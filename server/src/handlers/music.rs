@@ -15,11 +15,12 @@
 //! `storytel_login_saved/cleared`).
 
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::path::{Path as FsPath, PathBuf};
 
 use askama::Template;
 use axum::extract::multipart::Field;
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{ConnectInfo, Multipart, Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
@@ -316,12 +317,18 @@ struct MusicTemplate {
     bell: crate::parent_events::Bell,
 }
 
-/// `/music/settings`: new episodes, Storytel, the music app, files no entry uses.
+/// `/music/settings`: new episodes, Storytel, Spotify (design 47), the music app, files no entry
+/// uses.
 #[derive(Template)]
 #[template(path = "music_settings.html")]
 struct MusicSettingsTemplate {
     title: String,
     storytel: StorytelCard,
+    /// Storytel on each phone (design 47 §1.7): `(id, name, on)`, every phone.
+    storytel_switches: Vec<(i64, String, bool)>,
+    /// The "On phones" row is open (`?storytel=phones`, after one of its switches saved).
+    storytel_phones_open: bool,
+    spotify: super::music_spotify::SpotifySetup,
     catalog: Option<CatalogCard>,
     /// Own files on disk no entry names (qa-21-step1-code #7): how many and how big.
     orphans: Option<(usize, String)>,
@@ -524,35 +531,80 @@ fn login_opens(state: &AppState, fingerprint: Option<&str>) -> bool {
         .is_some_and(|key| fingerprint == Some(key.fingerprint.as_str()))
 }
 
-/// `GET /music/settings`; shows (once) how the last Storytel save went (a session flash).
+/// `GET /music/settings[?login=<outcome>|saved=N|cleared=1|removed=1|storytel=phones]`; shows
+/// (once) how the last Storytel save went (a session flash). The Spotify group's notices come by
+/// the query (design 47 §1.2); nothing else on the page reads those keys.
 pub async fn show_settings(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
     session: tower_sessions::Session,
+    axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> Response {
     let notice: Option<String> = session.remove(STORYTEL_NOTICE_FLASH).await.ok().flatten();
-    render_settings(&state, StatusCode::OK, None, notice).await
+    render_settings(
+        &state,
+        &headers,
+        state.net.is_trusted(peer.ip()),
+        StatusCode::OK,
+        (None, notice),
+        super::music_spotify::Entered::query(query),
+    )
+    .await
 }
 
 /// The settings page as it is, without a session (the tests call it with another state).
 #[cfg(test)]
 pub(crate) async fn render_settings_plain(state: &AppState) -> Response {
-    render_settings(state, StatusCode::OK, None, None).await
+    render_settings(
+        state,
+        &axum::http::HeaderMap::new(),
+        false,
+        StatusCode::OK,
+        (None, None),
+        Default::default(),
+    )
+    .await
 }
 
-async fn render_settings(
+/// Music › Settings with `status`: the Storytel card's error and notice, the Spotify group's
+/// state (a refusal's values, or the page's query; the request's headers and the peer's trust
+/// feed the redirect URI it suggests). It carries the Spotify page's CSP: the login form's 303
+/// goes to Spotify's accounts service, and a browser checks `form-action` on it (design 47 §1.2).
+pub(crate) async fn render_settings(
     state: &AppState,
+    headers: &axum::http::HeaderMap,
+    peer_trusted: bool,
     status: StatusCode,
-    storytel_error: Option<String>,
-    storytel_notice: Option<String>,
+    (storytel_error, storytel_notice): (Option<String>, Option<String>),
+    spotify: super::music_spotify::Entered,
 ) -> Response {
-    let page = settings_page(state, storytel_error, storytel_notice).await;
-    html(status, page, "couldn't load the music settings")
+    // The page's query rides in the Spotify state: `?storytel=phones` opens Storytel's row.
+    let open = spotify.query_value("storytel") == Some("phones");
+    let page = async {
+        let spotify =
+            super::music_spotify::setup_view(state, headers, peer_trusted, spotify).await?;
+        settings_page(state, storytel_error, storytel_notice, open, spotify).await
+    }
+    .await;
+    let mut response = html(status, page, "couldn't load the music settings");
+    match axum::http::HeaderValue::from_str(&super::music_spotify::page_csp(state)) {
+        Ok(csp) => {
+            response
+                .headers_mut()
+                .insert(axum::http::header::CONTENT_SECURITY_POLICY, csp);
+        }
+        Err(err) => tracing::error!(%err, "music settings: the page's CSP isn't a header value"),
+    }
+    response
 }
 
 async fn settings_page(
     state: &AppState,
     storytel_error: Option<String>,
     storytel_notice: Option<String>,
+    storytel_phones_open: bool,
+    spotify: super::music_spotify::SpotifySetup,
 ) -> Result<MusicSettingsTemplate, sqlx::Error> {
     type StoredRow = (
         Option<Vec<u8>>,
@@ -572,10 +624,13 @@ async fn settings_page(
     )
     .fetch_one(&state.db)
     .await?;
-    let storytel_phones: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM device_policy WHERE music_storytel = 1")
-            .fetch_one(&state.db)
-            .await?;
+    let storytel_switches: Vec<(i64, String, bool)> = sqlx::query_as(
+        "SELECT d.id, d.name, p.music_storytel FROM devices d \
+         JOIN device_policy p ON p.device_id = d.id ORDER BY d.name, d.id",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let storytel_phones = storytel_switches.iter().filter(|(_, _, on)| *on).count() as i64;
     let zone = crate::display_time::Zone::load(&state.db).await;
     let saved_on = stored.0.as_ref().map(|_| {
         stored
@@ -633,6 +688,9 @@ async fn settings_page(
     Ok(MusicSettingsTemplate {
         title: "Music Settings".to_string(),
         storytel,
+        storytel_switches,
+        storytel_phones_open,
+        spotify,
         catalog,
         orphans: music::orphan_files(&state.db, &state.music_files_dir)
             .await
@@ -1355,15 +1413,28 @@ fn storytel_status(
 /// and a one-time notice on the card. Never shown back, never logged; the fields never prefilled.
 pub async fn save_storytel(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     session: tower_sessions::Session,
     Form(form): Form<FormMap>,
 ) -> Response {
     use crate::storytel::Probe;
     let refuse = |error: &str| Some(error.to_string());
+    let peer_trusted = state.net.is_trusted(peer.ip());
+    let refused = |status: StatusCode, entered: Option<String>| {
+        render_settings(
+            &state,
+            &headers,
+            peer_trusted,
+            status,
+            (entered, None),
+            Default::default(),
+        )
+    };
     let Some(key) = state.music_key.clone() else {
         let entered = refuse("Storytel is off: this server has no key to keep the login safe.");
-        return render_settings(&state, StatusCode::SERVICE_UNAVAILABLE, entered, None).await;
+        return refused(StatusCode::SERVICE_UNAVAILABLE, entered).await;
     };
     let email = field(&form, "email").trim().to_string();
     let password = field(&form, "password");
@@ -1372,14 +1443,14 @@ pub async fn save_storytel(
         && !email.chars().any(|c| c.is_control() || c.is_whitespace());
     if !email_ok {
         let entered = refuse("Enter the Storytel account's e-mail address.");
-        return render_settings(&state, StatusCode::BAD_REQUEST, entered, None).await;
+        return refused(StatusCode::BAD_REQUEST, entered).await;
     }
     if password.is_empty()
         || password.chars().count() > 200
         || password.chars().any(char::is_control)
     {
         let entered = refuse("Enter the Storytel password.");
-        return render_settings(&state, StatusCode::BAD_REQUEST, entered, None).await;
+        return refused(StatusCode::BAD_REQUEST, entered).await;
     }
     let probe =
         crate::storytel::probe(&state, &email, &password, crate::storytel::PROBE_BUDGET).await;
@@ -1404,7 +1475,7 @@ pub async fn save_storytel(
                 ),
             };
             let entered = refuse(&text);
-            return render_settings(&state, StatusCode::BAD_REQUEST, entered, None).await;
+            return refused(StatusCode::BAD_REQUEST, entered).await;
         }
         Probe::Accepted { jwt, shelf } => {
             let notice = format!("Saved - Storytel shows {} series and books.", shelf.len());
@@ -4582,18 +4653,7 @@ pub async fn save_device_spotify(
         },
     };
     let saved: Result<Option<Option<String>>, sqlx::Error> = async {
-        let updated = sqlx::query(
-            "UPDATE device_policy SET music_spotify_account = ?, updated_at = datetime('now') \
-             WHERE device_id = ? AND (? IS NULL OR EXISTS \
-               (SELECT 1 FROM music_spotify_accounts WHERE id = ?))",
-        )
-        .bind(account)
-        .bind(id)
-        .bind(account)
-        .bind(account)
-        .execute(&state.db)
-        .await?;
-        if updated.rows_affected() == 0 {
+        if !bind_spotify(&state.db, id, account).await? {
             return Ok(None);
         }
         let name: Option<String> = match account {
@@ -4643,6 +4703,64 @@ pub async fn save_device_spotify(
     )
     .await;
     Redirect::to(&format!("/devices/{id}/music#music-spotify")).into_response()
+}
+
+/// Binds phone `device` to Spotify `account` (`None` = Spotify off on it): Device › Music's "Plays
+/// as" and Music › Settings' "Plays on" (design 47 §1.6). The account must exist, checked in the
+/// `UPDATE` itself (a Remove can't slip in between); `false` = no such phone or account, nothing
+/// written. The binding moves the library revision (0074's trigger), so the phone syncs.
+pub(crate) async fn bind_spotify<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
+    device: i64,
+    account: Option<i64>,
+) -> Result<bool, sqlx::Error> {
+    let updated = sqlx::query(
+        "UPDATE device_policy SET music_spotify_account = ?, updated_at = datetime('now') \
+         WHERE device_id = ? AND (? IS NULL OR EXISTS \
+           (SELECT 1 FROM music_spotify_accounts WHERE id = ?))",
+    )
+    .bind(account)
+    .bind(device)
+    .bind(account)
+    .bind(account)
+    .execute(db)
+    .await?;
+    Ok(updated.rows_affected() == 1)
+}
+
+/// `POST /music/storytel/phones/{id}` (`on` = the switch; design 47 §1.7): Storytel on that phone,
+/// from Music › Settings' "On phones" row - `music_storytel` alone (Device › Music's form writes
+/// the phone's other settings with it). The phone is nudged and the change logged as there; an
+/// unknown phone is a 400. Back to the row, open (`?storytel=phones#storytel-phones`).
+pub async fn save_storytel_phone(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<FormMap>,
+) -> Response {
+    let on = form.contains_key("on");
+    let updated = sqlx::query(
+        "UPDATE device_policy SET music_storytel = ?, updated_at = datetime('now') \
+         WHERE device_id = ?",
+    )
+    .bind(on)
+    .bind(id)
+    .execute(&state.db)
+    .await;
+    match updated {
+        Ok(done) if done.rows_affected() == 1 => {}
+        Ok(_) => return (StatusCode::BAD_REQUEST, "Unknown phone").into_response(),
+        Err(err) => return server_error(err, "couldn't save Storytel on a phone"),
+    }
+    nudge(&state, &[id]);
+    log_event(
+        &state,
+        &admin,
+        "music_phone_settings",
+        &format!("device {id}: Storytel {on}"),
+    )
+    .await;
+    Redirect::to("/music/settings?storytel=phones#storytel-phones").into_response()
 }
 
 /// `POST /devices/{id}/music/entries/{entry_id}` (`selected` = ticked): one auto-saving switch on

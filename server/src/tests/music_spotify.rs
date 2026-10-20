@@ -256,7 +256,7 @@ async fn routes_need_a_session() {
     assert!(
         res.text()
             .replace("&#39;", "'")
-            .contains("content=\"0;url=/music/spotify?login=ok#accounts\""),
+            .contains("content=\"0;url=/music/settings?login=ok#spotify-accounts\""),
         "{}",
         res.text().replace("&#39;", "'")
     );
@@ -288,7 +288,7 @@ async fn routes_need_a_session() {
         .await;
     let text = res.text();
     assert!(
-        text.contains("content=\"0;url=/music/spotify?login=expired#accounts\""),
+        text.contains("content=\"0;url=/music/settings?login=expired#spotify-accounts\""),
         "{text}"
     );
     assert!(!text.contains("<script>") && !text.contains("%3Cscript"));
@@ -332,19 +332,19 @@ async fn not_configured_shows_the_steps() {
         .text()
         .replace("&#39;", "'");
     assert!(music.contains("href=\"/music/spotify\""), "{music}");
-    let res = app.get_page("/music/spotify", &cookie).await;
+    let res = app.get_page("/music/settings", &cookie).await;
     assert_eq!(res.status, StatusCode::OK);
     let page = res.text().replace("&#39;", "'");
     assert!(page.contains("No Spotify app is set up on this server yet"));
     assert!(page.contains("developer.spotify.com/dashboard"));
     assert!(page.contains("At most 5 accounts can use a Development-mode app"));
-    assert!(page.contains("<details id=\"setup\" open"));
+    assert!(page.contains("<details id=\"spotify-setup\" open"));
     // The account model (design 26c step 8): one account per phone, the child's own; the
     // parent's is never logged in - the parent pastes links; a playlist lists only for a
     // child's account that owns it or collaborates on it.
     assert!(page.contains(
         "your children's Spotify accounts: one account per phone, the child's own. Your own \
-         Spotify account is never logged in here - you paste the links."
+         Spotify account is never logged in here - you paste the links on Add from Spotify."
     ));
     assert!(page.contains(
         "add each child's Spotify account - one per phone, the child's own, never yours - by \
@@ -410,10 +410,20 @@ async fn the_app_setting() {
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{fields:?}");
         let page = res.text().replace("&#39;", "'");
         assert!(page.contains(text), "{page}");
+        // The re-rendered Music › Settings: the values, the prefixed field and error ids (design
+        // 47 §1.2).
+        let id = match field {
+            "client_id" => "spotify-client-id",
+            _ => "spotify-redirect-uri-field",
+        };
+        let input = &page[page.find(&format!("id=\"{id}\"")).expect(id)..];
         assert!(
-            page.contains(&format!("id=\"{field}\"")) && page.contains("autofocus"),
+            input[..input.find('>').unwrap()]
+                .contains("aria-describedby=\"spotify-app-error\" autofocus"),
             "{field}"
         );
+        assert!(page.contains("<p class=\"field-error\" id=\"spotify-app-error\">"));
+        assert!(page.contains("<h1 class=\"page-title\">Settings</h1>"));
         // The CSP of the re-rendered page is the Spotify page's.
         assert!(
             res.headers[header::CONTENT_SECURITY_POLICY]
@@ -431,9 +441,9 @@ async fn the_app_setting() {
         &[("client_id", CLIENT), ("redirect_uri", HTTPS_REDIRECT)],
     )
     .await;
-    assert_eq!(res.location(), Some("/music/spotify?saved=0#app"));
+    assert_eq!(res.location(), Some("/music/settings?saved=0#spotify-app"));
     let page = app
-        .get_page("/music/spotify?saved=0", &cookie)
+        .get_page("/music/settings?saved=0", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -445,7 +455,7 @@ async fn the_app_setting() {
         "{page}"
     );
     assert!(page.contains(&format!(
-        "<code class=\"key\" id=\"redirect-uri\" style=\"user-select: all;\">{HTTPS_REDIRECT}</code>"
+        "<code class=\"key\" id=\"spotify-redirect-uri\" style=\"user-select: all;\">{HTTPS_REDIRECT}</code>"
     )));
     assert!(page.contains("<p class=\"flash\" role=\"status\" data-flash=\"app\">Saved.</p>"));
     assert!(page.contains("Log in with Spotify"));
@@ -453,7 +463,7 @@ async fn the_app_setting() {
         "Log in each child's own account - one per phone, never yours. Whoever is logged into \
          Spotify in this browser logs in, so open this page in a private window"
     ));
-    assert!(!page.contains("<details id=\"setup\" open"));
+    assert!(!page.contains("<details id=\"spotify-setup\" open"));
     assert_eq!(
         events(&app, "spotify_app_saved").await,
         [format!(
@@ -488,7 +498,7 @@ async fn the_environment_wins() {
                 &router,
                 super::LOOPBACK_PEER,
                 Request::builder()
-                    .uri("/music/spotify")
+                    .uri("/music/settings")
                     .header(header::COOKIE, &cookie)
                     .body(Body::empty())
                     .unwrap(),
@@ -550,7 +560,7 @@ async fn the_redirect_suggestion_follows_the_request() {
         let app = &app;
         async move {
             let mut builder = Request::builder()
-                .uri("/music/spotify")
+                .uri("/music/settings")
                 .header(header::COOKIE, &cookie);
             for (name, value) in headers {
                 builder = builder.header(name, value);
@@ -719,7 +729,7 @@ async fn the_callback_logs_an_account_in() {
     assert_eq!(app.fetch.count(), 0);
     // The page then says who logged in, with the 6-month line.
     let page = app
-        .get_page("/music/spotify?login=ok", &cookie)
+        .get_page("/music/settings?login=ok", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -791,7 +801,7 @@ async fn the_callback_needs_its_state_and_cookie() {
     assert_eq!(app.fetch.count(), 0);
     assert_eq!(account_rows(&app).await.len(), 1);
     let page = app
-        .get_page("/music/spotify?login=expired", &cookie)
+        .get_page("/music/settings?login=expired", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -826,7 +836,7 @@ async fn refusals_store_nothing() {
         Some("/music/spotify/done?login=not_registered")
     );
     let page = app
-        .get_page("/music/spotify?login=not_registered", &cookie)
+        .get_page("/music/settings?login=not_registered", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -985,7 +995,7 @@ async fn the_paste_finishes_a_loopback_login() {
     let cookie = app.admin_cookie().await;
     set_up(&app, &cookie, LOOPBACK_REDIRECT).await;
     let page = app
-        .get_page("/music/spotify", &cookie)
+        .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -1031,7 +1041,10 @@ async fn the_paste_finishes_a_loopback_login() {
         started.query["state"]
     ))
     .await;
-    assert_eq!(res.location(), Some("/music/spotify?login=ok#accounts"));
+    assert_eq!(
+        res.location(),
+        Some("/music/settings?login=ok#spotify-accounts")
+    );
     let rows = account_rows(&app).await;
     assert_eq!(rows[0].1, "fakeparent");
     // The exchange used the loopback redirect URI.
@@ -1052,7 +1065,7 @@ async fn the_paste_finishes_a_loopback_login() {
     .await;
     assert_eq!(
         res.location(),
-        Some("/music/spotify?login=expired#accounts")
+        Some("/music/settings?login=expired#spotify-accounts")
     );
     // A login another admin started can't be finished by this one.
     let other = app
@@ -1072,7 +1085,7 @@ async fn the_paste_finishes_a_loopback_login() {
     .await;
     assert_eq!(
         res.location(),
-        Some("/music/spotify?login=expired#accounts")
+        Some("/music/settings?login=expired#spotify-accounts")
     );
     // ...and doesn't use it up (code QA L1): its own browser still finishes it.
     assert_eq!(app.state.spotify.pending_count(), 1);
@@ -1092,7 +1105,7 @@ async fn the_paste_finishes_a_loopback_login() {
     .await;
     assert_eq!(
         res.location(),
-        Some("/music/spotify?login=cancelled#accounts")
+        Some("/music/settings?login=cancelled#spotify-accounts")
     );
     assert_eq!(account_rows(&app).await.len(), 1);
 }
@@ -1143,7 +1156,10 @@ async fn remove_clear_and_a_new_client_id() {
     );
     assert_eq!(remove(999, true).await.status, StatusCode::NOT_FOUND);
     let res = remove(kid, true).await;
-    assert_eq!(res.location(), Some("/music/spotify?removed=1#accounts"));
+    assert_eq!(
+        res.location(),
+        Some("/music/settings?removed=1#spotify-accounts")
+    );
     assert_eq!(binding(&app, ella).await, None);
     assert_eq!(binding(&app, ola).await, Some(parent));
     assert_eq!(revision(&app).await, before + 3);
@@ -1188,12 +1204,12 @@ async fn remove_clear_and_a_new_client_id() {
         ],
     )
     .await;
-    assert_eq!(res.location(), Some("/music/spotify?saved=1#app"));
+    assert_eq!(res.location(), Some("/music/settings?saved=1#spotify-app"));
     assert!(account_rows(&app).await.is_empty());
     assert_eq!(binding(&app, ola).await, None);
     assert_eq!(revision(&app).await, before + 4);
     let page = app
-        .get_page("/music/spotify?saved=1", &cookie)
+        .get_page("/music/settings?saved=1", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -1220,7 +1236,10 @@ async fn remove_clear_and_a_new_client_id() {
             &[("confirm", "on")],
         )
         .await;
-    assert_eq!(res.location(), Some("/music/spotify?cleared=1#app"));
+    assert_eq!(
+        res.location(),
+        Some("/music/settings?cleared=1#spotify-app")
+    );
     assert!(spotify::app(&app.state).await.unwrap().is_none());
     assert!(account_rows(&app).await.is_empty());
     assert_eq!(binding(&app, ella).await, None);
@@ -1229,7 +1248,7 @@ async fn remove_clear_and_a_new_client_id() {
         ["Spotify app and 1 accounts removed"]
     );
     let page = app
-        .get_page("/music/spotify?cleared=1", &cookie)
+        .get_page("/music/settings?cleared=1", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -1246,7 +1265,7 @@ async fn the_six_month_line() {
     app.state.music_sweep.set_clock(Some(t0));
     log_in(&app, &cookie, "me_kid.json", "FAKE-CODE-1").await;
     let page = app
-        .get_page("/music/spotify", &cookie)
+        .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -1259,7 +1278,7 @@ async fn the_six_month_line() {
         .music_sweep
         .set_clock(Some(t0 + chrono::TimeDelta::days(166)));
     let page = app
-        .get_page("/music/spotify", &cookie)
+        .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -1271,7 +1290,7 @@ async fn the_six_month_line() {
         .music_sweep
         .set_clock(Some(t0 + chrono::TimeDelta::days(181)));
     let page = app
-        .get_page("/music/spotify", &cookie)
+        .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -1284,7 +1303,7 @@ async fn the_six_month_line() {
     .await
     .unwrap();
     let page = app
-        .get_page("/music/spotify", &cookie)
+        .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -1297,7 +1316,7 @@ async fn the_six_month_line() {
     .await
     .unwrap();
     let page = app
-        .get_page("/music/spotify", &cookie)
+        .get_page("/music/settings", &cookie)
         .await
         .text()
         .replace("&#39;", "'");
@@ -1463,7 +1482,7 @@ async fn no_secret_in_logs_events_or_pages() {
             .await
             .unwrap();
     texts.extend(events.into_iter().map(|e| format!("{e:?}")));
-    for page in ["/music/spotify", "/music/spotify?login=ok", "/music"] {
+    for page in ["/music/spotify", "/music/settings?login=ok", "/music"] {
         texts.push(
             app.get_page(page, &cookie)
                 .await
@@ -1534,7 +1553,9 @@ async fn a_login_starts_only_at_the_redirects_address() {
             ),
             "{page}"
         );
-        assert!(page.contains("href=\"https://pi.example.ts.net/music/spotify#accounts\""));
+        assert!(
+            page.contains("href=\"https://pi.example.ts.net/music/settings#spotify-accounts\"")
+        );
         assert!(
             set_cookies(&res)
                 .iter()
@@ -3044,12 +3065,42 @@ mod entries {
             assert!(page.contains(text), "{text}: {page}");
             page
         };
-        // No app: not even the form would be shown; a POST is refused.
+        // Design 47 §1.3: while the setup isn't done the add page says what is missing, on top,
+        // linking to Music › Settings' group, and the form is disabled below it.
+        let not_ready = |page: &str, title: &str, fragment: &str| {
+            let row = &page[page
+                .find("data-row=\"spotify-not-ready\"")
+                .expect("the row")..];
+            let start = page.find("data-row=\"spotify-not-ready\"").unwrap();
+            let open = page[..start].rfind("<a ").unwrap();
+            assert!(
+                page[open..start].contains(&format!("href=\"/music/settings#{fragment}\"")),
+                "{fragment}"
+            );
+            assert!(row[..row.find("</a>").unwrap()].contains(title), "{title}");
+            assert!(
+                page.contains("id=\"spotify_link\"")
+                    && page.contains("<button type=\"submit\" class=\"button-wide\" disabled>Add"),
+                "the form disabled"
+            );
+        };
+        // No app: a POST is refused.
         let page = refused(
             add(&app, &cookie, &[("link", link.as_str())]).await,
             "Set up your Spotify app first.",
         );
-        assert!(!page.contains("Add a Spotify link"));
+        not_ready(
+            &page,
+            "No Spotify app is saved - set it up first",
+            "spotify",
+        );
+        let shown = page_text(&app.get_page("/music/spotify", &cookie).await);
+        not_ready(
+            &shown,
+            "No Spotify app is saved - set it up first",
+            "spotify",
+        );
+        assert!(shown.contains("<span class=\"row-value\">Not set up yet</span>"));
         assert_eq!(from_spotify(&app, &cookie).await, "No app");
         save_app(&app, LOOPBACK_REDIRECT).await;
         assert_eq!(from_spotify(&app, &cookie).await, "No login");
@@ -3058,6 +3109,8 @@ mod entries {
             add(&app, &cookie, &[("link", link.as_str())]).await,
             "Log in with a Spotify account first.",
         );
+        not_ready(&page, "No child's account is logged in yet", "spotify");
+        assert!(page.contains("<span class=\"row-value\">App saved, no account yet</span>"));
         assert!(
             page.contains(&format!("value=\"{link}\"")),
             "the link is kept"
@@ -3068,10 +3121,16 @@ mod entries {
             .execute(&app.db)
             .await
             .unwrap();
-        refused(
+        let page = refused(
             add(&app, &cookie, &[("link", link.as_str())]).await,
             "The Spotify logins need renewing",
         );
+        not_ready(
+            &page,
+            "An account needs to log in again",
+            "spotify-accounts",
+        );
+        assert!(page.contains("<span class=\"row-value\">1 account</span>"));
         assert_eq!(from_spotify(&app, &cookie).await, "No login");
         sqlx::query("UPDATE music_spotify_accounts SET needs_login = 0")
             .execute(&app.db)
@@ -3932,7 +3991,11 @@ mod entries {
             "<p class=\"group-footer\">One account per phone: the child's own Premium account, \
              never yours.</p>"
         ));
-        assert!(page.contains("href=\"/music/spotify#accounts\" data-row=\"spotify-accounts\""));
+        assert!(
+            page.contains(
+                "href=\"/music/settings#spotify-accounts\" data-row=\"spotify-accounts\""
+            )
+        );
         let form = &page[page
             .find(&format!(
                 "action=\"/devices/{ella}/music/spotify#music-spotify\""
@@ -4674,5 +4737,356 @@ mod phones {
             res.location(),
             Some(format!("/devices/{ella}/filter").as_str())
         );
+    }
+}
+
+/// Design 47: Add from Spotify opens on the add form; the setup is a group of Music › Settings,
+/// with "Plays on" per account and Storytel per phone.
+mod settings_group {
+    use axum::http::{Method, StatusCode, header};
+
+    use super::super::TestApp;
+    use super::super::settings_pages::check_forms;
+    use super::{bind, binding, revision};
+    use crate::spotify::LOOPBACK_REDIRECT;
+    use crate::spotify::tests::{save_app, store_account};
+
+    fn text(res: &super::TestResponse) -> String {
+        res.text().replace("&#39;", "'")
+    }
+
+    #[tokio::test]
+    async fn the_add_page_first_and_the_setup_in_music_settings() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        store_account(&app, "fakekid2", "Ola", "FAKE-REFRESH-2").await;
+
+        let page = text(&app.get_page("/music/spotify", &cookie).await);
+        check_forms("/music/spotify", &page);
+        assert!(page.contains("<h1 class=\"page-title\">Add from Spotify</h1>"));
+        assert!(page.contains("action=\"/music/spotify/add#add\""));
+        assert!(!page.contains("data-row=\"spotify-not-ready\""), "set up");
+        assert!(!page.contains("disabled>Add"));
+        let row = &page[page
+            .find("data-row=\"spotify-setup\"")
+            .expect("the setup row")..];
+        assert!(
+            row[..row.find("</a>").unwrap()]
+                .contains("<span class=\"row-value\">2 accounts</span>")
+        );
+        assert!(page.contains("href=\"/music/settings#spotify\" data-row=\"spotify-setup\""));
+        for setup in [
+            "client_id",
+            "/music/spotify/app",
+            "/music/spotify/login",
+            "Children's Accounts",
+        ] {
+            assert!(!page.contains(setup), "{setup} on the add page");
+        }
+
+        let res = app.get_page("/music/settings", &cookie).await;
+        let csp = res.headers[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap();
+        assert!(
+            csp.contains("form-action 'self' https://accounts.spotify.com;"),
+            "{csp}"
+        );
+        let settings = text(&res);
+        check_forms("/music/settings", &settings);
+        let at = |needle: &str| settings.find(needle).unwrap_or_else(|| panic!("{needle}"));
+        assert!(
+            at("id=\"storytel\"") < at("id=\"spotify\""),
+            "after Storytel"
+        );
+        for id in [
+            "spotify",
+            "spotify-app",
+            "spotify-app-form",
+            "spotify-setup",
+            "spotify-app-clear",
+            "spotify-accounts",
+            "spotify-login",
+            "spotify-paste",
+            "spotify-client-id",
+            "spotify-redirect-uri",
+            "spotify-redirect-uri-field",
+            "spotify-paste-url",
+        ] {
+            assert!(settings.contains(&format!("id=\"{id}\"")), "{id}");
+        }
+        // No unprefixed id of the moved markup is left (`#app` is the music app's group).
+        for old in [
+            "id=\"app-form\"",
+            "id=\"setup\"",
+            "id=\"app-clear\"",
+            "id=\"accounts\"",
+            "id=\"account-",
+            "id=\"login\"",
+            "id=\"paste\"",
+            "id=\"key\"",
+            "id=\"client_id\"",
+            "id=\"redirect_uri\"",
+            "id=\"paste_url\"",
+            "id=\"redirect-uri\"",
+        ] {
+            assert!(!settings.contains(old), "{old}");
+        }
+        assert_eq!(settings.matches("id=\"app\"").count(), 1, "the music app's");
+    }
+
+    /// The refusals' error ids carry the prefix too, and each re-renders Music › Settings.
+    #[tokio::test]
+    async fn the_refusals_render_music_settings_with_prefixed_ids() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        let ella = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        for (path, fields, error) in [
+            (
+                "/music/spotify/app/clear".to_string(),
+                vec![],
+                "spotify-clear-error",
+            ),
+            (
+                format!("/music/spotify/accounts/{ella}/remove"),
+                vec![],
+                &*format!("spotify-remove-error-{ella}"),
+            ),
+            (
+                "/music/spotify/paste".to_string(),
+                vec![("url", "https://example.org/")],
+                "spotify-paste-error",
+            ),
+        ] {
+            let res = app
+                .request_form(Method::POST, &path, Some(&cookie), &fields)
+                .await;
+            assert_eq!(res.status, StatusCode::BAD_REQUEST, "{path}");
+            let page = text(&res);
+            assert!(page.contains(&format!("id=\"{error}\"")), "{path}: {page}");
+            assert!(
+                page.contains(&format!("aria-describedby=\"{error}\" autofocus")),
+                "{path}"
+            );
+            assert!(
+                page.contains("<h1 class=\"page-title\">Settings</h1>"),
+                "{path}"
+            );
+        }
+    }
+
+    /// §1.6: one phone per account. Picking a phone binds it (moving it from another account) and
+    /// unbinds the account's other phones; "No phone" unbinds them all; an unknown phone or
+    /// account is a 400 with nothing written. The row says where it plays.
+    #[tokio::test]
+    async fn plays_on_binds_one_phone_per_account() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        save_app(&app, LOOPBACK_REDIRECT).await;
+        let ella = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
+        let ola = store_account(&app, "fakekid2", "Ola", "FAKE-REFRESH-2").await;
+        let (anna_phone, _) = app.enrolled_device("Annas telefon").await;
+        let (ola_phone, _) = app.enrolled_device("Olas telefon").await;
+        let (spare, _) = app.enrolled_device("Reserve").await;
+        let plays_on = |account: i64| {
+            let app = &app;
+            let cookie = cookie.clone();
+            async move {
+                let page = text(&app.get_page("/music/settings", &cookie).await);
+                let cell = &page[page
+                    .find(&format!("id=\"spotify-account-{account}\""))
+                    .unwrap()..];
+                let line = &cell[cell.find("data-plays-on>").unwrap() + 14..];
+                let select = &cell[cell
+                    .find(&format!("id=\"spotify-account-{account}-plays-on\""))
+                    .unwrap()..];
+                let select = &select[..select.find("</select>").unwrap()];
+                let chosen = select
+                    .split("<option")
+                    .find(|o| o.contains(" selected>"))
+                    .map(|o| o[o.find('>').unwrap() + 1..o.find('<').unwrap()].to_string());
+                (line[..line.find('<').unwrap()].to_string(), chosen)
+            }
+        };
+        let post = |account: i64, device: &str| {
+            let app = &app;
+            let cookie = cookie.clone();
+            let device = device.to_string();
+            async move {
+                app.request_form(
+                    Method::POST,
+                    &format!("/music/spotify/accounts/{account}/plays-on"),
+                    Some(&cookie),
+                    &[("device", device.as_str())],
+                )
+                .await
+            }
+        };
+        assert_eq!(
+            plays_on(ella).await,
+            ("Plays on no phone yet".into(), Some("No phone".into()))
+        );
+
+        // Several phones (Device › Music bound them): the picker says so.
+        bind(&app, anna_phone, ella).await;
+        bind(&app, spare, ella).await;
+        bind(&app, ola_phone, ola).await;
+        assert_eq!(
+            plays_on(ella).await,
+            (
+                "Plays on Annas telefon, Reserve".into(),
+                Some("Several phones".into())
+            )
+        );
+
+        // Ola's phone for Ella: it moves from Ola, Ella's two others are unbound.
+        let before = revision(&app).await;
+        let res = post(ella, &ola_phone.to_string()).await;
+        assert_eq!(
+            res.location(),
+            Some(format!("/music/settings#spotify-account-{ella}").as_str())
+        );
+        app.assert_lands(&res, &cookie).await;
+        assert_eq!(
+            (
+                binding(&app, ola_phone).await,
+                binding(&app, anna_phone).await,
+                binding(&app, spare).await
+            ),
+            (Some(ella), None, None)
+        );
+        assert!(revision(&app).await > before, "the phones sync");
+        assert_eq!(
+            plays_on(ella).await,
+            ("Plays on Olas telefon".into(), Some("Olas telefon".into()))
+        );
+        assert_eq!(plays_on(ola).await.0, "Plays on no phone yet");
+        let logged: Vec<String> = super::events(&app, "music_spotify_binding_changed").await;
+        assert_eq!(logged.len(), 3, "{logged:?}");
+        assert!(logged.contains(&format!("device {ola_phone}: Spotify plays as Ella")));
+        assert!(logged.contains(&format!("device {spare}: Spotify off")));
+
+        // Unknown phone, unknown account, no choice: 400, nothing written.
+        for (account, device) in [(ella, "999"), (999, &*anna_phone.to_string()), (ella, "x")] {
+            let res = post(account, device).await;
+            assert_eq!(res.status, StatusCode::BAD_REQUEST, "{account} {device}");
+        }
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/music/spotify/accounts/{ella}/plays-on"),
+                Some(&cookie),
+                &[],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        assert_eq!(binding(&app, ola_phone).await, Some(ella));
+        assert_eq!(binding(&app, anna_phone).await, None);
+
+        // No phone: every phone unbound.
+        let res = post(ella, "none").await;
+        assert_eq!(
+            res.location(),
+            Some(format!("/music/settings#spotify-account-{ella}").as_str())
+        );
+        assert_eq!(binding(&app, ola_phone).await, None);
+        assert_eq!(
+            plays_on(ella).await,
+            ("Plays on no phone yet".into(), Some("No phone".into()))
+        );
+    }
+
+    /// §1.7: Storytel per phone from Music › Settings sets `music_storytel` alone - the phone's
+    /// mobile-data switches, volume cap and storage limit stay as they are.
+    #[tokio::test]
+    async fn storytel_on_a_phone_from_music_settings() {
+        let app = TestApp::new().await;
+        let cookie = app.admin_cookie().await;
+        let (anna, _) = app.enrolled_device("Anna").await;
+        let (ola, _) = app.enrolled_device("Ola").await;
+        // A saved login (Storytel can't be reached here: saved, unchecked): the row shows.
+        let login = [
+            ("email", "parent@example.invalid"),
+            ("password", "not-a-real-password"),
+        ];
+        app.request_form(Method::POST, "/music/storytel", Some(&cookie), &login)
+            .await;
+        sqlx::query(
+            "UPDATE device_policy SET music_stream_mobile_data = 1, music_download_mobile_data = 1, \
+             music_volume_cap_pct = 70, music_storage_limit_gb = 8, music_storytel = 1 \
+             WHERE device_id = ?",
+        )
+        .bind(ola)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        type Settings = (bool, bool, Option<i64>, Option<i64>, bool);
+        let settings = |device: i64| {
+            let db = app.db.clone();
+            async move {
+                sqlx::query_as::<_, Settings>(
+                    "SELECT music_stream_mobile_data, music_download_mobile_data, \
+                     music_volume_cap_pct, music_storage_limit_gb, music_storytel \
+                     FROM device_policy WHERE device_id = ?",
+                )
+                .bind(device)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+            }
+        };
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/music/storytel/phones/{ola}"),
+                Some(&cookie),
+                &[],
+            )
+            .await;
+        assert_eq!(
+            res.location(),
+            Some("/music/settings?storytel=phones#storytel-phones")
+        );
+        assert_eq!(settings(ola).await, (true, true, Some(70), Some(8), false));
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/music/storytel/phones/{anna}"),
+                Some(&cookie),
+                &[("on", "on")],
+            )
+            .await;
+        assert!(settings(anna).await.4);
+        assert_eq!(
+            super::events(&app, "music_phone_settings").await,
+            [
+                format!("device {ola}: Storytel false"),
+                format!("device {anna}: Storytel true")
+            ]
+        );
+        // Back with the row open, the switches as stored; an unknown phone is a 400.
+        let page = text(&app.get_page(res.location().unwrap(), &cookie).await);
+        assert!(page.contains("<details class=\"cell disclosure\" id=\"storytel-phones\" open>"));
+        assert!(page.contains(
+            "<span class=\"row-label\">On phones</span><span class=\"row-value\">1</span>"
+        ));
+        assert!(page.contains(&format!(
+            "action=\"/music/storytel/phones/{anna}#storytel-phones\""
+        )));
+        let res = app
+            .request_form(
+                Method::POST,
+                "/music/storytel/phones/999",
+                Some(&cookie),
+                &[("on", "on")],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST);
+        // Opened from anywhere else, the row is closed.
+        let page = text(&app.get_page("/music/settings", &cookie).await);
+        assert!(page.contains("<details class=\"cell disclosure\" id=\"storytel-phones\">"));
     }
 }

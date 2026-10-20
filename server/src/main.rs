@@ -1115,7 +1115,8 @@ pub fn build_admin_router(
             get(handlers::music::storytel_shelf).post(handlers::music::save_storytel),
         )
         .route("/music/storytel/add", post(handlers::music::add_storytel))
-        // Spotify (design 26c step 1): the developer app, the accounts, the PKCE login.
+        // Spotify (design 26c step 1): the developer app, the accounts, the PKCE login (their
+        // forms are on Music › Settings since design 47; /music/spotify is Add from Spotify).
         .route("/music/spotify", get(handlers::music_spotify::show))
         .route(
             "/music/spotify/app",
@@ -1132,6 +1133,15 @@ pub fn build_admin_router(
         .route(
             "/music/spotify/accounts/{id}/remove",
             post(handlers::music_spotify::remove_account),
+        )
+        // Design 47: from Music › Settings, where an account plays and Storytel per phone.
+        .route(
+            "/music/spotify/accounts/{id}/plays-on",
+            post(handlers::music_spotify::save_plays_on),
+        )
+        .route(
+            "/music/storytel/phones/{id}",
+            post(handlers::music::save_storytel_phone),
         )
         .route(
             "/music/storytel/clear",
