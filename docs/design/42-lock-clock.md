@@ -79,6 +79,12 @@ with the signer.
 
 ## 4. Device checks
 
+A check that comes first, on the emulator: **an alarm two minutes ahead with the screen locked** - Fossify's alarm
+screen must come up (over our lock, through the exemption). On Android 14+ a non-system clock gets
+`USE_FULL_SCREEN_INTENT` only through the user's grant; the device owner can't give it. If the alarm shows as a plain
+notification instead, Fossify's own one-time prompt (shown when the app is first opened) is the setup step, written
+into the setup runbook; the launcher cannot do it for the parent.
+
 Emulator (Fossify from the catalog): a 10-minute timer, the lock: the tile counts down and follows the app's updates,
 the timer's end removes the tile (Fossify's alarm screen shows over the lock through the exemption); an alarm set
 for tomorrow: "Alarm tor 07:00"; the tap: the keypad, then Fossify; Google's clock timer: nothing. The Jelly Star: the
