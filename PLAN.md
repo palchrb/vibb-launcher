@@ -810,8 +810,12 @@ findings, merge to `main`, full suite once.
   the playlist's tracks with the kid's token (as it does for list mode; the same `music_items` listing shape, pictures
   through the sweep) and the phone shows the whole list as in list mode, the playing track marked; a tap on a row plays
   the context from that track - the same play call with `offset.uri` = the row's uri (what resume does today) - so
-  Spotify still owns the playback and the order (shuffle off, so it is the playlist's order). An artist context keeps
-  its one row (Spotify picks there). What the kid sees may lag an edit made in Spotify until the next listing sync;
+  Spotify still owns the playback and the order (shuffle off, so it is the playlist's order - confirmed by the user
+  2026-10-20: "rekkefølgen følger min playlist helt perfekt"; the hint "rekkefølgen velges for deg" is wrong for a
+  playlist and becomes "spillelistens rekkefølge", staying only for an artist context). An artist context keeps its
+  one row (Spotify picks there). Also noted: a context's first play after an idle pause takes a few seconds (the web
+  player is released after a pause and reloads: SDK page, token, `ready`, transfer, play) - expected; holding the web
+  player longer on Wi-Fi + charger is a battery trade-off to weigh, not a bug. What the kid sees may lag an edit made in Spotify until the next listing sync;
   a tapped track Spotify refuses (left the playlist) falls back to the context from the top, as resume does. Music
   app + server (listing for context entries); design note, the usual process; the behaviour reference stays vibb's
   list. Music round after stable 0.4.0's blockers.
