@@ -189,3 +189,86 @@ test("the key decodes and the hash matches the server's", async () => {
     assert.deepStrictEqual(Buffer.from(decodeKey(KEY, win)), Buffer.from(KEY, "base64url"));
     assert.strictEqual(await endpointHash(ENDPOINT, win), hashOf(ENDPOINT));
 });
+
+// Server round 5 §5: after Send a Test, the rows poll subscriptions.json and re-render in place.
+const { testedRow, pollRows } = require("../static/notifications.js");
+
+function fakeRows(answers) {
+    const rows = {};
+    const make = (id, sub, badge) => {
+        const line = { textContent: sub };
+        const pill = { textContent: badge, className: "badge badge-on" };
+        rows[id] = {
+            line,
+            pill,
+            querySelector: (s) => (s === "[data-sub]" ? line : s === "[data-badge]" ? pill : null),
+        };
+    };
+    make(4, "Nothing shown yet", "On");
+    make(5, "Last shown 2 h ago", "On");
+    const timers = [];
+    const fetched = [];
+    const win = {
+        document: {
+            querySelector: (s) => {
+                const m = /data-subscription="(\d+)"/.exec(s);
+                return m ? rows[m[1]] || null : null;
+            },
+        },
+        setTimeout: (fn, ms) => timers.push([fn, ms]),
+        fetch: (url, options) => {
+            fetched.push([url, options.credentials]);
+            const next = answers.shift();
+            if (next instanceof Error) return Promise.reject(next);
+            return Promise.resolve({ ok: true, json: () => Promise.resolve(next) });
+        },
+    };
+    const run = async () => {
+        const [fn, ms] = timers.shift();
+        assert.strictEqual(ms, 3000);
+        fn();
+        await settle();
+    };
+    return { win, rows, timers, fetched, run };
+}
+
+test("the tested row comes from the query", () => {
+    assert.strictEqual(testedRow("?from=devices&notice=test_sent&sub=4"), "4");
+    assert.strictEqual(testedRow("?notice=test_wait&sub=4"), null);
+    assert.strictEqual(testedRow("?notice=test_sent"), null);
+    assert.strictEqual(testedRow(""), null);
+});
+
+test("the rows re-render in place and the poll stops once the tested row changed", async () => {
+    const same = [
+        { id: 4, badge: "On", badge_class: "badge badge-on", sub: "Nothing shown yet" },
+        { id: 5, badge: "May not be showing", badge_class: "badge badge-warn", sub: "Last shown 2 h ago" },
+    ];
+    const changed = [{ id: 4, badge: "On", badge_class: "badge badge-on", sub: "Last shown 1 min ago" }];
+    const page = fakeRows([same, new Error("offline"), changed]);
+    let stopped = false;
+    pollRows(page.win, "4", () => { stopped = true; });
+    assert.strictEqual(page.fetched.length, 0, "the first poll waits 3 s");
+    await page.run();
+    assert.deepStrictEqual(page.fetched[0], ["/notifications/subscriptions.json", "same-origin"]);
+    assert.strictEqual(page.rows[5].pill.textContent, "May not be showing");
+    assert.strictEqual(page.rows[5].pill.className, "badge badge-warn");
+    assert.ok(!stopped);
+    await page.run(); // a lost answer: polled again
+    assert.ok(!stopped);
+    await page.run();
+    assert.strictEqual(page.rows[4].line.textContent, "Last shown 1 min ago");
+    assert.ok(stopped);
+    assert.strictEqual(page.timers.length, 0, "nothing more scheduled");
+});
+
+test("the poll stops after ten tries", async () => {
+    const same = () => [{ id: 4, badge: "On", badge_class: "badge badge-on", sub: "Nothing shown yet" }];
+    const page = fakeRows(Array.from({ length: 12 }, same));
+    let stopped = false;
+    pollRows(page.win, "4", () => { stopped = true; });
+    for (let i = 0; i < 10; i++) await page.run();
+    assert.ok(stopped);
+    assert.strictEqual(page.fetched.length, 10);
+    assert.strictEqual(page.timers.length, 0);
+});

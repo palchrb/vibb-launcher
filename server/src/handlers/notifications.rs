@@ -1,13 +1,19 @@
-//! Notifications (`/notifications`, design 35 §5): the warnings, This Device (Web Push on this
-//! browser, `static/notifications.js`), the inbox of what happened on the phones (`parent_events`,
-//! raised by `parent_events::raise`) with each row's delivery line, Getting Notifications (every
-//! subscribed device, its health, Send a Test, Remove) and Notify Me About, the per-kind push
-//! switches. Reached from the bell on the five tab pages and the Settings hub's row. Plus the
-//! service worker's receipt (`POST /notifications/receipt`, no session: a per-delivery token).
+//! Notifications (design 35 §5, design 45). `/notifications` is the inbox alone: what happened on
+//! the phones (`parent_events`, raised by `parent_events::raise`) with each row's delivery line,
+//! reached from the bell on the five tab pages; a gear leads to `/notifications/settings`: the
+//! warnings, This Device (Web Push on this browser, `static/notifications.js`), Getting
+//! Notifications (every subscribed device, its health, Send a Test, Remove) and Notify Me About,
+//! the per-kind push switches (the Settings hub's row leads there). Plus the service worker's
+//! receipt (`POST /notifications/receipt`, no session: a per-delivery token) and the `?push=`
+//! marker of a tapped notification ([push_marker]).
 //!
-//! No GET changes state: a row is a form whose POST marks the event read and 303s to its target;
-//! every other form comes back to its own group (`#this-device`, `#inbox`, `#devices`,
-//! `#events`), so a save never lands at the top (`scroll-restore.js` keeps the place).
+//! Two GETs write, both idempotent and both only for a signed-in parent (the admin cookie is
+//! SameSite=Strict, so a cross-site GET carries no session): opening the inbox marks the rows it
+//! shows read (design 45 §1.3; events are shared by all parents, so is their read state), and
+//! the `?push=` marker marks its delivery opened. A row is a form whose POST marks the event read
+//! and 303s to its target; every other form comes back to its own group (`#inbox`,
+//! `#this-device`, `#devices`, `#events`), so a save never lands at the top (`scroll-restore.js`
+//! keeps the place).
 
 use std::collections::HashMap;
 
@@ -92,9 +98,10 @@ pub struct Switch {
     pub on: bool,
 }
 
+/// The inbox (design 45 §1.1).
 #[derive(Template)]
 #[template(path = "notifications.html")]
-struct NotificationsTemplate {
+struct InboxTemplate {
     title: String,
     /// `from`, the back link's path and words.
     back: (&'static str, &'static str, &'static str),
@@ -103,22 +110,41 @@ struct NotificationsTemplate {
     device: Option<i64>,
     /// `?from=…[&device=…]`, for the page's own links.
     query: String,
+    /// The rows, each with its unread state from before this page marked it read.
     rows: Vec<InboxRow>,
     /// An older page exists: "Show older" (`?before=<id>`).
     older_than: Option<i64>,
     /// This is an older page: "Newest" leads back.
     paged: bool,
-    /// Unread events under the filter: Mark All as Read shows.
-    unread: i64,
+    /// Unread events under the filter after this page's marking: "Mark all N as read".
+    unread_after: i64,
+    /// Every unread event after the marking: the gear's `data-unread`, the app badge's source
+    /// (`register-sw.js`), as the bell's count on the tab pages.
+    badge: i64,
+    /// The devices that may not be showing notifications, or that pushes don't reach: rows to
+    /// the settings page's Getting Notifications.
+    not_showing: Vec<(String, String)>,
+    /// A push refused the server's signature in the last day: one row to the settings page.
+    clock_warning: bool,
+}
+
+/// Notification Settings (design 45 §1.2).
+#[derive(Template)]
+#[template(path = "notifications_settings.html")]
+struct SettingsTemplate {
+    title: String,
+    /// `from`, kept for the inbox's back link.
+    back: (&'static str, &'static str, &'static str),
+    /// The inbox's filter, kept for the query round-trip.
+    device: Option<i64>,
+    /// `?from=…[&device=…]`: the back link to the inbox.
+    query: String,
     switches: Vec<Switch>,
     /// The VAPID public key (base64url) for This Device; `None` = push is off on this server.
     push_key: Option<String>,
     /// The admin's active endpoints' 16-hex SHA-256 prefixes, comma-separated (§5.2).
     subscribed: String,
     devices: Vec<DeviceRow>,
-    /// The devices that may not be showing notifications, or that pushes don't reach (the
-    /// warnings, §6): `(title, sub-line)`.
-    not_showing: Vec<(String, String)>,
     /// A push refused the server's signature in the last day (§4.4).
     clock_warning: bool,
     /// A flash in This Device or in Getting Notifications: `(text, error)`.
@@ -172,6 +198,8 @@ type Row = (
     Option<String>,
 );
 
+/// The inbox (design 45 §1.1, §1.3): reads the page, marks exactly the rows it shows read, then
+/// counts what is left; the rows keep the unread state they had, for their dot.
 pub async fn page(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -182,120 +210,247 @@ pub async fn page(
     let before = number(&params, "before");
     let now = chrono::Utc::now();
     let read = async {
-        let page = read_page(&state, device, before).await?;
-        let ids: Vec<i64> = page.1.iter().map(|r| r.0).collect();
-        let lines = delivery_lines(&state.db, &ids).await?;
+        let (phones, raw) = read_page(&state, device, before).await?;
+        let shown: Vec<i64> = raw
+            .iter()
+            .take(parent_events::PAGE as usize)
+            .map(|r| r.0)
+            .collect();
+        let ids = serde_json::to_string(&shown).unwrap_or_default();
+        sqlx::query(
+            "UPDATE parent_events SET read_at = datetime('now') \
+             WHERE id IN (SELECT value FROM json_each(?)) AND read_at IS NULL",
+        )
+        .bind(&ids)
+        .execute(&state.db)
+        .await?;
+        let (unread_after, badge): (i64, i64) = sqlx::query_as(
+            "SELECT COALESCE(SUM(?1 IS NULL OR device_id = ?1), 0), COUNT(*) \
+             FROM parent_events WHERE read_at IS NULL",
+        )
+        .bind(device)
+        .fetch_one(&state.db)
+        .await?;
+        let lines = delivery_lines(&state.db, &shown).await?;
         let subscriptions = push::subscriptions(&state.db, admin.id, now).await?;
-        let known = push::active_endpoint_hashes(&state.db).await?;
-        Ok::<_, sqlx::Error>((page, lines, subscriptions, known))
+        Ok::<_, sqlx::Error>((phones, raw, unread_after, badge, lines, subscriptions))
     };
-    match read.await {
-        Ok(((phones, raw, unread, settings), mut lines, subscriptions, known)) => {
-            let zone = Zone::load(&state.db).await;
-            let older_than = (raw.len() as i64 > parent_events::PAGE)
-                .then(|| raw.get(parent_events::PAGE as usize - 1).map(|r| r.0))
-                .flatten();
-            let rows = raw
-                .into_iter()
-                .take(parent_events::PAGE as usize)
-                .map(
-                    |(
-                        id,
+    let (phones, raw, unread_after, badge, mut lines, subscriptions) = match read.await {
+        Ok(read) => read,
+        Err(err) => return read_error(err),
+    };
+    let zone = Zone::load(&state.db).await;
+    let older_than = (raw.len() as i64 > parent_events::PAGE)
+        .then(|| raw.get(parent_events::PAGE as usize - 1).map(|r| r.0))
+        .flatten();
+    let rows = raw
+        .into_iter()
+        .take(parent_events::PAGE as usize)
+        .map(
+            |(id, device_id, title, summary, detail, happened_at, unread, name, enrolled)| {
+                let at = crate::display_time::parse_db_utc(&happened_at);
+                InboxRow {
+                    id,
+                    avatar: crate::handlers::devices::avatar_class_of(
                         device_id,
-                        title,
-                        summary,
-                        detail,
-                        happened_at,
-                        unread,
-                        name,
-                        enrolled,
-                    )| {
-                        let at = crate::display_time::parse_db_utc(&happened_at);
-                        InboxRow {
-                            id,
-                            avatar: crate::handlers::devices::avatar_class_of(
-                                device_id,
-                                enrolled.is_some(),
-                            ),
-                            initial: crate::handlers::devices::initial(&name),
-                            title,
-                            summary,
-                            detail,
-                            when: at.map(|t| zone.relative(t, now)).unwrap_or_default(),
-                            exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
-                            unread,
-                            delivery: lines.remove(&id).and_then(|d| delivery_line(&d)),
-                        }
-                    },
-                )
-                .collect();
-            let switches = Kind::ALL
-                .iter()
-                .filter_map(|kind| kind.switch())
-                .zip(settings)
-                .map(|((name, label), on)| Switch { name, label, on })
-                .collect();
-            let subscribed = known.join(",");
-            let not_showing = subscriptions.iter().filter_map(warning_of).collect();
-            let notice = notice_of(params.get("notice").map(String::as_str));
-            let sub = number(&params, "sub");
-            let devices = subscriptions
-                .iter()
-                .map(|s| {
-                    let mut row = device_row(s, &zone, now);
-                    if Some(row.id) == sub {
-                        row.notice = notice
-                            .filter(|n| !n.0)
-                            .map(|(_, text, error)| (text, error));
-                    }
-                    row
-                })
-                .collect();
-            Html(
-                NotificationsTemplate {
-                    title: "Notifications".to_string(),
-                    back,
-                    phones: phones
-                        .into_iter()
-                        .map(|(id, name)| (id, name, Some(id) == device))
-                        .collect(),
-                    device,
-                    query: page_query(back.0, device),
-                    rows,
-                    older_than,
-                    paged: before.is_some(),
+                        enrolled.is_some(),
+                    ),
+                    initial: crate::handlers::devices::initial(&name),
+                    title,
+                    summary,
+                    detail,
+                    when: at.map(|t| zone.relative(t, now)).unwrap_or_default(),
+                    exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
                     unread,
-                    switches,
-                    push_key: state.push.key.as_ref().map(|key| key.public.clone()),
-                    subscribed,
-                    devices,
-                    not_showing,
-                    clock_warning: push::signature_refused(&state.db, now).await,
-                    this_notice: notice.filter(|n| n.0).map(|(_, text, error)| (text, error)),
+                    delivery: lines.remove(&id).and_then(|d| delivery_line(&d)),
                 }
-                .render()
-                .unwrap(),
-            )
-            .into_response()
+            },
+        )
+        .collect();
+    Html(
+        InboxTemplate {
+            title: "Notifications".to_string(),
+            back,
+            phones: phones
+                .into_iter()
+                .map(|(id, name)| (id, name, Some(id) == device))
+                .collect(),
+            device,
+            query: page_query(back.0, device),
+            rows,
+            older_than,
+            paged: before.is_some(),
+            unread_after,
+            badge,
+            not_showing: subscriptions.iter().filter_map(warning_of).collect(),
+            clock_warning: push::signature_refused(&state.db, now).await,
         }
-        Err(err) => {
-            tracing::error!(%err, "can't read the notifications page");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't read the notifications - check the server log.",
-            )
-                .into_response()
-        }
-    }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
 }
 
-/// The phones, a page of events (one more than shown, to know if there are older ones), the unread
-/// count under the filter and the switches in [Kind::ALL]'s order.
+/// Notification Settings (design 45 §1.2): This Device, Getting Notifications, Notify Me About.
+pub async fn settings_page(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let back = back_of(params.get("from").map(String::as_str));
+    let device = number(&params, "device");
+    let now = chrono::Utc::now();
+    let read = async {
+        let settings = read_switches(&state.db).await?;
+        let subscriptions = push::subscriptions(&state.db, admin.id, now).await?;
+        let known = push::active_endpoint_hashes(&state.db).await?;
+        Ok::<_, sqlx::Error>((settings, subscriptions, known))
+    };
+    let (settings, subscriptions, known) = match read.await {
+        Ok(read) => read,
+        Err(err) => return read_error(err),
+    };
+    let zone = Zone::load(&state.db).await;
+    let switches = Kind::ALL
+        .iter()
+        .filter_map(|kind| kind.switch())
+        .zip(settings)
+        .map(|((name, label), on)| Switch { name, label, on })
+        .collect();
+    let notice = notice_of(params.get("notice").map(String::as_str));
+    let sub = number(&params, "sub");
+    let devices = subscriptions
+        .iter()
+        .map(|s| {
+            let mut row = device_row(s, &zone, now);
+            if Some(row.id) == sub {
+                row.notice = notice
+                    .filter(|n| !n.0)
+                    .map(|(_, text, error)| (text, error));
+            }
+            row
+        })
+        .collect();
+    Html(
+        SettingsTemplate {
+            title: "Notification Settings".to_string(),
+            back,
+            device,
+            query: page_query(back.0, device),
+            switches,
+            push_key: state.push.key.as_ref().map(|key| key.public.clone()),
+            subscribed: known.join(","),
+            devices,
+            clock_warning: push::signature_refused(&state.db, now).await,
+            this_notice: notice.filter(|n| n.0).map(|(_, text, error)| (text, error)),
+        }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
+}
+
+/// One device row as JSON, for Send a Test's poll (server round 5 §5).
+#[derive(serde::Serialize)]
+struct DeviceRowJson {
+    id: i64,
+    badge: &'static str,
+    badge_class: &'static str,
+    sub: String,
+}
+
+/// `GET /notifications/subscriptions.json`: this admin's Getting Notifications rows (the badge
+/// and the sub-line only - never an endpoint or a key), which `notifications.js` polls after Send
+/// a Test to re-render them in place. No-store like every `/notifications` path.
+pub async fn subscriptions_json(
+    State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+) -> Response {
+    let now = chrono::Utc::now();
+    let subscriptions = match push::subscriptions(&state.db, admin.id, now).await {
+        Ok(subscriptions) => subscriptions,
+        Err(err) => return read_error(err),
+    };
+    let zone = Zone::load(&state.db).await;
+    let rows: Vec<DeviceRowJson> = subscriptions
+        .iter()
+        .map(|s| {
+            let row = device_row(s, &zone, now);
+            DeviceRowJson {
+                id: row.id,
+                badge: row.badge.0,
+                badge_class: row.badge.1,
+                sub: row.sub,
+            }
+        })
+        .collect();
+    axum::Json(rows).into_response()
+}
+
+fn read_error(err: sqlx::Error) -> Response {
+    tracing::error!(%err, "can't read the notifications page");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Couldn't read the notifications - check the server log.",
+    )
+        .into_response()
+}
+
+/// The `?push=<delivery>` marker of a tapped notification (server round 5 §1), a layer on the
+/// admin routes inside `require_full_auth`: on a GET carrying `push`, a delivery of one of this
+/// admin's subscriptions is marked opened (`push::opened`), and the answer is a 303 to the same
+/// URL without `push` - so Back and reload don't mark again and no page sees it; the fragment
+/// (never sent to the server) survives the redirect. An unknown or foreign id, or garbage: the
+/// same 303, nothing marked. A missing tap changes nothing.
+pub async fn push_marker(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let Some((delivery, rest)) = (request.method() == axum::http::Method::GET)
+        .then(|| request.uri().query().and_then(split_marker))
+        .flatten()
+    else {
+        return next.run(request).await;
+    };
+    if let (Some(delivery), Some(CurrentAdmin(admin))) =
+        (delivery, request.extensions().get::<CurrentAdmin>())
+    {
+        match push::opened(&state.db, admin.id, delivery).await {
+            Ok(true) => tracing::info!(delivery, "a push was opened"),
+            Ok(false) => {}
+            Err(err) => tracing::error!(%err, "can't mark a push opened"),
+        }
+    }
+    let path = request.uri().path();
+    let to = if rest.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{rest}")
+    };
+    Redirect::to(&to).into_response()
+}
+
+/// A query's `push` marker and the query without it: `None` when there is no `push` key; the id
+/// is `None` when its value isn't a number.
+fn split_marker(query: &str) -> Option<(Option<i64>, String)> {
+    let mut marker = None;
+    let mut rest = Vec::new();
+    for pair in query.split('&') {
+        match pair.split_once('=').unwrap_or((pair, "")) {
+            ("push", value) => marker = Some(value.parse::<i64>().ok()),
+            _ => rest.push(pair),
+        }
+    }
+    marker.map(|id| (id, rest.join("&")))
+}
+
+/// The phones and a page of events (one more than shown, to know if there are older ones).
 async fn read_page(
     state: &AppState,
     device: Option<i64>,
     before: Option<i64>,
-) -> Result<(Vec<(i64, String)>, Vec<Row>, i64, Vec<bool>), sqlx::Error> {
+) -> Result<(Vec<(i64, String)>, Vec<Row>), sqlx::Error> {
     let phones = sqlx::query_as("SELECT id, name FROM devices ORDER BY name, id")
         .fetch_all(&state.db)
         .await?;
@@ -311,23 +466,21 @@ async fn read_page(
     .bind(parent_events::PAGE + 1)
     .fetch_all(&state.db)
     .await?;
-    let unread = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM parent_events WHERE read_at IS NULL AND (?1 IS NULL OR device_id = ?1)",
-    )
-    .bind(device)
-    .fetch_one(&state.db)
-    .await?;
+    Ok((phones, rows))
+}
+
+/// The Notify Me About switches, in [Kind::ALL]'s order.
+async fn read_switches(db: &sqlx::SqlitePool) -> Result<Vec<bool>, sqlx::Error> {
     let names = switch_names();
     let settings = sqlx::query(&format!(
         "SELECT {} FROM notification_settings WHERE id = 1",
         names.join(", ")
     ))
-    .fetch_one(&state.db)
+    .fetch_one(db)
     .await?;
-    let on = (0..names.len())
+    (0..names.len())
         .map(|i| settings.try_get::<bool, _>(i))
-        .collect::<Result<_, _>>()?;
-    Ok((phones, rows, unread, on))
+        .collect()
 }
 
 /// The switches' columns, in [Kind::ALL]'s order (compiled-in names, never input).
@@ -405,9 +558,11 @@ pub async fn save_settings(
     }
     let done = update.execute(&state.db).await;
     match done {
-        Ok(_) => {
-            Redirect::to(&format!("/notifications{}#events", back_query(&form))).into_response()
-        }
+        Ok(_) => Redirect::to(&format!(
+            "/notifications/settings{}#events",
+            back_query(&form)
+        ))
+        .into_response(),
         Err(err) => db_error(err),
     }
 }
@@ -443,14 +598,23 @@ fn device_row(
     now: chrono::DateTime<chrono::Utc>,
 ) -> DeviceRow {
     // The newer of the last receipt and the last push Apple's service accepted and shows itself.
-    let shown = match (sub.last_receipt_at, sub.last_delivered_at) {
+    let last = match (sub.last_receipt_at, sub.last_delivered_at) {
         (Some(r), Some(d)) if d > r => Some(format!("Last delivered {}", zone.relative(d, now))),
         (Some(r), _) => Some(format!("Last shown {}", zone.relative(r, now))),
         (None, Some(d)) => Some(format!("Last delivered {}", zone.relative(d, now))),
         (None, None) => None,
     };
+    // The quiet count (server round 5 §2): pushes since the device last confirmed or opened one.
+    let shown = |line: Option<String>| {
+        let line = line.unwrap_or_else(|| "Nothing shown yet".to_string());
+        Some(match (sub.since_opened, sub.ever_opened) {
+            (0, _) => line,
+            (n, true) => format!("{line} · {n} since one was opened"),
+            (n, false) => format!("{line} · {n} not opened yet"),
+        })
+    };
     let (badge, sub_line) = match sub.health {
-        Health::Ok => (("On", "badge badge-on"), shown),
+        Health::Ok => (("On", "badge badge-on"), shown(last)),
         Health::NeverSent if sub.sending => {
             (("On", "badge badge-on"), Some("Sending…".to_string()))
         }
@@ -466,10 +630,7 @@ fn device_row(
                 if sub.sending { " · trying again" } else { "" }
             )),
         ),
-        Health::MayNotShow => (
-            ("May not be showing", "badge badge-warn"),
-            shown.or(Some("Nothing shown yet".to_string())),
-        ),
+        Health::MayNotShow => (("May not be showing", "badge badge-warn"), shown(last)),
         Health::Gone => (
             ("Turned off", "badge"),
             Some("Turned off on that device - turn it on again there".to_string()),
@@ -486,8 +647,9 @@ fn device_row(
 }
 
 /// One delivery of an event, for its line: status, reason (`declarative`: Apple's service shows it
-/// itself, no receipt comes), a receipt came, the device's label.
-type DeliveryState = (String, Option<String>, bool, String);
+/// itself, no receipt comes), a receipt came, the device's label, it was opened (a tap: the
+/// `?push=` marker or a `clicked` receipt).
+type DeliveryState = (String, Option<String>, bool, String, bool);
 
 /// The page's events' deliveries, by event (one query).
 async fn delivery_lines(
@@ -496,13 +658,13 @@ async fn delivery_lines(
 ) -> Result<HashMap<i64, Vec<DeliveryState>>, sqlx::Error> {
     // A folded delivery takes its summary's status (the subscription's next summary after it),
     // so "In a summary" means the summary itself went out (qa-35-s2-code N4).
-    let rows: Vec<(i64, String, Option<String>, bool, String)> = sqlx::query_as(
+    let rows: Vec<(i64, String, Option<String>, bool, String, bool)> = sqlx::query_as(
         "SELECT d.event_id, \
                 CASE WHEN d.reason = 'folded' THEN COALESCE((SELECT m.status \
                     FROM push_deliveries m WHERE m.subscription_id = d.subscription_id \
                     AND m.kind = 'summary' AND m.id > d.id ORDER BY m.id LIMIT 1), 'failed') \
                 ELSE d.status END, \
-                d.reason, d.receipt_at IS NOT NULL, s.label \
+                d.reason, d.receipt_at IS NOT NULL, s.label, d.clicked_at IS NOT NULL \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
          WHERE d.event_id IN (SELECT value FROM json_each(?)) ORDER BY d.id",
     )
@@ -510,18 +672,20 @@ async fn delivery_lines(
     .fetch_all(db)
     .await?;
     let mut lines: HashMap<i64, Vec<DeliveryState>> = HashMap::new();
-    for (event_id, status, reason, shown, label) in rows {
+    for (event_id, status, reason, shown, label, opened) in rows {
         lines
             .entry(event_id)
             .or_default()
-            .push((status, reason, shown, label));
+            .push((status, reason, shown, label, opened));
     }
     Ok(lines)
 }
 
-/// An inbox row's delivery line (§5.1): "Shown on iPhone · Safari", "Delivered to iPhone · Safari"
+/// An inbox row's delivery line (§5.1): "Opened on iPhone · Safari" (a tap, server round 5 §1),
+/// "Shown on iPhone · Safari", "Delivered to iPhone · Safari"
 /// (Apple's service accepted a declarative push it shows itself), "Pushed to iPhone · Safari, not
-/// confirmed", "Pushed to 2 devices · shown on 1" (delivered ones counted), "Sending", "In a
+/// confirmed", "Pushed to 2 devices · opened on 1" when any was opened, else "Pushed to 2 devices
+/// · shown on 1" (delivered ones counted), "Sending", "In a
 /// summary" (its summary was accepted), "Not sent"; nothing when no push was made. A folded delivery's status is its
 /// summary's ([delivery_lines]). A push a restart dropped (design 38: the held `phone_off` the
 /// next start's "restarted" replaced) or a newer shutdown superseded counts as none - the row says
@@ -539,6 +703,7 @@ pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
         .collect();
     let delivered = |d: &&DeliveryState| d.2 || d.1.as_deref() == Some("declarative");
     let shown = accepted.iter().filter(|d| delivered(d)).count();
+    let opened = accepted.iter().filter(|d| d.4).count();
     Some(match accepted.as_slice() {
         [] if deliveries.is_empty() => return None,
         [] if deliveries.iter().any(|d| d.0 == "queued") => "Sending".to_string(),
@@ -546,9 +711,11 @@ pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
             "In a summary".to_string()
         }
         [] => "Not sent".to_string(),
+        [one] if one.4 => format!("Opened on {}", one.3),
         [one] if one.2 => format!("Shown on {}", one.3),
         [one] if delivered(one) => format!("Delivered to {}", one.3),
         [one] => format!("Pushed to {}, not confirmed", one.3),
+        many if opened > 0 => format!("Pushed to {} devices · opened on {opened}", many.len()),
         many => format!("Pushed to {} devices · shown on {shown}", many.len()),
     })
 }
@@ -580,7 +747,7 @@ pub async fn warning_row(
 /// Where a This Device or Getting Notifications form comes back to, with its notice.
 fn back_to(form: &HashMap<String, String>, notice: &str, group: &str) -> Response {
     Redirect::to(&format!(
-        "/notifications{}&notice={notice}#{group}",
+        "/notifications/settings{}&notice={notice}#{group}",
         back_query(form)
     ))
     .into_response()
@@ -589,7 +756,7 @@ fn back_to(form: &HashMap<String, String>, notice: &str, group: &str) -> Respons
 /// Back to Getting Notifications with the notice in that subscription's own group.
 fn back_to_sub(form: &HashMap<String, String>, notice: &str, sub: i64) -> Response {
     Redirect::to(&format!(
-        "/notifications{}&notice={notice}&sub={sub}#devices",
+        "/notifications/settings{}&notice={notice}&sub={sub}#devices",
         back_query(form)
     ))
     .into_response()
@@ -841,11 +1008,32 @@ mod tests {
                 reason.map(str::to_string),
                 shown,
                 label.to_string(),
+                false,
             )
+        };
+        let opened = |mut delivery: DeliveryState| {
+            delivery.4 = true;
+            delivery
         };
         let iphone = "iPhone · Safari";
         for (deliveries, line) in [
             (vec![], None),
+            // A tap (server round 5 §1): opened before shown before delivered.
+            (
+                vec![opened(d("accepted", Some("declarative"), false, iphone))],
+                Some("Opened on iPhone · Safari"),
+            ),
+            (
+                vec![opened(d("accepted", None, true, iphone))],
+                Some("Opened on iPhone · Safari"),
+            ),
+            (
+                vec![
+                    opened(d("accepted", Some("declarative"), false, iphone)),
+                    d("accepted", None, true, "Mac · Safari"),
+                ],
+                Some("Pushed to 2 devices · opened on 1"),
+            ),
             (
                 vec![d("accepted", None, true, iphone)],
                 Some("Shown on iPhone · Safari"),

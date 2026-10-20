@@ -4,69 +4,39 @@
 {% include "partials/head.html" %}
 </head>
 <body>
-{#- Reached from the bell on any tab page (design 35 §5.1): no tab is current, the back link goes
-    to the tab it came from. -#}
+{#- The inbox (design 35 §5.1, design 45): reached from the bell on any tab page, so no tab is
+    current and the back link goes to the tab it came from. Opening it reads the rows it shows
+    (the dot is their state before); the gear leads to Notification Settings. -#}
 {% let tab = "" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    <a class="nav-back" href="{{ back.1 }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ back.2 }}</a>
+    <div class="title-bar title-bar-split">
+        <a class="nav-back" href="{{ back.1 }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ back.2 }}</a>
+        {#- The gear in the bell's place (the same 44 px icon button); `data-unread` is the app
+            badge's source on this page (register-sw.js), as the bell's on the tab pages. -#}
+        <a class="title-action title-bell" href="/notifications/settings{{ query }}" id="notification-settings" data-unread="{{ badge }}" aria-label="Notification settings"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 2.5v2.6M11 16.9v2.6M2.5 11h2.6M16.9 11h2.6M5 5l1.8 1.8M15.2 15.2L17 17M5 17l1.8-1.8M15.2 6.8L17 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></a>
+    </div>
     <h1 class="page-title">Notifications</h1>
 
-    {#- The warnings (§4.4, §6): only while one applies. -#}
+    {#- The warnings (§4.4, §6), only while one applies: each leads to the settings page. -#}
     {% if clock_warning %}
-    <div class="attention attention-alarm" id="clock-warning">
+    <a class="attention attention-action" href="/notifications/settings{{ query }}#clock-warning" id="clock-warning-row">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-        <div class="attention-text">The push service refused the server's signature - check the server's clock<div class="attention-sub">Without the right time no notification gets through. The Pi has no clock of its own: it needs the internet (NTP) after a power cut.</div></div>
-    </div>
+        <span class="attention-text">The push service refused the server's signature - check the server's clock</span>
+        <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
     {% endif %}
     {% for (title, sub) in not_showing %}
-    <a class="attention attention-action" href="#devices" data-warning="not-showing">
+    <a class="attention attention-action" href="/notifications/settings{{ query }}#devices" data-warning="not-showing">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
         <span class="attention-text">{{ title }}<span class="attention-sub">{{ sub }}</span></span>
         <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </a>
     {% endfor %}
 
-    {#- Web Push on this browser (§5.2): static/notifications.js decides the state and subscribes
-        from the tap; the forms post the subscription (or its end) and come back here. -#}
-    <section id="this-device" aria-labelledby="this-device-title">
-        <h2 class="group-header" id="this-device-title">This Device</h2>
-        {% if let Some(key) = push_key %}
-        <form method="post" action="/notifications/subscriptions#this-device" class="group" id="push-on-form" data-key="{{ key }}" data-subscribed="{{ subscribed }}">
-            <input type="hidden" name="from" value="{{ back.0 }}">
-            {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
-            <input type="hidden" name="endpoint" value="">
-            <input type="hidden" name="p256dh" value="">
-            <input type="hidden" name="auth" value="">
-            <div class="row">
-                <span class="row-label">Notifications</span>
-                <span class="row-value" id="push-state">Needs JavaScript</span>
-            </div>
-            <p class="row row-note" id="push-home-screen" hidden>In Safari, tap Share, then Add to Home Screen. Open Vibb Phone from the Home Screen and turn notifications on there.</p>
-            <p class="row row-note" id="push-blocked" hidden>Allow notifications for Vibb Phone in this device's Settings, then come back here.</p>
-            <button type="button" class="row row-button" id="push-on" hidden disabled>Turn On Notifications</button>
-            <button type="button" class="row row-button" id="push-off" hidden>Turn Off on This Device</button>
-            {% if let Some((text, error)) = this_notice %}
-            <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
-            {% endif %}
-        </form>
-        <form method="post" action="/notifications/subscriptions/unsubscribe#this-device" id="push-off-form" hidden>
-            <input type="hidden" name="from" value="{{ back.0 }}">
-            {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
-            <input type="hidden" name="endpoint" value="">
-        </form>
-        <p class="group-footer">Each device turns notifications on for itself.<noscript> Notifications need JavaScript.</noscript></p>
-        {% else %}
-        <div class="group">
-            <p class="row row-note">Notifications are off on this server: its key couldn't be read. The server log says which file.</p>
-        </div>
-        {% endif %}
-    </section>
-
-    {#- A row is a form: its POST marks the event read and goes to where it happened (no GET
-        changes state). Mark All as Read and the picker come back here (#inbox). -#}
-    <section id="inbox" aria-labelledby="inbox-title">
-        <h2 class="group-header" id="inbox-title">Inbox</h2>
+    {#- A row is a form: its POST marks the event read and goes to where it happened. Mark All as
+        Read and the picker come back here (#inbox). -#}
+    <section id="inbox" aria-label="Inbox">
         {% if phones.len() > 1 %}
         <form method="get" action="/notifications#inbox" class="group">
             <input type="hidden" name="from" value="{{ back.0 }}">
@@ -100,7 +70,7 @@
                 </button>
             </form>
             {% else %}
-            <p class="row row-note">Nothing yet. Events are kept 90 days.</p>
+            <p class="row row-note">Nothing yet - what the phones report shows up here</p>
             {% endfor %}
             {% if let Some(id) = older_than %}
             <a class="row" href="/notifications{{ query }}&amp;before={{ id }}#inbox" data-row="older">
@@ -109,87 +79,15 @@
             </a>
             {% endif %}
         </div>
-        {% if unread > 0 %}
+        {% if unread_after > 0 %}
         <form method="post" action="/notifications/read-all#inbox" class="group">
             <input type="hidden" name="from" value="{{ back.0 }}">
             {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
-            <button type="submit" class="row row-button">Mark All as Read</button>
+            <button type="submit" class="row row-button">Mark all {{ unread_after }} as read</button>
         </form>
         {% endif %}
         {% if !rows.is_empty() %}<p class="group-footer">Newest first, kept 90 days.</p>{% endif %}
     </section>
-
-    {#- Every subscribed device (§5.1, §6): its health, Send a Test, Remove…, back here. -#}
-    <section id="devices" aria-labelledby="devices-title">
-        <h2 class="group-header" id="devices-title">Getting Notifications</h2>
-        {% for d in devices %}
-        <div class="group" data-subscription="{{ d.id }}">
-            <div class="row">
-                <span class="row-label">{{ d.label }}<span class="row-sub">{{ d.sub }}</span></span>
-                <span class="{{ d.badge.1 }}">{{ d.badge.0 }}</span>
-            </div>
-            {% if d.active %}
-            <form method="post" action="/notifications/subscriptions/{{ d.id }}/test#devices" class="cell">
-                <input type="hidden" name="from" value="{{ back.0 }}">
-            {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
-                <button type="submit" class="row row-button">Send a Test</button>
-            </form>
-            {% endif %}
-            <details class="confirm cell">
-                <summary class="row">Remove&hellip;</summary>
-                <form method="post" action="/notifications/subscriptions/{{ d.id }}/delete#devices" class="confirm-body">
-                    <input type="hidden" name="from" value="{{ back.0 }}">
-            {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
-                    <p>Stop notifications to {{ d.label }}? It can turn them on again under This Device.</p>
-                    <button type="submit" class="button-destructive">Remove</button>
-                </form>
-            </details>
-            {% if let Some((text, error)) = d.notice %}
-            <p class="flash{% if error %} flash-error{% endif %}" role="status">{{ text }}</p>
-            {% endif %}
-        </div>
-        {% else %}
-        <div class="group">
-            <p class="row row-note">No device gets notifications yet. Turn them on under This Device, on each device you want them on.</p>
-        </div>
-        {% endfor %}
-        <div class="group-footer">Shown: the device confirmed it showed the notification.
-            <details class="info">
-                <summary aria-label="If notifications don't show"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel">
-                    <p>If a device may not be showing them, check on that device:</p>
-                    <p>Is Tailscale on? The confirmation needs it.</p>
-                    <p>On an iPhone or iPad: was Vibb Phone added to the Home Screen and opened from there?</p>
-                    <p>Are notifications allowed for Vibb Phone in its Settings?</p>
-                    <p>Is a Focus mode on?</p>
-                    <p>Then Send a Test.</p>
-                </div>
-            </details>
-        </div>
-    </section>
-
-    {#- One form, the handler writes every switch (a missing one is off). The switches govern the
-        push only: every event is listed above. -#}
-    <section id="events" aria-labelledby="events-title">
-        <h2 class="group-header" id="events-title">Notify Me About</h2>
-        <form method="post" action="/notifications/settings#events" class="group">
-            <input type="hidden" name="from" value="{{ back.0 }}">
-            {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
-            <label class="row">
-                <span class="row-label">Emergency call<span class="row-sub">Always on</span></span>
-                <input type="checkbox" role="switch" class="sw" checked disabled><span class="knob" aria-hidden="true"></span>
-            </label>
-            {% for s in switches %}
-            <label class="row">
-                <span class="row-label">{{ s.label }}</span>
-                <input type="checkbox" role="switch" class="sw" name="{{ s.name }}" value="on"{% if s.on %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
-            </label>
-            {% endfor %}
-            <noscript><button type="submit" class="row row-button">Save</button></noscript>
-        </form>
-        <p class="group-footer">Off: still listed here, no notification. Events arrive as soon as the phone next reports.</p>
-    </section>
 </main>
-{% if push_key.is_some() %}<script src="/static/notifications.js?v=1" defer></script>{% endif %}
 </body>
 </html>

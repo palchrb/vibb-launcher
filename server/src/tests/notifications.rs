@@ -364,11 +364,48 @@ async fn the_inbox_is_never_stored_the_tab_pages_keep_their_cache() {
     }
 }
 
+/// Design 45: the inbox is the page alone - no settings form, a gear to Notification Settings -
+/// and opening it reads exactly the rows it shows: they keep their dot this once, the gear's
+/// `data-unread` (the app badge's source) carries what is left, a `?device=` filter leaves the
+/// other phone's rows unread.
 #[tokio::test]
-async fn the_inbox_lists_opens_and_marks_read() {
+async fn opening_the_inbox_reads_the_rows_it_shows() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (anna, ola) = three_events(&app).await;
+    let unread = |app: &TestApp| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT device_id FROM parent_events WHERE read_at IS NULL ORDER BY id",
+            )
+            .fetch_all(&db)
+            .await
+            .unwrap()
+        }
+    };
+    // Ola's phone only: its one row read, Anna's two still unread (the badge says 2).
+    let html = app
+        .get_page(&format!("/notifications?from=music&device={ola}"), &cookie)
+        .await
+        .text();
+    assert_eq!(html.matches("data-event=").count(), 1);
+    assert_eq!(html.matches("class=\"unread-dot\"").count(), 1);
+    assert!(
+        html.contains(&format!("<option value=\"{ola}\" selected>")),
+        "{html}"
+    );
+    assert!(
+        html.contains(&format!(
+            "href=\"/notifications/settings?from=music&#38;device={ola}\" \
+             id=\"notification-settings\" data-unread=\"2\" aria-label=\"Notification settings\""
+        )),
+        "{html}"
+    );
+    assert!(!html.contains("Mark all"), "nothing left under the filter");
+    assert_eq!(unread(&app).await, [anna, anna]);
+
+    // All phones: the two still unread carry their dot, everything is read now.
     let page = app.get_page("/notifications?from=music", &cookie).await;
     assert_eq!(page.status, StatusCode::OK);
     let html = page.text();
@@ -378,22 +415,43 @@ async fn the_inbox_lists_opens_and_marks_read() {
         html.contains("<a class=\"nav-back\" href=\"/music\">"),
         "{html}"
     );
-    // Newest first, each unread, the name escaped.
+    assert_eq!(html.matches("class=\"unread-dot\"").count(), 2);
+    assert_eq!(
+        html.matches("<span class=\"visually-hidden\">Unread: </span>")
+            .count(),
+        2
+    );
+    assert!(html.contains("data-unread=\"0\""), "{html}");
+    // No settings here: they are behind the gear.
+    for settings in [
+        "push-on-form",
+        "id=\"devices\"",
+        "id=\"events\"",
+        "push_low_battery",
+    ] {
+        assert!(!html.contains(settings), "{settings}");
+    }
+    assert!(!html.contains("notifications.js"));
+    // Newest first, the name escaped.
     let at = |text: &str| html.find(text).unwrap_or_else(|| panic!("{text}: {html}"));
     assert!(at("Battery low on Anna (10 %)") < at("Ola &#60;b&#62; called an emergency number"));
     assert!(at("Ola &#60;b&#62; called") < at("Anna called an emergency number"));
-    assert_eq!(html.matches("class=\"unread-dot\"").count(), 3);
-    // One phone.
+    assert!(unread(&app).await.is_empty());
+    // Back (a reload: the page is never stored) shows no dots - the rows are read, by design.
     let html = app
-        .get_page(&format!("/notifications?device={ola}"), &cookie)
+        .get_page("/notifications?from=music", &cookie)
         .await
         .text();
-    assert_eq!(html.matches("data-event=").count(), 1);
-    assert!(
-        html.contains(&format!("<option value=\"{ola}\" selected>")),
-        "{html}"
-    );
+    assert!(!html.contains("unread-dot"));
+    let html = app.get_page("/devices", &cookie).await.text();
+    assert!(html.contains("data-unread=\"0\""), "the bell follows");
+}
 
+#[tokio::test]
+async fn the_inbox_rows_open_and_mark_all_as_read() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, ola) = three_events(&app).await;
     // A row's tap marks it read and goes where it happened.
     let call: i64 = sqlx::query_scalar(
         "SELECT id FROM parent_events WHERE device_id = ? AND kind = 'emergency_call'",
@@ -427,7 +485,6 @@ async fn the_inbox_lists_opens_and_marks_read() {
         &format!("/notifications?from=music&device={ola}"),
         Some("inbox"),
     );
-    app.assert_lands(&res, &cookie).await;
     sqlx::query("UPDATE parent_events SET target = '//evil.example/x' WHERE id = ?")
         .bind(call)
         .execute(&app.db)
@@ -443,7 +500,7 @@ async fn the_inbox_lists_opens_and_marks_read() {
         .await;
     assert_redirect(&res, "/notifications?from=devices", Some("inbox"));
 
-    // Mark All as Read, for one phone.
+    // Mark All as Read, for one phone: the rest of the shown phone's (an older page's) go.
     let res = app
         .request_form(
             Method::POST,
@@ -457,7 +514,6 @@ async fn the_inbox_lists_opens_and_marks_read() {
         &format!("/notifications?from=apps&device={anna}"),
         Some("inbox"),
     );
-    app.assert_lands(&res, &cookie).await;
     let unread: Vec<i64> =
         sqlx::query_scalar("SELECT device_id FROM parent_events WHERE read_at IS NULL")
             .fetch_all(&app.db)
@@ -468,9 +524,12 @@ async fn the_inbox_lists_opens_and_marks_read() {
         .request_form(Method::POST, "/notifications/read-all", Some(&cookie), &[])
         .await;
     assert_redirect(&res, "/notifications?from=devices", Some("inbox"));
-    let html = app.get_page("/notifications", &cookie).await.text();
-    assert!(!html.contains("unread-dot") && !html.contains("Mark All as Read"));
-    // The routes need a session.
+    app.assert_lands(&res, &cookie).await;
+    // The routes need a session; a signed-out inbox marks nothing.
+    sqlx::query("UPDATE parent_events SET read_at = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let res = app
         .request(
             Method::POST,
@@ -480,15 +539,25 @@ async fn the_inbox_lists_opens_and_marks_read() {
         )
         .await;
     assert_eq!(res.location(), Some("/login"));
+    let res = app.request(Method::GET, "/notifications", None, None).await;
+    assert_eq!(res.location(), Some("/login"));
+    let unread: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM parent_events WHERE read_at IS NULL")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(unread, 3);
 }
 
+/// The 101st event is on the older page and stays unread until that page is opened; Mark All as
+/// Read says how many are left.
 #[tokio::test]
 async fn an_empty_inbox_and_older_pages() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let html = app.get_page("/notifications", &cookie).await.text();
     assert!(
-        html.contains("Nothing yet. Events are kept 90 days."),
+        html.contains("Nothing yet - what the phones report shows up here"),
         "{html}"
     );
     assert!(html.contains("<a class=\"nav-back\" href=\"/devices\">"));
@@ -497,6 +566,8 @@ async fn an_empty_inbox_and_older_pages() {
     let html = app.get_page("/notifications", &cookie).await.text();
     assert_eq!(html.matches("data-event=").count(), 100);
     assert!(!html.contains("Event 0."));
+    assert!(html.contains("Mark all 1 as read"), "{html}");
+    assert!(html.contains("data-unread=\"1\""));
     let start = html.find("data-row=\"older\"").expect("Show older");
     let href = &html[..start];
     let href = &href[href.rfind("href=\"").unwrap() + 6..];
@@ -507,6 +578,46 @@ async fn an_empty_inbox_and_older_pages() {
         "{older}"
     );
     assert_eq!(older.matches("data-event=").count(), 1);
+    assert_eq!(older.matches("class=\"unread-dot\"").count(), 1);
+    assert!(!older.contains("Mark all"));
+}
+
+/// Notification Settings (design 45 §1.2): This Device, Getting Notifications and Notify Me About
+/// behind the inbox's gear; the Settings hub's row and the back link.
+#[tokio::test]
+async fn the_settings_page_holds_the_three_groups() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    three_events(&app).await;
+    let page = app
+        .get_page("/notifications/settings?from=music", &cookie)
+        .await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert_eq!(
+        page.headers
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store")
+    );
+    let html = page.text();
+    check_forms("/notifications/settings", &html);
+    assert_eq!(super::nav_current(&html), "");
+    assert!(html.contains("<a class=\"nav-back\" href=\"/notifications?from=music\">"));
+    assert!(html.contains("<h1 class=\"page-title\">Notification Settings</h1>"));
+    for group in ["id=\"this-device\"", "id=\"devices\"", "id=\"events\""] {
+        assert!(html.contains(group), "{group}");
+    }
+    assert!(!html.contains("data-event="), "no inbox here");
+    let unread: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM parent_events WHERE read_at IS NULL")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(unread, 3, "the settings page reads nothing");
+    let hub = app.get_page("/settings", &cookie).await.text();
+    assert!(
+        hub.contains("href=\"/notifications/settings?from=settings\" data-row=\"notifications\"")
+    );
 }
 
 /// Notify Me About: one form, every switch written (a missing one off); the switches govern the
@@ -515,7 +626,10 @@ async fn an_empty_inbox_and_older_pages() {
 async fn the_switches_are_saved_and_events_still_stored() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let html = app.get_page("/notifications", &cookie).await.text();
+    let html = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
     for name in [
         "push_pin_used",
         "push_pin_lockout",
@@ -543,7 +657,11 @@ async fn the_switches_are_saved_and_events_still_stored() {
             ],
         )
         .await;
-    assert_redirect(&res, "/notifications?from=settings", Some("events"));
+    assert_redirect(
+        &res,
+        "/notifications/settings?from=settings",
+        Some("events"),
+    );
     app.assert_lands(&res, &cookie).await;
     let stored: (bool, bool, bool, bool, bool) = sqlx::query_as(
         "SELECT push_pin_used, push_pin_lockout, push_foreign_access, push_unseen_boot, push_low_battery \
@@ -553,7 +671,10 @@ async fn the_switches_are_saved_and_events_still_stored() {
     .await
     .unwrap();
     assert_eq!(stored, (true, false, false, false, false));
-    let html = app.get_page("/notifications", &cookie).await.text();
+    let html = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
     assert_eq!(
         super::input_checked(&html, "push_low_battery", "on"),
         Some(false)

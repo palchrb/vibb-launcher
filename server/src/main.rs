@@ -1251,7 +1251,7 @@ pub fn build_admin_router(
         .route("/updates", get(handlers::updates::show_updates_page))
         .route("/security", get(handlers::admin::security_log))
         .route("/security/unban", post(handlers::admin::unban_ip))
-        // Design 35: the inbox and Notify Me About.
+        // Design 35: the inbox and, since design 45, its settings page.
         .route("/notifications", get(handlers::notifications::page))
         .route(
             "/notifications/{id}/open",
@@ -1263,7 +1263,12 @@ pub fn build_admin_router(
         )
         .route(
             "/notifications/settings",
-            post(handlers::notifications::save_settings),
+            get(handlers::notifications::settings_page)
+                .post(handlers::notifications::save_settings),
+        )
+        .route(
+            "/notifications/subscriptions.json",
+            get(handlers::notifications::subscriptions_json),
         )
         .route(
             "/notifications/subscriptions",
@@ -1295,6 +1300,13 @@ pub fn build_admin_router(
             "/account/dismiss-warning",
             post(handlers::auth::dismiss_login_warning),
         )
+        // A tapped notification's `?push=<delivery>` (server round 5 §1). Added before
+        // `require_full_auth` so it runs inside it (a later layer runs earlier) and sees
+        // `CurrentAdmin`.
+        .layer(from_fn_with_state(
+            state.clone(),
+            handlers::notifications::push_marker,
+        ))
         .layer(from_fn_with_state(
             state.clone(),
             security::require_full_auth,

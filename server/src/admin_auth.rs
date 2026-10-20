@@ -648,6 +648,8 @@ mod tests {
             "/account",
             "/auth/setup-2fa",
             "/notifications",
+            "/notifications/settings",
+            "/notifications/subscriptions.json",
         ] {
             assert!(no_store_path(path), "{path}");
         }

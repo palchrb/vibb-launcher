@@ -1711,6 +1711,7 @@ pub async fn commands_stream(
     let rx = state.command_notify.subscribe();
     // Moved into the stream: dropped (stream counted closed) when the connection ends.
     let guard = state.command_streams.open(device_id);
+    tracing::info!(device = device_id, "command stream opened");
     // The stream ends when its close signal turns true (shutdown, design 22 §2).
     let close = WatchStream::new(guard.closed()).filter_map(|closed| closed.then_some(None));
     // A lagged receiver lost ids - possibly this device's - so it nudges (QA 07 #16): one extra

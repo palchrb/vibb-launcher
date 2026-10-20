@@ -199,4 +199,4 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (the contract and its copy, H1's sequence - held, dropped, restarted -, the hold running out, the release before the
   "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
   the claim; since the code QA's fix round a report ending "Off since", a superseded held push, the level range in
-  the route's own test), `music_spotify::migrations_73_to_81_in_order`.
+  the route's own test), `music_spotify::migrations_73_to_82_in_order`.
