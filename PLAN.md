@@ -986,8 +986,8 @@ findings, merge to `main`, full suite once.
   switch-off is refused) and at a call's begin (MusicCalls' edges), never at screen-off, no camera-policy lift (a
   refused ON under the lock hides the lock's button) (`docs/design/41-flashlight.md`); **the lock's music tile
   rendered alone** (a session callback renders the tile, the page refits only on presence/height change, callbacks
-  coalesce per frame; "4:48 · 25:36" under the bar on both tiles - the compact tile's line costs one notification
-  row with music + 3 notifications, left as shipped pending the user) (`r6-launcher-small-items.md`); **design 42**
+  coalesce per frame; "4:48 · 25:36" under the bar on both tiles - the compact tile's line was dropped again on the user's call - "det holder med tiden på den
+  fulle" - so the notification row stays) (`r6-launcher-small-items.md`); **design 42**
   - Fossify Clock (`org.fossify.clock`, the catalog's, signer `affdb124…` pinned and verified) as the clock app:
   the alarm exemption widened by it, a next-alarm line ("Alarm tor 07:00"), a timer tile counting down from its
   notification's title and a stopwatch tile counting up, "Tiden er ute" with one Stopp button firing Fossify's own
