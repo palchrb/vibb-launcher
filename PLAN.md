@@ -919,8 +919,10 @@ findings, merge to `main`, full suite once.
   the catalog; (2) the battery optimisation exemption has no device-owner API, so right after a catalog install the
   launcher opens the system dialog for that package (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `package:<pkg>`;
   the app must declare the permission - Fossify Clock does) and someone taps Allow once (the user, 2026-10-20: "da må forelderen først låse opp telefonen": yes - so the dialog
-  is queued and shown in the parent's next PIN session, one app after another, and may also be shown to the kid with
-  a plain line since it only lets the app work in the background; a Deny asks again next time; alarms need none of
+  is shown to the kid on Home right after the install, with one plain line ("La <app> jobbe i bakgrunnen?"), since it
+  only lets the app work in the background - the user's call, 2026-10-20: "La barnet trykke ... Så slipper man en
+  pin-inntasting på noe ufarlig"; a Deny asks again at the next install or a day later, never nags; no PIN session
+  involved; alarms need none of
   this: `setAlarmClock` rings through Doze), the way design 19b does for the launcher itself; the app's page in the PWA shows the state ("exempt" / "not yet", from the status report's
   app list) and a row to ask again. Verify on the emulator first: the dialog for another package accepted from our
   app on Android 16, and what `setUserControlDisabledPackages` exempts there. Launcher round 7 (+ the status contract
