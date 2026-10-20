@@ -69,7 +69,7 @@ class SpotifyApiTest {
 
     @Test
     fun `the exact requests - play, the context form, transfer, the queue add`() {
-        val http = Script({ answer("ok") }, { answer("ok") }, { answer("ok") }, { answer("ok") }, { answer("ok") }, { answer("ok") })
+        val http = Script(*Array(9) { { answer("ok") } })
         val a = api(http)
         assertEquals(PlayOutcome.Ok, a.play(token, device, body))
         assertEquals(PlayOutcome.Ok, a.play(token, device, PlayBody.Context("spotify:playlist:FAKEplaylist0000000001", "spotify:track:FAKEtrack0000000000002", 42_000)))
@@ -83,6 +83,13 @@ class SpotifyApiTest {
         expect("queue", http.sent[3])
         expect("shuffle", http.sent[4])
         expect("repeat", http.sent[5])
+        // design 49 §1.5-§1.7: the wanted ones, as SpotifyModes words them
+        assertEquals(PlayOutcome.Ok, a.shuffle(token, device, SpotifyModes(shuffle = true).shuffle))
+        assertEquals(PlayOutcome.Ok, a.repeat(token, device, SpotifyModes(repeat = 1).repeatWord))
+        assertEquals(PlayOutcome.Ok, a.repeat(token, device, SpotifyModes(repeat = 2).repeatWord))
+        expect("shuffle_on", http.sent[6])
+        expect("repeat_context", http.sent[7])
+        expect("repeat_track", http.sent[8])
         assertEquals("an artist context: no offset, no position", """{"context_uri":"spotify:artist:FAKEartist000000000001"}""",
             PlayBody.Context("spotify:artist:FAKEartist000000000001", null, 5_000).json())
         assertEquals("the call's timeout", 10_000L, http.sent[0].timeoutMs)
@@ -235,24 +242,24 @@ class SpotifyApiTest {
     @Test
     fun `settings - shuffle and repeat off before the play, each awaited, sharing the start's retries (qa-26c-step4-code M1)`() {
         val http = Script({ answer("ok") }, { answer("ok") }, { answer("ok") })
-        assertEquals(StartResult.Sent, runBlocking { api(http).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = true) })
+        assertEquals(StartResult.Sent, runBlocking { api(http).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = SpotifyModes()) })
         assertEquals(listOf("/v1/me/player/shuffle", "/v1/me/player/repeat", "/v1/me/player/play"), http.sent.map { it.url.encodedPath })
         expect("shuffle", http.sent[0])
         expect("repeat", http.sent[1])
         assertEquals("without settings: the play alone", StartResult.Sent, start(Script({ answer("ok") }), Tokens(ok1)))
         // the device unknown at the first setting: one transfer, then the setting again, the other, the play
         val unknown = Script({ answer("device_unknown") }, { answer("ok") }, { answer("ok") }, { answer("ok") }, { answer("ok") })
-        assertEquals(StartResult.Sent, runBlocking { api(unknown).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = true) })
+        assertEquals(StartResult.Sent, runBlocking { api(unknown).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = SpotifyModes()) })
         assertEquals(
             listOf("/v1/me/player/shuffle", "/v1/me/player", "/v1/me/player/shuffle", "/v1/me/player/repeat", "/v1/me/player/play"),
             unknown.sent.map { it.url.encodedPath },
         )
         // a failed setting ends the start like a failed play: nothing plays shuffled
         val refused = Script({ answer("ok") }, { answer("refused") })
-        assertEquals(StartResult.Refused, runBlocking { api(refused).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = true) })
+        assertEquals(StartResult.Refused, runBlocking { api(refused).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = SpotifyModes()) })
         assertEquals("no play after it", 2, refused.sent.size)
         val down = Script({ answer("unavailable") })
-        assertEquals(StartResult.Unreachable("http_503"), runBlocking { api(down).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = true) })
+        assertEquals(StartResult.Unreachable("http_503"), runBlocking { api(down).start(device, body, 25_000, tokens = { ok1 }, awaitDevice = { true }, settings = SpotifyModes()) })
     }
 
     @Test

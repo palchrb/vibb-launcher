@@ -105,8 +105,8 @@ Favoritter.
 
 Built on `main` at `d53edc81` in parallel with design 49 (branch `music-r-a`). §1.1-§1.4 first, §1.5 last on 49's Room 6.
 
-- **§1.1 the skip pair - built.** `PlayerScreen`'s side slots follow `controlSlots(entry)` (49 §1.1; until 49's commit
-  is on this branch a stub with the same signature and rule, `logic/ControlSlotsStub.kt`): `SKIP` draws `SkipButton`
+- **§1.1 the skip pair - built.** `PlayerScreen`'s side slots follow `controlSlots(entry)` (49 §1.1, `logic/Queue.kt`; a
+  stub of the same signature stood in until `music-r-a` was merged into this branch): `SKIP` draws `SkipButton`
   with Material Symbols `replay`/`forward_media` (new `PLAYER_GLYPHS` in `scripts/material-symbols.sh`,
   `res/drawable/player_glyph_*.xml`, the "Converted from" header) at 20 dp in the 44 dp slot, "15"/"30" at a fixed
   7 dp (`SKIP_NUMBER_DP.dp.toSp()`). The target is `skipWithin(pos, ±delta, duration)` (`logic/Transport.kt`) from the
@@ -131,7 +131,7 @@ Built on `main` at `d53edc81` in parallel with design 49 (branch `music-r-a`). �
   - Deviation: the bar says "Sov · til slutten" (measured at 320 dp, `FitTest`); the item's remaining time is the
     seek bar's own two times - a third time in the bar would cut the output's name to its glyph at 320 dp.
   - Repeat-one (49) on the phone: `pauseAtEndOfMediaItems` pauses at the item's end in every repeat mode; on a room the
-    hold is checked before 49's wrap in `advance()` (to be kept so at the merge).
+    hold is checked before 49's wrap or replay in `advance()` (kept so at the merge of `music-r-a`).
 - **§1.3 the carousel's start - built.** `CarouselStart` (`logic/LibraryView.kt`) + `MusicViewModel.startOn`, from a
   `LaunchedEffect` in `MusicRoot` once both the snapshot and the stored row are non-null; `turned` (a real turn),
   `pickCategory` and `backToLibrary` mark it moved. The pager reads `initialPage` again through `carouselJumps`.

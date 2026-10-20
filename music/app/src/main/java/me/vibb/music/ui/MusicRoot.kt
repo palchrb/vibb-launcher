@@ -132,6 +132,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                     onBack = backToLibrary,
                     onSeek = actions::seekTo,
                     onShuffle = actions::toggleShuffle,
+                    onRepeat = actions::toggleRepeat,
                     onPrevious = { skip(false) },
                     onTogglePlay = actions::togglePlay,
                     onNext = { skip(true) },

@@ -1,5 +1,6 @@
 package me.vibb.music.sonos
 
+import me.vibb.music.logic.Repeat
 import me.vibb.music.model.Source
 import me.vibb.music.playback.RendererState
 import me.vibb.music.storytel.Mint
@@ -601,6 +602,41 @@ class SonosControllerTest {
         r.c.playTile()
         r.work.drain()
         assertEquals(r.url(1), r.spk.lastUri)
+    }
+
+    @Test
+    fun `d49 - repeat all wraps to the first item at the queue's end, repeat one plays the item again - no Stop, no end`() {
+        r.c.repeat = Repeat.ALL
+        playing("0:23:59")
+        r.c.stepTo(2, 0)
+        r.work.drain()
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(2))
+        r.poll()
+        r.advance(5_000)
+        r.c.takeAuto()
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(2))
+        r.poll()
+        r.work.drain()
+        assertEquals(0, r.c.index)
+        assertEquals("a new URI set + Play of the first", r.url(0), r.host.played.last().second)
+        assertTrue("the wrap is the natural advance (the last one done)", r.c.takeAuto())
+        assertFalse(r.c.takeEnded())
+        assertFalse(r.spk.commands.contains("stop"))
+        r.c.repeat = Repeat.ONE
+        val plays = r.host.played.size
+        r.advance(5_000)
+        r.speaker("0:24:00", uri = r.url(0))
+        r.poll()
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED", uri = r.url(0))
+        r.poll()
+        r.work.drain()
+        assertEquals(0, r.c.index)
+        assertEquals("the same item again", plays + 1, r.host.played.size)
+        assertEquals(r.url(0), r.host.played.last().second)
+        assertFalse("the same item: no item change, no done mark", r.c.takeAuto())
+        assertFalse(r.c.takeEnded())
     }
 
     @Test

@@ -17,6 +17,7 @@ import me.vibb.music.bridge.mobileSwitch
 import me.vibb.music.bridge.storageLimit
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.ListArt
+import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.listArtAfter
 import me.vibb.music.logic.newestFirst
 import me.vibb.music.logic.SpotifyContextTrack
@@ -275,7 +276,10 @@ class Store private constructor(context: Context) {
     fun snapshots(): Flow<Snapshot> = combine(
         libraries(),
         combine(db.allItemsFlow(), db.downloadsFlow(), db.listingsFlow()) { items, downloads, listings -> Triple(items, downloads, listings) },
-        combine(db.positionsFlow(), db.bookmarksFlow(), db.newsFlow(), db.shuffleFlow(), db.flipsFlow()) { p, b, n, s, f -> Rows(p, b, n, s, f) },
+        combine(
+            db.positionsFlow(), db.bookmarksFlow(), db.newsFlow(),
+            combine(db.shuffleFlow(), db.flipsFlow(), db.repeatFlow()) { s, f, r -> Triple(s, f, r) },
+        ) { p, b, n, (s, f, r) -> Rows(p, b, n, s, f, r) },
         spotifyContextFlow(),
         db.favouritesFlow(),
     ) { lib, (items, downloads, listings), rows, contexts, favourites ->
@@ -284,7 +288,7 @@ class Store private constructor(context: Context) {
 
     /** The same, once. */
     suspend fun snapshot(): Snapshot = snapshot(
-        library(), db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle(), db.allFlips()),
+        library(), db.allItems(), db.downloads(), db.listings(), Rows(db.allPositions(), db.bookmarks(), db.news(), db.allShuffle(), db.allFlips(), db.allRepeat()),
         spotifyContexts(), db.allFavourites(),
     )
 
@@ -294,6 +298,7 @@ class Store private constructor(context: Context) {
         val news: List<NewsRow>,
         val shuffle: List<ShuffleRow>,
         val flips: List<FlipRow>,
+        val repeat: List<RepeatRow>,
     )
 
     /**
@@ -332,7 +337,8 @@ class Store private constructor(context: Context) {
         val shuffle = rows.shuffle.filter { it.on }.map { it.entryKey }.toSet()
         val flips = rows.flips.associate { it.entryKey to it.parentNewestFirst }
         val hearts = favourites.groupBy { it.entryKey }.mapValues { (_, fs) -> fs.map { it.itemKey }.toSet() }
-        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts, flips, hearts)
+        val repeat = rows.repeat.associate { it.entryKey to Repeat.of(it.mode) }.filterValues { it != Repeat.OFF }
+        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts, flips, hearts, repeat)
     }
 
     companion object {

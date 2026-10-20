@@ -59,6 +59,7 @@ import me.vibb.music.data.BookmarkRow
 import me.vibb.music.data.DownloadRow
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.PositionRow
+import me.vibb.music.data.RepeatRow
 import me.vibb.music.data.ShuffleRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
@@ -75,7 +76,10 @@ import me.vibb.music.logic.callTimerEnded
 import me.vibb.music.logic.SleepEvent
 import me.vibb.music.logic.sleepAtEndAfter
 import me.vibb.music.logic.artOrCover
+import me.vibb.music.logic.Repeat
+import me.vibb.music.logic.canRepeat
 import me.vibb.music.logic.canShuffle
+import me.vibb.music.logic.moveOnIndex
 import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapPlan
 import me.vibb.music.logic.finished
@@ -160,6 +164,8 @@ internal class Active(
     val uncached: MutableSet<String> = mutableSetOf(),
     /** [order]'s direction (`Snapshot.shownNewestFirst`, design 39): a `FLIP_ORDER` to it already is nothing to do. */
     var shownNewestFirst: Boolean = false,
+    /** The entry's repeat (design 49 §1.2, `Snapshot.repeatOf`): the renderer's through `setModes`; off ends the queue. */
+    var repeat: Repeat = Repeat.OFF,
 )
 
 /**
@@ -456,11 +462,19 @@ class PlaybackService : MediaSessionService() {
             Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
         )
 
+        /** Only our own commands change shuffle and repeat (design 49 §1.3): Room stays the truth. */
+        private val refused = listOf(Player.COMMAND_SET_REPEAT_MODE, Player.COMMAND_SET_SHUFFLE_MODE)
+
         override fun getAvailableCommands(): Player.Commands = super.getAvailableCommands().buildUpon()
             .add(Player.COMMAND_SEEK_TO_NEXT).add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
             .add(Player.COMMAND_SEEK_TO_PREVIOUS).add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+            .removeAll(Player.COMMAND_SET_REPEAT_MODE, Player.COMMAND_SET_SHUFFLE_MODE)
             .build()
-        override fun isCommandAvailable(command: Int): Boolean = command in extra || super.isCommandAvailable(command)
+        override fun isCommandAvailable(command: Int): Boolean = command !in refused && (command in extra || super.isCommandAvailable(command))
+
+        // the launcher, Bluetooth, the notification: refused (Commands.SHUFFLE / REPEAT are the app's own)
+        override fun setRepeatMode(repeatMode: Int) = Unit
+        override fun setShuffleModeEnabled(shuffleModeEnabled: Boolean) = Unit
         override fun hasNextMediaItem(): Boolean = mediaItemCount > 1
         override fun hasPreviousMediaItem(): Boolean = mediaItemCount > 1
         override fun seekToNext() = skipNext()
@@ -536,6 +550,7 @@ class PlaybackService : MediaSessionService() {
                         Commands.RESTORE -> restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION), args)
                         Commands.SKIP_TO -> skipTo(args)
                         Commands.SHUFFLE -> toggleShuffle()
+                        Commands.REPEAT -> toggleRepeat()
                         Commands.FLIP_ORDER -> flipOrder(args.getString(Commands.ARG_ENTRY_KEY), args.getBoolean(Commands.ARG_NEWEST_FIRST))
                         Commands.SLEEP -> if (args.getBoolean(Commands.ARG_AT_END)) setSleepAtEnd() else setSleep(args.getInt(Commands.ARG_MINUTES))
                         Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
@@ -588,6 +603,7 @@ class PlaybackService : MediaSessionService() {
                         // the phone's own player takes Media3's items (never Spotify's web player)
                         usePhoneRenderer(a.entry)
                         active = a
+                        applyModes(a)
                         lastIndex = index
                         clearFault()
                         renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
@@ -660,6 +676,7 @@ class PlaybackService : MediaSessionService() {
                 art,
                 uncached = stale.toMutableSet(),
                 shownNewestFirst = snap.shownNewestFirst(entry),
+                repeat = snap.repeatOf(entry),
             )
         } catch (e: Throwable) {
             // A queue that never loads ends its claims (qa-30-s3b-code L6): a claimed progressive item would
@@ -750,6 +767,7 @@ class PlaybackService : MediaSessionService() {
             Commands.THEN_PREVIOUS -> skipPrevious()
             Commands.THEN_SEEK -> renderer.seekTo(positionMs)
             Commands.THEN_SHUFFLE -> toggleShuffle()
+            Commands.THEN_REPEAT -> toggleRepeat()
             Commands.THEN_SKIP_TO -> skipTo(args)
         }
         publish()
@@ -822,6 +840,7 @@ class PlaybackService : MediaSessionService() {
         // the old renderer saves its own place and pauses before the queue changes (attach)
         usePhoneRenderer(a.entry)
         active = a
+        applyModes(a)
         lastIndex = index
         renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
         // Loaded paused: the wake mode goes between prepare and play, as before step 2.
@@ -914,6 +933,16 @@ class PlaybackService : MediaSessionService() {
         val caps = netCaps(this)
         val streamMobileData = store.streamMobileData
         return playableIndex(a.entry, a.items.size, index, forward, wrap) { playable(a, it, caps, streamMobileData) }
+    }
+
+    /**
+     * The move-on past item [from] that can't play (design 49 §1.4, [moveOnIndex]): the next playable item; with repeat
+     * all it wraps, one lap at most and never back to [from] - nothing playable in a lap is null (the caller pauses).
+     */
+    private fun moveOnFrom(a: Active, from: Int): Int? {
+        val caps = netCaps(this)
+        val streamMobileData = store.streamMobileData
+        return moveOnIndex(a.items.size, from, a.repeat) { playable(a, it, caps, streamMobileData) }
     }
 
     /** A copy plays without holding Wi-Fi awake; a stream needs it (qa-21-step2-code L18). A no-op on Spotify's web
@@ -1137,20 +1166,45 @@ class PlaybackService : MediaSessionService() {
         val a = active ?: return
         if (!canShuffle(a.entry)) return
         val on = !a.shuffled
-        val index = renderer.currentIndex().coerceIn(a.items.indices)
-        val current = a.items[index]
-        val byKey = a.order.associateBy { it.key }
-        val items = toggledQueue(a.order.map { it.key }, current.key, on).mapNotNull { byKey[it] }
-        // Keep the current item playing, the new order after it.
-        renderer.reorder(index, items.drop(1).map { mediaItem(a, it) })
-        a.items = items
-        a.shuffled = on
-        lastIndex = 0
+        if (isSpotifyContext(a.entry)) {
+            // a playlist context (design 49 §1.7): Spotify's own shuffle - one synthetic item, no order of ours
+            a.shuffled = on
+        } else {
+            val index = renderer.currentIndex().coerceIn(a.items.indices)
+            val current = a.items[index]
+            val byKey = a.order.associateBy { it.key }
+            val items = toggledQueue(a.order.map { it.key }, current.key, on).mapNotNull { byKey[it] }
+            // Keep the current item playing, the new order after it (every renderer: Spotify's list mode re-feeds its
+            // tracker and marks its window stale, design 49 §1.6).
+            renderer.reorder(index, items.drop(1).map { mediaItem(a, it) })
+            a.items = items
+            a.shuffled = on
+            lastIndex = 0
+        }
+        applyModes(a)
         val entryKey = a.entry.key
         scope.launch(writer) { store.db.upsertShuffle(ShuffleRow(entryKey, on)) }
         renderer.saveNow()
         publish()
     }
+
+    /**
+     * The repeat button (design 49 §1.2-§1.3): off -> all -> one for the loaded entry, remembered in Room's `repeat`
+     * (never synced or reported) and handed to the renderer, which repeats by its own means. Not a play: nothing starts.
+     */
+    private fun toggleRepeat() {
+        val a = active ?: return
+        if (!canRepeat(a.entry)) return
+        val next = a.repeat.next()
+        a.repeat = next
+        applyModes(a)
+        val entryKey = a.entry.key
+        scope.launch(writer) { store.db.upsertRepeat(RepeatRow(entryKey, next.word)) }
+        publish()
+    }
+
+    /** The loaded queue's shuffle and repeat to the renderer (before every load, after a toggle, at an adopt). */
+    private fun applyModes(a: Active) = renderer.setModes(a.shuffled, a.repeat)
 
     /**
      * The kid's order flip (design 39 §3.3), after the list wrote its row (`Store.setFlip`, which also flipped the
@@ -1358,7 +1412,7 @@ class PlaybackService : MediaSessionService() {
         } else if (!playable(a, index)) {
             // The queue moves on (21 §4.2's one line beyond the mockup).
             PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
-            val nextIndex = playableFrom(a, index, forward = true, wrap = false)
+            val nextIndex = moveOnFrom(a, index)
             if (nextIndex != null) {
                 renderer.seekTo(nextIndex, startPos(a, nextIndex))
             } else {
@@ -1497,7 +1551,7 @@ class PlaybackService : MediaSessionService() {
             !isSpotify(a.entry) && copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.streamMobileData)
         PlayerHub.mutableMessages.tryEmit(if (offline) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY)
         renderer.saveNow()
-        val nextIndex = if (index + 1 < a.items.size) playableFrom(a, index + 1, forward = true, wrap = false) else null
+        val nextIndex = moveOnFrom(a, index)
         if (nextIndex != null) {
             renderer.seekTo(nextIndex, startPos(a, nextIndex))
             renderer.prepare()
@@ -1677,6 +1731,7 @@ class PlaybackService : MediaSessionService() {
             keys = a?.items?.map { it.key }.orEmpty(),
             index = renderer.currentIndex(),
             shuffled = a?.shuffled ?: false,
+            repeat = a?.repeat ?: Repeat.OFF,
             playing = renderer.showsPlaying,
             durationMs = renderer.durationMs() ?: a?.items?.getOrNull(renderer.currentIndex())?.durationMs,
             sleepEndsAt = sleepEndsAt,
@@ -1804,6 +1859,7 @@ class PlaybackService : MediaSessionService() {
         if (adopted != choice) withContext(writer) { home.write(adopted) }
         attach(sonos)
         active = a
+        applyModes(a)
         lastIndex = index
         sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri, live)
         publish()

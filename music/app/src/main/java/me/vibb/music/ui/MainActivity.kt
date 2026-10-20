@@ -144,6 +144,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         override fun toggleShuffle() = if (PlayerHub.state.value.live) command(Commands.SHUFFLE) else restoreThen(Commands.THEN_SHUFFLE)
+        override fun toggleRepeat() = if (PlayerHub.state.value.live) command(Commands.REPEAT) else restoreThen(Commands.THEN_REPEAT)
 
         // Design 39 §3.3: only a live player hears it (the stored queue was flipped with the row).
         override fun flipOrder(entryKey: String, newestFirst: Boolean) {
@@ -170,6 +171,9 @@ interface Actions {
     fun skipTo(entryId: Long, key: String, forward: Boolean)
     fun seekTo(ms: Long)
     fun toggleShuffle()
+
+    /** The repeat button (design 49 §1.2): off -> all -> one for the loaded entry. */
+    fun toggleRepeat()
 
     /** The kid's order flip of [entryKey] is written (design 39 §3.3): a live player reorders its queue [newestFirst]. */
     fun flipOrder(entryKey: String, newestFirst: Boolean)

@@ -8,6 +8,8 @@ import me.vibb.music.logic.Kind
 import me.vibb.music.logic.OrderWords
 import me.vibb.music.logic.orderWords
 import me.vibb.music.logic.PlayRequest
+import me.vibb.music.logic.Repeat
+import me.vibb.music.logic.canRepeat
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.ControlSlots
 import me.vibb.music.logic.controlSlots
@@ -145,9 +147,12 @@ data class NowView(
     val shuffled: Boolean,
     /** False while a tap's item isn't known yet (shuffle picks it): the entry's cover, no item title. */
     val itemKnown: Boolean = true,
+    /** The entry's repeat (design 49 §1.2): the player's while live, else Room's. */
+    val repeat: Repeat = Repeat.OFF,
 ) {
     val item: PlayItem get() = queue[index]
     val canShuffle: Boolean get() = canShuffle(entry)
+    val canRepeat: Boolean get() = canRepeat(entry)
 
     /** The control row's side slots (design 49 §1.1, 50 §1.1): shuffle/repeat, or the skip pair. */
     val slots: ControlSlots get() = controlSlots(entry)
@@ -211,6 +216,7 @@ fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView
     val view = NowView(
         entry, category(snap, entry), queue, index, live = false, playing = true, storedPosMs = pos,
         durationMs = if (key == null) null else queue[index].durationMs, shuffled = shuffle, itemKnown = key != null,
+        repeat = snap.repeatOf(entry),
     )
     return Switch(PlayRequest(entryId, itemKey?.let { key }, current?.ref, atMs), view)
 }
@@ -258,7 +264,7 @@ fun nowView(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): NowView?
         val queue = hub.keys.mapNotNull { snap.item(entry.id, it) }
         val index = queue.indexOfFirst { it.key == hub.keys.getOrNull(hub.index) }
         if (index < 0) return null
-        return NowView(entry, category(snap, entry), queue, index, true, hub.playing, 0, hub.durationMs ?: queue[index].durationMs, hub.shuffled)
+        return NowView(entry, category(snap, entry), queue, index, true, hub.playing, 0, hub.durationMs ?: queue[index].durationMs, hub.shuffled, repeat = hub.repeat)
     }
     row ?: return null
     val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return null
@@ -269,7 +275,7 @@ fun nowView(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): NowView?
     if (index < 0) return null
     // an artist context's stored place is shown as 0: its play starts where Spotify starts it (L2)
     val pos = if (contextResumes(entry)) row.posMs else 0
-    return NowView(entry, category(snap, entry), queue, index, false, false, pos, row.durationMs ?: queue[index].durationMs, row.shuffled)
+    return NowView(entry, category(snap, entry), queue, index, false, false, pos, row.durationMs ?: queue[index].durationMs, row.shuffled, repeat = snap.repeatOf(entry))
 }
 
 private fun category(snap: Snapshot, entry: Entry) = snap.library?.categories?.firstOrNull { it.id == entry.category }

@@ -87,7 +87,8 @@ class UiModelTest {
         val sw = playSwitch(snap, 6, null, null, 1_000)!!
         assertEquals("t2", sw.view.item.key)
         assertEquals(30_000L, sw.view.storedPosMs)
-        assertEquals("no shuffle for Spotify (resume on)", false, sw.view.canShuffle)
+        assertEquals("design 49 §1.1: Spotify music shuffles (the user's override of 26c)", true, sw.view.canShuffle)
+        assertEquals(true, sw.view.canRepeat)
         assertNull("a speaker can't play it: the service says Kan ikke spilles på Sonos", playSwitch(snap, 6, null, null, 1_000, onRoom = true))
     }
 
