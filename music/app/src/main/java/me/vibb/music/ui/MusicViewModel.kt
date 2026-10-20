@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -191,12 +192,23 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * A headset row tapped (decision 3): connect, or make a connected one active; the renderer doesn't move and the
-     * sheet stays open on "Kobler til…". [onRoom]: a Sonos room is the output - once the headset is routed, the room
-     * hands over to it (headsetTapPlan). A row already "Kobler til…" ignores the tap.
+     * sheet stays open on "Kobler til…". [fromKey]: the Sonos room's output key when a room is the output (null on the
+     * phone) - once the headset is routed, that room hands over to it if it is still the output (headsetTapPlan). A row
+     * already "Kobler til…" ignores the tap.
      */
-    fun headsetTapped(row: HeadsetRow, onRoom: Boolean) {
+    fun headsetTapped(row: HeadsetRow, fromKey: String?) {
         if (row.line == HeadsetLine.CONNECTING || !bt.granted()) return
-        reduce(ConnectEvent.Tapped(row.address, SystemClock.elapsedRealtime(), onRoom))
+        val address = BluetoothAudio.key(row.address)
+        // a tap on an attempt still open (a connected one reads "Bytt til") asks again but keeps its window
+        val opens = address !in headsetConnect.attempts
+        reduce(ConnectEvent.Tapped(row.address, SystemClock.elapsedRealtime(), fromKey, row.action == HeadsetAction.MAKE_ACTIVE))
+        if (opens) {
+            windows[address] = viewModelScope.launch {
+                delay(BluetoothAudio.CONNECT_WINDOW_MS)
+                windows.remove(address)
+                reduce(ConnectEvent.Tick(SystemClock.elapsedRealtime()))
+            }
+        }
         calls++
         viewModelScope.launch {
             try {
@@ -212,20 +224,20 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
                 releaseA2dp()
             }
         }
-        viewModelScope.launch {
-            delay(BluetoothAudio.CONNECT_WINDOW_MS)
-            reduce(ConnectEvent.Tick(SystemClock.elapsedRealtime()))
-        }
     }
+
+    /** Each open attempt's 10 s window, cancelled when the attempt ends sooner (main thread). */
+    private val windows = mutableMapOf<String, Job>()
 
     private fun reduce(e: ConnectEvent) {
         val step = connectStep(headsetConnect, e)
         headsetConnect = step.state
+        for (ended in windows.keys - step.state.attempts.keys) windows.remove(ended)?.cancel()
         // a failure after the kid closed the sheet: the player's one line for 3 s (nameless)
         if (step.failed.isNotEmpty() && !sheetOpen) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.HEADSET_NO_CONTACT)
         if (step.routed.isEmpty()) return
         for ((address, attempt) in step.routed) {
-            if (headsetTapPlan(attempt.onRoom, routedNow = true) == HeadsetMove.OUTPUT) {
+            if (headsetTapPlan(attempt.fromKey, PlayerHub.state.value.output.key, routedNow = true) == HeadsetMove.OUTPUT) {
                 routedIds[address]?.let { outputAsks.trySend(Output.deviceKey(it)) }
             }
         }
@@ -291,8 +303,8 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         if (watching) return
         watching = true
         val app = getApplication<Application>()
-        // a protected system broadcast (only the Bluetooth stack sends it), so exported: a not-exported dynamic
-        // receiver is not reached from the Bluetooth process's uid
+        // exported: the Bluetooth stack (uid 1002) sends it, and BroadcastSkipPolicy's "Exported Denial" drops it for a
+        // not-exported receiver; the action is a protected broadcast, so no other app can send it (qa-52-b-code)
         runCatching { app.registerReceiver(a2dpWatch, IntentFilter(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED), Context.RECEIVER_EXPORTED) }
         runCatching { app.getSystemService(AudioManager::class.java)?.registerAudioDeviceCallback(routeWatch, null) }
     }

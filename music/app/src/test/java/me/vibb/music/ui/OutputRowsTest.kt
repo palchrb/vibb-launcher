@@ -48,7 +48,7 @@ class OutputRowsTest {
         assertTrue(sheet.contains("if (h.line == HeadsetLine.NO_CONTACT) stringResource(line, name) else stringResource(line)"))
         // a headset tap keeps the sheet open (only the routed success closes it, in the view model); a pick closes it
         val root = moduleFile("src/main/java/me/vibb/music/ui/MusicRoot.kt").readText()
-        assertTrue(root.contains("onHeadset = { vm.headsetTapped(it, onRoom) },"))
+        assertTrue(root.contains("onHeadset = { vm.headsetTapped(it, hub.output.key.takeIf { onRoom }) },"))
         assertTrue(root.contains("onPick = { actions.output(it.key); vm.sheet = null },"))
         assertTrue(root.contains("PlayerHub.Message.HEADSET_NO_CONTACT -> R.string.headset_no_contact"))
     }
@@ -59,14 +59,14 @@ class OutputRowsTest {
         val vm = moduleFile("src/main/java/me/vibb/music/ui/MusicViewModel.kt").readText()
         val reduce = vm.substringAfter("private fun reduce(e: ConnectEvent) {").substringBefore("\n    }\n")
         assertTrue(reduce.contains("if (step.failed.isNotEmpty() && !sheetOpen) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.HEADSET_NO_CONTACT)"))
-        assertTrue(reduce.contains("if (headsetTapPlan(attempt.onRoom, routedNow = true) == HeadsetMove.OUTPUT) {"))
+        assertTrue(reduce.contains("if (headsetTapPlan(attempt.fromKey, PlayerHub.state.value.output.key, routedNow = true) == HeadsetMove.OUTPUT) {"))
         assertTrue(reduce.contains("routedIds[address]?.let { outputAsks.trySend(Output.deviceKey(it)) }"))
         assertTrue("the only OUTPUT the view model asks for", vm.split("outputAsks.trySend(").size == 2)
         val root = moduleFile("src/main/java/me/vibb/music/ui/MusicRoot.kt").readText()
         assertTrue(root.contains("LaunchedEffect(Unit) { vm.outputRequests.collect { actions.output(it) } }"))
-        // the tap: no output change at the tap, the onRoom of the moment carried in the attempt
-        val tap = vm.substringAfter("fun headsetTapped(row: HeadsetRow, onRoom: Boolean) {").substringBefore("\n    }\n")
-        assertTrue(tap.contains("reduce(ConnectEvent.Tapped(row.address, SystemClock.elapsedRealtime(), onRoom))"))
+        // the tap: no output change at the tap, the room's key of the moment carried in the attempt
+        val tap = vm.substringAfter("fun headsetTapped(row: HeadsetRow, fromKey: String?) {").substringBefore("\n    }\n")
+        assertTrue(tap.contains("reduce(ConnectEvent.Tapped(row.address, SystemClock.elapsedRealtime(), fromKey, row.action == HeadsetAction.MAKE_ACTIVE))"))
         assertTrue(tap.contains("delay(BluetoothAudio.CONNECT_WINDOW_MS)"))
         assertTrue("the renderer doesn't move at the tap", !tap.contains("output"))
         // the proxy opens with the sheet and closes after it unless a call still runs

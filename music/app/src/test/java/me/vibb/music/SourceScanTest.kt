@@ -698,7 +698,17 @@ class SourceScanTest {
         val pure = code(moduleFile("src/main/java/me/vibb/music/bluetooth/BluetoothAudio.kt"))
         assertTrue(pure.contains("const val A2DP_CONNECT = \"connect\"") && pure.contains("const val A2DP_SET_ACTIVE = \"setActiveDevice\""))
         assertTrue("the proxy is awaited, bounded", link.contains("withTimeoutOrNull(BluetoothAudio.PROXY_WAIT_MS) { awaitA2dp(adapter, wait) }"))
-        assertTrue("on IO", link.contains("val got = withContext(Dispatchers.IO) {"))
+        assertTrue("on IO", link.contains("got = withContext(Dispatchers.IO) {"))
+        // qa-52-b-code 2: a wait given up by the timeout or by a cancellation closes what came, in a finally
+        val open = link.substringAfter("suspend fun openA2dp(): BluetoothA2dp? {").substringBefore("\n    }\n")
+        assertTrue(open.contains("} finally {\n            if (got == null) {") && open.contains("wait.abandoned = true") && open.contains("stray?.let { closeQuietly(adapter, it) }"))
+        // qa-52-b-code 5: the reflection sits inside callA2dp's try - a blocked method, a revoked grant or a bad address is
+        // a false, never an exception through viewModelScope (that would kill the process and the playback service)
+        val call = link.substringAfter("private suspend fun callA2dp(").substringBefore("\n    }\n")
+        val inTry = call.substringAfter("        try {\n").substringBefore("        } catch (e: Exception) {")
+        assertTrue(call.contains("        try {\n") && call.contains("        } catch (e: Exception) {"))
+        assertTrue(inTry.contains("BluetoothA2dp::class.java.getMethod(method, BluetoothDevice::class.java).invoke(a2dp, device)"))
+        assertTrue(inTry.contains("adapter?.getRemoteDevice(address)"))
         assertTrue(link.contains("suspendCancellableCoroutine { cont ->"))
         // every other Bluetooth call is on IO: each public suspend read or call opens with withContext(Dispatchers.IO)
         for (fn in listOf("suspend fun routed()", "suspend fun pairedAudio(", "private suspend fun callA2dp(")) {
@@ -709,6 +719,20 @@ class SourceScanTest {
         val vm = code(moduleFile("src/main/java/me/vibb/music/ui/MusicViewModel.kt"))
         assertTrue(vm.contains("private val bt = BluetoothLink(app)"))
         for (token in listOf("runBlocking", "CountDownLatch", "Log.")) assertFalse("MusicViewModel uses $token", vm.contains(token))
+        // the sheet's own files hold names too: no log there either (qa-52-b-code 7)
+        for (path in listOf("src/main/java/me/vibb/music/ui/PlayerScreen.kt", "src/main/java/me/vibb/music/ui/OutputRows.kt")) {
+            val text = code(moduleFile(path))
+            for (token in listOf("Log.", "println(")) assertFalse("$path uses $token", text.contains(token))
+        }
+        // qa-52-b-code 4: A2DP's state broadcast comes from the Bluetooth stack's uid (1002); BroadcastSkipPolicy's
+        // "Exported Denial" drops it for a not-exported receiver, and the action is a protected broadcast - so exported
+        assertTrue(vm.contains("app.registerReceiver(a2dpWatch, IntentFilter(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED), Context.RECEIVER_EXPORTED)"))
+        assertFalse(vm.contains("RECEIVER_NOT_EXPORTED"))
+        assertTrue(vm.contains("registerAudioDeviceCallback(routeWatch, null)"))
+        val cleared = vm.substringAfter("override fun onCleared() {").substringBefore("\n    }\n")
+        assertTrue("the receiver goes with the view model", cleared.contains("getApplication<Application>().unregisterReceiver(a2dpWatch)"))
+        assertTrue("the callback too", cleared.contains("?.unregisterAudioDeviceCallback(routeWatch)"))
+        assertTrue("and the proxy", cleared.contains("a2dp?.let { bt.closeLater(it) }"))
     }
 
     /**

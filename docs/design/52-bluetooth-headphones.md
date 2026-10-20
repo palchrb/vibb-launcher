@@ -272,8 +272,8 @@ Built on branch `bt-b` (2026-10-20, from `main` 41cb9440); music suite 994 tests
 - **`bluetooth/BluetoothAudio.kt`** (pure): the UUIDs, `pairedAudioDevices(bonded, a2dpStates, routedAddresses)` (A2DP
   sink only - an LE-only device has no sink UUID and so no row; addresses compared upper case; sorted by name, nameless
   last), `actionFor` (CONNECTED -> `setActiveDevice`, else `connect`), `headsetRows`, the reducer `connectStep`
-  (`HeadsetConnect` = `attempts: address -> Attempt(startedAt, onRoom, connected)` + `failed`; events `Tapped`,
-  `Answered`, `StateChanged`, `Routed`, `Tick`), `headsetTapPlan(onRoom, routedNow)` and `failureWords` (the thrown
+  (`HeadsetConnect` = `attempts: address -> Attempt(startedAt, fromKey, makeActive, connected)` + `failed`; events `Tapped`,
+  `Answered`, `StateChanged`, `Routed`, `Tick`), `headsetTapPlan(fromKey, currentKey, routedNow)` and `failureWords` (the thrown
   class and its cause's class, `InvocationTargetException` unwrapped). Every holder of an address has a redacted
   `toString`; the events are plain classes.
 - **`bluetooth/BluetoothLink.kt`** (Android): the A2DP proxy through `suspendCancellableCoroutine` +
@@ -300,7 +300,7 @@ Deviations and choices:
 - **No HEADSET proxy in the music app.** Decision 1 opens one with the A2DP proxy, but it serves only Kid Settings'
   Disconnect (the HFP disconnect); the sheet has no "Koble fra" and connecting needs no HFP step, so the music app
   would hold an unused proxy (and maybe its 2 s wait). Pinned by `SourceScanTest` (no `BluetoothProfile.HEADSET`).
-- **`onRoom` = a Sonos room is the output at the tap**, playing or paused (decision 3 says "a room played"). A paused
+- **On a room = a Sonos room is the output at the tap** (the attempt keeps its key, `fromKey`), playing or paused (decision 3 says "a room played"). A paused
   room's `OUTPUT` to the headset comes home paused (`toPhone` resumes only a playing speaker), so the headset the kid
   picked becomes the output without anything starting.
 - **The receiver is `RECEIVER_EXPORTED`**: the broadcast is protected and comes from the Bluetooth stack's uid, which a
@@ -309,6 +309,23 @@ Deviations and choices:
 - A failure line from an earlier sheet is cleared when the sheet opens again (a closed sheet's failure was the hint).
 - A message from the headset (`HEADSET_NO_CONTACT`) ends a tap's instant-switch hold like every message (`GuardsTest`
   pins "every message ends the hold"); harmless.
+
+### Fix round after QA's code review (qa-52-b-code, 2026-10-20)
+
+- **1 (Medium)**: the attempt keeps the tapped room's output key (`fromKey`), and `headsetTapPlan(fromKey, currentKey,
+  routedNow)` sends `OUTPUT` only while that room is still the output (`PlayerHub.state.value.output.key` at the
+  routed moment): a room, the phone or wired headphones picked meanwhile keep their pick (two new cases, plus two more).
+- **2**: `openA2dp` closes a stray proxy in a `finally` - after the timeout and after a cancellation (a view model
+  cleared mid-wait), the wait marked abandoned so a later callback closes its own.
+- **3**: a "Bytt til" (make-active) attempt's window ends quietly back to "Bytt til" (the device is connected); only
+  its immediate `false` shows the failure line. The rows test changed with it, and a test for the immediate `false`.
+- **4**: `SourceScanTest` pins the `RECEIVER_EXPORTED` registration (BroadcastSkipPolicy's "Exported Denial" for uid
+  1002, the protected action), both unregister lines and the proxy's close in `onCleared`;
+  `assertEquals(10_000L, CONNECT_WINDOW_MS)`; a new tap clears the old failure (its own test).
+- **5**: `SourceScanTest` pins `getRemoteDevice` and `getMethod(...).invoke(` inside `callA2dp`'s `try`.
+- **6**: each attempt's 10 s window is a `Job` per address, cancelled when the attempt ends sooner; a tap on an
+  attempt still open asks again but keeps its window.
+- **7**: `PlayerScreen.kt` and `OutputRows.kt` are in the "no `Log.`" scan.
 
 Device checks owed (§4, the music half): on API 34/35/36 images - the sheet with the grant and Bluetooth on shows no
 extra row for no bonded device and nothing throws; the revoked/denied grant shows today's sheet; logcat's

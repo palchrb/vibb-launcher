@@ -125,14 +125,22 @@ enum class HeadsetMove { NONE, OUTPUT }
 
 /**
  * A headset tap's plan (decision 3): the tap itself only connects - the renderer never moves at the tap. When the
- * headset is then routed while its attempt is open and the tap was made on a Sonos room ([onRoom]), the app sends
- * `OUTPUT` with the headset's `dev:` key once (the usual `toPhone` + `setOutput`). A failure ([routedNow] false) moves
- * nothing; on the phone renderer the system routing already takes the sound (`onAudioDevicesAdded`).
+ * headset is then routed while its attempt is open, the tap was made on a Sonos room ([fromKey], that room's output key;
+ * null on the phone) and that room is still the output ([currentKey]: the kid picked nothing else meanwhile, qa-52-b-code
+ * 1), the app sends `OUTPUT` with the headset's `dev:` key once (the usual `toPhone` + `setOutput`). A failure
+ * ([routedNow] false) moves nothing; on the phone renderer the system routing already takes the sound
+ * (`onAudioDevicesAdded`).
  */
-fun headsetTapPlan(onRoom: Boolean, routedNow: Boolean): HeadsetMove = if (onRoom && routedNow) HeadsetMove.OUTPUT else HeadsetMove.NONE
+fun headsetTapPlan(fromKey: String?, currentKey: String?, routedNow: Boolean): HeadsetMove =
+    if (fromKey != null && fromKey == currentKey && routedNow) HeadsetMove.OUTPUT else HeadsetMove.NONE
 
-/** An open attempt: when it began, whether a Sonos room was the output at the tap, whether A2DP said CONNECTED. */
-data class Attempt(val startedAt: Long, val onRoom: Boolean, val connected: Boolean = false)
+/**
+ * An open attempt: when it began, the Sonos room's output key at the tap ([fromKey], null on the phone), whether it is a
+ * "Bytt til" ([makeActive]: the device is connected already), whether A2DP said CONNECTED.
+ */
+data class Attempt(val startedAt: Long, val fromKey: String?, val makeActive: Boolean = false, val connected: Boolean = false) {
+    override fun toString(): String = "Attempt($startedAt, room=${fromKey != null}, makeActive=$makeActive, connected=$connected)"
+}
 
 /**
  * The view model's connect state (decision 3): the open attempts by address ("Kobler til…") and the addresses whose
@@ -144,8 +152,8 @@ data class HeadsetConnect(val attempts: Map<String, Attempt> = emptyMap(), val f
 
 /** What moves the connect state. Plain classes: their default toString prints no address. */
 sealed class ConnectEvent {
-    /** A row tapped at [now] (`elapsedRealtime`); [onRoom]: a Sonos room is the output. */
-    class Tapped(val address: String, val now: Long, val onRoom: Boolean) : ConnectEvent()
+    /** A row tapped at [now] (`elapsedRealtime`); [fromKey]: the Sonos room's output key, null on the phone. */
+    class Tapped(val address: String, val now: Long, val fromKey: String?, val makeActive: Boolean = false) : ConnectEvent()
 
     /** The call's immediate result: [asked] false = refused or not asked (the failure line at once). */
     class Answered(val address: String, val asked: Boolean) : ConnectEvent()
@@ -170,12 +178,13 @@ class ConnectStep(val state: HeadsetConnect, val failed: Set<String> = emptySet(
  * - CONNECTED ends "Kobler til…" (the row becomes "Bytt til"; no failure at the window's end) and clears a failure;
  * - routed ends the attempt as a success (the room's `OUTPUT`, [headsetTapPlan]) and clears a failure - a late
  *   success after the failure line only clears it, it moves no room;
- * - the window's end fails an attempt that never reached CONNECTED.
+ * - the window's end fails a connect that never reached CONNECTED; a "Bytt til" (make-active) window ends quietly - the
+ *   device is connected, so the row goes back to "Bytt til" (only its immediate `false` shows the failure line).
  */
 fun connectStep(s: HeadsetConnect, e: ConnectEvent): ConnectStep = when (e) {
     is ConnectEvent.Tapped -> {
         val a = BluetoothAudio.key(e.address)
-        if (a in s.attempts) ConnectStep(s) else ConnectStep(HeadsetConnect(s.attempts + (a to Attempt(e.now, e.onRoom)), s.failed - a))
+        if (a in s.attempts) ConnectStep(s) else ConnectStep(HeadsetConnect(s.attempts + (a to Attempt(e.now, e.fromKey, e.makeActive)), s.failed - a))
     }
     is ConnectEvent.Answered -> {
         val a = BluetoothAudio.key(e.address)
@@ -200,7 +209,7 @@ fun connectStep(s: HeadsetConnect, e: ConnectEvent): ConnectStep = when (e) {
     }
     is ConnectEvent.Tick -> {
         val over = s.attempts.filterValues { e.now - it.startedAt >= BluetoothAudio.CONNECT_WINDOW_MS }
-        val failed = over.filterValues { !it.connected }.keys
+        val failed = over.filterValues { !it.connected && !it.makeActive }.keys
         ConnectStep(HeadsetConnect(s.attempts - over.keys, s.failed + failed), failed = failed)
     }
 }

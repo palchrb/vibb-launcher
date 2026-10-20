@@ -62,8 +62,8 @@ class BluetoothAudioTest {
             buds.toString(),
             PairedAudio("AA:BB:CC:00:00:01", "Buds", HeadsetState.OFF).toString(),
             HeadsetRow("AA:BB:CC:00:00:01", "Buds", HeadsetLine.CONNECT, HeadsetAction.CONNECT).toString(),
-            HeadsetConnect(mapOf("AA:BB:CC:00:00:01" to Attempt(1, false)), setOf("AA:BB:CC:00:00:02")).toString(),
-            ConnectEvent.Tapped("AA:BB:CC:00:00:01", 1, false).toString(),
+            HeadsetConnect(mapOf("AA:BB:CC:00:00:01" to Attempt(1, null)), setOf("AA:BB:CC:00:00:02")).toString(),
+            ConnectEvent.Tapped("AA:BB:CC:00:00:01", 1, null).toString(),
         )
         for (t in texts) assertFalse(t, t.contains("AA:BB") || t.contains("Buds"))
     }
@@ -91,14 +91,17 @@ class BluetoothAudioTest {
 
     @Test
     fun `rows - Kobler til after a tap, then the failure line, then Koble til again on a new tap`() {
-        var s = connectStep(HeadsetConnect(), ConnectEvent.Tapped(off.address, 0, false)).state
+        var s = connectStep(HeadsetConnect(), ConnectEvent.Tapped(off.address, 0, null)).state
         assertEquals(HeadsetLine.CONNECTING, lines(s)[0])
         // the tap on "Bytt til" reads "Kobler til…" too
-        s = connectStep(s, ConnectEvent.Tapped(on.address, 0, false)).state
+        s = connectStep(s, ConnectEvent.Tapped(on.address, 0, null, makeActive = true)).state
         assertEquals(HeadsetLine.CONNECTING, lines(s)[1])
-        s = connectStep(s, ConnectEvent.Tick(CONNECT_WINDOW_MS)).state
-        assertEquals(listOf(HeadsetLine.NO_CONTACT, HeadsetLine.NO_CONTACT, HeadsetLine.CONNECTING), lines(s))
-        s = connectStep(s, ConnectEvent.Tapped(off.address, CONNECT_WINDOW_MS + 1, false)).state
+        // the window's end: the connect failed; the make-active of a connected device goes back to "Bytt til" quietly
+        val end = connectStep(s, ConnectEvent.Tick(CONNECT_WINDOW_MS))
+        s = end.state
+        assertEquals(listOf(HeadsetLine.NO_CONTACT, HeadsetLine.SWITCH, HeadsetLine.CONNECTING), lines(s))
+        assertEquals(setOf(off.address), end.failed)
+        s = connectStep(s, ConnectEvent.Tapped(off.address, CONNECT_WINDOW_MS + 1, null)).state
         assertEquals(HeadsetLine.CONNECTING, lines(s)[0])
     }
 
@@ -108,7 +111,7 @@ class BluetoothAudioTest {
 
     @Test
     fun `an immediate false fails at once - a true waits`() {
-        val open = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a.lowercase(), 100, false)).state
+        val open = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a.lowercase(), 100, null)).state
         assertEquals(setOf(a), open.attempts.keys)
         assertEquals(open, connectStep(open, ConnectEvent.Answered(a, asked = true)).state)
         val step = connectStep(open, ConnectEvent.Answered(a, asked = false))
@@ -118,7 +121,7 @@ class BluetoothAudioTest {
 
     @Test
     fun `CONNECTING to DISCONNECTED fails at once, other edges and other devices don't`() {
-        val open = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 100, false)).state
+        val open = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 100, null)).state
         assertEquals(open, connectStep(open, ConnectEvent.StateChanged(a, STATE_DISCONNECTED, STATE_CONNECTING)).state)
         assertEquals(open, connectStep(open, ConnectEvent.StateChanged("AA:BB:CC:00:00:09", STATE_CONNECTING, STATE_DISCONNECTED)).state)
         assertEquals(open, connectStep(open, ConnectEvent.StateChanged(a, 3, STATE_DISCONNECTED)).state)
@@ -131,8 +134,8 @@ class BluetoothAudioTest {
 
     @Test
     fun `the 10 s window fails an attempt that never connected, a connected one ends quietly`() {
-        var s = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 1_000, true)).state
-        s = connectStep(s, ConnectEvent.Tapped("AA:BB:CC:00:00:02", 5_000, true)).state
+        var s = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 1_000, room)).state
+        s = connectStep(s, ConnectEvent.Tapped("AA:BB:CC:00:00:02", 5_000, room)).state
         s = connectStep(s, ConnectEvent.StateChanged("AA:BB:CC:00:00:02", STATE_CONNECTING, STATE_CONNECTED)).state
         assertEquals(s, connectStep(s, ConnectEvent.Tick(1_000 + CONNECT_WINDOW_MS - 1)).state)
         val first = connectStep(s, ConnectEvent.Tick(1_000 + CONNECT_WINDOW_MS))
@@ -145,7 +148,7 @@ class BluetoothAudioTest {
 
     @Test
     fun `CONNECTED ends Kobler til without a failure, and the row becomes Bytt til`() {
-        val open = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, false)).state
+        val open = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, null)).state
         val s = connectStep(open, ConnectEvent.StateChanged(a, STATE_CONNECTING, STATE_CONNECTED)).state
         assertTrue(s.attempts.getValue(a).connected)
         val row = BluetoothAudio.headsetRows(listOf(PairedAudio(a, "Buds", HeadsetState.CONNECTED)), s).single()
@@ -156,18 +159,18 @@ class BluetoothAudioTest {
 
     @Test
     fun `routed ends the attempt as a success, carrying whether a room played at the tap`() {
-        var s = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, onRoom = true)).state
+        var s = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, room)).state
         s = connectStep(s, ConnectEvent.Routed(setOf("AA:BB:CC:00:00:07"))).state
         assertEquals(setOf(a), s.attempts.keys)
         val step = connectStep(s, ConnectEvent.Routed(setOf(a.lowercase(), "AA:BB:CC:00:00:07")))
-        assertEquals(Attempt(0, onRoom = true), step.routed.getValue(a))
+        assertEquals(Attempt(0, room), step.routed.getValue(a))
         assertEquals(HeadsetConnect(), step.state)
         assertTrue(step.failed.isEmpty())
     }
 
     @Test
     fun `a late success clears the failure line and moves no room`() {
-        var s = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, onRoom = true)).state
+        var s = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, room)).state
         s = connectStep(s, ConnectEvent.Tick(CONNECT_WINDOW_MS)).state
         assertEquals(setOf(a), s.failed)
         val connected = connectStep(s, ConnectEvent.StateChanged(a, STATE_CONNECTING, STATE_CONNECTED))
@@ -179,20 +182,47 @@ class BluetoothAudioTest {
 
     @Test
     fun `a second tap on an open attempt changes nothing`() {
-        val s = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, onRoom = false)).state
-        assertEquals(s, connectStep(s, ConnectEvent.Tapped(a, 5_000, onRoom = true)).state)
+        val s = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, null)).state
+        assertEquals(s, connectStep(s, ConnectEvent.Tapped(a, 5_000, room)).state)
+    }
+
+    @Test
+    fun `a make-active's immediate false still shows the failure line`() {
+        val open = connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, null, makeActive = true)).state
+        val step = connectStep(open, ConnectEvent.Answered(a, false))
+        assertEquals(setOf(a), step.failed)
+        assertEquals(HeadsetConnect(failed = setOf(a)), step.state)
+    }
+
+    @Test
+    fun `a new tap clears the old failure line, and the window is 10 s`() {
+        assertEquals(10_000L, CONNECT_WINDOW_MS)
+        val failed = HeadsetConnect(failed = setOf(a, "AA:BB:CC:00:00:02"))
+        val s = connectStep(failed, ConnectEvent.Tapped(a.lowercase(), 0, null)).state
+        assertEquals(setOf("AA:BB:CC:00:00:02"), s.failed)
+        assertEquals(setOf(a), s.attempts.keys)
     }
 
     // The tap's plan (decision 3, 52-3).
 
+    private val room = "sonos:RINCON_000E58A0123401400"
+
     @Test
     fun `headsetTapPlan - on a room nothing moves at the tap, OUTPUT once routed, nothing on failure`() {
-        assertEquals("the tap", HeadsetMove.NONE, headsetTapPlan(onRoom = true, routedNow = false))
-        assertEquals("routed", HeadsetMove.OUTPUT, headsetTapPlan(onRoom = true, routedNow = true))
-        assertEquals("the phone: system routing takes it", HeadsetMove.NONE, headsetTapPlan(onRoom = false, routedNow = true))
-        assertEquals(HeadsetMove.NONE, headsetTapPlan(onRoom = false, routedNow = false))
+        assertEquals("the tap", HeadsetMove.NONE, headsetTapPlan(room, room, routedNow = false))
+        assertEquals("routed", HeadsetMove.OUTPUT, headsetTapPlan(room, room, routedNow = true))
+        assertEquals("the phone: system routing takes it", HeadsetMove.NONE, headsetTapPlan(null, "phone", routedNow = true))
+        assertEquals(HeadsetMove.NONE, headsetTapPlan(null, "phone", routedNow = false))
         // a failure never reaches routed: the reducer's failed attempts carry no plan
-        val failed = connectStep(connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, true)).state, ConnectEvent.Answered(a, false))
+        val failed = connectStep(connectStep(HeadsetConnect(), ConnectEvent.Tapped(a, 0, room)).state, ConnectEvent.Answered(a, false))
         assertTrue(failed.routed.isEmpty())
+    }
+
+    @Test
+    fun `headsetTapPlan - never after the kid picked another output meanwhile (qa-52-b-code 1)`() {
+        assertEquals("another room picked", HeadsetMove.NONE, headsetTapPlan(room, "sonos:RINCON_B8E9373C2A0201400", routedNow = true))
+        assertEquals("the phone picked", HeadsetMove.NONE, headsetTapPlan(room, "phone", routedNow = true))
+        assertEquals("wired headphones picked", HeadsetMove.NONE, headsetTapPlan(room, "dev:9", routedNow = true))
+        assertEquals("nothing known now", HeadsetMove.NONE, headsetTapPlan(room, null, routedNow = true))
     }
 }

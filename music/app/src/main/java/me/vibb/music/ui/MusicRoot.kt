@@ -159,7 +159,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                         onClose = vm::outputSheetClosed,
                         onPick = { actions.output(it.key); vm.sheet = null },
                         // design 52: a headset only connects (or is made active); the sheet stays open on "Kobler til…"
-                        onHeadset = { vm.headsetTapped(it, onRoom) },
+                        onHeadset = { vm.headsetTapped(it, hub.output.key.takeIf { onRoom }) },
                         onRescan = actions::rescanRooms,
                         onDismiss = { vm.sheet = null },
                     )

@@ -52,24 +52,30 @@ class BluetoothLink(context: Context) {
     /**
      * The A2DP proxy, or null (not granted, no adapter, Bluetooth off, or not ready within the wait). One per view
      * model while the sheet is open or a call runs (the caller holds it and [closeLater]s it). A proxy that arrives after
-     * the wait gave up is closed at once.
+     * the wait gave up - by the timeout or by the caller's cancellation (a view model cleared mid-wait) - is closed.
      */
     suspend fun openA2dp(): BluetoothA2dp? {
         if (!granted()) return null
         val adapter = adapter ?: return null
         val wait = Wait()
-        val got = withContext(Dispatchers.IO) {
-            // Bluetooth off: no proxy would come (and no bonded device is listed) - don't wait for it
-            if (!adapter.isEnabled) null else withTimeoutOrNull(BluetoothAudio.PROXY_WAIT_MS) { awaitA2dp(adapter, wait) }
+        var got: BluetoothA2dp? = null
+        try {
+            got = withContext(Dispatchers.IO) {
+                // Bluetooth off: no proxy would come (and no bonded device is listed) - don't wait for it
+                if (!adapter.isEnabled) null else withTimeoutOrNull(BluetoothAudio.PROXY_WAIT_MS) { awaitA2dp(adapter, wait) }
+            }
+            return got
+        } finally {
+            if (got == null) {
+                // Timed out, or cancelled (a value the callback gave may have been dropped by the cancellation): close
+                // what came, and mark the wait abandoned so a later callback closes its proxy itself.
+                val stray = synchronized(wait) {
+                    wait.abandoned = true
+                    wait.proxy.also { wait.proxy = null }
+                }
+                stray?.let { closeQuietly(adapter, it) }
+            }
         }
-        if (got != null) return got
-        // Timed out, or the value was dropped by a cancellation: close whatever came or comes later.
-        val stray = synchronized(wait) {
-            wait.abandoned = true
-            wait.proxy.also { wait.proxy = null }
-        }
-        stray?.let { closeQuietly(adapter, it) }
-        return null
     }
 
     /** Asks for the proxy and suspends until its callback (main handler) or a refusal; never blocks a thread. */
