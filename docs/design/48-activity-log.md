@@ -18,7 +18,8 @@ clock past yesterday (`Zone::when`). `device_commands` are never pruned.
 ## 1. Decisions
 
 1. **`#today` becomes "Now" (`#now`)** and keeps exactly the state items: the running lifts with End now and the PIN
-   notices. `summary_group("lifts")` points at `now`, so End now's save comes back to `#now` with its flash.
+   notices. `summary_group("lifts")` points at `now` (and its doc comment at `lifts.rs:52`, "are Today", follows), so End now's
+   save comes back to `#now` with its flash.
    `relock.answers` is no longer rendered (the loop in `devices.rs:1629-1643` goes; `last_answers` stays, the blocks
    need it): the command rows carry the status words (Done / Failed / Waiting / Sent / Received), and there is no
    de-dup rule. The round-5 Recent goes.
@@ -27,27 +28,32 @@ clock past yesterday (`Zone::when`). `device_commands` are never pruned.
      Cancel while it waits) - every kind of command of this phone;
    - an **event row** as the inbox draws it (title, sub-line, the time, the chevron to the event's target) -
      `parent_events` of this phone, built by the inbox's builder extracted from `page()`, without the avatar. Its `open`
-     form (a POST that marks it read) carries hidden `from=device` and `device=<id>`, so a pruned event or a non-local
-     target redirects back to the summary's `#activity`.
-   Then a last row **"Everything for this phone ›"** to `/notifications?from=device&device={id}`.
+     form (a POST that marks it read) carries hidden `from=devices` and `device=<id>` (`back_of` knows `devices`, not
+     `device`), so a pruned event or a non-local target comes back to this phone's filtered inbox
+     (`/notifications?from=devices&device=<id>`), as the inbox does today.
+   Then a last row **"Everything for this phone ›"** to `/notifications?from=devices&device={id}`.
    Sort key: the row's own time - a command's `requested_at`, an event's `at`. A **cancellable** (in-flight) command
    shows at any age, outside the 7-day window and the 10-row cap. Successful Update Locations are ordinary rows here
    (the cap is the limit; Requests hides them).
 3. **Every row carries the clock** through the existing `Zone::at`: "10:59", "yesterday 21:40", "12 Oct 08:12" (with the
    year past a year) - English, like the rest of the page; command and event rows both use it. The inbox and the devices
    list keep their relative words. The exact time stays in `title`. No new time function.
-4. **Locate's Recent becomes "Requests"**, defined by `CommandStatus`: every command still in flight (Waiting, Sent,
-   Received, Not confirmed - with Cancel where the status allows), every Failed / Expired / No answer whose time is within
-   the last 24 h, and the newest Done or Erasing of Ring, Stop Ringing, Lock and Erase; a Done locate is never a row.
+4. **Locate's Recent becomes "Requests"**, defined by `CommandStatus` (`models.rs:755-815`), one bucket formula:
+   shown at any age = `Waiting`, `Sent{NotYet | OfferedAgain | CantConfirm}`, `Received{overdue: false}`, `Erasing`
+   (with Cancel where the status allows); shown within the last 24 h = `Failed`, `Expired`, `Sent{Lost}`,
+   `Received{overdue: true}`; plus the newest `ring`/`stop_ring`/`lock`/`wipe` whatever its status; never
+   `Cancelled{Parent}`; a Done locate is never a row.
    `partials/recent.html` takes a parameter for its title ("Requests" on Locate, "Activity" on the summary), so Locate
    keeps its own wording. Requests and Activity are shown when they have rows **or** a flash (the Cancel flash), as the
    summary already does, so a Cancel never lands under a hidden group.
 5. **The Cancel's redirect**: the summary's Cancel comes back to `#activity` (the partial's form action carries it);
    Locate's stays `#recent`, and `device_locate.html:116` is reworded to "Requests".
-6. **Retention**: `retention::prune` deletes in SQL exactly as the pop's undelivered rule (`models.rs:581-587`): an
-   undelivered `lock`, `wipe`, `end_windows`, `allow_blocked` or `install_update` is kept at any age; every other command
-   older than 30 days (by `requested_at`) is deleted, counted in `Pruned` (the literal in `tests/cleanup.rs` gains the
-   field). The Activity log's 7-day window is a query filter, not retention.
+6. **Retention**: `retention::prune` deletes `device_commands` older than 30 days by `requested_at` with the pop's
+   undelivered rule (`models.rs:581-587`) spelled in the SQL: `DELETE … WHERE requested_at < ? AND (acknowledged_at IS
+   NOT NULL OR cancelled_at IS NOT NULL OR delivered_at IS NOT NULL OR command IN (<EXPIRING_COMMANDS>))` - so an
+   undelivered, uncancelled `lock`, `wipe`, `end_windows`, `allow_blocked` or `install_update` is kept at any age, and a
+   cancelled or acknowledged one of those is prunable like the rest; counted in `Pruned` (the literal in
+   `tests/cleanup.rs` gains the field). The Activity log's 7-day window is a query filter, not retention.
 7. **One query per page**: `activity::rows(state, device_id, zone, now)` reads both tables, merges by the sort key, cuts
    at 10 (plus the cancellable ones); the template gets a `Vec<ActivityRow>` enum (`Command(CommandRow)`,
    `Event(InboxRow)`). No new table, no migration.
@@ -57,7 +63,7 @@ clock past yesterday (`Zone::when`). `device_commands` are never pruned.
 
 Summary: a command and an event interleave newest first; the cap at 10 and the 7-day window; an 8-day-old waiting
 `end_windows` still shows Cancel; the Cancel lands on `/devices/{id}#activity`; an event's `open` form carries
-`from=device` and `device`, and a pruned event comes back to `#activity`; End now lands on `#now` with its flash; the PIN
+`from=device` and `device`, and a pruned event comes back to this phone's filtered inbox; End now lands on `#now` with its flash; the PIN
 notices are in Now; no `relock.answers` line; the clock words ("13:41", "yesterday 14:50", "15 Oct 14:02"). Locate: one
 test per `CommandStatus` bucket of §1.4 (in flight at any age, Failed/Expired/No answer within 24 h and not after, the
 newest Done of Ring/Stop Ringing/Lock/Erase, a Done locate never); cancelling the last waiting row shows the flash in
