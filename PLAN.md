@@ -982,6 +982,24 @@ findings, merge to `main`, full suite once.
   the wrong method**: `QuickControls.connectBluetoothDevice` reflects `BluetoothDevice.connect()`, which since Android 13
   is `@SystemApi` needing `BLUETOOTH_PRIVILEGED` + `MODIFY_PHONE_STATE` and returns an `int` (read as `Boolean` ->
   always false) - so "Connect" there has most likely never worked on the Jelly Star. Design: `docs/design/52-bluetooth-headphones.md` (QA'd and revised 2026-10-20): Kid Settings connects/disconnects through the A2DP proxy (HFP disconnect too), the music app's 'Spill av på' gets 'Koble til'/'Bytt til' rows for paired audio devices, the launcher grants the music app `BLUETOOTH_CONNECT`; LE-only devices get no Connect.
+- **Design 53 (to write): Sonos grouping + precision** (the user, 2026-10-20). (1) **Grouping in "Spill av på"**,
+  approved sketch https://claude.ai/artifact/JZHNZTury59y3UAQzek94G ("digget jeg designeforslaget for gruppering og
+  ungrouping! Vi kjører med det!"): a round "+" on every other room row = "spill også her" (the room joins the playing
+  group: `SetAVTransportURI x-rincon:<coordinator uid>`), the group as one selected row with its members under it,
+  each with "−" (`BecomeCoordinatorOfStandaloneGroup`; the last one out stops); the kid groups by itself ("Barnet
+  skal få gruppere selv"), no limit on which rooms ("Ingen begrensing på hvilke høyttalere") - a room playing
+  something else may be added (it stops that and joins); the PWA's room scope still limits what the sheet shows; the
+  volume cap set on each joining room. (2) **Precision**: GetPositionInfo every 1 s while the player screen shows and a
+  room plays (5/15 s otherwise, as today), no backward jumps under 1 s; a measuring round first for the user's Pi
+  observation ("pi misforstår etter optimistisk start ... flapper den tilbake") - the phone's `SonosController`
+  already holds a step's seed until the speaker reports the new uri or `SETTLE_MS` (8 s) after the SOAP answer, and
+  the art comes from our queue: verify with rapid skips on real speakers. (3) **Push**: Home Assistant (open source)
+  gets Sonos state from UPnP GENA events through soco's event listener (an HTTP server Sonos calls back:
+  `advertise_addr`) and uses the local WebSocket (`wss://<ip>:1443/websocket/api`, `sonos-websocket`) ONLY for
+  announcements (`play_clip`) - so GENA would break "the phone never serves" and a WebSocket playback subscription is
+  unproven locally: a probe script against the user's speakers first; if it pushes playback/metadata events, a
+  WebSocket subscription on top of polling (polling stays the fallback). Sources: home-assistant/core
+  `homeassistant/components/sonos/{__init__,media_player}.py`, jjlawren/sonos-websocket.
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
