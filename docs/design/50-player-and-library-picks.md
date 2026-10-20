@@ -18,24 +18,31 @@ favoritt-kategori"; the rewind-after-pause idea declined). Music app, plus the l
    has no listing duration (`contextItem`, `logic/Spotify.kt:102-103`): the clamp uses the live state's duration.
    Previous/Next stay vibb's (`previousAction`: an item over 30 min never restarts). **On the launcher's lock tile**
    the bridge's `setNowPlaying` carries the decision, not the kind: an appended field `controls: "skip"|"music"`,
-   both apps in one commit with `bridge_contract.json`, so the lock tile needs no kind logic and the same two buttons
-   replace previous/next when it says `skip`. The launcher part is a separate step after the music app's.
+   the key in `bridge_contract.json`'s `now_playing` (`entry,item,position_ms,duration_ms,playing,art` + `controls`;
+   the value names are ours: `skip`/`music`) and the music app's send in one commit (no AIDL change: `setNowPlaying`
+   takes a Bundle, `BridgeConfig.kt` holds the constants), so the lock tile needs no kind logic and the same two buttons
+   replace previous/next when it says `skip` - the lock tile's use of the key is the later launcher step.
 2. **"Til slutten" in the sleep sheet.** A fourth choice, a full-width row under the 2x2 minutes (15/30/45/Av): the
    timer ends at the end of the current item (track, episode, book part). It lives in `PlaybackService`
    (`setSleep`/`sleepTick`) as its own state, `sleepAtEnd: Boolean` (and a separate command argument, not the
    minutes; `PlayerHub.State` gets the field). The service does not time a fade from the position: the renderer pauses
-   AT the item's end through each renderer's end hook (the phone's player transition, Sonos' end, Spotify's `Ended`/
-   track change, with nothing re-sent), and the fade is the renderer's own (`fadeMs`: 10 s on the phone and Spotify,
+   AT the item's end by its own means - the phone's player with `setPauseAtEndOfMediaItems`, a room's `advance()`
+   holding at the next item at 0 as its `!mayPlay` branch does, Spotify through the tracker's end with nothing re-sent
+   (in list mode Spotify advances inside the window by itself, so the fade must have brought it to a pause before the
+   end; the pause never depends on the fade's timing) - and the fade is the renderer's own (`fadeMs`: 10 s on the phone and Spotify,
    3 s on a room), started by the renderer when its remaining time crosses it, recomputed after a seek. It beats
-   repeat-one (design 49). The choice survives a manual step like the minute timer (finish what plays); it is cleared
-   by a new queue or by the pause it causes. For an item with no duration (live, or a context before its first state)
+   repeat-one (design 49). The choice survives a manual step like the minute timer (finish what plays - the user's call); it is cleared by
+   a new queue, by the pause it causes, and by a kid's own pause (`PauseCause.USER`, as the minute timer is cleared at
+   `PlaybackService.kt:1278`). For an item with no duration (live, or a context before its first state)
    the choice is hidden. The bar shows "Sov · til slutten" and the item's remaining time; it must fit at 320 dp
    (`FlexBar` never cuts Sov, `FitTest`).
 3. **The carousel opens on the last played tile.** At start `carouselIndex` is the index of the stored now-playing
    entry (`NowPlayingRow`'s entry, shown paused as today) in the shown order; 0 when none or filtered out. It is set
-   once, where the snapshot is first applied in `MusicViewModel` (the first snapshot and the now-row's first emission
-   both in; `MusicViewModel.kt:78` is `pickCategory`'s reset and not the hook; the pager reads `initialPage` once, so
-   the index bumps `carouselJumps`), and never after the kid turned the carousel or came back from the player
+   once by a one-shot `LaunchedEffect` in `MusicRoot` (or a `combine` in the view model) that runs when both the
+   snapshot and the now-row are non-null (the view model's `snapshot`/`nowRow` are `stateIn` flows with no init;
+   `MusicRoot.kt:214` passes `startIndex = vm.carouselIndex`, the pager reads `initialPage` once keyed on `jumps`), sets
+   `carouselIndex` and bumps `carouselJumps`, guarded by a `started` flag that `onIndex` and `backToLibrary` set - so
+   never after the kid turned the carousel or came back from the player
    (`backToLibrary` wins).
 4. **A tile the phone can't play right now is dimmed.** `EntryUi` gains `unplayableNow`, computed in the view model
    from the current `NetCaps` read when the library screen (re)appears and on each snapshot; there is no network
@@ -45,8 +52,10 @@ favoritt-kategori"; the rewind-after-pause idea declined). Music app, plus the l
    already hidden on the phone (`Snapshot.kt:117-125`). On a Sonos room nothing is dimmed (the phone's gate does not
    apply; Spotify can't play there and already says so). The cover draws at 60 % (multiplying the pager's neighbour
    alpha) and hides design 46's play arrow. The tile's quiet line is the existing Spotify line (`spotifyTileState`);
-   for NRK/RSS a new tile line "Trenger Wi-Fi" in the same place (not the toast), and when both apply the account line
-   wins over "Trenger Wi-Fi". One line only, so `libraryFit`'s two measured lines and the cover don't move. The tap
+   for NRK/RSS a new tile line "Trenger Wi-Fi" in the same place (not the toast) - the line takes the hint's place, as
+   `CarouselTitle` shows a state or the hint (`LibraryScreen.kt:318`) - and when both apply the account line wins over
+   "Trenger Wi-Fi". An account line of its own ("Spør en voksen", `ASK_ADULT`) also dims the tile: the kid can't play
+   it either. One line only, so `libraryFit`'s two measured lines and the cover don't move. The tap
    still answers as today (never a silent block); nothing is hidden, no reorder.
 5. **Favoritter.** A heart per track/episode in the list screen's row (a small trailing heart, peach when set) and in
    the player under the title; stored in a new Room table `favourites(entryKey, itemKey)` (keyed by the entry KEY and
@@ -55,7 +64,7 @@ favoritt-kategori"; the rewind-after-pause idea declined). Music app, plus the l
    its copy keeps its heart); no heart on a context's synthetic item. A category tile "Favoritter" first after "Alle" in
    the category row (the row scrolls past four) with a sentinel category id (-1) in `CategoryTiles` that
    `tapCategory`/`effectiveCategory`/`backToLibrary` understand, showing the entries that hold a favourite; a tap on
-   it with one entry opens that entry; a cover tap under Favoritter plays the entry as usual, not a favourites queue.
+   it with one entry opens that entry (a proposal - drop if unwanted); a cover tap under Favoritter plays the entry as usual, not a favourites queue.
    Phone-only, never synced or reported. The "Bare favoritter" filter row is dropped (beyond PLAN). Nothing in the
    parent's PWA.
 6. **Not taken**: the "Fortsett" strip (3 covers it), the offline check badge (4 covers it the user's way), the

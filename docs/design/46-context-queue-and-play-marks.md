@@ -22,8 +22,10 @@ purpose (`server/src/spotify.rs:59-63`, 26c QA L2; `the_authorize_url_is_exact` 
 queue is a server change and every Spotify account must log in again (a refresh keeps the scopes it was granted).
 **The user decides.**
 
-- **Yes**: §1.1-§1.3 and §2's queue parts are built. The server adds the scope to its one scope set (the test in
-  `server/` and the contract test in the launcher/music directories that pin it, in one commit; the PWA's login text).
+- **Yes**: §1.1-§1.3 and §2's queue parts are built. The server adds the scope to its one scope set (`SCOPES`, `spotify.rs:62-63`;
+  the server's `the_authorize_url_is_exact` changes in three places - the exact URL string, the absence assert
+  `!SCOPES.contains("user-read-playback-state")` and the count 6 - and the PWA's login text; only `server/` pins the
+  set).
   The accounts' `scopes` column (`music_spotify_accounts`) tells which accounts lack it; the Spotify group in
   Music › Settings shows "Log in again for the track list" on those, and the queue read is not tried for them.
 - **No**: §1.1-§1.3 and the queue parts of §2/§3 are dropped; 46 is the play arrow (§1.4) alone, and the context list
@@ -59,7 +61,8 @@ The play arrow (§1.4) does not depend on the answer and can go ahead on its own
      are shown dimmed, without a tap. Rows past the context's end that the tracker can't tell apart are the only
      case where a tap plays the playlist from the top; say so in the code.
 3. **A tap on a queue row** (a playlist or album context only): the new gated command `Commands.PLAY_CONTEXT_AT`
-   (argument: the row's uri), through `playAllowed` and the renderer's start, coalesced like a step. It sends the play
+   (argument: the row's uri), added to `PLAYS`, `MOVES` and `Commands.ALL`, through `refuseSpotify`/`playAllowed` and
+   the renderer's start, coalesced like a step. It sends the play
    call with `offset.uri` (what a resume does today, `PlayBody.Context(ctx, offsetUri, 0)`) and records the tapped
    track as the live track; the tracker already takes every track of the context as ours. With shuffle on, Spotify
    re-shuffles the rest, as in its own app. **An artist context's rows are display-only** (no tap, no button

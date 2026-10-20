@@ -19,7 +19,8 @@ slot, the right slot is a spacer. There is no repeat anywhere; a queue plays to 
 1. **One predicate for 49 and 50, `controlSlots(entry)`** (pure, in `Queue.kt`, tested): `SHUFFLE_REPEAT` for
    `Kind.MUSIC` (Spotify music) and for `Kind.OWN` with `resume == false` (own music keeps the shuffle it has today);
    `SKIP` (design 50's 15 s / 30 s pair) for `Kind.PODCAST`, `Kind.AUDIOBOOK` and `Kind.OWN` with `resume == true`.
-   A Spotify artist context gets `SHUFFLE_REPEAT` with shuffle hidden (Spotify picks there; repeat only). `canShuffle`
+   A Spotify artist context gets `SHUFFLE_REPEAT` with shuffle hidden (Spotify picks there; repeat only - the left
+   slot is a spacer, as today's non-shuffle rows have). `canShuffle`
    follows the predicate. **This overrides 26c's "No shuffle" for Spotify music** (`26c-spotify.md` §4.2; music/
    CLAUDE.md "No shuffle (every Spotify entry resumes)"): the user's call, 2026-10-20; both texts change in the same
    commit. Design 50 §1.1 refers to this predicate.
@@ -46,11 +47,13 @@ slot, the right slot is a spacer. There is no repeat anywhere; a queue plays to 
    (`SdkState.kt:51`) and the tracker's `ShuffleOrRepeat` outcome (`SpotifyTracker.kt:385-392`) become "differs from
    wanted", not "on", and the renderer sends `PUT shuffle`/`repeat` (`needSettings`) whenever a state differs from what
    we last set. That also covers the next list-mode play after a context with them on (the account setting persists).
-6. **Spotify, list mode**: shuffle shuffles our window on the phone through `tracker.reorder` (the existing path from
-   design 39's flip, which must stop being a no-op for Spotify); "ours" is not widened - only our window's expected
+6. **Spotify, list mode**: shuffle shuffles our window on the phone through `tracker.reorder` (`SpotifyRenderer.reorder`, :479,
+   already re-feeds the tracker and marks the window stale - its stale "no shuffle for Spotify, §4.2" comment goes; the
+   service's shuffle path must call `renderer.reorder` for Spotify as the flip does); "ours" is not widened - only our window's expected
    current/next stay ours. Repeat-one = Spotify's `repeat=track` (the SDK repeats, no re-send). Repeat-all = a gated
    `NewWindow` from the first track when the last ends, decided BEFORE `Ended`/`clear_state` (the end rule checks the
-   repeat mode first), with no audible jump, and only for a play the kid wants now (`playWhenReady && playAllowed`).
+   repeat mode first), with no audible jump, and only for a play the kid wants now (`playWhenReady && playAllowed`, and never after a pause by the kid, the sleep
+   timer or a call - a `PauseCause` other than the natural end).
 7. **Spotify, context mode**: Spotify's own API is set to the wanted values (`PUT /me/player/shuffle?state=`,
    `PUT /me/player/repeat?state=off|context|track`; `SpotifyApi.shuffle`/`repeat` exist). With repeat on, the end rules
    never read a repeating track as the context's end: the tracker's `Ended` and `contextEnd` (N1, `SpotifyTracker.kt:
