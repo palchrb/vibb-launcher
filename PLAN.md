@@ -822,21 +822,16 @@ findings, merge to `main`, full suite once.
   "i går 14:50", "15. okt 14:02" (`display_time`, a clock on every row, not only in `title`) - on Requests and on the
   Activity log. (3) `device_commands` older than 30 days are pruned by `retention::prune` like events and locations
   (never a waiting one). (4) The Activity log is where the commands' history lives, with the same clock words.
-- **Design 42: the clock on the lock - a timer tile like iPhone's, from the system clock alone** (the user, 2026-10-20:
-  "ideelt sett en tile slik som iphone har i dag, som viser nedtelling etc og en knapp for å slå av og på ... når man
-  trykker på den så vil den i såfall åpne appen"; and "bruker systemklokken for å ikke skape noe mulige
-  angrepsflater" - no Fossify exemption, no hosted widgets). Decided: (1) a next-alarm line on the glance page from
-  `AlarmManager.getNextAlarmClock()` ("Alarm 07:00", only when the creator is the system clock app, as the PIN lock's
-  exemption already requires); (2) a tile in the music tile's style while the system clock has an ongoing timer or
-  stopwatch notification (the lock's notification listener reads it already for the glance rows): the remaining time
-  counted down locally from the notification's chronometer base (`when`, `EXTRA_CHRONOMETER_COUNT_DOWN`), the title
-  ("Timer", "Stoppeklokke"), and at most two buttons that are the notification's own actions (Pause/Resume, Stop) fired
-  through their `PendingIntent` - no app opens, nothing the lock didn't already allow; a tap on the tile itself goes
-  the glance rows' way: the keypad first, then the clock app (`GlanceOpener`). The tile goes when the notification
-  goes. Nothing is drawn from another app's views (no `AppWidgetHost`): the tile is our text and our buttons. Fits
-  `glanceFit` like the time-rule card (PLAN "A time rule shows as a card"). Emulator: Google's clock (system);
-  Jelly Star: its clock package to be checked (the alarm exemption needs it). Launcher round with 41 and the lock
-  tile's flicker; a design note first.
+- **Design 42: the clock on the lock - Fossify Clock's timer tile and the next alarm** (the user, 2026-10-20; probed
+  the same day: Google's clock draws its timer in a custom view with no readable text, Fossify Clock posts the
+  remaining time as the notification's title every second and sets its alarms with `setAlarmClock`; its stopwatch
+  posts nothing). Decided: Fossify Clock (`org.fossify.clock`, from the catalog, pinned package + signer, no internet
+  permission) is the catalog's clock app - "om fossify oppsettet vil fungere likt over alt og for alle telefoner":
+  it does, the catalog installs the same APK everywhere. The lock's alarm exemption widens by that one pinned app;
+  a next-alarm line ("Alarm tor 07:00"); a timer tile in the music tile's style with the countdown parsed from the
+  title and smoothed locally, no buttons (the notification has none), a tap = the keypad, then Fossify; no stopwatch
+  tile. `docs/design/42-lock-clock.md` (rewritten). Launcher round 6, implementer B after its glance work.
+
 - **Design 46: a context-mode playlist shows what is coming, and the kid picks a track** (the user, 2026-10-20: "se hele
   playlisten slik den er, og så velge en konkret sang"; not the queue as such). CORRECTED 2026-10-20: the whole list is
   NOT readable for exactly these playlists - Spotify's development mode lists a playlist's items only to its owner or a
