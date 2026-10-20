@@ -834,7 +834,12 @@ findings, merge to `main`, full suite once.
   first play after an idle pause takes a few seconds (the web player is released after a pause and reloads: SDK page,
   token, `ready`, transfer, play) - expected; holding the web player longer on Wi-Fi + charger is a battery trade-off to
   weigh, not a bug. Music app (+ the queue call); design note, the usual process; the behaviour reference stays vibb's
-  list. Music round after stable 0.4.0's blockers.
+  list. Also in 46 (the user, 2026-10-20: "den viser et lite play tegn på alle storytel bøker og podcaster - men
+  ikke på spotify tiles"): the carousel's play mark and progress bar show for a started entry that resumes
+  (`entryUi`: `entry.resume && started(...) && !isSpotifyContext`), and a context entry is left out by 26c §5.9 because
+  it has no list to measure progress through - so every one of the user's (parent-owned, context-mode) playlists shows
+  no mark although it was started. Change: a context entry with a stored live track shows the play mark (started)
+  and no progress bar; a list-mode Spotify entry already follows the rule. Music round after stable 0.4.0's blockers.
   **46b - the cheaper road to the whole list: a reader account** (2026-10-20, the user: "er du helt sikker på at vi
   ikke klarer å hente hele listen?"). Design 26c decision 1 says the code already allows it: "N accounts, one bound per
   phone, any of them a reader" - the parent's account is left out by the user's own choice at the time ("ingen grunn
