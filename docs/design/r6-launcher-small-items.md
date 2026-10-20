@@ -37,6 +37,13 @@ again - a full page re-layout two or three times per tap, visible as the whole c
 - Callbacks within one frame coalesce: a posted render (`Handler.post` with a pending flag, or
   `Choreographer.postFrameCallback`), so two or three session messages per tap draw once.
 - Design 42's clock tile follows the same path (its own `render()`, the fit only when it comes or goes).
+- **The tile shows the time** (the user, 2026-10-20: "kunne lagt inn hvor man er (timestamp) og hvor lang episoden
+  er i progress baren på locked screen? vi viser jo den på de andre kortene"): a small line under the progress bar,
+  "4:48 · 25:36" (`clockText(position)` and the duration; a live stream or an unknown duration: the position
+  alone), in the row-sub tone, ticking with the bar once a second while playing (the existing ticker), on the full
+  tile and the compact tile (the compact one in the same line as its progress, when the fit allows - `glanceFit`'s
+  `tileFull`/`tileCompact` terms grow by the line). Today the text exists only as the bar's `contentDescription`;
+  it stays there too.
 
 Tests: a JVM test of the coalescer (three calls in one frame = one render); `GlanceFitTest` unchanged (the maths is
 untouched); `LockGlanceGuardTest` unchanged. Device check: the recording method of 2026-10-20 (`ffmpeg` scene changes
