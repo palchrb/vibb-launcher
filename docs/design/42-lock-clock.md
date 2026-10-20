@@ -38,8 +38,17 @@ ongoing), channel "Stopwatch v2", two actions. So the time lives inside a foreig
 with a countdown and the notification's buttons cannot be built against the system clock without rendering another
 app's view, which this design refuses.** What stands: §0's alarm line (AlarmManager, no notification involved) and,
 if the user wants it, a plain tile "Timer går" / "Stoppeklokke går" told apart by the channel id ("Timers v2" /
-"Stopwatch v2"), no time, no buttons, a tap the keypad-then-clock-app way. The user decides between the alarm line
-alone and the alarm line plus the plain tile; §1.1-1.3 and §1.5's countdown parts are void either way.
+"Stopwatch v2"), no time, no buttons, a tap the keypad-then-clock-app way. The user's answer (2026-10-20): Fossify Clock is welcome
+"om fossify oppsettet vil fungere likt over alt og for alle telefoner". So 42 turns to **the catalog's clock app**:
+Fossify Clock (`org.fossify.clock`, GitHub `FossifyOrg/Clock`, installed through the catalog with the pinned package
+and signer, the same on every phone; no internet permission). Conditions, each checked by the same probe on the
+emulator before any code: (a) its timer/stopwatch notification carries the time as text (title/text updated each
+second) and Pause/Stop actions - then §1's tile reads that text (cleaned) instead of a chronometer, ticking by the
+app's updates, not ours; (b) its alarms go through `setAlarmClock` so `getNextAlarmClock` sees them (the alarm
+line); (c) the PIN lock's alarm exemption (`PinLockRuntime.systemClockPackage`, FLAG_SYSTEM only today) is widened to
+one more package: the catalog's clock app, only when the catalog's pinned signer matches the installed one - the
+same mechanism, one more package, decided by the server's catalog (a `clock_app` flag on the tracked app, in the
+policy). The user installs Fossify through the Apps tab and runs the probe; the note is rewritten after it.
 
 ## 1. Decisions
 
