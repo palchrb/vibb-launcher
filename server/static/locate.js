@@ -163,16 +163,33 @@
                 var link = e.target && e.target.closest ? e.target.closest("a[data-span]") : null;
                 if (!link) return;
                 storeSpan(storage, link.getAttribute("data-span"));
-                // The Locations page opens again with the span (the link); Locate redraws here.
-                if (listPage) return;
                 e.preventDefault();
+                // The Locations page opens again with the span, in place of this history entry
+                // (Back goes to Locate, not through the spans); Locate redraws here.
+                if (listPage) {
+                    win.location.replace(link.getAttribute("href"));
+                    return;
+                }
                 choose(link.getAttribute("data-span"));
             });
         }
 
         // A Locations row: the map into view (inside the page's scroller), that fix on it.
+        // The map's top goes to the top of <main>'s padding (under the status bar), by an offset
+        // in the scroll itself: scroll-margin-top needs Safari 14.1, the floor is 14.0.
+        function mapIntoView() {
+            var main = doc.querySelector("main");
+            var style = main && win.getComputedStyle ? win.getComputedStyle(main) : null;
+            if (style && (style.overflowY === "auto" || style.overflowY === "scroll")) {
+                main.scrollTop += box.getBoundingClientRect().top - main.getBoundingClientRect().top -
+                    (parseFloat(style.paddingTop) || 0);
+            } else if (box.scrollIntoView) {
+                box.scrollIntoView({ block: "start" });
+            }
+        }
+
         function showFix(row) {
-            if (box.scrollIntoView) box.scrollIntoView({ block: "start" });
+            mapIntoView();
             var at = [parseFloat(row.getAttribute("data-lat")), parseFloat(row.getAttribute("data-lng"))];
             if (isNaN(at[0]) || isNaN(at[1])) return;
             map.setView(at, Math.max(map.getZoom() || 0, 16));

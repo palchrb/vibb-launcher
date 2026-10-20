@@ -609,6 +609,13 @@ async fn each_recent_lists_its_own_commands_and_cancels_back_to_it() {
             .unwrap()
             .contains("data-flash=\"recent\">Cancelled. The phone will never get it.")
     );
+    // The cancelled Lock again is Today's answer now, so Recent leaves it out (one row per command
+    // on the page, qa-r5-a-code N2); the waiting ones keep their row and Cancel.
+    let today = &summary[summary.find("<section id=\"today\"").expect("Today")..];
+    assert!(today.contains("data-answer=\"Lock again\""), "{today}");
+    let recent = recent_of(&summary).unwrap();
+    assert!(!recent.contains("data-command=\"end_windows\""), "{recent}");
+    assert!(recent_row(recent, "start_pause").contains(">Cancel</button>"));
     // Too late now; a `back` that isn't known (or none) goes to Locate.
     for fields in [&[("back", "https://evil.example")][..], &[][..]] {
         let res = app

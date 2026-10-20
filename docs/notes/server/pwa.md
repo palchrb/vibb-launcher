@@ -89,7 +89,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   column; `overscroll-behavior-y: contain`), full width, the 720 px column (480 px `.container-narrow`) from its side
   padding `max(16px, inset, calc((100% - 720px) / 2 + 16px))` - the same 688 px of content as before. The tab bar is a
   plain flex child (`flex: none; order: 1`, after `main` on screen, first in the source as before); no `position:
-  fixed` anywhere (`shell::the_app_shell_scrolls_main_not_the_document`). The bottom padding is 16 px.
+  fixed` anywhere (`shell::the_app_shell_scrolls_main_not_the_document`). The bottom padding is 16 px under the bar (`.tab-bar ~ .container`), 16 px + the home indicator's inset on a page without it (`music_spotify_done`). The editor bar's `top: -8px` and `main`'s `padding-top: calc(8px + inset)` go together (the shell test pins both).
 - **The auth pages opt out**: `<body class="auth-page">` (login, 2FA, change password) keeps the document scroll
   (`height: auto; overflow: visible`), so a card taller than the screen with the keyboard up stays reachable.
 - **Double-tap zoom off, pinch kept**: `touch-action: manipulation` on `main` and `.tab-bar` - a scroller resets an
@@ -111,7 +111,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - `auto-reload.js`, `install-now.js` (their reload record) and `music-cards.js` (its scroll anchoring) read and scroll
   `main` the same way. Tests: `jstest/scroll-restore.test.js` (every restore case against the window and against a
   `main` scrolled to 300 that must leave the window alone; the place record, the fallback, the cap, the guard),
-  `auto-reload.test.js`, `install-now.test.js`, `shell::the_app_shell_scrolls_main_not_the_document`.
+  `auto-reload.test.js`, `install-now.test.js`, `music-cards.test.js`, `shell::the_app_shell_scrolls_main_not_the_document`.
 
 ## The PWA's times, connection state and Attention (design 31 step 2, `docs/design/31-pwa-redesign.md` §3.8, §3.10)
 
@@ -472,7 +472,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 - **Each Recent its own commands**: `locate::recent(state, device, kinds, back, cancel, zone, now)` reads the 10
   newest of `kinds`; Locate shows `LOCATE_KINDS` (locate, ring, stop_ring, lock, wipe), the phone's summary
-  (`device_detail.html`, a `#recent` right under `#quick`, shown once it has a row or a cancel line) shows
+  (`device_detail.html`, a `#recent` right under `#quick`, shown once it has a row or a cancel line; the row Today's answer already shows is left out unless it can still be cancelled) shows
   `OVERRIDE_KINDS` (end_windows, start_pause, allow_blocked). Install Now's row stays on the launcher's app page
   (`install_now::install_row`). One macro, `partials/recent.html` (`recent_group::show`), renders both; its Cancel
   posts a hidden `back` (`summary` → `/devices/{id}?cancel=…#recent`, anything else → `/devices/locate?device={id}&
@@ -481,7 +481,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `<a role="radio" aria-checked>` above the map on both pages, links with `?span=` (Locate's with `#location`) as the
   no-JS fallback; the server renders the count and the list for `?span=` (any other value is 12). `static/locate.js`
   remembers it per browser (`localStorage` `handy-locate-span`; the address's span wins and is remembered): on Locate it
-  redraws in place (`preventDefault`, nothing to save, nothing to jump), on the Locations page its link opens the page
+  redraws in place (`preventDefault`, nothing to save, nothing to jump), on the Locations page it opens the page (`location.replace`: Back goes to Locate, not through the spans)
   with the span (the server words and pages the rows), and a remembered span other than the rendered one reopens it.
 - **The "Locations" row** under the map's group: the count in the span ("14 in the last 12 hours", "3 kept", "None
   yet", "0 in the last 12 hours · newest 3 days ago" - `locate::locations_value`, worded the same by `locate.js`
@@ -490,7 +490,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   pick, the map, then every fix of the span newest first, 200 a page, "Show older" with `before=<captured_at>,<id>`
   (URL-encoded; `captured_at DESC, id DESC`, fixes arrive out of order) and "Newest" on an older page; each row the
   time as `Zone::at` (exact in `title`) and "± 25 m" / "accuracy unknown". A row's tap (JS: `role=button`,
-  `tabindex`, Enter/Space) scrolls the map box into view in `main` (`scroll-margin-top` clears the status bar), then
+  `tabindex`, Enter/Space) scrolls `main` so the map box sits at its top padding, under the status bar (an offset in the scroll: `scroll-margin-top` needs Safari 14.1), then
   pans to the fix with a popup of its words. **No-store** (`admin_auth::no_store_path` `["devices", _,
   "locations"]`): it holds every kept fix. Nothing posts; 404 for an unknown phone, 500 on a failed read.
 - **`locations.json?since=<hours>`**: the span's points oldest first (`captured_at ASC, id ASC`); when none is that

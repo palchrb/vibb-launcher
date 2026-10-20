@@ -123,7 +123,14 @@ Deviations:
   other than the rendered one reopens it once: the rows are worded in the server's zone (`Zone::at`) and paged by the
   server, which the script can't redo from `locations.json`. Locate's pick redraws in place as designed.
 - **The summary's Recent shows once it has a row (or a Cancel line)**: "Nothing asked yet." on every phone's
-  summary would be noise. Today keeps today's answers as before.
+  summary would be noise. Today keeps today's answers as before, and Recent leaves out the row Today's answer
+  already shows (that command's newest) unless it can still be cancelled - only Recent has Cancel (code QA N2;
+  filtering Recent was less code than reworking Today's answer card and its tests).
+- **The Locations page's pick replaces the history entry** (`location.replace`, code QA N1): Back goes to Locate,
+  not through the spans.
+- **A Locations row's tap scrolls `main` by an offset** that puts the map's top at `main`'s top padding (under the
+  status bar); `scroll-margin-top` needs Safari 14.1 and the floor is 14.0 (code QA N5). A page whose window scrolls
+  uses `scrollIntoView`.
 - **Small additions**: "Newest" on an older Locations page (the inbox's shape); All kept reads "3 kept"; Locate's
   no-JS span links carry `#location` (they land at the map, not the top); the Update Location wait polls
   `locations.json?since=1` (the newest is last either way) instead of every kept fix.

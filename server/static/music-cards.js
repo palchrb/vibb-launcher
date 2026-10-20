@@ -4,8 +4,26 @@
 // focused button) is never touched, and the view is kept still: the top of the first visible card
 // is noted before a swap and the page is scrolled by the difference afterwards (iOS Safari has no
 // scroll anchoring). The page works without this - a reload shows the same.
-(function () {
+// Run the scroll's test: node --test jstest/music-cards.test.js
+(function (root) {
     "use strict";
+
+    // The view kept still by `dy`: in the app shell (design 43) <main> scrolls, never the window.
+    function scrollBy(win, dy) {
+        var main = win.document.querySelector("main");
+        var overflow = main ? win.getComputedStyle(main).overflowY : "";
+        if (overflow === "auto" || overflow === "scroll") {
+            main.scrollTop += dy;
+        } else {
+            win.scrollBy(0, dy);
+        }
+    }
+
+    if (typeof module !== "undefined" && module.exports) {
+        module.exports = { scrollBy: scrollBy };
+        return;
+    }
+
     var EVERY_MS = 3000;
     var FOR_MS = 5 * 60 * 1000;
     var started = Date.now();
@@ -37,17 +55,6 @@
         return null;
     }
 
-    // In the app shell (design 43) <main> scrolls, not the window.
-    function scrollBy(dy) {
-        var main = document.querySelector("main");
-        var overflow = main ? getComputedStyle(main).overflowY : "";
-        if (overflow === "auto" || overflow === "scroll") {
-            main.scrollTop += dy;
-        } else {
-            window.scrollBy(0, dy);
-        }
-    }
-
     function swap(cards) {
         var anchor = firstVisible();
         var before = anchor ? anchor.getBoundingClientRect().top : 0;
@@ -63,7 +70,7 @@
         }
         if (anchor) {
             var after = anchor.getBoundingClientRect().top;
-            if (after !== before) scrollBy(after - before);
+            if (after !== before) scrollBy(root, after - before);
         }
     }
 
@@ -83,4 +90,4 @@
     }
 
     setTimeout(tick, EVERY_MS);
-})();
+})(this);

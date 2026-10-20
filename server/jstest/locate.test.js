@@ -201,7 +201,9 @@ test("on the Locations page the pick's link opens the page; a remembered span re
     await settle();
     let prevented = false;
     page.pick.listeners.click({ target: page.links[1], preventDefault: () => { prevented = true; } });
-    assert.ok(!prevented, "the link opens the page with its span");
+    // The page opens with its span in place of this entry: Back goes to Locate (qa-r5-a-code N1).
+    assert.ok(prevented, "no new history entry");
+    assert.deepStrictEqual(page.replaced, ["/x?span=24"]);
     assert.strictEqual(page.store.get(SPAN_KEY), "24");
     const remembered = fakePage({ box: { "data-list": "" }, stored: "24" });
     assert.strictEqual(install(remembered.win, fakeLeaflet()), null);
@@ -218,6 +220,7 @@ test("a Locations row scrolls the map into view, then pans to its fix with its w
     assert.strictEqual(row.getAttribute("role"), "button");
     assert.strictEqual(row.getAttribute("tabindex"), "0");
     row.listeners.click();
+    // No <main> scroller (a page whose window scrolls): scrollIntoView.
     assert.deepStrictEqual(page.scrolled, [{ block: "start" }]);
     const after = L.calls.slice(L.calls.findIndex((c) => c[0] === "popupAt") - 1);
     assert.deepStrictEqual(after, [
@@ -230,6 +233,23 @@ test("a Locations row scrolls the map into view, then pans to its fix with its w
     row.listeners.keydown({ key: "Enter", preventDefault: () => { prevented = true; } });
     assert.ok(prevented);
     assert.strictEqual(page.scrolled.length, 2);
+});
+
+// In the shell the map's top goes to the top of <main>'s padding (under the status bar) by an
+// offset in the scroll, not scroll-margin-top (Safari 14.1; the floor is 14.0).
+test("in the shell a Locations row scrolls <main> to put the map under its top padding", async () => {
+    const page = fakePage({ box: { "data-list": "" }, fixes: [["1", "2", "t"]] });
+    const main = { scrollTop: 900, getBoundingClientRect: () => ({ top: 0 }) };
+    page.mapBox.getBoundingClientRect = () => ({ top: 60 - (main.scrollTop - 900) - 900 });
+    const query = page.win.document.querySelector;
+    page.win.document.querySelector = (selector) => (selector === "main" ? main : query(selector));
+    page.win.getComputedStyle = () => ({ overflowY: "auto", paddingTop: "55px" });
+    install(page.win, fakeLeaflet());
+    await settle();
+    page.fixRows[0].listeners.click();
+    // The box was 840 px above the screen's top: it now sits 55 px down, at main's padding.
+    assert.strictEqual(main.scrollTop, 900 - 840 - 55);
+    assert.deepStrictEqual(page.scrolled, [], "no scrollIntoView");
 });
 
 test("no map box or no Leaflet: nothing happens", () => {

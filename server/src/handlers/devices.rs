@@ -1605,7 +1605,7 @@ async fn render_device(
 
     // Recent: the override commands' rows (design 44 §1.2); a failed read is no page, never an
     // empty list that isn't true.
-    let recent = match crate::handlers::locate::recent(
+    let mut recent = match crate::handlers::locate::recent(
         state,
         id,
         crate::handlers::locate::OVERRIDE_KINDS,
@@ -1631,6 +1631,16 @@ async fn render_device(
     relock.answers.retain(|a| {
         a.state == crate::window_relock::AnswerState::Waiting || zone.is_today(a.at, now)
     });
+    // An answer Today shows is its command's newest; Recent leaves that row out - the same
+    // command twice on one page (qa-r5-a-code N2) - unless it can still be cancelled, which only
+    // Recent offers. Rows are newest first, so the first of the label is that command.
+    for answer in &relock.answers {
+        if let Some(at) = recent.rows.iter().position(|row| row.label == answer.label)
+            && recent.rows[at].cancel_id.is_none()
+        {
+            recent.rows.remove(at);
+        }
+    }
     let paused = latest.as_ref().is_some_and(|s| s.restrictions_paused);
     let done = query
         .get("done")

@@ -139,8 +139,10 @@ the scroller (`overscroll-behavior-y: contain` on `main` stops the rubber band f
 2. A quick double tap on a tab, and on a row deep in a long page: no zoom; a pinch still zooms.
 3. A saved form (Device › Home's switches, Lock › Parent PIN, a group far down Device › Time) never jumps - the
    standing rule.
-4. Back from a phone's page to the long Devices list lands at the place, also when the list's address carries a
-   `#group`; a reload of a long page lands at its place.
+4. A history Back (the browser's Back, Android's system back, a back swipe where the platform has one) from a
+   phone's page to the long Devices list lands at the place, also when the list's address carries a `#group`; a
+   reload of a long page lands at its place. The page's own "‹ Devices" link is a plain navigation and opens the
+   list at the top - by design, as before the shell.
 5. Login with the keyboard up on the iPhone: the card reachable; Time rules' last field with the keyboard up, then the
    keyboard down and a scroll: no offset bar.
 6. Desktop (the Pi's Chromium, a wide and a narrow window): the scrollbar at the window's edge, the wheel working over
@@ -185,14 +187,21 @@ Deviations, each measured or found while building:
 - **The guard** runs wherever `main` is the scroller (not by `body.auth-page`): the auth pages and a page without
   `main` scroll the window themselves.
 - **`music-cards.js` scrolled the window** (`window.scrollBy`, its anchoring when a card grows; §2.3 missed it): it
-  scrolls `main` now (`?v=2` in `music.html`, `music_entry.html`). There are no horizontal card scrollers in
-  `style.css`, so `touch-action` is on `main` and `.tab-bar` only.
+  scrolls `main` now (`music.html`, `music_entry.html`; `jstest/music-cards.test.js`). There are no horizontal card
+  scrollers in `style.css`, so `touch-action` is on `main` and `.tab-bar` only.
+- **A page without the tab bar** (`music_spotify_done`) keeps the home indicator's inset under its content
+  (`calc(16px + inset)`); under the bar (`.tab-bar ~ .container`) it is 16 px.
+
+After the code QA (`qa-r5-a-code.md`): `shell::the_app_shell_scrolls_main_not_the_document` pins the editor bar's
+`top: -8px` together with `main`'s `padding-top: calc(8px + inset)` (L1) and matches `position:fixed` with or without
+the space (N3); the music cards' anchoring has a jstest (L2); check 4 names a history Back (L3).
 
 Device checks owed (the user; §5): 1 the bar still after > 10 min in the background on Device › Time; 2 no
 double-tap zoom on a tab or a deep row, pinch still zooms; 3 a save never jumps (Device › Home, Lock › Parent PIN, a
-low group on Device › Time); 4 Back from a phone to a long Devices list (also with a `#group` in its address) and a
-reload land at the place; 5 login with the keyboard up, Time rules' last field with the keyboard up and down, no
-offset bar; 6 desktop: the scrollbar at the window's edge, the wheel over the margins, the column steady, the
-editor bar flush with the column; 7 the Locate map drags without the page scrolling. Plus: **the editor bar sticks
-right under the status bar on the iPhone** (WebKit's sticky offset inside a padded scroller, assumed the same as
-Chromium's).
+low group on Device › Time); 4 a history Back (the browser's or the system's back, not the page's "‹" link, which
+opens at the top by design) from a phone to a long Devices list (also with a `#group` in its address) and a reload
+land at the place; 5 login with the keyboard up, Time rules' last field with the keyboard up and down, no offset
+bar; 6 desktop: the scrollbar at the window's edge, the wheel over the margins, the column steady, the editor bar
+flush with the column; 7 the Locate map drags without the page scrolling. Plus: **on Device › Time with a long rule
+list, scrolled, the editor bar sits right under the status bar - no gap above it - and Save is not covered**, also in
+landscape (WebKit's sticky offset inside a padded scroller, assumed the same as Chromium's).

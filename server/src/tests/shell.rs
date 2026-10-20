@@ -791,7 +791,8 @@ fn the_app_shell_scrolls_main_not_the_document() {
             .collect::<Vec<_>>()
             .join(" ")
     };
-    assert!(!css.contains("position: fixed"), "a fixed box again");
+    let compact: String = css.split_whitespace().collect();
+    assert!(!compact.contains("position:fixed"), "a fixed box again");
     let body = block("body");
     for needle in [
         "height: 100vh; height: 100dvh;",
@@ -817,6 +818,15 @@ fn the_app_shell_scrolls_main_not_the_document() {
         !main.contains("max-width"),
         "the scroller spans the window: {main}"
     );
+    // The editor bar sticks inside `main`, and a sticky offset counts from inside the scroller's
+    // padding: its `top: -8px` cancels exactly the 8 px above the status bar's inset in main's
+    // `padding-top`, so it sits right under the status bar. Change one, change the other.
+    assert!(
+        main.contains("padding-top: calc(8px + env(safe-area-inset-top, 0px));"),
+        "{main}"
+    );
+    let editor = block(".editor-bar");
+    assert!(editor.contains("top: -8px;"), "{editor}");
     let bar = block(".tab-bar");
     for needle in ["flex: none;", "order: 1;", "touch-action: manipulation;"] {
         assert!(bar.contains(needle), ".tab-bar: {needle} in {bar}");
