@@ -13,6 +13,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
@@ -45,6 +46,21 @@ class HomeGridAdapter(
     private var metrics: GridMetrics = gridMetrics(MOCKUP_CONTENT_DP, 3)
     private var ink: InkChoice = WallpaperStore.state.ink
 
+    /** Stable ids per [gridTileId], handed out once per adapter (never a hash: ids must not clash). */
+    private val ids = HashMap<String, Long>()
+
+    init {
+        setHasStableIds(true)
+    }
+
+    override fun getItemId(position: Int): Long = ids.getOrPut(gridTileId(tiles[position])) { ids.size.toLong() }
+
+    /**
+     * Launcher round 7 §4 (Fossify's drawer): one tile updates, not the grid - DiffUtil over the
+     * tiles' ids ([gridTileId]) and [tileChange], a badge-only change as the [BADGE] payload. New
+     * sizes or ink (and the first list) rebind every tile, as before. Home has no item animator,
+     * so nothing moves.
+     */
     fun submit(
         tiles: List<GridTile>,
         infos: Map<String, AbstractDetailedAppInfo>,
@@ -52,12 +68,34 @@ class HomeGridAdapter(
         metrics: GridMetrics,
         ink: InkChoice,
     ) {
+        val oldTiles = this.tiles
+        val oldIcons = this.icons
+        val everything = oldTiles.isEmpty() || metrics != this.metrics || ink != this.ink
         this.tiles = tiles
         this.infos = infos
         this.icons = icons
         this.metrics = metrics
         this.ink = ink
-        notifyDataSetChanged()
+        if (everything) {
+            notifyDataSetChanged()
+            return
+        }
+        fun iconOf(tile: GridTile, map: Map<String, Bitmap>) = (tile as? GridTile.App)?.let { map[it.app.key] }
+        fun change(oldPosition: Int, newPosition: Int): TileChange {
+            val old = oldTiles[oldPosition]
+            val new = tiles[newPosition]
+            return tileChange(old, new, sameIcon = iconOf(old, oldIcons) === iconOf(new, icons))
+        }
+        DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+            override fun getOldListSize() = oldTiles.size
+            override fun getNewListSize() = tiles.size
+            override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int) =
+                gridTileId(oldTiles[oldItemPosition]) == gridTileId(tiles[newItemPosition])
+            override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int) =
+                change(oldItemPosition, newItemPosition) == TileChange.SAME
+            override fun getChangePayload(oldItemPosition: Int, newItemPosition: Int): Any? =
+                BADGE.takeIf { change(oldItemPosition, newItemPosition) == TileChange.BADGE }
+        }, false).dispatchUpdatesTo(this)
     }
 
     inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -137,6 +175,26 @@ class HomeGridAdapter(
         KidAvatars.bindBadge(holder.badge, 0)
     }
 
+    /** A badge-only change ([TileChange.BADGE]): the badge and the description, nothing else. */
+    override fun onBindViewHolder(holder: ViewHolder, position: Int, payloads: MutableList<Any>) {
+        val tile = tiles[position]
+        if (tile !is GridTile.App || payloads.isEmpty() || payloads.any { it != BADGE }) {
+            onBindViewHolder(holder, position)
+            return
+        }
+        bindAppBadge(holder, tile)
+    }
+
+    private fun bindAppBadge(holder: ViewHolder, tile: GridTile.App) {
+        val context = holder.itemView.context
+        KidAvatars.bindBadge(holder.badge, tile.badge)
+        holder.itemView.contentDescription = if (tile.badge > 0) {
+            context.resources.getQuantityString(R.plurals.app_unread, tile.badge, tile.app.label, tile.badge)
+        } else {
+            tile.app.label
+        }
+    }
+
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val context = holder.itemView.context
         holder.applyMetrics(metrics)
@@ -168,14 +226,14 @@ class HomeGridAdapter(
                     holder.icon.setImageDrawable(null)
                 }
                 holder.label.text = tile.app.label
-                KidAvatars.bindBadge(holder.badge, tile.badge)
-                holder.itemView.contentDescription = if (tile.badge > 0) {
-                    context.resources.getQuantityString(R.plurals.app_unread, tile.badge, tile.app.label, tile.badge)
-                } else {
-                    tile.app.label
-                }
+                bindAppBadge(holder, tile)
             }
         }
+    }
+
+    private companion object {
+        /** The payload of a badge-only change. */
+        const val BADGE = "badge"
     }
 }
 

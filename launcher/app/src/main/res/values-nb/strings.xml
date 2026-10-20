@@ -3,7 +3,7 @@
 <resources>
     <!-- Home -->
     <string name="alert_cant_open_title">Kan ikke åpne appen</string>
-    <string name="alert_cant_open_message">Vil du endre innstillingene for den?</string>
+    <string name="alert_cant_open_message">Den kan ikke åpnes akkurat nå.</string>
 
     <!-- Lock screen -->
     <string name="lock_kind_school">Skole</string>

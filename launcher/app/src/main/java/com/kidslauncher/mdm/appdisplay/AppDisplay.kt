@@ -107,6 +107,12 @@ fun appIconKey(key: String, sizePx: Int, densityDpi: Int, entry: AppDisplayEntry
     return "$base|g=$icon|c=${entry.color}"
 }
 
+/** The app [key] an [appIconKey] was made from (launcher round 7 §4: an app's icons are evicted when
+ * it is updated); the cache key itself when it isn't one. */
+fun appIconKeyApp(cacheKey: String): String = cacheKey.replace(APP_ICON_KEY_SUFFIX, "")
+
+private val APP_ICON_KEY_SUFFIX = Regex("""\|\d+\|\d+(\|g=[^|]*\|c=[^|]*)?$""")
+
 /**
  * The parent's names and icons in memory: loaded from the cached policy at process start and after
  * every accepted sync (QA #2); a change reloads the app list, so Home and the drawer re-render and

@@ -28,11 +28,16 @@ object HomeFront {
 
     private val main = Handler(Looper.getMainLooper())
 
+    /** Marks our own starts (launcher round 7 §4): Home's `onNewIntent` scrolls to the top only for
+     * the kid's Home press, never for these (the lock leaving, the boot, the lock-up, an update). */
+    const val EXTRA_BROUGHT = "me.vibb.launcher.extra.HOME_BROUGHT"
+
     fun intent(context: Context, animate: Boolean = true): Intent =
         Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
             .setPackage(context.packageName)
             .addFlags(if (animate) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            .putExtra(EXTRA_BROUGHT, true)
 
     /**
      * Starts our Home; `false` if the platform refused. [animate] false: no open transition - only

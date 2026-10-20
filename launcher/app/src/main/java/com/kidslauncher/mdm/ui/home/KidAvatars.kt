@@ -27,6 +27,7 @@ import com.kidslauncher.mdm.appdisplay.AppGlyphs
 import com.kidslauncher.mdm.appdisplay.OWN_ICON
 import com.kidslauncher.mdm.apps.AppInfo
 import com.kidslauncher.mdm.appdisplay.appIconKey
+import com.kidslauncher.mdm.appdisplay.appIconKeyApp
 import com.kidslauncher.mdm.calls.ContactPhotos
 import com.kidslauncher.mdm.calls.MissedSummary
 import com.kidslauncher.mdm.calls.RuleContact
@@ -142,6 +143,22 @@ object KidAvatars {
     /** [iconKey] for a choice already read - the render keys and draws the same one (qa-14-code #1). */
     private fun iconKey(context: Context, key: String, sizePx: Int, display: AppDisplayEntry?): String =
         appIconKey(key, sizePx, context.resources.displayMetrics.densityDpi, display)
+
+    /**
+     * Launcher round 7 §4 (the Fossify comparison): drops every rendered icon of [packageName] - every
+     * size, density and parent choice - so an app that was updated (a new icon, a monochrome layer
+     * added) is drawn again on Home, the glance page and the time-rule screen. From the
+     * `LauncherApps` callbacks, before the app list reloads; cheap (a scan of the cache's keys).
+     */
+    fun evictPackage(packageName: String) {
+        try {
+            iconCache.snapshot().keys
+                .filter { packageOf(appIconKeyApp(it)) == packageName }
+                .forEach { iconCache.remove(it) }
+        } catch (e: Exception) {
+            android.util.Log.w("KidAvatars", "Icon eviction failed: ${e.javaClass.simpleName}")
+        }
+    }
 
     /** An already-rendered icon, or null. Never renders: safe on the main thread. */
     fun cachedAppIcon(context: Context, key: String, sizePx: Int): Bitmap? =

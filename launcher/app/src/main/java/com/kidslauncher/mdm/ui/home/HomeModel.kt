@@ -209,3 +209,43 @@ fun avatarStyle(contact: RuleContact, isEmergency: Boolean): AvatarStyle {
     val index = Math.floorMod(contact.id, AVATAR_PALETTE.size.toLong()).toInt()
     return AvatarStyle(text, AVATAR_PALETTE[index])
 }
+
+/** A tile's identity across grid updates (launcher round 7 §4): an app by its key, the others by kind. */
+fun gridTileId(tile: GridTile): String = when (tile) {
+    GridTile.PhoneBook -> "phone_book"
+    GridTile.Settings -> "settings"
+    is GridTile.Flashlight -> "flashlight"
+    is GridTile.App -> "app:${tile.app.key}"
+}
+
+/** What a grid update does to one tile (launcher round 7 §4): nothing, its badge only, or a rebind. */
+enum class TileChange { SAME, BADGE, FULL }
+
+/**
+ * The same tile ([gridTileId]) before and after an update: [sameIcon] = its rendered icon is the
+ * same bitmap. Only an app's unread count changed -> [TileChange.BADGE] (the badge and the
+ * description rebound, nothing else - a badge change no longer rebinds every tile and refits every
+ * label, as `notifyDataSetChanged` did).
+ */
+fun tileChange(old: GridTile, new: GridTile, sameIcon: Boolean): TileChange = when {
+    old == new && sameIcon -> TileChange.SAME
+    old is GridTile.App && new is GridTile.App && old.app == new.app && sameIcon -> TileChange.BADGE
+    else -> TileChange.FULL
+}
+
+/**
+ * Launcher round 7 §4 (Fossify's Home-press reset): a HOME intent delivered to Home scrolls the grid
+ * to the top and the contacts row to its start, and closes Home's menus, only when it is the kid
+ * pressing Home on Home - never one of our own typed starts ([broughtByUs]: the lock leaving, the
+ * boot, the dark lock-up, an update; `HomeFront.EXTRA_BROUGHT`), only when Home's content was up
+ * in front right before it ([contentWasUp]: resumed with its content and not stopped since - a
+ * press from another app finds Home stopped), and never while the content is off the window, the
+ * lock is LOCKED or a dark lock-up is marked (design 16c/32).
+ */
+fun homePressToTop(
+    broughtByUs: Boolean,
+    contentWasUp: Boolean,
+    contentShown: Boolean,
+    darkLockUp: Boolean,
+    locked: Boolean,
+): Boolean = !broughtByUs && contentWasUp && contentShown && !darkLockUp && !locked
