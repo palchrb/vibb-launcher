@@ -941,7 +941,7 @@ findings, merge to `main`, full suite once.
   `voipCandidates` (`lock/VoipCallPlan.kt`) fixes the set to Element X and Signal/Molly (the contacts' messaging apps
   while calls are managed, `KNOWN_VOIP_PACKAGES` while unmanaged). Change: the candidate set is every allowed,
   unsuspended app minus the SMS packages, the essential/dialer packages and our own family, under the same gates (calls
-  on, no no-calls time rule; none while calls are off or unknown), with a budget of 6 accepted rings per app per hour
+  on - a no-calls time rule is folded into the effective state -; none while calls are off or unknown), with a budget of 6 accepted rings per app per hour
   (over it = no ring, reported as `limited`). **Pending the user's yes to the residual** (design QA question 1): an
   allowed app that fakes a ring gets its own screen over the lock for that ring, and with the kiosk on that screen can
   open other allowed apps for the call's duration (as Element X today); strangers can ring through apps whose contacts

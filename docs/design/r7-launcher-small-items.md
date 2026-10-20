@@ -28,7 +28,8 @@ suspended packages (not allowlisted = suspended; a time rule suspends what it do
 
 1. **The candidate set is every allowed app, minus an exclusion set.** The rule is automatic (no per-app tick).
    `voipCandidates(effective: CallPolicyState, voipAllowed: Set<String>?, policyKnown: Boolean)` keeps its gates -
-   calls managed and on, or unmanaged; nothing while calls are off or `UnknownFailClosed` - and, when they pass,
+   calls managed and on, or unmanaged (`effective` already folds a no-calls time rule in, `VoipCallPlan.kt:41`);
+   nothing while calls are off or `UnknownFailClosed` - and, when they pass,
    answers `voipAllowed` instead of a fixed list. **Fallbacks** (in the pure function, so the §1.2 table is the whole
    rule): no enforced policy yet in this process (`policyKnown == false`) or `voipAllowed == null` (apps unmanaged)
    -> today's sets (the messaging apps, or `KNOWN_VOIP_PACKAGES`), so a phone before its first apply and a
@@ -84,7 +85,9 @@ suspended packages (not allowlisted = suspended; a time rule suspends what it do
    was refused by the budget since its last accepted one. **A ring is recorded only when it began while the lock mode
    was LOCKED, or when the phone locked during it** (`VoipCalls.evaluate` builds records in every mode, so a call taken
    on an unlocked phone is not "over the lock"). Kept in `VoipCalls`' CE prefs `voip_call` (`rang_v1`, package -> wall
-   ms, pruned at each write and each report; nothing but package names and times). Server: `kid_lock::LockState` gets
+   ms plus a `limited` flag per package, set by a ring the budget refused and cleared when the next ring of that
+   package is accepted; pruned at each write and each report; nothing but package names, times and that flag). The
+   budget's counts live in memory, so a restart empties them; `limited` survives in the prefs. Server: `kid_lock::LockState` gets
    `voip_rang: Vec<serde_json::Value>` with `#[serde(default)]` (missing = empty); `sanitize_lock_state` validates
    **each entry** (`valid_package_name`, an integer `last_at_ms`, a future time dropped, `limited` a bool else false),
    dedupes by package, newest first, `take(MAX_FSI_DENIED)`; **a bad entry is dropped, never the whole `lock_state`**
@@ -93,8 +96,9 @@ suspended packages (not allowlisted = suspended; a time rule suspends what it do
    (`LockNote::RangOverLock`; "... · the hourly limit stopped further rings" when `limited`; a quiet line, not a
    warning). The label is the catalog/app-display name for the package, else the package; the time is in the device's
    reported zone (`time_state.zone`), like the other device-page times. Contract: `StatusReportRequest.LockStateReport
-   .voipRang` (`LockStateReport` is built in `PinLockRuntime` only) and the server's `step10` test, one commit for
-   both directories.
+   .voipRang` (`LockStateReport` is built in `PinLockRuntime` only), the launcher's `PolicyResponseCompatTest`
+   (`status report lock_state uses the server's keys` pins the key set) and the server's `server/src/tests/step10.rs`
+   round trip, one commit for both directories.
 4. **Unchanged**: the reader reads no text (`VoipCallGuardTest`), the in-call phase's rule (an app without a
    call-category foreground notification gets the lock back after the grace, its call going on in the background -
    a known limit, noted for the device checks), the kiosk-off lock-task list (the ringing package is pinned as
@@ -113,8 +117,9 @@ non-candidate never recorded, a ring while unlocked never recorded, a ring durin
 limited ring recorded as `limited` and doing nothing else; the status field's encoding in `LockStateReport`. Server
 `kid_lock`: `voip_rang` sanitized (package names, cap, times, future time with the passed `now_ms`, `limited`), a
 malformed entry leaves the rest of `lock_state` intact (`step10.rs::lock_state_is_stored_sanitized_and_capped`), the
-card's note and its label/zone; `step10`'s lock-state round trip with the field. `PolicyResponseCompatTest` untouched
-(no policy change).
+card's note and its label/zone; `step10`'s lock-state round trip with the field. `PolicyResponseCompatTest`: `status report
+lock_state uses the server's keys` gains `voip_rang` (default `[]`); `limited` set by a refused ring, cleared by the
+next accepted one; no policy change.
 
 ### 1.3 Device checks
 
@@ -148,7 +153,9 @@ background work don't survive a force-stop.
 1. **Force-stop protection, plain code, lifted like every restriction.** Every `apply()` sets
    `setUserControlDisabledPackages(admin, pkgs)` to the **package set** = the stored catalog pins (`WindowRelock`'s
    catalog pins, package + signer, `rememberCatalogPins`: the current checked list) ∩ installed for this user
-   (`phonePackage`) ∩ installed by us (the installing package, `InstallSourceInfo.installingPackageName`, is in
+   (the `getApplicationInfo(MATCH_UNINSTALLED_PACKAGES)` + `FLAG_INSTALLED` check `phonePackage` does in
+   `MdmSyncWorker.kt` - that helper is private, so it moves to a shared place or the check is repeated in `apply()`)
+   ∩ installed by us (the installing package, `InstallSourceInfo.installingPackageName`, is in
    `OWN_PACKAGES`; the same test as the server's `installed_by_launcher`) minus the packages enforcement hides
    (`plan.hide`) minus `OWN_PACKAGES`. `TrackedAppUpdateState` is **not** used (it is keyed by the catalog id, holds no
    package, and is never pruned when an app is unchecked). A Play-installed app the catalog also names is out by the
@@ -166,7 +173,11 @@ background work don't survive a force-stop.
    and when it can't be read, as 19b does), `Option<bool>` with `serde(default, skip_serializing_if)` on
    `models.rs::InstalledApp`, kept by `cap_installed_apps` like `installer`. The app's row on the phone's Apps page
    shows a quiet "Background: unrestricted" or "Background: optimized (Android's default) - change it during a pause
-   (Settings › Apps › <app> › Battery)". No button, no command. Status contract in both directories in one commit.
+   (Settings › Apps › <app> › Battery)". No button, no command. Status contract in both directories in one commit: the launcher's `InstalledAppReportTest`
+   (new) encodes `server/testdata/installed_apps_battery.json` (a byte-identical copy in
+   `launcher/app/src/test/resources/`, the `power_report.json` pattern), the server's `cap_installed_apps` test posts
+   it and both compare the copies; the root `CLAUDE.md`'s shared-file list and the CI path lists (`launcher.yml`,
+   `server-ci.yml`) gain the fixture.
 3. **Not in this round**: any battery-exemption prompt, on the kid's screen or elsewhere (the user's call); 19b phase
    2 for the launcher itself; anything for Play-installed apps.
 
@@ -176,7 +187,8 @@ background work don't survive a force-stop.
 never a Play-installed twin, an unchecked app out), empty while `overrideActive` and in a pause, cleared when
 unmanaged; a source check that `setUserControlDisabledPackages` is called in `apply()` only, after `applyHardening`,
 inside its own try/catch. The report: `battery_exempt` for the package set only, left out for the rest and when
-unreadable. Server: `cap_installed_apps` keeps the field, the Apps page's two lines.
+unreadable; `InstalledAppReportTest` against the shared fixture. Server: `cap_installed_apps` keeps the field and
+posts the fixture, the Apps page's two lines.
 
 ### 2.3 Device checks
 
@@ -214,14 +226,14 @@ wakes the screen, through `PinLockRuntime.show(wake = true)`, which starts `PinL
 2. **Launcher, the switch**: `LauncherUi.lockWakeOnNotification: Boolean = false` (missing = off). The runtime holds
    it in a volatile read from the cached policy's `LauncherUi` at process start and after every accepted sync (as
    `GlanceStore.refreshPolicy` does).
-3. **Launcher, the wake reuses the VoIP path.** One main-thread step, `PinLockRuntime.wakeForNotice()`; no new
-   activity. `PinLockRuntime.show(context, wake = true)` is generalised to a `WakeKind` (`VOIP`, `NOTICE`) so the
+3. **Launcher, the wake reuses the VoIP path.** One main-thread step, `PinLockRuntime.noticeCame()`, which evaluates the
+   pure `noticeWakeAllowed` and, when true, calls `show(context, WakeKind.NOTICE)`; no new activity. `PinLockRuntime.show(context, wake = true)` is generalised to a `WakeKind` (`VOIP`, `NOTICE`) so the
    lock's start and the wake's start always go together (a `VoipWakeActivity` or any wake window is **never started
    alone**: over a task that is not the lock it would light a live app on a LOCKED phone, against design 32 §7's
    "lock or black"). It accepts that `show` clears `lockOnTop`: the next screen-off runs a normal lock-up (the wake's
    own pause of the lock is interactive and clears it, harmless). For `NOTICE` the wake activity's `onPause` does **not**
    call `voipWakePaused` (17b's try-detection stays untouched). The pure
-   `wakeForNotice(switchOn, mode, interactive, busy, sinceLastLockUpMs, sinceLastWakeMs, wakesThisHour, near)` says so:
+   `noticeWakeAllowed(switchOn, mode, interactive, busy, sinceLastLockUpMs, sinceLastWakeMs, wakesThisHour, near)` says so:
    the switch on, mode LOCKED, the display not interactive, not `busy` (our call, a system call, a VoIP phase, the
    emergency flow, a ringing alarm, `bootMark != Over`, the first 2 minutes after the process start), **no lock-up in
    the last 2 s** (a `lockUpAtElapsed` stamp in `lockUp`; replaces the `darkLockUp` gate, which stays true for most
@@ -245,7 +257,7 @@ wakes the screen, through `PinLockRuntime.show(wake = true)`, which starts `PinL
    `MissedCallNotifier` on its executor (`calls/MissedCallNotifier.kt:202-283`) after a successful `post(..., alert =
    true)` in `recomputeNow` - not its listeners (they fire only when `current` changes), not the boot re-send, `relearn`
    or `afterCall` updates (`alert = false`) - which posts `PinLockRuntime.noticeCame()` to the `main` handler, then the
-   same `wakeForNotice` gate. Never the music tile, the clock tile, our own notifications or anything `glanceCandidate`
+   same `noticeWakeAllowed` gate. Never the music tile, the clock tile, our own notifications or anything `glanceCandidate`
    refuses. The trigger passes no text, only "a row came".
 6. **Design 32 holds**: the lock activity itself never sets turn-screen-on; the only turn-screen-on activities are the
    existing `InCallActivity` and `VoipWakeActivity`. A refused start (BAL) is logged, not retried for that post.
