@@ -949,6 +949,22 @@ findings, merge to `main`, full suite once.
   "a CALL-category foreground notification (or Element's channel) + audio IN_COMMUNICATION": an app without it gets
   the lock back after the 15 s grace, its call going on in the background. Launcher only (+ the status field in both
   directories). Launcher round 7.
+- **Launcher round 7 §4 - small things from the Fossify Launcher comparison** (the user, 2026-10-20: "kunne du kikket
+  på kildekoden til fossify launcher og se om den gjør noe på et kløktigere vis"; the note
+  `docs/review/fossify-launcher-comparison.md`): Fossify is simpler, not cleverer - our icons, wallpaper ink, threading
+  and accessibility are ahead - but five small things are worth taking: (1) **evict an app's icons when it is
+  updated** - `appIconKey` has no version and nothing clears the cache on `onPackageChanged`, so an updated app keeps its
+  old icon on Home, the glance page and the time-rule screen until the process dies (`KidAvatars.evictPackage(pkg)`
+  from the `LauncherApps` callbacks before `loadApps()`); (2) **pressing Home on Home scrolls to the top** (an
+  `onNewIntent` on `HomeActivity`, only when its content was already up - never the lock's or boot's Home starts);
+  (3) **the home grid updates one tile** (DiffUtil with stable ids, no item animator, a badge-only payload instead of
+  `notifyDataSetChanged()`); (4) **coalesce `loadApps()`** (one job; a burst of suspend/unsuspend callbacks can finish
+  out of order today); (5) **an inherited escape**: `actions/AppAction.kt`'s "can't open" dialog's OK calls
+  `AppInfo.openSettings` (the app's details page in Settings) - reachable only in a rare fallback and blocked by the
+  kiosk, but unguarded (`KidScreensEscapeTest` doesn't scan `actions/`): drop the OK action and add the directory to the
+  scan. Not copied (deliberately): the shade fling, app shortcuts, App info/Uninstall in the menu, the widget bind and
+  resize flows, the Canvas home with folders, double-tap to lock, drawer search, `WallpaperColors` as ink. A disk icon
+  cache / per-app tone for the placeholder is the optional (M) follow-up.
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
