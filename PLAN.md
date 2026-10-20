@@ -793,6 +793,17 @@ findings, merge to `main`, full suite once.
   own (design QA + code QA), after the 0.29.5 verification; the user
   verifies on the iPhone: the bar still after > 10 min in the background, Back to a long page at its place, a saved
   form not jumping (the standing rule), no zoom on a quick double tap on a tab.
+- **Design 47: "Add from Spotify" opens on the add form; the Spotify setup behind a row** (the user, 2026-10-20:
+  "trykker på add from spotify, så kommer jeg inn i en tab som øverst viser ... settings; client id og pålogging av
+  kontoer ... add spotify link, category og 'on these phones' ... er det som burde komme opp ... Blir mye støy"). Today
+  `/music/spotify` (`music_spotify.html`) is: Your Spotify App, Children's Accounts (+ the paste flow), Add a Spotify
+  link, On these phones. Decided: `/music/spotify` = "Add a Spotify link" + "On these phones" first, then one row
+  "Spotify setup" with its value ("2 accounts", or "Not set up yet") to `/music/spotify/setup` (`music_spotify_setup.html`:
+  Your Spotify App, Children's Accounts, the paste flow, back link to the add page); when no app or no child account
+  exists, the add page shows that row on top as an attention row ("Set up Spotify first ›") and the form below it
+  disabled with the reason. Every POST keeps its own group's `#fragment` and comes back to the page that holds it (the
+  no-jump rule). Server only, small; the Music tab's "Add from Spotify" row keeps its link. Could ride in round 5's B
+  implementer or the next server round - the user decides.
 - **Design 46: a context-mode playlist shows its tracks, and the kid picks one** (the user, 2026-10-20: "se hele
   playlisten slik den er, og så velge en konkret sang"; not the queue). Today a context entry's list screen shows one
   row (design 26c §5.9, the live track, "rekkefølgen velges for deg"). Decided: for a playlist context the server reads
