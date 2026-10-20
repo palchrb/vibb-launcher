@@ -116,6 +116,12 @@ pub fn aud_of(endpoint: &str) -> Option<String> {
 }
 
 /// The endpoint's host, for log lines (never the path: it is the subscription's secret name).
+/// Apple's push service (`web.push.apple.com` and its siblings): it shows a declarative push
+/// itself, so no receipt comes from a device behind it.
+pub fn is_apple(host: &str) -> bool {
+    host == "push.apple.com" || host.ends_with(".push.apple.com")
+}
+
 pub fn host_of(endpoint: &str) -> String {
     reqwest::Url::parse(endpoint)
         .ok()
@@ -431,6 +437,14 @@ mod tests {
             format!("vapid t={jwt}, k={}", key.public)
         );
         assert!(VapidKey::from_pkcs8(b"not a key").is_none());
+    }
+
+    #[test]
+    fn apple_is_known_by_its_host() {
+        assert!(is_apple("web.push.apple.com"));
+        assert!(is_apple("push.apple.com"));
+        assert!(!is_apple("push.apple.com.example.net"));
+        assert!(!is_apple("fcm.googleapis.com"));
     }
 
     #[test]

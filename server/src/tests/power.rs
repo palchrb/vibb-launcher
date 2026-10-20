@@ -179,10 +179,7 @@ async fn a_restart_drops_the_held_off_push() {
     );
     // The off row has no delivery line (not "Not sent"): only the start's.
     let inbox = app.get_page("/notifications", &cookie).await.text();
-    assert_eq!(
-        delivery_lines(&inbox),
-        ["Pushed to iPhone · Safari, not confirmed"]
-    );
+    assert_eq!(delivery_lines(&inbox), ["Delivered to iPhone · Safari"]);
 }
 
 /// The inbox rows' delivery lines.
@@ -481,10 +478,7 @@ async fn a_newer_shutdown_supersedes_an_older_held_push() {
     assert_eq!(deliveries(&app, "phone_off").await[1].0, "accepted");
     let cookie = app.admin_cookie().await;
     let inbox = app.get_page("/notifications", &cookie).await.text();
-    assert_eq!(
-        delivery_lines(&inbox),
-        ["Pushed to iPhone · Safari, not confirmed"]
-    );
+    assert_eq!(delivery_lines(&inbox), ["Delivered to iPhone · Safari"]);
 }
 
 /// qa-38-design N4: the sender claims a row before its request - one dropped since the pass read

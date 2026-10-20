@@ -442,9 +442,13 @@ fn device_row(
     zone: &Zone,
     now: chrono::DateTime<chrono::Utc>,
 ) -> DeviceRow {
-    let shown = sub
-        .last_receipt_at
-        .map(|t| format!("Last shown {}", zone.relative(t, now)));
+    // The newer of the last receipt and the last push Apple's service accepted and shows itself.
+    let shown = match (sub.last_receipt_at, sub.last_delivered_at) {
+        (Some(r), Some(d)) if d > r => Some(format!("Last delivered {}", zone.relative(d, now))),
+        (Some(r), _) => Some(format!("Last shown {}", zone.relative(r, now))),
+        (None, Some(d)) => Some(format!("Last delivered {}", zone.relative(d, now))),
+        (None, None) => None,
+    };
     let (badge, sub_line) = match sub.health {
         Health::Ok => (("On", "badge badge-on"), shown),
         Health::NeverSent if sub.sending => {
@@ -481,7 +485,8 @@ fn device_row(
     }
 }
 
-/// One delivery of an event, for its line: status, reason, a receipt came, the device's label.
+/// One delivery of an event, for its line: status, reason (`declarative`: Apple's service shows it
+/// itself, no receipt comes), a receipt came, the device's label.
 type DeliveryState = (String, Option<String>, bool, String);
 
 /// The page's events' deliveries, by event (one query).
@@ -514,9 +519,10 @@ async fn delivery_lines(
     Ok(lines)
 }
 
-/// An inbox row's delivery line (§5.1): "Shown on iPhone · Safari", "Pushed to iPhone · Safari,
-/// not confirmed", "Pushed to 2 devices · shown on 1", "Sending", "In a summary" (its summary was
-/// accepted), "Not sent"; nothing when no push was made. A folded delivery's status is its
+/// An inbox row's delivery line (§5.1): "Shown on iPhone · Safari", "Delivered to iPhone · Safari"
+/// (Apple's service accepted a declarative push it shows itself), "Pushed to iPhone · Safari, not
+/// confirmed", "Pushed to 2 devices · shown on 1" (delivered ones counted), "Sending", "In a
+/// summary" (its summary was accepted), "Not sent"; nothing when no push was made. A folded delivery's status is its
 /// summary's ([delivery_lines]). A push a restart dropped (design 38: the held `phone_off` the
 /// next start's "restarted" replaced) or a newer shutdown superseded counts as none - the row says
 /// nothing, never "Not sent".
@@ -531,7 +537,8 @@ pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
         .copied()
         .filter(|d| d.0 == "accepted" && !folded(d))
         .collect();
-    let shown = accepted.iter().filter(|d| d.2).count();
+    let delivered = |d: &&DeliveryState| d.2 || d.1.as_deref() == Some("declarative");
+    let shown = accepted.iter().filter(|d| delivered(d)).count();
     Some(match accepted.as_slice() {
         [] if deliveries.is_empty() => return None,
         [] if deliveries.iter().any(|d| d.0 == "queued") => "Sending".to_string(),
@@ -539,7 +546,8 @@ pub fn delivery_line(deliveries: &[DeliveryState]) -> Option<String> {
             "In a summary".to_string()
         }
         [] => "Not sent".to_string(),
-        [one] if shown == 1 => format!("Shown on {}", one.3),
+        [one] if one.2 => format!("Shown on {}", one.3),
+        [one] if delivered(one) => format!("Delivered to {}", one.3),
         [one] => format!("Pushed to {}, not confirmed", one.3),
         many => format!("Pushed to {} devices · shown on {shown}", many.len()),
     })
@@ -845,6 +853,18 @@ mod tests {
             (
                 vec![d("accepted", None, false, iphone)],
                 Some("Pushed to iPhone · Safari, not confirmed"),
+            ),
+            // Apple's service shows a declarative push itself: accepted is delivered.
+            (
+                vec![d("accepted", Some("declarative"), false, iphone)],
+                Some("Delivered to iPhone · Safari"),
+            ),
+            (
+                vec![
+                    d("accepted", Some("declarative"), false, iphone),
+                    d("accepted", None, false, "Mac · Safari"),
+                ],
+                Some("Pushed to 2 devices · shown on 1"),
             ),
             (
                 vec![

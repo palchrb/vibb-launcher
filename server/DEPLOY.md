@@ -686,12 +686,15 @@ The bell and the inbox (`/notifications`) need nothing. Notifications on the par
   ("The push service refused the server's signature - check the server's clock" on Notifications). The Pi has no clock
   of its own: after a power cut it needs NTP (`timedatectl` shows "System clock synchronized: yes").
 - **`PUSH_PAYLOAD`** (optional) in `.env`: `declarative` (the default: Safari 18.4+ reads the notification from the
-  payload itself and shows it, badge included, even when the worker can't run; the worker only confirms it and sets
-  the badge - a replacement shown from the worker is accepted by iOS 26 and never displayed, found 2026-10-19) or
-  `classic` (a plain Web Push payload, the worker's `push` shows it everywhere). Chrome, Edge and Firefox treat both
-  the same. The server log's `push receipt` lines say which worker event confirmed each push
+  payload itself and shows it the moment it arrives, badge included, without running the worker - not `mutable`:
+  with that flag iOS 26 ran the worker and then displayed nothing, whether the worker replaced the notification or
+  left it alone, found 2026-10-19/20) or `classic` (a plain Web Push payload, the worker's `push` shows it
+  everywhere). Chrome, Edge and Firefox treat both the same. No receipt comes from a Safari device on the
+  declarative payload, so Apple's acceptance (201) is the delivery: the inbox says "Delivered to iPhone · Safari",
+  Getting Notifications "Last delivered …", and such a device is never "May not be showing". The server log's
+  `push receipt` lines say which worker event confirmed each push from the other browsers
   (`event=push|push-declarative|pushnotification|click`) and the worker's version; on Safari a tap on the
-  notification opens its link without the worker, so `click` receipts come from the other browsers.
+  notification opens its link without the worker.
 - **`VAPID_SUBJECT`** (optional) in `.env`: a `mailto:` or `https:` address the push services may contact about the
   server's pushes. Without it each device's own address of the PWA is sent.
 - **The key** `data/keys/vapid-p256.pk8` is made on the first start (0600) and is never backed up, like the Storytel

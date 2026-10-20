@@ -440,7 +440,8 @@ async fn the_page_carries_no_secret_and_every_form_lands() {
     }
     assert!(html.contains("<script src=\"/static/notifications.js?v=1\" defer></script>"));
     check_forms("/notifications", &html);
-    assert!(html.contains("Pushed to iPhone · Safari, not confirmed"));
+    // Apple's service shows a declarative push itself: accepted is delivered (0.29.6).
+    assert!(html.contains("Delivered to iPhone · Safari"));
 }
 
 /// §4.3, §5.3: the headers, the JWT, and the payload the browser decrypts - no `detail`.
@@ -505,7 +506,8 @@ async fn a_push_carries_its_headers_and_an_encrypted_payload() {
     .await;
     // Declarative by default (`PUSH_PAYLOAD` switches it; `push::tests::the_payload_switch`).
     assert_eq!(message["web_push"], 8030);
-    assert_eq!(message["mutable"], true);
+    // Never `mutable`: iOS 26 displays nothing after the worker ran (0.29.4/0.29.5).
+    assert!(message.get("mutable").is_none());
     let n = &message["notification"];
     assert_eq!(n["title"], "An app may read the PIN on Anna");
     assert_eq!(n["body"], "1 app with device admin");
@@ -844,13 +846,59 @@ async fn the_receipt() {
     );
 }
 
+/// Apple's service shows a declarative push itself and no receipt ever comes: its acceptance is
+/// the delivery (`reason` 'declarative'), never "may not be showing", "Last delivered" on its row
+/// (the user, 2026-10-20: 201 = delivered).
+#[tokio::test]
+async fn an_apple_acceptance_is_the_delivery() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let anna = phone(&app, "Anna").await;
+    // Three (a fourth would fold them into a summary): the "may not be showing" threshold.
+    for n in 1..=3 {
+        raise(&app, &anna.unseen_boot(n, None)).await;
+    }
+    send(&app).await;
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM push_deliveries WHERE status = 'accepted' \
+             AND reason = 'declarative' AND receipt_at IS NULL"
+        )
+        .await,
+        3
+    );
+    let inbox = app.get_page("/notifications", &cookie).await.text();
+    assert!(!inbox.contains("May not be showing"), "{inbox}");
+    assert!(inbox.contains("Delivered to iPhone · Safari"));
+    assert!(inbox.contains("Last delivered"));
+    let devices = app.get_page("/devices", &cookie).await.text();
+    assert!(!devices.contains("id=\"push-warning\""));
+    // A receipt that does come (another browser, or `PUSH_PAYLOAD=classic`) still wins the words.
+    let last = app.pushes.take().pop().unwrap();
+    assert_eq!(
+        post_receipt(&app, &receipt_of(&last, "shown"), "same-origin").await,
+        StatusCode::NO_CONTENT
+    );
+    let inbox = app.get_page("/notifications", &cookie).await.text();
+    assert!(inbox.contains("Shown on iPhone · Safari"));
+    assert!(inbox.contains("Last shown"));
+}
+
 /// §6: three pushes without a receipt, or one a day old, warn on /notifications and the Devices
-/// list; a receipt for any clears it.
+/// list; a receipt for any clears it. A browser whose worker shows the push (Firefox here - Apple's
+/// service shows it itself, [an_apple_acceptance_is_the_delivery]).
 #[tokio::test]
 async fn health_and_its_warnings() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    subscribe(&app, &cookie, ENDPOINT).await;
+    subscribe(
+        &app,
+        &cookie,
+        "https://updates.push.services.mozilla.com/wpush/v2/fake-health",
+    )
+    .await;
     let anna = phone(&app, "Anna").await;
     let warned = || async {
         let inbox = app.get_page("/notifications", &cookie).await.text();

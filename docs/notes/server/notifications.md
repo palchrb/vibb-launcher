@@ -64,7 +64,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   pushes of the normal kinds for one subscription (an urgent kind is never folded, L2) -> the newest 2 + one `summary` delivery ("New
   notifications", tag `s<id>`), the rest `dropped`/`folded`; sent one at a time, the emergency call first, then
   `Urgency: high`. Each send: TTL expired -> `failed`/`expired`; endpoint re-checked with `allowed`; a fresh 16-byte
-  receipt token (its SHA-256 stored before the request); the payload of design 35 §5.3 - `push::payload_json`: **declarative by default** (`web_push` 8030, `mutable`), plain
+  receipt token (its SHA-256 stored before the request); the payload of design 35 §5.3 - `push::payload_json`: **declarative by default** (`web_push` 8030, `app_badge`, never `mutable` since 0.29.6 - see below), plain
   with `PUSH_PAYLOAD=classic` (`Push::with_payload`; 2026-10-19: the user's iPhone showed every push and confirmed
   none, and the two forms can now be compared on one device against the `push receipt` log lines, which carry the
   worker event `e` and the worker version `v` the receipt names) - (`navigate` = the
@@ -117,7 +117,17 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   replacement carried `navigate` as an option (ServiceWorkerRegistration::showNotification: "did not include
   NotificationOptions that specify a valid defaultAction url"); and a replacement accepted (`shown: ok`) was never
   displayed. So the worker leaves the showing to the platform (0.29.5); the payload's top-level `app_badge` sets the
-  badge without the worker too. `pushnotification` (WebKit's explainer's name, fired by no shipping Safari) does the
+  badge without the worker too. **0.29.6: no `mutable` at all.** On 0.29.5 the worker ran, confirmed and badged, and
+  iOS 26 still displayed nothing: with `mutable` the result of the worker's run (WebKit: the replacement, else the
+  proposed notification) goes back through the host app to be shown, and on this iOS that step shows nothing in
+  either case, while the worker's own failure (0.29.1) made it show the proposed one. WebKit's `WebPushDaemon` shows
+  an immutable declarative push itself at once (`handleIncomingPushImpl`), no worker - the path Apple's own demos
+  use, and the one that works. So the declarative payload is immutable; the worker's declarative branch stays for a
+  WebKit that fires it; and **no receipt comes from a Safari device**: the sender marks a push Apple's service
+  accepted (`webpush::is_apple`, declarative on) with `reason = 'declarative'`, which counts as delivered -
+  `delivery_line` "Delivered to iPhone · Safari" (a receipt still says "Shown on"), `Subscription::last_delivered_at`
+  "Last delivered …", and `subscriptions()` leaves such pushes out of the unconfirmed count, so an iPhone is never
+  "May not be showing" (the user: 201 = delivered, no repeat-until-opened). `pushnotification` (WebKit's explainer's name, fired by no shipping Safari) does the
   same receipt and badge; `notificationclick` posts `clicked` and opens a same-origin path only (else `/notifications`,
   the link from `data.navigate`, else the notification's own `navigate`), steering an open window first - on Safari
   the tap on its own notification opens the link without the worker; still no `fetch` handler, no CSP change. `static/register-sw.js`

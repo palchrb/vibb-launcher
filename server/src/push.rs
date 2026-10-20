@@ -141,7 +141,7 @@ pub struct Push {
     jwts: Mutex<HashMap<(String, String), (i64, String)>>,
     /// Subscription id → when its last test push was asked for (Unix seconds).
     tests: Mutex<HashMap<i64, i64>>,
-    /// The payload's shape (`PUSH_PAYLOAD`): Safari's declarative form (`web_push` 8030,
+    /// The payload's shape (`PUSH_PAYLOAD`): Safari's declarative form (`web_push` 8030, not
     /// `mutable`, the default - the user wants to keep it) or the plain one (`classic`).
     pub declarative: bool,
 }
@@ -222,10 +222,11 @@ impl Push {
 /// `VAPID_SUBJECT` when it is a `mailto:` or `https:` URL; anything else is ignored (logged by
 /// the caller).
 /// The push's payload (design 35 §5.3). `declarative`: Safari 18.4+'s form (`web_push` 8030,
-/// `mutable`: Safari shows the notification itself and fires `pushnotification` at the worker,
-/// which posts the receipt; older Safari, Chrome and Firefox read it as plain data for `push`).
-/// `false` (`PUSH_PAYLOAD=classic`): the plain form, `push` everywhere. Switchable since 2026-10-19
-/// so the two can be compared on one iPhone against the receipt log.
+/// without `mutable`: webpushd shows the notification and sets the badge the moment the push
+/// arrives, no worker involved - the one path iOS 26 displays, 0.29.6; older Safari, Chrome and
+/// Firefox read it as plain data for `push`). `false` (`PUSH_PAYLOAD=classic`): the plain form,
+/// `push` everywhere. Switchable since 2026-10-19 so the two can be compared on one iPhone
+/// against the receipt log.
 #[allow(clippy::too_many_arguments)]
 pub fn payload_json(
     declarative: bool,
@@ -249,9 +250,10 @@ pub fn payload_json(
     });
     if declarative {
         payload["web_push"] = serde_json::json!(8030);
-        payload["mutable"] = serde_json::json!(true);
-        // Safari sets the app's badge from this itself, worker or no worker (the worker sets it
-        // too, from `data.b`; the same number).
+        // Not `mutable`: with it iOS 26 runs the worker and then displays nothing, whether the
+        // worker replaced the notification or left it alone (0.29.4, 0.29.5 on the user's iPhone;
+        // WebKit's WebPushDaemon shows an immutable one itself at once). Safari sets the app's
+        // badge from `app_badge`.
         payload["app_badge"] = serde_json::json!(unread.max(0));
     }
     payload.to_string()
@@ -768,12 +770,17 @@ async fn send_one(
                     .unwrap_or(""),
                 "a push service accepted a push"
             );
+            // Apple's service displays a declarative push itself, no worker, so no receipt will
+            // ever come: its acceptance is the delivery (`reason` 'declarative' - the user,
+            // 2026-10-20: 201 = delivered; never "may not be showing" for it).
+            let shown_by_service = state.push.declarative && webpush::is_apple(&host);
             sqlx::query(
                 "UPDATE push_deliveries SET status = 'accepted', accepted_at = ?, \
-                 http_status = ?, reason = NULL, next_try_at = NULL WHERE id = ?",
+                 http_status = ?, reason = ?, next_try_at = NULL WHERE id = ?",
             )
             .bind(db_time(now))
             .bind(status)
+            .bind(shown_by_service.then_some("declarative"))
             .bind(delivery.id)
             .execute(&state.db)
             .await?;
@@ -938,6 +945,9 @@ pub struct Subscription {
     pub id: i64,
     pub label: String,
     pub last_receipt_at: Option<DateTime<Utc>>,
+    /// The newest push Apple's service accepted and shows itself (a declarative one: no receipt
+    /// comes for it).
+    pub last_delivered_at: Option<DateTime<Utc>>,
     pub health: Health,
     /// Why the newest finished push failed ([failure_text]), with [Health::NotGettingThrough].
     pub failure: Option<String>,
@@ -977,6 +987,7 @@ pub async fn subscriptions(
         Option<i64>,
         Option<String>,
         bool,
+        Option<String>,
     );
     // The newest finished delivery (accepted or failed) by id: its status, push-service status
     // and reason.
@@ -990,10 +1001,13 @@ pub async fn subscriptions(
                 (SELECT f.status {LATEST}), (SELECT f.http_status {LATEST}), \
                 (SELECT f.reason {LATEST}), \
                 EXISTS (SELECT 1 FROM push_deliveries q \
-                        WHERE q.subscription_id = s.id AND q.status = 'queued') \
+                        WHERE q.subscription_id = s.id AND q.status = 'queued'), \
+                (SELECT MAX(p.accepted_at) FROM push_deliveries p \
+                        WHERE p.subscription_id = s.id AND p.reason = 'declarative') \
          FROM push_subscriptions s \
          LEFT JOIN push_deliveries u ON u.subscription_id = s.id AND u.status = 'accepted' \
-              AND u.receipt_at IS NULL AND u.accepted_at > COALESCE(s.last_receipt_at, '') \
+              AND u.receipt_at IS NULL AND COALESCE(u.reason, '') <> 'declarative' \
+              AND u.accepted_at > COALESCE(s.last_receipt_at, '') \
          WHERE s.admin_id = ? GROUP BY s.id ORDER BY s.id"
     ))
     .bind(admin_id)
@@ -1014,6 +1028,7 @@ pub async fn subscriptions(
                 latest_status,
                 latest_reason,
                 sending,
+                last_delivered,
             )| {
                 let parse =
                     |t: Option<String>| t.as_deref().and_then(crate::display_time::parse_db_utc);
@@ -1022,6 +1037,7 @@ pub async fn subscriptions(
                     id,
                     label,
                     last_receipt_at: parse(last_receipt),
+                    last_delivered_at: parse(last_delivered),
                     health: health(
                         state == "gone",
                         failed,
@@ -1352,7 +1368,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(declarative["web_push"], 8030);
-        assert_eq!(declarative["mutable"], true);
+        assert!(declarative.get("mutable").is_none());
         assert_eq!(declarative["app_badge"], 2);
         assert!(classic.get("app_badge").is_none());
         assert!(Push::new(None, None, Arc::new(Never)).declarative);
