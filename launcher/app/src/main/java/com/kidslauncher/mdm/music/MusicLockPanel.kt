@@ -22,7 +22,7 @@ import com.kidslauncher.mdm.lock.glanceTimeLine
  * the session's art, item, entry, progress, time line and play/pause into them, watches the session
  * between the lock's onStart and onStop and tells the panel when it changed ([onChange]; the panel
  * coalesces the callbacks of a frame, looks the session up and renders the tile alone - r6 §2). The
- * once-a-second tick moves only the bars and the time lines ([tick]): no text that changes the
+ * once-a-second tick moves only the bars and the full tile's time line ([tick]): no text that changes the
  * tile's height, no layout.
  *
  * It weakens nothing (LockMediaGuardTest): the session's play/pause, previous and next are all it
@@ -140,7 +140,7 @@ class MusicLockPanel(
         tick()
     }
 
-    /** The bars and the time lines at the position now; again in a second while the tile ticks. */
+    /** The bars and the full tile's time line at the position now; again in a second while the tile ticks. */
     private fun tick() {
         handler.removeCallbacks(ticker)
         val s = session ?: return
@@ -151,13 +151,12 @@ class MusicLockPanel(
         } else {
             clockText(position)
         }
-        val line = glanceTimeLine(position, s.durationMs)
         for (bar in listOf(glance.lockMediaProgress, glance.lockMediaCompactProgress)) {
             bar.progress = progress
             bar.contentDescription = progressText
         }
-        glance.lockMediaTime.text = line
-        glance.lockMediaCompactTime.text = line
+        // The full tile's time line only (the user, 2026-10-20); the compact one has its bar's description.
+        glance.lockMediaTime.text = glanceTimeLine(position, s.durationMs)
         if (glanceTicks(tile != GlanceTileSize.NONE, pageShown, s)) handler.postDelayed(ticker, 1_000)
     }
 }

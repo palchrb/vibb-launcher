@@ -120,6 +120,12 @@ recording.
 - Tests: `LockGlanceTest` (the time line, the refit rule, the coalescer - three requests in a frame, one render - the
   re-pinned model and candidates), `LockGlanceLayoutTest` (the tiles' heights, the expected fits, the line under each
   bar), `LockGlanceGuardTest` unchanged for §2.
+- **The user's call on qa-r6-b-code L6** (2026-10-20, "det holder med tiden på den fulle"): the time line stays on the
+  **full** tile only; the compact tile, the form the fit takes exactly when rows compete for the height, has none (its
+  bar's content description still says the time). `tileCompact` is 90 again, and the fits it moved are back: at 473 dp
+  music + 2 rows is 3 (458, mockup A), music + 3 rows 5 with two rows and "+ 1" (460). At 497 dp music + 1 row stays 3,
+  the compact tile (394): the full tile's line keeps the full form at 515.4. The bullets above describe the line on
+  both tiles as first built; this one supersedes them for the compact tile.
 - **Device checks owed**: the tile recording of 2026-10-20 again (`ffmpeg` scene changes on the tile's region): one
   change per play/pause tap, no full-card redraw ~0.8 s later; a track change from a one-line to a two-line title
   refits once (the "Lås opp"/"Nødsamtale" row stays on screen); the line ticking with no page movement. The same

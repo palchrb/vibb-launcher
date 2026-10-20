@@ -198,9 +198,9 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- The compact tile (mockup A): one row - 52 dp art, item, entry, a 3 dp progress bar under them
-         and the time line under the bar (r6 §2, qa-r6 r6-5: never beside it), a 48 dp peach
-         play/pause. -->
+    <!-- The compact tile (mockup A): one row - 52 dp art, item, entry, a 3 dp progress bar under them,
+         a 48 dp peach play/pause. No time line (the user, 2026-10-20: the full tile's is enough - the
+         compact form exists to make room for the rows); the bar's content description says the time. -->
     <LinearLayout
         android:id="@+id/lock_media_compact"
         android:layout_width="match_parent"
@@ -271,19 +271,6 @@
                 android:indeterminate="false"
                 android:max="1000"
                 android:progressDrawable="@drawable/bg_music_progress" />
-
-            <TextView
-                android:id="@+id/lock_media_compact_time"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:ellipsize="end"
-                android:fontFamily="@font/nunito_bold"
-                android:fontFeatureSettings="tnum"
-                android:importantForAccessibility="no"
-                android:maxLines="1"
-                android:textColor="@color/kid_core_dim"
-                android:textSize="12sp" />
         </LinearLayout>
 
         <ImageButton
