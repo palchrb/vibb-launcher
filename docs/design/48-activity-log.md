@@ -106,7 +106,7 @@ Activity. Event rows show no unread dot and no delivery line. Device check (§3)
 **Addendum (2026-10-20, branch r7-c): Now dropped.** The user, looking at the summary on server 0.31.0: "Jeg trodde
 vi skulle ta vekk den doble notifications inne i phone tabben? Jeg er happy med activity, kan vi ikke bare ta vekk
 hele den now biten?" - and the event rows showed their time twice ("Vibb One's Settings · 09:20 · 09:20"). §1.1's Now
-is gone: the lifts with End now are rows at the end of Quick Actions (End now → `#quick`, the flash there), the
+is gone: the pauses End now can still end are rows at the end of Quick Actions (End now → `#quick`, the flash there), the
 Parent PIN's notices are no longer on the summary (its events are Activity's rows; Lock Screen & PINs keeps its
 list). An Activity event row drops the clock its own summary carries when it is the row's
 (`activity::without_own_clock`), so each row shows one clock. The inbox is unchanged (its time is relative).

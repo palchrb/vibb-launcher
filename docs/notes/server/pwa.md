@@ -387,8 +387,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `an_event_opens_where_it_happened_or_this_phones_inbox`, `now_*`.
 - **Now went (the user, 2026-10-20, after 0.31.0: "kan vi ikke bare ta vekk hele den now biten?")**: no `#now`, no
   `show_now`, no Parent PIN notices on the summary (the uses and lockouts are Activity's events; Lock Screen & PINs
-  keeps its Recent use list; `parent_pin::notices`/`Notice` and the card's `notices` are deleted). Today's lifts and
-  the running pauses are rows at the end of **Quick Actions**, in a `.group` after the `act-grid` (`l.what`, the
+  keeps its Recent use list; `parent_pin::notices`/`Notice` and the card's `notices` are deleted). Only the lifts End
+  now can still end (`can_end`: the running rule pauses, filtered in the summary's view) are rows at the end of
+  **Quick Actions** - an ended pause or added screen time is history, shown only on Device › Time - in a `.group` after the `act-grid` (`l.what`, the
   sub-line `l.when · l.by`, `l.status` as the value, End now posting to `/devices/{id}/lifts/{id}/end#quick` with
   `back=summary`); `lifts::summary_group` is always `quick`, so End now lands on `?done=ended|over#quick` with the
   flash in that same group, which shows while it has a lift row or its flash. **One clock per Activity row**: an

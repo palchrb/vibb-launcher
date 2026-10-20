@@ -749,7 +749,7 @@ struct DeviceDetailTemplate {
     /// Managed without a Parent PIN: a phone not set up says so (it has no Attention rows,
     /// qa-31-s10-code L1).
     no_parent_pin: bool,
-    /// The lifts made today and the pauses still running, with End now: rows at the end of Quick
+    /// The lifts End now can still end (`can_end`; the running rule pauses): rows at the end of Quick
     /// actions (Now went, the user 2026-10-20; the Parent PIN's notices are Activity's events).
     lifts: Vec<crate::handlers::lifts::LiftView>,
     /// The not-set-up variant's Connect This Phone group (design 22 §3.1).
@@ -1363,7 +1363,9 @@ async fn render_device(
     let now = chrono::Utc::now();
     let lifts =
         match crate::handlers::lifts::today(&state.db, id, latest.as_ref(), &zone, now).await {
-            Ok(lifts) => lifts,
+            // Only what End now can still end: an ended lift (or added screen time) is history,
+            // on Device › Time only (the user, 2026-10-20).
+            Ok(lifts) => lifts.into_iter().filter(|l| l.can_end).collect::<Vec<_>>(),
             Err(err) => {
                 tracing::error!(device_id = id, %err, "can't read the lifts");
                 return (

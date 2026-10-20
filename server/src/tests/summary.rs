@@ -365,11 +365,11 @@ async fn every_form_on_the_summary_returns_to_its_group() {
     assert_eq!(before, after);
 }
 
-/// §3.2 item 4: Quick Actions ends with the lifts made today and the pauses still running (Now
-/// went, the user 2026-10-20), in local time with the exact one in `title`; yesterday's finished
-/// ones are on Device › Time only.
+/// §3.2 item 4: Quick Actions ends with the pauses End now can still end (Now went, the user
+/// 2026-10-20), in local time with the exact one in `title`; a pause of today that is over and
+/// added screen time are history - Device › Time's only, nowhere on the summary.
 #[tokio::test]
-async fn quick_actions_list_todays_lifts_in_local_time() {
+async fn quick_actions_list_running_pauses_in_local_time() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
@@ -381,43 +381,50 @@ async fn quick_actions_list_todays_lifts_in_local_time() {
     let made = chrono::Utc::now() - chrono::Duration::minutes(2);
     let made = made - chrono::Duration::seconds(i64::from(chrono::Timelike::second(&made)));
     let stamp = made.format("%Y-%m-%d %H:%M:%S").to_string();
-    for (target, minutes, created, expires) in [
-        ("budget", 15, stamp.clone(), "datetime('now', '+12 hours')"),
-        (
-            "rule",
-            30,
-            "2020-01-01 10:00:00".to_string(),
-            "'2020-01-01 10:30:00'",
-        ),
+    let mut ids = Vec::new();
+    for (target, rule, expires) in [
+        ("rule", "Skole", "datetime('now', '+1 hour')"),
+        ("rule", "Kveld", "datetime('now', '-1 minute')"),
+        ("budget", "", "datetime('now', '+12 hours')"),
     ] {
-        sqlx::query(&format!(
-            "INSERT INTO time_lifts (device_id, target, minutes, created_at, expires_at, created_by) \
-             VALUES (?, ?, ?, ?, {expires}, 'parent')"
+        let lift: i64 = sqlx::query_scalar(&format!(
+            "INSERT INTO time_lifts (device_id, target, rule_name, minutes, created_at, expires_at, created_by) \
+             VALUES (?, ?, NULLIF(?, ''), 15, ?, {expires}, 'parent') RETURNING id"
         ))
         .bind(id)
         .bind(target)
-        .bind(minutes)
-        .bind(&created)
-        .execute(&app.db)
+        .bind(rule)
+        .bind(&stamp)
+        .fetch_one(&app.db)
         .await
         .unwrap();
+        ids.push(lift);
     }
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
-    let today = group(&html, "quick");
+    let quick = group(&html, "quick");
     let oslo = made.with_timezone(&chrono_tz::Europe::Oslo);
-    assert!(today.contains("+15 min screen time"), "{today}");
     assert!(
-        today.contains(&format!(
+        quick.contains(&format!("data-lift=\"{}\"", ids[0])),
+        "{quick}"
+    );
+    assert!(quick.contains("Skole paused for 15 min"), "{quick}");
+    assert!(
+        quick.contains(&format!(
             "title=\"{}\">{} · parent</span>",
             oslo.format("%Y-%m-%d %H:%M:%S %Z"),
             oslo.format("%H:%M")
         )),
-        "{today}"
+        "{quick}"
     );
-    assert!(!today.contains("All rules paused"), "{today}");
+    // The pause that is over and the screen time: nowhere on the summary.
+    for lift in &ids[1..] {
+        assert!(!html.contains(&format!("data-lift=\"{lift}\"")), "{html}");
+    }
+    assert!(!html.contains("Kveld"), "{html}");
+    assert!(!html.contains("+15 min screen time"), "{html}");
     // Nothing happened: no lift rows, no Now, no Activity.
     let (emil, _) = app.enrolled_device("Emil").await;
     let html = app
@@ -532,7 +539,7 @@ async fn quick_actions_keep_running_pauses_and_no_answer_lines() {
         quick.contains(&format!("action=\"/devices/{id}/lifts/{pause}/end#quick\"")),
         "{quick}"
     );
-    assert_eq!(quick.matches("+15 min screen time").count(), 11, "{quick}");
+    assert!(!quick.contains("+15 min screen time"), "{quick}");
     assert!(!html.contains("data-answer"), "{html}");
     assert!(
         group(&html, "activity").contains("data-command=\"end_windows\""),
