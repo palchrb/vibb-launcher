@@ -787,7 +787,7 @@ findings, merge to `main`, full suite once.
   hidden. (5) **Favoritter**: a heart per track/episode in the list and the player, a "Favoritter" category tile
   first after Alle (the tile row scrolls past four, so width is no issue); phone-only (Room), never synced. Not taken:
   the "Fortsett" strip (3 covers it), the offline check badge (4 covers it the user's way). The rewind-after-a-long-pause
-  idea (5-10 s back after > a few minutes paused) is offered again as part of (1) - the user to say. Design note first;
+  idea (5-10 s back after > a few minutes paused) was declined (the user, 2026-10-20: "Nei legg det bort"). Design note first;
   the music round with 46 and 49.
 - **Design 49: shuffle and repeat in the player's control row** (the user, 2026-10-20: "en spesifikk shuffle knapp og
   repeat knapp ved siden av next/prev ... toggle for shuffle av og på - og toggle for ikke repeat, repeat all eller
