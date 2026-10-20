@@ -139,6 +139,27 @@ class MusicMediaPlanTest {
         assertEquals(DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT, notificationGrantState(managed = false))
     }
 
+    @Test
+    fun `the device owner grants the music app Bluetooth while managed and denies it without a policy`() {
+        val granted = DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+        assertEquals(granted, bluetoothGrantState(managed = true))
+        // DEFAULT would keep the grant: the withdrawal is real only as DENIED (design 52 decision 4).
+        assertEquals(DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED, bluetoothGrantState(managed = false))
+        assertEquals(
+            listOf(android.Manifest.permission.POST_NOTIFICATIONS, android.Manifest.permission.BLUETOOTH_CONNECT),
+            MUSIC_RUNTIME_GRANTS.map { it.first },
+        )
+        val states = MUSIC_RUNTIME_GRANTS.associate { (permission, state) -> permission to (state(true) to state(false)) }
+        assertEquals(granted to DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT, states[android.Manifest.permission.POST_NOTIFICATIONS])
+        assertEquals(granted to DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED, states[android.Manifest.permission.BLUETOOTH_CONNECT])
+        // MusicSync sets every grant of the list, each only when it differs (no repeated grants).
+        val sync = listOf("src/main/java/com/kidslauncher/mdm/music/MusicSync.kt", "app/src/main/java/com/kidslauncher/mdm/music/MusicSync.kt")
+            .map { java.io.File(it) }.first { it.exists() }.readText()
+        assertTrue(sync.contains("for ((permission, state) in MUSIC_RUNTIME_GRANTS)"))
+        assertTrue(sync.contains("if (dpm.getPermissionGrantState(admin, pkg, permission) != wanted)"))
+        assertFalse(sync.contains("Manifest.permission."))
+    }
+
     // Calls (design 26a §6.7).
 
     private fun calls(steps: List<Pair<Boolean, Boolean>>): List<CallMusicAction> {
