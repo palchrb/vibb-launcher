@@ -16,6 +16,14 @@
     // static/scroll-restore.js's sessionStorage key (its KEY).
     var SCROLL_KEY = "handy-scroll";
 
+    // The position of what scrolls the page: <main> in the app shell (design 43), else the window
+    // (scroll-restore.js's scrollerOf; this file stands alone).
+    function scrollTop(win) {
+        var main = win.document.querySelector("main");
+        var overflow = main && win.getComputedStyle ? win.getComputedStyle(main).overflowY : "";
+        return overflow === "auto" || overflow === "scroll" ? main.scrollTop : win.scrollY;
+    }
+
     function install(win) {
         var doc = win.document;
         var leaving = false;
@@ -59,7 +67,7 @@
             try {
                 win.sessionStorage.setItem(SCROLL_KEY, JSON.stringify({
                     path: win.location.pathname,
-                    y: win.scrollY,
+                    y: scrollTop(win),
                     t: Date.now()
                 }));
             } catch (e) {}

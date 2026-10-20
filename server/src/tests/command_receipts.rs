@@ -310,7 +310,21 @@ async fn the_locate_page_reads_receipts_and_failures() {
         "{}",
         line("locate")
     );
-    // A failure: its word, the phone's answer reworded, its own words in `title`.
+    // A failure: its word, the phone's answer reworded, its own words in `title` - on the
+    // summary's Recent, where Lock again is pressed (design 44). Two days old, so Today's answer
+    // card doesn't show it instead (one row per command on the page).
+    sqlx::query(
+        "UPDATE device_commands SET requested_at = datetime('now', '-2 days') \
+         WHERE command = 'end_windows'",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let summary = app
+        .get_page(&format!("/devices/{device}"), &cookie)
+        .await
+        .text();
+    let line = |command: &str| super::locate_page::recent_row(&summary, command).to_string();
     assert!(line("end_windows").contains(">Lock again<"));
     assert!(
         line("end_windows").contains(">Failed<"),

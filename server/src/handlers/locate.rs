@@ -5,6 +5,11 @@
 //! push channel and fetches them with its policy (see `handlers::device_api::policy`) - within
 //! seconds while it's online, otherwise when it's back. The location policy (off / on request /
 //! every N minutes, handy step 6) decides when the phone takes a fix on its own.
+//!
+//! Design 44: Recent lists only this page's commands ([LOCATE_KINDS]; the summary page has its
+//! own Recent for [OVERRIDE_KINDS]), the trail shows a span ([SPANS], picked in the browser), and
+//! every kept fix is a row on `/devices/{id}/locations` ([show_locations]). The map's script is
+//! `static/locate.js`.
 
 use askama::Template;
 use axum::extract::{Path, Query, State};
@@ -23,6 +28,25 @@ use crate::security::{self, CurrentAdmin};
 
 /// How many commands Recent lists.
 const RECENT_COMMANDS: i64 = 10;
+
+/// The commands the Locate page sends, the only ones its Recent lists (design 44 §1.1).
+pub(crate) const LOCATE_KINDS: &[&str] = &["locate", "ring", "stop_ring", "lock", "wipe"];
+
+/// The commands the phone's summary page sends (its Quick Actions and Blocked Apps): its own
+/// Recent (design 44 §1.2). Install Now's row is on the launcher's app page.
+pub(crate) const OVERRIDE_KINDS: &[&str] = &["end_windows", "start_pause", "allow_blocked"];
+
+/// The trail's spans in hours (0 = everything kept) and their words, the first the default
+/// (design 44 §1.5). The browser remembers the pick (`static/locate.js`).
+pub(crate) const SPANS: [(i64, &str); 4] = [
+    (12, "12 hours"),
+    (24, "24 hours"),
+    (168, "7 days"),
+    (0, "All kept"),
+];
+
+/// How many fixes the Locations page lists at a time.
+const FIXES_PER_PAGE: usize = 200;
 
 #[derive(Template)]
 #[template(path = "device_locate.html")]
@@ -54,11 +78,13 @@ struct PhoneLink {
 struct Locate {
     device: Device,
     fix: Option<FixView>,
-    /// The newest fix's `captured_at` and its popup text as JavaScript string literals
-    /// ([js_string]) for the page's script - never HTML-escaped text inside quotes (security
-    /// review H2).
-    last_fix_at_js: String,
-    fix_popup_js: String,
+    /// The map's `data-` attributes for `static/locate.js` (Askama escapes them; the script reads
+    /// them as text - security review H2).
+    map: MapData,
+    /// The span shown: the Locations row's value and the pick's checked link.
+    span: i64,
+    /// "14 in the last 12 hours", "None yet".
+    locations_value: String,
     /// The phone's answer to the newest Update Location.
     answer: Option<AnswerView>,
     /// Just pressed Update Location: the page polls for a fresh fix.
@@ -75,9 +101,28 @@ struct Locate {
     modes: [(&'static str, &'static str); 3],
     intervals: Vec<(i64, String)>,
     retention_choices: Vec<(i64, String)>,
-    commands: Vec<CommandRow>,
+    recent: Recent,
+}
+
+/// What `static/locate.js` needs from the page, as `data-` attributes on the map box: the phone,
+/// the newest fix shown (its `captured_at` and the popup's words), its age for the Locations row
+/// ("newest 3 days ago"), the span rendered.
+struct MapData {
+    device_id: i64,
+    shown: String,
+    shown_text: String,
+    newest_age: String,
+    span: i64,
+}
+
+/// A Recent group (`partials/recent.html`): the Locate page's or the summary's (design 44 §1.3).
+pub(crate) struct Recent {
+    pub(crate) device_id: i64,
+    /// The cancel form's `back`: `locate` or `summary`.
+    pub(crate) back: &'static str,
+    pub(crate) rows: Vec<CommandRow>,
     /// After Cancel (`?cancel=done|too_late`): the line in Recent, and whether it was refused.
-    cancel_flash: Option<(&'static str, bool)>,
+    pub(crate) flash: Option<(&'static str, bool)>,
 }
 
 /// The newest fix: "10 min ago", "Within 40 m", the exact time for `title`.
@@ -410,16 +455,69 @@ pub async fn locate_result_json(State(state): State<AppState>, Path(id): Path<i6
     }
 }
 
-/// `value` as a JavaScript string literal safe inside a `<script>` element: JSON with `<`, `>`,
-/// `&` and the line separators escaped, so no value can close the element or the string.
-pub(crate) fn js_string(value: &str) -> String {
-    serde_json::to_string(value)
-        .unwrap_or_else(|_| "\"\"".to_string())
-        .replace('<', "\\u003c")
-        .replace('>', "\\u003e")
-        .replace('&', "\\u0026")
-        .replace('\u{2028}', "\\u2028")
-        .replace('\u{2029}', "\\u2029")
+/// A Recent group for `device`: its newest [RECENT_COMMANDS] commands of `kinds`, as rows in local
+/// times, with the line after a Cancel (`cancel`, the page's `?cancel=`).
+pub(crate) async fn recent(
+    state: &AppState,
+    device_id: i64,
+    kinds: &[&str],
+    back: &'static str,
+    cancel: Option<&str>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Result<Recent, sqlx::Error> {
+    let list = vec!["?"; kinds.len()].join(", ");
+    let sql = format!(
+        "SELECT * FROM device_commands WHERE device_id = ? AND command IN ({list}) \
+         ORDER BY requested_at DESC, id DESC LIMIT ?"
+    );
+    let mut query = sqlx::query_as::<_, DeviceCommand>(&sql).bind(device_id);
+    for kind in kinds {
+        query = query.bind(*kind);
+    }
+    let commands = query.bind(RECENT_COMMANDS).fetch_all(&state.db).await?;
+    let receipts =
+        crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
+    Ok(Recent {
+        device_id,
+        back,
+        rows: commands
+            .iter()
+            .map(|command| command_row(command, zone, now, receipts))
+            .collect(),
+        flash: cancel_flash(cancel),
+    })
+}
+
+/// The span in `?span=` / `?since=`-style text: one of [SPANS]' hours, else the default.
+fn span_of(raw: Option<&String>) -> i64 {
+    raw.and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|hours| SPANS.iter().any(|(h, _)| h == hours))
+        .unwrap_or(SPANS[0].0)
+}
+
+/// The first `captured_at` inside the last `hours` (stored as `YYYY-MM-DDTHH:MM:SS.mmmZ`, so the
+/// text compares as the time), or `None` for everything (0, or more hours than a clock holds).
+fn span_start(hours: i64, now: DateTime<Utc>) -> Option<String> {
+    let back = chrono::Duration::try_hours(hours).filter(|_| hours > 0)?;
+    now.checked_sub_signed(back)
+        .map(|start| start.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+}
+
+/// The Locations row's value (design 44 §1.4, §1.6): "14 in the last 12 hours", "3 kept" (All
+/// kept), "None yet"; with nothing in the span but an older fix, "0 in the last 12 hours · newest
+/// 3 days ago". `static/locate.js` words it the same way when the span changes.
+fn locations_value(count: i64, hours: i64, newest_age: Option<&str>) -> String {
+    let words = SPANS
+        .iter()
+        .find(|(h, _)| *h == hours)
+        .map_or("", |(_, words)| words);
+    match (count, newest_age) {
+        (0, None) => "None yet".to_string(),
+        (n, _) if hours == 0 => format!("{n} kept"),
+        (0, Some(age)) => format!("0 in the last {words} · newest {age}"),
+        (n, _) => format!("{n} in the last {words}"),
+    }
 }
 
 /// The line in Recent after a Cancel (`?cancel=`), and whether it was refused.
@@ -492,15 +590,25 @@ fn phone_links(
         .collect()
 }
 
+/// What the request asks the Locate page to show besides the phone.
+struct Asked<'a> {
+    /// The name typed into Erase Phone… didn't match.
+    erase_refused: bool,
+    /// Just pressed Update Location (`?requested=1`).
+    waiting_for_fix: bool,
+    /// `?cancel=`, the line in Recent.
+    cancel: Option<&'a str>,
+    /// `?span=` ([span_of]).
+    span: i64,
+}
+
 /// The page. With one phone it is shown at once; with several and none (or an unknown one)
 /// chosen, the page lists them. Every read that fails is a 500, never a default (an "Off" or an
 /// empty Recent that isn't true).
 async fn render_locate_page(
     state: &AppState,
     selected_id: Option<i64>,
-    erase_refused: bool,
-    waiting_for_fix: bool,
-    cancel: Option<&str>,
+    asked: Asked<'_>,
 ) -> Result<Html<String>, sqlx::Error> {
     let devices = sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name, id")
         .fetch_all(&state.db)
@@ -513,18 +621,7 @@ async fn render_locate_page(
         .cloned();
     let phones = phone_links(state, &devices, device.as_ref().map(|d| d.id), &zone, now);
     let selected = match device {
-        Some(device) => Some(
-            locate_view(
-                state,
-                device,
-                &zone,
-                now,
-                erase_refused,
-                waiting_for_fix,
-                cancel,
-            )
-            .await?,
-        ),
+        Some(device) => Some(locate_view(state, device, &zone, now, asked).await?),
         None => None,
     };
     Ok(Html(
@@ -544,24 +641,16 @@ async fn locate_view(
     device: Device,
     zone: &Zone,
     now: DateTime<Utc>,
-    erase_refused: bool,
-    waiting_for_fix: bool,
-    cancel: Option<&str>,
+    asked: Asked<'_>,
 ) -> Result<Locate, sqlx::Error> {
+    let Asked {
+        erase_refused,
+        waiting_for_fix,
+        cancel,
+        span,
+    } = asked;
     let id = device.id;
-    let commands = sqlx::query_as::<_, DeviceCommand>(
-        "SELECT * FROM device_commands WHERE device_id = ? \
-         ORDER BY requested_at DESC, id DESC LIMIT ?",
-    )
-    .bind(id)
-    .bind(RECENT_COMMANDS)
-    .fetch_all(&state.db)
-    .await?;
-    let receipts = crate::handlers::device_api::sends_command_receipts(&state.db, id).await?;
-    let commands = commands
-        .iter()
-        .map(|command| command_row(command, zone, now, receipts))
-        .collect();
+    let recent = recent(state, id, LOCATE_KINDS, "locate", cancel, zone, now).await?;
 
     // A phone always has its policy row (`insert_device_with_policy`); a missing one reads as
     // the defaults a new phone gets.
@@ -581,13 +670,7 @@ async fn locate_view(
             )
         });
 
-    let newest = sqlx::query_as::<_, DeviceLocation>(
-        "SELECT * FROM device_locations WHERE device_id = ? ORDER BY captured_at DESC, id DESC \
-         LIMIT 1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await?;
+    let (newest, map) = map_data(state, id, span, zone, now).await?;
     let fix = newest.as_ref().map(|l| {
         let fix = Fix::of(&l.captured_at, l.accuracy_meters);
         FixView {
@@ -596,11 +679,12 @@ async fn locate_view(
             exact: fix.at.map(|t| zone.exact(t)).unwrap_or_default(),
         }
     });
-    let fix_popup = fix
-        .as_ref()
-        .map(|f| format!("{} · {}", f.age, f.accuracy.to_lowercase()))
-        .unwrap_or_default();
-    let last_fix_at = newest.map(|l| l.captured_at).unwrap_or_default();
+    let count = count_in_span(state, id, span, now).await?;
+    let locations_value = locations_value(
+        count,
+        span,
+        newest.is_some().then_some(map.newest_age.as_str()),
+    );
 
     let answer = latest_locate(state, id).await?.and_then(|(_, result, at)| {
         let answer = answer(result.as_deref()?)?;
@@ -624,8 +708,9 @@ async fn locate_view(
     Ok(Locate {
         device,
         fix,
-        last_fix_at_js: js_string(&last_fix_at),
-        fix_popup_js: js_string(&fix_popup),
+        map,
+        span,
+        locations_value,
         answer,
         waiting_for_fix,
         location_off: location_mode == "off",
@@ -654,9 +739,62 @@ async fn locate_view(
                 (*d, label)
             })
             .collect(),
-        commands,
-        cancel_flash: cancel_flash(cancel),
+        recent,
     })
+}
+
+/// The phone's newest fix and the map's data for `span`: the popup's words for it ("10 min ago ·
+/// within 40 m") and its age.
+async fn map_data(
+    state: &AppState,
+    device_id: i64,
+    span: i64,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Result<(Option<DeviceLocation>, MapData), sqlx::Error> {
+    let newest = sqlx::query_as::<_, DeviceLocation>(
+        "SELECT * FROM device_locations WHERE device_id = ? ORDER BY captured_at DESC, id DESC \
+         LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let fix = newest
+        .as_ref()
+        .map(|l| Fix::of(&l.captured_at, l.accuracy_meters));
+    let newest_age = fix.as_ref().map(|f| f.age(zone, now)).unwrap_or_default();
+    let map = MapData {
+        device_id,
+        shown: newest
+            .as_ref()
+            .map(|l| l.captured_at.clone())
+            .unwrap_or_default(),
+        shown_text: fix
+            .as_ref()
+            .map(|f| format!("{newest_age} · {}", f.accuracy().to_lowercase()))
+            .unwrap_or_default(),
+        newest_age,
+        span,
+    };
+    Ok((newest, map))
+}
+
+/// How many fixes the phone has in the last `span` hours (0 = all kept).
+async fn count_in_span(
+    state: &AppState,
+    device_id: i64,
+    span: i64,
+    now: DateTime<Utc>,
+) -> Result<i64, sqlx::Error> {
+    let start = span_start(span, now);
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM device_locations WHERE device_id = ? \
+         AND (?2 IS NULL OR captured_at >= ?2)",
+    )
+    .bind(device_id)
+    .bind(start)
+    .fetch_one(&state.db)
+    .await
 }
 
 pub async fn show_locate(
@@ -666,7 +804,19 @@ pub async fn show_locate(
     let selected_id = params.get("device").and_then(|s| s.parse::<i64>().ok());
     let waiting = params.contains_key("requested");
     let cancel = params.get("cancel").map(String::as_str);
-    match render_locate_page(&state, selected_id, false, waiting, cancel).await {
+    let span = span_of(params.get("span"));
+    match render_locate_page(
+        &state,
+        selected_id,
+        Asked {
+            erase_refused: false,
+            waiting_for_fix: waiting,
+            cancel,
+            span,
+        },
+    )
+    .await
+    {
         Ok(page) => page.into_response(),
         Err(err) => db_error(selected_id.unwrap_or(0), err),
     }
@@ -676,12 +826,14 @@ pub async fn show_locate(
 /// the phone hasn't fetched yet (the user's decision, 2026-10-12). One statement, so it races the
 /// policy's pop cleanly: whichever comes first wins - a cancelled command is never handed out (the
 /// pop skips `cancelled_at`), and one the phone just fetched can't be cancelled (`too_late`, as is
-/// an expired one, or another phone's). Logged in the security log. Back to Recent (`#recent`),
-/// where the line says what happened.
+/// an expired one, or another phone's). Logged in the security log. Back to the Recent it came
+/// from (`#recent`), where the line says what happened: `back` = `summary` is the phone's summary
+/// page (design 44 §1.3), anything else the Locate page.
 pub async fn cancel_command(
     State(state): State<AppState>,
     Path((id, command_id)): Path<(i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let outcome = match cancel_waiting(&state, id, command_id, None, &admin.username).await {
         Ok(true) => "done",
@@ -695,10 +847,11 @@ pub async fn cancel_command(
                 .into_response();
         }
     };
-    Redirect::to(&format!(
-        "/devices/locate?device={id}&cancel={outcome}#recent"
-    ))
-    .into_response()
+    let back = match form.get("back").map(String::as_str) {
+        Some("summary") => format!("/devices/{id}?cancel={outcome}#recent"),
+        _ => format!("/devices/locate?device={id}&cancel={outcome}#recent"),
+    };
+    Redirect::to(&back).into_response()
 }
 
 /// Cancels a command the phone hasn't fetched (the Locate page's Cancel, Install Now's - design
@@ -749,17 +902,181 @@ pub(crate) async fn cancel_waiting(
     Ok(true)
 }
 
-pub async fn locations_json(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
-    match sqlx::query_as::<_, DeviceLocation>(
-        "SELECT * FROM device_locations WHERE device_id = ? ORDER BY captured_at ASC",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    {
-        Ok(locations) => Json(locations).into_response(),
+/// A point of `locations.json`: the stored fix, and `"newest": true` on the newest one when it is
+/// older than the span asked for (the trail doesn't join it to the span's points).
+#[derive(serde::Serialize)]
+struct Point {
+    #[serde(flatten)]
+    location: DeviceLocation,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    newest: bool,
+}
+
+/// `GET /devices/{id}/locations.json[?since=<hours>]` (no-store): the fixes of the last `since`
+/// hours (a positive integer; anything else is everything kept), oldest first, and the newest
+/// fix after them when none is that recent - the map's marker never disappears (design 44 §1.6,
+/// §1.8).
+pub async fn locations_json(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let start = params
+        .get("since")
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .and_then(|hours| span_start(hours, Utc::now()));
+    let points = async {
+        let mut points: Vec<Point> = sqlx::query_as::<_, DeviceLocation>(
+            "SELECT * FROM device_locations WHERE device_id = ? \
+             AND (?2 IS NULL OR captured_at >= ?2) ORDER BY captured_at ASC, id ASC",
+        )
+        .bind(id)
+        .bind(&start)
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .map(|location| Point {
+            location,
+            newest: false,
+        })
+        .collect();
+        if points.is_empty() && start.is_some() {
+            let newest = sqlx::query_as::<_, DeviceLocation>(
+                "SELECT * FROM device_locations WHERE device_id = ? \
+                 ORDER BY captured_at DESC, id DESC LIMIT 1",
+            )
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?;
+            points.extend(newest.map(|location| Point {
+                location,
+                newest: true,
+            }));
+        }
+        Ok::<_, sqlx::Error>(points)
+    };
+    match points.await {
+        Ok(points) => Json(points).into_response(),
         Err(err) => db_error(id, err),
     }
+}
+
+#[derive(Template)]
+#[template(path = "device_locations.html")]
+struct LocationsTemplate {
+    title: String,
+    device: Device,
+    map: MapData,
+    span: i64,
+    fixes: Vec<FixRow>,
+    /// More fixes past this page: "Show older" (`?before=<captured_at>,<id>`, URL-encoded).
+    older: Option<String>,
+    /// This is an older page: "Newest" leads back.
+    paged: bool,
+}
+
+/// A row of the Locations page: when ("10:58", "yesterday 21:40", "12 Oct 08:12", the exact time
+/// in `title`), the accuracy ("± 25 m"), and the popup's words for `static/locate.js`.
+struct FixRow {
+    latitude: f64,
+    longitude: f64,
+    when: String,
+    exact: String,
+    accuracy: String,
+    popup: String,
+}
+
+/// `before=<captured_at>,<id>`: the page after the row with that key (rows sort by
+/// `captured_at DESC, id DESC`; fixes arrive out of order, so the key is both). `None` for the
+/// first page or a key that doesn't read. The time is compared as stored text, so any stored
+/// text pages on.
+fn before_of(raw: Option<&String>) -> Option<(String, i64)> {
+    let (at, id) = raw?.trim().rsplit_once(',')?;
+    Some((at.to_string(), id.parse().ok()?)).filter(|(at, _)| !at.is_empty())
+}
+
+/// `GET /devices/{id}/locations` (no-store: every kept fix; design 44 §1.4): the map for the span
+/// (`?span=`, the pick re-opens the page with it), then every fix of the span as a row, newest
+/// first, [FIXES_PER_PAGE] at a time. Nothing posts here. 404 for an unknown phone, 500 when a
+/// read fails.
+pub async fn show_locations(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let device = match sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(device)) => device,
+        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Err(err) => return db_error(id, err),
+    };
+    let span = span_of(params.get("span"));
+    let before = before_of(params.get("before"));
+    let zone = Zone::load(&state.db).await;
+    let now = Utc::now();
+    let page = async {
+        let (_, map) = map_data(&state, id, span, &zone, now).await?;
+        let (before_at, before_id) = before.clone().unzip();
+        let rows = sqlx::query_as::<_, DeviceLocation>(
+            "SELECT * FROM device_locations WHERE device_id = ?1 \
+             AND (?2 IS NULL OR captured_at >= ?2) \
+             AND (?3 IS NULL OR captured_at < ?3 OR (captured_at = ?3 AND id < ?4)) \
+             ORDER BY captured_at DESC, id DESC LIMIT ?5",
+        )
+        .bind(id)
+        .bind(span_start(span, now))
+        .bind(before_at)
+        .bind(before_id)
+        .bind(FIXES_PER_PAGE as i64 + 1)
+        .fetch_all(&state.db)
+        .await?;
+        Ok::<_, sqlx::Error>((map, rows))
+    };
+    let (map, mut rows) = match page.await {
+        Ok(page) => page,
+        Err(err) => return db_error(id, err),
+    };
+    let older = (rows.len() > FIXES_PER_PAGE).then(|| {
+        rows.truncate(FIXES_PER_PAGE);
+        let last = &rows[FIXES_PER_PAGE - 1];
+        let key = format!("{},{}", last.captured_at, last.id);
+        form_urlencoded::byte_serialize(key.as_bytes()).collect::<String>()
+    });
+    let fixes = rows
+        .iter()
+        .map(|l| {
+            let at = parse_db_utc(&l.captured_at);
+            let when = at.map_or_else(|| "Time unknown".to_string(), |t| zone.at(t, now));
+            let accuracy = Fix::of(&l.captured_at, l.accuracy_meters)
+                .accuracy_m
+                .map_or_else(|| "accuracy unknown".to_string(), |m| format!("± {m} m"));
+            FixRow {
+                latitude: l.latitude,
+                longitude: l.longitude,
+                popup: format!("{when} · {accuracy}"),
+                exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
+                when,
+                accuracy,
+            }
+        })
+        .collect();
+    Html(
+        LocationsTemplate {
+            title: "Locations".to_string(),
+            device,
+            map,
+            span,
+            fixes,
+            older,
+            paged: before.is_some(),
+        }
+        .render()
+        .unwrap(),
+    )
+    .into_response()
 }
 
 /// The commands a new one of [command] replaces while they wait (QA of cmd-expiry, Medium 1): only
@@ -1081,7 +1398,18 @@ pub async fn wipe(
 
     let confirm = form.get("confirm_name").map(|s| s.trim()).unwrap_or("");
     if confirm != device.name {
-        return match render_locate_page(&state, Some(id), true, false, None).await {
+        return match render_locate_page(
+            &state,
+            Some(id),
+            Asked {
+                erase_refused: true,
+                waiting_for_fix: false,
+                cancel: None,
+                span: SPANS[0].0,
+            },
+        )
+        .await
+        {
             Ok(page) => page.into_response(),
             Err(err) => db_error(id, err),
         };

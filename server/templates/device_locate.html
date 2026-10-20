@@ -5,6 +5,7 @@
 <link rel="stylesheet" href="/static/leaflet/leaflet.css">
 </head>
 <body>
+{% import "partials/recent.html" as recent_group %}
 {% let tab = "locate" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
@@ -27,10 +28,17 @@
         {% endfor %}
     </nav>
 
-    {#- Where it is: the map, the last fix, the phone's answer, the wait, Update Location. Update
-        Location returns here (#location), so the map and the waiting line are in view. -#}
+    {#- Where it is: the span pick, the map, the last fix, the phone's answer, the wait, Update
+        Location. Update Location returns here (#location), so the map and the waiting line are in
+        view. The pick is a view choice (design 44 §1.5): static/locate.js redraws in place and
+        remembers it; without JS the links show the span here. -#}
     <section id="location" aria-label="Location">
-        <div class="map-box"><div id="map"></div></div>
+        <div class="phone-switch span-pick" role="radiogroup" aria-label="Show" data-span-pick>
+            {% for (hours, words) in crate::handlers::locate::SPANS %}
+            <a role="radio" href="/devices/locate?device={{ view.device.id }}&amp;span={{ hours }}#location" data-span="{{ hours }}" aria-checked="{% if hours == view.span %}true{% else %}false{% endif %}">{{ words }}</a>
+            {% endfor %}
+        </div>
+        <div class="map-box" data-locate="{{ view.map.device_id }}" data-shown="{{ view.map.shown }}" data-shown-text="{{ view.map.shown_text }}" data-newest-age="{{ view.map.newest_age }}" data-span="{{ view.map.span }}"{% if view.waiting_for_fix %} data-waiting{% endif %}><div id="map"></div></div>
         <div class="group">
             {% if let Some(fix) = view.fix %}
             <div class="row" data-row="fix">
@@ -52,6 +60,15 @@
                 <button type="submit" class="row row-button">Update Location</button>
             </form>
         </div>
+        {#- Every kept fix is a page of its own (design 44 §1.4), not noise here. -#}
+        <div class="group">
+            <a class="row" href="/devices/{{ view.device.id }}/locations?span={{ view.span }}" data-row="locations">
+                <span class="row-label">Locations</span>
+                <span class="row-value" data-locations-count>{{ view.locations_value }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+        </div>
+        <p class="group-footer">The map shows the span picked above. Keep history for, under Location Settings, decides how long locations are kept.</p>
     </section>
 
     {% if view.location_off %}
@@ -102,29 +119,8 @@
         </div>
     </section>
 
-    {#- What was asked and how it went, newest first; Cancel while it waits (back to #recent,
-        where its line shows). -#}
-    <section id="recent" aria-labelledby="recent-title">
-        <h2 class="group-header" id="recent-title">Recent</h2>
-        <div class="group" data-group="recent">
-            {% for c in view.commands %}
-            <div class="row" data-command="{{ c.kind }}">
-                <span class="row-label">{{ c.label }}{% if let Some(detail) = c.detail %}<span class="row-sub"{% if let Some(raw) = c.detail_title %} title="{{ raw }}"{% endif %}>{{ detail }}</span>{% endif %}</span>
-                <span class="row-value" title="{{ c.asked_exact }}">{{ c.asked }} · <span class="tone-{{ c.tone }}">{{ c.word }}</span></span>
-                {% if let Some(cancel_id) = c.cancel_id %}
-                <form method="post" action="/devices/{{ view.device.id }}/commands/{{ cancel_id }}/cancel#recent" class="row-form">
-                    <button type="submit" class="row-action" aria-label="Cancel {{ c.label }} asked for at {{ c.asked }}">Cancel</button>
-                </form>
-                {% endif %}
-            </div>
-            {% else %}
-            <p class="row row-note">Nothing asked yet.</p>
-            {% endfor %}
-            {% if let Some((text, refused)) = view.cancel_flash %}
-            <p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="recent">{{ text }}</p>
-            {% endif %}
-        </div>
-    </section>
+    {#- This page's commands only (design 44 §1.1); the summary has the Quick Actions' own. -#}
+    {% call recent_group::show(view.recent) %}{% endcall %}
 
     {#- The pickers save on change (autosave.js) and return to this group (#location-settings):
         the last one on a long page, so a <noscript> Save (or a save after a refused erase, whose page
@@ -171,85 +167,14 @@
                 <summary aria-label="About the location settings"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>Off switches location off on the phone. Only when asked takes a fix for Update Location and Ring. Regularly also takes one at the interval you pick.</p>
-                    <p>The phone shows its location icon while it takes a fix. Older locations are deleted; the map shows the rest as a trail.</p>
+                    <p>The phone shows its location icon while it takes a fix. Older locations are deleted; the map shows the rest as a trail, and Locations lists them.</p>
                 </div>
             </details>
         </div>
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>
-    <script>
-    (function () {
-        var map = L.map('map');
-        // OSM refuses tile requests without a Referer, and the page's own Referrer-Policy is
-        // same-origin: the tiles alone send our origin (no path) - design 33.
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            referrerPolicy: 'strict-origin-when-cross-origin',
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        }).addTo(map);
-        // Leaflet's default marker icon from our own vendored images: Icon.Default prepends
-        // imagePath to its file names (an icon URL of our own would be prefixed twice - a 404).
-        L.Icon.Default.imagePath = '/static/leaflet/images/';
-        var shown = {{ view.last_fix_at_js|safe }};
-        var shownText = {{ view.fix_popup_js|safe }};
-
-        fetch('/devices/{{ view.device.id }}/locations.json')
-            .then(function (r) { return r.json(); })
-            .then(function (points) {
-                if (points.length === 0) {
-                    map.setView([20, 0], 2);
-                    return;
-                }
-                var latlngs = points.map(function (p) { return [p.latitude, p.longitude]; });
-                L.polyline(latlngs, { color: '#0B66D6' }).addTo(map);
-                var last = points[points.length - 1];
-                // A DOM node with textContent: the phone's values are never HTML (review H2). The
-                // server's words for the fix shown on the page, else (a newer one came since) none.
-                var popup = document.createElement('span');
-                popup.textContent = last.captured_at === shown ? shownText : 'Newest location';
-                L.marker([last.latitude, last.longitude])
-                    .addTo(map)
-                    .bindPopup(popup)
-                    .openPopup();
-                map.fitBounds(latlngs, { maxZoom: 16, padding: [30, 30] });
-            })
-            .catch(function () { map.setView([20, 0], 2); });
-    {% if view.waiting_for_fix %}
-        // After Update Location: look for a fix newer than the one shown, for up to a minute.
-        var tries = 0;
-        var timer = setInterval(function () {
-            tries += 1;
-            fetch('/devices/{{ view.device.id }}/locations.json')
-                .then(function (r) { return r.json(); })
-                .then(function (points) {
-                    var newest = points.length ? points[points.length - 1].captured_at : "";
-                    if (newest && newest !== shown) {
-                        clearInterval(timer);
-                        location.replace('/devices/locate?device={{ view.device.id }}#location');
-                    }
-                })
-                .catch(function () {});
-            // The phone's own answer, in the server's words ("Location is off on the phone").
-            fetch('/devices/{{ view.device.id }}/locate-result.json')
-                .then(function (r) { return r.json(); })
-                .then(function (cmd) {
-                    if (cmd.text) {
-                        var el = document.getElementById('fix_wait');
-                        if (el) el.textContent = 'The phone answered: ' + cmd.text;
-                        if (String(cmd.result).indexOf('fix') !== 0) clearInterval(timer);
-                    }
-                })
-                .catch(function () {});
-            if (tries >= 12) {
-                clearInterval(timer);
-                var el = document.getElementById('fix_wait');
-                if (el && el.textContent.indexOf('The phone answered') !== 0) el.textContent = 'No answer yet. The phone may be offline; it gets the request if it is back within an hour.';
-            }
-        }, 5000);
-    {% endif %}
-    })();
-    </script>
+    <script src="/static/locate.js?v=1"></script>
     {%- else %}
     {#- Several phones, none chosen: each with its state, as on Devices. -#}
     <div class="group group-avatars" data-group="phones">

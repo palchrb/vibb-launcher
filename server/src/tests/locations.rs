@@ -115,23 +115,29 @@ async fn the_locate_page_builds_no_html_from_stored_values() {
     .execute(&app.db)
     .await
     .unwrap();
-    // The page's script: the popup is a text node, and the newest fix's time a JSON string
-    // (the page waiting for a fresh fix is where it is used).
-    let page = app
-        .get_page(&format!("/devices/locate?device={id}&requested=1"), &cookie)
-        .await
-        .text();
-    assert!(!page.contains("bindPopup('"), "string popup");
-    assert!(page.contains("popup.textContent = last.captured_at === shown ? shownText"));
-    // A stored time that doesn't read has no age, and is never shown as it is.
-    assert!(page.contains("Time unknown"));
-    assert!(
-        page.contains(
-            r#"var shown = "\"\u003c/script\u003e\u003cscript\u003ealert(1)\u003c/script\u003e";"#
-        ),
-        "{page}"
-    );
-    assert!(!page.contains("<script>alert(1)"));
+    // The map's script (static/locate.js, design 44) gets the newest fix's time as an escaped
+    // data- attribute and builds its popups as text nodes (the page waiting for a fresh fix is
+    // where the time is used).
+    let script = std::fs::read_to_string("static/locate.js").unwrap();
+    assert!(script.contains("popup.textContent = last.captured_at === shown ? shownText"));
+    assert!(script.contains("text.textContent = row.getAttribute(\"data-text\")"));
+    assert!(!script.contains("innerHTML") && !script.contains("bindPopup('"));
+    for path in [
+        format!("/devices/locate?device={id}&requested=1"),
+        format!("/devices/{id}/locations"),
+    ] {
+        let page = app.get_page(&path, &cookie).await.text();
+        // A stored time that doesn't read has no age, and is never shown as it is.
+        assert!(page.contains("Time unknown"), "{path}");
+        assert!(
+            page.contains(
+                "data-shown=\"&#34;&#60;/script&#62;&#60;script&#62;alert(1)&#60;/script&#62;\""
+            ),
+            "{path}: {page}"
+        );
+        assert!(!page.contains("<script>alert(1)"), "{path}");
+        assert!(!page.contains("<script>\n"), "{path}: no inline script");
+    }
 
     // A phone's answer is text, never HTML (qa-31-s13-code L2): the locate answer row, Recent's
     // line, a reworded row's `title`, and the JSON the wait reads.
@@ -178,19 +184,6 @@ async fn the_locate_page_builds_no_html_from_stored_values() {
         .json();
     assert_eq!(json["result"], evil);
     assert_eq!(json["text"], evil);
-}
-
-#[test]
-fn js_strings_cant_close_the_script() {
-    use crate::handlers::locate::js_string;
-    assert_eq!(
-        js_string("2026-10-10T12:00:00.000Z"),
-        "\"2026-10-10T12:00:00.000Z\""
-    );
-    assert_eq!(
-        js_string("</script>&\"\u{2028}"),
-        r#""\u003c/script\u003e\u0026\"\u2028""#
-    );
 }
 
 /// Migration 0054 removes what the old intake let in.
@@ -335,8 +328,13 @@ async fn the_map_loads_osm_tiles_with_an_origin_only_referer() {
         .get_page(&format!("/devices/locate?device={device}"), &cookie)
         .await;
     assert_eq!(page.status, StatusCode::OK);
-    let html = page.text();
-    let layer = html
+    // The map's script is a file since design 44, loaded by the page.
+    assert!(
+        page.text()
+            .contains("<script src=\"/static/locate.js?v=1\"></script>")
+    );
+    let script = std::fs::read_to_string("static/locate.js").unwrap();
+    let layer = script
         .split("L.tileLayer(")
         .nth(1)
         .and_then(|rest| rest.split("}).addTo(map)").next())

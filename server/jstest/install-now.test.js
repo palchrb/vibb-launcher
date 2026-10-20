@@ -169,3 +169,21 @@ test("the POST's answer leaves the address; no poll group, nothing runs", () => 
     install(idle);
     assert.strictEqual(idle.pending(), 0);
 });
+
+// Design 43: in the app shell <main> scrolls, not the window; the record carries its position.
+test("the reload's record holds <main>'s position in the app shell", async () => {
+    const win = fakeWindow({
+        rows: { "phone-3": fakeRow("waiting", "") },
+        answer: { phones: [{ id: 3, state: "working", sub: "Installing" }] },
+    });
+    const stored = {};
+    win.sessionStorage = { setItem: (key, value) => { stored[key] = value; } };
+    const main = { scrollTop: 512 };
+    const query = win.document.querySelector;
+    win.document.querySelector = (selector) => (selector === "main" ? main : query(selector));
+    win.getComputedStyle = () => ({ overflowY: "scroll" });
+    install(win);
+    await win.advance();
+    assert.strictEqual(win.reloads, 1);
+    assert.strictEqual(JSON.parse(stored["handy-scroll"]).y, 512);
+});

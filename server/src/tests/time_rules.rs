@@ -696,10 +696,13 @@ async fn update_location_now_queues_locate() {
     let text = page.text();
     assert!(text.contains("Waiting for a fresh fix"));
     assert!(text.contains(">Update Location</button>"));
-    // A newer fix reloads at the map, not the top (qa-31-s13-code L1).
-    assert!(text.contains(&format!(
-        "location.replace('/devices/locate?device={id}#location')"
-    )));
+    // A newer fix reloads at the map, not the top (qa-31-s13-code L1): static/locate.js waits
+    // while the map box says so (design 44).
+    assert!(text.contains(" data-waiting>"));
+    let script = std::fs::read_to_string("static/locate.js").unwrap();
+    assert!(
+        script.contains("win.location.replace(\"/devices/locate?device=\" + id + \"#location\")")
+    );
     assert!(!text.contains("couple of minutes"));
 
     app.request(

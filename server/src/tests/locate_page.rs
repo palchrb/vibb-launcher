@@ -323,7 +323,7 @@ async fn the_fix_and_the_answer_read_in_local_time() {
     assert!(fix.contains(">10 min ago<"), "{fix}");
     assert!(fix.contains("Within 40 m"), "{fix}");
     assert!(fix.contains(" JST\""), "the exact time in title: {fix}");
-    assert!(html.contains("var shownText = \"10 min ago · within 40 m\";"));
+    assert!(html.contains("data-shown-text=\"10 min ago · within 40 m\""));
     let answer = html
         .split("data-row=\"locate-answer\"")
         .nth(1)
@@ -366,31 +366,17 @@ async fn recent_names_each_command_and_cancels_what_waits() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
-    for command in [
-        "end_windows",
-        "start_pause",
-        "allow_blocked",
-        "stop_ring",
-        "wipe",
-    ] {
+    for command in ["stop_ring", "wipe"] {
         waiting(&app, id, command, "datetime('now', '-2 minutes')").await;
     }
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
-    for (command, label) in [
-        ("end_windows", "Lock again"),
-        ("start_pause", "Unlock for 2 h"),
-        ("allow_blocked", "Allow these apps"),
-        ("stop_ring", "Stop Ringing"),
-        ("wipe", "Erase Phone"),
-    ] {
+    for (command, label) in [("stop_ring", "Stop Ringing"), ("wipe", "Erase Phone")] {
         let row = recent_row(&html, command);
         assert!(row.contains(&format!(">{label}<")), "{command}: {row}");
         assert!(row.contains("Waiting"), "{command}: {row}");
         assert!(row.contains(">Cancel</button>"), "{command}: {row}");
     }
-    for raw in ["end_windows", "start_pause", "allow_blocked", "stop_ring"] {
-        assert!(!html.contains(&format!(">{raw}")), "{raw} shown");
-    }
+    assert!(!html.contains(">stop_ring"), "the id shown");
     assert!(!html.contains("UTC"));
     assert!(html.contains("aria-label=\"Cancel Erase Phone asked for at "));
 
@@ -500,7 +486,7 @@ async fn unknown_phones_and_failed_reads() {
 /// was prefixed twice (`/static/leaflet/images//static/...`, a 404 and the marker's alt text).
 #[test]
 fn the_map_marker_uses_leaflets_image_path() {
-    let template = include_str!("../../templates/device_locate.html");
+    let template = include_str!("../../static/locate.js");
     assert!(template.contains("L.Icon.Default.imagePath = '/static/leaflet/images/';"));
     for option in ["iconUrl", "iconRetinaUrl", "shadowUrl"] {
         assert!(
@@ -515,4 +501,327 @@ fn the_map_marker_uses_leaflets_image_path() {
                 .is_file()
         );
     }
+}
+
+// ---- Design 44: each Recent its own commands, the span, the Locations page ----
+
+/// A fix `minutes_ago` old at latitude `lat` (the rows' and points' hook).
+async fn fix(app: &TestApp, device: i64, lat: f64, minutes_ago: i64) -> i64 {
+    let at = chrono::Utc::now() - chrono::Duration::minutes(minutes_ago);
+    sqlx::query_scalar(
+        "INSERT INTO device_locations (device_id, latitude, longitude, accuracy_meters, captured_at) \
+         VALUES (?, ?, 10.7, 25, ?) RETURNING id",
+    )
+    .bind(device)
+    .bind(lat)
+    .bind(at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+/// The `#recent` section of a page, or `None`.
+fn recent_of(html: &str) -> Option<&str> {
+    let start = html.find("<section id=\"recent\"")?;
+    let end = html[start..]
+        .find("</section>")
+        .map_or(html.len(), |e| start + e);
+    Some(&html[start..end])
+}
+
+/// Locate's Recent lists the page's own commands; the override commands (pressed on the summary)
+/// are the summary's `#recent`, with Cancel back there (design 44 §1.1-§1.3).
+#[tokio::test]
+async fn each_recent_lists_its_own_commands_and_cancels_back_to_it() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    // Nothing yet: the summary has no Recent.
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        recent_of(&summary).is_none(),
+        "an empty Recent on every summary"
+    );
+
+    for command in ["locate", "install_update"] {
+        waiting(&app, id, command, "datetime('now', '-3 minutes')").await;
+    }
+    let lock_again = waiting(&app, id, "end_windows", "datetime('now', '-2 minutes')").await;
+    for command in ["start_pause", "allow_blocked"] {
+        waiting(&app, id, command, "datetime('now', '-1 minutes')").await;
+    }
+    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    let locate = recent_of(&html).unwrap();
+    assert!(locate.contains("data-command=\"locate\""), "{locate}");
+    for other in [
+        "end_windows",
+        "start_pause",
+        "allow_blocked",
+        "install_update",
+    ] {
+        assert!(
+            !locate.contains(&format!("data-command=\"{other}\"")),
+            "{other} on Locate"
+        );
+    }
+    assert!(locate.contains("<input type=\"hidden\" name=\"back\" value=\"locate\">"));
+
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    let recent = recent_of(&summary).expect("the summary's Recent");
+    for (command, label) in [
+        ("end_windows", "Lock again"),
+        ("start_pause", "Unlock for 2 h"),
+        ("allow_blocked", "Allow these apps"),
+    ] {
+        let row = recent_row(recent, command);
+        assert!(row.contains(&format!(">{label}<")), "{command}: {row}");
+        assert!(row.contains(">Cancel</button>"), "{command}: {row}");
+    }
+    for other in ["locate", "install_update"] {
+        assert!(
+            !recent.contains(&format!("data-command=\"{other}\"")),
+            "{other} on the summary"
+        );
+    }
+    assert!(recent.contains("<input type=\"hidden\" name=\"back\" value=\"summary\">"));
+    // Under Quick Actions, where the buttons are.
+    assert!(summary.find("id=\"quick\"").unwrap() < summary.find("id=\"recent\"").unwrap());
+
+    // Cancel from the summary comes back to its Recent with the line.
+    let cancel = format!("/devices/{id}/commands/{lock_again}/cancel");
+    let res = app
+        .request_form(Method::POST, &cancel, Some(&cookie), &[("back", "summary")])
+        .await;
+    assert_redirect(&res, &format!("/devices/{id}?cancel=done"), Some("recent"));
+    app.assert_lands(&res, &cookie).await;
+    let summary = app
+        .get_page(&format!("/devices/{id}?cancel=done"), &cookie)
+        .await
+        .text();
+    assert!(
+        recent_of(&summary)
+            .unwrap()
+            .contains("data-flash=\"recent\">Cancelled. The phone will never get it.")
+    );
+    // The cancelled Lock again is Today's answer now, so Recent leaves it out (one row per command
+    // on the page, qa-r5-a-code N2); the waiting ones keep their row and Cancel.
+    let today = &summary[summary.find("<section id=\"today\"").expect("Today")..];
+    assert!(today.contains("data-answer=\"Lock again\""), "{today}");
+    let recent = recent_of(&summary).unwrap();
+    assert!(!recent.contains("data-command=\"end_windows\""), "{recent}");
+    assert!(recent_row(recent, "start_pause").contains(">Cancel</button>"));
+    // Too late now; a `back` that isn't known (or none) goes to Locate.
+    for fields in [&[("back", "https://evil.example")][..], &[][..]] {
+        let res = app
+            .request_form(Method::POST, &cancel, Some(&cookie), fields)
+            .await;
+        assert_redirect(
+            &res,
+            &format!("/devices/locate?device={id}&cancel=too_late"),
+            Some("recent"),
+        );
+    }
+}
+
+/// `locations.json?since=<hours>`: the span's points oldest first, the newest added (`newest`)
+/// only when nothing is that recent; no or a bad `since` is everything kept (design 44 §1.8).
+#[tokio::test]
+async fn locations_json_takes_a_span_and_keeps_the_newest() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let json = |query: String| {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            let res = app
+                .get_page(&format!("/devices/{id}/locations.json{query}"), cookie)
+                .await;
+            assert_eq!(res.status, StatusCode::OK);
+            res.json()
+        }
+    };
+    assert_eq!(json("?since=12".into()).await, serde_json::json!([]));
+    fix(&app, id, 1.0, 2 * 24 * 60).await;
+    // Only a 2-day-old fix: it is the newest, flagged, outside the span.
+    let points = json("?since=12".into()).await;
+    assert_eq!(points.as_array().unwrap().len(), 1, "{points}");
+    assert_eq!(points[0]["latitude"], 1.0);
+    assert_eq!(points[0]["newest"], true);
+    let week = json("?since=168".into()).await;
+    assert_eq!(week[0].get("newest"), None, "inside the span: no flag");
+    fix(&app, id, 2.0, 60).await;
+    fix(&app, id, 3.0, 5).await;
+    let points = json("?since=12".into()).await;
+    let lats: Vec<f64> = points
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["latitude"].as_f64().unwrap())
+        .collect();
+    assert_eq!(lats, [2.0, 3.0], "the 2-day-old one left out, oldest first");
+    assert!(
+        points
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p.get("newest").is_none())
+    );
+    for query in [
+        "",
+        "?since=0",
+        "?since=-3",
+        "?since=x",
+        "?since=99999999999999",
+    ] {
+        let all = json(query.to_string()).await;
+        assert_eq!(all.as_array().unwrap().len(), 3, "{query}");
+    }
+}
+
+/// The Locations row on Locate counts the span's fixes (never the newest outside it), `?span=`
+/// renders the others, and the pick marks the span shown (design 44 §1.4-§1.6).
+#[tokio::test]
+async fn the_locations_row_counts_the_span() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let value = |html: &str| {
+        html.split("data-locations-count>")
+            .nth(1)
+            .and_then(|rest| rest.split('<').next())
+            .unwrap()
+            .to_string()
+    };
+    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    assert_eq!(value(&html), "None yet");
+    fix(&app, id, 1.0, 3 * 24 * 60).await;
+    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    assert!(
+        value(&html).starts_with("0 in the last 12 hours · newest "),
+        "{}",
+        value(&html)
+    );
+    fix(&app, id, 2.0, 20 * 60).await;
+    fix(&app, id, 3.0, 60).await;
+    for (query, expected, checked) in [
+        ("", "1 in the last 12 hours", "12"),
+        ("&span=5", "1 in the last 12 hours", "12"),
+        ("&span=24", "2 in the last 24 hours", "24"),
+        ("&span=168", "3 in the last 7 days", "168"),
+        ("&span=0", "3 kept", "0"),
+    ] {
+        let html = locate_page(&app, &cookie, &format!("?device={id}{query}")).await;
+        assert_eq!(value(&html), expected, "{query}");
+        let pick = tags(&html, "a")
+            .into_iter()
+            .filter(|a| a.attr("role") == Some("radio"))
+            .map(|a| {
+                (
+                    a.attr("data-span").unwrap_or("").to_string(),
+                    a.attr("aria-checked").unwrap_or("").to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(pick.len(), 4, "{query}");
+        for (span, aria) in pick {
+            assert_eq!(aria == "true", span == checked, "{query}: {span} {aria}");
+        }
+        assert!(html.contains(&format!("href=\"/devices/{id}/locations?span={checked}\"")));
+        assert!(html.contains(&format!("data-span=\"{checked}\"")));
+    }
+}
+
+/// The Locations page: every fix of the span as a row, newest first, 200 a page; "Show older"
+/// keys on `(captured_at, id)`, so fixes stored out of order (a backlog after offline) and fixes
+/// with the same time are neither skipped nor repeated. No-store, nothing posts, 404 for an
+/// unknown phone (design 44 §1.4).
+#[tokio::test]
+async fn the_locations_page_pages_every_fix_once() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    // 205 fixes, three to a minute, stored in a scrambled order (ids don't follow the time).
+    let at = chrono::Utc::now() - chrono::Duration::minutes(1);
+    for n in 0..205i64 {
+        let i = n * 7 % 205;
+        sqlx::query(
+            "INSERT INTO device_locations (device_id, latitude, longitude, accuracy_meters, \
+             captured_at) VALUES (?, ?, 10.7, ?, ?)",
+        )
+        .bind(id)
+        .bind(i as f64)
+        .bind(if i == 0 { None } else { Some(25.4) })
+        .bind(
+            (at - chrono::Duration::minutes(i / 3))
+                .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string(),
+        )
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    fix(&app, id, 999.0, 3 * 24 * 60).await;
+    let lats = |html: &str| -> Vec<i64> {
+        tags(html, "div")
+            .into_iter()
+            .filter_map(|div| {
+                div.attr("data-lat")
+                    .map(|l| l.parse::<f64>().unwrap() as i64)
+            })
+            .collect()
+    };
+    let res = app
+        .get_page(&format!("/devices/{id}/locations"), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(
+        res.headers.get(axum::http::header::CACHE_CONTROL).unwrap(),
+        "no-store"
+    );
+    let first = res.text();
+    assert!(!first.contains("<form"), "nothing posts here");
+    assert!(first.contains("± 25 m") && first.contains("accuracy unknown"));
+    let older = tags(&first, "a")
+        .into_iter()
+        .find(|a| a.attr("data-row") == Some("older"))
+        .and_then(|a| a.attr("href").map(str::to_string))
+        .expect("Show older");
+    assert!(
+        older.starts_with(&format!("/devices/{id}/locations?span=12&amp;before=")),
+        "{older}"
+    );
+    let second = app
+        .get_page(&older.replace("&amp;", "&").replace("#fixes", ""), &cookie)
+        .await
+        .text();
+    assert!(second.contains("data-row=\"newest\""));
+    assert!(!second.contains("data-row=\"older\""));
+    let mut shown = lats(&first);
+    assert_eq!(shown.len(), 200);
+    shown.extend(lats(&second));
+    // Each once (the 3-day-old fix is outside the 12 hours), newest first (i / 3 is the age).
+    let mut each = shown.clone();
+    each.sort();
+    assert_eq!(each, (0..205).collect::<Vec<_>>());
+    assert!(shown.windows(2).all(|w| w[0] / 3 <= w[1] / 3), "{shown:?}");
+    // All kept: it is there too, on the second page.
+    let all = app
+        .get_page(&format!("/devices/{id}/locations?span=0"), &cookie)
+        .await
+        .text();
+    assert!(
+        all.contains("/locations?span=0&amp;before="),
+        "the span kept"
+    );
+    assert_eq!(
+        app.get_page("/devices/999/locations", &cookie).await.status,
+        StatusCode::NOT_FOUND
+    );
 }

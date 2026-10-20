@@ -4,6 +4,7 @@
 {% include "partials/head.html" %}
 </head>
 <body>
+{% import "partials/recent.html" as recent_group %}
 {% let tab = "devices" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
@@ -167,6 +168,12 @@
         </div>
         {% if let Some((text, refused)) = self.flash("quick") %}<div class="group"><p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="quick">{{ text }}</p></div>{% endif %}
     </section>
+
+    {#- Lock again, Unlock for 2 h… and Allow these apps… as they went, with Cancel while they wait
+        (design 44 §1.2; Locate's Recent has its own). Shown once there is one, or for its flash. -#}
+    {% if !recent.rows.is_empty() || recent.flash.is_some() %}
+    {% call recent_group::show(recent) %}{% endcall %}
+    {% endif %}
 
     {% if self.show_today() %}
     <section id="today" aria-labelledby="today-title">

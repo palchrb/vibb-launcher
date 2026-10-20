@@ -165,11 +165,12 @@ async fn the_app_is_called_vibb_phone_with_a_stable_identity() {
         "<script src=\"/static/autosave.js?v=2\"></script>",
         // Edge to edge on an iPhone, so the safe-area insets are real (style.css takes them).
         "content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\"",
-        // The tab bar back after an iOS resume.
-        "<script src=\"/static/tab-bar.js?v=1\" defer></script>",
     ] {
         assert!(html.contains(needle), "{needle}");
     }
+    // Round 1's relayout script is gone with the fixed bar (design 43); pinch zoom stays.
+    assert!(!html.contains("tab-bar.js"));
+    assert!(!html.contains("user-scalable") && !html.contains("maximum-scale"));
     assert!(!html.contains("Kids Device MDM") && !html.contains("Kids MDM"));
     // The brand bar is gone from the tab pages (step 15).
     assert!(!html.contains("class=\"app-header\""));
@@ -763,6 +764,93 @@ fn style_css_has_the_shape_browsers_read() {
         ("a { b: c } /* x", "line 1: a comment is never closed"),
     ] {
         assert_eq!(css_shape_error(css).as_deref(), Some(error), "{css}");
+    }
+}
+
+/// Design 43, the app shell: the document doesn't scroll, `main.container` does, and nothing is
+/// positioned against the viewport (an iOS standalone app's stale viewport moved the fixed bar).
+/// Double-tap zoom is off where it is tapped - the scroller and the bar, since a scroller resets
+/// an inherited `touch-action` -, never on `*` (Leaflet's own rules win on the map).
+#[test]
+fn the_app_shell_scrolls_main_not_the_document() {
+    let mut css = std::fs::read_to_string("static/style.css").unwrap();
+    while let Some(start) = css.find("/*") {
+        let end = css[start..].find("*/").map_or(css.len(), |e| start + e + 2);
+        css.replace_range(start..end, " ");
+    }
+    // The declarations of the first top-level rule for exactly `selector`.
+    let block = |selector: &str| -> String {
+        let open = format!("\n{selector} {{");
+        let at = css
+            .find(&open)
+            .unwrap_or_else(|| panic!("no rule {selector}"))
+            + open.len();
+        let end = css[at..].find('}').unwrap() + at;
+        css[at..end]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let compact: String = css.split_whitespace().collect();
+    assert!(!compact.contains("position:fixed"), "a fixed box again");
+    let body = block("body");
+    for needle in [
+        "height: 100vh; height: 100dvh;",
+        "overflow: hidden;",
+        "flex-direction: column;",
+    ] {
+        assert!(body.contains(needle), "body: {needle} in {body}");
+    }
+    assert!(
+        !body.contains("min-height"),
+        "never taller than the screen: {body}"
+    );
+    let main = block(".container");
+    for needle in [
+        "flex: 1 1 auto;",
+        "min-height: 0;",
+        "overflow-y: auto;",
+        "touch-action: manipulation;",
+    ] {
+        assert!(main.contains(needle), ".container: {needle} in {main}");
+    }
+    assert!(
+        !main.contains("max-width"),
+        "the scroller spans the window: {main}"
+    );
+    // The editor bar sticks inside `main`, and a sticky offset counts from inside the scroller's
+    // padding: its `top: -8px` cancels exactly the 8 px above the status bar's inset in main's
+    // `padding-top`, so it sits right under the status bar. Change one, change the other.
+    assert!(
+        main.contains("padding-top: calc(8px + env(safe-area-inset-top, 0px));"),
+        "{main}"
+    );
+    let editor = block(".editor-bar");
+    assert!(editor.contains("top: -8px;"), "{editor}");
+    let bar = block(".tab-bar");
+    for needle in ["flex: none;", "order: 1;", "touch-action: manipulation;"] {
+        assert!(bar.contains(needle), ".tab-bar: {needle} in {bar}");
+    }
+    assert!(!css.contains("\n* {\n    touch-action") && !body.contains("touch-action"));
+    // The auth pages keep the document scroll.
+    let auth = block(".auth-page");
+    assert!(
+        auth.contains("height: auto;") && auth.contains("overflow: visible;"),
+        "{auth}"
+    );
+    // Every page has the shell's scroller, or is an auth page (body.auth-page, main.auth-card).
+    for path in super::device_api::template_files() {
+        let text = std::fs::read_to_string(&path).unwrap();
+        if !text.contains("<body") {
+            continue;
+        }
+        assert!(
+            text.contains("<main class=\"container")
+                || (text.contains("<body class=\"auth-page\">")
+                    && text.contains("<main class=\"auth-card\">")),
+            "{} is neither in the shell nor an auth page",
+            path.display()
+        );
     }
 }
 

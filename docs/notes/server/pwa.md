@@ -66,22 +66,52 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the same viewport width - and the fixed bar the same tabs at the same x - on short and long pages. Not
   `scrollbar-gutter: stable`: measured in Chromium 130 it keeps the room for the page's flow but not for fixed boxes
   (the bar still spanned 500 px on a short page, 485 on a long one). Overlay scrollbars (phones, macOS) take no room.
-  The cost, accepted: an empty track on short pages there, the sign-in pages included (QA N2).
+  The cost, accepted: an empty track on short pages there, the sign-in pages included (QA N2). *Since design 43 the
+  always-there scrollbar is `main`'s, on a fine pointer only, and the bar is outside the scroller.*
 - **iPhone edges**: `head.html`'s viewport has `viewport-fit=cover`, without which every `env(safe-area-inset-*)` is 0;
   the insets then apply to `.container` (top, the sides as `max(16px, inset)`, bottom = 96 px + inset under the bar),
   the tab bar (sides, bottom `max(4px, inset + 6px)`), `.auth-page` (all four) and `.editor-bar` (sticky top, its side
   margins matching the container's). **dvh only after a vh fallback** (iOS 14, the floor, drops the `dvh` declaration):
-  `.auth-page` is `min-height: 100vh; min-height: 100dvh` (`shell::every_dvh_follows_a_vh_fallback`).
-- **`static/tab-bar.js`** (loaded deferred by `partials/tab_bar.html`; external, so a CSP needs no inline script;
-  `jstest/tab-bar.test.js`): on `pageshow`, a `visibilitychange` to visible and - in an installed app
-  (`display-mode: standalone`) - `resize`, at most once a frame, it hides and shows the fixed bar again so it is laid
-  out against the current viewport; it never scrolls and moves nothing else. **[needs device check: resume a
-  standalone install on the iPhone after > 1 min in the background, the bar visible]** - the iOS stale-viewport bug it
-  targets is a hypothesis; delete the file if the check shows no effect. If the bar still misbehaves, the robust
-  alternative is an app shell (content scrolls in its own box, the bar a normal flex child).
+  `.auth-page` is `min-height: 100vh; min-height: 100dvh` (`shell::every_dvh_follows_a_vh_fallback`). *Design 43
+  changed the bottom (16 px, the bar no longer covers the page) and the editor bar's top (below).*
+- **`static/tab-bar.js`** (a relayout of the fixed bar after an iOS resume) didn't hold on the iPhone and is deleted
+  with its test: design 43's app shell replaced it (the next section).
 - **The Locate marker**: `L.Icon.Default.imagePath = '/static/leaflet/images/'` - Leaflet prepends it to its own file
   names, so an absolute `iconUrl` was prefixed twice (a 404, the alt text "Mark";
   `locate_page::the_map_marker_uses_leaflets_image_path`).
+
+## The app shell (design 43, `docs/design/43-pwa-app-shell.md`)
+
+- **The document doesn't scroll on the tab pages** (style.css): `html { height: 100% }`, `body { height: 100vh; height:
+  100dvh; overflow: hidden; display: flex; flex-direction: column }` - exactly the visible height, never `min-height`
+  (a taller body could still be panned by a fragment, `scrollIntoView` or the iOS keyboard). `main.container` is the
+  scroller (`flex: 1 1 auto; min-height: 0; overflow-y: auto`, `scroll` on a fine pointer for a steady desktop
+  column; `overscroll-behavior-y: contain`), full width, the 720 px column (480 px `.container-narrow`) from its side
+  padding `max(16px, inset, calc((100% - 720px) / 2 + 16px))` - the same 688 px of content as before. The tab bar is a
+  plain flex child (`flex: none; order: 1`, after `main` on screen, first in the source as before); no `position:
+  fixed` anywhere (`shell::the_app_shell_scrolls_main_not_the_document`). The bottom padding is 16 px under the bar (`.tab-bar ~ .container`), 16 px + the home indicator's inset on a page without it (`music_spotify_done`). The editor bar's `top: -8px` and `main`'s `padding-top: calc(8px + inset)` go together (the shell test pins both).
+- **The auth pages opt out**: `<body class="auth-page">` (login, 2FA, change password) keeps the document scroll
+  (`height: auto; overflow: visible`), so a card taller than the screen with the keyboard up stays reachable.
+- **Double-tap zoom off, pinch kept**: `touch-action: manipulation` on `main` and `.tab-bar` - a scroller resets an
+  inherited `touch-action`, so it has to be on `main`, not `body`; never on `*` (Leaflet's own rules win on the
+  map), never `user-scalable=no`.
+- **`.editor-bar`** sticks inside `main`: a sticky offset counts from inside the scroller's padding (8 px + the status
+  bar's inset), so `top: -8px` puts it right under the status bar as before; its side margins still reach the 720 px
+  column's edge (measured in Chromium at 390 and 1280 px).
+- **The place on the page is `static/scroll-restore.js`'s** (a browser puts an inner scroller back only from the
+  back-forward cache): `scrollerOf(win)` picks `main` when its computed `overflow-y` scrolls, else the window, at each
+  use (the script runs from the head, before `main` exists). The form record's fragment maths uses the scroller's
+  position (`rect.top + scroller.top()` against the saved screen tops). **The place record**: on `pagehide` and when
+  the page is hidden, `{y, t}` under path + search in one sessionStorage map `handy-place` (the newest 50); a
+  `back_forward` or `reload` load (`PerformanceNavigationTiming`, else `performance.navigation.type` 2/1 on iOS 14)
+  puts it back - over a `#fragment` too, since after a save the address carries the group's one; a `navigate` load
+  restores nothing (a link opens at its fragment or the top). The form record wins over the place record. On the
+  shell's pages a window iOS left offset (the keyboard's pan) is put back at 0 on `focusout`, `visualViewport`
+  `resize` and `pageshow`.
+- `auto-reload.js`, `install-now.js` (their reload record) and `music-cards.js` (its scroll anchoring) read and scroll
+  `main` the same way. Tests: `jstest/scroll-restore.test.js` (every restore case against the window and against a
+  `main` scrolled to 300 that must leave the window alone; the place record, the fallback, the cap, the guard),
+  `auto-reload.test.js`, `install-now.test.js`, `music-cards.test.js`, `shell::the_app_shell_scrolls_main_not_the_document`.
 
 ## The PWA's times, connection state and Attention (design 31 step 2, `docs/design/31-pwa-redesign.md` §3.8, §3.10)
 
@@ -437,6 +467,45 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - Tests: `src/tests/locate_page.rs` (the redirect table, the erase refusal, the switcher and the list, local times
   and the answer, Recent's labels and Cancel, the warnings and pickers, unknown phones and failed reads),
   `handlers::locate::tests`, repointed `locations.rs`, `command_receipts.rs`, `command_expiry.rs`, `time_rules.rs`.
+
+## Locate: history, span, each page its Recent (design 44, `docs/design/44-locate-history.md`)
+
+- **Each Recent its own commands**: `locate::recent(state, device, kinds, back, cancel, zone, now)` reads the 10
+  newest of `kinds`; Locate shows `LOCATE_KINDS` (locate, ring, stop_ring, lock, wipe), the phone's summary
+  (`device_detail.html`, a `#recent` right under `#quick`, shown once it has a row or a cancel line; the row Today's answer already shows is left out unless it can still be cancelled) shows
+  `OVERRIDE_KINDS` (end_windows, start_pause, allow_blocked). Install Now's row stays on the launcher's app page
+  (`install_now::install_row`). One macro, `partials/recent.html` (`recent_group::show`), renders both; its Cancel
+  posts a hidden `back` (`summary` → `/devices/{id}?cancel=…#recent`, anything else → `/devices/locate?device={id}&
+  cancel=…#recent`; `cancel_command` takes the form).
+- **The span** (`locate::SPANS`: 12 hours (default), 24 hours, 7 days, All kept = 0): a segmented row of four
+  `<a role="radio" aria-checked>` above the map on both pages, links with `?span=` (Locate's with `#location`) as the
+  no-JS fallback; the server renders the count and the list for `?span=` (any other value is 12). `static/locate.js`
+  remembers it per browser (`localStorage` `handy-locate-span`; the address's span wins and is remembered): on Locate it
+  redraws in place (`preventDefault`, nothing to save, nothing to jump), on the Locations page it opens the page (`location.replace`: Back goes to Locate, not through the spans)
+  with the span (the server words and pages the rows), and a remembered span other than the rendered one reopens it.
+- **The "Locations" row** under the map's group: the count in the span ("14 in the last 12 hours", "3 kept", "None
+  yet", "0 in the last 12 hours · newest 3 days ago" - `locate::locations_value`, worded the same by `locate.js`
+  `countText`), linking to `/devices/{id}/locations?span=`.
+- **`/devices/{id}/locations`** (`locate::show_locations`, `device_locations.html`, tab Locate, back to Locate): the
+  pick, the map, then every fix of the span newest first, 200 a page, "Show older" with `before=<captured_at>,<id>`
+  (URL-encoded; `captured_at DESC, id DESC`, fixes arrive out of order) and "Newest" on an older page; each row the
+  time as `Zone::at` (exact in `title`) and "± 25 m" / "accuracy unknown". A row's tap (JS: `role=button`,
+  `tabindex`, Enter/Space) scrolls `main` so the map box sits at its top padding, under the status bar (an offset in the scroll: `scroll-margin-top` needs Safari 14.1), then
+  pans to the fix with a popup of its words. **No-store** (`admin_auth::no_store_path` `["devices", _,
+  "locations"]`): it holds every kept fix. Nothing posts; 404 for an unknown phone, 500 on a failed read.
+- **`locations.json?since=<hours>`**: the span's points oldest first (`captured_at ASC, id ASC`); when none is that
+  recent, the newest fix flagged `"newest": true` (the marker never disappears, the trail doesn't join it, it isn't
+  counted). No, 0 or a bad `since` is everything kept. The span's start is formatted like the stored `captured_at`
+  (`YYYY-MM-DDTHH:MM:SS.mmmZ`), so the text compares as the time.
+- **`static/locate.js`** (ES5, `?v=`) replaced the inline script: the phone, the newest fix's `captured_at` and popup
+  words, its age and the span come in Askama-escaped `data-` attributes on the map box (`js_string` is gone); popups
+  are text nodes. `L.map(…, { preferCanvas: true })` (All kept can be thousands of points), the trail plus a 3 px
+  `circleMarker` per fix, the marker on the newest. After Update Location (`data-waiting`) it polls
+  `locations.json?since=1` and `locate-result.json` every 5 s for a minute, as before.
+- Tests: `locate_page::each_recent_lists_its_own_commands_and_cancels_back_to_it`,
+  `locations_json_takes_a_span_and_keeps_the_newest`, `the_locations_row_counts_the_span`,
+  `the_locations_page_pages_every_fix_once`, `admin_auth::tests::no_store_paths`, repointed `locations.rs`,
+  `command_receipts.rs`, `install_now.rs`, `time_rules.rs`; `jstest/locate.test.js` (a fake Leaflet).
 
 ## The rest of Settings (design 31 step 14, `docs/design/31-pwa-redesign.md` §3.6)
 

@@ -460,13 +460,17 @@ async fn a_server_start_keeps_it_and_a_confirmed_one_works_for_25_hours() {
         polled,
         json!({"phones": [{"id": phone, "state": "working", "sub": "Downloading 40 of 80 MB"}]})
     );
-    // Recent on the Locate tab: "Install Now", still Received (not "No answer" at 11 minutes).
+    // Not "No answer" at 11 minutes; the row is the app page's alone (design 44: Locate's Recent
+    // lists its own commands).
+    assert!(
+        !row(&page, phone).contains("No answer"),
+        "not at 11 minutes"
+    );
     let locate = app
         .get_page(&format!("/devices/locate?device={phone}"), &cookie)
         .await
         .text();
-    assert!(locate.contains("Install Now"));
-    assert!(!locate.contains("No answer"), "not at 11 minutes");
+    assert!(!locate.contains("data-command=\"install_update\""));
     // 25 hours: "No answer", and the button is back.
     sqlx::query(
         "UPDATE device_commands SET received_at = datetime('now', '-1501 minutes') WHERE id = ?",
@@ -475,15 +479,15 @@ async fn a_server_start_keeps_it_and_a_confirmed_one_works_for_25_hours() {
     .execute(&app.db)
     .await
     .unwrap();
-    let locate = app
-        .get_page(&format!("/devices/locate?device={phone}"), &cookie)
-        .await
-        .text();
-    assert!(locate.contains("No answer"));
     let page = app
         .get_page(&format!("/apps/tracked/{launcher}"), &cookie)
         .await
         .text();
+    assert!(
+        row(&page, phone).contains("No answer"),
+        "{}",
+        row(&page, phone)
+    );
     assert!(row(&page, phone).contains(">Install Now</button>"));
     assert!(
         !page.contains("data-install-poll="),

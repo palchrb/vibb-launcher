@@ -139,8 +139,10 @@ the scroller (`overscroll-behavior-y: contain` on `main` stops the rubber band f
 2. A quick double tap on a tab, and on a row deep in a long page: no zoom; a pinch still zooms.
 3. A saved form (Device › Home's switches, Lock › Parent PIN, a group far down Device › Time) never jumps - the
    standing rule.
-4. Back from a phone's page to the long Devices list lands at the place, also when the list's address carries a
-   `#group`; a reload of a long page lands at its place.
+4. A history Back (the browser's Back, Android's system back, a back swipe where the platform has one) from a
+   phone's page to the long Devices list lands at the place, also when the list's address carries a `#group`; a
+   reload of a long page lands at its place. The page's own "‹ Devices" link is a plain navigation and opens the
+   list at the top - by design, as before the shell.
 5. Login with the keyboard up on the iPhone: the card reachable; Time rules' last field with the keyboard up, then the
    keyboard down and a scroll: no offset bar.
 6. Desktop (the Pi's Chromium, a wide and a narrow window): the scrollbar at the window's edge, the wheel working over
@@ -161,3 +163,45 @@ the scroller (`overscroll-behavior-y: contain` on `main` stops the rubber band f
 - 43-9: one `handy-place` map capped at 50 (§2.1).
 - 43-10: the `shell.rs` assertion flips, the `?v=` bumps listed, no `-webkit-overflow-scrolling` (§1.6, §1.7, §1.8, §2.2).
 - 43-11: `order: 1`; the reading order "unchanged" (§1.1).
+
+## Implementation status (2026-10-20, branch `r5-a`)
+
+Built as decided: the shell CSS (§1.1-§1.7, §1.9), `tab-bar.js` and its test deleted (§1.8), `scroll-restore.js` with
+the lazy `scrollerOf`, the scroller's fragment maths, the `handy-place` record (50 entries, Back/reload over a
+fragment, `performance.navigation` fallback, the form record first) and the `scrollY` guard (§1.10, §2.1),
+`auto-reload.js`/`install-now.js` reading `main` (§2.2), the `?v=` bumps. Notes: `docs/notes/server/pwa.md`, "The app
+shell". Checked in headless Chromium (390 and 1280 px): the bar at the bottom with the window never scrolled, the
+column 688 px as before, a save keeps the place, Back to a saved page lands at the place over its `#group`, a reload
+too, a link to a fragment lands on it.
+
+Deviations, each measured or found while building:
+
+- **The column's padding** is `max(16px, inset, calc((100% - 720px) / 2 + 16px))` (480 px narrow), not `(100% -
+  720px) / 2`: the old 720 px box held 16 px padding, so this keeps the content 688 px wide, as before.
+- **`.editor-bar`**: its side margins stay `-max(16px, inset)` - they already reach the old 720 px column's edge; the
+  full `max(...)` expression would stretch the bar across the window's margins. Its `top` became `-8px`: a sticky
+  offset counts from inside the scroller's padding (8 px + the status bar's inset; measured in Chromium), so the old
+  `top: env(safe-area-inset-top)` would have left it 8 px + twice the inset down.
+- **No `originTop()`**: the saved tops are screen tops, so where the scroller sits on the screen cancels out;
+  `find()` uses `rect.top + scroller.top()` (a jstest with `main` 44 px down proves it).
+- **The guard** runs wherever `main` is the scroller (not by `body.auth-page`): the auth pages and a page without
+  `main` scroll the window themselves.
+- **`music-cards.js` scrolled the window** (`window.scrollBy`, its anchoring when a card grows; §2.3 missed it): it
+  scrolls `main` now (`music.html`, `music_entry.html`; `jstest/music-cards.test.js`). There are no horizontal card
+  scrollers in `style.css`, so `touch-action` is on `main` and `.tab-bar` only.
+- **A page without the tab bar** (`music_spotify_done`) keeps the home indicator's inset under its content
+  (`calc(16px + inset)`); under the bar (`.tab-bar ~ .container`) it is 16 px.
+
+After the code QA (`qa-r5-a-code.md`): `shell::the_app_shell_scrolls_main_not_the_document` pins the editor bar's
+`top: -8px` together with `main`'s `padding-top: calc(8px + inset)` (L1) and matches `position:fixed` with or without
+the space (N3); the music cards' anchoring has a jstest (L2); check 4 names a history Back (L3).
+
+Device checks owed (the user; §5): 1 the bar still after > 10 min in the background on Device › Time; 2 no
+double-tap zoom on a tab or a deep row, pinch still zooms; 3 a save never jumps (Device › Home, Lock › Parent PIN, a
+low group on Device › Time); 4 a history Back (the browser's or the system's back, not the page's "‹" link, which
+opens at the top by design) from a phone to a long Devices list (also with a `#group` in its address) and a reload
+land at the place; 5 login with the keyboard up, Time rules' last field with the keyboard up and down, no offset
+bar; 6 desktop: the scrollbar at the window's edge, the wheel over the margins, the column steady, the editor bar
+flush with the column; 7 the Locate map drags without the page scrolling. Plus: **on Device › Time with a long rule
+list, scrolled, the editor bar sits right under the status bar - no gap above it - and Save is not covered**, also in
+landscape (WebKit's sticky offset inside a padded scroller, assumed the same as Chromium's).

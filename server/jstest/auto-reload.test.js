@@ -155,3 +155,18 @@ test("no record or reload once a save has started", () => {
     assert.strictEqual(win.reloads, 0);
     assert.deepStrictEqual(win.stored, {});
 });
+
+// Design 43: in the app shell <main> scrolls, not the window; the record carries its position.
+test("in the app shell the record holds <main>'s position", () => {
+    const scrollRestore = require("../static/scroll-restore.js");
+    const win = fakeWindow();
+    win.location.hash = "";
+    win.scrollY = 0;
+    const main = { scrollTop: 640 };
+    win.document.querySelector = (selector) => (selector === "main" ? main : null);
+    win.getComputedStyle = (el) => ({ overflowY: el === main ? "auto" : "visible" });
+    install(win);
+    win.advance();
+    assert.strictEqual(win.reloads, 1);
+    assert.strictEqual(JSON.parse(win.stored[scrollRestore.KEY]).y, 640);
+});

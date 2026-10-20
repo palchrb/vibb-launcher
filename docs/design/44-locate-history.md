@@ -105,3 +105,37 @@ the iPhone: the pick remembered across a relaunch, no jump on any tap.
 - 44-7: `preferCanvas: true`.
 - 44-8: `<a role="radio" aria-checked>` with `preventDefault`; the `newest: true` point is never counted.
 - 44-9: test names corrected (`no_store_paths`, `src/tests/` Locate file); list-page-no-store and Cancel-from-Locate tests added.
+
+## Implementation status (2026-10-20, branch `r5-a`)
+
+Built as decided: Locate's Recent filtered to its kinds, the summary's `#recent` under `#quick` for the override kinds,
+one macro (`partials/recent.html`) and `locate::recent`, Cancel's whitelisted `back`; the Locations row with the span's
+count; `/devices/{id}/locations` (no-store, 200 a page on `(captured_at, id)`, a row's tap scrolls the map into view
+and pans); the span pick as `role=radio` links remembered in `localStorage`; `locations.json?since=` with the flagged
+newest; `static/locate.js` with `data-` attributes and `preferCanvas` dots (`js_string` gone). Notes:
+`docs/notes/server/pwa.md`, "Locate: history, span, each page its Recent". Checked with the real Leaflet in headless
+Chromium against a fake `locations.json`: the trail, dots and marker with its popup, the pick redrawing and
+remembered across a reload, a list row bringing the map into view.
+
+Deviations:
+
+- **The Locations page's pick opens the page with the span** (its link, not `preventDefault`), and a remembered span
+  other than the rendered one reopens it once: the rows are worded in the server's zone (`Zone::at`) and paged by the
+  server, which the script can't redo from `locations.json`. Locate's pick redraws in place as designed.
+- **The summary's Recent shows once it has a row (or a Cancel line)**: "Nothing asked yet." on every phone's
+  summary would be noise. Today keeps today's answers as before, and Recent leaves out the row Today's answer
+  already shows (that command's newest) unless it can still be cancelled - only Recent has Cancel (code QA N2;
+  filtering Recent was less code than reworking Today's answer card and its tests).
+- **The Locations page's pick replaces the history entry** (`location.replace`, code QA N1): Back goes to Locate,
+  not through the spans.
+- **A Locations row's tap scrolls `main` by an offset** that puts the map's top at `main`'s top padding (under the
+  status bar); `scroll-margin-top` needs Safari 14.1 and the floor is 14.0 (code QA N5). A page whose window scrolls
+  uses `scrollIntoView`.
+- **Small additions**: "Newest" on an older Locations page (the inbox's shape); All kept reads "3 kept"; Locate's
+  no-JS span links carry `#location` (they land at the map, not the top); the Update Location wait polls
+  `locations.json?since=1` (the newest is last either way) instead of every kept fix.
+
+Device checks owed (§5): the emulator with two `geo fix` positions ten minutes apart - the trail with its dots, the
+row's count, the Locations page with both rows, a tap pans; 24 hours and All kept keep both; on the iPhone the pick
+remembered across a relaunch, no jump on any tap, and a Locations row's tap leaves the map under the status bar, not
+behind it.
