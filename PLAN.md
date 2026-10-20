@@ -756,6 +756,23 @@ findings, merge to `main`, full suite once.
   the tab-bar test deleted. A server round of its own (design QA + code QA), after the 0.29.5 verification; the user
   verifies on the iPhone: the bar still after > 10 min in the background, Back to a long page at its place, a saved
   form not jumping (the standing rule).
+- **Design 44: the Locate page shows its history, and only its own Recent** (the user, 2026-10-20: "hvor kan jeg
+  vise location history ... ser jo ikke den på noe vis i kartet"; the Recent list "viser egentlig feil ting" - Install
+  Now and Unlock rows; "1 og 2 er bra", plus a span choice for the trail). Today the history is the blue trail alone
+  (all stored points, `locations.json`; invisible when the points coincide, as on the emulator) and Recent lists the
+  phone's last 10 commands of every kind. Decided: (1) Recent on Locate keeps only the page's own actions (Update
+  Location, Ring, Stop Ringing, Lock, Erase); the other commands get a Recent of their own where they belong - Unlock
+  and Lock again on the Lock page, Install Now on Home (the Time page has its own already) - one shared partial and
+  one query taking a kind list, the same cancel. (2) A "Locations" list under the map: each stored fix with its time
+  (the zone words the page uses) and accuracy ("± 25 m"), newest first, a tap pans the map to it (no navigation, no
+  jump; JS-only enhancement, the list reads without it); the trail also gets a small dot per point so a short history
+  shows. (3) A span pick above the map, "Show: 12 hours (default) · 24 hours · 7 days · everything kept", applied to
+  the trail and the list alike, remembered per browser (localStorage, a view preference - no POST, so nothing to
+  save and nothing that can jump) and sent as `?since=` to `locations.json`, which filters by `captured_at`; the
+  newest fix is always shown whatever the span, so the marker never disappears. Server tests: the filtered JSON, the
+  kind-filtered Recent on each page, the cancel still right; jstest for the pick's storage and the list's pan. A PWA
+  server round, together with design 43 or right after it; the user verifies on the iPhone and the emulator (a
+  moving emulator: `geo fix` twice, §5 of docs/testing/emulator.md).
 - **Music app's episode list: thumbnails and a kid-side order flip** (the user, 2026-10-19, from a Snipp Snapp Snute
   screenshot): (1) small pictures in place of the number circles, only for an entry whose episodes really have their
   own art (the carousel's rule, `showsCarousel`: at least two different pictures; a one-picture entry keeps the
