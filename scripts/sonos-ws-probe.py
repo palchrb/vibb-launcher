@@ -9,10 +9,19 @@ every message as it arrives with a timestamp. With --poll it also asks the speak
 AVTransport (port 1400, what the music app uses today) for GetPositionInfo every second, so the
 two can be compared side by side while you skip tracks in the Sonos app or the music app.
 
-Nothing is changed on the speaker: subscribe and read only. Run on a machine on the same LAN:
+Without --do nothing is changed on the speaker: subscribe and read only. With --do it sends the
+listed commands one by one (--gap seconds apart, default 4) after the subscriptions, so the events
+each command causes show in the stream. Run on a machine on the same LAN:
 
     python3 -m pip install aiohttp        # or: sudo apt install python3-aiohttp
     python3 sonos-ws-probe.py 192.168.1.50 --poll
+    python3 sonos-ws-probe.py 192.168.1.50 --poll --do pause play seek+30 seek-15 volume=20
+    python3 sonos-ws-probe.py 192.168.1.50 --do group=Kjøkken ungroup=Kjøkken
+
+Commands: play, pause, toggle, next, prev, seek+N / seek-N (seconds, relative), seek=N (seconds,
+absolute), volume=N (0-100, this speaker's group), group=<room> (the room joins this speaker's
+group), ungroup=<room> (the room leaves its group and stands alone). Room names as the Sonos app
+shows them, matched case-insensitively.
 
 Ctrl-C ends it. The X-Sonos-Api-Key below is the RFC 4122 example UUID that sonos-websocket sends;
 the speaker accepts it locally - it is not a secret.
@@ -67,7 +76,52 @@ async def command(ws, header: dict, body: dict | None = None) -> None:
     await ws.send_json([header, body or {}])
 
 
-async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio.Event) -> None:
+def plan(step: str, gid: str, players: dict, groups: list) -> tuple[dict, dict] | None:
+    """One --do step as (header, body), or None (said why)."""
+    simple = {"play": "play", "pause": "pause", "toggle": "togglePlayPause", "next": "skipToNextTrack",
+              "prev": "skipToPreviousTrack"}
+    if step in simple:
+        return {"namespace": "playback:1", "command": simple[step], "groupId": gid}, {}
+    m = re.fullmatch(r"seek([+-])(\d+)", step)
+    if m:
+        delta = int(m.group(2)) * 1000 * (1 if m.group(1) == "+" else -1)
+        return {"namespace": "playback:1", "command": "seekRelative", "groupId": gid}, {"deltaMillis": delta}
+    m = re.fullmatch(r"seek=(\d+)", step)
+    if m:
+        return {"namespace": "playback:1", "command": "seek", "groupId": gid}, {"positionMillis": int(m.group(1)) * 1000}
+    m = re.fullmatch(r"volume=(\d+)", step)
+    if m:
+        return {"namespace": "groupVolume:1", "command": "setVolume", "groupId": gid}, {"volume": min(100, int(m.group(1)))}
+    m = re.fullmatch(r"(group|ungroup)=(.+)", step)
+    if m:
+        pid = players.get(m.group(2).strip().lower())
+        if pid is None:
+            print(f"{stamp()} DO {step}: no room of that name - known: {sorted(players)}")
+            return None
+        if m.group(1) == "group":
+            return {"namespace": "groups:1", "command": "modifyGroupMembers", "groupId": gid}, {"playerIdsToAdd": [pid], "playerIdsToRemove": []}
+        home = next((g for g in groups if pid in g.get("playerIds", [])), None)
+        if home is None or len(home.get("playerIds", [])) < 2:
+            print(f"{stamp()} DO {step}: that room isn't grouped")
+            return None
+        return {"namespace": "groups:1", "command": "modifyGroupMembers", "groupId": home["id"]}, {"playerIdsToAdd": [], "playerIdsToRemove": [pid]}
+    print(f"{stamp()} DO {step}: unknown command")
+    return None
+
+
+async def run_steps(ws, steps: list, gap: float, live: dict, players: dict) -> None:
+    """[live] is kept current from the groups events: a group's id changes when its members do."""
+    for step in steps:
+        await asyncio.sleep(gap)
+        planned = plan(step, live["gid"], players, live["groups"])
+        if planned:
+            header, body = planned
+            print(f"{stamp()} DO {step} -> {header['namespace']}/{header['command']} {json.dumps(body, ensure_ascii=False)}")
+            await command(ws, header, body)
+
+
+async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio.Event,
+                         steps: list | None = None, gap: float = 4.0) -> None:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE  # the speaker's certificate is self-signed
@@ -98,6 +152,7 @@ async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio
                     print(f"{stamp()} WS this ip isn't in the household's players: {[p.get('name') for p in players]}")
                     return
                 player = me["id"]
+                names = {p.get("name", "").lower(): p["id"] for p in players}
                 group = next(g for g in body.get("groups", []) if player in g.get("playerIds", []))
                 print(f"{stamp()} WS player {me.get('name')} in group {group.get('name')} ({group['id']})")
                 gid = group["id"]
@@ -106,7 +161,15 @@ async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio
                 await command(ws, {"namespace": "groups:1", "command": "subscribe", "householdId": household})
                 await command(ws, {"namespace": "playback:1", "command": "getPlaybackStatus", "groupId": gid})
                 ready.set()
+                live = {"gid": gid, "groups": body.get("groups", [])}
+                if steps:
+                    asyncio.create_task(run_steps(ws, steps, gap, live, names))
                 continue
+            if player is not None and header.get("type") == "groups":
+                live["groups"] = body.get("groups", [])
+                mine = next((g for g in live["groups"] if player in g.get("playerIds", [])), None)
+                if mine:
+                    live["gid"] = mine["id"]
             kind = header.get("type") or header.get("response") or header.get("command") or "?"
             ok = "" if header.get("success", True) else " FAILED"
             print(f"{stamp()} WS {header.get('namespace', '-')}/{kind}{ok} {short(body)}")
@@ -151,10 +214,12 @@ async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("ip", help="the speaker's LAN address (Sonos app › Settings › System › About)")
     ap.add_argument("--poll", action="store_true", help="also poll UPnP GetPositionInfo every second")
+    ap.add_argument("--do", nargs="+", metavar="CMD", help="commands to send, in order (see above)")
+    ap.add_argument("--gap", type=float, default=4.0, help="seconds between --do commands (default 4)")
     args = ap.parse_args()
     ready = asyncio.Event()
     async with aiohttp.ClientSession() as session:
-        tasks = [asyncio.create_task(websocket_side(session, args.ip, ready))]
+        tasks = [asyncio.create_task(websocket_side(session, args.ip, ready, args.do, args.gap))]
         if args.poll:
             tasks.append(asyncio.create_task(upnp_side(session, args.ip, ready)))
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
