@@ -928,6 +928,18 @@ findings, merge to `main`, full suite once.
   commit); when on, the launcher wakes the screen (`PowerManager`/`turnScreenOn` on the lock activity, a short
   timeout, never a dismiss) for a missed call and for a glance app's notification (design 51's list), never for the
   music tile. Launcher round 7 (the server half with it).
+- **Any allowed app may ring over the lock** (the user, 2026-10-20: "det er ikke sånn at vi bare automatisk kan
+  sense om en app har call funksjon med den call style biten? Isåfall kan den få automatisk tilgang"): design 17's
+  reading is already generic (a CALL-category notification with a full-screen intent from an unsuspended app); only
+  `voipCandidates` (`lock/VoipCallPlan.kt`) fixes the set to Element X and Signal/Molly (the contacts' messaging apps
+  while calls are managed, `KNOWN_VOIP_PACKAGES` while unmanaged). Change: the candidate set is every allowlisted,
+  unsuspended app (never the SMS app, as today), under the same gates (calls on, no no-calls time rule; none while
+  calls are off or unknown). Accepted: an allowed app that fakes a ring gets its own screen over the lock for that
+  ring - the app is the parent's choice, the kiosk keeps the rest locked. The status report counts rings per package
+  (`lock_state.voip_rings`, package + count, no text) so the PWA can show "rang over the lock". The in-call phase stays
+  "a CALL-category foreground notification (or Element's channel) + audio IN_COMMUNICATION": an app without it gets
+  the lock back after the 15 s grace, its call going on in the background. Launcher only (+ the status field in both
+  directories). Launcher round 7.
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
