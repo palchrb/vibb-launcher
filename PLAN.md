@@ -906,8 +906,10 @@ findings, merge to `main`, full suite once.
   on the iPhone, immutable, "funker 100%"); with `mutable` the worker's result went back through the host app and
   that step displayed nothing on iOS 26 whatever the worker did. No receipt comes from a Safari device now: Apple's
   acceptance is the delivery (`reason = 'declarative'`, "Delivered to iPhone · Safari", "Last delivered …", never
-  "May not be showing" - the user, 2026-10-20: "da velger vi å stole på declarative web push"). Owed: the iPhone test
-  (banner + badge, the inbox "Delivered to"). **Next server round**: the tap on a declarative notification goes
+  "May not be showing" - the user, 2026-10-20: "da velger vi å stole på declarative web push"). **Verified on the
+  iPhone 2026-10-20 07:20 UTC**: Send a Test shows its banner (deliveries 50-52, no receipt lines), a parent-PIN use
+  on the emulator reached the inbox and the badge on the Home Screen icon carried the unread count (a test push
+  carries `app_badge` = the unread count, 0 when the inbox is read - by design, no badge for a test alone). **Next server round**: the tap on a declarative notification goes
   straight to `navigate` without the worker (WebKit skips it when the notification has one), so the link carries the
   delivery (`?push=<delivery id>`) and the page handler of a logged-in parent sets `clicked_at` from it - "Opened on
   iPhone · Safari" (the user's yes, 2026-10-20; a missing tap never changes a thing - delivered stays delivered);
