@@ -505,14 +505,20 @@ findings, merge to `main`, full suite once.
   then protect; `ProtectedSocketTest`; emulator.md §6m step 8 - enrolment, pause on/off, all resolve). Code QA
   `docs/review/qa-vpn-protect-code.md` (0 High / 0 Medium / 3 Low, all fixed: `Attempt.Unprotected` never counts as a
   DoT block); **merged into `main` 2026-10-19, goes out with launcher-v0.29.1.**
-- **Play/pause flicker in the music card and the player** (the user, 2026-10-20, a screen recording: "widget (og
-  inne i appen) hopper litt frem og tilbake ofte når jeg toggler play/pause"): the launcher's Home music card
-  (`MusicHomeCard`/`MusicCard`) and the music app's own player flip back and forth for a moment after a play/pause
-  tap - most likely the tap's optimistic state and the session's state (bridge/`MusicStore`, Media3's
-  `onIsPlayingChanged`) arriving in the other order, each repainting. Find: log both sides' state changes with
-  timestamps on the emulator around one tap; fix: the optimistic state holds until the session confirms or 1 s
-  passes, never repainted by an older state (vibb's player is the reference). Launcher or music app, decided by the
-  log. Next launcher/music round.
+- **Play/pause flicker on the lock's music tile (and to check: the music app's player)** (the user, 2026-10-20, a
+  19 s screen recording of the PIN lock's glance page, Spotify "80s stemning": "widget (og inne i appen) hopper litt
+  frem og tilbake ofte når jeg toggler play/pause"). Frame analysis (ffmpeg scene changes + pixel diffs): each of the
+  six taps flips the icon once, 40 ms after the press ripple, and the progress bar moves only while the icon says
+  playing - no spontaneous flip back in this clip. What does show: about 0.8 s after a tap the WHOLE card is redrawn
+  (a faint whole-card diff at 6.22 s and 17.06 s), not just the button. Cause in the code: every session callback
+  (`MusicLockPanel.changed()` -> `GlancePanel.render()` -> `renderNow()`) rebinds the rows and runs `fitNow()`, which
+  measures by setting the live clock's text size big, then small, and `lockGlanceMore`'s text, then `glanceFit` picks
+  the tile size again - a full page re-layout per callback, two or three callbacks per tap (playback state, position,
+  metadata). Fix: a session change renders the tile alone (`MusicLockPanel.render()`), and the page's fit runs only
+  when `tileUp` or the rows changed; the fit measures on detached/measure-only copies, never by mutating the live
+  clock; coalesce callbacks within one frame (`Choreographer`/a posted render). Then the same recording method on the
+  music app's player screen (the user saw it there too; Compose, `isPlaying` from the controller) before touching it.
+  Launcher round; the reference behaviour is vibb's player.
 - **Diagnostics from the same incident:** (1) the music app logs nothing of its own in `onError`; Media3 prints a
   fixed "UnknownHostException (no network)" for any name failure - log the real cause (class + message) and the error
   code; (2) "Kan ikke spilles nå" shows for a name/network failure - say "no network" instead when that is the cause;
