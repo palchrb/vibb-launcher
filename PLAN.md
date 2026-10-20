@@ -707,7 +707,14 @@ findings, merge to `main`, full suite once.
   Launcher only; a mockup first, then the usual process.
 
 ### Before stable `music-v0.4.0`
-- **A context-mode playlist doesn't play on the real SDK** (the user, 2026-10-16, emulator, server 0.26.0,
+- **A context-mode playlist doesn't play on the real SDK - NOT REPRODUCED 2026-10-20**: the release music app
+  (0.4.0-rc.4 era) on the emulator played a playlist the parent's account owns and the kid's only follows
+  ("RÜFÜS DU SOL – SOLACE", context mode, the screenshot) from the first tap. So the 2026-10-16 failure was either
+  intermittent (a 403 that comes and goes, the web player not yet Spotify's active device, a settings call before
+  the play) or fixed indirectly between rc.1 and rc.4. Before stable 0.4.0: three more cold tries (app killed,
+  after a reboot, on mobile data) on that playlist and one other not-owned one; if all play, close this with the
+  wording fix alone (a 4xx before the play must never read "Trenger internett"); if one fails, the debug app and
+  `adb logcat -s VibbSpotify` on that tap. Original report: (the user, 2026-10-16, emulator, server 0.26.0,
   music 0.4.0-rc.1): a playlist the child's account neither owns nor collaborates on (context mode, `spotify:
   "context"`) shows "Trenger internett" at once and never plays, while NRK and the rest play; made a
   collaborator (list mode), the same playlist plays fine. So the list path works with the real SDK and the
