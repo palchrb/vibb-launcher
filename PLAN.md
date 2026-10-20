@@ -912,6 +912,17 @@ findings, merge to `main`, full suite once.
   widget carries a running timer with controls - the notification does, design 42). Decision 2026-10-20: not now; the
   targeted tiles (music, timer/alarm, flashlight) cover what was asked. Revisit when a third app needs a glance
   surface.
+- **Catalog apps: protected from force-stop, a one-tap battery exemption at install** (the user, 2026-10-20: "sikre
+  at vi kan installere apper direkte på telefonen, og samtidig live gi de batteriunntak"). Two parts: (1) the device
+  owner sets `setUserControlDisabledPackages` for every catalog-installed app (the kid can't force-stop or clear it;
+  from Android 12 it is kept out of app hibernation) - plain code at install/allow time, removed when the app leaves
+  the catalog; (2) the battery optimisation exemption has no device-owner API, so right after a catalog install the
+  launcher opens the system dialog for that package (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `package:<pkg>`;
+  the app must declare the permission - Fossify Clock does) and the parent taps Allow once, the way design 19b does
+  for the launcher itself; the app's page in the PWA shows the state ("exempt" / "not yet", from the status report's
+  app list) and a row to ask again. Verify on the emulator first: the dialog for another package accepted from our
+  app on Android 16, and what `setUserControlDisabledPackages` exempts there. Launcher round 7 (+ the status contract
+  field in both directories).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
