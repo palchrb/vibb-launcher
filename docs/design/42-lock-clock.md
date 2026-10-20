@@ -1,127 +1,94 @@
-# 42 - The clock on the lock: a timer tile from the system clock, the next alarm (proposal)
+# 42 - The clock on the lock: Fossify Clock's timer and the next alarm (proposal, rewritten after the probes)
 
-Asked 2026-10-19/20. The user: "ideelt sett en tile slik som iphone har i dag, som viser nedtelling etc og en knapp
-for å slå av og på eller noe sånne greier. når man trykker på den så vil den i såfall åpne appen"; and "bruker
-systemklokken for å ikke skape noe mulige angrepsflater" - no Fossify exemption, no hosted widgets. Launcher only; no
-API change. Builds on design 25 (the glance page, `GlanceRows`/`GlanceStore`, `glanceFit`), design 28 (the music tile,
-`MusicLockPanel`) and `PinLockRuntime`'s system-clock rule (`systemClockPackage`: the alarm app's package when it is a
-`FLAG_SYSTEM` app).
+Asked 2026-10-19/20. The user: a tile like iPhone's with the countdown, a tap opens the app; "bruker systemklokken for
+å ikke skape noe mulige angrepsflater" - then, when Google's clock proved unreadable: "Jeg er helt ok med å ta inn
+fossify clocken ... om fossify oppsettet vil fungere likt over alt og for alle telefoner". Launcher only (one pinned
+constant; no API change). Builds on design 25 (the glance page, `GlanceReader`/`GlanceStore`, `glanceFit`,
+`LockGlanceTest`), design 28 (the music tile), `PinLockRuntime`'s alarm exemption, and the catalog (security review
+M10: a catalog app is pinned to its package and signer). Revised twice on 2026-10-20: after
+`qa-r6-launcher-design.md` (42-1…42-6) and after the two probes below.
 
-## 0. What the kid sees
+## 0. The probes (2026-10-20, the emulator)
 
-On the glance page, between the date and the music tile:
+- **Google's clock** (`com.google.android.deskclock`): the stopwatch/timer notification is a custom
+  `contentView`, `android.showChronometer=false`, title and text `null`, flags `AUTO_CANCEL|LOCAL_ONLY`. Nothing
+  readable without rendering a foreign view. Out.
+- **Fossify Clock** (`org.fossify.clock`, installed through the catalog from GitHub `FossifyOrg/Clock`): a running
+  timer posts an ongoing notification (`channel=simple_alarm_timer`, `ONGOING_EVENT|FOREGROUND_SERVICE`, `vis=PUBLIC`)
+  whose **title is the remaining time ("11:12", updated every second)** and whose text is "1 timer er i gang"; no
+  actions; `showChronometer=false`. A running stopwatch posts nothing (probed twice). Its alarms go through
+  **`setAlarmClock`** (`Alarm clock: triggerTime=… showIntent=… startActivity`), so `getNextAlarmClock` sees them.
 
-- a line **"Alarm 07:00"** with the alarm glyph while the system clock has a next alarm (the clock's own alarm; one
-  set by another app shows nothing, as the PIN lock's exemption already decides); more than 24 h away it carries the
-  weekday: "Alarm tor 07:00";
-- a **tile in the music tile's style** while the system clock has a running timer or stopwatch: the glyph, the
-  app's own title ("Timer", "Stoppeklokke" - whatever the notification says), the time large (counting down or up
-  once a second), and at most two round buttons that are the notification's own non-activity actions with the app's
-  own labels (Pause/Fortsett, Stopp/Nullstill). A tap on the tile itself goes the glance rows' way: the keypad first,
-  then the clock app (`GlanceOpener`, design 25 §1.2's rule that a row never opens anything over the lock).
-
-## 0b. Step 0 - the probe (before anything else)
-
-On the emulator (Google's clock) and the Jelly Star, with a timer and a stopwatch running (and a paused timer), run
-`adb shell dumpsys notification --noredact` and record in this note: whether the ongoing notification carries
-`android.showChronometer` / `android.chronometerCountDown` and `when`, whether the content view is custom, its actions
-(titles, and whether each PendingIntent is an activity or a service/broadcast), and the exact package. The design is
-built only if the chronometer extras are there. If the clock draws its own view (as AOSP DeskClock does), 42 falls
-back to the alarm line alone and the timer tile is dropped - the user decides then. The implementer does not start 42
-before the probe's result is in this note.
-
-## 0c. The probe's result (2026-10-20, the emulator, Google's clock `com.google.android.deskclock`)
-
-A running stopwatch's notification: `contentView=com.google.android.deskclock/0x7f0e0044` (the clock's own layout),
-`android.showChronometer=false`, `android.title=null`, `android.text=null`, flags `AUTO_CANCEL|LOCAL_ONLY` (not
-ongoing), channel "Stopwatch v2", two actions. So the time lives inside a foreign RemoteViews only: **the timer tile
-with a countdown and the notification's buttons cannot be built against the system clock without rendering another
-app's view, which this design refuses.** What stands: §0's alarm line (AlarmManager, no notification involved) and,
-if the user wants it, a plain tile "Timer går" / "Stoppeklokke går" told apart by the channel id ("Timers v2" /
-"Stopwatch v2"), no time, no buttons, a tap the keypad-then-clock-app way. The user's answer (2026-10-20): Fossify Clock is welcome
-"om fossify oppsettet vil fungere likt over alt og for alle telefoner". So 42 turns to **the catalog's clock app**:
-Fossify Clock (`org.fossify.clock`, GitHub `FossifyOrg/Clock`, installed through the catalog with the pinned package
-and signer, the same on every phone; no internet permission). Conditions, each checked by the same probe on the
-emulator before any code: (a) its timer/stopwatch notification carries the time as text (title/text updated each
-second) and Pause/Stop actions - then §1's tile reads that text (cleaned) instead of a chronometer, ticking by the
-app's updates, not ours; (b) its alarms go through `setAlarmClock` so `getNextAlarmClock` sees them (the alarm
-line); (c) the PIN lock's alarm exemption (`PinLockRuntime.systemClockPackage`, FLAG_SYSTEM only today) is widened to
-one more package: the catalog's clock app, only when the catalog's pinned signer matches the installed one - the
-same mechanism, one more package, decided by the server's catalog (a `clock_app` flag on the tracked app, in the
-policy). The user installs Fossify through the Apps tab and runs the probe; the note is rewritten after it.
+So: Fossify Clock becomes **the catalog's clock app**. The same APK, package and signer on every phone (the catalog
+pins both; Fossify asks for no internet permission).
 
 ## 1. Decisions
 
-1. **The source is the system clock's notification, read by a `ClockReader`** of its own, wired from
-   `BadgeListenerService`'s posted/removed/connected/disconnected like `VoipCallReader` (own allowlist guard test).
-   `GlanceReader` cannot be used: it drops unticked packages and `glanceCandidate` drops every ongoing notification.
-   `ClockReader` filters on `systemClockPackage` first, so `PinLockRuntime.systemClockPackage` is exposed read-only.
-   A notification qualifies when `extras[EXTRA_SHOW_CHRONOMETER]` is true (as the probe confirms): `EXTRA_CHRONOMETER_COUNT_DOWN`
-   true = a timer whose end is `when`; false = a stopwatch whose start is `when`. Several timers: the one ending first.
-   A paused timer (posted without the chronometer, the remaining time in its text) shows the tile with the app's text
-   line and the Resume action, no ticking. The tile goes when the notification goes (`removed`), like a row.
-2. **The buttons are the notification's actions, in the clock's order** (what the shade shows): the first two whose
-   `PendingIntent` is not an activity (`isActivity == false`), titles cleaned with `cleanGlanceText(raw, max)`. They are Taking the first two in the clock's order means "Pause, +1 min" with no "Stop" can result; that is accepted - the tile mirrors the shade.
-   sent from their own file, `lock/ClockActions.kt`, with `ActivityOptions.makeBasic().
-   setPendingIntentBackgroundActivityStartMode(MODE_BACKGROUND_ACTIVITY_START_DENIED)` (API 34+), so nothing can start
-   over the LOCKED page. A guard test pins that single send, the `isActivity` filter and the system-clock package, and
-   forbids `.send(` in `GlancePanel`. Whether a service action sent by us reaches a clock app in the background is a
-   device check (§4); "no button" is the fallback. No icons from the app: our round buttons, the labels only.
-3. **The time is ours**: `ClockTile.remaining(end, now)`/`elapsed(start, now)` formatted as the lock's music tile
-   formats positions (`clockText`), ticked once a second only while the page shows the tile (`glanceTicks`); never the
-   app's text while the chronometer runs. The ticking text has a fixed width with tabular figures
-   (`fontFeatureSettings "tnum"`, a width measured for "88:88:88"), so a tick never asks the page for a layout.
-4. **The next-alarm line**: `AlarmManager.nextAlarmClock`, shown only when `showIntent.creatorPackage ==
-   systemClockPackage` (`PinLockRuntime`'s rule), the time in the lock's clock format (`ClockFormat`), the weekday when
-   more than 24 h away, refreshed on `ACTION_NEXT_ALARM_CLOCK_CHANGED` and at every page show. No tap.
-5. **Layout and fit**: `view_lock_glance.xml` gets `lock_glance_alarm` (a line under the date, in `date`'s term) and
-   `lock_timer_tile` (the music tile's card: glyph, title, the big time, a row of up to two buttons). `GlanceHeights`
-   gets two clock-tile terms (`clockFull`, `clockNoButtons`, measured from the XML like `tileFull`), and `glanceFit`
-   tries the candidates in this order, first that fits wins: (1) both tiles full and every row; (2) the music tile
-   compact; (3) rows folded into "+ N varsler"; (4) the clock tile without its buttons; (5) the clock tile gone (then
-   today's order for the music tile alone). A running timer is the thing the kid came to see, so the clock tile
-   outlives the music tile's full size and the rows.
-6. **The tile's tap target**: a new `GlanceTarget.ClockApp` (the system clock's launch intent), handled by the opener's
-   existing one-send-two-starts contract (unchanged counts); its case goes in `LockGlanceGuardTest` (the opener test)
-   and in `glanceUsableUnderLock` (the clock app under a time rule).
-7. **Rendering follows round 6's rule** (`r6-launcher-small-items.md` §2): a clock change renders the clock tile
-   alone; the page refits when the tile comes or goes or its measured height changes (the buttons appear, the paused
-   text wraps), never per tick.
-8. **System clock only**: the emulator's is `com.google.android.deskclock`; the Jelly Star's package is read in the
-   probe. Fossify Clock gets no exemption (the user's call).
+1. **The clock app is known by package and signer, in the launcher**: `ClockApp.PACKAGE = "org.fossify.clock"` and
+   `ClockApp.SIGNER_SHA256` (the release APK's signing certificate, computed by the implementer with `apksigner
+   --print-certs` on a GitHub release - the same value the catalog pinned, visible on the app's page in the PWA),
+   checked against the installed package's signers (`CatalogApkCheck`'s way). `ClockApp.installed(context)` is true
+   only when both match. A later server flag (`clock_app` on a tracked app, in the policy) can replace the constant;
+   not now (no API change this round).
+2. **The PIN lock's alarm exemption widens by that one app**: today the alarm's full-screen intent may show over the
+   lock only for a `FLAG_SYSTEM` clock (`PinLockRuntime.systemClockPackage`); now also when the `nextAlarmClock`'s
+   `showIntent.creatorPackage` is `ClockApp.PACKAGE` and `ClockApp.installed` holds. The same mechanism, one more
+   package, no other change to what the lock allows. `clockPackages()` (read-only) replaces the private
+   `systemClockPackage` for the readers below.
+3. **The next-alarm line** under the date: `AlarmManager.nextAlarmClock` when its creator is one of
+   `clockPackages()`; "Alarm 07:00", with the weekday when more than 24 h away ("Alarm tor 07:00"), in the lock's
+   `ClockFormat`; refreshed on `ACTION_NEXT_ALARM_CLOCK_CHANGED` and at every page show. No tap.
+4. **The timer tile**: its own `ClockReader` in `badges/` (wired in `BadgeListenerService` like `VoipCallReader`:
+   posted/removed/connected/disconnected, its own guard test), taking only notifications of `ClockApp.PACKAGE`
+   that are ongoing - `GlanceReader` never sees them (it drops unticked packages and every ongoing notification).
+   `ClockTile.parse(title, text)` (pure): the remaining time from the title (`H:MM:SS`/`MM:SS`/`M:SS` to seconds;
+   anything else = no time, the cleaned title shown as is), the text cleaned with `cleanGlanceText(raw, max)`. The
+   tile in the music tile's style (`lock_timer_tile`: the glyph, "Timer" as our own label, the time large in a
+   fixed-width tabular text measured for "88:88:88"); the time **counts down locally between the app's updates** from
+   the last parsed value (a drift corrected by every update; the app updates each second, so the local tick is a
+   smoothing, never the truth) and stops at 0:00. No buttons (the notification has none). The tile goes when the
+   notification goes. A stopwatch shows nothing (no notification). The tile's tap: `GlanceTarget.ClockApp` (the
+   app's launch intent) through the opener's one-send-two-starts contract - the keypad first, then Fossify
+   (`LockGlanceGuardTest` case). Several timers: the app posts one notification ("2 timere er i gang"); the title is
+   the nearest - shown as is.
+5. **Rendering**: round 6's rule (`r6-launcher-small-items.md` §2) - a clock change renders the tile alone and
+   refits the page only when the tile came or went or its measured height changed.
+6. **`glanceFit`** gets the term `clockFull` (measured from the XML like `tileFull`) and tries the candidates in
+   this order, first fit wins: (1) both tiles full and every row; (2) the music tile compact; (3) rows folded into
+   "+ N varsler"; (4) the clock tile gone (then today's order for the music tile alone). A running timer outlives the
+   music tile's full size and the rows (the kid came to see it). The numbers in `LockGlanceTest` (`fixed`, `tileFull`,
+   `tileCompact`) are the ones round 6 re-pinned; `clockFull` is pinned new.
+7. **Not read**: Google's clock (nothing to read) - a phone without Fossify shows the alarm line only when the system
+   clock set the alarm (today's rule) and never a timer tile.
 
 ## 2. Security
 
-Nothing from another app is rendered as a view: titles and labels are strings cleaned like the glance rows', the
-time is computed by us, only non-activity actions are sent, with background activity start denied. Only the system
-clock package is read. `LockGlanceGuardTest`: the tile's tap leads to the keypad; no button starts an activity; a
-notification without a chronometer and without actions shows nothing. Redacted `toString`s as the rows have.
+Nothing from another app is rendered as a view: the time is parsed from a string and drawn by us, the text is
+cleaned like a glance row's; only `ClockApp.PACKAGE` with the pinned signer is read; no action is fired (none exists);
+the tile's tap goes through the keypad. The alarm exemption grows by exactly one pinned app. Redacted `toString`s as
+the rows have. `LockGlanceGuardTest`: the tile opens nothing without the keypad; a notification of another package,
+or of the right package with a wrong signer, shows nothing.
 
 ## 3. Tests (required)
 
-`ClockTileTest` (JVM, pure): which notification qualifies (package, ongoing, chronometer, count-down), the earliest
-timer wins, remaining/elapsed maths and the format, the paused-timer shape, at most two non-activity actions in the
-clock's order with cleaned labels, the alarm line's condition (creator package, no alarm) and its weekday rule.
-`LockGlanceTest` (there is no `GlanceFitTest`): the clock-tile term and candidate order in the pure fit, the layout
-test pinning the XML model (with the existing `fixed` 106, `tileFull` 211, `tileCompact` 90 re-derived once, in one
-fit change together with design 41's bottom row and r6 §2's time line - the implementer of 41/r6 re-pins them first,
-42 adds its terms on top), 320/360/411 dp, 320 dp at the largest font scale. `LockGlanceGuardTest`: as in §2, the
-`ClockReader` allowlist, the `ClockActions` send.
+`ClockTileTest` (JVM, pure): the parse (`11:12`, `1:05:00`, `0:09`, garbage), the local countdown between updates and
+its correction, the alarm line's condition (creator in `clockPackages()`, none, > 24 h = weekday). `ClockAppTest`:
+installed = package + signer. `LockGlanceTest`: `clockFull` pinned, the candidate order, 320/360/411 dp and the
+largest font scale. `LockGlanceGuardTest`: as in §2. `PinLockRuntime`'s exemption test: Fossify's alarm allowed only
+with the signer.
 
 ## 4. Device checks
 
-Emulator (Google's clock): a 2-minute timer from the clock app, then the lock: the tile counts down, Pause/Resume
-work (a service action sent by us reaches the clock app in the background, or no button), the timer's end removes the
-tile (the clock's alarm screen shows as today); a stopwatch; an alarm set for later: the alarm line, and with the
-weekday past 24 h; a tap on the tile: the keypad, then the clock app. The Jelly Star: the same checks, the font scale
-at the largest setting (the time still fits, `LockGlanceTest`'s widths).
+Emulator (Fossify from the catalog): a 10-minute timer, the lock: the tile counts down and follows the app's updates,
+the timer's end removes the tile (Fossify's alarm screen shows over the lock through the exemption); an alarm set
+for tomorrow: "Alarm tor 07:00"; the tap: the keypad, then Fossify; Google's clock timer: nothing. The Jelly Star: the
+same, plus Fossify's alarm ringing over the lock and dismissable.
 
-## Revision (2026-10-20, after qa-r6-launcher-design.md)
+## Revision (2026-10-20)
 
-- 42-1: §0b, the probe first; the design is built only if the chronometer extras exist, else the alarm line alone.
-- 42-2: only non-activity actions, sent from `lock/ClockActions.kt` with background activity start denied, guard test (§1.2).
-- 42-3: its own `ClockReader` wired like `VoipCallReader`; `systemClockPackage` exposed read-only (§1.1).
-- 42-4: the clock-tile term and the candidate order, the clock tile stays and the music tile goes compact first (§1.5).
-- 42-5: `GlanceTarget.ClockApp` through the opener's one-send-two-starts contract, guard case named (§1.6).
-- 42-6: `cleanGlanceText`, the clock's first two actions in its order, the weekday on the alarm line, fixed-width tabular time (§0, §1.2-1.4).
-- Tests: `LockGlanceTest`, not `GlanceFitTest` (§3).
+- After qa-r6-launcher-design.md: 42-1 the probe (§0); 42-2 no actions are fired at all now (none exist); 42-3 the
+  own `ClockReader`, `clockPackages()` exposed; 42-4 the fit order and `clockFull` (§1.6); 42-5 `GlanceTarget.ClockApp`;
+  42-6 `cleanGlanceText`, the weekday, tabular width.
+- After the probes: the system clock is out, Fossify Clock in as the catalog's clock app with a pinned signer; the
+  exemption widened by that one app (§1.1-1.2); the time read from the notification's title and smoothed locally
+  (§1.4); no stopwatch tile.
