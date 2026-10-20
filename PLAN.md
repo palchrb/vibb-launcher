@@ -716,7 +716,18 @@ findings, merge to `main`, full suite once.
   Spotify's development-mode limits on playlists the app may not read (Spotify-owned/editorial ones). Rule out a host
   the web player refuses (a debug build counts them) - list mode works with the same list. Find it
   with the debug music app on the emulator (`spotifyLog`, the state recorder) and the real account; fix with a
-  test that replays the recorded answer. Must be fixed before stable music-v0.4.0.
+  test that replays the recorded answer. Must be fixed before stable music-v0.4.0. **What the spike did that worked
+  (2026-10-20 comparison, `docs/testing/spotify-spike.md` item 10, branch `spotify-spike`)**: one bare
+  `PUT /v1/me/player/play?device_id=…` with `{"context_uri": "spotify:playlist:…"}` on a playlist the parent owned
+  and the kid only followed - no `offset`, no shuffle/repeat calls first, no transfer - and it played (HTTP 204).
+  Our start (`SpotifyApi.start`) sends shuffle off and repeat off before the first play of a device session, then
+  the play, in context mode with `offset.uri` = the stored live track when there is one; a failure before the play
+  (`playSentAt` still unset) can't become `CONTEXT_REFUSED` and falls to `UNREACHABLE` = "Trenger internett" - which
+  is also the wrong word for any 4xx. So the editorial-playlist theory is out (the kid could be made a collaborator,
+  so it is a user's playlist), and the cheap bisect is: a debug switch that starts a context like the spike (no
+  settings, no offset) - plays? then add the settings calls back, then the offset; whichever step breaks it is the
+  bug. Either way `adb logcat -s VibbSpotify` on the failing tap names the call and status in one run. Also: a 4xx
+  before the play should read as Spotify's refusal, never as "no internet".
 
 - **R1 (Medium)**: after 3 of 14 short calls Spotify stays paused (the page reports paused ~5 ms
   after our resume; the launcher's HOLD/RELEASE are right).
@@ -770,6 +781,21 @@ findings, merge to `main`, full suite once.
   the tab-bar test deleted. A server round of its own (design QA + code QA), after the 0.29.5 verification; the user
   verifies on the iPhone: the bar still after > 10 min in the background, Back to a long page at its place, a saved
   form not jumping (the standing rule).
+- **Design 45: the Notifications page split - the inbox first, the settings behind a gear, opening the inbox
+  reads it** (the user, 2026-10-20: "burde man ikke heller bare komme til en slags notification inbox? ... en
+  tannhjul ... for å stille inn ... notification counter bør nullstilles når man har åpnet den innboxen; nå må man
+  trykke på hvert varsel"). Today `/notifications` is one page: This Device, Inbox, Getting Notifications, Notify Me
+  About; the bell leads there; an event is read only when tapped (its row goes to the phone's page) or by Mark All as
+  Read. Decided: (1) `/notifications` = the inbox alone (the phone filter, the rows, older/newer), with a gear
+  top-right (`title-action`, like the bell) to `/notifications/settings` = This Device, Getting Notifications, Notify
+  Me About, with their forms and `#fragments` unchanged (every redirect target moves with them - the no-jump rule);
+  (2) opening the inbox marks every event it shows as read (`read_at` on the page's rows, not older pages), so the
+  bell count and the app badge drop to what is not shown yet; a row keeps a quiet "new" dot for that visit (the
+  unread state rendered before the marking) so the parent still sees what was new; Mark All as Read stays for the
+  rest; a tap on a row still opens the phone's page (and still counts as `clicked` for the delivery). (3) The push's
+  `navigate` keeps pointing at the phone's page (the user: a tap should land on the phone), and the Notifications
+  warning rows keep linking to `/notifications/settings#devices`. Tests: the inbox read-on-open, the bell after it,
+  the settings forms' redirects, the links from Devices/Settings hubs. Server round, with designs 43/44.
 - **Design 44: the Locate page shows its history, and only its own Recent** (the user, 2026-10-20: "hvor kan jeg
   vise location history ... ser jo ikke den på noe vis i kartet"; the Recent list "viser egentlig feil ting" - Install
   Now and Unlock rows; "1 og 2 er bra", plus a span choice for the trail). Today the history is the blue trail alone
