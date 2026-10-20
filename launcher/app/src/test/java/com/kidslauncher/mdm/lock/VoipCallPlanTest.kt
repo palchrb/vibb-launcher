@@ -126,6 +126,10 @@ class VoipCallPlanTest {
         val again = voipRangAfter(entries.associate { it.packageName to it.lastAtMs }, "org.example.app7", now + 1)
         assertEquals("org.example.app7", again[0].packageName)
         assertEquals(1, again.count { it.packageName == "org.example.app7" })
+        // Below the cap only the age rule drops: exactly 7 days old goes, a minute younger stays
+        // (qa-l7-a-code 2, mutation e).
+        val few = voipRangEntries(mapOf("org.example.edge" to now - 7 * day, "org.example.young" to now - 7 * day + 60_000L), now)
+        assertEquals(listOf("org.example.young"), few.map { it.packageName })
         // The prefs' strings round trip, and junk is dropped.
         assertEquals(entries.associate { it.packageName to it.lastAtMs }, decodeVoipRang(encodeVoipRang(entries)))
         assertEquals(mapOf("a.b" to 1L), decodeVoipRang(setOf("a.b=1", "nothing", "=5", "c.d=x")))

@@ -828,6 +828,32 @@ mod tests {
                 .len(),
             1
         );
+        // A bad entry between good ones drops only itself (r7-4, qa-l7-a-code 2), and a duplicate
+        // inside the cap keeps only the package's newest.
+        let stored = sanitize_lock_state(
+            &serde_json::json!({ "voip_rang": [
+                { "package": "org.example.a", "last_at_ms": now - 1_000 },
+                { "package": "org.example.bad" },
+                { "package": "org.example.b", "last_at_ms": now - 2_000 },
+                { "package": "org.example.a", "last_at_ms": now - 3_000 },
+            ] }),
+            now,
+        )
+        .unwrap();
+        let state: LockState = serde_json::from_str(&stored).unwrap();
+        assert_eq!(
+            state.voip_rang,
+            vec![
+                VoipRang {
+                    package: "org.example.a".to_string(),
+                    last_at_ms: now - 1_000
+                },
+                VoipRang {
+                    package: "org.example.b".to_string(),
+                    last_at_ms: now - 2_000
+                },
+            ]
+        );
         // Not a list: empty, never the whole lock_state.
         let stored = sanitize_lock_state(
             &serde_json::json!({ "locked": true, "voip_rang": "x" }),

@@ -440,11 +440,19 @@ class Application : android.app.Application() {
 
     /**
      * Launcher round 7 §4: an installed, updated or removed app's rendered icons go before the list
-     * reloads, so an update's new icon shows on Home, the glance page and the time-rule screen.
+     * reloads, so an update's new icon shows on Home, the glance page and the time-rule screen. The
+     * package is evicted again right before the reloaded list is posted ([appLoads], qa-l7-a-code #1):
+     * until then a render from the old list (its `DetailedAppInfo` holds the old APK's drawable) could
+     * put the old bitmap back under the same key.
      */
     private fun evictIcons(packageName: String?) {
-        packageName?.let { com.kidslauncher.mdm.ui.home.KidAvatars.evictPackage(it) }
+        packageName ?: return
+        synchronized(iconsToEvict) { iconsToEvict += packageName }
+        com.kidslauncher.mdm.ui.home.KidAvatars.evictPackage(packageName)
     }
+
+    /** Packages whose icons go again when the next list lands ([evictIcons]). */
+    private val iconsToEvict = mutableSetOf<String>()
 
     /**
      * One app-list load at a time (launcher round 7 §4): a request while a load runs is folded into
@@ -463,7 +471,12 @@ class Application : android.app.Application() {
                             appDisplayLoaded = true
                             com.kidslauncher.mdm.appdisplay.AppDisplay.refresh(applicationContext, reload = false)
                         }
-                        apps.postValue(getApps(packageManager, applicationContext))
+                        // The packages asked for before this load: evicted again once it is done.
+                        val evict = synchronized(iconsToEvict) { iconsToEvict.toSet() }
+                        val list = getApps(packageManager, applicationContext)
+                        synchronized(iconsToEvict) { iconsToEvict -= evict }
+                        evict.forEach { com.kidslauncher.mdm.ui.home.KidAvatars.evictPackage(it) }
+                        apps.postValue(list)
                     } catch (e: Exception) {
                         android.util.Log.w("Application", "Couldn't load the app list: ${e.javaClass.simpleName}")
                     }

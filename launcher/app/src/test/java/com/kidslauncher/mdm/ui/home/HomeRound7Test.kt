@@ -111,6 +111,8 @@ class HomeRound7Test {
         assertTrue(adapter.contains("DiffUtil.calculateDiff("))
         assertTrue(adapter.contains("BADGE.takeIf { change(oldItemPosition, newItemPosition) == TileChange.BADGE }"))
         assertEquals("only for new sizes, ink or the first list", 1, Regex("notifyDataSetChanged\\(\\)").findAll(adapter).count())
+        // A new wallpaper ink rebinds every label (qa-l7-a-code 2, mutation k).
+        assertTrue(adapter.contains("oldTiles.isEmpty() || metrics != this.metrics || ink != this.ink"))
         assertTrue(code("ui/HomeActivity.kt").contains("binding.homeGrid.itemAnimator = null"))
     }
 
@@ -124,7 +126,19 @@ class HomeRound7Test {
         val loads = app.substringAfter("private val appLoads: Channel<Unit> by lazy {").substringBefore("\n    }\n")
         assertTrue(loads.contains("Channel<Unit>(Channel.CONFLATED)"))
         assertTrue(loads.contains("requests.consumeEach {"))
-        assertTrue(loads.contains("apps.postValue(getApps(packageManager, applicationContext))"))
+        assertTrue(loads.contains("val list = getApps(packageManager, applicationContext)"))
         assertEquals("the list is posted from the one consumer only", 1, Regex("apps\\.postValue\\(").findAll(app).count())
+    }
+
+    @Test
+    fun `the packages are evicted again after the load, right before the list is posted (qa-l7-a-code 1)`() {
+        val app = code("Application.kt")
+        assertTrue(app.substringAfter("private fun evictIcons(").substringBefore("\n    }\n").contains("iconsToEvict += packageName"))
+        val loads = app.substringAfter("private val appLoads: Channel<Unit> by lazy {").substringBefore("\n    }\n")
+        val snapshot = loads.indexOf("iconsToEvict.toSet()")
+        val load = loads.indexOf("getApps(packageManager, applicationContext)")
+        val evict = loads.indexOf("evict.forEach { com.kidslauncher.mdm.ui.home.KidAvatars.evictPackage(it) }")
+        val post = loads.indexOf("apps.postValue(list)")
+        assertTrue(loads, snapshot in 0 until load && load < evict && evict < post)
     }
 }
