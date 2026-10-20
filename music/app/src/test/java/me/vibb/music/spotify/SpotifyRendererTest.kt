@@ -766,6 +766,48 @@ class SpotifyRendererTest {
         r.release()
     }
 
+    // --- design 50 §1.2: "Til slutten" ---
+
+    @Test
+    fun `d50 - Til slutten fades the SDK's volume over the last 10 s and pauses just before the end, nothing sent`() = runBlocking {
+        val r = playing(duration = 60_000)
+        advance(1_000)
+        post(state(0, 45_000, duration = 60_000))
+        var done = 0
+        r.pauseAtItemEnd { done++ }
+        val requests = api.all().size
+        advance(5_000)
+        assertFalse("15 s left: no fade yet", page.calls.any { it.startsWith("vibb.volume(") && it != "vibb.volume(1.0)" })
+        advance(5_000)
+        assertEquals("5 s left: half way down", "vibb.volume(0.5)", page.calls.last())
+        assertTrue(r.showsPlaying)
+        advance(4_800)
+        assertEquals("paused once, just before Spotify's own advance", 1, done)
+        assertFalse(r.showsPlaying)
+        assertTrue(events.contains(RendererEvent.Paused(PauseCause.OTHER)))
+        assertEquals(listOf("vibb.pause()", "vibb.volume(1.0)"), page.calls.takeLast(2))
+        assertEquals("nothing re-sent", requests, api.all().size)
+        advance(5_000)
+        assertEquals("off after its pause", 1, done)
+        r.release()
+    }
+
+    @Test
+    fun `d50 - Spotify got to the next track anyway - it is paused at 0 at once, and that is the end`() = runBlocking {
+        val r = playing(duration = 60_000)
+        var done = 0
+        r.pauseAtItemEnd { done++ }
+        advance(4_000)
+        post(state(1, 0, prev = listOf(0), duration = 60_000))
+        assertEquals(1, r.currentIndex())
+        assertEquals(1, done)
+        assertFalse(r.showsPlaying)
+        assertEquals(0L, r.positionMs())
+        assertEquals("vibb.pause()", page.calls.last())
+        assertFalse("the volume never moved: 56 s were left", page.calls.any { it.startsWith("vibb.volume(") && it != "vibb.volume(1.0)" })
+        r.release()
+    }
+
     // --- §5.7: suspension; §5.8: errors ---
 
     @Test

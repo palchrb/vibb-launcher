@@ -13,6 +13,8 @@ import me.vibb.music.model.Source
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.playback.RendererState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -49,7 +51,7 @@ class UiModelTest {
         assertNull("never another source's", entryUi(snap, feed, 2, RendererState.SPOTIFY_NEEDS_INTERNET, null).state)
         assertNull("never a room's line", entryUi(snap, list, 6, RendererState.UNREACHABLE, null).state)
         // the stored outcome: every Spotify tile, until a play succeeds
-        for (word in listOf(SpotifyWords.REAUTHORIZE, SpotifyWords.REFUSED, SpotifyWords.NOT_PREMIUM, SpotifyWords.NO_WIDEVINE)) {
+        for (word in listOf(SpotifyWords.REAUTHORIZE, SpotifyWords.REAUTHORIZE, SpotifyWords.NOT_PREMIUM, SpotifyWords.NO_WIDEVINE)) {
             assertEquals(word, RendererState.SPOTIFY_ASK_ADULT, entryUi(snap, list, null, null, word).state)
             assertEquals(word, RendererState.SPOTIFY_ASK_ADULT, entryUi(snap, other, 6, null, word).state)
             assertNull(word, entryUi(snap, feed, null, null, word).state)
@@ -63,7 +65,7 @@ class UiModelTest {
 
     @Test
     fun `the tile's state is spotifyTileState - pure, by the entry`() {
-        assertNull(spotifyTileState(feed, 2, RendererState.SPOTIFY_ASK_ADULT, SpotifyWords.REFUSED))
+        assertNull(spotifyTileState(feed, 2, RendererState.SPOTIFY_ASK_ADULT, SpotifyWords.REAUTHORIZE))
         assertEquals(RendererState.SPOTIFY_STOPPED, spotifyTileState(list, 6, RendererState.SPOTIFY_STOPPED, null))
         assertEquals(RendererState.SPOTIFY_NOT_ON_PHONE, spotifyTileState(list, 6, RendererState.SPOTIFY_NOT_ON_PHONE, SpotifyWords.NO_WIDEVINE))
     }
@@ -138,5 +140,64 @@ class UiModelTest {
         assertEquals(0L, nowView(s, PlayerHub.State(), row(7))!!.storedPosMs)
         assertEquals(40_000L, nowView(s, PlayerHub.State(), row(9))!!.storedPosMs)
         assertEquals("a pick of its one row as well", 0L, playSwitch(s, 7, key, null, 1_000)!!.view.storedPosMs)
+    }
+
+    // design 50 §1.4 and design 46 §1.4: dimmed tiles, the play arrow on every tile
+
+    private val wifi = me.vibb.music.logic.NetCaps(internet = true, notMetered = true, notRoaming = true, physical = true)
+    private val cell = wifi.copy(notMetered = false)
+    private val offline: me.vibb.music.logic.NetCaps? = null
+    private fun net(caps: me.vibb.music.logic.NetCaps?, stream: Boolean = false, room: Boolean = false) = NetNow(caps, stream, room)
+
+    @Test
+    fun `d50 - unplayableNow per source under offline, cell and Wi-Fi - nothing on a room`() {
+        val nrk = entry(3, Source.NRK)
+        val own = entry(4, Source.OWN)
+        val s = snapshot(
+            library(listOf(list, feed, nrk, own), files = listOf(me.vibb.music.Fixtures.file(40, 4))),
+            rows(6, listOf("t1")) + items(2, listOf("e1", "e2")) + items(3, listOf("n1")),
+            downloads = listOf(me.vibb.music.Fixtures.done(3, "n1")),
+            ownCopies = setOf(40L),
+        )
+        for (e in listOf(list, feed)) {
+            assertTrue("${e.source} offline", entryUi(s, e, net = net(offline)).unplayableNow)
+            assertTrue("${e.source} on cell, streaming off", entryUi(s, e, net = net(cell)).unplayableNow)
+            assertFalse("${e.source} on cell, streaming on", entryUi(s, e, net = net(cell, stream = true)).unplayableNow)
+            assertFalse("${e.source} on Wi-Fi", entryUi(s, e, net = net(wifi)).unplayableNow)
+            assertFalse("${e.source} on a room: the phone's gate isn't the rule", entryUi(s, e, net = net(offline, room = true)).unplayableNow)
+        }
+        assertFalse("a copy on the phone plays offline", entryUi(s, nrk, net = net(offline)).unplayableNow)
+        assertFalse("own files show only with a copy", entryUi(s, own, net = net(offline)).unplayableNow)
+        assertFalse("no network read: nothing dimmed", entryUi(s, feed).unplayableNow)
+    }
+
+    @Test
+    fun `d50 - one line - Trenger Wi-Fi in the hint's place, the account line first, ASK_ADULT dims too`() {
+        val offlineFeed = entryUi(snap, feed, net = net(offline))
+        assertTrue(offlineFeed.needsWifi)
+        val askOffline = entryUi(snap, list, null, null, SpotifyWords.REAUTHORIZE, net(offline))
+        assertEquals(RendererState.SPOTIFY_ASK_ADULT, askOffline.state)
+        assertFalse("the account line wins", askOffline.needsWifi)
+        assertTrue(askOffline.unplayableNow)
+        val askOnWifi = entryUi(snap, list, null, null, SpotifyWords.REAUTHORIZE, net(wifi))
+        assertTrue("Spør en voksen: the kid can't play it either", askOnWifi.unplayableNow)
+        assertFalse(askOnWifi.needsWifi)
+        assertFalse("never on a room", entryUi(snap, list, null, null, SpotifyWords.REAUTHORIZE, net(wifi, room = true)).unplayableNow)
+        val library = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/ui/LibraryScreen.kt").readText()
+        assertTrue("one line: the state, else Trenger Wi-Fi, else the hint", library.contains("?: if (e.needsWifi) stringResource(R.string.tile_needs_wifi) else hintText(e.hint)"))
+        assertTrue("the cover at 60 % times the neighbour's alpha", library.contains("alpha = lerp(1f, 0.45f, f) * (if (e.unplayableNow) UNPLAYABLE_ALPHA else 1f)"))
+        assertEquals(0.6f, UNPLAYABLE_ALPHA, 0f)
+    }
+
+    @Test
+    fun `d46 - the play arrow on every tile, never on a dimmed one`() {
+        val fresh = entryUi(snap, other)
+        assertNull("not started: no progress line", fresh.progress)
+        assertTrue("but the arrow: tap to play", showsPlayMark(fresh))
+        assertTrue(showsPlayMark(entryUi(snap, list)))
+        assertFalse(showsPlayMark(entryUi(snap, feed, net = net(offline))))
+        val library = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/ui/LibraryScreen.kt").readText()
+        assertTrue(library.contains("if (showsPlayMark(e)) {"))
+        assertFalse("its own condition, not the progress", library.substringAfter("private fun CoverBadges(").contains("if (e.progress != null)"))
     }
 }

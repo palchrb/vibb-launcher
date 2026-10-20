@@ -505,7 +505,8 @@ class SourceScanTest {
         assertTrue(now.isNotEmpty())
         assertEquals(
             "Home's card and the lock's tile: the entry's name and the title",
-            listOf("putString(NowPlayingKeys.ENTRY, a.entry.name)", "putString(NowPlayingKeys.ITEM, title)"),
+            // design 50 §1.1's `controls` is a fixed word ("skip"/"music"), never shown as text
+            listOf("putString(NowPlayingKeys.ENTRY, a.entry.name)", "putString(NowPlayingKeys.ITEM, title)", "putString(NowPlayingKeys.CONTROLS, nowPlayingControls(a.entry))"),
             bundle.lines().map { it.trim() }.filter { it.startsWith("putString(") },
         )
         val renderer = code(moduleFile("src/main/java/me/vibb/music/spotify/SpotifyRenderer.kt"))

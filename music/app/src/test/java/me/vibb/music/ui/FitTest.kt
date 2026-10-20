@@ -49,6 +49,47 @@ class FitTest {
         assertTrue(widgets.contains("modifier.requiredSize(size).clip(CircleShape)"))
     }
 
+    @Test
+    fun `d50 - the skip pair takes the side slots - the row's sizes at 320 dp, the number fixed inside the glyph's ring`() {
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        val controls = player.substringAfter("val row = controlRow(maxWidth.value)").substringBefore("FlexBar(")
+        assertEquals("both side slots, at the row's side size", 2, Regex("SkipButton\\([^\\n]*row\\.side\\.dp\\)").findAll(controls).count())
+        assertTrue(controls.contains("val skips = now.slots == ControlSlots.SKIP"))
+        // the row is the same five slots as before: v15's 44/52/72/52/44 in exactly 288 dp
+        assertEquals(288, controlRow(288f).width)
+        assertEquals(44, controlRow(288f).side)
+        // "15"/"30": Nunito ExtraBold at a fixed 7 dp is 8.4 dp wide; the replay/forward_media ring inside the 20 dp
+        // glyph is 15 dp across less its 1.7 dp stroke on each side - 11.7 dp; its centre sits 0.83 dp below the glyph's
+        assertEquals(20, SKIP_GLYPH_DP)
+        assertTrue(8.4f * SKIP_NUMBER_DP / 7 <= 20f * (720 - 2 * 80) / 960)
+        assertEquals(1, SKIP_NUMBER_DROP_DP)
+        val button = player.substringAfter("private fun SkipButton(").substringBefore("\n}\n")
+        assertTrue("dp, never the font scale's sp", button.contains("SKIP_NUMBER_DP.dp.toSp()"))
+    }
+
+    @Test
+    fun `d50 - Sov · til slutten is never cut at 320 dp, and Til slutten is the sheet's full-width row`() {
+        val liste = 32.0f
+        // Nunito ExtraBold 14 sp from the font's advances, as the others
+        val atEnd = mapOf("Sov · til slutten" to 101.3f, "Sleep · at the end" to 116.5f)
+        for (path in listOf("src/main/res/values/strings.xml", "src/main/res/values-nb/strings.xml")) {
+            val line = Regex("""<string name="sleep_at_end_on">([^<]*)</string>""").find(moduleFile(path).readText())!!.groupValues[1]
+            assertTrue("$path: $line is measured", line in atEnd)
+        }
+        for (screen in widths) {
+            val room = available(screen).toInt() - 2 * 8
+            for ((line, width) in atEnd) {
+                val w = flexWidths(room, listOf(1f, 1f, 1.2f), listOf(bar(liste), bar(width), 0))
+                assertTrue("$screen: $line whole", w[1] >= bar(width))
+                assertTrue("$screen: Liste whole", w[0] >= bar(liste))
+                assertTrue("$screen: the output keeps its glyph", w[2] > icon)
+            }
+        }
+        val player = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        assertTrue(player.contains("SleepOption(stringResource(R.string.sleep_at_end), atEnd, Modifier.fillMaxWidth(), onAtEnd)"))
+        assertTrue("hidden without a duration", player.contains("if (offerAtEnd || atEnd)"))
+    }
+
     // The bottom bar: Liste and Sov never cut, the output's name gives way (the mockup's flex).
 
     private val icon = 2 * 2 + 20 + 6 // the bar button's padding, glyph and gap (dp)

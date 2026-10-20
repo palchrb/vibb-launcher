@@ -58,6 +58,10 @@ import me.vibb.music.logic.playWindow
 import me.vibb.music.logic.debugSwitchToken
 import me.vibb.music.logic.sdkErrorProblem
 import me.vibb.music.logic.sleepVolume
+import me.vibb.music.logic.AT_END_SPOTIFY_PAUSE_MS
+import me.vibb.music.logic.atEndGain
+import me.vibb.music.logic.atEndNextLookMs
+import me.vibb.music.logic.itemRemaining
 import me.vibb.music.logic.spotifyNetworkLine
 import me.vibb.music.logic.spotifyPauseCause
 import me.vibb.music.logic.spotifySelfResumeShown
@@ -677,6 +681,60 @@ internal class SpotifyRenderer(
         }
     }
 
+    /** "Til slutten" (design 50 §1.2): its done and the look at the track's time left. */
+    private var atEnd: (() -> Unit)? = null
+    private var atEndTimer: (() -> Unit)? = null
+
+    /**
+     * The web player's way (design 50 §1.2): the SDK's volume follows the track's time left over [fadeMs] (recomputed
+     * at every look, so a seek or a step brings it back up), and the renderer pauses itself [AT_END_SPOTIFY_PAUSE_MS]
+     * before the end - in list mode Spotify would advance inside its window by itself - nothing re-sent; if Spotify got
+     * to the next track anyway, that track is paused at 0 at once ([atEndBelt]): the pause never depends on the timing.
+     */
+    override fun pauseAtItemEnd(done: (() -> Unit)?) {
+        atEndTimer?.invoke()
+        atEndTimer = null
+        atEnd = done
+        if (done == null) {
+            if (fadeTimer == null && fadeLevel != 1.0) {
+                fadeLevel = 1.0
+                applyVolume()
+            }
+            return
+        }
+        lateinit var look: () -> Unit
+        look = {
+            atEndTimer = null
+            val left = itemRemaining(positionMs(), durationMs())
+            if (pwr && !ended && left != null && left <= AT_END_SPOTIFY_PAUSE_MS) {
+                finishAtEnd()
+            } else {
+                val gain = atEndGain(left, fadeMs).toDouble()
+                if (fadeTimer == null && gain != fadeLevel) {
+                    fadeLevel = gain
+                    applyVolume()
+                }
+                atEndTimer = ports.after(atEndNextLookMs(left, fadeMs), look)
+            }
+        }
+        atEndTimer = ports.after(0, look)
+    }
+
+    /** Spotify moved on by itself under "Til slutten": the new track paused at 0 at once, and that is the end. */
+    private fun atEndBelt() {
+        if (atEnd == null || !pwr) return
+        place = Place(index, 0, ports.now(), moving = false)
+        if (host.alive && tracker.mode == Mode.OURS) sdk("seek", 0L)
+        finishAtEnd()
+    }
+
+    private fun finishAtEnd() {
+        val done = atEnd ?: return
+        pause(PauseCause.OTHER)
+        pauseAtItemEnd(null) // the volume back
+        done()
+    }
+
     // The phone's own player only; the web player's audio is Android's to route (§5.6).
     override fun setAudioAttributes(attributes: AudioAttributes) = Unit
     override fun setWakeMode(wakeMode: Int) = Unit
@@ -686,7 +744,9 @@ internal class SpotifyRenderer(
         if (released) return
         saveNow(force = true)
         supersede()
-        for (t in listOf(stepTimer, firstStateTimer, gapTimer, idleTimer, prefetchTimer, lookTimer, fadeTimer)) t?.invoke()
+        for (t in listOf(stepTimer, firstStateTimer, gapTimer, idleTimer, prefetchTimer, lookTimer, fadeTimer, atEndTimer)) t?.invoke()
+        atEndTimer = null
+        atEnd = null
         stepTimer = null
         firstStateTimer = null
         gapTimer = null
@@ -1336,7 +1396,10 @@ internal class SpotifyRenderer(
             if ((start != null || stepTimer != null) && e !is Event.NotOurs) continue
             when (e) {
                 is Event.Started -> onStarted(e.index)
-                is Event.ItemChanged -> moveIndex(e.index, e.auto)
+                is Event.ItemChanged -> {
+                    moveIndex(e.index, e.auto)
+                    if (e.auto) atEndBelt()
+                }
                 is Event.Unplayable -> unplayable(e.index, e.stop)
                 is Event.Paused -> if (pwr) {
                     // not ours: the WebView's media session lost the audio focus (another app, a call, a notification's

@@ -100,3 +100,48 @@ Favoritter.
 - 50-6: §1.5 Room 6 holds both because 49 and 50 ship together; §1.1 the bridge carries `controls: "skip"|"music"`.
 - 50-7: §1.2 the full-width row under the 2x2; §1.1 fixed glyph size and the live duration for a context item.
 - Interactions: §1.1 refers to 49's `controlSlots`; §1.4 the account line wins over "Trenger Wi-Fi".
+
+## Implementation status (2026-10-20, branch `music-r-b`)
+
+Built on `main` at `d53edc81` in parallel with design 49 (branch `music-r-a`). §1.1-§1.4 first, §1.5 last on 49's Room 6.
+
+- **§1.1 the skip pair - built.** `PlayerScreen`'s side slots follow `controlSlots(entry)` (49 §1.1; until 49's commit
+  is on this branch a stub with the same signature and rule, `logic/ControlSlotsStub.kt`): `SKIP` draws `SkipButton`
+  with Material Symbols `replay`/`forward_media` (new `PLAYER_GLYPHS` in `scripts/material-symbols.sh`,
+  `res/drawable/player_glyph_*.xml`, the "Converted from" header) at 20 dp in the 44 dp slot, "15"/"30" at a fixed
+  7 dp (`SKIP_NUMBER_DP.dp.toSp()`). The target is `skipWithin(pos, ±delta, duration)` (`logic/Transport.kt`) from the
+  live position read at the tap, sent through the existing `seekTo` (live: the controller's seek - the phone, a room's
+  settled seek, the SDK; restored: `RESTORE` + `THEN_SEEK`), so no new command. The bridge: `NowPlayingKeys.CONTROLS`
+  (`controls`: `skip`/`music`, `nowPlayingControls`) in every `setNowPlaying`; `bridge_contract.json` (both copies)
+  gets `controls` appended to `now_playing` and a `now_playing_controls` list; the launcher only spells the key
+  (`MusicNowPlaying.CONTROLS`, `MusicPlanTest`), its lock tile's use is the later step.
+  - Deviation: "clamped to the item" is 1 s short of the end (`SKIP_END_MARGIN_MS`) - a seek to the very end would end
+    the item and move on, which §1.1 rules out; already within that second, forward stays put. With no duration
+    known (a context before its first state, live) forward does nothing and back still goes back.
+- **§1.2 "Til slutten" - built.** The sheet's full-width row under the 2x2 (`SleepOption`), shown only for an item
+  with a duration (`sleepAtEndOffered`; kept while it is on); a second tap turns it off. `Commands.SLEEP` with
+  `ARG_AT_END`, the service's `sleepAtEnd` (`PlayerHub.State.sleepAtEnd`), cleared per `sleepAtEndAfter` (a step keeps
+  it; a new queue - `start()` -, its pause, a kid's `PauseCause.USER` pause, the queue's end, a minute choice end it). The
+  renderers: `Renderer.pauseAtItemEnd(done)` - the phone `pauseAtEndOfMediaItems` and its `END_OF_MEDIA_ITEM` pause
+  (emitted as `Paused(OTHER)`, then done), the gain from the time left over 10 s; a room `SonosController.holdAtEnd`
+  in `advance()` (the `!mayPlay` branch's hold at the next item at 0) and the room's 3 s ramp started when the time
+  left crosses `fadeMs` (cancelled by a seek back or a step; whichever of the ramp's Pause and the hold comes first
+  ends it); the web player pauses itself `AT_END_SPOTIFY_PAUSE_MS` (400 ms) before the end with its 10 s gain, and a
+  belt pauses at 0 a track Spotify advanced to anyway. A renderer switch moves it to the new renderer (`attach`).
+  - Deviation: the bar says "Sov · til slutten" (measured at 320 dp, `FitTest`); the item's remaining time is the
+    seek bar's own two times - a third time in the bar would cut the output's name to its glyph at 320 dp.
+  - Repeat-one (49) on the phone: `pauseAtEndOfMediaItems` pauses at the item's end in every repeat mode; on a room the
+    hold is checked before 49's wrap in `advance()` (to be kept so at the merge).
+- **§1.3 the carousel's start - built.** `CarouselStart` (`logic/LibraryView.kt`) + `MusicViewModel.startOn`, from a
+  `LaunchedEffect` in `MusicRoot` once both the snapshot and the stored row are non-null; `turned` (a real turn),
+  `pickCategory` and `backToLibrary` mark it moved. The pager reads `initialPage` again through `carouselJumps`.
+- **§1.4 dimmed tiles - built.** `EntryUi.unplayableNow`/`needsWifi` from `NetNow(netCaps, streamMobileData, onRoom)`
+  (`unplayableNow` in `ui/UiModel.kt` reuses `itemPlayable`/`spotifyPlayability`); `MusicViewModel.netVersion` moves
+  on a default-network callback and when the library is started again. Cases as written; `ASK_ADULT` dims too.
+- **Tests**: `TransportTest` (`d50` clamp, context duration), `NowPlayingTest` (`d50` gain/look/offered, the clearing
+  rule, the renderers' means by source), `SpotifyRendererTest` (`d50` fade + pause before the end with nothing sent;
+  the belt), `SonosControllerTest` (`d50` hold at the next item at 0, once), `LibraryViewTest` (`d50` start index),
+  `UiModelTest` (`d50` per source/network, room, the single line, ASK_ADULT; `d46` arrow), `FitTest` (`d50` the skip
+  pair's slots and number, "Sov · til slutten" at 320 dp), `BridgeTest`/`MusicPlanTest` (`controls`), and the
+  guards that pinned the old lines (`GuardsTest`, `SourceScanTest`) moved to the new code.
+- **Device checks owed** (§3): the emulator list as written.

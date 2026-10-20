@@ -1,6 +1,9 @@
 package me.vibb.music.ui
 
 import android.app.Application
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +25,7 @@ import kotlinx.coroutines.withContext
 import me.vibb.music.data.NowPlayingRow
 import me.vibb.music.data.Snapshot
 import me.vibb.music.data.Store
+import me.vibb.music.logic.CarouselStart
 import me.vibb.music.logic.effectiveCategory
 import me.vibb.music.logic.flipInEffect
 import me.vibb.music.logic.newestFirst
@@ -33,6 +37,7 @@ import me.vibb.music.logic.tapCategory
 import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.sync.NewNotifier
+import me.vibb.music.sync.netCaps
 
 enum class Screen { LIBRARY, PLAYER, LIST, NEWS, SEARCH }
 
@@ -56,6 +61,34 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     val spotifyOutcome: StateFlow<String?> = store.spotifyOutcomes().map { it?.outcome }.flowOn(Dispatchers.IO)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    /**
+     * Moves at every change of the default network (design 50 §1.4): the screens have no network callback of their
+     * own, so the tiles read [netNow] again when this or the snapshot moves, and when the library (re)appears.
+     */
+    var netVersion by mutableIntStateOf(0)
+        private set
+
+    private val netWatch = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) = bumpNet()
+        override fun onLost(network: Network) = bumpNet()
+    }
+
+    init {
+        runCatching { app.getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(netWatch) }
+    }
+
+    override fun onCleared() {
+        runCatching { getApplication<Application>().getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(netWatch) }
+    }
+
+    /** Read the network again (a callback's thread posts to main: Compose state is written there). */
+    fun bumpNet() {
+        viewModelScope.launch(Dispatchers.Main) { netVersion++ }
+    }
+
+    /** What the network allows the tiles now (design 50 §1.4); [onRoom]: a Sonos room renders, nothing dims. */
+    fun netNow(onRoom: Boolean): NetNow = NetNow(netCaps(getApplication()), store.streamMobileData, onRoom)
+
     var screen by mutableStateOf(Screen.LIBRARY)
     var sheet by mutableStateOf<SheetKind?>(null)
     var category by mutableStateOf<Long?>(null)
@@ -74,8 +107,29 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     /** A category tile: single choice, a re-tap or Alle shows all; the carousel starts at index 0. */
     fun pickCategory(tapped: Long?) {
+        carouselStart.moved()
         category = tapCategory(category, tapped)
         carouselIndex = 0
+    }
+
+    /** Design 50 §1.3: the carousel's one start on the last played tile, never after the kid moved. */
+    private val carouselStart = CarouselStart()
+
+    /**
+     * The first snapshot and the stored now-playing row are both in (design 50 §1.3): the carousel opens on that
+     * entry's tile in the shown order - once, and never after the kid turned the carousel or came back from the player.
+     */
+    fun startOn(snap: Snapshot, row: NowPlayingRow) {
+        val shown = shownEntries(snap.entries, effectiveCategory(snap.entries, category))
+        val index = carouselStart.first(shown, row.entryId) ?: return
+        carouselIndex = index
+        carouselJumps++
+    }
+
+    /** The carousel landed on [index]: a turn by the kid when it moved (the pager reports its start page too). */
+    fun turned(index: Int) {
+        if (index != carouselIndex) carouselStart.moved()
+        carouselIndex = index
     }
 
     /**
@@ -83,6 +137,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
      * chosen doesn't hold it (vibb's cat_carousel case 6).
      */
     fun backToLibrary(snap: Snapshot?, entryId: Long?) {
+        carouselStart.moved()
         screen = Screen.LIBRARY
         val entries = snap?.entries ?: return
         val entry = entries.firstOrNull { it.id == entryId } ?: return

@@ -260,6 +260,12 @@ class SonosController(
     private var adopting = false
     private var fade: AtomicBoolean? = null
 
+    /**
+     * "Til slutten" (design 50 §1.2): set, the episode's natural end holds at the next item at 0 - as [advance]'s
+     * branch for a play that isn't allowed - and this runs once (then it is cleared). Main thread.
+     */
+    var holdAtEnd: (() -> Unit)? = null
+
     /** Our own last volume set: the base of the next press (vibb's `_sonos_vol_opt`). */
     var volOpt: Int? = null
         private set
@@ -1104,15 +1110,21 @@ class SonosController(
         if (next < items.size) {
             host.log("sonos: episode ended - next")
             autoFlag = true
-            if (mayPlay()) {
+            val held = holdAtEnd
+            if (mayPlay() && held == null) {
                 playIndex(next, 0.0, deliberate = false, PlayWhy.ADVANCE)
             } else {
-                // nothing may play now: the next item waits for a play, at 0
+                // nothing may play now, or "Til slutten" ends here: the next item waits for a play, at 0
                 gen++
                 index = next
                 startPosMs = 0
                 deliberateStart = false
                 startPending = true
+                if (held != null) {
+                    host.log("sonos: episode ended - held for the sleep timer")
+                    holdAtEnd = null
+                    held()
+                }
             }
         } else {
             host.log("sonos: queue finished - stop")

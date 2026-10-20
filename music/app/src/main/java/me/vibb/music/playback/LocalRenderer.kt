@@ -24,6 +24,9 @@ import me.vibb.music.data.Store
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.HLS_MAX_BITRATE
 import me.vibb.music.logic.SLEEP_FADE_MS
+import me.vibb.music.logic.atEndGain
+import me.vibb.music.logic.atEndNextLookMs
+import me.vibb.music.logic.itemRemaining
 import me.vibb.music.logic.save
 import me.vibb.music.logic.showsPlaying
 import me.vibb.music.logic.sleepVolume
@@ -86,6 +89,15 @@ internal class LocalRenderer(
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                // "Til slutten" (design 50 §1.2): ExoPlayer paused at the item's end - not the kid's pause
+                emit(RendererEvent.Paused(PauseCause.OTHER))
+                atEnd?.let { done ->
+                    pauseAtItemEnd(null)
+                    done()
+                }
+                return
+            }
             if (!playWhenReady) {
                 val cause = when (reason) {
                     Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY,
@@ -203,11 +215,36 @@ internal class LocalRenderer(
         exo.volume = 1f
     }
 
+    /** "Til slutten" (design 50 §1.2): its [done], and the look at the item's time left that sets the fade's gain. */
+    private var atEnd: (() -> Unit)? = null
+    private var atEndLook: Runnable? = null
+
+    override fun pauseAtItemEnd(done: (() -> Unit)?) {
+        atEndLook?.let { handler.removeCallbacks(it) }
+        atEndLook = null
+        atEnd = done
+        exo.pauseAtEndOfMediaItems = done != null
+        if (done == null) {
+            if (fade == null) exo.volume = 1f
+            return
+        }
+        val look = object : Runnable {
+            override fun run() {
+                val left = itemRemaining(exo.currentPosition, exo.duration.takeIf { it != C.TIME_UNSET })
+                exo.volume = atEndGain(left, fadeMs)
+                handler.postDelayed(this, atEndNextLookMs(left, fadeMs))
+            }
+        }
+        atEndLook = look
+        handler.post(look)
+    }
+
     override fun setAudioAttributes(attributes: AudioAttributes) = exo.setAudioAttributes(attributes, true)
     override fun setWakeMode(wakeMode: Int) = exo.setWakeMode(wakeMode)
     override fun setPreferredAudioDevice(device: AudioDeviceInfo?) = exo.setPreferredAudioDevice(device)
     override fun release() {
         cancelFade()
+        pauseAtItemEnd(null)
         exo.release()
     }
 

@@ -507,6 +507,32 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   at the font scale). After a flip the list scrolls to the playing row. Tests: `OrderFlipTest`, `EpisodeArtTest`'s
   `d39`, `QueueTest`, `FitTest`, `SpotifyRendererTest`/`SpotifyTrackerTest`'s `d39`, `SonosControllerTest`'s `d39`;
   the emulator round is `docs/testing/emulator.md` §6q.
+- **The player and library picks** (design 50 + 46 §1.4; **the user's picks of 2026-10-20, not vibb's**):
+  - **The skip pair**: `controlSlots(entry)` (design 49 §1.1, `logic/Queue.kt`) gives what resumes (podcasts, books, a
+    resuming own entry) "15 s tilbake" / "30 s fram" in the control row's side slots (`SkipButton`: Material Symbols
+    `replay`/`forward_media` from `scripts/material-symbols.sh`, `player_glyph_*`, the number at a fixed 7 dp, never
+    sp); a step is `skipWithin` (`logic/Transport.kt`: clamped inside the item, 1 s short of its end; the live
+    duration - a context item has no listed one) through the existing `seekTo` (the phone, a room's settled seek,
+    the SDK). Previous/next stay vibb's. The lock tile gets the decision, not the kind: `setNowPlaying`'s appended
+    `controls` (`skip`/`music`, `nowPlayingControls`; `bridge_contract.json` `now_playing` + `now_playing_controls`).
+  - **"Til slutten"**: the sleep sheet's full-width fourth row (only for an item with a duration,
+    `sleepAtEndOffered`); `SLEEP` with `ARG_AT_END`, the service's `sleepAtEnd` (`PlayerHub.State.sleepAtEnd`, the bar
+    "Sov · til slutten"). The renderer pauses AT the item's end by its own means (`Renderer.pauseAtItemEnd`): the
+    phone `pauseAtEndOfMediaItems` (+ `END_OF_MEDIA_ITEM`), a room `SonosController.holdAtEnd` in `advance()` (the
+    next item waits at 0) and its 3 s ramp, the web player pausing itself `AT_END_SPOTIFY_PAUSE_MS` before the end
+    (a belt pauses Spotify's own advance at 0); each fades over its own `fadeMs` from the time left (`atEndGain`,
+    looked at every second, 250 ms inside the fade, so a seek recomputes it). `sleepAtEndAfter`: it survives a manual
+    step (the user's call); a new queue, its pause, a kid's pause, the queue's end and the minute timer end it.
+  - **The carousel opens on the last played tile** (`CarouselStart`, `MusicViewModel.startOn`): once, when the first
+    snapshot and the stored now-playing row are in; never after the kid turned it, picked a category or came back from
+    the player (`backToLibrary` wins); 0 when the entry isn't shown.
+  - **Dimmed tiles**: `EntryUi.unplayableNow` (`unplayableNow`: NRK/RSS with no visible copy under a refused gate,
+    Spotify under `spotifyPlayability`'s refusal, and an `ASK_ADULT` account line; never on a room) from `NetNow`, read
+    when the library (re)appears, on each snapshot and on the view model's network callback (`netVersion`). The cover
+    at `UNPLAYABLE_ALPHA` (60 %, times the neighbour's alpha), no arrow; one line: the account/state line, else "Trenger
+    Wi-Fi" (`tile_needs_wifi`), else the hint - `libraryFit`'s two lines never change. The tap answers as before.
+  - **The play arrow means "tap to play"** (design 46 §1.4): on every tile (`showsPlayMark`), not only a started one;
+    never on a dimmed tile. The progress line alone says "started". 46's queue view (§1.1-§1.3) is parked (§0b).
 - A new entry is news (design 29, not vibb): a key the phone never knew, once a play has been stored, puts one item
   (the first that can play; Storytel: book 1) in Nytt at its first listing, with a 24 h settle; until that first
   play every listing is only acknowledged (the baseline is open: no news at all); known keys only grow;

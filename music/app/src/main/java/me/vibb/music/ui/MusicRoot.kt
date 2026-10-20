@@ -43,6 +43,8 @@ import me.vibb.music.logic.offlineSummary
 import me.vibb.music.logic.requestStands
 import me.vibb.music.logic.search
 import me.vibb.music.logic.shownEntries
+import me.vibb.music.logic.skipWithin
+import me.vibb.music.logic.sleepAtEndOffered
 import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.sync.NewNotifier
@@ -63,6 +65,12 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
             delay(3_000)
             message = null
         }
+    }
+    // design 50 §1.3: once the first snapshot and the stored row are in, the carousel opens on the last played tile
+    LaunchedEffect(snap != null, row != null) {
+        val s0 = snap ?: return@LaunchedEffect
+        val r0 = row ?: return@LaunchedEffect
+        vm.startOn(s0, r0)
     }
     Box(Modifier.fillMaxSize().background(Palette.bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
         val s = snap ?: return@Box
@@ -116,20 +124,28 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                     actions.skipTo(n.entry.id, item.key, forward)
                 }
                 PlayerScreen(
-                    n, { item -> playerNumberOf(s, n, item) }, of, position, hub.sleepMinutes, hub.output, hub.rendererState,
+                    n, { item -> playerNumberOf(s, n, item) }, of, position, hub.sleepMinutes, hub.sleepAtEnd, hub.output, hub.rendererState,
                     onBack = backToLibrary,
                     onSeek = actions::seekTo,
                     onShuffle = actions::toggleShuffle,
                     onPrevious = { skip(false) },
                     onTogglePlay = actions::togglePlay,
                     onNext = { skip(true) },
+                    // design 50 §1.1: from the live place (read now, not the last tick), clamped inside the item by its live duration
+                    onSkipBy = { delta -> actions.seekTo(skipWithin(if (n.live) PlayerHub.positionMs() ?: position else position, delta, n.durationMs)) },
                     onSkipTo = skipTo,
                     onList = { vm.screen = Screen.LIST },
                     onSleep = { vm.sheet = SheetKind.SLEEP },
                     onOutput = { vm.sheet = SheetKind.OUTPUT },
                 )
                 when (vm.sheet) {
-                    SheetKind.SLEEP -> SleepSheet(hub.sleepMinutes, { actions.sleep(it); vm.sheet = null }, { vm.sheet = null })
+                    SheetKind.SLEEP -> SleepSheet(
+                        hub.sleepMinutes, hub.sleepAtEnd, sleepAtEndOffered(n.durationMs),
+                        onPick = { actions.sleep(it); vm.sheet = null },
+                        // a second tap on "Til slutten" turns it off, as "Av" does
+                        onAtEnd = { if (hub.sleepAtEnd) actions.sleep(0) else actions.sleepAtEnd(); vm.sheet = null },
+                        onDismiss = { vm.sheet = null },
+                    )
                     SheetKind.OUTPUT -> OutputSheet(
                         hub.outputs, hub.rooms, hub.output,
                         onOpen = actions::refreshRooms,
@@ -206,9 +222,14 @@ private fun Library(vm: MusicViewModel, s: Snapshot, now: NowView?, hub: PlayerH
     val all = s.entries
     val selected = effectiveCategory(all, vm.category)
     val shown = shownEntries(all, selected)
+    // design 50 §1.4: the network as the library (re)appears, at each change and with each snapshot
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(Unit) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { vm.bumpNet() } }
+    val onRoom = hub.output.kind == OutputKind.SONOS
+    val net = remember(vm.netVersion, s, onRoom) { vm.netNow(onRoom) }
     LibraryScreen(
         // a Spotify tile's line: the loaded entry's web player state, else the stored outcome (design 26c §5.8)
-        entries = shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome) },
+        entries = shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome, net) },
         tiles = categoryTiles(s.library?.categories.orEmpty(), all),
         selected = selected,
         startIndex = vm.carouselIndex,
@@ -219,7 +240,7 @@ private fun Library(vm: MusicViewModel, s: Snapshot, now: NowView?, hub: PlayerH
         onSearch = vm::openSearch,
         onNews = { vm.screen = Screen.NEWS },
         onCategory = vm::pickCategory,
-        onIndex = { vm.carouselIndex = it },
+        onIndex = vm::turned,
         onPlay = { playEntry(it.entry.id) },
         onOpenPlayer = { vm.screen = Screen.PLAYER },
         onTogglePlay = actions::togglePlay,

@@ -584,6 +584,26 @@ class SonosControllerTest {
     }
 
     @Test
+    fun `d50 - Til slutten holds at the next item at 0 when the episode runs off its end, once`() {
+        playing("0:23:59")
+        var held = 0
+        r.c.holdAtEnd = { held++ }
+        val plays = r.host.played.size
+        r.advance(5_000)
+        r.speaker("0:24:13", transport = "STOPPED")
+        r.poll()
+        r.work.drain()
+        assertEquals("the speaker held at the end: nothing more played", plays, r.host.played.size)
+        assertEquals("the next item waits at 0, as for a play that isn't allowed", 1, r.c.index)
+        assertEquals(1, held)
+        assertNull("run once, then off", r.c.holdAtEnd)
+        // the next play starts that item at 0
+        r.c.playTile()
+        r.work.drain()
+        assertEquals(r.url(1), r.spk.lastUri)
+    }
+
+    @Test
     fun `a stop far from the end is a human and stays stopped`() {
         playing("0:10:00")
         r.advance(5_000)

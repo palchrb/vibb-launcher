@@ -279,7 +279,8 @@ private fun CarouselPager(
                         val scale = lerp(1f, 0.733f, f)
                         scaleX = scale
                         scaleY = scale
-                        alpha = lerp(1f, 0.45f, f)
+                        // design 50 §1.4: a tile the phone can't play right now at 60 %, times the neighbour's alpha
+                        alpha = lerp(1f, 0.45f, f) * (if (e.unplayableNow) UNPLAYABLE_ALPHA else 1f)
                         // Pull the neighbour in so 46 dp of it shows beside the 180 dp cover (more beside a smaller one).
                         translationX = sign(offset) * pull * f
                         // The soft shadow (P10 c): 12 dp under the centred cover, P2's 2 dp under a neighbour.
@@ -314,8 +315,11 @@ private fun CarouselTitle(entries: List<EntryUi>, targetPage: Int) {
         val e = entries.firstOrNull { it.entry.id == id } ?: current
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CAROUSEL_TITLE_GAP_DP.dp)) {
             Line(e.entry.name, 21, 800, Palette.white)
-            // a Spotify tile's line replaces the hint (design 26c §5.8): the loaded one's state, the stored outcome
-            Line(e.state?.let { stringResource(rendererStateText(it)) } ?: hintText(e.hint), 13, 700, Palette.sub)
+            // a Spotify tile's line replaces the hint (design 26c §5.8): the loaded one's state, the stored outcome; a
+            // tile the network refuses says "Trenger Wi-Fi" there (design 50 §1.4) - one line, the account line first
+            val line = e.state?.let { stringResource(rendererStateText(it)) }
+                ?: if (e.needsWifi) stringResource(R.string.tile_needs_wifi) else hintText(e.hint)
+            Line(line, 13, 700, Palette.sub)
             // without a progress line its 3 + 3 + 4 dp stay reserved, so the cover never resizes on a turn
             if (e.progress != null) {
                 Box(Modifier.padding(top = CAROUSEL_PROGRESS_PAD_DP.dp).width(140.dp).height(CAROUSEL_PROGRESS_DP.dp).clip(RoundedCornerShape(2.dp)).background(Palette.track)) {
@@ -337,7 +341,13 @@ private fun CarouselTitle(entries: List<EntryUi>, targetPage: Int) {
 private const val COVER_ELEVATION_DP = 12f
 private const val NEIGHBOUR_ELEVATION_DP = 2f
 
-/** The cover's badges: the kind chip ([kind]: not on a small cover, N6), NY, and the play mark of a started entry. */
+/** A dimmed tile's cover (design 50 §1.4). */
+const val UNPLAYABLE_ALPHA = 0.6f
+
+/**
+ * The cover's badges: the kind chip ([kind]: not on a small cover, N6), NY, and the play mark - on every tile, "tap
+ * to play" (design 46 §1.4, the user's call, not vibb's started-only mark), never on a dimmed one (design 50 §1.4).
+ */
 @Composable
 private fun CoverBadges(e: EntryUi, kind: Boolean) {
     Box(Modifier.fillMaxSize().padding(10.dp)) {
@@ -351,7 +361,7 @@ private fun CoverBadges(e: EntryUi, kind: Boolean) {
                 Line(stringResource(R.string.new_badge), 11, 800, Palette.bg)
             }
         }
-        if (e.progress != null) {
+        if (showsPlayMark(e)) {
             Box(Modifier.align(Alignment.TopEnd).size(32.dp).clip(CircleShape).background(Palette.peach), contentAlignment = Alignment.Center) {
                 Glyph(Icons.play, 16.dp, Palette.bg)
             }

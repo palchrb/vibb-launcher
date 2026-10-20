@@ -54,6 +54,7 @@ import me.vibb.music.bridge.Bridge
 import me.vibb.music.bridge.LAUNCHER_PACKAGES
 import me.vibb.music.bridge.LiveBridge
 import me.vibb.music.bridge.NowPlayingKeys
+import me.vibb.music.bridge.nowPlayingControls
 import me.vibb.music.data.BookmarkRow
 import me.vibb.music.data.DownloadRow
 import me.vibb.music.data.NowPlayingRow
@@ -71,6 +72,8 @@ import me.vibb.music.logic.TransportAction
 import me.vibb.music.logic.callMode
 import me.vibb.music.logic.callPauseStep
 import me.vibb.music.logic.callTimerEnded
+import me.vibb.music.logic.SleepEvent
+import me.vibb.music.logic.sleepAtEndAfter
 import me.vibb.music.logic.artOrCover
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.coverTapAwaitsBook
@@ -225,6 +228,9 @@ class PlaybackService : MediaSessionService() {
     private var lastIndex = -1
     private var sleepEndsAt: Long? = null
     private var sleepMinutes: Int? = null
+
+    /** "Til slutten" (design 50 §1.2): the renderer pauses at the current item's end ([Renderer.pauseAtItemEnd]). */
+    private var sleepAtEnd = false
     /** A pause the service makes itself (the sleep timer's end, a renderer switch): not the kid's, so it
      * never cancels the sleep timer. */
     private var selfPausing = false
@@ -416,6 +422,7 @@ class PlaybackService : MediaSessionService() {
             old.pause()
             selfPausing = false
             old.cancelFade()
+            old.pauseAtItemEnd(null)
             old.onEvent = null
             // design 26c §5.10, qa-26c-step5b-code M1: a detached web player owns nothing - a play from the account's
             // other app is paused at once, never focus or locks (the session no longer shows it)
@@ -429,6 +436,8 @@ class PlaybackService : MediaSessionService() {
             handler.removeCallbacks(sleepTick)
             handler.post(sleepTick)
         }
+        // so does "Til slutten" (design 50 §1.2): the new renderer pauses at its item's end
+        if (sleepAtEnd) next.pauseAtItemEnd { sleepAtEndReached() }
     }
 
     /** This app is suspended now (a time rule, design 21 step 4): nothing may start playing. */
@@ -528,7 +537,7 @@ class PlaybackService : MediaSessionService() {
                         Commands.SKIP_TO -> skipTo(args)
                         Commands.SHUFFLE -> toggleShuffle()
                         Commands.FLIP_ORDER -> flipOrder(args.getString(Commands.ARG_ENTRY_KEY), args.getBoolean(Commands.ARG_NEWEST_FIRST))
-                        Commands.SLEEP -> setSleep(args.getInt(Commands.ARG_MINUTES))
+                        Commands.SLEEP -> if (args.getBoolean(Commands.ARG_AT_END)) setSleepAtEnd() else setSleep(args.getInt(Commands.ARG_MINUTES))
                         Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
                         Commands.ROOMS_REFRESH -> launch(Dispatchers.IO) { home.rooms.refresh() }
                         Commands.ROOMS_RESCAN -> home.rooms.rescanInBackground()
@@ -794,6 +803,8 @@ class PlaybackService : MediaSessionService() {
      */
     private fun start(a: Active, plan: QueuePlan, play: Boolean = true) {
         renderer.saveNow()
+        // a new queue ends "Til slutten" (design 50 §1.2); a step doesn't
+        endSleepAtEnd(SleepEvent.NEW_QUEUE)
         clearFault()
         var index = plan.startIndex.coerceIn(a.items.indices)
         var pos = plan.startPosMs
@@ -1166,6 +1177,7 @@ class PlaybackService : MediaSessionService() {
     private fun setSleep(minutes: Int) {
         handler.removeCallbacks(sleepTick)
         renderer.cancelFade()
+        endSleepAtEnd(SleepEvent.TIMER_SET)
         if (minutes <= 0) {
             sleepEndsAt = null
             sleepMinutes = null
@@ -1188,6 +1200,35 @@ class PlaybackService : MediaSessionService() {
             }
             renderer.fadeOutAndPause { sleepEnded() }
         }
+    }
+
+    /**
+     * "Til slutten" (design 50 §1.2, the sheet's fourth choice): the minute timer off, the renderer pauses at the end of
+     * the item that plays then, with its own fade ([Renderer.pauseAtItemEnd]); [sleepAtEndReached] after that pause.
+     */
+    private fun setSleepAtEnd() {
+        handler.removeCallbacks(sleepTick)
+        renderer.cancelFade()
+        sleepEndsAt = null
+        sleepMinutes = null
+        sleepAtEnd = true
+        renderer.pauseAtItemEnd { sleepAtEndReached() }
+        publish()
+    }
+
+    /** [event] may end "Til slutten" ([sleepAtEndAfter]); then the renderer is told. */
+    private fun endSleepAtEnd(event: SleepEvent) {
+        if (!sleepAtEnd) return
+        sleepAtEnd = sleepAtEndAfter(true, event)
+        if (!sleepAtEnd) renderer.pauseAtItemEnd(null)
+    }
+
+    /** The pause "Til slutten" caused: like the minute timer's end (a call's pause is not undone after it). */
+    private fun sleepAtEndReached() {
+        sleepAtEnd = sleepAtEndAfter(sleepAtEnd, SleepEvent.ITEM_END_PAUSE)
+        callPause = callTimerEnded(callPause)
+        renderer.saveNow()
+        publish()
     }
 
     private fun sleepEnded() {
@@ -1275,7 +1316,7 @@ class PlaybackService : MediaSessionService() {
             is RendererEvent.Paused -> {
                 when (event.cause) {
                     PauseCause.FAULT -> markFault()
-                    PauseCause.USER -> if (!selfPausing && sleepEndsAt != null) setSleep(0)
+                    PauseCause.USER -> if (!selfPausing && (sleepEndsAt != null || sleepAtEnd)) setSleep(0)
                     PauseCause.OTHER -> Unit
                 }
                 renderer.saveNow()
@@ -1521,6 +1562,7 @@ class PlaybackService : MediaSessionService() {
     /** The queue played to its end (vibb `clear_state`): the last item is done, the bookmark and the
      * partial positions go, the done marks stay. */
     private fun queueEnded() {
+        endSleepAtEnd(SleepEvent.QUEUE_ENDED)
         val a = active ?: return
         // a Spotify context's item is never done (design 26c §5.9): its end drops its place and its live track only
         a.items.getOrNull(renderer.currentIndex())?.takeIf { keepsDuration(a.entry, it.key) }?.let { markDone(a, it) }
@@ -1614,6 +1656,8 @@ class PlaybackService : MediaSessionService() {
                 putLong(NowPlayingKeys.DURATION_MS, renderer.durationMs() ?: a.durations[item.key] ?: item.durationMs ?: 0)
                 putBoolean(NowPlayingKeys.PLAYING, playing)
                 art?.let { putByteArray(NowPlayingKeys.ART, it) }
+                // design 50 §1.1: the lock tile's pair is the player's decision, never the kind
+                putString(NowPlayingKeys.CONTROLS, nowPlayingControls(a.entry))
             },
         )
     }
@@ -1637,6 +1681,7 @@ class PlaybackService : MediaSessionService() {
             durationMs = renderer.durationMs() ?: a?.items?.getOrNull(renderer.currentIndex())?.durationMs,
             sleepEndsAt = sleepEndsAt,
             sleepMinutes = sleepMinutes,
+            sleepAtEnd = sleepAtEnd,
             outputs = outputs,
             output = output,
             rendererState = renderer.rendererState,

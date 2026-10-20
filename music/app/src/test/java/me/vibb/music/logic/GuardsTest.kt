@@ -479,7 +479,7 @@ class GuardsTest {
         val step = service.substringAfter("private fun callStep() {").substringBefore("\n    }\n")
         assertTrue(step.contains("selfPausing = true\n                r.pause()\n                selfPausing = false"))
         val events = service.substringAfter("private fun onRendererEvent(").substringBefore("\n    }\n")
-        assertTrue(events.contains("PauseCause.USER -> if (!selfPausing && sleepEndsAt != null) setSleep(0)"))
+        assertTrue(events.contains("PauseCause.USER -> if (!selfPausing && (sleepEndsAt != null || sleepAtEnd)) setSleep(0)"))
         assertTrue(service.substringAfter("private fun sleepEnded() {").substringBefore("\n    }\n").contains("callPause = callTimerEnded(callPause)"))
         // the launcher's two commands, granted to a launcher signed like this app only, never a play gate bypass
         val connect = service.substringAfter("override fun onConnect(").substringBefore("override fun onCustomCommand(")
@@ -879,10 +879,10 @@ class GuardsTest {
         // the report's word from the file; the screens' tiles from the store
         assertTrue(code("src/main/java/me/vibb/music/sync/Sync.kt").contains("spotify = SpotifyOutcome.reported(runCatching { store.spotifyStateFile.readText() }.getOrNull()),"))
         val root = code("src/main/java/me/vibb/music/ui/MusicRoot.kt")
-        assertTrue(root.contains("entries = shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome) },"))
+        assertTrue(root.contains("entries = shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome, net) },"))
         assertTrue("no offline summary for Spotify", root.contains("if (isSpotify(n.entry)) null else offlineSummary("))
         assertTrue(code("src/main/java/me/vibb/music/ui/MusicViewModel.kt").contains("store.spotifyOutcomes().map { it?.outcome }"))
-        assertTrue(code("src/main/java/me/vibb/music/ui/LibraryScreen.kt").contains("Line(e.state?.let { stringResource(rendererStateText(it)) } ?: hintText(e.hint), 13, 700, Palette.sub)"))
+        assertTrue(code("src/main/java/me/vibb/music/ui/LibraryScreen.kt").contains("val line = e.state?.let { stringResource(rendererStateText(it)) }"))
         // step 8: no source line under the title - the player looks the same for every source
         assertFalse(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("kind_spotify"))
         assertTrue(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("Kind.MUSIC -> R.string.track_of"))

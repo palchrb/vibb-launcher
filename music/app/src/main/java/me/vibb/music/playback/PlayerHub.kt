@@ -45,6 +45,9 @@ object Commands {
     const val ARG_ENTRY = "entry"
     const val ARG_KEY = "key"
     const val ARG_MINUTES = "minutes"
+
+    /** [SLEEP] with this true: "Til slutten" (design 50 §1.2) - the timer ends at the current item's end; minutes unread. */
+    const val ARG_AT_END = "at_end"
     /** An [Output.key] (a String since design 26a step 2). */
     const val ARG_OUTPUT = "output"
     const val ARG_FORWARD = "forward"
@@ -111,6 +114,8 @@ object PlayerHub {
         /** `SystemClock.elapsedRealtime()` when the sleep timer ends; null = off. */
         val sleepEndsAt: Long? = null,
         val sleepMinutes: Int? = null,
+        /** "Til slutten" is set (design 50 §1.2): the pause comes at the current item's end. */
+        val sleepAtEnd: Boolean = false,
         val outputs: List<Output> = listOf(Output.PHONE),
         /** The output in use (the chosen one, else where the system routes). */
         val output: Output = Output.PHONE,

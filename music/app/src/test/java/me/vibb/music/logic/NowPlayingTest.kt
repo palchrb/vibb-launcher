@@ -98,4 +98,47 @@ class NowPlayingTest {
         assertEquals(0.5f, sleepVolume(SLEEP_FADE_MS / 2))
         assertEquals(0f, sleepVolume(0))
     }
+
+    // design 50 §1.2: "Til slutten"
+
+    @Test
+    fun `d50 - Til slutten - offered only with a duration, the fade over the renderer's own fadeMs`() {
+        assertTrue(sleepAtEndOffered(600_000))
+        assertFalse("live, or a context before its first state", sleepAtEndOffered(null))
+        assertFalse(sleepAtEndOffered(0))
+        assertEquals(30_000L, itemRemaining(570_000, 600_000))
+        assertEquals(0L, itemRemaining(610_000, 600_000))
+        assertNull(itemRemaining(1_000, null))
+        // the phone and Spotify fade over 10 s, a room over 3 s: each renderer passes its own
+        assertEquals(1f, atEndGain(30_000, 10_000), 0f)
+        assertEquals(0.5f, atEndGain(5_000, 10_000), 0f)
+        assertEquals(0f, atEndGain(0, 10_000), 0f)
+        assertEquals(0.5f, atEndGain(1_500, 3_000), 0f)
+        assertEquals("unknown: full volume", 1f, atEndGain(null, 10_000), 0f)
+        // the look: at the fade's start but at least every second (a seek is seen), in 250 ms steps inside it
+        assertEquals(1_000L, atEndNextLookMs(60_000, 10_000))
+        assertEquals(400L, atEndNextLookMs(10_400, 10_000))
+        assertEquals(AT_END_STEP_MS, atEndNextLookMs(9_000, 10_000))
+        assertEquals(AT_END_LOOK_MS, atEndNextLookMs(null, 10_000))
+    }
+
+    @Test
+    fun `d50 - Til slutten survives a step, a new queue, its pause, the kid's pause and the minute timer end it`() {
+        assertTrue("finish what plays: a manual step keeps it (the user's call)", sleepAtEndAfter(true, SleepEvent.STEP))
+        for (e in SleepEvent.entries - SleepEvent.STEP) assertFalse(e.name, sleepAtEndAfter(true, e))
+        for (e in SleepEvent.entries) assertFalse("off stays off", sleepAtEndAfter(false, e))
+    }
+
+    @Test
+    fun `d50 - each renderer pauses at the item's end by its own means`() {
+        val local = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/playback/LocalRenderer.kt").readText()
+        assertTrue("the phone: ExoPlayer pauses at the item's end", local.contains("exo.pauseAtEndOfMediaItems = done != null"))
+        assertTrue(local.contains("reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM"))
+        val room = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/sonos/SonosRenderer.kt").readText()
+        assertTrue("a room: advance() holds", room.contains("controller.holdAtEnd = { finishAtEnd() }"))
+        val service = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt").readText()
+        assertTrue("a new queue ends it", service.contains("endSleepAtEnd(SleepEvent.NEW_QUEUE)"))
+        assertTrue("so does the kid's own pause", service.contains("PauseCause.USER -> if (!selfPausing && (sleepEndsAt != null || sleepAtEnd)) setSleep(0)"))
+        assertTrue("a renderer switch carries it", service.contains("if (sleepAtEnd) next.pauseAtItemEnd { sleepAtEndReached() }"))
+    }
 }

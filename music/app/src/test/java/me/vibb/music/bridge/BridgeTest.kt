@@ -201,8 +201,10 @@ class BridgeTest {
         assertEquals(strings("report_state"), listOf(REPORT_KEY, HELD_FILES_KEY, HELD_SHA256_KEY))
         assertEquals(
             strings("now_playing"),
-            listOf(NowPlayingKeys.ENTRY, NowPlayingKeys.ITEM, NowPlayingKeys.POSITION_MS, NowPlayingKeys.DURATION_MS, NowPlayingKeys.PLAYING, NowPlayingKeys.ART),
+            listOf(NowPlayingKeys.ENTRY, NowPlayingKeys.ITEM, NowPlayingKeys.POSITION_MS, NowPlayingKeys.DURATION_MS, NowPlayingKeys.PLAYING, NowPlayingKeys.ART, NowPlayingKeys.CONTROLS),
         )
+        // design 50 §1.1: the lock tile's pair, the decision's two words
+        assertEquals(strings("now_playing_controls"), listOf(NowPlayingKeys.CONTROLS_SKIP, NowPlayingKeys.CONTROLS_MUSIC))
         // The launcher's call rule (design 26a §6.7, qa-26a-step3b-code H1): its two session commands.
         val calls = (contract["call_commands"] as JsonObject).mapValues { (it.value as JsonPrimitive).content }
         assertEquals(calls["hold"], me.vibb.music.playback.Commands.CALL_HOLD)

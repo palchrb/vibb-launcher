@@ -106,6 +106,15 @@ interface Renderer {
     fun fadeOutAndPause(done: () -> Unit)
     fun cancelFade()
 
+    /**
+     * "Til slutten" (design 50 §1.2): with [done] the renderer pauses AT the end of whatever item is current then (a
+     * step keeps it armed) by its own means - the phone's `setPauseAtEndOfMediaItems`, a room's `advance()` holding at
+     * the next item at 0, the web player pausing itself just before Spotify's own advance - with its own fade over
+     * [fadeMs], started when the item's time left crosses it and recomputed after a seek. [done] runs once, on the main
+     * thread, after that pause; the renderer is then off again. Null turns it off (the volume back), never calling it.
+     */
+    fun pauseAtItemEnd(done: (() -> Unit)?)
+
     // The phone's own player only; a remote renderer ignores them (design 26a §3.2).
     fun setAudioAttributes(attributes: AudioAttributes)
     fun setWakeMode(wakeMode: Int)

@@ -9,6 +9,8 @@ import me.vibb.music.logic.OrderWords
 import me.vibb.music.logic.orderWords
 import me.vibb.music.logic.PlayRequest
 import me.vibb.music.logic.canShuffle
+import me.vibb.music.logic.ControlSlots
+import me.vibb.music.logic.controlSlots
 import me.vibb.music.logic.contextResumes
 import me.vibb.music.logic.countedOrder
 import me.vibb.music.logic.coverTapAwaitsBook
@@ -30,7 +32,12 @@ import me.vibb.music.logic.swipeVia
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
+import me.vibb.music.logic.NetCaps
+import me.vibb.music.logic.Playability
+import me.vibb.music.logic.spotifyPlayability
 import me.vibb.music.playback.PlayerHub
+import me.vibb.music.playback.RendererKind
+import me.vibb.music.playback.itemPlayable
 import me.vibb.music.playback.RendererState
 import me.vibb.music.sonos.PlayBodies
 import me.vibb.music.spotify.rendererStateOf
@@ -46,19 +53,57 @@ data class EntryUi(
     val isNew: Boolean,
     /** In place of the hint (design 26c §5.8): a Spotify tile's line - the loaded one's state, else the stored outcome's. */
     val state: RendererState? = null,
+    /**
+     * The phone can't play it right now (design 50 §1.4): the cover drawn at 60 %, no play arrow (design 46 §1.4). A
+     * tap still answers as today.
+     */
+    val unplayableNow: Boolean = false,
+    /** "Trenger Wi-Fi" in the hint's place (design 50 §1.4): dimmed by the network with no account line to say it. */
+    val needsWifi: Boolean = false,
 )
+
+/** The cover's play arrow means "tap to play" (design 46 §1.4): on every tile but a dimmed one (design 50 §1.4). */
+fun showsPlayMark(e: EntryUi): Boolean = !e.unplayableNow
+
+/** What the network allows now, for the tiles (design 50 §1.4): read when the library (re)appears and on each change. */
+data class NetNow(val caps: NetCaps?, val streamMobileData: Boolean, val onRoom: Boolean)
+
+/**
+ * Can't [entry] play on the phone right now (design 50 §1.4)? NRK/RSS with no visible item on the phone ([onPhone])
+ * that the streaming gate would let through, and Spotify under `spotifyPlayability`'s refusal - every renderer rule's
+ * own `itemPlayable`, so the tile says what a tap would meet. Storytel and own entries show only with a copy, so
+ * they always play. [onRoom]: never - the phone's gate isn't a room's (Spotify there says so itself).
+ */
+fun unplayableNow(entry: Entry, items: List<PlayItem>, onPhone: Set<String>, net: NetNow): Boolean = when {
+    net.onRoom -> false
+    isSpotify(entry) -> spotifyPlayability(net.caps, net.streamMobileData) != Playability.STREAM
+    else -> items.none { itemPlayable(RendererKind.LOCAL, entry, it.key in onPhone, it.url != null, net.caps, net.streamMobileData) }
+}
 
 /**
  * A cover of [entry]: its kind, hint, progress and NY - and for a Spotify entry the line that replaces the hint
  * ([spotifyTileState]: [loadedId]'s renderer [loadedState] from `PlayerHub.State`, the stored [spotifyOutcome]).
  */
-fun entryUi(snap: Snapshot, entry: Entry, loadedId: Long? = null, loadedState: RendererState? = null, spotifyOutcome: String? = null): EntryUi {
+fun entryUi(
+    snap: Snapshot,
+    entry: Entry,
+    loadedId: Long? = null,
+    loadedState: RendererState? = null,
+    spotifyOutcome: String? = null,
+    /** The network now (design 50 §1.4); null: nothing is dimmed by it. */
+    net: NetNow? = null,
+): EntryUi {
     val visible = snap.order(entry).map { it.key }
     val order = countedOrder(entry, visible, snap.listed[entry.id].orEmpty().map { it.key })
     val bookmark = snap.bookmarks[entry.key]
     // a Spotify context (design 26c §5.9) has no list to show progress through: Spotify picks the tracks
     val showProgress = entry.resume && started(order, bookmark) && !isSpotifyContext(entry)
     val duration = bookmark?.let { b -> snap.item(entry.id, b.itemKey)?.durationMs }
+    val state = spotifyTileState(entry, loadedId, loadedState, spotifyOutcome)
+    // design 50 §1.4: dimmed by the network, or by an account line of its own ("Spør en voksen": no play either);
+    // never on a room. One line: the account line wins over "Trenger Wi-Fi".
+    val refused = net != null && unplayableNow(entry, snap.visible(entry), snap.onPhone[entry.id].orEmpty(), net)
+    val dimmed = net?.onRoom != true && (refused || state == RendererState.SPOTIFY_ASK_ADULT)
     return EntryUi(
         entry,
         snap.library?.categories?.firstOrNull { it.id == entry.category },
@@ -66,7 +111,9 @@ fun entryUi(snap: Snapshot, entry: Entry, loadedId: Long? = null, loadedState: R
         hint(entry, order, bookmark),
         if (showProgress) overallProgress(order, bookmark, duration) else null,
         isNew(snap.news.filter { n -> visible.contains(n.key) }, entry.id),
-        spotifyTileState(entry, loadedId, loadedState, spotifyOutcome),
+        state,
+        unplayableNow = dimmed,
+        needsWifi = refused && state == null,
     )
 }
 
@@ -101,6 +148,9 @@ data class NowView(
 ) {
     val item: PlayItem get() = queue[index]
     val canShuffle: Boolean get() = canShuffle(entry)
+
+    /** The control row's side slots (design 49 §1.1, 50 §1.1): shuffle/repeat, or the skip pair. */
+    val slots: ControlSlots get() = controlSlots(entry)
     val ref: ItemRef get() = ItemRef(entry.id, item.key)
 
     /** The cover hash shown: the item's own art, else the entry's ([Cover] falls back to [fallback]

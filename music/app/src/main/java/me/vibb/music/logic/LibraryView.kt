@@ -100,6 +100,31 @@ fun effectiveCategory(entries: List<Entry>, selected: Long?): Long? =
 /** Virtual pages: more than one entry wraps (laps of the list), so a swipe never hits an end. */
 const val CAROUSEL_LAPS = 1000
 
+/**
+ * The carousel's first index (design 50 §1.3, ours: "husker hvilken tile som ble spilt"): the stored now-playing
+ * entry's ([entryId]) place in the [shown] order, 0 without one or when it isn't shown (another category, gone).
+ */
+fun carouselStartIndex(shown: List<Entry>, entryId: Long?): Int = shown.indexOfFirst { it.id == entryId }.coerceAtLeast(0)
+
+/**
+ * The carousel opens on the last played tile once (design 50 §1.3, QA 50-5): [first] answers the start index the first
+ * time it is asked, and never after the kid [moved] (turned the carousel, picked a category, came back from the player
+ * - `backToLibrary` wins) or after it already answered.
+ */
+class CarouselStart {
+    private var settled = false
+
+    fun moved() {
+        settled = true
+    }
+
+    fun first(shown: List<Entry>, entryId: Long?): Int? {
+        if (settled) return null
+        settled = true
+        return carouselStartIndex(shown, entryId)
+    }
+}
+
 fun carouselPageCount(n: Int): Int = if (n > 1) n * CAROUSEL_LAPS else n
 
 /** The page in the middle laps that shows entry [index]. */

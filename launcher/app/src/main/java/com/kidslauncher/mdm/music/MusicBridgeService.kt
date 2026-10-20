@@ -271,6 +271,9 @@ object MusicNowPlaying {
     const val DURATION_MS = "duration_ms"
     const val PLAYING = "playing"
     const val ART = "art"
+
+    /** Design 50 §1.1 (appended): "skip" or "music" - the lock tile's pair; read by the lock tile's later step. */
+    const val CONTROLS = "controls"
     private const val MAX_ART_BYTES = 64 * 1024
 
     /** A music app update was deferred: the next pause (or the player's end) asks for a download run (S3). */

@@ -150,6 +150,7 @@ class MainActivity : ComponentActivity() {
             if (PlayerHub.state.value.live) command(Commands.FLIP_ORDER, bundleOf(Commands.ARG_ENTRY_KEY to entryKey, Commands.ARG_NEWEST_FIRST to newestFirst))
         }
         override fun sleep(minutes: Int) = command(Commands.SLEEP, bundleOf(Commands.ARG_MINUTES to minutes))
+        override fun sleepAtEnd() = command(Commands.SLEEP, bundleOf(Commands.ARG_AT_END to true))
         override fun output(key: String) = command(Commands.OUTPUT, bundleOf(Commands.ARG_OUTPUT to key))
         override fun refreshRooms() = command(Commands.ROOMS_REFRESH)
         override fun rescanRooms() = command(Commands.ROOMS_RESCAN)
@@ -173,6 +174,9 @@ interface Actions {
     /** The kid's order flip of [entryKey] is written (design 39 §3.3): a live player reorders its queue [newestFirst]. */
     fun flipOrder(entryKey: String, newestFirst: Boolean)
     fun sleep(minutes: Int)
+
+    /** "Til slutten" (design 50 §1.2): the sleep timer ends at the current item's end. */
+    fun sleepAtEnd()
     /** An `Output.key`; a Sonos room's starts the speaker (design 26a §3.3). */
     fun output(key: String)
 

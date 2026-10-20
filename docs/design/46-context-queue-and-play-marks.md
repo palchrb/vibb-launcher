@@ -111,3 +111,12 @@ the user's account (after the re-login): the same on a parent-owned playlist, an
 - 46-9: §1.1 the shape no longer claims to be the server's; "de neste N" chosen; the restart fallback stated.
 - 46-10: §1.4 the badge has its own condition and is hidden on a dimmed tile.
 - Interactions: §1.1/§1.2 re-read after a shuffle/repeat change; the hint follows Spotify-side shuffle.
+
+## Implementation status (2026-10-20, branch `music-r-b`)
+
+- **§1.4 built**: the peach play disc on every carousel tile (`showsPlayMark(e) = !e.unplayableNow`,
+  `LibraryScreen.CoverBadges`), its own condition, no longer `progress != null`; hidden on a tile design 50 §1.4 dims.
+  The progress line still shows only for a started resume entry and never for a context. Tests: `UiModelTest`'s
+  `d46 - the play arrow on every tile, never on a dimmed one`.
+- **§1.1-§1.3 and the queue parts of §2/§3 are parked** (§0b, the user's call: the queue view is on PLAN's long
+  list). No server, scope, `SpotifyApi` or fake change was made. §1.5's scope note holds.
