@@ -20,7 +20,9 @@ betyr [pilen] trykk på tile for å starte avspilling".
 The queue read (`GET /v1/me/player/queue`) needs the scope `user-read-playback-state`. The server leaves it out on
 purpose (`server/src/spotify.rs:59-63`, 26c QA L2; `the_authorize_url_is_exact` asserts it absent), so reading the
 queue is a server change and every Spotify account must log in again (a refresh keeps the scopes it was granted).
-**The user decides.**
+**The user decided (2026-10-20): the queue view goes on PLAN's long list ("Legg køvisning for neste 20 på
+longlisten vår, så husker vi på den til senere"); the music round builds §1.4 only, and 46b (a reader account, no
+code) is the road to the whole list. §1.1-§1.3 and the queue parts of §2/§3 stay here for that later round.**
 
 - **Yes**: §1.1-§1.3 and §2's queue parts are built. The server adds the scope to its one scope set (`SCOPES`, `spotify.rs:62-63`;
   the server's `the_authorize_url_is_exact` changes in three places - the exact URL string, the absence assert

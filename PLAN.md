@@ -757,6 +757,12 @@ findings, merge to `main`, full suite once.
   "Til … p.m.", the PWA's About row, a VoIP ring while paused.
 - **Remove the unused androidx `palette` dependency** (unused since design 34 step 1), with its
   verification-metadata entries.
+- **Design 46's queue view: a context entry's list shows the playing track and the next 20 from Spotify's queue**
+  (the user, 2026-10-20: "Legg køvisning for neste 20 på longlisten vår, så husker vi på den til senere"). Designed and
+  QA'd in `docs/design/46-context-queue-and-play-marks.md` §0b/§1.1-§1.3 (+ `qa-music-round-design.md`): the server
+  adds the scope `user-read-playback-state`, every Spotify account logs in again, the music app reads
+  `GET /me/player/queue` after each start/track change, a tap on a playlist/album row starts there. Only worth it for
+  playlists no logged-in account owns, and for artists; 46b (a reader account) covers the family's own lists.
 
 ### Asked for, scope not settled yet
 
@@ -822,7 +828,12 @@ findings, merge to `main`, full suite once.
   "i går 14:50", "15. okt 14:02" (`display_time`, a clock on every row, not only in `title`) - on Requests and on the
   Activity log. (3) `device_commands` older than 30 days are pruned by `retention::prune` like events and locations
   (never a waiting one). (4) The Activity log is where the commands' history lives, with the same clock words.
-- **Design 46: a context-mode playlist shows what is coming, and the kid picks a track** (the user, 2026-10-20: "se hele
+- **Design 46: a context-mode playlist shows what is coming, and the kid picks a track** - DECIDED 2026-10-20: the
+  queue view (the playing track + the next 20, `docs/design/46-context-queue-and-play-marks.md` §1.1-§1.3, the server
+  scope + one re-login per account) is on the long list, not in the music round (the user: "Legg køvisning for neste 20
+  på longlisten vår, så husker vi på den til senere"); 46b (the parent's own account as a reader, no code) is the road
+  to the whole list now. The music round builds 46's play arrow (§1.4) only. The note stays as written for later.
+  History: (the user, 2026-10-20: "se hele
   playlisten slik den er, og så velge en konkret sang"; not the queue as such). CORRECTED 2026-10-20: the whole list is
   NOT readable for exactly these playlists - Spotify's development mode lists a playlist's items only to its owner or a
   collaborator (design 26c decision 4, verified 2026-10-13), and a playlist the kid's account owns or collaborates on is
