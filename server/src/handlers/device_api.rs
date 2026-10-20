@@ -1030,10 +1030,9 @@ pub async fn status(
     let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
     // Handy's lock (step 10): what the phone says about it - only the known fields are kept, so
     // no unlock times or PIN material can be stored whatever a launcher sends.
-    let lock_state_json = report
-        .lock_state
-        .as_ref()
-        .and_then(crate::kid_lock::sanitize_lock_state);
+    let lock_state_json = report.lock_state.as_ref().and_then(|state| {
+        crate::kid_lock::sanitize_lock_state(state, chrono::Utc::now().timestamp_millis())
+    });
     // Kiosk escapes (step 11): re-serialized through the known fields and capped - package and
     // channel ids with counts only, never notification text.
     let update_fence_json = report

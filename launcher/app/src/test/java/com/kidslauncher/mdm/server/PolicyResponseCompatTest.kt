@@ -821,14 +821,27 @@ class PolicyResponseCompatTest {
             lockState = com.kidslauncher.mdm.server.dto.LockStateReport(
                 active = true, inactive = null, locked = true, failures = 5, backoffUntilMs = 1L, exemptYields = 2,
                 voipFsiDenied = emptyList(),
+                voipRang = emptyList(),
             ),
         )
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
         assertEquals(
-            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields", "voip_fsi_denied"),
+            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields", "voip_fsi_denied", "voip_rang"),
             json["lock_state"]!!.jsonObject.keys,
         )
         assertEquals("[]", json["lock_state"]!!.jsonObject["voip_fsi_denied"].toString())
+        assertEquals("[]", json["lock_state"]!!.jsonObject["voip_rang"].toString())
+        // Design r7 §1.1.3: an entry is the server's `{package, last_at_ms}`.
+        val rang = com.kidslauncher.mdm.server.dto.LockStateReport(
+            active = true, inactive = null, locked = true, failures = 0, backoffUntilMs = null, exemptYields = 0,
+            voipFsiDenied = emptyList(),
+            voipRang = listOf(com.kidslauncher.mdm.server.dto.VoipRang("org.thoughtcrime.securesms", 1_800_000_000_000L)),
+        )
+        assertEquals(
+            """[{"package":"org.thoughtcrime.securesms","last_at_ms":1800000000000}]""",
+            ServerJson.parseToJsonElement(ServerJson.encodeToString(com.kidslauncher.mdm.server.dto.LockStateReport.serializer(), rang))
+                .jsonObject["voip_rang"].toString(),
+        )
         val failed = CallState(
             state = "managed", dialerRoleHeld = true, redirectionRoleHeld = true, screeningRoleHeld = false, defaultDialer = null, systemDialer = null,
             smsRestricted = false, outgoingRestricted = false, defaultSmsPackage = null, lastError = null,

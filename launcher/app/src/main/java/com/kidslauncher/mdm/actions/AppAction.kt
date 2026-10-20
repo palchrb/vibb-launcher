@@ -13,7 +13,6 @@ import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.apps.AbstractAppInfo.Companion.INVALID_USER
 import com.kidslauncher.mdm.apps.AppInfo
 import com.kidslauncher.mdm.apps.DetailedAppInfo
-import com.kidslauncher.mdm.ui.list.apps.openSettings
 
 class AppAction(val app: AppInfo) {
 
@@ -57,10 +56,9 @@ class AppAction(val app: AppInfo) {
             )
                 .setTitle(context.getString(R.string.alert_cant_open_title))
                 .setMessage(context.getString(R.string.alert_cant_open_message))
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    app.openSettings(context)
-                }
-                .setNegativeButton(android.R.string.cancel, null)
+                // Launcher round 7 §4: OK only closes the dialog - it opened the app's details page
+                // in system Settings (an inherited door out of the kiosk, KidScreensEscapeTest).
+                .setPositiveButton(android.R.string.ok, null)
                 .setIcon(android.R.drawable.ic_dialog_info)
                 .show()
             return true

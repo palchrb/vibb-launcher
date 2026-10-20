@@ -28,6 +28,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import android.app.role.RoleManager
 import com.kidslauncher.mdm.Application
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.lock.HomeFront
 import com.kidslauncher.mdm.lock.LockAsk
 import com.kidslauncher.mdm.lock.LockMode
 import com.kidslauncher.mdm.lock.PinLockRuntime
@@ -76,6 +77,7 @@ import com.kidslauncher.mdm.ui.home.NightGround
 import com.kidslauncher.mdm.ui.home.PressFeedback
 import com.kidslauncher.mdm.ui.home.gridColumns
 import com.kidslauncher.mdm.ui.home.homeGrid
+import com.kidslauncher.mdm.ui.home.homePressToTop
 import com.kidslauncher.mdm.ui.home.showPhoneBookTile
 import com.kidslauncher.mdm.ui.wallpaper.InkChoice
 import com.kidslauncher.mdm.ui.wallpaper.KidInk
@@ -134,6 +136,9 @@ class HomeActivity : UIObjectActivity() {
     private var contentShown = false
     private var nightShown = false
     private var resumedNow = false
+    /** Home's content was resumed in front and Home hasn't stopped since (launcher round 7 §4): a
+     * HOME intent then is the kid pressing Home on Home ([homePressToTop]). */
+    private var contentUp = false
     /** What Home opened over its content - the contact sheet, an app's long-press menu and its
      * rename dialog: closed when the lock engages (16c, qa-16c-code #2). */
     private val overlays = ArrayDeque<() -> Unit>()
@@ -274,6 +279,7 @@ class HomeActivity : UIObjectActivity() {
     private fun showNight() {
         closeOverlays()
         contentShown = false
+        contentUp = false
         renderMusicCard()
         appsJob?.cancel()
         refreshHandler.removeCallbacks(badgeRender)
@@ -300,6 +306,8 @@ class HomeActivity : UIObjectActivity() {
         gridLayout = GridLayoutManager(this, gridColumns(null))
         binding.homeGrid.layoutManager = gridLayout
         binding.homeGrid.adapter = gridAdapter
+        // Launcher round 7 §4: one-tile updates (DiffUtil), and nothing moves or fades.
+        binding.homeGrid.itemAnimator = null
         binding.homeGrid.addItemDecoration(
             GridGapDecoration(
                 KidAvatars.dp(this, GRID_COLUMN_GAP_DP.toFloat()),
@@ -506,6 +514,7 @@ class HomeActivity : UIObjectActivity() {
     /** The content's part of a resume (and of an UNLOCKED edge while resumed). */
     private fun resumeContent() {
         if (!contentShown) return
+        contentUp = true
         // The parent's language choice, now that Home is in front (no call screen or dialog).
         LauncherLocales.applyIfSafe(this)
         // Also refreshes whether the system wallpaper is still ours (in the background).
@@ -596,7 +605,29 @@ class HomeActivity : UIObjectActivity() {
         }
     }
 
+    /**
+     * Launcher round 7 §4: Home pressed while Home is up - back to the top (the grid and the contacts
+     * row) and Home's menus closed; nothing for our own Home starts or under the lock
+     * ([homePressToTop]). Android pauses Home for the delivery, so [contentUp] is what tells.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val toTop = homePressToTop(
+            broughtByUs = intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false),
+            contentWasUp = contentUp,
+            contentShown = contentShown,
+            darkLockUp = PinLockRuntime.darkLockUp,
+            locked = PinLockRuntime.mode == LockMode.LOCKED,
+        )
+        if (!toTop) return
+        closeOverlays()
+        binding.homeGrid.smoothScrollToPosition(0)
+        binding.homeContactsScroll.smoothScrollTo(0, 0)
+    }
+
     override fun onStop() {
+        contentUp = false
         // Design 16e: something covers the mark - the boot's wait for it ends.
         PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home stopped")
         started = false

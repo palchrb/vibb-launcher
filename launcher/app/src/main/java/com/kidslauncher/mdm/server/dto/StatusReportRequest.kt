@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.server.dto
 
 import android.os.BatteryManager
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlin.math.roundToInt
 
@@ -259,6 +260,17 @@ data class LockStateReport(
      * dropped it (no USE_FULL_SCREEN_INTENT), so their calls can't ring over the lock. Package
      * names only; always sent. */
     val voipFsiDenied: List<String>,
+    /** Design r7 §1.1.3: the apps whose ring the lock accepted while LOCKED (or that rang while the
+     * phone locked) in the last 7 days, newest first, at most 8. Package names and times only;
+     * always sent (`[]`). */
+    val voipRang: List<VoipRang>,
+)
+
+/** One `lock_state.voip_rang` entry: `{"package": ..., "last_at_ms": ...}` (the server's keys). */
+@Serializable
+data class VoipRang(
+    @SerialName("package") val packageName: String,
+    val lastAtMs: Long,
 )
 
 /** `StatusReportRequest.installMode`: wall-clock end of the Play install mode window. */

@@ -23,6 +23,9 @@ import com.kidslauncher.mdm.preferences.migratePreferencesToNewVersion
 import com.kidslauncher.mdm.preferences.resetPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.consumeEach
 import kotlinx.coroutines.launch
 import kotlin.system.exitProcess
 
@@ -55,11 +58,13 @@ class Application : android.app.Application() {
     // TODO: only update specific apps
     private val launcherAppsCallback = object : LauncherApps.Callback() {
         override fun onPackageRemoved(p0: String?, p1: UserHandle?) {
+            evictIcons(p0)
             loadApps()
             clockAppChanged(p0)
         }
 
         override fun onPackageAdded(p0: String?, p1: UserHandle?) {
+            evictIcons(p0)
             loadApps()
             clockAppChanged(p0)
             // Reacts to this specific install immediately (no network round-trip, no waiting on
@@ -87,6 +92,7 @@ class Application : android.app.Application() {
         }
 
         override fun onPackageChanged(p0: String?, p1: UserHandle?) {
+            evictIcons(p0)
             loadApps()
             clockAppChanged(p0)
             // An update (a replaced package) lands here: design 24b's install check (fix round QA
@@ -432,15 +438,54 @@ class Application : android.app.Application() {
     @Volatile
     private var appDisplayLoaded = false
 
-    private fun loadApps() {
-        CoroutineScope(Dispatchers.Default).launch {
-            // Once per process, before the first list (it decodes the cached policy - never on
-            // the main thread, qa-14-code #3); later changes come from the sync's refresh.
-            if (!appDisplayLoaded) {
-                appDisplayLoaded = true
-                com.kidslauncher.mdm.appdisplay.AppDisplay.refresh(applicationContext, reload = false)
+    /**
+     * Launcher round 7 §4: an installed, updated or removed app's rendered icons go before the list
+     * reloads, so an update's new icon shows on Home, the glance page and the time-rule screen. The
+     * package is evicted again right before the reloaded list is posted ([appLoads], qa-l7-a-code #1):
+     * until then a render from the old list (its `DetailedAppInfo` holds the old APK's drawable) could
+     * put the old bitmap back under the same key.
+     */
+    private fun evictIcons(packageName: String?) {
+        packageName ?: return
+        synchronized(iconsToEvict) { iconsToEvict += packageName }
+        com.kidslauncher.mdm.ui.home.KidAvatars.evictPackage(packageName)
+    }
+
+    /** Packages whose icons go again when the next list lands ([evictIcons]). */
+    private val iconsToEvict = mutableSetOf<String>()
+
+    /**
+     * One app-list load at a time (launcher round 7 §4): a request while a load runs is folded into
+     * one more load after it (a conflated channel), so a burst of suspend/unsuspend callbacks from
+     * `AppEnforcer` can never post an older list last. Started on the first request.
+     */
+    private val appLoads: Channel<Unit> by lazy {
+        Channel<Unit>(Channel.CONFLATED).also { requests ->
+            CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+                requests.consumeEach {
+                    try {
+                        // Once per process, before the first list (it decodes the cached policy -
+                        // never on the main thread, qa-14-code #3); later changes come from the
+                        // sync's refresh.
+                        if (!appDisplayLoaded) {
+                            appDisplayLoaded = true
+                            com.kidslauncher.mdm.appdisplay.AppDisplay.refresh(applicationContext, reload = false)
+                        }
+                        // The packages asked for before this load: evicted again once it is done.
+                        val evict = synchronized(iconsToEvict) { iconsToEvict.toSet() }
+                        val list = getApps(packageManager, applicationContext)
+                        synchronized(iconsToEvict) { iconsToEvict -= evict }
+                        evict.forEach { com.kidslauncher.mdm.ui.home.KidAvatars.evictPackage(it) }
+                        apps.postValue(list)
+                    } catch (e: Exception) {
+                        android.util.Log.w("Application", "Couldn't load the app list: ${e.javaClass.simpleName}")
+                    }
+                }
             }
-            apps.postValue(getApps(packageManager, applicationContext))
         }
+    }
+
+    private fun loadApps() {
+        appLoads.trySend(Unit)
     }
 }

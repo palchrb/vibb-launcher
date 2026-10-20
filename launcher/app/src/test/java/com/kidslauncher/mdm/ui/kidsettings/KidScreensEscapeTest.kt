@@ -26,6 +26,9 @@ class KidScreensEscapeTest {
         "\"android.intent.action.SET_WALLPAPER",
         "\"android.service.wallpaper.",
         "\"android.intent.action.CHOOSER",
+        // An app's details page (launcher round 7 §4: the inherited "can't open" dialog's OK).
+        "startAppDetailsActivity",
+        "openSettings(",
     )
 
     private fun src(path: String) =
@@ -33,10 +36,12 @@ class KidScreensEscapeTest {
             .first { it.exists() }
 
     /** The kid screens: Home (its Settings tile and swipes), the phone book, kid Settings and
-     * its Wi-Fi/Bluetooth subscreens, and the wallpaper code. */
+     * its Wi-Fi/Bluetooth subscreens, the wallpaper code, and the app launch actions (`actions/`,
+     * what a Home tile's tap runs - launcher round 7 §4). */
     private val guarded = listOf(
         "ui/kidsettings", "ui/quickcontrols", "ui/wallpaper", "server/QuickControls.kt",
         "ui/HomeActivity.kt", "ui/home", "calls/PhoneBookActivity.kt", "calls/PhoneBookAdapter.kt",
+        "actions",
     )
 
     @Test
@@ -46,7 +51,7 @@ class KidScreensEscapeTest {
                 .firstOrNull { it.exists() }
         }.flatMap { f -> if (f.isDirectory) f.walk().filter { it.isFile && it.name.endsWith(".kt") }.toList() else listOf(f) }
         assertTrue("guarded sources found", files.size >= 10)
-        for (name in listOf("HomeActivity.kt", "PhoneBookActivity.kt", "KidSettingsActivity.kt", "HomeGridAdapter.kt")) {
+        for (name in listOf("HomeActivity.kt", "PhoneBookActivity.kt", "KidSettingsActivity.kt", "HomeGridAdapter.kt", "AppAction.kt")) {
             assertTrue(name, files.any { it.name == name })
         }
         for (file in files) {

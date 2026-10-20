@@ -18,24 +18,135 @@ class VoipCallPlanTest {
 
     private fun contact(app: String) = RuleContact(name = "Pappa", number = "+4791234567", messageApp = app, messageAddress = "@pappa:vibb.me")
 
+    private fun src(path: String) =
+        listOf(java.io.File("src/main/java/com/kidslauncher/mdm/$path"), java.io.File("app/src/main/java/com/kidslauncher/mdm/$path"))
+            .first { it.exists() }.readText()
+
+    private val whatsapp = "com.whatsapp"
+    private val allowed = setOf(element, whatsapp, "com.microsoft.teams")
+
     @Test
-    fun `managed calls on - the contacts' messaging apps, never the SMS app`() {
+    fun `managed calls on - every allowed app (design r7)`() {
         val rules = CallRules(callsEnabled = true, smsEnabled = true, contacts = listOf(contact("element"), contact("sms")))
-        assertEquals(setOf(element), voipCandidates(CallPolicyState.Managed(rules)))
+        assertEquals(allowed, voipCandidates(CallPolicyState.Managed(rules), allowed, policyKnown = true))
     }
 
     @Test
-    fun `calls off, a no-calls time rule (folded into the effective state) or unknown rules - none`() {
-        val off = CallRules(callsEnabled = false, contacts = listOf(contact("element")))
-        assertEquals(emptySet<String>(), voipCandidates(CallPolicyState.Managed(off)))
-        assertEquals(emptySet<String>(), voipCandidates(CallPolicyState.UnknownFailClosed))
-    }
-
-    @Test
-    fun `unmanaged calls - the known VoIP messengers (apps managed + PIN lock only)`() {
-        val known = voipCandidates(CallPolicyState.Unmanaged)
+    fun `fallbacks - no policy yet or apps unmanaged give the pre-r7 sets, never wider`() {
+        val rules = CallRules(callsEnabled = true, smsEnabled = true, contacts = listOf(contact("element"), contact("sms")))
+        // Managed calls: the contacts' messaging apps, never the SMS app.
+        assertEquals(setOf(element), voipCandidates(CallPolicyState.Managed(rules), allowed, policyKnown = false))
+        assertEquals(setOf(element), voipCandidates(CallPolicyState.Managed(rules), null, policyKnown = true))
+        // Unmanaged calls: the known messengers.
+        val known = voipCandidates(CallPolicyState.Unmanaged, null, policyKnown = true)
+        assertEquals(KNOWN_VOIP_PACKAGES, known)
         assertTrue(element in known && signal in known)
-        assertTrue("never a self-managed game or WhatsApp", "com.whatsapp" !in known)
+        assertTrue("never a self-managed game or WhatsApp", whatsapp !in known)
+        assertEquals(KNOWN_VOIP_PACKAGES, voipCandidates(CallPolicyState.Unmanaged, allowed, policyKnown = false))
+    }
+
+    @Test
+    fun `unmanaged calls with an app list - the allowed apps`() {
+        assertEquals(allowed, voipCandidates(CallPolicyState.Unmanaged, allowed, policyKnown = true))
+    }
+
+    @Test
+    fun `calls off, a no-calls time rule (folded into the effective state) or unknown rules - none, whatever is allowed`() {
+        val off = CallRules(callsEnabled = false, contacts = listOf(contact("element")))
+        for (known in listOf(true, false)) {
+            for (set in listOf(allowed, null)) {
+                assertEquals(emptySet<String>(), voipCandidates(CallPolicyState.Managed(off), set, known))
+                assertEquals(emptySet<String>(), voipCandidates(CallPolicyState.UnknownFailClosed, set, known))
+            }
+        }
+    }
+
+    @Test
+    fun `the allowed set - the effective allowlist, messaging and usable apps, minus the exclusions`() {
+        val excluded = setOf("com.google.android.apps.messaging", "com.android.dialer", "com.android.server.telecom", "me.vibb.launcher")
+        val set = voipAllowedApps(
+            allowlist = listOf(whatsapp, "com.relock.blocked", "com.google.android.apps.messaging", "com.android.dialer", "me.vibb.launcher", whatsapp),
+            relockBlocked = setOf("com.relock.blocked"),
+            messagingApps = setOf(signal, "com.google.android.apps.messaging"),
+            lockUsableApps = setOf("org.fossify.clock", "com.android.server.telecom"),
+            excluded = excluded,
+        )
+        assertEquals(setOf(whatsapp, signal, "org.fossify.clock"), set)
+        assertNull("apps unmanaged", voipAllowedApps(null, emptySet(), setOf(signal), emptySet(), excluded))
+    }
+
+    @Test
+    fun `the exclusion set - SMS apps, the essentials and our own family`() {
+        val essential = setOf("com.android.dialer", "com.google.android.deskclock", "com.google.android.inputmethod.latin")
+        val own = setOf("me.vibb.launcher", "me.vibb.launcher.debug")
+        val excluded = com.kidslauncher.mdm.badges.voipExcluded("org.example.sms", essential, own)
+        for (pkg in listOf(
+            "org.example.sms", "com.google.android.apps.messaging", "com.android.messaging", "com.android.stk",
+            "com.android.phone", "com.android.server.telecom", "com.android.systemui", "android",
+            "com.android.dialer", "com.google.android.deskclock", "com.google.android.inputmethod.latin",
+            "me.vibb.launcher", "me.vibb.launcher.debug",
+        )) {
+            assertTrue(pkg, pkg in excluded)
+        }
+        assertFalse(whatsapp in excluded)
+        assertFalse(element in excluded)
+    }
+
+    @Test
+    fun `no ring is counted - VoipCallPlan holds no per-hour budget`() {
+        val source = src("lock/VoipCallPlan.kt")
+        for (banned in listOf("PER_HOUR", "perHour", "RINGS_PER", "budget", "limited")) {
+            assertFalse(banned, source.contains(banned))
+        }
+    }
+
+    // ---- voip_rang (design r7 §1.1.3) ---------------------------------------------------------
+
+    @Test
+    fun `a ring is recorded once, only while locked`() {
+        assertFalse("unlocked", voipRangDue(ringId = 5L, locked = false, recordedRingId = null))
+        assertTrue("locked", voipRangDue(5L, locked = true, recordedRingId = null))
+        assertFalse("already recorded", voipRangDue(5L, locked = true, recordedRingId = 5L))
+        assertTrue("the phone locked during an unlocked ring", voipRangDue(5L, locked = true, recordedRingId = 3L))
+        assertFalse("no ring (a non-candidate never rings)", voipRangDue(null, locked = true, recordedRingId = null))
+    }
+
+    @Test
+    fun `voip_rang keeps 7 days, 8 packages, newest first, valid names`() {
+        val day = 24 * 60 * 60_000L
+        val now = 100 * day
+        val stored = (0 until 10).associate { "org.example.app$it" to now - it * 60_000L } +
+            mapOf("org.example.old" to now - 7 * day, "bad name" to now, "org.example.future" to now + 1)
+        val entries = voipRangAfter(stored, whatsapp, now)
+        assertEquals(VOIP_RANG_MAX, entries.size)
+        assertEquals(whatsapp, entries[0].packageName)
+        assertEquals(entries.sortedByDescending { it.lastAtMs }, entries)
+        assertTrue(entries.none { it.packageName == "org.example.old" || it.packageName == "bad name" || it.packageName == "org.example.future" })
+        // The same package again moves to the front, once.
+        val again = voipRangAfter(entries.associate { it.packageName to it.lastAtMs }, "org.example.app7", now + 1)
+        assertEquals("org.example.app7", again[0].packageName)
+        assertEquals(1, again.count { it.packageName == "org.example.app7" })
+        // Below the cap only the age rule drops: exactly 7 days old goes, a minute younger stays
+        // (qa-l7-a-code 2, mutation e).
+        val few = voipRangEntries(mapOf("org.example.edge" to now - 7 * day, "org.example.young" to now - 7 * day + 60_000L), now)
+        assertEquals(listOf("org.example.young"), few.map { it.packageName })
+        // The prefs' strings round trip, and junk is dropped.
+        assertEquals(entries.associate { it.packageName to it.lastAtMs }, decodeVoipRang(encodeVoipRang(entries)))
+        assertEquals(mapOf("a.b" to 1L), decodeVoipRang(setOf("a.b=1", "nothing", "=5", "c.d=x")))
+    }
+
+    @Test
+    fun `the glue - eligible reads the pass's set, every ringer sync notes the ring with the lock mode, the report sends it`() {
+        val calls = src("lock/VoipCalls.kt")
+        assertTrue(calls.contains("NotificationRuleRuntime.voipAllowed"))
+        assertTrue(calls.contains("policyKnown = NotificationRuleRuntime.policy != null"))
+        assertFalse("no binder call or raw allowlist in eligible", calls.contains("defaultSmsPackage") || calls.contains(".allowlist"))
+        val runtime = src("lock/PinLockRuntime.kt")
+        val sync = runtime.substringAfter("fun syncVoipRinger(").substringBefore("\n    }\n")
+        assertTrue(sync.contains("VoipCalls.noteRingWhileLocked(app, locked = mode == LockMode.LOCKED)"))
+        assertTrue(runtime.contains("voipRang = VoipCalls.rangReport(app)"))
+        val rule = src("badges/NotificationRuleRuntime.kt")
+        assertTrue("the effective allowlist", rule.contains("relockBlocked = WindowRelock.blockedPackages(context)"))
     }
 
     // ---- notifications -------------------------------------------------------------------------

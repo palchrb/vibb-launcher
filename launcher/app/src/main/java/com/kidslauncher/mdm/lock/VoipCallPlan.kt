@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.lock
 
+import com.kidslauncher.mdm.appdisplay.isValidPackageName
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.MessagePackages
 import com.kidslauncher.mdm.calls.messagingAppPackages
@@ -37,18 +38,85 @@ const val CATEGORY_CALL = "call"
 val KNOWN_VOIP_PACKAGES: Set<String> = setOf(MessagePackages.ELEMENT_X) + MessagePackages.SIGNAL
 
 /**
- * The packages whose calls ring over the lock, from the phone path's answer (QA #8): the effective
- * call state (`CallPolicyStore.effectiveState()`, a no-calls time rule folded in - the override and
- * the pause lift a rule's call block, never the call rules). Managed with calls on: the contacts'
- * messaging apps (never the SMS app); unmanaged: the known VoIP messengers; calls off or unknown
- * (fail closed): none. The caller also requires the package to be unsuspended - a package that
- * isn't allowlisted is suspended (and hidden), and a time-rule lock suspends it unless usable.
+ * The packages whose calls ring over the lock (design r7 §1.1.1). The gates come from the phone
+ * path's answer (QA #8), the effective call state (`CallPolicyStore.effectiveState()`, a no-calls
+ * time rule folded in - the override and the pause lift a rule's call block, never the call rules):
+ * calls managed and on, or unmanaged; calls off or unknown (fail closed): none. When they pass:
+ * every allowed app ([voipAllowed], from [voipAllowedApps] once per enforcement pass, exclusions
+ * already out). Fallbacks, never wider than before r7: no enforced policy yet in this process
+ * ([policyKnown] false) or apps unmanaged ([voipAllowed] null) -> the contacts' messaging apps
+ * (never the SMS app) while managed, the known VoIP messengers while unmanaged. The caller also
+ * requires the package to be unsuspended - a package that isn't allowlisted is suspended (and
+ * hidden), and a time-rule lock suspends it unless usable. No ring is counted (the user, r7: the
+ * lock is the kid's own PIN, so a faked ring gains the kid nothing).
  */
-fun voipCandidates(effective: CallPolicyState): Set<String> = when (effective) {
-    CallPolicyState.Unmanaged -> KNOWN_VOIP_PACKAGES
-    CallPolicyState.UnknownFailClosed -> emptySet()
-    is CallPolicyState.Managed -> if (effective.rules.callsEnabled) messagingAppPackages(effective.rules, null) else emptySet()
+fun voipCandidates(effective: CallPolicyState, voipAllowed: Set<String>?, policyKnown: Boolean): Set<String> {
+    val fallback = when (effective) {
+        CallPolicyState.Unmanaged -> KNOWN_VOIP_PACKAGES
+        CallPolicyState.UnknownFailClosed -> return emptySet()
+        is CallPolicyState.Managed ->
+            if (effective.rules.callsEnabled) messagingAppPackages(effective.rules, null) else return emptySet()
+    }
+    return if (!policyKnown || voipAllowed == null) fallback else voipAllowed
 }
+
+/**
+ * Design r7 §1.1.1: the apps whose call-style ring may ring over the lock, from one enforcement
+ * pass - the effective allowlist ([allowlist] without [relockBlocked], as `effectiveAllowlist`) +
+ * the contacts' messaging apps + a time lock's usable apps, minus [excluded] (the SMS apps, the
+ * resolved essentials - the dialers, Telecom, the clock, the keyboards, SystemUI - and our own
+ * family): a set difference, so a package named twice is no bypass. `null` while apps are
+ * unmanaged (no allowlist).
+ */
+fun voipAllowedApps(
+    allowlist: List<String>?,
+    relockBlocked: Set<String>,
+    messagingApps: Set<String>,
+    lockUsableApps: Set<String>,
+    excluded: Set<String>,
+): Set<String>? {
+    if (allowlist == null) return null
+    return (allowlist.filterTo(mutableSetOf()) { it !in relockBlocked } + messagingApps + lockUsableApps) - excluded
+}
+
+/** `lock_state.voip_rang` (design r7 §1.1.3) keeps a package's last ring over the lock this long. */
+const val VOIP_RANG_KEEP_MS = 7 * 24 * 60 * 60_000L
+
+/** ... and at most this many packages, newest first. */
+const val VOIP_RANG_MAX = 8
+
+/** One `lock_state.voip_rang` entry: a package and its last ring over the lock (wall ms). */
+data class VoipRangEntry(val packageName: String, val lastAtMs: Long)
+
+/**
+ * Whether the current ring is recorded now (r7-5): a ring ([ringId], `VoipCalls.ringId`) seen while
+ * the lock mode is LOCKED - one that began locked, or one during which the phone locked - and not
+ * recorded yet ([recordedRingId]). A call taken on an unlocked phone is not "over the lock".
+ */
+fun voipRangDue(ringId: Long?, locked: Boolean, recordedRingId: Long?): Boolean =
+    ringId != null && locked && ringId != recordedRingId
+
+/** The stored map with [pkg] rung at [nowWallMs], pruned ([voipRangEntries]). */
+fun voipRangAfter(stored: Map<String, Long>, pkg: String, nowWallMs: Long): List<VoipRangEntry> =
+    voipRangEntries(stored + (pkg to nowWallMs), nowWallMs)
+
+/** The kept entries: valid package names, the last [VOIP_RANG_KEEP_MS] (never the future), newest
+ * first, at most [VOIP_RANG_MAX]. */
+fun voipRangEntries(stored: Map<String, Long>, nowWallMs: Long): List<VoipRangEntry> =
+    stored.filter { (pkg, at) -> isValidPackageName(pkg) && at in 1..nowWallMs && nowWallMs - at < VOIP_RANG_KEEP_MS }
+        .map { (pkg, at) -> VoipRangEntry(pkg, at) }
+        .sortedWith(compareByDescending<VoipRangEntry> { it.lastAtMs }.thenBy { it.packageName })
+        .take(VOIP_RANG_MAX)
+
+/** CE prefs `voip_call` `rang_v1` as strings "package=wall ms": nothing but package names and times. */
+fun encodeVoipRang(entries: List<VoipRangEntry>): Set<String> =
+    entries.mapTo(mutableSetOf()) { "${it.packageName}=${it.lastAtMs}" }
+
+fun decodeVoipRang(stored: Set<String>): Map<String, Long> = stored.mapNotNull { line ->
+    val pkg = line.substringBefore('=', "")
+    val at = line.substringAfter('=', "").toLongOrNull()
+    if (pkg.isEmpty() || at == null) null else pkg to at
+}.toMap()
 
 enum class VoipNoticeKind { NONE, RINGING, IN_CALL, FSI_DENIED }
 
@@ -236,7 +304,7 @@ data class VoipRecord(
 )
 
 data class VoipInputs(
-    /** Allowed packages ([voipCandidates], unsuspended) with a ringing CALL notification. */
+    /** Candidate packages ([voipCandidates], unsuspended) with a ringing CALL notification. */
     val ringing: Set<String>,
     /** Packages with a call foreground-service notification (any: only the record's counts). */
     val inCall: Set<String>,

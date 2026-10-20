@@ -948,7 +948,7 @@ findings, merge to `main`, full suite once.
   Element X today); strangers can ring through apps whose contacts Vibb doesn't manage. The status report lists the apps that rang (`lock_state.voip_rang`, package + `last_at_ms`, no text) so the PWA can show "rang over the lock". The in-call phase stays
   "a CALL-category foreground notification (or Element's channel) + audio IN_COMMUNICATION": an app without it gets
   the lock back after the 15 s grace, its call going on in the background. Launcher only (+ the status field in both
-  directories). Launcher round 7.
+  directories). Launcher round 7. **Built 2026-10-20 on `l7-a`** (design r7 §1.4: status, deviations, device checks owed).
 - **Launcher round 7 §4 - small things from the Fossify Launcher comparison** (the user, 2026-10-20: "kunne du kikket
   på kildekoden til fossify launcher og se om den gjør noe på et kløktigere vis"; the note
   `docs/review/fossify-launcher-comparison.md`): Fossify is simpler, not cleverer - our icons, wallpaper ink, threading
@@ -965,6 +965,12 @@ findings, merge to `main`, full suite once.
   scan. Not copied (deliberately): the shade fling, app shortcuts, App info/Uninstall in the menu, the widget bind and
   resize flows, the Canvas home with folders, double-tap to lock, drawer search, `WallpaperColors` as ink. A disk icon
   cache / per-app tone for the placeholder is the optional (M) follow-up.
+  **Built 2026-10-20 on `l7-a`**: all five as written (`HomeFront.EXTRA_BROUGHT` marks our own Home starts, so only
+  the kid's press scrolls; the "can't open" dialog keeps one OK that closes it, its message now "It can't be opened
+  right now." / "Den kan ikke åpnes akkurat nå."); tests `HomeRound7Test`, `KidScreensEscapeTest`. Device checks
+  owed: an app update's new icon on Home without a restart, also an update while Home is in front with the screen on
+  (qa-l7-a-code #1: the package is evicted again right before the reloaded list is posted); Home pressed on a scrolled Home (and not after unlocking,
+  at boot or from another app); a badge change rebinding one tile with no flicker; the menus closing on the press.
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`

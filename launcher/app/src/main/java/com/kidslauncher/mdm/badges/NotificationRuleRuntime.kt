@@ -8,12 +8,24 @@ import android.util.Log
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallSystem
 import com.kidslauncher.mdm.calls.messagingAppPackages
+import com.kidslauncher.mdm.lock.voipAllowedApps
+import com.kidslauncher.mdm.server.WindowRelock
 import com.kidslauncher.mdm.server.dto.NotificationCancelEntry
 import com.kidslauncher.mdm.server.dto.NotificationCancelsReport
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.ownPackageFamily
+import com.kidslauncher.mdm.server.smsPackages
 
 private const val LOG_TAG = "NotificationRule"
+
+/**
+ * Design r7 §1.1.1: what never rings over the lock as a VoIP app, whatever the allowlist says - the
+ * SMS apps (Google Messages posts call-category notifications for RCS video calls), the essentials
+ * (the fixed [ESSENTIAL_PACKAGES] and the resolved ones: the dialers - the system dialer's cellular
+ * ring carries an FSI -, Telecom, the emergency dialer, the clock, the keyboards) and our own family.
+ */
+fun voipExcluded(defaultSms: String?, essential: Set<String>, own: Set<String>): Set<String> =
+    smsPackages(defaultSms) + ESSENTIAL_PACKAGES + essential + own
 
 /**
  * The notification auto-cancel rule's state (handy step 11, pure rule in NotificationRule.kt):
@@ -24,6 +36,15 @@ private const val LOG_TAG = "NotificationRule"
 object NotificationRuleRuntime {
     @Volatile
     var policy: NagPolicy? = null
+        private set
+
+    /**
+     * Design r7 §1.1.1: the apps whose call-style ring may ring over the lock ([voipAllowedApps]),
+     * computed by [refresh] with the [policy] (a throw earlier in `apply()` keeps the previous one);
+     * `null` while apps are unmanaged or before the first [refresh] ([policy] `null` then).
+     */
+    @Volatile
+    var voipAllowed: Set<String>? = null
         private set
 
     private val budget = RepostBudget()
@@ -47,14 +68,25 @@ object NotificationRuleRuntime {
         essential: Set<String>,
     ) {
         val rules = (callState as? CallPolicyState.Managed)?.rules
-        val allowed = enforced?.allowlist.orEmpty().toSet() +
-            messagingAppPackages(rules, CallSystem.defaultSmsPackage(context)) + lockUsableApps
+        val defaultSms = CallSystem.defaultSmsPackage(context)
+        val messaging = messagingAppPackages(rules, defaultSms)
+        val allowed = enforced?.allowlist.orEmpty().toSet() + messaging + lockUsableApps
+        val own = ownPackageFamily(context.packageName)
         val next = NagPolicy(
             enabled = enforced?.notificationAutoCancel == true,
             managed = enforced?.allowlist != null && !overrideActive,
             allowed = allowed,
             essential = essential,
-            own = ownPackageFamily(context.packageName),
+            own = own,
+        )
+        // Design r7 §1.1.1: the apps that may ring over the lock, once per pass (the listener's main
+        // thread only reads it) - the effective allowlist, never the raw one.
+        voipAllowed = voipAllowedApps(
+            allowlist = enforced?.allowlist,
+            relockBlocked = WindowRelock.blockedPackages(context),
+            messagingApps = messaging,
+            lockUsableApps = lockUsableApps,
+            excluded = voipExcluded(defaultSms, essential, own),
         )
         val changed = next != policy
         policy = next

@@ -26,6 +26,7 @@ import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.ParentPinResult
 import com.kidslauncher.mdm.server.PinHash
 import com.kidslauncher.mdm.server.dto.LockStateReport
+import com.kidslauncher.mdm.server.dto.VoipRang
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.timerules.ScreenTimeTracker
@@ -977,6 +978,8 @@ object PinLockRuntime {
             callService = VoipCalls.ringCallServiceUp,
         )
         if (wanted) VoipRinger.start(app) else if (VoipRinger.active) VoipRinger.stop(app)
+        // Design r7 §1.1.3: a ring that began LOCKED, or during which the phone locked.
+        VoipCalls.noteRingWhileLocked(app, locked = mode == LockMode.LOCKED)
     }
 
     /** The emergency flow as the re-front check sees it: tapped < 2 min ago, until its call ended. */
@@ -1461,6 +1464,7 @@ object PinLockRuntime {
             backoffUntilMs = if (wait > 0L) now.wallMs + wait else null,
             exemptYields = yields,
             voipFsiDenied = VoipCalls.fsiDenied,
+            voipRang = VoipCalls.rangReport(app).map { VoipRang(it.packageName, it.lastAtMs) },
         )
     }
 
