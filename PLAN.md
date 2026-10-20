@@ -735,6 +735,27 @@ findings, merge to `main`, full suite once.
   works while the PIN lock has the cameras disabled by policy (design 25b's `CameraLock`); if not, the lock lifts the
   camera policy while the torch is on, or exempts the torch. Calm look (no yellow flash icon): the Vibb tones. After the
   picture migration (0082) and the receipt rule.
+- **Design 43: the PWA's app shell - the tab bar no longer `position: fixed`** (the user, 2026-10-20, the installed
+  app on the iPhone, iOS 26: after a while in the background, not every time, the tab bar "floats up the screen" as
+  the page scrolls). The cause is the stale layout viewport a standalone app keeps after a resume: a `fixed; bottom: 0`
+  box is placed against it, so it moves with the scroll. `tab-bar.js`'s relayout (round 1's hypothesis) doesn't hold
+  on the device, so round 1's named fallback goes in: the document stops scrolling (`html, body { height: 100%;
+  overflow: hidden }`, body a flex column, `100dvh` where known), `main` is the scroller (`flex: 1; overflow-y: auto;
+  overscroll-behavior: contain`), the tab bar a plain flex child at the bottom with the safe-area padding it has, no
+  fixed box anywhere; `tab-bar.js` and the container's 96 px bottom padding go; the desktop's always-there scrollbar
+  (`overflow-y: scroll`) moves from `html` to the scroller. Consequences to carry: `scroll-restore.js`,
+  `auto-reload.js` and `install-now.js` read and set the scroller instead of the window (a `handyScroller()` helper
+  in scroll-restore.js, falling back to the window when no `main` scrolls - the login page keeps its own layout and
+  has no tab bar); a browser restores no inner scroller on Back/reload, so scroll-restore.js keeps the place itself
+  (per path, on `pagehide` and throttled on scroll, restored when the navigation type is `back_forward` or
+  `reload` - qa-browser-fixes-code M1 must still pass); the `#fragment` anchors scroll the nearest scrollable ancestor,
+  so forms' redirects still land right; `.editor-bar`'s sticky top works inside the scroller; the Locate map and the
+  music cards' horizontal scrollers are children of the scroller (check the map's touch handling). Known trade-off:
+  with an inner scroller iOS may leave a focused field behind the keyboard (Safari usually scrolls it in; check the
+  long forms - Time, Filter - on the iPhone). Tests: jstest for the restore paths (window and scroller, back_forward),
+  the tab-bar test deleted. A server round of its own (design QA + code QA), after the 0.29.5 verification; the user
+  verifies on the iPhone: the bar still after > 10 min in the background, Back to a long page at its place, a saved
+  form not jumping (the standing rule).
 - **Music app's episode list: thumbnails and a kid-side order flip** (the user, 2026-10-19, from a Snipp Snapp Snute
   screenshot): (1) small pictures in place of the number circles, only for an entry whose episodes really have their
   own art (the carousel's rule, `showsCarousel`: at least two different pictures; a one-picture entry keeps the
@@ -856,8 +877,12 @@ findings, merge to `main`, full suite once.
   without `navigate` as an option (ServiceWorkerRegistration::showNotification: "did not include NotificationOptions
   that specify a valid defaultAction url") - the option added, absolute and same-origin; `shown: ok`, receipt
   `event=push-declarative`, the replacement shown with the badge. Also `jmt17.google.com` confirmed end to end from
-  the Pi's Chromium (a dead subscription there came back 410 once; Turn On again). **Next server round**: drop the two
-  probes; the "may not be showing" rule exempts Apple endpoints ("Shown on …" stays passive; the user: 201 = delivered
+  the Pi's Chromium (a dead subscription there came back 410 once; Turn On again). **0.29.5 (tagged 2026-10-20 on
+  4852bb62)**: the replacement the worker showed was accepted and never displayed on iOS 26 (six tests), so the
+  declarative path posts the receipt and sets the badge and shows nothing - Safari shows its own notification; the
+  payload carries `app_badge`; the probes are out; a tap on Safari's notification opens its `navigate`. Owed: the
+  iPhone test (banner, badge, `event=push-declarative worker=v0.29.5`). **Next server round**: the "may not be showing"
+  rule exempts Apple endpoints ("Shown on …" stays passive; the user: 201 = delivered
   for declarative, no repeat-until-opened); SSE `X-Accel-Buffering: no` + a log line per stream open/close (the
   emulator's "seen" resets every ~5 min = the 300 s read timeout, keepalives not arriving through the proxy at
   10.73.10.81 - ask which proxy); migration 0082 + the `failures == 0` art rule; the Send-a-Test row poll.
