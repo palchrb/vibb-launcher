@@ -195,6 +195,33 @@ granted during a pause, "unrestricted" at the next report; uncheck the app in th
 it. Whether the app is also kept out of hibernation / the permission reset (`adb shell dumpsys app_hibernation`, or
 the "Pause app activity if unused" row in a pause).
 
+### 2.4 Implementation status (implementer B, branch `l7-b`)
+
+Built as §2.1 says, launcher and server in one commit:
+
+- **Launcher**: pure `server/UserControlPlan.kt` - `protectedCatalogPackages(pins, installed, installers, hidden,
+  own)` (the stored catalog pins ∩ installed for this user ∩ installer in `AppFilter.OWN_PACKAGES`, minus `plan.hide`
+  and our own packages), `userControlDisabledPackages(managed, overrideActive, protected)` (empty while the override
+  or the pause is open and when unmanaged) and `withBatteryExempt` for the report. `apply()` sets it right after
+  `applyHardening`, in its own try/catch, only when `getUserControlDisabledPackages` differs (logged then); the
+  installed check is `phonePackage` (made `internal` in `MdmSyncWorker.kt`, not copied), the installer `installerOf`
+  (`internal` too). `AppEnforcer.protectedCatalogApps` keeps the set computed without the override, so the report
+  carries `battery_exempt` during a pause too - the one place the parent can change it. The design's six-argument
+  signature became the two functions above (the override is applied in the second); same rule.
+- **Status**: `InstalledApp.batteryExempt: Boolean?` (left out when `null`), `isIgnoringBatteryOptimizations(pkg)`
+  per protected app in `collectInstalledApps`. Contract `server/testdata/installed_apps_battery.json` (copy in the
+  launcher's test resources; `InstalledAppReportTest` encodes it, `intake_limits::the_battery_state_of_a_protected_app_is_kept`
+  posts it, both compare the copies); the root `CLAUDE.md`'s list and both CI path lists name it.
+- **Server**: `models::InstalledApp.battery_exempt: Option<bool>` (`serde(default, skip_serializing_if)`), kept by
+  `cap_installed_apps` (the `..app` spread); Device › Apps' row gets a second `row-sub`
+  (`devices::background_line`, `data-background`) for a reported value only.
+- Tests: `UserControlPlanTest` (the set: installed only, by us only, never ours, never hidden, never a Play twin, an
+  unchecked app out; the lift and the clear; the report for the set only and unreadable left out; the source check that
+  `setUserControlDisabledPackages` is called once, in `apply()`, after the hardening, in its own catch),
+  `InstalledAppReportTest`; server `intake_limits` (the contract's copies, the kept field, the two lines).
+- **Device checks owed**: all of §2.3 (emulator: `am force-stop` refused and Force stop greyed out outside a window,
+  back during a pause/override and greyed again after it, the two "Background:" lines, the uncheck; hibernation).
+
 ## 3. Wake the screen for a notification - one switch per phone
 
 The user, 2026-10-20: "er det en emulator ting at våre varsler ikke slår på skjermen? Eller er det by design?" ... "la

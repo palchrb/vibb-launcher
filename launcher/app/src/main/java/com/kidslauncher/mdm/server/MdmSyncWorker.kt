@@ -938,12 +938,19 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
             }
         }
         .distinctBy { it.packageName }
+        // Round 7 §2.1.2: the battery state of the catalog apps we protect, nothing else.
+        .let { apps ->
+            val power = context.getSystemService(android.os.PowerManager::class.java)
+            withBatteryExempt(apps, AppEnforcer.protectedCatalogApps) { pkg ->
+                runCatching { power?.isIgnoringBatteryOptimizations(pkg) }.getOrNull()
+            }
+        }
 }
 
 /** Who installed [packageName] (`com.android.vending` = Play), or `null` if unknown. */
 /** [PhonePackage] for [packageName]: `MATCH_UNINSTALLED_PACKAGES` so a hidden app counts, then
  * `FLAG_INSTALLED` for this user; only `NameNotFoundException` says "missing". */
-private fun phonePackage(pm: PackageManager, packageName: String): PhonePackage = try {
+internal fun phonePackage(pm: PackageManager, packageName: String): PhonePackage = try {
     val info = pm.getPackageInfo(
         packageName,
         PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong()),
@@ -960,7 +967,7 @@ private fun phonePackage(pm: PackageManager, packageName: String): PhonePackage 
     PhonePackage.Unknown
 }
 
-private fun installerOf(pm: PackageManager, packageName: String): String? = try {
+internal fun installerOf(pm: PackageManager, packageName: String): String? = try {
     pm.getInstallSourceInfo(packageName).installingPackageName
 } catch (e: Exception) {
     null

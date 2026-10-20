@@ -275,7 +275,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   unreadable" for a corrupt allowlist): **Allowed** (Vibb first, "Always on", no switch; then every app switched on)
   and **Not allowed**, one row per app from `devices::app_rows` - a tile (the icon the phone shows: its own Name and
   icon, else the catalog's, else the first letter), the name, the state as a sub-line ("Installing 40%", "Not
-  installed · No release yet", a refusal red) and a switch, its own form; an allowed app with a package has its
+  installed · No release yet", a refusal red) and a switch, its own form; a catalog app the launcher protects from
+  force-stop (launcher round 7 §2, the report's `battery_exempt`) has a second quiet sub-line, "Background:
+  unrestricted" or "Background: optimized (Android's default) - change it during a pause (Settings › Apps › <app> ›
+  Battery)" (`devices::background_line`, `data-background`) - no button, no command; an allowed app with a package has its
   `app_display_form` in a `<details>` under the row ("Name and icon: …"). The footer's ⓘ holds the keyboard and
   accessibility note. **Downloads**: "Download apps on Wi-Fi only" and the phone's network at its last report. No
   search field. While an app installs the page reloads every 3 s (`static/auto-reload.js`, pinned by

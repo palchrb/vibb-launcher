@@ -84,6 +84,10 @@ is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompa
 The launcher's `POST /api/devices/power` body (design 38 §2) is `server/testdata/power_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `PowerEventsTest` encodes exactly it, the server's
 `power::a_launcher_report_raises_both` posts it (its instants moved to the last hour), and both compare the copies.
+The launcher's status body with `installed_apps[].battery_exempt` (launcher round 7 §2) is
+`server/testdata/installed_apps_battery.json`, byte-identical in `launcher/app/src/test/resources/`: the launcher's
+`InstalledAppReportTest` encodes exactly it, the server's `intake_limits::the_battery_state_of_a_protected_app_is_kept`
+posts it, and both compare the copies.
 
 ## CI and releases
 
@@ -91,13 +95,13 @@ The launcher's `POST /api/devices/power` body (design 38 §2) is `server/testdat
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
-  `dns_upstream_status.json` and `power_report.json`, `music/gradle/` and
+  `dns_upstream_status.json`, `power_report.json` and `installed_apps_battery.json`, `music/gradle/` and
   `music.yml`; `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py` and `scripts/fake-audio.py`, whose `--selftest`s it runs
   after the build; `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` copies and the launcher's
-  `time_status_report.json`, `dns_upstream_status.json` and `power_report.json`;
+  `time_status_report.json`, `dns_upstream_status.json`, `power_report.json` and `installed_apps_battery.json`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in

@@ -17,4 +17,8 @@ data class InstalledApp(
      * one source per package (handy step 7): a Play-installed app isn't also pushed from the
      * catalog. `null` if unknown. */
     val installer: String? = null,
+    /** Round 7 §2.1.2: `PowerManager.isIgnoringBatteryOptimizations` for a catalog app the launcher
+     * protects ([com.kidslauncher.mdm.server.protectedCatalogPackages]); left out for every other
+     * app and when it can't be read. The parent grants the exemption by hand during a pause. */
+    val batteryExempt: Boolean? = null,
 )
