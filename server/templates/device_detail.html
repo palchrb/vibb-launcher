@@ -11,9 +11,9 @@
     <a class="nav-back" href="/devices"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Devices</a>
 
     {#- The phone's summary (design 31 §3.2): the header, Attention, the security warnings that need
-        steps, Quick actions, Now, the blocked apps, the last relock and Activity, then the Sections
-        rows. Every form returns to its own group with its flash there: the quick actions to #quick,
-        End now to #now, Allow these apps… to #blocked-apps, a Cancel to #activity (§5.1); each
+        steps, Quick actions (with today's lifts and End now at its end), the blocked apps, the last
+        relock and Activity, then the Sections rows. Every form returns to its own group with its
+        flash there: the quick actions and End now to #quick, Allow these apps… to #blocked-apps, a Cancel to #activity (§5.1); each
         action carries the same fragment. -#}
     <header class="summary-head" id="header">
         <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}<span class="avatar-dot dot-{{ connection.css() }}"></span></span>
@@ -166,37 +166,26 @@
             {% endif %}
             <a class="act" href="/devices/locate?device={{ device.id }}"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>Locate</a>
         </div>
-        {% if let Some((text, refused)) = self.flash("quick") %}<div class="group"><p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="quick">{{ text }}</p></div>{% endif %}
-    </section>
-
-    {#- Now (design 48 §1.1): what holds at the moment - today's lifts and the pauses still running,
-        with End now (back here, #now), and the Parent PIN's notices. The history is Activity. -#}
-    {% if self.show_now() %}
-    <section id="now" aria-labelledby="now-title">
-        <h2 class="group-header" id="now-title">Now</h2>
+        {#- Today's lifts and the pauses still running, with End now (back here, #quick): the end of
+            Quick actions since Now went (the user, 2026-10-20); the flash below them. -#}
+        {% if !lifts.is_empty() || self.flash("quick").is_some() %}
         <div class="group">
             {% for l in lifts %}
             <div class="row" data-lift="{{ l.id }}">
                 <span class="row-label">{{ l.what }}<span class="row-sub"{% if !l.exact.is_empty() %} title="{{ l.exact }}"{% endif %}>{{ l.when }}{% if !l.by.is_empty() %} · {{ l.by }}{% endif %}</span></span>
                 <span class="row-value">{{ l.status }}</span>
                 {% if l.can_end %}
-                <form method="post" action="/devices/{{ device.id }}/lifts/{{ l.id }}/end#now" class="row-end">
+                <form method="post" action="/devices/{{ device.id }}/lifts/{{ l.id }}/end#quick" class="row-end">
                     <input type="hidden" name="back" value="summary">
                     <button type="submit" class="row-action">End now</button>
                 </form>
                 {% endif %}
             </div>
             {% endfor %}
-            {% for n in pin_notices %}
-            <a class="row" href="/devices/{{ device.id }}/lock#parent-pin" data-pin-notice>
-                <span class="row-label{% if n.error %} text-alarm{% endif %}">{{ n.title }}<span class="row-sub">{{ n.sub }}{% if n.child_tail %}<br>Typed where your child could see? Change it.{% endif %}</span></span>
-                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </a>
-            {% endfor %}
-            {% if let Some((text, refused)) = self.flash("now") %}<p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="now">{{ text }}</p>{% endif %}
+            {% if let Some((text, refused)) = self.flash("quick") %}<p class="flash{% if refused %} flash-error{% endif %}" role="status" data-flash="quick">{{ text }}</p>{% endif %}
         </div>
+        {% endif %}
     </section>
-    {% endif %}
 
     {#- Apps the phone keeps hidden even when allowed under Apps (design 24b): each with why and
         when, its package and key behind the row's ⓘ; Allow these apps… names them (M6) and sends

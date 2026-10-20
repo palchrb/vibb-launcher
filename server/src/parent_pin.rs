@@ -1,8 +1,8 @@
 //! The parent PIN (design 24; the launcher's "unlock code", "Parent code", the offline override
 //! PIN): the checks on a new PIN, the easy-PIN warning - never a refusal, the code is the parents'
 //! choice - and its one-time sweep over the PINs stored before it existed; and what the phones
-//! report about it (`POST /api/devices/pin-events`): the checks on each event, its line and the
-//! Status card's notices. Pure apart from [run_easy_sweep]; the card, the save and the endpoint
+//! report about it (`POST /api/devices/pin-events`): the checks on each event and its line (the
+//! summary's notices went with its Now, the user 2026-10-20: the uses are Activity's events). Pure apart from [run_easy_sweep]; the card, the save and the endpoint
 //! are `handlers::parent_pin`.
 
 use chrono::{DateTime, Utc};
@@ -305,11 +305,6 @@ impl Entry {
             Entry::InstallMode => "for Play install mode",
         }
     }
-
-    /// Screens the kid uses: the parent may have been watched typing.
-    fn kid_screen(self) -> bool {
-        matches!(self, Entry::Override | Entry::PinLock)
-    }
 }
 
 /// One event as stored: every field checked, nothing free-form.
@@ -546,77 +541,6 @@ pub fn event_row(event: &PinEvent, zone: &Zone, now: DateTime<Utc>) -> EventRow 
         when: at.map(|t| zone.when(t, now)).unwrap_or_default(),
         exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
     }
-}
-
-/// A Parent PIN notice in the summary's Today group (design 24 §5, design 31 step 10): a short
-/// title, the line under it, red for a lockout or wrong tries; `child_tail` adds "Typed where your
-/// child could see?" (each row links to Lock Screen & PINs).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Notice {
-    pub title: String,
-    pub sub: String,
-    pub error: bool,
-    pub child_tail: bool,
-}
-
-/// The notices from the last 24 hours (design 24 §5), at most two: the latest use, then a lockout
-/// or else the wrong tries. `events` newest first. Times are local.
-pub fn notices(events: &[PinEvent], zone: &Zone, now: DateTime<Utc>) -> Vec<Notice> {
-    let now_ms = now.timestamp_millis();
-    let recent: Vec<&PinEvent> = events
-        .iter()
-        .filter(|e| e.occurred_at_ms > now_ms - DAY_MS)
-        .collect();
-    let mut out = Vec::new();
-    let uses: Vec<&&PinEvent> = recent.iter().filter(|e| e.kind == Kind::Unlocked).collect();
-    if let Some(latest) = uses.first() {
-        let mut sub = format!(
-            "{} · {}",
-            event_row(latest, zone, now).title,
-            utc(latest.occurred_at_ms)
-                .map(|t| zone.relative(t, now))
-                .unwrap_or_default()
-        );
-        if uses.len() > 1 {
-            sub.push_str(&format!(" · {} more in 24 h", uses.len() - 1));
-        }
-        out.push(Notice {
-            title: "Parent PIN used".to_string(),
-            sub,
-            error: false,
-            child_tail: latest.entry.kid_screen(),
-        });
-    }
-    if let Some(lockout) = recent.iter().find(|e| e.kind == Kind::Lockout) {
-        let until = lockout
-            .until_ms
-            .and_then(utc)
-            .map(|until| format!(" until {}", zone.until(until, now)))
-            .unwrap_or_default();
-        out.push(Notice {
-            title: "Parent PIN locked".to_string(),
-            sub: format!(
-                "After repeated wrong tries{until}. If that wasn't you, save a new Parent PIN."
-            ),
-            error: true,
-            child_tail: false,
-        });
-    } else {
-        let wrong = recent.iter().filter(|e| e.kind == Kind::Wrong).count();
-        if wrong > 0 {
-            out.push(Notice {
-                title: if wrong == 1 {
-                    "1 wrong Parent PIN".to_string()
-                } else {
-                    format!("{wrong} wrong Parent PINs")
-                },
-                sub: "In the last 24 hours. If that wasn't you, change it.".to_string(),
-                error: true,
-                child_tail: false,
-            });
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -968,77 +892,5 @@ mod tests {
         assert_eq!(row.exact, "2025-10-09 07:53:20 CEST");
         // Nothing says UTC once Phone Setup has a zone.
         assert!(!format!("{row:?}").contains("UTC"));
-    }
-
-    #[test]
-    fn notices_from_the_last_24_hours() {
-        let zone = oslo();
-        let now = at(NOW);
-        assert!(notices(&[], &zone, now).is_empty());
-        // Older than 24 h: nothing.
-        assert!(
-            notices(
-                &[ev(Kind::Lockout, Entry::Override, NOW - 25 * H)],
-                &zone,
-                now
-            )
-            .is_empty()
-        );
-
-        // Newest first: the latest use, with the watched-typing tail on a kid's screen.
-        let events = [
-            ev(Kind::Unlocked, Entry::Override, NOW - 5 * 60_000),
-            ev(Kind::Wrong, Entry::Override, NOW - H),
-            ev(Kind::Unlocked, Entry::Settings, NOW - 2 * H),
-            ev(Kind::Wrong, Entry::Settings, NOW - 3 * H),
-        ];
-        let out = notices(&events, &zone, now);
-        assert_eq!(out.len(), 2);
-        assert_eq!(
-            out[0],
-            Notice {
-                title: "Parent PIN used".to_string(),
-                sub: "Time lock lifted · 5 min ago · 1 more in 24 h".to_string(),
-                error: false,
-                child_tail: true,
-            }
-        );
-        assert_eq!(out[1].title, "2 wrong Parent PINs");
-        assert_eq!(
-            out[1].sub,
-            "In the last 24 hours. If that wasn't you, change it."
-        );
-        assert!(out[1].error);
-
-        // Settings is the parent's own screen: no tail. A lockout replaces the wrong tries.
-        let events = [
-            PinEvent {
-                until_ms: Some(NOW + 10 * 60_000),
-                level: Some(1),
-                ..ev(Kind::Lockout, Entry::PinLock, NOW - 5 * 60_000)
-            },
-            ev(Kind::Wrong, Entry::PinLock, NOW - 6 * 60_000),
-            ev(Kind::Unlocked, Entry::Settings, NOW - H),
-        ];
-        let out = notices(&events, &zone, now);
-        assert_eq!(out.len(), 2);
-        assert!(!out[0].child_tail);
-        assert_eq!(out[0].sub, "Vibb One's Settings opened · 1 h ago");
-        // 09:03 UTC is 11:03 in Oslo: never the UTC clock.
-        assert_eq!(
-            out[1],
-            Notice {
-                title: "Parent PIN locked".to_string(),
-                sub: "After repeated wrong tries until 11:03. If that wasn't you, save a new \
-                      Parent PIN."
-                    .to_string(),
-                error: true,
-                child_tail: false,
-            }
-        );
-        // One wrong try, no use.
-        let out = notices(&[ev(Kind::Wrong, Entry::Pause, NOW - H)], &zone, now);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].title, "1 wrong Parent PIN");
     }
 }

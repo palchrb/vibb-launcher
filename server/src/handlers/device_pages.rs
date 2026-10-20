@@ -840,16 +840,9 @@ pub async fn view_lock(
         .iter()
         .map(|n| n.note(reported.as_deref()))
         .partition(|n| n.warning);
-    let parent = crate::handlers::parent_pin::card(
-        &state.db,
-        &policy,
-        latest.as_ref(),
-        notice,
-        &zone,
-        now,
-        true,
-    )
-    .await;
+    let parent =
+        crate::handlers::parent_pin::card(&state.db, &policy, latest.as_ref(), notice, &zone, now)
+            .await;
 
     let backgrounds: Vec<_> = crate::handlers::wallpapers::device_choices(&state, id)
         .await

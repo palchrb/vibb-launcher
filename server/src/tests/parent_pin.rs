@@ -632,28 +632,11 @@ async fn the_group_lists_events_and_the_status_card_has_notices() {
     assert_eq!(group.matches("data-event").count(), 3);
     assert!(!group.contains("UTC"), "{group}");
 
-    // The summary's Now: the latest use with the watched-typing tail, and the wrong try, each a
-    // row to the Parent PIN.
+    // The summary has no notices since Now went (the user, 2026-10-20): the uses are Activity's
+    // events.
     let summary = page(device_page(id, Section::Summary)).await;
-    let today = &summary[summary.find("<section id=\"now\"").expect("Now")..];
-    assert!(
-        today.contains("Parent PIN used<span class=\"row-sub\">Lock screen opened · 10 min ago · 1 more in 24 h"),
-        "{today}"
-    );
-    assert!(
-        today.contains("Typed where your child could see? Change it."),
-        "{today}"
-    );
-    assert!(
-        today.contains(&format!(
-            "<a class=\"row\" href=\"{lock}#parent-pin\" data-pin-notice>"
-        )),
-        "{today}"
-    );
-    assert!(
-        today.contains("<span class=\"row-label text-alarm\">1 wrong Parent PIN<span"),
-        "{today}"
-    );
+    assert!(!summary.contains("data-pin-notice"), "{summary}");
+    assert!(!summary.contains("<section id=\"now\""), "{summary}");
 
     // A lockout replaces the wrong-try notice, and is red in the list.
     let body =
@@ -661,13 +644,6 @@ async fn the_group_lists_events_and_the_status_card_has_notices() {
         serde_json::json!({ "level": 1, "until_ms": now + 14 * 60_000 })) ] })
         .to_string();
     post_events(&app, &token, &body).await;
-    let summary = page(device_page(id, Section::Summary)).await;
-    assert!(
-        summary
-            .contains("Parent PIN locked<span class=\"row-sub\">After repeated wrong tries until "),
-        "{summary}"
-    );
-    assert!(!summary.contains("1 wrong Parent PIN"), "{summary}");
     let group = events_group(&page(lock).await);
     assert!(
         group.contains("<span class=\"text-alarm\">Parent PIN locked</span>"),
@@ -713,10 +689,10 @@ async fn old_events_are_pruned_after_90_days() {
     assert_eq!(stored_events(&app, id).await.len(), 1);
 }
 
-/// qa-24-code Low 4: once the parent saved a new PIN, the summary stops telling them to - the
-/// list on Lock Screen & PINs keeps every event.
+/// qa-24-code Low 4: a new PIN keeps the list on Lock Screen & PINs, every event (the summary's
+/// notices are gone since its Now went, the user 2026-10-20).
 #[tokio::test]
-async fn a_new_pin_ends_the_notices_but_not_the_list() {
+async fn a_new_pin_keeps_the_list() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
@@ -736,29 +712,12 @@ async fn a_new_pin_ends_the_notices_but_not_the_list() {
         let (app, cookie) = (&app, &cookie);
         async move { app.get_page(&device_page(id, section), cookie).await.text() }
     };
-    let notice = "After repeated wrong tries";
-    assert!(page(Section::Summary).await.contains(notice));
-
-    // The events are stamped up to 2 s ahead; the new PIN must be saved after them, also on a
-    // fast machine (CI saved it within the 2 s and the notice stayed).
-    let wait = (now + 2_100 - chrono::Utc::now().timestamp_millis()).max(0) as u64;
-    tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
     save(&app, &cookie, id, &[("new_pin", "4719305")]).await;
-    let html = page(Section::Summary).await;
-    assert!(!html.contains(notice), "{html}");
     let html = page(Section::Lock).await;
     assert!(
         html.contains("5 wrong in a row, the last on the lock screen"),
         "{html}"
     );
-    // An event after the save shows again.
-    let body = serde_json::json!({ "events": [ event(&hex_id(3), "wrong", "settings",
-        chrono::Utc::now().timestamp_millis() + 3_000, serde_json::json!({ "failures": 1 })) ] })
-    .to_string();
-    post_events(&app, &token, &body).await;
-    assert!(
-        page(Section::Summary)
-            .await
-            .contains(">1 wrong Parent PIN<")
-    );
+    // The summary has no PIN notices: the uses and lockouts are Activity's events.
+    assert!(!page(Section::Summary).await.contains("data-pin-notice"));
 }

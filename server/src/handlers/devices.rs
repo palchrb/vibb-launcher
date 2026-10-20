@@ -741,7 +741,7 @@ struct DeviceDetailTemplate {
     activity: crate::handlers::activity::Activity,
     /// Pause a rule…'s rules (the phone's effective ones); empty: no tile.
     pause_rules: Vec<(i64, String)>,
-    /// A lift form's flash (`?done=`): the summary group ("quick", "now"), text, refused.
+    /// A lift form's flash (`?done=`): the summary group ("quick"), text, refused.
     done: Option<(&'static str, &'static str, bool)>,
     /// The last report has the phone's restrictions paused: said at the top of Quick actions,
     /// where the Attention row lands (qa-31-s10-code M1).
@@ -749,10 +749,9 @@ struct DeviceDetailTemplate {
     /// Managed without a Parent PIN: a phone not set up says so (it has no Attention rows,
     /// qa-31-s10-code L1).
     no_parent_pin: bool,
-    /// Now: the lifts made today and the pauses still running, with End now.
+    /// The lifts made today and the pauses still running, with End now: rows at the end of Quick
+    /// actions (Now went, the user 2026-10-20; the Parent PIN's notices are Activity's events).
     lifts: Vec<crate::handlers::lifts::LiftView>,
-    /// Now: the Parent PIN's notices from the last 24 hours (design 24 §5).
-    pin_notices: Vec<crate::parent_pin::Notice>,
     /// The not-set-up variant's Connect This Phone group (design 22 §3.1).
     access: AccessCard,
     /// The Sections rows' values.
@@ -788,11 +787,6 @@ impl DeviceDetailTemplate {
             self.connection,
             crate::streams::ConnectionState::Disconnected
         )
-    }
-
-    /// Now shows (design 48 §1.1): a lift or a PIN notice, or its flash lands there.
-    fn show_now(&self) -> bool {
-        !self.lifts.is_empty() || !self.pin_notices.is_empty() || self.flash("now").is_some()
     }
 }
 
@@ -1470,16 +1464,6 @@ async fn render_device(
         && time_rules
             .as_ref()
             .is_ok_and(|rules| rules.iter().any(|r| !r.calls_allowed));
-    let parent_pin = crate::handlers::parent_pin::card(
-        &state.db,
-        &policy,
-        latest.as_ref(),
-        None,
-        &zone,
-        now,
-        false,
-    )
-    .await;
     let relock = crate::handlers::window_relock::card(
         &state.db,
         id,
@@ -1657,7 +1641,6 @@ async fn render_device(
             lifts,
             paused,
             no_parent_pin: managed_without_pin(&policy),
-            pin_notices: parent_pin.notices,
             relock,
             activity,
             access: access_card(
