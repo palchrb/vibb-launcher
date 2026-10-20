@@ -1,3 +1,4 @@
-{#- The bell (design 35 §5.1): in a tab page's .title-bar, before the page's own action. The count
+{#- The bell (design 35 §5.1): the last thing in a tab page's .title-bar, in the top right corner on every tab
+    (the user, 2026-10-20: it must not move between tabs; a page's own action goes before it). The count
     renders here (no script); `data-unread` is for the app badge. Needs `tab` and `bell`. -#}
 <a class="title-action title-bell" href="/notifications?from={{ tab }}" data-unread="{{ bell.unread }}" aria-label="Notifications{% if bell.unread > 0 %}, {{ bell.unread }} unread{% endif %}"><svg viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.8a5.6 5.6 0 0 0-5.6 5.6v3.4L3.6 15.4h14.8l-1.8-3.6V8.4A5.6 5.6 0 0 0 11 2.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.6 18.2a2.5 2.5 0 0 0 4.8 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>{% if bell.unread > 0 %}<span class="bell-count" aria-hidden="true">{{ bell.pill() }}</span>{% endif %}</a>

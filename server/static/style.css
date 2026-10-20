@@ -1995,10 +1995,10 @@ a.act, a.act:hover { text-decoration: none; }
 
 /* ---- Design 31 step 15: Add Phone, sign-in, the tab pages without the brand bar ---- */
 
-/* A tab's landing page opens on its large title under a 44px bar (the mockups): Devices, Apps and
-   Music put an action in it (.title-bar); Settings and Locate start with the title itself. */
+/* A tab's landing page opens on its large title under a 44px bar (the mockups) that ends with the bell
+   (design 35) on every tab; Devices and Apps put their + before it. */
 .container > .page-title:first-child { margin-top: 48px; }
-.title-add { justify-content: center; min-width: 44px; margin-right: -11px; padding: 0; }
+.title-add { justify-content: center; min-width: 44px; padding: 0; }
 .title-add svg { width: 22px; height: 22px; }
 /* Connect's two ways (QR code, Code): a large title with its one-line case under it. */
 .choice-title { margin: 28px 4px 8px; font-size: 1.25rem; font-weight: 700; line-height: 1.25; }
@@ -2104,11 +2104,16 @@ details.app-display[open] > summary .section-chev {
 
 /* Design 35 */
 
-/* The bell in a tab page's bar, before the page's own action; the unread count as a red pill on
-   its corner. */
-.title-bell { position: relative; justify-content: center; min-width: 44px; padding: 0; }
+/* The bell at the end of a tab page's bar, its glyph flush with the page's right edge on every tab, after
+   the page's own action; the unread count as a red pill on its corner. */
+.title-bell { position: relative; justify-content: center; min-width: 44px; margin-right: -11px; padding: 0; }
 .title-bell svg { width: 22px; height: 22px; }
-.title-bell + .title-action { margin-left: 4px; }
+.title-action + .title-bell { margin-left: 4px; }
+/* A group header with an action at its right (Music's Edit/Done): the header's own margins, the action a
+   44px tap target that doesn't add height. */
+.group-head { display: flex; justify-content: space-between; align-items: center; margin: 24px 16px 7px; }
+.group-head .group-header { margin: 0; }
+.group-action { display: inline-flex; align-items: center; min-height: 44px; margin: -14px -4px -14px 0; padding: 0 4px; color: var(--tint); font-size: 0.9375rem; text-decoration: none; }
 .bell-count { position: absolute; top: 4px; left: 24px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--count-bg); color: #FFFFFF; font-size: 0.6875rem; font-weight: 700; line-height: 18px; text-align: center; }
 /* The inbox: a row is a form's button; unread is bold with a blue dot. */
 .inbox-row { cursor: pointer; }

@@ -7,18 +7,22 @@
 {% let tab = "music" %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    {#- The bar is always there, so the title doesn't move when Edit appears with the second entry. -#}
     <div class="title-bar">
         {% include "partials/bell.html" %}
-        {% if edit %}
-        <a class="title-action" href="/music#entries" data-edit="done">Done</a>
-        {% else if entries.len() > 1 %}
-        <a class="title-action" href="/music?edit=1#entries" data-edit="start">Edit</a>
-        {% endif %}
     </div>
     <h1 class="page-title">Music</h1>
 
-    <h2 class="group-header">Library</h2>
+    {#- Edit (the covers' order) sits by the Library header, not in the page's bar (the user, 2026-10-20: it only
+        reorders the library). The header row is always there, so the list doesn't move when Edit appears with the
+        second entry. -#}
+    <div class="group-head">
+        <h2 class="group-header">Library</h2>
+        {% if edit %}
+        <a class="group-action" href="/music#entries" data-edit="done">Done</a>
+        {% else if entries.len() > 1 %}
+        <a class="group-action" href="/music?edit=1#entries" data-edit="start">Edit</a>
+        {% endif %}
+    </div>
     {% if entries.is_empty() %}
     <div class="group" id="entries"><p class="row row-note">Nothing yet. Add a podcast, an NRK series or your own files below.</p></div>
     {% else %}
