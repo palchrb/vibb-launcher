@@ -1,6 +1,6 @@
 # 52 - Bluetooth headphones: connect a paired device from Kid Settings and from the music app (proposal)
 
-Asked 2026-10-20 (the user: "ville det vært mulig å la paring/bt connect av eksisterende parede enheter dukke opp i
+Asked 2026-10-20 (the user: "ville det vært mulig å la paring/bt connect av eksisterende parese [sic] enheter dukke opp i
 musikk appen? ... er det noe robusthet og enkelhet av å sikre at bt headsets kobler seg til for avspilling av musikk vi
 kan forenkle gjennom musikk appen" and, after a first answer that it can't be done: "Litt rart at ikke apper kan få gjøre
 det? Er du sikker? Sjekk andre prosjekter please"). Launcher (Kid Settings) and the music app; no server change.
@@ -47,7 +47,7 @@ det? Er du sikker? Sjekk andre prosjekter please"). Launcher (Kid Settings) and 
   `getConnectionState(device)` on the A2DP proxy from `getProfileProxy`, `BluetoothDevice.getUuids()`,
   `AudioManager.getDevices(GET_DEVICES_OUTPUTS)` for what is routed now (with `BLUETOOTH_CONNECT` granted
   `AudioDeviceInfo.getAddress()` is the real MAC). All need `BLUETOOTH_CONNECT` (runtime).
-- `getProfileProxy` delivers `onServiceConnected` through the **main handler** (`BluetoothAdapter.java` :934, :3438):
+- `getProfileProxy` delivers `onServiceConnected` through the **main handler** (`BluetoothAdapter.java` :934, :3438 on 16):
   the proxy only reaches us in that callback, so blocking the main thread for it always times out.
 
 ## 1. Today
@@ -58,12 +58,12 @@ det? Er du sikker? Sjekk andre prosjekter please"). Launcher (Kid Settings) and 
   `MODIFY_PHONE_STATE`), which the existing `catch (e: Exception)` swallows, and the `int` result is read `as?
   Boolean` -> `false` anyway. So Connect never worked (not device-tested before; the launcher's CLAUDE.md lists it as
   untested). The "connected" mark comes from `isConnectedReflective()` (:500), the reachable `isConnected()`: the ACL
-  state, most likely working today, unverified. The buttons are decided in `BluetoothDeviceAdapter.bind` (:64-74),
+  state, most likely working today, unverified. The buttons are decided in `BluetoothDeviceAdapter.onBindViewHolder` (:44-80),
   called synchronously on main (`BluetoothDevicesActivity.kt:56-57`), which then does `refreshOne` at once and so shows
   the old state; the screen reads the bonded list in `scan()` before `scanBluetoothDevices` grants `BLUETOOTH_CONNECT`
   (`BluetoothDevicesActivity.kt:82-85` vs `QuickControls.kt:563-564`). `QuickControls.kt` logs addresses
-  (`Log.w(..., "... $address ...")`, :654, :676, :689).
-- **The music app's "Spill av på" sheet** (`ui/PlayerScreen.kt` `OutputSheet` :347): the phone, the **routed**
+  (`Log.w(..., "... $address ...")`, :637, :656, :677, :690).
+- **The music app's "Spill av på" sheet** (`ui/PlayerScreen.kt` `OutputSheet` :353): the phone, the **routed**
   Bluetooth and wired outputs (from the routed audio devices), the Sonos rooms. A paired headset that is off or
   connected elsewhere isn't there, nor is a connected one that is not the active sink. Wired headphones route by
   themselves on plug-in (no connect step) and already read "Kablet · tilkoblet". Any pick closes the sheet today
@@ -79,16 +79,22 @@ det? Er du sikker? Sjekk andre prosjekter please"). Launcher (Kid Settings) and 
    - **Pure**: `pairedAudioDevices(bonded, uuids, a2dpStates: Map<address, Int>, routedAddresses)`: a bonded device
      with the A2DP sink UUID (`0000110b-0000-1000-8000-00805f9b34fb`) is an audio device; its state CONNECTED /
      CONNECTING / OFF comes from the proxy's `getConnectionState`; it is listed when its address is not among the
-     routed outputs' addresses. The LE Audio ASCS UUID (`0000184e-0000-1000-8000-00805f9b34fb`; `BluetoothUuid.LE_AUDIO`
+     routed outputs' addresses. The view model reads `routedAddresses` and the `AudioDeviceInfo.id` for a matched address
+     from `AudioManager.getDevices(GET_DEVICES_OUTPUTS)` itself; `Output` and `PlayerHub.State` get no address field.
+     The LE Audio ASCS UUID (`0000184e-0000-1000-8000-00805f9b34fb`; `BluetoothUuid.LE_AUDIO`
      is not public) marks an **LE-only** device: the launcher lists it in Kid Settings with its state and no Connect;
      the music sheet leaves it out (a row without an action is a dead tap). The launcher's copy also classifies
-     non-audio devices (a watch, a keyboard).
+     non-audio devices (a watch, a keyboard). An LE-only device's state is the ACL `isConnected` mark, like a non-audio
+     device; an audio device with the ASCS UUID counts as connected when A2DP is CONNECTED or ACL `isConnected`.
    - **Glue is `suspend`.** The proxy is awaited with `suspendCancellableCoroutine` + `withTimeoutOrNull(2 s)`, never
      by blocking a thread (the ready callback comes on main, 52-2); every Bluetooth call (bonded devices, UUIDs, states,
      `connect`, `disconnect`, `setActiveDevice`, the HFP disconnect) runs on `Dispatchers.IO`. Kid Settings calls it
      from `lifecycleScope`, the music app from the view model's scope.
-   - **One A2DP proxy per screen / view model**: opened when the screen starts (Kid Settings' Bluetooth page, the music
-     view model while the sheet can be opened), closed on stop; not per call. **No LE Audio proxy** - we don't connect
+   - **One A2DP proxy per screen / view model**: opened when the screen starts (Kid Settings' Bluetooth page; the music
+     app: opened at the sheet's `onOpen`, closed when the sheet is dismissed; the connect call and the A2DP broadcast
+     receiver outlive the sheet in the view model), closed on stop; not per call. A HEADSET proxy is opened with the A2DP
+     one (same 2 s await, off main). A `false` from the HFP disconnect (no HFP state machine, or not connected) is not a
+     failure; only A2DP's result decides the row. **No LE Audio proxy** - we don't connect
      LE, so nothing needs it (an unsupported LE proxy would otherwise cost the full 2 s on every refresh).
    - **Connect** = `BluetoothA2dp.connect(device)` by reflection; **make active** (a tap on a CONNECTED-but-not-routed
      device) = `BluetoothA2dp.setActiveDevice(device)` by reflection (needs only `BLUETOOTH_CONNECT`; annotations in
@@ -104,7 +110,7 @@ det? Er du sikker? Sjekk andre prosjekter please"). Launcher (Kid Settings) and 
      **non-audio** device (a watch, a keyboard) keeps `isConnected` (the ACL state), so it still reads connected.
      `isConnectedReflective` stays, for those.
    - **Rows**: a pure `bluetoothRowActions(info)` -> audio: Connect or Disconnect (by state) + Forget; other: Forget
-     only; LE-only: Forget only. `BluetoothDeviceInfo` gets `audio: Boolean` and `state`. `BluetoothDeviceAdapter.bind`
+     only; LE-only: Forget only. `BluetoothDeviceInfo` gets `audio: Boolean` and `state`. `BluetoothDeviceAdapter.onBindViewHolder`
      only follows it.
    - **Disconnect** means the whole headset: A2DP `disconnect` **and** `BluetoothHeadset.disconnect(device)` (HFP;
      reflective, `@SystemApi` so on the sdk list, `BLUETOOTH_CONNECT` only - §0), so a call stops ringing in the
@@ -113,10 +119,11 @@ det? Er du sikker? Sjekk andre prosjekter please"). Launcher (Kid Settings) and 
      `ACTION_ACL_DISCONNECTED` next to the bond receiver and refresh the row on each. After a tap the row reads
      "Kobler til…" (like `setPairing`) until the state broadcast, an immediate `false`, or 10 s -> "Fikk ikke kontakt med
      <name> - er den på?" (nb + en; the same rule as the music app, decision 3).
-   - **The grant before the first list read**: `BluetoothDevicesActivity.onCreate` grants `BLUETOOTH_CONNECT` (the
-     existing grant path) before `scan()` reads the bonded list; the proxies throw without it.
-   - `BluetoothAudio` lives under a path `KidScreensEscapeTest` scans (`server/`, beside `QuickControls.kt`, or its
-     file is added to `guarded`, `KidScreensEscapeTest.kt:41-42`). No Settings intent; the Settings gate is unchanged.
+   - **The grant before the first list read**: `BluetoothDevicesActivity.onCreate` grants `BLUETOOTH_CONNECT` through
+     `QuickControls.grantBluetoothConnectIfNeeded` (now `private`, :109; it becomes `internal`) before `scan()` reads the
+     bonded list; the proxies throw without it.
+   - `BluetoothAudio`'s file is added to `guarded` in `KidScreensEscapeTest.kt` (the list names `server/QuickControls.kt`
+     as a file, so a new file in `server/` is not scanned by itself). No Settings intent; the Settings gate is unchanged.
    - The feature does not depend on the parent's Kid Settings Bluetooth switch (connecting an already-paired device
      changes no rule): nobody gates it on the mask.
 3. **Music app, "Spill av på"**: rows in the order **phone, routed outputs, paired-not-routed ("Koble til"), Sonos
@@ -128,9 +135,10 @@ det? Er du sikker? Sjekk andre prosjekter please"). Launcher (Kid Settings) and 
      headphones: unchanged. Pairing new devices stays in Kid Settings.
    - **A tap only connects (or makes active); the renderer does not move.** A room playing keeps playing. When the
      headset is **routed** (`AudioManager` routes media to it / the A2DP active device is it - the output is in
-     `outputs()` with its `dev:` key, matched by address) inside the window and the tap was made while a room played,
+     `outputs()` with its `dev:` key, matched by address) while the attempt is open (up to the 10 s) and the tap was made while a room played,
      the app then sends `OUTPUT` with that `dev:` key once (the usual `toPhone` + `setOutput`). A failed connect leaves
-     the room playing. On the phone renderer nothing extra is needed: `onAudioDevicesAdded` already drops a
+     the room playing. A success after the failure line clears it but does not move a room (the same as a headset that
+     connects by itself). On the phone renderer nothing extra is needed: `onAudioDevicesAdded` already drops a
      "Telefonen" choice to system routing and the new active A2DP device takes the sound. A headset that connects by
      itself while a room plays changes nothing (the room stays the output, 26a). The decision is the pure
      `headsetTapPlan(onRoom, routedNow)`.
@@ -139,8 +147,11 @@ det? Er du sikker? Sjekk andre prosjekter please"). Launcher (Kid Settings) and 
      routed (the connected row takes over and the sheet closes as today); or `false` from the call, an A2DP
      CONNECTING -> DISCONNECTED broadcast for that device, or 10 s -> the row reads "Fikk ikke kontakt med <name> - er
      den på?" / "Couldn't reach <name> - is it switched on?" (neutral, it fits a speaker; nb + en strings). If the kid
-     closed the sheet meanwhile, a failure shows as the player's quiet one-line hint for 5 s (the
-     `NOT_DOWNLOADED`-style message, `HEADSET_NO_CONTACT`). Dismissing the sheet does not cancel the attempt. A late
+     closed the sheet meanwhile, a failure shows as the player's one-line hint for 3 s (a new
+     `PlayerHub.Message.HEADSET_NO_CONTACT`; the enum has no payload, so its string is nameless: nb "Fikk ikke kontakt med
+     hodetelefonene - er de på?", en "Couldn't reach the headphones - are they switched on?"; its branch added to the
+     `when` in `MusicRoot.kt`). Dismissing the sheet does not cancel the attempt. A CONNECTED
+     broadcast ends "Kobler til…" and the row becomes "Bytt til" (no failure). A CONNECTING row reads "Kobler til…". A late
      success (the A2DP state machine's timeout is longer than 10 s) clears any error and routes as usual. The reducer is
      pure (immediate `false`, CONNECTING -> DISCONNECTED, timeout, late success).
    - **Switching headsets may pause playback**: `LocalRenderer` pauses on becoming-noisy when A2DP drops the first sink
@@ -149,7 +160,8 @@ det? Er du sikker? Sjekk andre prosjekter please"). Launcher (Kid Settings) and 
    - **No "Koble fra" in the sheet** (the headset's own button does it; Kid Settings has Disconnect). Strike it.
 4. **Permission and privacy**: the music app declares `BLUETOOTH_CONNECT` (`usesPermissionFlags` not needed); the
    launcher's `MusicSync` grants it while a policy exists, beside `POST_NOTIFICATIONS`: `grantNotifications` becomes
-   `grantRuntimePermissions` looping `MUSIC_RUNTIME_GRANTS = [POST_NOTIFICATIONS, BLUETOOTH_CONNECT]` (the once-only
+   `grantRuntimePermissions` looping `MUSIC_RUNTIME_GRANTS`, a `List<Pair<String, (Boolean) -> Int>>` (`POST_NOTIFICATIONS` with
+   `notificationGrantState`, `BLUETOOTH_CONNECT` with `bluetoothGrantState`) (the once-only
    `getPermissionGrantState != wanted` check stays, so repeated grants don't happen). The kid sees nothing: no dialog
    (the "admin granted" notification is for location only). **Withdrawal is real for `BLUETOOTH_CONNECT`**:
    `notificationGrantState(false)` is `PERMISSION_GRANT_STATE_DEFAULT`, which keeps the current grant and only unfixes
@@ -161,7 +173,7 @@ det? Er du sikker? Sjekk andre prosjekter please"). Launcher (Kid Settings) and 
      `AudioDeviceInfo` addresses) are never logged (on failure log only the exception's class and its cause's class,
      never `$device`, a name or an address), and never in the status report, `music_state`, `setNowPlaying`, the state
      recorder, `renderer.json` or the bridge. The address is only the row's key. The launcher's existing address log
-     lines in `QuickControls` (:654, :676, :689) go.
+     lines in `QuickControls` (:637, :656, :677, :690) go.
 5. **Never**: Settings intents, the system output switcher (`ACTION_MEDIA_OUTPUT` - SystemUI/Settings, an escape),
    `setConnectionPolicy` (`@SystemApi`), anything that pairs from the music app: `createBond`, `startDiscovery`,
    `BluetoothAdapter.ACTION_REQUEST_ENABLE` (a system dialog), `enable()`, `BLUETOOTH_SCAN`/`BLUETOOTH_ADMIN` in the
@@ -173,7 +185,8 @@ Launcher: `BluetoothAudioTest` (the pure filter, the states, routed-address matc
 `bluetoothRowActions` (audio -> Connect/Disconnect + Forget, non-audio -> Forget and the ACL mark); a source check
 that connect/disconnect reflect `BluetoothA2dp` (and `BluetoothHeadset.disconnect`), never `BluetoothDevice.connect`/
 `disconnect` (`isConnected` only for non-audio), that `BluetoothAudio` has no `CountDownLatch`, `runBlocking` or latch
-`.await(`, and that no log line in it or in `QuickControls` interpolates a device value; `KidScreensEscapeTest`
+`.await(`, and that no log line in it or in `QuickControls`' Bluetooth functions interpolates a device name or address (the Wi-Fi lines
+with `$ssid` stay); `KidScreensEscapeTest`
 covering `BluetoothAudio`; the grant list and `bluetoothGrantState` in **`MusicMediaPlanTest`** (beside
 `notificationGrantState`'s test), not `MusicPlanTest`.
 
@@ -181,19 +194,21 @@ Music app: the same `BluetoothAudioTest` (its copy); `headsetTapPlan` (on a room
 routing; nothing on failure); the sheet-state reducer (immediate `false`, CONNECTING -> DISCONNECTED, 10 s timeout,
 late success); the sheet's rows (order, paired-not-routed after the routed outputs, "Kobler til…" then the failure
 line, a connected-not-active row); a manifest/source scan (`SourceScanTest`): `BLUETOOTH_CONNECT` only, none of the
-Never list, no Settings intent, no "Spotify", no device value in a log (like the Storytel case: no log line in the
+Never list, no Settings intent, no "Spotify", no `CountDownLatch`/`runBlocking`/latch `.await(` in the Bluetooth sources, no device value in a log (like the Storytel case: no log line in the
 bluetooth sources interpolates a value); nb + en strings.
 
 ## 4. Device checks
 
-**Emulator, API 34, 35 and 36 images (no headset needed)** - the claim is about three releases:
+**Emulator, API 34, 35 and 36 images (no headset needed)** - the claim is about three releases. Bluetooth is switched on
+on the image (`adb shell cmd bluetooth_manager enable`; the app never does it).
 1. `dumpsys package me.vibb.music | grep BLUETOOTH_CONNECT` shows `granted=true` with the policy-fixed flag after a
    sync; with the policy gone, `granted=false` (decision 4).
 2. `BluetoothAudio.connect` on `adapter.getRemoteDevice("02:00:00:00:00:01")` (a debug-only trigger or a unit of the
    debug build; a made-up bonded address) returns `false`, not an exception (the UUID refusal).
 3. logcat shows `Accessing hidden method Landroid/bluetooth/BluetoothA2dp;->connect(...) (unsupported, reflection,
    allowed)`.
-4. With the permission revoked by `pm revoke`, the `SecurityException` is caught and the sheet shows only today's rows.
+4. In the state check 1 produces with the policy gone (`BLUETOOTH_CONNECT` denied and fixed), or after the grant is
+   reset to default and `pm revoke` is run, the sheet shows only today's rows and nothing throws.
 
 **Jelly Star** (the emulator's Bluetooth can't pair a real headset; Android 16 per `02-calls.md` - confirm with `adb shell getprop ro.build.version.release`,
 `docs/testing/emulator.md`): record it, and
@@ -225,13 +240,13 @@ audio devices.
   one calls `setActiveDevice` (annotation named per release in §0); "the second drops the first" marked
   phone-dependent (decision 1, §4).
 - **52-5** accepted: state in the music view model; the sheet stays open on a headset tap ("Kobler til…"), failure after
-  `false` / CONNECTING -> DISCONNECTED / 10 s as "Fikk ikke kontakt med <name> - er den på?", a 5 s player hint when the
+  `false` / CONNECTING -> DISCONNECTED / 10 s as "Fikk ikke kontakt med <name> - er den på?", a 3 s player hint (`HEADSET_NO_CONTACT`, a nameless string) when the
   sheet was closed, a late success clears it (decision 3).
 - **52-6** accepted: names and addresses never in logs, report, `music_state`, now-playing, the state recorder or the
   bridge; a source-scan test in each app; the launcher's address log lines in `QuickControls` go (decision 4, §3).
 - **52-7** accepted: pure `bluetoothRowActions`, live refresh on the A2DP / ACL broadcasts, the grant before the first
   list read, Disconnect also does `BluetoothHeadset.disconnect` (`@SystemApi`, `BLUETOOTH_CONNECT` only; confirmed in
-  16/15/14 sources, §0), `BluetoothAudio` under a `KidScreensEscapeTest`-scanned path (decision 2).
+  16/15/14 sources, §0), `BluetoothAudio` added to `guarded` (decision 2).
 - **52-8** accepted: emulator checks on API 34/35/36 needing no headset (grant in `dumpsys package`, made-up bonded
   address returns `false`, the "unsupported, reflection, allowed" line, the revoked-permission path) plus the Jelly Star
   checks (§4).
