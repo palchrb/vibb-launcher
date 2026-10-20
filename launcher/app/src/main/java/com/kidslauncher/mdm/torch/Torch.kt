@@ -29,7 +29,8 @@ private const val AUTO_OFF_REQUEST = 41
  * only - nothing stored. After a process restart the platform has already turned our torch off (a
  * dead client's torch goes off), and the callback says so. The rules are the pure [torchStep]. The
  * camera policy while LOCKED (design 25b) is never lifted: a `CAMERA_DISABLED` refusal under the lock
- * only hides the lock's button ([lockButtonShown]). Main thread.
+ * on an on-tap only hides the lock's button ([lockButtonShown]); a refused off is tried again by
+ * the auto-off alarm. Main thread.
  */
 object Torch {
     private var initialised = false
@@ -123,7 +124,10 @@ object Torch {
     }
 
     private fun act(app: Context, step: TorchStep) {
-        if (step.switchOff) cameraId?.let { setTorch(app, it, on = false) }
+        if (step.switchOff) {
+            val switched = cameraId?.let { setTorch(app, it, on = false) } ?: true
+            if (torchAlarmAfterOff(switched) == TorchAlarm.ARM) armAutoOff(app)
+        }
         when (step.alarm) {
             TorchAlarm.ARM -> armAutoOff(app)
             TorchAlarm.CANCEL -> cancelAutoOff(app)
@@ -131,13 +135,16 @@ object Torch {
         }
     }
 
-    private fun setTorch(app: Context, id: String, on: Boolean) {
+    /** Whether the platform took the switch (its callback then reports the new state). */
+    private fun setTorch(app: Context, id: String, on: Boolean): Boolean {
         try {
-            app.getSystemService(CameraManager::class.java)?.setTorchMode(id, on)
+            val cameras = app.getSystemService(CameraManager::class.java) ?: return false
+            cameras.setTorchMode(id, on)
+            return true
         } catch (e: CameraAccessException) {
             val locked = PinLockRuntime.mode == LockMode.LOCKED
-            Log.w(LOG_TAG, "The torch refused (reason ${e.reason}, locked $locked)")
-            val refused = torchRefusedOnLock(refusedOnLock, e.reason == CameraAccessException.CAMERA_DISABLED, locked)
+            Log.w(LOG_TAG, "The torch refused (reason ${e.reason}, on $on, locked $locked)")
+            val refused = torchRefusedOnLock(refusedOnLock, on, e.reason == CameraAccessException.CAMERA_DISABLED, locked)
             if (refused != refusedOnLock) {
                 refusedOnLock = refused
                 changed()
@@ -145,6 +152,7 @@ object Torch {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't switch the torch: ${e.javaClass.simpleName}")
         }
+        return false
     }
 
     private fun changed() {

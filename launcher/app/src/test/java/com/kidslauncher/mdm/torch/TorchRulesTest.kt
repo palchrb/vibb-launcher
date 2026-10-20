@@ -17,12 +17,18 @@ class TorchRulesTest {
     private val torch = File(main, "java/com/kidslauncher/mdm/torch/Torch.kt").readText()
 
     @Test
-    fun `every on arms the 10-minute alarm, every off path cancels it`() {
+    fun `every on arms the 10-minute alarm, only the platform's dark cancels it, a refused off re-arms it`() {
         assertEquals(10 * 60_000L, TORCH_AUTO_OFF_MS)
         assertEquals(TorchStep(switchOff = false, alarm = TorchAlarm.ARM), torchStep(lit = true, TorchEvent.LIT))
         assertEquals(TorchStep(switchOff = false, alarm = TorchAlarm.CANCEL), torchStep(lit = false, TorchEvent.DARK))
-        assertEquals(TorchStep(switchOff = true, alarm = TorchAlarm.CANCEL), torchStep(lit = true, TorchEvent.AUTO_OFF))
-        assertEquals(TorchStep(switchOff = false, alarm = TorchAlarm.CANCEL), torchStep(lit = false, TorchEvent.AUTO_OFF))
+        // A switch-off keeps the alarm until the platform says dark: a refused one must not drop it.
+        assertEquals(TorchStep(switchOff = true, alarm = TorchAlarm.KEEP), torchStep(lit = true, TorchEvent.AUTO_OFF))
+        assertEquals(TorchStep(switchOff = false, alarm = TorchAlarm.KEEP), torchStep(lit = false, TorchEvent.AUTO_OFF))
+        assertEquals(TorchAlarm.ARM, torchAlarmAfterOff(switched = false))
+        assertEquals(TorchAlarm.KEEP, torchAlarmAfterOff(switched = true))
+        // The glue acts on both: the re-arm after a failed off, the cancel on DARK.
+        assertTrue("if (torchAlarmAfterOff(switched) == TorchAlarm.ARM) armAutoOff(app)" in torch)
+        assertTrue("TorchAlarm.CANCEL -> cancelAutoOff(app)" in torch)
         // The alarm is set from now, exact and while idle (Doze in a pocket), and only to our receiver.
         assertTrue("SystemClock.elapsedRealtime() + TORCH_AUTO_OFF_MS" in torch)
         assertTrue("setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP" in torch)
@@ -42,13 +48,23 @@ class TorchRulesTest {
             assertEquals(CallEdge.BEGAN, callEdge(wasInCall = false, inCall = begins))
         }
         assertEquals(CallEdge.NONE, callEdge(wasInCall = true, inCall = true))
-        assertEquals(TorchStep(switchOff = true, alarm = TorchAlarm.CANCEL), torchStep(lit = true, TorchEvent.CALL_BEGAN))
+        assertEquals(TorchStep(switchOff = true, alarm = TorchAlarm.KEEP), torchStep(lit = true, TorchEvent.CALL_BEGAN))
         assertEquals(CallEdge.ENDED, callEdge(wasInCall = true, inCall = false))
         assertEquals(TorchStep(switchOff = false, alarm = TorchAlarm.KEEP), torchStep(lit = false, TorchEvent.CALL_ENDED))
         // The rule hangs on the music's call edges, so the two never drift.
-        assertTrue("MusicCalls.addCallEdgeListener" in torch)
+        // The edge listener does nothing but step the rule (no relight at a call's end).
+        val listener = torch.substringAfter("MusicCalls.addCallEdgeListener { edge ->").substringBefore("\n        }\n").trim()
+        assertEquals(
+            "act(app, torchStep(state?.lit == true, if (edge == CallEdge.BEGAN) TorchEvent.CALL_BEGAN else TorchEvent.CALL_ENDED))",
+            listener,
+        )
         val calls = File(main, "java/com/kidslauncher/mdm/music/MusicCalls.kt").readText()
+        // All three sources, the VoIP phase (a ring included) as it is, reach the one edge.
+        assertTrue("musicCallActive(VoipCalls.phase, OngoingCalls.hasLiveCall, systemCall(ctx))" in calls)
         assertTrue("val edge = callEdge(state.inCall, inCall)" in calls)
+        // Its own try, so the volume cap's setup can't take the call edges with it.
+        val media = File(main, "java/com/kidslauncher/mdm/music/MusicSessions.kt").readText()
+        assertTrue(Regex("""try \{\s+MusicCalls\.init\(app\)\s+\} catch""").containsMatchIn(media))
     }
 
     @Test
@@ -57,16 +73,31 @@ class TorchRulesTest {
         for (event in listOf("ACTION_SCREEN_OFF", "ACTION_SCREEN_ON", "ACTION_USER_PRESENT", "isInteractive")) {
             assertFalse(event, event in torch)
         }
+        // And nothing else switches it: only the alarm's receiver, Home's tile and the lock's button
+        // call it (a screen-off receiver elsewhere calling autoOff would break the rule).
+        val java = File(main, "java/com/kidslauncher/mdm")
+        val callers = java.walk().filter { it.isFile && it.name.endsWith(".kt") }
+            .filter { Regex("""Torch\.(autoOff|toggle)\(""").containsMatchIn(it.readText()) }
+            .map { it.relativeTo(java).path }.toSet()
+        assertTrue(callers.toString(), callers.isNotEmpty() && callers.all { it in setOf("torch/Torch.kt", "ui/home/HomeGridAdapter.kt", "lock/GlancePanel.kt") })
+        assertEquals(1, Regex("""Torch\.autoOff\(""").findAll(torch).count())
+        assertTrue("override fun onReceive(context: Context, intent: Intent) = Torch.autoOff(context)" in torch)
+        val adapter = File(java, "ui/home/HomeGridAdapter.kt").readText()
+        assertTrue("is GridTile.Flashlight -> Torch.toggle(activity)" in adapter)
     }
 
     @Test
-    fun `CAMERA_DISABLED under the lock hides the lock's button until the next unlock`() {
-        assertTrue(torchRefusedOnLock(refused = false, cameraDisabled = true, locked = true))
-        assertFalse(torchRefusedOnLock(refused = false, cameraDisabled = true, locked = false))
-        assertFalse(torchRefusedOnLock(refused = false, cameraDisabled = false, locked = true))
-        assertTrue(torchRefusedOnLock(refused = true, cameraDisabled = false, locked = false))
+    fun `an on-tap refused with CAMERA_DISABLED under the lock hides the lock's button until the next unlock`() {
+        assertTrue(torchRefusedOnLock(refused = false, turningOn = true, cameraDisabled = true, locked = true))
+        // A refused off never hides it: a lit torch keeps its off button.
+        assertFalse(torchRefusedOnLock(refused = false, turningOn = false, cameraDisabled = true, locked = true))
+        assertFalse(torchRefusedOnLock(refused = false, turningOn = true, cameraDisabled = true, locked = false))
+        assertFalse(torchRefusedOnLock(refused = false, turningOn = true, cameraDisabled = false, locked = true))
+        assertTrue(torchRefusedOnLock(refused = true, turningOn = false, cameraDisabled = false, locked = false))
         assertTrue(torchLockButton(TorchState(lit = false), refusedOnLock = false))
         assertFalse(torchLockButton(TorchState(lit = true), refusedOnLock = true))
+        assertTrue("val lockButtonShown: Boolean get() = torchLockButton(state, refusedOnLock)" in torch)
+        assertTrue("torchRefusedOnLock(refusedOnLock, on, e.reason == CameraAccessException.CAMERA_DISABLED, locked)" in torch)
         // The unlock clears it (the mode listener), so the next lock tries again.
         val unlock = torch.substringAfter("PinLockRuntime.addModeListener {").substringBefore("\n        }\n")
         assertTrue("refusedOnLock && PinLockRuntime.mode != LockMode.LOCKED" in unlock)

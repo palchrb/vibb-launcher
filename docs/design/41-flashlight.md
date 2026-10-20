@@ -115,9 +115,12 @@ Deviations:
 - The glyph hashes in `material-symbols.sh` were computed from the files as fetched once, because the sandbox
   couldn't run the script's own download. The reconstruction method was checked against an existing glyph's pinned
   hash (`bedtime`), and the script's next run verifies them.
-- A tap that turns the torch *off* and is refused with `CAMERA_DISABLED` under the lock hides the button too; the
-  torch then goes off by the 10-minute alarm or from Home. This only matters if the probe finds that the policy
-  blocks the torch.
+- Code QA fix round (qa-r6-a-code M1): only the platform's DARK cancels the auto-off alarm, and a switch-off that
+  fails (the alarm's, a call's) arms it again (`torchAlarmAfterOff`). So a torch lit on Home before the lock and
+  refused off under the camera policy is tried again every 10 minutes; it goes off as soon as an off is accepted
+  (at the latest at the next unlock, from Home), never staying lit for want of an alarm. Only a refused *on*-tap
+  hides the lock's button; a refused off keeps it, so a lit torch keeps its off button. This only matters if the
+  probe finds that the policy blocks the torch.
 
 Device checks owed (all of §4 - the emulator has no flash unit): step 0's probe of the lock's button under the camera
 policy (B and the user); steps 1-4 on the Jelly Star for the tile: on/off, the 10 minutes, an incoming cellular call
