@@ -96,7 +96,11 @@ The example below is also `server/deploy/Caddyfile.example`.
 Caddy gets its own certificates and replaces any `X-Forwarded-For` a client sends (never set `trusted_proxies` in
 Caddy for this site). Don't add `encode`: the phones' event stream must not be compressed. Strip
 `Tailscale-User-Login` in every site, so nobody can send it through Caddy. Put `DEVICE_BIND_ADDR=127.0.0.1:3101` in
-`.env` and restart.
+`.env` and restart. **Caddy 2.11 and later need `write_idle` raised** (the global `servers { timeouts { … } }` block
+below): since 2.11 Caddy aborts any response that writes nothing for one minute (`RST_STREAM INTERNAL_ERROR` on
+HTTP/2), and the phones' event stream writes only a keepalive every `SSE_KEEPALIVE_SECS` (240 s) - every stream died
+60 s after each keepalive, and every phone reconnected every 5 minutes (found 2026-10-20 on the user's Caddy 2.11.6).
+Any other proxy needs the same: its idle or read timeout for the upstream response above the keepalive interval.
 
 ```
 {
@@ -104,6 +108,9 @@ Caddy for this site). Don't add `encode`: the phones' event stream must not be c
 	servers {
 		timeouts {
 			read_header 10s
+			# Caddy 2.11+ aborts a response that writes nothing for 1 minute (its write_idle default);
+			# the phones' event stream writes a keepalive every 4 minutes. Keep this above that.
+			write_idle 10m
 		}
 	}
 }

@@ -1698,7 +1698,9 @@ pub async fn install_progress(
 /// nudge, not the command payload itself - the client always re-fetches `GET /api/devices/policy`
 /// to get the real `pending_command`, reusing the exact same dispatch path as a normal scheduled
 /// sync. `KeepAlive` comments (every `SSE_KEEPALIVE_SECS`) let the client detect a silently-dead
-/// connection and reconnect; a proxy in front of this server needs a read timeout above it.
+/// connection and reconnect; a proxy in front of this server needs its idle/read timeout for the
+/// response above it (Caddy 2.11+: `write_idle`, 1 minute by default - DEPLOY.md, "With your own
+/// Caddy"; found 2026-10-20: every stream reset 60 s after each keepalive).
 /// While the response lives, `AppState.command_streams` counts it (the device page's "Instant
 /// changes" line).
 pub async fn commands_stream(
