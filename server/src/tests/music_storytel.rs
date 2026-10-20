@@ -646,26 +646,32 @@ async fn add_takes_only_shelf_targets() {
     );
 
     // At most MAX_ENTRIES target fields are read (code QA L6), repeats included.
-    let many: Vec<(&str, &str)> = std::iter::repeat_n(("target", "storytel:book:999"), 201)
-        .chain([("category", "3")])
-        .collect();
+    let many: Vec<(&str, &str)> = std::iter::repeat_n(
+        ("target", "storytel:book:999"),
+        crate::music::MAX_ENTRIES as usize + 1,
+    )
+    .chain([("category", "3")])
+    .collect();
     let res = app
         .request_form(Method::POST, "/music/storytel/add", Some(&cookie), &many)
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
-    assert!(
-        res.text()
-            .contains("More than 200 rows are ticked - nothing was added.")
-    );
+    assert!(res.text().contains(&format!(
+        "More than {} rows are ticked - nothing was added.",
+        crate::music::MAX_ENTRIES
+    )));
     assert_eq!(storytel_entries(&app).await.len(), 3);
-    let two_hundred: Vec<(&str, &str)> =
-        std::iter::repeat_n(("target", "storytel:book:999"), 200).collect();
+    let at_the_cap: Vec<(&str, &str)> = std::iter::repeat_n(
+        ("target", "storytel:book:999"),
+        crate::music::MAX_ENTRIES as usize,
+    )
+    .collect();
     let res = app
         .request_form(
             Method::POST,
             "/music/storytel/add",
             Some(&cookie),
-            &two_hundred,
+            &at_the_cap,
         )
         .await;
     assert!(res.status.is_redirection(), "{}", res.status);
@@ -677,20 +683,20 @@ async fn add_takes_only_shelf_targets() {
 
     // The entry limit is the INSERT's own condition.
     sqlx::query(
-        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 197) \
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) \
          INSERT INTO music_entries (name, category_id, source, key, cache, resume, sort) \
          SELECT 'own ' || i, 1, 'own', 'own-' || i, -1, 0, 1000 + i FROM n",
     )
+    .bind(crate::music::MAX_ENTRIES - 3)
     .execute(&app.db)
     .await
     .unwrap();
     let res = add(&app, &cookie, &["storytel:book:999"]).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
-    assert!(
-        res.text()
-            .replace("&#39;", "'")
-            .contains("The library has 200 entries")
-    );
+    assert!(res.text().replace("&#39;", "'").contains(&format!(
+        "The library has {} entries",
+        crate::music::MAX_ENTRIES
+    )));
 }
 
 #[tokio::test]

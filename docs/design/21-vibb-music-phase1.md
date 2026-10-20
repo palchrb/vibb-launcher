@@ -25,7 +25,7 @@ Storytel) from the source, like the Pi; the server never proxies or stores them.
 - `music_entries`: name, `category_id`, `source` (nrk/rss/own; storytel/spotify refused until their phase), `target`
   (normalised URL, unique; NULL for own), `key` (vibb `state_key`: NRK podkast slug, else `sha1(target)[:12]`;
   `own-<id>`), `play_order` (auto/newest_first/oldest_first), `cache` (-1 all, 0 none, 1-100 newest N; default 5; own =
-  all), `resume` (default on; off for own), `cover_hash` (parent upload), `sort`. <= 200 entries.
+  all), `resume` (default on; off for own), `cover_hash` (parent upload), `sort`. <= 200 entries (500 since 2026-10-20).
 - `music_files`: `entry_id` (CASCADE), path, size (<= 1 GB), sha256, title/artist/album/track_no/duration_ms (tags via
   `lofty`, MIT/Apache, `spawn_blocking`), `art_hash` (embedded picture -> 512 px JPEG), sort, `missing`; <= 300 per
   entry, in track order when every file has a number (vibb), else upload order.

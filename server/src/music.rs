@@ -37,8 +37,11 @@ pub const MUSIC_COVERS_DIR: &str = "data/music_covers";
 /// Episode art (design 27, `photos::MUSIC_ART`): not backed up.
 pub const MUSIC_ART_DIR: &str = "data/music_art";
 
-/// At most this many entries in the library.
-pub const MAX_ENTRIES: i64 = 200;
+/// At most this many entries in the family's library. A sizing guard, not a product choice (the user,
+/// 2026-10-20: "ingen grunn til å begrense library til 200 innføringer"): design 21b sized the sweep's day for a
+/// Pi at 200 entries and the limit was raised to 500 on their ask; a phone's own library is bounded by
+/// [MAX_LIBRARY_BYTES] regardless.
+pub const MAX_ENTRIES: i64 = 500;
 /// At most this many files per own-files entry.
 pub const MAX_FILES_PER_ENTRY: i64 = 300;
 /// The largest own file accepted.

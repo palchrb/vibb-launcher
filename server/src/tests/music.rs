@@ -11,6 +11,8 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 use serde_json::{Value, json};
+
+use crate::music::MAX_ENTRIES;
 use sha2::{Digest, Sha256};
 
 use super::{
@@ -912,14 +914,15 @@ async fn own_entries_get_their_key_after_the_id_and_play_everything() {
 }
 
 #[tokio::test]
-async fn the_library_holds_at_most_200_entries() {
+async fn the_library_holds_at_most_max_entries() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     sqlx::query(
-        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200) \
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) \
          INSERT INTO music_entries (name, category_id, source, key) \
          SELECT 'E' || i, 1, 'own', 'own-x' || i FROM n",
     )
+    .bind(MAX_ENTRIES)
     .execute(&app.db)
     .await
     .unwrap();
@@ -932,7 +935,7 @@ async fn the_library_holds_at_most_200_entries() {
         )
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
-    assert!(res.text().contains("200 entries"));
+    assert!(res.text().contains(&format!("{MAX_ENTRIES} entries")));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -4563,14 +4566,15 @@ async fn the_pis_get_library_answer_imports_too_and_a_reimport_adds_nothing() {
 }
 
 #[tokio::test]
-async fn an_import_stops_at_200_entries_and_skips_whats_in_the_library() {
+async fn an_import_stops_at_max_entries_and_skips_whats_in_the_library() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     sqlx::query(
-        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 198) \
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) \
          INSERT INTO music_entries (name, category_id, source, key, sort) \
          SELECT 'E' || i, 1, 'own', 'own-x' || i, i * 10 FROM n",
     )
+    .bind(MAX_ENTRIES - 2)
     .execute(&app.db)
     .await
     .unwrap();
@@ -4592,7 +4596,7 @@ async fn an_import_stops_at_200_entries_and_skips_whats_in_the_library() {
         .await
         .text();
     assert!(page.contains("already in the library"));
-    assert!(page.contains("the library holds at most 200 entries"));
+    assert!(page.contains(&format!("the library holds at most {MAX_ENTRIES} entries")));
     assert_eq!(preview_rows(&page), vec!["0.1"]);
     let doc = preview_doc(&page);
     // A hand-made form ticking the third row too: re-checked, still the limit.
@@ -4607,7 +4611,7 @@ async fn an_import_stops_at_200_entries_and_skips_whats_in_the_library() {
         .fetch_one(&app.db)
         .await
         .unwrap();
-    assert_eq!(count, 200);
+    assert_eq!(count, MAX_ENTRIES);
     let names: Vec<String> =
         sqlx::query_scalar("SELECT name FROM music_entries WHERE name IN ('One', 'Two')")
             .fetch_all(&app.db)
@@ -4615,7 +4619,9 @@ async fn an_import_stops_at_200_entries_and_skips_whats_in_the_library() {
             .unwrap();
     assert_eq!(names, vec!["One"], "rows are taken in file order");
     let page = app.get_page("/music/import", &cookie).await.text();
-    assert!(page.contains("Podkast / Two: the library holds at most 200 entries"));
+    assert!(page.contains(&format!(
+        "Podkast / Two: the library holds at most {MAX_ENTRIES} entries"
+    )));
 }
 
 #[tokio::test]
@@ -4737,17 +4743,17 @@ async fn the_confirm_trusts_nothing_in_the_form() {
     let res = import_confirm(&app, &cookie, &[("row", "0.0")]).await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
 
-    // A document edited to carry a Spotify short link, a folder and 201 entries: only what a fresh
+    // A document edited to carry a Spotify short link, a folder and MAX_ENTRIES + 1 entries: only what a fresh
     // upload would allow gets in.
     let mut entries = vec![
         json!({"name": "Spill", "target": "https://spotify.link/abc"}),
         json!({"name": "Mappe", "target": "/srv/x"}),
     ];
-    entries.extend((0..201).map(
+    entries.extend((0..MAX_ENTRIES + 1).map(
         |i| json!({"name": format!("F{i}"), "target": format!("https://example.org/{i}.rss")}),
     ));
     let tampered = json!({"sections": [{"name": "Podkast", "entries": entries}]}).to_string();
-    let rows: Vec<String> = (0..203).map(|i| format!("0.{i}")).collect();
+    let rows: Vec<String> = (0..MAX_ENTRIES + 3).map(|i| format!("0.{i}")).collect();
     let mut fields: Vec<(&str, &str)> = vec![("doc", tampered.as_str())];
     fields.extend(rows.iter().map(|r| ("row", r.as_str())));
     let phone_id = phone.to_string();
@@ -4763,13 +4769,15 @@ async fn the_confirm_trusts_nothing_in_the_form() {
     assert!(
         !names
             .iter()
-            .any(|n| n == "Spill" || n == "Mappe" || n == "F200")
+            .any(|n| n == "Spill" || n == "Mappe" || n == &format!("F{MAX_ENTRIES}"))
     );
     let page = app.get_page("/music/import", &cookie).await.text();
     assert!(page.contains(
         "Podkast / Spill: a Spotify short link - resolve it by adding it on the Spotify page"
     ));
-    assert!(page.contains("Podkast / F200: the library holds at most 200 entries"));
+    assert!(page.contains(&format!(
+        "Podkast / F{MAX_ENTRIES}: the library holds at most {MAX_ENTRIES} entries"
+    )));
     assert!(app.fetch.calls.lock().unwrap().is_empty());
 }
 

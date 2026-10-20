@@ -3906,11 +3906,12 @@ mod entries {
 
         // A full library: refused after the check, nothing stored.
         sqlx::query(
-            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 198) \
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) \
              INSERT INTO music_entries (name, category_id, source, target, key, sort) \
              SELECT 'F' || i, 4, 'rss', 'https://example.org/' || i || '.rss', 'k' || i, 100 + i \
              FROM n",
         )
+        .bind(crate::music::MAX_ENTRIES - 2)
         .execute(&app.db)
         .await
         .unwrap();
@@ -3922,7 +3923,10 @@ mod entries {
         )
         .await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST);
-        assert!(page_text(&res).contains("The library has 200 entries - delete one first."));
+        assert!(page_text(&res).contains(&format!(
+            "The library has {} entries - delete one first.",
+            crate::music::MAX_ENTRIES
+        )));
         assert_eq!(entry_count(&app).await, crate::music::MAX_ENTRIES);
     }
 

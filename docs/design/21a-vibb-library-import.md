@@ -8,7 +8,7 @@ User (2026-10-09): bring the Pi's curated library over in one go instead of rety
 - One uploaded file, at most 1 MB: the Pi's `/etc/vibb/library.json` (`VIBB_LIBRARY`), or the Pi's `GET /library`
   answer (same shape plus `image`/`new` fields, ignored). Shape (palchrb/vibb `pi/vibb/library.py`
   `normalize_library`): `{"sections": [{"name", "spotify_user"?, "entries": [{"name", "target", "order", "cache",
-  "resume"}]}]}`. Unknown fields are ignored; at most 50 sections and 500 entries are read. Not JSON or no
+  "resume"}]}]}`. Unknown fields are ignored; at most 50 sections and `MAX_ROWS` entries (600 since 2026-10-20, 500 before) are read. Not JSON or no
   `sections` list -> 400 with the reason by the field, nothing stored.
 - The PWA says where to find it: `scp <pi>:/etc/vibb/library.json .`.
 
@@ -24,7 +24,7 @@ User (2026-10-09): bring the Pi's curated library over in one go instead of rety
 - Skipped, each with its reason in the preview and the result: Spotify (`spotify:`, `open.spotify.com`,
   `spotify.link/`; phase 3), Storytel (`storytel:`; phase 2), a local folder (starts with `/`: "upload the files as an
   own-files entry"), anything `parse_link` refuses, a `spotify_user` section's entries, a target or key already in
-  the library, a repeat within the file, the 200-entry limit (`MAX_ENTRIES`; rows are taken in file order).
+  the library, a repeat within the file, the entry limit (`MAX_ENTRIES`, 200 then, 500 since 2026-10-20; rows are taken in file order).
 - Positions and downloads are not imported (no position mirroring, design 20).
 
 ## Flow

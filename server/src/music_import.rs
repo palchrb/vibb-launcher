@@ -21,9 +21,10 @@ use crate::music::{self, DEFAULT_CACHE, MAX_ENTRIES, MAX_NAME_CHARS};
 
 /// The largest file read (and the largest preview document accepted back).
 pub const MAX_IMPORT_BYTES: usize = 1_000_000;
-/// At most this many sections and entries are read; the rest of the file is ignored.
+/// At most this many sections and entries are read; the rest of the file is ignored. `MAX_ROWS` stays above
+/// [MAX_ENTRIES], so a file past the library's limit is told so row by row (`Skip::Full`), not cut in silence.
 pub const MAX_SECTIONS: usize = 50;
-pub const MAX_ROWS: usize = 500;
+pub const MAX_ROWS: usize = MAX_ENTRIES as usize + 100;
 /// A skipped row's name and target are kept this long (to show it; it is never stored).
 const MAX_SHOWN_CHARS: usize = 300;
 /// A section name is kept this long (a new category's name is cut to 20 from it).
