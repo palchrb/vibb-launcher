@@ -142,6 +142,16 @@ fun notificationGrantState(managed: Boolean): Int =
 fun musicCallActive(voip: VoipPhase, ourCall: Boolean, systemCall: Boolean): Boolean =
     voip != VoipPhase.NONE || ourCall || systemCall
 
+/** A call's edge as [musicCallActive] sees it - the one place the music's hold and the torch's off
+ * rule (design 41 §1.4) both read, so the two never drift. */
+enum class CallEdge { NONE, BEGAN, ENDED }
+
+fun callEdge(wasInCall: Boolean, inCall: Boolean): CallEdge = when {
+    !wasInCall && inCall -> CallEdge.BEGAN
+    wasInCall && !inCall -> CallEdge.ENDED
+    else -> CallEdge.NONE
+}
+
 /** [holdSent]: the launcher told the music app to hold for this call. */
 data class CallHold(val inCall: Boolean = false, val holdSent: Boolean = false)
 
@@ -157,8 +167,8 @@ enum class CallMusicAction { NONE, HOLD, RELEASE }
  * it plays again only what it paused, not after the kid's own play and pause during the call, nor after
  * the timer ended meanwhile, nor while it may not play.
  */
-fun callHoldStep(state: CallHold, inCall: Boolean, session: Boolean): Pair<CallHold, CallMusicAction> = when {
-    !state.inCall && inCall -> if (session) CallHold(inCall = true, holdSent = true) to CallMusicAction.HOLD else CallHold(inCall = true) to CallMusicAction.NONE
-    state.inCall && !inCall -> CallHold() to (if (state.holdSent) CallMusicAction.RELEASE else CallMusicAction.NONE)
-    else -> state to CallMusicAction.NONE
+fun callHoldStep(state: CallHold, inCall: Boolean, session: Boolean): Pair<CallHold, CallMusicAction> = when (callEdge(state.inCall, inCall)) {
+    CallEdge.BEGAN -> if (session) CallHold(inCall = true, holdSent = true) to CallMusicAction.HOLD else CallHold(inCall = true) to CallMusicAction.NONE
+    CallEdge.ENDED -> CallHold() to (if (state.holdSent) CallMusicAction.RELEASE else CallMusicAction.NONE)
+    CallEdge.NONE -> state to CallMusicAction.NONE
 }
