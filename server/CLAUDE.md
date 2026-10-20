@@ -171,12 +171,14 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_81_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
+(`migrations_73_to_82_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
 `0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
 out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both).
 `0080_phone_power.sql` (design 38, the two power switches) follows 0079, and
 `0081_music_art_more.sql` (2026-10-19, episode pictures ASAP: `music_listings.art_more`) follows 0080
-(`migrations_73_to_81_in_order`). The next free number is 0082.
+(`migrations_73_to_82_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
+the listings with untried episode pictures, `push_subscriptions.last_opened_at`) follows 0081. The next free number is
+0083.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -193,7 +195,7 @@ out-of-order hazard above; both merged into `main` on 2026-10-18, so every build
 - `device_lock_glance_apps` (the apps whose messages the PIN lock's first page shows) and `device_policy.lock_glance_text` - see "The lock's glance page"
 - ~~`device_push`~~ - FCM tokens and health (migration `0026`), dropped by `0048` (design 19)
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
-- `parent_events` (kept 90 days; design 38's `phone_off`/`phone_on` too), `notification_settings` (singleton; design 38's `push_phone_off`/`push_phone_on` since 0080), `push_subscriptions`, `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
+- `parent_events` (kept 90 days; design 38's `phone_off`/`phone_on` too), `notification_settings` (singleton; design 38's `push_phone_off`/`push_phone_on` since 0080), `push_subscriptions` (`last_opened_at` since 0082), `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b)
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"; `music_spotify_app`, `music_spotify_accounts` - Spotify's app and logins, see "Vibb music: Spotify on the server"
 - `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)

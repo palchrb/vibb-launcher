@@ -102,3 +102,30 @@ come back to the Spotify group without a jump; a fresh server (no app) shows the
 - 47-6: `done` -> `/music/settings?login={code}#spotify-accounts`; no other reader of those query keys on the settings page.
 - New (the user): §1.6 "Plays on" picker per account and §1.7 Storytel phones `details` row (`#storytel-phones`), with tests in §2.
 - Revision check (2026-10-20): §1.6 and §1.7 each get a new narrow handler (`plays-on`, `storytel/phones/{id}`) - the device page's handlers take the phone from the path or save the whole form; the error ids prefixed too.
+
+## Implementation status (2026-10-20, branch `r5-b`)
+
+Built as decided: `/music/spotify` is Add from Spotify (`AddTemplate`: the add form, the setup row with "N accounts" /
+"App saved, no account yet" / "Not set up yet", the not-set-up attention row for no key / no app / an account to log in
+again / no account); the setup is `partials/spotify_setup.html` in Music › Settings after Storytel
+(`music_spotify::setup_view`, every id `spotify-` prefixed, the error ids too); `render_settings(state, headers,
+trusted, status, (storytel error, notice), music_spotify::Entered)` re-renders the refusals in place and sets
+`page_csp`; `done`, `paste`, `save_app`, `clear_app` and `remove_account` land on `/music/settings?…#spotify-…`; §1.6
+`POST /music/spotify/accounts/{id}/plays-on` (`save_plays_on`, `handlers::music::bind_spotify` shared with
+`save_device_spotify`) and §1.7 `POST /music/storytel/phones/{id}` (`save_storytel_phone`). Tests:
+`tests::music_spotify::settings_group`, the not-set-up rows in `entries::the_add_form_refuses_with_nothing_stored`, the
+moved assertions in `tests::music_spotify`, `tests::music::every_form_on_the_music_pages_returns_to_its_page`.
+
+Deviations:
+- The disabled add form disables each field and the button (`disabled` attributes), not a `fieldset disabled`:
+  `style.css` has no fieldset reset, and a bare fieldset draws the browser's border.
+- The Storytel switches redirect to `/music/settings?storytel=phones#storytel-phones`: the query reopens the `details`
+  after the reload, else the row the parent just toggled would fold away (still no jump: the fragment is there).
+- The Spotify page's intro moved into the Your Spotify App footer's ⓘ ("… you paste the links on Add from Spotify.").
+- Device › Music's "Spotify Accounts ›" row links to `/music/settings#spotify-accounts` (`device_music.html`, one href;
+  it pointed at the old page's `#accounts`).
+- "Plays on" lists every phone with a policy row (as the add form's phone list does).
+
+Device checks owed (§3): the iPhone - Music › From Spotify opens on the form; the setup row's count; in Music › Settings
+Save / Log in with Spotify (the CSP lets the 303 go) / Remove come back to the Spotify group without a jump; "Plays on"
+and the Storytel switches save in place; a fresh server (no app) shows the attention row on the add page.

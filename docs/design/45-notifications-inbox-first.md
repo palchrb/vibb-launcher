@@ -86,3 +86,27 @@ via the gear, Turn On/Send a Test/Remove come back to their groups without a jum
 - 45-3: read state shared across parents; module doc changed; SameSite=Strict named as the reason a GET may write.
 - 45-4: template hrefs named; one `.route("/notifications/settings", get(...).post(...))`; `device` hidden inputs kept.
 - 45-5: Back to the inbox shows no dots, by design, written down.
+
+## Implementation status (2026-10-20, branch `r5-b`)
+
+Built as decided: `/notifications` is the inbox alone (`notifications.html`, the gear in the bell's place carrying
+`data-unread`), `/notifications/settings` the settings page (`notifications_settings.html`, one route with Notify Me
+About's POST); opening the inbox marks exactly the rows it shows, which keep their dot this once; every subscription
+and Notify Me About redirect lands on the settings page's group; the Devices warning and the Settings hub's row lead
+there, the bell to the inbox; `notifications.js` (`?v=2`) loads on the settings page only. Tests in
+`src/tests/notifications.rs` and `web_push.rs` (`pages()` reads both pages where a word may be on either).
+
+Deviations:
+- The gear's `data-unread` carries **every** unread event left, not the filter's `unread_after`: §1.3 says the badge
+  drops "to what is not shown yet (… another phone under a filter)", which is the bell's global count. "Mark all N as
+  read" counts the filter's. The gear reuses `title-action title-bell` (the bell's 44 px icon button; no new CSS) in a
+  `title-bar title-bar-split` with the back link, as `schedule_rule.html` does.
+- The settings page keeps the full clock warning (`#clock-warning`); the "may not be showing" rows are on the inbox
+  only (the settings page's device rows carry the badges). "Off: still listed here" became "Off: still in the inbox".
+- Send a Test's push now navigates to `/notifications/settings#devices` (it was `/notifications#devices`).
+- `tests::shell::every_template_with_the_bar_sets_its_tab` allows `notifications_settings.html` with no tab: a one-line
+  change in its own commit, since `shell.rs` belongs to the design 43 branch.
+- The Settings hub's row still shows "N unread" while it now leads to the settings page (unchanged; worth a look).
+
+Device checks owed (§4): the iPhone - bell with 3 → inbox → dots on three rows, bell 0, the Home Screen badge 0; the
+gear → Turn On / Send a Test / Remove come back to their groups without a jump; the same on the Pi's Chromium.

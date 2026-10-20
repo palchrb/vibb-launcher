@@ -240,7 +240,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 - **What**: `src/spotify.rs` (vibb `spotify.py`'s link grammar ported; the rest new ground) and
   `handlers::music_spotify`. **Bring your own developer app**: the server ships no client ID. Until one is set,
-  Spotify is "not configured" - `/music/spotify` shows how to register an app (a Premium owner, the redirect URI shown,
+  Spotify is "not configured" - Music › Settings' Spotify group shows how to register an app (a Premium owner, the redirect URI shown,
   Web API + Web Playback SDK, at most 5 users under User Management, a name not starting "Spot", the Developer
   Policy's line about children), and nothing else changes. The client ID is one `music_spotify_app` row from the PWA
   or `SPOTIFY_CLIENT_ID` (32 letters and digits; it wins, the field read-only), with `SPOTIFY_REDIRECT_URI` likewise;
@@ -260,7 +260,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   parent's own Spotify account is never logged in** - the parent pastes links. Nothing in the code enforces it (the
   table holds any accounts, a phone binds one, any account is a reader); the copy says it, and tests pin the copy: the
   Spotify page's intro ("your children's Spotify accounts: one account per phone, the child's own. Your own Spotify
-  account is never logged in here - you paste the links."), its setup steps (User Management: "each child's Spotify
+  account is never logged in here - you paste the links on Add from Spotify."), its setup steps (User Management: "each child's Spotify
   account - one per phone, the child's own, never yours"; a sixth step on playlists: a playlist lists only when a
   child's account owns it or collaborates on it - made in the child's account, or the parent's with the child invited to
   collaborate and joined from the child's account (the invite link opened as the child) -, else it plays in Spotify's
@@ -276,11 +276,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   S256 challenge and a 32-hex `state` kept **in memory only** (at most 8, 10 minutes, with the admin who started it; a
   restart loses an unfinished login), the `spotify_login` cookie (hex SHA-256 of the state; `HttpOnly`, `Secure`
   unless `INSECURE_COOKIES`, `SameSite=Lax`, `Path=/music/spotify/callback`, 10 minutes), then a 303 to Spotify's
-  authorize URL with `show_dialog=true`. Its form is the one form on `/music/spotify` without a `#fragment` (a
+  authorize URL with `show_dialog=true`. Its form is the one form on Music › Settings without a `#fragment` (a
   fragment would follow the 303 to Spotify; a refusal renders the page with the button `autofocus`ed;
-  `settings_pages::leaves_the_page`). The page carries its own CSP (`ADMIN_CSP` with `form-action 'self' https://accounts.spotify.com`, the
-  loopback fake's origin with the override; `admin_headers` keeps a CSP a handler set - only this page sets one), else
-  the browser would block the form's 303. **With an https redirect URI a login is started only from that address** (the cookie is that
+  `settings_pages::leaves_the_page`). Music › Settings carries the widened CSP (`music_spotify::page_csp`: `ADMIN_CSP` with `form-action 'self'
+  https://accounts.spotify.com`, the loopback fake's origin with the override; `admin_headers` keeps a CSP a handler
+  set - only `render_settings` sets one since design 47), else the browser would block the form's 303. **With an https redirect URI a login is started only from that address** (the cookie is that
   host's; `request_host`/`redirect_host`): another address of the server is refused by the button with a link to the
   right one. The suggested redirect is https only when a trusted proxy said `X-Forwarded-Proto: https`, else the
   loopback form `http://127.0.0.1:43117/callback` (`LOOPBACK_REDIRECT`): nothing listens there, the parent pastes the
@@ -293,7 +293,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   use) and a matching `spotify_login` cookie (cleared); the exchange and `/v1/me` share `LOGIN_BUDGET` (45 s, the
   gate's wait included); `/me` 403 = the account isn't in the app's User Management (nothing stored). It answers a 303
   to `/music/spotify/done?login=<outcome>` - a public page with no secret that moves on to
-  `/music/spotify?login=<outcome>#accounts` with a meta refresh (same-site, so the session cookie goes;
+  `/music/settings?login=<outcome>#spotify-accounts` with a meta refresh (same-site, so the session cookie goes;
   `music_spotify_done.html`, with the head partial's stylesheet and title like every page), so the
   spent code never sits on a page's URL or in a `Referer`. Outcomes: `ok`, `cancelled`, `not_registered`, `refused`,
   `unreachable`, `expired` (also another browser, a changed app), `off`, `error`. Events `spotify_account_added`,
@@ -436,6 +436,44 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `phones` - the token route's answers, limit and budget, the policy and the blocklist following the binding, the
   `/dns` marks), `music::tests` (the link, kinds, words), `music_import::tests`, `music_secret::tests`;
   `music_library.json` holds a Spotify entry in each mode (shared with both apps).
+
+- **Design 47 (server round 5): Add from Spotify first, the setup in Music › Settings.** `/music/spotify`
+  (`music_spotify.html`, `AddTemplate`) is "Add from Spotify": the link, its category, On these phones, the added
+  result (`#add`, `#add-phones`, `#added`, as before) and a "Spotify setup" row with the accounts' count ("2 accounts",
+  "App saved, no account yet", "Not set up yet") to `/music/settings#spotify`. While the setup isn't done
+  (`NotReady`: no music key -> `#spotify-key`, no app -> `#spotify`, every account needing a login -> `#spotify-accounts`,
+  no account -> `#spotify`) an attention row on top says so and the form's fields and button are `disabled` (each one:
+  no fieldset style exists); the add POST still refuses with its field error. The setup (`partials/spotify_setup.html`
+  in `music_settings.html` after Storytel, `music_spotify::setup_view` -> `SpotifySetup`) is the old page's two groups
+  with every id `spotify-` prefixed (`#spotify-app`, `-app-form`, `-setup`, `-app-clear`, `-accounts`, `-account-<id>`,
+  `-login`, `-paste`, `-key`, the fields `spotify-client-id`, `-redirect-uri-field`, `-paste-url`, the errors
+  `spotify-app-error`, `-clear-error`, `-remove-error-<id>`, `-paste-error`; the page's `#app` stays the music app's).
+  `render_settings(state, headers, trusted, status, (storytel error, notice), music_spotify::Entered)` renders it, sets
+  the CSP, and is what `save_app`, `clear_app`, `login`, `paste` and `remove_account` answer a refusal with
+  (`login_elsewhere` = `https://<host>/music/settings#spotify-accounts`); their successes go to
+  `/music/settings?saved=N#spotify-app`, `?cleared=1#spotify-app`, `?login=<code>#spotify-accounts` (also `done`'s
+  meta refresh), `?removed=1#spotify-accounts`. `show_settings` reads those keys from the query and nothing else on
+  the page does (Storytel's notice is a session flash). Device › Music's "Spotify Accounts ›" row points there too.
+- **"Plays on" per account** (design 47 §1.6): each account row says "Plays on Annas telefon[, …]" / "Plays on no
+  phone yet" and has an auto-saving picker (`spotify-account-<id>-plays-on`: "No phone", every phone; a disabled
+  "Several phones" while more than one plays as it) posting `device` (a phone id or `none`) to `POST
+  /music/spotify/accounts/{id}/plays-on` (`save_plays_on`): in one `BEGIN IMMEDIATE`, the chosen phone is bound (moved
+  from another account if it had one) and every other phone of this account unbound - one phone per account, as an
+  account plays on one device at a time. Each write is `handlers::music::bind_spotify` (the UPDATE Device › Music's
+  `save_device_spotify` runs, now shared; 0074's trigger moves the library revision); the changed phones are nudged and
+  logged (`music_spotify_binding_changed`, Device › Music's words). An unknown account or phone, or no `device`, is a
+  400 with nothing written; back to `/music/settings#spotify-account-<id>`.
+- **Storytel per phone** (design 47 §1.7): Storytel's "On phones · N" row is a `details` (`#storytel-phones`) with one
+  auto-saving switch per phone posting `on` to `POST /music/storytel/phones/{id}` (`save_storytel_phone`), which sets
+  `device_policy.music_storytel` alone (Device › Music's `save_device_settings` writes the mobile-data switches, the
+  volume cap and the storage limit from the same form, so a partial post there would switch those off), nudges the
+  phone, logs `music_phone_settings` ("device N: Storytel true") and answers `/music/settings?storytel=phones#storytel-phones`
+  - the query keeps the row open after the reload (a deviation from the note's plain fragment: without it the switch
+  just saved would fold away). An unknown phone is a 400.
+- Tests: `tests::music_spotify::settings_group` (the two pages, the prefixed ids and none of the old, the CSP, the
+  refusals' error ids, "Plays on", Storytel per phone), the not-set-up rows in
+  `entries::the_add_form_refuses_with_nothing_stored`, `tests::music::every_form_on_the_music_pages_returns_to_its_page`
+  (every new form and fragment).
 
 ## Vibb music: episode art (design 27, `docs/design/27-music-episode-art.md`, migration `0070_music_episode_art.sql`)
 

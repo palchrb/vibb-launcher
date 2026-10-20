@@ -140,6 +140,67 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `handlers::notifications::tests` (the delivery line), `src/tests/web_push.rs`, `jstest/sw.test.js`,
   `jstest/notifications.test.js`, `jstest/register-sw.test.js`.
 
+## Notifications: the inbox first, the tap marked (design 45 and server round 5, migration `0082_art_backfill_and_last_opened.sql`)
+
+Supersedes the page layout above (step 1's single `/notifications` page; step 2's warnings, This Device and Getting
+Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/design/r5-server-small-items.md`.
+
+- **Two pages** (`handlers::notifications`, both full auth, both `no-store` by `["notifications", ..]`):
+  `GET /notifications` (`notifications.html`, `InboxTemplate`) is the inbox alone - the back link to `?from=`'s tab, a
+  gear in the bell's place (`title-action title-bell`, `aria-label` "Notification settings", `id="notification-settings"`)
+  to `/notifications/settings{query}`, one-line warning rows (the clock, "may not be showing"/"not reaching") to the
+  settings page's `#clock-warning`/`#devices`, the phone filter, the rows, Newer/Older, "Mark all N as read" (N = what
+  is left under the filter), the empty state "Nothing yet - what the phones report shows up here"; no script of its
+  own. `GET /notifications/settings` (`notifications_settings.html`, `SettingsTemplate`, one route with Notify Me About's
+  POST) has the back link to the inbox, the clock warning, This Device (`#this-device`), Getting Notifications
+  (`#devices`) and Notify Me About (`#events`) as they were, and `notifications.js?v=2` (with a push key). Both include
+  the tab bar with no tab current. Every subscription POST and Notify Me About come back to
+  `/notifications/settings{query}…#group`; `open` and `read-all` to the inbox. Links: the bell to the inbox; the Settings
+  hub's row and the Devices list's warning to the settings page; a Send a Test push's `navigate` to
+  `/notifications/settings#devices`.
+- **Opening the inbox reads it** (§1.3): `page` reads the page, marks exactly the shown ids read (`UPDATE … WHERE id IN
+  (json_each) AND read_at IS NULL`), then counts; the rows keep their pre-mark `unread` for the existing dot and
+  "Unread:" text. The gear carries `data-unread` = every unread event left (not only the filter's: the bell's count), so
+  `register-sw.js` (unchanged, `[data-unread]`) clears this device's app badge; other devices follow their next push's
+  `app_badge` or page. An older page (`?before=`) reads its own rows when opened; a `?device=` filter leaves the other
+  phones' rows. Events are shared by every parent, so is their read state (as Mark All as Read). This GET writes on
+  purpose: the admin cookie is SameSite=Strict, so a cross-site GET carries no session (the module doc says so). Back
+  to the inbox is a reload (no-store) and shows no dots - by design.
+- **The tap on a notification** (r5 §1): `push::send_one`'s `navigate` is `push::with_marker(target, delivery)` -
+  `?push=<id>` before any `#fragment`, `&push=` after an existing query (none today); the classic worker's
+  `data.navigate` is the same string. `handlers::notifications::push_marker` is a `from_fn_with_state` layer on
+  `admin_routes`, added before `.layer(require_full_auth)` so it runs inside it and sees `CurrentAdmin`; on a GET with a
+  `push` key it calls `push::opened` (this admin's delivery only: `clicked_at` kept first, the subscription's
+  `last_opened_at`, the event's `read_at`; a summary or test has no event) and answers a 303 to the same path and query
+  without `push` (garbage or a foreign id: the same 303, nothing marked; the fragment survives, as the browser keeps
+  it). Signed out, `require_full_auth` sends `/login` without the URL: the marker is lost, which changes nothing. A
+  `clicked` receipt runs the same writes (`push::mark_opened`). `delivery_line`'s 5th field is "opened" (`clicked_at
+  IS NOT NULL`): one delivery "Opened on …" before "Shown on" before "Delivered to" before "Pushed to …, not
+  confirmed"; several "Pushed to 2 devices · opened on 1" when any was opened, else "· shown on N". A delivery never
+  opened stays delivered.
+- **The quiet count** (r5 §2): `push_subscriptions.last_opened_at` (0082; set by the marker and a click receipt,
+  outliving the 30-day deliveries). `Subscription::since_opened` = accepted deliveries newer than
+  `max(last_receipt_at, last_opened_at)` (every accepted one when neither came), `ever_opened` = either came. The device
+  row's sub-line gains "· 7 since one was opened" or "· 7 not opened yet" (Ok and May not be showing rows; nothing at
+  0). Plain `row-sub`; health unchanged.
+- **Send a Test's rows poll** (r5 §5): `GET /notifications/subscriptions.json` (this admin's rows: `id`, `badge`,
+  `badge_class`, `sub` - never an endpoint or key; no-store). Back on the settings page with `?notice=test_sent&sub=N`,
+  `notifications.js` (`testedRow`, `pollRows`) fetches it every 3 s, at most 10 times, re-rendering each row's
+  `[data-badge]` (text, class) and `[data-sub]` in place (no reload, no scroll), and stops once the tested row's
+  sub-line changed; a lost answer just waits for the next tick.
+- **The command stream's log lines** (r5 §3): `commands_stream` logs `command stream opened` (`device`) and
+  `StreamGuard::drop` `command stream closed` (`device`, `secs` = `StreamGuard::age()`, from `opened: Instant`), both
+  at `info` - the server's half of the SSE diagnosis (`adb logcat -s CommandListenerService` the phone's); `close_all`
+  at shutdown gives one line per stream.
+- **0082's other half** (r5 §4): `music_listings.art_more = 1` for every listing with an `ok` item whose `art_url` was
+  never tried at that URL (`art_from IS NULL OR art_from <> art_url`, the art pass's own condition), so entries
+  checked under the old caps get their pictures at the next sweep. `tests::music_art::migration_0082_flags_entries_with_untried_pictures`.
+- Tests: `tests::notifications` (the inbox reads its rows, the filter, older pages, the settings page, the switches),
+  `tests::web_push` (`pages` = inbox + settings; the marker, the count, `subscriptions.json`, every redirect),
+  `push::tests::the_marker_in_a_target`, `handlers::notifications::tests::the_delivery_line`,
+  `streams::tests::a_guard_knows_its_age`, `admin_auth::tests::no_store_paths`, `jstest/notifications.test.js` (the
+  poll), `jstest/register-sw.test.js` (the badge source, unchanged).
+
 ## The phone turned off and on (design 38, `docs/design/38-phone-off-on.md`, migration `0080_phone_power.sql`)
 
 - **The route** (`device_api::power`, `device_routes.rs`; bearer, its own 2 KiB body limit, `POWER_BODY_LIMIT`):
