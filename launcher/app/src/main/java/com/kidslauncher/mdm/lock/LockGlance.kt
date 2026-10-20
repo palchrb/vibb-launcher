@@ -2,6 +2,7 @@ package com.kidslauncher.mdm.lock
 
 import com.kidslauncher.mdm.badges.GlanceConversation
 import com.kidslauncher.mdm.music.MusicSession
+import com.kidslauncher.mdm.music.clockText
 
 /*
  * The lock's glance page (design 25, docs/design/25-lock-glance.md at the monorepo root, mockup
@@ -41,7 +42,20 @@ sealed interface GlanceTarget {
     data class MissedCalls(val number: String?) : GlanceTarget {
         override fun toString() = "MissedCalls"
     }
+
+    /** The timer tile's tap (design 42 §1.4): the catalog's clock app, by its launch intent. */
+    data object ClockApp : GlanceTarget {
+        val packageName: String get() = com.kidslauncher.mdm.lock.ClockApp.PACKAGE
+    }
 }
+
+/** The app a target opens; null for the missed calls (the phone book). */
+val GlanceTarget.appPackage: String?
+    get() = when (this) {
+        is GlanceTarget.Conversation -> packageName
+        is GlanceTarget.ClockApp -> packageName
+        is GlanceTarget.MissedCalls -> null
+    }
 
 /** The stage and the target it carries. */
 data class GlanceStageState(val stage: LockStage, val target: GlanceTarget?) {
@@ -101,6 +115,65 @@ fun glanceTile(session: MusicSession?): Boolean = session != null
 fun glanceTicks(tileShown: Boolean, pageShown: Boolean, session: MusicSession?): Boolean =
     tileShown && pageShown && session?.playing == true
 
+/** The line under both tiles' bar (r6 §2): "4:48 · 25:36"; a live stream or an unknown duration
+ * shows the position alone. The bar's content description keeps "4:48 av 25:36". */
+fun glanceTimeLine(positionMs: Long, durationMs: Long): String =
+    if (durationMs > 0) "${clockText(positionMs)} · ${clockText(durationMs)}" else clockText(positionMs)
+
+/**
+ * The refit rule (r6 §2, qa-r6 r6-4): a session callback renders the tile alone and refits the page
+ * only when the tile came or went ([tileWasUp] -> [tileUp]) or the shown tile's measured height
+ * ([measuredPx], with its margins; `null` before the page is laid out) differs from the one the last
+ * fit was made with ([fittedPx]; `null` = no fit with a tile yet).
+ */
+fun glanceRefitDue(tileWasUp: Boolean, tileUp: Boolean, fittedPx: Int?, measuredPx: Int?): Boolean =
+    tileWasUp != tileUp || (tileUp && (fittedPx == null || fittedPx != measuredPx))
+
+/**
+ * Callbacks within one frame draw once (r6 §2): [request] posts [work] through [post] (the glue's
+ * `Choreographer.postFrameCallback`) only when none is pending, so the two or three session
+ * messages of one tap render the tile once. Main thread only.
+ */
+class GlanceCoalescer(private val post: (() -> Unit) -> Unit, private val work: () -> Unit) {
+    private var pending = false
+
+    fun request() {
+        if (pending) return
+        pending = true
+        post {
+            pending = false
+            work()
+        }
+    }
+}
+
+// ---- the flashlight button (design 41 §1.3) ------------------------------------------------------
+
+/**
+ * What the lock needs of the torch (design 41 §1.1; the glue's `Torch` behind it): whether the phone
+ * has a flash unit, whether it is lit, whether turning it on failed with `CAMERA_DISABLED` while
+ * the PIN lock was LOCKED (§1.5: the lock's button goes, Home's tile stays), the toggle and the
+ * change listener. The lock's button toggles the torch and nothing else - it opens nothing.
+ */
+interface TorchPort {
+    val hasFlash: Boolean
+    val lit: Boolean
+    val refusedWhileLocked: Boolean
+    fun toggle()
+    fun addListener(listener: () -> Unit)
+    fun removeListener(listener: () -> Unit)
+}
+
+enum class GlanceTorchButton { HIDDEN, OFF, LIT }
+
+/** The lock's round button (§1.3): none without a flash unit or after a `CAMERA_DISABLED` refusal
+ * on the lock (§1.5); else off or lit (the lit state a filled peach disc). */
+fun glanceTorchButton(hasFlash: Boolean, refusedWhileLocked: Boolean, lit: Boolean): GlanceTorchButton = when {
+    !hasFlash || refusedWhileLocked -> GlanceTorchButton.HIDDEN
+    lit -> GlanceTorchButton.LIT
+    else -> GlanceTorchButton.OFF
+}
+
 // ---- the fit -------------------------------------------------------------------------------------
 
 /** The page shows at most this many rows; the rest is the "more" line's count. */
@@ -108,8 +181,9 @@ const val GLANCE_MAX_ROWS = 3
 
 /**
  * Each part's height as measured (any unit, the same for all and for the available height):
- * [fixed] = "Lås opp" and "Nødsamtale" with their margins; [date] with its margin; the tiles with
- * their top margin; [rowsTop] the list's margin below the tile, [rowsTopNoTile] below the date;
+ * [fixed] = "Lås opp" and the bottom row ("Nødsamtale" and the flashlight, design 41) with their
+ * margins; [date] with its margin; the tiles with their top margin (and the time line under the bar,
+ * r6 §2); [clockFull] the timer tile with its margin (design 42); [rowsTop] the list's margin below a tile, [rowsTopNoTile] below the date;
  * [row] one row (the tallest); [rowGap] between rows; [more] the "more" line (nothing above it).
  */
 data class GlanceHeights(
@@ -119,6 +193,7 @@ data class GlanceHeights(
     val date: Float,
     val tileFull: Float,
     val tileCompact: Float,
+    val clockFull: Float,
     val rowsTop: Float,
     val rowsTopNoTile: Float,
     val row: Float,
@@ -128,7 +203,8 @@ data class GlanceHeights(
 
 enum class GlanceTileSize { NONE, FULL, COMPACT }
 
-/** What the page shows: [candidate] is §1.2's number (1-7), for the logs and tests. */
+/** What the page shows: [candidate] is §1.2's number (1-7), for the logs and tests; [clock]: the
+ * timer tile (design 42). */
 data class GlanceFit(
     val candidate: Int,
     val bigClock: Boolean,
@@ -137,6 +213,7 @@ data class GlanceFit(
     val rows: Int,
     val more: Int,
     val height: Float,
+    val clock: Boolean = false,
 )
 
 /**
@@ -147,13 +224,18 @@ data class GlanceFit(
  * 5. small clock, compact tile, one row less each time down to 1 (the "more" line counts the rest);
  * 6. as 5 with one row and no date; 7. the same with no row (only the "more" line).
  * Without a tile, 2-4 are only the clock step. Nothing fits: the last candidate.
+ *
+ * With a running timer ([clock], design 42 §1.6) the timer tile is tried first in every one of
+ * them, in this order: both tiles and every row (1-2), the music tile compact (3-4), the rows folded
+ * into "+ N varsler" one by one down to none (5); only then the timer tile goes and the order above
+ * runs for the music tile alone. A running timer outlives the music tile's full size and the rows.
  */
-fun glanceFit(available: Float, heights: GlanceHeights, tile: Boolean, rowCount: Int): GlanceFit {
+fun glanceFit(available: Float, heights: GlanceHeights, tile: Boolean, rowCount: Int, clock: Boolean = false): GlanceFit {
     val n = rowCount.coerceAtLeast(0)
     val most = minOf(n, GLANCE_MAX_ROWS)
     val full = if (tile) GlanceTileSize.FULL else GlanceTileSize.NONE
     val compact = if (tile) GlanceTileSize.COMPACT else GlanceTileSize.NONE
-    fun fit(candidate: Int, big: Boolean, date: Boolean, size: GlanceTileSize, rows: Int): GlanceFit {
+    fun fit(candidate: Int, big: Boolean, date: Boolean, size: GlanceTileSize, rows: Int, withClock: Boolean = false): GlanceFit {
         val more = n - rows
         val tileHeight = when (size) {
             GlanceTileSize.NONE -> 0f
@@ -163,15 +245,24 @@ fun glanceFit(available: Float, heights: GlanceHeights, tile: Boolean, rowCount:
         val list = if (rows == 0 && more == 0) {
             0f
         } else {
-            (if (size == GlanceTileSize.NONE) heights.rowsTopNoTile else heights.rowsTop) +
+            (if (size == GlanceTileSize.NONE && !withClock) heights.rowsTopNoTile else heights.rowsTop) +
                 rows * heights.row + (rows - 1).coerceAtLeast(0) * heights.rowGap +
                 (if (more > 0) heights.more else 0f)
         }
         val height = heights.fixed + (if (big) heights.clockBig else heights.clockSmall) +
-            (if (date) heights.date else 0f) + tileHeight + list
-        return GlanceFit(candidate, big, date, size, rows, more, height)
+            (if (date) heights.date else 0f) + tileHeight + (if (withClock) heights.clockFull else 0f) + list
+        return GlanceFit(candidate, big, date, size, rows, more, height, withClock)
     }
     val candidates = buildList {
+        if (clock) {
+            add(fit(1, big = true, date = true, size = full, rows = most, withClock = true))
+            add(fit(2, big = false, date = true, size = full, rows = most, withClock = true))
+            if (tile) {
+                add(fit(3, big = true, date = true, size = compact, rows = most, withClock = true))
+                add(fit(4, big = false, date = true, size = compact, rows = most, withClock = true))
+            }
+            for (rows in most - 1 downTo 0) add(fit(5, big = false, date = true, size = compact, rows = rows, withClock = true))
+        }
         add(fit(1, big = true, date = true, size = full, rows = most))
         add(fit(2, big = false, date = true, size = full, rows = most))
         if (tile) {
@@ -208,7 +299,7 @@ fun glancePrompt(usable: Boolean, waiting: Boolean, checking: Boolean, wrong: Bo
     waiting -> GlancePrompt.WAIT
     checking -> GlancePrompt.CHECKING
     wrong -> GlancePrompt.WRONG
-    target is GlanceTarget.Conversation -> GlancePrompt.OPEN_APP
+    target is GlanceTarget.Conversation || target is GlanceTarget.ClockApp -> GlancePrompt.OPEN_APP
     target is GlanceTarget.MissedCalls -> GlancePrompt.SEE_MISSED
     else -> GlancePrompt.PLAIN
 }
@@ -231,8 +322,7 @@ fun glanceTargetTaken(timeRule: Boolean, usableUnderRule: Boolean): Boolean = !t
  */
 fun glanceUsableUnderLock(lock: com.kidslauncher.mdm.timerules.TimeLock, target: GlanceTarget, callsManaged: Boolean): Boolean = when {
     !lock.locked -> true
-    target is GlanceTarget.Conversation -> target.packageName in lock.usableApps
-    else -> lock.callsAllowed && callsManaged
+    else -> target.appPackage?.let { it in lock.usableApps } ?: (lock.callsAllowed && callsManaged)
 }
 
 /** Where the open after the code runs from. */

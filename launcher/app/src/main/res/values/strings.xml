@@ -350,6 +350,17 @@
     <string name="music_previous">Previous</string>
     <string name="music_next">Next</string>
     <string name="lock_media_unlock">Unlock</string>
+    <!-- The lock's flashlight button (design 41 §1.3): its name and its state for TalkBack. -->
+    <string name="lock_torch">Flashlight</string>
+    <string name="lock_torch_on">On</string>
+    <!-- The clock on the lock (design 42): the next alarm under the date, the timer tile's label and
+         what TalkBack reads for it. -->
+    <string name="lock_alarm">Alarm %1$s</string>
+    <string name="lock_timer">Timer</string>
+    <string name="lock_stopwatch">Stopwatch</string>
+    <string name="lock_timer_stop">Stop</string>
+    <string name="lock_timer_described">%1$s, %2$s</string>
+    <string name="lock_torch_off">Off</string>
     <string name="lock_media_back">Back</string>
     <!-- Design 25: the lock's glance page - its notification rows and the "more" line. -->
     <plurals name="glance_messages">

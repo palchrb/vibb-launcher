@@ -1,12 +1,18 @@
 package com.kidslauncher.mdm.lock
 
+import android.app.AlarmManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.ColorStateList
 import android.graphics.drawable.Drawable
 import android.os.PowerManager
 import android.text.format.DateFormat
 import android.util.Log
 import android.util.TypedValue
+import android.view.Choreographer
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
@@ -14,9 +20,11 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.appdisplay.AppDisplay
+import com.kidslauncher.mdm.badges.ClockReader
 import com.kidslauncher.mdm.badges.GlanceLevel
 import com.kidslauncher.mdm.badges.GlanceMessageRow
 import com.kidslauncher.mdm.badges.GlanceMissedRow
@@ -32,6 +40,7 @@ import com.kidslauncher.mdm.calls.relativeDay
 import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
 import com.kidslauncher.mdm.databinding.ViewLockGlanceRowBinding
 import com.kidslauncher.mdm.music.MusicLockPanel
+import com.kidslauncher.mdm.torch.Torch
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.ui.ClockFormat
@@ -43,8 +52,23 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private const val LOG_TAG = "GlancePanel"
+
+/**
+ * The phone's torch as the lock's [TorchPort] (design 41 §1.3, §1.5): a flash unit when `Torch`
+ * found one, lit as it reports, and refused while LOCKED when it hides the lock's button. The
+ * button's toggle is `Torch.toggle` and nothing else.
+ */
+internal fun lockTorch(context: Context): TorchPort = object : TorchPort {
+    override val hasFlash: Boolean get() = Torch.state != null
+    override val lit: Boolean get() = Torch.state?.lit == true
+    override val refusedWhileLocked: Boolean get() = Torch.state != null && !Torch.lockButtonShown
+    override fun toggle() = Torch.toggle(context.applicationContext)
+    override fun addListener(listener: () -> Unit) = Torch.addListener(listener)
+    override fun removeListener(listener: () -> Unit) = Torch.removeListener(listener)
+}
 
 /**
  * The PIN lock's glance page (design 25, mockup LockGlance.dc.html; the rules are the pure
@@ -54,8 +78,9 @@ private const val LOG_TAG = "GlancePanel"
  * screen on ([lockStageDue]) it shows the glance page.
  *
  * It weakens nothing (LockGlanceGuardTest): "Lås opp" and a row lead to the keypad, the music tile's
- * controls are [MusicLockPanel]'s, "Nødsamtale" is the lock's own button ([onEmergency]) - nothing
- * here opens an app, a notification or a setting. A row's tap only takes its target (§1.4: under a
+ * controls are [MusicLockPanel]'s, "Nødsamtale" is the lock's own button ([onEmergency]), the
+ * flashlight (design 41 §1.3) only toggles the torch ([torch]), the timer tile (design 42) and a
+ * row lead to the keypad - nothing here opens an app, a notification or a setting. A row's tap only takes its target (§1.4: under a
  * time rule only when the rule leaves it usable, QA Q1) and the content intent it would open (kept,
  * never sent here); the unlock takes it ([takeTarget]) and [GlanceOpener] opens it after the code.
  * Every entry point catches everything and logs the exception class only: a glance fault must never
@@ -68,10 +93,19 @@ class GlancePanel(
     private val keypad: View,
     /** The stage changed: the activity renders the keypad's prompt. */
     private val onStage: () -> Unit,
+    /** The flashlight (design 41): the phone's `Torch` ([lockTorch]); `null` = no button. */
+    private val torch: TorchPort? = lockTorch(activity),
     private val onEmergency: () -> Unit,
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
-    private val music = MusicLockPanel(activity, glance) { render() }
+
+    /** r6 §2: the session's and the timer's callbacks of one frame render once - each source's tile
+     * alone (qa-r6-b-code L4: the clock app posts every second, the music tile isn't touched for it). */
+    private val tileChanges: GlanceCoalescer = GlanceCoalescer({ run -> Choreographer.getInstance().postFrameCallback { run() } }) { tileChanged() }
+    private var musicDirty = false
+    private var clockDirty = false
+    private val music = MusicLockPanel(activity, glance) { musicDirty = true; tileChanges.request() }
+    private val clock = ClockLockPanel(activity, glance) { clockDirty = true; tileChanges.request() }
     private var started = false
 
     /** The stage (memory only). */
@@ -88,6 +122,9 @@ class GlancePanel(
     /** `PinLockRuntime.screenOffs` when the stage was last decided (null = not yet). */
     private var decidedAt: Int? = null
     private var tileUp = false
+
+    /** A timer runs (design 42): the timer tile is in the fit. */
+    private var clockUp = false
     private var rows: List<GlanceRow> = emptyList()
     private val rowViews = mutableListOf<ViewLockGlanceRowBinding>()
 
@@ -98,10 +135,20 @@ class GlancePanel(
     private var fitFor = 0
     private var fit: GlanceFit? = null
 
+    /** The shown tiles' heights (px, with their margins) the current fit was made with (null: none). */
+    private var fitTilePx: Int? = null
+    private var fitClockPx: Int? = null
+
+    /** The next alarm changed (design 42 §1.3): the line under the date again. */
+    private val alarmChanged = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) = render()
+    }
+
     private val labels = HashMap<String, String>()
     /** Home's icons for the rows, shared with the time-rule screen (qa-34-s7-code N4). */
     private val icons = AppIconLoader(activity, KidAvatars.dp(activity, 36f), LOG_TAG)
     private val changed: () -> Unit = { render() }
+    private val torchChanged: () -> Unit = { activity.runOnUiThread { guarded("torch") { bindTorch() } } }
 
     /** The phone's clock format changed (design 34 P12): the clock and the rows' times again. */
     private var clockWatch: ClockFormat.Watch? = null
@@ -114,6 +161,12 @@ class GlancePanel(
         glance.lockGlanceDate.format24Hour = datePattern
         glance.lockGlanceUnlock.setOnClickListener { step(GlanceStageEvent.Unlock) }
         glance.lockGlanceEmergency.setOnClickListener { onEmergency() }
+        glance.lockGlanceTorch.setOnClickListener { torch?.toggle() }
+        glance.lockTimerTile.setOnClickListener { tapClock() }
+        glance.lockTimerStop.setOnClickListener { ClockActions.stop(activity, ClockReader.stopIntent) }
+        openAction(glance.lockTimerTile)
+        // The clock app's text, like a row's: only accessibility tools read it.
+        sensitive(glance.lockTimerTile)
         // The fit needs the page's height: never before the first layout, again after every change
         // (gesture <-> 3-button navigation, QA Low 4).
         glance.root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
@@ -134,7 +187,12 @@ class GlancePanel(
             started = true
             GlanceStore.addListener(changed)
             MissedCallNotifier.addListener(changed)
+            torch?.addListener(torchChanged)
             music.start()
+            clock.start()
+            ContextCompat.registerReceiver(
+                activity, alarmChanged, IntentFilter(AlarmManager.ACTION_NEXT_ALARM_CLOCK_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
             clockWatch = ClockFormat.watch(activity) {
                 guarded("clock") {
                     ClockFormat.bind(glance.lockGlanceClock)
@@ -170,10 +228,17 @@ class GlancePanel(
     fun stop() = guarded("stop") {
         icons.cancel()
         music.stop()
+        clock.stop()
         if (!started) return@guarded
+        try {
+            activity.unregisterReceiver(alarmChanged)
+        } catch (e: IllegalArgumentException) {
+            // Never registered (start failed before it).
+        }
         started = false
         GlanceStore.removeListener(changed)
         MissedCallNotifier.removeListener(changed)
+        torch?.removeListener(torchChanged)
         ClockFormat.unwatch(activity, clockWatch)
         clockWatch = null
         labels.clear()
@@ -202,6 +267,18 @@ class GlancePanel(
         dropTargetIfGone()
         renderNow()
         onStage()
+    }
+
+    /** The timer tile's tap (design 42 §1.4): the keypad with the clock app as the target - under a
+     * time rule only when the rule leaves it usable, as a row's. Nothing is captured: it opens by its
+     * launch intent after the code. */
+    private fun tapClock() = guarded("tap") {
+        val target = GlanceTarget.ClockApp
+        val timeRule = LauncherPreferences.mdm().lockReason() != LockReason.NONE
+        val taken = glanceTargetTaken(timeRule, timeRule && GlanceOpener.usableUnderTimeRule(activity, target))
+        captured = null
+        promptLabel = if (taken) glancePromptLabel(label(target.packageName)) else null
+        step(GlanceStageEvent.Row(target.takeIf { taken }))
     }
 
     private fun dropTargetIfGone() {
@@ -242,8 +319,105 @@ class GlancePanel(
         null
     }
 
-    /** Re-render (rows, the session, a store change): never throws. */
+    /** Re-render (the rows, a store change): never throws. */
     private fun render() = guarded("render") { renderNow() }
+
+    /**
+     * A session callback (r6 §2, coalesced per frame): the tile rendered alone - the rows aren't
+     * rebound and the clock isn't touched. The page refits only when the tile came or went or the shown
+     * tile's height changed (a two-line title, the entry line coming or going; [glanceRefitDue]).
+     */
+    private fun tileChanged() = guarded("tile") {
+        val musicChanged = musicDirty
+        val clockChanged = clockDirty
+        musicDirty = false
+        clockDirty = false
+        if (!started) return@guarded
+        val page = state.stage == LockStage.GLANCE
+        var refit = false
+        if (musicChanged) {
+            val wasUp = tileUp
+            tileUp = glanceTile(music.lookUp())
+            music.show(shownTile(), page)
+            refit = glanceRefitDue(wasUp, tileUp, fitTilePx, shownTilePx())
+        }
+        if (clockChanged) {
+            val wasUp = clockUp
+            clockUp = clock.up
+            clock.show(shownClock(), page)
+            val width = pageWidth()
+            val clockPx = if (fit?.clock == true && width != null) withMargins(glance.lockTimerTile, width).roundToInt() else null
+            refit = glanceRefitDue(wasUp, clockUp, fitClockPx, clockPx) || refit
+        }
+        if (refit) {
+            fitFor = 0
+            fitNow()
+        }
+    }
+
+    /** The timer tile while a timer runs and the fit keeps it (before the first fit: shown). */
+    private fun shownClock(): Boolean = clockUp && fit?.clock != false
+
+    /** The fit's tile while one is up (the full one before the first fit). */
+    private fun shownTile(): GlanceTileSize =
+        if (!tileUp) GlanceTileSize.NONE else fit?.tile?.takeIf { it != GlanceTileSize.NONE } ?: GlanceTileSize.FULL
+
+    /** The shown tile's height with its margins at the page's width; null before the page is laid out. */
+    private fun shownTilePx(): Int? {
+        val width = pageWidth() ?: return null
+        val view = when (fit?.tile) {
+            GlanceTileSize.FULL -> glance.lockMediaTile
+            GlanceTileSize.COMPACT -> glance.lockMediaCompact
+            else -> return null
+        }
+        return withMargins(view, width).roundToInt()
+    }
+
+    /** The page's content width once it is laid out and shown, else null. */
+    private fun pageWidth(): Int? {
+        val root = glance.root
+        if (root.height <= 0 || root.visibility != View.VISIBLE) return null
+        return (root.width - root.paddingStart - root.paddingEnd).takeIf { it > 0 }
+    }
+
+    /** The next alarm under the date (design 42 §1.3): the system clock app's or the pinned clock
+     * app's only ([PinLockRuntime.clockPackages]), "Alarm 07:00" - with the weekday more than 24 h
+     * away; it goes with the date when the fit drops that. */
+    private fun bindAlarm() {
+        val next = try {
+            activity.getSystemService(AlarmManager::class.java)?.nextAlarmClock
+        } catch (e: Exception) {
+            null
+        }
+        val alarm = glanceAlarm(next?.triggerTime, next?.showIntent?.creatorPackage, PinLockRuntime.clockPackages(), System.currentTimeMillis())
+        val view = glance.lockGlanceAlarm
+        view.text = alarm?.let { activity.getString(R.string.lock_alarm, alarmText(it)) }
+        view.visibility = if (alarm != null && fit?.date != false) View.VISIBLE else View.GONE
+    }
+
+    private fun alarmText(alarm: GlanceAlarm): String {
+        val time = ClockFormat.formatUntil(activity, alarm.atMs)
+        if (!alarm.withWeekday) return time
+        val locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()
+        val day = DateFormat.format(DateFormat.getBestDateTimePattern(locale, "EEE"), alarm.atMs).toString().trimEnd('.')
+        return "$day $time"
+    }
+
+    /** The flashlight button (design 41 §1.3): hidden, off, or lit - a filled peach disc with the
+     * ground's glyph. It toggles the torch and opens nothing; its presence never moves the fit (the
+     * row is as tall as "Nødsamtale" either way). */
+    private fun bindTorch() {
+        val t = torch
+        val button = glance.lockGlanceTorch
+        val look = glanceTorchButton(t?.hasFlash == true, t?.refusedWhileLocked == true, t?.lit == true)
+        button.visibility = if (look == GlanceTorchButton.HIDDEN) View.GONE else View.VISIBLE
+        if (look == GlanceTorchButton.HIDDEN) return
+        val lit = look == GlanceTorchButton.LIT
+        button.setBackgroundResource(if (lit) R.drawable.bg_music_play else R.drawable.bg_music_control)
+        button.setImageResource(if (lit) R.drawable.torch_glyph_on else R.drawable.torch_glyph_off)
+        button.imageTintList = ColorStateList.valueOf(activity.getColor(if (lit) R.color.kid_ground else R.color.kid_core))
+        button.stateDescription = activity.getString(if (lit) R.string.lock_torch_on else R.string.lock_torch_off)
+    }
 
     private fun renderNow() {
         val shown = state.stage == LockStage.GLANCE
@@ -251,6 +425,7 @@ class GlancePanel(
         keypad.importantForAccessibility =
             if (shown) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
         tileUp = glanceTile(music.lookUp())
+        clockUp = clock.up
         try {
             rows = GlanceStore.rows(MissedCallNotifier.current)
             bindRows()
@@ -260,8 +435,11 @@ class GlancePanel(
             rows = emptyList()
             rowViews.forEach { it.root.visibility = View.GONE }
         }
+        bindTorch()
+        bindAlarm()
         // The tile's content first (the fit measures it), then the fit decides which tile shows.
-        music.show(fit?.tile?.takeIf { tileUp } ?: if (tileUp) GlanceTileSize.FULL else GlanceTileSize.NONE, page = shown)
+        music.show(shownTile(), page = shown)
+        clock.show(shownClock(), page = shown)
         fitFor = 0
         fitNow()
     }
@@ -406,7 +584,12 @@ class GlancePanel(
      * code opens. */
     private fun describe(view: ViewLockGlanceRowBinding, description: String, action: String) {
         view.root.contentDescription = description
-        view.root.accessibilityDelegate = object : View.AccessibilityDelegate() {
+        openAction(view.root, action)
+    }
+
+    /** The click action TalkBack names ("Lås opp og åpne" - the keypad first). */
+    private fun openAction(view: View, action: String = activity.getString(R.string.glance_open_action)) {
+        view.accessibilityDelegate = object : View.AccessibilityDelegate() {
             override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
                 super.onInitializeAccessibilityNodeInfo(host, info)
                 info.addAction(AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, action))
@@ -449,10 +632,8 @@ class GlancePanel(
      * Only once the page is laid out; a re-render starts again from candidate 1. */
     private fun fitNow() {
         val root = glance.root
+        val width = pageWidth() ?: return
         val height = root.height
-        if (height <= 0 || root.visibility != View.VISIBLE) return
-        val width = root.width - root.paddingStart - root.paddingEnd
-        if (width <= 0) return
         fitFor = height
         val available = (height - root.paddingTop - root.paddingBottom).toFloat()
         val clock = glance.lockGlanceClock
@@ -464,34 +645,45 @@ class GlancePanel(
         val more = glance.lockGlanceMore
         more.text = activity.resources.getQuantityString(R.plurals.glance_more, 9, 9)
         val heights = GlanceHeights(
-            fixed = withMargins(glance.lockGlanceUnlock, width) + withMargins(glance.lockGlanceEmergency, width),
+            fixed = withMargins(glance.lockGlanceUnlock, width) + withMargins(glance.lockGlanceBottom, width),
             clockBig = clockBig,
             clockSmall = clockSmall,
-            date = withMargins(glance.lockGlanceDate, width),
+            // The alarm line goes with the date (design 42 §1.3).
+            date = withMargins(glance.lockGlanceDate, width) +
+                (if (glance.lockGlanceAlarm.text.isNullOrEmpty()) 0f else withMargins(glance.lockGlanceAlarm, width)),
             tileFull = withMargins(glance.lockMediaTile, width),
             tileCompact = withMargins(glance.lockMediaCompact, width),
+            clockFull = withMargins(glance.lockTimerTile, width),
             rowsTop = dp(ROWS_TOP_DP).toFloat(),
             rowsTopNoTile = dp(ROWS_TOP_NO_TILE_DP).toFloat(),
             row = shownRows.maxOfOrNull { measured(it.root, width) } ?: 0f,
             rowGap = dp(8f).toFloat(),
             more = measured(more, width),
         )
-        val next = glanceFit(available, heights, tileUp, rows.size)
+        val next = glanceFit(available, heights, tileUp, rows.size, clockUp)
         if (next != fit) {
             Log.i(LOG_TAG, "Glance fit: candidate ${next.candidate}, ${next.rows} rows, ${next.more} more")
             refitPending = true
         }
         fit = next
+        fitTilePx = when (next.tile) {
+            GlanceTileSize.FULL -> heights.tileFull
+            GlanceTileSize.COMPACT -> heights.tileCompact
+            GlanceTileSize.NONE -> null
+        }?.roundToInt()
+        fitClockPx = heights.clockFull.roundToInt().takeIf { next.clock }
         apply(next, shownRows)
     }
 
     private fun apply(fit: GlanceFit, shownRows: List<ViewLockGlanceRowBinding>) {
         glance.lockGlanceClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (fit.bigClock) CLOCK_BIG_SP else CLOCK_SMALL_SP)
         glance.lockGlanceDate.visibility = if (fit.date) View.VISIBLE else View.GONE
+        glance.lockGlanceAlarm.visibility = if (fit.date && !glance.lockGlanceAlarm.text.isNullOrEmpty()) View.VISIBLE else View.GONE
         music.show(fit.tile, page = true)
+        clock.show(fit.clock, page = true)
         val list = glance.lockGlanceList
         list.visibility = if (fit.rows == 0 && fit.more == 0) View.GONE else View.VISIBLE
-        val top = dp(if (fit.tile == GlanceTileSize.NONE) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)
+        val top = dp(if (fit.tile == GlanceTileSize.NONE && !fit.clock) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)
         (list.layoutParams as ViewGroup.MarginLayoutParams).let {
             if (it.topMargin != top) list.layoutParams = it.apply { topMargin = top }
         }

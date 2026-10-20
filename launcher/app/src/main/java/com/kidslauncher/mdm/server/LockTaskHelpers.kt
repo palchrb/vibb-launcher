@@ -251,7 +251,8 @@ class StatusBarLatch {
  * the in-call UI of every call (qa-10-code #5; with the role held its emergency in-call UI runs
  * under AOSP's KEYGUARD exemption, and pinning it would let its full UI - call log, contacts,
  * keypad - stay over the lock) - and the clock app (its alarm screen shows over the lock). Only system apps, never a
- * forbidden one (Settings, the camera) or Play.
+ * forbidden one (Settings, the camera) or Play - except [clockApp], the catalog's clock app with its pinned signer
+ * (design 42 §1.2, `ClockApp.installed`), whose alarm screen shows over the lock the same way.
  */
 fun pinLockHelpers(
     emergencyDialer: ResolvedHelper?,
@@ -261,9 +262,11 @@ fun pinLockHelpers(
     forbidden: Set<String>,
     ourDialerHeld: Boolean = false,
     emergencySos: ResolvedHelper? = null,
+    clockApp: String? = null,
 ): Set<String> = listOfNotNull(emergencyDialer, telecom, systemDialer.takeIf { !ourDialerHeld }, alarmApp, emergencySos)
     .filter { it.system && it.packageName !in forbidden && it.packageName !in PLAY_CORE }
     .mapTo(mutableSetOf()) { it.packageName }
+    .apply { clockApp?.takeIf { it !in forbidden }?.let(::add) }
 
 /** One of the chrome's writes ([chromeWriteOrder]). */
 enum class ChromeWrite { STATUS_BAR, CREATE_WINDOWS, LOCK_TASK }

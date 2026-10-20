@@ -18,6 +18,8 @@
 #   design 34 P6; LOCK_GLYPHS below - not a parent choice, so not in app_icons.json)
 #   launcher/app/src/main/res/drawable/torch_glyph_<key>.xml   (the flashlight's tile and lock button, design 41;
 #   TORCH_GLYPHS below)
+#   launcher/app/src/main/res/drawable/clock_glyph_<key>.xml   (the lock's timer tile and its Stopp button, design 42;
+#   CLOCK_GLYPHS below)
 # Every converted file says what it was converted from (Apache-2.0 §4(b)).
 set -eu
 COMMIT=737e3324305806514d7909874fa1818ae1808232
@@ -57,6 +59,8 @@ rocket_launch bbd73bab567e74f4dd1e10f3e31261ee927b5121484763e7b9ef19e324244ab9
 hourglass_bottom 4de2c88bf639a1f5f114be2cdd2b2e36611500e8d3adb6d57402beae91b3aa17
 flashlight_on 6ea0d1a366d4c9e4dbb60fafff51286ee563e5a03eb6541fe0071761283a7e5f
 flashlight_off a5de8d4ae00e77fca5caf13553c13bcf537007e95d645d3a5fb200dbb6715656
+timer e177e5b0c620eab0719b917e234e542a4e90b6d3ca23ced23c28c0c79f092b16
+stop 461106881100fa958bb90b2e1aae721e71f9f88b7de0b926c712b2c9c536c7a5
 HASHES
 
 while read -r name sha; do
@@ -120,7 +124,9 @@ for key, name in icons.items():
 LOCK_GLYPHS = {"hourglass": "hourglass_bottom", "bedtime": "bedtime", "school": "menu_book"}
 # The flashlight (design 41): Home's tile and the lock's button, lit and dark.
 TORCH_GLYPHS = {"on": "flashlight_on", "off": "flashlight_off"}
-for prefix, glyphs in (("lock_glyph", LOCK_GLYPHS), ("torch_glyph", TORCH_GLYPHS)):
+# The clock on the lock (design 42): the timer tile's glyph and its Stopp button.
+CLOCK_GLYPHS = {"timer": "timer", "stop": "stop"}
+for prefix, glyphs in (("lock_glyph", LOCK_GLYPHS), ("torch_glyph", TORCH_GLYPHS), ("clock_glyph", CLOCK_GLYPHS)):
     for key, name in glyphs.items():
         with open(f"launcher/app/src/main/res/drawable/{prefix}_{key}.xml", "w") as out:
             out.write('<?xml version="1.0" encoding="utf-8"?>\n'

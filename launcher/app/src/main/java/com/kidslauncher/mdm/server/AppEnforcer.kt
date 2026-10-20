@@ -902,6 +902,7 @@ object AppEnforcer {
             forbidden = forbidden,
             ourDialerHeld = CallSystem.dialerRoleHeld(context),
             emergencySos = resolved[HelperKind.EMERGENCY_SOS],
+            clockApp = com.kidslauncher.mdm.lock.ClockApp.PACKAGE.takeIf { com.kidslauncher.mdm.lock.ClockApp.installed(context) },
         )
         Log.i(LOG_TAG, "PIN lock helpers (kiosk off): $helpers")
         return helpers
