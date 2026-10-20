@@ -915,32 +915,38 @@ findings, merge to `main`, full suite once.
   widget carries a running timer with controls - the notification does, design 42). Decision 2026-10-20: not now; the
   targeted tiles (music, timer/alarm, flashlight) cover what was asked. Revisit when a third app needs a glance
   surface.
-- **Catalog apps: protected from force-stop, a one-tap battery exemption at install** (the user, 2026-10-20: "sikre
+- **Catalog apps: protected from force-stop, no battery-exemption flow** (the user, 2026-10-20: "sikre
   at vi kan installere apper direkte på telefonen, og samtidig live gi de batteriunntak"). Two parts: (1) the device
-  owner sets `setUserControlDisabledPackages` for every catalog-installed app (the kid can't force-stop or clear it;
-  from Android 12 it is kept out of app hibernation) - plain code at install/allow time, removed when the app leaves
-  the catalog; (2) the battery optimisation exemption: NO flow (the user, 2026-10-20, on the proposal of a
+  owner sets `setUserControlDisabledPackages` for the catalog apps we installed (the stored catalog pins ∩ installed
+  ∩ installed by us, minus hidden and our own; the kid can't force-stop or clear it) - plain code in `apply()` after
+  `applyHardening`, in its own try/catch, **lifted by the override and the pause** like every restriction (standing
+  rule) and re-applied after; gone when the app leaves the catalog; whether it also keeps the app out of hibernation is
+  a device check, not a claim; (2) the battery optimisation exemption: NO flow (the user, 2026-10-20, on the proposal of a
   time-boxed Settings window for Android's dialog: "Nei vil ikke auto åpne settings, da er det bedre at vi ikke legger
   inn noe spesielt rundt batteriunntaket. Da får folk styre det selv") - the parent grants it by hand during a pause as
-  design 19b says, and the app's row in the PWA only shows the state ("exempt" / "restricted", from the status
-  report's app list). Design: `docs/design/r7-launcher-small-items.md` §2. Launcher round 7 (+ the status contract
+  design 19b says, and the app's row in the PWA only shows the state ("Background: unrestricted" / "Background: optimized (Android's default) - change it during a pause", from the
+  status report's app list). Design: `docs/design/r7-launcher-small-items.md` §2. Launcher round 7 (+ the status contract
   field in both directories).
 - **Wake the screen for a notification - a global switch** (the user, 2026-10-20, on the lock screen never waking for a
   notification, design 32b's exclusion: "la det være en global bryter i pwa? Under feks lock screen kategorien i phone
   settings"): one per-device switch in the PWA under Device › Lock screen, off by default (today's behaviour), a policy
   field `lock_wake_on_notification` (both directories, `policy_json_keys_snapshot` + `PolicyResponseCompatTest` in one
-  commit); when on, the launcher wakes the screen (`PowerManager`/`turnScreenOn` on the lock activity, a short
-  timeout, never a dismiss) for a missed call and for a glance app's notification (design 51's list), never for the
-  music tile. Launcher round 7 (the server half with it).
+  commit); when on, the launcher wakes the screen through the existing VoIP wake path (`PinLockRuntime.show(wake)` with a `WakeKind`; the lock activity
+  itself never gets turn-screen-on, design 32 §7; never a dismiss), off again after 15 s untouched, not in a pocket
+  (proximity), for a missed call and for a glance app's new row (alerting, not suspended, passes DND; design 51's
+  list), never for the music tile. Launcher round 7 (the server half with it).
 - **Any allowed app may ring over the lock** (the user, 2026-10-20: "det er ikke sånn at vi bare automatisk kan
   sense om en app har call funksjon med den call style biten? Isåfall kan den få automatisk tilgang"): design 17's
   reading is already generic (a CALL-category notification with a full-screen intent from an unsuspended app); only
   `voipCandidates` (`lock/VoipCallPlan.kt`) fixes the set to Element X and Signal/Molly (the contacts' messaging apps
-  while calls are managed, `KNOWN_VOIP_PACKAGES` while unmanaged). Change: the candidate set is every allowlisted,
-  unsuspended app (never the SMS app, as today), under the same gates (calls on, no no-calls time rule; none while
-  calls are off or unknown). Accepted: an allowed app that fakes a ring gets its own screen over the lock for that
-  ring - the app is the parent's choice, the kiosk keeps the rest locked. The status report counts rings per package
-  (`lock_state.voip_rings`, package + count, no text) so the PWA can show "rang over the lock". The in-call phase stays
+  while calls are managed, `KNOWN_VOIP_PACKAGES` while unmanaged). Change: the candidate set is every allowed,
+  unsuspended app minus the SMS packages, the essential/dialer packages and our own family, under the same gates (calls
+  on, no no-calls time rule; none while calls are off or unknown), with a budget of 6 accepted rings per app per hour
+  (over it = no ring, reported as `limited`). **Pending the user's yes to the residual** (design QA question 1): an
+  allowed app that fakes a ring gets its own screen over the lock for that ring, and with the kiosk on that screen can
+  open other allowed apps for the call's duration (as Element X today); strangers can ring through apps whose contacts
+  Vibb doesn't manage. The status report lists the apps that rang (`lock_state.voip_rang`, package + `last_at_ms` +
+  `limited`, no text) so the PWA can show "rang over the lock". The in-call phase stays
   "a CALL-category foreground notification (or Element's channel) + audio IN_COMMUNICATION": an app without it gets
   the lock back after the 15 s grace, its call going on in the background. Launcher only (+ the status field in both
   directories). Launcher round 7.
