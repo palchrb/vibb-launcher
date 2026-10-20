@@ -971,6 +971,24 @@ findings, merge to `main`, full suite once.
   owed: an app update's new icon on Home without a restart, also an update while Home is in front with the screen on
   (qa-l7-a-code #1: the package is evicted again right before the reloaded list is posted); Home pressed on a scrolled Home (and not after unlocking,
   at boot or from another app); a badge change rebinding one tile with no flicker; the menus closing on the press.
+- **Bluetooth headphones: connect a paired device - fix Kid Settings, then a "Lyd ut" list in the music app** (the
+  user, 2026-10-20: "kunne paring/bt connect av eksisterende parede enheter dukke opp i musikk appen? ... Er du sikker?
+  Sjekk andre prosjekter"). Checked against AOSP `android16-release` (packages/modules/Bluetooth): the A2DP profile
+  proxy's `BluetoothA2dp.connect(device)` is `@hide` but `@UnsupportedAppUsage` **without** a `maxTargetSdk` (so
+  reachable by reflection at target 36, on the "unsupported" list - it may be blocked in a later release), and the
+  service (`A2dpServiceBinder.getServiceAndEnforceConnect`) asks only for `BLUETOOTH_CONNECT` + the active user; it
+  refuses a device with `CONNECTION_POLICY_FORBIDDEN` or without the A2DP sink UUID and disconnects the current sink
+  when only one is allowed. Tasker's "Bluetooth Connection › Connect" (no root) does the same. **Our Kid Settings calls
+  the wrong method**: `QuickControls.connectBluetoothDevice` reflects `BluetoothDevice.connect()`, which since Android 13
+  is `@SystemApi` needing `BLUETOOTH_PRIVILEGED` + `MODIFY_PHONE_STATE` and returns an `int` (read as `Boolean` ->
+  always false) - so "Connect" there has most likely never worked on the Jelly Star. Steps: (1) launcher: connect and
+  disconnect through the A2DP proxy (`getProfileProxy(A2DP)`, reflect `connect(BluetoothDevice)`/`disconnect`, a short
+  wait for the proxy, fail-soft, logged by class), LE Audio's proxy the same way only if the device has no A2DP;
+  (2) music app: its output sheet ("Telefon" / Sonos rooms) lists the paired audio devices (bonded with an A2DP sink or
+  LE audio UUID; `getConnectedDevices` for the state) with "Koble til" - the music app calls the proxy itself, the
+  launcher grants it `BLUETOOTH_CONNECT` as device owner (as it grants `POST_NOTIFICATIONS` in `MusicSync`), no bridge
+  change; pairing new devices stays in Kid Settings (the system's pairing dialog). Device check first on the Jelly
+  Star with a headset last used on another phone. Design note + the usual process; a launcher and a music round.
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
