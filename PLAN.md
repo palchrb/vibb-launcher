@@ -519,6 +519,15 @@ findings, merge to `main`, full suite once.
   Emergency SOS" (16:37:12) - the SOS guess must not fire for the VoIP wake/FSI; (3) Home pressed during a VoIP call
   with the kiosk off flashes BlockedAppActivity (the app-block bit is on while the call is pinned) before the lock.
   Long list, not now: the caller's name/picture on the ring card from CallStyle's `EXTRA_CALL_PERSON`, memory only.
+- **Stuck in Recents after an unlock** (the user's emulator, 2026-10-21 ~16:55, not reproduced, no lock log kept): the
+  user had just unlocked to grant WhatsApp its call permissions; then "app not available", the lock, and after the
+  unlock quickstep's empty RecentsActivity on top with lock task LOCKED, HOME resolving to ours but `am start -c HOME`
+  refused with 101 (lock-task violation - the HOME feature off, as while the PIN lock is LOCKED). Suspect: the lock's
+  mode or the chrome left LOCKED after the unlock (permission controller dialogs inside lock task). Try to reproduce
+  (WhatsApp's first-run permission flow over the PIN lock, kiosk on); keep `logcat | grep -E "PinLock|LockTask"`.
+- **PWA: a pause or "Lock again" from the PWA shows only after a manual reload** (the user, 2026-10-21): the phone
+  acts at once (SSE), the page doesn't follow. Load `auto-reload.js` (3 s, design 31's pattern, scroll kept) while a
+  `start_pause`/`end_windows` command is unanswered or its window isn't in the newest status yet, at most ~2 min.
 
 - **No network after the VPN (re)starts** (the user's emulator, 2026-10-19, launcher 0.29.0 release): every upstream
   socket of design 36's DNS engine was refused by `protect()` - Android's `Socket()` has no descriptor until a bind -,
