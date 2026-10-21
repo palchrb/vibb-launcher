@@ -1368,6 +1368,19 @@ findings, merge to `main`, full suite once.
   `adb shell dumpsys notification --noredact | grep -B4 -A16 "<its text>"` and `adb logcat -d -s NotificationRule`
   before changing the rule (a snooze for non-clearable nags is the candidate fix).
 
+- **Sonos polling round (53-d)** (approved 2026-10-21, "skal vi bare starte den"): after 53-c merges - a confirm poll
+  every 1 s after any socket event we didn't cause until UPnP agrees with it (up to ~3-4 s, generalising the IDLE
+  recheck), the metadata's `objectId: "vibb-1"` as an early "ours" hint, a slow UPnP check (60-120 s) while the socket is
+  healthy, today's 5/15 s cadence only without a healthy socket.
+- **The notification filter on by default for new phones** (the user, 2026-10-21: "Varselfilter kan gjerne være på som
+  standard, alt som er viktig for funksjon/hindre ting utenfor launcher bør vel gjerne bare være med"): server
+  migration so a new `device_policy` row gets `notification_auto_cancel = 1`; existing phones keep their setting.
+- **Design 55 (to write): controls on the lock's clock tile** (the user, 2026-10-21, iPhone-like): stopwatch running -
+  pause and lap; paused - play and X (stop, reset, the notification goes); timer running - pause and X; paused - play
+  and X; ended - restart and X. Needs research of what Fossify Clock exposes (today: only the ended timer's single
+  Dismiss broadcast, design 42) - its receivers/intents for pause, resume, reset, lap, restart - and what the lock may
+  send without unlocking (broadcasts only, never an activity).
+
 ### To decide (the user)
 
 
