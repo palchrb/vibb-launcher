@@ -558,6 +558,13 @@ findings, merge to `main`, full suite once.
   phone's DNS filter (`dns.google`, `cloudflare-dns.com`, `mozilla.cloudflare-dns.com`, `dns.quad9.net`, `doh.*`...),
   never the launcher's own upstreams (protected sockets, IP literals); (3) Firefox's canary `use-application-dns.net`
   answered NXDOMAIN. Later, if wanted: route the public resolvers' IPs into the tunnel and drop 443 to them.
+  **Cromite checked (uazo/cromite 3724efc, 2026-09-19):** a poor fit for a filtered phone - `DoH-improvements.patch`
+  turns "automatic" into strict secure DoH and fills an empty template with `https://doh.opendns.com/dns-query` (so
+  out of the box it never asks our DNS), and stubs out Chromium's "disable DoH when managed / parental controls"
+  (`ShouldDisableDohForManaged`/`...ForParentalControls` return false); `Ignore-enterprise-policies-for-secure-DNS.patch`
+  reports the device as never owned; `Disable-Android-AppRestrictions.patch` drops Chrome's managed-config provider
+  behind a flag that defaults off (a kid can't be held to it either). With fix (2) blocking doh.opendns.com, Cromite
+  resolves nothing until its Secure DNS is set Off by hand; a custom template by IP literal still bypasses names.
 - **The server's exposure (the user, 2026-10-21):** a public HTTPS endpoint for the phones, the PWA over the tailnet
   only. So the phone-intake budgets (server L1/L3/L4) and launcher S-M1 (refuse a non-https server URL) matter.
 - **Stuck in Recents after an unlock** (the user's emulator, 2026-10-21 ~16:55, not reproduced, no lock log kept): the
