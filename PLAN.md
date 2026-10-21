@@ -565,7 +565,7 @@ findings, merge to `main`, full suite once.
   reports the device as never owned; `Disable-Android-AppRestrictions.patch` drops Chrome's managed-config provider
   behind a flag that defaults off (a kid can't be held to it either). With fix (2) blocking doh.opendns.com, Cromite
   resolves nothing until its Secure DNS is set Off by hand; a custom template by IP literal still bypasses names.
-- **Storytel login to the phone (server review M3, the user's choice pending):** proposed - the password never leaves
+- **Storytel login to the phone (server review M3, approved 2026-10-21 - design 58):** the password never leaves
   the server; the phone asks for a JWT through the launcher bridge when it downloads/streams/syncs (like Spotify's token
   courier), the server shares its cached JWT (one Storytel login an hour at most, only in hours with use). Checked
   debba/storytel-player (2ca1e2d, 2026-10-18): its password mode is ours (re-login on expiry, the JWT's own exp-iat,
