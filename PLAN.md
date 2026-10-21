@@ -1387,6 +1387,12 @@ findings, merge to `main`, full suite once.
   after 3 s that pings `GET /ping` and starts the navigation again by itself, "Try again" after 20 s; back after 10
   minutes hidden: a ping and a reload in place keeping the scroll place. Owed: the iPhone PWA after being away (and
   the Android one) - a tab tapped before the network is up shows the chip and the page arrives without another tap.
+- **One select per app on the lock** (approved 2026-10-21, the mockup's variant B). **Done (branch
+  `srv-sweep-resume`)**: Lock Screen & PINs' app list is one row per app with a native select - Off, Name only, Full
+  text - replacing the tick and the "Show message text" switch ("Sender's name only" was wrong for non-chat apps);
+  `POST /devices/{id}/lock-screen/apps` takes `show`, the `/text` route is gone; stored data and policy unchanged.
+- **A quiet NRK/RSS entry is checked daily** (approved 2026-10-21). **Done (branch `srv-sweep-resume`)**: no new item
+  in 30 days -> once a day instead of the interval, back on it as soon as a check finds a new item.
 - **Design 55 (to write): controls on the lock's clock tile** (the user, 2026-10-21, iPhone-like): stopwatch running -
   pause and lap; paused - play and X (stop, reset, the notification goes); timer running - pause and X; paused - play
   and X; ended - restart and X. Needs research of what Fossify Clock exposes (today: only the ended timer's single

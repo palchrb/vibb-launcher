@@ -1316,6 +1316,114 @@ async fn the_cadence_follows_the_setting() {
     );
 }
 
+/// The entries due `hours` after t0, by id.
+async fn due_sorted(app: &TestApp, hours: i64) -> Vec<i64> {
+    let mut ids: Vec<i64> = sweep::due(&app.db, t0() + TimeDelta::hours(hours))
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.entry_id)
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// A feed of `(guid, published)` items, newest first.
+fn dated_feed(items: &[(&str, DateTime<Utc>)]) -> String {
+    let mut body = String::from("<?xml version=\"1.0\"?><rss><channel><title>Stille</title>");
+    for (guid, published) in items.iter().rev() {
+        body.push_str(&format!(
+            "<item><title>{guid}</title><guid>{guid}</guid><enclosure url=\"https://example.org/{guid}.mp3\"/><pubDate>{}</pubDate></item>",
+            published.to_rfc2822()
+        ));
+    }
+    body.push_str("</channel></rss>");
+    body
+}
+
+/// 2026-10-21: an NRK/RSS entry with no new item in 30 days is checked once a day, not at its
+/// interval; a check that finds a new item - new by its date, or an old-dated one first seen by a
+/// later check - puts it back on its interval at once. Check now is unaffected; Storytel and
+/// Spotify keep their own rules.
+#[tokio::test]
+async fn a_quiet_entry_is_checked_daily_until_it_has_a_new_item() {
+    let rss = crate::music::parse_link("https://example.org/q.rss").unwrap();
+    let nrk = crate::music::parse_link("https://radio.nrk.no/podkast/x").unwrap();
+    let spotify =
+        crate::music::entry_link("spotify", "spotify:show:4FakeShow0000000000001").unwrap();
+    let old = Some(t0() - TimeDelta::days(30));
+    for link in [&rss, &nrk] {
+        assert!(sweep::quiet(link, old, t0()));
+        assert!(!sweep::quiet(link, Some(t0() - TimeDelta::days(29)), t0()));
+        assert!(!sweep::quiet(link, None, t0()), "no items yet");
+    }
+    assert!(!sweep::quiet(&spotify, old, t0()));
+
+    let app = TestApp::new().await;
+    let (phone, _) = app.enrolled_device("Ella").await;
+    let created = "2026-10-01 10:00:00";
+    let quiet = entry(&app, "https://example.org/q.rss", "Q", "auto", created).await;
+    let busy = entry(&app, "https://example.org/b.rss", "B", "auto", created).await;
+    let backlog = entry(&app, "https://example.org/o.rss", "O", "auto", created).await;
+    for id in [quiet, busy, backlog] {
+        tick_on(&app, phone, id).await;
+    }
+    let long_ago = |days| t0() - TimeDelta::days(days);
+    app.fetch.answer(
+        "https://example.org/q.rss",
+        200,
+        dated_feed(&[("q1", long_ago(90)), ("q2", long_ago(40))]),
+    );
+    app.fetch.answer(
+        "https://example.org/b.rss",
+        200,
+        dated_feed(&[("b1", long_ago(40)), ("b2", long_ago(2))]),
+    );
+    app.fetch.answer(
+        "https://example.org/o.rss",
+        200,
+        dated_feed(&[("o1", long_ago(60))]),
+    );
+    for id in [quiet, busy, backlog] {
+        assert_eq!(check(&app, id, t0()).await.error, None);
+    }
+    // The setting is 6 h: the busy feed every 6 h, the quiet ones once a day.
+    assert_eq!(due_sorted(&app, 6).await, [busy]);
+    assert_eq!(due_sorted(&app, 23).await, [busy]);
+    assert_eq!(due_sorted(&app, 24).await, [quiet, busy, backlog]);
+    // Check now is unaffected.
+    sweep::request_check(&app.db, quiet, t0() + TimeDelta::hours(1))
+        .await
+        .unwrap();
+    let first = sweep::due(&app.db, t0() + TimeDelta::hours(1))
+        .await
+        .unwrap();
+    assert_eq!(
+        first.first().map(|s| (s.entry_id, s.why)),
+        Some((quiet, sweep::Why::CheckNow))
+    );
+    check(&app, quiet, t0() + TimeDelta::hours(1)).await;
+
+    // A new episode in the quiet feed, an old-dated one first seen in the other: both back on the
+    // 6 h interval from that check.
+    app.fetch.answer(
+        "https://example.org/q.rss",
+        200,
+        dated_feed(&[("q1", long_ago(90)), ("q2", long_ago(40)), ("q3", t0())]),
+    );
+    app.fetch.answer(
+        "https://example.org/o.rss",
+        200,
+        dated_feed(&[("o0", long_ago(70)), ("o1", long_ago(60))]),
+    );
+    let day = t0() + TimeDelta::hours(24);
+    for id in [quiet, busy, backlog] {
+        assert_eq!(check(&app, id, day).await.error, None);
+    }
+    assert!(due_sorted(&app, 29).await.is_empty());
+    assert_eq!(due_sorted(&app, 30).await, [quiet, busy, backlog]);
+}
+
 /// Check now first, then a single new entry before an import's backlog (newest first), then
 /// rework, then the intervals.
 #[tokio::test]

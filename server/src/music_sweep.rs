@@ -5,8 +5,10 @@
 //!
 //! - **Cadence** ([schedule], [due]): the family-wide setting `I` (1/3/6/12/24 h, default 6 = the
 //!   Pi); RSS every `I`, NRK every `max(I, min(2I, 12 h))`, an entry no phone has once a day after
-//!   its first fill. Check now, a new entry, a flagged item or an interrupted fill go first. A
-//!   failure backs off 15 min · 4^(n-1), capped at the interval, daily after 7 days.
+//!   its first fill, and a **quiet** NRK/RSS entry - no new item in [QUIET_DAYS] days ([quiet]) -
+//!   once a day too, back on its interval as soon as a check finds a new item (2026-10-21). Check
+//!   now, a new entry, a flagged item or an interrupted fill go first. A failure backs off 15 min ·
+//!   4^(n-1), capped at the interval, daily after 7 days.
 //! - **One check** ([check_entry]): a start stamp (`checked_at`, `failures` + 1, so a crash backs off
 //!   like a failure), then the work, then one transaction that first checks the entry still exists.
 //!   A failing root, listing page or feed keeps the last good list; a failing manifest only leaves
@@ -426,6 +428,8 @@ struct ScheduleRow {
     spotify_app_saved_at: Option<String>,
     spotify_login_at: Option<String>,
     art_more: i64,
+    /// When the entry last had a new item ([quiet]).
+    newest_at: Option<String>,
 }
 
 /// The check errors a saved login can cure: a Storytel entry failing with one of them since before
@@ -461,6 +465,21 @@ pub fn interval(link: &Link, ticked: bool, setting_hours: i64) -> TimeDelta {
         } => hours(24),
         _ => hours(setting_hours),
     }
+}
+
+/// An NRK or RSS entry with no new item for this many days is checked daily ([quiet]).
+pub const QUIET_DAYS: i64 = 30;
+
+/// A quiet NRK/RSS entry (2026-10-21): its newest item ([ScheduleRow]'s `newest_at`: the newest
+/// `published_at`, an item without one by its first sighting, and any item a later check found by
+/// that check's time) is [QUIET_DAYS] old or more - checked once a day instead of at its
+/// [interval]. A check that finds a new item makes `newest_at` that check's time, so the entry is
+/// back on its interval at once. No items yet: not quiet. Storytel and Spotify keep their rules.
+pub fn quiet(link: &Link, newest_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+    matches!(
+        link,
+        Link::NrkPodcast { .. } | Link::NrkSeries { .. } | Link::Rss { .. }
+    ) && newest_at.is_some_and(|at| at + TimeDelta::days(QUIET_DAYS) <= now)
 }
 
 /// The wait after `failures` failed checks in a row: 15 min · 4^(n-1), at most `interval`.
@@ -504,7 +523,12 @@ fn schedule_one(
     let checked = row.checked_at.as_deref().and_then(parse_stamp);
     let requested = row.requested_at.as_deref().and_then(parse_stamp);
     let created = parse_stamp(&row.created_at).unwrap_or(now);
-    let every = interval(&link, row.ticked, setting_hours);
+    let newest_at = row.newest_at.as_deref().and_then(parse_stamp);
+    let every = if quiet(&link, newest_at, now) {
+        interval(&link, row.ticked, setting_hours).max(hours(24))
+    } else {
+        interval(&link, row.ticked, setting_hours)
+    };
     // Its regular time: after a success the interval, after a failure the backoff (daily after a
     // week of failures).
     let regular = if row.failures > 0 {
@@ -655,7 +679,13 @@ pub async fn schedule(
              AS storytel_saved_at, \
            (SELECT a.saved_at FROM music_spotify_app a WHERE a.id = 1) AS spotify_app_saved_at, \
            (SELECT MAX(a.authorized_at) FROM music_spotify_accounts a) AS spotify_login_at, \
-           COALESCE(l.art_more, 0) AS art_more \
+           COALESCE(l.art_more, 0) AS art_more, \
+           NULLIF(MAX( \
+             COALESCE((SELECT MAX(COALESCE(i.published_at, i.first_seen_at)) FROM music_items i \
+               WHERE i.entry_id = e.id), ''), \
+             COALESCE((SELECT MAX(i.first_seen_at) FROM music_items i WHERE i.entry_id = e.id \
+               AND i.first_seen_at > (SELECT MIN(j.first_seen_at) FROM music_items j \
+                 WHERE j.entry_id = e.id)), '')), '') AS newest_at \
          FROM music_entries e LEFT JOIN music_listings l ON l.entry_id = e.id \
          WHERE e.source IN ('nrk', 'rss', 'storytel', 'spotify') AND e.target IS NOT NULL",
     )

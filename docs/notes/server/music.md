@@ -132,7 +132,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   and their dedupe sets only, 8 KB of text per element, nesting past 64 = `not_feed`.
 - **Cadence** (`schedule`/`due`): RSS every `I`, NRK `max(I, min(2I, 12 h))`, unticked daily; priority Check now >
   never listed > rework (flags, untried pending, refill) > interval; backoff 15 min x 4^(n-1) capped at the interval,
-  daily after 7 days.
+  daily after 7 days. **Quiet entries** (2026-10-21, `music_sweep::quiet`, `QUIET_DAYS` = 30): an NRK/RSS entry whose
+  newest item is 30 days old or more is checked once a day instead. The newest item (`schedule`'s `newest_at`, from
+  `music_items`): the newest `published_at` (an item without one by its `first_seen_at`), and any item first seen by
+  a later check than the first fill at that check's time - so a check that finds a new item, even an old-dated one,
+  puts the entry back on its interval at once; a dead feed is quiet from its first fill (its dates are old), one
+  without dates after 30 days. No items: not quiet. Check now, a new entry, flags, rework and art passes are
+  unaffected (they don't use the interval); the backoff's cap is the daily interval then. Storytel and Spotify keep
+  their own rules. Test: `music_sweep::a_quiet_entry_is_checked_daily_until_it_has_a_new_item`.
 - **Rechecks**: `music_state.item_errors` 401/403/404/410 at the current version from a phone with the entry flag the
   item (`flag_reports`, once per item a day; stamped by `Sweep::now`, the tests' fake clock); a flag makes an entry
   due only while it isn't failing; it is cleared (and `rechecked_at` stamped) once its item was asked - also when the
