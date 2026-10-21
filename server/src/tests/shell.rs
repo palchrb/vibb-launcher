@@ -1037,7 +1037,7 @@ fn every_class_a_template_uses_is_in_style_css() {
 #[tokio::test]
 async fn every_page_carries_the_connecting_script_and_its_ping() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/reconnect.js?v=1\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/reconnect.js?v=2\" defer></script>"));
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
@@ -1049,10 +1049,10 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
         "/settings".to_string(),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
-        assert!(html.contains("/static/reconnect.js?v=1"), "{page}");
+        assert!(html.contains("/static/reconnect.js?v=2"), "{page}");
     }
     let signed_out = app.request(Method::GET, "/login", None, None).await;
-    assert!(signed_out.text().contains("/static/reconnect.js?v=1"));
+    assert!(signed_out.text().contains("/static/reconnect.js?v=2"));
 
     let ping = app.get_page("/ping", &cookie).await;
     assert_eq!(ping.status, StatusCode::NO_CONTENT);
@@ -1065,7 +1065,84 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
     );
     let ping = app.request(Method::GET, "/ping", None, None).await;
     assert_redirect(&ping, "/login", None);
+    // The phone listener stays the device API and /healthz (qa-srv-sweep-resume-code L6a).
+    let request = axum::http::Request::builder()
+        .uri("/ping")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let on_the_phones = app
+        .send_via(&app.device_router(), super::LOOPBACK_PEER, request)
+        .await;
+    assert_eq!(on_the_phones.status, StatusCode::NOT_FOUND);
 
     let backups = std::fs::read_to_string("templates/backups.html").unwrap();
     assert!(backups.contains("/download\" class=\"button-small\" download>"));
+}
+
+/// qa-srv-sweep-resume-code M1: a page that is a POST's own answer carries
+/// `<body data-post-answer`, so reconnect.js never reloads it (a reload would resend the form) -
+/// the setup code (200), a refused form shown again (400), a sign-in error; a page reached by a
+/// GET doesn't, nor a POST's redirect.
+#[tokio::test]
+async fn a_posts_own_page_is_marked_so_it_is_never_reloaded() {
+    let marked = |html: &str| html.contains("<body data-post-answer");
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("Anna").await;
+
+    let code = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/regenerate-code"),
+            Some(&cookie),
+            &[],
+        )
+        .await;
+    assert_eq!(code.status, StatusCode::OK);
+    assert!(marked(&code.text()), "the setup code");
+
+    let refused = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/provision"),
+            Some(&cookie),
+            &[("wifi_ssid", ""), ("wifi_password", "secret-wifi")],
+        )
+        .await;
+    assert!(refused.text().contains("<body"), "{}", refused.status);
+    assert!(marked(&refused.text()), "the setup form shown again");
+
+    let wrong = app
+        .request_form(
+            Method::POST,
+            "/login",
+            None,
+            &[("username", "parent"), ("password", "not the password")],
+        )
+        .await;
+    assert!(
+        marked(&wrong.text()),
+        "the sign-in page's error: {}",
+        wrong.status
+    );
+
+    for page in ["/devices".to_string(), format!("/devices/{id}/provision")] {
+        let html = app.get_page(&page, &cookie).await.text();
+        assert!(html.contains("<body") && !marked(&html), "{page}");
+    }
+    let redirect = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/lock-wake"),
+            Some(&cookie),
+            &[("on", "on")],
+        )
+        .await;
+    assert!(redirect.status.is_redirection() && !marked(&redirect.text()));
+
+    assert_eq!(
+        crate::admin_auth::mark_body(b"<html><body class=\"x\">hi</body></html>"),
+        b"<html><body data-post-answer class=\"x\">hi</body></html>"
+    );
+    assert_eq!(crate::admin_auth::mark_body(b"no page"), b"no page");
 }

@@ -367,7 +367,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   a snapshot change stays unseen until then (Check now covers it; the phone and the speaker skip an unplayable track
   anyway). A show's gate (2026-10-21): after the metadata, `GET /shows/{id}/episodes?limit=1` (`Read::ShowNewest`);
   its mark `total:newest id` (`spotify::show_mark`, stored in `spotify_snapshot`, the same from the full read's first
-  page) unchanged = done (two requests, not the 2-3 of the full read); the same trade-off for an older episode changed
+  page; no `total` in the answer = no mark, no gate) unchanged = done (two requests, not the 2-3 of the full read); the same trade-off for an older episode changed
   without the count or the newest moving. Check now ignores both gates; `interval(link, ..)`: an album, track, episode or artist daily, a playlist or
   show at the setting. Without an app `spotify_off`, without a usable account `no_account`/`reauthorize`, inside the
   quota pause `quota` - no request; the last good list stays. A new login or app save makes the entries that failed

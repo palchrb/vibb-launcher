@@ -8,15 +8,19 @@
 //   no modal, the page stays usable) and heals by itself: it pings the server (`GET /ping`, 204
 //   with a session, a redirect to the login without one: any answer means the server is there) at
 //   once, every 5 s, on `online` and when the page becomes visible again, and starts the same
-//   navigation again once the server answers (after a ping failed, or 12 s into a navigation
-//   that still hasn't arrived), so the page arrives without another tap. A quiet "Try again" is
-//   offered only after 20 s;
+//   navigation again once the server answers after a failed ping (the network is back), so the
+//   page arrives without another tap; a navigation that is only slow is started again once, 12 s
+//   in, then left to come. A quiet "Try again" is offered only after 20 s. A save started meanwhile
+//   (a submit, a data-autosave change) ends the wait: its restart would cancel the save;
 // - when the page becomes visible after more than 10 minutes hidden, pings the server (the chip
 //   only if that takes over 3 s) and, answered, reloads the page in place keeping its scroll place
 //   (scroll-restore.js's record, as auto-reload.js leaves it - never the top: "Lagring i
 //   foreldre-PWAen skal aldri hoppe til toppen av siden"); a signed-out session lands on the
-//   login. It never reloads once a save has started or while a <details> is open (auto-reload.js's
-//   rules); then the page stays as it is;
+//   login. It never reloads once a save has started, while a <details> is open (auto-reload.js's
+//   rules), when a field was typed in or changed, or on a POST's answer (the server marks its
+//   <body data-post-answer>, `admin_auth::mark_post_answer`); then the page stays as it is. Before
+//   any reload the entry is made a GET of the address (`replaceState`), so a reload never resends
+//   a form;
 // - clears everything on `pageshow` (a page back from the back-forward cache is never left
 //   "loading").
 // No service-worker fetch handler: the network is never faked. ES5, no framework (§5.7: Chrome/
@@ -117,6 +121,7 @@
         var bar = null;
         var chip = null;
         var retry = null;
+        var text = null;
         function ready() {
             if (chip) return true;
             if (!doc.body || !doc.createElement) return false;
@@ -128,8 +133,9 @@
             chip.className = "net-chip";
             chip.setAttribute("role", "status");
             chip.hidden = true;
-            var text = doc.createElement("span");
-            text.textContent = TEXT.connecting;
+            // Empty while hidden, its words set when shown: a live region announces a change of
+            // its text, not one that appears with it (QA L9, VoiceOver).
+            text = doc.createElement("span");
             retry = doc.createElement("button");
             retry.type = "button";
             retry.className = "net-retry";
@@ -148,6 +154,7 @@
             chip: function (on) {
                 if (!ready()) return;
                 chip.hidden = !on;
+                text.textContent = on ? TEXT.connecting : "";
                 if (!on) retry.hidden = true;
             },
             offer: function (onRetry) {
@@ -199,6 +206,54 @@
         return record;
     }
 
+    /**
+     * A form control that differs from what the page came with: text typed, a box ticked, an
+     * option picked - a reload in place would lose it (qa-srv-sweep-resume-code L4).
+     */
+    function edited(doc) {
+        if (!doc.querySelectorAll) return false;
+        var controls = doc.querySelectorAll("input, textarea, select");
+        for (var i = 0; i < controls.length; i++) {
+            var el = controls[i];
+            var tag = String(el.tagName || "").toUpperCase();
+            if (tag === "SELECT") {
+                var options = el.options || [];
+                for (var j = 0; j < options.length; j++) {
+                    if (options[j].selected !== options[j].defaultSelected) return true;
+                }
+                continue;
+            }
+            var type = String(el.type || "").toLowerCase();
+            if (type === "hidden" || type === "submit" || type === "button" || type === "reset" || type === "image") continue;
+            if (type === "checkbox" || type === "radio") {
+                if (el.checked !== el.defaultChecked) return true;
+            } else if (type === "file") {
+                if (el.value) return true;
+            } else if (el.value !== el.defaultValue) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The address to reload: this one without a shown `notice=` (it would show again). */
+    function reloadUrl(href) {
+        var hash = "";
+        var at = href.indexOf("#");
+        if (at >= 0) {
+            hash = href.slice(at);
+            href = href.slice(0, at);
+        }
+        var q = href.indexOf("?");
+        if (q < 0) return href + hash;
+        var kept = [];
+        var parts = href.slice(q + 1).split("&");
+        for (var i = 0; i < parts.length; i++) {
+            if (parts[i] && parts[i].split("=")[0] !== "notice") kept.push(parts[i]);
+        }
+        return href.slice(0, q) + (kept.length ? "?" + kept.join("&") : "") + hash;
+    }
+
     function install(win, opts) {
         opts = opts || {};
         var now = opts.now || function () { return Date.now(); };
@@ -243,12 +298,24 @@
             } catch (e) {}
         }
 
-        /** The navigation again: the same address, or the reload in place. */
+        /** The page is a POST's answer (the server marks its <body>): never reloaded (QA M1). */
+        function postAnswer() {
+            return !!(doc.body && doc.body.hasAttribute && doc.body.hasAttribute("data-post-answer"));
+        }
+
+        /**
+         * The navigation again: the same address, or the reload in place. Before a reload the entry
+         * is made a GET of this address (`replaceState`), so a reload can never resend a form - a
+         * belt to the `data-post-answer` rule (QA M1) - and loses a `notice=` already shown.
+         */
         function go(w) {
             w.restarted = now();
             w.failed = false;
             if (w.href === null) {
                 keepPlace();
+                try {
+                    win.history.replaceState(win.history.state, "", reloadUrl(win.location.href));
+                } catch (e) {}
                 win.location.reload();
             } else {
                 win.location.assign(w.href);
@@ -266,9 +333,10 @@
                     return;
                 }
                 if (w.kind === "return") {
-                    // The server is there: the page fresh, in place - unless a save started or a
-                    // <details> is open (what was typed or opened would be lost).
-                    if (saving || (doc.querySelector && doc.querySelector("details[open]"))) {
+                    // The server is there: the page fresh, in place - unless a save started, a
+                    // <details> is open, something was typed or picked (it would be lost), or the
+                    // page is a POST's answer.
+                    if (saving || postAnswer() || (doc.querySelector && doc.querySelector("details[open]")) || edited(doc)) {
                         end();
                         return;
                     }
@@ -276,8 +344,48 @@
                     go(reload);
                     return;
                 }
-                if (w.failed || now() - w.restarted >= STUCK_AFTER) go(w);
+                // Started again: at once once the network is back (a ping failed during the wait);
+                // a page that is only slow, once after 12 s and then left to come, with "Try again"
+                // (QA L2).
+                if (w.failed) {
+                    go(w);
+                } else if (!w.slowRestarted && now() - w.restarted >= STUCK_AFTER) {
+                    w.slowRestarted = true;
+                    go(w);
+                }
             });
+        }
+
+        /**
+         * The wait's timers, from its start: the chip (and a navigation's first ping) at 3 s, "Try
+         * again" at 20 s, a ping every 5 s from 8 s. Armed again when the page comes back after a
+         * `pagehide` that stopped them (QA L5).
+         */
+        function arm(w) {
+            var elapsed = now() - w.started;
+            if (!w.chipShown) {
+                w.timers.push(later(function () {
+                    if (wait !== w) return;
+                    w.chipShown = true;
+                    view.chip(true);
+                    if (w.kind === "load") check(w);
+                }, Math.max(0, CHIP_AFTER - elapsed)));
+            }
+            if (!w.offered) {
+                w.timers.push(later(function () {
+                    if (wait !== w) return;
+                    w.offered = true;
+                    view.offer(function () {
+                        if (wait === w) go(w);
+                    });
+                }, Math.max(0, OFFER_AFTER - elapsed)));
+            }
+            var every = function () {
+                if (wait !== w) return;
+                check(w);
+                w.timers.push(later(every, PING_EVERY));
+            };
+            w.timers.push(later(every, Math.max(PING_EVERY, CHIP_AFTER + PING_EVERY - elapsed)));
         }
 
         /**
@@ -293,7 +401,10 @@
                 started: now(),
                 restarted: now(),
                 failed: false,
+                slowRestarted: false,
                 asking: false,
+                chipShown: false,
+                offered: false,
                 timers: []
             };
             wait = w;
@@ -301,23 +412,7 @@
                 view.mark(link, true);
                 view.bar(true);
             }
-            w.timers.push(later(function () {
-                if (wait !== w) return;
-                view.chip(true);
-                if (kind === "load") check(w);
-            }, CHIP_AFTER));
-            w.timers.push(later(function () {
-                if (wait !== w) return;
-                view.offer(function () {
-                    if (wait === w) go(w);
-                });
-            }, OFFER_AFTER));
-            var every = function () {
-                if (wait !== w) return;
-                check(w);
-                w.timers.push(later(every, PING_EVERY));
-            };
-            w.timers.push(later(every, CHIP_AFTER + PING_EVERY));
+            arm(w);
             if (kind === "return") check(w);
             return w;
         }
@@ -328,19 +423,25 @@
             if (href !== null) start("load", href, link);
         });
 
-        // A save leaves the page (auto-reload.js's rule): no reload in place from then on.
-        doc.addEventListener("submit", function () { saving = true; }, true);
+        // A save leaves the page (auto-reload.js's rule): no reload in place from then on, and a
+        // wait for an earlier tap ends - its restart would cancel the save's POST (QA L3).
+        function saveStarted() {
+            saving = true;
+            end();
+        }
+        doc.addEventListener("submit", saveStarted, true);
         doc.addEventListener("change", function (e) {
             var el = e && e.target;
-            if (el && el.hasAttribute && el.hasAttribute("data-autosave")) saving = true;
+            if (el && el.hasAttribute && el.hasAttribute("data-autosave")) saveStarted();
         }, true);
 
         function cameBack() {
             var away = hiddenAt !== null && now() - hiddenAt > AWAY_MS;
             hiddenAt = null;
             if (wait) {
+                if (!wait.timers.length) arm(wait);
                 check(wait);
-            } else if (away && !saving) {
+            } else if (away && !saving && !postAnswer()) {
                 start("return", null, null);
             }
         }
@@ -374,6 +475,9 @@
         navigationTarget: navigationTarget,
         linkOf: linkOf,
         placeRecord: placeRecord,
+        edited: edited,
+        reloadUrl: reloadUrl,
+        domView: domView,
         CHIP_AFTER: CHIP_AFTER,
         PING_EVERY: PING_EVERY,
         PING_TIMEOUT: PING_TIMEOUT,

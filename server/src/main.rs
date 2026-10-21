@@ -1068,6 +1068,11 @@ pub fn build_admin_router(
             "/devices/{id}/lock-screen/apps",
             post(handlers::lock_glance::save_app),
         )
+        // A Lock page from before the select still posts here: "reload it" (QA L6b).
+        .route(
+            "/devices/{id}/lock-screen/apps/text",
+            post(handlers::lock_glance::stale_page),
+        )
         // Launcher round 7 §3: "Wake the screen for a notification".
         .route(
             "/devices/{id}/lock-wake",
@@ -1403,6 +1408,8 @@ pub fn build_admin_router(
         .layer(session_layer)
         // Before the session is read: a cross-site form never acts (design 22 §3.2.5).
         .layer(from_fn_with_state(state.clone(), admin_auth::csrf_guard))
+        // A POST's own page is marked so reconnect.js never reloads it (qa-srv-sweep-resume M1).
+        .layer(axum::middleware::from_fn(admin_auth::mark_post_answer))
         .layer(axum::middleware::from_fn(admin_auth::admin_headers))
         // Outermost: a refused request never reaches the session store.
         .layer(from_fn_with_state(state, gate::admin_gate))

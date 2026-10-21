@@ -69,7 +69,7 @@ test("the link is found from a tap on its icon", () => {
 
 // A fake window: a clock, timers, a fetch the test answers, events fired by hand, a view that
 // records what is shown.
-function fakeWindow({ openForm = false } = {}) {
+function fakeWindow({ openForm = false, postAnswer = false } = {}) {
     let clock = 1000000;
     let timerId = 0;
     const timers = new Map();
@@ -87,6 +87,9 @@ function fakeWindow({ openForm = false } = {}) {
         main: { scrollTop: 420 },
         pings,
         view,
+        // What happened, in order: `replace <url>`, `reload`.
+        steps: [],
+        controls: [],
         location: {
             href: "https://pi.example.ts.net/devices/1",
             pathname: "/devices/1",
@@ -94,9 +97,17 @@ function fakeWindow({ openForm = false } = {}) {
             assign: (href) => win.assigned.push(href),
             reload: () => {
                 win.reloads += 1;
+                win.steps.push("reload");
             },
         },
-        history: { scrollRestoration: "manual" },
+        history: {
+            scrollRestoration: "manual",
+            state: { from: "the page" },
+            replaceState: (state, _title, url) => {
+                win.steps.push("replace " + url);
+                assert.deepStrictEqual(state, { from: "the page" }, "the entry's state kept");
+            },
+        },
         sessionStorage: {
             setItem: (key, value) => {
                 win.stored[key] = value;
@@ -129,6 +140,8 @@ function fakeWindow({ openForm = false } = {}) {
                 return null;
             },
             getElementById: (id) => (id === "apps" ? { getBoundingClientRect: () => ({ top: 88 }) } : null),
+            querySelectorAll: () => win.controls,
+            body: { hasAttribute: (name) => name === "data-post-answer" && postAnswer },
         },
     };
     win.now = () => clock;
@@ -411,6 +424,167 @@ test("back from the back-forward cache after long: the same ping", async () => {
     assert.strictEqual(win.pings.length, 1);
     await answer(win);
     assert.strictEqual(win.reloads, 1);
+});
+
+// ---- qa-srv-sweep-resume-code ------------------------------------------------------------------
+
+async function awayAndBack(win) {
+    win.hide();
+    win.advance(AWAY_MS + 1);
+    win.show();
+}
+
+test("M1: a POST's answer (data-post-answer) is never reloaded after being away", async () => {
+    const win = fakeWindow({ postAnswer: true });
+    win.install();
+    await awayAndBack(win);
+    win.advance(60000);
+    await settle();
+    assert.strictEqual(win.reloads, 0);
+    assert.deepStrictEqual(win.steps, []);
+    win.fire("win", "pagehide");
+    win.advance(AWAY_MS + 1);
+    win.fire("win", "pageshow", { persisted: true });
+    assert.strictEqual(win.reloads, 0, "not from the back-forward cache either");
+});
+
+test("M1: every reload in place is made a GET of the address first, the shown notice dropped", async () => {
+    const win = fakeWindow();
+    win.location.href = "https://pi.example.ts.net/devices/1?notice=sent&tab=apps#apps";
+    win.install();
+    await awayAndBack(win);
+    await answer(win);
+    assert.deepStrictEqual(win.steps, [
+        "replace https://pi.example.ts.net/devices/1?tab=apps#apps",
+        "reload",
+    ]);
+    assert.strictEqual(rc.reloadUrl("https://h/x?notice=a"), "https://h/x");
+    assert.strictEqual(rc.reloadUrl("https://h/x?a=1&notice=b&c=2#f"), "https://h/x?a=1&c=2#f");
+    assert.strictEqual(rc.reloadUrl("https://h/x#f"), "https://h/x#f");
+    assert.strictEqual(rc.reloadUrl("https://h/x?notices=1"), "https://h/x?notices=1");
+});
+
+test("L2: a slow page with the server answering is started again once, then left to come", async () => {
+    const win = fakeWindow();
+    win.install();
+    win.tap(link("/updates"));
+    win.advance(CHIP_AFTER);
+    await answer(win);
+    for (let i = 0; i < 12; i++) {
+        win.advance(PING_EVERY);
+        await answer(win);
+    }
+    assert.deepStrictEqual(win.assigned, ["https://pi.example.ts.net/updates"], "once, at 13 s");
+    // The network dropping and coming back still starts it again.
+    win.advance(PING_EVERY);
+    const dropped = win.pings.length;
+    win.pings[dropped - 1].reject(new TypeError("Failed to fetch"));
+    await settle();
+    win.advance(PING_EVERY);
+    assert.strictEqual(win.pings.length, dropped + 1);
+    await answer(win);
+    assert.strictEqual(win.assigned.length, 2);
+});
+
+test("L3: a save started during a wait ends it - the restart can't cancel the save", async () => {
+    const win = fakeWindow();
+    win.install();
+    const tab = link("/apps");
+    win.tap(tab);
+    win.advance(CHIP_AFTER);
+    win.pings[0].reject(new TypeError("Failed to fetch"));
+    await settle();
+    win.fire("doc", "change", { target: { hasAttribute: (n) => n === "data-autosave" } });
+    assert.strictEqual(win.view.bar, false);
+    assert.strictEqual(win.view.chip, false);
+    assert.ok(!win.view.marked.has(tab));
+    const before = win.pings.length;
+    win.fire("win", "online");
+    win.advance(60000);
+    assert.strictEqual(win.pings.length, before, "nothing pinged any more");
+    assert.deepStrictEqual(win.assigned, []);
+
+    const submitted = fakeWindow();
+    submitted.install();
+    submitted.tap(link("/apps"));
+    submitted.fire("doc", "submit", { target: {} });
+    assert.strictEqual(submitted.view.bar, false);
+});
+
+test("L4: no reload in place over a field that was typed in or changed", async () => {
+    const typed = { tagName: "INPUT", type: "text", value: "Ella", defaultValue: "" };
+    const win = fakeWindow();
+    win.controls = [{ tagName: "INPUT", type: "hidden", value: "x", defaultValue: "y" }, typed];
+    win.install();
+    await awayAndBack(win);
+    await answer(win);
+    assert.strictEqual(win.reloads, 0);
+    assert.strictEqual(win.view.chip, false);
+
+    const doc = (controls) => ({ querySelectorAll: () => controls });
+    assert.ok(!rc.edited(doc([])));
+    assert.ok(!rc.edited(doc([{ tagName: "INPUT", type: "text", value: "a", defaultValue: "a" }])));
+    assert.ok(rc.edited(doc([{ tagName: "TEXTAREA", value: "hei", defaultValue: "" }])));
+    assert.ok(rc.edited(doc([{ tagName: "INPUT", type: "checkbox", checked: true, defaultChecked: false }])));
+    assert.ok(!rc.edited(doc([{ tagName: "INPUT", type: "submit", value: "Save", defaultValue: "" }])));
+    const option = (selected, defaultSelected) => ({ selected, defaultSelected });
+    assert.ok(rc.edited(doc([{ tagName: "SELECT", options: [option(false, true), option(true, false)] }])));
+    assert.ok(!rc.edited(doc([{ tagName: "SELECT", options: [option(true, true), option(false, false)] }])));
+    assert.ok(rc.edited(doc([{ tagName: "INPUT", type: "file", value: "C:\\fakepath\\a.mp3" }])));
+});
+
+test("L5: a pagehide that doesn't unload, then back: the wait's pings and Try again come again", async () => {
+    const win = fakeWindow();
+    win.install();
+    win.tap(link("/music"));
+    win.advance(CHIP_AFTER);
+    assert.strictEqual(win.pings.length, 1);
+    win.fire("win", "pagehide");
+    win.advance(PING_TIMEOUT);
+    await settle();
+    win.advance(30000);
+    assert.strictEqual(win.pings.length, 1, "stopped while hidden");
+    win.show();
+    assert.strictEqual(win.pings.length, 2, "a ping at once");
+    win.advance(PING_TIMEOUT);
+    await settle();
+    win.advance(PING_EVERY);
+    assert.ok(win.pings.length >= 3, "then every 5 s");
+    assert.strictEqual(typeof win.view.retry, "function", "Try again (over 20 s since the tap)");
+});
+
+test("L9: the chip's words are set when it shows, so a screen reader announces them", () => {
+    const made = [];
+    const element = (tag) => {
+        const el = {
+            tag,
+            hidden: false,
+            textContent: "",
+            children: [],
+            attrs: {},
+            setAttribute(name, value) {
+                this.attrs[name] = value;
+            },
+            appendChild(child) {
+                this.children.push(child);
+            },
+        };
+        made.push(el);
+        return el;
+    };
+    const body = element("body");
+    const view = rc.domView({ document: { body, createElement: element } });
+    view.chip(false);
+    const chip = made.find((el) => el.className === "net-chip");
+    const words = chip.children[0];
+    assert.strictEqual(chip.attrs.role, "status");
+    assert.strictEqual(chip.hidden, true);
+    assert.strictEqual(words.textContent, "", "empty while hidden");
+    view.chip(true);
+    assert.strictEqual(chip.hidden, false);
+    assert.strictEqual(words.textContent, "Connecting\u2026");
+    view.chip(false);
+    assert.strictEqual(words.textContent, "");
 });
 
 test("the strings and the script are ES5 (§5.7)", () => {

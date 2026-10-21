@@ -13,6 +13,16 @@ const ENDPOINT = "https://web.push.apple.com/QK1-fake";
 const hashOf = (endpoint) =>
     crypto.createHash("sha256").update(endpoint).digest("hex").slice(0, 16);
 
+// The fake page's digest resolves as a microtask: WebCrypto's runs on the thread pool and missed
+// the 20 ms `settle()` on a loaded machine (qa-srv-sweep-resume-code L8). The real WebCrypto is
+// still checked by "the key decodes and the hash matches the server's".
+const syncSubtle = {
+    digest: (_algorithm, bytes) => {
+        const d = crypto.createHash("sha256").update(bytes).digest();
+        return Promise.resolve(d.buffer.slice(d.byteOffset, d.byteOffset + d.length));
+    },
+};
+
 function element(extra = {}) {
     const listeners = {};
     return Object.assign({
@@ -77,7 +87,7 @@ function fakePage({
         Notification: { permission },
         atob: (s) => Buffer.from(s, "base64").toString("binary"),
         TextEncoder,
-        crypto: { subtle: crypto.webcrypto.subtle },
+        crypto: { subtle: syncSubtle },
     };
     if (pushManager) win.PushManager = function () {};
     return { win, nodes, calls, submitted, form, offForm };
