@@ -302,6 +302,27 @@ class SonosTransportTest {
     }
 
     @Test
+    fun `d53 a − on our coordinator is BecomeCoordinatorOfStandaloneGroup in the actor, to the session's uid only`() = runBlocking {
+        val spk = FakeSpeaker("RINCON_X")
+        val t = rig(spk)
+        t.play(body)!!
+        assertTrue(t.leave("RINCON_X"))
+        assertEquals(listOf("seturi", "play", "standalone"), spk.commands)
+        assertEquals("the verb's fast cadence and a poll at once", "wake", wakes.last())
+        assertFalse("a uid that is no longer the session's: nothing", t.leave("RINCON_OTHER01400"))
+        assertEquals(3, spk.commands.size)
+        // a joiner from outside: its cap through the same actor, our own sets by uid
+        val loud = FakeSpeaker("RINCON_LOUD01400").apply { vol = 80 }
+        val quiet = FakeSpeaker("RINCON_QUIET01400").apply { vol = 20 }
+        val byUid = mapOf(spk.uid to spk, loud.uid to loud, quiet.uid to quiet)
+        val s2 = SonosSession({ clock.now })
+        val t2 = SonosTransport(s2, { u, _, _ -> byUid[u] ?: throw UnknownUid(u) }, NrkService({ _, _ -> "" }), clock.clock)
+        assertEquals(mapOf(loud.uid to 40), t2.capMembers(listOf(loud.uid, quiet.uid, "RINCON_GONE01400"), 40))
+        assertEquals(listOf("volume 40"), loud.commands)
+        assertTrue(quiet.commands.isEmpty())
+    }
+
+    @Test
     fun `an nrk_program body without its series is a SonosException, inside the failed-play path (L1)`() = runBlocking {
         val spk = FakeSpeaker("RINCON_X")
         try {

@@ -1,11 +1,14 @@
 package me.vibb.music.sonos
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -14,6 +17,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /*
@@ -57,12 +61,17 @@ data class SpeakerDoc(
  * are the uids grouped with it as the household's topology says, coordinator first - unknown ones
  * (no player row in the cache) included - and [uid] alone for a room on its own. The parent's room
  * scope allows a row only when it allows every one of them (design 26a §5.5): a member the phone
- * can't name is not allowed by any list of rooms.
+ * can't name is not allowed by any list of rooms. [names] are the known members' (uid, name) pairs,
+ * coordinator first (design 53 §2.7: the group block's member lines).
  */
-data class Room(val label: String, val uid: String, val names: List<String>, val members: List<String> = listOf(uid))
+data class Room(val label: String, val uid: String, val names: List<Pair<String, String>>, val members: List<String> = listOf(uid))
 
-/** What the "Spill av på" sheet shows: [stale] = nobody answered, [scanning] = an SSDP round runs. */
-data class RoomsView(val rooms: List<Room>, val stale: Boolean, val scanning: Boolean)
+/**
+ * What the "Spill av på" sheet shows: [stale] = nobody answered, [scanning] = an SSDP round runs; [busy] = the
+ * coordinators of other rows that play something else (design 53 §2.7, "Spiller noe annet": read when the sheet
+ * opens and at a `groups` event while it is open, never on a timer).
+ */
+data class RoomsView(val rooms: List<Room>, val stale: Boolean, val scanning: Boolean, val busy: Set<String> = emptySet())
 
 /** The file (`noBackupFilesDir/sonos.json`, SonosFiles.kt), read and written whole, tmp + rename. */
 class SpeakerCache(private val file: File, private val wallS: () -> Double = { System.currentTimeMillis() / 1000.0 }) {
@@ -129,11 +138,11 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
                 g.members.forEach { groupOf[it] = g.members }
                 val members = g.members.filter { it in names }
                 if (members.size < 2 || g.coordinator !in names) continue
-                rows.add(Room(members.joinToString(" + ") { names.getValue(it) }, g.coordinator, members.map { names.getValue(it) }, g.members))
+                rows.add(Room(members.joinToString(" + ") { names.getValue(it) }, g.coordinator, members.map { it to names.getValue(it) }, g.members))
                 absorbed.addAll(members)
             }
             for ((uid, _) in players) {
-                if (uid !in absorbed) rows.add(Room(names.getValue(uid), uid, listOf(names.getValue(uid)), groupOf[uid] ?: listOf(uid)))
+                if (uid !in absorbed) rows.add(Room(names.getValue(uid), uid, listOf(uid to names.getValue(uid)), groupOf[uid] ?: listOf(uid)))
             }
             return rows
         }
@@ -159,6 +168,8 @@ class RoomDirectory(
     private val scope: CoroutineScope,
     private val elapsedMs: () -> Long,
     private val log: (String) -> Unit = {},
+    /** A room's `CurrentTransportState` within a time budget (design 53 §2.7's busy look); null when it won't say. */
+    private val transportState: (ip: String, port: Int, timeoutMs: Long) -> String? = { _, _, _ -> null },
 ) {
     private val roundRunning = AtomicBoolean(false)
     private val views = MutableStateFlow(RoomsView(emptyList(), stale = false, scanning = false))
@@ -184,7 +195,44 @@ class RoomDirectory(
 
     /** The cache as it is (a plain read), published. */
     fun view(stale: Boolean = false): RoomsView =
-        RoomsView(SpeakerCache.rooms(cache.load()), stale, scanning).also { views.value = it }
+        RoomsView(SpeakerCache.rooms(cache.load()), stale, scanning, views.value.busy).also { views.value = it }
+
+    /**
+     * "Spiller noe annet" (design 53 §2.7): every other row's coordinator - not [ours], not a row holding it - is
+     * asked its `GetTransportInfo` in parallel, [BUSY_PER_MS] each, at most [BUSY_MAX] rows; the PLAYING ones are
+     * published as [RoomsView.busy] (a row that doesn't answer is not busy). Called when the sheet opens, after its
+     * topology refresh, and at a `groups` event while it is open - never on a timer. Only on Wi-Fi.
+     */
+    suspend fun lookBusy(ours: String?): Set<String> {
+        if (!onWifi()) {
+            clearBusy()
+            return emptySet()
+        }
+        val doc = cache.load()
+        val rows = SpeakerCache.rooms(doc).filter { it.uid != ours && (ours == null || ours !in it.members) }.take(BUSY_MAX)
+        val found = ConcurrentHashMap.newKeySet<String>()
+        withTimeoutOrNull(BUSY_TOTAL_MS) {
+            coroutineScope {
+                for (r in rows) {
+                    val rec = doc.players[r.uid] ?: continue
+                    launch(Dispatchers.IO) {
+                        val state = try {
+                            transportState(rec.ip, rec.port, BUSY_PER_MS)
+                        } catch (_: IOException) {
+                            null
+                        }
+                        if (state != null && TransportState.parse(state) == TransportState.PLAYING) found.add(r.uid)
+                    }
+                }
+            }
+        }
+        val busy = found.toSet()
+        views.update { it.copy(busy = busy) }
+        return busy
+    }
+
+    /** No busy lines (the sheet opening, before its new look: the last opening's are stale; qa-53b-code 9). */
+    fun clearBusy() = views.update { it.copy(busy = emptySet()) }
 
     /**
      * `refresh_topology`: GetZoneGroupState against the cached speakers in uid order until one
@@ -237,7 +285,7 @@ class RoomDirectory(
                 false
             }
             // the new rows, still stale if no household answered; scanning ends below
-            views.value = RoomsView(SpeakerCache.rooms(cache.load()), stale = !answered && views.value.stale, scanning = true)
+            views.value = RoomsView(SpeakerCache.rooms(cache.load()), stale = !answered && views.value.stale, scanning = true, busy = views.value.busy)
         }
         job.invokeOnCompletion {
             views.update { it.copy(scanning = false) }
@@ -272,6 +320,11 @@ class RoomDirectory(
     companion object {
         const val PER_IP_MS = 2_000L
         const val TOTAL_MS = 6_000L
+
+        /** The busy look (design 53 §2.7): 1 s a room, 2 s in all, at most 8 rows. */
+        const val BUSY_PER_MS = 1_000L
+        const val BUSY_TOTAL_MS = 2_000L
+        const val BUSY_MAX = 8
     }
 }
 

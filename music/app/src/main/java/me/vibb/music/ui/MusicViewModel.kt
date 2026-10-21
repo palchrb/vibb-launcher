@@ -77,6 +77,9 @@ enum class Screen { LIBRARY, PLAYER, LIST, NEWS, SEARCH }
 enum class SheetKind { SLEEP, OUTPUT }
 
 /** The screens' state: the store's snapshot, the stored now-playing row, and where the kid is. */
+/** Design 53 §2.12: a group block's slider sends at most this often while dragging (and once at the release). */
+const val VOLUME_SEND_MS = 150L
+
 class MusicViewModel(app: Application) : AndroidViewModel(app) {
     private val store = Store.get(app)
 
@@ -174,6 +177,8 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun outputSheetOpened() {
         sheetOpen = true
+        // design 53 §2.7: a `groups` event looks at the other rooms again only while the sheet is open
+        PlayerHub.sheetOpen.value = true
         headsetConnect = headsetConnect.copy(failed = emptySet())
         if (!bt.granted()) {
             headsets = emptyList()
@@ -186,8 +191,39 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     /** The sheet left: the proxy closes unless a call still runs; an open attempt goes on. */
     fun outputSheetClosed() {
         sheetOpen = false
+        PlayerHub.sheetOpen.value = false
+        // a drag cut off by the sheet closing never hands its base to the next one (qa-53b-code 14)
+        volumeDrag = null
         headsets = emptyList()
         releaseA2dp()
+    }
+
+    /** The group block's drag in progress (design 53 §2.12): its id (the service's base for "Begge"), the last send, the trailing one. */
+    private var volumeDrag: Long? = null
+    private var volumeSentAt = 0L
+    private var volumeLater: Job? = null
+
+    /**
+     * A slider of the group block (design 53 §2.12): sent at most every [VOLUME_SEND_MS] while the finger moves, and
+     * once at the release ([done]) - the latest value always goes out. A drag's id names the "Begge" drag's base.
+     */
+    fun roomVolume(uid: String, group: Boolean, volume: Int, done: Boolean, send: (String, Boolean, Int, Long) -> Unit) {
+        val now = SystemClock.elapsedRealtime()
+        val drag = volumeDrag ?: now.also { volumeDrag = it }
+        volumeLater?.cancel()
+        volumeLater = null
+        val wait = VOLUME_SEND_MS - (now - volumeSentAt)
+        if (done || wait <= 0) {
+            volumeSentAt = now
+            if (done) volumeDrag = null
+            send(uid, group, volume, drag)
+            return
+        }
+        volumeLater = viewModelScope.launch {
+            delay(wait)
+            volumeSentAt = SystemClock.elapsedRealtime()
+            send(uid, group, volume, drag)
+        }
     }
 
     /**

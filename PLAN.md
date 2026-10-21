@@ -1038,8 +1038,17 @@ findings, merge to `main`, full suite once.
   `ZoneGroupState` stay the fallback. Test on the speakers with the hardware button, all four.
   **Status (2026-10-21)**: written as `docs/design/53-sonos-grouping-precision.md` (QA'd, revised, Q2/Q4 answered);
   rounds 53-0 (vibb's DIDL, the goldens) and 53-a (the event socket, the bar's anchor, the 1 s display poll, the IDLE
-  advance, the extra polls' guards, `sonos-ws-probe.py --save`) on branch `d53-a`, awaiting code QA; 53-b (grouping)
-  next. Owed on the speakers: design 53 §5 (the capture that replaces the provisional `ws/` fixtures first).
+  advance, the extra polls' guards, `sonos-ws-probe.py --save`) merged after their code QA (`qa-53a-code.md`); 53-b
+  (grouping: the UPnP verbs in `GroupVerbs`, the sheet per the approved sketch with the group block, "+"/"−", busy
+  rows and per-room/"Begge" volume sliders, the four outside cases followed, Q4's accepted rooms, the joiner cap, the
+  advance guard, `fake-sonos.py`'s join/leave) on branch `d53-b`; code QA `qa-53b-code.md` (0 High, 4 Medium, 6 Low,
+  6 Nit) and its fix round done - see the note's "53-b status". **Decided and done in that round** (the user,
+  2026-10-21: "enig i at den bør slå av alle grouped høyttalere"): the sleep timer's fade on a group fades every
+  known room with the coordinator and puts each one's own volume back after the Pause (found in 53-b: before, only
+  the coordinator faded).
+  §5 check 1, the capture, done 2026-10-21 (the `ws/` fixtures are it, scrubbed; the parser fixed where it
+  disagreed). Owed on the speakers: design 53 §5 (checks 2-5, 9-11; checks 6-8c
+  for 53-b).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
@@ -1320,6 +1329,7 @@ findings, merge to `main`, full suite once.
   before changing the rule (a snooze for non-clearable nags is the candidate fix).
 
 ### To decide (the user)
+
 
 - **The app's DIDL differs from vibb's** (found 2026-10-21 against `pi/daemon.py` `_sonos_body`, branch pipewire): for a
   podcast, RSS or NRK series item the app sends the listing's `duration` on the `res`, which vibb sends only for

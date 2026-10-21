@@ -97,8 +97,15 @@ class SonosHome(context: Context) {
         scope = scope,
         elapsedMs = SystemClock::elapsedRealtime,
         log = ::log,
+        // design 53 §2.7's busy look: each other row's coordinator's transport
+        transportState = { ip, port, timeoutMs ->
+            soap.call(ip, port, SonosService.AV_TRANSPORT, "GetTransportInfo", listOf("InstanceID" to "0"), timeoutMs)["CurrentTransportState"]
+        },
     )
     val speakers = CachedSpeakers(cache, soap)
+
+    /** The grouping verbs on other rooms (design 53 §2.6): one at a time, on IO, never in a room's actor. */
+    val verbs = GroupVerbs(speakers, ::log)
     val nrk = NrkService({ ip, port -> soap.get(ip, port, "/status/accounts") }, ::log)
     val probe = HouseholdProbe(rooms, soap)
 

@@ -33,9 +33,12 @@ volume back after the last; with --do the run then ends by itself.
 line, rewritten after each), the music app's fixture format (design 53 §5 check 1,
 `music/app/src/test/resources/sonos/ws/`: split it into the scenario files, no conversion needed): the
 household id, every RINCON uid, every LAN address (IPv4 and IPv6 - a link-local IPv6 can carry the
-speaker's MAC) and every name (rooms, groups, titles) replaced by fake ones, consistently within the
-file - `Sonos_FAKEhousehold000000000000001` (one household: every id maps to it),
-`RINCON_000000000000014NN`, `192.168.1.NN`, `fd00::NN`, `Navn N` - so the capture can be committed as it is.
+speaker's MAC), every name (rooms, groups, titles), the hardware's ids (`serialNumber`, `deviceId` - the
+speaker's MAC - and any other MAC), `locationId`, `queueId`, the item ids and every picture URL replaced by
+fake ones, consistently within the file - `Sonos_FAKEhousehold000000000000001` (one household: every id maps to
+it), `RINCON_000000000000014NN`, `10.0.0.NN`, `fd00::NN`, `Navn N`, `FAKE-SERIAL-N`, `FAKEDEVICENN`,
+`lc_FAKElocationNN`, `item-N`, `https://images.example.invalid/N.jpg` - so the capture can be committed as it is.
+--rescrub IN OUT runs an earlier capture through today's rules (no speaker, no aiohttp needed).
 
 --key UUID sends another X-Sonos-Api-Key (a random one tells whether the speaker checks it at all), --key none
 sends no key header.
@@ -43,6 +46,8 @@ sends no key header.
 Ctrl-C ends it. The X-Sonos-Api-Key below is the RFC 4122 example UUID that sonos-websocket sends;
 the speaker accepts it locally - it is not a secret.
 """
+
+from __future__ import annotations  # the aiohttp annotations aren't evaluated: --rescrub runs without it
 
 import argparse
 import asyncio
@@ -56,7 +61,7 @@ import uuid
 try:
     import aiohttp
 except ImportError:
-    sys.exit("needs aiohttp: python3 -m pip install aiohttp (or apt install python3-aiohttp)")
+    aiohttp = None  # --rescrub needs none; a probe run says so in main()
 
 API_KEY = "123e4567-e89b-12d3-a456-426655440000"
 KEY = API_KEY  # --key: another value, or "none" for no X-Sonos-Api-Key header at all
@@ -78,17 +83,34 @@ class Saver:
     IPV6 = re.compile(r"(?i)(?<![\w:])(?:(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?"
                       r"|::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4})(?![\w:])")
     NAME_KEYS = {"name", "groupName", "roomName", "title", "artist", "album"}
+    # a MAC anywhere else (a serial number carries one), as a belt under the keys below
+    MAC = re.compile(r"(?i)(?<![0-9a-f])(?:[0-9a-f]{2}[-:]){5}[0-9a-f]{2}(?![0-9a-f])")
+    # the hardware's and the household's own identifiers, each replaced consistently (an item id's "0" and "" stay:
+    # they mean "none" to the speaker)
+    ID_KEYS = {"serialNumber": "FAKE-SERIAL-{}", "deviceId": "FAKEDEVICE{:02d}", "locationId": "lc_FAKElocation{:02d}",
+               "queueId": "00000000-0000-0000-0000-{:012d}", "itemId": "item-{}", "previousItemId": "item-{}"}
+    IMAGE_KEYS = {"imageUrl", "url"}
 
     def __init__(self, path: str):
         self.path = path
         self.messages = []
         self.uids, self.ips, self.ip6s, self.names = {}, {}, {}, {}
+        self.ids = {}  # (kind, value) -> fake; item ids share one map
+        self.images = {}
 
     def _uid(self, m):
         return self.uids.setdefault(m.group(0), f"RINCON_{'0' * 12}014{len(self.uids) % 100:02d}")
 
     def _ip(self, m):
-        return self.ips.setdefault(m.group(0), f"192.168.1.{16 + len(self.ips)}")
+        # 10.0.0.x: a private range the app's socket gate accepts, so the fixtures keep its tests meaningful
+        return self.ips.setdefault(m.group(0), f"10.0.0.{16 + len(self.ips)}")
+
+    def _id(self, key: str, v: str) -> str:
+        if key in ("itemId", "previousItemId") and v in ("", "0"):
+            return v
+        kind = "item" if key in ("itemId", "previousItemId") else key
+        same = [k for k in self.ids if k[0] == kind]
+        return self.ids.setdefault((kind, v), self.ID_KEYS[key].format(len(same) + 1))
 
     def _ip6(self, m):
         return self.ip6s.setdefault(m.group(0).lower(), f"fd00::{16 + len(self.ip6s):x}")
@@ -97,7 +119,8 @@ class Saver:
         v = self.UID.sub(self._uid, v)
         v = self.HOUSEHOLD.sub("Sonos_FAKEhousehold000000000000001", v)
         v = self.IPV6.sub(self._ip6, v)
-        return self.IPV4.sub(self._ip, v)
+        v = self.IPV4.sub(self._ip, v)
+        return self.MAC.sub("00-00-00-00-00-00", v)
 
     def scrub(self, v, key=None):
         if isinstance(v, dict):
@@ -107,6 +130,10 @@ class Saver:
         if isinstance(v, str):
             if key in self.NAME_KEYS:
                 return self.names.setdefault(v, f"Navn {len(self.names) + 1}")
+            if key in self.ID_KEYS:
+                return self._id(key, v)
+            if key in self.IMAGE_KEYS and v.startswith("http"):
+                return self.images.setdefault(v, f"https://images.example.invalid/{len(self.images) + 1}.jpg")
             return self._text(v)
         return v
 
@@ -114,6 +141,16 @@ class Saver:
         self.messages.append(json.dumps([self.scrub(header), self.scrub(body)], ensure_ascii=False))
         with open(self.path, "w", encoding="utf-8") as out:  # whole each time: a Ctrl-C leaves a valid array
             out.write("[\n  " + ",\n  ".join(self.messages) + "\n]\n")
+
+
+def rescrub(src: str, dst: str) -> None:
+    """--rescrub: an earlier capture through today's Saver, message by message (the same consistent maps)."""
+    with open(src, encoding="utf-8") as f:
+        messages = json.load(f)
+    saver = Saver(dst)
+    for header, body in messages:
+        saver.save(header, body)
+    print(f"{len(messages)} messages scrubbed into {dst}")
 
 
 def short(body: dict) -> str:
@@ -357,7 +394,14 @@ async def main() -> None:
     ap.add_argument("--save", metavar="FILE", help="write every message to a JSON array, ids, addresses and names replaced (fixtures)")
     ap.add_argument("--key", help="the X-Sonos-Api-Key to send instead of the example UUID; 'none' sends no header "
                     "(does the speaker check it?)")
+    ap.add_argument("--rescrub", nargs=2, metavar=("IN", "OUT"),
+                    help="scrub an earlier --save capture again with today's rules (no speaker, no aiohttp); ip is ignored")
     args = ap.parse_args()
+    if args.rescrub:
+        rescrub(*args.rescrub)
+        return
+    if aiohttp is None:
+        sys.exit("needs aiohttp: python3 -m pip install aiohttp (or apt install python3-aiohttp)")
     if args.key:
         global KEY
         KEY = args.key

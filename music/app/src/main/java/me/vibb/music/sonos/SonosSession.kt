@@ -124,6 +124,8 @@ data class Fields(
     val measuredCadenceMs: Long = SonosSession.POLL_MS,
     /** The speaker's raw state was TRANSITIONING ([transport] then reports the last real one). */
     val transitioning: Boolean = false,
+    /** This poll ran the migration probe's last try and no coordinator carries our stream (design 53 §2.8's advance guard). */
+    val probeMissed: Boolean = false,
 ) {
     /** The uris as [redactUri] prints them: a Storytel book's TrackURI is a signed URL (design 26b §0). */
     override fun toString(): String =
@@ -131,7 +133,7 @@ data class Fields(
             "relS=$relS, durS=$durS, uri=${uri?.let(::redactUri)}, ours=$ours, foreignUri=${foreignUri?.let(::redactUri)}, " +
             "groupedAway=$groupedAway, coordinator=$coordinator, lostSession=$lostSession, volume=$volume, retriedAt=$retriedAt, " +
             "streamMoved=$streamMoved, error=$error, failedPolls=$failedPolls, nextPollMs=$nextPollMs, " +
-            "measuredCadenceMs=$measuredCadenceMs, transitioning=$transitioning)"
+            "measuredCadenceMs=$measuredCadenceMs, transitioning=$transitioning, probeMissed=$probeMissed)"
 
     /**
      * Fresh, defined once (QA H2): measured within the cadence chosen after that successful poll,
@@ -214,6 +216,10 @@ class SonosSession(
     /** The listing's duration of the item we played: the tail cadence's only (null after an adopt). */
     private var cadenceHintS: Double? = null
 
+    /** Design 53 §2.8: the probe's candidate (asked first) and when our group last changed (the kept-TrackURI window). */
+    private var hinted: String? = null
+    private var groupAt: Long? = null
+
     /** The cadence chosen after the last successful poll (freshness). */
     private var lastCadence = POLL_MS
 
@@ -232,6 +238,21 @@ class SonosSession(
         moved = null
         migrateTries = 0
         oursAt = null
+        hinted = null
+    }
+
+    /** Design 53 §2.8: [uid] may carry our stream now (a `MOVED`'s player, a `groups` event's, our "−"'s first member) - the probe asks it first. */
+    fun hint(uid: String) {
+        hinted = uid
+    }
+
+    /**
+     * Design 53 §2.8's advance guard: our group changed at [at]. For [GROUP_WINDOW_MS] the probe also takes a STOPPED
+     * of ours that kept its TrackURI (an old coordinator may keep it after leaving), so the next episode never starts
+     * here while another room plays the current one.
+     */
+    fun groupChanged(at: Long) {
+        groupAt = at
     }
 
     /**
@@ -291,6 +312,7 @@ class SonosSession(
         lastPos = null
         retriedAt = null
         moved = null
+        hinted = null
         migrateTries = 0
         oursAt = null
         auxN = 0
@@ -333,8 +355,8 @@ class SonosSession(
             val fields = classify(io())
             fails = 0
             retry = stallBookkeeping(fields)
-            if (probe != null) maybeProbeMigration(fields, probe)
-            publish(fields)
+            val missed = probe != null && maybeProbeMigration(fields, probe)
+            publish(fields.copy(probeMissed = missed))
         } catch (e: Exception) {
             fails++
             publishUnreachable(e.javaClass.simpleName)
@@ -533,36 +555,44 @@ class SonosSession(
     /**
      * `_maybe_probe_migration`: only the migration signature (STOPPED with an EMPTY TrackURI) after
      * an ours+live sighting within [MIGRATE_WINDOW_MS], [MIGRATE_TRIES] attempts per transition; a
-     * found hint ends the probing. A hijack (x-rincon) or an episode end (uri retained) never enters.
+     * found hint ends the probing. A hijack (x-rincon) or an episode end (uri retained) never enters -
+     * except, for [GROUP_WINDOW_MS] after our group changed (design 53 §2.8), a STOPPED of ours that kept
+     * its TrackURI: the old coordinator may keep it after leaving. True when the probe's last try ran
+     * and no coordinator carries our stream (the controller's advance guard reads it as [Fields.probeMissed]).
      */
-    fun maybeProbeMigration(fields: Fields, probe: MigrationProbe) {
-        if (!(fields.transport == TransportState.STOPPED && fields.uri.isNullOrEmpty())) return
-        if (moved != null || migrateTries <= 0) return
-        val ours = oursAt ?: return
+    fun maybeProbeMigration(fields: Fields, probe: MigrationProbe): Boolean {
         val now = elapsedMs()
-        if (now - ours > MIGRATE_WINDOW_MS) return
+        val kept = fields.ours && groupAt?.let { now - it in 0 until GROUP_WINDOW_MS } == true
+        if (!(fields.transport == TransportState.STOPPED && (fields.uri.isNullOrEmpty() || kept))) return false
+        if (moved != null || migrateTries <= 0) return false
+        val ours = oursAt ?: return false
+        if (now - ours > MIGRATE_WINDOW_MS) return false
         // design 53 §2.4: a try only MIGRATE_SPACING_MS after the last, whatever woke the poll
-        if (probedAt?.let { now - it < MIGRATE_SPACING_MS } == true) return
+        if (probedAt?.let { now - it < MIGRATE_SPACING_MS } == true) return false
         probedAt = now
         migrateTries--
-        log("migration probe ${MIGRATE_TRIES - migrateTries}/$MIGRATE_TRIES: our uid stopped empty - looking for the stream on another coordinator")
+        log("migration probe ${MIGRATE_TRIES - migrateTries}/$MIGRATE_TRIES: our uid stopped ${if (fields.uri.isNullOrEmpty()) "empty" else "after a group change"} - looking for the stream on another coordinator")
         try {
             probeMigration(probe)
         } catch (e: Exception) {
             log("migration probe failed (${e.javaClass.simpleName})")
         }
         if (moved == null && migrateTries <= 0) log("migration probe: no coordinator carries our stream - settling into lost-session")
+        // only the last try's miss says nobody carries it: right after a coordinator left, the new one can still be
+        // missing from the topology or TRANSITIONING at the first try (qa-53b-code 7)
+        return moved == null && migrateTries <= 0
     }
 
     /**
      * `_probe_migration`: the LIVE topology, then each other coordinator's own transport (never the
-     * aux coordinator, which ghosts). Match: PLAYING/PAUSED and [sameStream] (1b's [normUri] equality) with the session's
-     * uri. A hit records [Moved] with the session's uri.
+     * aux coordinator, which ghosts) - the hinted one first (design 53 §2.8). Match: PLAYING/PAUSED and
+     * [sameStream] (1b's [normUri] equality) with the session's uri. A hit records [Moved] with the session's uri.
      */
     private fun probeMigration(probe: MigrationProbe) {
         val doc = probe.refreshTopology()
         val own = uri ?: return
-        val candidates = doc.groups.filter { it.coordinator.isNotEmpty() && it.coordinator != uid }.take(MAX_CANDIDATES)
+        val others = doc.groups.filter { it.coordinator.isNotEmpty() && it.coordinator != uid }
+        val candidates = others.sortedByDescending { it.coordinator == hinted }.take(MAX_CANDIDATES)
         for (g in candidates) {
             val rec = doc.players[g.coordinator] ?: continue
             val (tr, trackUri) = probe.live(rec) ?: continue
@@ -570,6 +600,7 @@ class SonosSession(
             if (!sameStream(own, trackUri)) continue
             moved = Moved(g.coordinator, rec.name, own)
             migrateTries = 0
+            hinted = null
             log("stream moved to ${rec.name} (${g.coordinator}) - hinting the controller")
             return
         }
@@ -597,5 +628,8 @@ class SonosSession(
 
         /** The migration probe's tries at least this far apart. */
         const val MIGRATE_SPACING_MS = 1_500L
+
+        /** Design 53 §2.8: after our group changed, a STOPPED of ours with its TrackURI kept is probed this long (the controller's SETTLE_MS). */
+        const val GROUP_WINDOW_MS = 8_000L
     }
 }

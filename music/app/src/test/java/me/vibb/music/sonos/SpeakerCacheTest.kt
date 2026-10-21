@@ -100,7 +100,7 @@ class SpeakerCacheTest {
         rig.waitForRound()
         assertEquals(
             "the rows refresh by themselves when the round ends (L3)",
-            RoomsView(listOf(Room("Edith", "RINCON_E", listOf("Edith")), Room("Kjøkken", "RINCON_K", listOf("Kjøkken"))), stale = false, scanning = false),
+            RoomsView(listOf(Room("Edith", "RINCON_E", listOf("RINCON_E" to "Edith")), Room("Kjøkken", "RINCON_K", listOf("RINCON_K" to "Kjøkken"))), stale = false, scanning = false),
             rig.rooms.state.value,
         )
         val view = rig.rooms.view()
@@ -216,5 +216,39 @@ class SpeakerCacheTest {
         RendererChoice.write(file, RendererChoice.LOCAL_CHOICE)
         assertFalse(RendererChoice.read(file).sonos)
         assertEquals(listOf("renderer.json"), tmp.root.list()!!.toList())
+    }
+
+    @Test
+    fun `d53 the busy look - every other row's coordinator asked within 1 s, PLAYING is busy, ours and a silent one never`() = kotlinx.coroutines.runBlocking {
+        val cache = SpeakerCache(tmp.root.resolve("sonos.json"))
+        cache.applyTopology(
+            Household(
+                mapOf(
+                    "RINCON_S" to Zone("RINCON_S", "192.168.1.20", 1400, "Stua"), "RINCON_K" to Zone("RINCON_K", "192.168.1.21", 1400, "Kjøkken"),
+                    "RINCON_B" to Zone("RINCON_B", "192.168.1.22", 1400, "Barnerommet"), "RINCON_L" to Zone("RINCON_L", "192.168.1.23", 1400, "Loft"),
+                    "RINCON_O" to Zone("RINCON_O", "192.168.1.24", 1400, "Bad"),
+                ),
+                listOf(Group("RINCON_S", listOf("RINCON_S", "RINCON_K")), Group("RINCON_B", listOf("RINCON_B")), Group("RINCON_L", listOf("RINCON_L")), Group("RINCON_O", listOf("RINCON_O"))),
+            ),
+        )
+        val asked = java.util.concurrent.ConcurrentLinkedQueue<Pair<String, Long>>()
+        val states = mapOf("192.168.1.20" to "PLAYING", "192.168.1.22" to "PLAYING", "192.168.1.23" to "STOPPED")
+        val rooms = RoomDirectory(
+            cache, { _, _, _ -> "" }, { emptyList() }, { true }, scope, System::currentTimeMillis,
+            transportState = { ip, _, timeoutMs ->
+                asked += ip to timeoutMs
+                if (ip == "192.168.1.24") throw SpeakerUnreachable("off")
+                states[ip]
+            },
+        )
+        rooms.view()
+        assertEquals(setOf("RINCON_B"), rooms.lookBusy("RINCON_S"))
+        assertEquals(setOf("RINCON_B"), rooms.state.value.busy)
+        assertEquals("our own row (and the member in it) is never asked", setOf("192.168.1.22", "192.168.1.23", "192.168.1.24"), asked.map { it.first }.toSet())
+        assertTrue(asked.all { it.second == RoomDirectory.BUSY_PER_MS })
+        // the next refresh keeps it until the next look; the sheet's opening clears it first (qa-53b-code 9)
+        assertEquals(setOf("RINCON_B"), rooms.view().busy)
+        rooms.clearBusy()
+        assertTrue(rooms.state.value.busy.isEmpty())
     }
 }

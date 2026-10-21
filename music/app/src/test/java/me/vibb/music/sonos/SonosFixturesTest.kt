@@ -32,8 +32,26 @@ class SonosFixturesTest {
             "get_volume.xml", "get_mute.xml", "empty_response.xml",
             // design 53 §2.1: not replies - the golden DIDLs PlayBodyTest compares (scripts/sonos-play-test.py --golden)
             "didl_url.xml", "didl_nrk.xml", "didl_storytel.xml",
+            // design 53 §2.6: the leave's reply
+            "become_standalone.xml",
         )
         assertEquals(checked, SonosFakes.fixtureNames().toSet())
+    }
+
+    @Test
+    fun `d53 the grouping verbs on the wire - the join is x-rincon with empty metadata, the leave parses its reply`() {
+        TinyHttp { r -> TinyHttp.Response(200, fixture(if (r.body.contains("BecomeCoordinatorOfStandaloneGroup")) "become_standalone.xml" else "empty_response.xml")) }.use { server ->
+            val kjokken = SoapSpeaker(Soap(Soap.client()), "127.0.0.1", server.port, "RINCON_KJOKKEN01400")
+            kjokken.joinGroup("RINCON_STUA01400")
+            val join = server.requests.last()
+            assertEquals("\"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI\"", join.headers["soapaction"])
+            assertTrue(join.body, join.body.contains("<CurrentURI>x-rincon:RINCON_STUA01400</CurrentURI><CurrentURIMetaData></CurrentURIMetaData>"))
+            kjokken.becomeStandalone()
+            val leave = server.requests.last()
+            assertEquals("\"urn:schemas-upnp-org:service:AVTransport:1#BecomeCoordinatorOfStandaloneGroup\"", leave.headers["soapaction"])
+            assertTrue(leave.body, leave.body.contains("<InstanceID>0</InstanceID></u:BecomeCoordinatorOfStandaloneGroup>"))
+        }
+        assertEquals("RINCON_000E58A0B1C201400", reply("become_standalone.xml", "BecomeCoordinatorOfStandaloneGroup")["DelegatedGroupCoordinatorID"])
     }
 
     @Test

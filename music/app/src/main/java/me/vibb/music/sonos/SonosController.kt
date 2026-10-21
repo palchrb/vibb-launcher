@@ -6,6 +6,9 @@ import me.vibb.music.logic.SonosAnchor
 import me.vibb.music.logic.SonosMeasure
 import me.vibb.music.logic.advanceIndex
 import me.vibb.music.logic.durationByConsumableId
+import me.vibb.music.logic.groupMean
+import me.vibb.music.logic.groupMove
+import me.vibb.music.logic.groupStep
 import me.vibb.music.logic.sonosAnchor
 import me.vibb.music.logic.sonosMintCode
 import me.vibb.music.model.Entry
@@ -41,6 +44,10 @@ import kotlin.math.roundToInt
  * Design 53 (round 53-a, ours): the speaker's event socket ([onSocket]) confirms our own verbs, re-bases
  * the bar ([sonosAnchor], display only) and wakes confirm polls; every decision - ours, the advance,
  * the follow, grouped away, the bookmark - stays a poll's.
+ *
+ * Design 53-b (§2.6-§2.9, §2.12, ours): the household's grouping ([topology]: the joiners accepted and capped once,
+ * the label, the follow's candidate and the advance guard after a group change), our own "−" on our coordinator
+ * ([leaveGroup]) and the group's volume (every room by the same delta, each clamped; [memberVolumes] off the actor).
  */
 
 /** The actor (design 26a §0): SOAP in order on one IO consumer, results back on the main thread. */
@@ -114,8 +121,18 @@ interface SonosHost {
      */
     fun armedPlaying(playing: Boolean) {}
 
+    /** A `groups` or `MOVED` event (design 53 §2.8): the household's topology is to be read again (debounced). */
+    fun groupsChanged() {}
+
     fun log(message: String) {}
 }
+
+/**
+ * Design 53 §2.9 (QA 53-4): the rooms in our group's [members] the controller didn't know ([known]: what a start
+ * capped, an adopt's or a follow's baseline, our own joins) - joined from outside the app. One rule for the cap and
+ * for Q4's acceptance.
+ */
+fun joiners(known: Set<String>, members: List<String>, ourUid: String): List<String> = members.filter { it != ourUid && it !in known }.distinct()
 
 /** The player's phase (Media3's playback states; mapped in SonosRenderer). */
 enum class PlayPhase { IDLE, BUFFERING, READY, ENDED }
@@ -182,6 +199,8 @@ class SonosController(
     private val events: SonosEventLink = SonosEventLink.NONE,
     /** Wake the poller now: a confirm poll (design 53 §2.3). */
     private val wakePoll: () -> Unit = {},
+    /** Our group's other rooms' volumes (design 53 §2.12): set latest-wins and read off our actor. */
+    private val memberVolumes: MemberVolumes = MemberVolumes.NONE,
 ) {
     /**
      * The room: the uid we command (a group by its coordinator), and its label. Migration follow moves
@@ -279,12 +298,67 @@ class SonosController(
      */
     var holdAtEnd: (() -> Unit)? = null
 
-    /** Our own last volume set: the base of the next press (vibb's `_sonos_vol_opt`). */
-    var volOpt: Int? = null
+    /**
+     * Our own last volume set per room (vibb's `_sonos_vol_opt`, per room since design 53 §2.12): the base of the next
+     * press; [volOpt] is our coordinator's.
+     */
+    private val volOpts = mutableMapOf<String, Int>()
+
+    /** Our coordinator's own last set (the lone room's slider and keys, as before design 53). */
+    val volOpt: Int? get() = volOpts[uid]
+
+    /** The last volume read of our group's other rooms (§2.12: our own last set wins over it). */
+    private val volRead = mutableMapOf<String, Int>()
+
+    /** Bumped by every volume set of our own on our coordinator: a play's result never overwrites a newer one (L1). */
+    private var volSets = 0
+
+    /** The "Begge"/"Alle" drag in progress (§2.12): its id and the volumes when it began (a drag back restores the balance). */
+    private var dragId: Long? = null
+    private var dragBase: Map<String, Int> = emptyMap()
+
+    /** The system's slider on a group (§2.12, qa-53b-code 6): the volumes when this slide began, and its last event. */
+    private var deviceBase: Map<String, Int> = emptyMap()
+    private var deviceAt = FAR_PAST
+
+    /** Per room: bumped by each own set, so a read started before it never replaces it (qa-53b-code 3). */
+    private val volGen = mutableMapOf<String, Int>()
+
+    /** Rooms whose last read got no answer: the group's keys don't wait for them again (qa-53b-code 4). */
+    private val unread = mutableSetOf<String>()
+
+    // -- design 53-b: the group (§2.6-§2.9) --
+
+    /** Our group's members as the topology last said, coordinator first ([uid] alone while it is no row's coordinator). */
+    var groupMembers: List<String> = listOf(uid)
         private set
 
-    /** Bumped by every volume set of our own: a play's result never overwrites a newer one (L1). */
-    private var volSets = 0
+    /** §2.9 `knownMembers`: the rooms a start capped, the baseline of an adopt or a follow, our own joins - never a joiner. */
+    private val knownMembers = mutableSetOf<String>()
+
+    /** No baseline yet (a renderer before its first start), or one owed by an adopt: the next fresh topology is it. */
+    private var baselined = false
+    private var baselinePending = false
+
+    /** Known rooms that left our group, and when (a follow takes them back: they moved with our stream). */
+    private val knownLeft = mutableMapOf<String, Long>()
+
+    /** The rooms our own "+" job is joining now (known though the topology doesn't show them yet; qa-53b-code 13). */
+    private val joiningNow = mutableSetOf<String>()
+
+    /**
+     * §2.8 (Q4) `acceptedRooms`: the rooms grouped into our session from outside the app during this renderer's life -
+     * respected whatever the scope ([sessionAllowed]). Read off the main thread by the scope's belt ([mayPlay]).
+     */
+    @Volatile
+    var accepted: Set<String> = emptySet()
+        private set
+
+    /** When an accepted room left our group (it stays accepted for [ACCEPTED_GRACE_MS]: our stream may have followed it). */
+    private val acceptedLeft = mutableMapOf<String, Long>()
+
+    /** §2.8's advance guard: our group changed (a `groups` event, a topology, our "−" on our coordinator). */
+    private var groupChangedAt = FAR_PAST
 
     /** The last playWhenReady the player showed: held through a transient (§3.2). */
     private var heldPwr = false
@@ -388,8 +462,19 @@ class SonosController(
         }
     }
 
-    /** The volume the slider shows: our last set, else the last read. */
-    fun deviceVolume(): Int = (volOpt ?: snap?.volume ?: 0).coerceIn(0, 100)
+    /** The volume the slider shows: our last set, else the last read; on a group the mean of its rooms (design 53 §2.12). */
+    fun deviceVolume(): Int = (groupVolume() ?: volOpt ?: snap?.volume ?: 0).coerceIn(0, 100)
+
+    /** Our coordinator plays with other rooms (the topology's view). */
+    fun grouped(): Boolean = groupMembers.size > 1
+
+    /** What the app knows of each member's volume (§2.12): our own last set, else the last read. */
+    fun roomVolumes(): Map<String, Int> = groupMembers.mapNotNull { u -> volumeOf(u)?.let { u to it } }.toMap()
+
+    /** The group's value (§2.12): the mean of its rooms' known volumes, two or more of them; null for a lone room. */
+    fun groupVolume(): Int? = roomVolumes().takeIf { grouped() && it.size >= 2 }?.let { groupMean(it.values) }
+
+    private fun volumeOf(u: String): Int? = volOpts[u] ?: (if (u == uid) snap?.volume else null) ?: volRead[u]
 
     /** Why the player stopped wanting to play: ours or the speaker's own pause is USER (the sleep timer ends). */
     fun pauseCause(now: Long): PauseCause =
@@ -596,6 +681,10 @@ class SonosController(
         endsNear = 0
         anchor = null
         forgetEvents()
+        // design 53 §2.9: the first fresh topology after the adopt is the baseline - nothing sent, volumes left as the
+        // household set them; read now (qa-53b-code 2: never the cache as an earlier process left it)
+        baselinePending = true
+        host.groupsChanged()
         accept(live)
         host.log("sonos: adopted a live session on start [${idx + 1}/${items.size}] ${items[idx].title}")
         host.changed()
@@ -912,7 +1001,11 @@ class SonosController(
         // the ramp's leftover is our own set: never above the cap either
         val restore = volume?.let { volumeTarget(it, startCap ?: cap()) }
         val target = uid
-        val room = if (startCap != null) members(target) else emptyList()
+        val group = if (why == PlayWhy.START) members(target) else null
+        val room = if (startCap != null) group.orEmpty() else emptyList()
+        // design 53 §2.9: a start's rooms are known (capped now, or no cap in force); a room its list missed (the rows
+        // not loaded yet) is a joiner when it first shows, and capped then
+        group?.let { baseline(it, accept = false) }
         val volSet = volSets
         val cid = body.mint
         // The job's token (design 26b §5.1, M6; qa-26b-step4b-code L1, L2): a Storytel play is the kid's latest
@@ -1035,7 +1128,7 @@ class SonosController(
      * ([volSet] behind [volSets]): its set ran later in the actor and stands.
      */
     private fun tookVolume(res: PlayResult, volSet: Int) {
-        if (volSet == volSets) res.volume?.let { volOpt = it }
+        if (volSet == volSets) res.volume?.let { volOpts[res.uid] = it }
     }
 
     private fun played(idx: Int, item: PlayItem, res: PlayResult, startS: Double, restored: Int?, volSet: Int) {
@@ -1172,6 +1265,13 @@ class SonosController(
             endsNear = if (dur != null && dur > 0 && rel > dur - ENDS_NEAR_S) endsNear + 1 else 0
         }
         if (s.transport == TransportState.STOPPED && endsNear > 0 && playing != null) {
+            // design 53 §2.8: right after a group change of ours the stream may have moved (an old coordinator may keep
+            // its TrackURI): the probe, with the candidate, decides first - the advance only once no coordinator carries it
+            if (now - groupChangedAt < SETTLE_MS && !s.probeMissed) {
+                host.log("sonos: the end right after a group change - the probe looks first")
+                work.after(SonosSession.MIGRATE_SPACING_MS) { if (!closed) wakePoll() }
+                return
+            }
             endsNear = 0
             idleGen = null
             if (skipAdvance == gen) {
@@ -1235,8 +1335,16 @@ class SonosController(
                         playback(e, now)
                     }
                 }
-                is SocketEvent.Moved -> if (session) wake(immediate = true, now)
-                is SocketEvent.Groups -> if (session) wake(immediate = false, now)
+                is SocketEvent.Moved -> if (session) {
+                    // design 53 §2.8: our uid coordinates no subscribed group now - its new coordinator may carry our stream
+                    wake(immediate = true, now)
+                    host.groupsChanged()
+                    followSoon(e.playerId)
+                }
+                is SocketEvent.Groups -> if (session) {
+                    wake(immediate = false, now)
+                    groups(e)
+                }
                 is SocketEvent.Health -> if (!e.healthy) {
                     // a socket that went away says nothing more: polling alone, as before it
                     wsState = null
@@ -1380,7 +1488,17 @@ class SonosController(
             r.onSuccess {
                 uid = mv.uid
                 name = mv.name
-                volOpt = null // new speaker, new volume world
+                // new speaker, new volume world
+                volOpts.clear()
+                volRead.clear()
+                unread.clear()
+                // design 53 §2.9 (qa-53b-code 2, 8): the stream's group moved with it - its rooms stay known and accepted
+                // as they were (also those the topology already showed gone with it); only a room neither known nor
+                // accepted is a joiner at the next topology, read now
+                groupMembers = listOf(mv.uid)
+                knownMembers += knownLeft.keys
+                knownLeft.clear()
+                host.groupsChanged()
                 playing = playing?.let { Playing(it.entryId, it.index, it.itemKey, mv.uri) }
                 host.followed(mv.uid, mv.name, playing?.itemKey, mv.uri)
                 host.log("sonos: stream moved to ${mv.name} (${mv.uid}) - following")
@@ -1556,6 +1674,164 @@ class SonosController(
         lockFor(false)
     }
 
+    // -- grouping (design 53 §2.6-§2.9; main thread) --
+
+    /** The session is live: fresh, ours, PLAYING or PAUSED - grouping is offered (§2.7; a paused one counts, N4). */
+    fun liveSession(now: Long): Boolean {
+        val s = snap ?: return false
+        return session && !closed && s.fresh(now) && s.ours && s.reachable && effectiveTransport(now)?.live == true
+    }
+
+    /** The controller's generation now (a "+" job captures it and ends when it moved: a play, a step, a load). */
+    val generationNow: Long get() = generation.get()
+
+    /** The label follows the household (§2.8): "Stua + Kjøkken" as it happens, the room's own name alone. */
+    fun relabel(label: String?) {
+        if (closed || label == null || label == name) return
+        name = label
+        host.changed()
+    }
+
+    /**
+     * The household's grouping as the topology says it now (the service's rooms.state collector, before its sheet and
+     * its scope's look; §2.8-§2.9): our group's [members], coordinator first ([uid] alone while it is no row's
+     * coordinator). The baseline an adopt or a follow owes takes them with nothing sent. Afterwards a room that wasn't
+     * known joined from outside the app ([joiners]): accepted whatever the scope (Q4) and, while a session of ours
+     * plays, capped once when louder - through our actor. A room that left is forgotten (an accepted one after
+     * [ACCEPTED_GRACE_MS]: our stream may have moved to it). A change opens §2.8's advance guard and reads the volumes.
+     */
+    fun topology(members: List<String>) {
+        if (closed) return
+        val now = elapsedMs()
+        val before = groupMembers
+        groupMembers = members.ifEmpty { listOf(uid) }
+        val changed = before.toSet() != groupMembers.toSet()
+        for (u in accepted) if (u !in groupMembers) acceptedLeft.getOrPut(u) { now } else acceptedLeft.remove(u)
+        val stale = acceptedLeft.filterValues { now - it >= ACCEPTED_GRACE_MS }.keys
+        if (stale.isNotEmpty()) {
+            accepted = accepted - stale
+            acceptedLeft.keys.removeAll(stale)
+        }
+        if (baselinePending) {
+            baseline(groupMembers, accept = true)
+        } else if (baselined) {
+            // a room that left is forgotten (joining again is a new join) - but remembered for the grace, in case our
+            // stream follows it (a follow keeps what the old group's rooms were); our own joins in flight stay known
+            for (u in knownMembers) if (u !in groupMembers && u !in joiningNow) knownLeft[u] = now
+            knownMembers.retainAll(groupMembers.toSet() + joiningNow)
+            for (u in groupMembers) knownLeft.remove(u)
+            knownLeft.values.removeAll { now - it >= ACCEPTED_GRACE_MS }
+            val outside = joiners(knownMembers, groupMembers, uid)
+            // Q4 is about a running session going on: a room grouped in while nothing of ours plays is no joiner yet - the
+            // next start's members cap it and the scope judges it then (qa-53b-code 1)
+            if (outside.isNotEmpty() && session) {
+                host.log("sonos: ${outside.size} room(s) joined our group from outside - accepted")
+                accepted = accepted + outside
+                knownMembers += outside
+                capJoiners(outside)
+            }
+        }
+        if (changed && session) {
+            groupChanged(now)
+            readVolumes()
+        }
+    }
+
+    /** The baseline (§2.9): [members] known; with [accept] (an adopt) the app put none of them there. */
+    private fun baseline(members: List<String>, accept: Boolean) {
+        baselined = true
+        baselinePending = false
+        knownMembers.clear()
+        knownMembers += members
+        knownLeft.clear()
+        if (accept) accepted = accepted + members.filter { it != uid }
+    }
+
+    /**
+     * Our own "+" (§2.7): [room] joins by the app's hand - known, never counted (or capped again) as a joiner from
+     * outside, also when a topology comes between this and its join ([joinDone] ends it).
+     */
+    fun joining(room: String) {
+        knownMembers += room
+        joiningNow += room
+    }
+
+    /** Our "+" job ended: its rooms are known only while the topology shows them. */
+    fun joinDone(rooms: Collection<String>) {
+        joiningNow -= rooms.toSet()
+    }
+
+    /** §2.9: joiners louder than the cap brought down to it once, through our actor; each set is our own. */
+    private fun capJoiners(rooms: List<String>) {
+        val c = cap()?.takeIf { it in 1..99 } ?: return
+        work.submit({ transport.capMembers(rooms, c) }) { r ->
+            r.getOrNull()?.let { set -> if (!closed) set.forEach { (u, v) -> ownMemberSet(u, v) } }
+            r.exceptionOrNull()?.let { host.log("sonos: a joiner's cap failed (${it.javaClass.simpleName})") }
+            host.changed()
+        }
+    }
+
+    /**
+     * "−" on our own coordinator (§2.6-§2.7): `BecomeCoordinatorOfStandaloneGroup` in our actor (ordered against our
+     * plays). Sonos moves the stream to a remaining member; the follow takes it - the poll burst, [candidate] (the
+     * first remaining member) asked first by the probe, and the advance guard's window. [then] hears whether the
+     * speaker took it. False when nothing was sent (no session of ours: refused, [then] never runs; qa-53b-code 11).
+     */
+    fun leaveGroup(candidate: String?, then: (Boolean) -> Unit): Boolean {
+        if (closed || !session) return false
+        val target = uid
+        work.submit({ transport.leave(target) }) { r ->
+            val ok = r.getOrNull() == true
+            r.exceptionOrNull()?.let { host.log("sonos: leaving the group failed (${it.javaClass.simpleName})") }
+            if (ok && !closed) {
+                host.log("sonos: our coordinator left its group - following the stream")
+                followSoon(candidate)
+            }
+            then(ok)
+            host.changed()
+        }
+        return true
+    }
+
+    /**
+     * §2.8 case 3: our stream may now play on another coordinator - [candidate] (a `MOVED`'s player, a `groups`
+     * event's, our "−"'s first member) to the probe through the actor, the advance guard's window, and the poll burst:
+     * now, +[BURST_FIRST_MS], +[BURST_SECOND_MS]. The ours-gate (`sameStream`) still decides; nothing is sent.
+     */
+    private fun followSoon(candidate: String?) {
+        groupChanged(elapsedMs())
+        if (candidate != null && candidate != uid) work.submit({ transport.hint(candidate) }) {}
+        burstPoll()
+        work.after(BURST_FIRST_MS) { burstPoll() }
+        work.after(BURST_SECOND_MS) { burstPoll() }
+    }
+
+    private fun burstPoll() {
+        if (!closed && session && snap?.reachable != false) wakePoll()
+    }
+
+    /** §2.8's advance guard opens (and the session's probe takes a kept TrackURI) for [SETTLE_MS]. */
+    private fun groupChanged(at: Long) {
+        groupChangedAt = at
+        work.submit({ transport.groupChanged(at) }) {}
+    }
+
+    /**
+     * A `groups` event (§2.8): the topology is read again (debounced, the renderer's); our group's members changing
+     * open the advance guard; and when our former members are now held by another coordinator - our coordinator left
+     * them (case 3, if no `MOVED` reached us) or they left us - that coordinator is the follow's candidate.
+     */
+    private fun groups(e: SocketEvent.Groups) {
+        host.groupsChanged()
+        val former = groupMembers.filter { it != uid }
+        val holder = e.groups.firstOrNull { g -> g.coordinatorId != uid && uid !in g.playerIds && g.playerIds.any { it in former } }
+        if (holder != null) {
+            followSoon(holder.coordinatorId)
+        } else if (e.members.isNotEmpty() && e.members.toSet() != groupMembers.toSet()) {
+            groupChanged(elapsedMs())
+        }
+    }
+
     // -- volume (§5.3) --
 
     /**
@@ -1568,7 +1844,7 @@ class SonosController(
     fun setVolume(volume: Int) {
         if (closed) return
         val v = volumeTarget(volume, cap())
-        volOpt = v
+        volOpts[uid] = v
         volSets++
         val target = uid
         work.submit({ transport.volume(v, target) }) { r ->
@@ -1579,12 +1855,54 @@ class SonosController(
     }
 
     /**
+     * The player's and the system's slider (`setDeviceVolume`): a lone room as [setVolume]; on a group (design 53
+     * §2.12) the value is the new mean - like "Begge", the same delta to every room from the volumes as they were when
+     * this slide began (its first event after [DEVICE_SLIDE_GAP_MS] without one; qa-53b-code 6), each clamped
+     * ([groupMove]), so sliding back restores the balance.
+     */
+    fun setDeviceVolume(volume: Int) {
+        if (closed) return
+        if (!groupLive()) return setVolume(volume)
+        val now = elapsedMs()
+        val fresh = now - deviceAt > DEVICE_SLIDE_GAP_MS
+        deviceAt = now
+        withRoomVolumes {
+            if (fresh || deviceBase.isEmpty()) deviceBase = roomVolumes()
+            setRooms(groupMove(deviceBase, volume, cap()))
+        }
+    }
+
+    /**
+     * [block] with the volumes the app knows - at once, or after one read of those it doesn't (§2.12). A room that
+     * didn't answer that read isn't asked again before every press, and the known rooms move without it: one
+     * switched-off member never disables the group's keys (qa-53b-code 4).
+     */
+    private fun withRoomVolumes(block: () -> Unit) {
+        val unknown = groupMembers.filter { volumeOf(it) == null && it !in unread }
+        if (unknown.isEmpty()) return block()
+        readNow(unknown) { if (!closed && groupLive()) block() }
+    }
+
+    /** One read of [rooms] (§2.12), absorbed; the rooms that didn't answer are remembered as unread until the next read. */
+    private fun readNow(rooms: List<String>, then: () -> Unit) {
+        val gens = rooms.associateWith { volGen[it] ?: 0 }
+        memberVolumes.read(rooms) { read ->
+            absorb(read, gens)
+            unread -= read.keys
+            unread += rooms.filter { it !in read }
+            then()
+        }
+    }
+
+    /**
      * A volume key: our own last set (never the stale poll), else the last read, else 50 (vibb), +-
      * [delta]. A press up on a speaker already at or above the cap sends nothing: it would be pulled
-     * down by an "up" (and the cap forbids going higher).
+     * down by an "up" (and the cap forbids going higher). On a group (design 53 §2.12) every room moves by
+     * [delta] from its own last set ([groupStep]) - the rooms' volumes read first while one is unknown.
      */
     fun adjustVolume(delta: Int) {
         if (closed) return
+        if (groupLive()) return withRoomVolumes { setRooms(groupStep(roomVolumes(), delta, cap())) }
         val base = volOpt ?: snap?.volume ?: 50
         val c = cap()?.takeIf { it in 1..99 }
         if (delta > 0 && c != null && base >= c) return host.log("sonos: volume at the cap ($c) - up ignored")
@@ -1592,18 +1910,92 @@ class SonosController(
     }
 
     /**
+     * One room's own slider in the sheet's group block (§2.12): that room only, clamped like every set of ours. Not
+     * while the session isn't ours to drive.
+     */
+    fun setRoomVolume(room: String, volume: Int) {
+        if (closed || !groupLive() || room !in groupMembers) return
+        setRooms(mapOf(room to volumeTarget(volume, cap())))
+    }
+
+    /**
+     * The "Begge"/"Alle" slider (§2.12): every room by the same delta from the volumes as they were when this drag
+     * ([drag], the view model's id of it) began - so dragging back restores the balance - each clamped ([groupMove]).
+     */
+    fun setGroupVolume(mean: Int, drag: Long) {
+        if (closed || !groupLive()) return
+        if (dragId != drag) {
+            dragId = drag
+            dragBase = roomVolumes()
+        }
+        // the known rooms move (one unreadable member never disables the slider; qa-53b-code 4)
+        if (dragBase.size < 2) return host.log("sonos: a group drag before two rooms' volumes are known - ignored")
+        setRooms(groupMove(dragBase, mean, cap()))
+    }
+
+    /** Our session drives a group (§2.12's group rules apply): a session of ours, the topology's group. */
+    private fun groupLive(): Boolean = session && grouped() && snap?.ours == true
+
+    /**
+     * Each room to its volume (§2.12): our coordinator through our actor ([setVolume]), every other member through
+     * [memberVolumes] (latest-wins, off our actor). A room already at its target gets nothing, and nothing is ever sent
+     * above the cap: a raise leaves a room at or above it where it is (`roomMove`), so such a target is no set of ours -
+     * sending it back would set a stale read's value and record a louder volume set elsewhere as our own (qa-53b-code 3).
+     */
+    private fun setRooms(targets: Map<String, Int>) {
+        val c = cap()?.takeIf { it in 1..99 }
+        for ((u, v) in targets) {
+            if (volumeOf(u) == v || (c != null && v > c)) continue
+            if (u == uid) {
+                setVolume(v)
+            } else {
+                ownMemberSet(u, v)
+                memberVolumes.set(u, v)
+            }
+        }
+        host.changed()
+    }
+
+    /** Our own set of a member: its base, and a newer generation than any read already under way (§2.12). */
+    private fun ownMemberSet(u: String, v: Int) {
+        volOpts[u] = v
+        volGen[u] = (volGen[u] ?: 0) + 1
+    }
+
+    /**
+     * The members' volumes as read (§2.12): a member's read that differs from our own last set replaces it - the Sonos
+     * app changed it since, and that volume is never pulled down by the cap (26a §5.3) - but only a read that started
+     * after that room's last own set ([gens], the generation at its start): an older one says nothing of the set
+     * (qa-53b-code 3). Our coordinator's own set stays the base of its next press (vibb's `_sonos_vol_opt`).
+     */
+    private fun absorb(read: Map<String, Int>, gens: Map<String, Int>) {
+        for ((u, v) in read) {
+            if ((volGen[u] ?: 0) != (gens[u] ?: 0)) continue
+            volRead[u] = v
+            if (u != uid && volOpts[u] != v) volOpts.remove(u)
+        }
+    }
+
+    /** The members' volumes read now (§2.12: the sheet opening, the group's members changing). */
+    fun readVolumes() {
+        if (closed || !grouped()) return
+        readNow(groupMembers) { host.changed() }
+    }
+
+    /**
      * The managed config changed (the restrictions broadcast; design 26a §5.3, qa-26a-corrections M1):
      * the cap in force went below our own last set (the override or the pause ended after the keys
      * turned the room up) - one `SetVolume` of the cap. A volume nobody of ours set (the Sonos app's,
      * [volOpt] null) or one at or below the cap is left alone: vibb never fights an external change.
+     * Per room since design 53 §2.12: each room of the group whose own last set by us is above it.
      */
     fun capChanged() {
         if (closed || !session) return
         val c = cap()?.takeIf { it in 1..99 } ?: return
-        val v = volOpt ?: return
-        if (v <= c) return
-        host.log("sonos: the cap went down to $c - our own $v follows it")
-        setVolume(c)
+        val over = volOpts.filter { (u, v) -> v > c && (u == uid || u in groupMembers) }
+        if (over.isEmpty()) return
+        host.log("sonos: the cap went down to $c - our own ${over.size} louder set(s) follow it")
+        setRooms(over.mapValues { c })
     }
 
     // -- the sleep timer's end (§5.2) --
@@ -1613,6 +2005,12 @@ class SonosController(
      * volume put back so the next play isn't silent - one actor job, cancelled by [cancelFade] (the
      * volume is restored at once). [done] runs on the main thread when it is over. Nothing of ours
      * playing: just [done].
+     *
+     * A group (design 53-b, the user, 2026-10-21: "den bør slå av alle grouped høyttalere"): every other member
+     * whose volume the app knows steps down with our coordinator from its own volume - through [memberVolumes]
+     * (latest-wins, off our actor: a switched-off member never delays the Pause), never above the cap - and gets
+     * its own pre-fade volume back after the Pause (which stops the whole group), as the coordinator does. Reads
+     * during the ramp say nothing of the rooms' volumes (their generation is bumped at both ends).
      */
     fun fadeOutAndPause(done: () -> Unit) {
         val now = elapsedMs()
@@ -1630,20 +2028,27 @@ class SonosController(
         bookmarkNow(force = false)
         host.ramp(base)
         val target = uid
+        val others = if (grouped()) roomVolumes().filterKeys { it != target } else emptyMap()
+        others.keys.forEach { volGen[it] = (volGen[it] ?: 0) + 1 }
+        val c = cap()?.takeIf { it in 1..99 }
+        val members = memberVolumes
         work.submit({
             var paused = false
             try {
                 for (f in listOf(2.0 / 3, 1.0 / 3, 0.0)) {
                     if (cancel.get()) break
+                    for ((u, b) in others) members.set(u, volumeTarget((b * f).roundToInt(), c))
                     transport.volume((base * f).roundToInt(), target)
                     sleep(RAMP_STEP_MS)
                 }
                 if (!cancel.get()) paused = transport.pause(target)
             } finally {
+                for ((u, b) in others) members.set(u, b)
                 transport.volume(base, target)
             }
             paused
         }) { r ->
+            others.keys.forEach { volGen[it] = (volGen[it] ?: 0) + 1 }
             if (fade === cancel) fade = null
             host.ramp(null)
             r.exceptionOrNull()?.let { host.log("sonos: sleep fade failed (${it.javaClass.simpleName})") }
@@ -1705,6 +2110,16 @@ class SonosController(
 
         /** The live classify of a switch home (`/state?live=1`, 1021-1039). */
         const val LIVE_BUDGET_MS = 1_500L
+
+        /** Design 53 §2.8: the poll burst after a group change that may have moved our stream - now, then these. */
+        const val BURST_FIRST_MS = 1_500L
+        const val BURST_SECOND_MS = 3_500L
+
+        /** The system's slider on a group: a gap this long between its events starts a new slide (a new base). */
+        const val DEVICE_SLIDE_GAP_MS = 1_000L
+
+        /** An accepted room that left our group stays accepted this long (the probe's window: our stream may follow it). */
+        const val ACCEPTED_GRACE_MS = SonosSession.MIGRATE_WINDOW_MS
 
         /** The sleep ramp's step (§5.2). */
         const val RAMP_STEP_MS = 1_000L

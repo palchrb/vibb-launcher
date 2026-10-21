@@ -47,6 +47,7 @@ import me.vibb.music.logic.canFavourite
 import me.vibb.music.logic.favouriteEntryKeys
 import me.vibb.music.logic.skipWithin
 import me.vibb.music.logic.sleepAtEndOffered
+import me.vibb.music.playback.Output
 import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.sync.NewNotifier
@@ -154,13 +155,25 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                         onDismiss = { vm.sheet = null },
                     )
                     SheetKind.OUTPUT -> OutputSheet(
-                        hub.outputs, vm.headsetRows(), hub.rooms, hub.output,
+                        // design 53 §2.7: the rooms as groupSheet decides them, from the service's published state
+                        outputSheetItems(
+                            hub.outputs, vm.headsetRows(),
+                            groupSheet(
+                                hub.rooms, Output.sonosUid(hub.output.key), hub.roomLive, hub.playing,
+                                hub.groupPending, hub.groupFailed, hub.roomVolumes, hub.groupVolume,
+                            ),
+                        ),
+                        hub.rooms.scanning, hub.output,
                         onOpen = { actions.refreshRooms(); vm.outputSheetOpened() },
                         onClose = vm::outputSheetClosed,
                         onPick = { actions.output(it.key); vm.sheet = null },
                         // design 52: a headset only connects (or is made active); the sheet stays open on "Kobler til…"
                         onHeadset = { vm.headsetTapped(it, hub.output.key.takeIf { onRoom }) },
                         onRescan = actions::rescanRooms,
+                        // design 53 §2.7, §2.12: "+", "−" and the sliders keep the sheet open
+                        onJoin = { actions.roomJoin(it.uid) },
+                        onLeave = actions::roomLeave,
+                        onVolume = { uid, group, volume, done -> vm.roomVolume(uid, group, volume, done, actions::roomVolume) },
                         onDismiss = { vm.sheet = null },
                     )
                     null -> Unit

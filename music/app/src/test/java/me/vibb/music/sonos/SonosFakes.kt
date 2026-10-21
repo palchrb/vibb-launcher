@@ -142,6 +142,15 @@ class FakeSpeaker(
 
     override fun stop() = record("stop")
 
+    /** Design 53 §0.2: the join (`x-rincon:` with empty metadata) and the leave, as "join <coordinator>" and "standalone". */
+    override fun joinGroup(coordinator: String) {
+        record("join $coordinator", "join")
+        lastUri = rinconUri(coordinator)
+        lastMeta = ""
+    }
+
+    override fun becomeStandalone() = record("standalone")
+
     override fun seek(target: String) {
         failOn["seek"]?.let { throw it() }
         seekFaults.removeFirstOrNull()?.let {

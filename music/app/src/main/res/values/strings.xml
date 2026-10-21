@@ -82,6 +82,20 @@
     <string name="headset_no_contact_row">Couldn\'t reach %1$s - is it switched on?</string>
     <string name="rooms_rescan">Look for speakers</string>
     <string name="rooms_scanning">Looking for speakers…</string>
+    <!-- Design 53 §2.7, §2.12: grouping in "Play on" (no hint lines: the user, Q3) -->
+    <string name="room_switch_here">Tap to switch here</string>
+    <string name="room_playing_now">Playing now</string>
+    <string name="group_playing_both">Playing in both</string>
+    <string name="group_playing_all">Playing in all %1$d</string>
+    <string name="room_busy">Playing something else</string>
+    <string name="room_join">Also play in %1$s</string>
+    <string name="room_leave">Take %1$s out of the group</string>
+    <string name="room_no_contact">Couldn\'t reach %1$s - is it switched on?</string>
+    <string name="group_volume_both">Both</string>
+    <string name="group_volume_all">All</string>
+    <string name="group_volume_cd_both">Volume in both rooms</string>
+    <string name="group_volume_cd_all">Volume in all rooms</string>
+    <string name="room_volume_cd">Volume in %1$s</string>
     <string name="renderer_grouped_away">Playing in another group</string>
     <string name="renderer_taken_over">Someone else is using the speaker</string>
     <string name="renderer_lost_session">The speaker stopped</string>

@@ -80,6 +80,20 @@
     <string name="headset_no_contact_row">Fikk ikke kontakt med %1$s - er den på?</string>
     <string name="rooms_rescan">Se etter høyttalere</string>
     <string name="rooms_scanning">Søker etter høyttalere…</string>
+    <!-- Design 53 §2.7, §2.12: gruppering i «Spill av på» (ingen hjelpetekst: brukeren, Q3) -->
+    <string name="room_switch_here">Trykk for å bytte hit</string>
+    <string name="room_playing_now">Spiller nå</string>
+    <string name="group_playing_both">Spiller nå i begge</string>
+    <string name="group_playing_all">Spiller nå i alle %1$d</string>
+    <string name="room_busy">Spiller noe annet</string>
+    <string name="room_join">Spill også i %1$s</string>
+    <string name="room_leave">Ta %1$s ut av gruppen</string>
+    <string name="room_no_contact">Fikk ikke kontakt med %1$s - er den på?</string>
+    <string name="group_volume_both">Begge</string>
+    <string name="group_volume_all">Alle</string>
+    <string name="group_volume_cd_both">Volum i begge rommene</string>
+    <string name="group_volume_cd_all">Volum i alle rommene</string>
+    <string name="room_volume_cd">Volum i %1$s</string>
     <string name="renderer_grouped_away">Spilles i en annen gruppe</string>
     <string name="renderer_taken_over">Noen andre bruker høyttaleren</string>
     <string name="renderer_lost_session">Høyttaleren stoppet</string>

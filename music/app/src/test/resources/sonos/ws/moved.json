@@ -1,6 +1,6 @@
 [
   [{"namespace": "playback:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "type": "groupCoordinatorChanged"},
-   {"_objectType": "groupCoordinatorChanged", "groupStatus": "GROUP_STATUS_MOVED", "groupName": "Kjøkken + 1", "websocketUrl": "wss://192.168.1.17:1443/websocket/api", "playerId": "RINCON_00000000000001401"}],
+   {"_objectType": "groupCoordinatorChanged", "groupStatus": "GROUP_STATUS_MOVED", "groupName": "Kjøkken + 1", "websocketUrl": "wss://10.0.0.17:1443/websocket/api", "playerId": "RINCON_00000000000001401"}],
   [{"namespace": "global", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "type": "groupCoordinatorChanged"},
    {"_objectType": "groupCoordinatorChanged", "groupStatus": "GROUP_STATUS_UPDATED", "groupName": "Stua + 1"}]
 ]

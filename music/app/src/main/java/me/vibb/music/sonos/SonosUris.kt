@@ -138,5 +138,8 @@ fun xmlEscape(s: String): String = s.replace("&", "&amp;").replace("<", "&lt;").
  */
 fun queueUri(uid: String): String = "x-rincon-queue:$uid#0"
 
+/** A member's source while grouped with [coordinator] (soco `join`, design 53 §0.2): what `SetAVTransportURI` joins with. */
+fun rinconUri(coordinator: String): String = "x-rincon:$coordinator"
+
 /** The kind of a BUILT uri (what renderer.json stores): the NRK Radio service's, else a plain `url`. */
 fun kindOfUri(uri: String): Kind = if (uri.startsWith("x-sonos-http:")) Kind.NRK_PROGRAM else Kind.URL

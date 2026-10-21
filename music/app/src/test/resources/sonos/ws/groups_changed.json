@@ -5,8 +5,8 @@
       {"_objectType": "group", "id": "RINCON_00000000000001400:100", "name": "Stua + 1", "coordinatorId": "RINCON_00000000000001400", "playerIds": ["RINCON_00000000000001400", "RINCON_00000000000001401"]}
     ],
     "players": [
-      {"_objectType": "player", "id": "RINCON_00000000000001400", "name": "Stua", "websocketUrl": "wss://192.168.1.16:1443/websocket/api"},
-      {"_objectType": "player", "id": "RINCON_00000000000001401", "name": "Kjøkken", "websocketUrl": "wss://192.168.1.17:1443/websocket/api"}
+      {"_objectType": "player", "id": "RINCON_00000000000001400", "name": "Stua", "websocketUrl": "wss://10.0.0.16:1443/websocket/api"},
+      {"_objectType": "player", "id": "RINCON_00000000000001401", "name": "Kjøkken", "websocketUrl": "wss://10.0.0.17:1443/websocket/api"}
     ]}],
   [{"namespace": "groups:1", "householdId": "Sonos_FAKEhousehold000000000000001", "type": "groups"},
    {"_objectType": "groups",
@@ -14,8 +14,8 @@
       {"_objectType": "group", "id": "RINCON_00000000000001401:9", "name": "Kjøkken + 1", "coordinatorId": "RINCON_00000000000001401", "playerIds": ["RINCON_00000000000001401", "RINCON_00000000000001400"]}
     ],
     "players": [
-      {"_objectType": "player", "id": "RINCON_00000000000001400", "name": "Stua", "websocketUrl": "wss://192.168.1.16:1443/websocket/api"},
-      {"_objectType": "player", "id": "RINCON_00000000000001401", "name": "Kjøkken", "websocketUrl": "wss://192.168.1.17:1443/websocket/api"}
+      {"_objectType": "player", "id": "RINCON_00000000000001400", "name": "Stua", "websocketUrl": "wss://10.0.0.16:1443/websocket/api"},
+      {"_objectType": "player", "id": "RINCON_00000000000001401", "name": "Kjøkken", "websocketUrl": "wss://10.0.0.17:1443/websocket/api"}
     ]}],
   [{"namespace": "groups:1", "householdId": "Sonos_FAKEhousehold000000000000001", "type": "groups"},
    {"_objectType": "groups",
@@ -24,7 +24,7 @@
       {"_objectType": "group", "id": "RINCON_00000000000001401:9", "name": "Kjøkken", "coordinatorId": "RINCON_00000000000001401", "playerIds": ["RINCON_00000000000001401"]}
     ],
     "players": [
-      {"_objectType": "player", "id": "RINCON_00000000000001400", "name": "Stua", "websocketUrl": "wss://192.168.1.16:1443/websocket/api"},
-      {"_objectType": "player", "id": "RINCON_00000000000001401", "name": "Kjøkken", "websocketUrl": "wss://192.168.1.17:1443/websocket/api"}
+      {"_objectType": "player", "id": "RINCON_00000000000001400", "name": "Stua", "websocketUrl": "wss://10.0.0.16:1443/websocket/api"},
+      {"_objectType": "player", "id": "RINCON_00000000000001401", "name": "Kjøkken", "websocketUrl": "wss://10.0.0.17:1443/websocket/api"}
     ]}]
 ]

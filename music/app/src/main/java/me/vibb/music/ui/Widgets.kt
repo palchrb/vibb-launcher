@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,6 +74,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import me.vibb.music.data.Store
 import me.vibb.music.logic.DecodedCover
@@ -82,6 +84,7 @@ import me.vibb.music.logic.formatDuration
 import me.vibb.music.logic.shouldDecode
 import me.vibb.music.model.Category
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** A tinted icon. */
 @Composable
@@ -321,6 +324,58 @@ fun SeekBar(positionMs: Long, durationMs: Long?, label: String, onSeek: (Long) -
             Spacer(Modifier.weight(1f))
             Line(formatDuration(duration), 12, 700, Palette.sub)
         }
+    }
+}
+
+/**
+ * A volume line (design 53 §2.12, the sketch's board 4; Compose foundation only, no Material): a 4 dp track, its fill
+ * in [fill], an 18 dp thumb, 48 dp to touch. A drag or a tap moves it: [onChange] hears the value (0..100) as the
+ * finger goes and once more with `done` at the release; the thumb stays where it was let go until the published
+ * [value] gets there (or a second passes). TalkBack sees a slider named [label].
+ */
+@Composable
+fun VolumeSlider(value: Int, fill: Color, label: String, modifier: Modifier = Modifier, onChange: (volume: Int, done: Boolean) -> Unit) {
+    var dragFrac by remember { mutableStateOf<Float?>(null) }
+    var released by remember { mutableStateOf<Pair<Int, Long>?>(null) } // (volume, when)
+    val change by rememberUpdatedState(onChange)
+    val held = released?.takeIf { (v, at) -> v != value && SystemClock.elapsedRealtime() - at < 1_000 }?.first
+    // nothing else recomposes the sheet a second later (no position ticks here): let go of the hold then (qa-53b-code 5)
+    LaunchedEffect(released) {
+        if (released != null) {
+            delay(1_000)
+            released = null
+        }
+    }
+    val frac = dragFrac ?: ((held ?: value).coerceIn(0, 100) / 100f)
+    fun pct(f: Float): Int = (f.coerceIn(0f, 1f) * 100).roundToInt()
+    fun send(f: Float, done: Boolean) {
+        if (done) released = pct(f) to SystemClock.elapsedRealtime()
+        change(pct(f), done)
+    }
+    BoxWithConstraints(
+        modifier.fillMaxWidth().height(48.dp)
+            .semantics {
+                contentDescription = label
+                progressBarRangeInfo = ProgressBarRangeInfo(frac, 0f..1f)
+                setProgress { f ->
+                    send(f, done = true)
+                    true
+                }
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { dragFrac = (it.x / size.width).coerceIn(0f, 1f).also { f -> send(f, done = false) } },
+                    onDragEnd = { dragFrac?.let { f -> send(f, done = true) }; dragFrac = null },
+                    onDragCancel = { dragFrac?.let { f -> send(f, done = true) }; dragFrac = null },
+                ) { c, _ -> dragFrac = (c.position.x / size.width).coerceIn(0f, 1f).also { f -> send(f, done = false) } }
+            }
+            .pointerInput(Unit) { detectTapGestures { send(it.x / size.width, done = true) } },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        val width = maxWidth
+        Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Palette.track))
+        Box(Modifier.width(width * frac).height(4.dp).clip(RoundedCornerShape(2.dp)).background(fill))
+        Box(Modifier.offset(x = (width - 18.dp) * frac).size(18.dp).clip(CircleShape).background(Palette.fg))
     }
 }
 

@@ -70,8 +70,11 @@ internal class SonosRenderer(
     name: String?,
     /** Hold the wake lock and the Wi-Fi lock while true ([SonosController.armedPlaying], design 26a §6.3). */
     private val onArmedPlaying: (Boolean) -> Unit = {},
-    /** The parent's room scope (design 26a §5.5): may a play go to this room's uid (and its group)? */
-    private val roomAllowed: (String) -> Boolean = { true },
+    /**
+     * The parent's room scope (design 26a §5.5): may a play go to this room's uid (and its group)? With the rooms the
+     * session accepted (grouped in by hand, design 53 §2.8: `sessionAllowed`).
+     */
+    private val roomAllowed: (uid: String, accepted: Set<String>) -> Boolean = { _, _ -> true },
     /** The session followed its stream to another coordinator (§4.8): the scope looks again (qa-26a-step3c-code M1). */
     private val onFollowed: () -> Unit = {},
 ) : Renderer {
@@ -124,6 +127,8 @@ internal class SonosRenderer(
 
         override fun armedPlaying(playing: Boolean) = onArmedPlaying(playing)
 
+        override fun groupsChanged() = this@SonosRenderer.groupsChanged()
+
         override fun log(message: String) = SonosHome.log(message)
     }
 
@@ -156,7 +161,7 @@ internal class SonosRenderer(
         // every play the controller sends asks first, as KidPlayer and the play commands do (H1);
         // and never to a room outside the parent's scope (design 26a §5.5, a belt: the service refuses
         // the switch and leaves a room the scope dropped)
-        mayPlay = { playAllowed(suspendedNow()) && roomAllowed(this@SonosRenderer.uid) },
+        mayPlay = { playAllowed(suspendedNow()) && roomAllowed(this@SonosRenderer.uid, controller.accepted) },
         // the parent's cap in force, read live from the managed config like the mobile-data switches (§5.3)
         cap = { Bridge.config(context).volumeCapPct },
         // a start caps every room of the group it plays in (§5.3, qa-26a-corrections M2)
@@ -166,6 +171,8 @@ internal class SonosRenderer(
         // design 53 §2.2-§2.3: the socket's health and liveness hooks, and the confirm poll an event asks for
         events = socket,
         wakePoll = { poller?.wake() },
+        // design 53 §2.12: the group's other rooms' volumes, set and read off our actor
+        memberVolumes = RoomVolumes(home.speakers, actorScope, post = { block -> handler.post { if (!released) block() } }, log = SonosHome::log),
     )
 
     private fun suspendedNow(): Boolean = try {
@@ -185,6 +192,19 @@ internal class SonosRenderer(
     /** The Wi-Fi network and the player screen's flag, watched while this renderer lives (design 53 §2.2, §2.4). */
     private val watches = mutableListOf<Job>()
 
+    /**
+     * [groupsChanged]'s debounced look: the topology - handed to the controller whether or not the rows changed (an
+     * equal view isn't emitted again, and an adopt's baseline waits for this fresh read; qa-53b-code 2) - and the busy
+     * look while the sheet is open.
+     */
+    private val regroup = Runnable {
+        val ours = controller.uid
+        scope.launch(Dispatchers.IO) {
+            if (home.rooms.refreshQuietly()) handler.post { topology(home.rooms.state.value.rooms) }
+            if (PlayerHub.sheetOpen.value) home.rooms.lookBusy(ours)
+        }
+    }
+
     init {
         poller = SonosPoller(actorScope, actor, { transport.poll(home.probe) to session.snapshot }) { tick, fields -> controller.onPoll(tick, fields) }
             .also { it.start() }
@@ -192,6 +212,36 @@ internal class SonosRenderer(
         watches += scope.launch { home.wifiNetwork.collect { updateSocket() } }
         // the player coming on screen polls at once (the 1 s display poll starts now, not at the next cadence)
         watches += scope.launch { PlayerHub.playerShown.collect { if (it) poller?.wake() } }
+        // design 53 §2.8: the group as the rows say now (no baseline yet: that is the first start's, an adopt's)
+        topology(home.rooms.state.value.rooms)
+    }
+
+    /**
+     * The household's grouping changed (design 53 §2.8; the service's rooms.state collector, before its sheet and its
+     * scope's look): our group's members to the controller - the joiners accepted and capped, the baseline, the advance
+     * guard - and the label ("Stua + Kjøkken", or the room's own name).
+     */
+    fun topology(rooms: List<Room>) {
+        if (released) return
+        val uid = controller.uid
+        controller.topology(roomMembers(rooms, uid))
+        controller.relabel(rooms.firstOrNull { it.uid == uid }?.label ?: rooms.firstNotNullOfOrNull { r -> r.names.firstOrNull { it.first == uid }?.second })
+    }
+
+    /** The rooms the session accepted (grouped in by hand, design 53 §2.8): the scope's leave and sheet read them. */
+    val accepted: Set<String> get() = controller.accepted
+
+    /** The event socket is healthy (design 53 §2.8: without it the group watch looks every 60 s, whatever the scope). */
+    val socketHealthy: Boolean get() = socket.healthy
+
+    /**
+     * A `groups` or `MOVED` event (design 53 §2.8): one topology refresh, debounced [GROUPS_DEBOUNCE_MS] (`groupInfo`,
+     * `groups` and `groupCoordinatorChanged` come together), and while the sheet is open its busy look again.
+     */
+    private fun groupsChanged() {
+        if (released) return
+        handler.removeCallbacks(regroup)
+        handler.postDelayed(regroup, GROUPS_DEBOUNCE_MS)
     }
 
     /** The watches end with the renderer (never the actor's scope: its queued Stop still goes out). */
@@ -519,7 +569,8 @@ internal class SonosRenderer(
 
         override fun handleStop(): ListenableFuture<*> = handling { controller.stop() }
 
-        override fun handleSetDeviceVolume(deviceVolume: Int, flags: Int): ListenableFuture<*> = handling { controller.setVolume(deviceVolume) }
+        // design 53 §2.12: on a group the system's slider is the group's mean and moves every room
+        override fun handleSetDeviceVolume(deviceVolume: Int, flags: Int): ListenableFuture<*> = handling { controller.setDeviceVolume(deviceVolume) }
 
         override fun handleIncreaseDeviceVolume(flags: Int): ListenableFuture<*> = handling { controller.adjustVolume(VOLUME_STEP) }
 
@@ -536,6 +587,9 @@ internal class SonosRenderer(
 
         /** How long a probe waits for the Wi-Fi network at start. */
         const val WIFI_WAIT_MS = 1_000L
+
+        /** Design 53 §2.8: a `groups` event's topology refresh waits this long for its companions. */
+        const val GROUPS_DEBOUNCE_MS = 300L
 
         /** §3.2 (QA M1): without the three GET commands the platform metadata is empty. */
         val COMMANDS: Player.Commands = Player.Commands.Builder().addAll(*SONOS_COMMANDS).build()

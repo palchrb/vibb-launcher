@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:BecomeCoordinatorOfStandaloneGroupResponse xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><DelegatedGroupCoordinatorID>RINCON_000E58A0B1C201400</DelegatedGroupCoordinatorID><NewGroupID>RINCON_000E58A0B1C201400:7</NewGroupID></u:BecomeCoordinatorOfStandaloneGroupResponse></s:Body></s:Envelope>
