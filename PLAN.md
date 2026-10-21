@@ -707,7 +707,12 @@ findings, merge to `main`, full suite once.
   date, alarm, tiles, rows) takes what is left, and the notification rows scroll inside it when they don't fit (a
   change to design 25's "the page never scrolls" - the rows only; the tiles keep the fit's sizes); (3) **the time line
   under the music bar**: elapsed at the bar's left, the duration right-aligned at its right end (today "1:26 · 4:04"
-  centred-left on one line). Launcher only.
+  centred-left on one line). Launcher only. (4) **A more compact music tile**, like the iPhone 16's lock player (the
+  user's screenshot, 2026-10-21): a small cover (~48 dp) with the title and artist on one line each (ellipsized, no
+  wrap); one progress row "elapsed - bar - remaining" (`1:13 ━━━━── −1:50`, replacing (3)'s separate line); the
+  controls as plain glyphs on one row without the big discs (each still a >= 48 dp target, play a little larger).
+  Saves roughly a third of the tile's height, which also helps (1)-(2). No output/AirPlay button (the lock opens
+  nothing). Mockup first.
 - **Music: what a heart means** (the user, 2026-10-21): the heart is per track/episode, but "Favoritter" only filters
   the carousel to entries holding a heart and a cover tap plays the whole entry - so in practice it marks the tile.
   Options put to the user: (A) the heart on the tile/entry instead of per track; (C) keep per-track hearts, and under
