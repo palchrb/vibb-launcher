@@ -699,6 +699,14 @@ findings, merge to `main`, full suite once.
   the shape of Element X's missed-call notification (category, channel, whether the caller's person is on it) - capture
   it on the Jelly Star first, then a short design note; launcher only. Approved 2026-10-15.
 
+- **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** (1) the device token (and the other
+  CE-stored secrets P-L5 names: the kid PIN's hash and salt) wrapped with a non-exportable AndroidKeyStore key, so a
+  copied data directory (root, a backup) is useless - launcher fix round; (2) a **hardware-bound device token**: at
+  enrolment the phone makes a key pair in the Keystore (StrongBox when `android.hardware.strongbox_keystore`, else
+  TEE), the server binds the token to its public key and every request is signed (key attestation checks the key is
+  in hardware and the app is our signed launcher) - a stolen token is worthless off the phone; closes the "stolen
+  token" root of server L1/L3/L4. Its own design (60), server + launcher in one contract change, after design 59's
+  keyguard decision (a real Android PIN would let keys be bound to user authentication).
 - **The lock's glance page, three things** (the user's emulator screenshot, 2026-10-21, 320x569 dp, music tile full,
   one WhatsApp missed-call row): (1) **bug** - the bottom row ("Nødsamtale" and the torch) is cut off at the screen's
   bottom edge: `glanceFit` didn't keep the page inside the screen (check the 2026-10-21 torch spacing, +12 dp, and
