@@ -1292,7 +1292,13 @@ findings, merge to `main`, full suite once.
   shows its header only. Likely the clock app's group summary (ClockReader is the one reader that doesn't skip
   `FLAG_GROUP_SUMMARY`) or a blank ended-timer update; to confirm, `adb shell dumpsys notification --noredact` on the
   phone while the empty card shows. Fix: skip group summaries and blank tiles (neither a time nor a title/text) in the
-  reader, with a ClockTile/ClockReader test.
+  reader, with a ClockTile/ClockReader test. **The stopwatch never shows either** (the user, same day): its
+  notification is exactly what design 42 reads (dumpsys 2026-10-21: `org.fossify.clock` id 10001, channel
+  `simple_alarm_stopwatch`, title "30:55", text "Stoppeklokke", ONGOING|NO_CLEAR|FOREGROUND_SERVICE), and NMS held no
+  other Fossify notification then - so the reader's `entries` kept a stale timer entry that NMS no longer has, and
+  `clockShown` ranks ENDED/TIMER above STOPWATCH: one stale blank entry explains both. Fix also: reconcile `entries`
+  with the listener's active notifications (Fossify's keys) on each Fossify post/removal and at the glance page's
+  show, so a missed removal can't stick; a blank entry never outranks a tile with content.
 - **The lock's flashlight sits tight under "Lås opp"** (the user, 2026-10-21: "litt for tett på lås-opp knappen? Ser
   grafisk litt snålt ut"): the Nødsamtale/torch row is 2 dp under the 56 dp button (`view_lock_glance.xml`); proposed
   12-16 dp of air and a quieter torch (the music controls' dark round ground, peach only while lit), keeping
