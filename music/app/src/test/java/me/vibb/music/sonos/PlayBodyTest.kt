@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 /**
@@ -224,5 +225,31 @@ class PlayBodyTest {
         val fields = Fields(armed = true, uid = "RINCON_X", kind = Kind.URL, seq = 1, measuredAt = 1L, uri = signed, foreignUri = signed, streamMoved = Moved("RINCON_Y", "Stua", signed))
         assertFalse(fields.toString(), fields.toString().contains("FAKE-SIG"))
         assertTrue(fields.toString().contains("RINCON_Y"))
+    }
+
+    // -- design 54: a share link's body (nothing builds one for a room in 54-a1: speakerDropReason still refuses) --
+
+    @Test
+    fun `d54 a share body - the canonical target, our listing's track uris, the start index - never printed with ids`() {
+        val playlist = entry(id = 9, source = Source.SPOTIFY, target = "spotify:playlist:0FakePlaylistKveld0001", name = "Kveldsmusikk")
+        val keys = listOf("1FakeTrackA00000000001", "1FakeTrackC00000000003", "1FakeTrackA00000000001")
+        val b = PlayBodies.share(playlist, keys, 2, "RINCON_X", 42.0, hintS = 201.0)!!
+        assertEquals(Kind.SPOTIFY_SHARELINK, b.kind)
+        assertEquals("spotify:playlist:0FakePlaylistKveld0001", b.uri)
+        assertEquals(keys.map { "spotify:track:$it" }, b.listed)
+        assertEquals(2, b.trackIndex)
+        assertEquals(201.0, b.cadenceHintS!!, 1e-9)
+        assertNull("an index outside the listing names no start item", PlayBodies.share(playlist, keys, 3, "RINCON_X", 0.0)!!.trackIndex)
+        val show = entry(id = 10, source = Source.SPOTIFY, target = "spotify:show:4FakeShow0000000000001")
+        assertEquals(listOf("spotify:episode:5FakeEpisode0000000003"), PlayBodies.share(show, listOf("5FakeEpisode0000000003"), 0, "RINCON_X", 0.0)!!.listed)
+        assertNull("an artist has no share type", PlayBodies.share(entry(source = Source.SPOTIFY, target = "spotify:artist:3FakeArtist00000000001"), keys, 0, "RINCON_X", 0.0))
+        assertNull("not Spotify", PlayBodies.share(entry(), keys, 0, "RINCON_X", 0.0))
+        assertFalse("54-11: neither the target nor the listing in a line", b.toString().contains("Fake"))
+        try {
+            builtDidl(b, b.uri)
+            fail("a share link's metadata is SoCo's, never vibb's didl()")
+        } catch (_: IllegalArgumentException) {
+        }
+        assertEquals("54-a1 changes nothing for the kid: a room still refuses Spotify", "spotify", PlayBodies.speakerDropReason(playlist, item(key = keys[0], url = null)))
     }
 }

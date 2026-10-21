@@ -494,7 +494,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   Stop the speaker reads 0:00).
 - **The phone's lifecycle on a room** (26a §6): `MY_PACKAGE_SUSPENDED` (`SuspendedReceiver`, `goAsync`) stops our
   stream with the service up (`suspendStop`) or without it (`SonosSuspension.standalone`): live classify, bookmark,
-  Stop, `x-rincon-queue:<uid>#0` (the speaker's own Play button plays nothing), disarm. `onDestroy` runs the hand-off
+  Stop, `x-rincon-queue:<uid>#0` (the speaker's own Play button plays nothing; a share link's session then also clears
+  the queue - design 54 §2.9, never a podcast's or NRK's, whose household queue stays), disarm. `onDestroy` runs the hand-off
   (bookmark, ours-gated Stop) in a tail after the service; the next adopt and the standalone path wait for it
   (`SonosTail`). A crash leaves the speaker playing until the next start adopts it or a suspension edge stops it.
   `SonosLocks` holds a partial wake lock (timed, renewed) and a Wi-Fi lock while a room is armed and playing or a

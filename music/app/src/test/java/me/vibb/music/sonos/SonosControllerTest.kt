@@ -2386,9 +2386,9 @@ class SonosControllerTest {
             )
         }
 
-        override fun live(player: CachedPlayer): Pair<TransportState, String>? {
+        override fun live(player: CachedPlayer): ProbeLive? {
             asked += player.ip
-            return carries[player.ip] ?: (TransportState.STOPPED to "")
+            return (carries[player.ip] ?: (TransportState.STOPPED to "")).let { ProbeLive(it.first, it.second) }
         }
     }
 

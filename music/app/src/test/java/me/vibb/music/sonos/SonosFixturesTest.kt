@@ -34,8 +34,94 @@ class SonosFixturesTest {
             "didl_url.xml", "didl_nrk.xml", "didl_storytel.xml",
             // design 53 §2.6: the leave's reply
             "become_standalone.xml",
+            // design 54 (54-a1): the speaker's own queue - the 54-0 run's add and media info, the rest provisional (README)
+            "add_uri_to_queue.xml", "add_uri_to_queue_empty.xml", "browse_queue_page.xml", "browse_queue_meta.xml",
+            "position_spotify_queue.xml", "transport_settings.xml", "media_info_queue.xml", "sleep_timer.xml", "fault_800.xml",
+            // ... and not replies: the golden share-link requests ShareLinkTest compares, and the provenance
+            "sharelink_playlist.xml", "sharelink_album.xml", "sharelink_track.xml", "sharelink_show.xml", "sharelink_episode.xml",
+            "README.md",
         )
         assertEquals(checked, SonosFakes.fixtureNames().toSet())
+    }
+
+    @Test
+    fun `d54 the queue's replies - the add, a page of the queue, its container, the position, the mode, the media, the sleep timer`() {
+        assertEquals(mapOf("FirstTrackNumberEnqueued" to "1", "NumTracksAdded" to "30", "NewQueueLength" to "30"), reply("add_uri_to_queue.xml", "AddURIToQueue"))
+        assertEquals("0", reply("add_uri_to_queue_empty.xml", "AddURIToQueue")["NumTracksAdded"])
+        val page = Soap.parseQueuePage(reply("browse_queue_page.xml", "Browse"))
+        assertEquals(5, page.res.size)
+        assertEquals(5, page.total)
+        assertEquals("39", page.updateId)
+        assertEquals("x-sonos-spotify:spotify%3atrack%3a1FakeTrackA00000000001?sid=9&flags=8232&sn=6", page.res[0])
+        assertEquals("a duplicate", page.res[0], page.res[3])
+        assertEquals(QueueMeta(30, "39"), Soap.parseQueueMeta(reply("browse_queue_meta.xml", "Browse")))
+        assertEquals("an empty Result is no page", QueuePage(emptyList(), null, null), Soap.parseQueuePage(mapOf("Result" to "")))
+        try {
+            Soap.parseQueuePage(mapOf("Result" to "<not xml"))
+            fail("a Result that isn't DIDL")
+        } catch (_: SpeakerUnreachable) {
+        }
+        val pos = position("position_spotify_queue.xml")
+        assertEquals("3", pos.track)
+        assertEquals("spotify:track:1FakeTrackC00000000003", me.vibb.music.logic.trackSpotifyUri(pos.trackUri))
+        assertEquals(222.0, hmsToS(pos.trackDuration))
+        assertTrue(pos.trackMetaData!!.contains("<dc:title>Månesang</dc:title>"))
+        assertEquals("NORMAL", reply("transport_settings.xml", "GetTransportSettings")["PlayMode"])
+        reply("media_info_queue.xml", "GetMediaInfo").let {
+            assertEquals("30", it["NrTracks"])
+            assertEquals(queueUri("RINCON_000E58A0B1C201400"), it["CurrentURI"])
+        }
+        assertEquals("0:59:43", reply("sleep_timer.xml", "GetRemainingSleepTimerDuration")["RemainingSleepTimerDuration"])
+        // qa-54a1-code 11: a holder of a CurrentURI prints it as the others do - no token, no Spotify id
+        val signed = MediaInfo(1, "https://cdn.example.invalid/book?token=FAKE-SIG-3").toString()
+        assertFalse(signed, signed.contains("FAKE-SIG"))
+        assertFalse(MediaInfo(1, "x-sonos-spotify:spotify%3atrack%3a1FakeTrackC00000000003?sid=9").toString().contains("Fake"))
+        try {
+            Soap.parseResponse(500, fixture("fault_800.xml"), "AddURIToQueue")
+            fail()
+        } catch (e: UpnpFault) {
+            assertEquals(800, e.code)
+        }
+    }
+
+    @Test
+    fun `d54 the queue's verbs on the wire - every Browse carries all six arguments, SortCriteria too`() {
+        TinyHttp { r ->
+            val name = when {
+                "BrowseMetadata" in r.body -> "browse_queue_meta.xml"
+                "BrowseDirectChildren" in r.body -> "browse_queue_page.xml"
+                "GetTransportSettings" in r.body -> "transport_settings.xml"
+                "GetMediaInfo" in r.body -> "media_info_queue.xml"
+                "GetRemainingSleepTimerDuration" in r.body -> "sleep_timer.xml"
+                else -> "empty_response.xml"
+            }
+            TinyHttp.Response(200, fixture(name))
+        }.use { server ->
+            val spk = SoapSpeaker(Soap(Soap.client()), "127.0.0.1", server.port, "RINCON_STUA01400")
+            assertEquals(5, spk.browseQueue(100, 100).res.size)
+            val browse = server.requests.last()
+            assertEquals("/MediaServer/ContentDirectory/Control", browse.path)
+            assertEquals("\"urn:schemas-upnp-org:service:ContentDirectory:1#Browse\"", browse.headers["soapaction"])
+            assertTrue(
+                browse.body,
+                browse.body.contains(
+                    "<ObjectID>Q:0</ObjectID><BrowseFlag>BrowseDirectChildren</BrowseFlag><Filter>*</Filter>" +
+                        "<StartingIndex>100</StartingIndex><RequestedCount>100</RequestedCount><SortCriteria></SortCriteria></u:Browse>",
+                ),
+            )
+            assertFalse("ContentDirectory takes no InstanceID", browse.body.contains("InstanceID"))
+            assertEquals(QueueMeta(30, "39"), spk.queueMeta())
+            assertTrue(server.requests.last().body.contains("<BrowseFlag>BrowseMetadata</BrowseFlag><Filter>*</Filter><StartingIndex>0</StartingIndex><RequestedCount>1</RequestedCount><SortCriteria></SortCriteria>"))
+            spk.setPlayMode("NORMAL")
+            assertTrue(server.requests.last().body.contains("<InstanceID>0</InstanceID><NewPlayMode>NORMAL</NewPlayMode></u:SetPlayMode>"))
+            assertEquals("NORMAL", spk.playMode())
+            spk.seekTrack(4)
+            assertTrue(server.requests.last().body.contains("<Unit>TRACK_NR</Unit><Target>4</Target></u:Seek>"))
+            assertEquals(MediaInfo(30, queueUri("RINCON_000E58A0B1C201400")), spk.mediaInfo())
+            spk.configureSleepTimer("")
+            assertTrue(server.requests.last().body.contains("<NewSleepTimerDuration></NewSleepTimerDuration></u:ConfigureSleepTimer>"))
+            assertEquals("0:59:43", spk.remainingSleepTimer())
+        }
     }
 
     @Test

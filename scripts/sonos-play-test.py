@@ -30,9 +30,16 @@ spotify_sharelink does it - play mode NORMAL, RemoveAllTracksFromQueue, AddURITo
 byte for byte (service 2311, then 3079) - then plays from the queue (--start), jumps, pauses, lets the speaker advance
 by itself, optionally waits --press seconds for Next/Previous pressed on the speaker, tries the play modes and parks
 (Stop, the queue cleared). Spotify must be linked in the Sonos app. Run sonos-ws-probe.py --save alongside to capture.
+--more adds design 54's 54-0 remainder (the full Browse - against --listing FILE, the server's listing of that entry -,
+the queue's end, REPEAT_ONE, SHUFFLE_NOREPEAT with Next/Previous, ReorderTracksInQueue while playing, the speaker's
+sleep timer); --add-only LINK only adds a link (one the linked account can't open, [D12]) and prints the answer.
 
 It REPLACES what the speaker is playing and leaves it stopped (parked). The speaker's volume is
 set to 1 (--volume) before the first play and put back at the end. Needs sonos-ws-probe.py next to it.
+
+--golden DIR also writes sharelink_<type>.xml for playlist, album, track, show and episode (design 54 §2.2):
+AddURIToQueue's arguments in SoCo's order, by the real SoCo ShareLinkPlugin when it is importable (vibb's venv on the
+Pi), else by share_request below - each file's `writer` says which; ShareLinkTest compares the app with them.
 
 --golden DIR writes didl_url.xml, didl_nrk.xml and didl_storytel.xml: vibb's DIDL for each kind, with
 the per-kind arguments of vibb's `Session.play` and `_sonos_body` (url: title and album, no duration;
@@ -162,10 +169,61 @@ def goldens() -> dict:
     }
 
 
+# design 54 §2.2: the share links the golden AddURIToQueue requests are written for - the fake ids of
+# server/testdata/spotify/ (fake-sonos.py and the app's tests name the same); ShareLinkTest takes the same inputs
+GOLDEN_SHARES = {
+    "playlist": "spotify:playlist:0FakePlaylistKveld0001",
+    "album": "spotify:album:2FakeAlbumX00000000001",
+    "track": "spotify:track:1FakeTrackH00000000008",
+    "show": "spotify:show:4FakeShow0000000000001",
+    "episode": "spotify:episode:5FakeEpisode0000000003",
+}
+
+
+def soco_share_args(link: str):
+    """AddURIToQueue's arguments as the real SoCo ShareLinkPlugin sends them (service 2311), or None without SoCo."""
+    try:
+        from soco.plugins.sharelink import ShareLinkPlugin  # vibb's venv on the Pi has it
+        import soco
+    except ImportError:
+        return None, None
+
+    class Recorder:  # a recording avTransport: SoCo's call goes nowhere
+        def __init__(self):
+            self.calls = []
+
+        def AddURIToQueue(self, args, **_kw):  # noqa: N802 - SoCo's name
+            self.calls.append(args)
+            return {"FirstTrackNumberEnqueued": "1"}
+
+    class FakeSoco:
+        def __init__(self):
+            self.avTransport = Recorder()  # noqa: N815 - SoCo's name
+
+    fake = FakeSoco()
+    ShareLinkPlugin(fake).add_share_link_to_queue(link)
+    return [(k, str(v)) for k, v in fake.avTransport.calls[0]], f"soco {getattr(soco, '__version__', '?')}"
+
+
+def share_goldens() -> dict:
+    """sharelink_<type>.xml: AddURIToQueue's arguments, in order, for each share type - written by the real SoCo when
+    it is importable (the `writer` attribute says "soco <version>"), else by share_request (`writer="share_request"`)."""
+    out = {}
+    for kind, link in GOLDEN_SHARES.items():
+        args, writer = soco_share_args(link)
+        if args is None:
+            uri, meta = share_request(link, SHARE_SERVICES[0])
+            args, writer = [("InstanceID", "0"), ("EnqueuedURI", uri), ("EnqueuedURIMetaData", meta),
+                            ("DesiredFirstTrackNumberEnqueued", "0"), ("EnqueueAsNext", "0")], "share_request"
+        inner = "".join(f"<{k}>{escape(v)}</{k}>" for k, v in args)
+        out[f"sharelink_{kind}.xml"] = f'<AddURIToQueue writer="{escape(writer)}">{inner}</AddURIToQueue>'
+    return out
+
+
 def write_goldens(out: str) -> None:
     folder = pathlib.Path(out)
     folder.mkdir(parents=True, exist_ok=True)
-    for name, text in goldens().items():
+    for name, text in {**goldens(), **share_goldens()}.items():
         (folder / name).write_text(text, encoding="utf-8")  # no trailing newline: compared byte for byte
         print(f"{folder / name} ({len(text)} chars)")
 
@@ -216,7 +274,8 @@ async def episodes(session, slug: str, n: int) -> list:
 # --- UPnP, as Soap.kt / SoCo send it ------------------------------------------------------------
 
 SERVICES = {"AVTransport": "/MediaRenderer/AVTransport/Control",
-            "RenderingControl": "/MediaRenderer/RenderingControl/Control"}
+            "RenderingControl": "/MediaRenderer/RenderingControl/Control",
+            "ContentDirectory": "/MediaServer/ContentDirectory/Control"}
 
 
 class SoapFault(Exception):
@@ -228,7 +287,8 @@ class Speaker:
         self.session, self.base = session, f"http://{ip}:1400"
 
     async def call(self, service: str, action: str, **args) -> str:
-        args = {"InstanceID": "0", **args}
+        if service != "ContentDirectory":  # SoCo's Browse takes no InstanceID
+            args = {"InstanceID": "0", **args}
         inner = "".join(f"<{k}>{escape(str(v))}</{k}>" for k, v in args.items())
         body = ('<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
                 's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>'
@@ -368,7 +428,136 @@ def share_request(link: str, sn: int):
     return prefix + encoded, meta
 
 
-async def spotify_scenario(spk, watch, uid: str, link: str, start: int, press: int):
+def track_spotify_uri(uri: str):
+    """vibb's track_spotify_uri: after the first ':', before '?', unquoted - for x-sonos-spotify: / x-sonosprog-spotify:."""
+    from urllib.parse import unquote
+    if not uri.startswith(("x-sonos-spotify:", "x-sonosprog-spotify:")):
+        return None
+    return unquote(uri.split(":", 1)[1].split("?", 1)[0]) or None
+
+
+async def browse_queue(spk):
+    """Every page of Q:0 (SoCo's get_queue, all six arguments): (decoded uris, UpdateID, TotalMatches)."""
+    import html
+    uris, start, update, total = [], 0, None, None
+    while total is None or start < total:
+        r = await spk.call("ContentDirectory", "Browse", ObjectID="Q:0", BrowseFlag="BrowseDirectChildren", Filter="*",
+                           StartingIndex=str(start), RequestedCount="100", SortCriteria="")
+        total, update = int(tag(r, "TotalMatches") or 0), tag(r, "UpdateID")
+        page = [html.unescape(u) for u in re.findall(r"<res[^>]*>([^<]*)</res>", html.unescape(tag(r, "Result")))]
+        if not page:
+            break
+        uris += [track_spotify_uri(u) for u in page]
+        start += len(page)
+    return uris, update, total
+
+
+def slots(listed, queue):
+    """The app's map (design 54 §2.3): each listed uri's 1-based queue position, the k-th occurrence to the k-th."""
+    free = {}
+    for pos, uri in enumerate(queue, 1):
+        free.setdefault(uri, []).append(pos)
+    return [free[u].pop(0) if free.get(u) else None for u in listed]
+
+
+async def spotify_more(spk, uid, base, listing, where, say):
+    """Design 54's 54-0 remainder ([D3], [D7], [D8+], [D10], [D21]): the full Browse (against --listing), the queue's
+    end under NORMAL, REPEAT_ONE, SHUFFLE_NOREPEAT with AVTransport Next/Previous, ReorderTracksInQueue while playing,
+    the speaker's sleep timer. Prints counts, positions and states (and, with --listing, the slots' verdict)."""
+    say("[D3] the whole queue, read the app's way (Browse Q:0, 100 a page)")
+    queue, update, total = await browse_queue(spk)
+    print(f"{stamp()} QUEUE {total} items, UpdateID {update}, prefixes ok: "
+          f"{sum(1 for u in queue if u)} of {len(queue)}, duplicates {len(queue) - len(set(queue))}")
+    if listing:
+        kind = listing["kind"]
+        listed = [f"spotify:{kind}:{it['key']}" for it in listing["items"]]
+        mapped = slots(listed, queue)
+        gaps = [i for i, p in enumerate(mapped) if p is None]
+        extras = sorted(set(range(1, len(queue) + 1)) - {p for p in mapped if p})
+        order = [p for p in mapped if p]
+        print(f"{stamp()} SLOTS listed {len(listed)}, slotted {len(order)}, gaps at listing indices {gaps[:20]}, "
+              f"extras at positions {extras[:20]}, in the queue's order: {order == sorted(order)}, "
+              f"reversed: {order == sorted(order, reverse=True)}")
+
+    say("[D7] the queue's end under NORMAL: the last track, 10 s before its end")
+    await spk.av("SetPlayMode", NewPlayMode="NORMAL")
+    await spk.av("Seek", Unit="TRACK_NR", Target=str(base - 1 + total))
+    await spk.av("Play", Speed="1")
+    await asyncio.sleep(4)
+    _, dur = await where("the last track")
+    if dur:
+        await spk.av("Seek", Unit="REL_TIME", Target=hms(max(0, dur - 10)))
+        for _ in range(20):
+            await asyncio.sleep(1)
+            await where("after the queue's end?")
+
+    say("[D8+] REPEAT_ONE: the same track again at its end")
+    await spk.av("Seek", Unit="TRACK_NR", Target=str(base))
+    await spk.av("Play", Speed="1")
+    await spk.av("SetPlayMode", NewPlayMode="REPEAT_ONE")
+    await asyncio.sleep(4)
+    _, dur = await where("repeat one")
+    if dur:
+        await spk.av("Seek", Unit="REL_TIME", Target=hms(max(0, dur - 8)))
+        for _ in range(14):
+            await asyncio.sleep(1)
+            await where("repeat one around the end")
+
+    say("[D8+] SHUFFLE_NOREPEAT: Track and TRACK_NR, then AVTransport Next and Previous")
+    await spk.av("SetPlayMode", NewPlayMode="SHUFFLE_NOREPEAT")
+    await asyncio.sleep(2)
+    await where("shuffled")
+    await spk.av("Seek", Unit="TRACK_NR", Target=str(base + 1))
+    await asyncio.sleep(3)
+    await where("shuffled, TRACK_NR 2")
+    for verb in ("Next", "Next", "Previous"):
+        try:
+            await spk.av(verb)
+        except SoapFault as e:
+            print(f"{stamp()} {verb} REFUSED - {e}")
+        await asyncio.sleep(3)
+        await where(f"shuffled, after {verb}")
+    await spk.av("SetPlayMode", NewPlayMode="NORMAL")
+
+    if total >= 4:
+        say("[D10] ReorderTracksInQueue while playing: the last track moved right after the current one")
+        await spk.av("Seek", Unit="TRACK_NR", Target=str(base))
+        await asyncio.sleep(3)
+        _, before, _ = await browse_queue(spk)
+        await spk.av("ReorderTracksInQueue", StartingIndex=str(base - 1 + total), NumberOfTracks="1",
+                     InsertBefore=str(base + 1), UpdateID="0")
+        await asyncio.sleep(2)
+        after, update2, _ = await browse_queue(spk)
+        await where("after the reorder (the current track should play on)")
+        print(f"{stamp()} REORDER UpdateID {before} -> {update2}; position {base + 1} now holds the old last track: "
+              f"{after[base] == queue[base - 2 + total] if len(after) > base else '?'}")
+
+    say("[D21] the speaker's sleep timer: 0:00:20, read back, then let it run out")
+    await spk.av("Play", Speed="1")
+    await spk.av("ConfigureSleepTimer", NewSleepTimerDuration="0:00:20")
+    print(f"{stamp()} SLEEP {tag(await spk.av('GetRemainingSleepTimerDuration'), 'RemainingSleepTimerDuration')!r}")
+    for _ in range(26):
+        await asyncio.sleep(1)
+        await where("the sleep timer")
+    print(f"{stamp()} SLEEP after: {tag(await spk.av('GetRemainingSleepTimerDuration'), 'RemainingSleepTimerDuration')!r}")
+    await spk.av("ConfigureSleepTimer", NewSleepTimerDuration="")
+
+
+async def spotify_add_only(spk, link: str):
+    """[D12] a link the household's account can't open: what the add answers (the fault, or how many tracks)."""
+    for sn in SHARE_SERVICES:
+        uri, meta = share_request(link, sn)
+        try:
+            r = await spk.av("AddURIToQueue", EnqueuedURI=uri, EnqueuedURIMetaData=meta,
+                             DesiredFirstTrackNumberEnqueued="0", EnqueueAsNext="0")
+            print(f"{stamp()} ADD-ONLY sn={sn}: first={tag(r, 'FirstTrackNumberEnqueued')} "
+                  f"added={tag(r, 'NumTracksAdded')} queue={tag(r, 'NewQueueLength')}")
+            return
+        except SoapFault as e:
+            print(f"{stamp()} ADD-ONLY sn={sn} REFUSED - {e}")
+
+
+async def spotify_scenario(spk, watch, uid: str, link: str, start: int, press: int, more=False, listing=None):
     say = lambda t: print(f"{stamp()} STEP {t}")  # noqa: E731
 
     async def where(label):
@@ -451,6 +640,9 @@ async def spotify_scenario(spk, watch, uid: str, link: str, start: int, press: i
             await asyncio.sleep(1)
             t, _ = await where("press window")
             last = t
+
+    if more:
+        await spotify_more(spk, uid, base, listing, where, say)
 
     say("play modes: REPEAT_ALL, then NORMAL")
     await spk.av("SetPlayMode", NewPlayMode="REPEAT_ALL")
@@ -664,6 +856,14 @@ def parse_args():
     ap.add_argument("--press", type=int, default=0, metavar="S",
                     help="wait S seconds for Next/Previous pressed on the speaker itself (default 0: skip); "
                          "without --spotify: play one podcast episode the vibb way, watch, park - nothing else")
+    ap.add_argument("--more", action="store_true",
+                    help="--spotify: design 54's 54-0 remainder after the jumps - the full Browse, the queue's end, REPEAT_ONE, "
+                    "SHUFFLE_NOREPEAT with Next/Previous, ReorderTracksInQueue, the speaker's sleep timer (~3 minutes more)")
+    ap.add_argument("--listing", metavar="FILE",
+                    help="--spotify --more: the server's listing of that entry (GET /api/devices/music/entries/<id>/items, "
+                    "saved as JSON) to map the queue against, the app's way")
+    ap.add_argument("--add-only", metavar="LINK",
+                    help="[D12]: only add LINK to the queue (a playlist the linked account can't open) and print the answer")
     args = ap.parse_args()
     if not args.golden and not args.ip:
         ap.error("the speaker's ip is needed (or --golden DIR)")
@@ -672,6 +872,14 @@ def parse_args():
 
 async def main(args):
     async with aiohttp.ClientSession() as session:
+        if args.add_only:
+            if not spotify_canonical(args.add_only):
+                sys.exit("not a Spotify playlist/album/track/show/episode link")
+            spk = Speaker(session, args.ip)
+            await spk.av("RemoveAllTracksFromQueue")
+            await spotify_add_only(spk, args.add_only)
+            await spk.av("RemoveAllTracksFromQueue")
+            return
         if args.spotify:
             if not spotify_canonical(args.spotify):
                 sys.exit("not a Spotify playlist/album/track/show/episode link")
@@ -727,8 +935,13 @@ async def spotify_main(session, args):
     old_volume = tag(await spk.call("RenderingControl", "GetVolume", Channel="Master"), "CurrentVolume")
     await spk.call("RenderingControl", "SetVolume", Channel="Master", DesiredVolume=str(max(0, min(100, args.volume))))
     print(f"{stamp()} volume {old_volume or '?'} -> {args.volume} (put back at the end)")
+    listing = None
+    if args.listing:
+        with open(args.listing, encoding="utf-8") as f:
+            listing = json.load(f)
+        listing["kind"] = "episode" if spotify_canonical(args.spotify).split(":")[1] in ("show", "episode") else "track"
     try:
-        await spotify_scenario(spk, watch, info["uid"], args.spotify, args.start, args.press)
+        await spotify_scenario(spk, watch, info["uid"], args.spotify, args.start, args.press, args.more, listing)
     except Exception as e:  # noqa: BLE001
         print(f"{stamp()} STOPPED: {type(e).__name__}: {e}")
     finally:

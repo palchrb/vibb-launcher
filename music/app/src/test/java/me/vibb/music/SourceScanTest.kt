@@ -707,6 +707,22 @@ class SourceScanTest {
         assertTrue(socket.contains(".hostnameVerifier { name, _ -> host != null && name == host }"))
     }
 
+    /** Design 54 §2.2, §2.14: SoCo's ShareLink template lives in one file; no share-link holder prints a Spotify id. */
+    @Test
+    fun `d54 - x-rincon-cpcontainer only in ShareLink, and the share link's holders print no id`() {
+        val main = sources("src/main/java") + sources("src/debug/java")
+        assertEquals(listOf("ShareLink.kt"), main.filter { "x-rincon-cpcontainer" in code(it) }.map { it.name })
+        val body = code(moduleFile("src/main/java/me/vibb/music/sonos/PlayBody.kt"))
+        assertTrue("a share body prints counts", body.contains("listed=\${listed?.size} uris"))
+        val queue = code(moduleFile("src/main/java/me/vibb/music/logic/SonosQueue.kt"))
+        assertTrue(queue.contains("override fun toString(): String = \"QueueRead(length="))
+        assertTrue(queue.contains("override fun toString(): String = \"QueueMap(listed=\${listed.size}"))
+        val transport = code(moduleFile("src/main/java/me/vibb/music/sonos/SonosTransport.kt"))
+        val shareLines = Regex("log\\(\"share: [^\\n]*").findAll(transport).map { it.value }.toList()
+        assertTrue(shareLines.isNotEmpty())
+        assertTrue("a share line names kinds, counts and positions only: $shareLines", shareLines.none { "body.uri" in it || "listed" in it || "want" in it || "link.canonical" in it })
+    }
+
     // Design 52: Bluetooth headphones in "Spill av på".
 
     /** Decision 4-5: `BLUETOOTH_CONNECT` only; nothing that scans, pairs, turns Bluetooth on or opens a system switcher. */

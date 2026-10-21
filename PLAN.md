@@ -1439,6 +1439,14 @@ findings, merge to `main`, full suite once.
   can tell the playing track (and whether it is ours) from the event itself. **`/status/accounts` is empty on firmware
   86.10** (`<ZPSupportInfo></ZPSupportInfo>`) although Spotify plays: design 54's household check can't use it - the
   add's answer decides - and `NrkService.serial` works only through its `sn=14` fallback there.
+- **Design 54 round 54-a1 built (branch `d54-a1`, 2026-10-21; nothing changes for the kid)**: SoCo's ShareLink request
+  (`ShareLink.kt`, goldens `sharelink_*.xml` - written by the script's transcription, checked byte-identical against SoCo
+  master's plugin; the Pi run with vibb's SoCo owed), the pure rules (`logic/SonosQueue.kt`), `Kind.SPOTIFY_SHARELINK`,
+  ContentDirectory Browse, the queue verbs, `playShare`/`queuePlay`/`readQueue`/`learnQueue`, the park's clear (every
+  kind), the speaker's sleep timer as SOAP, the session's classify and probe for the kind, the socket's new fields, the
+  54-0 capture scrubbed into `ws/spotify_queue_2026-10-21.json` (the probe's Spotify-id rule), `fake-sonos.py`'s queue
+  and `sonos-play-test.py --more`/`--add-only`, NOTICE + `MIT-SoCo.txt`. Design 54 "54-a1 status". Next: its code QA,
+  then 54-a2. Owed on the Pi: `sonos-play-test.py --golden` with SoCo, `--spotify ... --more [--listing]`, `--add-only`.
 
 - **A sturdier NRK series serial** (the user, 2026-10-21: "hadde vært fint om det serieoppslaget ble mer robust. men
   alt nytt content kommer ut som podcasts istedet" - low priority): `/status/accounts` is empty on firmware 86.10, so

@@ -205,6 +205,7 @@ class SonosLifecycleTest {
     fun `bedtime - the looks read no group and no volume, their budget is the Stop's`() {
         val l = Looks(slow = 0)
         assertEquals(RoomVerdict.OURS_LIVE, l.stop())
+        // design 54 (qa-54a1-code 8): a url session's park never clears the queue - the household's stays
         assertEquals(listOf("getposition", "gettransport", "stop", "seturi"), l.spk.log)
     }
 

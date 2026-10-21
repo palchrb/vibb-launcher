@@ -89,4 +89,12 @@ class SonosUrisTest {
     fun `escape touches amp lt gt only`() {
         assertEquals("a &amp; b &lt;c&gt; \"d\" 'e'", xmlEscape("a & b <c> \"d\" 'e'"))
     }
+
+    @Test
+    fun `d54 the kind of a stored uri - the speaker's own queue is a share link's marker`() {
+        assertEquals(Kind.SPOTIFY_SHARELINK, kindOfUri(queueUri("RINCON_X")))
+        assertEquals(Kind.NRK_PROGRAM, kindOfUri("x-sonos-http:series%3ax.unknown?sid=277"))
+        assertEquals(Kind.URL, kindOfUri("https://podkast.example/ep12.mp3"))
+        assertEquals("spotify_sharelink", Kind.SPOTIFY_SHARELINK.wire)
+    }
 }

@@ -141,5 +141,12 @@ fun queueUri(uid: String): String = "x-rincon-queue:$uid#0"
 /** A member's source while grouped with [coordinator] (soco `join`, design 53 §0.2): what `SetAVTransportURI` joins with. */
 fun rinconUri(coordinator: String): String = "x-rincon:$coordinator"
 
-/** The kind of a BUILT uri (what renderer.json stores): the NRK Radio service's, else a plain `url`. */
-fun kindOfUri(uri: String): Kind = if (uri.startsWith("x-sonos-http:")) Kind.NRK_PROGRAM else Kind.URL
+/**
+ * The kind of a BUILT uri (what renderer.json stores): the NRK Radio service's, the speaker's own queue (a share link's
+ * marker, design 54 §2.9), else a plain `url`.
+ */
+fun kindOfUri(uri: String): Kind = when {
+    uri.startsWith("x-sonos-http:") -> Kind.NRK_PROGRAM
+    uri.startsWith("x-rincon-queue:") -> Kind.SPOTIFY_SHARELINK
+    else -> Kind.URL
+}

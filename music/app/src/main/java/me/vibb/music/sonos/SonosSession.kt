@@ -16,15 +16,31 @@ package me.vibb.music.sonos
  * Design 53 §2.4 (ours): the poll is stamped at GetPositionInfo's return; the 1 s display poll and an
  * event's confirm polls pass guards so they change nothing else (freshness, the stall, the probe, the aux).
  * Design 53-d (ours): while the socket is healthy the regular check relaxes to once a minute ([POLL_SLOW_MS]).
+ *
+ * Design 54 §2.5, §2.9 (vibb's `spotify_sharelink` in `_classify` and `_probe_migration`): a share link's session is
+ * the speaker's own queue - "ours" is vibb's prefix rule unless contradicted (`logic/SonosQueue.kt` `shareOurs`), the
+ * fields carry the queue position and the decoded track, no lost-session, no DIDL check, no stall retry, and the probe
+ * follows only the exact track at a continuous position.
  */
 
+import me.vibb.music.logic.QueueRead
+import me.vibb.music.logic.containerContradicts
 import me.vibb.music.logic.redactUri
 import me.vibb.music.logic.sameStream
+import me.vibb.music.logic.shareOurs
+import me.vibb.music.logic.shareProbeMatches
+import me.vibb.music.logic.trackSpotifyUri
 
-/** Content kinds (`KINDS`; `spotify_sharelink` is phase 3). */
+/** Content kinds (`KINDS`). */
 enum class Kind(val wire: String) {
     URL("url"),
     NRK_PROGRAM("nrk_program"),
+
+    /**
+     * Design 54: a Spotify link added to the speaker's own queue (vibb's `spotify_sharelink`, SoCo's ShareLink); the
+     * session's uri is the queue (`x-rincon-queue:<uid>#0`), "ours" the prefix rule unless contradicted ([SonosSession]).
+     */
+    SPOTIFY_SHARELINK("spotify_sharelink"),
 }
 
 /** `TRANSPORTS`, plus [UNKNOWN] for any other state a speaker reports (NO_MEDIA_PRESENT, ...). */
@@ -58,7 +74,7 @@ data class PositionInfo(
 ) {
     /** A Storytel book's TrackURI (and the DIDL's `res`) is a signed URL: neither is printed (design 26b §0; qa L4). */
     override fun toString(): String =
-        "PositionInfo(track=$track, trackUri=${trackUri?.let(::redactUri)}, relTime=$relTime, trackDuration=$trackDuration, " +
+        "PositionInfo(track=$track, trackUri=${Fields.shown(trackUri)}, relTime=$relTime, trackDuration=$trackDuration, " +
             "trackMetaData=${trackMetaData?.length} chars)"
 }
 
@@ -75,6 +91,17 @@ interface SpeakerIo {
     fun groupCoordinator(): String?
 
     fun volume(): Int
+
+    /**
+     * Design 54 §2.3: the queue's container (`Browse Q:0 BrowseMetadata`, SoCo's `queue_size`): its `childCount` and
+     * the answer's `UpdateID`. A read: the classify of a share link asks it once for a track neither list names.
+     */
+    fun queueMeta(): QueueMeta
+}
+
+/** A candidate's own transport, TrackURI and RelTime (design 54 §2.9: a share link's follow needs the position too). */
+data class ProbeLive(val transport: TransportState, val trackUri: String, val relS: Double? = null) {
+    override fun toString(): String = "ProbeLive(transport=$transport, trackUri=${Fields.shown(trackUri)}, relS=$relS)"
 }
 
 /** The topology and the other coordinators, for the migration probe. */
@@ -82,8 +109,8 @@ interface MigrationProbe {
     /** `refresh_topology()`: throws when nobody answers. */
     fun refreshTopology(): SpeakerDoc
 
-    /** A candidate's own (transport, TrackURI), or null when it doesn't answer. */
-    fun live(player: CachedPlayer): Pair<TransportState, String>?
+    /** A candidate's own transport, TrackURI and position, or null when it doesn't answer. */
+    fun live(player: CachedPlayer): ProbeLive?
 }
 
 /** The `stream_moved` hint: our stream now plays on [uid]; [uri] is the SESSION's (never empty). */
@@ -129,11 +156,18 @@ data class Fields(
     val transitioning: Boolean = false,
     /** This poll ran the migration probe's last try and no coordinator carries our stream (design 53 §2.8's advance guard). */
     val probeMissed: Boolean = false,
+    /** Design 54 §2.5: a share link's queue position (GetPositionInfo's `Track`, 1-based); null for every other kind. */
+    val trackNo: Int? = null,
+    /** Design 54 §2.5: a share link's playing track, decoded (`spotify:track:<id>`); null for every other kind or none. */
+    val trackSpotifyUri: String? = null,
 ) {
-    /** The uris as [redactUri] prints them: a Storytel book's TrackURI is a signed URL (design 26b §0). */
+    /**
+     * The uris as [redactUri] prints them: a Storytel book's TrackURI is a signed URL (design 26b §0); a Spotify queue
+     * track's id never (design 54 §2.14).
+     */
     override fun toString(): String =
         "Fields(armed=$armed, uid=$uid, kind=$kind, seq=$seq, measuredAt=$measuredAt, reachable=$reachable, transport=$transport, " +
-            "relS=$relS, durS=$durS, uri=${uri?.let(::redactUri)}, ours=$ours, foreignUri=${foreignUri?.let(::redactUri)}, " +
+            "relS=$relS, durS=$durS, uri=${shown(uri)}, ours=$ours, foreignUri=${shown(foreignUri)}, trackNo=$trackNo, " +
             "groupedAway=$groupedAway, coordinator=$coordinator, lostSession=$lostSession, volume=$volume, volumeAt=$volumeAt, retriedAt=$retriedAt, " +
             "streamMoved=$streamMoved, error=$error, failedPolls=$failedPolls, nextPollMs=$nextPollMs, " +
             "measuredCadenceMs=$measuredCadenceMs, transitioning=$transitioning, probeMissed=$probeMissed)"
@@ -148,6 +182,13 @@ data class Fields(
 
     companion object {
         const val FRESH_SLACK_MS = 10_000L
+
+        /** A uri for a line: a Spotify queue track by its prefix only (design 54 §2.14), anything else [redactUri]'s. */
+        internal fun shown(u: String?): String? = when {
+            u == null -> null
+            trackSpotifyUri(u) != null -> u.substringBefore(':') + ":…"
+            else -> redactUri(u)
+        }
     }
 }
 
@@ -230,6 +271,32 @@ class SonosSession(
     /** The cadence chosen after the last successful poll (freshness). */
     private var lastCadence = POLL_MS
 
+    /**
+     * Design 54 §2.5: what makes a Spotify queue track ours - the target we transferred, our listing's uris, the queue we
+     * read (its uris and `UpdateID`, the baseline) and the socket's last container. Null for every other kind, and for a
+     * share session whose baseline isn't known (vibb's prefix rule alone: an old `renderer.json`).
+     */
+    private class Share(val target: String, val listed: Set<String>) {
+        var queue: Set<String> = emptySet()
+        var baseline: String? = null
+        var container: String? = null
+
+        /** The last track neither list names and whether the queue's version had moved for it (read once per track). */
+        var unknown: Unknown? = null
+    }
+
+    private var share: Share? = null
+
+    /** vibb's `last_ours_track`/`last_ours_rel` (design 54 §2.9): the share link's last ours + live sighting, the probe's match. */
+    private var lastOursTrack: String? = null
+    private var lastOursRel: Double? = null
+
+    /** Our own speaker sleep timer (design 54 §2.9 item 4): the uid, when it was set (elapsed) and for how long. */
+    private var sleepSet: Triple<String, Long, Long>? = null
+
+    /** The share link's target (design 54 §2.9: `renderer.json`'s `shareTarget`), or null. */
+    val shareTarget: String? get() = share?.target
+
     /** Probe attempts left in this transition (tests). */
     val migrateTriesLeft: Int get() = migrateTries
 
@@ -238,7 +305,10 @@ class SonosSession(
 
     // -- lifecycle (SonosTransport, under its mutex) --
 
-    /** `play()`'s first half: uid and kind BEFORE any SOAP (452); a new session voids a pending hint. */
+    /**
+     * `play()`'s first half: uid and kind BEFORE any SOAP (452); a new session voids a pending hint, and a share link's
+     * knowledge (a transfer sets it again once the queue is ours, [shareSet]).
+     */
     fun beginPlay(uid: String, kind: Kind) {
         this.uid = uid
         this.kind = kind
@@ -246,6 +316,53 @@ class SonosSession(
         migrateTries = 0
         oursAt = null
         hinted = null
+        share = null
+        lastOursTrack = null
+        lastOursRel = null
+    }
+
+    // -- design 54: a share link's session --
+
+    /** A transfer (or an adopt that kept the session) of [target] with our listing's track uris [listed]: what is ours. */
+    fun shareSet(target: String, listed: Collection<String>) {
+        share = Share(target, listed.toSet())
+    }
+
+    /** A read of the queue: its uris (`ours` (b): "in the queue we read") and its `UpdateID`, the baseline (N3). */
+    fun shareRead(read: QueueRead) {
+        val sh = share ?: return
+        sh.queue = read.uris
+        read.updateId?.let { sh.baseline = it }
+        sh.unknown = null
+    }
+
+    /** The socket's last `metadataStatus` container (§2.5 (a)): fed by the controller; null is no evidence. */
+    fun shareContainer(objectId: String?) {
+        share?.container = objectId
+    }
+
+    /**
+     * A `queuePlay` went out (design 54 §2.4): the same session, now at another position - armed again (a jump after
+     * the 10-minute disarm), the fast cadence, the target's listed duration as the tail cadence's hint.
+     */
+    fun jumped(hintS: Double?) {
+        armed = true
+        fastAt = elapsedMs()
+        cadenceHintS = hintS
+        frozen = 0
+        lastPos = null
+    }
+
+    /** Our own sleep timer on [uid] was set for [durationMs] now, or ([durationMs] null) is ours no more. */
+    fun ownSleepTimer(uid: String, durationMs: Long?) {
+        sleepSet = durationMs?.let { Triple(uid, elapsedMs(), it) }
+    }
+
+    /** What our own sleep timer on [uid] has left now, or null when none of ours is set there. */
+    fun ownSleepLeftMs(uid: String): Long? {
+        val (on, at, ms) = sleepSet ?: return null
+        if (on != uid) return null
+        return ms - (elapsedMs() - at)
     }
 
     /** Design 53 §2.8: [uid] may carry our stream now (a `MOVED`'s player, a `groups` event's, our "−"'s first member) - the probe asks it first. */
@@ -314,6 +431,10 @@ class SonosSession(
         this.uid = uid
         this.kind = kind
         this.uri = uri
+        // design 54 §2.9: an adopted share session knows nothing of the queue until [shareSet] (vibb's prefix rule meanwhile)
+        share = null
+        lastOursTrack = null
+        lastOursRel = null
         cadenceHintS = null
         armed = true
         frozen = 0
@@ -439,12 +560,18 @@ class SonosSession(
         val trackUri = pos.trackUri.orEmpty()
         val rel = hmsToS(pos.relTime)
         val dur = hmsToS(pos.trackDuration)
-        // design 26b §5.3: a Storytel marker (a look before the live uri is known) matches by consumableId
-        val ours = sameStream(uri, trackUri)
-        if (!ours && !uri.isNullOrEmpty() && trackUri.isNotEmpty() && oursLogged != trackUri) {
+        val shareKind = kind == Kind.SPOTIFY_SHARELINK
+        val spotify = if (shareKind) trackSpotifyUri(trackUri) else null
+        // design 26b §5.3: a Storytel marker (a look before the live uri is known) matches by consumableId; design 54
+        // §2.5: vibb's `_classify` - the uri equality always counts, and for a share link also a Spotify queue track by
+        // the prefix rule unless contradicted (qa-54a1-code 1: a transfer that never landed leaves the session's kind
+        // set over the previous uri, and that stream must stay ours - the park and every Stop gate read it)
+        val ours = sameStream(uri, trackUri) || (shareKind && shareIsOurs(io, spotify))
+        // vibb logs "not ours" only for the other kinds (`self.kind != "spotify_sharelink"`)
+        if (!ours && !shareKind && !uri.isNullOrEmpty() && trackUri.isNotEmpty() && oursLogged != trackUri) {
             oursLogged = trackUri
-            // design 26b §5.7: scheme, host and path only - a signed URL's query is a bearer
-            log("not-ours? speaker=${redactUri(trackUri)} vs set=${redactUri(uri)}")
+            // design 26b §5.7: scheme, host and path only - a signed URL's query is a bearer; design 54 §2.14: no Spotify id
+            log("not-ours? speaker=${Fields.shown(trackUri)} vs set=${Fields.shown(uri)}")
         }
         // Grouped away, on the same poll (stage B1): a member's own transport names its coordinator.
         // x-rincon-mp3radio:// and x-rincon-queue: can't match (char 9 is '-'); an EMPTY uri decides nothing.
@@ -475,8 +602,15 @@ class SonosSession(
             }
         }
         if (aux) auxN--
-        val lost = transport == TransportState.STOPPED && trackUri.isEmpty()
-        if (ours && !didlChecked) {
+        // design 54 §2.5: no lost-session and no DIDL check for a share link (vibb's sharelink branch)
+        val lost = !shareKind && transport == TransportState.STOPPED && trackUri.isEmpty()
+        // vibb keeps the last track and place when a sighting has none (`track_spotify_uri or last`, `if rel is not None`):
+        // only an ours + live queue track records them (qa-54a1-code 1, 7)
+        if (spotify != null && ours && transport.live) {
+            lastOursTrack = spotify
+            rel?.let { lastOursRel = it }
+        }
+        if (ours && !didlChecked && !shareKind) {
             didlChecked = true
             val meta = pos.trackMetaData.orEmpty()
             if (meta.isEmpty() || meta == "NOT_IMPLEMENTED") {
@@ -498,8 +632,46 @@ class SonosSession(
             foreignUri = if (ours) null else trackUri.ifEmpty { null },
             groupedAway = auxGroupedAway, coordinator = auxCoordinator, lostSession = lost, volume = auxVolume, volumeAt = auxVolumeAt,
             transitioning = transitioning,
+            trackNo = if (shareKind) pos.track?.trim()?.toIntOrNull() else null,
+            trackSpotifyUri = spotify,
         )
     }
+
+    /**
+     * Design 54 §2.5 (54-1, N2): a share link's `ours` - vibb's prefix rule ([spotify] not null) unless contradicted by
+     * the socket's container naming another playlist, or by a track in neither our listing nor the queue we read while
+     * the queue's `UpdateID` moved from the baseline (one `BrowseMetadata`, read once per such track; no answer or no
+     * baseline is no evidence). With no share knowledge (an adopt before its baseline) the prefix alone.
+     */
+    private fun shareIsOurs(io: SpeakerIo, spotify: String?): Boolean {
+        val sh = share ?: return spotify != null
+        if (spotify == null) return false
+        val byContainer = containerContradicts(sh.container, sh.target)
+        val known = spotify in sh.listed || spotify in sh.queue
+        val base = sh.baseline
+        val moved = if (known || byContainer || base == null) {
+            null
+        } else {
+            val cached = sh.unknown?.takeIf { it.track == spotify && (it.moved != null || elapsedMs() - it.at < UNKNOWN_RETRY_MS) }
+            if (cached != null) {
+                cached.moved
+            } else {
+                // one try per such track; no answer is cached too (qa-54a1-code 6: never a Browse at every poll), and
+                // tried again only after UNKNOWN_RETRY_MS. No answer decides nothing against ours.
+                val now = try {
+                    io.queueMeta().updateId?.let { it != base } ?: false
+                } catch (_: Exception) {
+                    null
+                }
+                sh.unknown = Unknown(spotify, now, elapsedMs())
+                now
+            }
+        }
+        return shareOurs(spotify, byContainer, known, moved)
+    }
+
+    /** A track neither list names: whether the queue's version had moved for it (null: no answer) and when it was asked. */
+    private data class Unknown(val track: String, val moved: Boolean?, val at: Long)
 
     /**
      * `publish`: a new [seq], the session's identity, and the hint while one is pending. A reachable
@@ -579,7 +751,8 @@ class SonosSession(
      * one: a Wi-Fi rebuffer would false-positive.
      */
     fun stallBookkeeping(fields: Fields): Double? {
-        if (fields.transport != TransportState.PLAYING || !fields.ours) {
+        // design 54 §2.5: a share link has no stall retry (vibb 895-899) - a frozen queue track is the speaker's matter
+        if (fields.transport != TransportState.PLAYING || !fields.ours || fields.kind == Kind.SPOTIFY_SHARELINK) {
             frozen = 0
             lastPos = null
             stallAt = null
@@ -644,9 +817,11 @@ class SonosSession(
         val candidates = others.sortedByDescending { it.coordinator == hinted }.take(MAX_CANDIDATES)
         for (g in candidates) {
             val rec = doc.players[g.coordinator] ?: continue
-            val (tr, trackUri) = probe.live(rec) ?: continue
-            if (!tr.live) continue
-            if (!sameStream(own, trackUri)) continue
+            val live = probe.live(rec) ?: continue
+            if (!live.transport.live) continue
+            // design 54 §2.9: a share link only on the exact track and position continuity (vibb's sonos_migrate_probe.py 3)
+            val carries = if (kind == Kind.SPOTIFY_SHARELINK) shareProbeMatches(lastOursTrack, lastOursRel, live.trackUri, live.relS) else sameStream(own, live.trackUri)
+            if (!carries) continue
             moved = Moved(g.coordinator, rec.name, own)
             migrateTries = 0
             hinted = null
@@ -688,5 +863,8 @@ class SonosSession(
 
         /** Design 53 §2.8: after our group changed, a STOPPED of ours with its TrackURI kept is probed this long (the controller's SETTLE_MS). */
         const val GROUP_WINDOW_MS = 8_000L
+
+        /** Design 54 (qa-54a1-code 6): an unknown track's `BrowseMetadata` that didn't answer is asked again after this. */
+        const val UNKNOWN_RETRY_MS = 60_000L
     }
 }

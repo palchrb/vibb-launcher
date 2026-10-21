@@ -125,7 +125,100 @@ class FakeSpeaker(
         muted = mute
     }
 
-    override fun removeAllTracksFromQueue() = record("clearqueue")
+    override fun removeAllTracksFromQueue() {
+        record("clearqueue")
+        queue.clear()
+        updateId++
+    }
+
+    // -- design 54: the speaker's own queue --
+
+    /** The queue as the speaker holds it: each item's `res` (a TrackURI). */
+    val queue = mutableListOf<String>()
+
+    /** The queue's `UpdateID`: one more with every edit (the 54-0 run's `queueVersion`). */
+    var updateId = 37
+
+    /** What an add puts in the queue (each a TrackURI); null answers 0 added. */
+    var shareTracks: List<String>? = listOf(qTrack("1FakeTrackA00000000001"), qTrack("1FakeTrackC00000000003"))
+
+    /** The add's answer per service type: a fault (or any error) for that `sn`. */
+    var addFaults: Map<Int, () -> Exception> = emptyMap()
+
+    /** `AddURIToQueue`'s fields as the speaker answers them, overriding the computed ones (an unparsable first, ...). */
+    var addAnswer: AddResult? = null
+
+    var playModeValue = "NORMAL"
+
+    /** `GetRemainingSleepTimerDuration`: null = none set. */
+    var sleepRemaining: String? = null
+
+    /** The `EnqueuedURI`/metadata of the last add. */
+    var lastEnqueued: Pair<String, String>? = null
+
+    override fun setPlayMode(mode: String) {
+        record("playmode $mode", "playmode")
+        playModeValue = mode
+    }
+
+    override fun playMode(): String? {
+        record("getplaymode")
+        return playModeValue
+    }
+
+    override fun addUriToQueue(uri: String, metadata: String): AddResult {
+        val sn = Regex("SA_RINCON(\\d+)_").find(metadata)?.groupValues?.get(1)?.toInt() ?: 0
+        addFaults[sn]?.let {
+            log.add("addqueue $sn refused")
+            throw it()
+        }
+        record("addqueue $sn", "addqueue")
+        lastEnqueued = uri to metadata
+        val first = queue.size + 1
+        val tracks = shareTracks.orEmpty()
+        queue += tracks
+        updateId++
+        return addAnswer ?: AddResult(if (tracks.isEmpty()) 0 else first, tracks.size, queue.size)
+    }
+
+    override fun seekTrack(position: Int) = record("seektrack $position", "seektrack")
+
+    /** At most this many items a Browse answers (a speaker may answer fewer than asked). */
+    var browseCap = Int.MAX_VALUE
+
+    /** Runs before each Browse answers (an edit from the Sonos app between pages). */
+    var beforeBrowse: () -> Unit = {}
+
+    override fun browseQueue(start: Int, count: Int): QueuePage {
+        record("getbrowse $start $count", "browse")
+        beforeBrowse()
+        return QueuePage(queue.drop(start).take(minOf(count, browseCap)), queue.size, updateId.toString())
+    }
+
+    override fun queueMeta(): QueueMeta {
+        record("getqueuemeta", "queuemeta")
+        return QueueMeta(queue.size, updateId.toString())
+    }
+
+    override fun mediaInfo(): MediaInfo {
+        record("getmediainfo")
+        return MediaInfo(queue.size, lastUri)
+    }
+
+    override fun configureSleepTimer(duration: String) {
+        record("sleeptimer $duration", "sleeptimer")
+        sleepRemaining = duration.ifEmpty { null }
+    }
+
+    override fun remainingSleepTimer(): String? {
+        record("getsleeptimer")
+        return sleepRemaining
+    }
+
+    companion object {
+        /** A Spotify queue track's TrackURI as the 54-0 run showed it. */
+        fun qTrack(id: String, kind: String = "track") = "x-sonos-spotify:spotify%3a$kind%3a$id?sid=9&flags=8232&sn=6"
+    }
 
     var lastUri: String? = null
     var lastMeta: String? = null

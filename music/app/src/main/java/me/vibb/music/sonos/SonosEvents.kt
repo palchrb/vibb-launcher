@@ -2,6 +2,7 @@ package me.vibb.music.sonos
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -59,6 +60,18 @@ const val OUR_OBJECT_ID = "vibb-1"
 /** One group of a `groups` message. */
 data class WsGroup(val id: String, val coordinatorId: String, val playerIds: List<String>)
 
+/** A `playbackStatus`'s `playModes` (design 54 §2.6: a mode we didn't set is followed, never corrected). */
+data class WsPlayModes(val repeat: Boolean, val repeatOne: Boolean, val shuffle: Boolean, val crossfade: Boolean)
+
+/**
+ * A `metadataStatus`'s Spotify track (design 54 §2.5, §2.8, §2.12): its uri (`spotify:track:<id>`), name, artist and
+ * duration - a cross-check of UPnP's, and the title of an unmapped track or a context's live one. Printed without
+ * them (design 54 §2.14).
+ */
+data class WsTrack(val uri: String, val name: String?, val artist: String?, val durationMs: Long?) {
+    override fun toString(): String = "WsTrack(${uri.substringBeforeLast(':')}, durationMs=$durationMs)"
+}
+
 /**
  * What the socket tells the controller, compact, stamped at receipt ([Playback.at]: the elapsed
  * clock). Never a URL: a `websocketUrl` is read for its player id only and never dialled.
@@ -67,14 +80,36 @@ sealed interface SocketEvent {
     /**
      * A `playbackStatus` of the group we subscribed (also the `getPlaybackStatus` reply); [itemId] is the speaker's
      * queue item (a new one with every `SetAVTransportURI`; none at the natural end's IDLE) - design 53-d's "new item".
+     * Design 54 §2.5: [queueVersion] (moves only when the queue is edited, §0.3), [playModes] and
+     * [previousPositionMs] - cross-checks and wakes only; `previousItemId` is another id space and never read.
      */
-    data class Playback(val groupId: String, val state: WsPlayback, val positionMs: Long?, val at: Long, val itemId: String? = null) : SocketEvent
+    data class Playback(
+        val groupId: String,
+        val state: WsPlayback,
+        val positionMs: Long?,
+        val at: Long,
+        val itemId: String? = null,
+        val queueVersion: String? = null,
+        val playModes: WsPlayModes? = null,
+        val previousPositionMs: Long? = null,
+    ) : SocketEvent
 
     /**
-     * A `metadataStatus` of the group we subscribed (design 53-d): only its `container.id.objectId` - our DIDL's item
-     * id ([OUR_OBJECT_ID]) for a play of ours - never the title or a picture (the kid's listening).
+     * A `metadataStatus` of the group we subscribed: its `container.id.objectId` (design 53-d: our DIDL's item id,
+     * [OUR_OBJECT_ID], for a play of ours; design 54: `spotify:playlist:<id>` for a share link's queue) - and, only for
+     * a Spotify track (service 9 or a `spotify:` object id, design 54 §2.5), the current [track] and the [nextUri]. Never
+     * a picture. Printed without ids or titles (design 54 §2.14).
      */
-    data class Metadata(val groupId: String, val objectId: String?, val at: Long) : SocketEvent
+    data class Metadata(
+        val groupId: String,
+        val objectId: String?,
+        val at: Long,
+        val track: WsTrack? = null,
+        val nextUri: String? = null,
+    ) : SocketEvent {
+        override fun toString(): String =
+            "Metadata(groupId=$groupId, objectId=${objectId?.substringBeforeLast(':')}, at=$at, track=$track, next=${nextUri != null})"
+    }
 
     /** A `groups` event after the handshake: the group holding our player, and every group. */
     data class Groups(val ourGroupId: String?, val ourCoordinatorId: String?, val members: List<String>, val groups: List<WsGroup>) : SocketEvent
@@ -121,6 +156,27 @@ object SonosEvents {
             )
             add(JsonObject(emptyMap()))
         }.toString()
+
+    /** A non-negative millisecond value of [body], or null. */
+    private fun millis(body: JsonObject, key: String): Long? = (body[key] as? JsonPrimitive)?.longOrNull?.takeIf { it >= 0 }
+
+    /** The string at [path] under [element] (objects only), or null. */
+    private fun text(element: JsonElement?, vararg path: String): String? {
+        var e = element
+        for (k in path) e = (e as? JsonObject)?.get(k)
+        return (e as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+    }
+
+    /**
+     * A queue item's track when it is Spotify's (design 54 §2.5): `track.id.serviceId` 9 or a `spotify:` object id; its
+     * uri, `name`, `artist.name` and `durationMillis`. Anything else (another service, no id) is null.
+     */
+    private fun spotifyTrack(item: JsonElement?): WsTrack? {
+        val track = (item as? JsonObject)?.get("track") as? JsonObject ?: return null
+        val uri = text(track, "id", "objectId") ?: return null
+        if (text(track, "id", "serviceId") != "9" && !uri.startsWith("spotify:")) return null
+        return WsTrack(uri, text(track, "name"), text(track, "artist", "name"), millis(track, "durationMillis"))
+    }
 
     /** The host of a player's `websocketUrl` (`wss`, then `<ip>:1443/...`), for matching only - never dialled. */
     fun wsHost(url: String?): String? {
@@ -246,16 +302,32 @@ object SonosEvents {
             if (gid != subscribed) return Step() // another group's (none subscribed): not ours to read
             val state = WsPlayback.parse(m.bodyStr("playbackState")) ?: return Step()
             status = true
-            val pos = (m.body["positionMillis"] as? JsonPrimitive)?.longOrNull?.takeIf { it >= 0 }
-            return Step(events = listOf(SocketEvent.Playback(gid, state, pos, at, m.bodyStr("itemId"))))
+            val pos = millis(m.body, "positionMillis")
+            val modes = (m.body["playModes"] as? JsonObject)?.let { o ->
+                fun flag(k: String) = (o[k] as? JsonPrimitive)?.booleanOrNull == true
+                WsPlayModes(flag("repeat"), flag("repeatOne"), flag("shuffle"), flag("crossfade"))
+            }
+            return Step(
+                events = listOf(
+                    SocketEvent.Playback(
+                        gid, state, pos, at, m.bodyStr("itemId"),
+                        queueVersion = m.bodyStr("queueVersion"), playModes = modes, previousPositionMs = millis(m.body, "previousPositionMillis"),
+                    ),
+                ),
+            )
         }
 
-        /** Our group's `metadataStatus`: `container.id.objectId` only (design 53-d). */
+        /**
+         * Our group's `metadataStatus`: `container.id.objectId` (design 53-d), and for a Spotify track (design 54 §2.5)
+         * `currentItem`'s uri, name, artist and duration and `nextItem`'s uri. Never a picture.
+         */
         private fun metadata(m: WsMessage, at: Long): Step {
             val gid = m.str("groupId") ?: return Step()
             if (gid != subscribed || m.str("namespace") != "playbackMetadata:1") return Step()
-            val id = ((m.body["container"] as? JsonObject)?.get("id") as? JsonObject)?.get("objectId") as? JsonPrimitive
-            return Step(events = listOf(SocketEvent.Metadata(gid, id?.takeIf { it.isString }?.contentOrNull, at)))
+            val id = text(m.body["container"], "id", "objectId")
+            val current = spotifyTrack(m.body["currentItem"])
+            val next = spotifyTrack(m.body["nextItem"])?.uri
+            return Step(events = listOf(SocketEvent.Metadata(gid, id, at, current, next)))
         }
 
         private fun coordinatorChanged(m: WsMessage): Step {
