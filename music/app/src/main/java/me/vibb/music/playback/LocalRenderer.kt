@@ -287,10 +287,12 @@ internal fun persistPlace(
     durationMs: Long?,
     shownDurationMs: Long?,
     force: Boolean,
+    /** Design 53-d (qa-53d-code 1): false for a queue the service no longer holds - its place only, never the stored queue's row. */
+    withQueue: Boolean = true,
 ) {
     val item = a.items.getOrNull(index) ?: return
     val now = System.currentTimeMillis()
-    val stored = NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, posMs, shownDurationMs, a.shuffled, now)
+    val stored = if (!withQueue) null else NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, posMs, shownDurationMs, a.shuffled, now)
     val place = place(a.entry.key, item.key, posMs, durationMs, now, stored)
     a.positions[item.key] = place.record
     val write: suspend () -> Unit = { writePlace(context, store, place) }

@@ -38,20 +38,23 @@ class SonosEventsTest {
     private fun shaken(plan: SonosEvents.Plan = SonosEvents.Plan(stua, ip)): List<SonosEvents.Step> = messages("handshake.json").map { feed(plan, it) }
 
     @Test
-    fun `the handshake - empty command, getGroups, subscribe then getPlaybackStatus, then groups - healthy on the ack and the status`() {
+    fun `the handshake - empty command, getGroups, subscribe then getPlaybackStatus and the metadata, then groups - healthy on the ack and the status`() {
         val plan = SonosEvents.Plan(stua, ip)
         val first = plan.start().single()
         assertEquals("[{\"cmdId\":\"vibb-1\"},{}]", first)
         val steps = shaken(plan)
         assertEquals(listOf("groups:1 getGroups Sonos_FAKEhousehold000000000000001"), steps[0].commands.map(::what))
         assertEquals(
-            listOf("playback:1 subscribe $stua:100", "playback:1 getPlaybackStatus $stua:100", "groups:1 subscribe Sonos_FAKEhousehold000000000000001"),
+            listOf(
+                "playback:1 subscribe $stua:100", "playback:1 getPlaybackStatus $stua:100",
+                "playbackMetadata:1 subscribe $stua:100", "groups:1 subscribe Sonos_FAKEhousehold000000000000001",
+            ),
             steps[1].commands.map(::what),
         )
         assertEquals(stua, plan.playerId)
         assertTrue("every command carries a cmdId", (steps[0].commands + steps[1].commands).all { header(it)["cmdId"] != null })
         assertTrue("no groups event for the handshake's own reply", steps[1].events.isEmpty())
-        assertEquals("the getPlaybackStatus reply is an event", listOf(SocketEvent.Playback("$stua:100", WsPlayback.IDLE, 0, 1L)), steps[3].events)
+        assertEquals("the getPlaybackStatus reply is an event", listOf(SocketEvent.Playback("$stua:100", WsPlayback.IDLE, 0, 1L, itemId = "0")), steps[3].events)
         assertTrue(plan.healthy)
         // the ack alone, or the status alone, is not health
         val noStatus = SonosEvents.Plan(stua, ip)
@@ -88,7 +91,11 @@ class SonosEventsTest {
         assertFalse("and not healthy: our uid coordinates no subscribed group", plan.healthy)
         assertEquals(kjokken, (a.events.single() as SocketEvent.Groups).ourCoordinatorId)
         val b = feed(plan, alone)
-        assertEquals("coordinating again, a new id", listOf("playback:1 subscribe $stua:104", "playback:1 getPlaybackStatus $stua:104"), b.commands.map(::what))
+        assertEquals(
+            "coordinating again, a new id",
+            listOf("playback:1 subscribe $stua:104", "playback:1 getPlaybackStatus $stua:104", "playbackMetadata:1 subscribe $stua:104"),
+            b.commands.map(::what),
+        )
         assertFalse("not healthy until the new ack and status", plan.healthy)
     }
 
@@ -139,7 +146,7 @@ class SonosEventsTest {
         assertEquals("PLAYING without the prefix", WsPlayback.PLAYING, (events[2].single() as SocketEvent.Playback).state)
         assertEquals(WsPlayback.IDLE, (events[3].single() as SocketEvent.Playback).state)
         assertTrue("another group's status", events[4].isEmpty())
-        assertTrue("metadataStatus isn't subscribed or read", events[5].isEmpty())
+        assertEquals("metadataStatus: our DIDL's id only (design 53-d) - none in this one", listOf(SocketEvent.Metadata("$stua:100", null, 105L)), events[5])
         assertTrue("an unknown state", events[6].isEmpty())
         assertEquals(TransportState.TRANSITIONING, WsPlayback.BUFFERING.transport)
         assertEquals(TransportState.STOPPED, WsPlayback.IDLE.transport)
@@ -153,7 +160,10 @@ class SonosEventsTest {
         // (1) the empty command's answer is a globalError, but its header carries the household: the handshake goes on
         assertEquals(listOf("groups:1 getGroups Sonos_FAKEhousehold000000000000001"), steps[0].commands.map(::what))
         assertEquals(
-            listOf("playback:1 subscribe $stua:100", "playback:1 getPlaybackStatus $stua:100", "groups:1 subscribe Sonos_FAKEhousehold000000000000001"),
+            listOf(
+                "playback:1 subscribe $stua:100", "playback:1 getPlaybackStatus $stua:100",
+                "playbackMetadata:1 subscribe $stua:100", "groups:1 subscribe Sonos_FAKEhousehold000000000000001",
+            ),
             steps[1].commands.map(::what),
         )
         assertTrue("nothing else is ever sent", steps.drop(2).all { it.commands.isEmpty() })
@@ -168,7 +178,7 @@ class SonosEventsTest {
         )
         assertEquals(7, events.filterIsInstance<SocketEvent.Groups>().single().groups.size)
         // (2), (4), (5): the status after the subscribe's ack, the getPlaybackStatus reply, then each change; the
-        // metadata and volume pushes are not read
+        // volume pushes are not read (the metadata's: design 53-d, below)
         val states = events.filterIsInstance<SocketEvent.Playback>().map { "${it.state} ${it.positionMs}" }
         assertEquals(
             listOf(
@@ -186,6 +196,53 @@ class SonosEventsTest {
             states,
         )
         assertEquals("every event of our group", setOf("$stua:100"), events.filterIsInstance<SocketEvent.Playback>().map { it.groupId }.toSet())
+    }
+
+    @Test
+    fun `d53d the capture - each play a new itemId, the natural end's IDLE none, our DIDL's id in the metadata of every play of ours`() {
+        val plan = SonosEvents.Plan(stua, ip)
+        val events = messages("capture_2026-10-21.json").flatMapIndexed { i, m -> feed(plan, m, at = i.toLong()).events }
+        val items = events.filterIsInstance<SocketEvent.Playback>().map { "${it.state} ${it.itemId}" }
+        assertEquals(
+            listOf(
+                "IDLE 0", "IDLE 0", "IDLE 0",
+                "BUFFERING item-2", "PLAYING item-2", // the play: a new item
+                "PAUSED item-2", "BUFFERING item-2", "PLAYING item-2", "BUFFERING item-2", "PLAYING item-2", // pause, resume, seek: the same
+                "PLAYING item-1", // next: another
+                "BUFFERING item-2", "PLAYING item-2", // previous: another again
+                "BUFFERING item-2", "PLAYING item-2", "BUFFERING item-2", "PLAYING item-2",
+                "IDLE null", // the natural end names no item
+                "BUFFERING item-1", "PLAYING item-1", // the advance
+                "IDLE null", "IDLE 0",
+            ),
+            items,
+        )
+        val metadata = events.filterIsInstance<SocketEvent.Metadata>()
+        assertEquals(
+            "the subscribe's own push (nothing playing), the play, next, previous, the advance, the park",
+            listOf(null, OUR_OBJECT_ID, OUR_OBJECT_ID, OUR_OBJECT_ID, OUR_OBJECT_ID, null),
+            metadata.map { it.objectId },
+        )
+        assertEquals(listOf(5L, 32L, 40L, 43L, 52L, 56L), metadata.map { it.at })
+        // the metadata of a play of ours comes after its BUFFERING (the play, previous, the advance) or after its PLAYING (next)
+        assertEquals(setOf("$stua:100"), metadata.map { it.groupId }.toSet())
+    }
+
+    @Test
+    fun `d53d metadata of another group is no event (qa-53d-code 5)`() {
+        val plan = SonosEvents.Plan(stua, ip)
+        shaken(plan)
+        val other = "[{\"namespace\":\"playbackMetadata:1\",\"groupId\":\"$kjokken:7\",\"type\":\"metadataStatus\"}," +
+            "{\"container\":{\"id\":{\"objectId\":\"vibb-1\"}}}]"
+        assertTrue(feed(plan, other).events.isEmpty())
+        val ours = other.replace("$kjokken:7", "$stua:100")
+        assertEquals(listOf(SocketEvent.Metadata("$stua:100", OUR_OBJECT_ID, 1L)), feed(plan, ours).events)
+    }
+
+    @Test
+    fun `d53d our DIDL's item id is the one the hint looks for`() {
+        val built = didl("https://podkast.example/ep1.mp3", "Episode 1", null, "Podden", null, null)
+        assertTrue(built, "<item id=\"$OUR_OBJECT_ID\"" in built)
     }
 
     @Test

@@ -311,6 +311,14 @@ class GuardsTest {
         assertTrue(bookmark.contains("BookmarkInput(pl.itemKey, s.ours, s.transport, s.relS, s.durS, durFromListing, age)"))
         for (guess in listOf("optPos", "frozen", "positionAt", "spec(", "startPosMs")) assertFalse(guess, bookmark.contains(guess))
         assertTrue("the seed of our own play is not a measurement", bookmark.contains("if (seeded ||"))
+        // design 53-d (qa-53d-code 1): the one other write is a live read's, before a step, a pick or a stop - the same
+        // measured-only input (the speaker's own duration), through the store the controller was given or pinned
+        val live = sonos.substringAfter("private fun bookmarkLive(").substringBefore("\n    }\n")
+        assertEquals(1, Regex("""\bto\.save\(""").findAll(sonos).count())
+        assertTrue(live.contains("BookmarkInput(pl.itemKey, true, f.transport, f.relS, f.durS, false, age)"))
+        assertTrue(live.contains("if (closed || !f.reachable || !f.ours || normUri(f.uri) != normUri(pl.uri)) return"))
+        for (guess in listOf("optPos", "frozen", "positionAt", "spec(", "startPosMs", "anchor")) assertFalse(guess, live.contains(guess))
+        assertTrue(sonos.substringAfter("private fun bookmarkLiveFirst(").substringBefore("\n    }\n").contains("if (closed || !session || !ownsSpeaker || seeded || pending != null) return"))
         // the snapshot is only ever replaced by accept (a poll, a live classify) or the seed of a play
         assertEquals(2, Regex("""\bsnap = """).findAll(sonos).count())
         val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
@@ -320,7 +328,9 @@ class GuardsTest {
             .map { f -> f.name to f.readText().replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "").replace(Regex("//[^\\n]*"), "") }.toList()
         val calls = main.flatMap { (name, text) -> Regex("""persistPlace\(""").findAll(text).map { name }.toList() }
         // design 26c §5.4: Spotify's bookmark is the tracker's measurement, through the same write
-        assertEquals(listOf("LocalRenderer.kt", "LocalRenderer.kt", "SonosRenderer.kt", "SpotifyRenderer.kt"), calls.sorted())
+        // (SonosRenderer's second: its pinned store, design 53-d - the old queue's place, its row only while it is the service's)
+        assertEquals(listOf("LocalRenderer.kt", "LocalRenderer.kt", "SonosRenderer.kt", "SonosRenderer.kt", "SpotifyRenderer.kt"), calls.sorted())
+        assertTrue(renderer.contains("withQueue = queue() === a)"))
         // ... and one write behind every place: persistPlace and the suspension's standalone bookmark (qa-26a-step3b-code L6)
         val writes = main.flatMap { (name, text) -> Regex("""writePlace\(""").findAll(text).map { name }.toList() }
         assertEquals(listOf("LocalRenderer.kt", "LocalRenderer.kt", "SonosSuspension.kt"), writes.sorted())
@@ -469,7 +479,8 @@ class GuardsTest {
         assertTrue(renderer.contains("cap = { Bridge.config(context).volumeCapPct },"))
         val set = sonos.substringAfter("fun setVolume(volume: Int) {").substringBefore("\n    }\n")
         assertTrue(set.contains("val v = volumeTarget(volume, cap())"))
-        assertTrue(sonos.substringAfter("fun adjustVolume(delta: Int) {").substringBefore("\n    }\n").contains("setVolume(base + delta)"))
+        assertTrue(sonos.substringAfter("private fun stepVolume(base: Int, delta: Int) {").substringBefore("\n    }\n").contains("setVolume(base + delta)"))
+        assertEquals(2, Regex("""stepVolume\(""").findAll(sonos.substringAfter("fun adjustVolume(delta: Int) {").substringBefore("\n    }\n")).count())
         assertTrue(renderer.contains("handling { controller.setDeviceVolume(deviceVolume) }"))
         // design 53 §2.12: a lone room as before; a group's every room through groupMove/groupStep, each clamped to the cap
         val device = sonos.substringAfter("fun setDeviceVolume(volume: Int) {").substringBefore("\n    }\n")

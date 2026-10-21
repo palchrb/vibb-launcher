@@ -15,6 +15,7 @@ package me.vibb.music.sonos
  *
  * Design 53 §2.4 (ours): the poll is stamped at GetPositionInfo's return; the 1 s display poll and an
  * event's confirm polls pass guards so they change nothing else (freshness, the stall, the probe, the aux).
+ * Design 53-d (ours): while the socket is healthy the regular check relaxes to once a minute ([POLL_SLOW_MS]).
  */
 
 import me.vibb.music.logic.redactUri
@@ -115,6 +116,8 @@ data class Fields(
     val coordinator: String? = null,
     val lostSession: Boolean = false,
     val volume: Int? = null,
+    /** When [volume] was last READ from the speaker (an aux read or a read before a key press or the fade; design 53-d). */
+    val volumeAt: Long? = null,
     val retriedAt: Long? = null,
     val streamMoved: Moved? = null,
     val error: String? = null,
@@ -131,7 +134,7 @@ data class Fields(
     override fun toString(): String =
         "Fields(armed=$armed, uid=$uid, kind=$kind, seq=$seq, measuredAt=$measuredAt, reachable=$reachable, transport=$transport, " +
             "relS=$relS, durS=$durS, uri=${uri?.let(::redactUri)}, ours=$ours, foreignUri=${foreignUri?.let(::redactUri)}, " +
-            "groupedAway=$groupedAway, coordinator=$coordinator, lostSession=$lostSession, volume=$volume, retriedAt=$retriedAt, " +
+            "groupedAway=$groupedAway, coordinator=$coordinator, lostSession=$lostSession, volume=$volume, volumeAt=$volumeAt, retriedAt=$retriedAt, " +
             "streamMoved=$streamMoved, error=$error, failedPolls=$failedPolls, nextPollMs=$nextPollMs, " +
             "measuredCadenceMs=$measuredCadenceMs, transitioning=$transitioning, probeMissed=$probeMissed)"
 
@@ -195,6 +198,7 @@ class SonosSession(
     private var lastPos: Double? = null
     private var retriedAt: Long? = null
     private var auxVolume: Int? = null
+    private var auxVolumeAt: Long? = null
     private var auxGroupedAway = false
     private var auxCoordinator: String? = null
     private var auxN = 0
@@ -207,6 +211,9 @@ class SonosSession(
     private var oursLogged: String? = null
     private var downSince: Long? = null
     private var fails = 0
+
+    /** The slow check's last logged state (design 53-d). */
+    private var slowLogged = false
 
     /** Design 53 §2.4's guards against the extra polls: the last counted stall poll, probe try and aux read. */
     private var stallAt: Long? = null
@@ -270,6 +277,7 @@ class SonosSession(
         retriedAt = null
         // new session: forget the old speaker's volume and topology, refresh them on the first poll
         auxVolume = null
+        auxVolumeAt = null
         auxGroupedAway = false
         auxCoordinator = null
         auxN = 0
@@ -336,6 +344,17 @@ class SonosSession(
         snapshot = snapshot.copy(volume = volume)
     }
 
+    /**
+     * Design 53-d (qa-53d-code 2): a GetVolume read outside the aux (before a key press or the sleep fade, when no set
+     * of ours is the base and the last read is old) - the snapshot's volume and its read time.
+     */
+    fun volumeRead(volume: Int) {
+        val at = elapsedMs()
+        auxVolume = volume
+        auxVolumeAt = at
+        snapshot = snapshot.copy(volume = volume, volumeAt = at)
+    }
+
     // -- the poll --
 
     /**
@@ -377,7 +396,14 @@ class SonosSession(
             snapshot = snap.copy(armed = false, seq = seq)
             return Tick.Disarmed
         }
-        val delay = cadenceMs(tr, snap, fails)
+        // one reading of the socket's health for the cadence and the line (qa-53d-code 8)
+        val slow = relaxed(snap)
+        val delay = cadenceMs(tr, snap, fails, slow)
+        // design 53-d: said once per change, for the device check (one line, never per poll)
+        if (slow != slowLogged) {
+            slowLogged = slow
+            log(if (slow) "sonos: the regular UPnP check once a minute (socket healthy)" else "sonos: the regular UPnP check at 5/15 s")
+        }
         // freshness keeps the normal rule's cadence, never the 1 s one: the screen going off must not read stale
         if (snap.reachable) lastCadence = delay
         val next = if (precise(snap, now)) minOf(delay, POLL_PRECISE_MS) else delay
@@ -443,6 +469,7 @@ class SonosSession(
             }
             try {
                 auxVolume = io.volume()
+                auxVolumeAt = measuredAt
             } catch (_: Exception) {
                 // keep the last known volume
             }
@@ -469,7 +496,7 @@ class SonosSession(
             armed = armed, uid = uid, kind = kind, seq = seq, measuredAt = measuredAt,
             reachable = true, transport = transport, relS = rel, durS = dur, uri = trackUri, ours = ours,
             foreignUri = if (ours) null else trackUri.ifEmpty { null },
-            groupedAway = auxGroupedAway, coordinator = auxCoordinator, lostSession = lost, volume = auxVolume,
+            groupedAway = auxGroupedAway, coordinator = auxCoordinator, lostSession = lost, volume = auxVolume, volumeAt = auxVolumeAt,
             transitioning = transitioning,
         )
     }
@@ -501,14 +528,17 @@ class SonosSession(
      * the speaker reads TRANSITIONING or inside the window after a verb or an arm - vibb fast-polls
      * only PLAYING there, so a resume reported as PAUSED (TRANSITIONING keeps the last real state)
      * slept 15 s, and a start buffering after a STOPPED 60 s, longer than the controller's 8 s hold.
+     * Design 53-d (ours): under a healthy event socket PAUSED and PLAYING's cruise are [POLL_SLOW_MS] ([relaxed]),
+     * the cruise cut short where the tail begins; the tail, the verb window, TRANSITIONING, the migration window and
+     * the backoff stay as they are.
      */
-    fun cadenceMs(tr: TransportState?, snap: Fields, fails: Int): Long {
+    fun cadenceMs(tr: TransportState?, snap: Fields, fails: Int, slow: Boolean = relaxed(snap)): Long {
         val now = elapsedMs()
         if (tr == TransportState.UNREACHABLE) return minOf(POLL_MS * (1L shl minOf(fails, 6)), 300_000L)
         val fast = fastAt
         if (snap.transitioning || (fast != null && now - fast < VERB_FAST_MS)) return POLL_MS
         return when (tr) {
-            TransportState.PAUSED_PLAYBACK -> POLL_PAUSED_MS
+            TransportState.PAUSED_PLAYBACK -> if (slow) POLL_SLOW_MS else POLL_PAUSED_MS
             TransportState.STOPPED -> {
                 val ours = oursAt
                 if (snap.uri.isNullOrEmpty() && moved == null && migrateTries > 0 && ours != null && now - ours <= MIGRATE_WINDOW_MS) POLL_MS else POLL_STOPPED_MS
@@ -519,10 +549,29 @@ class SonosSession(
                 // reads 0:00 keeps its 5 s polls near the end; cadence only)
                 val dur = snap.durS?.takeIf { it != 0.0 } ?: cadenceHintS?.takeIf { snap.ours }
                 val tail = rel != null && dur != null && dur != 0.0 && dur - rel <= TAIL_FAST_S
-                if (tail) POLL_MS else POLL_CRUISE_MS
+                when {
+                    tail -> POLL_MS
+                    // design 53-d: the slow check never sleeps past the tail's start - the advance needs a poll within
+                    // ENDS_NEAR_S of the end, and the tail's 5 s polls give it (and the bookmark near the end)
+                    slow -> if (rel != null && dur != null && dur > 0.0) {
+                        ((dur - TAIL_FAST_S - rel) * 1000).toLong().coerceIn(POLL_MS, POLL_SLOW_MS)
+                    } else {
+                        POLL_SLOW_MS
+                    }
+                    else -> POLL_CRUISE_MS
+                }
             }
         }
     }
+
+    /**
+     * Design 53-d: the slow UPnP check - while the event socket is healthy (open, our coordinator's playback
+     * subscribed, acknowledged and read, live: [socketHealthy]) every change is pushed and wakes confirm polls, so
+     * PLAYING's 15 s cruise and PAUSED's 15 s relax to [POLL_SLOW_MS]. Never while the speaker didn't answer, nor
+     * while the stall counter runs (a frozen position is retried at today's pace, not a minute apart). Without a
+     * healthy socket nothing changes.
+     */
+    private fun relaxed(snap: Fields): Boolean = snap.reachable && frozen == 0 && socketHealthy()
 
     /**
      * `_stall_bookkeeping`: PLAYING + ours + the same `relS` for [STALL_POLLS] polls -> one retry
@@ -619,6 +668,14 @@ class SonosSession(
         const val MIGRATE_WINDOW_MS = 90_000L
         const val STALL_POLLS = 3
         const val MAX_CANDIDATES = 6
+
+        /**
+         * Design 53-d: the regular UPnP check while the event socket is healthy (PLAYING outside the tail, PAUSED).
+         * 60 s, the low end of 60-120: a bookmark a crash can lose stays at most a minute (the socket never writes
+         * Room), the bar's extrapolation cap and the freshness window stay above it ([SonosSpec.MAX_EXTRAPOLATE_MS],
+         * [Fields.FRESH_SLACK_MS]), and STOPPED already polls at it.
+         */
+        const val POLL_SLOW_MS = 60_000L
 
         /** Design 53 §2.4: the display poll while the player shows without a healthy socket. */
         const val POLL_PRECISE_MS = 1_000L

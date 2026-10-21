@@ -316,6 +316,19 @@ class SonosTransport(
     }
 
     /**
+     * Design 53-d (qa-53d-code 2): one GetVolume of the session's speaker, outside the aux - a key press's or the sleep
+     * fade's base when no set of ours is one and the last read is old. Null when [ifUid] is no longer the session's;
+     * speaker errors propagate. A read, not a verb: no fast-cadence window.
+     */
+    suspend fun readVolume(ifUid: String? = null): Int? = mutex.withLock {
+        val uid = session.uid
+        if (uid == null || (ifUid != null && ifUid != uid)) return@withLock null
+        val v = speakers.speaker(uid, verify = false, budgetMs = null).volume()
+        session.volumeRead(v)
+        v
+    }
+
+    /**
      * `verb`: vibb's `if_uid` 409 is an in-process check - a verb for a uid that is no longer the
      * session's is dropped (false). Each stamps the fast-cadence window. Speaker errors propagate.
      */

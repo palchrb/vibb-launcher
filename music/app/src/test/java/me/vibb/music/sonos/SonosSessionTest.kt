@@ -310,7 +310,7 @@ class SonosSessionTest {
         assertEquals("freshness is the normal rule's cadence, never 1 s", 15_000L, s.snapshot.measuredCadenceMs)
         assertTrue("so the screen going off doesn't read stale for seconds", s.snapshot.fresh(clock.now + 20_000))
         healthy = true
-        assertEquals("a healthy socket pushes every change", 15_000L, (s.tick({ spk }, null) as Tick.Next).delayMs)
+        assertEquals("a healthy socket pushes every change (and the check is the slow one, design 53-d)", SonosSession.POLL_SLOW_MS, (s.tick({ spk }, null) as Tick.Next).delayMs)
         healthy = false
         shown = false
         assertEquals(15_000L, (s.tick({ spk }, null) as Tick.Next).delayMs)
@@ -320,6 +320,77 @@ class SonosSessionTest {
         spk.transport = "PLAYING"
         spk.position = spk.position.copy(trackUri = "https://elsewhere.example/x.mp3")
         assertEquals("not ours: no", 15_000L, (s.tick({ spk }, null) as Tick.Next).delayMs)
+    }
+
+    // -- design 53-d: the slow check while the socket is healthy --
+
+    @Test
+    fun `d53d under a healthy socket the cruise and paused check once a minute, cut short at the tail - the rest as before`() {
+        var healthy = true
+        val s = SonosSession({ clock.now }, socketHealthy = { healthy })
+        s.adopt(kid, Kind.URL, uri)
+        val playing = fields(TransportState.PLAYING, uri).copy(relS = 400.0, durS = 1453.0)
+        assertEquals("the arm's window stays 5 s", 5_000L, s.cadenceMs(TransportState.PLAYING, playing, 0))
+        clock.advance(30_000)
+        assertEquals(SonosSession.POLL_SLOW_MS, s.cadenceMs(TransportState.PLAYING, playing, 0))
+        assertEquals(SonosSession.POLL_SLOW_MS, s.cadenceMs(TransportState.PAUSED_PLAYBACK, playing, 0))
+        assertEquals("never past where the tail begins (1453 - 45 - 1380 s)", 28_000L, s.cadenceMs(TransportState.PLAYING, playing.copy(relS = 1380.0), 0))
+        assertEquals("nor under 5 s", 5_000L, s.cadenceMs(TransportState.PLAYING, playing.copy(relS = 1406.0), 0))
+        assertEquals("the tail keeps its 5 s (the advance needs a poll near the end)", 5_000L, s.cadenceMs(TransportState.PLAYING, playing.copy(relS = 1410.0), 0))
+        assertEquals("no duration", SonosSession.POLL_SLOW_MS, s.cadenceMs(TransportState.PLAYING, playing.copy(durS = 0.0, relS = 0.0), 0))
+        assertEquals("STOPPED as before", 60_000L, s.cadenceMs(TransportState.STOPPED, playing, 0))
+        assertEquals("TRANSITIONING as before", 5_000L, s.cadenceMs(TransportState.PLAYING, playing.copy(transitioning = true), 0))
+        assertEquals("the backoff as before", 10_000L, s.cadenceMs(TransportState.UNREACHABLE, playing, 1))
+        s.stampVerb()
+        assertEquals("a verb's window as before", 5_000L, s.cadenceMs(TransportState.PAUSED_PLAYBACK, playing, 0))
+        clock.advance(30_000)
+        healthy = false
+        assertEquals("without a healthy socket: today's cruise", 15_000L, s.cadenceMs(TransportState.PLAYING, playing, 0))
+        assertEquals("and today's paused", 15_000L, s.cadenceMs(TransportState.PAUSED_PLAYBACK, playing, 0))
+        assertEquals(5_000L, s.cadenceMs(TransportState.PLAYING, playing.copy(relS = 1410.0), 0))
+    }
+
+    @Test
+    fun `d53d the slow check - freshness follows it, and a frozen position goes back to today's pace so the stall retry isn't minutes away`() {
+        val s = SonosSession({ clock.now }, socketHealthy = { true })
+        s.adopt(kid, Kind.URL, uri)
+        val spk = speaker(uri, rel = "0:07:11")
+        clock.advance(31_000)
+        assertEquals(SonosSession.POLL_SLOW_MS, (s.tick({ spk }, null) as Tick.Next).delayMs)
+        assertEquals("fresh until the next slow check plus the slack", SonosSession.POLL_SLOW_MS, s.snapshot.measuredCadenceMs)
+        assertTrue(s.snapshot.fresh(clock.now + SonosSession.POLL_SLOW_MS + 5_000))
+        assertTrue("the bar extrapolates across it", SonosSpec.MAX_EXTRAPOLATE_MS > SonosSession.POLL_SLOW_MS)
+        clock.advance(SonosSession.POLL_SLOW_MS)
+        val frozen = s.tick({ spk }, null) as Tick.Next // the same RelTime a minute later
+        assertEquals("a frozen position: today's cruise", 15_000L, frozen.delayMs)
+        clock.advance(15_000)
+        assertEquals(15_000L, (s.tick({ spk }, null) as Tick.Next).delayMs)
+        clock.advance(15_000)
+        assertEquals("the retry 90 s after the freeze, not three minutes", 431.0, (s.tick({ spk }, null) as Tick.Next).stallRetryAtS)
+    }
+
+    /**
+     * An hour-long podcast played from the start, the player screen off: every UPnP call of its polls (each a SOAP
+     * call on the LAN), until its end. Confirm polls come on top - none here: nothing changes outside the app.
+     */
+    private fun hourOfPodcast(healthy: Boolean): Int {
+        val s = SonosSession({ clock.now }, socketHealthy = { healthy })
+        s.beginPlay(kid, Kind.URL)
+        s.played(uri, hintS = 3600.0)
+        val spk = speaker(uri, dur = "1:00:00")
+        val start = clock.now
+        while (clock.now - start < 3_600_000) {
+            spk.position = spk.position.copy(relTime = hms((clock.now - start) / 1000.0))
+            clock.advance((s.tick({ spk }, null) as Tick.Next).delayMs)
+        }
+        return spk.log.size
+    }
+
+    @Test
+    fun `d53d an hour of a podcast - the UPnP calls before and after the slow check`() {
+        // each poll is GetPositionInfo + GetTransportInfo; every 12th adds GetZoneGroupState + GetVolume (the aux)
+        assertEquals("today, and without a healthy socket: 250 polls (6 in the arm's window, 235 at 15 s, 9 in the tail), 21 aux reads", 542, hourOfPodcast(healthy = false))
+        assertEquals("under a healthy socket: 74 polls (6, 59 a minute apart, 9 in the tail), 7 aux reads", 162, hourOfPodcast(healthy = true))
     }
 
     @Test
@@ -549,7 +620,7 @@ class SonosSessionTest {
         val playing = Fields(
             armed = true, uid = kid, kind = Kind.URL, seq = 1, measuredAt = clock.now, reachable = true,
             transport = TransportState.PLAYING, relS = 431.0, durS = 1453.0, uri = ep, ours = true, foreignUri = null,
-            groupedAway = false, coordinator = null, lostSession = false, volume = 31, retriedAt = null, nextPollMs = 15_000,
+            groupedAway = false, coordinator = null, lostSession = false, volume = 31, volumeAt = clock.now, retriedAt = null, nextPollMs = 15_000,
             measuredCadenceMs = 15_000,
         )
         assertEquals("STATE_PLAYING", playing, s.snapshot)
