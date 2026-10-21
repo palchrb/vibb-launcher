@@ -168,7 +168,7 @@ pub fn login_url(base: &str, email: &str, password: &str) -> String {
 
 /// Where the login and the bookshelf go. `STORYTEL_BASE` in `.env` (a loopback URL only, its host
 /// compared exactly) sends both to the fake Storytel with [Reach::Any], and then only a fake login
-/// (an e-mail ending `.example.invalid`) is ever sent.
+/// (an e-mail at `example.invalid` or a name under it) is ever sent.
 #[derive(Clone)]
 pub struct Config {
     pub login_url: String,
@@ -1116,6 +1116,15 @@ pub async fn login_with(
         has_email: payload_has_email(payload.as_ref(), email),
     };
     drop(payload);
+    if life.claims && life.left + Duration::from_secs(300) < life.life {
+        // A fresh session that is already old by the server's clock: the clock is probably ahead
+        // (design 58 code QA nit 6). Numbers only.
+        tracing::warn!(
+            life_s = facts.life_s,
+            left_at_login_s = facts.left_s,
+            "storytel: the session looks older than a fresh one - is the server's clock ahead?"
+        );
+    }
     tracing::info!(
         "storytel: logged in (life_s={}, left_at_login_s={}, claims={}, payload_has_email={})",
         facts.life_s,
@@ -1425,7 +1434,7 @@ impl Account {
         let life = gate
             .last
             .map_or(JWT_LIFE_FALLBACK.as_secs(), |facts| facts.left_s)
-            .max(1);
+            .max(PHONE_FLOOR.as_secs());
         let bound = PHONE_LOGINS_MIN.max(2 * PHONE_WINDOW.as_secs().div_ceil(life) as usize);
         (gate.phone_logins.len() >= bound).then(|| {
             let oldest = gate.phone_logins.front().copied().unwrap_or(now);
@@ -1480,17 +1489,33 @@ impl Account {
                     session: new_session(generation),
                 };
                 let handed = kept.handed(now);
+                // A save may have kept a newer generation's JWT while this login ran (design 58
+                // code QA L2): this one is then not kept, and its facts don't replace the save's.
+                let stored = {
+                    let mut jwt = lock(&self.jwt);
+                    let newer = jwt.as_ref().is_some_and(|k| k.generation > generation);
+                    if !newer {
+                        *jwt = Some(kept);
+                    }
+                    !newer
+                };
                 {
                     let mut gate = lock(&self.gate);
                     gate.backoff = None;
-                    gate.last = Some(login.facts);
+                    if stored {
+                        gate.last = Some(login.facts);
+                    }
                 }
-                *lock(&self.jwt) = Some(kept);
                 Ok(handed)
             }
             Err(err) => {
                 if matches!(err, StorytelError::Refused(_)) {
-                    lock(&self.jwt).take();
+                    {
+                        let mut jwt = lock(&self.jwt);
+                        if jwt.as_ref().is_some_and(|k| k.generation <= generation) {
+                            jwt.take();
+                        }
+                    }
                     record(state, generation, Outcome::Refused).await;
                 } else if err.is_outage() {
                     record(state, generation, Outcome::Failed(&err.code())).await;
@@ -1568,7 +1593,30 @@ impl Account {
         if let Some(jwt) = self.kept_if(fresh(plain.generation)) {
             return Ok(jwt);
         }
-        let _one = self.login_lock.lock().await;
+        // A login in flight (it may wait in the fetch gate behind a feed for minutes): a plain ask
+        // gets the kept JWT while it still serves, as when no login can be made (design 58 code QA
+        // L1). A force waits for the lock and its own re-check.
+        let _one = match self.login_lock.try_lock() {
+            Ok(one) => one,
+            Err(_) => {
+                let forcing = stale.is_some_and(|stale| {
+                    lock(&self.jwt)
+                        .as_ref()
+                        .is_some_and(|k| k.generation == plain.generation && k.session == stale)
+                });
+                let serving = (!forcing)
+                    .then(|| {
+                        self.kept_if(|kept, now| {
+                            kept.generation == plain.generation && kept.left(now) >= PHONE_FLOOR
+                        })
+                    })
+                    .flatten();
+                if let Some(jwt) = serving {
+                    return Ok(jwt);
+                }
+                self.login_lock.lock().await
+            }
+        };
         // Again under the lock: a login or a refusal may have landed while this ask waited.
         let plain = Plain::read(&state).await?;
         if let Some(jwt) = self.kept_if(fresh(plain.generation)) {
@@ -1626,6 +1674,14 @@ impl Account {
             }
             other => other?,
         };
+        // Under STORYTEL_BASE a login that isn't a fake one is never sent: refused here, before it
+        // counts in the cap (design 58 code QA L5); `login_with` refuses it again.
+        if self.config.fake_base.is_some() && !fake_login(&credentials.login.email) {
+            tracing::warn!(
+                "storytel: STORYTEL_BASE is set: the stored login isn't a fake one, not sent"
+            );
+            return Err(StorytelError::NotConfigured);
+        }
         lock(&self.gate).phone_logins.push_back(now);
         if force {
             self.forces.record(device, now);
@@ -3309,15 +3365,19 @@ mod tests {
         let real = "parent@example.org";
         store(&app, real, PASSWORD, 1).await;
         app.fetch.answer(&fake_login(real), 200, LOGIN_OK);
-        assert_eq!(
-            state
-                .storytel
-                .clone()
-                .phone_jwt(state.clone(), 1, None)
-                .await
-                .err(),
-            Some(StorytelError::NotConfigured)
-        );
+        for _ in 0..8 {
+            assert_eq!(
+                state
+                    .storytel
+                    .clone()
+                    .phone_jwt(state.clone(), 1, None)
+                    .await
+                    .err(),
+                Some(StorytelError::NotConfigured),
+                "never counted in the cap (code QA L5)"
+            );
+        }
+        assert!(lock(&state.storytel.gate).phone_logins.is_empty());
         assert!(matches!(
             probe(&state, real, PASSWORD, PROBE_BUDGET).await,
             Probe::Unreachable { code, login: None } if code == "storytel_off"
@@ -3348,5 +3408,66 @@ mod tests {
             app.state.storytel.force_min_age(JWT_LIFE_FALLBACK),
             Duration::from_secs(300)
         );
+    }
+
+    /// Code QA L1: while a login waits in the fetch gate, a plain ask gets the kept JWT that still
+    /// serves (10 minutes left, under `PHONE_MIN_LEFT`) at once; a force waits for the lock.
+    #[tokio::test]
+    async fn a_plain_ask_never_waits_behind_a_login_in_flight() {
+        let app = phone_app(LOGIN_OK).await;
+        let account = &app.state.storytel;
+        let first = ask(&app, 1, None).await.unwrap();
+        account.advance(JWT_LIFE_FALLBACK - Duration::from_secs(600));
+        app.fetch.hold();
+        let state = app.state.clone();
+        let refresh = tokio::spawn(state.storytel.clone().phone_jwt(state.clone(), 1, None));
+        app.fetch.wait_in_flight().await;
+        let kept = tokio::time::timeout(Duration::from_secs(1), ask(&app, 2, None))
+            .await
+            .expect("not behind the login in flight")
+            .unwrap();
+        assert_eq!(kept.session, first.session);
+        assert!(kept.left <= Duration::from_secs(600));
+        let force = tokio::time::timeout(
+            Duration::from_millis(200),
+            ask(&app, 3, Some(&first.session)),
+        )
+        .await;
+        assert!(force.is_err(), "a force waits for the lock");
+        app.fetch.release();
+        let fresh = refresh.await.unwrap().unwrap();
+        assert_ne!(fresh.session, first.session);
+        assert_eq!(calls_to(&app, LOGIN_URL), 2);
+    }
+
+    /// Code QA L2: a login started before a save never replaces or drops the save's newer JWT,
+    /// nor its facts.
+    #[tokio::test]
+    async fn a_login_in_flight_never_replaces_a_newer_save() {
+        let probe_facts = fake_login_ok("FAKE-JWT-9").facts;
+        for (status, body) in [(200, login_body(&living(3600, 0))), (403, Vec::new())] {
+            let app = phone_app(LOGIN_OK).await;
+            app.fetch.answer(&login(EMAIL, PASSWORD), status, body);
+            app.fetch.hold();
+            let state = app.state.clone();
+            let old = tokio::spawn(state.storytel.clone().phone_jwt(state.clone(), 1, None));
+            app.fetch.wait_in_flight().await;
+            // The parent saves meanwhile: generation 2 and the probe's JWT.
+            store(&app, EMAIL, PASSWORD, 2).await;
+            app.state
+                .storytel
+                .keep(2, Some(fake_login_ok("FAKE-JWT-9")), None);
+            app.fetch.release();
+            let _ = old.await.unwrap();
+            assert_eq!(kept_generation(&app.state.storytel), Some(2), "{status}");
+            assert_eq!(app.state.storytel.facts(), Some(probe_facts), "{status}");
+            app.fetch.clear_calls();
+            assert_eq!(
+                ask(&app, 1, None).await.unwrap().jwt.secret(),
+                "FAKE-JWT-9",
+                "{status}"
+            );
+            assert_eq!(app.fetch.count(), 0, "{status}: no extra login");
+        }
     }
 }

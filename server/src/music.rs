@@ -664,7 +664,7 @@ pub fn storytel_check_message(code: &str) -> String {
         "no_jwt" => "Storytel took the login but sent no session.".to_string(),
         // Design 58 §2.3: a failed login backs off (1 minute doubling to 30) instead of a refusal.
         "login_backoff" => {
-            "Storytel couldn't be reached - the server tries again in a few minutes.".to_string()
+            "Storytel couldn't be reached - the server tries again within 30 minutes.".to_string()
         }
         "short_life" => "Storytel sent a session that ends at once.".to_string(),
         "bad_shelf" => "Storytel sent a shelf this server can't read.".to_string(),

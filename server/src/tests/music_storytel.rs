@@ -2415,6 +2415,17 @@ async fn the_token_route_answers_the_shared_contract() {
     seal(&app, EMAIL, PASSWORD, 2).await;
     app.fetch.answer(&login(EMAIL, PASSWORD), 403, "");
     produced.insert("refused", plain_ask(&app, &token).await);
+    // Inside the hour after it: `refused` with what is left of the cooldown, nothing sent (code QA
+    // L3).
+    app.fetch.clear_calls();
+    let again = plain_ask(&app, &token).await;
+    assert_eq!(
+        (again.status, word(&again)),
+        (StatusCode::CONFLICT, "refused".to_string())
+    );
+    let left = again.json()["retry_after_s"].as_u64().unwrap();
+    assert!((3590..=3600).contains(&left), "{left}");
+    assert_eq!(app.fetch.count(), 0, "no login inside the cooldown");
     seal(&app, EMAIL, PASSWORD, 3).await;
     app.fetch.answer(&login(EMAIL, PASSWORD), 503, "");
     produced.insert("unreachable", plain_ask(&app, &token).await);

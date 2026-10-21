@@ -526,6 +526,7 @@ pub async fn storytel_token(
             refused(crate::storytel::LOGIN_COOLDOWN.num_seconds().unsigned_abs())
         }
         StorytelError::Busy { wait } => busy(crate::storytel::wait_secs(wait)),
+        // Defensive: `phone_jwt` answers a running backoff as `Busy` under the login lock.
         StorytelError::Backoff { until } => busy(until_secs(until)),
         StorytelError::Database(_) => word(StatusCode::INTERNAL_SERVER_ERROR, "unreachable"),
         _ => word(StatusCode::BAD_GATEWAY, "unreachable"),

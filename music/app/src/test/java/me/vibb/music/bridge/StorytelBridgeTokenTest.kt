@@ -77,5 +77,6 @@ class StorytelBridgeTokenTest {
         val ok = jwtResult("ok", "FAKE-JWT-1", 3_540_000, "1:00000000000000a1", now)
         assertFalse(ok.toString(), ok.toString().contains("FAKE-JWT"))
         assertTrue(ok.toString().contains("jwt=<redacted>"))
+        assertFalse("nor the session", ok.toString().contains("00000000000000a1"))
     }
 }

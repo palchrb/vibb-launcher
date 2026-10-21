@@ -1488,7 +1488,13 @@ pub async fn save_storytel(
                 Some(status) => format!("Storytel answered {status}"),
                 None => "Storytel sent no session".to_string(),
             };
-            log_event(&state, &admin, "storytel_login_refused", &detail).await;
+            // An outage is no refusal (design 58 §2.3, code QA nit 4).
+            let event = if outage {
+                "storytel_login_failed"
+            } else {
+                "storytel_login_refused"
+            };
+            log_event(&state, &admin, event, &detail).await;
             // Worded by the login's class (QA L5, design 58 §2.3): a 5xx, a 408, a 429 or no
             // session is Storytel's trouble, not a wrong password. Nothing is stored either way.
             let text = match (outage, status) {
@@ -1511,12 +1517,15 @@ pub async fn save_storytel(
             let notice = format!("Saved - Storytel shows {} series and books.", shelf.len());
             (Some(login), Some(shelf), None, notice)
         }
-        Probe::Unreachable { code, login } => (
-            login,
-            None,
-            Some(code),
-            "Saved, but Storytel couldn't be reached to check it.".to_string(),
-        ),
+        Probe::Unreachable { code, login } => {
+            // `storytel_off` here is only the STORYTEL_BASE guard: nothing was asked (design 58 §2.6).
+            let notice = if code == crate::storytel::StorytelError::NotConfigured.code() {
+                "Saved; STORYTEL_BASE is set, so Storytel wasn't asked.".to_string()
+            } else {
+                "Saved, but Storytel couldn't be reached to check it.".to_string()
+            };
+            (login, None, Some(code), notice)
+        }
     };
     let now = crate::music_sweep::stamp(state.music_sweep.now());
     let ok_at = login.as_ref().map(|_| now.clone());

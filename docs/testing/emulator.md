@@ -943,9 +943,9 @@ session comes with step 2):
   next force within a minute answers `busy` with no `login` line (the backoff: 1 minute, doubling to 30). Saving the
   login again answers "Storytel answered 503 - nothing was saved".
 - **The guard**: save `parent@example.org` with the override set: the fake logs nothing, the server logs "STORYTEL_BASE
-  is set: the stored login isn't a fake one, not sent", and the card says "Saved, but Storytel couldn't be reached to
-  check it." and "Storytel wasn't asked: STORYTEL_BASE is set and this login isn't a fake one."; a phone's ask answers
-  `404 off`. Take the line out of `.env` (and restart) when done.
+  is set: the stored login isn't a fake one, not sent", and the card says "Saved; STORYTEL_BASE is set, so Storytel
+  wasn't asked." and "Storytel wasn't asked: STORYTEL_BASE is set and this login isn't a fake one."; every phone's ask
+  answers `404 off` (never counted in the phone-login cap). Take the line out of `.env` (and restart) when done.
 - **Step 2** adds the phone's side: one `login` at the save and none per book, a declined force from the phone's own
   401 coming back after the wait, the room's prefetch (design 58 §9 §6i A and B).
 

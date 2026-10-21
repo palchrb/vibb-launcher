@@ -19,8 +19,8 @@ import me.vibb.bridge.IStorytelTokenCallback
 sealed interface JwtResult {
     /** [jwt] until [expiresAtMs] (the elapsed-realtime clock; the server took its margin off), named [session] ("<generation>:<16 hex>"). */
     data class Ok(val jwt: String, val expiresAtMs: Long, val session: String) : JwtResult {
-        /** Never the JWT (design 58 §7.1). */
-        override fun toString(): String = "Ok(jwt=<redacted>, expiresAtMs=$expiresAtMs, session=$session)"
+        /** Never the JWT, nor the session that names it (design 58 §7.1). */
+        override fun toString(): String = "Ok(jwt=<redacted>, expiresAtMs=$expiresAtMs, session=<set>)"
     }
 
     /** Storytel is off on this phone (its switch, or no login on the server). */

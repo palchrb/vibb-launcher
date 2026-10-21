@@ -127,6 +127,7 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "storytel_login_saved" => "Storytel login saved",
         "storytel_login_cleared" => "Storytel login removed",
         "storytel_login_refused" => "Storytel refused the login",
+        "storytel_login_failed" => "Storytel couldn't check the login",
         "storytel_login_sent" => "Storytel login sent to phone",
         "spotify_app_saved" => "Spotify app saved",
         "spotify_app_cleared" => "Spotify app removed",

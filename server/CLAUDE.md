@@ -224,6 +224,7 @@ Every route below is declared in `src/device_routes.rs` (`device_routes()`, desi
 - `POST /api/devices/power` (bearer) - `{off?: {at_ms, boot_count, battery?, reboot?, reason?}, on?: {at_ms, boot_count, battery?}}`, the phone's shutdown and start (design 38, see "The phone turned off and on") -> 204; 400 for neither part or not one, 413 above 2 KiB
 - `GET /api/devices/apps` / `GET /api/devices/apps/{id}/download` (bearer) - update check/download, both scoped to apps selected for this specific device (plus the launcher's own self-update, always included) - see the "global catalog" bullet above; the download is resumable (`Range`/`If-Match`, `X-Release-Tag`; "App downloads" below)
 - `GET /api/devices/music/library` (ETag/304, gzip), `/music/entries/{id}/items` (ETag/304, gzip; design 21b), `/music/covers/{hash}`, `/music/files/{id}` (Range, `X-Content-SHA256`), `/music/storytel` (bearer) - the phone's music library, scoped to its ticks (design 21)
+- `POST /api/devices/music/storytel/token` (bearer) - `{}` or `{"stale": "<generation>:<16 hex>"}` (read as bytes, at most 256) → always JSON with `status`, `no-store`: 200 `ok` `{jwt, expires_in_s, session}` (the server's own Storytel JWT, design 58 §2.2), 404 `off`, 409 `refused`/429 `busy` with `retry_after_s`, 502/500 `unreachable`, 503 `key`; 20 asks a rolling hour per phone; the shapes are `testdata/storytel_token_answers.json`, shared with both apps
 
 ## Where the rest is
 

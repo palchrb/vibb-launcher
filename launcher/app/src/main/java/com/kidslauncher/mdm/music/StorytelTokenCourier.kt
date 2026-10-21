@@ -44,9 +44,9 @@ private val JSON = Json { ignoreUnknownKeys = true }
  * ("<generation>:<16 hex>") only with `ok`.
  */
 data class StorytelTokenAnswer(val status: String, val jwt: String?, val expiresInMs: Long, val session: String?) {
-    /** Never the JWT (design 58 §7.1). */
+    /** Never the JWT, nor the session that names it (design 58 §7.1). */
     override fun toString(): String =
-        "StorytelTokenAnswer(status=$status, jwt=${if (jwt == null) "null" else "<redacted>"}, expiresInMs=$expiresInMs, session=$session)"
+        "StorytelTokenAnswer(status=$status, jwt=${if (jwt == null) "null" else "<redacted>"}, expiresInMs=$expiresInMs, session=${if (session == null) "null" else "<set>"})"
 
     companion object {
         /** The launcher couldn't get an answer: no server set up, a transport failure, a timeout, junk. */

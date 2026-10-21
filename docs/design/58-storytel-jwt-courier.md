@@ -1197,6 +1197,25 @@ The fixes for `docs/review/qa-58-revision-check.md`.
   refused the save's probe (`storytel_off` in `login_error`).
 - The fake's `/fake/jwt` is step 2's; its `--revoke-after` issues the next JWT at a login only.
 
+**Code QA fixes** (`docs/review/qa-58-step1-code.md`, all findings):
+- L1: while a login is in flight (it may wait in the fetch gate), a plain ask gets the kept JWT that still has 121 s
+  (`try_lock` on `login_lock`); a force waits for the lock as before.
+- L2: a login that finishes after a save keeps nothing over the save's newer generation, drops nothing of it on a
+  refusal, and leaves the card's facts alone.
+- L3: the route's cooldown answer (409 with what is left, no login) is pinned; the `Backoff` arm is marked
+  defensive.
+- L4: `server-ci.yml` watches `music/app/src/test/resources/storytel/` until step 2.
+- L5: under `STORYTEL_BASE` a login that isn't a fake one is refused before it counts in the phone-login cap.
+- Nits: the check card says "tries again within 30 minutes"; the guard's wording names the domain rule; the save's
+  notice under the guard says Storytel wasn't asked; an outage at the save is the event `storytel_login_failed`; both
+  apps' `toString`s print `session=<set>`; a fresh login whose claims say it is more than 5 minutes old logs a warning
+  (the server's clock may be ahead, §12); the phone-login cap counts a life of at least 121 s; `server/CLAUDE.md`'s
+  device API lists the route.
+- **Release order** (nit 8): if this server (0.35.0) releases before design 57's prep, that prep must take 0.36.0 -
+  `update.sh` installs the newest tag, so a later 0.34.0 would never be installed.
+- After the fixes: server 1133 tests (two new: a login in flight, a save during a login), fmt clean, clippy's 13 known
+  warnings; launcher 1506 and music app 1170 unit tests; the fake's selftest OK.
+
 **Tests** (each suite run whole before the commit):
 - server: 1131 (`cargo test`; the two `tests::summary` tests that read the wall clock fail in the minutes after
   Oslo's midnight whatever the change, and pass after it), `cargo fmt --check`, `cargo clippy --all-targets` (the

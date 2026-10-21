@@ -407,7 +407,7 @@ async fn main() {
     if let Some(base) = &storytel_config.fake_base {
         tracing::warn!(
             "Storytel's login and bookshelf go to {base} (STORYTEL_BASE: the fake Storytel, design \
-             58 §2.6); only a login ending .example.invalid is sent"
+             58 §2.6); only a login at example.invalid (or a name under it) is sent"
         );
     }
 

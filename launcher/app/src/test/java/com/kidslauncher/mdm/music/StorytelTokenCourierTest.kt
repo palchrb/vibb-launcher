@@ -90,6 +90,8 @@ class StorytelTokenCourierTest {
         val answer = storytelTokenAnswer(200, ok())
         assertFalse(answer.toString(), answer.toString().contains("FAKE-JWT"))
         assertTrue(answer.toString().contains("jwt=<redacted>"))
+        assertFalse("nor the session", answer.toString().contains("00000000000000a1"))
+        assertTrue(answer.toString().contains("session=<set>"))
     }
 
     @Test

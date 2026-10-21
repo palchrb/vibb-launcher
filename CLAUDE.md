@@ -89,7 +89,8 @@ byte-identical in both apps' test resources: the server's `music_storytel::the_t
 produces every row, the launcher's `StorytelTokenCourierTest` and the music app's `StorytelBridgeTokenTest` read each,
 and all three compare the copies (`MusicPlanTest`, `ContractFilesTest`); a change goes into the three in one commit.
 `scripts/fake-storytel.py` reads its login and bookshelf from `server/testdata/storytel/` (`fake_login_*.json`,
-`aes_vectors.json`, `bookshelf.json`; the server's `fake_login_fixtures_match`).
+`aes_vectors.json`, `bookshelf.json`; the server's `fake_login_fixtures_match`, which until design 58 step 2 also
+compares the music app's login originals in `music/app/src/test/resources/storytel/`).
 
 ## CI and releases
 
@@ -103,8 +104,9 @@ and all three compare the copies (`MusicPlanTest`, `ContractFilesTest`); a chang
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py` and `scripts/fake-audio.py`, whose `--selftest`s it runs
   after the build, the server's and the launcher's `storytel_token_answers.json` and `server/testdata/storytel/`;
-  `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and the
-  launcher's `time_status_report.json`, `dns_upstream_status.json` and `power_report.json`;
+  `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies, the
+  music app's `src/test/resources/storytel/` (until design 58 step 2) and the launcher's `time_status_report.json`,
+  `dns_upstream_status.json` and `power_report.json`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in
