@@ -1068,7 +1068,7 @@ findings, merge to `main`, full suite once.
   it was earned at (a stale ip after a DHCP shuffle never parks a good speaker, 53-a's TCP case too), `dates` never
   parks (a phone clock far off), several udns, a leaf as issuer, `sonos-ws-probe.py --root` (check 10 from the Pi). Owed on the speakers: design 53 §5 (checks 2-5, 9-11 - check 10 now the phone's TLS accepting the chain:
   `certificate CN ..., issuer CN "Sonos Device Authentication Root CA" - verified` in logcat; checks 6-8c
-  for 53-b).
+  for 53-b). **53-d** (the polling round, branch `d53-d`): the "Sonos polling round (53-d)" entry below and the note's "53-d status".
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
@@ -1378,7 +1378,14 @@ findings, merge to `main`, full suite once.
 - **Sonos polling round (53-d)** (approved 2026-10-21, "skal vi bare starte den"): after 53-c merges - a confirm poll
   every 1 s after any socket event we didn't cause until UPnP agrees with it (up to ~3-4 s, generalising the IDLE
   recheck), the metadata's `objectId: "vibb-1"` as an early "ours" hint, a slow UPnP check (60-120 s) while the socket is
-  healthy, today's 5/15 s cadence only without a healthy socket.
+  healthy, today's 5/15 s cadence only without a healthy socket. **Built on branch `d53-d`** (design 53 "53-d status"):
+  confirm polls every second up to 4 s after a change we didn't cause (a state or a new `itemId`), a lagging confirm
+  poll no longer flipping a Sonos-app pause back (found while building: 53-a did); `playbackMetadata:1` subscribed for
+  the container's object id, `vibb-1` + the new item's parked event re-basing the bar and showing READY while our play
+  settles (display only); the slow check **60 s** while the socket is healthy (cruise and paused; the 5 s tail, verb
+  window and the rest unchanged; the extrapolation cap 70 s; a frozen position back to 15 s; health lost wakes a poll;
+  a disagreeing poll looks again in 3 s) - an hour of a podcast **542 -> 162 UPnP calls**. Awaiting its code QA; owed on
+  the speakers: the note's 53-d (a)-(f).
 - **The notification filter on by default for new phones** (the user, 2026-10-21: "Varselfilter kan gjerne være på som
   standard, alt som er viktig for funksjon/hindre ting utenfor launcher bør vel gjerne bare være med"): server
   migration so a new `device_policy` row gets `notification_auto_cancel = 1`; existing phones keep their setting.

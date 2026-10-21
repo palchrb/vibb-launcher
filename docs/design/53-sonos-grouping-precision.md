@@ -155,7 +155,8 @@ app is exactly today's plus the 1 s display poll of §2.4: **we lose speed, neve
   `householdId` -> `groups:1 getGroups` -> our player = the `players[]` entry whose `id` equals `controller.uid` (fallback:
   whose `websocketUrl` host equals the ip we dialled) -> its group -> `playback:1 subscribe` (that `groupId`), then
   `playback:1 getPlaybackStatus` (its reply is handled as an event), and `groups:1 subscribe` (householdId). Not
-  subscribed: `playbackMetadata:1` (only our title; reconsidered if §0.1 (c) shows a takeover without an IDLE) and
+  subscribed: `playbackMetadata:1` (only our title; reconsidered if §0.1 (c) shows a takeover without an IDLE -
+  **subscribed since 53-d** for the container's object id, our DIDL's `vibb-1`: "53-d status") and
   `groupVolume:1` (no reader: a group's volume is computed from each room's own, §2.12 - Sonos' group volume can't
   respect a cap per room). A `groups` event re-subscribes
   `playback:1` only when the group holding our player has another id **and its `coordinatorId` is our player** (while
@@ -287,7 +288,8 @@ app is exactly today's plus the 1 s display poll of §2.4: **we lose speed, neve
 
 ### 2.5 The cadence with a healthy socket: unchanged
 
-Decided: the 15 s cruise, the tail's 5 s, the verb window and the rest stay as they are, socket or not. The poll is the
+**Superseded by round 53-d** (the user asked to lean more on the socket once it proved itself; "53-d status" below:
+PLAYING's cruise and PAUSED check once a minute while the socket is healthy, the rest as here). Decided at first: the 15 s cruise, the tail's 5 s, the verb window and the rest stay as they are, socket or not. The poll is the
 only ours-verifier (an event names no stream), the bookmark's clock (a crash loses at most one cadence) and the
 fallback that must already be right when a socket dies silently. The saving would be two SOAP calls on the LAN every
 15 s, while what costs battery during a session - the partial wake lock and the Wi-Fi lock (`SonosLocks`) - is held
@@ -1128,3 +1130,100 @@ security config) accepting the speaker's chain against the pinned root - logcat 
 "...", issuer CN "Sonos Device Authentication Root CA", valid to <year> - verified (the pinned root, the udn)` and
 then `open to RINCON_...` and `healthy`; on every speaker model in the house (or `sonos-ws-probe.py <ip> --root` from
 the Pi for each). A `refused (udn mismatch)` on the speaker we dial is check 10's spelling case.
+
+## 53-d status (2026-10-21, branch `d53-d`) - the polling round
+
+The user's approval (PLAN, "Sonos polling round (53-d)": "skal vi bare starte den"), after the capture showed the
+socket keeping up: lean on it more, keep UPnP the verdict. Music app only; no contract file changes. §2.5 is superseded
+by (3).
+
+**(1) Confirm polls until UPnP agrees** (`SonosController.confirmFor`/`confirmed`, generalising 53-a's IDLE recheck,
+qa-53a-code 4). A `playbackStatus` we didn't cause - not a play of ours settling, not our held verb's own state, not a
+BUFFERING within `SETTLE_MS` of a verb of ours (`causedByUs`) - that the last poll doesn't show opens a confirm: a state
+(PLAYING, PAUSED, IDLE -> STOPPED) or a **new item** (another `itemId` than the socket's last: UPnP's TrackURI must
+change). The event's own wake goes out as before (at most once a second, an IDLE at once, none while the last poll
+failed); a poll that doesn't show it asks again `CONFIRM_EVERY_MS` (1 s) later, through the same rate limit, while the
+next one stays within `CONFIRM_UNTIL_MS` (4 s) of the event - so at most the event's poll and three rechecks. It ends on
+a poll that shows it, a poll with another TrackURI than before (a takeover, grouped away, a moved stream), a failed poll,
+a newer play, the socket's health going, or the window; and a newer state from the socket (ours or not) supersedes a
+state still being confirmed. A BUFFERING of the same item is a phase and opens none (its state follows). **While a PLAYING or PAUSED confirm is open, a confirm poll still reading the old state doesn't take
+the screen back** (`awaited`: the socket's state stays the effective transport; `accept` doesn't re-anchor the bar from
+that poll) - found while building: in 53-a the immediate confirm poll, landing inside UPnP's 0.3-2.6 s lag, flipped a
+pause from the Sonos app back to playing until the next poll. When the window ends without UPnP showing it, the poll's
+word is the speaker's again (and the disagreement rule takes over). The IDLE near the end advances exactly as before
+(the confirm's STOPPED is `pollTick`'s rule's input); `idleGen` clears when an IDLE's confirm ends unconfirmed, as the
+recheck did. Events we caused keep their one wake (the landing poll of our own play comes sooner) and the verb window.
+
+**(2) `objectId: "vibb-1"` as an early "ours" hint** (`OUR_OBJECT_ID` in `SonosEvents.kt`; the DIDL's `<item
+id="vibb-1">`, `didl()` untouched - `SonosEventsTest` ties the two). The handshake now also subscribes
+`playbackMetadata:1` for our coordinated group (after `getPlaybackStatus`; re-subscribed with playback); its answers
+say nothing of health; a `metadataStatus` of our group becomes `SocketEvent.Metadata(groupId, objectId, at)` - the
+container's object id only, never the title or a picture. `SocketEvent.Playback` gains `itemId`. The hint
+(`earlyHint`): while our answered play settles (`pending` with its uri), our id in a metadata event since the play went
+out **and** a parked PLAYING or PAUSED of a **new** item (an `itemId` other than the speaker's when the play went out)
+re-base the bar on that event's exact position and show READY instead of BUFFERING. That is all it does: `pending`
+stays until a poll sees our TrackURI or `SETTLE_MS` (a lagging poll of the old stream never reads TAKEN_OVER), nothing
+is bookmarked, and the advance, the follow, the park and every gate read UPnP as before. An absent or other id (or an
+unchanged item) is no evidence: the seed shows until the landing poll, as in 53-a. The capture's first play (messages
+30-33: IDLE, BUFFERING item-2, metadata `vibb-1`, PLAYING 1186 ms) is replayed through `SonosEvents.Plan` into the
+controller (`SonosControllerTest` `d53d`); the capture shows the id on every play of ours (play, next, previous, the
+advance) and none at the subscribe's push and the park.
+
+**(3) The slow UPnP check while the socket is healthy** (`SonosSession.relaxed`, `POLL_SLOW_MS` = **60 s**). While
+`socketHealthy()` (53-a's definition: open, our coordinator's playback subscribed, acknowledged and read, live - a
+liveness miss or the disagreement rule closes it), the speaker answered the last poll and the stall counter is 0,
+PLAYING's 15 s cruise and PAUSED's 15 s become 60 s. Unchanged: the 5 s tail (45 s before the end), the verb/arm window
+(5 s for 30 s), TRANSITIONING (5 s), STOPPED (60 s, 5 s in the migration window), the UNREACHABLE backoff, the disarm.
+Without a healthy socket the 5/15 s cadence and the 1 s player-shown poll are exactly today's (`SonosSessionTest`).
+Why 60 and not 120, and what had to move with it:
+- **The tail and the advance**: the advance needs an ours poll within `ENDS_NEAR_S` (20 s) of the end; the slow check
+  is cut short where the tail begins (`dur - 45 s - rel`, at least 5 s), so the tail's 5 s polls (and the last bookmark
+  ≤ 5 s before the end) stay; the IDLE's confirm then advances within ~1 s.
+- **The bar**: `SonosSpec.MAX_EXTRAPOLATE_MS` was 60 s - with polls a minute apart and no event the bar would stop just
+  before each poll; it is now `POLL_SLOW_MS + FRESH_SLACK_MS` (70 s). Freshness is the chosen cadence + 10 s (70 s), and
+  a stale snapshot already stops the bar.
+- **The bookmark clock**: a poll writes it, the socket never does; the service's 15 s save tick re-writes the last
+  measurement (+ at most 5 s). A crash that also loses the speaker loses at most ~1 minute (was 15 s); the usual crash
+  (the speaker plays on) is healed by the adopt's live read; a pause, a switch, a suspension and the hand-off read live
+  as before. 120 s would double that, and the extrapolation cap would have to grow past vibb's minute twice over.
+- **The stall**: a frozen position takes the session back to the 15 s cruise until it moves, so the retry comes ≤ 90 s
+  after the freeze (was ≤ 45 s; at a flat 60 s it would be ~3 minutes).
+- **A socket that stops pushing but stays open**: the first poll that disagrees with it asks for a second look 3 s
+  later (`agreement`), so the disagreement rule closes it in seconds, not two slow polls; the socket going unhealthy
+  (closed, dead ping, liveness miss, disagreement) wakes a poll at once, whose cadence is today's.
+- **The aux reads** stay every 12th poll (≥ 60 s): under the slow check that is ~12 min. Accepted: the volume shown is
+  our own last set (vibb's rule) and grouped away is read from the TrackURI on every poll and from `groups` events.
+- **The migration probe**: unchanged (STOPPED's window polls at 5 s); with the socket a `MOVED`/`groups` event starts the
+  burst as in 53-b.
+- The 60 s locks renewal (`SonosLocks.RENEW_MS` 5 min) is re-asserted at every refresh, still ≥ 5 per renewal.
+- A one-line log when the slow check starts or ends (`the socket is healthy - the regular UPnP check once a minute`),
+  for the device check.
+
+**UPnP calls, an hour of one podcast playing from the start, the screen off** (`SonosSessionTest` `d53d`, simulated;
+each poll GetPositionInfo + GetTransportInfo, every 12th also GetZoneGroupState + GetVolume): **before** (and still
+without a healthy socket) 250 polls - 6 in the arm's window, 235 at 15 s, 9 in the tail - and 21 aux reads = **542
+SOAP calls**; **after**, under a healthy socket, 74 polls - 6, 59 a minute apart, 9 in the tail - and 7 aux reads =
+**162** (-70 %). Confirm polls come on top only for changes made outside the app (at most 4 per event) and the natural
+end (1-3). With the player screen open and no socket the 1 s display poll is ~7 200 calls an hour, as in 53-a.
+
+**For design 54**: `IDLE_RECHECK_MS`/`IDLE_RECHECK_UNTIL_MS` are now `CONFIRM_EVERY_MS` (1 s) / `CONFIRM_UNTIL_MS`
+(4 s); `SocketEvent.Playback.itemId` and `SocketEvent.Metadata` (the container's object id) exist - 54's queue parts
+extend them; the new-item confirm is 54-4's precursor for a direct-URI session.
+
+**Tests**: `SonosEventsTest` (the metadata subscribe in the handshake and the re-subscribe, `Metadata` from our group
+only, the capture's `itemId`s and object ids, the DIDL's id), `SonosSessionTest` `d53d` (the cadence under and without
+a healthy socket, the tail cut, the stall's return to 15 s, freshness, the hour's counts), `SonosControllerTest` `d53d`
+(the Sonos-app pause confirmed every second and not taken back by a lagging poll; the confirm's end at 4 s; our own
+verb's event opens none; a new item polled until the TrackURI changes; a failed poll ends it; health lost wakes a
+poll; the disagreement's second look; the capture's play with the hint, `pending` and the bookmark untouched; an
+absent, other or unchanged-item id is no evidence); 53-a's IDLE-recheck test kept (now the confirm).
+
+**Owed on the speakers** (a debug build, logcat `VibbSonos`): (a) the slow-check line after `healthy`, and an hour of a
+podcast advancing to the next episode within ~1 s of the end (§5 check 3) with the tail polls; (b) a pause and a resume
+from the Sonos app and the speaker's button: shown at once, no flap back while UPnP lags, the bookmark at the pause
+point; (c) a takeover from the Sonos app (§0.1 (c), still open): what the socket sends (a new `itemId`?), the confirm
+until the TrackURI changes, "Spilles et annet sted" without a flap, nothing advanced; (d) the hint: `our DIDL's id on
+the socket` on a play, a next and the advance, the bar exact before UPnP confirms - also whether an NRK
+(`x-sonos-http:`) and a Storytel play carry `vibb-1` (the capture had direct-URI plays only; without it nothing
+changes); (e) the socket killed (the speaker's power, a Wi-Fi switch): today's cadence at once (the line `the regular
+UPnP check at 5/15 s`); (f) a stall, if one can be provoked: the retry within ~90 s.

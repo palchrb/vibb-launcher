@@ -457,7 +457,10 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   measurement - only while the snapshot is fresh and ours, no play settles (an answered play's event is parked for the
   landing poll, one before the answer dropped) and no IDLE or BUFFERING we didn't cause came since the last ours poll.
   Every event wakes a confirm poll, at most once a second (an IDLE or a `MOVED` at once), none while the last poll
-  failed. **An IDLE near the end advances at once** through the poll's existing gated STOPPED-near-the-end rule
+  failed; **a change we didn't cause that the last poll doesn't show** (a PLAYING, PAUSED or IDLE, or a new `itemId`:
+  the TrackURI must change) is polled for every second until UPnP shows it, at most 4 s after the event (design 53-d,
+  `confirmFor`/`confirmed`), and meanwhile a confirm poll still reading the old state never takes the screen or the bar
+  back (`awaited`). **An IDLE near the end advances at once** through the poll's existing gated STOPPED-near-the-end rule
   (`advance()`: `mayPlay`, "Til slutten", repeat); a BUFFERING or PLAYING we didn't cause between the IDLE and that poll
   sets `skipAdvance` - someone else's stream is never replaced. **The bar** (`sonosAnchor`): every measurement of the
   same item in the same motion within a second re-bases smoothly, a second or more (or a seek, a step, a new item, a play)
@@ -467,7 +470,17 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   and the snapshot is ours, fresh and PLAYING, only without a healthy socket) change nothing else: freshness keeps the
   normal cadence, the stall counts polls 5 s apart (an uncounted one leaves the count alone), the probe tries 1.5 s
   apart, the aux at most every 60 s, a poll's bookmark at most every 5 s unless the transport or the stream changed;
-  the tail cadence takes the play's listed duration (`cadenceHintS`) when the speaker reads `0:00`. Tests:
+  the tail cadence takes the play's listed duration (`cadenceHintS`) when the speaker reads `0:00`. **The slow check
+  (design 53-d)**: while the socket is healthy (and the speaker answered, and no position is frozen) PLAYING's cruise and
+  PAUSED poll every 60 s (`POLL_SLOW_MS`) instead of 15 s, the cruise cut short where the 5 s tail begins; the tail, the
+  verb window, TRANSITIONING, STOPPED, the migration window and the backoff are unchanged, and without a healthy socket
+  everything is the 5/15 s cadence and the 1 s display poll as before. The bar's extrapolation cap is 70 s
+  (`POLL_SLOW_MS` + the freshness slack); the socket going unhealthy wakes a poll at once; a poll that disagrees with a
+  healthy socket looks again 3 s later. ~162 UPnP calls for an hour of a podcast instead of ~542 (design 53 "53-d
+  status"). **Our DIDL's id as a hint** (53-d): `playbackMetadata:1` is subscribed for the container's object id only
+  (`SocketEvent.Metadata`, never a title); `vibb-1` (`OUR_OBJECT_ID`, the DIDL's `item id`) since our play went out plus
+  a parked PLAYING/PAUSED of a new `itemId` re-base the bar and show READY while the play settles - display only:
+  `pending`, ours, the bookmark, the advance and every gate stay UPnP's; an absent or other id is no evidence. Tests:
   `SonosEventsTest` (the `ws/` fixtures: the user's capture of 2026-10-21, design 53 §5 check 1, replayed whole -
   only the answer about our own playback subscription counts, never another group's MOVED reply), `SonosSocketTest`,
   `SonosAnchorTest`, `SonosControllerTest`'s and `SonosSessionTest`'s `d53`. Owed: design 53 §5 checks 1-5, 9-11.

@@ -156,8 +156,12 @@ data class SonosSpec(
     }
 
     companion object {
-        /** vibb never extrapolates past ~60 s of staleness (`_sonos_position`). */
-        const val MAX_EXTRAPOLATE_MS = 60_000L
+        /**
+         * vibb never extrapolates past ~60 s of staleness (`_sonos_position`). Design 53-d: under a healthy socket the
+         * polls are [SonosSession.POLL_SLOW_MS] apart, so the cap is that plus the freshness slack - a stale snapshot
+         * already stops the bar (`position`), the cap never cuts in between two slow polls.
+         */
+        const val MAX_EXTRAPOLATE_MS = SonosSession.POLL_SLOW_MS + Fields.FRESH_SLACK_MS
     }
 }
 
@@ -395,7 +399,33 @@ class SonosController(
 
     /** The generation an IDLE asked a confirm poll for. */
     private var idleGen: Long? = null
-    private var idleAt = FAR_PAST
+
+    /** The socket's last `itemId` of our group (design 53-d: a new one is a new item on the speaker). */
+    private var wsItem: String? = null
+
+    /**
+     * Design 53-d: a change the socket showed that we didn't cause and the last poll didn't show - [state] (null for a
+     * new item: UPnP's TrackURI must change from [fromUri]); polled every [CONFIRM_EVERY_MS] until UPnP agrees or
+     * [CONFIRM_UNTIL_MS] after the event.
+     */
+    private class Confirm(val gen: Long, val state: TransportState?, val newItem: Boolean, val fromUri: String?, val at: Long) {
+        /** A poll that shows it: the state itself, or another TrackURI than before (a takeover, grouped away, a moved stream). */
+        fun seenIn(s: Fields): Boolean =
+            normUri(s.uri) != normUri(fromUri) || (!newItem && state != null && !s.transitioning && s.transport == state)
+    }
+
+    private var confirm: Confirm? = null
+
+    /**
+     * Design 53-d: our play's early "ours" hint - when it went out and the socket's item then; [meta] once our DIDL's
+     * id ([OUR_OBJECT_ID]) came since, [applied] once a parked event of the new item re-based the bar with it.
+     */
+    private class Early(val sentAt: Long, val itemBefore: String?) {
+        var meta = false
+        var applied = false
+    }
+
+    private var early: Early? = null
 
     /** The takeover race (§2.3): that generation's one STOPPED near the end decides nothing. */
     private var skipAdvance: Long? = null
@@ -434,7 +464,14 @@ class SonosController(
      */
     fun effectiveTransport(now: Long): TransportState? = opt(now)?.state ?: wsNewer()?.state ?: snap?.transport
 
-    private fun wsNewer(): Opt? = wsTr?.takeIf { it.at > (snap?.measuredAt ?: FAR_PAST) }
+    private fun wsNewer(): Opt? = wsTr?.takeIf { it.at > (snap?.measuredAt ?: FAR_PAST) || awaited(it.state) }
+
+    /**
+     * Design 53-d: a PLAYING or PAUSED from the socket we didn't cause that UPnP doesn't show yet (a [confirm] still
+     * open: it lags 0.3-2.6 s) - a confirm poll still reading the old state doesn't take the screen back. Once a
+     * poll shows it, or the confirm's window ends without one showing it, the poll's word is the speaker's again.
+     */
+    private fun awaited(state: TransportState): Boolean = confirm?.let { it.gen == gen && !it.newItem && it.state == state } ?: false
 
     /** The socket's last word is BUFFERING, newer than the last poll: the phase only (§2.3), never the transport. */
     private fun wsBuffering(): Boolean = wsState == WsPlayback.BUFFERING && wsAt > (snap?.measuredAt ?: FAR_PAST)
@@ -505,7 +542,8 @@ class SonosController(
         val p = pending
         return when {
             // a play in flight: the speaker may still report the old track (its settle window)
-            p != null -> spec(PlayPhase.BUFFERING, opt(now)?.state?.let { it == TransportState.PLAYING } ?: heldPwr)
+            // design 53-d: our DIDL's id and the new item's event on the socket - READY before UPnP confirms (display only)
+            p != null -> spec(if (early?.applied == true) PlayPhase.READY else PlayPhase.BUFFERING, opt(now)?.state?.let { it == TransportState.PLAYING } ?: heldPwr)
             s == null -> spec(PlayPhase.BUFFERING, heldPwr)
             // the first failed polls are a transient: BUFFERING keeps the FGS (one failure must never read IDLE)
             !s.reachable -> if (s.failedPolls <= TRANSIENT_FAILURES) spec(PlayPhase.BUFFERING, heldPwr) else spec(PlayPhase.READY, false)
@@ -852,6 +890,8 @@ class SonosController(
         idleGen = null
         skipAdvance = null
         parked = null
+        confirm = null
+        early = null
     }
 
     /**
@@ -994,6 +1034,7 @@ class SonosController(
         bmHold = null
         endsNear = 0
         forgetEvents()
+        early = Early(now, wsItem)
         val volume = restoreVolume
         // a session's start brings a louder speaker down to the parent's cap before Play (§5.3); a
         // step or an advance inside the session never does (a louder volume set elsewhere stays)
@@ -1219,6 +1260,7 @@ class SonosController(
             val landed = p.uri != null && polled.reachable && polled.ours && normUri(polled.uri) == normUri(p.uri)
             if (landed || (p.uri != null && now - p.at > SETTLE_MS)) {
                 pending = null
+                early = null
                 // design 53 §2.3: an event parked while our play settled counts once this poll saw the play land
                 parked?.let { e ->
                     parked = null
@@ -1236,6 +1278,7 @@ class SonosController(
             return
         }
         accept(polled)
+        confirmed(polled, now)
         val s = snap ?: return
         optTr?.let { o -> if (s.transport == o.state || now - o.at > SETTLE_MS) optTr = null }
         if (optTr == null) frozen = null
@@ -1285,14 +1328,27 @@ class SonosController(
         }
         // our own stream plays or pauses again: the takeover skip is over
         if (s.transport?.live == true && !s.transitioning) skipAdvance = null
-        // an IDLE's confirm poll that still reads PLAYING or TRANSITIONING asks again every second, up to
-        // IDLE_RECHECK_UNTIL_MS after the IDLE: UPnP lags a change by 0.3-2.6 s (design 53 §0.1, qa-53a-code 4)
-        if (idleGen == gen && (s.transport == TransportState.PLAYING || s.transitioning)) {
-            if (now - idleAt < IDLE_RECHECK_UNTIL_MS) {
-                work.after(IDLE_RECHECK_MS) { if (!closed) wakePoll() }
-            } else {
-                idleGen = null
-            }
+    }
+
+    /**
+     * Design 53-d (generalising 53-a's IDLE recheck, qa-53a-code 4): a poll that doesn't show the change [confirm]
+     * waits for asks again [CONFIRM_EVERY_MS] later (through [wake]'s once-a-second limit) while that stays within
+     * [CONFIRM_UNTIL_MS] of the event - UPnP lags the socket by 0.3-2.6 s (design 53 §0.1). One that shows it, a
+     * TrackURI other than the one before (a takeover, grouped away, a moved stream), a failed poll, a newer play or
+     * the window's end ends it - then the normal cadence.
+     */
+    private fun confirmed(s: Fields, now: Long) {
+        val c = confirm ?: return
+        if (c.gen != gen || !s.reachable || c.seenIn(s)) {
+            confirm = null
+            return
+        }
+        if (now - c.at + CONFIRM_EVERY_MS <= CONFIRM_UNTIL_MS) {
+            work.after(CONFIRM_EVERY_MS) { if (!closed && confirm === c) wake(immediate = false, elapsedMs()) }
+        } else {
+            confirm = null
+            // an IDLE UPnP never showed: no poll decided it, so the takeover race is over (qa-53a-code 4)
+            if (c.state == TransportState.STOPPED && idleGen == gen) idleGen = null
         }
     }
 
@@ -1308,6 +1364,9 @@ class SonosController(
             ((polled == TransportState.PLAYING && (ws == WsPlayback.PAUSED || ws == WsPlayback.IDLE)) ||
                 ((polled == TransportState.PAUSED_PLAYBACK || polled == TransportState.STOPPED) && ws == WsPlayback.PLAYING))
         disagreements = if (differs) disagreements + 1 else 0
+        // design 53-d: under a healthy socket the next regular poll may be a minute away - the second look comes
+        // DISAGREE_AFTER_MS later, so a socket that stopped pushing is closed in seconds, not two slow polls
+        if (disagreements == 1) work.after(DISAGREE_AFTER_MS) { if (!closed) wake(immediate = false, elapsedMs()) }
         if (disagreements >= 2) {
             disagreements = 0
             host.log("sonos: two polls disagree with the socket ($polled vs $ws) - closing it")
@@ -1328,13 +1387,21 @@ class SonosController(
             val now = elapsedMs()
             when (e) {
                 is SocketEvent.Playback -> {
+                    val before = wsItem
                     wsState = e.state
                     wsAt = e.at
+                    e.itemId?.let { wsItem = it }
+                    // design 53-d: a newer state supersedes a state still being confirmed (ours or not)
+                    confirm?.let { c -> if (!c.newItem && e.state != WsPlayback.BUFFERING && e.state.transport != c.state) confirm = null }
                     if (session) {
                         wake(immediate = e.state == WsPlayback.IDLE, now)
+                        // decided before playback(), which may settle our verb
+                        val caused = causedByUs(e, now)
                         playback(e, now)
+                        if (!caused) confirmFor(e, before, now)
                     }
                 }
+                is SocketEvent.Metadata -> if (session) metadata(e)
                 is SocketEvent.Moved -> if (session) {
                     // design 53 §2.8: our uid coordinates no subscribed group now - its new coordinator may carry our stream
                     wake(immediate = true, now)
@@ -1352,6 +1419,10 @@ class SonosController(
                     wsBlocked = false
                     parked = null
                     disagreements = 0
+                    wsItem = null
+                    confirm = null
+                    // design 53-d: the slow check was the socket's - today's cadence from a poll now
+                    if (session) wake(immediate = true, now)
                 }
             }
         } catch (x: Exception) {
@@ -1381,6 +1452,56 @@ class SonosController(
     }
 
     /**
+     * Design 53-d: an event of our own making - a play of ours settling, our verb's own state while it is held, or a
+     * BUFFERING within [SETTLE_MS] of a verb of ours. Those are confirmed by the verb window's polls, as before.
+     */
+    private fun causedByUs(e: SocketEvent.Playback, now: Long): Boolean =
+        pending != null || (now - verbAt <= SETTLE_MS && (e.state == WsPlayback.BUFFERING || opt(now)?.state == e.state.transport))
+
+    /**
+     * Design 53-d: a change we didn't cause that the last poll doesn't show - a state (PLAYING, PAUSED, IDLE) or a new
+     * item (another `itemId`: UPnP's TrackURI must change) - is polled for until UPnP agrees ([confirmed]). A BUFFERING
+     * of the same item is a phase: its state follows in the next event.
+     */
+    private fun confirmFor(e: SocketEvent.Playback, before: String?, now: Long) {
+        val newItem = e.itemId != null && before != null && e.itemId != before
+        val state = e.state.transport.takeIf { e.state != WsPlayback.BUFFERING }
+        if (!newItem && state == null) return
+        val s = snap
+        if (!newItem && s != null && s.reachable && !s.transitioning && s.transport == state) return
+        confirm = Confirm(gen, state, newItem, s?.uri, now)
+    }
+
+    /** Design 53-d: our DIDL's id on the socket since our play went out - the early hint ([earlyHint]). */
+    private fun metadata(e: SocketEvent.Metadata) {
+        val h = early ?: return
+        if (pending == null || e.objectId != OUR_OBJECT_ID || e.at < h.sentAt) return
+        h.meta = true
+        earlyHint()
+    }
+
+    /**
+     * Design 53-d: the early "ours" hint. While our answered play settles, our DIDL's id ([OUR_OBJECT_ID]) on the
+     * socket since it went out and a parked PLAYING or PAUSED of a new item (another `itemId` than the speaker had
+     * when it went out) re-base the bar on that event's exact position and show READY - display only. `pending`
+     * stays until a poll sees our TrackURI (or [SETTLE_MS]): UPnP is the verdict for ours, the bookmark, the advance
+     * and every gate. An absent or other id is no evidence of anything.
+     */
+    private fun earlyHint() {
+        val h = early ?: return
+        val p = pending ?: return
+        val e = parked ?: return
+        if (!h.meta || p.uri == null) return
+        if (e.state != WsPlayback.PLAYING && e.state != WsPlayback.PAUSED) return
+        val item = e.itemId ?: return
+        if (item == h.itemBefore) return
+        val pos = e.positionMs ?: return
+        if (!h.applied) host.log("sonos: our DIDL's id on the socket - the bar from its event before UPnP confirms")
+        h.applied = true
+        measure(pos, e.at, moving = e.state == WsPlayback.PLAYING, poll = false)
+    }
+
+    /**
      * A `playbackStatus` of our group (§2.3): BUFFERING is TRANSITIONING - the phase only; our own
      * verb wins until it settles; outside it PLAYING and PAUSED are the effective transport and a
      * measurement, under one gate: the snapshot fresh and ours, no play settling, no IDLE and no
@@ -1390,7 +1511,10 @@ class SonosController(
     private fun playback(e: SocketEvent.Playback, now: Long) {
         val p = pending
         if (p != null) {
-            if (p.uri != null) parked = e
+            if (p.uri != null) {
+                parked = e
+                earlyHint()
+            }
             return
         }
         val ours = now - verbAt <= SETTLE_MS
@@ -1401,7 +1525,6 @@ class SonosController(
                 // the end, a takeover, a stop: the confirm poll decides (pollTick's STOPPED near the end)
                 wsBlocked = true
                 idleGen = gen
-                idleAt = now
             }
             WsPlayback.BUFFERING -> {
                 if (!ours) {
@@ -1468,7 +1591,10 @@ class SonosController(
             lastOursRel = s.relS
             lastOursDur = s.durS?.takeIf { it > 0 } ?: lastOursDur
             // the bar's anchor (design 53 §2.4), at the instant the speaker measured it (GetPositionInfo's return)
-            if (s.reachable) measure((s.relS * 1000).toLong(), s.measuredAt ?: elapsedMs(), moving = s.transport == TransportState.PLAYING, poll = true)
+            // design 53-d: a poll still reading the state before a PLAYING or PAUSED the socket showed (a confirm open)
+            // is older news than that event - it doesn't move the bar back
+            val lagging = confirm?.let { it.gen == gen && (it.state == TransportState.PLAYING || it.state == TransportState.PAUSED_PLAYBACK) && !it.seenIn(s) } ?: false
+            if (s.reachable && !lagging) measure((s.relS * 1000).toLong(), s.measuredAt ?: elapsedMs(), moving = s.transport == TransportState.PLAYING, poll = true)
         }
     }
 
@@ -2093,11 +2219,14 @@ class SonosController(
         /** Design 53 §2.3: an event wakes a confirm poll at most this often (an IDLE or a `MOVED` at once). */
         const val EVENT_WAKE_MIN_MS = 1_000L
 
-        /** An IDLE's confirm poll that still reads PLAYING or TRANSITIONING asks once more after this. */
-        const val IDLE_RECHECK_MS = 1_000L
+        /**
+         * Design 53-d (53-a's IDLE recheck, generalised): a confirm poll that doesn't show the change an event we
+         * didn't cause showed asks once more after this ...
+         */
+        const val CONFIRM_EVERY_MS = 1_000L
 
-        /** ... for this long after the IDLE: the UPnP lag measured (0.3-2.6 s), then the normal cadence. */
-        const val IDLE_RECHECK_UNTIL_MS = 3_000L
+        /** ... while the next one stays within this of the event: the UPnP lag measured (0.3-2.6 s), then the normal cadence. */
+        const val CONFIRM_UNTIL_MS = 4_000L
 
         /** The seek hold ends on a PLAYING or PAUSED event this close to the target (the socket's position is exact). */
         const val SEEK_EVENT_TOL_MS = 1_000L

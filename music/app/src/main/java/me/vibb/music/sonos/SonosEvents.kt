@@ -49,6 +49,13 @@ enum class WsPlayback {
     }
 }
 
+/**
+ * The item id of every DIDL we send (`Didl.kt`'s `<item id="vibb-1" ...>`, vibb's), which the speaker shows as
+ * `metadataStatus`'s `container.id.objectId` for our own direct-URI plays (captured 2026-10-21, design 53-d). A hint
+ * only: an absent or other id is no evidence, and UPnP's TrackURI stays the verdict (`SonosController.onSocket`).
+ */
+const val OUR_OBJECT_ID = "vibb-1"
+
 /** One group of a `groups` message. */
 data class WsGroup(val id: String, val coordinatorId: String, val playerIds: List<String>)
 
@@ -57,8 +64,17 @@ data class WsGroup(val id: String, val coordinatorId: String, val playerIds: Lis
  * clock). Never a URL: a `websocketUrl` is read for its player id only and never dialled.
  */
 sealed interface SocketEvent {
-    /** A `playbackStatus` of the group we subscribed (also the `getPlaybackStatus` reply). */
-    data class Playback(val groupId: String, val state: WsPlayback, val positionMs: Long?, val at: Long) : SocketEvent
+    /**
+     * A `playbackStatus` of the group we subscribed (also the `getPlaybackStatus` reply); [itemId] is the speaker's
+     * queue item (a new one with every `SetAVTransportURI`; none at the natural end's IDLE) - design 53-d's "new item".
+     */
+    data class Playback(val groupId: String, val state: WsPlayback, val positionMs: Long?, val at: Long, val itemId: String? = null) : SocketEvent
+
+    /**
+     * A `metadataStatus` of the group we subscribed (design 53-d): only its `container.id.objectId` - our DIDL's item
+     * id ([OUR_OBJECT_ID]) for a play of ours - never the title or a picture (the kid's listening).
+     */
+    data class Metadata(val groupId: String, val objectId: String?, val at: Long) : SocketEvent
 
     /** A `groups` event after the handshake: the group holding our player, and every group. */
     data class Groups(val ourGroupId: String?, val ourCoordinatorId: String?, val members: List<String>, val groups: List<WsGroup>) : SocketEvent
@@ -134,8 +150,8 @@ object SonosEvents {
      * The handshake and the subscriptions of one connection (`sonos-ws-probe.py`'s order): the empty
      * command -> the `householdId` -> `groups:1 getGroups` -> our player (the `players[]` entry whose
      * `id` is [uid], else whose `websocketUrl` host is the [ip] we dialled) -> the group it coordinates
-     * -> `playback:1 subscribe` and `getPlaybackStatus` (its reply is an event), then `groups:1
-     * subscribe`. A later `groups` re-subscribes playback only for a group our player coordinates
+     * -> `playback:1 subscribe` and `getPlaybackStatus` (its reply is an event), `playbackMetadata:1 subscribe`
+     * (design 53-d: our DIDL's id as an early hint), then `groups:1 subscribe`. A later `groups` re-subscribes playback only for a group our player coordinates
      * whose id changed (grouped away it would only earn a `MOVED`); our player coordinating none, a
      * refused subscribe or a `MOVED` for it leaves the connection open for `groups` but not [healthy].
      * Not thread-safe: one connection's reader thread owns it.
@@ -189,6 +205,7 @@ object SonosEvents {
             return when (type) {
                 "groups" -> groups(m)
                 "playbackStatus" -> playback(m, at)
+                "metadataStatus" -> metadata(m, at)
                 "groupCoordinatorChanged" -> coordinatorChanged(m)
                 else -> Step()
             }
@@ -212,6 +229,8 @@ object SonosEvents {
                 status = false
                 commands += command(next(), "playback:1", "subscribe", "groupId", coordinated.id)
                 commands += command(next(), "playback:1", "getPlaybackStatus", "groupId", coordinated.id)
+                // design 53-d: the metadata only for our DIDL's item id (an early "ours" hint); its answers say nothing of health
+                commands += command(next(), "playbackMetadata:1", "subscribe", "groupId", coordinated.id)
             }
             val first = !groupsSeen
             if (first) {
@@ -228,7 +247,15 @@ object SonosEvents {
             val state = WsPlayback.parse(m.bodyStr("playbackState")) ?: return Step()
             status = true
             val pos = (m.body["positionMillis"] as? JsonPrimitive)?.longOrNull?.takeIf { it >= 0 }
-            return Step(events = listOf(SocketEvent.Playback(gid, state, pos, at)))
+            return Step(events = listOf(SocketEvent.Playback(gid, state, pos, at, m.bodyStr("itemId"))))
+        }
+
+        /** Our group's `metadataStatus`: `container.id.objectId` only (design 53-d). */
+        private fun metadata(m: WsMessage, at: Long): Step {
+            val gid = m.str("groupId") ?: return Step()
+            if (gid != subscribed || m.str("namespace") != "playbackMetadata:1") return Step()
+            val id = ((m.body["container"] as? JsonObject)?.get("id") as? JsonObject)?.get("objectId") as? JsonPrimitive
+            return Step(events = listOf(SocketEvent.Metadata(gid, id?.takeIf { it.isString }?.contentOrNull, at)))
         }
 
         private fun coordinatorChanged(m: WsMessage): Step {

@@ -228,7 +228,13 @@ class ControllerRig(val uid: String = "RINCON_KID01400") {
     )
 
     /** One event of the socket, received now (design 53 §2.3). */
-    fun event(state: WsPlayback, posMs: Long? = null, at: Long = clock.now) = c.onSocket(SocketEvent.Playback("$uid:100", state, posMs, at))
+    fun event(state: WsPlayback, posMs: Long? = null, at: Long = clock.now, item: String? = null) = c.onSocket(SocketEvent.Playback("$uid:100", state, posMs, at, item))
+
+    /** Our group's metadata, received now (design 53-d: its `container.id.objectId` only). */
+    fun meta(objectId: String?, at: Long = clock.now) = c.onSocket(SocketEvent.Metadata("$uid:100", objectId, at))
+
+    /** A message of the speaker as the socket's reader gives it to the controller: parsed by [plan], each event received now. */
+    fun wire(plan: SonosEvents.Plan, text: String) = plan.receive(SonosEvents.parse(text)!!, clock.now).events.forEach { c.onSocket(it) }
 
     val entry = SonosFakes.entry()
     val items: List<PlayItem> = (1..3).map { SonosFakes.item(key = "ep$it", url = "https://podkast.example/ep$it.mp3") }
