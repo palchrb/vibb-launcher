@@ -1033,7 +1033,13 @@ findings, merge to `main`, full suite once.
   400); a random UUID -> accepted, the full handshake runs. The local endpoint needs the header but doesn't check its
   value - the RFC 4122 example UUID is no secret and no borrowed key (it is in `jjlawren/sonos-websocket`'s first
   commit, 2023-04-09, and in Music Assistant's `aiosonos`; SmartThings' official driver sends its own Sonos-issued key
-  to the same port 1443). **Next, only after the device checks** (the user asked whether to lean more on the socket):
+  to the same port 1443). **The certificate, checked the same day** (the user's Pi, `openssl s_client` to Sverre): the
+  speaker's leaf (CN = its MAC, OU Sonos Devices) chains to the **Sonos Device Authentication Root CA** (SHA-256
+  `42:DC:D4:A7:D4:B2:3B:D2:86:83:B4:03:37:7B:A8:8A:16:9B:35:78:EC:94:F4:15:BB:E6:FD:48:3D:D5:A0:8F`, 2015-2055; the
+  copy in `nickblt/sonos-websocket`, matched against the speaker) - `Verify return code: 0 (ok)` - and its SAN holds
+  `urn:sonos:udn:RINCON_<uid>` (plus `sonos-<mac>.local`, the household id, a user id - none of which may be logged). So
+  53's trust-any-on-the-private-ip can become: the chain verified against that pinned root, and the leaf's
+  `urn:sonos:udn:` equal to the uid we dial (round 53-c). **Next, only after the device checks** (the user asked whether to lean more on the socket):
   commands stay UPnP (a play needs vibb's DIDL, which `loadStreamUrl` can't carry); if the socket proves stable on the
   Jelly Star for some days, relax the UPnP poll while it is healthy (e.g. 60 s instead of 5/15 s) as a small round. **Grouping from outside the app is
   followed** (the user, 2026-10-21: the kids add and drop rooms by holding Play on a speaker, which can change the
