@@ -1386,7 +1386,15 @@ findings, merge to `main`, full suite once.
   pause and lap; paused - play and X (stop, reset, the notification goes); timer running - pause and X; paused - play
   and X; ended - restart and X. Needs research of what Fossify Clock exposes (today: only the ended timer's single
   Dismiss broadcast, design 42) - its receivers/intents for pause, resume, reset, lap, restart - and what the lock may
-  send without unlocking (broadcasts only, never an activity).
+  send without unlocking (broadcasts only, never an activity). **Fossify checked 2026-10-21** (FossifyOrg/Clock
+  `AndroidManifest.xml`): the only exported entry is `SplashActivity` (the app's UI) for `TOGGLE_STOPWATCH`,
+  `SET_TIMER`, `DISMISS_TIMER` and the alarm actions - an activity, so never from the lock; `TimerService`,
+  `StopwatchService` and `HideTimerReceiver` are not exported; the running timer's and the stopwatch's notifications
+  carry no actions (the user's dumpsys: only the ended timer's Dismiss). So no pause/resume/reset/lap/restart is
+  reachable from the lock today. Options: (a) a contribution to Fossify adding notification actions as broadcast
+  PendingIntents (stopwatch: pause/resume/lap/reset; timer: pause/resume/stop; ended: restart/dismiss) - the lock then
+  sends them like today's Stopp; (b) Vibb One's own timer/stopwatch on the lock (alarms stay Fossify's); (c) as today,
+  the tile opens Fossify after the unlock. Waiting for the user.
 
 - **Design 54's measuring run done early** (the user's Pi, 2026-10-21, `sonos-play-test.py --spotify` + the probe's
   `--save`; raw files in the session scratchpad, to be scrubbed into fixtures by 54-a1): sn 2311 took the ShareLink in
