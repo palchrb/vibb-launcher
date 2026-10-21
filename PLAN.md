@@ -1308,6 +1308,13 @@ findings, merge to `main`, full suite once.
   12-16 dp of air and a quieter torch (the music controls' dark round ground, peach only while lit), keeping
   `lockGlanceFit`'s row height.
 
+- **A Google setup nag got past the notification filter** (the user's jellystar2, 2026-10-21: "Fullfør
+  Google-konfigurering · Du er nesten ferdig", NEI TAKK/OK, from "Google Play …"; the filter switch has long been on).
+  Likely not clearable (FLAG_NO_CLEAR - the rule keeps those, `NOT_CLEARABLE`), else the Play Store allowed or an
+  alert-like channel. Waiting for the evidence: the user dismissed it, so the next time a Google nag shows, ask for
+  `adb shell dumpsys notification --noredact | grep -B4 -A16 "<its text>"` and `adb logcat -d -s NotificationRule`
+  before changing the rule (a snooze for non-clearable nags is the candidate fix).
+
 ### To decide (the user)
 
 - **The app's DIDL differs from vibb's** (found 2026-10-21 against `pi/daemon.py` `_sonos_body`, branch pipewire): for a
