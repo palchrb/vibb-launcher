@@ -20,8 +20,8 @@ measuring run done early". vibb `pipewire`: `pi/sonosd.py` (`Session.play`'s `sp
 3, `tests/sonos_hush.py` case 5, `tests/sonos_contract.py`; SoCo (MIT) `soco/plugins/sharelink.py` and `soco/core.py`
 (`play_from_queue`, `clear_queue`, `queue_size`, `play_mode`, `PLAY_MODES`, `reorder_queue`); the captures
 `music/app/src/test/resources/sonos/ws/capture_2026-10-21.json` (direct URIs) and the 54-0 run's
-`ws-spotify-2026-10-21.json` + `spotify-playtest-2026-10-21.txt` (a Spotify queue; session scratchpad, to be scrubbed
-into fixtures by 54-a1); the server's listing (`server/src/spotify.rs`); the music app's `sonos/`, `spotify/`,
+`ws-spotify-2026-10-21.json` + `spotify-playtest-2026-10-21.txt` (a Spotify queue; kept outside the repo in
+`~/handy-captures/`, §0.3); the server's listing (`server/src/spotify.rs`); the music app's `sonos/`, `spotify/`,
 `playback/`.
 
 `M/` = `music/app/src/main/java/me/vibb/music/`. Markers: **[D n]** = an owed device check (§5); **[vibb]** = ported
@@ -114,7 +114,9 @@ socket messages):
   An **editorial playlist** (one no family account may list in dev mode: context mode for us) played through the
   household's account.
 - **Jumps**: `TRACK_NR` works while PLAYING and while PAUSED (paused, it stays paused on the new track at 0:00).
-- **The natural advance** is gapless; the socket saw it **0.5 s before UPnP** (`playbackStatus` PLAYING with a new
+- **The natural advance** is gapless; the socket saw it **0.5-1.0 s before UPnP** (the run's 1 s poll still showed the
+  old track 0.5 s before the socket's event and the new one 0.5 s after it - a bound, not the lag; [D6+] owes the
+  number) (`playbackStatus` PLAYING with a new
   `itemId` and **no BUFFERING**; `previousPositionMillis` 230998 for a 230000 ms track). A jump of ours goes BUFFERING ->
   PLAYING (`previousPositionMillis` the old place).
 - **`queueVersion`** moves **only when the queue is edited**: 37 (the household's old queue) -> 39 after our clear + add
@@ -129,7 +131,12 @@ socket messages):
 - `itemId` changes with every track and is stable per queue position (the scrub keeps it consistent: track 3 was the
   same id twice). `previousItemId` is **not** the last `itemId` (another id space): never read.
 - Not measured yet: a Browse of the queue, the queue's end, the speaker's own Next/Previous, `REPEAT_ONE`,
-  `ReorderTracksInQueue`, a show, a refused or empty add [D3, D7, D9, D8, D10, D11, D12].
+  `ReorderTracksInQueue`, a show, a refused or empty add [D3, D7, D9, D8, D10, D11, D12]. **The container was seen for a
+  playlist only** (`container.type` `playlist`): an album's, a show's, a track's and an episode's container form is
+  owed [D3, D11]; it is empty on IDLE and after the park, and absent right after a transfer.
+- **The raw files** (`ws-spotify-2026-10-21.json`, `spotify-playtest-2026-10-21.txt`, and the first capture) have a
+  durable copy **outside the repo** in `~/handy-captures/`. They hold real Spotify ids: 54-a1 scrubs them into fixtures
+  (§3) and never commits them raw.
 
 ### 0.4 What the app does today (read 2026-10-21)
 
@@ -160,7 +167,10 @@ speaker made (its own advance, its buttons, the Sonos app) is confirmed by UPnP 
 found quickly because the socket's new `itemId` and its `metadataStatus` (which names the Spotify track) wake the
 confirm polls. Design 53's rule holds: UPnP commands, verifies and bookmarks; the socket wakes, pairs and cross-checks.
 **Every play stays ours and gated**: NORMAL play mode (the speaker never wraps or repeats by itself), repeat done by our
-gated advance, and a belt that pauses the speaker's own advance whenever playing isn't allowed.
+gated advance, a belt that pauses the speaker's own advance whenever playing isn't allowed, and the speaker's own
+sleep timer set to the next time-rule edge, so a missed bedtime stop can't let the queue play on (§2.9). A context-mode
+playlist (one our server can't list) goes the same way in the same delivery: the speaker plays the share link through
+the household's account whatever our server can read, and the socket's metadata names what plays (§2.12).
 
 ## 2. Decisions
 
@@ -169,9 +179,9 @@ gated advance, and a belt that pauses the speaker's own advance whenever playing
 - **List mode** (26c §3.3): speaker-playable when the target's kind has a ShareLink type - `playlist`, `album`,
   `track`, `show`, `episode`. **An artist never** (no ShareLink type). `speakerDropReason` returns null for the five,
   `"spotify artist"` for an artist.
-- **Context mode** (26c §5.9): `"spotify context"` until round 54-c (§2.12), then a playlist context passes and an
-  artist context stays refused.
-- **Shows and episodes** go by the ShareLink too (vibb did; Q4). RSS and NRK podcasts and Storytel are not touched.
+- **Context mode** (26c §5.9; the user's Q3: "vi sender jo bare hele sharelinken"): a playlist context passes (§2.12,
+  delivered with list mode in 54-a2); an artist context stays refused.
+- **Shows and episodes** go by the ShareLink too (vibb did; Q4, decided: "ja ... samme oppførsel som vibb"). RSS and NRK podcasts and Storytel are not touched.
 - **No household pre-check** (§2.13): the add's answer decides.
 - Refused by kind: the phone keeps playing (`toRoom`'s "nothing speaker-playable" path), `CANT_PLAY_ON_SONOS` ("Kan
   ikke spilles på Sonos"). Refused by the speaker (§2.2): the failed start, `SONOS_ASK_ADULT` ("Kan ikke spilles på Sonos
@@ -191,16 +201,19 @@ out). The sequence, under the transport's mutex:
 4. `SetPlayMode(NORMAL)` (errors ignored, vibb's `try`; §2.7).
 5. `RemoveAllTracksFromQueue`.
 6. `AddURIToQueue` with `shareLinkUri(ref)` and `shareLinkMetadata(ref, 2311)`; on a `UpnpFault` the same with `3079`
-   (§0.2). The second fault, a network failure, or an answer with `NumTracksAdded` 0 or `NewQueueLength` 0 throws
-   `ShareRefused` before any Seek: a failed start (§2.13). `first` = `FirstTrackNumberEnqueued` (unparsable -> 1), `len`
+   (§0.2). The second fault, or an answer with `NumTracksAdded` 0 or `NewQueueLength` 0, throws `ShareRefused`; a
+   network failure throws its own `SpeakerUnreachable` (no second try) - both before any Seek, a failed start (§2.13). `first` = `FirstTrackNumberEnqueued` (unparsable -> 1), `len`
    = `NewQueueLength`, else vibb's `queue_size`.
 7. **The start's position** (§2.3): `findInQueue(listed[trackIndex], near = first + trackIndex)` - one
-   `BrowseDirectChildren` page of 100 around the guess, then the others until the hit, at most 10 pages; not found ->
-   position `first` at 0 (vibb's "hit is None -> idx 0").
+   `BrowseDirectChildren` page of 100 around the guess, then the others until the hit, at most 10 pages. **Not found**
+   (vibb's "hit is None -> idx 0"; qa-54-revision N4): position `first` at 0 with **no seek** (step 10 is skipped: the
+   saved second belongs to another track), no bookmark and no index move - the read's slots tell the controller what
+   plays (§2.3); a pick of that item also shows `CANT_PLAY_ON_SONOS`. A context resume (§2.12) is the same.
 8. **`gate()`** again, then `play_from_queue(position)` as SoCo: `SetAVTransportURI(queueUri(uid), "")`, `Seek(TRACK_NR,
    position)`, `Play`.
 9. `session.played(queueUri(uid), hint)` and `session.shareSet(target)`; armed.
-10. A start of 5 s or more: `seekSettled` (REL_TIME); false arms the controller's refused-seek hold, as today.
+10. A start of 5 s or more at a found position: `seekSettled` (REL_TIME); false arms the controller's refused-seek hold.
+10b. The speaker's sleep timer to the next suspension edge, or cleared (§2.9, `ConfigureSleepTimer`; errors logged).
 11. Unhush. `PlayResult(uri = queueUri(uid), queue = QueueRead.partial(first, len, the pages read), ...)`.
 12. **Then, as its own actor job outside the hush** (`readQueue`): the rest of the queue's pages (§2.3) -> the full map.
 
@@ -220,15 +233,23 @@ a kids' playlist often holds a track twice. A position formula drifts from the f
 
 - **The read**: paged `Browse Q:0 BrowseDirectChildren` (100 a call, at most 10 calls - the server's cap), each item's
   `res` decoded by `trackSpotifyUri` (§2.5), and the answer's `UpdateID`. The start needs only the page of its track
-  (§2.2 step 7); the rest is read right after Play, off the hush.
+  (§2.2 step 7); the rest is read right after Play, off the hush. **While the read runs** (qa-54-revision N6) the map
+  counts as trusted for choosing a `queuePlay` - never a transfer, which would make a mash re-add - and a `queuePlay`
+  job looks its position up when it runs: the read is ahead of it in the actor, so it waits for it.
 - **`slots`**: for each item of our listing, its queue position or none - duplicates matched in order (the k-th
   occurrence of a uri in our listing to the k-th in the queue); exact for gaps, extras, either direction and any cap.
   `itemAt(position)` is the inverse. No direction field, no formula.
 - **An item with no slot** can't play on that room: a step skips it the way an unplayable item is skipped
-  (`playableIndex`'s rule, in the step's direction); a pick of it is refused with `CANT_PLAY_ON_SONOS`, nothing changes.
-- **`version`**: the queue's version at the read - the socket's `queueVersion` (it moves only on an edit, §0.3), else
-  the Browse's `UpdateID` [D10: whether the two are the same number]. **Trusted** = a read exists for this entry and uid
-  and the queue's version hasn't moved since it, except by an edit of ours (our 54-b moves re-read).
+  (`playableIndex`'s rule, in the step's direction). A pick of it: when our listing changed since the read (an item
+  added by a sync while the room plays) one fresh transfer, whose start decides (§2.2 step 7); otherwise - the item a
+  transfer would not give, relinked or unplayable for the household - refused with `CANT_PLAY_ON_SONOS`, nothing changes.
+- **`version`**: the queue's version at the read, **kept with its source** (qa-54-revision N5): the Browse's
+  `UpdateID` always (it is what the standalone path and adopt can read, §2.9), and the socket's `queueVersion` when the
+  socket was healthy at the read; a later value is compared only with the same source, and a source the read lacks (the
+  socket came back) means "read the version again" (one `BrowseMetadata`), never a mismatch [D10: whether the two are one
+  number]. **Trusted** = a read exists for this entry and uid and the version hasn't moved since it, except by an edit of
+  ours: 54-b's job counts its own moves and ends with a re-read, which becomes the version (a guest's edit during the
+  job shows as a read that doesn't match the applied moves -> untrusted).
 - **The confirm verifies**: an ours poll's `Track = p` and uri `u`; trusted and `u != listed[itemAt(p)]` -> untrusted
   (logged once). The index comes from `Track` through the slots; the uri only verifies it. Untrusted, the item is found
   by uri, the occurrence nearest the expected one.
@@ -263,13 +284,18 @@ a kids' playlist often holds a track twice. A position formula drifts from the f
   before `?`, `pyUnquote`d (vibb's expression); anything else null. The same decode reads a Browse item's `res`.
 - **Two meanings, split** [vibb's, made explicit]:
   - **`ours`** (the session - the speaker plays the queue of our transfer): `trackSpotifyUri` is not null (vibb's
-    prefix) **and** the queue isn't known to be someone else's: the socket's last `metadataStatus` container is our
-    target, and its `queueVersion` hasn't moved except by us; without a socket, the last read's `UpdateID` stands (an
-    unmapped track triggers one `Browse Q:0 BrowseMetadata` to compare it). Every Stop, park, lock, disarm, follow and
-    "taken over" gate reads this - an unlisted track of our playlist is still ours, so the park stops it.
+    prefix) **and not contradicted** (qa-54-revision N2). Contradicted means one of two things. (a) The socket's last
+    `metadataStatus` container names a Spotify object other than our target. An absent container, an empty one (IDLE,
+    right after a transfer) or one of a form we haven't seen (only a playlist's was measured, §0.3) is **no evidence**,
+    never "not ours". (b) UPnP: the playing track is neither in our listing nor in the queue we read, **and** the
+    queue's version moved by an edit not ours. That takes one `Browse Q:0 BrowseMetadata` `UpdateID`, read only when an
+    unmapped track shows up. A moved version alone only makes the map untrusted. Every Stop, park, lock, disarm,
+    follow and "taken over" gate reads `ours`. So an unlisted track of our playlist is still ours, and the park stops
+    it; a queue replaced from the Sonos app is not. The socket's part only ever withholds a Stop, and the park's final
+    verdict is UPnP's (§2.9).
   - **`mapped`** (the item): the polled `Track` holds one of our items through the slots, its uri verified. The index,
     the bookmark, the done mark and the now-playing row read this. A track that is ours but not mapped gets no bookmark
-    and no index move; what it shows is Q6 (default vibb's: §2.8).
+    and no index move; what it shows is Q6 (decided, vibb's: §2.8).
 - **`SonosSession.classify` for this kind**: `ours` as above (the session holds the target and the version it read;
   the controller feeds it the socket's container and version), `Fields.trackNo`, `Fields.trackSpotifyUri`; no
   `lostSession`, no DIDL check, and `stallBookkeeping` returns null for this kind (vibb 895-899). `lastOursTrack`/
@@ -279,8 +305,9 @@ a kids' playlist often holds a track twice. A position formula drifts from the f
   container's uri, parsed only for `serviceId` 9 or a `spotify:` object id):
   - an **`itemId`** different from the one paired with `playing`, while a queue session of ours plays and no play of
     ours is pending, is a track change the speaker made: a confirm poll **at once**, then **re-polls every
-    `IDLE_RECHECK_MS` until a poll names a uri other than `playing`'s - the one the socket's metadata named, when it
-    did - or `IDLE_RECHECK_UNTIL_MS`** (design 53's IDLE recheck, qa-53a-code 4: UPnP lags 0.3-2.6 s; 0.5 s measured);
+    `IDLE_RECHECK_MS` until a poll names a `Track` or a uri other than `playing`'s** (either: a duplicate at the next
+    position has the same uri; qa-54-revision N6) **- the one the socket's metadata named, when it did - or
+    `IDLE_RECHECK_UNTIL_MS`** (design 53's IDLE recheck, qa-53a-code 4: UPnP lags 0.3-2.6 s; 0.5-1.0 s in the 54-0 run);
     `wsBlocked` clears only on that confirming poll, never on a lagging poll of the old track;
   - **pairing**: `playing` is paired with the `itemId` seen when it was confirmed; a socket measurement (PLAYING/PAUSED
     with `positionMillis`) counts only when its `itemId` equals the pair - so the new track's 0:00 never re-bases the
@@ -290,15 +317,22 @@ a kids' playlist often holds a track twice. A position formula drifts from the f
 - **`pollTick` for this kind**, after the existing landing, disarm, accept, `optTr`/`optPos`, the follow and the
   `fresh && ours` gate, in this order:
   1. **The belt** (§2.9): `mayPlay()` false on an ours PLAYING poll -> one Pause (once per generation and track).
-  2. **STOPPED near the end** (`endsNear > 0`) is the queue's end (§2.7) - before anything reads `Track` [D7].
-  3. **A track change** (the polled uri isn't `playing`'s, no play of ours pending) -> `queueMoved`: `index` and
+  2. **STOPPED near the end** is the queue's end (§2.7) - before anything reads `Track` [D7]. For this kind "near the
+     end" is `endsNear > 0` **or the anchor**: the last ours measurement of the playing track, extrapolated to the
+     STOPPED poll's `measuredAt` (or the IDLE event's `at`), within `ENDS_NEAR_S` of its duration (qa-54-revision N1b -
+     chosen over keeping the tail cadence: no extra polls, and with a healthy socket the anchor is exact and the IDLE
+     wakes the confirm at once; without one the tail cadence still runs, §2.11).
+  3. **A track change** (the polled `Track` or uri isn't `playing`'s, no play of ours pending) -> `queueMoved`: `index` and
      `playing` follow `itemAt(Track)` (`Playing(entryId, index, key, polled TrackURI)`, paired with the socket's current
      `itemId`), `endsNear = 0`, the map verified; not mapped -> the unmapped look (§2.8), the index stays.
      **Natural or pressed** (`boundary`, pure, on our own measurements): natural iff the previous track's anchor,
      extrapolated to the change's time (the `itemId` event's `at`, else the confirming poll's `measuredAt`), is within
-     `NATURAL_END_MS` (3 s) of its duration; without a socket iff `endsNear > 0` (a press in the last 20 s counts as
-     natural - it only adds a done mark). Natural -> `autoFlag` (the service marks the finished track done), then §2.6
-     and §2.7. Pressed (the speaker's buttons, the Sonos app) -> followed as it is: no done mark, no correction.
+     `NATURAL_END_MS` (3 s) of its duration (the anchor exists with or without a socket: polls re-base it too); when
+     the anchor can't say (no ours measurement of that track), the fallback is `endsNear > 0` - a press in the last
+     20 s then counts as natural, which only adds a done mark: **the correction (§2.6) runs only on the anchor's
+     verdict, never on this fallback** (qa-54-revision N8). Natural -> `autoFlag` (the service marks the finished track
+     done), then §2.6 and §2.7. Pressed (the speaker's buttons, the Sonos app) -> followed as it is: no done mark, no
+     correction.
   4. The bookmark (§2.8), then `endsNear` as today.
 - **The pending play** of a `queuePlay` or a transfer carries the target's Spotify uri and lands when a poll's
   `trackSpotifyUri` equals it (`sameTrack`), else at `SETTLE_MS` after the answer; until then a different track is the
@@ -312,12 +346,13 @@ item of **our** order: the parent's order setting, the kid's flip (design 39) an
 - **`follows`** (pure, per `load`/`reorder`/`setModes`/re-read): for our current item, the next queue position holds
   our next item (through the slots). While it does, the speaker's own advance is ours: gapless, nothing sent. A show
   listed newest first over a newest-first queue follows; a flipped or shuffled playlist doesn't.
-- **When it doesn't** (round 54-a, the correction): at a **natural** boundary whose new track isn't our expected next,
+- **When it doesn't** (round 54-a, the correction): at a **natural** boundary (the anchor's verdict) whose new track
+  isn't our expected next,
   one `queuePlay` of our next at 0 (`PlayWhy.ADVANCE`, gated) - **but first the mode**: the socket's last `playModes`, or
   one `GetTransportSettings` without a socket; a mode we didn't set (shuffle or repeat-one from the Sonos app) is
   followed, never corrected. About 0.5-1.5 s of the speaker's next is heard [D6]: for a shuffled kids' list, every track.
   A pressed change is never corrected.
-- **Round 54-b** (Q1's default when [D10] holds): **one reorder of the rest of the queue into our order**. Right after
+- **Round 54-b** (Q1, decided: "enig"; gated on [D10]): **one reorder of the rest of the queue into our order**. Right after
   a start (and again after `reorder` - a flip, a shuffle), a background actor job places our items after the current
   one in our order with `ReorderTracksInQueue` (one call per item out of place, 50-100 ms each, the job yielding to steps
   between calls), the slots updated per move and re-read at the end (the version after it is ours). Then the speaker's
@@ -326,7 +361,7 @@ item of **our** order: the parent's order setting, the kid's flip (design 39) an
 
 ### 2.7 The end of the list, repeat, "Til slutten"
 
-- **Play mode: `NORMAL` always** (vibb; Q5's default). The kid's repeat (design 49) is **our gated advance**, as on a room
+- **Play mode: `NORMAL` always** (vibb; Q5, decided: "ok"; the one exception is a context's shuffle, §2.12). The kid's repeat (design 49) is **our gated advance**, as on a room
   today: the speaker never wraps or repeats by itself.
   - **Repeat all**: at the end of our list our first item plays by a gated `queuePlay` (about 1 s of gap at the wrap).
   - **Repeat one**: the at-end timer (below) sends a gated `Seek REL_TIME 0:00:00` 400 ms before the track's end; the
@@ -358,7 +393,7 @@ item of **our** order: the parent's order setting, the kid's flip (design 39) an
 - **The bar**: `sonosAnchor` unchanged; the anchor key changes with `playing`'s item; socket measurements only through
   the `itemId` pair (§2.5).
 - **The shown track** is our list's item (title, picture, numbers, "Spor N av M"), never the speaker's metadata
-  (`sonos_spotify_queue.py` 2). **Unmapped but ours** (Q6, default vibb's demoted fallback): the player shows the
+  (`sonos_spotify_queue.py` 2). **Unmapped but ours** (Q6, decided "ok": vibb's demoted fallback): the player shows the
   speaker's title - the socket's `name — artist`, else `TrackMetaData`'s `dc:title` and `dc:creator`, in the server's
   `"<title> — <artists>"` form - over the entry's cover, with the speaker's position, no number and no heart, through the
   renderer's in-place item swap (`Renderer.replaceItem`); it plays on and nothing is written. No art is ever fetched from
@@ -366,16 +401,24 @@ item of **our** order: the parent's order setting, the kid's flip (design 39) an
 
 ### 2.9 Ours, adopt, the suspension, the park, the gate on the speaker's own advance
 
-- **The stored marker**: `renderer.json`'s uri for this kind is `queueUri(uid)` (`storedUri` returns the uri as played);
+- **The stored marker and the baseline** (qa-54-revision N3): `renderer.json`'s uri for this kind is `queueUri(uid)`
+  (`storedUri` returns the uri as played), and `RendererChoice` gains two optional fields written with it and after
+  each read: `shareTarget` (the canonical target) and `queueUpdateId` (the read's `UpdateID`, §2.3 - the UPnP source,
+  the one a restart can read again). An old file without them reads as "no baseline" (vibb's prefix rule then).
   `kindOfUri("x-rincon-queue:...")` = `SPOTIFY_SHARELINK`; `sameStream(marker, live)` = the live TrackURI is a Spotify
   queue track; `adoptIndex` for a Spotify entry = the item whose `uriOf(kind, key)` is the decoded uri. With a queue
   marker the item is **always found from the live uri**, never `RendererChoice.itemKey` (the queue moved on).
-  **`roomVerdict` is OURS_LIVE for any Spotify queue track under a queue marker** (54-1: the park must stop an unlisted
-  track of our playlist); `SonosSuspension.bookmark` writes only for a mapped one.
+  **`roomVerdict` is OURS_LIVE for a Spotify queue track under a queue marker** (54-1: the park must stop an unlisted
+  track of our playlist) **unless contradicted by UPnP**: with a baseline, one `Browse Q:0 BrowseMetadata` in the look's
+  budget - an `UpdateID` that moved **and** a live track not in the stored entry's listing is a queue someone replaced
+  (NOT_OURS: not stopped; the guest's music plays on). No answer to that Browse decides nothing against the Stop
+  (OURS_LIVE). `SonosSuspension.bookmark` writes only for a mapped track.
 - **Adopt at start** (`adoptLive`, zero transport commands): kept for our live PLAYING/PAUSED queue under the marker;
   one `GetMediaInfo` in the look, inside its budget, confirms `CurrentURI == queueUri(uid)` (Spotify Connect,
-  `x-sonos-vli:`, is never ours). Then `learnQueue` as its own actor job (reads only): the read of §2.3 -> the slots and
-  the version. The next press is a `queuePlay` when trusted.
+  `x-sonos-vli:`, is never ours), and the same baseline test as `roomVerdict` - a queue built in the Sonos app has the
+  same `x-rincon-queue:<uid>#0`, so the `CurrentURI` alone never tells a guest. Then `learnQueue` as its own actor job
+  (reads only): the read of §2.3 -> the slots and the version; it becomes the baseline only when the adopt kept the
+  session (never a guest's queue).
 - **The migration probe** for this kind (vibb `sonos_migrate_probe.py` 3): `MigrationProbe.live` returns the position
   too; a candidate matches only on `trackSpotifyUri == lastOursTrack` with `lastOursRel - 5 <= rel <= lastOursRel + 45`;
   no recorded track -> never follows. The follow adopts with the new uid's marker (`queueUri(new uid)`, not
@@ -385,7 +428,7 @@ item of **our** order: the parent's order setting, the kid's flip (design 39) an
   playlist during a time rule). A refused clear is logged; the Stop already happened. **A normal Stop** (the kid's stop,
   a switch home) leaves the queue, as vibb.
 - **The gate on the speaker's own advance** [ours; vibb has no time rule] - today a room's advance is our own gated
-  play; with a queue the speaker advances by itself, so the gate is rebuilt three ways:
+  play; with a queue the speaker advances by itself, so the gate is rebuilt four ways:
   1. **NORMAL** (§2.7): a missed park ends at the queue's end, never all night.
   2. **The controller's belt**: on every confirmed boundary (natural or pressed) and every ours PLAYING poll with
      `mayPlay()` false (the time rule, or the room scope's belt), one Pause - also in the 54-a correction's place.
@@ -393,8 +436,30 @@ item of **our** order: the parent's order setting, the kid's flip (design 39) an
      or came late) and `renderer.json` still names a room, a unique WorkManager chain `sonos-park-retry` runs the existing
      `suspensionStop` on Wi-Fi's return and every 5 minutes, for at most 2 hours after the edge, while the app is still
      suspended; it ends at the first definite verdict. For every kind (harmless for a `url` play). [D16+: whether
-     Android runs a suspended package's work at all - if not, the retry is the next start's adopt as today, and the
-     belt plus NORMAL bound the cost.]
+     Android runs a suspended package's work at all.]
+  4. **The speaker's own sleep timer** (qa-54-revision N1, the coordinator's decision; the independent bound - it needs
+     no phone, no Wi-Fi and no running process at the edge): AVTransport `ConfigureSleepTimer(InstanceID 0,
+     NewSleepTimerDuration "H:MM:SS")` on our coordinator, `""` to cancel (SoCo `set_sleep_timer`); it stops the
+     group's playback when it runs out [D21]. **Set** to the time left until the next instant the launcher will suspend
+     the music app (`suspendAtMs`, below) at a transfer, at every confirmed boundary when it differs from our own last
+     set by more than 30 s (the timer counts down by itself: no SOAP otherwise), after a follow (on the new
+     coordinator), and when the restriction changes while a session plays; only for this kind (a `url` play's missed
+     park costs at most one episode; podcasts stay untouched), never at adopt (zero transport commands - the first
+     boundary or restriction change after it sets it). Capped at 23:59:59; no edge known, or an edge more than a day
+     away, sets none. **Cleared** (`""`) by our own Stop, the park and a hand-off, and when the edge goes away (a
+     parent's change), but only while `GetRemainingSleepTimerDuration` is within 30 s of what our own last set would
+     have left - a timer someone set in the Sonos app afterwards is theirs and stays. A timer the household had set
+     before our transfer is replaced while our session plays (stated in §2.13). **The edge, `suspendAtMs`**: a new
+     restriction key from the launcher (epoch ms, 0 = none; §2.14): the next instant its time rules suspend the music
+     app (`TimeRulesRuntime.nextBoundary` and the policy at that instant), and the screen-time budget's lock only while
+     the launcher can foresee it as an instant - listening doesn't spend the budget, so with the screen off it has no
+     edge, and its lock comes while the phone is in use (the service up, the ordinary park). **What the Sonos app
+     shows** [D21]: its own sleep-timer countdown for the room; a household member can change or cancel it there (our
+     next set at a boundary puts it back - the parent's rule is the edge). **A parent's extension after our service has
+     gone** leaves the old timer: the room stops at the old edge, and the next play from the phone sets it anew.
+  **The fallback, truthfully**: with no edge known (the budget) and no retry run (D16+ fails), a missed park lets the
+  rest of the queue play; NORMAL ends it at the queue's end (at most the server's 1000 tracks). The belt protects only
+  while the service runs.
 
 ### 2.10 Hand-over
 
@@ -414,56 +479,86 @@ item of **our** order: the parent's order setting, the kid's flip (design 39) an
   the stream and its queue to a member -> the follow (§2.9) [D13, D14].
 - **The cap**: a transfer and a pick are STARTs (every room of the row capped inside the hush before Play); a step, an
   advance, a correction or the speaker's own advance never touch a volume.
-- **The sleep timer** (minutes): unchanged. **"Til slutten"**: §2.7. **Calls**: the same pause and resume verbs.
+- **The kid's sleep timer** (minutes): unchanged - the app's own fade and Pause, never the speaker's timer, which is the
+  time rule's bound only (§2.9 item 4; whichever comes first stops the music). **"Til slutten"**: §2.7. **Calls**: the
+  same pause and resume verbs.
 - **The cadence**: for this kind the 5 s tail cadence (45 s before a track's end - a quarter of a 3-minute song) runs
   only **without a healthy socket, or while an at-end action is armed**; with a healthy socket the `itemId` confirm
-  covers the boundary. The 1 s display poll is design 53's.
+  covers the boundary, and the queue's end is found from the anchor (§2.5, qa-54-revision N1b). The 1 s display poll
+  is design 53's.
 - **Locks**: a self-advancing queue holds the phone's partial wake lock and Wi-Fi lock for as long as it plays (today's
   rule: armed and playing) - hours for a long playlist. Accepted; the disarm after 10 minutes paused is unchanged.
 
-### 2.12 Context mode on a room (round 54-c; Q3)
+### 2.12 Context mode on a room (in 54-a2 - the user's Q3)
 
-Most playlists a parent pastes are context mode in dev mode (26c §3.3); the 54-0 run played exactly such an editorial
-playlist through the household account. This is the round that delivers "hele playlisten" for those.
+The user (2026-10-21): "vi sender jo bare hele sharelinken selv om ikke vår konto kan lese den vel? så vi burde vel
+spille av den? ... jeg ser ingen grunn til at det ikke går i samme runde nå". Right: the speaker plays the share link
+through the household's account whatever our server can list. Most playlists a parent pastes are context mode in dev
+mode (26c §3.3), and the 54-0 run played exactly such an editorial playlist. So context mode ships with list mode, in
+54-a2. The one part behind a device check is the context's shuffle [D8+].
 
-- A playlist context is a transfer of the playlist like list mode, with no listing: no slots for our items. **Ours** =
-  the prefix and, with the socket, `metadataStatus`'s container = our target and `queueVersion` unmoved; without it the
-  read's `UpdateID` at the start and at adopt. (A guest's Spotify that replaced our queue in the Sonos app is then not
-  ours - QA's Q3 note: the bedtime park never stops a parent's music.)
-- **Resume**: the context's live track (`spotify_context.json`, 26c §5.9) -> `findInQueue(uri)` -> its position, at the
-  synthetic item's saved place; not found -> position 1 at 0.
-- **The shown track**: the socket's metadata `name`/`artist` (else `TrackMetaData`) in the server's form, written as the
-  live track through the store port the web player uses, on a change only; the synthetic item's title follows it. No
-  art from the speaker (the entry's cover).
-- **Steps**: `stepsOnWebPlayer(entry)` routes next/previous to the room's controller: `play_from_queue(Track ± 1)`;
-  previous more than 5 s in restarts at 0 (vibb). Shuffle for a context (design 49: Spotify's own on the phone) is the
-  speaker's own here (`SHUFFLE_NOREPEAT`), and while shuffled a step is AVTransport `Next`/`Previous`. Repeat as §2.7.
-- The bookmark: the synthetic item's position + the live track (26c's model), so phone <-> room continue on the same
-  track. End: the queue's end -> `ended` (never marked done). An artist context: refused.
+- **The transfer** is §2.2's, with no listing: no `listed`, no slots - the queue read (§2.3) is kept as the queue's own
+  uri list (for `findInQueue` and `ours` (b)), and every track of our queue is the one synthetic item `context`.
+- **Ours**: §2.5's rule. The container is the strongest evidence here - the 54-0 run showed it naming our playlist -
+  and (b) reads "not in the queue we read". The baseline is persisted as in list mode (§2.9), so a guest's queue is
+  told apart after a restart and in the standalone path too.
+- **What the app shows** (the same as the web player's context mode, 26c §5.9): the entry's tile and one item, titled
+  by the live track - the socket's `metadataStatus` `name — artist` (the server's `"<title> — <artists>"` form), else
+  UPnP's `TrackMetaData` `dc:title`/`dc:creator` - written as the live track (uri + title) through the store port the
+  web player uses (`spotify_context.json`), on a change only. The picture is **the entry's cover** (the web player's
+  context shows the same; the metadata's `imageUrl` is not fetched - no new fetch path). The position and duration are
+  the speaker's (`durationMillis`, else `TrackDuration`); no "Spor N av M", no heart, no number. The socket's `nextItem`
+  is not shown (a cross-check only).
+- **Resume**: the context bookmark is the synthetic item's position plus the live track (26c's model). A start looks
+  for the live track with `findInQueue`. Found, it plays at the saved place. Not found, it plays position 1 with no
+  seek (§2.2 step 7; 26c's "one more play from the top"). Phone <-> room continue on the same track. The web player
+  gets `context_uri` + `offset.uri` + the position; the room gets `findInQueue`. Every confirmed track change
+  rewrites the live track; a bookmark is the position of the track playing.
+- **Steps**: `stepsOnWebPlayer(entry)` routes next/previous to the room's controller: `play_from_queue(Track ± 1)`
+  (gated; previous more than 5 s in restarts at 0, vibb); past the queue's ends nothing. Repeat as §2.7 (NORMAL, our
+  gated advance: repeat all = position 1 after the end; repeat one = the at-end seek to 0).
+- **Shuffle** (design 49 gives a context Spotify's own shuffle on the phone): on a room the speaker's own
+  `SHUFFLE_NOREPEAT` - **the one exception to "NORMAL always"** (§6; qa-54-revision N7): a shuffle that never repeats
+  by itself. While shuffled a step is AVTransport `Next`/`Previous` (the speaker's pick; gated), and turning shuffle off
+  sends `NORMAL`; every transfer starts with NORMAL (or `SHUFFLE_NOREPEAT` when the entry is shuffled). Gated on
+  [D8+] (`Track`, `TRACK_NR` and `Next` under shuffle); until it passes, a context on a room plays in the playlist's
+  order and the shuffle slot does nothing there.
+- **End**: the queue's end -> `ended` (a context item is never marked done, `keepsDuration`). An artist context:
+  refused (`CANT_PLAY_ON_SONOS`).
 
 ### 2.13 The Sonos household
 
 - **What it needs**: Spotify linked in the Sonos app (Settings › Services › Spotify) - **the household's account**,
   often a parent's: that account plays on the speaker, not the kid's phone account, and the kid's listening lands in
-  its history and recommendations. A playlist the linked account can't open fails the add or adds nothing [D12]. **One
+  its history and recommendations (the user, Q2: "enig at det er greit at lytting havner på tilkoblet spotify konto"). A playlist the linked account can't open fails the add or adds nothing [D12]. **One
   stream per account**: that account playing elsewhere stops the room - followed as a stop we didn't make ("Høyttaleren
   stoppet"), nothing restarts by itself [D18].
 - **No account document**: `/status/accounts` is empty on the house's firmware (§0.3), so it is not read for Spotify
   at all. **The add's answer decides**: both service types refused, or 0 tracks added -> `ShareRefused` -> the failed
   start (26a §4.2: back to the phone, paused) with `SONOS_ASK_ADULT`, "Kan ikke spilles på Sonos - spør en voksen" /
   "Can't play on Sonos - ask a grown-up". `lost()` takes the reason (today it always emits `CANT_PLAY_ON_SONOS`); a
-  network failure during the add is the ordinary `CANT_PLAY_ON_SONOS`.
+  network failure during the add is its own exception (`SpeakerUnreachable`) and the ordinary `CANT_PLAY_ON_SONOS`.
+- **The speaker's sleep timer** (§2.9 item 4): while a session of ours plays before a time-rule edge, the room's
+  sleep timer in the Sonos app shows our countdown to that edge; a timer the household set before is replaced while
+  our session plays, one set after it is left alone.
 - **The parent** learns it from the kid, and from one line of copy on the PWA's Spotify page ("On Sonos, a link plays
   through the Spotify account linked in the Sonos app") - server copy only (§2.14). No report field (a contract).
 
 ### 2.14 Server, PWA, contracts, launcher, logging, licences
 
-- **Server/PWA**: no API, no migration, no policy key; the room scope applies unchanged; no parent switch (Q2's
-  default). Optional: the Spotify page's one line of copy, a server-only commit with its test.
-- **Shared contracts: none.** No change to `server/testdata/*` contract files, `music_state.json`, the policy JSON, the
-  bridge AIDL, `bridge_contract.json` or `spotify_hosts.json`. The fake speaker reads `server/testdata/spotify/` as test
+- **Server/PWA**: no API, no migration, no policy key; the room scope applies unchanged; no parent switch (Q2,
+  decided). Optional: the Spotify page's one line of copy, a server-only commit with its test.
+- **One shared contract change** (for §2.9 item 4's edge; qa-54-revision N1): a restriction key `suspend_at_ms` (long,
+  epoch ms, 0 = none) in `bridge_contract.json`'s `restrictions`, both byte-identical copies, written by the launcher's
+  restrictions writer, read live by the music app (`BridgeConfig`, like `volume_cap_pct`) and re-read at
+  `BRIDGE_CHANGED`. Absent (an older launcher) = 0. Launcher and music in one commit, with `MusicPlanTest`/`BridgeTest`
+  (CLAUDE.md's rule for the bridge). No other contract changes: `server/testdata/*`, `music_state.json`, the policy
+  JSON, the AIDL and `spotify_hosts.json` stay. The fake speaker reads `server/testdata/spotify/` as test
   data (§3), not a contract (`music.yml` already triggers on it).
-- **Launcher**: untouched. The phone sends only SOAP to the LAN; the speaker reaches Spotify itself, outside the
+- **Launcher**: only `suspend_at_ms` - computed from `TimeRulesRuntime.nextBoundary` (`L/timerules/`) and whether the
+  policy suspends the music app at that boundary, written again whenever it changes the restrictions (a policy, a
+  boundary passed, a parent's extension), and the budget's lock only when it is a foreseeable instant. The phone sends
+  only SOAP to the LAN; the speaker reaches Spotify itself, outside the
   phone's DNS filter and VPN. No token is asked for a room.
 - **Logging** (26c §7.1's rule for Spotify; `SonosHome.log` is `Log.i` in a release): a release's Sonos lines for this
   kind carry kinds, counts, positions and verdicts only - the target and a track id only under `BuildConfig.DEBUG`; no
@@ -479,12 +574,13 @@ playlist through the household account. This is the round that delivers "hele pl
 - **Fixtures from the 54-0 run** (54-a1): `sonos/ws/spotify_queue_2026-10-21.json` = the 53 socket messages, scrubbed by
   `sonos-ws-probe.py --rescrub`'s rules **plus the Spotify ids** (the probe gains the rule: every `spotify:<kind>:<id>`
   and every `%3a<id>` replaced consistently by ids of `server/testdata/spotify/playlist_items.json`, so the fake and the
-  fixtures name the same tracks). **New UPnP fixtures** in `sonos/` (from the run's answers where it read them - the add,
+  fixtures name the same tracks; the raw files stay in `~/handy-captures/`, never committed). **New UPnP fixtures** in `sonos/` (from the run's answers where it read them - the add,
   `GetMediaInfo`, GetPositionInfo while the queue played -, else hand-written in SoCo's shapes, marked provisional in
   `SonosFixturesTest` until the 54-0 remainder replaces them): `add_uri_to_queue.xml` (1, 30, 30), `add_uri_to_queue_empty.xml`
   (0 added), `browse_queue_page.xml` (`Q:0/n` items with `res` `x-sonos-spotify:spotify%3atrack%3a<id>?sid=9&amp;flags=8232&amp;sn=6`,
   a duplicate, an extra track, `UpdateID`), `browse_queue_meta.xml` (`childCount`, `UpdateID`), `position_spotify_queue.xml`,
-  `transport_settings.xml`, `media_info_queue.xml`, `fault_800.xml` (code provisional, [D12]); the goldens
+  `transport_settings.xml`, `media_info_queue.xml`, `sleep_timer.xml` (`GetRemainingSleepTimerDuration`),
+  `fault_800.xml` (code provisional, [D12]); the goldens
   `sharelink_{playlist,album,track,show,episode}.xml` written by SoCo (§2.2). `accounts.xml` stays NRK's only.
 - `ShareLinkTest`: each type's `EnqueuedURI` and metadata byte for byte against SoCo's goldens; artist and junk -> null;
   2311 then 3079 on a fault, not on a network failure.
@@ -492,20 +588,25 @@ playlist through the household account. This is the round that delivers "hele pl
   extra track, a duplicate, a capped reversed show and a relinked id; `itemAt`; trust by version; the confirm's
   verification; the nearest occurrence when untrusted; `follows`; `boundary` (the anchor within 3 s of the duration;
   `endsNear` without a socket); the at-end arming (not for our last item at the queue's last position; yes when a slot
-  follows); the unmapped title form.
+  follows); the unmapped title form; **the anchor's `endsNear`** at a STOPPED with no poll in the last 20 s (N1b);
+  **ours's contradiction** - an absent, empty or unknown-form container is no evidence, another Spotify container is
+  (N2); the version kept with its source and a missing source re-read, never a mismatch (N5); **the sleep timer's
+  value** from `suspendAtMs` (none for 0 or past a day, the 30 s re-set threshold, the clear only for our own).
 - `SonosTransportTest` `d54`: a transfer's SOAP order (the hush around it, the cap before `SetPlayMode`, the gate before
   `SetPlayMode` and again before `SetAVTransportURI` - a closed gate sends nothing more; NORMAL; the 3079 retry on a
-  fault only; both faults and a 0-track add throw `ShareRefused` with no Seek; the start's page; `play_from_queue`'s
+  fault only; both faults and a 0-track add throw `ShareRefused` with no Seek, a network failure `SpeakerUnreachable`
+  with no retry; a start item not in the queue plays position `first` with no settled seek (N4); `ConfigureSleepTimer`
+  after Play with the value given, `""` on our Stop and the park; the start's page; `play_from_queue`'s
   three calls; the settled seek; `readQueue` afterwards, outside the hush); every `Browse` carries `SortCriteria`;
   `queuePlay` hushed as vibb's `sonos_hush.py` 5; `park` = Stop, clear, the queue uri.
 - `SonosSessionTest` `d54`: classify for the queue kind (ours for an unlisted Spotify track of our queue; not ours for
-  `x-sonos-vli:` or a moved version; `trackNo`; no `lostSession`; no stall retry); vibb's `sonos_migrate_probe.py` 3.
+  `x-sonos-vli:` or another container; a moved version alone keeps ours; `trackNo`; no `lostSession`; no stall retry); vibb's `sonos_migrate_probe.py` 3.
 - `SonosEventsTest` `d54`: `itemId`, `queueVersion`, `playModes`, `previousPositionMillis` and `metadataStatus`'s
   current/next/container parsed from `spotify_queue_2026-10-21.json`; absent fields null; another service's metadata
   ignored.
 - `SonosControllerTest` `d54` - vibb's `sonos_spotify_queue.py` ported: (1) a start resumes the bookmarked track at its
   second with **one** transfer; (2) the shown item is our list's, never the speaker's metadata; (2b) a guest's Spotify
-  (another container, a moved version) is not ours; (3) a step is one `queuePlay`, never an add - **and a second step
+  (another container; a replaced queue - moved version and a track in neither list) is not ours; (3) a step is one `queuePlay`, never an add - **and a second step
   inside the first one's settle too**; (4) a refused seek holds the bookmark until playback passes it; (5) an untrusted
   map makes the next press a transfer; (6) an artist is refused by name; (7) the step worker survives a failed play.
   Ours: the park and `handOff` stop an unlisted track of our queue (54-1); a natural boundary with `mayPlay()` false
@@ -517,17 +618,29 @@ playlist through the household account. This is the round that delivers "hele pl
   before the end and the belt at a boundary; duplicates - the index from `Track` through the slots (54-3); the tile with
   an intact queue sends nothing or one resume, else a transfer; a pick on the loaded entry is a `queuePlay`; a
   superseded transfer's map is taken; adopt sends no transport command and reads the map; the unmapped look writes no
-  bookmark.
+  bookmark. Revision check: a duplicate at the next position triggers the recheck by `Track` (N6); a step before the
+  read finished is a `queuePlay` that waits for it, never a transfer (N6); a pick of an item added since the read is one
+  transfer (N6); a pressed change near the end without the anchor's verdict is never corrected (N8); the queue's end
+  found by the anchor with a healthy socket and no tail poll (N1b); the sleep timer set at a transfer and at a boundary
+  when the edge moved by more than 30 s, never at adopt, re-set after a follow, cleared by our Stop only while it is
+  ours (N1). **Context mode** (Q3, in 54-a2): the live track from the metadata, then `TrackMetaData`; resume by
+  `findInQueue`, not found = position 1 with no seek; steps ±1 through `play_from_queue`; shuffle `SHUFFLE_NOREPEAT` and
+  `Next`/`Previous` only behind its switch; the end never marks done.
 - `SonosLifecycleTest`: `kindOfUri`, `sameStream`, `adoptIndex` for a queue marker; `roomVerdict` OURS_LIVE for an
-  unlisted queue track under a queue marker; the standalone bookmark only for a mapped track. `SonosSuspensionTest`: a
+  unlisted queue track under a queue marker; NOT_OURS with a persisted baseline, a moved `UpdateID` and a track not in
+  the stored listing; OURS_LIVE when that Browse doesn't answer (N3); an old `renderer.json` without the baseline reads
+  as vibb's prefix rule; the standalone bookmark only for a mapped track. `SonosSuspensionTest`: a
   NO_ANSWER park schedules the retry, a later OURS_LIVE parks, a definite verdict ends it.
+- `MusicPlanTest` (launcher) and `BridgeTest` (music): `suspend_at_ms` in both `bridge_contract.json` copies; the
+  launcher's value from its next boundary only when that boundary suspends the music app (a lock), 0 otherwise.
 - `PlayBodyTest`/`RendererRulesTest`: the drop reasons by kind and mode. `GuardsTest`: `comeHome` reaches the web
   player for a Spotify entry; `lost()`'s reason. `SourceScanTest`: the new words name no source; `x-rincon-cpcontainer`
   only in `ShareLink.kt`; no Spotify id or title in a release-built Sonos log line.
 - **`scripts/fake-sonos.py`** (the queues come from `server/testdata/spotify/` - `playlist_items.json`,
   `album_tracks.json`, `show_episodes.json`, `track.json`, `episode.json`): `AddURIToQueue` (the ShareLink uris),
   `RemoveAllTracksFromQueue`, `SetAVTransportURI x-rincon-queue:`, `Seek TRACK_NR`, `SetPlayMode`/`GetTransportSettings`,
-  `Browse Q:0` (both flags, paged, `UpdateID` moving on each edit), `GetMediaInfo`, `ReorderTracksInQueue` (54-b), the
+  `Browse Q:0` (both flags, paged, `UpdateID` moving on each edit), `GetMediaInfo`, `ReorderTracksInQueue` (54-b),
+  `ConfigureSleepTimer`/`GetRemainingSleepTimerDuration` (the timer stops playback when it runs out), the
   queue's own advance (NORMAL, the end STOPPED), GetPositionInfo from `position_spotify_queue.xml`; `--refuse-share`
   (the add's fault) and `--empty-share` (0 added); `--queue-reversed`, `--queue-extra` (a track our listing lacks),
   `--queue-gap` (one of ours missing); script events `next`, `previous` (the speaker's buttons), `queue-insert` (an edit
@@ -547,14 +660,18 @@ playlist through the household account. This is the round that delivers "hele pl
   `findInQueue` and the park's clear, `SonosSession`'s classify/probe for the kind, `SonosEvents`' new fields and
   `Metadata`, the probe's Spotify-id scrub, the fixtures, `fake-sonos.py`, the play test's remainder steps, the tests
   above that need no controller.
-- **54-a2 - list mode on a room** (the feature on): `SonosController` (the map, ours/mapped, steps vs transfer, the tile,
+- **54-a2 - Spotify on a room, list and context mode** (the feature on; context mode folded in by the user's Q3; if
+  its size calls for it, split into a2 = list mode and a2' = context mode, delivered together): `SonosController` (the map, ours/mapped, steps vs transfer, the tile,
   `queueMoved`, the boundary, the correction, the at-end timer, repeat by our advance, the belt, the `itemId` recheck and
   pairing, the unmapped look, `learnQueue` at adopt), `SonosRenderer` (`setModes`, `pauseAtItemEnd`), the service
   (`speakerDropReason`, `lost()`'s reason and `SONOS_ASK_ADULT`, `comeHome`, the listing's keys handed to `load`),
-  `SonosLifecycle`/`SonosSuspension` (OURS_LIVE, the park retry), the strings, the logging, `GuardsTest`/`SourceScanTest`,
-  emulator.md §6h, the docs. Its code QA takes the controller and the lifecycle in separate passes (qa-54 L14).
-- **54-b - our order without the blip** (Q1, gated on [D10]): the one-pass reorder, the fake's reorder.
-- **54-c - context mode** (Q3): §2.12.
+  `SonosLifecycle`/`SonosSuspension` (OURS_LIVE and the baseline, the park retry), the speaker's sleep timer and the
+  `suspend_at_ms` contract commit (launcher + music, §2.14), context mode (§2.12), the strings, the logging,
+  `GuardsTest`/`SourceScanTest`, emulator.md §6h, the docs. Its code QA takes the controller and the lifecycle in separate passes (qa-54 L14).
+- **54-b - our order without the blip** (Q1, decided; gated on [D10]): the one-pass reorder, its version accounting
+  (§2.3), the fake's reorder.
+
+(The former 54-c, context mode, is in 54-a2 - the user's Q3.)
 
 Docs with 54-a2: `music/CLAUDE.md` ("Spotify is the third renderer": a room plays a Spotify entry through the ShareLink;
 a rule block "Spotify on a room (design 54)" - the read map, ours vs mapped, the heal, NORMAL and the belt, the park's
@@ -566,7 +683,7 @@ pinned by SoCo-written goldens), design 26c §11/§12/§13/§14 pointing here, d
 
 Through the play test unless "the app" is named. Done in 54-0 (§0.3): D1 (the accounts document - empty, dropped), D2's
 add (0.8 s, 30 tracks, first 1), D4 (TrackURI, Track, TrackDuration), D5 (TRACK_NR playing and paused), D6's natural
-advance (gapless, 0.5 s socket lead, no BUFFERING, `queueVersion` unchanged), D8's NORMAL/REPEAT_ALL.
+advance (gapless, a 0.5-1.0 s socket lead, no BUFFERING, `queueVersion` unchanged), D8's NORMAL/REPEAT_ALL.
 
 1. **D2+** The add's time for 300 and 1000 tracks; the largest queue one ShareLink gives; `NumTracksAdded` and
    `NewQueueLength` for a private playlist of the kid's.
@@ -576,7 +693,9 @@ advance (gapless, 0.5 s socket lead, no BUFFERING, `queueVersion` unchanged), D8
 4. **D6+** The `itemId` change on a press; how long GetPositionInfo lags it; the correction's audible length (the app).
 5. **D7** The queue's end under NORMAL: the transport, `Track` and `TrackURI` after it, the socket's IDLE.
 6. **D8+** `REPEAT_ONE` on a queue; the household's crossfade (`playModes.crossfade`) and its effect on the boundary and
-   the at-end timer; `TRACK_NR` and `Track` with shuffle switched on in the Sonos app.
+   the at-end timer; `TRACK_NR`, `Track` and AVTransport `Next`/`Previous` under `SHUFFLE_NOREPEAT` (set by us and by
+   the Sonos app) - **the gate for a context's shuffle on a room** (§2.12); the container's form for an album, a show
+   and a track (N2).
 7. **D9** The speaker's own Next and Previous (the button, the Sonos app): the app follows within ~1 s with the socket
    and at the next poll without; no done mark, no correction (the app).
 8. **D10** `ReorderTracksInQueue` while playing: the current track plays on without a gap, the positions after the move,
@@ -599,6 +718,12 @@ advance (gapless, 0.5 s socket lead, no BUFFERING, `queueVersion` unchanged), D8
     repeat all's wrap and repeat one (the app).
 18. **D20** Five nexts within 2 s on a playing queue: one `queuePlay` per settled want, no add, the title never flaps
     back (the app).
+19. **D21** The speaker's sleep timer (§2.9 item 4): `ConfigureSleepTimer` and `GetRemainingSleepTimerDuration` on a
+    coordinator playing our queue; what the speaker does when it runs out (pause or stop, the group with it); how the
+    Sonos app shows it (the room's countdown) and whether a change there reads back; whether a transfer, a `TRACK_NR`
+    jump, a follow or our park keeps or resets it; that it ends a queue whose park was missed (the edge with the phone
+    off Wi-Fi). If it fails, the fallback of §2.9 stands as written, and the user decides whether that residual is
+    accepted.
 
 ## 6. Deviations from vibb
 
@@ -606,14 +731,15 @@ advance (gapless, 0.5 s socket lead, no BUFFERING, `queueVersion` unchanged), D8
 |---|---|---|
 | the map is positional from `q_base` over go-librespot's own listing | the map is one read of the queue (slots), trusted by the queue's version | our listing is the server's, filtered (local, unplayable, relinked, capped, duplicates) |
 | trusted iff `qlen == len(rows)` | trusted while the queue's version is ours | an exact map holds whatever the lengths; only an outside edit breaks it |
-| `ours` = the prefix | the prefix and the queue still ours (the socket's container and version, else `UpdateID`); "mapped" separate | a guest's queue is detected, not assumed; our own unlisted tracks stay ours (the park) |
+| `ours` = the prefix | the prefix unless contradicted (another container; or a moved version with a track in neither list), the baseline persisted in `renderer.json`; "mapped" separate | a guest's queue is detected, not assumed, also after a restart; our own unlisted tracks stay ours (the park) |
 | a track change adopted at the next poll | the socket's `itemId`/metadata wake the confirm and its recheck; natural vs pressed by our anchor | design 53's events; the user's expectation for the speaker's buttons |
 | Spotify's order only; `sonos_step` wraps `% n` | our order through the correction (54-a) or one reorder (54-b); the service's skip rules | designs 39, 49 and 50 are the user's |
-| no time rule; `_sonos_on_term`'s Stop | the park clears the queue; the belt pauses the speaker's own advance; a missed park is retried | our time rule with a queue (26a §6.1) - a consequence, not a choice |
+| no time rule; `_sonos_on_term`'s Stop | the park clears the queue; the belt pauses the speaker's own advance; a missed park is retried; the speaker's own sleep timer runs to the next time-rule edge | our time rule with a queue (26a §6.1) - a consequence, not a choice |
 | no account check | none either - the add's answer picks the words | `/status/accounts` is empty on the house's firmware |
-| a context resumes through go-librespot's listing | through `findInQueue` of the live track (54-c) | no listing on the phone |
+| a context resumes through go-librespot's listing | through `findInQueue` of the live track (in 54-a2) | no listing on the phone |
+| NORMAL always, no shuffle on Sonos | a context's shuffle is the speaker's `SHUFFLE_NOREPEAT`, its steps AVTransport `Next`/`Previous`; every other case NORMAL | design 49's context shuffle is Spotify's own on the phone; a context has no list of ours to order (gated on [D8+]) |
 
-Kept as vibb (Q5's default): NORMAL always. Kept as vibb (Q6's default): an unlisted track of our queue is ours and
+Kept as vibb (Q5, decided): NORMAL always. Kept as vibb (Q6, decided): an unlisted track of our queue is ours and
 shows the speaker's title.
 
 ## 7. What this design does NOT do
@@ -622,38 +748,30 @@ shows the speaker's title.
 - No Spotify Connect to the speaker (`x-sonos-vli:`), no Web API call for a room, no web player, no token.
 - No artist on a room. No Liked Songs, no Sonos playlists or favourites.
 - No art fetched from the speaker or the socket; no speaker metadata shown for a mapped track.
-- No parent switch, no report field, no contract change; no `/status/accounts` read for Spotify.
+- No parent switch, no report field; no contract change but `suspend_at_ms` (§2.14); no `/status/accounts` read for
+  Spotify.
 - No fight with the Sonos app: a play mode, a shuffle, a queue edit or a volume set there is followed, never undone
   until the kid's next explicit press.
 
-## 8. Questions for the user (the body builds each default)
+## 8. The user's answers (2026-10-21) - all six decided
 
-- **Q1. Our order on a room** - a shuffled, flipped or "newest first" list: the speaker's queue is in Spotify's order.
-  **Default: one reorder of the rest of the queue into our order right after the start (round 54-b, if the device
-  check shows the speaker plays on through it)**; until then - and for good if it doesn't - a short correction at each
-  track change: about a second of the speaker's next track, for a shuffled list at every track. Other options: move only
-  the next track into place after each track (the same result, more moving parts); our order as single-track adds (one
-  per track, slow for long lists); correction only; or play a room in the playlist's own order with the speaker's own
-  shuffle (simple, but the list the kid sees and what plays next differ).
-- **Q2. A parent switch for Spotify on Sonos** - **Default: none.** It plays wherever the Sonos app has Spotify linked,
-  on the rooms the room scope allows, with the linked account - often a parent's: the kid's listening lands in that
-  account's history and recommendations, and that account playing elsewhere stops the room. A switch would be a policy
-  key, a launcher change and a contract.
-- **Q3. Context-mode playlists on a room** (an editorial or a friend's playlist, which no family account may list - the
-  54-0 run played one) - **Default: yes (round 54-c)**, resuming at the last track by finding it in the speaker's queue,
-  titled from the speaker; a guest's Spotify that replaced our queue is told apart by the socket's container and the
-  queue's version. Alternative: refused on a room until a family account collaborates on the playlist.
-- **Q4. Spotify shows and episodes on a room** - **Default: through the ShareLink like music (vibb did)**, each episode
-  resuming at its own place; the show's order and its 100-episode cap are handled by the read map. RSS/NRK podcasts and
-  Storytel keep their direct URI. Alternative: refuse Spotify shows on a room.
-- **Q5. Repeat on a room** - **Default: vibb's NORMAL always, repeat done by our gated advance** (about a second of gap
-  at a repeat-all wrap; repeat one as a seek to 0 at the track's end), so nothing repeats on the speaker by itself - not
-  even all night after a missed bedtime stop. Alternative: the speaker's own REPEAT_ALL/REPEAT_ONE (gapless, but never
-  gated, and shown and changeable in the Sonos app).
-- **Q6. A track of our queue that our list doesn't have** (the server leaves out local files and unplayable tracks, a
-  track may be relinked, a list is capped) - **Default: vibb's: it stays ours and plays on, the player shows the
-  speaker's title over the entry's cover, no bookmark.** Alternative: show it as "used by something else" and stop
-  following until a listed track plays (but the bedtime stop still stops it).
+- **Q1. Our order on a room** (a shuffled, flipped or "newest first" list over a queue in Spotify's order): the user
+  "enig" - **one reorder of the rest of the queue into our order right after the start** (round 54-b, gated on [D10]);
+  until then, and for good if [D10] fails, the short correction at each natural track change (§2.6).
+- **Q2. A parent switch**: "enig at det er greit at lytting havner på tilkoblet spotify konto" - **no switch**; it plays
+  wherever the Sonos app has Spotify linked, on the rooms the room scope allows, with the linked account (§2.13).
+- **Q3. Context-mode playlists on a room**: "vi sender jo bare hele sharelinken selv om ikke vår konto kan lese den
+  vel? så vi burde vel spille av den? ... jeg ser ingen grunn til at det ikke går i samme runde nå" - **yes, in 54-a2**,
+  not a later round: the speaker plays the share link through the household's account whatever our server can read;
+  the app shows the live track from the socket's metadata and resumes at the last track (§2.12).
+- **Q4. Spotify shows and episodes**: "ja ... samme oppførsel som vibb" - **share links into the speaker's queue**, each
+  episode resuming at its own place; RSS/NRK podcasts and Storytel untouched (§2.1).
+- **Q5. Repeat on a room**: "ok" - **vibb's NORMAL always, repeat by our gated advance** (§2.7).
+- **Q6. A track of our queue that our list doesn't have**: "ok" - **vibb's: it stays ours and plays on**, the speaker's
+  title over the entry's cover, no bookmark (§2.8).
+
+Still open with the user only if a device check fails: [D21] (the speaker's sleep timer) and [D16+] (a suspended app's
+work) - if both fail, whether the residual of §2.9's fallback is accepted.
 
 ## Revision after QA (2026-10-21, `qa-54-design.md`) and the 54-0 measurement
 
@@ -696,3 +814,37 @@ Each finding was checked against the code and the sources before it was taken; a
 - **The 54-0 run** (§0.3): used beyond the findings - the socket's `metadataStatus` names the Spotify track, the next
   one and our playlist as the container, which gives `ours` its container check (54-1, Q3), the recheck its target
   (54-4) and context mode its title (§2.12); the rounds start from its facts and owe only the remainder (§4, §5).
+
+## Revision check addendum (2026-10-21, `qa-54-revision-check.md`, and the user's answers)
+
+All ten taken; none disputed.
+
+- **N1** the speaker-side `ConfigureSleepTimer` is the independent bound (§2.9 item 4): set to the next suspension edge
+  at a transfer, a boundary (when it moved more than 30 s), a follow and a restriction change; cleared by our Stop,
+  the park and a hand-off, only while it is ours; the edge comes from the launcher as the new restriction `suspend_at_ms`
+  (§2.14 - the one contract change, launcher + music in one commit). The fallback is now written truthfully (a missed
+  park with no edge and no retry plays the rest of the queue, NORMAL ends it at the queue's end); [D21] and [D16+]
+  owed.
+- **N1b** `endsNear` also from the anchor (§2.5 step 2), chosen over keeping the tail cadence: no extra polls, exact
+  with a healthy socket whose IDLE wakes the confirm; without a socket the tail cadence runs anyway.
+- **N2** an absent, empty or unknown-form container is no evidence; only another Spotify container, or a moved version
+  with a track in neither list, contradicts `ours`; the park's final verdict is UPnP's; only a playlist's container was
+  measured (§0.3, §2.5).
+- **N3** the target and the read's `UpdateID` are persisted in `renderer.json`; adopt and the standalone suspension
+  compare them with one `BrowseMetadata` (§2.9); `learnQueue` becomes the baseline only for a kept session.
+- **N4** a start item not in the queue: position `first`, no seek, no bookmark, no index move; the read sets the index
+  (§2.2 step 7).
+- **N5** the version is kept with its source; a missing source is a re-read, never a mismatch; 54-b counts its own
+  moves and ends with a re-read (§2.3).
+- **N6** while the read runs, steps are `queuePlay`s that wait for it in the actor; a pick of an item added since the
+  read is one transfer; the recheck triggers on `Track` or the uri (duplicates) (§2.3, §2.5).
+- **N7** a context's `SHUFFLE_NOREPEAT` and `Next`/`Previous` are the one exception to NORMAL, in §6, gated on [D8+]
+  (§2.12).
+- **N8** the correction runs only on the anchor's natural verdict, never on the `endsNear` fallback (§2.5, §2.6).
+- **N9** the lag is 0.5-1.0 s, bounded by the run's 1 s poll ([D6+] owes it); a network failure in the add is its own
+  exception with the ordinary words (§0.3, §2.2, §2.13).
+- **N10** the raw 54-0 files are kept outside the repo in `~/handy-captures/`; 54-a1 scrubs them into fixtures and never
+  commits them raw (§0.3, §3).
+- **The user's answers** (§8): Q1 one reorder (54-b), Q2 no switch, Q3 context mode in 54-a2 (§2.12 rewritten: what the
+  app shows - the live track's title over the entry's cover, the speaker's position - and how it resumes), Q4 shows and
+  episodes as share links, Q5 NORMAL, Q6 vibb's fallback.
