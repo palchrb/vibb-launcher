@@ -248,6 +248,24 @@ class SonosSessionTest {
     }
 
     @Test
+    fun `d53 the tail cadence from the listing's hint when the speaker reads 0-00 - ours only, an adopt has none`() {
+        // design 53 §2.4: the DIDL no longer carries a podcast's duration, so a speaker that reads 0:00 keeps
+        // the 5 s tail polls from our play's listed duration - cadence only
+        val s = SonosSession({ clock.now })
+        s.beginPlay(kid, Kind.URL)
+        s.played(uri, hintS = 1453.0)
+        clock.advance(30_000)
+        val silent = fields(TransportState.PLAYING, uri).copy(ours = true, relS = 1420.0, durS = 0.0)
+        assertEquals("the hint's tail", 5_000L, s.cadenceMs(TransportState.PLAYING, silent, 0))
+        assertEquals("far from the end", 15_000L, s.cadenceMs(TransportState.PLAYING, silent.copy(relS = 400.0), 0))
+        assertEquals("the speaker's own duration wins", 15_000L, s.cadenceMs(TransportState.PLAYING, silent.copy(durS = 3600.0), 0))
+        assertEquals("not our stream: no hint", 15_000L, s.cadenceMs(TransportState.PLAYING, silent.copy(ours = false), 0))
+        s.adopt(kid, Kind.URL, uri)
+        clock.advance(30_000)
+        assertEquals("an adopt has no hint", 15_000L, s.cadenceMs(TransportState.PLAYING, silent, 0))
+    }
+
+    @Test
     fun `TRANSITIONING reports the last real state, or PLAYING at a fresh start`() {
         val s = session()
         assertEquals(TransportState.PLAYING, s.classify(speaker(uri, tr = "TRANSITIONING")).transport)

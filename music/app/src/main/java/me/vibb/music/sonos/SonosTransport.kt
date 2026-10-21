@@ -110,7 +110,7 @@ class SonosTransport(
                         spk.removeAllTracksFromQueue()
                     } catch (_: Exception) {
                     }
-                    val built = didl(body.uri, body.title, body.artist, body.album, body.art, body.durationS)
+                    val built = builtDidl(body, body.uri)
                     if (!gate()) return@withLock null
                     spk.setAvTransportUri(body.uri, built)
                     spk.play()
@@ -120,17 +120,14 @@ class SonosTransport(
                     val series = body.series ?: throw SonosException("nrk_program without a series")
                     val programId = body.programId ?: throw SonosException("nrk_program without a program id")
                     val uri = nrk.programUri(spk.ip, spk.port, series, programId)
-                    val built = didl(
-                        uri, body.title, body.artist, body.album, body.art, body.durationS,
-                        upnpClass = NrkService.UPNP_CLASS, protocol = NrkService.PROTOCOL, desc = NrkService.DESC,
-                    )
+                    val built = builtDidl(body, uri)
                     if (!gate()) return@withLock null
                     spk.setAvTransportUri(uri, built)
                     spk.play()
                     uri to built
                 }
             }
-            session.played(uri)
+            session.played(uri, body.cadenceHintS)
             if (capped != null) session.ownVolume(capped)
             val sought = if (start >= 5) seekSettled(spk, start) else true
             PlayResult(body.uid, uri, sought, built, capped)

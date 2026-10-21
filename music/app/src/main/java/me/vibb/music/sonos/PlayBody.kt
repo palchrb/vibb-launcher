@@ -30,6 +30,10 @@ data class PlayBody(
     val title: String?,
     val album: String?,
     val art: String?,
+    /**
+     * The DIDL's `res@duration`: vibb's `_sonos_body` sends one only for a Storytel book (the shelf's
+     * length; design 53 §2.1, "Ikke endre noe i didl!!") - null for `url` and `nrk_program`.
+     */
     val durationS: Double?,
     val startS: Double,
     val artist: String? = null,
@@ -41,11 +45,16 @@ data class PlayBody(
      * minted, and for every other source.
      */
     val mint: String? = null,
+    /**
+     * The listing's duration for every kind: the session's tail cadence only ([SonosSession.played],
+     * design 53 §2.4) - **never** passed to [didl] ([builtDidl] leaves it out).
+     */
+    val cadenceHintS: Double? = null,
 ) {
     /** Never the signed URL's token (design 26b §0, L9): the uri as [redactUri] prints it. */
     override fun toString(): String =
         "PlayBody(uid=$uid, kind=$kind, uri=${redactUri(uri)}, title=$title, album=$album, art=${art?.let(::redactUri)}, " +
-            "durationS=$durationS, startS=$startS, series=$series, programId=$programId, mint=$mint)"
+            "durationS=$durationS, startS=$startS, series=$series, programId=$programId, mint=$mint, cadenceHintS=$cadenceHintS)"
 }
 
 private val NRK_SERIE = Regex("^https?://radio\\.nrk\\.no/serie/([a-z0-9_-]+)", RegexOption.IGNORE_CASE)
@@ -53,31 +62,48 @@ private val NRK_SERIE = Regex("^https?://radio\\.nrk\\.no/serie/([a-z0-9_-]+)", 
 /** vibb's series slug from an entry's target (`re.match`, daemon.py:1275), or null. */
 fun nrkSeriesSlug(target: String?): String? = NRK_SERIE.find(target.orEmpty())?.groupValues?.get(1)
 
+/**
+ * The DIDL [body] goes out with, [uri] the one it plays (the body's own for `url`, the built service uri
+ * for `nrk_program`, the minted URL for a Storytel book): vibb's `Session.play`'s per-kind [didl]
+ * arguments (sonosd.py 478-560), nothing more - the one builder for SonosTransport.play and PlayBodyTest's
+ * goldens (`scripts/sonos-play-test.py --golden`, design 53 §2.1). [PlayBody.cadenceHintS] never goes in.
+ */
+fun builtDidl(body: PlayBody, uri: String): String = when (body.kind) {
+    Kind.URL -> didl(uri, body.title, body.artist, body.album, body.art, body.durationS)
+    Kind.NRK_PROGRAM -> didl(
+        uri, body.title, body.artist, body.album, body.art, body.durationS,
+        upnpClass = NrkService.UPNP_CLASS, protocol = NrkService.PROTOCOL, desc = NrkService.DESC,
+    )
+}
+
 object PlayBodies {
     /**
      * `_sonos_body` for [item] of [entry]: an NRK series item (the slug from the target, and the
      * item key is the program id for every NRK series listing, 26a §2.5) is `nrk_program`; anything
      * else is `url` with the item's own URL. [art] only when it is http (the phone's cover file is
-     * unreachable to a speaker, which also resolves no `.local`). The listing's duration rides along:
-     * an extension-less URL reads 0:00 on the speaker until it has buffered (daemon.py:1306-1313).
-     * Null when the item has nothing a speaker could play ([speakerDropReason]).
+     * unreachable to a speaker, which also resolves no `.local`). The DIDL's duration is vibb's: only a
+     * Storytel book's (design 53 §2.1 - a speaker refuses more than vibb sends); the listing's duration of
+     * every kind is the session's [PlayBody.cadenceHintS] only. Null when the item has nothing a speaker
+     * could play ([speakerDropReason]).
      */
     fun build(entry: Entry, item: PlayItem, uid: String, startS: Double, art: String? = null, album: String? = entry.name): PlayBody? {
         if (speakerDropReason(entry, item) != null) return null
         val durationS = item.durationMs?.let { it / 1000.0 }
         if (entry.source == Source.STORYTEL) {
             // design 26b §5.1: the URL is minted in the play's actor job (`mint`), the shelf's length rides
-            // along (a speaker reads 0:00 for an extension-less signed URL, vibb 9), and no art: the
-            // listing's is a hash the server serves only to the phone's bearer (design 26a §9).
-            return PlayBody(uid, Kind.URL, "", item.title, album, null, durationS, startS, mint = item.key)
+            // along (vibb's Storytel branch: a speaker reads 0:00 for an extension-less signed URL, vibb 9),
+            // and no art: the listing's is a hash the server serves only to the phone's bearer (design 26a §9;
+            // vibb may send `art_url` - the app sends less than vibb, never more)
+            return PlayBody(uid, Kind.URL, "", item.title, album, null, durationS, startS, mint = item.key, cadenceHintS = durationS)
         }
         val speakerArt = art?.takeIf { it.startsWith("http") }
         val slug = if (entry.nrkSerie) nrkSeriesSlug(entry.target) else null
         if (slug != null) {
             // speakerDropReason guarantees a program id (the item key) here
-            return PlayBody(uid, Kind.NRK_PROGRAM, entry.target!!, item.title, album, speakerArt, durationS, startS, series = slug, programId = item.key)
+            return PlayBody(uid, Kind.NRK_PROGRAM, entry.target!!, item.title, album, speakerArt, null, startS, series = slug, programId = item.key, cadenceHintS = durationS)
         }
-        return PlayBody(uid, Kind.URL, item.url!!, item.title, album, speakerArt, durationS, startS)
+        // vibb's plain `url` body: no duration in the DIDL (design 53 §2.1)
+        return PlayBody(uid, Kind.URL, item.url!!, item.title, album, speakerArt, null, startS, cadenceHintS = durationS)
     }
 
     /**

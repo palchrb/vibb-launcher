@@ -400,8 +400,11 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   "å sende med mer enn vi gjør i vibb pi gjør at det blir rejected"): a speaker refuses a `SetAVTransportURI` whose
   metadata carries more than vibb's. `Didl` is vibb's `didl()`; what goes into it is vibb's `_sonos_body` (daemon.py,
   branch pipewire): title, album, the picture when it is http, a `duration` on the `res` only for Storytel - nothing
-  added. (Checked 2026-10-21: the app's `PlayBodies.build` sends the listing's duration for every kind and no picture -
-  PLAN, Fix backlog.)
+  added. Done in design 53-0 (§2.1): `PlayBodies.build` gives a `duration` only to a Storytel book and no picture (the
+  phone holds only hashes, so vibb's http-art rule yields nothing); one pure `builtDidl(body, uri)` builds the DIDL for
+  `SonosTransport.play` and `PlayBodyTest`, which compares it byte for byte with `src/test/resources/sonos/didl_*.xml`
+  (written by `scripts/sonos-play-test.py --golden DIR` from vibb's per-kind arguments - regenerate, never hand-edit).
+  The listing's duration of every kind is `PlayBody.cadenceHintS`: the session's tail cadence only, never the DIDL.
 - **Nothing starts by itself on Sonos either**: adopt sends nothing, a stale or unreachable speaker shows the play
   button, room -> phone plays on only when the speaker was PLAYING. **Every play path is gated** (`playAllowed`, then
   the controller's `mayPlay` before any SOAP): a start, a resume, a step, a natural advance, OUTPUT to a `sonos:` key

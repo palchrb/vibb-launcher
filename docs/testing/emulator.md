@@ -710,7 +710,10 @@ python3 scripts/fake-sonos.py --speakers Stua:1401,Kjøkken:1402 --print-seed > 
 python3 scripts/fake-sonos.py --speakers Stua:1401,Kjøkken:1402            # leave it running; Ctrl+C ends it
 #   --group Stua+Kjøkken     the two as one group (the picker's "Stua + Kjøkken" row, Stua the coordinator)
 #   --script FILE            scripted events, timed from the first Play (see below)
-#   --duration 1453          a track length when the DIDL has none (default: the speaker reads 0:00:00)
+#   --duration 90            a track length when the DIDL has none - since design 53-0 every podcast and NRK item
+#                            (vibb's DIDL: a duration only for a Storytel book); without it a podcast reads 0:00:00
+#                            and never ends: start it with `--duration 90` for the advance steps (the next episode,
+#                            "Til slutten", repeat)
 R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
 adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
 adb shell am broadcast -n $R
@@ -738,7 +741,8 @@ t+15 volume 60
 ```
 
 - The fake's transport: SetAVTransportURI sets the uri, Play plays (TRANSITIONING for 0.5 s first), RelTime runs in
-  real time and the track ends by itself at its DIDL duration (STOPPED, uri kept: an episode end), Seek on a
+  real time and the track ends by itself at its DIDL duration - a Storytel book's - else at `--duration` (STOPPED,
+  uri kept: an episode end; a podcast's DIDL carries no duration since design 53-0, vibb's), Seek on a
   stopped transport is UPnP 701 (the hush and the settled seek), past the end 711; volume and mute.
 - Step 1 (`sonos/` core) has no screen yet: check the selftest, the seeding and the cache file. With step 3a: the
   "Spill av på" sheet lists Stua and Kjøkken (stale + "Søker etter høyttalere…" when the fake is down), switch phone ->

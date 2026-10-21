@@ -194,6 +194,9 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
     private var downSince: Long? = null
     private var fails = 0
 
+    /** The listing's duration of the item we played: the tail cadence's only (null after an adopt). */
+    private var cadenceHintS: Double? = null
+
     /** The cadence chosen after the last successful poll (freshness). */
     private var lastCadence = POLL_MS
 
@@ -214,9 +217,14 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         oursAt = null
     }
 
-    /** `play()`'s success: the built [uri] (only now), armed, the stall and aux state reset, fast cadence. */
-    fun played(uri: String) {
+    /**
+     * `play()`'s success: the built [uri] (only now), armed, the stall and aux state reset, fast cadence.
+     * [hintS] is the listing's duration ([PlayBody.cadenceHintS]): the tail cadence's when the speaker
+     * reads none (design 53 §2.4), never published, never the bookmark's.
+     */
+    fun played(uri: String, hintS: Double? = null) {
         this.uri = uri
+        cadenceHintS = hintS
         armed = true
         didlChecked = false
         frozen = 0
@@ -252,6 +260,7 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         this.uid = uid
         this.kind = kind
         this.uri = uri
+        cadenceHintS = null
         armed = true
         frozen = 0
         lastPos = null
@@ -426,8 +435,8 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
 
     /**
      * `_cadence`: PAUSED 15 s; UNREACHABLE backs off from 5 s to 300 s; STOPPED 5 s only while a
-     * migration transition pends, else 60 s; PLAYING 5 s near the end (the boundary machinery), else
-     * the 15 s cruise. Deviation (qa-26a-step1-code M1, design 26a §9): 5 s whatever the state while
+     * migration transition pends, else 60 s; PLAYING 5 s near the end (the boundary machinery; the
+     * speaker's duration, else our play's listed one, design 53 §2.4), else the 15 s cruise. Deviation (qa-26a-step1-code M1, design 26a §9): 5 s whatever the state while
      * the speaker reads TRANSITIONING or inside the window after a verb or an arm - vibb fast-polls
      * only PLAYING there, so a resume reported as PAUSED (TRANSITIONING keeps the last real state)
      * slept 15 s, and a start buffering after a STOPPED 60 s, longer than the controller's 8 s hold.
@@ -445,7 +454,9 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
             }
             else -> {
                 val rel = snap.relS
-                val dur = snap.durS
+                // the speaker's own duration, else the listing's hint (design 53 §2.4: a podcast whose speaker
+                // reads 0:00 keeps its 5 s polls near the end; cadence only)
+                val dur = snap.durS?.takeIf { it != 0.0 } ?: cadenceHintS?.takeIf { snap.ours }
                 val tail = rel != null && dur != null && dur != 0.0 && dur - rel <= TAIL_FAST_S
                 if (tail) POLL_MS else POLL_CRUISE_MS
             }

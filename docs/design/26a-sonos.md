@@ -213,9 +213,11 @@ All in the actor (the session lock, 393-394), never on the main thread.
   daemon.py:1275) -> `nrk_program{uri = entry.target, series, programId = item.key}`: **the item key is the program id**
   for every NRK series listing (`server/src/music_sources.rs:87-89`, vibb `content.py:160-165`); the RSS fallback with
   `sha1(guid)` keys exists only for NRK podkast (`music_sweep.rs:1412-1449`) and keeps psapi keys where it has them
-  (QA M3: no server change). Else `url{uri = item.url}`; `durationS` from the listing when the item has one (the
-  speaker reports 0:00 for an extension-less url until buffered, `daemon.py:1306-1313`). Storytel's branch arrives in
-  phase 2.
+  (QA M3: no server change). Else `url{uri = item.url}`. **Corrected by design 53 §2.1 (round 53-0)**: the DIDL's
+  `durationS` is vibb's - only a Storytel book's (its branch, phase 2: the shelf's length, since a speaker reports 0:00
+  for an extension-less signed url until buffered); a `url` or `nrk_program` body sends none (a speaker refuses more
+  than vibb sends). The listing's duration of every kind rides as `cadenceHintS`, the session's tail cadence only,
+  never in the DIDL; one pure `builtDidl(body, uri)` builds the DIDL for the transport and the golden tests.
 
 ## 3. The renderer axis in `playback/`
 

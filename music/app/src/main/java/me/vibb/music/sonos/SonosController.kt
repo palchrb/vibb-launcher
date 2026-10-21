@@ -776,7 +776,10 @@ class SonosController(
         }
         val e = entry
         val item = items.getOrNull(idx)
-        val body = if (e != null && item != null) PlayBodies.build(e, item, uid, startS) else null
+        // art = null: the phone holds only hashes (a listing's `art`, the library's `cover`) the server serves
+        // to the phone's bearer - no http URL a speaker could fetch, so vibb's http-only rule yields nothing
+        // (design 53 §0.3, §2.1)
+        val body = if (e != null && item != null) PlayBodies.build(e, item, uid, startS, art = null) else null
         if (body == null || item == null) {
             host.log("sonos: nothing a speaker can play at ${idx + 1}")
             failed(why, SonosException("nothing-remote-playable"))

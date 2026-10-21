@@ -1292,7 +1292,10 @@ findings, merge to `main`, full suite once.
   podcast, RSS or NRK series item the app sends the listing's `duration` on the `res`, which vibb sends only for
   Storytel, and never the picture vibb sends when it is http (`PlayBodies.build`, `SonosController` calls it without
   `art`). The user's rule is vibb's DIDL field for field; the speaker test `scripts/sonos-play-test.py --didl vibb|app`
-  shows whether a speaker refuses either. Fix after that: the app sends exactly vibb's fields.
+  shows whether a speaker refuses either. Fix after that: the app sends exactly vibb's fields. **Decided and done**
+  (design 53 §2.1, round 53-0, branch `d53-a`): a duration only for Storytel, no picture (the phone holds hashes only),
+  one `builtDidl` checked byte for byte against `scripts/sonos-play-test.py --golden`'s files; the listing's duration
+  rides as the session's tail-cadence hint only. Owed: design 53 §5 check 9 on the speakers.
 
 ## Open questions
 
