@@ -1033,7 +1033,9 @@ findings, merge to `main`, full suite once.
   400); a random UUID -> accepted, the full handshake runs. The local endpoint needs the header but doesn't check its
   value - the RFC 4122 example UUID is no secret and no borrowed key (it is in `jjlawren/sonos-websocket`'s first
   commit, 2023-04-09, and in Music Assistant's `aiosonos`; SmartThings' official driver sends its own Sonos-issued key
-  to the same port 1443). **Grouping from outside the app is
+  to the same port 1443). **Next, only after the device checks** (the user asked whether to lean more on the socket):
+  commands stay UPnP (a play needs vibb's DIDL, which `loadStreamUrl` can't carry); if the socket proves stable on the
+  Jelly Star for some days, relax the UPnP poll while it is healthy (e.g. 60 s instead of 5/15 s) as a small round. **Grouping from outside the app is
   followed** (the user, 2026-10-21: the kids add and drop rooms by holding Play on a speaker, which can change the
   coordinator - "Endres groups utenfor vår musikk app skal vi klare å følge med"): the four cases - a room joins our
   group, a member leaves, our coordinator leaves (Sonos promotes a member and the stream moves: vibb's migration-follow,
