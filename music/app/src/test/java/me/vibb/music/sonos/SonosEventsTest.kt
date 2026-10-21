@@ -12,14 +12,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The event socket's reducer (design 53 §2.2, §3), replaying `src/test/resources/sonos/ws/` (provisional
- * until the capture, its README): the handshake's order, our player, the re-subscribe rule, `MOVED`
- * as an event and never a connect, health, both state spellings, and what is dropped.
+ * The event socket's reducer (design 53 §2.2, §3), replaying `src/test/resources/sonos/ws/` (the user's
+ * capture of 2026-10-21 and the hand-written cases it couldn't show, its README): the handshake's order, our
+ * player, the re-subscribe rule, `MOVED` as an event and never a connect, health, both state spellings, and
+ * what is dropped.
  */
 class SonosEventsTest {
     private val stua = "RINCON_00000000000001400"
     private val kjokken = "RINCON_00000000000001401"
-    private val ip = "192.168.1.16"
+    private val ip = "10.0.0.16"
 
     /** A fixture's messages, each as the text a speaker sends. */
     private fun messages(name: String): List<String> =
@@ -50,7 +51,7 @@ class SonosEventsTest {
         assertEquals(stua, plan.playerId)
         assertTrue("every command carries a cmdId", (steps[0].commands + steps[1].commands).all { header(it)["cmdId"] != null })
         assertTrue("no groups event for the handshake's own reply", steps[1].events.isEmpty())
-        assertEquals("the getPlaybackStatus reply is an event", listOf(SocketEvent.Playback("$stua:100", WsPlayback.PLAYING, 431_250, 1L)), steps[3].events)
+        assertEquals("the getPlaybackStatus reply is an event", listOf(SocketEvent.Playback("$stua:100", WsPlayback.IDLE, 0, 1L)), steps[3].events)
         assertTrue(plan.healthy)
         // the ack alone, or the status alone, is not health
         val noStatus = SonosEvents.Plan(stua, ip)
@@ -60,17 +61,17 @@ class SonosEventsTest {
 
     @Test
     fun `our player by its id, else by the websocketUrl host we dialled - a URL is read, never connected to`() {
-        val byHost = SonosEvents.Plan("RINCON_NOT_IN_THE_LIST", "192.168.1.17")
+        val byHost = SonosEvents.Plan("RINCON_NOT_IN_THE_LIST", "10.0.0.17")
         shaken(byHost)
         assertEquals(kjokken, byHost.playerId)
         assertFalse("its group isn't the one subscribed in the replies", byHost.healthy)
-        val nobody = SonosEvents.Plan("RINCON_NOT_IN_THE_LIST", "192.168.1.99")
+        val nobody = SonosEvents.Plan("RINCON_NOT_IN_THE_LIST", "10.0.0.99")
         val steps = shaken(nobody)
         assertNull(nobody.playerId)
         assertTrue("no playback subscription for nobody", steps[1].commands.none { "playback:1" in what(it) })
-        assertEquals("192.168.1.16", SonosEvents.wsHost("wss://192.168.1.16:1443/websocket/api"))
+        assertEquals("10.0.0.16", SonosEvents.wsHost("wss://10.0.0.16:1443/websocket/api"))
         assertEquals("fe80::1", SonosEvents.wsHost("wss://[fe80::1]:1443/websocket/api"))
-        assertNull(SonosEvents.wsHost("https://192.168.1.16/"))
+        assertNull(SonosEvents.wsHost("https://10.0.0.16/"))
     }
 
     @Test
@@ -142,6 +143,65 @@ class SonosEventsTest {
         assertTrue("an unknown state", events[6].isEmpty())
         assertEquals(TransportState.TRANSITIONING, WsPlayback.BUFFERING.transport)
         assertEquals(TransportState.STOPPED, WsPlayback.IDLE.transport)
+    }
+
+    @Test
+    fun `d53 the capture replayed whole - the handshake, the other groups' MOVED replies ignored, every state the controller sees, the IDLE at the end`() {
+        val plan = SonosEvents.Plan(stua, ip)
+        val steps = messages("capture_2026-10-21.json").mapIndexed { i, m -> feed(plan, m, at = i.toLong()) }
+        assertEquals(58, steps.size)
+        // (1) the empty command's answer is a globalError, but its header carries the household: the handshake goes on
+        assertEquals(listOf("groups:1 getGroups Sonos_FAKEhousehold000000000000001"), steps[0].commands.map(::what))
+        assertEquals(
+            listOf("playback:1 subscribe $stua:100", "playback:1 getPlaybackStatus $stua:100", "groups:1 subscribe Sonos_FAKEhousehold000000000000001"),
+            steps[1].commands.map(::what),
+        )
+        assertTrue("nothing else is ever sent", steps.drop(2).all { it.commands.isEmpty() })
+        val events = steps.flatMap { it.events }
+        // (3) every other group's subscribe answered MOVED (the probe's --all): none is about our stream, none ends ours
+        assertTrue(events.none { it is SocketEvent.Moved })
+        assertTrue("healthy to the end", plan.healthy)
+        assertEquals(
+            "the one groups event (after the handshake's own reply)",
+            listOf(SocketEvent.Groups("$stua:100", stua, listOf(stua), (events.single { it is SocketEvent.Groups } as SocketEvent.Groups).groups)),
+            events.filterIsInstance<SocketEvent.Groups>(),
+        )
+        assertEquals(7, events.filterIsInstance<SocketEvent.Groups>().single().groups.size)
+        // (2), (4), (5): the status after the subscribe's ack, the getPlaybackStatus reply, then each change; the
+        // metadata and volume pushes are not read
+        val states = events.filterIsInstance<SocketEvent.Playback>().map { "${it.state} ${it.positionMs}" }
+        assertEquals(
+            listOf(
+                "IDLE 0", "IDLE 0", "IDLE 0", // the subscribe's own push (§0.1 (f)), getPlaybackStatus, the queue's change
+                "BUFFERING 0", "PLAYING 1186", // the play
+                "PAUSED 9316", "BUFFERING 9316", "PLAYING 9877", // pause, then a resume through BUFFERING (§0.1 (b))
+                "BUFFERING 60000", "PLAYING 60151", // a seek through BUFFERING
+                "PLAYING 27", // next: the new item PLAYING at once
+                "BUFFERING 0", "PLAYING 577", // previous
+                "BUFFERING 90000", "PLAYING 90354", "BUFFERING 536000", "PLAYING 536188", // the muted seek, then near the end
+                "IDLE 0", // the natural end - its position 0 (§0.1 (a)), no item
+                "BUFFERING 0", "PLAYING 306", // the advance
+                "IDLE 0", "IDLE 0", // the park
+            ),
+            states,
+        )
+        assertEquals("every event of our group", setOf("$stua:100"), events.filterIsInstance<SocketEvent.Playback>().map { it.groupId }.toSet())
+    }
+
+    @Test
+    fun `d53 a subscribe answer about another group or namespace never acks or ends ours (the capture's MOVED replies)`() {
+        val plan = SonosEvents.Plan(stua, ip)
+        val capture = messages("capture_2026-10-21.json")
+        feed(plan, capture[0])
+        feed(plan, capture[1])
+        // the other groups' MOVED before our own ack: no ack from them, no event
+        assertTrue(capture.slice(8..13).all { feed(plan, it).events.isEmpty() })
+        feed(plan, capture[3])
+        assertFalse("a status without our ack is no health", plan.healthy)
+        feed(plan, capture[2])
+        feed(plan, capture[3])
+        assertTrue(plan.healthy)
+        assertTrue("and after it: ours stands", capture.slice(14..25).all { feed(plan, it).events.isEmpty() } && plan.healthy)
     }
 
     @Test

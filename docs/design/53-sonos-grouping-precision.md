@@ -605,7 +605,7 @@ of the sketch (`group-page/spill-av-pa-grupper.html`, "Volum i gruppe"): "jeg sy
   (the app dials 1443 on the fake's ip and is refused - and, after five, parks it): the emulator round
   (`docs/testing/emulator.md` §6h, the fake started with `--duration`) checks the fallback - the 1 s display poll, the
   STOPPED advance - and the verbs. The socket path is checked on the user's speakers (§5).
-- The `ws/` fixtures: until the user's capture (§5, check 1) they are written from §0.1's shapes and marked provisional
+- The `ws/` fixtures (replaced by the capture on 2026-10-21, §5 check 1): until the user's capture they are written from §0.1's shapes and marked provisional
   in their README line; the capture replaces them in one commit (uids and the household id replaced by fake ones,
   `RINCON_000000000000014xx`, `Sonos_FAKE...`).
 
@@ -644,6 +644,24 @@ entry; backlog items for anything found).
    (and whether it passes through IDLE - if not, `playbackMetadata:1` is reconsidered as an early hint); whether the
    subscribe pushes the current status; what our socket gets when our coordinator leaves by hold-Play (a `MOVED`, or
    only `groups`).
+   **Done 2026-10-21** (the user: `sonos-ws-probe.py --all --save` on one speaker while `sonos-play-test.py --volume 0`
+   ran play, pause, resume, a seek, next, previous with the muted seek, the natural end -> the advance, the park; 58
+   messages, now `ws/capture_2026-10-21.json`, scrubbed with `--rescrub`, replayed whole by `SonosEventsTest`). What it
+   showed against 53-a: (1) the empty command is answered by `type: globalError`, `success: false`
+   (`ERROR_INVALID_PARAMETER`) whose header still carries `householdId` - the handshake takes the household from it
+   (it did); (2) a playback subscribe is acked as `response: subscribe`, `success: true`, `type: none` with an empty
+   body, the status following as a separate `playbackStatus` without `response` - (f) yes, the subscribe pushes the
+   current status itself; (3) a MOVED is the subscribe's own reply (`response: subscribe`, `success: false`, `type:
+   groupCoordinatorChanged`, body `GROUP_STATUS_MOVED`, `websocketUrl`, `playerId`) - **the parser was wrong here**: a
+   refused answer for any group ended our own subscription and every such reply was a `Moved` event; now only the
+   answer about our own playback subscription counts (another group's or another namespace's is ignored); (4)
+   `getPlaybackStatus` replies `response: getPlaybackStatus`, `type: playbackStatus`; (5) the natural end is
+   `PLAYBACK_STATE_IDLE` with no `itemId`, then BUFFERING/PLAYING of the new item; event headers carry the group's
+   `name`. Of §0.1: (a) the end's IDLE carries `positionMillis` 0 (the poll decides, as designed); (b) a seek and a
+   resume go through BUFFERING (a next went PLAYING at once); (f) yes. Still open: (c) a takeover from the Sonos app,
+   (d) what our socket gets when our coordinator leaves by hold-Play, (g) S1 - the grouping checks 6-7 record them.
+   The probe's `--save` didn't scrub `serialNumber`/`deviceId` (the speakers' MACs), `locationId`, `queueId`, the item
+   ids and picture URLs, and wrote addresses as 192.168.1.x: fixed (10.0.0.x, which the socket gate's tests accept).
 2. **Rapid skips**: five nexts within 2 s on a playing room, with the socket and with it down: one play per settled
    want, the title and bar never flap back to the old episode (the Pi observation, "pi misforstår etter optimistisk
    start ... flapper den tilbake").
@@ -988,6 +1006,11 @@ its own pre-fade volume back after it (also when the ramp is cancelled), as the 
 rooms' read generation is bumped at both ends, so a read during the ramp never reads as their volume. A member whose
 volume the app doesn't know is left alone (nothing to put back). Not carried across a crash: `renderer.json`'s ramp
 volume is still the coordinator's only (a process that dies mid-ramp leaves a member quiet until it is turned up).
+
+**The capture** (§5 check 1, done 2026-10-21, in this round): the `ws/` fixtures are the user's capture, scrubbed
+(`ws/capture_2026-10-21.json` replayed whole; `handshake.json` its own messages in the app's order; the rest
+hand-written in its shapes), and `SonosEvents.Plan` reads only the answer about our own playback subscription - the
+capture's other groups answering MOVED had ended ours (§5 check 1 lists the five findings).
 
 **Owed** (§5): checks 6, 7, 8, 8b and 8c on the user's speakers (with the socket: the four outside cases within ~1-2 s;
 check 7's report of the old coordinator's transport and TrackURI after a "−" on it - if Sonos keeps the stream on the

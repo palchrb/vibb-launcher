@@ -101,8 +101,9 @@ are verified against `gradle/verification-metadata.xml` and the wrapper pins its
 root `CLAUDE.md` "Build and test"; `BuildChainTest`). The canned SOAP replies in `src/test/resources/sonos/`
 (`SonosFixturesTest`) are also what `scripts/fake-sonos.py` answers from (vibb's "two fakes" rule; the fake has no event
 socket - the app's connect to 1443 is refused and parks after five, so the emulator checks the polling fallback;
-`sonos/ws/` holds the socket's messages, `scripts/sonos-ws-probe.py --save` captures real ones with every id and name
-replaced; design 53-b: the fake answers the grouping verbs - `x-rincon:` joins, `BecomeCoordinatorOfStandaloneGroup`
+`sonos/ws/` holds the socket's messages - the user's capture of 2026-10-21 and hand-written cases -, `scripts/sonos-ws-probe.py --save`
+captures real ones with every id, address, name, serial, device, location, queue and item id and picture URL replaced
+(`--rescrub IN OUT` re-applies the rules to an earlier capture); design 53-b: the fake answers the grouping verbs - `x-rincon:` joins, `BecomeCoordinatorOfStandaloneGroup`
 from `become_standalone.xml`): change a fixture
 and run `python3 -I scripts/fake-sonos.py --selftest` (CI does, `music.yml`). On the emulator the app plays on the
 fake speakers (docs/testing/emulator.md §6h; no multicast there, so no SSDP: the debug feed seeds the cache). Likewise
@@ -456,7 +457,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   normal cadence, the stall counts polls 5 s apart (an uncounted one leaves the count alone), the probe tries 1.5 s
   apart, the aux at most every 60 s, a poll's bookmark at most every 5 s unless the transport or the stream changed;
   the tail cadence takes the play's listed duration (`cadenceHintS`) when the speaker reads `0:00`. Tests:
-  `SonosEventsTest` (the `ws/` fixtures, provisional until design 53 §5 check 1's capture), `SonosSocketTest`,
+  `SonosEventsTest` (the `ws/` fixtures: the user's capture of 2026-10-21, design 53 §5 check 1, replayed whole -
+  only the answer about our own playback subscription counts, never another group's MOVED reply), `SonosSocketTest`,
   `SonosAnchorTest`, `SonosControllerTest`'s and `SonosSessionTest`'s `d53`. Owed: design 53 §5 checks 1-5, 9-11.
 - **Never a guess in Room**: `optPos`, the pause freeze, the seed of a play and the age term (capped at 5 s, only
   fresh + PLAYING) never reach a stored position; a bookmark always precedes a Stop or a renderer change (after a

@@ -169,11 +169,16 @@ object SonosEvents {
                 household = hh
                 return Step(commands = listOf(command(next(), "groups:1", "getGroups", "householdId", hh)))
             }
-            // the answer to our playback subscribe is told by its `response` first (qa-53a-code 7): it may carry the
-            // current status (design 53 §0.1 (f)) or a MOVED as its `type`, read as such after the ack
-            if (m.str("namespace") == "playback:1" && m.str("response") == "subscribe") {
+            // a subscribe's answer is told by its `response` first (qa-53a-code 7). Captured 2026-10-21 (design 53 §5
+            // check 1): an ack is `type: none` with an empty body, the status follows as its own `playbackStatus`; a MOVED
+            // is the subscribe's own reply (`success: false`, `type: groupCoordinatorChanged`). Only the answer about OUR
+            // playback subscription counts - one for another namespace or another group says nothing of ours, and must
+            // never end it (the probe's --all subscribed every group: each other one answered MOVED)
+            if (m.str("response") == "subscribe" && m.str("namespace") != "groups:1") {
+                val gid = m.str("groupId")
+                if (m.str("namespace") != "playback:1" || (gid != null && gid != subscribed)) return Step()
                 val ok = (m.header["success"] as? JsonPrimitive)?.booleanOrNull != false
-                if (ok && (m.str("groupId") == null || m.str("groupId") == subscribed)) acked = true
+                if (ok) acked = true
                 if (!ok) subscribed = null
                 return when (type) {
                     "playbackStatus" -> playback(m, at)

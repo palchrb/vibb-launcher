@@ -1046,7 +1046,8 @@ findings, merge to `main`, full suite once.
   2026-10-21: "enig i at den bør slå av alle grouped høyttalere"): the sleep timer's fade on a group fades every
   known room with the coordinator and puts each one's own volume back after the Pause (found in 53-b: before, only
   the coordinator faded).
-  Owed on the speakers: design 53 §5 (the capture that replaces the provisional `ws/` fixtures first; checks 6-8c
+  §5 check 1, the capture, done 2026-10-21 (the `ws/` fixtures are it, scrubbed; the parser fixed where it
+  disagreed). Owed on the speakers: design 53 §5 (checks 2-5, 9-11; checks 6-8c
   for 53-b).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
