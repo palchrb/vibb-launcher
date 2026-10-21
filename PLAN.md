@@ -1381,6 +1381,16 @@ findings, merge to `main`, full suite once.
   Dismiss broadcast, design 42) - its receivers/intents for pause, resume, reset, lap, restart - and what the lock may
   send without unlocking (broadcasts only, never an activity).
 
+- **Design 54's measuring run done early** (the user's Pi, 2026-10-21, `sonos-play-test.py --spotify` + the probe's
+  `--save`; raw files in the session scratchpad, to be scrubbed into fixtures by 54-a1): sn 2311 took the ShareLink in
+  0.8 s (first=1, 30 added, NrTracks 30; TrackURIs carry `sn=6`); TRACK_NR jumps work playing and paused; the speaker's
+  own advance is gapless and the socket saw it 0.5 s before UPnP; REPEAT_ALL/NORMAL set and show at once. **On a Spotify
+  queue the socket's `metadataStatus` carries the full track** (the Spotify track id, name, artist, album, image,
+  duration), the `nextItem`, and the container's playlist id, and `canSkip`/`canSkipToPrevious` are true - so the app
+  can tell the playing track (and whether it is ours) from the event itself. **`/status/accounts` is empty on firmware
+  86.10** (`<ZPSupportInfo></ZPSupportInfo>`) although Spotify plays: design 54's household check can't use it - the
+  add's answer decides - and `NrkService.serial` works only through its `sn=14` fallback there.
+
 ### To decide (the user)
 
 
