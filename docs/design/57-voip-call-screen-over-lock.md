@@ -25,8 +25,10 @@ finding to its fix).
 5. **An app whose call screen is its main (launcher) activity doesn't ring over the lock** (Q-A): its launcher
    activities are never trusted.
 6. **The learned call screen is remembered per app** (new, approved): package + activity class + the app's
-   versionCode + its signer, learned only from our own sends; never a launcher activity, never a class that once
-   caused a cover; forgotten on any app update or signer change. From the second call on, answering on Element X's
+   versionCode + its signer, learned only from our own sends; never a launcher activity, and through a reopen never a
+   class that came up uncaused during the call (§2.3; the user's "never a class that once caused a cover", scoped so
+   that Element's own first Answer doesn't block its call screen for good - revision check N1); forgotten on any app
+   update or signer change. From the second call on, answering on Element X's
    own ring screen needs no extra tap.
 7. **Android 15+ only** (Q-C): the per-package event query is API 35. On Android 14 the phone behaves as without
    usage access (and says so to the parent).
@@ -47,7 +49,7 @@ finding to its fix).
 
 ## 1. Facts (checked)
 
-Code, as on `main` 20320912:
+Code, as on `main` 1ba6735a:
 - The lock yields to whatever is in front while a VoIP phase is on: `RefrontPolicy.kt:86`
   (`inputs.voipCall -> Yield("voip")`), and `step` never shows it over IN_CALL (`PinLockState.kt:153` ProcessStart,
   `:161` ScreenOff, `:171` ScreenOn, `:198` RemoteLock). A LockResumed during IN_CALL re-sends the call notice's
@@ -145,6 +147,11 @@ Element X (main 2a8ce3ef, read only):
   `VoiceMessagingActivity`).
 - Element X's ongoing call: a plain notification on `call_foreground_service_channel`, flags
   NO_CLEAR|FOREGROUND_SERVICE, content intent only. WhatsApp's: CallStyle callType 2 with `android.hangUpIntent`.
+- WhatsApp **video** call over the lock, kiosk off (no lock task then), Back on the call screen: `topResumedActivity`
+  became our `PinLockActivity` while WhatsApp stayed visible with its camera frame frozen - almost certainly WhatsApp
+  entering PiP, a PiP window floating over our lock (§2.4, "PiP of the call screen").
+- WhatsApp's Decline on its own ring screen: `topResumedActivity` became `PinLockActivity`; no chats reached.
+- `appops set me.vibb.launcher GET_USAGE_STATS allow` then `get`: `default` at once (the reset of QA 57-5, confirmed).
 
 So the real Element hang-up path is **a PiP it entered, then removed** (our lock-task start, a swipe-away) - possible
 only where PiP is allowed: kiosk off with no lock task running.
@@ -177,7 +184,7 @@ read site, with a source scan in `VoipCallPlanTest`:
 | Reader | Takes |
 |---|---|
 | `PinLockRuntime` events (VoipRinging/VoipEnded, ScreenOff/ScreenOn/RemoteLock/ProcessStart `:522`), `ringId`/`ringingPackage`, the FSI send and the card, `voip_rang`, `screenOffSilencesRing` (`:742`), `KeyguardCover` (`:298`), the boot mark (`:350`), `ScreenTimeTracker` (`exempt`), the notice wake (`:1070`) | `phase` (lock) |
-| `VoipRinger` | `phase` for the full ring; `callPhase` for the quiet ring (§2.8) |
+| `VoipRinger` | `phase`/`ringId` for the full ring; `callPhase`/`callRingId`/`callRingingPackage` and the screen-off's `quietSilencedRing` for the quiet ring (§2.8) |
 | `LockTaskChrome.voipPackages` (`:148-151`), `lockTaskEntry` (`PinLockActivity.kt:366`, `:550`), `callLiveNow`/`lockLeave` (`PinLockRuntime.kt:1665`), the screen-off lock-up's `callLive` (`:630`), the camera (`updateCallForCamera` `:822-827`, QA 57-13) | `callPhase` / `pinnedPackage` (= `callPackage`) |
 | `MusicCalls` (`:56`), `SelfUpdate` (`:219`, `:338`), `BootHome` (`:49`), `WindowRelock` (`:539`) | `callPhase` / `liveCall` |
 
@@ -208,17 +215,25 @@ A class is **trusted** for the current ring (`ringId`, QA 57-6: reset per ring, 
    (WhatsApp's one `VoipActivityV2`).
 2. or **it is remembered** for this package at its current versionCode and signer (§3.3).
 
-Never trusted (`neverTrusted`): the package's launcher activities (every `MAIN`/`LAUNCHER` activity and
-`getLaunchIntentForPackage`'s component, resolved through aliases to their target class; read with PackageManager at
-the ring's start, off the main thread) and any class in the package's `covered` set (§3.3). A first RESUMED after our
-send that is never-trusted is not learned: it is a stray (and covered).
+Never learned (`neverTrusted`, QA revision check N1 - the only two guards):
+- **the package's launcher activities**, always: every `MAIN`/`LAUNCHER` activity and `getLaunchIntentForPackage`'s
+  component, resolved through aliases to their target class; read with PackageManager at the ring's start, off the
+  main thread. A learn waits for that read; no read (it failed or isn't back) = nothing is learned.
+- **by a REOPEN only: a class that showed up uncaused during this ring's IN_CALL** (`strayInCall`, memory, per ring) -
+  the kid's own way out of the call screen (WhatsApp's arrow to `HomeActivity`). A reopen whose first RESUMED is such a
+  class learns nothing and is covered. The FSI and the answer action learn any class but a launcher activity, also
+  one that was a stray before: they are the ring's own intents. A stray while RINGING (Element's call screen after
+  its own Answer) blocks nothing.
+A first RESUMED after our send that isn't learned is a stray (row 2 of §2.4).
 
 Nothing else is trusted. In particular a screen the app opened by itself (Element's call screen after its own
 Answer, a SystemUI-launched FSI) is not, unless remembered. Element's first call: the kid answers on
 `IncomingCallActivity` (trusted by the FSI), `ElementCallActivity` comes up untrusted, the lock covers it with 17b's
 card (the ring notice lives until Element joins); Svar sends the answer action, which Element treats as the same call,
-so `ElementCallActivity` resumes as our send's - trusted and remembered. If the ring has already ended, the cover
-shows "Tilbake til samtalen" and the reopen trusts it for this call (remembered only per §3.3's rule).
+so `ElementCallActivity` resumes as our send's - trusted and remembered (its earlier stray was during RINGING, which
+blocks nothing). If the ring has already ended, the cover shows "Tilbake til samtalen" and the reopen trusts it for
+this call (it was no IN_CALL stray; remembered only per §3.3's rule). From the second call `ElementCallActivity` is
+remembered, so Element's own Answer needs no tap.
 
 ### 2.4 The fold and the verdict
 
@@ -227,29 +242,46 @@ timestamp, type and class for the 1 s window overlap):
 - `resumed: Set<String>` - classes RESUMED and not since PAUSED/STOPPED/DESTROYED (several at once in split screen);
 - `visible: Set<String>` - classes PAUSED and not since STOPPED/DESTROYED (under a translucent dialog, or in PiP);
 - `strayResumed: Boolean` - a non-trusted class RESUMED since the last verdict;
-- `lastTrustedEvent` - the last event type of a trusted class, and when.
+- `lastTrustedEvent` - the last event type of a trusted class, and when;
+- `strayInCall: Set<String>` - classes whose stray RESUMED came while the lock-facing phase was IN_CALL (§2.3).
 
 The fold starts empty when the lock leaves the front (our lock in front is the known state), keeps across a
 screen-off and screen-on (an ear-blank keeps the screen interactive, a power-off pauses and resumes the activity,
 both seen), and resets at the lock's next resume and at a new ring. No event from before the window start is ever
 used (§3.2).
 
-`callScreenVerdict(fold, trusted, lockTaskLocked, sinceMs, nowMs) -> ALLOW | COVER | WAIT | SOS`:
+`callScreenVerdict(fold, trusted, lockTaskLocked, lastScreenOnMs, sosAppPresent, sinceMs, nowMs) -> ALLOW | COVER |
+WAIT | SOS`, the first matching row wins:
 
 | # | Fold | Verdict |
 |---|---|---|
-| 1 | a stray resumed since the last verdict, or a non-trusted class in `resumed` now | COVER |
-| 2 | a trusted class in `resumed`, nothing else in it | ALLOW |
-| 3 | nothing resumed, a trusted class in `visible`, lock task LOCKED | ALLOW (a dialog over the call screen in lock task; QA 57-8) |
-| 4 | nothing resumed, a trusted class in `visible`, no lock task | COVER (Recents' live tile, a share sheet, another package's dialog) |
-| 5 | a trusted class STOPPED within `SOS_GESTURE_WINDOW_MS` of a screen-on, an SOS app present, nothing of the package resumed | SOS (mark a probable SOS, no cover; QA 57-3) |
+| 1 | nothing of the package resumed, a trusted class PAUSED **or** STOPPED within `SOS_GESTURE_WINDOW_MS` (3 s) after the last screen-on, an SOS app present | SOS (mark a probable SOS, no cover; QA 57-3, revision check N2) |
+| 2 | a stray resumed since the last verdict, or a non-trusted class in `resumed` now | COVER |
+| 3 | a trusted class in `resumed`, nothing else in it | ALLOW |
+| 4 | nothing resumed, a trusted class in `visible`, lock task LOCKED | ALLOW (a dialog over the call screen in lock task; QA 57-8) |
+| 5 | nothing resumed, a trusted class in `visible`, no lock task | COVER (Recents' live tile, a share sheet, another package's dialog; a PiP of the call screen - below) |
 | 6 | nothing of the package resumed or visible, less than the wait after `since` | WAIT |
-| 7 | nothing of the package resumed or visible after the wait (another app, Recents, a dead activity) | COVER |
-| 8 | no trusted class at all in an IN_CALL ring | COVER (the button learns one) |
+| 7 | nothing of the package resumed or visible after the wait (another app, Recents, a dead activity, no trusted class at all) | COVER |
+
+The SOS row comes first, so with the kiosk off the call screen's PAUSED for the SOS countdown (the first thing a poll
+can see, before its STOPPED) never gives a COVER. The watcher can't see the SOS app (the query is package-filtered),
+so the row works from the call screen's own events and a screen-on edge: the gesture always has one (the screen turns
+on at the first or second press and stays on, `RefrontPolicy.kt:181-199`); a gesture with no screen-on in the last
+3 s gets no mark - check 12. The residual is 25b-H's: anything that pauses the call screen within 3 s of a screen-on,
+with an SOS app on the phone, is left up to `SOS_FLOW_MS` (15 s) by the "sos" yield (narrowed with the kiosk on).
+Old row 8 ("no trusted class in an IN_CALL ring") is gone (N5): with no trusted class any RESUMED is row 2 and
+nothing resumed is row 6/7, so it waits like every other case and never cuts the 3 s after a send.
+
+**PiP of the call screen over the lock** (WhatsApp's Back on a video call, measured): a PiP window of a trusted class
+floats above everything, our lock included; it shows only that call, and expanding it brings the trusted class back
+(row 3). It is **accepted**: preventing it would mean removing it (lock task, a swipe), which may end the call, and
+it gives no way past the activity-level rule. While it floats the call class is PAUSED, never STOPPED, so §2.6 never
+starts lock task over it. With lock task already running, PiP is refused (`ActivityRecord.java:3380-3397`) and
+WhatsApp's reaction is check 11's.
 
 `since` = the later of the lock leaving the front and our last send; the wait is `VOIP_SCREEN_LEARN_MS` (3 s) after
-a send, `VOIP_EVENT_LAG_MS` (1 s) otherwise (QA 57-10: a cold-started app needs seconds). A COVER whose cause is a
-stray RESUMED adds that class to `covered` (§3.3) unless it is a launcher activity (always untrusted anyway).
+a send, `VOIP_EVENT_LAG_MS` (1 s) otherwise (QA 57-10: a cold-started app needs seconds). A stray RESUMED during
+IN_CALL goes into `strayInCall` (memory, this ring only); nothing about a cover is stored.
 
 ### 2.5 The lock and the re-front loop: one decider
 
@@ -272,7 +304,9 @@ fun voipLockYields(phase: VoipPhase, expecting: Boolean, verdict: CallVerdict, t
 
 - **Our send opens the expectation and clears the cover** (QA 57-2): `SendMark(RING_SCREEN | ANSWER | REOPEN)` sets
   `expect = send + VOIP_SCREEN_LEARN_MS`; while it runs the re-front check yields to the package and the watcher
-  decides what came up. The lock's 200 ms pause re-front no longer races the button.
+  decides what came up. The lock's 200 ms pause re-front no longer races the button. **A watcher COVER ends the
+  expectation at once** (N6), as do an unlock, `VoipEnded` and a new ring: a stray after our send never buys the
+  rest of the 3 s.
 - **One decider**: during a lock-facing phase the re-front check doesn't read a cover or a learned class left by an
   older poll: it asks `CallScreenWatch.verdictNow` (the last verdict if younger than `VOIP_SCREEN_POLL_MS`, else one
   query on the watch thread, the check re-run in its callback).
@@ -290,6 +324,13 @@ starting it removes a PiP and Element then hangs up; a call answered before the 
 lock with Home, Recents and split screen working. Lock task can only be started by our lock while it is the focused
 top task (§1), so the order is: the lock covers the call screen first, then starts lock task, then the kid goes back.
 
+**The cover that makes it possible** (revision check N3): with the kiosk off, lock task not running and a lock-facing
+IN_CALL, the **ScreenOff** that locks the phone gets `voipYields = false` once (`lockTaskCoverDue(kioskOn,
+lockTaskRunning, lockPhase)`), whatever the trusted set: the lock-up covers the call (LOCK, `callLive`), so a trusted
+or remembered call screen answered while unlocked is covered too. At the next screen-on the kid sees the lock with
+"Tilbake til samtalen" - one tap per call, since lock task then runs until the call ends or the unlock. A ring that
+came while LOCKED needs none of this: the lock's lock task already runs.
+
 ```kotlin
 /** Design 57 (Q-D): the lock (resumed, kiosk off, not in lock task) may start lock task during a VoIP call only when
  * the call app has no PiP that the start would remove: its last event since the LOCKED edge is STOPPED or DESTROYED
@@ -305,12 +346,14 @@ fun lockTaskOverCall(kioskOn: Boolean, running: Boolean, permitted: Boolean, ove
 | off | no | true | STOPPED or DESTROYED | **yes** |
 | off | no | true | PAUSED, RESUMED or none | no |
 
-`lockTaskEntry`'s `voipCall` becomes `callPhase != NONE && !lockTaskOverCall(...)`. The read is one query from the
-lock's `onResume` during a lock-facing phase (LOCKED, call live: inside the privacy limit), on the watch thread, then
-`ensureLockTask` on the main thread. With lock task running, Home and Overview are off for the whole screen (the
-mode's status-bar flags), the pinned call package has the block bit, and row 3 holds. A PiP the kid made before the
+`lockTaskEntry`'s `voipCall` becomes `callPhase != NONE && !lockTaskOverCall(...)`. The read is no single shot (N3:
+right after our cover the call screen has often only reached PAUSED): while the lock is resumed in that state, the
+watch thread queries every 300 ms (`VOIP_LOCK_TASK_RETRY_MS`) for up to 3 s (`VOIP_LOCK_TASK_WAIT_MS`), events since the
+LOCKED edge only (LOCKED, call live: inside the privacy limit); the first STOPPED or DESTROYED posts `ensureLockTask` to
+the main thread; still PAUSED after 3 s = probably PiP, no start. A later cover of the same call tries again. With lock task running, Home and Overview are off for the whole screen (the
+mode's status-bar flags), the pinned call package has the block bit, and row 4 holds. A PiP the kid made before the
 lock floats over it; the lock starts no lock task then, and tapping the PiP expands the call screen (a trusted class
--> ALLOW, else row 1).
+-> ALLOW, else row 2).
 
 ### 2.7 Every automated start is no user leave
 
@@ -335,7 +378,11 @@ fun voipQuietRingWanted(callPhase: VoipPhase, overLock: Boolean, locked: Boolean
 ```
 
 True only for `callPhase == RINGING`, `!overLock`, LOCKED, not silenced (power button), no other call, emergency
-flow or alarm, within `VOIP_RING_LIMIT_MS`. `VoipRinger` plays the same ringtone and vibration (`ringPlan`: ringer
+flow or alarm, within `VOIP_RING_LIMIT_MS`. Its inputs come from the call side, never the lock phase (NONE without
+access; revision check N4): `VoipCalls.callRingId` (the verdict's `ringStartedElapsedMs` while `callPhase == RINGING`)
+and `callRingingPackage`; the power button's silence is `quietSilencedRing = callRingId` at a screen-off that finds the
+phone LOCKED and the call ringing (`screenOffSilencesRing(lockedBefore, callPhase == RINGING)`), the ring limit counts
+from `callRingId`. `VoipRinger` plays the same ringtone and vibration (`ringPlan`: ringer
 mode and DND) at `VOIP_QUIET_RING_VOLUME` (0.3 of the stream volume, `MediaPlayer.setVolume`). No wake, no card, no
 FSI send, no exemption; it stops when the app's ring ends. With the kiosk on, Android may launch the app's
 full-screen intent itself on a dark screen: the screen lights with the app's ring screen until the next re-front
@@ -389,16 +436,16 @@ full-screen intent itself on a dark screen: the screen lights with the app's rin
 
 ### 3.3 Remembered call screens (CE prefs `voip_screens`, keys pinned)
 
-- `screens_v1`: a string set, each `"<package>|<class>|<versionCode>|<signerSha256>"`; `covered_v1`: the same format,
-  classes whose RESUMED caused a COVER. At most 32 entries each, oldest dropped. Package and class names only - not
-  sensitive (the user).
-- **Learned** only from our own sends (§2.3 rule 1): the FSI and the answer action always; the reopen only through an
-  ongoing CallStyle or a category-`call` notice (a plain foreground notice may be any service of the app, so a class
-  it opens is trusted for this call but not remembered). Never a never-trusted class, never a class in `covered_v1`;
-  a class added to `covered_v1` is dropped from `screens_v1`.
+- `screens_v1`: a string set, each `"<package>|<class>|<versionCode>|<signerSha256>|<learnedAtWallMs>"`. At most 32
+  entries, the oldest `learnedAtWallMs` dropped (a string set has no order). Package and class names only - not
+  sensitive (the user). Nothing about covers is stored (revision check N1).
+- **Learned** only from our own sends (§2.3 rule 1): the FSI and the answer action always (a launcher activity never);
+  the reopen only through an ongoing CallStyle or a category-`call` notice and never for a `strayInCall` class (a plain
+  foreground notice may be any service of the app, so a class it opens is trusted for this call but not remembered).
 - **Valid** only while the installed package has the same `longVersionCode` and its signing certificate (SHA-256,
-  `GET_SIGNING_CERTIFICATES`, the first signer) matches: checked at each ring's start (with the launcher-activity
-  read, off the main thread); a mismatch drops that package's entries in both sets. `PACKAGE_REPLACED`/`REMOVED`
+  `GET_SIGNING_CERTIFICATES`: the set of current signers, `apkContentsSigners`; more than one, or a rotated lineage, is
+  stored as the sorted list joined with `,`, and any difference fails closed) matches: checked at each ring's start
+  (with the launcher-activity read, off the main thread); a mismatch drops that package's entries. `PACKAGE_REPLACED`/`REMOVED`
   (`Application`'s package callbacks) drop them too.
 - `PinLockStore`-style test pins the file and key names (as `UpdateFenceTest` pins the fence's).
 - Effect: WhatsApp's `VoipActivityV2` and Element's `IncomingCallActivity` are remembered at their first ring, and
@@ -438,7 +485,7 @@ the button learns it again.
 - **`lockTaskWhileLocked`**: the kiosk-off pin set follows `callPackage` (§2.1), with or without access.
 - **Kiosk off**: §2.6 starts lock task over a covered call; without access, today's rule (no start during a call).
 - **Kiosk on**: lock task runs, PiP is refused (no hang-up), Home/Overview are off while LOCKED; a link from the call
-  screen to another allowed app is row 1 or 7 within one poll.
+  screen to another allowed app is row 2 or 7 within one poll.
 - **Unlock during a call**: `lockLeave(callLive = callPhase != NONE)` - no Home over the call, as today.
 
 ## 5. The small fixes
@@ -460,7 +507,7 @@ of a non-pinned package, i.e. the ring came while LOCKED (the lock's lock task k
 with the bit, and the Home press made a non-pinned package start an activity - our HomeActivity is pinned, so it was
 someone else's: most likely the stock launcher's quickstep (the 16d pattern) or the call app reacting to its leave
 hint.
-- It is a dialog (§1): the call screen stays visible and paused under it, and in lock task that is row 3 (ALLOW).
+- It is a dialog (§1): the call screen stays visible and paused under it, and in lock task that is row 4 (ALLOW).
   The flash therefore stays until the kid taps its OK - harmless (nothing opens), and the watcher does not end it.
 - Diagnostic for the emulator run: `adb logcat -s ActivityTaskManager:I PinLock:I` - the `START u0 {...} from uid ...`
   line right before BlockedAppActivity's names the blocked component and its caller (check 10).
@@ -559,7 +606,8 @@ the task's root-activity package and the package list, not the HOME feature).
 (`server/src/kid_lock.rs:409-460`), after `CallsCantRing`, only when the lock is active **and** VoIP can ring at all:
 calls unmanaged, or managed with `calls_enabled` (QA 57-18). `VoipNeedsUsageAccess` when `usage_access_granted ==
 Some(false)` (never for `None`); `gated` = the report's capabilities hold `voip_gated_v1`. `VoipNeedsAndroid15` when
-`voip_over_lock_unsupported == Some(true)`. An Attention row from the same notes (`server/src/attention.rs`, beside
+`voip_over_lock_unsupported == Some(true)`, with the same `gated` choice of words (revision check N7: during the prep
+release nothing is gated yet, so the prep words speak of the next update). An Attention row from the same notes (`server/src/attention.rs`, beside
 `no_notification_access` `:586`), `Level::Action` like `Kind::NoNotificationAccess` (`:288-302`); no parent
 notification (Attention rows aren't `parent_events`). Words (the PWA is English; nb for the record):
 
@@ -570,8 +618,10 @@ notification (Attention rows aren't `parent_events`). Words (the PWA is English;
 | title, prep | Turn on Usage access for Vibb One | Slå på Bruksdata for Vibb One |
 | sentence, prep | From the next Vibb One update, calls in apps show over the lock only with Usage access. | Fra neste Vibb One-oppdatering vises samtaler i apper over låsen bare med Bruksdata. |
 | ⓘ fix (both) | During a pause, on the phone: Vibb One's Settings (Parent PIN) › Calls over the lock (or Settings › Apps › Special app access › Usage access › Vibb One). If the switch is greyed: tap it, OK, then App info › ⋮ › Allow restricted settings. With USB debugging allowed: adb shell appops set me.vibb.launcher GET_USAGE_STATS allow (a debug build: me.vibb.launcher.debug). | Under en pause, på telefonen: Vibb Ones Innstillinger (foreldrekode) › Samtaler over låsen (eller Innstillinger › Apper › Spesiell apptilgang › Bruksdata › Vibb One). Er bryteren grå: trykk på den, OK, så Appinfo › ⋮ › Tillat begrensede innstillinger. Med USB-feilsøking: adb shell appops set me.vibb.launcher GET_USAGE_STATS allow (debug-bygg: me.vibb.launcher.debug). |
-| title, Android 14 | Calls in apps can't show over the lock | Samtaler i apper kan ikke vises over låsen |
-| sentence, Android 14 | This needs Android 15 or newer. Calls ring quietly while the phone is locked and open after unlocking. | Dette krever Android 15 eller nyere. Samtaler ringer lavt mens telefonen er låst og åpner seg etter opplåsing. |
+| title, Android 14, gated | Calls in apps can't show over the lock | Samtaler i apper kan ikke vises over låsen |
+| sentence, Android 14, gated | This needs Android 15 or newer. Calls ring quietly while the phone is locked and open after unlocking. | Dette krever Android 15 eller nyere. Samtaler ringer lavt mens telefonen er låst og åpner seg etter opplåsing. |
+| title, Android 14, prep | Calls over the lock will need Android 15 | Samtaler over låsen vil kreve Android 15 |
+| sentence, Android 14, prep | From the next Vibb One update, calls in apps show over the lock only on Android 15 or newer; on this phone they will ring quietly and open after unlocking. | Fra neste Vibb One-oppdatering vises samtaler i apper over låsen bare på Android 15 eller nyere; på denne telefonen vil de ringe lavt og åpne seg etter opplåsing. |
 
 The nb labels of Android's pages are check 9.
 
@@ -618,29 +668,44 @@ The call row's button gets `ButtonRole` like the lock's other buttons; the row's
   - trust: the first RESUMED within 3 s after each send kind; a resume at 3.1 s learns nothing; the FSI's class
     stays trusted through IN_CALL (WhatsApp's single activity); a SystemUI-launched ring screen is not trusted unless
     remembered; a launcher activity (and an alias's target) is never trusted, also when it is our send's first
-    RESUMED; a `covered` class is never learned by the button; the trusted set resets per `ringId` (a second ring in
-    the grace).
+    RESUMED; a REOPEN never learns a `strayInCall` class, while the FSI and the answer action learn a class that was a
+    stray before (Element's walk-through of §2.3: own Answer -> stray -> COVER -> Svar -> trusted and remembered;
+    second call: remembered, no cover); a stray during RINGING blocks no reopen; no learn before the launcher-activity
+    read is back; the trusted set and `strayInCall` reset per `ringId` (a second ring in the grace).
   - the fold and the verdict table (§2.4): a call screen resumed 60 s ago with no new events -> ALLOW; two resumed
     classes (split screen) -> COVER; RESUMED(chat) then RESUMED(call) in one window -> COVER; DESTROYED without
-    PAUSED -> gone; paused-not-stopped ALLOW only in lock task; the SOS row; the 1 s / 3 s wait from `since`; no event
-    before the window start is used; dedupe of the overlap.
+    PAUSED -> gone; paused-not-stopped ALLOW only in lock task; the SOS row first: PAUSED only, screen-on 1 s ago, an
+    SOS app present, no lock task -> SOS (not COVER), STOPPED likewise -> SOS, the same 3.5 s after the screen-on ->
+    COVER, no SOS app -> COVER; no trusted class, nothing resumed -> WAIT for 3 s after a send, then COVER (no early
+    cover, old row 8); the 1 s / 3 s wait from `since`; no event before the window start is used; dedupe of the
+    overlap.
   - Decline on an app's own ring screen -> its main activity resumed -> COVER (no "ring ended" confirmation exists).
-  - **Mutation targets**: drop the never-trusted guard; trust a class the app opened itself; reset per record instead
-    of per ring; a single `resumed` instead of the set; ALLOW for row 4; the 3 s window bound.
+  - **Mutation targets**: drop the never-trusted guard; let a REOPEN learn a `strayInCall` class; block the FSI or the
+    answer action on an earlier stray; the SOS row after the visible rows; SOS on STOPPED only; trust a class the app
+    opened itself; reset per record instead
+    of per ring; a single `resumed` instead of the set; ALLOW for row 5; the 3 s window bound.
 - `voipFacing`/`voipOverLock` (`VoipCallPlanTest`): the table of §2.1 (34 -> false, null -> false); `callPackage` kept
   without access. **Mutation**: the pin read from the lock phase.
 - `voipNoticeKind`: Element X's measured shape (no category, `call_foreground_service_channel`, NO_CLEAR|FOREGROUND_SERVICE)
   -> IN_CALL; a foreground notice on another channel -> IN_CALL; an incoming CallStyle with the FGS flag -> NONE;
   the ranking for the reopen and `ringCallServiceUp`.
 - `voipLockYields` (`VoipCallPlanTest`): the table of §2.5. `RefrontPolicyTest`: covered + expecting -> Yield,
-  covered + expired -> Refront, stale + IN_CALL without a trusted class -> Refront; our call/system call/emergency/
+  covered + expired -> Refront, send then a stray at 1 s -> COVER, then a lock pause at 2 s -> Refront (the COVER ended
+  the expectation, N6); unlock, `VoipEnded` and a new ring end it too; stale + IN_CALL without a trusted class ->
+  Refront; our call/system call/emergency/
   alarm still first; "sos" after a covering VoIP. `PinLockStateTest`: ProcessStart/ScreenOff/ScreenOn/RemoteLock
   with `voipYields` false during IN_CALL show the lock; LockResumed never reopens; VoipRinging/VoipEnded unchanged.
   **Mutation**: the `expecting` row.
-- `lockTaskOverCall`: the table of §2.6. **Mutation**: start on PAUSED.
+- `lockTaskOverCall`: the table of §2.6; the retry: PAUSED at the first read, STOPPED 300 ms later -> start; PAUSED for
+  the whole 3 s -> no start; nothing read before the LOCKED edge. `lockTaskCoverDue`: kiosk off + no lock task +
+  IN_CALL -> the ScreenOff covers even a trusted or remembered call screen; kiosk on, lock task running or RINGING ->
+  no. `PinLockStateTest`: that ScreenOff shows the lock. **Mutations**: start on PAUSED; a single read with no retry;
+  `lockTaskCoverDue` ignoring a trusted screen.
 - `automatedStart` + a source scan: every `startActivity` of `PinLockActivity`, `VoipWakeActivity`, `LockActivity` and
   `HomeFront` passes through it; no other file starts `PinLockActivity`. **Mutation**: dropping `NO_USER_ACTION`.
-- `voipQuietRingWanted`: the table, and that `VoipRinger` never wakes or sends anything for it.
+- `voipQuietRingWanted`: the table, and that `VoipRinger` never wakes or sends anything for it; without access
+  (`phase` NONE) the power button silences the quiet ring through `callRingId` and the ring limit counts from it.
+  **Mutation**: read `ringId` (the lock phase's) for the quiet ring.
 - `CallScreenGuardTest` (new, like `LockGlanceGuardTest`): `UsageStatsManager`, `UsageEvents`, `UsageEventsQuery`,
   `queryEvents` only in `lock/CallScreenWatch.kt`; the query always has `setPackageNames` and is reached only behind
   `voipOverLock` (`SDK_INT >= 35`); the file's imports are exactly the reviewed ones; no `getSharedPreferences`, file
@@ -650,8 +715,9 @@ The call row's button gets `ButtonRole` like the lock's other buttons; the row's
 - `voipWatchDue`: LOCKED x phase x access x interactive x lockResumed x our own activity in front. **Mutation**: polling
   with the lock resumed, the screen off or our wake window up.
 - Fail streak: three throwing polls -> COVER. **Mutation**: no limit.
-- `VoipScreens` (§3.3): the codec, the 32 cap, a versionCode or signer change drops the package, `covered_v1` blocks a
-  learn, the reopen through a plain notice isn't remembered; the prefs file and keys are pinned.
+- `VoipScreens` (§3.3): the codec, the 32 cap by `learnedAtWallMs`, a versionCode or signer-set change drops the
+  package, a launcher activity is never stored, a REOPEN of a `strayInCall` class isn't stored, the reopen through a
+  plain notice isn't remembered, no cover is ever stored; the prefs file and key are pinned.
 - (a) `VoipReopen` from a fake notice set. (b) `sosGestureLikely` true during a phase with no own start, false within
   3 s of our own start. **Mutation**: restore the phase clause. (d) `phoneStateWrites` table (`EnforcementPlanTest`);
   targets: system apps and ours never, an app without CALL_PHONE/ANSWER_PHONE_CALLS never, every target with a `null`
@@ -660,7 +726,7 @@ The call row's button gets `ButtonRole` like the lock's other buttons; the row's
 - `usageAccessRowState` table; the row opens only a `dialogTarget`, the package intent before the plain one.
 - Contract: `PolicyResponseCompatTest` (both keys, absent for null, both capabilities); server
   `kid_lock::voip_usage_notes` (gated/prep words, `None`/`Some(true)` silent, inactive lock silent, calls off silent,
-  Android 14 note), `step10` round trip, `attention::voip_usage_row` (`Level::Action`); the manifest check for
+  Android 14 note in its prep and gated words), `step10` round trip, `attention::voip_usage_row` (`Level::Action`); the manifest check for
   `PACKAGE_USAGE_STATS` (a later build without it fails).
 - `VoipCallPlanTest`'s read-site scan: every row of §2.1's table.
 
@@ -669,25 +735,21 @@ The call row's button gets `ButtonRole` like the lock's other buttons; the row's
 Emulator (Android 16 image, `docs/testing/emulator.md` §6, WhatsApp and Element X from a second account), then the
 Jelly Star.
 
-**Step 1 - the gate before any code.** Already measured (2026-10-21, PLAN): Element's ring and call classes and their
-task; WhatsApp's single `VoipActivityV2` per call and its new task per call; the arrow -> `home.ui.HomeActivity` in
-another task; manifest `showWhenLocked` no use; both ongoing notices' shapes. Still to measure (`adb logcat -b events
-| grep -E "wm_(resume|pause|stop|destroy)_activity"` and `dumpsys activity activities`):
-1. **WhatsApp's Back** on the call screen and **its Decline** on the ring screen: what resumes, in which task. If
-   either reaches the chats **without** a new RESUMED (in place), stop and go back to the user (the activity-level
-   guarantee doesn't hold for WhatsApp).
-2. **WhatsApp's ongoing notice**: is it a foreground-service notification (the generic IN_CALL needs it)? Any other
-   foreground notice during a call?
-3. **`--activity-no-user-action`**: kiosk off, no lock task, an Element call on screen: `adb shell am start
-   --activity-no-user-action -a android.intent.action.MAIN -c android.intent.category.HOME` -> Element does **not**
-   enter PiP; the same without the option -> it does. If the option doesn't stop PiP, stop and revise §2.6/§2.7.
-4. **Element's first call through the card**: answer on its own screen; with Vibb's lock over `ElementCallActivity`
-   (a plain `am start` of our HOME with the option), the call still connects and the card's Svar (`am`-sent answer
-   action, `dumpsys notification --noredact` for the intent) brings `ElementCallActivity` back without a second call.
-5. **Cold start**: the time from a send (FSI, reopen) to the RESUMED event with the app's process killed first -
-   confirms `VOIP_SCREEN_LEARN_MS` = 3 s.
-6. **The op reset** (§1, QA 57-5): on the current release, `appops set $P GET_USAGE_STATS allow`, then `appops get` a
-   second later shows `default`.
+**Step 1 - the gate before any code.** Tools: `adb logcat -b events | grep -E "wm_(resume|pause|stop|destroy)_activity"`,
+`adb shell dumpsys activity activities` (`topResumedActivity`, tasks), `dumpsys notification --noredact`.
+
+| # | Measurement | Status (2026-10-21) | Stop condition / what it sets |
+|---|---|---|---|
+| 0a | Element's ring and call classes and their task; WhatsApp's one `VoipActivityV2` per call, a new task per call; the arrow -> `home.ui.HomeActivity` in another task; manifest `showWhenLocked` no use; both ongoing notices' shapes | **done** (PLAN) | - |
+| 0b | WhatsApp's Decline on its own ring screen | **done**: our `PinLockActivity` became top resumed, no chats | - |
+| 0c | WhatsApp video call, kiosk off, Back on the call screen | **done**: our lock top resumed, WhatsApp visible with a frozen frame - a PiP over the lock (§2.4 accepts it) | - |
+| 0d | The op reset (§1, QA 57-5): `appops set $P GET_USAGE_STATS allow`, then `get` | **done**: `default` at once | confirms the prep release (§7.4) |
+| 1 | WhatsApp's Back on a **voice** call screen: what resumes, in which task | open | chats without a new RESUMED (in place) -> stop, back to the user |
+| 2 | WhatsApp's ongoing notice: a foreground-service notification? Another foreground notice during a call? | open | not FGS -> the generic IN_CALL (§2.2) doesn't see WhatsApp's call: revise |
+| 3 | `--activity-no-user-action` against Element's PiP: kiosk off, no lock task, an Element call on screen; `am start -a android.intent.action.MAIN -c android.intent.category.HOME -p $P` with and without the option; does Element shrink to PiP? | **half done**: the plain start brought our Home ("its current task has been brought to the front"); whether Element went to PiP, and the option's variant, not seen yet | the option doesn't stop PiP -> stop, revise §2.6/§2.7 |
+| 4 | Element's first call through the card: answer on its own screen, our lock over `ElementCallActivity` (the start with the option), the call still connects; the answer action brings `ElementCallActivity` back without a second call | open | the call drops or a second call starts -> revise §2.3's walk-through |
+| 5 | Cold start: a send (FSI, reopen) to the RESUMED event with the app's process killed first | open | sets `VOIP_SCREEN_LEARN_MS` (3 s unless longer) |
+| 6 | A PiP call across a screen-off and screen-on: which events (STOPPED at sleep, then PAUSED or none at wake?) | open | §2.6 must not read a PiP as STOPPED: if the wake gives no event, the retry also needs "no event since the latest screen-on" - revise |
 
 Then, after step 2's code:
 7. With access, LOCKED, screen off, both kiosk modes: a WhatsApp ring shows its ring screen (17b), answering keeps the
@@ -703,11 +765,15 @@ Then, after step 2's code:
     SystemUI-launched FSI may light the screen until the next re-front); it stops when the ring ends; unlocked, the
     app rings as usual. Kiosk off, a ring while LOCKED, answered unlocked, `am crash $P`: the call survives (the pin).
     With access, revoke during a call over the lock: the lock comes back, the call goes on.
-11. Kiosk off, a call answered while unlocked, then locked: the lock covers it and starts lock task; after "Tilbake",
-    Home, Recents and split screen do nothing. With the call put in PiP before locking: no lock-task start, the call
-    survives. (c): Home on such a call - the `START` line names the blocked component.
-12. Emergency SOS during a WhatsApp call over the lock and during its ring card: five presses keep the countdown up
-    and it dials. (b): a ring that wakes the screen logs no "probably Emergency SOS".
+11. Kiosk off, a call answered while unlocked (also a remembered call screen), then locked: the lock covers it and
+    starts lock task; after "Tilbake", Home, Recents and split screen do nothing. **With lock task running, Back on
+    WhatsApp's video call screen: PiP is refused - what does WhatsApp do** (stays full screen, goes to its chats - a
+    stray, covered - or hangs up)? With the call put in PiP before locking: no lock-task start, the PiP floats over
+    the lock, expanding it returns to the call, the call survives. (c): Home on such a call - the `START` line names
+    the blocked component.
+12. Emergency SOS during a WhatsApp call over the lock (kiosk on and off) and during its ring card: five presses keep
+    the countdown up and it dials; with the screen already on, the presses give a screen-on edge (the SOS row needs
+    one). (b): a ring that wakes the screen logs no "probably Emergency SOS".
 13. (d): WhatsApp gets READ_PHONE_STATE by policy while calls are managed, CALL_PHONE stays denied; calls unmanaged ->
     not granted, the app may ask again. (e): the recipe in §5e; the `Unlock check` line after every unlock.
 14. Android 14 image: no watcher, the quiet ring, `voip_over_lock_unsupported: true`, the PWA's Android 15 note.
@@ -716,7 +782,8 @@ Then, after step 2's code:
 
 ## 11. Steps
 
-1. **Step 1's measurements** (§10, items 1-6). No code. A stop condition in 1 or 3 goes back to the user.
+1. **Step 1's open measurements** (§10's table, items 1-6; 0a-0d are done). No code. A stop condition in 1, 3, 4 or
+   6 goes back to the user or revises the note.
 2. **Prep release** (§7.4.1), launcher and server in one commit for the contract: manifest, `UsageAccess`, the report
    fields and `voip_usage_v1`, the Settings row, the server's `LockState`, the prep note and Attention row, the
    runbook and `docs/setup/usage-access.md`. Tag `launcher-v0.35.0`, `server-v0.34.0`. The parent grants on each phone.
@@ -742,8 +809,10 @@ None open. The QA's Q-A to Q-E and the note's Q1/Q2 are answered (§0).
 
 ## 13. Not verified here
 
-- Step 1's items 1-6 (WhatsApp's Back and Decline, its ongoing notice's FGS flag, the user-leave flag against Element's
-  PiP, Element's first call through the card while covered, cold-start time, the op reset on the current release).
+- Step 1's open items 1-6 (WhatsApp's Back on a voice call, its ongoing notice's FGS flag, the user-leave flag
+  against Element's PiP, Element's first call through the card while covered, cold-start time, a PiP's events across
+  a screen-off).
+- What WhatsApp does when its PiP is refused in lock task (check 11).
 - Which install paths ECM guards on the target phones (check 8).
 - What the Home press in (c) started and the cause of (e): both need the diagnostics' logs.
 - Element's `canEnterPip()` answer during a call (a `false` hangs up on any leave hint; §2.7 avoids the hint from our
@@ -776,3 +845,20 @@ None open. The QA's Q-A to Q-E and the note's Q1/Q2 are answered (§0).
 | 57-19 (Low) other starts; (e) | `automatedStart` for the lock, the wake window, the time-rule screen and Home; (e)'s fallback features labelled a separate hardening, the `Unlock check` line is the deliverable | §2.7, §5e |
 | 57-20 (Nit) | `ElementCallActivity.kt:209-211`; `EnforcementPlan.kt:246`; the dashboard claim moved to "not verified"; §13's answered item removed | §1, §13 |
 | New (the user) | Remembered call screens per app (§3.3); the quiet ring without access (§2.8); the generic IN_CALL rule (§2.2) | |
+
+Row numbers in the table above are those of that revision; §2.4 has been renumbered since (the SOS row is first).
+
+## Revision for qa-57-revision-check (2026-10-21)
+
+| Item | Fix | Where |
+|---|---|---|
+| N1 (High) persistent `covered_v1` blocks Element | `covered_v1` removed; nothing about covers is stored. The guards are only: never a launcher activity; a REOPEN never learns a class that came up uncaused during this ring's IN_CALL (`strayInCall`, memory). The FSI and the answer action learn any other class, an earlier stray included, so Element's first call (own Answer -> COVER -> Svar) trusts and remembers `ElementCallActivity` | §2.3, §2.4, §3.3, §9 |
+| N2 (High) SOS loses to rows 3/4 | The SOS row is now the first row and matches the call screen PAUSED or STOPPED within 3 s of a screen-on with an SOS app present; with the kiosk off its PAUSED can't give a COVER; the screen-on edge assumption named | §2.4, §9, check 12 |
+| N3 (Medium) Q-D only after a cover, single read | The locking ScreenOff covers once (`lockTaskCoverDue`) whatever the trusted set, with the kiosk off and no lock task; the read retries every 300 ms for 3 s for STOPPED/DESTROYED | §2.6, §9, check 11 |
+| N4 (Medium) quiet ring on the lock phase | `callRingId`/`callRingingPackage` and `quietSilencedRing` from the call side; read-site table updated | §2.1, §2.8, §9 |
+| N5 (Medium) row 8 | Removed; the no-trusted-class case waits like the rest and never cuts the 3 s after a send | §2.4, §9 |
+| N6 (Medium) COVER and the expectation | A watcher COVER ends the expectation, as do an unlock, `VoipEnded` and a new ring | §2.5, §9 |
+| N7 (Low) Android 14 words in prep | Prep and gated words for the Android 14 note, chosen by `voip_gated_v1` | §7.2 |
+| N8 (Low, part) | `learnedAtWallMs` orders the 32-entry cap; the signer is the set of current signers, any difference fails closed; a learn waits for the launcher-activity read | §2.3, §3.3 |
+| N9-N12 (Low) | Left for code QA, as the check proposes: `voip_usage_v1` unread by the server, a shared status fixture, Q-A's FSI flash for a launcher-activity ring screen, a fail-streak report, (d)'s "ours" wording | - |
+| New measurements | WhatsApp video Back -> PiP over the lock (accepted for a trusted class, §2.4; never lock task over it, §2.6; the refused-PiP reaction is check 11), Decline -> our lock, the op reset confirmed, Element's PiP comparison half done; step 1 is now a table of done and open items | §1, §2.4, §10 |

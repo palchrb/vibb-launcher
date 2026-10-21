@@ -581,7 +581,7 @@ findings, merge to `main`, full suite once.
   resolves nothing until its Secure DNS is set Off by hand; a custom template by IP literal still bypasses names.
 - **Storytel login to the phone (server review M3, approved 2026-10-21 - design 58):** the password never leaves
   the server; the phone asks for a JWT through the launcher bridge when it downloads/streams/syncs (like Spotify's token
-  courier), the server shares its cached JWT (one Storytel login an hour at most, only in hours with use). Checked
+  courier), the server shares its cached JWT (a login only when its JWT runs low, and only when a phone downloads or plays a book on a room; backoff and a server-wide cap after failures - design 58). Checked
   debba/storytel-player (2ca1e2d, 2026-10-18): its password mode is ours (re-login on expiry, the JWT's own exp-iat,
   30 min fallback; one retry on a 401); its SSO mode (Google/Apple) scrapes Storytel's web Firebase refresh token from
   the site's IndexedDB in an Electron window and refreshes ID tokens at `securetoken.googleapis.com` with Storytel's web
