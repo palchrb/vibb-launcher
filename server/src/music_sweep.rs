@@ -40,9 +40,10 @@
 //!   show or episode is listed with the Web API like a feed (one `ok` item per track or episode,
 //!   key = the Spotify id, no URL - the phone plays `spotify:<type>:<key>`), read with the first
 //!   account that may (the listing's last reader first); a playlist's `snapshot_id` gates its item
-//!   read (one request when unchanged, the items again after a day or for Check now). An artist,
-//!   and a playlist no account may list, is **context mode**: no items, the phone plays the
-//!   Spotify context. No app, no usable account or Spotify's quota pause fail the check without a
+//!   read (one request when unchanged - the items only when it moves, or for Check now), a show's
+//!   newest episode and count do the same ([spotify::show_mark]). An artist, and a playlist no account may
+//!   list, is **context mode**: no items, the phone plays the Spotify context (a context
+//!   playlist's items are tried again at most daily). No app, no usable account or Spotify's quota pause fail the check without a
 //!   request; every failure keeps the last good list.
 //!
 //! Ported in behaviour from palchrb/vibb `pi/vibb/content.py` (`_catalog`, `_new_episodes`,
@@ -834,9 +835,11 @@ pub struct Listing {
     pub art_more: i64,
     /// Spotify (design 26c §3.3-§3.4, migration 0074): `list` or `context`.
     pub spotify_mode: Option<String>,
-    /// A playlist's `snapshot_id` at the last item read.
+    /// A playlist's `snapshot_id` at the last item read; a show's gate mark (`total:newest id`,
+    /// [spotify::show_mark]).
     pub spotify_snapshot: Option<String>,
-    /// The last full item read.
+    /// The last full item read (list mode); in context mode the last time a playlist's items
+    /// were tried (2026-10-21: at most daily).
     pub spotify_items_at: Option<String>,
     /// The account that last read it (no FK: a removed account's id counts for nothing).
     pub spotify_reader: Option<i64>,
@@ -2729,10 +2732,11 @@ impl SpotifyReads<'_, '_, '_> {
 /// A Spotify entry's check (design 26c §3.4; vibb `library.py`'s precache gate and
 /// `context_tracks`): without an app `spotify_off`, without a usable account `no_account` (or
 /// `reauthorize` when every login ended), inside the quota pause `quota` - no request. Then the
-/// kind's reads with the readers (§3.3): a playlist's metadata (its `snapshot_id` unchanged and
-/// the items read in the last day: done, one request - not for Check now), then its items with
-/// each reader in turn until one may list them (none: context mode); an album's tracks in disc and
-/// track order; a track or an episode as one item; a show's newest 100 episodes; an artist in
+/// kind's reads with the readers (§3.3): a playlist's metadata (its `snapshot_id` unchanged: done,
+/// one request - not for Check now; in context mode and tried in the last day: done too), then its
+/// items with each reader in turn until one may list them (none: context mode); an album's tracks
+/// in disc and track order; a track or an episode as one item; a show's newest 100 episodes (its
+/// newest episode and count unchanged: done after one small read - not for Check now); an artist in
 /// context mode - or, with `SPOTIFY_ARTIST_ALBUMS`, as its albums' tracks. Every failure keeps the
 /// last good list (`finish`). The items keep their rows (first sighting, the art pass's result) as
 /// a feed's do; a track that left the playlist leaves the list.
@@ -2806,19 +2810,27 @@ async fn spotify_check(
     plan.cover_candidate = meta.image.clone();
     match kind {
         LinkKind::Playlist => {
-            // The snapshot gate (vibb `_precache_due`): an unchanged playlist whose items were
-            // read in the last day costs this one request. Check now reads them anyway; a
-            // playlist in context mode is tried again at every check.
-            let fresh = old
-                .spotify_items_at
-                .as_deref()
-                .and_then(parse_stamp)
-                .is_some_and(|at| at > now - hours(24));
+            // The snapshot gate (vibb `_precache_due`): an unchanged playlist costs this one
+            // request - its items are never read again while `snapshot_id` stays the same
+            // (Spotify moves it with any change to the list: a track added, removed or moved).
+            // What that knowingly gives up: a track's availability, relinking or metadata
+            // changing without a snapshot change goes unseen until the snapshot moves or Check now
+            // (which always reads the items); the phone and the speaker skip an unplayable track
+            // anyway.
             if !mode.requested
-                && fresh
                 && old.spotify_mode.as_deref() == Some("list")
                 && meta.snapshot.is_some()
                 && old.spotify_snapshot == meta.snapshot
+            {
+                return Ok(Ok(()));
+            }
+            // A playlist in context mode (no reader may list it; the phone plays it as a share
+            // link, design 54): its items are tried again at most once a day - every reader
+            // answers 403 again until one got access - unless Check now or a Spotify login newer
+            // than the last try (that account may be the one that can list it).
+            if !mode.requested
+                && old.spotify_mode.as_deref() == Some("context")
+                && context_tried_lately(&state.db, old, now).await?
             {
                 return Ok(Ok(()));
             }
@@ -2828,7 +2840,7 @@ async fn spotify_check(
                 Ok(found) => found,
                 // No account owns it or collaborates on it: the phones play it as a context.
                 Err(none) if none.refused => {
-                    spotify_context(plan, Some(meta_reader), snapshot);
+                    spotify_context(plan, Some(meta_reader), snapshot, Some(stamp(now)));
                     return Ok(Ok(()));
                 }
                 Err(none) => return fail(none.err),
@@ -2881,10 +2893,35 @@ async fn spotify_check(
             reader = meta_reader;
         }
         LinkKind::Show => {
+            // The show gate (as a playlist's snapshot): its newest episode and the episode count
+            // in one small read; the same as at the last read - done. Check now reads anyway.
+            // What it gives up, as the snapshot gate does: an older episode edited, made
+            // unplayable or swapped without the count or the newest changing.
+            if !mode.requested
+                && old.spotify_mode.as_deref() == Some("list")
+                && old.spotify_snapshot.is_some()
+            {
+                let mark = match reads
+                    .get(meta_reader, &accounts.read_url(Read::ShowNewest(id)))
+                    .await
+                {
+                    Ok(body) => match spotify::parse_show_episodes(&body) {
+                        Some(_) => spotify::show_mark(&body),
+                        None => return fail(SpotifyError::BadAnswer),
+                    },
+                    Err(err) => return fail(err),
+                };
+                if mark.is_some() && mark == old.spotify_snapshot {
+                    return Ok(Ok(()));
+                }
+            }
             let url = accounts.read_url(Read::ShowEpisodes(id, 0));
             let page = match reads.get(meta_reader, &url).await {
                 Ok(body) => match spotify::parse_show_episodes(&body) {
-                    Some(page) => page,
+                    Some(page) => {
+                        snapshot = spotify::show_mark(&body);
+                        page
+                    }
                     None => return fail(SpotifyError::BadAnswer),
                 },
                 Err(err) => return fail(err),
@@ -2911,7 +2948,7 @@ async fn spotify_check(
         LinkKind::Artist => {
             if !accounts.config().artist_albums {
                 // Context mode (the default, §3.3): the metadata only, one request a day.
-                spotify_context(plan, Some(meta_reader), None);
+                spotify_context(plan, Some(meta_reader), None, None);
                 return Ok(Ok(()));
             }
             match artist_albums(&mut reads, &ids, id).await {
@@ -2921,7 +2958,7 @@ async fn spotify_check(
                 }
                 // Spotify refused the artist's albums: played as Spotify picks.
                 Ok(None) => {
-                    spotify_context(plan, Some(meta_reader), None);
+                    spotify_context(plan, Some(meta_reader), None, None);
                     return Ok(Ok(()));
                 }
                 Err(err) => return fail(err),
@@ -2965,18 +3002,47 @@ async fn spotify_check(
 }
 
 /// Context mode (design 26c §3.3): no items - the phone plays the Spotify context - and the
-/// listing's mode, reader and snapshot.
-fn spotify_context(plan: &mut Plan, reader: Option<i64>, snapshot: Option<String>) {
+/// listing's mode, reader and snapshot; `tried` = when a playlist's items were last tried
+/// (`spotify_items_at` in context mode, [context_tried_lately]).
+fn spotify_context(
+    plan: &mut Plan,
+    reader: Option<i64>,
+    snapshot: Option<String>,
+    tried: Option<String>,
+) {
     plan.items.clear();
     plan.capped = false;
     plan.keep_end = Some("first".to_string());
     plan.spotify = SpotifyPlan {
         mode: Some("context".to_string()),
         snapshot,
-        items_at: None,
+        items_at: tried,
         reader,
         skipped: 0,
     };
+}
+
+/// A context playlist's items were tried in the 24 h before `now` and no Spotify account logged in
+/// since: not tried again yet (a listing with no try stamped - from before 2026-10-21 - is tried).
+async fn context_tried_lately(
+    db: &sqlx::SqlitePool,
+    old: &Listing,
+    now: DateTime<Utc>,
+) -> Result<bool, sqlx::Error> {
+    let Some(tried) = old.spotify_items_at.as_deref().and_then(parse_stamp) else {
+        return Ok(false);
+    };
+    if tried + hours(24) <= now {
+        return Ok(false);
+    }
+    let login: Option<String> =
+        sqlx::query_scalar("SELECT MAX(authorized_at) FROM music_spotify_accounts")
+            .fetch_one(db)
+            .await?;
+    Ok(login
+        .as_deref()
+        .and_then(parse_stamp)
+        .is_none_or(|login| login <= tried))
 }
 
 /// The artist option (design 26c §3.3, `SPOTIFY_ARTIST_ALBUMS`): the artist's albums and singles

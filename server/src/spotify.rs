@@ -1981,6 +1981,9 @@ pub enum Read<'a> {
     Show(&'a str),
     /// `GET /shows/{id}/episodes?limit=50&offset=N&market=from_token` (newest first).
     ShowEpisodes(&'a str, usize),
+    /// `GET /shows/{id}/episodes?limit=1&offset=0&market=from_token`: the newest episode and the
+    /// paging object's `total` only - the sweep's show gate (`music_sweep::show_mark`).
+    ShowNewest(&'a str),
     /// `GET /episodes/{id}?market=from_token`.
     Episode(&'a str),
 }
@@ -2042,6 +2045,14 @@ impl Accounts {
                 vec![
                     ("limit", limit),
                     ("offset", offset.to_string()),
+                    ("market", "from_token".to_string()),
+                ],
+            ),
+            Read::ShowNewest(id) => (
+                format!("/v1/shows/{id}/episodes"),
+                vec![
+                    ("limit", "1".to_string()),
+                    ("offset", "0".to_string()),
                     ("market", "from_token".to_string()),
                 ],
             ),
@@ -2547,6 +2558,21 @@ pub fn parse_named(body: &[u8]) -> Option<Meta> {
 pub fn parse_show_episodes(body: &[u8]) -> Option<Page> {
     paging(&object(body)?, |item| {
         item.is_object().then(|| episode(item)).flatten()
+    })
+}
+
+/// A show's gate mark (the sweep stores it as the listing's `spotify_snapshot`): the paging
+/// object's `total` and the first entry's id (`-` for a `null` entry; playable or not) of the first
+/// page of `GET /shows/{id}/episodes` (newest first), as `total:id` - the same from the gate's
+/// one-episode read ([Read::ShowNewest]) and from the full read's first page. `None` for an answer
+/// with no entry or no paging object: no gate, the next check reads in full.
+pub fn show_mark(body: &[u8]) -> Option<String> {
+    let value = object(body)?;
+    let first = value.get("items")?.as_array()?.first()?;
+    let id = first.get("id").and_then(Value::as_str).unwrap_or("-");
+    Some(match value.get("total").and_then(Value::as_u64) {
+        Some(total) => format!("{total}:{id}"),
+        None => id.to_string(),
     })
 }
 
@@ -4235,6 +4261,10 @@ pub(crate) mod tests {
             (
                 Read::ShowEpisodes(id, 0),
                 "/v1/shows/0FakePlaylistKveld0001/episodes?limit=50&offset=0&market=from_token",
+            ),
+            (
+                Read::ShowNewest(id),
+                "/v1/shows/0FakePlaylistKveld0001/episodes?limit=1&offset=0&market=from_token",
             ),
             (
                 Read::Episode(id),

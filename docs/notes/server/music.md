@@ -349,11 +349,19 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `spotify_skipped`; a repeat listed once), at most 1000 (`capped`); an album in disc/track order; a show's newest 100
   (`keep_end = 'newest'`); a track or episode one item. **Context mode** (`'context'`): an artist always (top tracks
   are gone in dev mode), and a playlist whose items every reader refuses - no items, the listing's version moving
-  with the mode, the title and the cover URL; the phone plays the context. A context playlist is read again at every
-  check and flips back to list mode as soon as a reader may list it. `SPOTIFY_ARTIST_ALBUMS=1` (an opt-in, off by default; QA
+  with the mode, the title and the cover URL; the phone plays the context. A context playlist's items are tried again
+  at most once a day (2026-10-21; `spotify_items_at` = the last try in context mode; the checks in between read the
+  metadata only, not one 403 per account) - at once for Check now or a Spotify login newer than the try - and it flips
+  back to list mode as soon as a reader may list it. `SPOTIFY_ARTIST_ALBUMS=1` (an opt-in, off by default; QA
   checklist item 18) lists an artist as its newest 20 albums' tracks (pages of 10, at most 500 tracks), with a
-  403/404 falling back to context mode. A playlist's `snapshot_id` gates its items (unchanged and read within 24 h:
-  one request; Check now ignores it); `interval(link, ..)`: an album, track, episode or artist daily, a playlist or
+  403/404 falling back to context mode. A playlist's `snapshot_id` gates its items: unchanged = one request and the
+  items are **never** read again (2026-10-21, the user: the snapshot moves with any change to the list); only a moved
+  snapshot or Check now reads them. Knowingly given up: a track's availability, relinking or metadata changing without
+  a snapshot change stays unseen until then (Check now covers it; the phone and the speaker skip an unplayable track
+  anyway). A show's gate (2026-10-21): after the metadata, `GET /shows/{id}/episodes?limit=1` (`Read::ShowNewest`);
+  its mark `total:newest id` (`spotify::show_mark`, stored in `spotify_snapshot`, the same from the full read's first
+  page) unchanged = done (two requests, not the 2-3 of the full read); the same trade-off for an older episode changed
+  without the count or the newest moving. Check now ignores both gates; `interval(link, ..)`: an album, track, episode or artist daily, a playlist or
   show at the setting. Without an app `spotify_off`, without a usable account `no_account`/`reauthorize`, inside the
   quota pause `quota` - no request; the last good list stays. A new login or app save makes the entries that failed
   for those reasons due at once. `restamp_versions` takes Spotify; `flag_reports` skips it. Art: a playlist's and a

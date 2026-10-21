@@ -1862,22 +1862,23 @@ pub(in crate::tests) mod listing {
         assert_eq!(row.spotify_items_at, Some(stamp(t0())), "not read again");
         assert_eq!(row.listed_at, Some(stamp(t0() + TimeDelta::hours(6))));
 
-        // A day after the items were read: read again.
-        app.fetch.clear_calls();
-        let report = check(&app, id, t0() + TimeDelta::hours(25)).await;
-        assert_eq!(report.requests, 2);
-        assert_eq!(calls_to(&app, &items_url), 1);
-        assert_eq!(
-            listing(&app, id).await.spotify_items_at,
-            Some(stamp(t0() + TimeDelta::hours(25)))
-        );
+        // A day, a week, a month later: an unchanged snapshot never reads the items again
+        // (2026-10-21, the user: the snapshot moves with any change to the list).
+        for later in [25, 24 * 8, 24 * 31] {
+            app.fetch.clear_calls();
+            let report = check(&app, id, t0() + TimeDelta::hours(later)).await;
+            assert_eq!((report.requests, report.error.clone()), (1, None));
+            assert_eq!(calls_to(&app, &items_url), 0);
+        }
+        assert_eq!(listing(&app, id).await.spotify_items_at, Some(stamp(t0())));
 
         // Check now ignores the gate.
-        let now = t0() + TimeDelta::hours(26);
+        let now = t0() + TimeDelta::hours(24 * 31 + 1);
         sweep::request_check(&app.db, id, now).await.unwrap();
         app.fetch.clear_calls();
         check(&app, id, now).await;
         assert_eq!(calls_to(&app, &items_url), 1);
+        assert_eq!(listing(&app, id).await.spotify_items_at, Some(stamp(now)));
 
         // A new snapshot: the items, a new list.
         let mut meta: Value = serde_json::from_slice(&fixture("playlist.json")).unwrap();
@@ -1888,7 +1889,7 @@ pub(in crate::tests) mod listing {
         page["items"].as_array_mut().unwrap().truncate(1);
         app.fetch.answer(&items_url, 200, page.to_string());
         app.fetch.clear_calls();
-        let report = check(&app, id, t0() + TimeDelta::hours(27)).await;
+        let report = check(&app, id, t0() + TimeDelta::hours(24 * 31 + 2)).await;
         assert_eq!(calls_to(&app, &items_url), 1);
         assert!(report.changed);
         assert_eq!(keys(&items(&app, id).await), [TRACK_A]);
@@ -1912,6 +1913,11 @@ pub(in crate::tests) mod listing {
         save_app(&app, LOOPBACK_REDIRECT).await;
         let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
         let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        // Both logged in before the checks (a newer login makes a context playlist try at once).
+        sqlx::query("UPDATE music_spotify_accounts SET authorized_at = '2026-10-08 12:00:00'")
+            .execute(&app.db)
+            .await
+            .unwrap();
         // The kid's refresh comes first (the readers by id), then the parent's.
         app.fetch
             .answer_once(TOKEN_URL, 200, token("FAKE-ACCESS-KID"));
@@ -1945,19 +1951,46 @@ pub(in crate::tests) mod listing {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(doc["version"], context.as_str());
         assert_eq!(doc["items"], json!([]));
-        // Context mode is tried again at every check (no snapshot gate).
+        assert_eq!(row.spotify_items_at, Some(stamp(t0())), "the try");
+        // Context mode tries the items again at most daily (2026-10-21): the checks in between
+        // read the metadata only - not one 403 per account at every sweep.
+        for later in [1, 6, 23] {
+            app.fetch.clear_calls();
+            let report = check(&app, id, t0() + TimeDelta::hours(later)).await;
+            assert_eq!((report.requests, report.error.clone()), (1, None));
+            assert_eq!(calls_to(&app, &meta_url), 1);
+            assert_eq!(calls_to(&app, &items_url), 0);
+        }
+        let row = listing(&app, id).await;
+        assert_eq!(row.version, Some(context.clone()));
+        assert_eq!(row.spotify_mode.as_deref(), Some("context"));
+        assert_eq!(row.spotify_items_at, Some(stamp(t0())));
+        // A day after the try: every reader again.
         app.fetch.clear_calls();
-        check(&app, id, t0() + TimeDelta::hours(1)).await;
+        check(&app, id, t0() + TimeDelta::hours(24)).await;
         assert_eq!(calls_to(&app, &items_url), 2);
         assert_eq!(listing(&app, id).await.version, Some(context.clone()));
+        // Check now tries at once.
+        let now = t0() + TimeDelta::hours(25);
+        sweep::request_check(&app.db, id, now).await.unwrap();
+        app.fetch.clear_calls();
+        check(&app, id, now).await;
+        assert_eq!(calls_to(&app, &items_url), 2);
 
-        // The parent may list it now (the kid still may not): list mode, read by the parent.
+        // The parent may list it now (the kid still may not), and logs in again: a login newer
+        // than the try makes the next check try at once - list mode, read by the parent.
+        sqlx::query("UPDATE music_spotify_accounts SET authorized_at = ? WHERE id = ?")
+            .bind(stamp(t0() + TimeDelta::hours(25) + TimeDelta::minutes(5)))
+            .bind(parent)
+            .execute(&app.db)
+            .await
+            .unwrap();
         app.fetch
             .answer_once(&items_url, 403, fixture("forbidden.json"));
         app.fetch
             .answer(&items_url, 200, fixture("playlist_items.json"));
         app.fetch.clear_calls();
-        let report = check(&app, id, t0() + TimeDelta::hours(2)).await;
+        let report = check(&app, id, t0() + TimeDelta::hours(26)).await;
         assert_eq!(report.error, None);
         assert_eq!(
             bearers(&app, &items_url),
@@ -1973,7 +2006,7 @@ pub(in crate::tests) mod listing {
 
         // The reader is remembered: the next read asks the parent first.
         app.fetch.clear_calls();
-        let now = t0() + TimeDelta::hours(3);
+        let now = t0() + TimeDelta::hours(27);
         sweep::request_check(&app.db, id, now).await.unwrap();
         check(&app, id, now).await;
         assert_eq!(bearers(&app, &meta_url), ["Bearer FAKE-ACCESS-PARENT"]);
@@ -1985,7 +2018,7 @@ pub(in crate::tests) mod listing {
             .unwrap();
         app.fetch.answer(&items_url, 403, fixture("forbidden.json"));
         app.fetch.clear_calls();
-        let now = t0() + TimeDelta::hours(4);
+        let now = t0() + TimeDelta::hours(28);
         sweep::request_check(&app.db, id, now).await.unwrap();
         check(&app, id, now).await;
         assert_eq!(bearers(&app, &items_url), ["Bearer FAKE-ACCESS-KID"]);
@@ -2174,6 +2207,97 @@ pub(in crate::tests) mod listing {
             listing(&app, episode).await.title.as_deref(),
             Some("Episode 3: Trollet")
         );
+    }
+
+    /// The show gate (2026-10-21): after a full read, a check asks for the newest episode only
+    /// (`limit=1`) and stops when it and the count are the same; a new newest episode, a changed
+    /// count or Check now reads the episodes as before.
+    #[tokio::test]
+    async fn a_show_reads_its_episodes_only_when_the_newest_or_the_count_moves() {
+        let app = TestApp::new().await;
+        ready(&app).await;
+        let show = entry(&app, "show", SHOW).await;
+        app.fetch
+            .answer(&url(&app, Read::Show(SHOW)), 200, fixture("show.json"));
+        for size in [640, 300, 64] {
+            let cover = format!("https://i.scdn.co/image/fake-show-{size}");
+            app.fetch.answer(&cover, 200, png(0b1000_0001, 300, 300));
+        }
+        let episodes_url = url(&app, Read::ShowEpisodes(SHOW, 0));
+        let newest_url = url(&app, Read::ShowNewest(SHOW));
+        let full: Value = serde_json::from_slice(&fixture("show_episodes.json")).unwrap();
+        let newest = |page: &Value| {
+            let mut one = page.clone();
+            one["items"].as_array_mut().unwrap().truncate(1);
+            one["limit"] = json!(1);
+            one["next"] = json!("https://api.spotify.com/next");
+            one.to_string()
+        };
+        app.fetch.answer(&episodes_url, 200, full.to_string());
+        app.fetch.answer(&newest_url, 200, newest(&full));
+        assert_eq!(check(&app, show, t0()).await.error, None);
+        assert_eq!(calls_to(&app, &newest_url), 0, "no gate before a full read");
+        let row = listing(&app, show).await;
+        assert_eq!(
+            row.spotify_snapshot.as_deref(),
+            Some("4:5FakeEpisode0000000003")
+        );
+        let version = row.version;
+
+        // Unchanged: the metadata and the one-episode read, nothing else.
+        for later in [6, 24 * 8] {
+            app.fetch.clear_calls();
+            let report = check(&app, show, t0() + TimeDelta::hours(later)).await;
+            assert_eq!((report.requests, report.error.clone()), (2, None));
+            assert_eq!(calls_to(&app, &newest_url), 1);
+            assert_eq!(calls_to(&app, &episodes_url), 0);
+            assert!(!report.changed);
+        }
+        assert_eq!(listing(&app, show).await.version, version);
+
+        // Check now reads in full.
+        let now = t0() + TimeDelta::hours(24 * 8 + 1);
+        sweep::request_check(&app.db, show, now).await.unwrap();
+        app.fetch.clear_calls();
+        check(&app, show, now).await;
+        assert_eq!(
+            (calls_to(&app, &newest_url), calls_to(&app, &episodes_url)),
+            (0, 1)
+        );
+
+        // The same newest episode but another count (an old one removed): read in full.
+        let mut fewer = full.clone();
+        fewer["items"].as_array_mut().unwrap().pop();
+        fewer["total"] = json!(3);
+        app.fetch.answer(&episodes_url, 200, fewer.to_string());
+        app.fetch.answer(&newest_url, 200, newest(&fewer));
+        app.fetch.clear_calls();
+        let report = check(&app, show, t0() + TimeDelta::hours(24 * 8 + 2)).await;
+        assert_eq!(
+            (calls_to(&app, &newest_url), calls_to(&app, &episodes_url)),
+            (1, 1)
+        );
+        assert!(report.changed);
+        assert_eq!(keys(&items(&app, show).await), ["5FakeEpisode0000000003"]);
+
+        // A new newest episode with the same count: read in full, the new mark kept.
+        let mut moved = fewer.clone();
+        moved["items"][0]["id"] = json!("5FakeEpisode0000000004");
+        moved["items"][0]["uri"] = json!("spotify:episode:5FakeEpisode0000000004");
+        app.fetch.answer(&episodes_url, 200, moved.to_string());
+        app.fetch.answer(&newest_url, 200, newest(&moved));
+        app.fetch.clear_calls();
+        check(&app, show, t0() + TimeDelta::hours(24 * 8 + 3)).await;
+        assert_eq!(calls_to(&app, &episodes_url), 1);
+        assert_eq!(keys(&items(&app, show).await), ["5FakeEpisode0000000004"]);
+        assert_eq!(
+            listing(&app, show).await.spotify_snapshot.as_deref(),
+            Some("3:5FakeEpisode0000000004")
+        );
+        // And unchanged from there: the gate holds again.
+        app.fetch.clear_calls();
+        check(&app, show, t0() + TimeDelta::hours(24 * 8 + 4)).await;
+        assert_eq!(calls_to(&app, &episodes_url), 0);
     }
 
     fn synthetic_track(n: usize) -> Value {
