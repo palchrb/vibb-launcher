@@ -565,6 +565,16 @@ findings, merge to `main`, full suite once.
   reports the device as never owned; `Disable-Android-AppRestrictions.patch` drops Chrome's managed-config provider
   behind a flag that defaults off (a kid can't be held to it either). With fix (2) blocking doh.opendns.com, Cromite
   resolves nothing until its Secure DNS is set Off by hand; a custom template by IP literal still bypasses names.
+- **Storytel login to the phone (server review M3, the user's choice pending):** proposed - the password never leaves
+  the server; the phone asks for a JWT through the launcher bridge when it downloads/streams/syncs (like Spotify's token
+  courier), the server shares its cached JWT (one Storytel login an hour at most, only in hours with use). Checked
+  debba/storytel-player (2ca1e2d, 2026-10-18): its password mode is ours (re-login on expiry, the JWT's own exp-iat,
+  30 min fallback; one retry on a 401); its SSO mode (Google/Apple) scrapes Storytel's web Firebase refresh token from
+  the site's IndexedDB in an Electron window and refreshes ID tokens at `securetoken.googleapis.com` with Storytel's web
+  API key (Bearer on api.storytel.net, the `storytel_session` cookie as the *.action token). Long list: a refresh-token
+  login instead of a stored password - needs a browser login to capture it (fragile, Storytel's web internals), and a
+  check that vibb's endpoints (bookshelf, asset mint, bookmarks) take the Firebase ID token. Small, any time: take the
+  JWT's lifetime from its own exp-iat instead of a fixed hour.
 - **The server's exposure (the user, 2026-10-21):** a public HTTPS endpoint for the phones, the PWA over the tailnet
   only. So the phone-intake budgets (server L1/L3/L4) and launcher S-M1 (refuse a non-https server URL) matter.
 - **Stuck in Recents after an unlock** (the user's emulator, 2026-10-21 ~16:55, not reproduced, no lock log kept): the
