@@ -547,6 +547,12 @@ findings, merge to `main`, full suite once.
   Retest of Back on a WhatsApp video call: nothing happened, the call and camera ran on, top stayed `VoipActivityV2`
   (t60) - Back is a no-op there; the earlier frozen frame was a PiP over the lock. (The design-57 revision for
   qa-57-revision-check landed in commit 9e88b6ab, whose message names only the PLAN line.)
+  Step-1 items measured the same evening: (3) Element X, unlocked, kiosk off, call screen up: a plain
+  `am start -c HOME -p me.vibb.launcher` and the `--activity-no-user-action` one both just bring our Home to the front
+  ("its current task has been brought to the front") - no PiP either way, the call lives on in the background (its
+  notices still posted, audio ok); so the flag's effect on Element's PiP is unmeasured but no PiP happens on our
+  start. (1) WhatsApp *voice* call over the lock, Back: our lock comes up, the call goes on, and today's reopen brings
+  the call screen back - no chats.
   **The user's rule (2026-10-21): D is the condition.** Another app's call screen comes over the lock only while
   usage access is granted, and then only that call screen (the activity that came up for the call; any other
   activity resumed -> the lock again, with `FLAG_ACTIVITY_NO_USER_ACTION`, "Tilbake til samtalen"). Without usage
