@@ -1286,6 +1286,18 @@ findings, merge to `main`, full suite once.
 - The server seeds the launcher's catalog row itself (merged 1b0a888d; goes out with the next
   `server-v*`).
 
+- **The lock's timer tile stays as an empty "Timer" card after the timer ended and was dismissed** (the user's
+  jellystar2, 2026-10-21, screenshots): `ClockReader.read` (launcher `badges/ClockReader.kt`) keeps any notification on
+  the clock's timer channels, a group summary or an update with no title and no text included, and the tile then
+  shows its header only. Likely the clock app's group summary (ClockReader is the one reader that doesn't skip
+  `FLAG_GROUP_SUMMARY`) or a blank ended-timer update; to confirm, `adb shell dumpsys notification --noredact` on the
+  phone while the empty card shows. Fix: skip group summaries and blank tiles (neither a time nor a title/text) in the
+  reader, with a ClockTile/ClockReader test.
+- **The lock's flashlight sits tight under "Lås opp"** (the user, 2026-10-21: "litt for tett på lås-opp knappen? Ser
+  grafisk litt snålt ut"): the Nødsamtale/torch row is 2 dp under the 56 dp button (`view_lock_glance.xml`); proposed
+  12-16 dp of air and a quieter torch (the music controls' dark round ground, peach only while lit), keeping
+  `lockGlanceFit`'s row height.
+
 ### To decide (the user)
 
 - **The app's DIDL differs from vibb's** (found 2026-10-21 against `pi/daemon.py` `_sonos_body`, branch pipewire): for a
