@@ -56,6 +56,25 @@ async fn events(app: &TestApp, kind: &str) -> Vec<(String, Option<String>)> {
         .collect()
 }
 
+/// Lock Screen & PINs' select for one app (2026-10-21): `off`, `name` or `text` (or anything, for
+/// the refusals).
+async fn show(
+    app: &TestApp,
+    cookie: Option<&str>,
+    id: i64,
+    package: &str,
+    value: &str,
+) -> super::TestResponse {
+    app.request_form(
+        Method::POST,
+        &format!("/devices/{id}/lock-screen/apps"),
+        cookie,
+        &[("package_name", package), ("show", value)],
+    )
+    .await
+}
+
+/// On (Name only) or Off.
 async fn tick(
     app: &TestApp,
     cookie: Option<&str>,
@@ -63,20 +82,10 @@ async fn tick(
     package: &str,
     on: bool,
 ) -> super::TestResponse {
-    let mut fields = vec![("package_name", package)];
-    if on {
-        fields.push(("on", "on"));
-    }
-    app.request_form(
-        Method::POST,
-        &format!("/devices/{id}/lock-screen/apps"),
-        cookie,
-        &fields,
-    )
-    .await
+    show(app, cookie, id, package, if on { "name" } else { "off" }).await
 }
 
-/// An app's text switch (design 51).
+/// Full text or Name only (design 51's text switch).
 async fn switch(
     app: &TestApp,
     cookie: Option<&str>,
@@ -84,17 +93,7 @@ async fn switch(
     package: &str,
     on: bool,
 ) -> super::TestResponse {
-    let mut fields = vec![("package_name", package)];
-    if on {
-        fields.push(("show_text", "on"));
-    }
-    app.request_form(
-        Method::POST,
-        &format!("/devices/{id}/lock-screen/apps/text"),
-        cookie,
-        &fields,
-    )
-    .await
+    show(app, cookie, id, package, if on { "text" } else { "name" }).await
 }
 
 /// A status report with `installed` apps and `extra` fields.
@@ -360,10 +359,9 @@ async fn ticking_and_unticking_an_app_is_idempotent_logged_and_nudges() {
     assert_eq!(ticks(&app, id).await, ["org.thoughtcrime.securesms"]);
     assert_eq!(
         events(&app, "lock_screen_app_changed").await,
+        // One line per change, not per save (2026-10-21).
         [
             "device {id}: org.thoughtcrime.securesms on the lock screen: on",
-            "device {id}: org.thoughtcrime.securesms on the lock screen: on",
-            "device {id}: io.element.android.x on the lock screen: off",
             "device {id}: io.element.android.x on the lock screen: off",
         ]
         .map(|d| (
@@ -408,19 +406,101 @@ async fn an_apps_text_switch_saves_logs_nudges_and_a_retick_resets_it() {
     );
     assert_eq!(
         events(&app, "lock_screen_text_changed").await,
-        ["on", "on", "off", "on"].map(|s| (
+        ["on", "off", "on"].map(|s| (
             format!("device {id}: {signal}'s message text on the lock screen: {s}"),
             Some("parent".to_string())
         ))
     );
 
-    // Untick and tick again: the sender only.
+    // Off and Name only again: no text.
     tick(&app, Some(&cookie), id, signal, false).await;
     tick(&app, Some(&cookie), id, signal, true).await;
     assert_eq!(
         texts(&app, id).await,
         [text_of(ELEMENT_X, false), text_of(signal, false)]
     );
+}
+
+/// 2026-10-21: every move of the select - Off, Name only, Full text in each order - writes exactly
+/// that (no row, a row without text, a row with text), lands on the app's row, nudges the phone
+/// and logs what changed; the policy says the same.
+#[tokio::test]
+async fn each_move_of_the_select_is_stored_as_the_lock_shows_it() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let signal = "org.thoughtcrime.securesms";
+    let mut nudges = app.state.command_notify.subscribe();
+    let stored = |value: &str| match value {
+        "off" => None,
+        "name" => Some(false),
+        _ => Some(true),
+    };
+    let mut before = "off";
+    for value in ["text", "off", "name", "text", "name", "off", "text"] {
+        let res = show(&app, Some(&cookie), id, signal, value).await;
+        assert_eq!(res.status, StatusCode::SEE_OTHER, "{value}: {}", res.text());
+        super::assert_redirect(
+            &res,
+            &lock_page(id),
+            Some(&format!("lock-screen-app-{signal}")),
+        );
+        assert_eq!(nudges.try_recv().ok(), Some(id));
+        let row = texts(&app, id)
+            .await
+            .into_iter()
+            .find(|(p, _)| p == signal)
+            .map(|(_, text)| text);
+        assert_eq!(row, stored(value), "{before} -> {value}");
+        let apps = policy(&app, &token).await["lock_glance"]["apps"].clone();
+        let listed = apps
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["package"] == signal)
+            .map(|a| a["show_text"].as_bool().unwrap());
+        assert_eq!(listed, stored(value), "the policy: {before} -> {value}");
+        before = value;
+    }
+    let on_off = |lines: Vec<(String, Option<String>)>| -> Vec<String> {
+        lines
+            .into_iter()
+            .map(|(d, _)| d.rsplit(": ").next().unwrap().to_string())
+            .collect()
+    };
+    // off->text on, text->off off, off->name on, name->off off, off->text on.
+    assert_eq!(
+        on_off(events(&app, "lock_screen_app_changed").await),
+        ["on", "off", "on", "off", "on"]
+    );
+    // off->text on, name->text on, text->name off, off->text on.
+    assert_eq!(
+        on_off(events(&app, "lock_screen_text_changed").await),
+        ["on", "on", "off", "on"]
+    );
+    // A row listed only because it is on (qa-browser-fixes-code L1; qa-srv-sweep-resume-code
+    // L6c): Name only or Full text keep its own row, Off lands on the group.
+    for (value, landing) in [
+        ("text", "lock-screen-app-com.old.chat"),
+        ("name", "lock-screen-app-com.old.chat"),
+        ("off", "notifications"),
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/lock-screen/apps"),
+                Some(&cookie),
+                &[
+                    ("package_name", "com.old.chat"),
+                    ("unlisted", "1"),
+                    ("show", value),
+                ],
+            )
+            .await;
+        super::assert_redirect(&res, &lock_page(id), Some(landing));
+    }
+    // Element X, untouched.
+    assert!(texts(&app, id).await.contains(&text_of(ELEMENT_X, false)));
 }
 
 #[tokio::test]
@@ -455,13 +535,50 @@ async fn refused_saves_write_nothing() {
             .status,
         StatusCode::NOT_FOUND
     );
-    // 404: the text of an app that isn't ticked (a stale page) - no row is made.
-    assert_eq!(
-        switch(&app, Some(&cookie), id, "com.a.chat", true)
-            .await
-            .status,
-        StatusCode::NOT_FOUND
-    );
+    // 400: a value the select doesn't have, or none.
+    for bad in ["", "on", "Text", "all", "1"] {
+        assert_eq!(
+            show(&app, Some(&cookie), id, ELEMENT_X, bad).await.status,
+            StatusCode::BAD_REQUEST,
+            "{bad}"
+        );
+    }
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/lock-screen/apps"),
+            Some(&cookie),
+            &[("package_name", ELEMENT_X)],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST, "no value");
+    // A Lock page from before the select (qa-srv-sweep-resume-code L6b): its switch posts `on`,
+    // its text switch the removed route - both say to reload, nothing written.
+    for (route, fields) in [
+        (
+            "lock-screen/apps",
+            vec![("package_name", ELEMENT_X), ("on", "on")],
+        ),
+        (
+            "lock-screen/apps/text",
+            vec![("package_name", ELEMENT_X), ("show_text", "on")],
+        ),
+    ] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &format!("/devices/{id}/{route}"),
+                Some(&cookie),
+                &fields,
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{route}");
+        assert_eq!(
+            res.text(),
+            "This page is out of date - reload it.",
+            "{route}"
+        );
+    }
     // 400: the text of something that isn't a package.
     assert_eq!(
         switch(&app, Some(&cookie), id, "not a package", true)
@@ -530,25 +647,22 @@ fn subsection(page: &str) -> &str {
     &page[start..end]
 }
 
-/// The text form of `package` (design 51), if it has one.
-fn text_form_of(section: &str, id: i64, package: &str) -> Option<String> {
-    let action =
-        format!(r#"action="/devices/{id}/lock-screen/apps/text#lock-screen-app-{package}""#);
-    let at = section.find(&action)?;
-    let rest = &section[section[..at].rfind("<form").unwrap()..];
-    Some(rest[..rest.find("</form>").unwrap()].to_string())
-}
-
-/// The tick form of `package` (the first form in its cell): its switch and its note, if it is
-/// listed.
+/// The form of `package` (its cell): its select and its note, if it is listed.
 fn form_of(section: &str, package: &str) -> Option<String> {
     let id = section.find(&format!(r#"id="lock-screen-app-{package}""#))?;
-    let rest = &section[id + section[id..].find("<form").unwrap()..];
+    let start = section[..id].rfind("<form").unwrap();
+    let rest = &section[start..];
     Some(rest[..rest.find("</form>").unwrap()].to_string())
 }
 
-fn switch_on(form: &str) -> bool {
-    super::input_checked(form, "on", "on").expect("a switch")
+/// The select's chosen value: `off`, `name` or `text` - exactly one is selected.
+fn shown(form: &str) -> &'static str {
+    let chosen: Vec<&'static str> = ["off", "name", "text"]
+        .into_iter()
+        .filter(|v| form.contains(&format!(r#"<option value="{v}" selected>"#)))
+        .collect();
+    assert_eq!(chosen.len(), 1, "{form}");
+    chosen[0]
 }
 
 #[tokio::test]
@@ -598,46 +712,59 @@ async fn the_page_lists_the_allowed_apps_with_their_ticks() {
     let section = subsection(&page);
     assert!(section.contains("Nothing can be answered or dismissed there"));
     assert!(section.contains("login codes show too"));
-    assert!(section.contains("Missed calls always show."));
-    assert!(section.contains("Anyone holding the phone can read the message text."));
-    // No global switch any more (design 51).
-    assert!(!section.contains("lock-screen-text"));
-
-    let element = form_of(section, ELEMENT_X).expect("Element X listed");
+    // The footer says what Name only is for a chat and for any other app (the launcher's
+    // `glanceLevel`), and what Full text costs.
     assert!(
-        switch_on(&element) && element.contains("Element X"),
-        "{element}"
+        section.contains(
+            "Name only: the sender's name for chats, otherwise the app's name and how many."
+        ),
+        "{section}"
     );
+    assert!(section.contains("which anyone holding the phone can read"));
+    assert!(section.contains("Missed calls always show."));
+    // No global switch (design 51), no per-app switches (2026-10-21).
+    assert!(!section.contains("lock-screen-text"));
+    assert!(!section.contains("/lock-screen/apps/text"));
+    assert!(!section.contains("Show message text") && !section.contains("Sender's name only"));
+
+    // One row per app: a select labelled by the app's name - Off, Name only, Full text.
+    let element = form_of(section, ELEMENT_X).expect("Element X listed");
+    assert_eq!(shown(&element), "name", "{element}");
     assert!(element.contains(&format!(
         r#"action="/devices/{id}/lock-screen/apps#lock-screen-app-{ELEMENT_X}""#
     )));
-    assert!(element.contains(r#"role="switch""#));
-    assert!(super::autosaves(&element, "on"));
+    assert!(element.contains(&format!(r#"name="package_name" value="{ELEMENT_X}""#)));
+    let label = &element[element.find("<label").unwrap()..element.find("</label>").unwrap()];
+    assert!(label.contains("Element X") && label.contains(r#"<select class="pick" name="show""#));
+    for option in [
+        r#"value="off""#,
+        r#">Off</option>"#,
+        r#">Name only</option>"#,
+        r#">Full text</option>"#,
+    ] {
+        assert!(element.contains(option), "{option}");
+    }
+    assert!(super::autosaves(&element, "show"));
+    assert!(element.contains("<noscript><button type=\"submit\""));
+    assert!(!element.contains(r#"role="switch""#));
     let signal = form_of(section, "org.thoughtcrime.securesms").expect("Signal listed");
-    assert!(!switch_on(&signal) && signal.contains("Signal"), "{signal}");
-    // The text switch only on a ticked row, off and auto-saving, with its package.
-    let text = text_form_of(section, id, ELEMENT_X).expect("Element X's text switch");
-    assert_eq!(super::input_checked(&text, "show_text", "on"), Some(false));
-    assert!(super::autosaves(&text, "show_text"));
-    assert!(text.contains(&format!(r#"name="package_name" value="{ELEMENT_X}""#)));
-    assert!(text.contains("Sender's name only"), "{text}");
-    assert!(text_form_of(section, id, "org.thoughtcrime.securesms").is_none());
-    assert!(text_form_of(section, id, "com.old.chat").is_some());
-    // Not allowed: not listed - unless ticked, then with its note so it can be removed.
+    assert_eq!(shown(&signal), "off");
+    assert!(signal.contains("Signal"));
+    // Not allowed: not listed - unless on, then with its note so it can be set Off.
     assert!(form_of(section, "com.example.game").is_none());
     assert!(form_of(section, "com.android.vending").is_none());
     let old = form_of(section, "com.old.chat").expect("the ticked, not allowed app");
+    assert_eq!(shown(&old), "name");
     assert!(
-        switch_on(&old) && old.contains("<span class=\"row-sub\">Not allowed</span>"),
+        old.contains("<span class=\"row-sub\">Not allowed</span>"),
         "{old}"
     );
 
-    // The switch on shows on.
+    // Full text shows as Full text.
     switch(&app, Some(&cookie), id, ELEMENT_X, true).await;
     let page = app.get_page(&lock_page(id), &cookie).await.text();
-    let text = text_form_of(subsection(&page), id, ELEMENT_X).unwrap();
-    assert_eq!(super::input_checked(&text, "show_text", "on"), Some(true));
-    assert!(text.contains("Text shown on the lock"), "{text}");
+    let element = form_of(subsection(&page), ELEMENT_X).unwrap();
+    assert_eq!(shown(&element), "text");
 }
 
 #[tokio::test]
@@ -667,10 +794,8 @@ async fn without_an_allowlist_every_reported_app_is_listed() {
     assert!(form_of(section, "me.vibb.launcher").is_none());
     // Element X is ticked by default but not on this phone: still listed, so it can be unticked.
     let element = form_of(section, ELEMENT_X).expect("the default tick");
-    assert!(
-        switch_on(&element) && element.contains("Not on the phone"),
-        "{element}"
-    );
+    assert_eq!(shown(&element), "name");
+    assert!(element.contains("Not on the phone"), "{element}");
     // Sorted by label: Game before Signal.
     assert!(
         section.find("lock-screen-app-com.example.game").unwrap()
@@ -804,11 +929,12 @@ async fn unticking_a_row_listed_only_for_its_tick_lands_on_the_group() {
         action,
         format!("/devices/{id}/lock-screen/apps#notifications")
     );
-    let fields: Vec<(&str, &str)> = hidden
+    let mut fields: Vec<(&str, &str)> = hidden
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
     assert!(fields.contains(&("unlisted", "1")));
+    fields.push(("show", "off"));
     let res = app
         .request_form(Method::POST, &action, Some(&cookie), &fields)
         .await;
@@ -861,7 +987,7 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
         "{cell}"
     );
     assert!(
-        cell.contains("For the apps ticked below and missed calls"),
+        cell.contains("For the apps on the lock below and missed calls"),
         "{cell}"
     );
     assert!(!cell.contains(" checked"), "off by default: {cell}");

@@ -487,6 +487,53 @@ pub fn no_store_path(path: &str) -> bool {
     )
 }
 
+/// A page that is a POST's answer - rendered by the POST itself, not reached by its redirect: the
+/// setup code, a refused form shown again, the sign-in steps' errors, a music import's preview -
+/// gets `<body data-post-answer`, so `static/reconnect.js` never reloads it in place after the PWA
+/// was away: a reload would resend the form (qa-srv-sweep-resume-code M1). Every HTML answer to a
+/// POST outside the device API, whatever its status; the body is the server's own page, read
+/// whole. One rule here instead of a flag in each of the ~45 handlers that render on a POST.
+pub async fn mark_post_answer(request: Request, next: Next) -> Response {
+    let post =
+        request.method() == Method::POST && !request.uri().path().starts_with("/api/devices/");
+    let response = next.run(request).await;
+    let html = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/html"));
+    if !post || !html {
+        return response;
+    }
+    let (mut parts, body) = response.into_parts();
+    let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            tracing::error!(%err, "couldn't read a POST's page to mark it");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    parts.headers.remove(header::CONTENT_LENGTH);
+    Response::from_parts(parts, axum::body::Body::from(mark_body(&bytes)))
+}
+
+/// `html` with ` data-post-answer` after its first `<body` (unchanged without one).
+pub fn mark_body(html: &[u8]) -> Vec<u8> {
+    const BODY: &[u8] = b"<body";
+    const MARK: &[u8] = b" data-post-answer";
+    match html.windows(BODY.len()).position(|w| w == BODY) {
+        Some(at) => {
+            let split = at + BODY.len();
+            let mut out = Vec::with_capacity(html.len() + MARK.len());
+            out.extend_from_slice(&html[..split]);
+            out.extend_from_slice(MARK);
+            out.extend_from_slice(&html[split..]);
+            out
+        }
+        None => html.to_vec(),
+    }
+}
+
 /// Headers on every admin response (§3.2.4); the device API sets its own (`limits`).
 pub async fn admin_headers(request: Request, next: Next) -> Response {
     let path = request.uri().path().to_string();

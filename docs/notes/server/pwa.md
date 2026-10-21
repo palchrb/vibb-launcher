@@ -208,10 +208,32 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Forms** (POST routes unchanged): the Child PIN and Parent PIN rows are `<details class="edit">` with the field
   and a Save button (a PIN is typed, not toggled); Remove Child PIN… is a `<details>` confirm (M6) posting
   `clear_kid_pin`; the Parent PIN's "Remove it instead" stays a checkbox in its form. "Turn off after" and
-  "Background" are inline `select.pick`s, "Show message text" and each app a switch - all `data-autosave` with a
-  `<noscript>` Save.
+  "Background" are inline `select.pick`s, each app a `select.pick` too since 2026-10-21 (below) - all
+  `data-autosave` with a `<noscript>` Save.
+- **One select per app on the lock** (2026-10-21, the user's pick of the mockup's variant B): "Notifications on the
+  lock screen" is one row per app (`form.cell#lock-screen-app-<package>`), the app's name (and its "Not allowed" /
+  "Not on the phone" note) as the label of a native `<select name="show">` (the phone's own picker): **Off** (not on
+  the lock), **Name only** (on, text off), **Full text** (on, text on). It replaces the tick switch and design 51's
+  "Show message text" switch under it, whose sub-line "Sender's name only" was wrong for anything but a chat: the
+  launcher's `GlanceRows.glanceLevel` shows a MessagingStyle notification's sender, any other app's name and count,
+  and the text for any style with the text on. The footer says so: "Name only: the sender's name for chats,
+  otherwise the app's name and how many. Full text: the message too, which anyone holding the phone can read. Missed
+  calls always show." One handler, `lock_glance::save_app` (`POST /devices/{id}/lock-screen/apps`, `package_name` +
+  `show` = `off`/`name`/`text`; `/lock-screen/apps/text` is gone): one transaction - no row, a row with
+  `show_text = 0`, or with `show_text = 1` - back to the app's row (Off on a row listed only because it was on: to
+  `#notifications`, qa-browser-fixes-code L1), the phone nudged, a security-log line per change only
+  (`lock_screen_app_changed` on/off, `lock_screen_text_changed` for the text; a save that changes nothing logs
+  nothing). 400 for a bad package or a `show` that isn't one of the three; a body without `show` (a Lock page loaded
+  before the select posts `on`) and a post to the removed `/lock-screen/apps/text` answer 400 "This page is out of
+  date - reload it." (`lock_glance::stale_page`, nothing written; the route can go a release later). The write is one
+  `BEGIN IMMEDIATE` transaction (two saves racing wait for each other). 404 unknown phone, 500 on a
+  DB error - nothing written. **The stored data and the policy are unchanged** (`device_lock_glance_apps` row or
+  none, `show_text`; `policy_json_keys_snapshot` untouched): no launcher or contract change. Tests:
+  `lock_glance::each_move_of_the_select_is_stored_as_the_lock_shows_it` (every transition, the policy, the log),
+  `refused_saves_write_nothing` (the values), `the_page_lists_the_allowed_apps_with_their_ticks` (the select, its
+  label, the footer), `device_pages::lock_forms_return_to_the_page`, `lock_auto_saves_have_a_save_without_js`.
 - **Wake the screen for a notification** (launcher round 7 §3, `docs/design/r7-launcher-small-items.md`): its own
-  cell `#lock-wake` in the Lock screen group under Background - a switch (sub-line "For the apps ticked below and
+  cell `#lock-wake` in the Lock screen group under Background - a switch (sub-line "For the apps on the lock below and
   missed calls", `data-autosave`, `<noscript>` Save) posting `POST /devices/{id}/lock-wake`
   (`lock_glance::save_wake`: `device_policy.lock_wake_on_notification`, migration 0084, off by default; 404 for an
   unknown phone), back to `#lock-wake` (`check_forms`), the phone nudged, a `lock_wake_changed` security-log line when the value changed
@@ -637,3 +659,47 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - Tests: `tests::provisioning` (the add flow's table from the rendered forms, a connected phone, the name and Wi-Fi
   refusals, "Server setup needed", 404s), `admin_auth::the_sign_in_pages_use_the_new_components`,
   `shell::the_tab_pages_open_on_their_large_title`, repointed `enrollment.rs`, `devices_list.rs`.
+
+## Connecting: a tap is never "nothing" after being away (2026-10-21, `static/reconnect.js`)
+
+- **Why**: after the installed PWA was in the background a while, a tapped tab sometimes did nothing until the app
+  was restarted - the network to the server (often over Tailscale) not up yet, and an installed PWA shows no loading
+  indicator of its own (the user confirmed: after waiting it reconnected; "En subtil reconnecting hadde vært bra!").
+  No service-worker fetch handler was added (the network is never faked).
+- **The script** (ES5, deferred, from `partials/head.html` on every page, `?v=2`): a same-origin link tap (the tab bar,
+  any link; not `download`, a `target` other than `_self`, a modified or handled click, a `#fragment` on this page, or
+  `data-no-wait`) marks the link (`.is-pending`, `aria-busy`) and shows a thin bar at the top (`.net-progress`) at once.
+  Not left after 3 s: a small calm chip "Connecting…" (`.net-chip`, `role=status`; no alarm colour, no modal, the page
+  usable under it), a ping (`GET /ping`, 4 s timeout) then and every 5 s, on `online` and when the page is visible
+  again; once the server answers (any status below 500 - a signed-out session gets the login's redirect, which counts)
+  the same navigation starts again by itself (`location.assign`) - at once after a failed ping (the network came
+  back), else once, 12 s into a navigation that still hasn't arrived, and then it is left to come (qa-srv-sweep-resume-code
+  L2: a slow page - `/updates` waits for GitHub - is never restarted for good). "Try again" shows in the chip only
+  after 20 s. A save started during a wait (a `submit`, a `data-autosave` change) ends it, so no restart cancels the
+  save's POST (L3). A `pagehide` stops the wait's timers; coming back re-arms them (the 5 s pings, "Try again" when
+  due; L5). The chip's words are set when it shows (empty while hidden), so a screen reader announces them (L9). Visible again after more than 10 minutes hidden (or back from the back-forward cache after that long): a ping
+  (the chip only if it takes over 3 s); answered, a reload in place through the same machinery, keeping the place -
+  scroll-restore.js's form record in sessionStorage and `window.name` (`path`, `y` of `<main>` in the shell, and over
+  a `#fragment` its element's screen top in `tops`), as auto-reload.js leaves it; never the top. No reload once a
+  save started (a `submit`, a `data-autosave` change), while a `<details>` is open, when a field differs from what
+  the page came with (typed text, a ticked box, a picked option, a chosen file; L4), or on a **POST's own answer**
+  (qa-srv-sweep-resume-code M1) - the page then stays as it is. `admin_auth::mark_post_answer` (a layer on the admin
+  router) puts `data-post-answer` on the `<body>` of every HTML answer to a POST outside the device API, whatever its
+  status (the setup code, a refused form shown again, the sign-in steps' errors, a music import's preview - about 45
+  handlers render on a POST; one rule instead of a flag in each); the script never reloads such a page. As a belt,
+  every reload first makes the entry a GET of the address (`history.replaceState(history.state, "", url)`, Chromium
+  checked by the QA: the reload is then a GET), so a reload can never resend a form; that URL drops a shown
+  `notice=` (it would show again).
+  `pageshow` from the back-forward cache clears everything (a first `pageshow` doesn't, so a tap during the load
+  keeps its bar).
+- **The CSS** (`style.css?v=39`): the bar and the chip are `position: absolute`, never fixed (design 43's rule, pinned
+  by `the_app_shell_scrolls_main_not_the_document`); the bar's sweep is still under reduced motion.
+- **`GET /ping`** (`main::ping`, behind `require_full_auth`): an empty 204, `Cache-Control: no-store`.
+- The backup download link carries `download` (it is an attachment: the script must not wait for a page that won't
+  come). A new link to a file needs `download` or `data-no-wait`.
+- Tests: `jstest/reconnect.test.js` (which clicks count, the timeline with a fake clock and fetch, the restart rule,
+  5xx = no answer, Try again at 20 s, `pageshow`, the return reload and its place record, the save/details rules, ES5),
+  `shell::every_page_carries_the_connecting_script_and_its_ping` (also: the phone listener has no `/ping`),
+  `shell::a_posts_own_page_is_marked_so_it_is_never_reloaded`; the QA's findings each have a jstest (M1, L2-L5, L9). A headless Chromium check against a never-answering
+  page showed the bar at once, the chip at 3 s, "Try again" at 20 s and a restart about every 15 s while the server
+  answered. Owed: the iPhone (and Android) PWA after being away.

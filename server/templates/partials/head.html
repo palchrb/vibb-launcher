@@ -2,7 +2,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>{{ title }} · Vibb Phone</title>
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/static/style.css?v=38">
+<link rel="stylesheet" href="/static/style.css?v=39">
 
 <link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" href="/static/icons/icon-192.png">
@@ -21,3 +21,7 @@
      form.submit(). Not deferred either: it only listens on the document, so a switch tapped while a
      long page is still loading saves too (qa-31-s1-code L1). -->
 <script src="/static/autosave.js?v=2"></script>
+<!-- A tap is never "nothing" after being away (2026-10-21): the tapped link marked and a thin bar at
+     once, "Connecting…" after 3 s and the same navigation again by itself once the server answers;
+     after 10 minutes hidden a ping and a reload in place that keeps the scroll place. -->
+<script src="/static/reconnect.js?v=2" defer></script>

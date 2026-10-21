@@ -691,6 +691,16 @@ async fn healthz(axum::extract::State(state): axum::extract::State<AppState>) ->
     }
 }
 
+/// `GET /ping` (a session): an empty 204, never cached - `static/reconnect.js` asks it after the
+/// PWA was away or while a tapped page doesn't come, to know the server is reachable again.
+async fn ping() -> Response {
+    (
+        StatusCode::NO_CONTENT,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+    )
+        .into_response()
+}
+
 /// Unknown paths: an empty 404 (both listeners).
 async fn not_found() -> StatusCode {
     StatusCode::NOT_FOUND
@@ -771,6 +781,9 @@ pub fn build_admin_router(
 
     let admin_routes = Router::new()
         .route("/", get(|| async { Redirect::to("/devices") }))
+        // static/reconnect.js's ping (2026-10-21): is the server there, and is the session? An
+        // empty 204 behind the session check (signed out: the login's redirect).
+        .route("/ping", get(ping))
         .route("/devices", get(handlers::devices::list_devices))
         .route("/schedules", get(handlers::schedules::show_schedules))
         .route(
@@ -1049,14 +1062,16 @@ pub fn build_admin_router(
             "/devices/{id}/apps/display",
             post(handlers::devices::save_app_display),
         )
-        // The lock's glance page (design 25): the apps it shows and, per app, the text (design 51).
+        // The lock's glance page (design 25): the apps it shows and, per app, the text (design 51)
+        // - one three-way select per app since 2026-10-21.
         .route(
             "/devices/{id}/lock-screen/apps",
             post(handlers::lock_glance::save_app),
         )
+        // A Lock page from before the select still posts here: "reload it" (QA L6b).
         .route(
             "/devices/{id}/lock-screen/apps/text",
-            post(handlers::lock_glance::save_app_text),
+            post(handlers::lock_glance::stale_page),
         )
         // Launcher round 7 §3: "Wake the screen for a notification".
         .route(
@@ -1393,6 +1408,8 @@ pub fn build_admin_router(
         .layer(session_layer)
         // Before the session is read: a cross-site form never acts (design 22 §3.2.5).
         .layer(from_fn_with_state(state.clone(), admin_auth::csrf_guard))
+        // A POST's own page is marked so reconnect.js never reloads it (qa-srv-sweep-resume M1).
+        .layer(axum::middleware::from_fn(admin_auth::mark_post_answer))
         .layer(axum::middleware::from_fn(admin_auth::admin_headers))
         // Outermost: a refused request never reaches the session store.
         .layer(from_fn_with_state(state, gate::admin_gate))

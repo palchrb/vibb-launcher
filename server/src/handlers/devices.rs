@@ -426,10 +426,13 @@ async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, 
     // Kiosk mode on, with the full always-on feature set, for every device - see
     // `update_policy` and this repo's CLAUDE.md (`kiosk_desired` is no longer admin-configurable).
     // Kid Settings (the Quick Controls screen) starts with Wi-Fi, Bluetooth and brightness on;
-    // devices created before 2026-10-06 keep the column default (none).
+    // devices created before 2026-10-06 keep the column default (none). The notification filter
+    // (Advanced › Updates & notifications) starts on (2026-10-21, the user: "Varselfilter kan
+    // gjerne være på som standard"); phones created before keep what they have - the column
+    // default (0, migration 0036) is not changed, so no migration.
     sqlx::query(
         "INSERT INTO device_policy (device_id, kiosk_desired, lock_task_features, \
-         quick_controls_mask) VALUES (?, 1, ?, ?)",
+         quick_controls_mask, notification_auto_cancel) VALUES (?, 1, ?, ?, 1)",
     )
     .bind(id)
     .bind(DEFAULT_LOCK_TASK_FEATURES)

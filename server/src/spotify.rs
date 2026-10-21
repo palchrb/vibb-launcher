@@ -1981,6 +1981,9 @@ pub enum Read<'a> {
     Show(&'a str),
     /// `GET /shows/{id}/episodes?limit=50&offset=N&market=from_token` (newest first).
     ShowEpisodes(&'a str, usize),
+    /// `GET /shows/{id}/episodes?limit=1&offset=0&market=from_token`: the newest episode and the
+    /// paging object's `total` only - the sweep's show gate (`music_sweep::show_mark`).
+    ShowNewest(&'a str),
     /// `GET /episodes/{id}?market=from_token`.
     Episode(&'a str),
 }
@@ -2042,6 +2045,14 @@ impl Accounts {
                 vec![
                     ("limit", limit),
                     ("offset", offset.to_string()),
+                    ("market", "from_token".to_string()),
+                ],
+            ),
+            Read::ShowNewest(id) => (
+                format!("/v1/shows/{id}/episodes"),
+                vec![
+                    ("limit", "1".to_string()),
+                    ("offset", "0".to_string()),
                     ("market", "from_token".to_string()),
                 ],
             ),
@@ -2548,6 +2559,20 @@ pub fn parse_show_episodes(body: &[u8]) -> Option<Page> {
     paging(&object(body)?, |item| {
         item.is_object().then(|| episode(item)).flatten()
     })
+}
+
+/// A show's gate mark (the sweep stores it as the listing's `spotify_snapshot`): the paging
+/// object's `total` and the first entry's id (`-` for a `null` entry; playable or not) of the first
+/// page of `GET /shows/{id}/episodes` (newest first), as `total:id` - the same from the gate's
+/// one-episode read ([Read::ShowNewest]) and from the full read's first page. `None` - no gate, the
+/// next check reads in full - for an answer with no entry, no paging object or no `total` (without
+/// it a `null` newest entry would stay `-` as episodes come and go, qa-srv-sweep-resume-code L10).
+pub fn show_mark(body: &[u8]) -> Option<String> {
+    let value = object(body)?;
+    let first = value.get("items")?.as_array()?.first()?;
+    let id = first.get("id").and_then(Value::as_str).unwrap_or("-");
+    let total = value.get("total").and_then(Value::as_u64)?;
+    Some(format!("{total}:{id}"))
 }
 
 /// `GET /episodes/{id}`: the episode as the entry's one item; its picture, else its show's.
@@ -4237,12 +4262,36 @@ pub(crate) mod tests {
                 "/v1/shows/0FakePlaylistKveld0001/episodes?limit=50&offset=0&market=from_token",
             ),
             (
+                Read::ShowNewest(id),
+                "/v1/shows/0FakePlaylistKveld0001/episodes?limit=1&offset=0&market=from_token",
+            ),
+            (
                 Read::Episode(id),
                 "/v1/episodes/0FakePlaylistKveld0001?market=from_token",
             ),
         ] {
             assert_eq!(accounts.read_url(read), format!("{API_BASE}{url}"));
         }
+    }
+
+    /// The show gate's mark (qa-srv-sweep-resume-code L10): `total:first id`, `-` for a `null`
+    /// first entry, and no mark without a `total`, an entry or a paging object.
+    #[test]
+    fn a_shows_mark_needs_its_total() {
+        let mark = |v: serde_json::Value| show_mark(v.to_string().as_bytes());
+        assert_eq!(
+            mark(serde_json::json!({"items": [{"id": "5Ep"}, {"id": "4Ep"}], "total": 7})),
+            Some("7:5Ep".to_string())
+        );
+        assert_eq!(
+            mark(serde_json::json!({"items": [null], "total": 3})),
+            Some("3:-".to_string())
+        );
+        assert_eq!(mark(serde_json::json!({"items": [{"id": "5Ep"}]})), None);
+        assert_eq!(mark(serde_json::json!({"items": [null]})), None);
+        assert_eq!(mark(serde_json::json!({"items": [], "total": 0})), None);
+        assert_eq!(mark(serde_json::json!({"total": 3})), None);
+        assert_eq!(show_mark(b"not json"), None);
     }
 
     /// §3.3: the readers - no `needs_login`, the last reader first, a removed one counts for
