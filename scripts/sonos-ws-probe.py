@@ -16,12 +16,18 @@ each command causes show in the stream. Run on a machine on the same LAN:
     python3 -m pip install aiohttp        # or: sudo apt install python3-aiohttp
     python3 sonos-ws-probe.py 192.168.1.50 --poll
     python3 sonos-ws-probe.py 192.168.1.50 --poll --do pause play seek+30 seek-15 volume=20
-    python3 sonos-ws-probe.py 192.168.1.50 --do group=Kjøkken ungroup=Kjøkken
+    python3 sonos-ws-probe.py 192.168.1.50 --do group=Kjøkken ungroup=Kjøkken --volume 0 --all
 
 Commands: play, pause, toggle, next, prev, seek+N / seek-N (seconds, relative), seek=N (seconds,
 absolute), volume=N (0-100, this speaker's group), group=<room> (the room joins this speaker's
 group), ungroup=<room> (the room leaves its group and stands alone). Room names as the Sonos app
 shows them, matched case-insensitively.
+
+--all also subscribes to every other group's playback (does one socket follow the whole house?),
+and to each new group as one forms. The own group is subscribed again whenever its id changes (a
+group's id changes with its members). --volume N sets this speaker and every room named in a
+group=/ungroup= to N (UPnP, each at its own ip) before the first command and puts each one's
+volume back after the last; with --do the run then ends by itself.
 
 Ctrl-C ends it. The X-Sonos-Api-Key below is the RFC 4122 example UUID that sonos-websocket sends;
 the speaker accepts it locally - it is not a secret.
@@ -109,19 +115,62 @@ def plan(step: str, gid: str, players: dict, groups: list) -> tuple[dict, dict] 
     return None
 
 
-async def run_steps(ws, steps: list, gap: float, live: dict, players: dict) -> None:
-    """[live] is kept current from the groups events: a group's id changes when its members do."""
-    for step in steps:
+RC = """<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
+s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:{action}
+xmlns:u="urn:schemas-upnp-org:service:RenderingControl:1"><InstanceID>0</InstanceID><Channel>Master</Channel>{extra}</u:{action}></s:Body></s:Envelope>"""
+
+
+async def rc(session, ip: str, action: str, extra: str = "") -> str:
+    """One RenderingControl call on the speaker at [ip] (its own volume, not the group's)."""
+    async with session.post(f"http://{ip}:1400/MediaRenderer/RenderingControl/Control",
+                            data=RC.format(action=action, extra=extra), headers={
+                                "Content-Type": 'text/xml; charset="utf-8"',
+                                "SOAPACTION": f'"urn:schemas-upnp-org:service:RenderingControl:1#{action}"'},
+                            timeout=aiohttp.ClientTimeout(total=4)) as r:
+        return await r.text()
+
+
+def ip_of(player: dict) -> str:
+    return re.sub(r"^wss://([^:/]+).*", r"\1", player.get("websocketUrl", ""))
+
+
+async def run_steps(ws, session, steps: list, gap: float, live: dict, players: dict,
+                    volume: int | None, quiet: list) -> None:
+    """[live] is kept current from the groups events: a group's id changes when its members do.
+    [quiet]: the players (dicts) set to [volume] first and put back at the end."""
+    saved = {}
+    try:
+        if volume is not None:
+            for p in quiet:
+                try:
+                    saved[p["name"]] = (ip_of(p), tag(await rc(session, ip_of(p), "GetVolume"), "CurrentVolume"))
+                    await rc(session, ip_of(p), "SetVolume", f"<DesiredVolume>{volume}</DesiredVolume>")
+                    print(f"{stamp()} VOLUME {p['name']} {saved[p['name']][1]} -> {volume}")
+                except Exception as e:  # noqa: BLE001
+                    print(f"{stamp()} VOLUME {p.get('name')}: {type(e).__name__} - not changed")
+        for step in steps:
+            await asyncio.sleep(gap)
+            planned = plan(step, live["gid"], players, live["groups"])
+            if planned:
+                header, body = planned
+                print(f"{stamp()} DO {step} -> {header['namespace']}/{header['command']} {json.dumps(body, ensure_ascii=False)}")
+                await command(ws, header, body)
         await asyncio.sleep(gap)
-        planned = plan(step, live["gid"], players, live["groups"])
-        if planned:
-            header, body = planned
-            print(f"{stamp()} DO {step} -> {header['namespace']}/{header['command']} {json.dumps(body, ensure_ascii=False)}")
-            await command(ws, header, body)
+    finally:
+        for name, (ip, old) in saved.items():
+            try:
+                if old:
+                    await rc(session, ip, "SetVolume", f"<DesiredVolume>{old}</DesiredVolume>")
+                    print(f"{stamp()} VOLUME {name} back to {old}")
+            except Exception as e:  # noqa: BLE001
+                print(f"{stamp()} VOLUME {name}: {type(e).__name__} - NOT put back to {old}")
+        if steps:
+            await ws.close()
 
 
 async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio.Event,
-                         steps: list | None = None, gap: float = 4.0) -> None:
+                         steps: list | None = None, gap: float = 4.0, everything: bool = False,
+                         volume: int | None = None) -> None:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE  # the speaker's certificate is self-signed
@@ -133,6 +182,14 @@ async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio
         await command(ws, {})
         household = None
         player = group = None
+        subscribed = set()
+
+        async def follow(gid, again=False):
+            if gid in subscribed and not again:
+                return
+            subscribed.add(gid)
+            for ns in ("playback:1", "playbackMetadata:1", "groupVolume:1"):
+                await command(ws, {"namespace": ns, "command": "subscribe", "groupId": gid})
         async for msg in ws:
             if msg.type != aiohttp.WSMsgType.TEXT:
                 print(f"{stamp()} WS {msg.type.name}")
@@ -156,23 +213,38 @@ async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio
                 group = next(g for g in body.get("groups", []) if player in g.get("playerIds", []))
                 print(f"{stamp()} WS player {me.get('name')} in group {group.get('name')} ({group['id']})")
                 gid = group["id"]
-                for ns in ("playback:1", "playbackMetadata:1", "groupVolume:1"):
-                    await command(ws, {"namespace": ns, "command": "subscribe", "groupId": gid})
+                await follow(gid)
+                if everything:
+                    for g in body.get("groups", []):
+                        await follow(g["id"])
                 await command(ws, {"namespace": "groups:1", "command": "subscribe", "householdId": household})
                 await command(ws, {"namespace": "playback:1", "command": "getPlaybackStatus", "groupId": gid})
                 ready.set()
                 live = {"gid": gid, "groups": body.get("groups", [])}
                 if steps:
-                    asyncio.create_task(run_steps(ws, steps, gap, live, names))
+                    named = {re.sub(r"^(?:un)?group=", "", st).strip().lower() for st in steps if "group=" in st}
+                    quiet = [me] + [p for p in players if p.get("name", "").lower() in named and p["id"] != player]
+                    task = asyncio.create_task(run_steps(ws, session, steps, gap, live, names, volume, quiet))
+                    task.add_done_callback(lambda t: t.cancelled() or t.exception() and print(
+                        f"{stamp()} DO stopped: {type(t.exception()).__name__}: {t.exception()}"))
                 continue
             if player is not None and header.get("type") == "groups":
                 live["groups"] = body.get("groups", [])
                 mine = next((g for g in live["groups"] if player in g.get("playerIds", [])), None)
-                if mine:
+                if mine and mine["id"] != live["gid"]:
+                    print(f"{stamp()} WS own group is now {mine.get('name')} ({mine['id']}) - subscribing")
                     live["gid"] = mine["id"]
+                    await follow(mine["id"], again=True)  # an old subscription may have ended with its group
+                if everything:
+                    for g in live["groups"]:
+                        await follow(g["id"])
             kind = header.get("type") or header.get("response") or header.get("command") or "?"
             ok = "" if header.get("success", True) else " FAILED"
-            print(f"{stamp()} WS {header.get('namespace', '-')}/{kind}{ok} {short(body)}")
+            where = ""
+            if player is not None and header.get("groupId"):
+                g = next((g for g in live["groups"] if g["id"] == header["groupId"]), None)
+                where = f" [{g.get('name') if g else header['groupId']}]"
+            print(f"{stamp()} WS {header.get('namespace', '-')}/{kind}{ok}{where} {short(body)}")
 
 
 SOAP = """<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
@@ -216,13 +288,15 @@ async def main() -> None:
     ap.add_argument("--poll", action="store_true", help="also poll UPnP GetPositionInfo every second")
     ap.add_argument("--do", nargs="+", metavar="CMD", help="commands to send, in order (see above)")
     ap.add_argument("--gap", type=float, default=4.0, help="seconds between --do commands (default 4)")
+    ap.add_argument("--all", action="store_true", help="also follow every other group's playback")
+    ap.add_argument("--volume", type=int, help="with --do: this speaker and the rooms named set to N first, put back after")
     args = ap.parse_args()
     ready = asyncio.Event()
     async with aiohttp.ClientSession() as session:
-        tasks = [asyncio.create_task(websocket_side(session, args.ip, ready, args.do, args.gap))]
+        tasks = [asyncio.create_task(websocket_side(session, args.ip, ready, args.do, args.gap, args.all, args.volume))]
         if args.poll:
             tasks.append(asyncio.create_task(upnp_side(session, args.ip, ready)))
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for t in pending:
             t.cancel()
         for t in done:
