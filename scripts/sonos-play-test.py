@@ -20,11 +20,11 @@ The DIDL is built by vibb's `didl()` (Didl.kt), unchanged. --didl picks which fi
 
     python3 -m pip install aiohttp
     python3 sonos-play-test.py 192.168.1.16 --dry-run          # NRK only: episodes + DIDL, no speaker
-    python3 sonos-play-test.py 192.168.1.16                     # the whole run, ~3 minutes
+    python3 sonos-play-test.py 192.168.1.16                     # the whole run, ~2 minutes, at volume 1
     python3 sonos-play-test.py 192.168.1.16 --didl app --volume 12
 
-It REPLACES what the speaker is playing and leaves it stopped (parked). With --volume the
-speaker's volume is set first and put back at the end. Needs sonos-ws-probe.py next to it.
+It REPLACES what the speaker is playing and leaves it stopped (parked). The speaker's volume is
+set to 1 (--volume) before the first play and put back at the end. Needs sonos-ws-probe.py next to it.
 """
 
 import argparse
@@ -430,7 +430,8 @@ async def main():
     ap.add_argument("ip", help="the speaker's LAN address")
     ap.add_argument("--podcast", default="hallo_bablo", help="NRK podcast slug (radio.nrk.no/podkast/<slug>)")
     ap.add_argument("--didl", choices=("vibb", "app", "bare"), default="vibb", help="which fields go in (see above)")
-    ap.add_argument("--volume", type=int, help="set this volume first, put the old one back at the end")
+    ap.add_argument("--volume", type=int, default=1,
+                    help="the volume set before anything plays (default 1); the old one is put back at the end")
     ap.add_argument("--dry-run", action="store_true", help="NRK only: list the episodes and print the DIDL")
     ap.add_argument("--verbose", action="store_true", help="print every WS message")
     args = ap.parse_args()
@@ -454,10 +455,10 @@ async def main():
         if info["group"].get("coordinatorId") != info["uid"]:
             print(f"{stamp()} NOTE this speaker is grouped and not its group's coordinator - "
                   "AVTransport commands may be refused; use the coordinator's ip")
-        old_volume = None
-        if args.volume is not None:
-            old_volume = tag(await spk.call("RenderingControl", "GetVolume", Channel="Master"), "CurrentVolume")
-            await spk.call("RenderingControl", "SetVolume", Channel="Master", DesiredVolume=str(args.volume))
+        old_volume = tag(await spk.call("RenderingControl", "GetVolume", Channel="Master"), "CurrentVolume")
+        await spk.call("RenderingControl", "SetVolume", Channel="Master",
+                       DesiredVolume=str(max(0, min(100, args.volume))))
+        print(f"{stamp()} volume {old_volume or '?'} -> {args.volume} (put back at the end)")
         await asyncio.sleep(2)  # let both watchers show the starting state
         run = Run(spk, watch, eps, args.didl, info["uid"])
         try:
