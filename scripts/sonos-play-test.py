@@ -25,6 +25,12 @@ The DIDL is built by vibb's `didl()` (Didl.kt), unchanged. --didl picks which fi
     python3 sonos-play-test.py 192.168.1.16 --didl app --volume 12
     python3 -I sonos-play-test.py --golden music/app/src/test/resources/sonos   # no speaker, no aiohttp
 
+--spotify LINK (design 54's measuring run): the speaker's queue gets the Spotify link the way vibb's
+spotify_sharelink does it - play mode NORMAL, RemoveAllTracksFromQueue, AddURIToQueue with SoCo's ShareLink request
+byte for byte (service 2311, then 3079) - then plays from the queue (--start), jumps, pauses, lets the speaker advance
+by itself, optionally waits --press seconds for Next/Previous pressed on the speaker, tries the play modes and parks
+(Stop, the queue cleared). Spotify must be linked in the Sonos app. Run sonos-ws-probe.py --save alongside to capture.
+
 It REPLACES what the speaker is playing and leaves it stopped (parked). The speaker's volume is
 set to 1 (--volume) before the first play and put back at the end. Needs sonos-ws-probe.py next to it.
 
@@ -331,6 +337,133 @@ async def upnp_watch(spk: Speaker, watch: Watch, ready: asyncio.Event):
 
 # --- the run ------------------------------------------------------------------------------------
 
+# --- Spotify on a room: vibb's spotify_sharelink, SoCo's ShareLinkPlugin to the byte (design 54, 54-0) ----------
+
+SHARE_MAGIC = {  # soco/plugins/sharelink.py ShareClass.magic()
+    "album": ("x-rincon-cpcontainer:1004206c", "00040000", "object.container.album.musicAlbum"),
+    "episode": ("", "00032020", "object.item.audioItem.musicTrack"),
+    "track": ("", "00032020", "object.item.audioItem.musicTrack"),
+    "show": ("x-rincon-cpcontainer:1006206c", "1006206c", "object.container.playlistContainer"),
+    "playlist": ("x-rincon-cpcontainer:1006206c", "1006206c", "object.container.playlistContainer"),
+}
+SHARE_SERVICES = (2311, 3079)  # SpotifyShare, then SpotifyUSShare
+
+
+def spotify_canonical(link: str):
+    m = re.search(r"spotify.*[:/](album|episode|playlist|show|track)[:/](\w+)", link)
+    return f"spotify:{m.group(1)}:{m.group(2)}" if m else None
+
+
+def share_request(link: str, sn: int):
+    """(EnqueuedURI, EnqueuedURIMetaData) as SoCo's add_share_link_to_queue builds them (dc_title empty)."""
+    canon = spotify_canonical(link)
+    kind = canon.split(":")[1]
+    encoded = canon.replace(":", "%3a")
+    prefix, key, cls = SHARE_MAGIC[kind]
+    meta = ('<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" '
+            'xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/">'
+            f'<item id="{key}{encoded}" parentID="-1" restricted="true"><dc:title></dc:title><upnp:class>{cls}</upnp:class>'
+            '<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">'
+            f"SA_RINCON{sn}_X_#Svc{sn}-0-Token</desc></item></DIDL-Lite>")
+    return prefix + encoded, meta
+
+
+async def spotify_scenario(spk, watch, uid: str, link: str, start: int, press: int):
+    say = lambda t: print(f"{stamp()} STEP {t}")  # noqa: E731
+
+    async def where(label):
+        pos = await spk.av("GetPositionInfo")
+        info = await spk.av("GetTransportInfo")
+        uri = tag(pos, "TrackURI").replace("&amp;", "&")
+        print(f"{stamp()} AT {label}: {tag(info, 'CurrentTransportState')} track {tag(pos, 'Track')} "
+              f"{tag(pos, 'RelTime')}/{tag(pos, 'TrackDuration')} {uri[:70]}")
+        return int(tag(pos, "Track") or 0), hms_s(tag(pos, "TrackDuration"))
+
+    # the household's accounts: only the service types, never serials or names
+    try:
+        async with spk.session.get(spk.base + "/status/accounts", timeout=aiohttp.ClientTimeout(total=4)) as r:
+            xml = await r.text()
+        types = sorted(set(re.findall(r'<Account Type="(\d+)"', xml)))
+        print(f"{stamp()} ACCOUNTS service types: {types} - Spotify linked: {any(t in ('2311', '3079') for t in types)}")
+    except Exception as e:  # noqa: BLE001
+        print(f"{stamp()} ACCOUNTS unreadable: {type(e).__name__}")
+
+    say("play mode NORMAL, clear the queue, add the share link (vibb's transfer)")
+    await spk.av("SetPlayMode", NewPlayMode="NORMAL")
+    await spk.av("RemoveAllTracksFromQueue")
+    added = None
+    for sn in SHARE_SERVICES:
+        uri, meta = share_request(link, sn)
+        t0 = time.monotonic()
+        try:
+            r = await spk.av("AddURIToQueue", EnqueuedURI=uri, EnqueuedURIMetaData=meta,
+                             DesiredFirstTrackNumberEnqueued="0", EnqueueAsNext="0")
+            added = (sn, int(tag(r, "FirstTrackNumberEnqueued") or 1), tag(r, "NumTracksAdded"), tag(r, "NewQueueLength"))
+            print(f"{stamp()} ADD sn={sn} in {time.monotonic() - t0:.1f}s: first={added[1]} added={added[2]} "
+                  f"queue={added[3]}")
+            break
+        except SoapFault as e:
+            print(f"{stamp()} ADD sn={sn} REFUSED - {e}")
+    if added is None:
+        say("no service took the link - is Spotify linked in the Sonos app?")
+        return
+    base = added[1]
+    nr = tag(await spk.av("GetMediaInfo"), "NrTracks")
+    print(f"{stamp()} MEDIA NrTracks={nr}")
+
+    say(f"play from the queue at index {start} (vibb's play_from_queue: the queue as source, Seek TRACK_NR, Play)")
+    await spk.av("SetAVTransportURI", CurrentURI=f"x-rincon-queue:{uid}#0", CurrentURIMetaData="")
+    await spk.av("Seek", Unit="TRACK_NR", Target=str(base + start))
+    await spk.av("Play", Speed="1")
+    await asyncio.sleep(8)
+    await where("after the start")
+
+    say(f"jump to track {base + start + 2} while playing (vibb's queue_play)")
+    await spk.av("Seek", Unit="TRACK_NR", Target=str(base + start + 2))
+    await asyncio.sleep(6)
+    await where("after the jump")
+
+    say("pause, jump back one while paused, play")
+    await spk.av("Pause")
+    await asyncio.sleep(3)
+    await spk.av("Seek", Unit="TRACK_NR", Target=str(base + start + 1))
+    await asyncio.sleep(3)
+    await where("paused after the jump")
+    await spk.av("Play", Speed="1")
+    await asyncio.sleep(5)
+    track, dur = await where("playing again")
+
+    if dur:
+        say("seek to 10 s before the track's end - the speaker's own advance")
+        await spk.av("Seek", Unit="REL_TIME", Target=hms(max(0, dur - 10)))
+        end = time.monotonic() + 30
+        while time.monotonic() < end:
+            await asyncio.sleep(1)
+            t, _ = await where("waiting for the next track")
+            if t and t != track:
+                break
+
+    if press:
+        say(f"PRESS Next / Previous on the speaker now - watching for {press} s")
+        end = time.monotonic() + press
+        last = None
+        while time.monotonic() < end:
+            await asyncio.sleep(1)
+            t, _ = await where("press window")
+            last = t
+
+    say("play modes: REPEAT_ALL, then NORMAL")
+    await spk.av("SetPlayMode", NewPlayMode="REPEAT_ALL")
+    print(f"{stamp()} MODE {tag(await spk.av('GetTransportSettings'), 'PlayMode')}")
+    await spk.av("SetPlayMode", NewPlayMode="NORMAL")
+    print(f"{stamp()} MODE {tag(await spk.av('GetTransportSettings'), 'PlayMode')}")
+
+    say("park: Stop, clear the queue")
+    await spk.av("Stop")
+    await spk.av("RemoveAllTracksFromQueue")
+    await asyncio.sleep(2)
+
+
 class Run:
     def __init__(self, spk, watch, eps, mode, uid):
         self.spk, self.watch, self.eps, self.mode, self.uid = spk, watch, eps, mode, uid
@@ -503,6 +636,11 @@ def parse_args():
     ap.add_argument("--dry-run", action="store_true", help="NRK only: list the episodes and print the DIDL")
     ap.add_argument("--verbose", action="store_true", help="print every WS message")
     ap.add_argument("--golden", metavar="DIR", help="write the golden DIDLs to DIR and end (no speaker, no network)")
+    ap.add_argument("--spotify", metavar="LINK", help="instead of NRK: put this Spotify playlist/album/track/show link in "
+                    "the speaker's queue as vibb does (SoCo's ShareLink) and play it (design 54's measuring run)")
+    ap.add_argument("--start", type=int, default=0, help="--spotify: the 0-based track to start from (default 0)")
+    ap.add_argument("--press", type=int, default=0, metavar="S",
+                    help="--spotify: wait S seconds for Next/Previous pressed on the speaker itself (default 0: skip)")
     args = ap.parse_args()
     if not args.golden and not args.ip:
         ap.error("the speaker's ip is needed (or --golden DIR)")
@@ -511,6 +649,11 @@ def parse_args():
 
 async def main(args):
     async with aiohttp.ClientSession() as session:
+        if args.spotify:
+            if not spotify_canonical(args.spotify):
+                sys.exit("not a Spotify playlist/album/track/show/episode link")
+            await spotify_main(session, args)
+            return
         eps = await episodes(session, args.podcast, 2)
         if len(eps) < 2:
             sys.exit(f"needs two playable episodes of {args.podcast}, found {len(eps)}")
@@ -545,6 +688,28 @@ async def main(args):
             ws_task.cancel()
             poll_task.cancel()
         run.report()
+
+
+async def spotify_main(session, args):
+    spk, watch, ready, info = Speaker(session, args.ip), Watch(), asyncio.Event(), {}
+    spk.session = session
+    ws_task = asyncio.create_task(websocket_watch(session, args.ip, watch, ready, info, args.verbose))
+    poll_task = asyncio.create_task(upnp_watch(spk, watch, ready))
+    await asyncio.wait({ws_task, asyncio.create_task(ready.wait())}, return_when=asyncio.FIRST_COMPLETED)
+    if ws_task.done():
+        sys.exit(f"WS failed: {ws_task.exception()}")
+    old_volume = tag(await spk.call("RenderingControl", "GetVolume", Channel="Master"), "CurrentVolume")
+    await spk.call("RenderingControl", "SetVolume", Channel="Master", DesiredVolume=str(max(0, min(100, args.volume))))
+    print(f"{stamp()} volume {old_volume or '?'} -> {args.volume} (put back at the end)")
+    try:
+        await spotify_scenario(spk, watch, info["uid"], args.spotify, args.start, args.press)
+    except Exception as e:  # noqa: BLE001
+        print(f"{stamp()} STOPPED: {type(e).__name__}: {e}")
+    finally:
+        if old_volume:
+            await spk.call("RenderingControl", "SetVolume", Channel="Master", DesiredVolume=old_volume)
+        ws_task.cancel()
+        poll_task.cancel()
 
 
 if __name__ == "__main__":
