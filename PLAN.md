@@ -1322,11 +1322,38 @@ findings, merge to `main`, full suite once.
   stopwatch did show (the user's screenshot, 10:43) - consistent with the stale entry living until the next
   `BadgeListenerService.sweep` (`ClockReader.connected` rebuilds `entries`; a sweep runs after each `apply()` with the
   notification rule active), so it shows late rather than never. Also: the stopwatch tile shows "Stoppeklokke" twice
-  (the label and Fossify's text) - drop the small text when it equals the label.
+  (the label and Fossify's text) - drop the small text when it equals the label. **Done 2026-10-21 (branch
+  `lfix-clock-torch`)**: `ClockReader.read` skips `FLAG_GROUP_SUMMARY` (before the extras) and `ClockTile.blank` tiles;
+  `clockShown` takes the tiles and never shows a blank one; `ClockReader.reconcile` (on each of Fossify's posts and
+  removals, and in `GlancePanel.resumeNow`) asks the listener's `getActiveNotifications(keys)` for exactly the kept keys
+  (`ClockReader.attach` at connect, cleared at disconnect; pure `clockStale`) and drops what is gone; `clockSmallText`
+  drops the small line when it repeats the label (case/spacing aside). The likely source (AOSP read, android14/16
+  `NotificationManagerService`/`GroupHelper`): Android 16's `config_autoGroupAtCount` is 2, so Fossify's running timer
+  and its ended notification (or the stopwatch) get a system autogroup summary - posted under `org.fossify.clock`,
+  tag `ranker_group`, id 2147483647, on the triggering child's channel (a timer channel), no title, no text, ongoing
+  while any child is - exactly the empty "Timer" card, ranked above the stopwatch; it lives as long as any ungrouped
+  Fossify notification does. NMS reports a posted record's removal to every listener in order, so a summary that NMS
+  no longer held is not explained by AOSP; the reconcile covers a missed removal either way. Tests: `ClockTileTest`
+  (blank, the order with blanks, `clockStale`, `clockSmallText`), `LockGlanceGuardTest` (the summary skip before the
+  extras, the keyed lookup, every entry point guarded, the wiring). Owed on the phone: a timer to its end with the
+  stopwatch running - no empty card, the stopwatch shows at once after Stopp, "Stoppeklokke" once; and
+  `adb shell dumpsys notification --noredact | grep -A3 "pkg=org.fossify.clock"` while both run, to see the
+  `ranker_group` summary (confirms the source). Code QA `docs/review/qa-lfix-clock-torch-code.md` (0 High, 1 Medium,
+  3 Low, 1 Nit), all fixed: the air 12 dp (Medium 1, below); a null `getActiveNotifications(keys)` stays "no answer"
+  (Low 2); `onDestroy` drops the lookup too (Low 3); `LockGlanceGuardTest` now catches its surviving mutations 6, 7, 9
+  (Low 4); the Nit (one binder call per Fossify post next to `recount`'s) needs no change.
 - **The lock's flashlight sits tight under "Lås opp"** (the user, 2026-10-21: "litt for tett på lås-opp knappen? Ser
   grafisk litt snålt ut"): the Nødsamtale/torch row is 2 dp under the 56 dp button (`view_lock_glance.xml`); proposed
   12-16 dp of air and a quieter torch (the music controls' dark round ground, peach only while lit), keeping
-  `lockGlanceFit`'s row height.
+  `lockGlanceFit`'s row height. **Done 2026-10-21 (branch `lfix-clock-torch`)**: `lock_glance_bottom`'s top margin
+  2 -> 12 dp (the low end, after qa-lfix-clock-torch-code 1: 3.2 dp of slack left for the full music tile with the big
+  clock at 473 dp); 8 of the 10 new dp from the page's bottom padding (16 -> 8 dp), so the fixed part is 116 dp and every fit
+  `LockGlanceLayoutTest` pins at 473 dp (the Jelly Star's 3-button navigation) and 497 dp is unchanged (a plain
+  +12 would have cost the big clock at 473 dp for the full music tile alone and for 4 rows, and with a morning alarm
+  a row); the pure model's tests re-derived. The torch already was the dark disc (`bg_music_control`, `kid_core`
+  glyph) while off and peach only while lit since round 6 - the screenshot likely showed it lit; now pinned by
+  `KidPaletteTest` (glyph on its ground >= 4.5:1 both ways, the disc a quiet field < 1.5:1 on the night). Owed: a
+  look on the Jelly Star (the emulator has no flash unit, so no button there).
 
 - **A Google setup nag got past the notification filter** (the user's jellystar2, 2026-10-21: "Fullfør
   Google-konfigurering · Du er nesten ferdig", NEI TAKK/OK, from "Google Play …"; the filter switch has long been on).

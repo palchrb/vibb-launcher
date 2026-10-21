@@ -28,6 +28,7 @@ class BadgeListenerService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         NotificationRuleRuntime.attach(this)
+        ClockReader.attach { keys -> activeOrNull(keys) }
         sweep()
         GlanceReader.connected(this)
     }
@@ -42,6 +43,8 @@ class BadgeListenerService : NotificationListenerService() {
 
     override fun onDestroy() {
         NotificationRuleRuntime.detach(this)
+        // The clock reader's lookup holds this instance: a destroy without the disconnect drops it too.
+        ClockReader.disconnected()
         super.onDestroy()
     }
 
@@ -147,6 +150,16 @@ class BadgeListenerService : NotificationListenerService() {
     } catch (e: Exception) {
         // Thrown when called before the listener is connected or after it was unbound.
         Log.w("BadgeListener", "Couldn't read active notifications", e)
+        null
+    }
+
+    /** Only the notifications of [keys] still active (the clock reader's check of its own keys,
+     * design 42's fix 2026-10-21); null when the listener can't answer. */
+    private fun activeOrNull(keys: Array<String>): List<StatusBarNotification>? = try {
+        // Null (not bound, or a RemoteException the service caught) stays null: no answer, never "nothing active".
+        getActiveNotifications(keys)?.filterNotNull()
+    } catch (e: Exception) {
+        Log.w("BadgeListener", "Couldn't read active notifications: ${e.javaClass.simpleName}")
         null
     }
 

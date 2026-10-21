@@ -22,9 +22,47 @@ class ClockTileTest {
         assertNull("a wrong signer", clockKind(pkg, verified = false, channelId = "simple_alarm_timer"))
         assertNull("the right channel from another package", clockKind("com.example.clock", verified = true, channelId = "simple_alarm_timer"))
         // Several at once: an ended timer first, then a running one, then the stopwatch.
-        assertEquals(ClockKind.ENDED, clockShown(listOf(ClockKind.STOPWATCH, ClockKind.ENDED, ClockKind.TIMER)))
-        assertEquals(ClockKind.TIMER, clockShown(listOf(ClockKind.STOPWATCH, ClockKind.TIMER)))
+        val timer = ClockTile.parse(ClockKind.TIMER, "11:12", "1 timer er i gang")
+        val stopwatch = ClockTile.parse(ClockKind.STOPWATCH, "30:55", "Stoppeklokke")
+        val ended = ClockTile.parse(ClockKind.ENDED, "Timer", "Tiden er ute")
+        assertEquals(ended, clockShown(listOf(stopwatch, ended, timer)))
+        assertEquals(timer, clockShown(listOf(stopwatch, timer)))
         assertNull(clockShown(emptyList()))
+    }
+
+    @Test
+    fun `a blank tile never shows - nor outranks one with content (the empty Timer card, 2026-10-21)`() {
+        // The system's autogroup summary on a timer channel: no title, no text.
+        val blankTimer = ClockTile.parse(ClockKind.TIMER, null, null)
+        val blankEnded = ClockTile.parse(ClockKind.ENDED, " ", "⁠\n")
+        assertTrue(blankTimer.blank)
+        assertTrue("whitespace and invisible marks clean to nothing", blankEnded.blank)
+        for (shape in listOf(ClockTile.parse(ClockKind.TIMER, "Pasta", null), ClockTile.parse(ClockKind.ENDED, null, "Tiden er ute"), ClockTile.parse(ClockKind.TIMER, "0:09", null))) {
+            assertFalse("$shape", shape.blank)
+        }
+        val stopwatch = ClockTile.parse(ClockKind.STOPWATCH, "30:55", "Stoppeklokke")
+        assertEquals(stopwatch, clockShown(listOf(blankEnded, blankTimer, stopwatch)))
+        assertNull("alone it shows nothing", clockShown(listOf(blankTimer)))
+    }
+
+    @Test
+    fun `the kept keys the listener no longer has are stale`() {
+        assertEquals(setOf("timer"), clockStale(listOf("timer", "stopwatch"), listOf("stopwatch")))
+        assertEquals(emptySet<String>(), clockStale(listOf("stopwatch"), listOf("stopwatch", "other")))
+        assertEquals(setOf("a", "b"), clockStale(listOf("a", "b"), emptyList()))
+    }
+
+    @Test
+    fun `the small line - not the ended timer's, not a repeat of the label`() {
+        assertEquals("1 timer er i gang", clockSmallText(ClockTile.parse(ClockKind.TIMER, "11:12", "1 timer er i gang"), "Timer"))
+        // The stopwatch's "Stoppeklokke" under our "Stoppeklokke": once is enough, case and spacing aside.
+        for (text in listOf("Stoppeklokke", "stoppeklokke", "  STOPPEKLOKKE ")) {
+            assertNull(text, clockSmallText(ClockTile.parse(ClockKind.STOPWATCH, "30:55", text), "Stoppeklokke"))
+        }
+        assertNull(clockSmallText(ClockTile.parse(ClockKind.STOPWATCH, "1:02", "Stopwatch"), "stopwatch"))
+        assertEquals("Lap 2", clockSmallText(ClockTile.parse(ClockKind.STOPWATCH, "1:02", "Lap 2"), "Stoppeklokke"))
+        assertNull("the ended timer's text is its big line", clockSmallText(ClockTile.parse(ClockKind.ENDED, "Timer", "Tiden er ute"), "Timer"))
+        assertNull(clockSmallText(ClockTile.parse(ClockKind.TIMER, "11:12", null), "Timer"))
     }
 
     @Test

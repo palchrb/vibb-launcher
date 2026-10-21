@@ -210,6 +210,8 @@ class GlancePanel(
 
     private fun resumeNow() {
         if (!started) return
+        // A timer the listener no longer has goes before the page is drawn (fix 2026-10-21).
+        ClockReader.reconcile()
         // Design 34 P12: the clock follows the phone's format, not Vibb's own language.
         ClockFormat.bind(glance.lockGlanceClock)
         val interactive = activity.getSystemService(PowerManager::class.java)?.isInteractive == true

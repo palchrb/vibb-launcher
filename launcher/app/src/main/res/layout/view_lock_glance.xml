@@ -20,7 +20,7 @@
     android:paddingStart="16dp"
     android:paddingTop="8dp"
     android:paddingEnd="16dp"
-    android:paddingBottom="16dp"
+    android:paddingBottom="8dp"
     android:visibility="gone">
 
     <TextClock
@@ -438,13 +438,16 @@
          end, beside it without pushing it off centre. Nødsamtale keeps the 48 dp target of design 34
          P7 (qa-34-s8-code N5; the row's margin gave the 4 dp) and the room for a 48 dp button on each
          side, so a long label at a large font wraps before it reaches the button; the button is no
-         taller than it, so the row (the fit's fixed part) stays 50 dp. The flashlight is gone without a
-         flash unit or when the torch is refused while LOCKED (§1.5). -->
+         taller than it. 12 dp of air under "Lås opp" (the user, 2026-10-21: the row sat 2 dp under it,
+         "litt for tett"), so the row with its margin (the fit's fixed part) is 60 dp; 8 of the 10 new dp came
+         from the page's bottom padding (16 -> 8 dp), so every fit LockGlanceLayoutTest pins at 473/497
+         dp holds. The flashlight is gone without a flash unit or when the torch is refused while
+         LOCKED (§1.5). -->
     <FrameLayout
         android:id="@+id/lock_glance_bottom"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="2dp">
+        android:layout_marginTop="12dp">
 
         <TextView
             android:id="@+id/lock_glance_emergency"

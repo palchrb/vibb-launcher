@@ -287,6 +287,31 @@ class KidPaletteTest {
     }
 
     @Test
+    fun `the lock's flashlight is a quiet dark disc while off, peach only while lit (2026-10-21)`() {
+        // Off (the layout's default): the music controls' dark ground with the light glyph.
+        val android = "http://schemas.android.com/apk/res/android"
+        val all = parse("layout/view_lock_glance.xml").getElementsByTagName("*")
+        val torch = (0 until all.length).map { all.item(it) as Element }.single { it.getAttributeNS(android, "id") == "@+id/lock_glance_torch" }
+        fun solid(drawable: String) = (parse("drawable/$drawable.xml").getElementsByTagName("solid").item(0) as Element).getAttributeNS(android, "color")
+        val offGround = solid(torch.getAttributeNS(android, "background").removePrefix("@drawable/"))
+        assertEquals("@color/kid_music_control", offGround)
+        val offGlyph = torch.getAttributeNS(android, "tint")
+        assertEquals("@color/kid_core", offGlyph)
+        // The panel's two looks (lock/GlancePanel.kt bindTorch): the same off look, the peach only when lit.
+        val panel = listOf("src/main/java", "app/src/main/java").map { File(it, "com/kidslauncher/mdm/lock/GlancePanel.kt") }.first { it.exists() }.readText()
+        assertTrue(panel.contains("button.setBackgroundResource(if (lit) R.drawable.bg_music_play else R.drawable.bg_music_control)"))
+        assertTrue(panel.contains("activity.getColor(if (lit) R.color.kid_ground else R.color.kid_core)"))
+        assertEquals("@color/kid_accent", solid("bg_music_play"))
+        // The glyph reads on its ground (a non-text icon needs 3:1; both clear text's 4.5:1) ...
+        for ((glyph, ground) in listOf(offGlyph to offGround, "kid_ground" to "kid_accent")) {
+            val ratio = contrast(glyph, ground)
+            assertTrue("$glyph on $ground: $ratio", ratio >= 4.5)
+        }
+        // ... and the dark disc is a quiet field on the night, not a second "Lås opp".
+        assertTrue(contrast("kid_music_control", "kid_ground") < 1.5)
+    }
+
+    @Test
     fun `the lock's tonal emergency pills carry their label and glyph`() {
         // Design 34 P7: what the keypad (activity_pin_lock.xml) and the VoIP ring card
         // (view_voip_ring.xml, qa-34-s8-code L2) really use, from the shared resources.

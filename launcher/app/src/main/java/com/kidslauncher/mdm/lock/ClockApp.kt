@@ -50,7 +50,7 @@ object ClockApp {
             val now = installed(context)
             if (now != verified) Log.i(LOG_TAG, "Clock app $PACKAGE verified: $now")
             verified = now
-            if (!now) Handler(Looper.getMainLooper()).post { ClockReader.disconnected() }
+            if (!now) Handler(Looper.getMainLooper()).post { ClockReader.unverified() }
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "Clock app check failed: ${e.javaClass.simpleName}")
         }

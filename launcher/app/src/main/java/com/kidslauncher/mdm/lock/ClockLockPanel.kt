@@ -54,9 +54,11 @@ class ClockLockPanel(
         pageShown = page
         glance.lockTimerTile.visibility = if (shown) View.VISIBLE else View.GONE
         val ended = tile?.kind == ClockKind.ENDED
-        glance.lockTimerLabel.setText(if (tile?.kind == ClockKind.STOPWATCH) R.string.lock_stopwatch else R.string.lock_timer)
-        // An ended timer's text is its big line; the small one is for a running timer's "1 timer er i gang".
-        val small = tile?.text?.takeIf { !ended }
+        val label = activity.getString(if (tile?.kind == ClockKind.STOPWATCH) R.string.lock_stopwatch else R.string.lock_timer)
+        glance.lockTimerLabel.text = label
+        // An ended timer's text is its big line; the small one is for a running timer's "1 timer er i
+        // gang" - and none when it only repeats the label (the stopwatch's "Stoppeklokke").
+        val small = tile?.let { clockSmallText(it, label) }
         glance.lockTimerText.text = small
         glance.lockTimerText.visibility = if (small != null) View.VISIBLE else View.GONE
         glance.lockTimerStop.visibility = if (ended && ClockReader.stopIntent != null) View.VISIBLE else View.GONE
