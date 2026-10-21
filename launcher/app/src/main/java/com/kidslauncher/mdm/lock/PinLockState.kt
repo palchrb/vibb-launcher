@@ -282,3 +282,11 @@ fun appendDigit(entered: String, digit: Char, length: Int): String =
     if (digit in '0'..'9' && entered.length < length) entered + digit else entered
 
 fun deleteDigit(entered: String): String = entered.dropLast(1)
+
+/**
+ * The digits typed so far, once the lock is back: every screen-off since the first of them drops them
+ * (the user, 2026-10-21: a power press mid-PIN must not leave its digits on the keypad).
+ * [enteredAtScreenOffs] is `PinLockRuntime.screenOffs` when the first digit was typed.
+ */
+fun enteredAfterScreenOffs(entered: String, enteredAtScreenOffs: Int, screenOffs: Int): String =
+    if (entered.isNotEmpty() && screenOffs != enteredAtScreenOffs) "" else entered

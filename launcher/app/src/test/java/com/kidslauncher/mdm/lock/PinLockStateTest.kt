@@ -240,4 +240,21 @@ class PinLockStateTest {
         assertEquals("", deleteDigit(""))
         assertEquals("12", appendDigit("12", 'x', 4))
     }
+
+    @Test
+    fun `a screen-off drops the digits typed before it`() {
+        assertEquals("12", enteredAfterScreenOffs("12", enteredAtScreenOffs = 3, screenOffs = 3))
+        assertEquals("", enteredAfterScreenOffs("12", enteredAtScreenOffs = 3, screenOffs = 4))
+        assertEquals("", enteredAfterScreenOffs("", enteredAtScreenOffs = 3, screenOffs = 9))
+    }
+
+    @Test
+    fun `the lock checks the typed digits against the screen-offs at every resume`() {
+        val path = "java/com/kidslauncher/mdm/lock/PinLockActivity.kt"
+        val src = listOf(java.io.File("src/main/$path"), java.io.File("app/src/main/$path")).first { it.exists() }.readText()
+        val resume = src.substringAfter("override fun onResume()").substringBefore("override fun onUserInteraction()")
+        assertTrue(resume.contains("enteredAfterScreenOffs(entered, enteredAt, PinLockRuntime.screenOffs)"))
+        val digit = src.substringAfter("private fun onDigit(").substringBefore("private fun onDelete(")
+        assertTrue(digit.contains("if (entered.isEmpty()) enteredAt = PinLockRuntime.screenOffs"))
+    }
 }

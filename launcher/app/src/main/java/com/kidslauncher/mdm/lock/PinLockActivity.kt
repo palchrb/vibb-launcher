@@ -66,6 +66,8 @@ class PinLockActivity : AppCompatActivity() {
     private lateinit var binding: ActivityPinLockBinding
     private val handler = Handler(Looper.getMainLooper())
     private var entered = ""
+    /** `PinLockRuntime.screenOffs` when the first of [entered]'s digits was typed ([enteredAfterScreenOffs]). */
+    private var enteredAt = 0
     private var checking = false
     private var waitMs = 0L
     private var wrongShown = false
@@ -308,6 +310,7 @@ class PinLockActivity : AppCompatActivity() {
         binding.pinEmergency.accessibilityDelegate = ButtonRole
         voipRing.voipRingEmergency.accessibilityDelegate = ButtonRole
         entered = savedInstanceState?.getString(STATE_ENTERED).orEmpty()
+        enteredAt = PinLockRuntime.screenOffs
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {}
@@ -477,6 +480,12 @@ class PinLockActivity : AppCompatActivity() {
             return
         }
         PinLockRuntime.onLockResumed(this)
+        // Digits typed before a screen-off go with it.
+        val kept = enteredAfterScreenOffs(entered, enteredAt, PinLockRuntime.screenOffs)
+        if (kept != entered) {
+            entered = kept
+            render()
+        }
         // Design 32 step 2: the keyguard cover is dismissed after this resume's first frame.
         watchFirstFrame()
         glance?.resume()
@@ -652,6 +661,7 @@ class PinLockActivity : AppCompatActivity() {
     private fun onDigit(digit: Char) {
         if (!keypadEnabled()) return
         wrongShown = false
+        if (entered.isEmpty()) enteredAt = PinLockRuntime.screenOffs
         entered = appendDigit(entered, digit, PinLockRuntime.pinLength)
         render()
         if (entered.length == PinLockRuntime.pinLength) check(entered)
