@@ -615,6 +615,28 @@ class Run:
         await self.park()
         await asyncio.sleep(3)
 
+    async def press_window(self, seconds: int):
+        """An episode played the vibb way (one URI, no queue), then S seconds for Next/Previous
+        pressed on the speaker itself - does the speaker do or send anything? Then park."""
+        if not await self.play(self.eps[0], 0, "play episode 1 (vibb's way: one URI, no queue)"):
+            return
+        await asyncio.sleep(4)
+        self.say(f"PRESS Next / Previous (and Play/Pause) on the speaker now - watching for {seconds} s")
+        end = time.monotonic() + seconds
+        last = None
+        while time.monotonic() < end:
+            try:
+                st, rel, dur, uri = await self.spk.state()
+                line = f"{st} {hms(rel)}/{hms(dur)} {uri[-50:]}"
+                if line != last:
+                    print(f"{stamp()} AT {line}")
+                    last = line
+            except Exception as e:  # noqa: BLE001
+                print(f"{stamp()} AT error {type(e).__name__}")
+            await asyncio.sleep(1)
+        await self.park()
+        await asyncio.sleep(2)
+
     def report(self):
         print("\n=== result (seconds from the command until each side showed it) ===")
         print(f"{'step':58} {'WS':>6} {'UPnP':>6}  note")
@@ -640,7 +662,8 @@ def parse_args():
                     "the speaker's queue as vibb does (SoCo's ShareLink) and play it (design 54's measuring run)")
     ap.add_argument("--start", type=int, default=0, help="--spotify: the 0-based track to start from (default 0)")
     ap.add_argument("--press", type=int, default=0, metavar="S",
-                    help="--spotify: wait S seconds for Next/Previous pressed on the speaker itself (default 0: skip)")
+                    help="wait S seconds for Next/Previous pressed on the speaker itself (default 0: skip); "
+                         "without --spotify: play one podcast episode the vibb way, watch, park - nothing else")
     args = ap.parse_args()
     if not args.golden and not args.ip:
         ap.error("the speaker's ip is needed (or --golden DIR)")
@@ -679,7 +702,10 @@ async def main(args):
         await asyncio.sleep(2)  # let both watchers show the starting state
         run = Run(spk, watch, eps, args.didl, info["uid"])
         try:
-            await run.scenario()
+            if args.press:
+                await run.press_window(args.press)
+            else:
+                await run.scenario()
         except Exception as e:  # noqa: BLE001
             print(f"{stamp()} STOPPED: {type(e).__name__}: {e}")
         finally:
