@@ -718,7 +718,16 @@ findings, merge to `main`, full suite once.
   Options put to the user: (A) the heart on the tile/entry instead of per track; (C) keep per-track hearts, and under
   "Favoritter" a cover tap plays only that entry's hearted items (in the entry's order; one source, no mixing);
   (B) a "Favoritter" mix tile playing every hearted item across entries (shuffled) - mixes sources (local files, NRK,
-  Spotify, Storytel), hard on the Sonos and Spotify paths. Awaiting the user's choice.
+  Spotify, Storytel), hard on the Sonos and Spotify paths. Awaiting the user's choice. The user's point on (B): items
+  do carry their own play links - NRK/RSS episodes are direct URLs the app already sends one at a time to a room and
+  advances itself, a Storytel book is a per-book mint (design 58); the exceptions are Spotify (a speaker-side queue
+  from a share link on a room, the Web Playback SDK on the phone - a single track can be a share link, but every
+  switch between it and a URL item replaces the transport) and own files (phone-only: "the phone never serves", 26a
+  drops them on a room). So (B) is buildable as a per-item dispatcher; the cost is a multi-source advance that vibb
+  doesn't have.
+- **Music: the output and sleep sheets don't swipe down** (the user, 2026-10-21): `ui/Widgets.kt` `Sheet` is our own
+  sheet - a scrim tap and Back close it, the handle is only drawn. Add a drag down on the handle/sheet (past a
+  threshold or a fling) that closes it, as Android's sheets do; keep the scrim tap and Back.
 
 - **Touch sounds and vibration on Kid Settings** (the user, 2026-10-16): a row on the child's Settings
   (swipe left) to turn key/touch sounds on and off, and vibration on touch. Android's switches are
