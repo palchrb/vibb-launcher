@@ -1391,6 +1391,13 @@ findings, merge to `main`, full suite once.
   86.10** (`<ZPSupportInfo></ZPSupportInfo>`) although Spotify plays: design 54's household check can't use it - the
   add's answer decides - and `NrkService.serial` works only through its `sn=14` fallback there.
 
+- **A sturdier NRK series serial** (the user, 2026-10-21: "hadde vært fint om det serieoppslaget ble mer robust. men
+  alt nytt content kommer ut som podcasts istedet" - low priority): `/status/accounts` is empty on firmware 86.10, so
+  `NrkService.serial` always falls back to `sn=14`. Candidates: learn the serial from any `x-sonos-http:...sid=277...sn=N`
+  URI the household's speakers report (their favourites via ContentDirectory `FV:2`, or a TrackURI seen while NRK
+  plays), else try 14; a refused play could retry once with a learned one. New NRK content comes as podcasts (plain
+  mp3, no account), so only the older series depend on it.
+
 ### To decide (the user)
 
 
