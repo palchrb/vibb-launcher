@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:GetRemainingSleepTimerDurationResponse xmlns:u="urn:schemas-upnp-org:service:AVTransport:1"><RemainingSleepTimerDuration>0:59:43</RemainingSleepTimerDuration><CurrentSleepTimerGeneration>3</CurrentSleepTimerGeneration></u:GetRemainingSleepTimerDurationResponse></s:Body></s:Envelope>

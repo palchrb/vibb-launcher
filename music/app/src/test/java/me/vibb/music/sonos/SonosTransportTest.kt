@@ -333,4 +333,198 @@ class SonosTransportTest {
         }
         assertEquals(emptyList<String>(), spk.commands)
     }
+
+    // -- design 54: a share link into the speaker's own queue (vibb's spotify_sharelink; SoCo's ShareLink) --
+
+    private val a = "1FakeTrackA00000000001"
+    private val c = "1FakeTrackC00000000003"
+    private val d = "1FakeTrackD00000000004"
+    private val listed = listOf(a, c, a, d).map { "spotify:track:$it" }
+
+    /** The fake playlist's queue as the speaker holds it: A, an episode our listing drops, C, A again, D. */
+    private fun queueSpeaker() = FakeSpeaker("RINCON_X").apply {
+        shareTracks = listOf(FakeSpeaker.qTrack(a), FakeSpeaker.qTrack("5FakeEpisode0000000009", "episode"), FakeSpeaker.qTrack(c), FakeSpeaker.qTrack(a), FakeSpeaker.qTrack(d))
+    }
+
+    private fun share(index: Int? = 0, startS: Double = 0.0, uris: List<String> = listed) =
+        PlayBody("RINCON_X", Kind.SPOTIFY_SHARELINK, "spotify:playlist:0FakePlaylistKveld0001", null, "Kveldsmusikk", null, null, startS, trackIndex = index, listed = uris)
+
+    @Test
+    fun `d54 a transfer - hushed, capped, gated, NORMAL, cleared, added by 2311, the start's page, play_from_queue, the seek, the sleep timer`() = runBlocking {
+        val spk = queueSpeaker().apply { vol = 60 }
+        val t = rig(spk)
+        // the start item is the second A (index 2): the occurrence nearest the guess first + 2 = 3 is position 4
+        val r = t.playShare(share(index = 2, startS = 42.0), cap = 40, sleepTimer = "1:00:00")!!
+        assertEquals(
+            listOf(
+                "getmute", "mute true", "getvolume", "volume 40", "playmode NORMAL", "clearqueue", "addqueue 2311", "getbrowse 0 100",
+                "seturi", "seektrack 4", "play", "gettransport", "seek 0:00:42", "sleeptimer 1:00:00", "mute false",
+            ),
+            spk.log,
+        )
+        assertEquals("play_from_queue: the queue as the source, no metadata", queueUri("RINCON_X"), spk.lastUri)
+        assertEquals("", spk.lastMeta)
+        assertEquals(ShareLink.of("spotify:playlist:0FakePlaylistKveld0001")!!.enqueuedUri to ShareLink.of("spotify:playlist:0FakePlaylistKveld0001")!!.metadata(2311), spk.lastEnqueued)
+        assertEquals(queueUri("RINCON_X"), r.uri)
+        assertEquals(40, r.volume)
+        assertTrue(r.sought)
+        val start = r.share!!
+        assertEquals(listOf(1, 5, 4, 2311), listOf(start.first, start.length, start.position, start.sn))
+        assertTrue(start.found)
+        assertTrue("the start's page holds the whole small queue", start.read.complete)
+        assertEquals(Kind.SPOTIFY_SHARELINK, t.session.kind)
+        assertEquals("spotify:playlist:0FakePlaylistKveld0001", t.session.shareTarget)
+        assertTrue(t.session.armed)
+        assertTrue("our sleep timer: ours to clear later", t.session.ownSleepLeftMs("RINCON_X")!! > 3_590_000)
+        assertTrue("logged by kind, count and position - never an id (54-11)", logs.none { "Fake" in it || "spotify:" in it })
+        assertTrue(logs.contains("share: playlist added 5 (first 1, queue 5) by service 2311"))
+        assertFalse("never an id in the result's line", r.toString().contains("Fake"))
+    }
+
+    @Test
+    fun `d54 a closed gate sends nothing more - before SetPlayMode and again before SetAVTransportURI`() = runBlocking {
+        val first = queueSpeaker()
+        assertNull(rig(first).playShare(share(), gate = { false }))
+        assertTrue("nothing changed the room", first.log.none { it.startsWith("playmode") || it == "clearqueue" || it.startsWith("addqueue") })
+        val second = queueSpeaker()
+        var asked = 0
+        assertNull(rig(second).playShare(share(startS = 30.0), gate = { ++asked == 1 }))
+        assertEquals(2, asked)
+        assertTrue("the add went out, the play didn't", second.log.contains("addqueue 2311") && second.log.none { it == "seturi" || it.startsWith("seektrack") || it == "play" })
+        assertFalse("the mute put back", second.muted)
+    }
+
+    @Test
+    fun `d54 3079 only after a UPnP fault, both faults or a 0-track add are ShareRefused, a network failure ends at once - no Seek`() = runBlocking {
+        val us = queueSpeaker().apply { addFaults = mapOf(2311 to { UpnpFault(800, null) }) }
+        val r = rig(us).playShare(share())!!
+        assertEquals(3079, r.share!!.sn)
+        assertEquals(listOf("addqueue 2311 refused", "addqueue 3079"), us.log.filter { it.startsWith("addqueue") })
+        assertTrue(us.lastEnqueued!!.second.contains("SA_RINCON3079_X_#Svc3079-0-Token"))
+        assertEquals(r.didl, us.lastEnqueued!!.second)
+        for (spk in listOf(
+            queueSpeaker().apply { addFaults = mapOf(2311 to { UpnpFault(800, null) }, 3079 to { UpnpFault(800, null) }) },
+            queueSpeaker().apply { shareTracks = emptyList() },
+            queueSpeaker().apply { addAnswer = AddResult(1, 3, 0) },
+        )) {
+            try {
+                rig(spk).playShare(share(startS = 30.0))
+                fail("refused")
+            } catch (_: ShareRefused) {
+            }
+            assertTrue(spk.log.none { it.startsWith("seek") || it == "seturi" || it == "play" })
+            assertFalse(spk.muted)
+        }
+        val gone = queueSpeaker().apply { addFaults = mapOf(2311 to { SpeakerUnreachable("timeout") }) }
+        try {
+            rig(gone).playShare(share())
+            fail("unreachable")
+        } catch (_: SpeakerUnreachable) {
+        }
+        assertEquals("no second try on a network failure", listOf("addqueue 2311 refused"), gone.log.filter { it.startsWith("addqueue") })
+        try {
+            rig(queueSpeaker()).playShare(share().copy(uri = "spotify:artist:3FakeArtist00000000001"))
+            fail("an artist has no share type")
+        } catch (_: ShareRefused) {
+        }
+    }
+
+    @Test
+    fun `d54 N4 a start item not in the queue plays the first added position at 0 - no seek - and an unparsable first is 1`() = runBlocking {
+        val spk = queueSpeaker().apply { addAnswer = AddResult(null, 5, 5) }
+        val r = rig(spk).playShare(share(index = 1, startS = 90.0, uris = listOf(listed[0], "spotify:track:1FakeTrackE00000000005")))!!
+        assertTrue(spk.log.contains("seektrack 1"))
+        assertTrue("the saved second belongs to another track", spk.log.none { it.startsWith("seek 0:") })
+        assertEquals(listOf(1, 1), listOf(r.share!!.first, r.share!!.position))
+        assertFalse(r.share!!.found)
+        assertTrue(r.sought)
+        assertTrue(logs.contains("share: the start item isn't in the queue - position 1, no seek"))
+        assertFalse(spk.muted)
+    }
+
+    @Test
+    fun `d54 the rest of the queue is its own job, off the hush - a queue edited while it is read is read again once`() = runBlocking {
+        val spk = FakeSpeaker("RINCON_X").apply { shareTracks = (1..150).map { FakeSpeaker.qTrack("1FakeTrackQ%011d".format(it)) } }
+        val t = rig(spk)
+        val r = t.playShare(share(index = 0, uris = listOf("spotify:track:1FakeTrackQ00000000001")))!!
+        assertFalse("the start read its page only", r.share!!.read.complete)
+        spk.log.clear()
+        val read = t.readQueue("RINCON_X", r.share!!.read)!!
+        assertEquals(listOf("getbrowse 100 100"), spk.log)
+        assertTrue(read.complete)
+        assertEquals(150, read.uris.size)
+        assertNull("another uid: nothing", t.readQueue("RINCON_Y", r.share!!.read))
+        // the Sonos app edits the queue between the start's page and the rest: read again from the top, once
+        spk.updateId++
+        spk.log.clear()
+        val again = t.readQueue("RINCON_X", r.share!!.read)!!
+        assertEquals(listOf("getbrowse 100 100", "getbrowse 0 100", "getbrowse 100 100"), spk.log)
+        assertEquals(spk.updateId.toString(), again.updateId)
+        // adopt's read: the container, then every page - reads only
+        spk.log.clear()
+        assertEquals(150, t.learnQueue("RINCON_X")!!.tracks.size)
+        assertEquals(listOf("getqueuemeta", "getbrowse 0 100", "getbrowse 100 100"), spk.log)
+    }
+
+    @Test
+    fun `d54 queuePlay - hushed as vibb's sonos_hush 5, the cap on a start only, no clear and no add, refused for another uid or kind`() = runBlocking {
+        val spk = queueSpeaker().apply { vol = 60 }
+        val t = rig(spk)
+        t.playShare(share())!!
+        spk.log.clear()
+        val r = t.queuePlay(3, 30.0, "RINCON_X")!!
+        assertEquals(listOf("getmute", "mute true", "seturi", "seektrack 3", "play", "gettransport", "seek 0:00:30", "mute false"), spk.log)
+        assertTrue(r.sought)
+        spk.log.clear()
+        t.queuePlay(5, 0.0, "RINCON_X", cap = 40)!!
+        assertEquals("a pick is a START: capped before Play", listOf("getvolume", "volume 40", "seturi", "seektrack 5", "play"), spk.log)
+        spk.log.clear()
+        assertNull(t.queuePlay(2, 0.0, "RINCON_Y"))
+        assertNull(t.queuePlay(2, 0.0, "RINCON_X", gate = { false }))
+        assertTrue(spk.log.isEmpty())
+        t.play(body)!!
+        assertNull("a url session has no queue to jump in", t.queuePlay(2, 0.0, "RINCON_X"))
+    }
+
+    @Test
+    fun `d54 the park clears the queue for every kind, our sleep timer goes with our Stop or the park, only while it is ours`() = runBlocking {
+        val spk = FakeSpeaker("RINCON_X")
+        val t = rig(spk)
+        t.play(body)!!
+        spk.log.clear()
+        assertTrue(t.park())
+        assertEquals(listOf("stop", "clearqueue", "seturi"), spk.log)
+        assertEquals(queueUri("RINCON_X"), spk.lastUri)
+        // a refused clear: the queue uri still goes out
+        val stubborn = FakeSpeaker("RINCON_X").apply { failOn = mapOf("clearqueue" to { UpnpFault(804, null) }) }
+        val t2 = rig(stubborn)
+        t2.play(body.copy(startS = 0.0))
+        stubborn.log.clear()
+        assertTrue(t2.park())
+        assertEquals(listOf("stop", "seturi"), stubborn.log)
+        assertTrue(logs.contains("park: the queue wasn't cleared (UpnpFault)"))
+        // ours: cleared by the Stop
+        val q = queueSpeaker()
+        val t3 = rig(q)
+        t3.playShare(share(), sleepTimer = "1:00:00")!!
+        clock.advance(60_000)
+        q.sleepRemaining = "0:59:00"
+        q.log.clear()
+        assertTrue(t3.stop())
+        assertEquals(listOf("stop", "getsleeptimer", "sleeptimer "), q.log)
+        assertNull(q.sleepRemaining)
+        // someone set another in the Sonos app afterwards: theirs, the park leaves it
+        t3.playShare(share(), sleepTimer = "1:00:00")!!
+        q.sleepRemaining = "0:20:00"
+        q.log.clear()
+        assertTrue(t3.park())
+        assertEquals(listOf("stop", "clearqueue", "seturi", "getsleeptimer"), q.log)
+        assertEquals("0:20:00", q.sleepRemaining)
+        // none of ours: not even read
+        q.log.clear()
+        t3.playShare(share())!!
+        q.log.clear()
+        t3.stop()
+        assertEquals(listOf("stop"), q.log)
+    }
 }

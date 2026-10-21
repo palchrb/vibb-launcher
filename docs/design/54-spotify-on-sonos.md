@@ -848,3 +848,68 @@ All ten taken; none disputed.
 - **The user's answers** (§8): Q1 one reorder (54-b), Q2 no switch, Q3 context mode in 54-a2 (§2.12 rewritten: what the
   app shows - the live track's title over the entry's cover, the speaker's position - and how it resumes), Q4 shows and
   episodes as share links, Q5 NORMAL, Q6 vibb's fallback.
+
+## 54-a1 status (2026-10-21, branch `d54-a1`)
+
+Built as §4 lists it; nothing changes for the kid (`speakerDropReason` still `"spotify"`, pinned by `PlayBodyTest`).
+53-d's renamed constants (`CONFIRM_EVERY_MS`/`CONFIRM_UNTIL_MS`) stand for §2.5's `IDLE_RECHECK_*`; a1 touches neither.
+
+- **`sonos/ShareLink.kt`**: SoCo's share types, `canonical_uri`'s pattern (no artist), `EnqueuedURI` and the metadata
+  template with `dc:title` empty; `shareLinkUri`/`shareLinkMetadata`; the only file spelling `x-rincon-cpcontainer`
+  (`SourceScanTest`). **The goldens** `sharelink_<type>.xml` hold `AddURIToQueue`'s five arguments in SoCo's order with
+  a `writer` attribute (the note named the files, not their content): `sonos-play-test.py --golden` writes them with the
+  real SoCo when importable, else `share_request`. The committed ones are `share_request`'s; this session ran SoCo
+  master's `sharelink.py` (stub base classes) over the same inputs - byte-identical. The Pi run with vibb's SoCo is owed
+  (`sonos/README.md`).
+- **`logic/SonosQueue.kt`** (pure): `trackSpotifyUri`, `QueueRead` (+ pages), `versionCheck` (N5), `QueueMap` (slots,
+  `itemAt`, `verifies`, `nearest`, `follows`), `queuePagesAround`/`positionNearest`, `containerContradicts` +
+  `shareOurs` (N2), `shareProbeMatches`, `boundary`/`Boundary` (N8: `correctable` only on the anchor), `anchorNearEnd`
+  (N1b), `atEndAction`/`atEndDelayMs` (54-8), `unmappedTitle`, `sleepTimerFor`/`sleepTimerResetDue`/`sleepTimerOurs`
+  (N1). Only a playlist container counts as evidence: any other form is no evidence until [D8+].
+- **`Kind.SPOTIFY_SHARELINK`**; `builtDidl` throws for it, `SonosTransport.play` refuses it; `kindOfUri` maps
+  `x-rincon-queue:` to it (dormant: nothing stores the marker before 54-a2). `PlayBody` gains `trackIndex` and `listed`
+  (its `toString` prints counts for a share body); `PlayBodies.share` builds one (pure, not called yet).
+- **`Soap`**: the ContentDirectory service, `Browse Q:0` with all six arguments (no `InstanceID`), `parseQueuePage`/
+  `parseQueueMeta`. **`SpeakerControl`**: `setPlayMode`, `playMode`, `addUriToQueue`, `seekTrack`, `browseQueue`,
+  `mediaInfo`, `configureSleepTimer`, `remainingSleepTimer`; `SpeakerIo.queueMeta` (the classify's one read). Not built:
+  AVTransport `Next`/`Previous` (54-a2's context shuffle, [D8+]) and `ReorderTracksInQueue` (54-b).
+- **`SonosTransport`**: `playShare` (§2.2's order; `ShareRefused` for both faults, 0 added or no share type;
+  `SpeakerUnreachable` without a second try; not found = `first`, no seek), `findInQueue`, `readQueue` (an `UpdateID`
+  that moves between pages reads the queue again once), `learnQueue` + `shareBaseline` (adopt's read; the baseline only
+  through the second), `queuePlay` (hushed, the cap on a START, `session.jumped` re-arms a disarmed session),
+  `setPlayMode`, `playMode`, `sleepTimer`. **The park clears the queue for every kind** (Stop, clear, the queue uri;
+  a refused clear logged) - `SonosLifecycleTest`'s bedtime look now sees `clearqueue`. **The speaker's sleep timer is
+  in a1 as SOAP**: `playShare`'s step 10b (`sleepTimer`; null clears only ours), and our own Stop and the park clear it
+  only while `GetRemainingSleepTimerDuration` is within 30 s of what our last set has left (`session.ownSleepTimer`); a
+  hand-off clears it through its Stop. Nothing sets one yet: the edge (`suspend_at_ms`) and when to set it are 54-a2's.
+- **`SonosSession`**: `shareSet`/`shareRead`/`shareContainer`/`jumped`; classify for the kind (§2.5's `ours`, one
+  `BrowseMetadata` per unknown track, cached; `trackNo`, `trackSpotifyUri`; no lost-session, no DIDL check);
+  `stallBookkeeping` null for it; `lastOursTrack`/`lastOursRel` and the probe's match (`MigrationProbe.live` now returns
+  `ProbeLive` with the position). `adopt` and a play of another kind clear the share knowledge.
+- **`SonosEvents`**: `Playback` gains `queueVersion`, `playModes` (`WsPlayModes`), `previousPositionMs`; the existing
+  53-d `Metadata` gains `track` (`WsTrack`: uri, name, artist, duration - service 9 or a `spotify:` id) and `nextUri`
+  instead of a new event. Both print no id or title.
+- **Logging (54-11)**: share lines carry kinds, counts and positions; `Fields`, `PositionInfo`, `ProbeLive` and the
+  session's "not-ours?" line print a Spotify queue track by its prefix only (`Fields.shown`).
+- **Fixtures**: `ws/spotify_queue_2026-10-21.json` (the 53 messages, the probe's new Spotify-id rule on top of
+  `--rescrub`: ids of `server/testdata/spotify/`, positions 1-4 = `1FakeTrackA`, `C`, `D`, `E`; the raw files stay in
+  `~/handy-captures/`); UPnP `add_uri_to_queue.xml` and `media_info_queue.xml` from the run, the rest hand-written and
+  provisional (`sonos/README.md`).
+- **`scripts/fake-sonos.py`**: the queue from `server/testdata/spotify/` (a playlist's episode in the queue is an
+  extra), SoCo's add (2311/3079, fault 800), the clear, the queue as the source, `TRACK_NR`, its own advance under the
+  play modes (the end STOPPED with its track kept - provisional [D7]), Browse both flags paged (402 without
+  `SortCriteria`), `UpdateID`, `GetMediaInfo`, the sleep timer (it pauses when it runs out - provisional [D21]),
+  `--refuse-share`, `--empty-share`, `--queue-reversed`, `--queue-extra`, `--queue-gap`, `--track-seconds`, script events
+  `next`, `previous`, `queue-insert`, `shuffle`; a migration's `move` carries the queue. `--selftest` step 6.
+- **`scripts/sonos-play-test.py`**: `--more` (the 54-0 remainder: the full Browse against `--listing`, the queue's end,
+  `REPEAT_ONE`, `SHUFFLE_NOREPEAT` with `Next`/`Previous`, `ReorderTracksInQueue`, the sleep timer), `--add-only LINK`
+  ([D12]), the share goldens.
+- **NOTICE.md and `assets/licenses/MIT-SoCo.txt`** now, not with 54-a2's docs: SoCo's code ships in the APK from this
+  round.
+
+**54-a2 inherits**: `adopt` clears the share knowledge, so the adopt's classify runs on vibb's prefix rule - with a
+persisted baseline the look must call `shareSet` + `shareRead` before it classifies (an `adoptLive` parameter); a
+`playShare` stopped by its second gate has replaced the queue but returns null (the controller can't take that map -
+§2.3's "a superseded transfer"); the controller feeds `shareContainer` and decides trust with `versionCheck`; the sleep
+timer's edge, its re-set at boundaries and follows (`sleepTimer`), and `GetTransportSettings` before a correction
+(`playMode`); music/CLAUDE.md, emulator.md §6h and the rest of §4's docs.

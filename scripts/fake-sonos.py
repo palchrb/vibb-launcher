@@ -32,6 +32,21 @@ verbs): SetAVTransportURI to x-rincon:<coordinator> joins that group (a stream t
 stops); BecomeCoordinatorOfStandaloneGroup leaves it - a member stops and the rest play on, a
 coordinator's stream moves to its next member (as `move`) - answering from become_standalone.xml.
 
+The speaker's own queue (design 54, Spotify on a room: vibb's spotify_sharelink, SoCo's ShareLink): AddURIToQueue takes
+a share link (SoCo's EnqueuedURI and metadata, service 2311 or 3079) of the fixtures in server/testdata/spotify/ - the
+playlist of playlist_items.json (its playable tracks and episodes in its order: an episode our listing drops is an
+extra), the album (album.json + album_tracks.json), the show (show_episodes.json), track.json, episode.json - and
+answers from add_uri_to_queue.xml; another id is fault 800 (fault_800.xml, provisional). RemoveAllTracksFromQueue,
+SetAVTransportURI x-rincon-queue:<uid>#0 (the queue as the source), Seek TRACK_NR, the queue's own advance (NORMAL: the
+next position, STOPPED after the last with its track kept; REPEAT_ALL wraps; REPEAT_ONE plays it again; SHUFFLE_* a
+seeded pick), SetPlayMode/GetTransportSettings (transport_settings.xml), ContentDirectory Browse Q:0 - BrowseMetadata
+(browse_queue_meta.xml) and BrowseDirectChildren paged (browse_queue_page.xml), every one of the six arguments required
+(402 without SortCriteria), `UpdateID` one more with every edit -, GetMediaInfo (media_info_queue.xml) and the sleep
+timer: ConfigureSleepTimer / GetRemainingSleepTimerDuration (sleep_timer.xml; when it runs out the speaker pauses -
+provisional, design 54 [D21]). GetPositionInfo of a queue track answers from position_spotify_queue.xml. The options
+--refuse-share (every add a fault), --empty-share (0 added), --queue-reversed, --queue-extra (a track our listing lacks,
+at position 2), --queue-gap (one of ours missing) and --track-seconds N (every queue track N s long) shape the add.
+
 --script FILE: one event per line, `t+<seconds> [@<speaker>] <event>`, the time counted from the
 first Play any speaker receives (the session start); the speaker defaults to the first. Events:
     PLAYING "<uri>" | PAUSED_PLAYBACK "<uri>" | STOPPED "" | TRANSITIONING -   set state and uri (- keeps it)
@@ -40,6 +55,9 @@ first Play any speaker receives (the session start); the speaker defaults to the
     drop | back                           stop / start answering (connection closed: unreachable)
     stall | unstall                       RelTime frozen while PLAYING (the stall retry)
     volume <0-100>                        changed from "the Sonos app"
+    next | previous                       the speaker's own buttons on a queue (design 54 [D9])
+    queue-insert                          an edit from the Sonos app: a track our listing lacks after the current one
+    shuffle                               the Sonos app sets SHUFFLE_NOREPEAT
 Lines starting with # are comments.
 """
 
@@ -47,12 +65,14 @@ import argparse
 import http.client
 import json
 import os
+import random
 import re
 import shlex
 import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,12 +80,22 @@ from xml.sax.saxutils import escape
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(HERE, "..", "music", "app", "src", "test", "resources", "sonos")
+SPOTIFY_DATA = os.path.join(HERE, "..", "server", "testdata", "spotify")
 SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
 SERVICES = {
     "/MediaRenderer/AVTransport/Control": "urn:schemas-upnp-org:service:AVTransport:1",
     "/MediaRenderer/RenderingControl/Control": "urn:schemas-upnp-org:service:RenderingControl:1",
     "/ZoneGroupTopology/Control": "urn:schemas-upnp-org:service:ZoneGroupTopology:1",
+    "/MediaServer/ContentDirectory/Control": "urn:schemas-upnp-org:service:ContentDirectory:1",
 }
+# design 54: SoCo's ShareLink EnqueuedURI (soco/plugins/sharelink.py magic(): a container's prefix, or none for an item)
+SHARE_URI = re.compile(r"(?:x-rincon-cpcontainer:(?:1004206c|1006206c))?spotify%3a(playlist|album|show|track|episode)%3a([A-Za-z0-9]+)")
+SHARE_SN = re.compile(r"SA_RINCON(2311|3079)_X_#Svc(2311|3079)-0-Token")
+PLAY_MODES = ("NORMAL", "REPEAT_ALL", "REPEAT_ONE", "SHUFFLE", "SHUFFLE_NOREPEAT", "SHUFFLE_REPEAT_ONE")  # SoCo's
+DIDL_NS = ('xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" '
+           'xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"')
+# a track our listing lacks (album_tracks.json's bonus track): --queue-extra and the script's queue-insert
+EXTRA_TRACK = "1FakeTrackG00000000007"
 LIVE = ("PLAYING", "PAUSED_PLAYBACK")
 T0 = time.monotonic()
 # The canned reply each situation is answered from: the fixture the JVM tests parse for that very case
@@ -123,6 +153,52 @@ class Fault(Exception):
         self.code = code
 
 
+# --- design 54: the speaker's own queue, filled by a Spotify share link from server/testdata/spotify/ ---------------
+
+def spotify_fixture(name):
+    with open(os.path.join(SPOTIFY_DATA, name), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def queue_row(item, album=None):
+    """A queue item from a Spotify fixture's track or episode: its TrackURI as the 54-0 run showed it (sid 9, sn 6), its
+    length, title, artists and album."""
+    kind = item.get("type") or "track"
+    return {"id": item["id"], "uri": f"x-sonos-spotify:spotify%3a{kind}%3a{item['id']}?sid=9&flags=8232&sn=6",
+            "dur": (item.get("duration_ms") or 0) / 1000.0, "title": item.get("name") or "",
+            "creator": ", ".join(a.get("name", "") for a in item.get("artists") or []),
+            "album": (item.get("album") or {}).get("name") or album or (item.get("show") or {}).get("name") or ""}
+
+
+def share_catalog():
+    """(kind, id) -> the queue rows a share link of it adds: what the household's account plays of the fake Spotify's
+    data (playable, not local, with an id), in Spotify's order - a playlist's episodes too."""
+    def playable(items):
+        return [i for i in items if i and i.get("id") and not i.get("is_local") and i.get("is_playable", True)]
+
+    cat = {}
+    pl = spotify_fixture("playlist_items.json")
+    cat[("playlist", urllib.parse.urlsplit(pl["href"]).path.split("/")[3])] = \
+        [queue_row(i) for i in playable(r.get("item") for r in pl["items"])]
+    album = spotify_fixture("album.json")
+    tracks = (album.get("tracks") or {}).get("items", []) + spotify_fixture("album_tracks.json").get("items", [])
+    cat[("album", album["id"])] = [queue_row(i, album.get("name")) for i in playable(tracks)]
+    show = spotify_fixture("show.json")
+    cat[("show", show["id"])] = [queue_row(i, show.get("name")) for i in playable(spotify_fixture("show_episodes.json").get("items", []))]
+    for name in ("track.json", "episode.json"):
+        it = spotify_fixture(name)
+        cat[(it["type"], it["id"])] = [queue_row(it)]
+    return cat
+
+
+def row_didl(row, item_id, parent):
+    """A queue item's DIDL-Lite (browse_queue_page.xml's and position_spotify_queue.xml's shape), values escaped once."""
+    return (f'<item id="{item_id}" parentID="{parent}" restricted="true">'
+            f'<res protocolInfo="sonos.com-spotify:*:audio/x-spotify:*" duration="{hms(row["dur"])}">{escape(row["uri"])}</res>'
+            f'<dc:title>{escape(row["title"])}</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class>'
+            f'<dc:creator>{escape(row["creator"])}</dc:creator><upnp:album>{escape(row["album"])}</upnp:album></item>')
+
+
 class Speaker:
     def __init__(self, name, port, uid):
         self.name, self.port, self.uid = name, port, uid
@@ -138,17 +214,69 @@ class Speaker:
         self.mute = False
         self.reachable = True
         self.stalled = False
+        # design 54: the speaker's own queue
+        self.queue = []            # rows (queue_row)
+        self.update_id = 1         # one more with every edit (the 54-0 run's queueVersion)
+        self.from_queue = False    # the transport's source is x-rincon-queue:<uid>#0
+        self.track = 0             # its 1-based position while from_queue
+        self.play_mode = "NORMAL"
+        self.shuffled = set()      # SHUFFLE_NOREPEAT: the positions played since the mode was set
+        self.rng = random.Random(54)
+        self.sleep_until = None    # monotonic: the sleep timer runs out
 
     def position(self):
         if self.state == "PLAYING" and self.since is not None and not self.stalled:
             return self.rel + (time.monotonic() - self.since)
         return self.rel
 
+    def select(self, n):
+        """The queue's position n (1-based; 0 for none) on the transport: its TrackURI, length and DIDL, from 0."""
+        row = self.queue[n - 1] if 0 < n <= len(self.queue) else None
+        self.track = n if row else 0
+        self.uri = row["uri"] if row else ""
+        self.duration = row["dur"] if row else 0.0
+        self.meta = f"<DIDL-Lite {DIDL_NS}>{row_didl(row, '-1', '-1')}</DIDL-Lite>" if row else ""
+        self.rel = 0.0
+        self.since = time.monotonic() if self.state == "PLAYING" else None
+        if row:
+            self.shuffled.add(n)
+
     def settle(self):
-        """The track ends by itself at its duration (STOPPED, uri kept)."""
+        """The sleep timer runs out (paused); the track ends by itself at its duration: a direct uri STOPPED with the uri
+        kept, a queue track the queue's own advance."""
+        if self.sleep_until is not None and time.monotonic() >= self.sleep_until:
+            self.sleep_until = None
+            if self.state == "PLAYING":
+                self.set_state("PAUSED_PLAYBACK")
+                log(f"{self.name}: the sleep timer ran out - paused")
         if self.state == "PLAYING" and self.duration > 0 and self.position() >= self.duration:
+            if self.from_queue:
+                self.advance()
+                return
             self.state, self.rel, self.since = "STOPPED", 0.0, None
             log(f"{self.name}: track ended (uri kept)")
+
+    def advance(self):
+        """The queue's own advance under the play mode: NORMAL the next position (STOPPED after the last, its track and
+        TrackURI kept - provisional, design 54 [D7]); REPEAT_ALL wraps; REPEAT_ONE again; SHUFFLE_* a seeded pick."""
+        over = max(0.0, self.position() - self.duration)
+        n, last, mode = self.track, len(self.queue), self.play_mode
+        if mode in ("REPEAT_ONE", "SHUFFLE_REPEAT_ONE"):
+            nxt = n
+        elif mode.startswith("SHUFFLE"):
+            left = [p for p in range(1, last + 1) if p != n and (mode == "SHUFFLE" or p not in self.shuffled)]
+            nxt = self.rng.choice(left) if left else None
+        elif n < last:
+            nxt = n + 1
+        else:
+            nxt = 1 if mode == "REPEAT_ALL" and last else None
+        if nxt is None:
+            self.state, self.rel, self.since = "STOPPED", 0.0, None
+            log(f"{self.name}: the queue ended at position {n} (uri kept)")
+            return
+        self.select(nxt)
+        self.rel = min(over, self.duration)
+        log(f"{self.name}: the queue's own advance {n} -> {nxt}")
 
     def freeze(self):
         self.rel, self.since = self.position(), (time.monotonic() if self.state == "PLAYING" else None)
@@ -172,6 +300,11 @@ class Household:
         self.lock = threading.RLock()
         self.script = []           # [(t, speaker, words)]
         self.started = None        # monotonic of the first Play
+        # design 54: what a share link adds, and how the add is shaped
+        self.catalog = share_catalog()
+        self.extra_row = next(r for rows in self.catalog.values() for r in rows if r["id"] == EXTRA_TRACK)
+        self.refuse_share = self.empty_share = self.queue_reversed = self.queue_extra = self.queue_gap = False
+        self.track_seconds = 0.0
 
     def speaker(self, name):
         s = self.by_name.get(name)
@@ -229,6 +362,17 @@ class Household:
             spk.since = time.monotonic() if spk.state == "PLAYING" else None
         elif verb == "volume":
             spk.volume = max(0, min(100, int(words[1])))
+        elif verb in ("next", "previous"):
+            n = spk.track + (1 if verb == "next" else -1)
+            if spk.from_queue and 1 <= n <= len(spk.queue):
+                spk.freeze()
+                spk.select(n)
+        elif verb == "queue-insert":
+            spk.queue.insert(spk.track, dict(self.extra_row))
+            spk.update_id += 1
+        elif verb == "shuffle":
+            spk.play_mode = "SHUFFLE_NOREPEAT"
+            spk.shuffled = {spk.track}
         else:
             raise SystemExit(f"fake-sonos: unknown script event {verb!r}")
 
@@ -236,6 +380,9 @@ class Household:
         """Migration: spk's stream moves to `to` (its group's new coordinator), spk STOPPED "" and standalone."""
         spk.freeze()
         to.uri, to.meta, to.duration, to.rel = spk.uri, spk.meta, spk.duration, spk.rel
+        # design 54 [D13]: a queue moves with the stream, at the same positions
+        to.queue, to.from_queue, to.track, to.play_mode = list(spk.queue), spk.from_queue, spk.track, spk.play_mode
+        to.update_id += 1
         to.coordinator = to.uid
         to.set_state(spk.state if spk.state in LIVE else "PLAYING")
         to.rel = spk.rel
@@ -244,6 +391,7 @@ class Household:
                 other.coordinator = to.uid
         spk.coordinator = spk.uid
         spk.uri, spk.meta, spk.duration = "", "", 0.0
+        spk.from_queue, spk.track = False, 0
         spk.set_state("STOPPED")
 
     def members_of(self, spk):
@@ -266,6 +414,7 @@ class Household:
                 self.hand_over(spk, members[0])
             else:
                 spk.uri, spk.meta, spk.duration = "", "", 0.0
+                spk.from_queue, spk.track = False, 0
                 spk.set_state("STOPPED")
         spk.freeze()
         spk.coordinator = coord.uid
@@ -277,6 +426,7 @@ class Household:
         if spk.coordinator != spk.uid:
             spk.coordinator = spk.uid
             spk.uri, spk.meta, spk.duration = "", "", 0.0
+            spk.from_queue, spk.track = False, 0
             spk.set_state("STOPPED")
             log(f"{spk.name}: left its group")
             return
@@ -336,16 +486,111 @@ class Household:
                 return empty(service, action)
         if service.endswith("ZoneGroupTopology:1") and action == "GetZoneGroupState":
             return put(fixture("zgs_wrapped.xml"), "ZoneGroupState", self.zone_group_state())
+        if service.endswith("ContentDirectory:1") and action == "Browse":
+            return self.browse(spk, args)
         raise Fault(401)  # Invalid Action
+
+    # -- design 54: the queue --
+
+    def shape(self, rows):
+        """A share link's rows as the options shape them (copies): one of ours missing, an extra, reversed, short."""
+        rows = [dict(r) for r in rows]
+        if self.queue_gap and len(rows) > 2:
+            del rows[2]
+        if self.queue_extra:
+            rows.insert(1, dict(self.extra_row))
+        if self.queue_reversed:
+            rows.reverse()
+        if self.track_seconds:
+            for r in rows:
+                r["dur"] = self.track_seconds
+        return rows
+
+    def add_share(self, spk, args):
+        """AddURIToQueue with SoCo's ShareLink request: the link's rows appended (DesiredFirstTrackNumberEnqueued 0)."""
+        link = SHARE_URI.fullmatch(args.get("EnqueuedURI", ""))
+        rows = self.catalog.get((link.group(1), link.group(2))) if link else None
+        if self.refuse_share or rows is None or not SHARE_SN.search(args.get("EnqueuedURIMetaData", "")):
+            raise Fault(800)  # the speaker's refusal of a link it can't play (the code is design 54 [D12]'s)
+        rows = [] if self.empty_share else self.shape(rows)
+        first = len(spk.queue) + 1 if rows else 0
+        spk.queue += rows
+        spk.update_id += 1
+        body = put(fixture("add_uri_to_queue.xml"), "FirstTrackNumberEnqueued", str(first))
+        return put(put(body, "NumTracksAdded", str(len(rows))), "NewQueueLength", str(len(spk.queue)))
+
+    def browse(self, spk, args):
+        """ContentDirectory Browse of Q:0 (SoCo's queue_size and get_queue): all six arguments or 402."""
+        if any(k not in args for k in ("ObjectID", "BrowseFlag", "Filter", "StartingIndex", "RequestedCount", "SortCriteria")):
+            raise Fault(402)
+        if args["ObjectID"] != "Q:0":
+            raise Fault(701)  # no such object
+        if args["BrowseFlag"] == "BrowseMetadata":
+            didl = (f'<DIDL-Lite {DIDL_NS}><container id="Q:0" parentID="Q:" restricted="true" childCount="{len(spk.queue)}">'
+                    '<dc:title>Queue</dc:title><upnp:class>object.container.playlistContainer</upnp:class></container></DIDL-Lite>')
+            body, returned = put(fixture("browse_queue_meta.xml"), "Result", didl), 1
+        elif args["BrowseFlag"] == "BrowseDirectChildren":
+            start, count = int(args["StartingIndex"] or 0), int(args["RequestedCount"] or 0)
+            rows = spk.queue[start:start + count]
+            items = "".join(row_didl(r, f"Q:0/{start + i + 1}", "Q:0") for i, r in enumerate(rows))
+            body, returned = put(fixture("browse_queue_page.xml"), "Result", f"<DIDL-Lite {DIDL_NS}>{items}</DIDL-Lite>"), len(rows)
+        else:
+            raise Fault(402)
+        body = put(put(body, "NumberReturned", str(returned)), "TotalMatches", str(len(spk.queue)))
+        return put(body, "UpdateID", str(spk.update_id))
 
     def av(self, spk, action, args):
         if action == "GetPositionInfo":
             state, uri, rel, dur, meta = self.view(spk)
             body = fixture(position_fixture(state, uri))
-            for tag, value in (("Track", "1" if uri else "0"), ("TrackDuration", hms(dur)), ("TrackMetaData", meta),
+            track = str(spk.track) if spk.from_queue and uri.startswith("x-sonos-spotify:") else ("1" if uri else "0")
+            for tag, value in (("Track", track), ("TrackDuration", hms(dur)), ("TrackMetaData", meta),
                                ("TrackURI", uri), ("RelTime", hms(rel))):
                 body = put(body, tag, value)
             return body
+        if action == "AddURIToQueue":
+            return self.add_share(spk, args)
+        if action == "RemoveAllTracksFromQueue":
+            spk.queue, spk.update_id = [], spk.update_id + 1
+            if spk.from_queue:
+                spk.set_state("STOPPED")
+                spk.select(0)
+            return empty(SERVICES["/MediaRenderer/AVTransport/Control"], action)
+        if action == "SetPlayMode":
+            if args.get("NewPlayMode") not in PLAY_MODES:
+                raise Fault(402)
+            spk.play_mode, spk.shuffled = args["NewPlayMode"], {spk.track}
+            return empty(SERVICES["/MediaRenderer/AVTransport/Control"], action)
+        if action == "GetTransportSettings":
+            return put(fixture("transport_settings.xml"), "PlayMode", spk.play_mode)
+        if action == "GetMediaInfo":
+            current = f"x-rincon-queue:{spk.uid}#0" if spk.from_queue else spk.uri
+            nr = len(spk.queue) if spk.from_queue else (1 if spk.uri else 0)
+            return put(put(fixture("media_info_queue.xml"), "NrTracks", str(nr)), "CurrentURI", current)
+        if action == "ConfigureSleepTimer":
+            value = args.get("NewSleepTimerDuration", "")
+            secs = hms_to_s(value) if value else None
+            if value and secs is None:
+                raise Fault(402)
+            spk.sleep_until = time.monotonic() + secs if value else None
+            return empty(SERVICES["/MediaRenderer/AVTransport/Control"], action)
+        if action == "GetRemainingSleepTimerDuration":
+            spk.settle()
+            left = "" if spk.sleep_until is None else hms(max(0.0, spk.sleep_until - time.monotonic()))
+            return put(fixture("sleep_timer.xml"), "RemainingSleepTimerDuration", left)
+        if action == "SetAVTransportURI" and args.get("CurrentURI", "") == f"x-rincon-queue:{spk.uid}#0":
+            spk.coordinator = spk.uid
+            spk.from_queue = True
+            spk.set_state("STOPPED")
+            spk.select(1 if spk.queue else 0)
+            return empty(SERVICES["/MediaRenderer/AVTransport/Control"], action)
+        if action == "Seek" and args.get("Unit") == "TRACK_NR":
+            n = int(args.get("Target") or 0) if (args.get("Target") or "").isdigit() else 0
+            if not spk.from_queue or not 1 <= n <= len(spk.queue):
+                raise Fault(711)
+            spk.freeze()
+            spk.select(n)
+            return empty(SERVICES["/MediaRenderer/AVTransport/Control"], action)
         if action == "GetTransportInfo":
             state = self.view(spk)[0]
             return put(fixture(TRANSPORT.get(state, "transport_playing.xml")), "CurrentTransportState", state)
@@ -358,6 +603,7 @@ class Household:
             return empty(SERVICES["/MediaRenderer/AVTransport/Control"], action)
         if action == "SetAVTransportURI":
             spk.coordinator = spk.uid  # a play on a member makes it standalone again
+            spk.from_queue, spk.track = False, 0
             spk.uri, spk.meta = args.get("CurrentURI", ""), args.get("CurrentURIMetaData", "")
             m = re.search(r'duration="([0-9:]+)"', spk.meta)
             spk.duration = (hms_to_s(m.group(1)) if m else None) or self.default_duration
@@ -385,7 +631,7 @@ class Household:
                 raise Fault(711)
             spk.freeze()
             spk.rel = target
-        elif action != "RemoveAllTracksFromQueue":
+        else:
             raise Fault(401)
         return empty(SERVICES["/MediaRenderer/AVTransport/Control"], action)
 
@@ -399,6 +645,8 @@ def position_fixture(state, uri):
     """GetPositionInfo's template for what the speaker's own transport reports."""
     if uri.startswith("x-rincon:"):
         return POSITION["grouped"]
+    if uri.startswith("x-sonos-spotify:"):
+        return "position_spotify_queue.xml"  # design 54: a track of the speaker's own queue
     if state == "STOPPED" and not uri:
         return POSITION["stopped_empty"]
     return POSITION.get(state, POSITION["PLAYING"])
@@ -512,6 +760,9 @@ def build(args):
     house = Household(speakers, args.advertise, args.transition_s, args.duration)
     for spk in speakers:
         spk.volume = max(0, min(100, args.volume))
+    for opt in ("refuse_share", "empty_share", "queue_reversed", "queue_extra", "queue_gap"):
+        setattr(house, opt, bool(getattr(args, opt, False)))
+    house.track_seconds = float(getattr(args, "track_seconds", 0.0) or 0.0)
     if args.group:
         names = args.group.split("+")
         coord = house.speaker(names[0])
@@ -550,7 +801,14 @@ def selftest():
         [(n, ("CurrentTransportState",)) for n in sorted(set(TRANSPORT.values()))] + [
         ("zgs_wrapped.xml", ("ZoneGroupState",)), ("get_volume.xml", ("CurrentVolume",)), ("get_mute.xml", ("CurrentMute",)),
         ("fault_701.xml", ("errorCode",)), ("device_description.xml", ("UDN", "roomName")),
-        ("become_standalone.xml", ("DelegatedGroupCoordinatorID", "NewGroupID"))]
+        ("become_standalone.xml", ("DelegatedGroupCoordinatorID", "NewGroupID")),
+        # design 54: the queue's replies
+        ("position_spotify_queue.xml", POSITION_TAGS),
+        ("add_uri_to_queue.xml", ("FirstTrackNumberEnqueued", "NumTracksAdded", "NewQueueLength")),
+        ("browse_queue_meta.xml", ("Result", "NumberReturned", "TotalMatches", "UpdateID")),
+        ("browse_queue_page.xml", ("Result", "NumberReturned", "TotalMatches", "UpdateID")),
+        ("transport_settings.xml", ("PlayMode",)), ("media_info_queue.xml", ("NrTracks", "CurrentURI")),
+        ("sleep_timer.xml", ("RemainingSleepTimerDuration",))]
     for name, tags in templates:
         for tag in tags:
             put(fixture(name), tag, "x")
@@ -573,8 +831,8 @@ def selftest():
 
     def soap(spk, path, action, args=()):
         service = SERVICES[path]
-        inner = "".join(f"<{k}>{escape(v)}</{k}>" for k, v in (("InstanceID", "0"),) + tuple(args)) \
-            if not path.startswith("/ZoneGroup") else ""
+        instance = (("InstanceID", "0"),) if path.startswith("/MediaRenderer") else ()
+        inner = "".join(f"<{k}>{escape(v)}</{k}>" for k, v in instance + tuple(args))
         body = (f'<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="{SOAP_NS}"><s:Body>'
                 f'<u:{action} xmlns:u="{service}">{inner}</u:{action}></s:Body></s:Envelope>').encode("utf-8")
         req = urllib.request.Request(f"http://127.0.0.1:{spk.port}{path}", data=body, headers={
@@ -699,6 +957,112 @@ def selftest():
         # 5. the seed file the debug feed reads
         assert f'"port": {kjokken.port}' in seed(house)
         print("5. debug-feed seed OK")
+
+        # 6. design 54: the speaker's own queue - SoCo's request as the golden pins it added, browsed, played from, its
+        # own advance and end, the play modes, the buttons, an edit, the sleep timer, the park's clear, the add's options
+        CD = "/MediaServer/ContentDirectory/Control"
+        didl_ns = "{urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/}"
+
+        def browse(flag, start, count, sort=True):
+            args = (("ObjectID", "Q:0"), ("BrowseFlag", flag), ("Filter", "*"), ("StartingIndex", str(start)),
+                    ("RequestedCount", str(count))) + ((("SortCriteria", ""),) if sort else ())
+            return soap(stua, CD, "Browse", args)[1]
+
+        def ids(rows):
+            return [r["id"][:11] for r in rows]
+
+        def near_end(spk):
+            spk.freeze()
+            spk.rel = spk.duration - 0.05
+            time.sleep(0.1)
+
+        golden = {c.tag: (c.text or "") for c in ET.fromstring(fixture("sharelink_playlist.xml").encode("utf-8"))}
+        add_args = tuple((k, golden[k]) for k in ("EnqueuedURI", "EnqueuedURIMetaData", "DesiredFirstTrackNumberEnqueued", "EnqueueAsNext"))
+        soap(stua, AV, "SetPlayMode", (("NewPlayMode", "NORMAL"),))
+        soap(stua, AV, "RemoveAllTracksFromQueue")
+        version = stua.update_id
+        added = soap(stua, AV, "AddURIToQueue", add_args)[1]
+        assert added == {"FirstTrackNumberEnqueued": "1", "NumTracksAdded": "5", "NewQueueLength": "5"}, added
+        assert ids(stua.queue) == ["1FakeTrackA", "5FakeEpisod", "1FakeTrackC", "1FakeTrackA", "1FakeTrackD"], ids(stua.queue)
+        assert stua.update_id == version + 1, "an edit moves the UpdateID"
+        meta = browse("BrowseMetadata", 0, 1)
+        assert 'childCount="5"' in meta["Result"] and meta["UpdateID"] == str(stua.update_id), meta
+        page = browse("BrowseDirectChildren", 1, 2)
+        res = [e.text for e in ET.fromstring(page["Result"]).iter(f"{didl_ns}res")]
+        assert res == [stua.queue[1]["uri"], stua.queue[2]["uri"]] and page["NumberReturned"] == "2" and page["TotalMatches"] == "5", page
+        assert res[1] == "x-sonos-spotify:spotify%3atrack%3a1FakeTrackC00000000003?sid=9&flags=8232&sn=6"
+        assert browse("BrowseDirectChildren", 0, 100, sort=False) == {"fault": "402"}, "every Browse carries SortCriteria"
+        # play_from_queue: the queue as the source, Seek TRACK_NR, Play
+        soap(stua, AV, "SetAVTransportURI", (("CurrentURI", f"x-rincon-queue:{stua.uid}#0"), ("CurrentURIMetaData", "")))
+        soap(stua, AV, "Seek", (("Unit", "TRACK_NR"), ("Target", "3")))
+        soap(stua, AV, "Play", (("Speed", "1"),))
+        time.sleep(0.35)
+        pos = soap(stua, AV, "GetPositionInfo")[1]
+        assert pos["Track"] == "3" and pos["TrackURI"] == res[1] and pos["TrackDuration"] == "0:03:42", pos
+        assert "<dc:title>Månesang</dc:title>" in pos["TrackMetaData"]
+        expected = fixture("position_spotify_queue.xml")
+        for tag in POSITION_TAGS:
+            expected = put(expected, tag, pos[tag])
+        assert replies[-1] == expected, "a queue track answers from position_spotify_queue.xml"
+        assert soap(stua, AV, "Seek", (("Unit", "TRACK_NR"), ("Target", "9")))[1] == {"fault": "711"}
+        media = soap(stua, AV, "GetMediaInfo")[1]
+        assert media["NrTracks"] == "5" and media["CurrentURI"] == f"x-rincon-queue:{stua.uid}#0", media
+        near_end(stua)
+        assert soap(stua, AV, "GetPositionInfo")[1]["Track"] == "4", "the speaker's own advance, gapless"
+        assert soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "PLAYING"
+        soap(stua, AV, "Seek", (("Unit", "TRACK_NR"), ("Target", "5")))
+        near_end(stua)
+        end = soap(stua, AV, "GetPositionInfo")[1]
+        assert soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "STOPPED"
+        assert end["Track"] == "5" and "1FakeTrackD" in end["TrackURI"], "NORMAL ends after the last, its track kept"
+        soap(stua, AV, "SetPlayMode", (("NewPlayMode", "REPEAT_ALL"),))
+        assert soap(stua, AV, "GetTransportSettings")[1]["PlayMode"] == "REPEAT_ALL"
+        assert replies[-1] == put(fixture("transport_settings.xml"), "PlayMode", "REPEAT_ALL")
+        assert soap(stua, AV, "SetPlayMode", (("NewPlayMode", "LOUD"),))[1] == {"fault": "402"}
+        soap(stua, AV, "Play", (("Speed", "1"),))
+        time.sleep(0.35)
+        near_end(stua)
+        assert soap(stua, AV, "GetPositionInfo")[1]["Track"] == "1", "REPEAT_ALL wraps"
+        soap(stua, AV, "SetPlayMode", (("NewPlayMode", "NORMAL"),))
+        # the speaker's buttons, an edit from the Sonos app, its shuffle
+        version = stua.update_id
+        house.load_script("t+0 next\nt+0 queue-insert\nt+0 shuffle\n")
+        house.run_due()
+        assert stua.track == 2 and ids(stua.queue)[2] == "1FakeTrackG" and stua.update_id == version + 1, ids(stua.queue)
+        assert soap(stua, AV, "GetTransportSettings")[1]["PlayMode"] == "SHUFFLE_NOREPEAT"
+        house.load_script("t+0 previous\n")
+        house.run_due()
+        assert soap(stua, AV, "GetPositionInfo")[1]["Track"] == "1"
+        # the sleep timer: set, read back, cancelled; at 0 the speaker pauses (provisional, [D21])
+        soap(stua, AV, "ConfigureSleepTimer", (("NewSleepTimerDuration", "1:00:00"),))
+        assert soap(stua, AV, "GetRemainingSleepTimerDuration")[1]["RemainingSleepTimerDuration"] in ("1:00:00", "0:59:59")
+        soap(stua, AV, "ConfigureSleepTimer", (("NewSleepTimerDuration", ""),))
+        assert soap(stua, AV, "GetRemainingSleepTimerDuration")[1]["RemainingSleepTimerDuration"] == ""
+        soap(stua, AV, "ConfigureSleepTimer", (("NewSleepTimerDuration", "0:00:00"),))
+        assert soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "PAUSED_PLAYBACK", "the timer ran out"
+        # the park: Stop, the queue cleared, the queue as the source - the speaker's Play button plays nothing
+        soap(stua, AV, "Stop")
+        soap(stua, AV, "RemoveAllTracksFromQueue")
+        soap(stua, AV, "SetAVTransportURI", (("CurrentURI", f"x-rincon-queue:{stua.uid}#0"), ("CurrentURIMetaData", "")))
+        parked = soap(stua, AV, "GetPositionInfo")[1]
+        assert parked["TrackURI"] == "" and parked["Track"] == "0" and 'childCount="0"' in browse("BrowseMetadata", 0, 1)["Result"]
+        assert soap(stua, AV, "Play", (("Speed", "1"),))[1] == {"fault": "701"}
+        # the add's options
+        house.refuse_share = True
+        assert soap(stua, AV, "AddURIToQueue", add_args)[1] == {"fault": "800"}
+        assert replies[-1] == fixture("fault_800.xml")
+        house.refuse_share, house.empty_share = False, True
+        assert soap(stua, AV, "AddURIToQueue", add_args)[1]["NumTracksAdded"] == "0"
+        house.empty_share = False
+        house.queue_gap = house.queue_extra = house.queue_reversed = True
+        house.track_seconds = 2.0
+        assert soap(stua, AV, "AddURIToQueue", add_args)[1]["NewQueueLength"] == "5"
+        assert ids(stua.queue) == ["1FakeTrackD", "1FakeTrackA", "5FakeEpisod", "1FakeTrackG", "1FakeTrackA"], ids(stua.queue)
+        assert all(r["dur"] == 2.0 for r in stua.queue)
+        unknown = (("EnqueuedURI", "spotify%3atrack%3a1FakeTrackZ00000000099"),) + add_args[1:]
+        assert soap(stua, AV, "AddURIToQueue", unknown)[1] == {"fault": "800"}, "a link the household can't play"
+        print("6. the queue (design 54): SoCo's add, Browse paged with UpdateID, play_from_queue, the own advance and end, "
+              "the modes, buttons, an edit, the sleep timer, the park's clear, the add's options OK")
     finally:
         for s in servers:
             s.shutdown()
@@ -718,6 +1082,12 @@ def main():
                    help="track length in seconds when the DIDL has none (default: none, reads 0:00:00)")
     p.add_argument("--transition-s", type=float, default=0.5, help="TRANSITIONING after Play (default %(default)s)")
     p.add_argument("--volume", type=int, default=30, help="every speaker's volume at the start (default %(default)s)")
+    p.add_argument("--refuse-share", action="store_true", help="design 54: every AddURIToQueue is fault 800 (no service takes the link)")
+    p.add_argument("--empty-share", action="store_true", help="design 54: a share link adds 0 tracks")
+    p.add_argument("--queue-reversed", action="store_true", help="design 54: the added queue in reverse order")
+    p.add_argument("--queue-extra", action="store_true", help="design 54: a track our listing lacks at the added queue's position 2")
+    p.add_argument("--queue-gap", action="store_true", help="design 54: one of our tracks missing from the added queue")
+    p.add_argument("--track-seconds", type=float, default=0.0, help="design 54: every queue track this long (default: its own)")
     p.add_argument("--print-seed", action="store_true", help="print debug-feed/sonos.json for these speakers and exit")
     p.add_argument("--selftest", action="store_true", help="check the fixtures and the fake against itself, then exit")
     args = p.parse_args()

@@ -54,7 +54,7 @@ class SonosEventsTest {
         assertEquals(stua, plan.playerId)
         assertTrue("every command carries a cmdId", (steps[0].commands + steps[1].commands).all { header(it)["cmdId"] != null })
         assertTrue("no groups event for the handshake's own reply", steps[1].events.isEmpty())
-        assertEquals("the getPlaybackStatus reply is an event", listOf(SocketEvent.Playback("$stua:100", WsPlayback.IDLE, 0, 1L, itemId = "0")), steps[3].events)
+        assertEquals("the getPlaybackStatus reply is an event", listOf(SocketEvent.Playback("$stua:100", WsPlayback.IDLE, 0, 1L, itemId = "0", queueVersion = "33", playModes = WsPlayModes(repeat = true, repeatOne = false, shuffle = false, crossfade = false), previousPositionMs = 7020)), steps[3].events)
         assertTrue(plan.healthy)
         // the ack alone, or the status alone, is not health
         val noStatus = SonosEvents.Plan(stua, ip)
@@ -141,7 +141,7 @@ class SonosEventsTest {
         val plan = SonosEvents.Plan(stua, ip)
         shaken(plan)
         val events = messages("playback_events.json").mapIndexed { i, m -> feed(plan, m, at = 100L + i).events }
-        assertEquals(SocketEvent.Playback("$stua:100", WsPlayback.PAUSED, 440_120, 100L), events[0].single())
+        assertEquals(SocketEvent.Playback("$stua:100", WsPlayback.PAUSED, 440_120, 100L, previousPositionMs = 439_900), events[0].single())
         assertEquals(WsPlayback.BUFFERING, (events[1].single() as SocketEvent.Playback).state)
         assertEquals("PLAYING without the prefix", WsPlayback.PLAYING, (events[2].single() as SocketEvent.Playback).state)
         assertEquals(WsPlayback.IDLE, (events[3].single() as SocketEvent.Playback).state)
@@ -259,6 +259,61 @@ class SonosEventsTest {
         feed(plan, capture[3])
         assertTrue(plan.healthy)
         assertTrue("and after it: ours stands", capture.slice(14..25).all { feed(plan, it).events.isEmpty() } && plan.healthy)
+    }
+
+    @Test
+    fun `d54 the Spotify queue capture - itemId, queueVersion, playModes, previousPositionMillis, the track, the next one and our playlist`() {
+        val plan = SonosEvents.Plan(stua, ip)
+        val events = messages("spotify_queue_2026-10-21.json").flatMapIndexed { i, m -> feed(plan, m, at = i.toLong()).events }
+        assertTrue(plan.healthy)
+        val status = events.filterIsInstance<SocketEvent.Playback>()
+        assertEquals(
+            listOf(
+                "IDLE 0 37", "IDLE 0 37", // the subscribe's push and getPlaybackStatus: the household's old queue
+                "IDLE item-2 39", "BUFFERING item-2 39", "PLAYING item-2 39", // our clear + add (37 -> 39), the start at 1
+                "BUFFERING item-3 39", "PLAYING item-3 39", // the jump to 3
+                "PAUSED item-3 39", "PAUSED item-6 39", "BUFFERING item-6 39", "PLAYING item-6 39", // pause, back to 2 paused, play
+                "BUFFERING item-6 39", "PLAYING item-6 39", // the seek near the end
+                "PLAYING item-3 39", // the speaker's own advance to 3: PLAYING with a new item, no BUFFERING
+                "PLAYING item-3 39", // REPEAT_ALL: the version doesn't move with a play mode
+                "IDLE 0 40", // the park's clear
+            ),
+            status.map { "${it.state} ${it.itemId} ${it.queueVersion}" },
+        )
+        val advance = status[13]
+        assertEquals("previousPositionMillis past the old track's end", 230_998L, advance.previousPositionMs)
+        assertEquals(4L, advance.positionMs)
+        assertEquals(WsPlayModes(repeat = false, repeatOne = false, shuffle = false, crossfade = false), advance.playModes)
+        assertEquals("REPEAT_ALL shows at once", true, status[14].playModes?.repeat)
+        assertEquals("the household's parked queue repeated", true, status[0].playModes?.repeat)
+        val meta = events.filterIsInstance<SocketEvent.Metadata>()
+        val playlist = "spotify:playlist:0FakePlaylistKveld0001"
+        assertEquals(listOf(null, playlist, playlist, playlist, playlist, playlist, playlist, playlist, null), meta.map { it.objectId })
+        val tracks = "spotify:track:1FakeTrack"
+        assertEquals(
+            listOf(null, "${tracks}A00000000001", "${tracks}A00000000001", "${tracks}D00000000004", "${tracks}D00000000004", "${tracks}C00000000003", "${tracks}C00000000003", "${tracks}D00000000004", null),
+            meta.map { it.track?.uri },
+        )
+        assertEquals("the queue's next", "${tracks}C00000000003", meta[1].nextUri)
+        val first = meta[1].track!!
+        assertEquals(listOf("Navn 12", "Navn 13"), listOf(first.name, first.artist))
+        assertEquals(240_000L, first.durationMs)
+        assertEquals("an empty item (IDLE, the park) is none", null, meta.last().track)
+        assertFalse("printed without ids or titles", meta.joinToString().contains("Fake") || meta.joinToString().contains("Navn"))
+    }
+
+    @Test
+    fun `d54 another service's track is no Spotify track, and absent fields are null`() {
+        val plan = SonosEvents.Plan(stua, ip)
+        shaken(plan)
+        val radio = "[{\"namespace\":\"playbackMetadata:1\",\"groupId\":\"$stua:100\",\"type\":\"metadataStatus\"}," +
+            "{\"container\":{\"id\":{\"objectId\":\"vibb-1\"}},\"currentItem\":{\"track\":{\"name\":\"Radio\",\"id\":{\"serviceId\":\"254\",\"objectId\":\"s1234\"}}}}]"
+        val m = feed(plan, radio).events.single() as SocketEvent.Metadata
+        assertNull(m.track)
+        assertNull(m.nextUri)
+        assertEquals(OUR_OBJECT_ID, m.objectId)
+        val bare = "[{\"namespace\":\"playback:1\",\"groupId\":\"$stua:100\",\"type\":\"playbackStatus\"},{\"playbackState\":\"PLAYBACK_STATE_PLAYING\"}]"
+        assertEquals(SocketEvent.Playback("$stua:100", WsPlayback.PLAYING, null, 1L), feed(plan, bare).events.single())
     }
 
     @Test

@@ -1,6 +1,7 @@
 package me.vibb.music.sonos
 
 import kotlinx.coroutines.runBlocking
+import me.vibb.music.logic.QueueRead
 import me.vibb.music.sonos.SonosFakes.position
 import me.vibb.music.sonos.SonosFakes.transport
 import org.junit.Assert.assertEquals
@@ -120,9 +121,13 @@ class SonosSessionTest {
             )
         }
 
-        override fun live(player: CachedPlayer): Pair<TransportState, String>? {
+        /** Design 54: a candidate's RelTime, by ip (the share link's continuity). */
+        val positions = mutableMapOf<String, Double>()
+
+        override fun live(player: CachedPlayer): ProbeLive? {
             asked += player.ip
-            return candidates[player.ip] ?: (TransportState.STOPPED to "")
+            val (tr, uri) = candidates[player.ip] ?: (TransportState.STOPPED to "")
+            return ProbeLive(tr, uri, positions[player.ip])
         }
     }
 
@@ -250,7 +255,7 @@ class SonosSessionTest {
         val failing = object : MigrationProbe {
             override fun refreshTopology(): SpeakerDoc = throw SpeakerUnreachable("nobody")
 
-            override fun live(player: CachedPlayer): Pair<TransportState, String>? = null
+            override fun live(player: CachedPlayer): ProbeLive? = null
         }
         s.maybeProbeMigration(stoppedEmpty, failing)
         assertEquals(2, s.migrateTriesLeft)
@@ -803,5 +808,104 @@ class SonosSessionTest {
         val sent = session(u = book)
         assertTrue(sent.classify(speaker(book)).ours)
         assertFalse("another token is another stream", sent.classify(speaker(book.replace("FAKE-SIG-1", "FAKE-SIG-2"))).ours)
+    }
+
+    // -- design 54: a share link's session (vibb's spotify_sharelink in _classify and _probe_migration) --
+
+    private val spA = "spotify:track:1FakeTrackA00000000001"
+    private val spC = "spotify:track:1FakeTrackC00000000003"
+    private val spE = "spotify:track:1FakeTrackE00000000005"
+    private val qA = FakeSpeaker.qTrack("1FakeTrackA00000000001")
+    private val qC = FakeSpeaker.qTrack("1FakeTrackC00000000003")
+    private val qE = FakeSpeaker.qTrack("1FakeTrackE00000000005")
+    private val qG = FakeSpeaker.qTrack("1FakeTrackG00000000007")
+    private val playlist = "spotify:playlist:0FakePlaylistKveld0001"
+
+    /** A transfer of the fake playlist: our listing A, C; the queue read A, C, E (an unlisted track of our queue), UpdateID 39. */
+    private fun shareSession(): SonosSession = SonosSession({ clock.now }, { logs.add(it) }).apply {
+        beginPlay(kid, Kind.SPOTIFY_SHARELINK)
+        played(queueUri(kid))
+        shareSet(playlist, listOf(spA, spC))
+        shareRead(QueueRead(3, mapOf(1 to spA, 2 to spC, 3 to spE), "39"))
+    }
+
+    private fun queueSpeaker(trackUri: String, track: String = "1", tr: String = "PLAYING", rel: String = "0:01:00") =
+        FakeSpeaker(kid).apply {
+            position = PositionInfo(track, trackUri, rel, "0:03:42", "<x/>")
+            transport = tr
+            updateId = 39
+        }
+
+    @Test
+    fun `d54 classify a share link - ours by the prefix unless contradicted, the position and the track, no DIDL check`() {
+        val s = shareSession()
+        val f = s.classify(queueSpeaker(qC, track = "2"))
+        assertTrue(f.ours)
+        assertEquals(2, f.trackNo)
+        assertEquals(spC, f.trackSpotifyUri)
+        assertEquals(Kind.SPOTIFY_SHARELINK, f.kind)
+        assertTrue("no DIDL verdict for a share link", logs.none { it.startsWith("didl") })
+        assertTrue("an unlisted track of our queue is ours - the park must stop it (54-1)", s.classify(queueSpeaker(qE, track = "3")).ours)
+        // a track in neither list: one BrowseMetadata, then the verdict kept for that track
+        val g = queueSpeaker(qG, track = "4")
+        assertTrue("the version didn't move: ours", s.classify(g).ours)
+        assertTrue(s.classify(g).ours)
+        assertEquals("read once per such track", 1, g.log.count { it == "getqueuemeta" })
+        val edited = queueSpeaker(qG, track = "4").apply { updateId = 41 }
+        val s2 = shareSession()
+        assertFalse("a queue someone replaced: a track in neither list and a moved version", s2.classify(edited).ours)
+        assertTrue("a moved version alone keeps ours", s2.classify(queueSpeaker(qA).apply { updateId = 41 }).ours)
+        val silent = queueSpeaker(qG).apply { failOn = mapOf("queuemeta" to { SpeakerUnreachable("x") }) }
+        assertTrue("no answer decides nothing against ours", shareSession().classify(silent).ours)
+        // the socket's container: another playlist contradicts, an absent or unseen one is no evidence
+        val s3 = shareSession()
+        s3.shareContainer("spotify:playlist:FAKEforeignList000001")
+        assertFalse(s3.classify(queueSpeaker(qA)).ours)
+        s3.shareContainer(null)
+        assertTrue(s3.classify(queueSpeaker(qA)).ours)
+        s3.shareContainer("spotify:album:2FakeAlbumX00000000001")
+        assertTrue(s3.classify(queueSpeaker(qA)).ours)
+        // Spotify Connect and a direct uri are never ours
+        assertFalse(s3.classify(queueSpeaker("x-sonos-vli:RINCON_KID:1,spotify:abc")).ours)
+        val direct = s3.classify(queueSpeaker("https://podkast.example/ep12.mp3"))
+        assertFalse(direct.ours)
+        assertNull(direct.trackSpotifyUri)
+        assertTrue("no Spotify id in a log line", logs.none { "Fake" in it })
+        // no baseline (an adopt before the read): vibb's prefix rule alone
+        val adopted = SonosSession({ clock.now }).apply { adopt(kid, Kind.SPOTIFY_SHARELINK, queueUri(kid)) }
+        assertTrue(adopted.classify(queueSpeaker(qG).apply { updateId = 99 }).ours)
+    }
+
+    @Test
+    fun `d54 a share link has no lost-session and no stall retry (vibb 895-899)`() {
+        val s = shareSession()
+        assertFalse(s.classify(queueSpeaker("", tr = "STOPPED")).lostSession)
+        val spk = queueSpeaker(qA)
+        repeat(SonosSession.STALL_POLLS + 2) {
+            clock.advance(SonosSession.POLL_MS)
+            assertNull(s.stallBookkeeping(s.classify(spk)))
+        }
+    }
+
+    @Test
+    fun `d54 sonos_migrate_probe 3 - a share link follows only the exact track at a continuous position`() {
+        val s = shareSession()
+        s.classify(queueSpeaker(qC, rel = "0:01:00"))
+        val probe = Probe()
+        probe.candidates["10.0.0.11"] = TransportState.PLAYING to qA
+        probe.positions["10.0.0.11"] = 62.0
+        probe.candidates["10.0.0.12"] = TransportState.PLAYING to qC
+        probe.positions["10.0.0.12"] = 200.0
+        s.maybeProbeMigration(stoppedEmpty, probe)
+        assertNull("another track, or our track far away: no follow", s.streamMoved)
+        probe.positions["10.0.0.12"] = 63.0
+        clock.advance(SonosSession.MIGRATE_SPACING_MS)
+        s.maybeProbeMigration(stoppedEmpty, probe)
+        assertEquals(Moved("RINCON_BATH", "Bad", queueUri(kid)), s.streamMoved)
+        // never with no recorded track: a session that never saw ours live
+        val blind = shareSession()
+        blind.classify(queueSpeaker(qC, tr = "STOPPED"))
+        blind.maybeProbeMigration(stoppedEmpty, probe)
+        assertNull(blind.streamMoved)
     }
 }

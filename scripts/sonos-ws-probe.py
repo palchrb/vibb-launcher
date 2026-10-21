@@ -37,8 +37,11 @@ speaker's MAC), every name (rooms, groups, titles), the hardware's ids (`serialN
 speaker's MAC - and any other MAC), `locationId`, `queueId`, the item ids and every picture URL replaced by
 fake ones, consistently within the file - `Sonos_FAKEhousehold000000000000001` (one household: every id maps to
 it), `RINCON_000000000000014NN`, `10.0.0.NN`, `fd00::NN`, `Navn N`, `FAKE-SERIAL-N`, `FAKEDEVICENN`,
-`lc_FAKElocationNN`, `item-N`, `https://images.example.invalid/N.jpg` - so the capture can be committed as it is.
---rescrub IN OUT runs an earlier capture through today's rules (no speaker, no aiohttp needed).
+`lc_FAKElocationNN`, `item-N`, `https://images.example.invalid/N.jpg` - and every Spotify id (`spotify:<kind>:<id>`,
+plain or percent-encoded; design 54) by the fake ids of `server/testdata/spotify/` (the playlist fixture's playable
+tracks first, in its order; `9Fake<Kind>Z...` once those run out or without the repo next to the script), so the
+capture can be committed as it is. --rescrub IN OUT runs an earlier capture through today's rules (no speaker, no
+aiohttp needed).
 
 --key UUID sends another X-Sonos-Api-Key (a random one tells whether the speaker checks it at all), --key none
 sends no key header.
@@ -98,6 +101,10 @@ class Saver:
     ID_KEYS = {"serialNumber": "FAKE-SERIAL-{}", "deviceId": "FAKEDEVICE{:02d}", "locationId": "lc_FAKElocation{:02d}",
                "queueId": "00000000-0000-0000-0000-{:012d}", "itemId": "item-{}", "previousItemId": "item-{}"}
     IMAGE_KEYS = {"imageUrl", "url"}
+    # design 54 (N10): a Spotify id - `spotify:<kind>:<id>`, also percent-encoded as a TrackURI carries it
+    # (`spotify%3atrack%3a<id>`) - replaced consistently by an id of server/testdata/spotify/, so the fake speaker and
+    # the fixtures name the same tracks; an id that is already fake (`...Fake...`) stays
+    SPOTIFY = re.compile(r"(?i)(spotify(?::|%3a))(track|episode|playlist|album|show|artist)(:|%3a)([A-Za-z0-9]{22})(?![A-Za-z0-9])")
 
     def __init__(self, path: str):
         self.path = path
@@ -105,6 +112,24 @@ class Saver:
         self.uids, self.ips, self.ip6s, self.names = {}, {}, {}, {}
         self.ids = {}  # (kind, value) -> fake; item ids share one map
         self.images = {}
+        self.spotify = {}  # (kind, real id) -> fake id
+        self.pools = spotify_pools()
+
+    def _spotify(self, m):
+        kind, real = m.group(2).lower(), m.group(4)
+        if "fake" in real.lower():
+            return m.group(0)
+        key = (kind, real)
+        if key not in self.spotify:
+            pool = self.pools.get(kind, [])
+            used = sum(1 for k in self.spotify if k[0] == kind)
+            if used < len(pool):
+                fake = pool[used]
+            else:  # more ids than the fixtures have: a fake of the same length
+                stem = f"9Fake{kind.capitalize()}Z"
+                fake = stem + str(used + 1).zfill(22 - len(stem))
+            self.spotify[key] = fake
+        return m.group(1) + m.group(2) + m.group(3) + self.spotify[key]
 
     def _uid(self, m):
         return self.uids.setdefault(m.group(0), f"RINCON_{'0' * 12}014{len(self.uids) % 100:02d}")
@@ -124,6 +149,7 @@ class Saver:
         return self.ip6s.setdefault(m.group(0).lower(), f"fd00::{16 + len(self.ip6s):x}")
 
     def _text(self, v: str) -> str:
+        v = self.SPOTIFY.sub(self._spotify, v)
         v = self.UID.sub(self._uid, v)
         v = self.HOUSEHOLD.sub("Sonos_FAKEhousehold000000000000001", v)
         v = self.IPV6.sub(self._ip6, v)
@@ -149,6 +175,44 @@ class Saver:
         self.messages.append(json.dumps([self.scrub(header), self.scrub(body)], ensure_ascii=False))
         with open(self.path, "w", encoding="utf-8") as out:  # whole each time: a Ctrl-C leaves a valid array
             out.write("[\n  " + ",\n  ".join(self.messages) + "\n]\n")
+
+
+def spotify_pools() -> dict:
+    """The fake Spotify ids of server/testdata/spotify/, by kind, in the order the scrub hands them out (the playlist
+    fixture's playable tracks first, in its order); empty when the repo isn't next to this script (a copy on a Pi)."""
+    import os
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server", "testdata", "spotify")
+    pools = {"track": [], "episode": [], "playlist": [], "album": [], "show": [], "artist": []}
+
+    def load(name):
+        try:
+            with open(os.path.join(base, name), encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
+    def add(kind, fid):
+        if fid and fid not in pools[kind]:
+            pools[kind].append(fid)
+
+    items = [r.get("item") or {} for r in load("playlist_items.json").get("items", [])]
+    for playable in (True, False):
+        for it in items:
+            if it.get("type") in ("track", "episode") and bool(it.get("is_playable")) == playable:
+                add(it["type"], it.get("id"))
+    for it in items:
+        for a in it.get("artists") or []:
+            add("artist", a.get("id"))
+    for name, kind in (("playlist_items.json", "playlist"), ("album.json", "album"), ("show_episodes.json", "show")):
+        href = load(name).get("href") or ((load(name).get("tracks") or {}).get("href"))
+        m = re.search(r"/v1/\w+/([A-Za-z0-9]{22})/", href or "")
+        if m:
+            add(kind, m.group(1))
+    for name in ("show_episodes.json",):
+        for it in load(name).get("items", []):
+            add("episode", (it or {}).get("id"))
+    add("track", load("track.json").get("id"))
+    return pools
 
 
 def rescrub(src: str, dst: str) -> None:

@@ -127,3 +127,12 @@ token route, the Web API listing, the headless WebView player (`music/app/src/ma
 and its notice in [`music/app/src/main/assets/licenses/MIT-vibb.txt`](music/app/src/main/assets/licenses/MIT-vibb.txt)
 cover these too. Spotify's Web Playback SDK (`https://sdk.scdn.co/spotify-player.js`) is not in this repository or
 any APK: the music app's page loads it from Spotify at run time, under Spotify's Developer Terms.
+
+Spotify on a Sonos room (design 54) reimplements in Kotlin, under the GPL-3.0 (or later), parts of
+[SoCo](https://github.com/SoCo/SoCo) (the Python Sonos library vibb's Sonos sidecar uses): the ShareLink plugin's share
+types and its `AddURIToQueue` request and metadata template (`soco/plugins/sharelink.py`), and `play_from_queue`,
+`clear_queue`, `queue_size`, `get_queue` and `set_sleep_timer` (`soco/core.py`) - in
+`music/app/src/main/java/me/vibb/music/sonos/ShareLink.kt`, `Soap.kt` and `SonosTransport.kt`, each header naming it.
+SoCo is licensed under the MIT License, Copyright (c) Rahim Sonawalla and individual contributors; its notice is in
+[`music/app/src/main/assets/licenses/MIT-SoCo.txt`](music/app/src/main/assets/licenses/MIT-SoCo.txt), shipped in the
+app. vibb's `spotify_sharelink` (`pi/sonosd.py`) behind it is covered by vibb's notice above.

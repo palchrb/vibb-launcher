@@ -7,6 +7,8 @@ import me.vibb.music.logic.redactUri
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
+import me.vibb.music.spotify.spotifyTarget
+import me.vibb.music.spotify.uriOf
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.InetAddress
 
@@ -50,11 +52,21 @@ data class PlayBody(
      * design 53 §2.4) - **never** passed to [didl] ([builtDidl] leaves it out).
      */
     val cadenceHintS: Double? = null,
+    /** Design 54 §2.2: a share link's start item - its index in the listing's own order ([listed]); null otherwise. */
+    val trackIndex: Int? = null,
+    /** Design 54 §2.2: a share link's listing, its track uris in the listing's own order (`uriOf`); never logged. */
+    val listed: List<String>? = null,
 ) {
-    /** Never the signed URL's token (design 26b §0, L9): the uri as [redactUri] prints it. */
-    override fun toString(): String =
+    /**
+     * Never the signed URL's token (design 26b §0, L9): the uri as [redactUri] prints it. A share link's target and
+     * listing never (design 54 §2.14): its kind and counts.
+     */
+    override fun toString(): String = if (kind == Kind.SPOTIFY_SHARELINK) {
+        "PlayBody(uid=$uid, kind=$kind, startS=$startS, trackIndex=$trackIndex, listed=${listed?.size} uris, cadenceHintS=$cadenceHintS)"
+    } else {
         "PlayBody(uid=$uid, kind=$kind, uri=${redactUri(uri)}, title=$title, album=$album, art=${art?.let(::redactUri)}, " +
             "durationS=$durationS, startS=$startS, series=$series, programId=$programId, mint=$mint, cadenceHintS=$cadenceHintS)"
+    }
 }
 
 private val NRK_SERIE = Regex("^https?://radio\\.nrk\\.no/serie/([a-z0-9_-]+)", RegexOption.IGNORE_CASE)
@@ -74,6 +86,8 @@ fun builtDidl(body: PlayBody, uri: String): String = when (body.kind) {
         uri, body.title, body.artist, body.album, body.art, body.durationS,
         upnpClass = NrkService.UPNP_CLASS, protocol = NrkService.PROTOCOL, desc = NrkService.DESC,
     )
+    // design 54 §2.2: a share link's metadata is SoCo's template (ShareLink.kt), never vibb's didl()
+    Kind.SPOTIFY_SHARELINK -> throw IllegalArgumentException("a share link's metadata is ShareLink's, never didl()")
 }
 
 object PlayBodies {
@@ -104,6 +118,22 @@ object PlayBodies {
         }
         // vibb's plain `url` body: no duration in the DIDL (design 53 §2.1)
         return PlayBody(uid, Kind.URL, item.url!!, item.title, album, speakerArt, null, startS, cadenceHintS = durationS)
+    }
+
+    /**
+     * Design 54 §2.2: a Spotify entry's share body - the canonical target as the uri, our listing's track uris
+     * ([keys] in the listing's own order, `uriOf`) and the start item's index there; the playing item's listed
+     * duration as the tail cadence's hint. Null when the target has no share type (an artist, junk). Nothing calls it
+     * for a room yet: [speakerDropReason] still refuses Spotify (round 54-a2 turns it on).
+     */
+    fun share(entry: Entry, keys: List<String>, index: Int?, uid: String, startS: Double, hintS: Double? = null): PlayBody? {
+        val ref = spotifyTarget(entry.target) ?: return null
+        if (entry.source != Source.SPOTIFY || ShareLink.of(ref.target) == null) return null
+        val listed = keys.map { uriOf(ref.kind, it) }
+        return PlayBody(
+            uid, Kind.SPOTIFY_SHARELINK, ref.target, null, entry.name, null, null, startS,
+            cadenceHintS = hintS, trackIndex = index?.takeIf { it in listed.indices }, listed = listed,
+        )
     }
 
     /**

@@ -22,6 +22,11 @@ import javax.xml.parsers.DocumentBuilderFactory
  * Replies are parsed with javax.xml's DOM, which is in the JDK and in Android, so the JVM tests parse
  * for real (SonosFixturesTest).
  *
+ * Design 54: the speaker's own queue as SoCo drives it (`soco/core.py` `play_mode`, `play_from_queue`, `queue_size`,
+ * `get_queue`, `set_sleep_timer`, `get_sleep_timer`; `soco/plugins/sharelink.py`'s `AddURIToQueue` arguments; SoCo is
+ * MIT License, Copyright (c) Rahim Sonawalla and individual contributors - NOTICE.md), reimplemented here: a Browse of
+ * `Q:0` with all six arguments, the reply's DIDL read with the same DOM.
+ *
  * No address guard: this is control traffic to the LAN (21b §2.7 is about audio origins). Every
  * URL is built with HttpUrl.Builder from the ip and port (SourceScanTest bans http literals).
  */
@@ -38,12 +43,30 @@ class SpeakerUnreachable(message: String, cause: Throwable? = null) : SonosExcep
 /** No cached speaker has this uid, or the cached ip now answers with another one (`_speaker`). */
 class UnknownUid(val uid: String) : SonosException("unknown speaker $uid")
 
-/** The three UPnP services vibb drives. */
+/** The UPnP services vibb drives, and the queue's ContentDirectory (design 54 §0.2: SoCo's `get_queue`, `queue_size`). */
 enum class SonosService(val controlPath: String, val serviceType: String) {
     AV_TRANSPORT("/MediaRenderer/AVTransport/Control", "urn:schemas-upnp-org:service:AVTransport:1"),
     RENDERING_CONTROL("/MediaRenderer/RenderingControl/Control", "urn:schemas-upnp-org:service:RenderingControl:1"),
     ZONE_GROUP_TOPOLOGY("/ZoneGroupTopology/Control", "urn:schemas-upnp-org:service:ZoneGroupTopology:1"),
+    CONTENT_DIRECTORY("/MediaServer/ContentDirectory/Control", "urn:schemas-upnp-org:service:ContentDirectory:1"),
 }
+
+/** `AddURIToQueue`'s answer (design 54 §0.2); each null when the speaker's value isn't a number. */
+data class AddResult(val firstTrack: Int?, val added: Int?, val newLength: Int?)
+
+/** `Browse Q:0 BrowseMetadata` (SoCo's `queue_size`): the container's `childCount` and the answer's `UpdateID`. */
+data class QueueMeta(val childCount: Int?, val updateId: String?)
+
+/**
+ * One page of `Browse Q:0 BrowseDirectChildren` (SoCo's `get_queue`): each item's `res` as the speaker gave it (null
+ * for an item without one), `TotalMatches` and `UpdateID`. Never printed whole: the uris name the kid's tracks.
+ */
+data class QueuePage(val res: List<String?>, val total: Int?, val updateId: String?) {
+    override fun toString(): String = "QueuePage(items=${res.size}, total=$total, updateId=$updateId)"
+}
+
+/** `GetMediaInfo`: the queue's `NrTracks` and the transport's `CurrentURI` (Spotify Connect's `x-sonos-vli:` is never ours). */
+data class MediaInfo(val nrTracks: Int?, val currentUri: String?)
 
 /** Every speaker listens here; only the debug feed (the emulator's fake speaker) sets another port. */
 const val SONOS_PORT = 1400
@@ -144,6 +167,26 @@ class Soap(private val client: () -> OkHttpClient) {
             return children(first).associate { (it.localName ?: it.nodeName) to it.textContent }
         }
 
+        /** A Browse answer's `Result` (DIDL-Lite) as a page of the queue: every `item`'s `res`, in order. */
+        fun parseQueuePage(fields: Map<String, String>): QueuePage {
+            val items = didlRoot(fields)?.let { root -> children(root).filter { it.localName == "item" } }.orEmpty()
+            val res = items.map { item -> children(item).firstOrNull { it.localName == "res" }?.textContent?.trim()?.takeIf { it.isNotEmpty() } }
+            return QueuePage(res, fields["TotalMatches"]?.trim()?.toIntOrNull(), fields["UpdateID"]?.trim()?.takeIf { it.isNotEmpty() })
+        }
+
+        /** A `BrowseMetadata` answer for `Q:0`: the container's `childCount` (SoCo's `queue_size`) and `UpdateID`. */
+        fun parseQueueMeta(fields: Map<String, String>): QueueMeta {
+            val container = didlRoot(fields)?.let { root -> children(root).firstOrNull { it.localName == "container" } }
+            return QueueMeta(container?.getAttribute("childCount")?.trim()?.toIntOrNull(), fields["UpdateID"]?.trim()?.takeIf { it.isNotEmpty() })
+        }
+
+        /** The DIDL-Lite of a Browse's `Result`; null for an empty one, [SpeakerUnreachable] for one that isn't XML. */
+        private fun didlRoot(fields: Map<String, String>): Element? {
+            val text = fields["Result"]?.trim().orEmpty()
+            if (text.isEmpty()) return null
+            return runCatching { parseXml(text).documentElement }.getOrNull() ?: throw SpeakerUnreachable("Browse: the Result isn't DIDL")
+        }
+
         /** The device description's UDN, `uuid:` stripped. */
         fun parseUdn(xml: String): String? {
             val doc = runCatching { parseXml(xml) }.getOrNull() ?: return null
@@ -204,6 +247,15 @@ class SoapSpeaker(
     private fun av(action: String, vararg args: Pair<String, String>) =
         soap.call(ip, port, SonosService.AV_TRANSPORT, action, listOf("InstanceID" to "0") + args, left())
 
+    private fun cd(action: String, vararg args: Pair<String, String>) =
+        soap.call(ip, port, SonosService.CONTENT_DIRECTORY, action, args.toList(), left())
+
+    /** SoCo's Browse of the queue: all six arguments, `SortCriteria` too (a speaker may answer 402 without it, design 54 §0.2). */
+    private fun browseQ0(flag: String, start: Int, count: Int) = cd(
+        "Browse", "ObjectID" to "Q:0", "BrowseFlag" to flag, "Filter" to "*",
+        "StartingIndex" to start.toString(), "RequestedCount" to count.toString(), "SortCriteria" to "",
+    )
+
     private fun rc(action: String, vararg args: Pair<String, String>) =
         soap.call(ip, port, SonosService.RENDERING_CONTROL, action, listOf("InstanceID" to "0") + args, left())
 
@@ -261,4 +313,35 @@ class SoapSpeaker(
     override fun becomeStandalone() {
         av("BecomeCoordinatorOfStandaloneGroup")
     }
+
+    // -- design 54: the speaker's own queue (SoCo's `play_mode`, `add_share_link_to_queue`, `play_from_queue`,
+    // `get_queue`, `queue_size`, `set_sleep_timer`/`get_sleep_timer`) --
+
+    override fun setPlayMode(mode: String) {
+        av("SetPlayMode", "NewPlayMode" to mode)
+    }
+
+    override fun playMode(): String? = av("GetTransportSettings")["PlayMode"]?.trim()
+
+    override fun addUriToQueue(uri: String, metadata: String): AddResult = av(
+        "AddURIToQueue", "EnqueuedURI" to uri, "EnqueuedURIMetaData" to metadata,
+        "DesiredFirstTrackNumberEnqueued" to "0", "EnqueueAsNext" to "0",
+    ).let { AddResult(it["FirstTrackNumberEnqueued"]?.trim()?.toIntOrNull(), it["NumTracksAdded"]?.trim()?.toIntOrNull(), it["NewQueueLength"]?.trim()?.toIntOrNull()) }
+
+    override fun seekTrack(position: Int) {
+        av("Seek", "Unit" to "TRACK_NR", "Target" to position.toString())
+    }
+
+    override fun browseQueue(start: Int, count: Int): QueuePage = Soap.parseQueuePage(browseQ0("BrowseDirectChildren", start, count))
+
+    override fun queueMeta(): QueueMeta = Soap.parseQueueMeta(browseQ0("BrowseMetadata", 0, 1))
+
+    override fun mediaInfo(): MediaInfo = av("GetMediaInfo").let { MediaInfo(it["NrTracks"]?.trim()?.toIntOrNull(), it["CurrentURI"]) }
+
+    override fun configureSleepTimer(duration: String) {
+        av("ConfigureSleepTimer", "NewSleepTimerDuration" to duration)
+    }
+
+    override fun remainingSleepTimer(): String? =
+        av("GetRemainingSleepTimerDuration")["RemainingSleepTimerDuration"]?.trim()?.takeIf { it.isNotEmpty() }
 }
