@@ -155,6 +155,12 @@ class MainActivity : ComponentActivity() {
         override fun output(key: String) = command(Commands.OUTPUT, bundleOf(Commands.ARG_OUTPUT to key))
         override fun refreshRooms() = command(Commands.ROOMS_REFRESH)
         override fun rescanRooms() = command(Commands.ROOMS_RESCAN)
+        override fun roomJoin(uid: String) = command(Commands.ROOM_JOIN, bundleOf(Commands.ARG_OUTPUT to uid))
+        override fun roomLeave(uid: String) = command(Commands.ROOM_LEAVE, bundleOf(Commands.ARG_OUTPUT to uid))
+        override fun roomVolume(uid: String, group: Boolean, volume: Int, drag: Long) = command(
+            Commands.ROOM_VOLUME,
+            bundleOf(Commands.ARG_OUTPUT to uid, Commands.ARG_GROUP to group, Commands.ARG_VOLUME to volume, Commands.ARG_DRAG to drag),
+        )
         override fun backHome() = finish()
     }
 }
@@ -189,5 +195,14 @@ interface Actions {
 
     /** "Se etter høyttalere": one SSDP round. */
     fun rescanRooms()
+
+    /** Design 53 §2.7: "+" on the row [uid] (every room of it joins our group) - a play, gated by the service. */
+    fun roomJoin(uid: String)
+
+    /** Design 53 §2.7: "−" on the member [uid] of our group. */
+    fun roomLeave(uid: String)
+
+    /** Design 53 §2.12: a group block's slider - a member's own, or the group's ([group], its [drag]). */
+    fun roomVolume(uid: String, group: Boolean, volume: Int, drag: Long)
     fun backHome()
 }

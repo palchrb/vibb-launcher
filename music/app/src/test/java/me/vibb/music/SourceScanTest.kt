@@ -800,4 +800,30 @@ class SourceScanTest {
         assertEquals("Couldn\\'t reach %1\$s - is it switched on?", en["headset_no_contact_row"])
         assertEquals("Couldn\\'t reach the headphones - are they switched on?", en["headset_no_contact"])
     }
+
+    @Test
+    fun `d53 - the grouping words of the approved sketch in both languages, design 52's no-contact wording`() {
+        val nb = strings("src/main/res/values-nb/strings.xml")
+        val en = strings("src/main/res/values/strings.xml")
+        val words = mapOf(
+            "room_switch_here" to ("Trykk for å bytte hit" to "Tap to switch here"),
+            "room_playing_now" to ("Spiller nå" to "Playing now"),
+            "group_playing_both" to ("Spiller nå i begge" to "Playing in both"),
+            "group_playing_all" to ("Spiller nå i alle %1\$d" to "Playing in all %1\$d"),
+            "room_busy" to ("Spiller noe annet" to "Playing something else"),
+            "room_join" to ("Spill også i %1\$s" to "Also play in %1\$s"),
+            "room_leave" to ("Ta %1\$s ut av gruppen" to "Take %1\$s out of the group"),
+            "group_volume_both" to ("Begge" to "Both"),
+            "group_volume_all" to ("Alle" to "All"),
+            "group_volume_cd_both" to ("Volum i begge rommene" to "Volume in both rooms"),
+            "group_volume_cd_all" to ("Volum i alle rommene" to "Volume in all rooms"),
+            "room_volume_cd" to ("Volum i %1\$s" to "Volume in %1\$s"),
+        )
+        for ((name, pair) in words) {
+            assertEquals(name, pair.first, nb[name])
+            assertEquals(name, pair.second, en[name])
+        }
+        assertEquals(nb["headset_no_contact_row"], nb["room_no_contact"])
+        assertEquals(en["headset_no_contact_row"], en["room_no_contact"])
+    }
 }

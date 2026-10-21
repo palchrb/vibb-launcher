@@ -128,9 +128,14 @@ import me.vibb.music.sonos.adoptIndex
 import me.vibb.music.sonos.adoptPlan
 import me.vibb.music.sonos.Room
 import me.vibb.music.sonos.SpeakerCache
+import me.vibb.music.sonos.RoomsView
 import me.vibb.music.sonos.allowedRooms
 import me.vibb.music.sonos.groupAllowed
+import me.vibb.music.sonos.joinOffered
+import me.vibb.music.sonos.leaveOffered
 import me.vibb.music.sonos.mustLeaveRoom
+import me.vibb.music.sonos.roomMembers
+import me.vibb.music.sonos.sessionAllowed
 import me.vibb.music.sonos.ourLiveSession
 import me.vibb.music.sonos.roomVerdict
 import me.vibb.music.spotify.SpotifyRenderer
@@ -295,7 +300,11 @@ class PlaybackService : MediaSessionService() {
         // refresh, a scan, the scope's watch below) - the sheet again, and a session on a room whose
         // group now holds a forbidden room leaves it.
         scope.launch {
-            home.rooms.state.collect {
+            home.rooms.state.collect { view ->
+                // design 53 §2.8: the renderer hears the grouping first - a room grouped in from outside is accepted (Q4)
+                // and capped before anything judges it, and the label follows - then the sheet and the scope's look
+                (renderer as? SonosRenderer)?.topology(view.rooms)
+                groupSettled(view)
                 publish()
                 if (renderer is SonosRenderer) leaveIfNotAllowed()
             }
@@ -311,12 +320,13 @@ class PlaybackService : MediaSessionService() {
         }
         // M1: while a session plays on a room under a limited scope, the household's groups are read
         // every [SCOPE_WATCH_MS] (one GetZoneGroupState, never a discovery round), so a forbidden room
-        // an adult groups into ours is noticed. Every room allowed (the default): nothing is read.
+        // an adult groups into ours is noticed. Design 53 §2.8: the group watch - whatever the scope while
+        // the room's event socket isn't healthy (grouping done outside the app is followed without it too).
         scope.launch {
             while (true) {
                 delay(SCOPE_WATCH_MS)
                 val sonos = renderer as? SonosRenderer ?: continue
-                if (roomScope != null && sonos.showsPlaying) withContext(Dispatchers.IO) { home.rooms.refreshQuietly() }
+                if (sonos.showsPlaying && (roomScope != null || !sonos.socketHealthy)) withContext(Dispatchers.IO) { home.rooms.refreshQuietly() }
             }
         }
         // A picture landing (the sync copied it) refreshes the current item's artwork (QA M5/H2).
@@ -540,6 +550,8 @@ class PlaybackService : MediaSessionService() {
             if ((Commands.ALL + Commands.LAUNCHER).none { it.customAction == customCommand.customAction }) {
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
+            // Design 53 §2.6, §2.12: grouping runs beside the switch lock - a join or a drag never waits behind a hand-off
+            if (customCommand.customAction in Commands.GROUPING) return grouping(customCommand.customAction, args)
             // A tap's switch shows on the screens until this has run (PlayerHub.State.waiting, logic/Switch.kt).
             val moves = customCommand.customAction in Commands.MOVES
             if (moves) waitingMoves(+1)
@@ -560,7 +572,16 @@ class PlaybackService : MediaSessionService() {
                         Commands.FLIP_ORDER -> flipOrder(args.getString(Commands.ARG_ENTRY_KEY), args.getBoolean(Commands.ARG_NEWEST_FIRST))
                         Commands.SLEEP -> if (args.getBoolean(Commands.ARG_AT_END)) setSleepAtEnd() else setSleep(args.getInt(Commands.ARG_MINUTES))
                         Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)
-                        Commands.ROOMS_REFRESH -> launch(Dispatchers.IO) { home.rooms.refresh() }
+                        Commands.ROOMS_REFRESH -> {
+                            // design 53 §2.7, §2.12: on a room, after the refresh the other rows' transports ("Spiller noe
+                            // annet") and our group's volumes - once per opening, never on a timer
+                            val sonos = renderer as? SonosRenderer
+                            sonos?.controller?.readVolumes()
+                            launch(Dispatchers.IO) {
+                                home.rooms.refresh()
+                                sonos?.let { home.rooms.lookBusy(it.uid) }
+                            }
+                        }
                         Commands.ROOMS_RESCAN -> home.rooms.rescanInBackground()
                         Commands.CALL_HOLD -> launcherCall(true)
                         Commands.CALL_RELEASE -> launcherCall(false)
@@ -1744,6 +1765,15 @@ class PlaybackService : MediaSessionService() {
             ?: outputs.firstOrNull { it.key == chosenOutput }
             ?: outputs.firstOrNull { it.kind == OutputKind.BLUETOOTH || it.kind == OutputKind.WIRED }
             ?: Output.PHONE
+        // design 53 §2.7, §2.12: the room's grouping state (none while the phone renders)
+        val sonos = renderer as? SonosRenderer
+        val now = SystemClock.elapsedRealtime()
+        if (sonos == null) {
+            groupPending.clear()
+            groupFailed.clear()
+        }
+        groupPending.values.removeAll { now >= it.until }
+        groupFailed.values.removeAll { now >= it }
         PlayerHub.mutableState.value = PlayerHub.State(
             live = a != null && renderer.itemCount() > 0,
             entryId = a?.entry?.id,
@@ -1759,10 +1789,142 @@ class PlaybackService : MediaSessionService() {
             outputs = outputs,
             output = output,
             rendererState = renderer.rendererState,
-            // only the rooms the parent allows (design 26a §5.5): a group by its coordinator
-            rooms = allowedRooms(home.rooms.state.value, roomScope),
+            // only the rooms the parent allows (design 26a §5.5): a group by its coordinator - and our own row with the
+            // rooms the kids grouped into it by hand (design 53 §2.8, Q4)
+            rooms = allowedRooms(home.rooms.state.value, roomScope, sonos?.uid, sonos?.accepted.orEmpty()),
             waiting = waitingMoves.get() > 0,
+            roomLive = sonos?.controller?.liveSession(now) == true,
+            groupPending = groupPending.keys.toSet(),
+            groupFailed = groupFailed.keys.toSet(),
+            roomVolumes = sonos?.controller?.roomVolumes().orEmpty(),
+            groupVolume = sonos?.controller?.groupVolume(),
         )
+        groupExpiry(now)
+    }
+
+    // --- grouping in "Spill av på" (design 53 §2.6-§2.12) ---
+
+    /** A "+" (a row's uid; done when it shows in our group) or "−" (a member's; done when it no longer does) that went out. */
+    private class GroupWait(val join: Boolean, val until: Long)
+
+    private val groupPending = mutableMapOf<String, GroupWait>()
+
+    /** A verb that got no answer: its row or member (uid -> until), "Fikk ikke kontakt med X - er den på?". */
+    private val groupFailed = mutableMapOf<String, Long>()
+    private var groupExpiryAt: Long? = null
+
+    /** The next pending or failure mark to run out republishes the sheet then (one posted look at a time). */
+    private fun groupExpiry(now: Long) {
+        val next = (groupPending.values.map { it.until } + groupFailed.values).minOrNull() ?: return
+        if (groupExpiryAt?.let { it <= next } == true) return
+        groupExpiryAt = next
+        handler.postDelayed({
+            groupExpiryAt = null
+            publish()
+        }, (next - now).coerceAtLeast(0) + 1)
+    }
+
+    /** The topology shows a verb's effect: its Spinner goes (design 53 §2.7). */
+    private fun groupSettled(view: RoomsView) {
+        val sonos = renderer as? SonosRenderer ?: return
+        val ours = roomMembers(view.rooms, sonos.uid)
+        groupPending.entries.removeAll { (uid, w) -> if (w.join) uid in ours else uid !in ours || ours.size < 2 }
+    }
+
+    /**
+     * [Commands.GROUPING] (design 53 §2.6, §2.12): beside the switch lock, once the renderer is settled; each checks its
+     * own gates now and again in its job. Answered at once, as every custom command - pending and failed are published state.
+     */
+    private fun grouping(action: String, args: Bundle): ListenableFuture<SessionResult> {
+        scope.launch {
+            rendererReady.await()
+            groupCommand(action, args)
+        }
+        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+    }
+
+    /** ROOM_JOIN, ROOM_LEAVE, ROOM_VOLUME (design 53 §2.7, §2.12): only while a room renders. */
+    private fun groupCommand(action: String, args: Bundle) {
+        val sonos = renderer as? SonosRenderer ?: return
+        val uid = args.getString(Commands.ARG_OUTPUT) ?: return
+        when (action) {
+            Commands.ROOM_JOIN -> roomJoin(sonos, uid)
+            Commands.ROOM_LEAVE -> roomLeave(sonos, uid)
+            Commands.ROOM_VOLUME -> {
+                val volume = args.getInt(Commands.ARG_VOLUME)
+                if (args.getBoolean(Commands.ARG_GROUP)) sonos.controller.setGroupVolume(volume, args.getLong(Commands.ARG_DRAG)) else sonos.controller.setRoomVolume(uid, volume)
+            }
+        }
+        publish()
+    }
+
+    /**
+     * "+" (design 53 §2.7): every room of the row [row] joins our coordinator - a play: `playAllowed` (the command's gate,
+     * again here and before each room), the scope (every member of the row allowed - the app's own join never adds a
+     * room outside it), the offered rule, and never a row that holds our uid. The job runs beside the switch lock and off
+     * our actor ([GroupVerbs]); it captures our coordinator and the controller's generation and asks them again, with
+     * the gates, before each room: a follow, a switch, a new play or a release ends it with the rest unsent (N2).
+     */
+    private fun roomJoin(sonos: SonosRenderer, row: String) {
+        val c = sonos.controller
+        val view = home.rooms.state.value
+        val ours = c.uid
+        val now = SystemClock.elapsedRealtime()
+        val target = view.rooms.firstOrNull { it.uid == row }
+        if (target == null || !joinOffered(view, ours, c.liveSession(now), roomScope, row) || !playAllowed(suspendedNow())) {
+            SonosHome.log("sonos: a join of $row refused - not offered, not allowed or already ours")
+            return
+        }
+        val gen = c.generationNow
+        val still: suspend () -> Boolean = {
+            withContext(Dispatchers.Main) {
+                renderer === sonos && !c.closed && c.uid == ours && c.generationNow == gen && playAllowed(suspendedNow()) &&
+                    c.liveSession(SystemClock.elapsedRealtime())
+            }
+        }
+        val cap = Bridge.config(this).volumeCapPct
+        groupFailed.remove(row)
+        groupPending[row] = GroupWait(join = true, until = now + GROUP_PENDING_MS)
+        scope.launch {
+            val out = withContext(Dispatchers.IO) {
+                home.verbs.join(ours, target.members, cap, still, joining = { u -> withContext(Dispatchers.Main) { c.joining(u) } })
+            }
+            if (out.failed.isNotEmpty() || out.stopped) groupPending.remove(row)
+            if (out.failed.isNotEmpty()) groupFailed[row] = SystemClock.elapsedRealtime() + GROUP_FAILED_MS
+            publish()
+            withContext(Dispatchers.IO) { home.rooms.refreshQuietly() }
+        }
+    }
+
+    /**
+     * "−" (design 53 §2.7): [member] leaves our group - only a member as the topology has it now, of a group of two or
+     * more (a "−" never leaves nothing playing: Q2), while grouping is offered. Our own coordinator in our actor (it
+     * orders against our plays; the follow takes the stream to the first remaining member), any other on [GroupVerbs].
+     */
+    private fun roomLeave(sonos: SonosRenderer, member: String) {
+        val c = sonos.controller
+        val view = home.rooms.state.value
+        val members = roomMembers(view.rooms, c.uid)
+        if (!leaveOffered(view, c.uid, c.liveSession(SystemClock.elapsedRealtime()), member)) {
+            SonosHome.log("sonos: a leave of $member refused - not a member of our group now")
+            return
+        }
+        groupFailed.remove(member)
+        groupPending[member] = GroupWait(join = false, until = SystemClock.elapsedRealtime() + GROUP_PENDING_MS)
+        val done = { ok: Boolean ->
+            if (!ok) {
+                groupPending.remove(member)
+                groupFailed[member] = SystemClock.elapsedRealtime() + GROUP_FAILED_MS
+            }
+            publish()
+            scope.launch(Dispatchers.IO) { home.rooms.refreshQuietly() }
+            Unit
+        }
+        if (member == c.uid) {
+            c.leaveGroup(members.firstOrNull { it != member }, done)
+        } else {
+            scope.launch { done(withContext(Dispatchers.IO) { home.verbs.leave(member) }) }
+        }
     }
 
     /**
@@ -1812,7 +1974,8 @@ class PlaybackService : MediaSessionService() {
         return SonosRenderer(
             this, home, store, scope, writer, { active }, uid, name,
             onArmedPlaying = { locks.hold(owner, it) },
-            roomAllowed = { groupAllowed(roomScope, home.rooms.state.value.rooms, it) },
+            // design 53 §2.8 (Q4): a room the kids grouped into the session by hand never makes its plays refused
+            roomAllowed = { uid, accepted -> sessionAllowed(roomScope, home.rooms.state.value.rooms, uid, accepted) },
             // M1: the session followed its stream to another coordinator - is that room allowed?
             onFollowed = { scope.launch { leaveIfNotAllowed() } },
         )
@@ -1881,6 +2044,8 @@ class PlaybackService : MediaSessionService() {
         applyModes(a)
         lastIndex = index
         sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri, live)
+        // design 53 §2.9: the adopt's baseline - the household's group as the cache has it, nothing sent (Q4: accepted)
+        sonos.topology(roomsNow())
         publish()
         // a room the parent's scope no longer allows: adopted only to be bookmarked and stopped (§5.5)
         leaveDisallowedRoom()
@@ -1901,7 +2066,8 @@ class PlaybackService : MediaSessionService() {
      */
     private suspend fun leaveDisallowedRoom() {
         val sonos = renderer as? SonosRenderer ?: return
-        if (!mustLeaveRoom(sonos.uid, roomsNow(), allowedRoomsNow())) return
+        // design 53 §2.8 (Q4): a room the kids grouped in by hand is respected, whatever the scope
+        if (!mustLeaveRoom(sonos.uid, roomsNow(), allowedRoomsNow(), sonos.accepted)) return
         SonosHome.log("sonos: ${sonos.uid} isn't allowed on this phone (now) - bookmark, stop, the phone (paused)")
         PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)
         handOff(sonos)
@@ -1972,16 +2138,18 @@ class PlaybackService : MediaSessionService() {
      * back first, as RESUME does (QA ambiguity 4). The room we're on is the same-tile rule.
      */
     private suspend fun toRoom(uid: String) {
+        val old = renderer
+        // The room we're on is the same-tile rule - first (design 53 §2.8, Q4): a room the kids grouped into it by hand
+        // never makes a tap on our own row refused; the controller's belt (`sessionAllowed`) still gates its play.
+        if (old is SonosRenderer && old.uid == uid) {
+            old.play()
+            publish()
+            return
+        }
         // The parent's room scope (design 26a §5.5): a room outside it is refused before anything moves.
         if (!groupAllowed(allowedRoomsNow(), roomsNow(), uid)) {
             SonosHome.log("sonos: $uid (or a room grouped with it) isn't allowed on this phone - refused")
             PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)
-            publish()
-            return
-        }
-        val old = renderer
-        if (old is SonosRenderer && old.uid == uid) {
-            old.play()
             publish()
             return
         }
@@ -2138,8 +2306,17 @@ class PlaybackService : MediaSessionService() {
         /** A recorded room is looked at again before a play at most this often (the cabin case: no speaker answers). */
         const val ROOM_LOOK_MS = 15_000L
 
-        /** How often the household's groups are read while a session plays under a limited room scope (§5.5, M1). */
+        /**
+         * How often the household's groups are read while a session plays under a limited room scope (§5.5, M1) - and,
+         * since design 53 §2.8, whatever the scope while the room's event socket isn't healthy (the group watch).
+         */
         const val SCOPE_WATCH_MS = 60_000L
+
+        /** Design 53 §2.7: a "+" or "−" shows its Spinner until the topology shows it or this passes. */
+        const val GROUP_PENDING_MS = 8_000L
+
+        /** ... and a verb that got no answer its no-contact line until the next tap on it or this passes. */
+        const val GROUP_FAILED_MS = 30_000L
 
         /** The web player's debug log (design 26c §7.1; a debug build only). */
         const val SPOTIFY_LOG_TAG = "VibbSpotify"

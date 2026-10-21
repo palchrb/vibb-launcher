@@ -33,6 +33,24 @@ object Commands {
     /** "Se etter høyttalere": one SSDP round in the background. */
     const val ROOMS_RESCAN = "me.vibb.music.ROOMS_RESCAN"
 
+    /**
+     * Design 53 §2.7: "+" on a row of "Spill av på" ([ARG_OUTPUT] = the row's uid): each of its rooms joins our
+     * coordinator. A play (in [PLAYS]: refused while suspended) - the service checks the gates and the scope again.
+     */
+    const val ROOM_JOIN = "me.vibb.music.ROOM_JOIN"
+
+    /** Design 53 §2.7: "−" on a member of our group's block ([ARG_OUTPUT] = its uid): it leaves, the rest play on. */
+    const val ROOM_LEAVE = "me.vibb.music.ROOM_LEAVE"
+
+    /**
+     * Design 53 §2.12: a volume slider of the group block - [ARG_OUTPUT] a member's uid, or our coordinator's with
+     * [ARG_GROUP] true ("Begge"/"Alle", the drag [ARG_DRAG]); [ARG_VOLUME] 0..100. Not a play.
+     */
+    const val ROOM_VOLUME = "me.vibb.music.ROOM_VOLUME"
+    const val ARG_GROUP = "group"
+    const val ARG_VOLUME = "volume"
+    const val ARG_DRAG = "drag"
+
     /** A swipe of the episode carousel (design 27): to [ARG_KEY] of [ARG_ENTRY] (ignored unless that
      * entry is loaded), as next or previous by [ARG_FORWARD]. Like next it starts nothing - not in
      * [PLAYS]; on a Sonos room it goes through the renderer as next does (`goTo` ->
@@ -73,7 +91,13 @@ object Commands {
     const val THEN_SKIP_TO = "skip_to"
 
     val ALL: List<SessionCommand> =
-        listOf(PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, REPEAT, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN, SKIP_TO, FLIP_ORDER).map { SessionCommand(it, Bundle.EMPTY) }
+        listOf(
+            PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, REPEAT, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN, SKIP_TO, FLIP_ORDER,
+            ROOM_JOIN, ROOM_LEAVE, ROOM_VOLUME,
+        ).map { SessionCommand(it, Bundle.EMPTY) }
+
+    /** Design 53 §2.6-§2.12: run beside the switch lock, never behind it - a join or a drag never waits for a hand-off. */
+    val GROUPING: Set<String> = setOf(ROOM_JOIN, ROOM_LEAVE, ROOM_VOLUME)
 
     /**
      * The launcher's call rule (design 26a §6.7, qa-26a-step3b-code H1): a call that rings or is up
@@ -92,7 +116,7 @@ object Commands {
      * to a Sonos room starts the speaker too: that depends on its argument, so the service's command
      * gate reads [ARG_OUTPUT] (`Output.sonosUid`) beside this set (design 26a §3.3).
      */
-    val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME)
+    val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME, ROOM_JOIN)
 
     /**
      * The commands a tap's instant switch waits for (`logic/Switch.kt`): a cover, a pick,
@@ -143,6 +167,18 @@ object PlayerHub {
          * screens hold a tap's switch meanwhile (`logic/Switch.kt`, `holdEndsAt`).
          */
         val waiting: Boolean = false,
+        /**
+         * Design 53 §2.7: the room session is live (fresh, ours, PLAYING or PAUSED) - "+" and "−" are offered only
+         * then; [groupPending] the rows and members a "+" or "−" went out for and the topology doesn't show yet (the
+         * Spinner in the button's place, at most 8 s); [groupFailed] those whose verb got no answer ("Fikk ikke kontakt
+         * med X - er den på?" until the next tap on it or 30 s). Published state: the commands answer at once.
+         */
+        val roomLive: Boolean = false,
+        val groupPending: Set<String> = emptySet(),
+        val groupFailed: Set<String> = emptySet(),
+        /** Design 53 §2.12: each room of our group's volume as the app knows it (uid -> 0..100), and the group's mean. */
+        val roomVolumes: Map<String, Int> = emptyMap(),
+        val groupVolume: Int? = null,
     )
 
     /**
@@ -175,6 +211,12 @@ object PlayerHub {
      * the value, nothing calls into it.
      */
     val playerShown = MutableStateFlow(false)
+
+    /**
+     * "Spill av på" is open (the view model's `outputSheetOpened`/`outputSheetClosed`; design 53 §2.7): a `groups`
+     * event looks at the other rooms' transports again only meanwhile ("Spiller noe annet"), never on a timer.
+     */
+    val sheetOpen = MutableStateFlow(false)
 
     /** The live position (ms), read on the main thread; null without a live queue. */
     @Volatile internal var position: (() -> Long)? = null

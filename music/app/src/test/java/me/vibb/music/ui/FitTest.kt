@@ -165,8 +165,9 @@ class FitTest {
     @Test
     fun `a Sonos room in the bar - a long name or a three-member group gives way, Liste and Sov stay whole`() {
         // design 26a §5.1: the room's label is the output's name; Nunito ExtraBold 14 sp as above:
-        // "Kjøkken + Stua + Bad" 142.5 dp, "Barnerommet i andre etasje" 184.7 dp
-        val labels = listOf(142.5f, 184.7f)
+        // "Kjøkken + Stua + Bad" 142.5 dp, "Barnerommet i andre etasje" 184.7 dp; design 53 §2.8 (the label follows
+        // the household): a four-room group "Stua + Kjøkken + Bad + Loft" 186.0 dp
+        val labels = listOf(142.5f, 184.7f, 186.0f)
         val liste = 32.0f
         val sov30 = 81.4f
         for (screen in widths) {
@@ -188,6 +189,40 @@ class FitTest {
         assertTrue("one line, ellipsized (Line's default)", bar.contains("Line(label, 14, 800, fg)"))
         val widgets = moduleFile("src/main/java/me/vibb/music/ui/Widgets.kt").readText()
         assertTrue(widgets.contains("maxLines: Int = 1") && widgets.contains("overflow = TextOverflow.Ellipsis"))
+    }
+
+    @Test
+    fun `d53 the sheet's group block and its + rows fit 320, 360 and 411 dp - buttons round, names and lines whole, sliders usable`() {
+        // Nunito from the font's advances (as above): a row's title ExtraBold 15 sp, its line Bold 12 sp, a member's name
+        // Bold 15 sp, the "Begge"/"Alle" label Bold 13 sp
+        val title = 98.1f // "Barnerommet"
+        val lines = listOf(110.8f, 103.7f, 95.4f, 129.8f, 97.8f, 94.3f, 84.2f, 83.1f) // "Trykk for å bytte hit" .. "Playing in all 3"
+        val noContact = 271.2f // "Fikk ikke kontakt med Barnerommet - er den på?", the longer of both languages: two lines
+        val member = 96.0f // "Barnerommet"
+        val label = 38.7f // "Begge" (Alle, Both, All are shorter)
+        val twoRooms = 107.4f // "Stua + Kjøkken"
+        for (screen in widths) {
+            val room = available(screen)
+            assertTrue("$screen: a + row's title whole", joinRowTextDp(room) >= title)
+            for (l in lines) assertTrue("$screen: the line $l whole", joinRowTextDp(room) >= l)
+            assertTrue("$screen: the no-contact line in two lines", 2 * joinRowTextDp(room) >= noContact && 2 * memberNameDp(room) >= noContact)
+            assertTrue("$screen: a member's name beside its −", memberNameDp(room) >= member)
+            assertTrue("$screen: a two-room block's title beside the check", groupTitleDp(room) >= twoRooms)
+            assertTrue("$screen: the Begge label in its 44 dp", GROUP_VOLUME_LABEL_DP >= label)
+            assertTrue("$screen: the sliders keep a usable track", groupSliderDp(room) >= 140 && memberSliderDp(room) >= 140)
+        }
+        // the Jelly Star's numbers, so a change of the geometry is seen
+        assertEquals(162f, joinRowTextDp(288f), 0.001f)
+        assertEquals(162f, memberNameDp(288f), 0.001f)
+        val sheet = moduleFile("src/main/java/me/vibb/music/ui/PlayerScreen.kt").readText()
+        // the 48 dp buttons are requiredSize (never squeezed), the rows give them their end padding, long lines are cut
+        val button = sheet.substringAfter("private fun GroupButton(").substringBefore("\n}\n")
+        assertTrue(button.contains("Modifier.requiredSize(GROUP_BUTTON_DP.dp)"))
+        assertTrue(sheet.contains("end = if (trailing != null) SHEET_BUTTON_END_DP.dp else SHEET_ROW_PAD_DP.dp"))
+        assertTrue(sheet.contains("subtitleLines = if (item.line == RoomLine.NO_CONTACT) 2 else 1"))
+        assertTrue(sheet.contains("Line(stringResource(R.string.room_no_contact, m.name), 12, 700, Palette.sub, maxLines = 2)"))
+        // a three-member block and its sliders make the sheet taller: it scrolls within OUTPUT_SHEET_MAX_SHARE
+        assertTrue(sheet.contains("Modifier.fillMaxWidth().heightIn(max = maxHeight).verticalScroll(rememberScrollState())"))
     }
 
     @Test

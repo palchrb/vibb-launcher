@@ -73,8 +73,30 @@ class FakeLink : SonosEventLink {
     }
 }
 
+/** The group's other rooms' volumes (design 53 §2.12): the sets as they went out, and reads answered from [held] at once. */
+class FakeVolumes : MemberVolumes {
+    val sets = mutableListOf<Pair<String, Int>>()
+    val held = mutableMapOf<String, Int>()
+    val reads = mutableListOf<List<String>>()
+
+    override fun set(uid: String, volume: Int) {
+        sets += uid to volume
+        held[uid] = volume
+    }
+
+    override fun read(uids: List<String>, then: (Map<String, Int>) -> Unit) {
+        reads += uids
+        then(uids.mapNotNull { u -> held[u]?.let { u to it } }.toMap())
+    }
+}
+
 class FakeHost : SonosHost {
     var changes = 0
+    var regroups = 0
+
+    override fun groupsChanged() {
+        regroups++
+    }
     val played = mutableListOf<Pair<String, String>>()
     val followed = mutableListOf<Pair<String, String?>>()
     val ramps = mutableListOf<Int?>()
@@ -165,7 +187,17 @@ class ControllerRig(val uid: String = "RINCON_KID01400") {
     val host = FakeHost()
     val session = SonosSession({ clock.now })
     var resolvedUids = mutableListOf<String>()
-    val transport = SonosTransport(session, { u, _, _ -> resolvedUids.add(u); spk }, NrkService({ _, _ -> SonosFakes.fixture("accounts.xml") }), clock.clock)
+
+    /** Design 53-b: the group's other rooms by uid (every other uid is [spk], as before). */
+    val others = mutableMapOf<String, FakeSpeaker>()
+    val transport = SonosTransport(session, { u, _, _ -> resolvedUids.add(u); others[u] ?: spk }, NrkService({ _, _ -> SonosFakes.fixture("accounts.xml") }), clock.clock)
+
+    /** The rows' members of a uid (the start cap's `members`), and the members' volumes off our actor (design 53 §2.12). */
+    var membersOf: (String) -> List<String> = { listOf(it) }
+    val volumes = FakeVolumes()
+
+    /** The migration probe a poll runs (design 53 §2.8's advance guard), none by default. */
+    var probe: MigrationProbe? = null
     /** playAllowed: false while the launcher has suspended the app. */
     var allowed = true
 
@@ -181,6 +213,7 @@ class ControllerRig(val uid: String = "RINCON_KID01400") {
     val c = SonosController(
         transport, work, store, { clock.now }, uid, "Barnerom", host, sleep = clock.clock.sleep, mayPlay = { allowed }, cap = { capPct },
         minter = minter, privateMintAllowed = { privateMint }, events = link, wakePoll = { wakes++ },
+        members = { membersOf(it) }, memberVolumes = volumes,
     )
 
     /** One event of the socket, received now (design 53 §2.3). */
@@ -208,7 +241,7 @@ class ControllerRig(val uid: String = "RINCON_KID01400") {
 
     /** One poll, its snapshot handed to the controller as the actor would. */
     fun poll(): Tick {
-        val tick = runBlocking { transport.poll(null) }
+        val tick = runBlocking { transport.poll(probe) }
         c.onPoll(tick, session.snapshot)
         work.drain()
         return tick

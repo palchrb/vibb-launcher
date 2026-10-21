@@ -39,6 +39,18 @@ interface SpeakerControl : SpeakerIo {
 
     /** REL_TIME to [target] (`H:MM:SS`). */
     fun seek(target: String)
+
+    /**
+     * Join [coordinator]'s group (soco `SoCo.join`, design 53 §0.2): `SetAVTransportURI` to
+     * [rinconUri] with empty metadata on THIS room; a stream it coordinated stops.
+     */
+    fun joinGroup(coordinator: String)
+
+    /**
+     * Leave the group (soco `SoCo.unjoin`): `BecomeCoordinatorOfStandaloneGroup` on THIS room; when it
+     * coordinated, Sonos promotes a member and the stream moves there (design 26a §4.8's follow).
+     */
+    fun becomeStandalone()
 }
 
 /** Elapsed time (SystemClock.elapsedRealtime on the phone: it counts deep sleep) and the waits. */
@@ -316,6 +328,38 @@ class SonosTransport(
     }
 
     /**
+     * "−" on our own coordinator (design 53 §2.6): `BecomeCoordinatorOfStandaloneGroup` on [ifUid], in our actor -
+     * ordered against our plays. Sonos promotes a remaining member and moves the stream there; the controller's
+     * follow takes it (the poll burst, the probe's candidate). False when [ifUid] is no longer the session's.
+     */
+    suspend fun leave(ifUid: String): Boolean = verb(ifUid, GroupVerbs.VERB_BUDGET_MS) {
+        it.becomeStandalone()
+        wake()
+    }
+
+    /**
+     * A grouped room that joined from outside (design 53 §2.9): brought down to [cap] once when louder - each its own
+     * RenderingControl within [MEMBER_CAP_BUDGET_MS], best effort, through our actor. The volumes set, by uid.
+     */
+    suspend fun capMembers(uids: List<String>, cap: Int): Map<String, Int> = mutex.withLock {
+        val set = mutableMapOf<String, Int>()
+        for (m in uids.distinct()) {
+            try {
+                capVolume(speakers.speaker(m, verify = false, budgetMs = MEMBER_CAP_BUDGET_MS), cap)?.let { set[m] = it }
+            } catch (e: Exception) {
+                log("volume cap: a joining room isn't known (${e.javaClass.simpleName})")
+            }
+        }
+        set
+    }
+
+    /** The migration probe's candidate (design 53 §2.8: a `MOVED`'s player, a `groups` event's, our "−"'s first member): asked first. */
+    suspend fun hint(uid: String) = mutex.withLock { session.hint(uid) }
+
+    /** Our group changed (design 53 §2.8): for a while a STOPPED of ours with its TrackURI kept is probed too. */
+    suspend fun groupChanged(at: Long) = mutex.withLock { session.groupChanged(at) }
+
+    /**
      * `/state?live=1` (sonosd.py 1021-1039): one classify within [budgetMs] for the bookmark at the
      * exact second (a switch home, a hand-off); published like a poll. Null when the session isn't
      * armed ([armedOnly]; the suspension's look also reads a stood-down session's room, §6.1) or the
@@ -358,7 +402,7 @@ class SonosTransport(
         /** "Transition not available", "seek mode not supported", "illegal seek target" - retried. */
         val RETRY_FAULTS = setOf(701, 710, 711)
 
-        /** A grouped room's cap at a start: its GetVolume and SetVolume together (§5.3). */
+        /** A grouped room's cap at a start (§5.3) and a joiner's (design 53 §2.9): its GetVolume and SetVolume together. */
         const val MEMBER_CAP_BUDGET_MS = 1_500L
     }
 }

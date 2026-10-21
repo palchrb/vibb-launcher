@@ -101,6 +101,9 @@ class SonosSessionTest {
         var topology = 0
         val candidates = mutableMapOf<String, Pair<TransportState, String>>()
 
+        /** The candidates' ips in the order the probe asked them (design 53 §2.8: the hinted one first). */
+        val asked = mutableListOf<String>()
+
         override fun refreshTopology(): SpeakerDoc {
             topology++
             return SpeakerDoc(
@@ -117,10 +120,40 @@ class SonosSessionTest {
             )
         }
 
-        override fun live(player: CachedPlayer): Pair<TransportState, String>? = candidates[player.ip] ?: (TransportState.STOPPED to "")
+        override fun live(player: CachedPlayer): Pair<TransportState, String>? {
+            asked += player.ip
+            return candidates[player.ip] ?: (TransportState.STOPPED to "")
+        }
     }
 
     private val stoppedEmpty get() = fields(TransportState.STOPPED, "")
+
+    @Test
+    fun `d53 the hinted candidate is asked first, and right after a group change a STOPPED of ours that kept its TrackURI probes too`() {
+        val s = session()
+        warm(s)
+        val probe = Probe()
+        s.hint("RINCON_BATH")
+        assertTrue("it ran, nobody carries the stream: the advance guard's probeMissed", s.maybeProbeMigration(stoppedEmpty, probe))
+        assertEquals("the hinted Bad first, then Kjøkken", listOf("10.0.0.12", "10.0.0.11"), probe.asked)
+        // our TrackURI kept, STOPPED: an episode's end - never probed outside the window...
+        val kept = fields(TransportState.STOPPED, uri).copy(ours = true)
+        clock.advance(2_000)
+        assertFalse(s.maybeProbeMigration(kept, probe))
+        assertEquals(1, probe.topology)
+        // ... but right after our group changed (an old coordinator may keep it): probed, and the stream found
+        s.groupChanged(clock.now)
+        probe.candidates["10.0.0.11"] = TransportState.PLAYING to uri
+        assertFalse("found: not missed", s.maybeProbeMigration(kept, probe))
+        assertEquals(Moved("RINCON_KITCHEN", "Kjøkken", uri), s.streamMoved)
+        // the window closes after GROUP_WINDOW_MS
+        val s2 = session()
+        warm(s2)
+        s2.groupChanged(clock.now)
+        clock.advance(SonosSession.GROUP_WINDOW_MS)
+        assertFalse(s2.maybeProbeMigration(kept, probe))
+        assertEquals(2, probe.topology)
+    }
 
     @Test
     fun `migrate 1 - only the migration signature probes`() {

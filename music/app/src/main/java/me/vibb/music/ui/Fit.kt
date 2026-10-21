@@ -242,3 +242,43 @@ fun orderWordsFit(lineDp: Float, glyph: Boolean, availableDp: Float): Boolean =
 
 /** The side (px) a cover file of [sidePx] decodes at on a screen of [density]: what the player's 224 dp needs, never more than the file. */
 fun coverDecodePx(sidePx: Int, density: Float): Int = minOf(sidePx, kotlin.math.ceil(PLAYER_ART_MAX_DP * density).toInt()).coerceAtLeast(1)
+
+// -- "Spill av på" with grouping (design 53 §2.7, §2.12): the sheet's row geometry, dp --
+
+/** A sheet row's side padding, its glyph disc and the gap between its parts (`SheetRow`). */
+const val SHEET_ROW_PAD_DP = 14
+const val SHEET_DISC_DP = 34
+const val SHEET_ROW_GAP_DP = 12
+
+/** A row's end padding when it carries a 48 dp button (the sketch's 6). */
+const val SHEET_BUTTON_END_DP = 6
+
+/** The round "+" and "−" (the sketch's 48 dp, the touch target). */
+const val GROUP_BUTTON_DP = 48
+
+/** The group block's member lines start under the title: the disc and its gap (the sketch's 38 dp, in its own geometry). */
+const val GROUP_INDENT_DP = SHEET_DISC_DP + SHEET_ROW_GAP_DP
+
+/** The "Begge"/"Alle" label's width, the sliders' gap and a member slider's glyph. */
+const val GROUP_VOLUME_LABEL_DP = 44
+const val GROUP_SLIDER_GAP_DP = 10
+const val GROUP_SLIDER_GLYPH_DP = 18
+
+/** The room a "+" row leaves its title and line in a sheet [availableDp] wide (the sheet's content width). */
+fun joinRowTextDp(availableDp: Float): Float =
+    availableDp - SHEET_ROW_PAD_DP - SHEET_DISC_DP - SHEET_ROW_GAP_DP - SHEET_ROW_GAP_DP - GROUP_BUTTON_DP - SHEET_BUTTON_END_DP
+
+/** The room a member's name (and its failure line) has beside its "−" in the group block. */
+fun memberNameDp(availableDp: Float): Float =
+    availableDp - SHEET_ROW_PAD_DP - GROUP_INDENT_DP - SHEET_ROW_GAP_DP - GROUP_BUTTON_DP - SHEET_BUTTON_END_DP
+
+/** A member's own slider's track. */
+fun memberSliderDp(availableDp: Float): Float =
+    availableDp - SHEET_ROW_PAD_DP - GROUP_INDENT_DP - GROUP_SLIDER_GLYPH_DP - GROUP_SLIDER_GAP_DP - SHEET_ROW_PAD_DP
+
+/** The "Begge"/"Alle" slider's track. */
+fun groupSliderDp(availableDp: Float): Float =
+    availableDp - SHEET_ROW_PAD_DP - GROUP_INDENT_DP - GROUP_VOLUME_LABEL_DP - GROUP_SLIDER_GAP_DP - SHEET_ROW_PAD_DP
+
+/** The group block's title and line beside the selected row's 22 dp check. */
+fun groupTitleDp(availableDp: Float): Float = availableDp - 2 * SHEET_ROW_PAD_DP - SHEET_DISC_DP - 2 * SHEET_ROW_GAP_DP - 22

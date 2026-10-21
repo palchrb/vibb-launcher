@@ -37,6 +37,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
@@ -72,7 +74,7 @@ import me.vibb.music.playback.Output
 import me.vibb.music.playback.OutputKind
 import me.vibb.music.playback.PlayerHub
 import me.vibb.music.playback.RendererState
-import me.vibb.music.sonos.RoomsView
+import me.vibb.music.sonos.Room
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -371,18 +373,25 @@ private fun SleepOption(label: String, on: Boolean, modifier: Modifier, onClick:
  * ikke" while nobody answered), then "Se etter høyttalere" ("Søker etter høyttalere…" while a round runs). Opening it
  * asks for one topology refresh and opens the A2DP proxy ([onOpen]); leaving it closes the proxy ([onClose]); picking
  * a room is a play on it. The rows scroll when they are taller than the sheet's room.
+ *
+ * Design 53 §2.7, §2.12 (the approved sketch, no hint lines): [items] are [outputSheetItems] with the rooms as
+ * `groupSheet` decided them - our group's block (its "Begge"/"Alle" slider, a line per member with its "−" and its
+ * own quieter slider), a "+" on every other allowed row ([onJoin]; a tap on the row itself still switches there),
+ * the Spinner in a button's place while its verb settles, the no-contact line after one that got no answer.
  */
 @Composable
 fun OutputSheet(
-    outputs: List<Output>,
-    headsets: List<HeadsetRow>,
-    rooms: RoomsView,
+    items: List<SheetItem>,
+    scanning: Boolean,
     current: Output,
     onOpen: () -> Unit,
     onClose: () -> Unit,
     onPick: (Output) -> Unit,
     onHeadset: (HeadsetRow) -> Unit,
     onRescan: () -> Unit,
+    onJoin: (Room) -> Unit,
+    onLeave: (String) -> Unit,
+    onVolume: (uid: String, group: Boolean, volume: Int, done: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     DisposableEffect(Unit) {
@@ -395,7 +404,7 @@ fun OutputSheet(
             Modifier.fillMaxWidth().heightIn(max = maxHeight).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            for (item in outputSheetRows(outputs, headsets, rooms.rooms)) {
+            for (item in items) {
                 when (item) {
                     is SheetItem.Out -> {
                         val o = item.output
@@ -420,10 +429,22 @@ fun OutputSheet(
                         SheetRow(Icons.headphones, name, sub, selected = false, subtitleLines = 2) { onHeadset(h) }
                     }
                     is SheetItem.Speaker -> {
-                        val o = Output(Output.sonosKey(item.room.uid), OutputKind.SONOS, item.room.label)
-                        SheetRow(Icons.roomSpeaker, item.room.label, stringResource(if (rooms.stale) R.string.output_sonos_stale else R.string.output_sonos), o.key == current.key) { onPick(o) }
+                        val r = item.room
+                        val o = Output(Output.sonosKey(r.uid), OutputKind.SONOS, r.label)
+                        val line = roomLineText(item.line)
+                        val sub = if (item.line == RoomLine.NO_CONTACT) stringResource(line, r.label) else stringResource(line)
+                        val trailing: (@Composable () -> Unit)? = when (item.join) {
+                            GroupMark.NONE -> null
+                            GroupMark.PENDING -> ({ GroupPending() })
+                            GroupMark.BUTTON -> ({ GroupButton(Icons.add, stringResource(R.string.room_join, r.label), Palette.peach.copy(alpha = 0.6f), Palette.peach) { onJoin(r) } })
+                        }
+                        SheetRow(
+                            if (r.names.size >= 2) Icons.roomGroup else Icons.roomSpeaker, r.label, sub, item.selected,
+                            subtitleLines = if (item.line == RoomLine.NO_CONTACT) 2 else 1, trailing = trailing,
+                        ) { onPick(o) }
                     }
-                    SheetItem.Rescan -> if (rooms.scanning) {
+                    is SheetItem.Group -> GroupBlock(item, onPick = { onPick(Output(Output.sonosKey(item.room.uid), OutputKind.SONOS, item.room.label)) }, onLeave, onVolume)
+                    SheetItem.Rescan -> if (scanning) {
                         Row(
                             Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 14.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -445,15 +466,28 @@ fun OutputSheet(
 /** The output sheet's rows take at most this share of the screen's height, then scroll (design 52: more rows). */
 const val OUTPUT_SHEET_MAX_SHARE = 0.7f
 
+/**
+ * One row of the sheet: the 34 dp glyph disc, the title and its line, the check when [selected]; [trailing] (design 53
+ * §2.7: a row's 48 dp "+" or its Spinner) sits at the row's end with [SHEET_BUTTON_END_DP] of padding.
+ */
 @Composable
-private fun SheetRow(glyph: ImageVector, title: String, subtitle: String?, selected: Boolean, subtitleLines: Int = 1, onClick: () -> Unit) {
+private fun SheetRow(
+    glyph: ImageVector,
+    title: String,
+    subtitle: String?,
+    selected: Boolean,
+    subtitleLines: Int = 1,
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 52.dp).clip(RoundedCornerShape(16.dp)).background(if (selected) Palette.selected else Palette.sheetRow)
-            .semantics { this.selected = selected }.button(null, onClick).padding(horizontal = 14.dp, vertical = 6.dp),
+            .semantics { this.selected = selected }.button(null, onClick)
+            .padding(start = SHEET_ROW_PAD_DP.dp, end = if (trailing != null) SHEET_BUTTON_END_DP.dp else SHEET_ROW_PAD_DP.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(SHEET_ROW_GAP_DP.dp),
     ) {
-        Box(Modifier.size(34.dp).clip(CircleShape).background(if (selected) Palette.peach else Palette.track), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(SHEET_DISC_DP.dp).clip(CircleShape).background(if (selected) Palette.peach else Palette.track), contentAlignment = Alignment.Center) {
             Glyph(glyph, 18.dp, if (selected) Palette.bg else Palette.fg)
         }
         Column(Modifier.weight(1f)) {
@@ -461,6 +495,76 @@ private fun SheetRow(glyph: ImageVector, title: String, subtitle: String?, selec
             subtitle?.let { Line(it, 12, 700, Palette.sub, maxLines = subtitleLines) }
         }
         if (selected) Glyph(Icons.check, 22.dp, Palette.peach)
+        trailing?.invoke()
+    }
+}
+
+/** A row's "+" or a member's "−" (design 53 §2.7): a 48 dp round outline, its glyph, its words for TalkBack. */
+@Composable
+private fun GroupButton(icon: ImageVector, label: String, ring: Color, tint: Color, onClick: () -> Unit) {
+    Box(
+        Modifier.requiredSize(GROUP_BUTTON_DP.dp).clip(CircleShape).border(1.5.dp, ring, CircleShape).button(label, onClick),
+        contentAlignment = Alignment.Center,
+    ) { Glyph(icon, 20.dp, tint) }
+}
+
+/** A "+" or "−" that went out and the topology doesn't show yet: the Spinner in the button's place. */
+@Composable
+private fun GroupPending() {
+    Box(Modifier.requiredSize(GROUP_BUTTON_DP.dp), contentAlignment = Alignment.Center) { Spinner(20.dp, Palette.sub) }
+}
+
+/**
+ * Our group's block (design 53 §2.7, §2.12; the sketch's boards 2 and 4): the selected title row (a tap is today's
+ * pick of our own row), the "Begge"/"Alle" slider moving every room, then one line per member, coordinator first -
+ * indented under the title, a 1 dp divider, the name at 15/700 (not a button) with its "−", and under it the room's
+ * own quieter slider. A volume not read yet shows no slider.
+ */
+@Composable
+private fun GroupBlock(g: SheetItem.Group, onPick: () -> Unit, onLeave: (String) -> Unit, onVolume: (uid: String, group: Boolean, volume: Int, done: Boolean) -> Unit) {
+    val two = g.members.size == 2
+    val playingLine = if (two) stringResource(R.string.group_playing_both) else stringResource(R.string.group_playing_all, g.members.size)
+    val indent = (SHEET_ROW_PAD_DP + GROUP_INDENT_DP).dp
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Palette.selected).padding(bottom = 6.dp)) {
+        SheetRow(Icons.roomGroup, g.room.label, if (g.playing) playingLine else stringResource(R.string.output_sonos), selected = true, onClick = onPick)
+        g.volume?.let { v ->
+            Row(Modifier.fillMaxWidth().padding(start = indent, end = SHEET_ROW_PAD_DP.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(GROUP_SLIDER_GAP_DP.dp)) {
+                Line(stringResource(if (two) R.string.group_volume_both else R.string.group_volume_all), 13, 700, Palette.sub, Modifier.width(GROUP_VOLUME_LABEL_DP.dp))
+                VolumeSlider(v, Palette.peach, stringResource(if (two) R.string.group_volume_cd_both else R.string.group_volume_cd_all), Modifier.weight(1f)) { volume, done ->
+                    onVolume(g.room.uid, true, volume, done)
+                }
+            }
+        }
+        for (m in g.members) {
+            Box(Modifier.padding(start = indent).fillMaxWidth().height(1.dp).background(Palette.fg.copy(alpha = 0.12f)))
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = GROUP_BUTTON_DP.dp).padding(start = indent, end = SHEET_BUTTON_END_DP.dp, top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(SHEET_ROW_GAP_DP.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Line(m.name, 15, 700, Palette.white)
+                    if (m.failed) Line(stringResource(R.string.room_no_contact, m.name), 12, 700, Palette.sub, maxLines = 2)
+                }
+                when (m.leave) {
+                    GroupMark.PENDING -> GroupPending()
+                    GroupMark.BUTTON -> GroupButton(Icons.remove, stringResource(R.string.room_leave, m.name), Palette.dot, Palette.fg) { onLeave(m.uid) }
+                    GroupMark.NONE -> Unit
+                }
+            }
+            m.volume?.let { v ->
+                Row(
+                    Modifier.fillMaxWidth().padding(start = indent, end = SHEET_ROW_PAD_DP.dp).alpha(0.9f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(GROUP_SLIDER_GAP_DP.dp),
+                ) {
+                    Glyph(Icons.volume, GROUP_SLIDER_GLYPH_DP.dp, Palette.fg)
+                    VolumeSlider(v, Palette.peach.copy(alpha = 0.75f), stringResource(R.string.room_volume_cd, m.name), Modifier.weight(1f)) { volume, done ->
+                        onVolume(m.uid, false, volume, done)
+                    }
+                }
+            }
+        }
     }
 }
 

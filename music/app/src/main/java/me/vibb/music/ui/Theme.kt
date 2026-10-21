@@ -104,6 +104,15 @@ object Icons {
 
     /** A Sonos room (design 26a §5.1): a speaker cabinet in the player's stroked set (not a Material Symbol: a filled glyph would stand out in this bar). */
     val roomSpeaker = stroked("roomSpeaker", 2.2f, rect(6f, 3f, 12f, 18f, 2.5f), circle(12f, 14f, 3.2f), "M12 7.4v.2")
+
+    /**
+     * Design 53 §2.7, §2.12: grouping in "Spill av på" - a group of rooms (two cabinets), the row's "+", a member's
+     * "−" and a member's quiet volume line. Our own drawing of the approved sketch's SVGs, in the stroked set (GPL).
+     */
+    val roomGroup = stroked("roomGroup", 2f, rect(2f, 4f, 9f, 16f, 2.5f), rect(13f, 4f, 9f, 16f, 2.5f))
+    val add = stroked("add", 2.4f, "M12 5v14M5 12h14")
+    val remove = stroked("remove", 2.4f, "M5 12h14")
+    val volume = stroked("volume", 1.9f, "M3.6 9.6h3.6l4.8-4.2v13.2L7.2 14.4H3.6z", "M15.6 9a4.2 4.2 0 0 1 0 6")
     val check = stroked("check", 3f, "M5 12l5 5 9-10")
     val downloadAll = stroked("downloadAll", 2.4f, "M12 4v11M7 10l5 5 5-5M5 20h14")
     val downloaded = stroked("downloaded", 3f, "M12 5v10M7 11l5 5 5-5")

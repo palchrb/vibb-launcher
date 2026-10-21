@@ -27,7 +27,10 @@ multicast and every host fake is 10.0.2.2, so the app's cache is seeded through 
 The transport: SetAVTransportURI sets the uri (STOPPED), Play plays (TRANSITIONING for
 --transition-s first), RelTime runs in real time and the track ends by itself at its duration (from
 the DIDL's res@duration, else --duration; STOPPED with the uri kept, like a real episode end), Seek
-on a STOPPED transport is UPnP 701, Pause, Stop, volume and mute.
+on a STOPPED transport is UPnP 701, Pause, Stop, volume and mute. Grouping (design 53 §0.2, soco's
+verbs): SetAVTransportURI to x-rincon:<coordinator> joins that group (a stream the room coordinated
+stops); BecomeCoordinatorOfStandaloneGroup leaves it - a member stops and the rest play on, a
+coordinator's stream moves to its next member (as `move`) - answering from become_standalone.xml.
 
 --script FILE: one event per line, `t+<seconds> [@<speaker>] <event>`, the time counted from the
 first Play any speaker receives (the session start); the speaker defaults to the first. Events:
@@ -213,18 +216,7 @@ class Household:
             spk.freeze()
             spk.coordinator = coord
         elif verb == "move":
-            to = self.speaker(words[1])
-            spk.freeze()
-            to.uri, to.meta, to.duration, to.rel = spk.uri, spk.meta, spk.duration, spk.rel
-            to.coordinator = to.uid
-            to.set_state(spk.state if spk.state in LIVE else "PLAYING")
-            to.rel = spk.rel
-            for other in self.speakers:
-                if other.coordinator == spk.uid and other is not spk:
-                    other.coordinator = to.uid
-            spk.coordinator = spk.uid
-            spk.uri, spk.meta, spk.duration = "", "", 0.0
-            spk.set_state("STOPPED")
+            self.hand_over(spk, self.speaker(words[1]))
         elif verb == "drop":
             spk.reachable = False
         elif verb == "back":
@@ -239,6 +231,55 @@ class Household:
             spk.volume = max(0, min(100, int(words[1])))
         else:
             raise SystemExit(f"fake-sonos: unknown script event {verb!r}")
+
+    def hand_over(self, spk, to):
+        """Migration: spk's stream moves to `to` (its group's new coordinator), spk STOPPED "" and standalone."""
+        spk.freeze()
+        to.uri, to.meta, to.duration, to.rel = spk.uri, spk.meta, spk.duration, spk.rel
+        to.coordinator = to.uid
+        to.set_state(spk.state if spk.state in LIVE else "PLAYING")
+        to.rel = spk.rel
+        for other in self.speakers:
+            if other.coordinator == spk.uid and other is not spk:
+                other.coordinator = to.uid
+        spk.coordinator = spk.uid
+        spk.uri, spk.meta, spk.duration = "", "", 0.0
+        spk.set_state("STOPPED")
+
+    def members_of(self, spk):
+        return [s for s in self.speakers if s.coordinator == spk.uid and s is not spk]
+
+    def join(self, spk, coord_uid):
+        """`SetAVTransportURI(x-rincon:<uid>)` (soco `join`, design 53 §0.2): spk joins that coordinator's group; a
+        stream it coordinated stops (its own members, if any, keep it on the next of them, as a real household does)."""
+        coord = self.by_uid.get(coord_uid)
+        if coord is None or coord is spk:
+            raise Fault(714)  # Illegal MIME-Type / no such group: the speaker refuses it
+        coord = self.by_uid.get(coord.coordinator, coord)
+        if spk.coordinator == spk.uid:
+            members = self.members_of(spk)
+            if members:
+                self.hand_over(spk, members[0])
+            else:
+                spk.uri, spk.meta, spk.duration = "", "", 0.0
+                spk.set_state("STOPPED")
+        spk.freeze()
+        spk.coordinator = coord.uid
+        log(f"{spk.name}: joined {coord.name}'s group")
+
+    def standalone(self, spk):
+        """`BecomeCoordinatorOfStandaloneGroup` (soco `unjoin`): a member leaves and stops, the rest play on; a
+        coordinator's stream moves to its next member (as `move`) and it stands alone, STOPPED ""."""
+        if spk.coordinator != spk.uid:
+            spk.coordinator = spk.uid
+            spk.uri, spk.meta, spk.duration = "", "", 0.0
+            spk.set_state("STOPPED")
+            log(f"{spk.name}: left its group")
+            return
+        members = self.members_of(spk)
+        if members:
+            self.hand_over(spk, members[0])
+            log(f"{spk.name}: left its group - the stream moved to {members[0].name}")
 
     # -- what a speaker reports --
 
@@ -304,6 +345,13 @@ class Household:
         if action == "GetTransportInfo":
             state = self.view(spk)[0]
             return put(fixture(TRANSPORT.get(state, "transport_playing.xml")), "CurrentTransportState", state)
+        if action == "BecomeCoordinatorOfStandaloneGroup":
+            self.standalone(spk)
+            body = put(fixture("become_standalone.xml"), "DelegatedGroupCoordinatorID", spk.uid)
+            return put(body, "NewGroupID", f"{spk.uid}:1")
+        if action == "SetAVTransportURI" and args.get("CurrentURI", "").startswith("x-rincon:"):
+            self.join(spk, args["CurrentURI"].split(":", 1)[1])
+            return empty(SERVICES["/MediaRenderer/AVTransport/Control"], action)
         if action == "SetAVTransportURI":
             spk.coordinator = spk.uid  # a play on a member makes it standalone again
             spk.uri, spk.meta = args.get("CurrentURI", ""), args.get("CurrentURIMetaData", "")
@@ -497,7 +545,8 @@ def selftest():
     templates = [(n, POSITION_TAGS) for n in sorted(set(POSITION.values()))] + \
         [(n, ("CurrentTransportState",)) for n in sorted(set(TRANSPORT.values()))] + [
         ("zgs_wrapped.xml", ("ZoneGroupState",)), ("get_volume.xml", ("CurrentVolume",)), ("get_mute.xml", ("CurrentMute",)),
-        ("fault_701.xml", ("errorCode",)), ("device_description.xml", ("UDN", "roomName"))]
+        ("fault_701.xml", ("errorCode",)), ("device_description.xml", ("UDN", "roomName")),
+        ("become_standalone.xml", ("DelegatedGroupCoordinatorID", "NewGroupID"))]
     for name, tags in templates:
         for tag in tags:
             put(fixture(name), tag, "x")
@@ -615,6 +664,29 @@ def selftest():
         house.run_due()
         assert soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "STOPPED"
         print("4. script: grouped away (x-rincon), migration (move), drop and back OK")
+
+        # 4b. the grouping verbs (design 53 §0.2, §2.6): a join with x-rincon: and empty metadata stops the room's own
+        # stream; a member's BecomeCoordinatorOfStandaloneGroup stops it, the rest play on; the coordinator's moves the
+        # stream to its next member (as `move`)
+        other = "https://podkast.example/other.mp3"
+        soap(stua, AV, "SetAVTransportURI", (("CurrentURI", other), ("CurrentURIMetaData", "")))
+        soap(stua, AV, "Play", (("Speed", "1"),))
+        soap(stua, AV, "SetAVTransportURI", (("CurrentURI", f"x-rincon:{kjokken.uid}"), ("CurrentURIMetaData", "")))
+        assert soap(stua, AV, "GetPositionInfo")[1]["TrackURI"] == f"x-rincon:{kjokken.uid}"
+        assert stua.uri == "", "the joining room's own stream stopped"
+        assert soap(kjokken, ZGT, "GetZoneGroupState")[1]["ZoneGroupState"].count("<ZoneGroup ") == 1
+        left = soap(stua, AV, "BecomeCoordinatorOfStandaloneGroup")[1]
+        assert left["DelegatedGroupCoordinatorID"] == stua.uid and left["NewGroupID"] == f"{stua.uid}:1", left
+        assert soap(stua, AV, "GetPositionInfo")[1]["TrackURI"] == ""
+        assert soap(stua, AV, "GetTransportInfo")[1]["CurrentTransportState"] == "STOPPED"
+        assert soap(kjokken, AV, "GetPositionInfo")[1]["TrackURI"] == uri, "the rest play on"
+        assert soap(kjokken, ZGT, "GetZoneGroupState")[1]["ZoneGroupState"].count("<ZoneGroup ") == 2
+        soap(stua, AV, "SetAVTransportURI", (("CurrentURI", f"x-rincon:{kjokken.uid}"), ("CurrentURIMetaData", "")))
+        soap(kjokken, AV, "BecomeCoordinatorOfStandaloneGroup")
+        assert soap(stua, AV, "GetPositionInfo")[1]["TrackURI"] == uri, "the coordinator's stream moved to its member"
+        assert soap(kjokken, AV, "GetPositionInfo")[1]["TrackURI"] == ""
+        assert soap(kjokken, AV, "SetAVTransportURI", (("CurrentURI", f"x-rincon:{kjokken.uid}"), ("CurrentURIMetaData", "")))[1] == {"fault": "714"}
+        print("4b. grouping: join (x-rincon:, the room's own stream stops), a member's leave, the coordinator's leave (the stream moves) OK")
 
         # 5. the seed file the debug feed reads
         assert f'"port": {kjokken.port}' in seed(house)

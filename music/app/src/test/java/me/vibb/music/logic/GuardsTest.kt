@@ -46,7 +46,7 @@ class GuardsTest {
         val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("val future")
         assertTrue(resumption.contains("if (!playAllowed(suspendedNow())) return"))
         // (Commands itself builds SessionCommands with Android Bundles: read, not loaded.)
-        assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME)"))
+        assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME, ROOM_JOIN)"))
         // The session is built on KidPlayer, so every controller goes through it - also after a
         // renderer switch (design 26a §0): every setPlayer wraps KidPlayer.
         assertTrue(service.contains("MediaSession.Builder(this, KidPlayer(renderer.player))"))
@@ -294,7 +294,8 @@ class GuardsTest {
         assertTrue(service.contains("attach(sonosRenderer(uid, name))"))
         assertTrue(service.contains("attach(sonos)\n        active = a"))
         assertEquals("every room's renderer holds the locks", 1, Regex("""SonosRenderer\(""").findAll(service).count())
-        assertTrue(service.contains("onArmedPlaying = { locks.hold(owner, it) },\n            roomAllowed = { groupAllowed(roomScope, home.rooms.state.value.rooms, it) },"))
+        assertTrue(service.contains("onArmedPlaying = { locks.hold(owner, it) },"))
+        assertTrue(service.contains("roomAllowed = { uid, accepted -> sessionAllowed(roomScope, home.rooms.state.value.rooms, uid, accepted) },"))
         assertTrue(service.substringAfter("private suspend fun comeHome(").substringBefore("sonos.release()\n        active = null").contains("if (renderer !== sonos) return\n        attach(local)"))
         // a headset arriving or leaving touches the output choice only, never the renderer (sonos_renderer.py 5)
         val devices = service.substringAfter("private val deviceCallback").substringBefore("private val saveTick")
@@ -340,7 +341,7 @@ class GuardsTest {
         assertTrue("before anything is sent", play.indexOf("if (!mayPlay()) {") in 0 until play.indexOf("work.submit<PlayResult?>("))
         assertTrue(sonos.substringAfter("private fun resume(").substringBefore("\n    }\n").contains("if (!mayPlay()) return"))
         val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
-        assertTrue(renderer.contains("mayPlay = { playAllowed(suspendedNow()) && roomAllowed(this@SonosRenderer.uid) },"))
+        assertTrue(renderer.contains("mayPlay = { playAllowed(suspendedNow()) && roomAllowed(this@SonosRenderer.uid, controller.accepted) },"))
         // M2: the command coroutine and resumption hold the switch lock; lost() takes it too
         val command = service.substringAfter("override fun onCustomCommand(").substringAfter("rendererReady.await()").substringBefore("return Futures")
         assertTrue(command.trimStart().startsWith("switching.withLock {\n"))
@@ -360,18 +361,23 @@ class GuardsTest {
     fun `the parent's room scope - the sheet, the switch refused, a dropped room left at the sync, after adopt, on a regroup and a follow`() {
         // design 26a §5.5: the sheet lists only allowed rooms (a group only with every member allowed, RoomScopeTest)
         val publish = service.substringAfter("private fun publish() {").substringBefore("\n    }\n")
-        assertTrue(publish.contains("rooms = allowedRooms(home.rooms.state.value, roomScope),"))
-        assertEquals("the sheet's rows in publish, the belt's groups", 2, Regex("""home\.rooms\.state\.value""").findAll(service).count())
-        // OUTPUT to a room outside the scope (or grouped with one): refused with its own line before anything moves
+        // ... and our own row with the rooms the kids grouped into it by hand (design 53 §2.8, Q4)
+        assertTrue(publish.contains("rooms = allowedRooms(home.rooms.state.value, roomScope, sonos?.uid, sonos?.accepted.orEmpty()),"))
+        assertEquals("the sheet's rows in publish, the belt's groups, the join's and the leave's look", 4, Regex("""home\.rooms\.state\.value""").findAll(service).count())
+        // OUTPUT to a room outside the scope (or grouped with one): refused with its own line before anything moves -
+        // after the same-room shortcut (design 53 §2.8: a tap on our own row is the same-tile rule, whatever the kids grouped in)
         val toRoom = service.substringAfter("private suspend fun toRoom(uid: String) {").substringBefore("\n    }\n")
-        val refusal = toRoom.substringBefore("val old = renderer")
+        val shortcut = toRoom.substringBefore("if (!groupAllowed(")
+        assertTrue(shortcut.contains("if (old is SonosRenderer && old.uid == uid) {\n            old.play()"))
+        assertTrue("the scope's check exists, after the shortcut", toRoom.indexOf("if (!groupAllowed(") > toRoom.indexOf("old.uid == uid"))
+        val refusal = toRoom.substring(shortcut.length).substringBefore("val name = ")
         assertTrue(refusal.contains("if (!groupAllowed(allowedRoomsNow(), roomsNow(), uid)) {"))
         assertTrue(refusal.contains("PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)"))
         assertTrue(refusal.contains("return"))
         for (move in listOf("handOff(", "saveNow(", "home.write(", "attach(", "start(", ".play()")) assertFalse(move, refusal.contains(move))
         // a session on a room not allowed as grouped now: the bookmark and the ours-gated Stop (the hand-off) before the phone, paused
         val leave = service.substringAfter("private suspend fun leaveDisallowedRoom() {").substringBefore("\n    }\n")
-        assertTrue(leave.contains("if (!mustLeaveRoom(sonos.uid, roomsNow(), allowedRoomsNow())) return"))
+        assertTrue(leave.contains("if (!mustLeaveRoom(sonos.uid, roomsNow(), allowedRoomsNow(), sonos.accepted)) return"))
         assertTrue(leave.contains("PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.ROOM_NOT_ALLOWED)"))
         assertFalse("its own line (qa-26a-step3c-code L1)", leave.contains("CANT_PLAY_ON_SONOS"))
         assertTrue(leave.indexOf("handOff(sonos)") in 0 until leave.indexOf("comeHome(sonos, play = false, quiet = true)"))
@@ -381,13 +387,17 @@ class GuardsTest {
         val onCreate = service.substringAfter("override fun onCreate() {").substringBefore("override fun onGetSession")
         val sync = onCreate.substringAfter("store.libraries().map { it?.sonosRooms }.distinctUntilChanged()")
         assertTrue(sync.contains("roomScope = rooms\n                publish()\n                leaveIfNotAllowed()"))
-        assertTrue(onCreate.contains("home.rooms.state.collect {\n                publish()\n                if (renderer is SonosRenderer) leaveIfNotAllowed()"))
+        // design 53 §2.8: the renderer hears the members first (a room grouped in by hand accepted and capped), then the sheet and the look
+        val collector = onCreate.substringAfter("home.rooms.state.collect { view ->").substringBefore("\n            }\n")
+        assertTrue(collector.indexOf("(renderer as? SonosRenderer)?.topology(view.rooms)") in 0 until collector.indexOf("publish()"))
+        assertTrue(collector.indexOf("publish()") < collector.indexOf("if (renderer is SonosRenderer) leaveIfNotAllowed()"))
         assertTrue(service.contains("onFollowed = { scope.launch { leaveIfNotAllowed() } },"))
         val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
         assertTrue(renderer.contains("writeChoice { it.followed(uid, name, entry, itemKey, uri) }\n            onFollowed()"))
-        // the groups are watched only under a limited scope while a room plays, and never with a discovery round
+        // the group watch (design 53 §2.8): while a room plays, under a limited scope or without a healthy event socket -
+        // never with a discovery round
         val watch = onCreate.substringAfter("delay(SCOPE_WATCH_MS)").substringBefore("\n        publish()")
-        assertTrue(watch.contains("if (roomScope != null && sonos.showsPlaying) withContext(Dispatchers.IO) { home.rooms.refreshQuietly() }"))
+        assertTrue(watch.contains("if (sonos.showsPlaying && (roomScope != null || !sonos.socketHealthy)) withContext(Dispatchers.IO) { home.rooms.refreshQuietly() }"))
         val quietly = code("src/main/java/me/vibb/music/sonos/SpeakerCache.kt").substringAfter("fun refreshQuietly(): Boolean = try {").substringBefore("\n    }\n")
         assertFalse(quietly.contains("rescanInBackground") || quietly.contains("round("))
         // the scope is read before the startup look and the first rows (L7)
@@ -399,7 +409,8 @@ class GuardsTest {
         assertTrue(look.indexOf("sonos.adopt(") in 0 until look.indexOf("leaveDisallowedRoom()"))
         assertEquals("defined once; the gate and the look", 3, Regex("""\bleaveDisallowedRoom\(""").findAll(service).count())
         // the belt: every play the room's controller sends asks the scope too
-        assertTrue(renderer.contains("&& roomAllowed(this@SonosRenderer.uid) },"))
+        assertTrue(renderer.contains("&& roomAllowed(this@SonosRenderer.uid, controller.accepted) },"))
+        assertTrue(service.contains("roomAllowed = { uid, accepted -> sessionAllowed(roomScope, home.rooms.state.value.rooms, uid, accepted) },"))
         // the kid's line, both languages
         assertTrue(code("src/main/java/me/vibb/music/ui/MusicRoot.kt").contains("PlayerHub.Message.ROOM_NOT_ALLOWED -> R.string.room_not_allowed"))
     }
@@ -453,7 +464,13 @@ class GuardsTest {
         val set = sonos.substringAfter("fun setVolume(volume: Int) {").substringBefore("\n    }\n")
         assertTrue(set.contains("val v = volumeTarget(volume, cap())"))
         assertTrue(sonos.substringAfter("fun adjustVolume(delta: Int) {").substringBefore("\n    }\n").contains("setVolume(base + delta)"))
-        assertTrue(renderer.contains("handling { controller.setVolume(deviceVolume) }"))
+        assertTrue(renderer.contains("handling { controller.setDeviceVolume(deviceVolume) }"))
+        // design 53 §2.12: a lone room as before; a group's every room through groupMove/groupStep, each clamped to the cap
+        val device = sonos.substringAfter("fun setDeviceVolume(volume: Int) {").substringBefore("\n    }\n")
+        assertTrue(device.contains("if (!groupLive()) return setVolume(volume)"))
+        assertTrue(device.contains("groupMove(roomVolumes(), volume, cap())"))
+        assertTrue(sonos.substringAfter("fun adjustVolume(delta: Int) {").substringBefore("\n    }\n").contains("groupStep(roomVolumes(), delta, cap())"))
+        assertTrue(sonos.substringAfter("fun setRoomVolume(room: String, volume: Int) {").substringBefore("\n    }\n").contains("volumeTarget(volume, cap())"))
     }
 
     @Test

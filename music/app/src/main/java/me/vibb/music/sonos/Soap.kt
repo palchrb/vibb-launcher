@@ -253,4 +253,12 @@ class SoapSpeaker(
     override fun seek(target: String) {
         av("Seek", "Unit" to "REL_TIME", "Target" to target)
     }
+
+    override fun joinGroup(coordinator: String) {
+        av("SetAVTransportURI", "CurrentURI" to rinconUri(coordinator), "CurrentURIMetaData" to "")
+    }
+
+    override fun becomeStandalone() {
+        av("BecomeCoordinatorOfStandaloneGroup")
+    }
 }

@@ -102,4 +102,53 @@ class RoomScopeTest {
         // M1: Stua leaves, the stream migrates to Kjøkken and the controller follows
         assertTrue(mustLeaveRoom(kjokken, alone, listOf(stua)))
     }
+
+    // -- design 53 §2.8: the user's answer to Q4 - a room grouped in by hand is respected, whatever the scope --
+
+    @Test
+    fun `d53 Q4 - a forbidden room the kids grouped in is accepted - no leave, our row stays, the belt passes`() {
+        val onlyStua = listOf(stua, bad, loft)
+        val accepted = setOf(kjokken)
+        assertTrue(sessionAllowed(onlyStua, stuaLeads, stua, accepted))
+        assertFalse("no leave", mustLeaveRoom(stua, stuaLeads, onlyStua, accepted))
+        // our own row stays in the sheet with the accepted room; another out-of-scope row doesn't come back
+        val rows = allowedRooms(view(stuaLeads), onlyStua, ours = stua, accepted = accepted).rooms.map { it.label }
+        assertEquals(listOf("Stua + Kjøkken", "Bad", "Loft"), rows)
+        assertEquals(listOf("Bad", "Loft"), allowedRooms(view(kjokkenLeads), onlyStua, ours = stua, accepted = accepted).rooms.map { it.label })
+        // everything the app starts or adds itself still needs every room allowed
+        assertFalse(groupAllowed(onlyStua, stuaLeads, stua))
+    }
+
+    @Test
+    fun `d53 Q4 - a room the app put there, our coordinator forbidden, or a room no longer accepted still leaves`() {
+        // a parent's new scope forbids a member the app put there (not accepted): the session leaves, as before
+        assertTrue(mustLeaveRoom(stua, stuaLeads, listOf(stua), accepted = emptySet()))
+        // our coordinator itself forbidden: accepted members don't save it
+        assertTrue(mustLeaveRoom(stua, stuaLeads, listOf(kjokken), accepted = setOf(kjokken)))
+        // a follow onto an accepted room (the kid took Stua out by hand-Play): it plays on there
+        assertFalse(mustLeaveRoom(kjokken, household(loft, bad), listOf(stua), accepted = setOf(kjokken)))
+        // ... and onto a room neither allowed nor accepted: it leaves, as today
+        assertTrue(mustLeaveRoom(kjokken, household(loft, bad), listOf(stua), accepted = setOf(bad)))
+        // the existing cases with nothing accepted are unchanged
+        assertTrue(sessionAllowed(null, stuaLeads, stua, emptySet()))
+        assertEquals(groupAllowed(listOf(stua), stuaLeads, stua), sessionAllowed(listOf(stua), stuaLeads, stua, emptySet()))
+    }
+
+    @Test
+    fun `d53 the grouping belts - offered only on a live session of ours, a join never to our row or outside the scope, a leave only of a member`() {
+        val v = RoomsView(stuaLeads, stale = false, scanning = false)
+        assertTrue(groupingOffered(v, stua, live = true))
+        assertFalse("not live (stopped, ended, not started)", groupingOffered(v, stua, live = false))
+        assertFalse("the phone renders", groupingOffered(v, null, live = true))
+        assertFalse("stale", groupingOffered(v.copy(stale = true), stua, live = true))
+        assertFalse("grouped away: our room sits in Kjøkken's row", groupingOffered(RoomsView(kjokkenLeads, false, false), stua, live = true))
+        assertTrue(joinOffered(v, stua, true, null, bad))
+        assertFalse("our own row", joinOffered(v, stua, true, null, stua))
+        assertFalse("outside the scope", joinOffered(v, stua, true, listOf(stua, kjokken), bad))
+        assertFalse("no such row", joinOffered(v, stua, true, null, "RINCON_000E58A0B1C901400"))
+        assertTrue(leaveOffered(v, stua, true, kjokken))
+        assertTrue("our own coordinator too", leaveOffered(v, stua, true, stua))
+        assertFalse("not a member of our group (N2)", leaveOffered(v, stua, true, bad))
+        assertFalse("a lone room has no −: Q2", leaveOffered(RoomsView(household(loft, bad), false, false), stua, true, stua))
+    }
 }
