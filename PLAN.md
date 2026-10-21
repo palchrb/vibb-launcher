@@ -1038,8 +1038,12 @@ findings, merge to `main`, full suite once.
   `ZoneGroupState` stay the fallback. Test on the speakers with the hardware button, all four.
   **Status (2026-10-21)**: written as `docs/design/53-sonos-grouping-precision.md` (QA'd, revised, Q2/Q4 answered);
   rounds 53-0 (vibb's DIDL, the goldens) and 53-a (the event socket, the bar's anchor, the 1 s display poll, the IDLE
-  advance, the extra polls' guards, `sonos-ws-probe.py --save`) on branch `d53-a`, awaiting code QA; 53-b (grouping)
-  next. Owed on the speakers: design 53 §5 (the capture that replaces the provisional `ws/` fixtures first).
+  advance, the extra polls' guards, `sonos-ws-probe.py --save`) merged after their code QA (`qa-53a-code.md`); 53-b
+  (grouping: the UPnP verbs in `GroupVerbs`, the sheet per the approved sketch with the group block, "+"/"−", busy
+  rows and per-room/"Begge" volume sliders, the four outside cases followed, Q4's accepted rooms, the joiner cap, the
+  advance guard, `fake-sonos.py`'s join/leave) on branch `d53-b`, awaiting code QA - see the note's "53-b status".
+  Owed on the speakers: design 53 §5 (the capture that replaces the provisional `ws/` fixtures first; checks 6-8c
+  for 53-b).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
@@ -1309,6 +1313,12 @@ findings, merge to `main`, full suite once.
   `lockGlanceFit`'s row height.
 
 ### To decide (the user)
+
+- **The sleep timer's fade on a Sonos group fades only the coordinator room** (found in design 53-b, 2026-10-21):
+  `SonosController.fadeOutAndPause` steps our coordinator's `SetVolume` (2/3, 1/3, 0) and then pauses the group - the
+  other rooms keep their volume until the Pause, so a grouped Kjøkken plays at full volume through Stua's fade. With
+  53-b's per-room volumes the fade could step every room the same way (each room's own base, put back after the
+  Pause), off the actor for the members like the "Begge" slider. Not built (not asked; vibb fades its one room).
 
 - **The app's DIDL differs from vibb's** (found 2026-10-21 against `pi/daemon.py` `_sonos_body`, branch pipewire): for a
   podcast, RSS or NRK series item the app sends the listing's `duration` on the `res`, which vibb sends only for

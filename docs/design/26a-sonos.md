@@ -415,7 +415,10 @@ alive while the speaker plays because the renderer reports playing (§3.2); adop
   (2627-2632). The player screen shows one line under the title (§5.2); nothing acts on it but the kid.
 - **Migration follow** (`_sonos_stream_moved`, 1090-1135): a `streamMoved` hint with `uid != current`, snapshot uid ==
   renderer uid, fresh -> `adopt(hint.uid, kind, hint.uri)` **first**, then `renderer.json` with the new uid and name;
-  later verbs go to the new uid. A failed adopt changes nothing and is retried next tick.
+  later verbs go to the new uid. A failed adopt changes nothing and is retried next tick. **Since design 53-b (§2.8)**
+  grouping done outside the app is followed as it happens: a `MOVED` or a `groups` event names the follow's
+  candidate (asked first by the probe), a poll burst and, for 8 s, a STOPPED of ours that kept its TrackURI is probed
+  before any advance.
 
 ## 5. UI, strings, the launcher
 
@@ -427,7 +430,9 @@ the paired-not-routed headsets, then the Sonos rooms from `PlayerHub.State.rooms
 `roomsStale`), then "Se etter høyttalere" (`ROOMS_RESCAN`; "Søker etter høyttalere…" with a spinner while
 `scanning`). Opening the sheet sends `ROOMS_REFRESH`. The player's bottom bar shows the room name highlighted like a
 headset. Strings in `values` **and** `values-nb` (`SourceScanTest`): the rows, the state lines, the messages; `FitTest`
-for the bar with a long room name and a three-member group label.
+for the bar with a long room name and a three-member group label. **Since design 53-b (§2.7, §2.12)**: grouping in
+the sheet - our group's selected block with a "−" and a volume slider per room and a "Begge"/"Alle" slider, a "+" on
+every other allowed row, "Spiller noe annet" for a busy row; the label follows the household.
 
 ### 5.2 The player on Sonos
 Everything as today, plus: `rendererState` as one quiet line under the entry name ("Spilles i en annen gruppe" /
@@ -465,13 +470,20 @@ goes down during the session** (the override or the restrictions pause ending, a
 below the cap is left alone (qa-26a-corrections M1). `volOpt` is always what we last set on the speaker: the start's
 cap, a ramp's leftover put back after it, or a key press sent while the start was in flight, whichever went out last
 (L1). Best effort: a speaker that won't answer `GetVolume` still plays (logged). The keys and the slider still reach
-the coordinator only (vibb's model, a group's own volume is the Sonos app's).
+the coordinator only (vibb's model, a group's own volume is the Sonos app's). **Superseded for a group by design 53
+§2.12 (round 53-b, the user's Q1)**: the keys and the slider move every room of the group by the same delta, each
+clamped to the cap; a room joining from outside is capped once when louder (§2.9); `volOpt` is per room.
 
 ### 5.4 No server change for playback
 NRK series items carry their program id as the item key (§2.5), so the listing contract stays. The server sees no
 now-playing (design 20 decision 5).
 
 ### 5.5 Room scoping (user, 2026-10-11: every room allowed by default; the parent may restrict to specific speakers)
+**Amended by design 53 §2.8 (round 53-b, the user's Q4, 2026-10-21)**: a room the kids group into the running session
+by hand is respected whatever the scope (`sessionAllowed`, the session's accepted rooms); the scope still limits every
+room the app itself starts or adds, and the 60 s group read runs whatever the scope while the room's event socket isn't
+healthy.
+
 Step 3c, after 3b; the one change that touches the server, launcher and music app, in one commit:
 - **The phone reports the rooms it knows**: `music_state` gains `sonos_rooms: [{uid, name}]` (<= 32 rows, names <= 40
   chars, uids `RINCON_[A-Z0-9]{12,20}`), from the speaker cache, refreshed with every report. Server `MusicState` +

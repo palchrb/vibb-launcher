@@ -773,10 +773,26 @@ t+15 volume 60
   Stua and Kjøkken under "All rooms"; "All rooms" off and Kjøkken switched off -> after the next sync the sheet lists only
   Stua, a session playing on Kjøkken got a bookmark and one Stop and came home paused ("Rommet er ikke lenger
   tillatt"); with `--group Kjøkken+Stua` (or `Stua+Kjøkken`) and only Stua allowed the sheet shows no group row (a
-  group needs every member allowed); a `group` script line putting Kjøkken under a playing, allowed Stua stops the
-  session within a minute (the scope's topology read); with the
+  group needs every member allowed); since design 53-b (the user's Q4) a `group` script line putting Kjøkken under a
+  playing, allowed Stua is a room grouped in by hand: within a minute (the group watch) the session plays on, the
+  sheet shows "Stua + Kjøkken" with Kjøkken's "−", no other out-of-scope row gets a "+"; with the
   sheet open while the sync lands, Kjøkken's row goes (the switch's own refusal - the message, nothing in the fake's
   log - is pinned in the JVM tests: the sheet no longer offers the room).
+- **Grouping in "Spill av på"** (design 53-b; the fake answers `x-rincon:` joins and `BecomeCoordinatorOfStandaloneGroup`,
+  `--selftest` 4b). Start the fake with three rooms (`--speakers Stua:1401,Kjøkken:1402,Barnerom:1403 --duration 90`),
+  play on Stua, open the sheet: Stua selected "Spiller nå", a "+" on Kjøkken and Barnerom ("Trykk for å bytte hit"; a
+  room playing something else - `@Barnerom PLAYING "https://x.example/a.mp3"` in a script - "Spiller noe annet", read
+  once per opening: the fake's log shows one `GetTransportInfo` per other row). "+" on Kjøkken: its Spinner, the
+  fake's log `GetVolume` (with a cap, `SetVolume <cap>` when louder) then `SetAVTransportURI x-rincon:<Stua>` on
+  Kjøkken, then the block "Stua + Kjøkken" with "Spiller nå i begge", the "Begge" slider and a line per room with its
+  "−" and slider; the bar's label "Stua + Kjøkken". "+" on Barnerom playing: its stream stops, it joins. The "Begge"
+  slider: one `SetVolume` per room at a time on Stua (our actor) and the others; a member's slider: that room only; the
+  volume keys: ±3 on every room. "−" on Kjøkken: `BecomeCoordinatorOfStandaloneGroup` on Kjøkken, Stua plays on.
+  "−" on Stua (the coordinator): the fake moves the stream to Kjøkken, the app follows within a few seconds (logcat
+  `stream moved`), the label "Kjøkken", `renderer.json` updated. A switched-off room (`@Kjøkken drop`): its "+" shows
+  "Fikk ikke kontakt med Kjøkken - er den på?" after a few seconds, while Pause and the volume keys on Stua answer at
+  once. With the fake there is no event socket: the outside cases (a `group`/`move` script line) show at the group
+  watch (60 s), not at once.
 - Real speakers stay a device check (design 26a, "Device checks"): SSDP, discovery and control with the launcher's VPN
   filter on (no `EPERM`), the NRK service, Doze.
 

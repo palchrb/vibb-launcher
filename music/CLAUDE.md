@@ -42,7 +42,8 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   `LocalRenderer` (the ExoPlayer, the phone's 10 s sleep fade, audio focus) and `RendererGate` (the startup gate).
   The output axis (`Output` keys `phone`/`dev:<id>`/`sonos:<uid>`, `setPreferredAudioDevice`, the headset callbacks)
   stays the phone's and always goes to `LocalRenderer`. "Spill av på"'s rows: the phone, the routed outputs, the paired
-  headsets not routed now ("Koble til" / "Bytt til", design 52), the rooms, "Se etter høyttalere" (`outputSheetRows`). The third renderer is `spotify/SpotifyRenderer` (26c §5);
+  headsets not routed now ("Koble til" / "Bytt til", design 52), the rooms - on a live room session our group's block
+  and a "+" on every other row (design 53 §2.7, `groupSheet`) -, "Se etter høyttalere" (`outputSheetRows`/`outputSheetItems`). The third renderer is `spotify/SpotifyRenderer` (26c §5);
   `RendererRules.kt` holds the pure rules of which renderer an entry gets, a Spotify item's playability, the queue's
   kind and its claim, and the call test (`RendererRulesTest`).
 - `sonos/` - the Sonos port (26a §1-§2, from vibb `pi/sonosd.py`, `pi/vibb/renderer.py` and `pi/daemon.py`'s
@@ -58,7 +59,10 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   the round only), `SonosLocks`, `SonosSuspension`, `SonosTail`; the event socket (design 53 §2.2): pure `SonosEvents`
   (the messages, the handshake reducer `Plan`, `SocketEvent`) and `SonosSocket` (OkHttp's own WebSocket: `socketWanted`,
   the host gate, the speaker's limited trust, the backoff, the parks, the liveness rule); the bar's anchor is
-  `logic/SonosAnchor.kt`.
+  `logic/SonosAnchor.kt`. Grouping (design 53-b): `GroupVerbs` (soco's join/leave on other rooms, off the actor, one
+  Mutex) and `RoomVolumes` (the members' volumes, latest-wins per room, off the actor); the group's volume rules are
+  `logic/GroupVolume.kt`; the scope's and the sheet's belts (`sessionAllowed`, `groupingOffered`, `joinOffered`,
+  `leaveOffered`) are in `RoomScope.kt`, the sheet's rows in `ui/OutputRows.kt` (`groupSheet`).
 - `storytel/` - the phone's Storytel client (26b §4, from vibb `pi/vibb/storytel.py`; the server reads the shelf and
   lists it, the phone never does): `StorytelApi` (pure: AES `pwd=`, the login with the refused-login cooldown, the JWT,
   the asset call's 302 captured as a `Mint`, the login lock), `StorytelHttp` (the seam and `OkHttpStorytelHttp`),
@@ -98,7 +102,8 @@ root `CLAUDE.md` "Build and test"; `BuildChainTest`). The canned SOAP replies in
 (`SonosFixturesTest`) are also what `scripts/fake-sonos.py` answers from (vibb's "two fakes" rule; the fake has no event
 socket - the app's connect to 1443 is refused and parks after five, so the emulator checks the polling fallback;
 `sonos/ws/` holds the socket's messages, `scripts/sonos-ws-probe.py --save` captures real ones with every id and name
-replaced): change a fixture
+replaced; design 53-b: the fake answers the grouping verbs - `x-rincon:` joins, `BecomeCoordinatorOfStandaloneGroup`
+from `become_standalone.xml`): change a fixture
 and run `python3 -I scripts/fake-sonos.py --selftest` (CI does, `music.yml`). On the emulator the app plays on the
 fake speakers (docs/testing/emulator.md §6h; no multicast there, so no SSDP: the debug feed seeds the cache). Likewise
 `src/test/resources/storytel/` (the login request and answers, the asset 302 and the locked 403, the AES vectors) is
@@ -419,7 +424,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
 - **Nothing starts by itself on Sonos either**: adopt sends nothing, a stale or unreachable speaker shows the play
   button, room -> phone plays on only when the speaker was PLAYING. **Every play path is gated** (`playAllowed`, then
   the controller's `mayPlay` before any SOAP): a start, a resume, a step, a natural advance, OUTPUT to a `sonos:` key
-  (it starts the speaker, so it is a play) and resumption; a skip on a paused, stopped or not-yet-started room only
+  (it starts the speaker, so it is a play), a "+" in "Spill av på" (`ROOM_JOIN`, design 53 §2.7: another room starts
+  sounding) and resumption; a skip on a paused, stopped or not-yet-started room only
   moves where the next play starts.
 - **The Sonos event socket** (design 53 §1-§2.5, round 53-a; ours, not vibb's): one WebSocket per room session to
   `wss://<cached ip>:1443/websocket/api` (`X-Sonos-Api-Key` = the RFC 4122 example UUID, public; subprotocol
@@ -467,7 +473,16 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   pick, a start, a restart) brings every room of the row louder than the cap down to it once, before Play, inside the
   hush (`SonosTransport.capVolume`); during the session a louder volume set from the Sonos app is never pulled down,
   but a cap lowered at a restrictions broadcast pulls our own louder set (`volOpt`) down once (`capChanged`). No
-  audio focus while a room renders (`LocalRenderer.standDown()`).
+  audio focus while a room renders (`LocalRenderer.standDown()`). **A group** (design 53 §2.12, the user's Q1; ours,
+  not vibb's): the group's value is the mean of its rooms (the system's slider, the player, the sheet's "Begge"/"Alle");
+  the keys move every room ±3 from its own last set, the system's slider and "Begge" add the same delta to every room
+  (from the drag's base, so dragging back restores the balance), each clamped to 0..100 and the cap per room
+  (`logic/GroupVolume.kt`: a raise leaves a room at or above the cap where it is) - never Sonos' `SetGroupVolume`;
+  a member's own slider sets that room only. Our coordinator's set goes through our actor, every other member's
+  through `RoomVolumes` (latest-wins, 1.5 s, off the actor). What the app knows of a room's volume is our own last set
+  (`volOpts`, per room), else the last read (the sheet opening, the members changing, a group key press while one is
+  unknown) - a member's read that differs replaces our set (the Sonos app changed it; never pulled down). `capChanged`
+  runs over every room our own set took above the new cap. A lone room is unchanged.
 - **Bluetooth headphones** (design 52): `BLUETOOTH_CONNECT` is the app's only Bluetooth permission (the launcher's
   `MusicSync` grants it while a policy exists; without it the sheet is the old one). A headset tap only connects (or
   makes a connected one active) - the renderer never moves at the tap; on a Sonos room the headset gets `OUTPUT` once it
@@ -486,9 +501,37 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   none) limits the sheet, the pick (`ROOM_NOT_ALLOWED`), the controller's belt and a running session (bookmarked,
   stopped, home paused). **A group needs every member allowed** (`groupAllowed`; a `Room`'s members are the whole
   group, uids the cache can't name included, and those are never allowed), so an allowed room grouped with a forbidden
-  or unknown one leaves the sheet; under a limited scope the groups are re-read every 60 s while a room plays (one
-  GetZoneGroupState, never discovery). The report's `sonos_rooms` (uids `RINCON_…`, names cut as the server cuts
-  them, at most 32, never an ip) feeds the parent's card.
+  or unknown one leaves the sheet; while a room plays the groups are re-read every 60 s under a limited scope, and
+  whatever the scope while the room's event socket isn't healthy (the group watch, design 53 §2.8; one
+  GetZoneGroupState, never discovery). **The exception (design 53 §2.8, the user's Q4: "det barna gjør manuelt bør
+  respekteres")**: a room grouped into our running session from outside the app (a kid's hold-Play) is accepted for
+  this renderer's life (`SonosController.accepted`: exactly the `joiners`, plus an adopt's or a follow's baseline) -
+  the session's own checks use `sessionAllowed` (the leave, the controller's belt, our row in the sheet with that
+  room's "−"), and a follow onto an accepted room plays on there. Everything the app starts or adds itself still needs
+  `groupAllowed` (a pick of another row, a "+": only rows the scope allows get one), a parent's new scope still makes
+  the session leave over a room the app put there, and the cap still applies to such a joiner. The report's
+  `sonos_rooms` (uids `RINCON_…`, names cut as the server cuts them, at most 32, never an ip) feeds the parent's card.
+- **Grouping in "Spill av på"** (design 53 §2.6-§2.9, round 53-b; the user's approved sketch, ours - vibb groups in the
+  Sonos app only): the verbs are soco's over UPnP, never the speaker's WebSocket - join = `SetAVTransportURI
+  x-rincon:<our coordinator>` with empty metadata on the joining room (a busy room's own stream stops: the kid asked),
+  leave = `BecomeCoordinatorOfStandaloneGroup` on the leaving room. Verbs on other rooms run in `GroupVerbs` (IO, one
+  Mutex, 2 s a call, the uid verified), never in our actor or under the switch lock; only a "−" on our own coordinator
+  runs in our actor (`SonosTransport.leave`) and starts the follow (the poll burst now, +1.5 s, +3.5 s and the first
+  remaining member as the probe's first candidate). "+" (`ROOM_JOIN`) is a play: in `Commands.PLAYS`, then
+  `joinOffered` (a live session of ours - fresh, ours, PLAYING or PAUSED -, our uid a row's uid and in its members, not
+  stale, the row not ours, every room of it in the scope) and `playAllowed`, read again with the captured coordinator
+  and generation before each room (members first, the row's coordinator last; each capped first). "−"
+  (`ROOM_LEAVE`) only on a member of a group of two or more (`leaveOffered`): never on a lone room (Q2). Pending
+  (the Spinner, until the topology shows it or 8 s) and no contact ("Fikk ikke kontakt med X - er den på?", 30 s) are
+  published state; the commands answer at once. No hint lines (Q3). "Spiller noe annet" is each other row's
+  `GetTransportInfo`, once per opening and per `groups` event while the sheet is open (`PlayerHub.sheetOpen`), never on a
+  timer. **Grouping done outside the app** is followed: a `groups` event refreshes the topology (debounced 300 ms) and
+  the service's rooms.state collector hands our group's members to the renderer before `publish()` and the scope's
+  look - a joiner (`joiners`: a member not in `knownMembers` - what a start capped, an adopt's or a follow's baseline
+  taken with nothing sent, our own joins) is accepted and capped once when louder (never a volume set later from the
+  Sonos app); the label follows ("Stua + Kjøkken"); a `MOVED`, or former members now held by another coordinator, is
+  the follow's candidate; and for 8 s after a group change a STOPPED of ours near the end probes first (the old
+  coordinator may keep its TrackURI) - the advance only when no coordinator carries our stream (`Fields.probeMissed`).
 - **Discovery never on a timer**: a cache miss, the sheet's "Se etter høyttalere" row or a failed play; opening the
   sheet is one topology refresh. Every URL is built with `HttpUrl.Builder` from an IP literal (no `Uri.parse("http`);
   SOAP is LAN control traffic and has no address guard, but the speaker-playable filter keeps a `publicOnly` entry's
@@ -632,7 +675,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `pruneNews`). A `no_audio` on a tray item asks for a sync (`repickWanted`), which re-picks a new entry's item.
 - Rows that must fit 320 dp (288 inside the sides) follow `ui/Fit.kt` (`FitTest` at 320/360/411 dp): the player's
   control row (v12's sizes where 332 dp fit, else mockup v15's 44/52/72/52/44 with 6 dp gaps), the bottom bar's flex
-  widths, the category tiles, the carousel, the bar's room label (a three-member group) and the Sonos state lines.
+  widths, the category tiles, the carousel, the bar's room label (a four-member group, design 53), the Sonos state
+  lines and "Spill av på"'s group block and "+" rows (design 53: `joinRowTextDp`, `memberNameDp`, the sliders).
   `RoundButton` is `requiredSize`: give it the room, it never shrinks.
 - **The library's height** (design 34 P10 b, QA L1): the header, the category tiles and the now-playing bar keep their
   own height; the carousel fills the weighted slot between them (`BoxWithConstraints`). Its cover is

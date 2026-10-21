@@ -875,3 +875,77 @@ advance guard after a group change.
 **Owed** (§5): the capture first (it replaces the provisional `ws/` fixtures), then checks 2-5 and 9-11 on the user's
 speakers; the emulator round §6h (the fallback: the refused socket parked after five, the 1 s polls, the STOPPED
 advance with `--duration`).
+
+## 53-b status (2026-10-21, branch `d53-b`)
+
+Built as §2.6-§2.9 and §2.12 specify, on main `a2d66476`; awaiting its code QA.
+
+**What was built.**
+- §2.6: `SpeakerControl.joinGroup` (`SetAVTransportURI` to `rinconUri(coordinator)` with empty metadata) and
+  `becomeStandalone` (`BecomeCoordinatorOfStandaloneGroup`); `sonos/GroupVerbs.kt` - `GroupVerbs` (one `Mutex`, IO,
+  2 s a call, the uid verified; `join`: `joinOrder` = members first, the row's coordinator last, each capped first,
+  `still` asked before each room; `leave`) in `SonosHome.verbs`; `SonosTransport.leave` (our coordinator's "−", in the
+  actor), `capMembers` (a joiner's cap through the actor), `hint`, `groupChanged`.
+- §2.7: `Commands.ROOM_JOIN` (in `PLAYS`), `ROOM_LEAVE`, `ROOM_VOLUME` (`Commands.GROUPING`, run beside the switch
+  lock); the service's belts are pure in `RoomScope.kt` (`groupingOffered`, `joinOffered`, `leaveOffered`); the job
+  captures the coordinator and `generationNow` and asks them with `playAllowed` and the live session before each room
+  (N2). The sheet's rows are the pure `groupSheet` (`ui/OutputRows.kt`: `SheetItem.Speaker` with its `RoomLine` and
+  "+" `GroupMark`, `SheetItem.Group` with its `GroupMember`s) drawn by `OutputSheet` (`SheetRow` gained a trailing
+  slot; `GroupButton`, `GroupPending`, `GroupBlock`), the order design 52's (`outputSheetItems`). `RoomsView.busy` from
+  `RoomDirectory.lookBusy` (parallel `GetTransportInfo`, 1 s each, 2 s in all, at most 8 rows) at `ROOMS_REFRESH` and at
+  a `groups` event while `PlayerHub.sheetOpen`. Pending/failed in `PlayerHub.State` (`groupPending`, `groupFailed`,
+  `roomLive`), expired by a posted republish. `Room.names` is `(uid, name)` pairs. Strings in both languages, the
+  glyphs `Icons.roomGroup`/`add`/`remove`/`volume`.
+- §2.8: `SonosController.topology(members)` from the renderer, which the service's rooms.state collector calls before
+  `publish()` and the scope's look (`GuardsTest`); `joiners`, `knownMembers`, the baseline (a start's members; an
+  adopt's or a follow's first topology, nothing sent), `accepted` (Q4), `relabel`; `groups()` and `MOVED` ->
+  `followSoon` (the candidate through the actor, `groupChanged`, the burst now/+1.5/+3.5 s), `host.groupsChanged()` ->
+  the renderer's debounced `refreshQuietly` (300 ms). The session probes a kept TrackURI for `GROUP_WINDOW_MS` after a
+  change and asks the hinted candidate first; the controller's advance guard waits for `Fields.probeMissed` (or the
+  window's end). Q4's four places: `sessionAllowed` in `leaveDisallowedRoom` (`mustLeaveRoom(..., accepted)`), the
+  renderer's belt (`roomAllowed(uid, accepted)`), the sheet (`allowedRooms(view, scope, ours, accepted)`), `toRoom`'s
+  same-room shortcut first. The group watch: `showsPlaying && (roomScope != null || !socketHealthy)`.
+- §2.9: a joiner louder than the cap is capped once through the actor; our own join caps before its `x-rincon:` and
+  marks the room known first (`joining`).
+- §2.12: `logic/GroupVolume.kt` (`groupMean`, `roomMove`, `groupMove`, `groupStep`); `MemberVolumes`/`RoomVolumes`
+  (a conflated channel per room on IO, 1.5 s a set; reads in parallel, 1 s each); the controller's `volOpts` per room,
+  `setDeviceVolume`, the group paths of `adjustVolume`, `setRoomVolume`, `setGroupVolume(mean, drag)`, `readVolumes`,
+  `capChanged` over the map; `VolumeSlider` (`ui/Widgets.kt`); the view model's 150 ms throttle (`VOLUME_SEND_MS`).
+- `scripts/fake-sonos.py`: `x-rincon:` joins (the room's own stream stops; a coordinator's members keep it on the next
+  of them), `BecomeCoordinatorOfStandaloneGroup` (a member stops; a coordinator's stream moves on, as `move`) answering
+  from `become_standalone.xml`; `--selftest` 4b. emulator.md §6h has the round.
+
+**Where it differs from §2 (the code's reality, or a gap the note left):**
+- The member lines are indented 46 dp (the row's glyph disc and its gap), not the sketch's 38: in the app's row
+  geometry that is what puts the names under the title, as the sketch's 38 does in its own.
+- The "Begge" drag's base is keyed by a drag id the view model sends (`ARG_DRAG`, app-internal): a drag is a run of
+  sends ended by the release, so a finger held still never starts a new base.
+- A member's read volume that differs from our own last set replaces it (`absorb`): the note's "our own last set,
+  else the last read" would hide a change made in the Sonos app, which §2.12 says shows at the next read. Our
+  coordinator keeps vibb's rule (its own set is the base).
+- An accepted room that leaves our group stays accepted for 90 s (`ACCEPTED_GRACE_MS`, the probe's window): the
+  topology can show it gone before the follow lands on it (the kid took our coordinator out by hold-Play), and the
+  scope's look after the follow must still see it accepted. It is no member meanwhile, so nothing else reads it.
+- A room that leaves is dropped from `knownMembers`: joining again from outside is a new join, capped again.
+- A joiner seen while no session of ours plays (stopped) is accepted but neither capped nor known - the next start
+  caps it with the rest of the row.
+- `GroupVerbs.join` treats a joining room that doesn't answer its `GetVolume` as no contact (its join isn't sent; a
+  UPnP fault on the volume alone is logged and the join goes on), and refuses a row holding our coordinator (a belt
+  under the service's `joinOffered`). With no cap nothing is read.
+- A "+" whose row partly failed shows the no-contact line on the row; a "−" on our coordinator is settled when it no
+  longer shares a group with the others (our uid alone, or the follow).
+- `liveSession` doesn't wait for a play to settle (the seed is ours and PLAYING): the "+" would blink off at every
+  next episode otherwise.
+- The label is the row's from the published rows, else our room's own name from the rows' (uid, name) pairs - never
+  `home.label`, which reads the cache file on main when the rows lack it.
+- A `groups` event whose former members are held by another coordinator always names it as the candidate: from our
+  socket a member leaving looks like our coordinator leaving them; the probe's gate (our uid STOPPED, empty or kept
+  in the window) decides, at the cost of a three-poll burst.
+- The "Begge" line and a member's slider show only once that volume is known (the sheet's opening reads them).
+- The busy look runs only while a room renders (grouping can be offered only then).
+
+**Found, not built** (PLAN "To decide"): the sleep timer's fade on a group fades only the coordinator room.
+
+**Owed** (§5): checks 6, 7, 8, 8b and 8c on the user's speakers (with the socket: the four outside cases within ~1-2 s;
+check 7's report of the old coordinator's transport and TrackURI after a "−" on it - if Sonos keeps the stream on the
+leaving room, `DelegateGroupCoordinationTo` first, a change in this note); the emulator round §6h's grouping step.
