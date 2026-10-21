@@ -536,7 +536,11 @@ findings, merge to `main`, full suite once.
   call task (t25), separate from its main screens. WhatsApp rings and talks in the same `VoipActivityV2` instance (one
   record through ring and call, a new task per call: t30, t33, t35), so answering on WhatsApp's own ring screen raises
   no new RESUMED event - design 57 must trust an activity our own full-screen-intent send opened through the answer
-  (it is the call screen too), without a second tap.
+  (it is the call screen too), without a second tap. Manifest `showWhenLocked` (`ActivityInfo.flags & 0x800000`,
+  AOSP `ActivityInfo.java:677`, readable by any app) is **not** a usable shortcut: Element X sets it in code
+  (`ElementCallActivity.kt:100`, `IncomingCallActivity.kt:93`), and WhatsApp's only manifest `showWhenLocked` activity is
+  `com.whatsapp.voicemessaging.productinfra.VoiceMessagingActivity` (taskAffinity `:voice`), not `VoipActivityV2` -
+  trusting the flag would let a non-call screen over the lock during a call.
   **The user's rule (2026-10-21): D is the condition.** Another app's call screen comes over the lock only while
   usage access is granted, and then only that call screen (the activity that came up for the call; any other
   activity resumed -> the lock again, with `FLAG_ACTIVITY_NO_USER_ACTION`, "Tilbake til samtalen"). Without usage
