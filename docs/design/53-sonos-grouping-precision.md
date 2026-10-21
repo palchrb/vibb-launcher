@@ -335,7 +335,8 @@ it.
   play on. On **our coordinator** Sonos moves the stream to a remaining member and the app follows it (§2.8 case 3;
   the controller knows it is coming: the poll burst and the first remaining member as the probe's candidate, and the
   advance guard of §2.8). A group block always has two or more members; once one is left it is that room's ordinary
-  selected row with no "−" - so a "−" never leaves nothing playing, and stopping stays the play button's (§7 Q2).
+  selected row with no "−" - so a "−" never leaves nothing playing, and stopping stays the play button's (decided by
+  the user, §7 Q2).
 - **"Spiller noe annet"**: when the sheet opens (`ROOMS_REFRESH`), after the topology refresh, `RoomDirectory` asks
   each other row's coordinator `GetTransportInfo` - in parallel on IO, 1 s each, 2 s in all, at most 8 - and
   publishes the PLAYING ones as `RoomsView.busy` (a set of uids). Once per opening and per `Groups` event while the
@@ -349,7 +350,9 @@ it.
   tap on it or 30 s. After every verb the job runs one `refreshQuietly()` (the `Groups` event does it too when the
   socket is up).
 - **The scope**: the PWA's room scope still limits the sheet (`allowedRooms`: a row only when every member is allowed),
-  so a + exists only on allowed rows and a join never makes our group forbidden.
+  so a + exists only on allowed rows and **the app's own join never adds a room outside the scope**. The one exception
+  is our own row: a room the kids grouped in by hand stays a member of it (§2.8, the user's answer to Q4), so our row
+  is kept by `sessionAllowed` and that room shows in the block with its "−" like any member.
 - The sketch's bottom paragraphs ("+ betyr «spill også her» ...", "− tar et rom ut ...", "Et rom som spiller noe annet
   ...") sit outside the sheet's frame and are read as the artboards' captions, not sheet text (§7 Q3).
 - `Room.names` becomes the known members' `(uid, name)` pairs, coordinator first (its readers take the names); no
@@ -387,9 +390,42 @@ it.
   socket isn't healthy, and under a limited scope always (as today, a belt for the parent's rule). `GuardsTest`'s
   pinned line (`GuardsTest.kt:389-391`) changes with it. The −'s own follow doesn't need it: the burst and the
   candidate come from the tap.
-- **A forbidden room grouped in from outside** under a limited scope makes the whole session leave, as today
-  (`leaveIfNotAllowed` -> `leaveDisallowedRoom`, `PlaybackService.kt:349`, `:1902-1910`) - with 53-b about a second
-  after the hold-Play instead of up to 60 s. §7 Q4.
+- **A room grouped in by hand is respected, whatever the scope** (the user's answer to Q4, 2026-10-21: "det barna gjør
+  manuelt bør respekteres"). Today a forbidden room joining our group from outside reaches four places, each through
+  `groupAllowed`/`mustLeaveRoom` (`sonos/RoomScope.kt`), which require every member of our group to be allowed:
+  1. `leaveIfNotAllowed` -> `leaveDisallowedRoom` (`PlaybackService.kt:349`, `:1902-1910`; run from the `rooms.state`
+     collector `:300`, the library collector `:309` and `onFollowed` `:1817`): the session leaves - bookmark, Stop of
+     the whole group, the phone paused, "Rommet er ikke lenger tillatt";
+  2. the controller's belt `mayPlay` (`roomAllowed = groupAllowed(roomScope, rooms, it)`, `PlaybackService.kt:1815`,
+     `SonosRenderer.kt:134`): every later play - the next episode's advance, a skip, a resume - would be refused;
+  3. the sheet's filter `allowedRooms` (`PlaybackService.kt:1763`): our own row would vanish from the sheet;
+  4. `toRoom`'s check (`PlaybackService.kt:1976`), which runs before its same-room shortcut: a tap on our own row would
+     read `ROOM_NOT_ALLOWED`.
+
+  **The change**: the service keeps `acceptedRooms` - the rooms that joined our group **from outside the app** during
+  this renderer's life - and the session's own checks use `sessionAllowed(allowed, rooms, uid, accepted)` =
+  `allowed == null || roomMembers(rooms, uid).all { roomAllowed(allowed, it) || it in accepted }` (in `RoomScope.kt`;
+  `mustLeaveRoom` gains the `accepted` argument):
+  - **Who is accepted**: exactly §2.9's joiners - a uid in our group's members that is not in `knownMembers` (the
+    controller's pure `joiners(known, members, ourUid)` decides both the cap and the acceptance), plus, at an adopt or
+    a follow, the baseline's members other than our coordinator (the app put none of them there). Unknown uids (no
+    cache row) count like any other joiner. A room leaves `acceptedRooms` when it leaves our group, and the set is
+    dropped with the renderer (a switch home, to another room, a release). Memory only.
+  - **Order**: the service's `rooms.state` collector hands the new members to the renderer (which updates
+    `knownMembers`, `acceptedRooms` and the caps, on main) **before** `publish()` and the leave check, so an outside
+    joiner is accepted before anything can judge it.
+  - Places 1-3 use `sessionAllowed` for the session's own uid: no leave, no refused advance, our row stays in the
+    sheet with the accepted room in its block (its "−" like any member's). Place 4 checks `uid == current renderer's
+    uid` first (the same-room shortcut), then `groupAllowed` as today for any other room.
+  - **What the scope still does**: it limits every room the app itself starts or adds - a pick of another row
+    (`toRoom`, `groupAllowed`, today's), the rows that get a "+", the service's belt on `ROOM_JOIN`. A parent's **new**
+    scope (the library collector) still makes the session leave when it forbids our coordinator or a member the app put
+    there (not accepted); an accepted room never does.
+  - **If our coordinator leaves and the stream moves to an accepted room** (§2.8 case 3, a kid's hold-Play), the follow
+    lands on it and the session plays on there: it is accepted, and what the kids did by hand is respected. A follow to
+    a room that is neither allowed nor accepted leaves, as today.
+  - With the socket (53-a) and 53-b's `Groups` handling all of this happens about a second after the hold-Play; without
+    the socket, at the group watch (60 s).
 
 ### 2.9 The volume cap on joining rooms
 
@@ -409,11 +445,16 @@ added; our own join adds its rooms when it caps them. A start whose `members` li
 not loaded yet) leaves the rooms it didn't cap out of `knownMembers`, so they are capped when they first show. A volume
 set later from the Sonos app is never pulled down (26a §5.3, vibb never fights an external change).
 
+**The cap applies to a room the scope doesn't allow, too** (decided here for the user to see; it follows from the
+answer to Q4): a joiner grouped in by hand is accepted *and* capped once if louder - the scope says where the app may
+play, the cap how loud; respecting the kids' grouping is not a reason to let a room join above the parent's limit.
+
 ### 2.10 What stays
 
 Ours-detection (`sameStream`), `SETTLE_MS` and the seed's hold, `optTr`'s precedence, `optPos`/`frozen`, the stall retry
 and the hijack states, `bookmarkNow` and `SonosBookmarks`, "Til slutten" (`holdAtEnd`, the 3 s ramp), repeat
-(`advanceIndex`), every gate (`playAllowed`, `mayPlay`, the scope's `groupAllowed` belt), "nothing starts by itself" (an
+(`advanceIndex`), every gate (`playAllowed`, `mayPlay`, the scope's belt - `sessionAllowed` for the running session, `groupAllowed` for
+everything the app starts or adds), "nothing starts by itself" (an
 event never starts anything: it re-bases, confirms, or asks for a poll; a natural advance is today's gated `advance()`),
 the disarm, the locks, the threading (controller on main, SOAP in the actor or the group job, the session under the
 transport's mutex), the hand-off and the park, `adoptLive`'s zero commands.
@@ -464,7 +505,15 @@ for the handshake, not copied).
   `SetVolume`; a third room appearing later is capped once and only when louder; a start whose `members` was empty caps
   the second room when it first shows; the label follows; the advance guard runs the probe before advancing within
   8 s of a group change, and a kept TrackURI on the old coordinator never advances while the stream plays elsewhere);
-  `FitTest` (§2.7); `GuardsTest` (the group watch line); `SourceScanTest` `d53` (the trust manager,
+  `RoomScopeTest` `d53` (the user's Q4: `sessionAllowed` passes our group with an accepted forbidden member and
+  `mustLeaveRoom` is false for it; a member the app put there and a parent's new scope that forbids it still leave;
+  our coordinator forbidden still leaves; a follow onto an accepted room stays; an accepted room that left the group
+  is no longer accepted; `groupAllowed` for another row is unchanged - the existing `a session leaves a room ...` cases
+  keep passing with an empty `accepted`); `SonosControllerTest` `d53b` (`joiners`: an outside joiner outside the scope
+  is reported once, accepted and capped when louder; an adopt's baseline members are accepted with nothing sent);
+  `OutputRowsTest` (our row kept with the accepted room and its "−"; no "+" on an out-of-scope row);
+  `FitTest` (§2.7); `GuardsTest` (the group watch line; the `rooms.state` collector hands the members to the renderer
+  before `publish()` and `leaveIfNotAllowed()`; `toRoom`'s same-room shortcut before its scope check); `SourceScanTest` `d53` (the trust manager,
   `checkServerTrusted` and a `HostnameVerifier` only in `SonosSocket.kt`; the socket client used for nothing else; no
   `wss://` literal; the strings in both languages).
 - `scripts/fake-sonos.py`: `x-rincon:` joins (a coordinator's own stream stops), `BecomeCoordinatorOfStandaloneGroup`
@@ -499,7 +548,7 @@ Sequential (all touch the Sonos package), each with its code QA and fix round.
 
 Docs with each round: music/CLAUDE.md (53-0: the DIDL rule's "Checked 2026-10-21" sentence becomes "done"; 53-a: the
 socket's rule and its trust exception to "the system's CAs only", the extra polls' guards; 53-b: grouping, the cap and
-its baseline), docs/testing/emulator.md §6h (53-0 `--duration`; 53-b the verbs), design 26a §2.5/§4.3/§5.1/§5.5
+its baseline, and the "Room scope" rule's exception for rooms the kids grouped in by hand, Q4), docs/testing/emulator.md §6h (53-0 `--duration`; 53-b the verbs), design 26a §2.5/§4.3/§5.1/§5.5
 pointers to this note, `GuardsTest`'s pinned lines where they move, PLAN (the "To decide" DIDL item and the "Design 53"
 entry; backlog items for anything found).
 
@@ -541,6 +590,11 @@ entry; backlog items for anything found).
 8. **The cap on join**: a room at 80 with the cap 40 joins at 40 before any sound; a room at 20 stays at 20; a joined
    room turned up in the Sonos app afterwards is not pulled down; after an app restart that adopts a playing group,
    no member's volume changes.
+8b. **A room outside the scope grouped in by hand** (Q4): with the PWA limited to Stua, a kid holds Play on Kjøkken
+   while Stua plays - the music plays on in both (no "Rommet er ikke lenger tillatt", nothing stops), Kjøkken shows in
+   the sheet's block with its "−" and no other out-of-scope row gets a "+", Kjøkken at 80 is brought down to the cap,
+   the next episode advances on the group; the kid takes Stua out by hold-Play - the music follows to Kjøkken and plays
+   on; switching home and picking Stua + Kjøkken's row again is refused as before (the app never starts there itself).
 9. **The DIDL**: a podcast, an NRK series item and a Storytel book each play, `didl accepted` in logcat, the Sonos
    app shows title and album; `sonos-play-test.py --didl vibb` and the app's DIDL are the same string.
 10. **The certificate and the key** on every speaker model in the house: the socket opens; a debug build logs the
@@ -557,25 +611,28 @@ entry; backlog items for anything found).
 - vibb advances on STOPPED near the end at its poll; 53 advances on the confirm poll an `IDLE` asks for (§2.3), and
   holds the advance for the probe right after a group change of ours (§2.8).
 - vibb caps nothing on grouping; the cap on joining rooms is the parent's rule extended (§2.9).
+- vibb has no room scope; the app's scope (26a §5.5) no longer undoes grouping done by hand during a session (the
+  user's answer to Q4, §2.8).
 - The poll's display anchor is `RelTime + 0.5 s` (§2.4); vibb shows the truncated second. Display only.
 
-## 7. Open questions (the user)
+## 7. Open questions (the user) - Q1 and Q3 open, Q2 and Q4 decided 2026-10-21
 
 - **Q1. Volume on a group.** The keys and the slider set the coordinator room's own volume (vibb's, 26a §5.3), so in
   "Stua + Kjøkken" only Stua changes. Move them to the whole group (each member ±3 from its own volume, each capped;
   or Sonos' `GroupRenderingControl`)? Default in 53: unchanged (a joiner is capped anyway, §2.9).
-- **Q2. "Tas det siste ut, stopper den."** A group block always has two or more rooms, so the last room is an ordinary
-  selected row without "−" and stopping stays the play button's (§2.7; the `Main` artboard shows no "−" on the lone
-  Stua). Or should a lone room also get a "−" that stops it (bookmark, Stop, the phone paused)? Default: no "−" on a
-  lone room.
+- **Q2. "Tas det siste ut, stopper den." - decided 2026-10-21: no "−" on a room that plays alone** (the default
+  stands). The user: "gir mening for meg at vi ikke viser et minustegn på enkelthøyttalere som spiller alene". A group
+  block always has two or more rooms; the last room is an ordinary selected row and stopping stays the play button's
+  (§2.7).
 - **Q3. The sketch's bottom lines.** Read as captions (they sit outside the sheet's frame), not shown in the app (the
   buttons carry "Spill også i X" / "Ta X ut av gruppen" for TalkBack). Should the sheet show one quiet hint line
   instead? Default: no line.
-- **Q4. A forbidden room grouped in from outside** (QA 53-14). Under a limited room scope, a kid holding Play on a
-  speaker the parent didn't allow makes the whole session leave - bookmark, Stop for the whole group, the phone paused
-  (today's rule, `leaveDisallowedRoom`) - and with 53-b that happens about a second later, so one sibling can stop the
-  other's music on purpose. The alternative: `BecomeCoordinatorOfStandaloneGroup` on the forbidden joiner and play on.
-  Default: as today (the session leaves).
+- **Q4. A forbidden room grouped in from outside** (QA 53-14) - **decided 2026-10-21, not the default: the kids' own
+  grouping is respected.** The user: "om barna legger til en høyttaler selv, så mener jeg appen bør bare akseptere at
+  den er lagt til der og da og fortsette å spille. det barna gjør manuelt bør respekteres". A room added from outside
+  stays in the group and the music plays on, whatever the PWA's room scope says; the session doesn't leave and nothing
+  is removed; the sheet shows the room as a member with its "−"; the app's own "+" still offers in-scope rooms only;
+  the volume cap still applies to such a joiner (a decision in this note, §2.9). The spec is §2.8's last bullet.
 
 ## Revision after QA (2026-10-21, qa-53-design.md)
 
@@ -621,7 +678,21 @@ Each finding was checked against the code before it was taken; all were taken, n
 - **53-13 (Low)** - §2.3: `idleEnd` dropped (the confirm poll makes it fast, `endsNear` decides); the takeover race is
   closed by `skipAdvance` (an uncaused BUFFERING/PLAYING after the IDLE skips that one STOPPED). Tests: no SOAP with
   `mayPlay()` false, exactly one play for IDLE + poll + second wake.
-- **53-14 (Low)** - Q4 added with the default "as today"; §2.8 states the consequence.
+- **53-14 (Low)** - Q4 added with the default "as today"; §2.8 states the consequence. (Superseded by the user's
+  answer: see "The user's answers" below.)
 - **53-15 (Low)** - the DIDL fix is its own round, 53-0 (§4); §4 lists `GuardsTest`'s watch line, emulator.md §6h
   (`--duration`, `:741`, `:858`) and music/CLAUDE.md's trust exception; `PlayerHub.sheetOpen` for the busy refreshes;
   `Room.names` becomes pairs instead of a second field; `room_no_contact`'s English is design 52's "is it switched on?".
+
+## The user's answers (2026-10-21)
+
+- **Q2** (a "−" on a room that plays alone): the default stands - "gir mening for meg at vi ikke viser et minustegn på
+  enkelthøyttalere som spiller alene". Nothing in the spec changes (§2.7 already shows no "−" on a lone room).
+- **Q4** (a room outside the scope grouped in by hand): **not the default** - "om barna legger til en høyttaler selv, så
+  mener jeg appen bør bare akseptere at den er lagt til der og da og fortsette å spille. det barna gjør manuelt bør
+  respekteres". The spec: §2.8's last bullet (today's four places that act on it, `acceptedRooms` and
+  `sessionAllowed`, the order in the `rooms.state` collector, what the scope still limits, a follow onto an accepted
+  room), §2.7's scope bullet (our row kept, the accepted room with its "−", "+" in scope only), §2.9 (the cap still
+  applies - decided here, for the user to see), §3's `RoomScopeTest`/`SonosControllerTest`/`OutputRowsTest`/
+  `GuardsTest` cases, §5 check 8b. 53-b carries it; music/CLAUDE.md's "Room scope" rule gets the exception with it.
+- **Q1** (group volume) and **Q3** (the hint line) are still open.
