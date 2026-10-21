@@ -1,11 +1,13 @@
 //! Lock Screen & PINs' Notifications group (design 25 §3.3, `crate::lock_glance`; design 31 step
-//! 4): one tick per app and, on a ticked app, its "Show message text" switch (design 51). Both are
-//! auto-saving forms behind full admin auth (and the admin listener's CSRF check, as every form);
-//! each change is in the security log, nudges the phone and goes back to the app's row on
-//! `/devices/{id}/lock` (`#lock-screen-app-<package>`; `#notifications` for an untick of a row
-//! listed only because it was ticked, which goes with its tick): without JS the answer lands on
-//! the switch in a long app list, with JS `scroll-restore.js` keeps the exact place (design 31
-//! §5.1.4).
+//! 4; one select per app since 2026-10-21): per app Off (not on the lock), Name only (on, design
+//! 51's text off) or Full text (on, text on) - an auto-saving form behind full admin auth (and the
+//! admin listener's CSRF check, as every form); each change is in the security log, nudges the
+//! phone and goes back to the app's row on `/devices/{id}/lock` (`#lock-screen-app-<package>`;
+//! `#notifications` for Off on a row listed only because it was on, which goes with it): without
+//! JS the answer lands on the select in a long app list, with JS `scroll-restore.js` keeps the
+//! exact place (design 31 §5.1.4). The stored data is design 25's and 51's as before (a
+//! `device_lock_glance_apps` row or none, its `show_text`): the policy and the launcher are
+//! unchanged.
 
 use std::collections::HashMap;
 
@@ -32,10 +34,44 @@ fn failed() -> Response {
         .into_response()
 }
 
-/// `POST /devices/{id}/lock-screen/apps`: `package_name` and the checkbox `on` (missing = off) -
-/// that app's messages on the lock's first page. Idempotent (a tick is one row). 400 for a package
-/// that isn't a package name or is Play core, 404 for an unknown device, 500 on a DB error - each
-/// with nothing written.
+/// What the lock shows of one app (the page's select): `off`, `name` or `text`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Show {
+    /// Not on the lock: no row.
+    Off,
+    /// On, the text off: the sender's name for a chat, else the app's name and how many.
+    Name,
+    /// On with the message text (design 51).
+    Text,
+}
+
+impl Show {
+    pub fn parse(value: &str) -> Option<Show> {
+        match value {
+            "off" => Some(Show::Off),
+            "name" => Some(Show::Name),
+            "text" => Some(Show::Text),
+            _ => None,
+        }
+    }
+
+    /// The stored row: none, or one with its `show_text`.
+    fn stored(self) -> Option<bool> {
+        match self {
+            Show::Off => None,
+            Show::Name => Some(false),
+            Show::Text => Some(true),
+        }
+    }
+}
+
+/// `POST /devices/{id}/lock-screen/apps`: `package_name` and `show` (`off`, `name`, `text`) - that
+/// app on the lock's first page or not, and with its message text or not. Idempotent. The
+/// security log has a line for what changed: `lock_screen_app_changed` when it came on or went
+/// off, `lock_screen_text_changed` when an app on the lock changed its text (coming on with Full
+/// text logs both). 400 for a package that isn't a package name or is Play core, or a `show` that
+/// isn't one of the three; 404 for an unknown device; 500 on a DB error - each with nothing
+/// written.
 pub async fn save_app(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -54,50 +90,38 @@ pub async fn save_app(
         )
             .into_response();
     }
-    let on = form.contains_key("on");
-    let exists: Option<i64> = match sqlx::query_scalar("SELECT id FROM devices WHERE id = ?")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-    {
-        Ok(found) => found,
-        Err(err) => {
-            tracing::error!(device_id = id, %err, "couldn't read the device");
-            return failed();
-        }
+    let Some(show) = form.get("show").and_then(|v| Show::parse(v)) else {
+        return (StatusCode::BAD_REQUEST, "Pick Off, Name only or Full text.").into_response();
     };
-    if exists.is_none() {
-        return (StatusCode::NOT_FOUND, "Device not found").into_response();
-    }
-    let result = if on {
-        sqlx::query(
-            "INSERT INTO device_lock_glance_apps (device_id, package_name) VALUES (?, ?) \
-             ON CONFLICT(device_id, package_name) DO NOTHING",
-        )
-        .bind(id)
-        .bind(&package)
-        .execute(&state.db)
-        .await
-    } else {
-        sqlx::query("DELETE FROM device_lock_glance_apps WHERE device_id = ? AND package_name = ?")
-            .bind(id)
-            .bind(&package)
-            .execute(&state.db)
-            .await
-    };
-    match result {
-        Ok(_) => {
-            security::record_security_event(
-                &state.db,
-                "lock_screen_app_changed",
-                Some(&admin.username),
-                None,
-                Some(&lock_glance::log_line(id, &package, on)),
-            )
-            .await;
-            // A row listed only because it was ticked is gone once unticked: back to the group
+    match write_show(&state, id, &package, show).await {
+        Ok(None) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Ok(Some(before)) => {
+            let after = show.stored();
+            if before.is_some() != after.is_some() {
+                security::record_security_event(
+                    &state.db,
+                    "lock_screen_app_changed",
+                    Some(&admin.username),
+                    None,
+                    Some(&lock_glance::log_line(id, &package, after.is_some())),
+                )
+                .await;
+            }
+            if let Some(text) = after
+                && text != before.unwrap_or(false)
+            {
+                security::record_security_event(
+                    &state.db,
+                    "lock_screen_text_changed",
+                    Some(&admin.username),
+                    None,
+                    Some(&lock_glance::text_log_line(id, &package, text)),
+                )
+                .await;
+            }
+            // A row listed only because it was on is gone once Off: back to the group
             // (qa-browser-fixes-code L1), else to the row.
-            if form.contains_key("unlisted") && !on {
+            if form.contains_key("unlisted") && show == Show::Off {
                 saved(&state, id, "notifications")
             } else {
                 saved(&state, id, &format!("lock-screen-app-{package}"))
@@ -110,59 +134,64 @@ pub async fn save_app(
     }
 }
 
-/// `POST /devices/{id}/lock-screen/apps/text` (design 51): `package_name` and the checkbox
-/// `show_text` (missing = off) - that ticked app's message text on the lock's first page, not only
-/// who it's from. 400 for a package that isn't a package name or is Play core; 404 when the app
-/// isn't ticked on this phone (or there is no such phone: the page was stale); 500 on a DB error -
-/// each with nothing written.
-pub async fn save_app_text(
-    State(state): State<AppState>,
-    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-    Path(id): Path<i64>,
-    Form(form): Form<HashMap<String, String>>,
-) -> Response {
-    let package = form
-        .get("package_name")
-        .map(|p| p.trim())
-        .unwrap_or_default();
-    if !lock_glance::valid_package(package) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Not an app that can show on the lock screen.",
-        )
-            .into_response();
+/// [save_app]'s write in one transaction: `Ok(None)` = no such device (nothing written), else the
+/// stored state before (`None` = not on the lock, else its `show_text`).
+async fn write_show(
+    state: &AppState,
+    id: i64,
+    package: &str,
+    show: Show,
+) -> Result<Option<Option<bool>>, sqlx::Error> {
+    let mut tx = state.db.begin().await?;
+    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if exists.is_none() {
+        return Ok(None);
     }
-    let on = form.contains_key("show_text");
-    let result = sqlx::query(
-        "UPDATE device_lock_glance_apps SET show_text = ? WHERE device_id = ? AND package_name = ?",
+    let before: Option<bool> = sqlx::query_scalar(
+        "SELECT show_text FROM device_lock_glance_apps WHERE device_id = ? AND package_name = ?",
     )
-    .bind(on)
     .bind(id)
     .bind(package)
-    .execute(&state.db)
-    .await;
-    match result {
-        Ok(done) if done.rows_affected() == 0 => (
-            StatusCode::NOT_FOUND,
-            "That app isn't on this phone's lock screen. Reload the page.",
-        )
-            .into_response(),
-        Ok(_) => {
-            security::record_security_event(
-                &state.db,
-                "lock_screen_text_changed",
-                Some(&admin.username),
-                None,
-                Some(&lock_glance::text_log_line(id, package, on)),
+    .fetch_optional(&mut *tx)
+    .await?;
+    match show.stored() {
+        None => {
+            sqlx::query(
+                "DELETE FROM device_lock_glance_apps WHERE device_id = ? AND package_name = ?",
             )
-            .await;
-            saved(&state, id, &format!("lock-screen-app-{package}"))
+            .bind(id)
+            .bind(package)
+            .execute(&mut *tx)
+            .await?;
         }
-        Err(err) => {
-            tracing::error!(device_id = id, %err, "couldn't save the lock screen's text switch");
-            failed()
+        Some(text) if before.is_none() => {
+            sqlx::query(
+                "INSERT INTO device_lock_glance_apps (device_id, package_name, show_text) \
+                 VALUES (?, ?, ?)",
+            )
+            .bind(id)
+            .bind(package)
+            .bind(text)
+            .execute(&mut *tx)
+            .await?;
+        }
+        Some(text) => {
+            sqlx::query(
+                "UPDATE device_lock_glance_apps SET show_text = ? \
+                 WHERE device_id = ? AND package_name = ?",
+            )
+            .bind(text)
+            .bind(id)
+            .bind(package)
+            .execute(&mut *tx)
+            .await?;
         }
     }
+    tx.commit().await?;
+    Ok(Some(before))
 }
 
 /// `POST /devices/{id}/lock-wake` (launcher round 7 §3): the checkbox `on` (missing = off) - "Wake

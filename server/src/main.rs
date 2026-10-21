@@ -1062,14 +1062,11 @@ pub fn build_admin_router(
             "/devices/{id}/apps/display",
             post(handlers::devices::save_app_display),
         )
-        // The lock's glance page (design 25): the apps it shows and, per app, the text (design 51).
+        // The lock's glance page (design 25): the apps it shows and, per app, the text (design 51)
+        // - one three-way select per app since 2026-10-21.
         .route(
             "/devices/{id}/lock-screen/apps",
             post(handlers::lock_glance::save_app),
-        )
-        .route(
-            "/devices/{id}/lock-screen/apps/text",
-            post(handlers::lock_glance::save_app_text),
         )
         // Launcher round 7 §3: "Wake the screen for a notification".
         .route(

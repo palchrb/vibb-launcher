@@ -649,7 +649,7 @@ async fn lock_forms_return_to_the_page() {
     let lock = device_page(id, Section::Lock);
     // (route, the fields a parent sends, the expected Location: path and fragment).
     type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
-    let table: [Row; 8] = [
+    let table: [Row; 7] = [
         (
             "kid-lock#child-pin",
             &[("new_kid_pin", "7391")],
@@ -685,18 +685,12 @@ async fn lock_forms_return_to_the_page() {
             &[("on", "on")],
             (lock.clone(), Some("lock-wake")),
         ),
-        // Element X, ticked for every new phone (its hidden `package_name`); listed only for its
-        // tick (no report yet): kept ticked here, so its text switch below has its row (the
-        // untick's landing on the group is tests::lock_glance's).
+        // Element X, on for every new phone (its hidden `package_name`); listed only for being
+        // on (no report yet): kept on here with its text (2026-10-21's one select per app), back
+        // to its row (Off's landing on the group is tests::lock_glance's).
         (
             "lock-screen/apps#notifications",
-            &[("on", "on")],
-            (lock.clone(), Some("lock-screen-app-io.element.android.x")),
-        ),
-        // Its text switch (design 51), back to its row.
-        (
-            "lock-screen/apps/text#lock-screen-app-io.element.android.x",
-            &[("show_text", "on")],
+            &[("show", "text")],
             (lock.clone(), Some("lock-screen-app-io.element.android.x")),
         ),
     ];
@@ -746,7 +740,7 @@ async fn lock_auto_saves_have_a_save_without_js() {
         .get_page(&device_page(id, Section::Lock), &cookie)
         .await
         .text();
-    for name in ["screen_timeout_seconds", "wallpaper", "show_text", "on"] {
+    for name in ["screen_timeout_seconds", "wallpaper", "show", "on"] {
         assert!(autosaves(&html, name), "{name}");
         let control = html.find(&format!("name=\"{name}\"")).unwrap();
         let end = html[control..].find("</form>").unwrap() + control;

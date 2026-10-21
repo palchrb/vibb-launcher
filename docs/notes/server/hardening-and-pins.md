@@ -64,7 +64,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   auto-saving switch per app (`POST /devices/{id}/lock-screen/apps`, `package_name` + checkbox `on`, in the cell
   `#lock-screen-app-<package>`) and, under each ticked one, its own small form "Show message text" (design 51: `POST
   /devices/{id}/lock-screen/apps/text`, `package_name` + checkbox `show_text`; sub-line "Text shown on the lock" /
-  "Sender's name only"); the footer "Anyone holding the phone can read the message text." is the group's. The global
+  "Sender's name only"); the footer "Anyone holding the phone can read the message text." is the group's. **Since
+  2026-10-21 both are one select per app** (Off / Name only / Full text, `show` on the same route, the text route gone;
+  `docs/notes/server/pwa.md`, "One select per app on the lock"); the stored data and the policy are unchanged. The global
   switch (`POST /devices/{id}/lock-screen`, `#lock-screen-text`) is gone. Listed: with an allowlist the allowed apps (the "Names and
   icons" set), without one every app the phone reports (QA Low 7: a calls-only phone with a kid PIN has the lock
   too), never Play core or the launcher; every ticked package outside that list is added - "Not allowed"

@@ -208,10 +208,29 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Forms** (POST routes unchanged): the Child PIN and Parent PIN rows are `<details class="edit">` with the field
   and a Save button (a PIN is typed, not toggled); Remove Child PIN… is a `<details>` confirm (M6) posting
   `clear_kid_pin`; the Parent PIN's "Remove it instead" stays a checkbox in its form. "Turn off after" and
-  "Background" are inline `select.pick`s, "Show message text" and each app a switch - all `data-autosave` with a
-  `<noscript>` Save.
+  "Background" are inline `select.pick`s, each app a `select.pick` too since 2026-10-21 (below) - all
+  `data-autosave` with a `<noscript>` Save.
+- **One select per app on the lock** (2026-10-21, the user's pick of the mockup's variant B): "Notifications on the
+  lock screen" is one row per app (`form.cell#lock-screen-app-<package>`), the app's name (and its "Not allowed" /
+  "Not on the phone" note) as the label of a native `<select name="show">` (the phone's own picker): **Off** (not on
+  the lock), **Name only** (on, text off), **Full text** (on, text on). It replaces the tick switch and design 51's
+  "Show message text" switch under it, whose sub-line "Sender's name only" was wrong for anything but a chat: the
+  launcher's `GlanceRows.glanceLevel` shows a MessagingStyle notification's sender, any other app's name and count,
+  and the text for any style with the text on. The footer says so: "Name only: the sender's name for chats,
+  otherwise the app's name and how many. Full text: the message too, which anyone holding the phone can read. Missed
+  calls always show." One handler, `lock_glance::save_app` (`POST /devices/{id}/lock-screen/apps`, `package_name` +
+  `show` = `off`/`name`/`text`; `/lock-screen/apps/text` is gone): one transaction - no row, a row with
+  `show_text = 0`, or with `show_text = 1` - back to the app's row (Off on a row listed only because it was on: to
+  `#notifications`, qa-browser-fixes-code L1), the phone nudged, a security-log line per change only
+  (`lock_screen_app_changed` on/off, `lock_screen_text_changed` for the text; a save that changes nothing logs
+  nothing). 400 for a bad package or a `show` that isn't one of the three (missing too), 404 unknown phone, 500 on a
+  DB error - nothing written. **The stored data and the policy are unchanged** (`device_lock_glance_apps` row or
+  none, `show_text`; `policy_json_keys_snapshot` untouched): no launcher or contract change. Tests:
+  `lock_glance::each_move_of_the_select_is_stored_as_the_lock_shows_it` (every transition, the policy, the log),
+  `refused_saves_write_nothing` (the values), `the_page_lists_the_allowed_apps_with_their_ticks` (the select, its
+  label, the footer), `device_pages::lock_forms_return_to_the_page`, `lock_auto_saves_have_a_save_without_js`.
 - **Wake the screen for a notification** (launcher round 7 §3, `docs/design/r7-launcher-small-items.md`): its own
-  cell `#lock-wake` in the Lock screen group under Background - a switch (sub-line "For the apps ticked below and
+  cell `#lock-wake` in the Lock screen group under Background - a switch (sub-line "For the apps on the lock below and
   missed calls", `data-autosave`, `<noscript>` Save) posting `POST /devices/{id}/lock-wake`
   (`lock_glance::save_wake`: `device_policy.lock_wake_on_notification`, migration 0084, off by default; 404 for an
   unknown phone), back to `#lock-wake` (`check_forms`), the phone nudged, a `lock_wake_changed` security-log line when the value changed

@@ -798,7 +798,7 @@ struct LockTemplate {
 /// GET `/devices/{id}/lock`: Lock Screen & PINs (design 31 §3.2, step 4). The Child PIN
 /// (`/kid-lock`: set in a `<details>`, remove behind a confirm), the Parent PIN (`/parent-pin`,
 /// with what the phone reported), the screen timeout and the lock's background (inline selects),
-/// one switch per app and a ticked app's text switch (`/lock-screen/apps`, `.../apps/text`). The
+/// one select per app - Off, Name only, Full text (`/lock-screen/apps`). The
 /// forms keep their POST routes; they return here. A phone not set up yet has the page too: its
 /// PINs can be set before setup.
 pub async fn view_lock(
