@@ -3603,7 +3603,7 @@ pub(crate) mod tests {
         assert_eq!(b.unwrap().token.secret(), "FAKE-ACCESS-2");
         assert_eq!(token_calls(&app), 1);
         // Another account has its own lock and its own token.
-        let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        let parent = store_account(&app, "fakeparent", "Forelder", "FAKE-REFRESH-9").await;
         spotify
             .access_token(&app.state, parent, READ_MIN_LEFT)
             .await
@@ -4302,7 +4302,7 @@ pub(crate) mod tests {
         let none = readers(&app.db, None).await.unwrap();
         assert_eq!(none.refusal(), Some(SpotifyError::NoAccount));
         let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
-        let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        let parent = store_account(&app, "fakeparent", "Forelder", "FAKE-REFRESH-9").await;
         let third = store_account(&app, "fakeother", "Ola", "FAKE-REFRESH-8").await;
         assert_eq!(
             readers(&app.db, None).await.unwrap().ids,

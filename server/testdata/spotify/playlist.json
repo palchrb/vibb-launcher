@@ -3,6 +3,6 @@
     {"height": null, "url": "https://mosaic.scdn.co/640/fake-mosaic-kveld", "width": null}
   ],
   "name": "Kveldsmusikk",
-  "owner": {"display_name": "Pål", "id": "fakeparent"},
+  "owner": {"display_name": "Forelder", "id": "fakeparent"},
   "snapshot_id": "AAAAA0fakeSnapshotKveld1"
 }

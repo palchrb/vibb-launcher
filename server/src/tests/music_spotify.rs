@@ -986,7 +986,7 @@ async fn a_new_login_of_the_same_account() {
     let rows = account_rows(&app).await;
     assert_eq!(
         rows.iter().map(|r| r.2.as_str()).collect::<Vec<_>>(),
-        ["Ella", "Pål"]
+        ["Ella", "Forelder"]
     );
 }
 
@@ -1912,7 +1912,7 @@ pub(in crate::tests) mod listing {
         app.state.music_sweep.set_art_per_check(0);
         save_app(&app, LOOPBACK_REDIRECT).await;
         let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
-        let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        let parent = store_account(&app, "fakeparent", "Forelder", "FAKE-REFRESH-9").await;
         // Both logged in before the checks (a newer login makes a context playlist try at once).
         sqlx::query("UPDATE music_spotify_accounts SET authorized_at = '2026-10-08 12:00:00'")
             .execute(&app.db)
@@ -2459,7 +2459,7 @@ pub(in crate::tests) mod listing {
         app.state.music_sweep.set_art_per_check(0);
         save_app(&app, LOOPBACK_REDIRECT).await;
         let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
-        let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        let parent = store_account(&app, "fakeparent", "Forelder", "FAKE-REFRESH-9").await;
         app.fetch
             .answer_once(TOKEN_URL, 200, token("FAKE-ACCESS-KID"));
         app.fetch
@@ -2529,7 +2529,7 @@ pub(in crate::tests) mod listing {
         app.state.music_sweep.set_art_per_check(0);
         save_app(&app, LOOPBACK_REDIRECT).await;
         store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
-        store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        store_account(&app, "fakeparent", "Forelder", "FAKE-REFRESH-9").await;
         app.fetch
             .answer(TOKEN_URL, 200, fixture("token_refresh.json"));
         let mut state = app.state.clone();
@@ -2613,7 +2613,7 @@ pub(in crate::tests) mod listing {
         app.state.music_sweep.set_art_per_check(0);
         save_app(&app, LOOPBACK_REDIRECT).await;
         let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
-        let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        let parent = store_account(&app, "fakeparent", "Forelder", "FAKE-REFRESH-9").await;
         app.fetch
             .answer_once(TOKEN_URL, 200, token("FAKE-ACCESS-KID"));
         app.fetch
@@ -3370,7 +3370,7 @@ mod entries {
         let app = TestApp::new().await;
         let cookie = app.admin_cookie().await;
         ready(&app).await;
-        store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-2").await;
+        store_account(&app, "fakeparent", "Forelder", "FAKE-REFRESH-2").await;
         app.fetch.answer(
             &url(&app, Read::Playlist(PLAYLIST)),
             200,
@@ -4111,7 +4111,7 @@ mod entries {
         );
         save_app(&app, LOOPBACK_REDIRECT).await;
         let kid = store_account(&app, "fakekid", "Ella", "FAKE-REFRESH-1").await;
-        let parent = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-2").await;
+        let parent = store_account(&app, "fakeparent", "Forelder", "FAKE-REFRESH-2").await;
         let page = card(ella).await;
         assert!(page.contains("id=\"music-spotify\""));
         assert!(
@@ -4617,7 +4617,7 @@ mod phones {
         assert_eq!(token_requests(&app), before);
 
         // A login sealed with another key: key.
-        let other = store_account(&app, "fakeparent", "Pål", "FAKE-REFRESH-9").await;
+        let other = store_account(&app, "fakeparent", "Forelder", "FAKE-REFRESH-9").await;
         sqlx::query("UPDATE music_spotify_accounts SET key_fingerprint = 'another' WHERE id = ?")
             .bind(other)
             .execute(&app.db)

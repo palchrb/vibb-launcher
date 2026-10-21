@@ -507,7 +507,7 @@ findings, merge to `main`, full suite once.
   M11) and S-M2 (filter state in the report); then the Lows. Owed by the user: server M3 (Storytel credentials to the
   phone in plaintext), launcher S-M3 (browser "secure DNS" bypass) and S-M4 (a VoIP call over the PIN lock - the user
   doubts the chats are reachable; device check: lock, ring the phone from another Element X account, answer, try Back
-  and the call screen's minimise arrow), music P-L4 (are "Pål"/"Ella" in `server/testdata/spotify/` real names?).
+  and the call screen's minimise arrow), music P-L4 (done 2026-10-21: the real first name in the Spotify fixtures is now "Forelder"; "Ella" is not a real name).
   **S-M4 checked on the emulator 2026-10-21 (Element X): no way to the chats** - Back does nothing in
   `ElementCallActivity`, the minimise arrow does nothing, Home and Recents land on the lock. **WhatsApp (same day):
   its call screen's arrow leads straight into the chats over the lock -> S-M4 stays Medium**; Element X may add such

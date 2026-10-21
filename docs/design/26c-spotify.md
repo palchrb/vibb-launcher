@@ -2602,8 +2602,8 @@ skipped when absent); `testdata/music_state.json` is unchanged too (`MusicState.
 - **The cards** (`S/handlers/music.rs`): `SweepView` loads whether an app is set up, the bound phones (with their
   account's name) and the accounts' names; `gated` gives a Spotify entry "no Spotify app is set up" on every phone
   without an app and "Spotify is off on this phone" on an unbound one, and `phone_count` counts only the others.
-  `SweepView::spotify_card`: "42 tracks · read as Pål" (a show or episode "episodes"), context mode "Spotify picks the
-  order · read as Pål" with its notice (a playlist: "No logged-in account owns this playlist ..."; an artist: "An
+  `SweepView::spotify_card`: "42 tracks · read as Forelder" (a show or episode "episodes"), context mode "Spotify picks the
+  order · read as Forelder" with its notice (a playlist: "No logged-in account owns this playlist ..."; an artist: "An
   artist plays as Spotify picks ..." or, with `SPOTIFY_ARTIST_ALBUMS`, "Spotify refused the artist's albums - played
   as Spotify picks."), "N left out: not playable here, local files or podcast episodes", the caps ("the first 1000
   tracks (the playlist has more)", a show's newest 100, the artist option's 20 albums / 500 tracks), "Open in Spotify"
@@ -2684,7 +2684,7 @@ Deviations from the spec (each with its reason):
    (Sonos rooms, too-big ticks) answer the same way.
 4. **More codes cure a waiting entry**: `key` and `app_refused` too (a new login and a new app save cure them as well
    as `spotify_off`, `no_account`, `reauthorize`).
-5. **The card's line is "42 tracks · read as Pål"** and the left-out count is its own note ("3 left out: not playable
+5. **The card's line is "42 tracks · read as Forelder"** and the left-out count is its own note ("3 left out: not playable
    here, local files or podcast episodes", §3.4's wording) rather than "· 3 left out" on the line: the line is one
    ellipsised row on a 360 px card.
 6. **More words on the device card**: `refused` and `quota` (§4.4's words) have lines too, `none` none; "no Spotify
@@ -4261,7 +4261,7 @@ Deviations from the brief (each with its reason):
    ("fortsetter der du slapp"), with the kind before it.
 4. **"No resume" for a context**: the brief says context mode has no resume. As built (§5.9) a playlist context resumes
    at its live track while that track is still in the playlist; only an artist has none. The docs say it as built.
-5. **The fixtures keep their second account** (`fakeparent`, "Pål" in the server tests): the machinery is N accounts
+5. **The fixtures keep their second account** (`fakeparent`, "Forelder" in the server tests): the machinery is N accounts
    and the tests exercise readers in turn; §6l says to read `fakeparent` as a second child's account. No test was
    renamed.
 

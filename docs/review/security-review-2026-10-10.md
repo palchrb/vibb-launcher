@@ -2,7 +2,7 @@
 
 # Sikkerhetsreview av vibb-launcher
 
-2026-10-10 · Pål Breyholtz
+2026-10-10 · Forelder Breyholtz
 
 Dette er et oppdrag til en kodeagent: rett sikkerhetsfunnene under i `palchrb/vibb-launcher`, i rekkefølgen i oversikten. Reviewen er gjort mot commit `9cfb600` uten kodeendringer, så sjekk hvert funn mot gjeldende kode før du endrer det.
 

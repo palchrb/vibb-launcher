@@ -3441,7 +3441,7 @@ impl SweepView {
             .map(|at| self.zone.until(at, self.now))
     }
 
-    /// A Spotify card's sweep part (design 26c §3.6): "42 tracks · read as Pål", what was left
+    /// A Spotify card's sweep part (design 26c §3.6): "42 tracks · read as Forelder", what was left
     /// out, a cap, context mode's notice; no offline select (it streams); the link back to
     /// Spotify.
     fn spotify_card(&self, entry: &MusicEntry) -> SweepCard {
