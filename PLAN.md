@@ -699,6 +699,22 @@ findings, merge to `main`, full suite once.
   the shape of Element X's missed-call notification (category, channel, whether the caller's person is on it) - capture
   it on the Jelly Star first, then a short design note; launcher only. Approved 2026-10-15.
 
+- **The lock's glance page, three things** (the user's emulator screenshot, 2026-10-21, 320x569 dp, music tile full,
+  one WhatsApp missed-call row): (1) **bug** - the bottom row ("Nødsamtale" and the torch) is cut off at the screen's
+  bottom edge: `glanceFit` didn't keep the page inside the screen (check the 2026-10-21 torch spacing, +12 dp, and
+  the music tile's time line against `LockGlanceLayoutTest`'s pinned heights); (2) **the bottom block stays put** (the
+  user): "Lås opp", "Nødsamtale" and the torch anchored at the bottom whatever the content; the space above (clock,
+  date, alarm, tiles, rows) takes what is left, and the notification rows scroll inside it when they don't fit (a
+  change to design 25's "the page never scrolls" - the rows only; the tiles keep the fit's sizes); (3) **the time line
+  under the music bar**: elapsed at the bar's left, the duration right-aligned at its right end (today "1:26 · 4:04"
+  centred-left on one line). Launcher only.
+- **Music: what a heart means** (the user, 2026-10-21): the heart is per track/episode, but "Favoritter" only filters
+  the carousel to entries holding a heart and a cover tap plays the whole entry - so in practice it marks the tile.
+  Options put to the user: (A) the heart on the tile/entry instead of per track; (C) keep per-track hearts, and under
+  "Favoritter" a cover tap plays only that entry's hearted items (in the entry's order; one source, no mixing);
+  (B) a "Favoritter" mix tile playing every hearted item across entries (shuffled) - mixes sources (local files, NRK,
+  Spotify, Storytel), hard on the Sonos and Spotify paths. Awaiting the user's choice.
+
 - **Touch sounds and vibration on Kid Settings** (the user, 2026-10-16): a row on the child's Settings
   (swipe left) to turn key/touch sounds on and off, and vibration on touch. Android's switches are
   `Settings.System.SOUND_EFFECTS_ENABLED` (touch sounds), `HAPTIC_FEEDBACK_ENABLED` (touch vibration) and
