@@ -67,10 +67,14 @@ class CustomDnsGuardsTest {
         val vpn = source("KidVpnService.kt")
         val stop = vpn.substringAfter("private fun stopSelfCleanly() {").substringBefore("\n    }\n")
         val locked = stop.substringAfter("synchronized(this) {").substringBefore("\n        }")
-        assertTrue("live cleared under the service's monitor", "live = null" in locked && "stopped = true" in locked)
+        // The stop is marked first (VpnTunnelState.stop: a volatile flag syncCustom reads under the
+        // monitor), then live is cleared under it (qa-lfix-notifs-code #3).
+        assertTrue("live cleared under the service's monitor", "live = null" in locked)
+        assertTrue(stop.indexOf("state.stop()") in 0 until stop.indexOf("synchronized(this) {"))
+        assertTrue("wanted.takeUnless { state.stopped }" in vpn)
         assertTrue(Regex("""fun dnsUpstreamReport\(\): DnsUpstreamReport\? = live\?\.report\(\)""").containsMatchIn(vpn))
         // Set only where the custom server is (re)built, after the VPN is up.
         assertEquals(1, Regex("""\blive = custom\b""").findAll(vpn).count())
-        assertTrue(vpn.indexOf("pfd = established") < vpn.indexOf("syncCustom()"))
+        assertTrue(vpn.indexOf("state.established(established") in 0 until vpn.indexOf("syncCustom()"))
     }
 }

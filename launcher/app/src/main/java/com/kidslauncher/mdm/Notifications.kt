@@ -120,7 +120,8 @@ fun createNotificationChannels(context: Context) {
         )
         // MIN importance, silent - same reasoning as the listener channel above: this is the
         // mandatory persistent notification for KidVpnService's foreground service, not something
-        // meant to draw attention.
+        // meant to draw attention. Only while the filter isn't up and always-on (vpnHoldsForeground):
+        // an established always-on VPN drops its foreground state and this notification.
         notificationManager.createNotificationChannel(
             NotificationChannel(
                 NOTIFICATION_CHANNEL_VPN_FILTER,

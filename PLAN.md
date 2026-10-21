@@ -1455,7 +1455,24 @@ findings, merge to `main`, full suite once.
   succeeded (the always-on VPN's system binding keeps it alive; restore the notification if the filter is ever found
   down), the anchor keeps one short notification ("Vibb One", no body). The icon stays while the anchor runs - Android
   doesn't allow a hidden foreground service. Device check: the filter survives a night in Doze without its own
-  notification. Waiting for the user's go.
+  notification. Approved 2026-10-21 ("Do it"). **Built 2026-10-21 on `lfix-notifs`** (code QA `qa-lfix-notifs-code.md`, all six
+  findings fixed): `KidVpnService` goes foreground first in `onCreate` as before and drops it
+  (`stopForeground(STOP_FOREGROUND_REMOVE)`) once the tunnel is up and `isAlwaysOn` (pure `VpnTunnelState` /
+  `vpnHoldsForeground`); a failed establish or a VPN that isn't always-on yet holds the notification; a read loop that
+  ends (thrown or end of stream) closes the tunnel, takes the notification back and retries in the service (5 s
+  doubling to 5 min, reset after a tunnel that held 10 min). That notification now says "Content filter connecting…" /
+  "Innholdsfilteret kobler til …" (no body; the coordinator's call). AOSP (`Vpn.establish`): system_server binds an
+  established VpnService with `BIND_AUTO_CREATE | BIND_FOREGROUND_SERVICE` - `PROCESS_STATE_BOUND_FOREGROUND_SERVICE`,
+  the Doze network threshold; the anchor's FGS is in the same process anyway. `KidVpnService.start` (every `apply()`)
+  is a plain `startService` whenever an instance runs, `startForegroundService` with `EXTRA_FOREGROUND` (answered by
+  `startForeground` first) only when none does; `onRevoke` posts its stop to the main thread. The anchor's
+  notification is "Vibb One" with no body (`notification_listener_text` gone). Owed on the Jelly Star: (1) the shade
+  shows one notification, "Vibb One", and the status bar one Vibb icon (plus Android's VPN key); (2) the filter
+  survives a night in Doze without its notification - in the morning a blocked name still fails and the parent's DNS
+  log has entries from the night, `logcat -s KidVpnService` shows no restart loop; (3) after a reboot the filter comes
+  up without its notification ("Filter up and always-on: foreground state dropped" in logcat, the DNS log fills); (4)
+  the pause/override on and off: the filter goes and comes back, no notification left; (5) no
+  `ForegroundServiceDidNotStartInTimeException` in a day's logcat (every sync calls `start`).
 
 ### To decide (the user)
 
