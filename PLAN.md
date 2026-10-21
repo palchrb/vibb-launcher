@@ -540,7 +540,10 @@ findings, merge to `main`, full suite once.
   AOSP `ActivityInfo.java:677`, readable by any app) is **not** a usable shortcut: Element X sets it in code
   (`ElementCallActivity.kt:100`, `IncomingCallActivity.kt:93`), and WhatsApp's only manifest `showWhenLocked` activity is
   `com.whatsapp.voicemessaging.productinfra.VoiceMessagingActivity` (taskAffinity `:voice`), not `VoipActivityV2` -
-  trusting the flag would let a non-call screen over the lock during a call.
+  trusting the flag would let a non-call screen over the lock during a call. More (same day): Back on a WhatsApp
+  *video* call over the lock (kiosk off) -> our lock on top, but WhatsApp's video stays visible frozen (PiP over the
+  lock); Decline on WhatsApp's own ring screen -> our lock, no chats; `appops set ... GET_USAGE_STATS allow` reads
+  back `default` at once on today's launcher (QA 57-5 confirmed: a prep release must declare the permission first).
   **The user's rule (2026-10-21): D is the condition.** Another app's call screen comes over the lock only while
   usage access is granted, and then only that call screen (the activity that came up for the call; any other
   activity resumed -> the lock again, with `FLAG_ACTIVITY_NO_USER_ACTION`, "Tilbake til samtalen"). Without usage
