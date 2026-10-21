@@ -189,6 +189,11 @@ Time is an injected `elapsedMs()` (never wall clock: vibb's `monotonic`, 437-441
 - `publish()` increments `seq`; `measuredAt` is the poll's elapsed time; a failed poll publishes `reachable=false,
   transport=UNREACHABLE, error` and keeps the last measured values **of this session**: a play or an adopt starts
   from nothing measured, no down streak, no failure count and no last real state (qa-26a-step1-code H1, H2, M1).
+- **Design 53 (round 53-a)** adds the speaker's event socket on top of this machine (events only; UPnP still commands
+  and decides) and moves `measuredAt` to GetPositionInfo's return; its extra polls (an event's confirm poll, the 1 s
+  display poll while the player shows without a healthy socket) keep freshness on the normal cadence and pass guards:
+  the stall counts polls 5 s apart, the probe tries 1.5 s apart, the aux at most every 60 s, the tail cadence takes the
+  play's listed duration when the speaker reads `0:00` - design 53 §2.2-§2.4.
 
 ### 2.5 Transport sequences (`SonosTransport.kt`) and the play body (`PlayBody.kt`)
 All in the actor (the session lock, 393-394), never on the main thread.
@@ -339,7 +344,12 @@ STOPPED + ends_near -> `markDone` for the finished item and the next item **at 0
 (`markDone`, clear partial positions, now-playing cleared; `PlaybackService.kt:758-772`) (4499-4520). Position for the
 UI and the session (`_sonos_position`, 1137-1162): `optPos` wins while <= 12 s old and same uri; null unless ours and
 PLAYING/PAUSED; PLAYING -> `rel + (elapsedMs - measuredAt)/1000` (**one age term**: vibb's `age + stale_s` summed two
-clocks across its process split), clamped to `dur`.
+clocks across its process split), clamped to `dur`. **Since design 53 (round 53-a, §2.3-§2.4)** the shown position is a
+display anchor every measurement re-bases with hysteresis (`logic/SonosAnchor.kt`: a poll's `RelTime + 0.5 s`, an event's
+exact `positionMillis`; within a second smooth, at a second or more a jump), the socket's PLAYING/PAUSED is the effective
+transport when newer than the last poll (BUFFERING never: it is TRANSITIONING), an IDLE asks a confirm poll at once and this
+tick's STOPPED-near-the-end rule advances (a stream we didn't start in between skips it), and a poll's non-forced bookmark
+is written at most every 5 s unless the transport or the stream changed. The bookmark still reads only the measured snapshot.
 
 ### 4.4 Bookmarks (`_sonos_bookmark_now`, 1177-1268; pure in `SonosBookmarks.kt`)
 `saveNow()` on Sonos **is** `bookmarkNow()`; no other path writes a position (QA H3). Needs an index, `ours`, a
