@@ -65,7 +65,7 @@ class LockGlanceTest {
     /** §1.2's model at 320x569 dp (LockGlanceLayoutTest pins it from the XML; the full tile with r6 §2's
      * time line, the compact one without). */
     private val model = GlanceHeights(
-        fixed = 118f, clockBig = 78.4f, clockSmall = 56f, date = 25.6f, tileFull = 233.8f, tileCompact = 90f, clockFull = 114f,
+        fixed = 116f, clockBig = 78.4f, clockSmall = 56f, date = 25.6f, tileFull = 233.8f, tileCompact = 90f, clockFull = 114f,
         rowsTop = 14f, rowsTopNoTile = 22f, row = 56f, rowGap = 8f, more = 24f,
     )
     // The page's paddings: 8 dp top, 8 dp bottom (16 until the bottom row's air, 2026-10-21).
@@ -100,7 +100,7 @@ class LockGlanceTest {
 
     @Test
     fun `less room - rows go one by one, then the date, then every row`() {
-        // 5 with one row: 118 + 56 + 25.6 + 90 + 14 + 56 + 24 = 383.6; 6 (no date): 358; 7 (no row): 302.
+        // 5 with one row: 116 + 56 + 25.6 + 90 + 14 + 56 + 24 = 381.6; 6 (no date): 356; 7 (no row): 300.
         val fifth = glanceFit(390f, model, tile = true, rowCount = 3)
         assertEquals(listOf(5, 1, 2), listOf(fifth.candidate, fifth.rows, fifth.more))
         assertTrue(fifth.date)
@@ -131,11 +131,11 @@ class LockGlanceTest {
         glanceFit(1000f, model, tile = true, rowCount = 2, clock = true).let {
             assertEquals(listOf(1, 2), listOf(it.candidate, it.rows)); assertTrue(it.clock); assertEquals(GlanceTileSize.FULL, it.tile)
         }
-        // 600: the full music tile and the timer do not fit with two rows (703.8 / 681.4); compact does (560).
+        // 600: the full music tile and the timer do not fit with two rows (701.8 / 679.4); compact does (558).
         glanceFit(600f, model, tile = true, rowCount = 2, clock = true).let {
             assertEquals(listOf(3, 2), listOf(it.candidate, it.rows)); assertTrue(it.clock); assertEquals(GlanceTileSize.COMPACT, it.tile)
         }
-        // At 473 dp (both bars): the timer stays, the rows fold to the "more" line (5, 0 rows, 2 more: 441.6).
+        // At 473 dp (both bars): the timer stays, the rows fold to the "more" line (5, 0 rows, 2 more: 439.6).
         glanceFit(bothBars, model, tile = true, rowCount = 2, clock = true).let {
             assertEquals(listOf(5, 0, 2), listOf(it.candidate, it.rows, it.more)); assertTrue(it.clock)
             assertEquals(GlanceTileSize.COMPACT, it.tile)
@@ -485,8 +485,8 @@ class LockGlanceLayoutTest {
         // has no line (the user, 2026-10-20), its 52 dp art row stays its height.
         assertEquals(233.8f, heights.tileFull, 0.01f)
         assertEquals(90f, heights.tileCompact, 0.01f)
-        // Lås opp 56 + the bottom row 48 + its 14 dp of air (the user, 2026-10-21; it was 2 dp).
-        assertEquals(118f, heights.fixed, 0.01f)
+        // Lås opp 56 + the bottom row 48 + its 12 dp of air (the user, 2026-10-21; it was 2 dp).
+        assertEquals(116f, heights.fixed, 0.01f)
         // Design 42: the timer tile - 12 dp padding, the label row, the 24 sp time, the text - and its margin.
         assertEquals(114f, heights.clockFull, 0.01f)
         assertEquals(14f, heights.rowsTop)
@@ -504,8 +504,8 @@ class LockGlanceLayoutTest {
         assertTrue(link.dim("minHeight") >= 48f)
         assertEquals("@color/kid_emergency_text", link.getAttributeNS(ns, "textColor"))
         // The row's margin gave the 4 dp; since 2026-10-21 Lås opp + the bottom row with their margins are
-        // 118 dp (14 dp of air), 8 of the 12 new dp taken from the page's bottom padding.
-        assertEquals(118f, withMargins("lock_glance_unlock") + withMargins("lock_glance_bottom"), 0.01f)
+        // 116 dp (12 dp of air), 8 of the 10 new dp taken from the page's bottom padding.
+        assertEquals(116f, withMargins("lock_glance_unlock") + withMargins("lock_glance_bottom"), 0.01f)
     }
 
     @Test
@@ -563,22 +563,22 @@ class LockGlanceLayoutTest {
         fun fit(tile: Boolean, rows: Int, avail: Float = bars) = glanceFit(avail, heights, tile, rows)
         fun total(f: GlanceFit) = f.height + root.dim("paddingTop") + root.dim("paddingBottom")
         // Re-derived with r6 §2's time line on the full tile (tileFull 233.8, tileCompact 90); again on
-        // 2026-10-21 with the bottom row's 14 dp of air and the page's 8 dp bottom padding: every total
-        // grows by 4 dp against 8 dp more room, so every candidate below is the same as before.
-        // Full tile alone -> 1 (471.8).
-        fit(true, 0).let { assertEquals(1, it.candidate); assertEquals(471.8f, total(it), 0.5f) }
-        // 3 rows + more, no music -> 1 (468).
-        fit(false, 4).let { assertEquals(listOf(1, 3, 1), listOf(it.candidate, it.rows, it.more)); assertEquals(468f, total(it), 0.5f) }
-        // Music + 1 row -> 3 (398).
-        fit(true, 1).let { assertEquals(3, it.candidate); assertEquals(398f, total(it), 0.5f) }
-        // Music + 2 rows -> 3 (462, mockup A).
-        fit(true, 2).let { assertEquals(listOf(3, 2), listOf(it.candidate, it.rows)); assertEquals(462f, total(it), 0.5f) }
-        // Music + 3 rows -> 5 with 2 rows + more (463.6).
-        fit(true, 3).let { assertEquals(listOf(5, 2, 1), listOf(it.candidate, it.rows, it.more)); assertEquals(463.6f, total(it), 0.5f) }
-        // 24 dp navigation: music + 1 row stays the compact tile (3, 398) - the full tile's line makes the
-        // full one 519.4, over 497; music + 2 rows mockup A (3, 462).
-        fit(true, 1, available(24f)).let { assertEquals(3, it.candidate); assertEquals(GlanceTileSize.COMPACT, it.tile); assertEquals(398f, total(it), 0.5f) }
-        fit(true, 2, available(24f)).let { assertEquals(listOf(3, 2), listOf(it.candidate, it.rows)); assertEquals(462f, total(it), 0.5f) }
+        // 2026-10-21 with the bottom row's 12 dp of air and the page's 8 dp bottom padding: every total
+        // grows by 2 dp against 8 dp more room (the full tile alone keeps 3.2 dp of slack at 473 dp, qa-lfix 1), so every candidate below is the same as before.
+        // Full tile alone -> 1 (469.8).
+        fit(true, 0).let { assertEquals(1, it.candidate); assertEquals(469.8f, total(it), 0.5f) }
+        // 3 rows + more, no music -> 1 (466).
+        fit(false, 4).let { assertEquals(listOf(1, 3, 1), listOf(it.candidate, it.rows, it.more)); assertEquals(466f, total(it), 0.5f) }
+        // Music + 1 row -> 3 (396).
+        fit(true, 1).let { assertEquals(3, it.candidate); assertEquals(396f, total(it), 0.5f) }
+        // Music + 2 rows -> 3 (460, mockup A).
+        fit(true, 2).let { assertEquals(listOf(3, 2), listOf(it.candidate, it.rows)); assertEquals(460f, total(it), 0.5f) }
+        // Music + 3 rows -> 5 with 2 rows + more (461.6).
+        fit(true, 3).let { assertEquals(listOf(5, 2, 1), listOf(it.candidate, it.rows, it.more)); assertEquals(461.6f, total(it), 0.5f) }
+        // 24 dp navigation: music + 1 row stays the compact tile (3, 396) - the full tile's line makes the
+        // full one 517.4, over 497; music + 2 rows mockup A (3, 460).
+        fit(true, 1, available(24f)).let { assertEquals(3, it.candidate); assertEquals(GlanceTileSize.COMPACT, it.tile); assertEquals(396f, total(it), 0.5f) }
+        fit(true, 2, available(24f)).let { assertEquals(listOf(3, 2), listOf(it.candidate, it.rows)); assertEquals(460f, total(it), 0.5f) }
     }
 
     @Test
@@ -586,9 +586,9 @@ class LockGlanceLayoutTest {
         val alarm = withMargins("lock_glance_alarm")
         assertEquals("2 dp + 13 sp x 1.4", 20.2f, alarm, 0.01f)
         val withAlarm = heights.copy(date = heights.date + alarm)
-        // 473 dp: with a morning alarm set, no music and 4 rows take the small clock (472.2 > 457) ...
+        // 473 dp: with a morning alarm set, no music and 4 rows take the small clock (470.2 > 457) ...
         glanceFit(available(48f), withAlarm, false, 4).let { assertEquals(listOf(2, 3, 1), listOf(it.candidate, it.rows, it.more)) }
-        // ... and the full music tile alone too (476 > 457).
+        // ... and the full music tile alone too (474 > 457).
         assertEquals(2, glanceFit(available(48f), withAlarm, true, 0).candidate)
         // 497 dp: both keep the big clock.
         assertEquals(1, glanceFit(available(24f), withAlarm, false, 4).candidate)

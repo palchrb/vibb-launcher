@@ -1322,12 +1322,16 @@ findings, merge to `main`, full suite once.
   extras, the keyed lookup, every entry point guarded, the wiring). Owed on the phone: a timer to its end with the
   stopwatch running - no empty card, the stopwatch shows at once after Stopp, "Stoppeklokke" once; and
   `adb shell dumpsys notification --noredact | grep -A3 "pkg=org.fossify.clock"` while both run, to see the
-  `ranker_group` summary (confirms the source).
+  `ranker_group` summary (confirms the source). Code QA `docs/review/qa-lfix-clock-torch-code.md` (0 High, 1 Medium,
+  3 Low, 1 Nit), all fixed: the air 12 dp (Medium 1, below); a null `getActiveNotifications(keys)` stays "no answer"
+  (Low 2); `onDestroy` drops the lookup too (Low 3); `LockGlanceGuardTest` now catches its surviving mutations 6, 7, 9
+  (Low 4); the Nit (one binder call per Fossify post next to `recount`'s) needs no change.
 - **The lock's flashlight sits tight under "Lås opp"** (the user, 2026-10-21: "litt for tett på lås-opp knappen? Ser
   grafisk litt snålt ut"): the Nødsamtale/torch row is 2 dp under the 56 dp button (`view_lock_glance.xml`); proposed
   12-16 dp of air and a quieter torch (the music controls' dark round ground, peach only while lit), keeping
   `lockGlanceFit`'s row height. **Done 2026-10-21 (branch `lfix-clock-torch`)**: `lock_glance_bottom`'s top margin
-  2 -> 14 dp; 8 of the 12 dp from the page's bottom padding (16 -> 8 dp), so the fixed part is 118 dp and every fit
+  2 -> 12 dp (the low end, after qa-lfix-clock-torch-code 1: 3.2 dp of slack left for the full music tile with the big
+  clock at 473 dp); 8 of the 10 new dp from the page's bottom padding (16 -> 8 dp), so the fixed part is 116 dp and every fit
   `LockGlanceLayoutTest` pins at 473 dp (the Jelly Star's 3-button navigation) and 497 dp is unchanged (a plain
   +12 would have cost the big clock at 473 dp for the full music tile alone and for 4 rows, and with a morning alarm
   a row); the pure model's tests re-derived. The torch already was the dark disc (`bg_music_control`, `kid_core`

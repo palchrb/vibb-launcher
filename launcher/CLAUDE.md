@@ -491,10 +491,10 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   rebound only on store/notifier changes. The full tile has a time line under the bar ("4:48 · 25:36", `glanceTimeLine`; the compact one none - the user, 2026-10-20;
   `match_parent`, one line, `tnum`, so the 1 s tick - `MusicLockPanel.tick`, bars and the line only - never asks for a
   layout). "Nødsamtale" sits centred in the bottom row `lock_glance_bottom` with the round flashlight button at its end
-  (`fixed` is measured from the row, 118 dp); the button follows the `TorchPort` the lock passes (`glanceTorchButton`:
+  (`fixed` is measured from the row, 116 dp); the button follows the `TorchPort` the lock passes (`glanceTorchButton`:
   hidden without a flash unit or after a `CAMERA_DISABLED` refusal while LOCKED), toggles the torch and opens nothing.
-  Since 2026-10-21 (the user: "litt for tett på lås-opp knappen") the row sits 14 dp under "Lås opp" (was 2), 8 of the
-  12 dp taken from the page's bottom padding (16 -> 8), so every fit `LockGlanceLayoutTest` pins at 473/497 dp is
+  Since 2026-10-21 (the user: "litt for tett på lås-opp knappen") the row sits 12 dp under "Lås opp" (was 2), 8 of the
+  10 new dp taken from the page's bottom padding (16 -> 8), so every fit `LockGlanceLayoutTest` pins at 473/497 dp is
   unchanged; the button stays the music controls' dark disc (`bg_music_control`, `kid_core` glyph, about 11.6:1) while off and
   peach only while lit (`KidPaletteTest`).
 - **The clock on the lock** (design 42, `docs/design/42-lock-clock.md`): the catalog's clock app is Fossify Clock, known

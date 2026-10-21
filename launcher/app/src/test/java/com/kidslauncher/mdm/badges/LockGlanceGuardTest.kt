@@ -311,7 +311,14 @@ class LockGlanceGuardTest {
         val stale = body(clockReader, "dropStale")
         assertTrue(stale.contains("lookup?.invoke(entries.keys.toTypedArray()) ?: return false"))
         assertTrue(stale.contains("active.filter { it.packageName == ClockApp.PACKAGE }.map { it.key }"))
+        // ... and really drops them (qa-lfix 4: a dropStale that only answered true left the tile up).
+        assertTrue(stale.contains("stale.forEach { entries.remove(it) }"))
         for (name in listOf("posted", "removed", "reconcile")) assertTrue(name, body(clockReader, name).contains("dropStale()"))
+        // The check runs first, so a removal or post that hit still checks the other keys.
+        assertTrue(body(clockReader, "removed").contains("if (dropStale() || gone) changed()"))
+        assertTrue(body(clockReader, "posted").contains("if (dropStale() || touched) changed()"))
+        // The panel's small line goes through clockSmallText (the stopwatch's label once).
+        assertTrue(code("ClockLockPanel.kt").contains("clockSmallText(it, label)"))
         for (name in listOf("posted", "removed")) {
             assertTrue(name, body(clockReader, name).contains("if (sbn.packageName != ClockApp.PACKAGE) return@guarded"))
         }
@@ -324,7 +331,11 @@ class LockGlanceGuardTest {
         val listener = code("BadgeListenerService.kt")
         assertTrue(listener.contains("ClockReader.attach { keys -> activeOrNull(keys) }"))
         assertTrue(listener.indexOf("ClockReader.attach {") < listener.indexOf("sweep()"))
-        assertTrue(listener.contains("getActiveNotifications(keys).orEmpty().filterNotNull()"))
+        // No answer stays null - never read as "nothing active" (qa-lfix 2).
+        assertTrue(listener.contains("getActiveNotifications(keys)?.filterNotNull()"))
+        assertFalse(listener.contains("getActiveNotifications(keys).orEmpty()"))
+        // A destroy without the disconnect drops the lookup too (qa-lfix 3).
+        assertTrue(body(listener, "onDestroy").contains("ClockReader.disconnected()"))
         assertTrue(body(panel, "resumeNow").contains("ClockReader.reconcile()"))
         assertTrue(code("ClockApp.kt").contains("Handler(Looper.getMainLooper()).post { ClockReader.unverified() }"))
     }
