@@ -498,6 +498,17 @@ findings, merge to `main`, full suite once.
 
 ### Approved for the next fix batch
 
+- **Security and privacy reviews 2026-10-21** (asked for by the user): `docs/review/security-review-2026-10-21-server.md`
+  (0 High / 3 Medium / 18 Low), `-launcher.md` (0 High / 5 Medium / 16 Low; Tailscale/tsnet verdict: keep it as is,
+  dormant without an auth key, three small hardenings in S-L10), `-music.md` (0 High / 1 Medium / 9 Low). Proposed
+  order: server M1 (push subscriptions survive a password change / 2FA reset), M2 (backup snapshots never pruned),
+  launcher P-M1 (the fallback policy drops `locationPolicy`), music S-M1 (a planted SSDP speaker: LOCATION must equal
+  the sender, LAN only, `RINCON_` uids, the cache tied to the network and pruned); then launcher S-M1 (cleartext,
+  M11) and S-M2 (filter state in the report); then the Lows. Owed by the user: server M3 (Storytel credentials to the
+  phone in plaintext), launcher S-M3 (browser "secure DNS" bypass) and S-M4 (a VoIP call over the PIN lock - the user
+  doubts the chats are reachable; device check: lock, ring the phone from another Element X account, answer, try Back
+  and the call screen's minimise arrow), music P-L4 (are "Pål"/"Ella" in `server/testdata/spotify/` real names?).
+
 - **No network after the VPN (re)starts** (the user's emulator, 2026-10-19, launcher 0.29.0 release): every upstream
   socket of design 36's DNS engine was refused by `protect()` - Android's `Socket()` has no descriptor until a bind -,
   so the VPN answered no query and the launcher's own sync died with it. Reproduced on handy36 with the 0.29.0 APK
