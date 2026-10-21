@@ -127,7 +127,9 @@ app is exactly today's plus the 1 s display poll of §2.4: **we lose speed, neve
   `src/test/resources/sonos/`; `PlayBodyTest` compares `builtDidl(PlayBodies.build(...), uri)` with each byte for byte.
   `SonosTransportTest:144` (`body.copy(durationS = 1453.0, ...)`) and `PlayBodyTest:26,151-154` change with the fix.
 - `scripts/fake-sonos.py` keeps reading `res@duration` (a Storytel book) and `--duration` otherwise; a podcast on the
-  fake now ends only with `--duration N`, so docs/testing/emulator.md §6h (`:741`, `:858`) says so and starts the fake
+  fake now ends only with `--duration N`, so docs/testing/emulator.md §6h (`:741`, the track ending at its DIDL duration;
+  `:713`, `--duration`'s default - a podcast reads `0:00:00` and never ends; `:858` stays: the Storytel book keeps its
+  duration) says so and starts the fake
   with `--duration` for the advance steps.
 
 ### 2.2 The socket (`sonos/SonosEvents.kt` pure, `sonos/SonosSocket.kt` OkHttp)
@@ -157,8 +159,11 @@ app is exactly today's plus the 1 s display poll of §2.4: **we lose speed, neve
   it (our uid no longer coordinates), leaves the socket open for `groups` but **not healthy**.
 - **Health**: healthy = open, the playback subscription of the group our uid coordinates acknowledged, the
   `getPlaybackStatus` reply received, and **live**:
-  - *The liveness rule*: every play, pause, resume, seek or step of ours must be followed by a `playbackStatus` within
-    3 s (measured: 0.0-0.4 s), or the socket is dead - closed and counted as a failure. A firmware that acknowledges
+  - *The liveness rule*: a verb of ours that must change the speaker's state - a pause on a confirmed PLAYING, a resume
+    on a confirmed PAUSED, a play of a new item or a step (each against the socket's and the poll's agreeing state) -
+    must be followed by a `playbackStatus` within 3 s (measured: 0.0-0.4 s), or the socket is dead - closed and counted
+    as a failure. A seek while paused, a pause while already paused or any other verb the speaker may answer without a
+    change doesn't count (no event is owed). A firmware that acknowledges
     but never pushes is caught at the kid's next tap, not "when the state happens to change twice".
   - *Disagreement*: two polls in a row that see ours-PLAYING vs a socket state of PAUSED/IDLE (or the reverse), each 3 s
     or more after the socket's last event, also mark it dead - it covers changes made outside the app.
@@ -296,7 +301,10 @@ coordinator - run in a job of their own on IO (`GroupVerbs`, one `Mutex`, sequen
 actor, so polls, Pause, the volume keys and a hand-off never wait behind a switched-off room. Only a **"−" on our
 coordinator** runs in our actor (`SonosTransport.leave(uid)`), because it must order against our plays and starts the
 follow. The service's `switching` lock is **not** held across a join: the job checks the gates when it starts (§2.7) and
-the actor's verbs to our uid need no order against it.
+the actor's verbs to our uid need no order against it. **The job captures** the coordinator uid and the controller's
+generation at its start and **re-checks both, with the gates, before each member**: a follow, a switch, a new play or a
+release in the meantime ends it with the rest of the row unsent (no room ever joins a coordinator we left).
+`ROOM_LEAVE` is refused for a uid that isn't a member of our group as the topology has it now.
 
 ### 2.7 "Spill av på" with grouping (53-b; the sketch's three artboards, `Main`, `Grouped`, `Busy`)
 
@@ -310,7 +318,8 @@ it.
   Otherwise the rooms are today's rows - a group is one row, no + and no −:
   - the phone or a headset renders;
   - a session that is stopped, ended, disarmed or not started (a + would stop another room's stream and join it to a
-    silent coordinator);
+    silent coordinator). **A paused session counts as live** (revision check N4, accepted): "+" on it joins the room,
+    which stays silent until the kid resumes, and a busy room's own stream stops at once - the kid asked for that room;
   - **grouped away** (§2.8 case 4): our room sits in another coordinator's row ("Barnerommet + Stua", uid Barnerommet);
     nothing is selected, that row's subtitle is the player's line "Spilles i en annen gruppe", and a tap on it is
     today's `OUTPUT`;
@@ -381,7 +390,8 @@ it.
   (with the candidate) before `advance()`; only when no coordinator carries our stream does the advance run. Today's
   probe gate is "STOPPED with an empty TrackURI"; inside this window it also takes "STOPPED with our TrackURI kept". So
   if the old coordinator keeps its TrackURI after leaving, Stua never starts the next episode while Kjøkken plays the
-  current one.
+  current one. The window reaches the session the way the candidate does: through the actor
+  (`transport.groupChanged(at)`, beside `transport.hint(uid)`), never a call from main into `SonosSession`.
 - **The label follows**: `SonosController.relabel(label)` from each `rooms.state` change (`home.label(controller.uid)`:
   the row's joined label, else the cached name), so the bar and the player read "Stua + Kjøkken" as it happens.
   `renderer.json`'s name is left as written (a pick, a follow): the label is recomputed from the cache at every start.
@@ -681,7 +691,7 @@ Each finding was checked against the code before it was taken; all were taken, n
 - **53-14 (Low)** - Q4 added with the default "as today"; §2.8 states the consequence. (Superseded by the user's
   answer: see "The user's answers" below.)
 - **53-15 (Low)** - the DIDL fix is its own round, 53-0 (§4); §4 lists `GuardsTest`'s watch line, emulator.md §6h
-  (`--duration`, `:741`, `:858`) and music/CLAUDE.md's trust exception; `PlayerHub.sheetOpen` for the busy refreshes;
+  (`--duration`, `:741` and `:713`; `:858` stays - revision check N1) and music/CLAUDE.md's trust exception; `PlayerHub.sheetOpen` for the busy refreshes;
   `Room.names` becomes pairs instead of a second field; `room_no_contact`'s English is design 52's "is it switched on?".
 
 ## The user's answers (2026-10-21)
@@ -696,3 +706,19 @@ Each finding was checked against the code before it was taken; all were taken, n
   applies - decided here, for the user to see), §3's `RoomScopeTest`/`SonosControllerTest`/`OutputRowsTest`/
   `GuardsTest` cases, §5 check 8b. 53-b carries it; music/CLAUDE.md's "Room scope" rule gets the exception with it.
 - **Q1** (group volume) and **Q3** (the hint line) are still open.
+
+## Revision check (2026-10-21, qa-53-revision-check.md)
+
+Ready for implementation; its four Lows are folded in:
+
+- **N1** - the emulator.md lines that change are `:741` (the track ends at its DIDL duration) and `:713` (`--duration`'s
+  default: a podcast reads `0:00:00`); `:858` stays, the Storytel book keeps its duration (§2.1, the 53-15 line).
+- **N2** - the "+" job captures the coordinator uid and the controller's generation at its start and re-checks both with
+  the gates before each member; `ROOM_LEAVE` refuses a uid not in our group; the advance guard's window reaches the
+  session through the actor (`transport.groupChanged`), like `hint` (§2.6, §2.8). Tests: `GroupVerbsTest` - a follow
+  between two members sends nothing more; `ROOM_LEAVE` of a non-member sends nothing.
+- **N3** - the liveness rule counts only verbs against a confirmed opposite state (a pause on PLAYING, a resume on
+  PAUSED, a new item or a step); a seek while paused or a no-op verb owes no event (§2.2). Test: `SonosSocketTest` - a
+  seek while paused with no event keeps the socket healthy.
+- **N4** - decided as accepted: "+" on a paused session joins the room; it is silent until resumed, and a busy room's
+  own stream stops at once - the kid asked for it (§2.7).
