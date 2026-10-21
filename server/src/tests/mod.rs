@@ -30,7 +30,7 @@ mod locations;
 mod lock_glance;
 mod music;
 mod music_art;
-mod music_spotify;
+pub(crate) mod music_spotify;
 mod music_storytel;
 mod music_sweep;
 mod notifications;

@@ -285,6 +285,9 @@ pub struct StorytelCard {
     /// What Storytel last said about the login (design 26b §2.3), and whether it is bad news.
     pub status: Option<String>,
     pub status_error: bool,
+    /// The last login's facts under the ⓘ while a login is stored (design 58 §2.7): from the
+    /// account's memory, never a column.
+    pub session: Option<String>,
 }
 
 pub struct CatalogCard {
@@ -665,6 +668,10 @@ async fn settings_page(
         notice: storytel_notice,
         status,
         status_error,
+        session: stored
+            .0
+            .as_ref()
+            .map(|_| storytel_session(state.storytel.facts())),
     };
 
     let catalog = match music_app_row(&state.db).await? {
@@ -1334,6 +1341,21 @@ pub async fn delete_category(
 // Storytel
 // ------------------------------------------------------------------------------------------------
 
+/// The Storytel card's session facts (design 58 §2.7): how long the server's session lives and
+/// whether Storytel put an e-mail address in it - a word, never the value.
+fn storytel_session(facts: Option<crate::storytel::LoginFacts>) -> String {
+    match facts {
+        Some(facts) => format!(
+            "Session: lives {} min; holds an e-mail address: {}.",
+            facts.left_s / 60,
+            facts.has_email.as_str()
+        ),
+        None => {
+            "Session: not known yet - it shows after the server's next Storytel login.".to_string()
+        }
+    }
+}
+
 /// The session key of the Storytel card's one-time notice after a save.
 const STORYTEL_NOTICE_FLASH: &str = "storytel_notice";
 
@@ -1396,6 +1418,11 @@ fn storytel_status(
             "The saved login was locked with another key - enter it again.".to_string()
         }
         "no_jwt" => format!("Storytel took the login but sent no session{when}."),
+        // Design 58 §2.6: only the fake-login guard records it while a login is stored.
+        "storytel_off" => {
+            "Storytel wasn't asked: STORYTEL_BASE is set and this login isn't a fake one."
+                .to_string()
+        }
         "network" | "timeout" => format!("Storytel couldn't be reached{when}."),
         code => match code.strip_prefix("http_") {
             Some(status) => format!("Storytel answered {status}{when}."),
@@ -1454,42 +1481,54 @@ pub async fn save_storytel(
     }
     let probe =
         crate::storytel::probe(&state, &email, &password, crate::storytel::PROBE_BUDGET).await;
-    let (jwt, shelf, error_code, notice) = match probe {
-        Probe::Refused { status } => {
+    let (login, shelf, error_code, notice) = match probe {
+        Probe::Refused { status, outage } => {
             // A typo must not cut every phone off (26b §9): the saved login stays as it was.
             let detail = match status {
                 Some(status) => format!("Storytel answered {status}"),
                 None => "Storytel sent no session".to_string(),
             };
-            log_event(&state, &admin, "storytel_login_refused", &detail).await;
-            // Worded by status (QA L5): a 503 or a 429 is Storytel's trouble, not a wrong
-            // password. Nothing is stored either way.
-            let text = match status {
-                None | Some(401) | Some(403) => {
+            // An outage is no refusal (design 58 §2.3, code QA nit 4).
+            let event = if outage {
+                "storytel_login_failed"
+            } else {
+                "storytel_login_refused"
+            };
+            log_event(&state, &admin, event, &detail).await;
+            // Worded by the login's class (QA L5, design 58 §2.3): a 5xx, a 408, a 429 or no
+            // session is Storytel's trouble, not a wrong password. Nothing is stored either way.
+            let text = match (outage, status) {
+                (false, _) => {
                     "Storytel refused that e-mail and password. The saved login is unchanged."
                         .to_string()
                 }
-                Some(status) => format!(
+                (true, Some(status)) => format!(
                     "Storytel answered {status} - nothing was saved; the saved login is \
                      unchanged. Try again later."
                 ),
+                (true, None) => "Storytel took the login but sent no session - nothing was \
+                                 saved; the saved login is unchanged. Try again later."
+                    .to_string(),
             };
             let entered = refuse(&text);
             return refused(StatusCode::BAD_REQUEST, entered).await;
         }
-        Probe::Accepted { jwt, shelf } => {
+        Probe::Accepted { login, shelf } => {
             let notice = format!("Saved - Storytel shows {} series and books.", shelf.len());
-            (Some(jwt), Some(shelf), None, notice)
+            (Some(login), Some(shelf), None, notice)
         }
-        Probe::Unreachable { code, jwt } => (
-            jwt,
-            None,
-            Some(code),
-            "Saved, but Storytel couldn't be reached to check it.".to_string(),
-        ),
+        Probe::Unreachable { code, login } => {
+            // `storytel_off` here is only the STORYTEL_BASE guard: nothing was asked (design 58 §2.6).
+            let notice = if code == crate::storytel::StorytelError::NotConfigured.code() {
+                "Saved; STORYTEL_BASE is set, so Storytel wasn't asked.".to_string()
+            } else {
+                "Saved, but Storytel couldn't be reached to check it.".to_string()
+            };
+            (login, None, Some(code), notice)
+        }
     };
     let now = crate::music_sweep::stamp(state.music_sweep.now());
-    let ok_at = jwt.as_ref().map(|_| now.clone());
+    let ok_at = login.as_ref().map(|_| now.clone());
     let error_at = error_code.as_ref().map(|_| now.clone());
     let plain = serde_json::json!({"email": email, "password": password}).to_string();
     let (ciphertext, nonce) = key.seal(plain.as_bytes());
@@ -1513,7 +1552,7 @@ pub async fn save_storytel(
         Ok(generation) => generation,
         Err(err) => return server_error(err, "couldn't save the Storytel login"),
     };
-    state.storytel.keep(generation, jwt, shelf);
+    state.storytel.keep(generation, login, shelf);
     nudge(&state, &storytel_phones(&state.db).await);
     // The Storytel entries that failed for want of a (good) login are due now (QA L1 of 2b,
     // `music_sweep::schedule`); the probe's shelf serves them.

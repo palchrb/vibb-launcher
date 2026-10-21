@@ -2307,3 +2307,447 @@ async fn every_book_keeps_its_own_cover_whatever_the_series_cover() {
         (Some("own"), Some(hashes[1].as_str()))
     );
 }
+
+// ------------------------------------------------------------------------------------------------
+// Design 58 step 1: POST /api/devices/music/storytel/token - the server's session to the phones
+// ------------------------------------------------------------------------------------------------
+
+const TOKEN_ROUTE: &str = "/api/devices/music/storytel/token";
+
+/// The login sealed for `generation`, as a save leaves it (no probe).
+async fn seal(app: &TestApp, email: &str, password: &str, generation: i64) {
+    let key = app.state.music_key.clone().unwrap();
+    let plain = serde_json::json!({"email": email, "password": password}).to_string();
+    let (ciphertext, nonce) = key.seal(plain.as_bytes());
+    sqlx::query(
+        "UPDATE music_storytel SET ciphertext = ?, nonce = ?, key_fingerprint = ?, \
+         saved_at = datetime('now'), generation = ? WHERE id = 1",
+    )
+    .bind(ciphertext)
+    .bind(nonce)
+    .bind(&key.fingerprint)
+    .bind(generation)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// A phone with Storytel switched `on`.
+async fn storytel_phone(app: &TestApp, name: &str, on: bool) -> (i64, String) {
+    let (device, token) = app.enrolled_device(name).await;
+    sqlx::query("UPDATE device_policy SET music_storytel = ? WHERE device_id = ?")
+        .bind(on)
+        .bind(device)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    (device, token)
+}
+
+/// One token ask: `body` as it is, with `content_type` when given (none at all otherwise).
+async fn token_ask(
+    app: &TestApp,
+    router: &axum::Router,
+    bearer: &str,
+    body: &[u8],
+    content_type: Option<&str>,
+) -> super::TestResponse {
+    let mut builder = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri(TOKEN_ROUTE)
+        .header(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {bearer}"),
+        );
+    if let Some(content_type) = content_type {
+        builder = builder.header(axum::http::header::CONTENT_TYPE, content_type);
+    }
+    let request = builder.body(axum::body::Body::from(body.to_vec())).unwrap();
+    app.send_via(router, super::LOOPBACK_PEER, request).await
+}
+
+async fn plain_ask(app: &TestApp, bearer: &str) -> super::TestResponse {
+    token_ask(app, &app.router, bearer, b"{}", Some("application/json")).await
+}
+
+fn word(res: &super::TestResponse) -> String {
+    res.json()["status"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn contract_file(path: &str) -> Vec<u8> {
+    std::fs::read(path).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+/// §8 (QA 58-13): every row of the shared answers file is produced by the route - its HTTP
+/// status, its keys and their types - and the apps' copies are this file, byte for byte.
+#[tokio::test]
+async fn the_token_route_answers_the_shared_contract() {
+    let ours = contract_file("testdata/storytel_token_answers.json");
+    for copy in [
+        "../launcher/app/src/test/resources/storytel_token_answers.json",
+        "../music/app/src/test/resources/storytel_token_answers.json",
+    ] {
+        assert_eq!(
+            contract_file(copy),
+            ours,
+            "{copy} differs from the server's"
+        );
+    }
+    let contract: serde_json::Value = serde_json::from_slice(&ours).unwrap();
+    let rows = contract["answers"].as_array().unwrap();
+    assert!(
+        !String::from_utf8_lossy(&ours).contains("eyJ"),
+        "fake values only"
+    );
+
+    let app = TestApp::new().await;
+    let (_, token) = storytel_phone(&app, "phone", true).await;
+    let (_, off_token) = storytel_phone(&app, "other", false).await;
+    seal(&app, EMAIL, PASSWORD, 1).await;
+    app.fetch
+        .answer(&login(EMAIL, PASSWORD), 200, fixture("login_ok.json"));
+    let mut produced = std::collections::HashMap::new();
+    produced.insert("ok", plain_ask(&app, &token).await);
+    produced.insert("off", plain_ask(&app, &off_token).await);
+    seal(&app, EMAIL, PASSWORD, 2).await;
+    app.fetch.answer(&login(EMAIL, PASSWORD), 403, "");
+    produced.insert("refused", plain_ask(&app, &token).await);
+    // Inside the hour after it: `refused` with what is left of the cooldown, nothing sent (code QA
+    // L3).
+    app.fetch.clear_calls();
+    let again = plain_ask(&app, &token).await;
+    assert_eq!(
+        (again.status, word(&again)),
+        (StatusCode::CONFLICT, "refused".to_string())
+    );
+    let left = again.json()["retry_after_s"].as_u64().unwrap();
+    assert!((3590..=3600).contains(&left), "{left}");
+    assert_eq!(app.fetch.count(), 0, "no login inside the cooldown");
+    seal(&app, EMAIL, PASSWORD, 3).await;
+    app.fetch.answer(&login(EMAIL, PASSWORD), 503, "");
+    produced.insert("unreachable", plain_ask(&app, &token).await);
+    produced.insert("busy", plain_ask(&app, &token).await);
+    sqlx::query("UPDATE music_storytel SET key_fingerprint = '0000000000000000'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    produced.insert("key", plain_ask(&app, &token).await);
+    sqlx::query("DROP TABLE music_storytel")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    produced.insert("database", plain_ask(&app, &token).await);
+
+    let kind = |value: &serde_json::Value| match value {
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Number(n) if n.is_u64() => "integer",
+        _ => "other",
+    };
+    assert_eq!(produced.len(), rows.len());
+    for row in rows {
+        let name = row["name"].as_str().unwrap();
+        let res = &produced[name];
+        assert_eq!(
+            u64::from(res.status.as_u16()),
+            row["http"].as_u64().unwrap(),
+            "{name}: {}",
+            res.text()
+        );
+        assert_eq!(
+            res.headers["cache-control"], "no-store",
+            "{name}: never cached"
+        );
+        let body = res.json();
+        let want = row["body"].as_object().unwrap();
+        let got = body.as_object().unwrap();
+        assert_eq!(
+            got.keys().collect::<Vec<_>>(),
+            want.keys().collect::<Vec<_>>(),
+            "{name}"
+        );
+        for (key, value) in want {
+            assert_eq!(kind(&got[key]), kind(value), "{name}.{key}");
+        }
+        assert_eq!(got["status"], want["status"], "{name}");
+    }
+    // The values the rows only shape: the fallback life less the margin, a valid session, the
+    // cooldown's hour, the backoff's minute.
+    let ok = produced["ok"].json();
+    assert_eq!(ok["jwt"], "FAKE-JWT-1");
+    assert_eq!(ok["expires_in_s"], 30 * 60 - 60);
+    assert!(crate::storytel::valid_session(
+        ok["session"].as_str().unwrap()
+    ));
+    assert!(ok["session"].as_str().unwrap().starts_with("1:"));
+    assert_eq!(produced["refused"].json()["retry_after_s"], 3600);
+    assert_eq!(produced["busy"].json()["retry_after_s"], 60);
+}
+
+/// §2.2's order: the switch and a stored login first (`off`, not counted), the phone's limit, the
+/// key by its fingerprint (nothing opened or written), then the session.
+#[tokio::test]
+async fn the_token_route_checks_in_order() {
+    let app = TestApp::new().await;
+    let (_, token) = storytel_phone(&app, "phone", true).await;
+    let (_, off_token) = storytel_phone(&app, "off", false).await;
+    // No login stored: off, whatever the switch.
+    assert_eq!(word(&plain_ask(&app, &token).await), "off");
+    seal(&app, EMAIL, PASSWORD, 1).await;
+    app.fetch
+        .answer(&login(EMAIL, PASSWORD), 200, fixture("login_ok.json"));
+    // Switched off: off, and never counted against the limit.
+    for _ in 0..25 {
+        let res = plain_ask(&app, &off_token).await;
+        assert_eq!(
+            (res.status, word(&res)),
+            (StatusCode::NOT_FOUND, "off".into())
+        );
+    }
+    sqlx::query("UPDATE device_policy SET music_storytel = 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(word(&plain_ask(&app, &off_token).await), "ok");
+    // The key: no key at all, or another key's fingerprint - no open, no record, no request.
+    let mut keyless = app.state.clone();
+    keyless.music_key = None;
+    let keyless = crate::build_device_router(keyless);
+    app.fetch.clear_calls();
+    let res = token_ask(&app, &keyless, &token, b"{}", None).await;
+    assert_eq!(
+        (res.status, word(&res)),
+        (StatusCode::SERVICE_UNAVAILABLE, "key".into())
+    );
+    sqlx::query("UPDATE music_storytel SET key_fingerprint = '0000000000000000'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        let res = plain_ask(&app, &token).await;
+        assert_eq!(
+            (res.status, word(&res)),
+            (StatusCode::SERVICE_UNAVAILABLE, "key".into())
+        );
+    }
+    let error: Option<String> = sqlx::query_scalar("SELECT login_error FROM music_storytel")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(error, None, "no login_error per ask");
+    assert_eq!(app.fetch.count(), 0);
+    // The limit: 20 asks a rolling hour per phone (the key asks above counted), then busy.
+    let key = app.state.music_key.clone().unwrap();
+    sqlx::query("UPDATE music_storytel SET key_fingerprint = ?")
+        .bind(&key.fingerprint)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for n in 5..=20 {
+        assert_eq!(word(&plain_ask(&app, &token).await), "ok", "ask {n}");
+    }
+    let res = plain_ask(&app, &token).await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(word(&res), "busy");
+    assert!(res.json()["retry_after_s"].as_u64().unwrap() > 3500);
+    assert_eq!(
+        word(&plain_ask(&app, &off_token).await),
+        "ok",
+        "another phone"
+    );
+}
+
+/// §2.2: a login still running when the route's budget ends finishes and is kept.
+#[tokio::test]
+async fn a_login_past_the_budget_is_kept_for_the_next_ask() {
+    let app = TestApp::new().await;
+    let (_, token) = storytel_phone(&app, "phone", true).await;
+    seal(&app, EMAIL, PASSWORD, 1).await;
+    app.fetch
+        .answer(&login(EMAIL, PASSWORD), 200, fixture("login_ok.json"));
+    app.state
+        .storytel
+        .set_phone_budget(std::time::Duration::from_millis(100));
+    app.fetch.delay(400);
+    let res = plain_ask(&app, &token).await;
+    assert_eq!(
+        (res.status, word(&res)),
+        (StatusCode::BAD_GATEWAY, "unreachable".into())
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    app.fetch.delay(0);
+    app.fetch.clear_calls();
+    let res = plain_ask(&app, &token).await;
+    assert_eq!(word(&res), "ok");
+    assert_eq!(app.fetch.count(), 0, "the spawned login was kept");
+}
+
+/// §2.2: the body is read as bytes, leniently - only a valid `stale` forces.
+#[tokio::test]
+async fn the_stale_body_is_read_leniently() {
+    let app = TestApp::new().await;
+    let (_, token) = storytel_phone(&app, "phone", true).await;
+    seal(&app, EMAIL, PASSWORD, 1).await;
+    app.fetch
+        .answer(&login(EMAIL, PASSWORD), 200, fixture("login_ok.json"));
+    let first = plain_ask(&app, &token).await.json();
+    let session = first["session"].as_str().unwrap().to_string();
+    let stale = serde_json::json!({ "stale": session }).to_string();
+    // A valid stale forces: the JWT is too young, so a wait - never the JWT it names.
+    for content_type in [Some("application/json"), None, Some("text/plain")] {
+        let res = token_ask(&app, &app.router, &token, stale.as_bytes(), content_type).await;
+        assert_eq!(
+            res.status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "{content_type:?}"
+        );
+        assert_eq!(word(&res), "busy");
+        assert!(res.json().get("jwt").is_none());
+        let wait = res.json()["retry_after_s"].as_u64().unwrap();
+        assert!((295..=300).contains(&wait), "{wait}");
+    }
+    // Anything else is a plain ask.
+    let padded = format!(
+        r#"{{"stale": "{session}", "pad": "{}"}}"#,
+        "x".repeat(crate::handlers::music_api::STORYTEL_TOKEN_BODY_LIMIT)
+    );
+    for body in [
+        &br#"{"stale": "1:not-a-session000"}"#[..],
+        br#"{"stale": 5}"#,
+        br#"{"stale": "1:00000000000000A1"}"#,
+        b"not json",
+        b"",
+        padded.as_bytes(),
+    ] {
+        let res = token_ask(&app, &app.router, &token, body, Some("application/json")).await;
+        assert_eq!(
+            (res.status, word(&res)),
+            (StatusCode::OK, "ok".into()),
+            "{}",
+            String::from_utf8_lossy(&body[..body.len().min(40)])
+        );
+        assert_eq!(res.json()["session"], session.as_str());
+    }
+}
+
+/// §2.2, §7.1: the JWT and its session reach no log line (any level), no event and no column.
+#[tokio::test]
+async fn no_jwt_in_logs_events_or_the_database() {
+    use super::music_spotify::{CAPTURE, install_capture};
+    install_capture();
+    CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+    let app = TestApp::new().await;
+    let (device, token) = storytel_phone(&app, "phone", true).await;
+    seal(&app, EMAIL, PASSWORD, 1).await;
+    app.fetch
+        .answer(&login(EMAIL, PASSWORD), 200, fixture("login_ok.json"));
+    let events_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM security_events")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let ok = plain_ask(&app, &token).await.json();
+    let session = ok["session"].as_str().unwrap().to_string();
+    let stale = serde_json::json!({ "stale": session }).to_string();
+    token_ask(&app, &app.router, &token, stale.as_bytes(), None).await;
+    let lines = CAPTURE.with(|capture| capture.borrow_mut().take()).unwrap();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("storytel: a phone's token ask")
+                && l.contains(&format!("device_id={device}"))
+                && l.contains("status=\"ok\"")),
+        "{lines:?}"
+    );
+    for line in &lines {
+        for secret in ["FAKE-JWT", session.as_str(), EMAIL, PASSWORD, "pwd="] {
+            assert!(!line.contains(secret), "{line}");
+        }
+    }
+    let events_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM security_events")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(events_after, events_before, "no event per ask (I11)");
+    let row: (Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT login_error, login_ok_at, login_refused_at FROM music_storytel")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let row = format!("{row:?}");
+    assert!(
+        !row.contains("FAKE-JWT") && !row.contains(&session),
+        "{row}"
+    );
+}
+
+/// §2.7: the card's ⓘ shows the last login's two facts, from memory - "not known yet" until one.
+#[tokio::test]
+async fn the_card_shows_the_sessions_facts() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    seal(&app, EMAIL, PASSWORD, 1).await;
+    let page = app.get_page("/music/settings", &cookie).await.text();
+    assert!(page.contains("Session: not known yet"), "{page}");
+    storytel_takes(&app, EMAIL, PASSWORD);
+    save(&app, &cookie, EMAIL, PASSWORD).await;
+    let page = app.get_page("/music/settings", &cookie).await.text();
+    // FAKE-JWT-1 has no dots: the fallback life, and nothing known of an e-mail in it.
+    assert!(
+        page.contains("Session: lives 30 min; holds an e-mail address: unknown."),
+        "{page}"
+    );
+    assert_no_secret(&page, PASSWORD, "the card");
+}
+
+/// §8 (QA N-14): the fake Storytel's login fixtures, copied for the server and the fake: every
+/// AES vector holds, the request's `pwd` is its password's, the answers classify as the login
+/// reads them - and, until step 2 deletes them, the music app's originals hold the same values.
+#[test]
+fn fake_login_fixtures_match() {
+    let json =
+        |path: &str| -> serde_json::Value { serde_json::from_slice(&contract_file(path)).unwrap() };
+    let vectors = json("testdata/storytel/aes_vectors.json");
+    let vectors = vectors["vectors"].as_array().unwrap();
+    assert!(vectors.len() >= 4);
+    for vector in vectors {
+        assert_eq!(
+            encrypt_password(vector["password"].as_str().unwrap()),
+            vector["hex"].as_str().unwrap()
+        );
+    }
+    let request = json("testdata/storytel/fake_login_request.json");
+    let (email, password) = (
+        request["email"].as_str().unwrap(),
+        request["password"].as_str().unwrap(),
+    );
+    assert!(email.ends_with("@example.invalid"), "a fake login only");
+    assert_eq!(request["pwd"].as_str().unwrap(), encrypt_password(password));
+    assert_eq!(
+        format!("{}?{}", LOGIN_URL, request["query"].as_str().unwrap()),
+        login_url(LOGIN_URL, email, password)
+    );
+    let answers = json("testdata/storytel/fake_login_answers.json");
+    let body = |name: &str| answers[name]["body"].to_string().into_bytes();
+    assert_eq!(answers["ok"]["status"], 200);
+    assert_eq!(
+        crate::storytel::classify_login(200, &body("ok")).unwrap(),
+        "FAKE-JWT-1"
+    );
+    assert_eq!(
+        crate::storytel::classify_login(200, &body("no_jwt")).unwrap_err(),
+        crate::storytel::StorytelError::NoJwt
+    );
+    let music = "../music/app/src/test/resources/storytel";
+    assert_eq!(
+        contract_file(&format!("{music}/aes_vectors.json")),
+        contract_file("testdata/storytel/aes_vectors.json")
+    );
+    assert_eq!(json(&format!("{music}/login_request.json")), request);
+    assert_eq!(json(&format!("{music}/login_ok.json")), answers["ok"]);
+    assert_eq!(
+        json(&format!("{music}/login_no_jwt.json")),
+        answers["no_jwt"]
+    );
+}

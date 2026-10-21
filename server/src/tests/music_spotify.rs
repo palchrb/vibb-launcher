@@ -1329,7 +1329,7 @@ async fn the_six_month_line() {
 
 thread_local! {
     /// This thread's capture while [no_secret_in_logs_events_or_pages] runs, else `None`.
-    static CAPTURE: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+    pub(crate) static CAPTURE: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// A process-wide subscriber that records every event, at every level, of a thread whose
@@ -1379,7 +1379,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for ThreadCapture {
 
 /// Installs [ThreadCapture] as the global default once (no other test sets one), and rebuilds
 /// every callsite's interest so callsites registered before it know it too.
-fn install_capture() {
+pub(crate) fn install_capture() {
     use tracing_subscriber::layer::SubscriberExt;
     static INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     INSTALLED.get_or_init(|| {

@@ -1,0 +1,12 @@
+{
+  "comment": "POST /api/devices/music/storytel/token's answers (design 58 §2.2), one per row, fake values only. Byte-identical in launcher/ and music/ test resources: the server's route test produces each row, the launcher's StorytelTokenCourierTest and the music app's StorytelBridgeTokenTest read each, all three compare the copies.",
+  "answers": [
+    {"name": "ok", "http": 200, "body": {"status": "ok", "jwt": "FAKE-JWT-1", "expires_in_s": 3540, "session": "1:00000000000000a1"}},
+    {"name": "off", "http": 404, "body": {"status": "off"}},
+    {"name": "refused", "http": 409, "body": {"status": "refused", "retry_after_s": 2400}},
+    {"name": "busy", "http": 429, "body": {"status": "busy", "retry_after_s": 30}},
+    {"name": "unreachable", "http": 502, "body": {"status": "unreachable"}},
+    {"name": "key", "http": 503, "body": {"status": "key"}},
+    {"name": "database", "http": 500, "body": {"status": "unreachable"}}
+  ]
+}

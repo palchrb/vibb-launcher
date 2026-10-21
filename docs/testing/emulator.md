@@ -798,10 +798,12 @@ t+15 volume 60
 
 ## 6i. Vibb music with Storytel (design 26b): the fake Storytel
 
-No real account is used on the emulator: `scripts/fake-storytel.py` on the VM is the login, the asset call (the
-302 the app captures) and a CDN serving silent WAV books with Range. Its answers come from the fixtures the JVM tests
-read (`music/app/src/test/resources/storytel/`; fake values only: `k@example.invalid` / `hemmelig`, `FAKE-JWT-1`,
-`FAKE-SIG-<n>`), and it logs every request with its Range and token. The app reaches it through the one debug switch
+No real account is used on the emulator: `scripts/fake-storytel.py` on the VM is the login, the bookshelf, the asset
+call (the 302 the app captures) and a CDN serving silent WAV books with Range. Its answers come from the fixtures the
+tests read (the login and the bookshelf from `server/testdata/storytel/` since design 58 step 1 - the music app's
+originals in `music/app/src/test/resources/storytel/` hold the same values until step 2 -, the asset call from the
+music app's; fake values only: `k@example.invalid` / `hemmelig`, `FAKE-JWT-<n>`, `FAKE-SIG-<n>`), and it logs every
+request with its Range and token. The app reaches it through the one debug switch
 (`storytel_base` in the debug feed's `config.json`, `src/debug` only; read again at every process start, so a
 download job in a fresh process still goes to the fake; only `10.0.2.2` or loopback is taken, anything else means the
 real hosts). Python 3, stdlib only.
@@ -813,6 +815,8 @@ python3 -I scripts/fake-storytel.py                            # port 8730, book
 #   --drop-at 40                  each book's first transfer closed at 40 %
 #   --token-ttl 30                a token is refused (403) 30 s after its mint
 #   --refuse | --no-jwt           the login refused (403) | 200 without a jwt
+#   --login-5xx                   the login answers 503 (design 58: an outage, not a refusal)
+#   --revoke-after 1              after the first accepted asset call the JWT answers 401 until a login issues FAKE-JWT-2
 #   --slow-mint 5                 every 302 after 5 s (step 4b)
 #   --no-download 222,444         those books mint but the CDN answers 503: never on the phone, a room plays them (step 4b)
 mkdir -p debug-feed/items
@@ -902,6 +906,48 @@ adb shell run-as me.vibb.music.debug cat no_backup/renderer.json
     `not-ours?` lines show scheme, host and path only; the no-secrets greps above still find nothing.
 - Real Storytel stays a device check (design 26b, "Device checks"): the real login, a 300 MB book over Wi-Fi that
   drops for more than an hour, downloads under Doze, the Sonos items.
+
+### §6i B: the chain - the server's session from the fake (design 58 §2.6, steps 1 and 4)
+
+The server talks to the same fake. `STORYTEL_BASE` in the server's `.env` sends its login and bookshelf there, with
+`Reach::Any`; it is taken only as `http://127.0.0.1:<port>`, `http://[::1]:<port>` or `http://localhost:<port>` (the
+host compared exactly - `http://127.0.0.1.evil.example:8730` is ignored with a warning). While it is set the server
+sends a login only for an e-mail at `example.invalid` (the save's probe too), so a real password never reaches a
+loopback port, even from a line left in a Pi's `.env`; and a phone's forced login needs a JWT only 10 s old.
+
+```
+python3 -I scripts/fake-storytel.py                            # port 8730 on the VM (the server's loopback)
+echo 'STORYTEL_BASE=http://127.0.0.1:8730' >> .env             # the server's .env; restart it: the start logs the warning
+```
+
+Set-up: Music › Settings saves `k@example.invalid` / `hemmelig` (the probe hits the fake's `login` and `bookshelf`),
+the series is added from the shelf, and the phone's Storytel switch is on. Then (step 1; the phone's own use of the
+session comes with step 2):
+
+- **The line**: the server logs `storytel: logged in (life_s=1800, left_at_login_s=1800, claims=no,
+  payload_has_email=unknown)` - `FAKE-JWT-1` has no dots, so the fallback life and nothing known of an e-mail (design
+  58 §9 says `no`; QA N-5's revision made an unreadable payload `unknown`). Music › Settings' Storytel ⓘ reads
+  "Session: lives 30 min; holds an e-mail address: unknown."; after a server restart "Session: not known yet".
+- **The route**: with the phone's device token (the debug launcher's preferences), `curl -s -X POST -H "Authorization:
+  Bearer $TOKEN" http://<server>/api/devices/music/storytel/token` answers `{"status":"ok","jwt":"FAKE-JWT-1",
+  "expires_in_s":1739,"session":"<generation>:<16 hex>"}` (about 29 minutes) with no new `login` line in the fake's log (the probe's JWT is
+  kept); a second phone's token gets the same JWT, still no login. The phone's Storytel switch off: `404 off`.
+- **A force**: `-d '{"stale":"<that session>"}'` within 10 s of the login answers `429 busy` with the seconds left,
+  never the JWT; after 10 s one `login` line, a new session (the same `FAKE-JWT-1` from this fake). A fourth force
+  from the same phone within the hour answers `busy` with the wait to its first force's hour.
+- **A revoked JWT**: `--revoke-after 1` and the old music app downloading a book with the same fixture login (§6i):
+  after its first asset call the fake revokes the JWT; the server's next Check now on the series gets the bookshelf's
+  401, logs in once (`jwt #2`) and lists the series.
+- **An outage** (`--login-5xx`, the fake restarted with it): a force after 10 s answers `502 unreachable`, the PWA's
+  status line says "Storytel answered 503", a plain ask still gets the kept JWT while it has over 2 minutes, and the
+  next force within a minute answers `busy` with no `login` line (the backoff: 1 minute, doubling to 30). Saving the
+  login again answers "Storytel answered 503 - nothing was saved".
+- **The guard**: save `parent@example.org` with the override set: the fake logs nothing, the server logs "STORYTEL_BASE
+  is set: the stored login isn't a fake one, not sent", and the card says "Saved; STORYTEL_BASE is set, so Storytel
+  wasn't asked." and "Storytel wasn't asked: STORYTEL_BASE is set and this login isn't a fake one."; every phone's ask
+  answers `404 off` (never counted in the phone-login cap). Take the line out of `.env` (and restart) when done.
+- **Step 2** adds the phone's side: one `login` at the save and none per book, a declined force from the phone's own
+  401 coming back after the wait, the room's prefetch (design 58 §9 §6i A and B).
 
 ## 6j. The music card's listening window; Play in the drawer during a window (design 28)
 

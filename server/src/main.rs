@@ -399,6 +399,18 @@ async fn main() {
         );
     }
 
+    // Storytel (design 58 §2.6): STORYTEL_BASE is honoured only on loopback (the fake Storytel).
+    let storytel_config = storytel::Config::from_env();
+    for warning in &storytel_config.warnings {
+        tracing::warn!("{warning}");
+    }
+    if let Some(base) = &storytel_config.fake_base {
+        tracing::warn!(
+            "Storytel's login and bookshelf go to {base} (STORYTEL_BASE: the fake Storytel, design \
+             58 §2.6); only a login at example.invalid (or a name under it) is sent"
+        );
+    }
+
     let (command_notify, _) = tokio::sync::broadcast::channel(64);
     let state = AppState {
         db,
@@ -424,7 +436,7 @@ async fn main() {
         )),
         music_sweep: Default::default(),
         music_libraries: Default::default(),
-        storytel: Default::default(),
+        storytel: std::sync::Arc::new(storytel::Account::new(storytel_config)),
         spotify: std::sync::Arc::new(spotify::Accounts::new(spotify_config)),
         net: std::sync::Arc::new(net_config),
         audit: Default::default(),

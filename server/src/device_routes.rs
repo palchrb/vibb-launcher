@@ -109,6 +109,12 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
             "/api/devices/music/spotify/token",
             post(handlers::music_api::spotify_token),
         )
+        .route(
+            "/api/devices/music/storytel/token",
+            post(handlers::music_api::storytel_token).layer(DefaultBodyLimit::max(
+                handlers::music_api::STORYTEL_TOKEN_BODY_LIMIT,
+            )),
+        )
         .layer(from_fn_with_state(
             state.clone(),
             security::require_device_token,
