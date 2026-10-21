@@ -530,6 +530,10 @@ findings, merge to `main`, full suite once.
   can't grant an app-op - the parent toggles Usage access once on the phone (PIN-gated Settings row, during a pause)
   or adb; check whether Android's "restricted settings" grey it out for a sideloaded launcher.
   **Superseded the same day: usage access is mandatory** (the user: "D samtykke må gis uansett, det er en integral del av at voip skal funke") - without it no VoIP app rings over the lock at all (no E fallback, no Element X exception); with it, the D rule for every app. Design 57 (`docs/design/57-voip-call-screen-over-lock.md`, in progress). The earlier version:
+  **Measured 2026-10-21 (the user's emulator):** WhatsApp's call-screen arrow starts `com.whatsapp/.home.ui.HomeActivity`
+  in another task (t21 vs the call's t20) - a new activity, so design 57 sees it; Element X rings in
+  `io.element.android.features.call.impl.ui.IncomingCallActivity` and talks in `...ui.ElementCallActivity`, both in the
+  call task (t25), separate from its main screens.
   **The user's rule (2026-10-21): D is the condition.** Another app's call screen comes over the lock only while
   usage access is granted, and then only that call screen (the activity that came up for the call; any other
   activity resumed -> the lock again, with `FLAG_ACTIVITY_NO_USER_ACTION`, "Tilbake til samtalen"). Without usage
