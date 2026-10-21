@@ -10,10 +10,10 @@ object SonosFakes {
     /** A canned reply from src/test/resources/sonos/ (scripts/fake-sonos.py serves the same files). */
     fun fixture(name: String): String = javaClass.classLoader!!.getResource("sonos/$name")!!.readText()
 
-    /** Every fixture file. */
+    /** Every fixture file (the files only: `ws/`, the event socket's messages, is SonosEventsTest's). */
     fun fixtureNames(): List<String> =
-        // !! on both: android.jar marks parentFile and list() nullable, the JDK leaves them platform types
-        File(javaClass.classLoader!!.getResource("sonos/device_description.xml")!!.toURI()).parentFile!!.list()!!.sorted()
+        // !! on both: android.jar marks parentFile and listFiles() nullable, the JDK leaves them platform types
+        File(javaClass.classLoader!!.getResource("sonos/device_description.xml")!!.toURI()).parentFile!!.listFiles()!!.filter { it.isFile }.map { it.name }.sorted()
 
     /** A reply's fields, as Soap returns them. */
     fun reply(name: String, action: String): Map<String, String> = Soap.parseResponse(200, fixture(name), action)

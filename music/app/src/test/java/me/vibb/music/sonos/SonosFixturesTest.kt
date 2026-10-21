@@ -30,6 +30,8 @@ class SonosFixturesTest {
             "transport_transitioning.xml", "zgs_wrapped.xml", "zgs_bare.xml", "fault_701.xml", "fault_710.xml",
             "fault_711.xml", "fault_500.xml", "device_description.xml", "accounts.xml", "ssdp_sonos.txt", "ssdp_other.txt",
             "get_volume.xml", "get_mute.xml", "empty_response.xml",
+            // design 53 §2.1: not replies - the golden DIDLs PlayBodyTest compares (scripts/sonos-play-test.py --golden)
+            "didl_url.xml", "didl_nrk.xml", "didl_storytel.xml",
         )
         assertEquals(checked, SonosFakes.fixtureNames().toSet())
     }

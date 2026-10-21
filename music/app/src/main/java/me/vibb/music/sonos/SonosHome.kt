@@ -12,8 +12,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import me.vibb.music.BuildConfig
 import okhttp3.OkHttpClient
 
 /*
@@ -30,6 +32,12 @@ class SonosHome(context: Context) {
 
     private val wifiNet = MutableStateFlow<Network?>(null)
     private val wifi: Network? get() = wifiNet.value
+
+    /**
+     * The Wi-Fi network (a gate, never a binding): the event socket closes at any change of it and opens
+     * again on the new one (design 53 §2.2 - B's onAvailable may come before A's onLost).
+     */
+    val wifiNetwork: StateFlow<Network?> = wifiNet
     private var client: Pair<Network, OkHttpClient>? = null
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
@@ -74,6 +82,9 @@ class SonosHome(context: Context) {
     }
 
     val soap = Soap { client() }
+
+    /** The event socket's own client for [ip] (design 53 §2.2): this network's SOAP client with the speaker's limited trust. */
+    fun socketClient(ip: String): OkHttpClient = speakerSocketClient(client(), ip, certLog = if (BuildConfig.DEBUG) SonosHome::log else null)
     val cache = SpeakerCache(SonosFiles.cache(app))
 
     val rooms = RoomDirectory(

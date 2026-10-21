@@ -13,17 +13,53 @@ import org.junit.Test
  * palchrb/vibb `pi/daemon.py` `_sonos_body` and `sonos_start_target`'s filter (MIT, Copyright (c)
  * 2026 palchrb), as design 26a §2.5 and §4.2 port them: the art rule, the NRK series branch with the
  * item key as the program id, the speaker-playable filter (HLS only as an NRK series, the public
- * address rule moved to the speaker's fetch), the listing's duration; and the Storytel branch
+ * address rule moved to the speaker's fetch), a DIDL duration only for Storytel (design 53 §2.1, against
+ * the goldens `scripts/sonos-play-test.py --golden` writes); and the Storytel branch
  * (design 26b §5.1, vibb `tests/storytel_sonos.py` 2, 6, 9): a book minted in the play's job.
  */
 class PlayBodyTest {
     private val nrkSerie = entry(id = 7, source = Source.NRK, target = "https://radio.nrk.no/serie/barnas-supersommer", name = "Barnas supersommer")
 
     @Test
-    fun `an RSS item is a url body - its own url, the entry's name as album, the listing's duration`() {
+    fun `an RSS item is a url body - its own url, the entry's name as album, no DIDL duration, the listing's as the hint`() {
         val b = PlayBodies.build(entry(), item(), "RINCON_X", 427.0)!!
-        assertEquals(PlayBody("RINCON_X", Kind.URL, "https://podkast.example/ep12.mp3", "Sommerfuglen", "Barnas Supersommer", null, 1453.0, 427.0), b)
-        assertNull("no listed duration, none sent", PlayBodies.build(entry(), item(durationMs = null), "RINCON_X", 0.0)!!.durationS)
+        assertEquals(PlayBody("RINCON_X", Kind.URL, "https://podkast.example/ep12.mp3", "Sommerfuglen", "Barnas Supersommer", null, null, 427.0, cadenceHintS = 1453.0), b)
+        assertNull("no listed duration, no hint", PlayBodies.build(entry(), item(durationMs = null), "RINCON_X", 0.0)!!.cadenceHintS)
+    }
+
+    // -- design 53 §2.1: vibb's DIDL field for field ("Ikke endre noe i didl!!"), against the generated goldens --
+
+    /** `scripts/sonos-play-test.py --golden` wrote it from vibb's per-kind arguments (the same fixed inputs). */
+    private fun golden(name: String) = SonosFakes.fixture(name)
+
+    @Test
+    fun `d53 the url DIDL is vibb's - title and album, no duration, no art`() {
+        val b = PlayBodies.build(entry(), item(), "RINCON_X", 0.0, art = null)!!
+        assertEquals(golden("didl_url.xml"), builtDidl(b, b.uri))
+    }
+
+    @Test
+    fun `d53 the NRK series DIDL is vibb's - the service uri, class, protocol and desc, no duration`() {
+        val b = PlayBodies.build(nrkSerie, item(key = "MKTT81008181", url = "https://nrk-od.example/MKTT81008181/master.m3u8", hls = true, entryId = 7), "RINCON_X", 0.0)!!
+        assertNull(b.durationS)
+        assertEquals(1453.0, b.cadenceHintS!!, 1e-9)
+        assertEquals(golden("didl_nrk.xml"), builtDidl(b, NrkService.programUri(b.series!!, b.programId!!, NrkService.FALLBACK_SERIAL)))
+    }
+
+    @Test
+    fun `d53 the Storytel DIDL is vibb's - the minted URL and the shelf's duration, no art`() {
+        val minted = "https://cdn.example.invalid/book?token=FAKE-SIG-1"
+        val b = PlayBodies.build(series, book("111"), "RINCON_X", 0.0, art = "https://covers.example.invalid/111.jpg")!!.copy(uri = minted, mint = null)
+        assertEquals(golden("didl_storytel.xml"), builtDidl(b, b.uri))
+    }
+
+    @Test
+    fun `d53 a hash is never an albumArtURI, and the cadence hint never reaches the DIDL`() {
+        val hash = "940b951005008e7207e7f8b8807ac39691025858882b8c67843a29b65e388187"
+        val b = PlayBodies.build(entry(), item().copy(artHash = hash), "RINCON_X", 0.0, art = hash)!!
+        val built = builtDidl(b.copy(cadenceHintS = 99_999.0), b.uri)
+        assertFalse(built.contains("albumArtURI"))
+        assertFalse(built.contains("duration="))
     }
 
     @Test
@@ -43,7 +79,7 @@ class PlayBodyTest {
         assertNull(PlayBodies.build(entry(), item().copy(artHash = hash), "RINCON_X", 0.0)!!.art)
         assertNull(PlayBodies.build(entry(), item().copy(artHash = hash), "RINCON_X", 0.0, art = hash)!!.art)
         val controller = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/sonos/SonosController.kt").readText()
-        assertTrue("the controller's body carries no art", controller.contains("PlayBodies.build(e, item, uid, startS)"))
+        assertTrue("the controller's body carries no art", controller.contains("PlayBodies.build(e, item, uid, startS, art = null)"))
     }
 
     @Test
@@ -149,6 +185,7 @@ class PlayBodyTest {
         assertEquals("no URL yet: the job mints it right before SetAVTransportURI", "", b.uri)
         assertEquals("111", b.mint)
         assertEquals("the shelf's length (a speaker reads 0:00 for an extension-less signed URL)", 721.893, b.durationS!!, 1e-9)
+        assertEquals("and the session's tail hint", 721.893, b.cadenceHintS!!, 1e-9)
         assertNull("no art to the speaker (design 26a §9: a hash has no LAN URL)", b.art)
         assertEquals("Kokosbananas", b.album)
         assertNull("no length listed, none sent", PlayBodies.build(series, book("222", durationMs = null), "RINCON_X", 0.0)!!.durationS)

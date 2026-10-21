@@ -70,8 +70,12 @@ import me.vibb.music.logic.kindOf
 import me.vibb.music.model.PlayItem
 import me.vibb.music.playback.Output
 import me.vibb.music.playback.OutputKind
+import me.vibb.music.playback.PlayerHub
 import me.vibb.music.playback.RendererState
 import me.vibb.music.sonos.RoomsView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 /**
  * The player (design 21 §4.2, `Main.dc.html` v12 `onPlayer`): back + entry title, the cover
@@ -112,6 +116,17 @@ fun PlayerScreen(
     onSleep: () -> Unit,
     onOutput: () -> Unit,
 ) {
+    // design 53 §2.4: the player shows while composed and its activity resumed - a Sonos room without a healthy
+    // event socket polls every second meanwhile (PlayerHub.playerShown, read by the session)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, _ -> PlayerHub.playerShown.value = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            PlayerHub.playerShown.value = false
+        }
+    }
     Column(
         Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),

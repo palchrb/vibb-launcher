@@ -55,7 +55,10 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   `RoomScope`, `RendererChoice`; the Android side `SonosRenderer` (a Media3 `SimpleBasePlayer`), `SonosActor` +
   `SonosPoller`, `SonosHome` (Wi-Fi tracking as a gate; no socket is ever bound to a `Network`: the launcher's
   always-on VPN allows no bypass, so the bind is EPERM - 26a §6.5, `SourceScanTest`), `SsdpScanner` (MulticastLock for
-  the round only), `SonosLocks`, `SonosSuspension`, `SonosTail`.
+  the round only), `SonosLocks`, `SonosSuspension`, `SonosTail`; the event socket (design 53 §2.2): pure `SonosEvents`
+  (the messages, the handshake reducer `Plan`, `SocketEvent`) and `SonosSocket` (OkHttp's own WebSocket: `socketWanted`,
+  the host gate, the speaker's limited trust, the backoff, the parks, the liveness rule); the bar's anchor is
+  `logic/SonosAnchor.kt`.
 - `storytel/` - the phone's Storytel client (26b §4, from vibb `pi/vibb/storytel.py`; the server reads the shelf and
   lists it, the phone never does): `StorytelApi` (pure: AES `pwd=`, the login with the refused-login cooldown, the JWT,
   the asset call's 302 captured as a `Mint`, the login lock), `StorytelHttp` (the seam and `OkHttpStorytelHttp`),
@@ -92,7 +95,10 @@ shared files in `src/test/resources/` must equal `server/testdata/music_{library
 `server/testdata/spotify_hosts.json` (`ContractFilesTest`; `SpotifyHostsTest` checks the constant against it). A release build without the signing properties is unsigned, as the launcher's. Dependencies
 are verified against `gradle/verification-metadata.xml` and the wrapper pins its distribution (security review L9,
 root `CLAUDE.md` "Build and test"; `BuildChainTest`). The canned SOAP replies in `src/test/resources/sonos/`
-(`SonosFixturesTest`) are also what `scripts/fake-sonos.py` answers from (vibb's "two fakes" rule): change a fixture
+(`SonosFixturesTest`) are also what `scripts/fake-sonos.py` answers from (vibb's "two fakes" rule; the fake has no event
+socket - the app's connect to 1443 is refused and parks after five, so the emulator checks the polling fallback;
+`sonos/ws/` holds the socket's messages, `scripts/sonos-ws-probe.py --save` captures real ones with every id and name
+replaced): change a fixture
 and run `python3 -I scripts/fake-sonos.py --selftest` (CI does, `music.yml`). On the emulator the app plays on the
 fake speakers (docs/testing/emulator.md §6h; no multicast there, so no SSDP: the debug feed seeds the cache). Likewise
 `src/test/resources/storytel/` (the login request and answers, the asset 302 and the locked 403, the AES vectors) is
@@ -153,7 +159,12 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
 - **Cleartext http is allowed** (`res/xml/network_security_config.xml`, qa-30-s3b-code H2; `SourceScanTest`): Sonos
   SOAP to a speaker's LAN address, http enclosures, `lan` feeds and the emulator's fakes all need it, and a config
   can name hosts but not ranges. What may be fetched is the app's own rule (the public-only client's address checks,
-  Sonos URLs from IP literals); trust is the system's CAs only.
+  Sonos URLs from IP literals); trust is the system's CAs only - **with one exception** (design 53 §2.2): the Sonos event
+  socket's own client (`speakerSocketClient`, `SonosSocket.kt`) accepts the speaker's self-signed certificate, only for
+  `wss` to the cached ip literal of the uid we command, in a speaker's range (`speakerLiteral`: RFC 1918, link-local,
+  IPv6 ULA/link-local - never loopback or the tailnet), port 1443, `/websocket/api` (`socketGate`,
+  checked before any connect), its host name verifier accepting exactly that ip. No other client gets that trust, and a
+  URL from a socket message (a `MOVED`'s, a player's `websocketUrl`) is never dialled (`SourceScanTest`'s `d53`).
 - Positions are keyed by (entry key, item key), never by URL.
 - A public entry's audio never comes from a private address (21b §2.7): every entry except one the library marks
   `lan` (an RSS feed on the LAN or tailnet).
@@ -400,13 +411,47 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   "å sende med mer enn vi gjør i vibb pi gjør at det blir rejected"): a speaker refuses a `SetAVTransportURI` whose
   metadata carries more than vibb's. `Didl` is vibb's `didl()`; what goes into it is vibb's `_sonos_body` (daemon.py,
   branch pipewire): title, album, the picture when it is http, a `duration` on the `res` only for Storytel - nothing
-  added. (Checked 2026-10-21: the app's `PlayBodies.build` sends the listing's duration for every kind and no picture -
-  PLAN, Fix backlog.)
+  added. Done in design 53-0 (§2.1): `PlayBodies.build` gives a `duration` only to a Storytel book and no picture (the
+  phone holds only hashes, so vibb's http-art rule yields nothing); one pure `builtDidl(body, uri)` builds the DIDL for
+  `SonosTransport.play` and `PlayBodyTest`, which compares it byte for byte with `src/test/resources/sonos/didl_*.xml`
+  (written by `scripts/sonos-play-test.py --golden DIR` from vibb's per-kind arguments - regenerate, never hand-edit).
+  The listing's duration of every kind is `PlayBody.cadenceHintS`: the session's tail cadence only, never the DIDL.
 - **Nothing starts by itself on Sonos either**: adopt sends nothing, a stale or unreachable speaker shows the play
   button, room -> phone plays on only when the speaker was PLAYING. **Every play path is gated** (`playAllowed`, then
   the controller's `mayPlay` before any SOAP): a start, a resume, a step, a natural advance, OUTPUT to a `sonos:` key
   (it starts the speaker, so it is a play) and resumption; a skip on a paused, stopped or not-yet-started room only
   moves where the next play starts.
+- **The Sonos event socket** (design 53 §1-§2.5, round 53-a; ours, not vibb's): one WebSocket per room session to
+  `wss://<cached ip>:1443/websocket/api` (`X-Sonos-Api-Key` = the RFC 4122 example UUID, public; subprotocol
+  `v1.api.smartspeaker.audio`), **events only** - UPnP still sends every command and is the only ours-verifier and the
+  only source of a bookmark; the socket never writes Room and never starts anything. Open while `socketWanted`: the
+  session armed, Wi-Fi up, not closed, the uid not parked; any change of the Wi-Fi network or of the uid we command
+  (a follow) closes it and opens it again; none while the phone renders (only a `SonosRenderer` owns one). Healthy =
+  open, our coordinator's `playback:1` subscribed and acknowledged, its `getPlaybackStatus` read, and live: a verb of
+  ours against a confirmed opposite state (a pause on PLAYING, a resume on PAUSED, a play or a step against the state
+  the socket and the poll agree on - never a seek while paused or a no-op, N3) owes a `playbackStatus` within 3 s -
+  one that came after the verb went out, also before its SOAP answer reached main, pays it (qa-53a-code 2) -, and
+  two ours polls against the socket's state 3 s after its last event also close it. Reconnects 1, 2, 5, 15, 60 s, then
+  300 s, reset only after a healthy socket passed a liveness check; an HTTP answer or five refused connects park the uid
+  6 h (process memory). An event (on main, `SonosController.onSocket`): BUFFERING is TRANSITIONING (the phase only - never
+  the transport, `playWhenReady`, a `Paused`/`Resumed` or a USER pause); our own verb wins until `SETTLE_MS` (a matching
+  state confirms it); outside it a PLAYING or PAUSED newer than the last poll is the effective transport and a
+  measurement - only while the snapshot is fresh and ours, no play settles (an answered play's event is parked for the
+  landing poll, one before the answer dropped) and no IDLE or BUFFERING we didn't cause came since the last ours poll.
+  Every event wakes a confirm poll, at most once a second (an IDLE or a `MOVED` at once), none while the last poll
+  failed. **An IDLE near the end advances at once** through the poll's existing gated STOPPED-near-the-end rule
+  (`advance()`: `mayPlay`, "Til slutten", repeat); a BUFFERING or PLAYING we didn't cause between the IDLE and that poll
+  sets `skipAdvance` - someone else's stream is never replaced. **The bar** (`sonosAnchor`): every measurement of the
+  same item in the same motion within a second re-bases smoothly, a second or more (or a seek, a step, a new item, a play)
+  jumps; a poll is `RelTime + 0.5 s` at GetPositionInfo's return - within the second it never moves the value (the
+  event's exact position stands under a healthy socket) but always moves the anchor's instant on, or the bar would stop
+  at the 60 s extrapolation cap (events come on a change only; qa-53a-code 1) - display only. **The extra polls** (confirm polls; the 1 s display poll while `PlayerHub.playerShown`
+  and the snapshot is ours, fresh and PLAYING, only without a healthy socket) change nothing else: freshness keeps the
+  normal cadence, the stall counts polls 5 s apart (an uncounted one leaves the count alone), the probe tries 1.5 s
+  apart, the aux at most every 60 s, a poll's bookmark at most every 5 s unless the transport or the stream changed;
+  the tail cadence takes the play's listed duration (`cadenceHintS`) when the speaker reads `0:00`. Tests:
+  `SonosEventsTest` (the `ws/` fixtures, provisional until design 53 §5 check 1's capture), `SonosSocketTest`,
+  `SonosAnchorTest`, `SonosControllerTest`'s and `SonosSessionTest`'s `d53`. Owed: design 53 §5 checks 1-5, 9-11.
 - **Never a guess in Room**: `optPos`, the pause freeze, the seed of a play and the age term (capped at 5 s, only
   fresh + PLAYING) never reach a stored position; a bookmark always precedes a Stop or a renderer change (after a
   Stop the speaker reads 0:00).

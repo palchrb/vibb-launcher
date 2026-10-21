@@ -710,7 +710,10 @@ python3 scripts/fake-sonos.py --speakers Stua:1401,Kjøkken:1402 --print-seed > 
 python3 scripts/fake-sonos.py --speakers Stua:1401,Kjøkken:1402            # leave it running; Ctrl+C ends it
 #   --group Stua+Kjøkken     the two as one group (the picker's "Stua + Kjøkken" row, Stua the coordinator)
 #   --script FILE            scripted events, timed from the first Play (see below)
-#   --duration 1453          a track length when the DIDL has none (default: the speaker reads 0:00:00)
+#   --duration 90            a track length when the DIDL has none - since design 53-0 every podcast and NRK item
+#                            (vibb's DIDL: a duration only for a Storytel book); without it a podcast reads 0:00:00
+#                            and never ends: start it with `--duration 90` for the advance steps (the next episode,
+#                            "Til slutten", repeat)
 R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
 adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
 adb shell am broadcast -n $R
@@ -738,8 +741,15 @@ t+15 volume 60
 ```
 
 - The fake's transport: SetAVTransportURI sets the uri, Play plays (TRANSITIONING for 0.5 s first), RelTime runs in
-  real time and the track ends by itself at its DIDL duration (STOPPED, uri kept: an episode end), Seek on a
+  real time and the track ends by itself at its DIDL duration - a Storytel book's - else at `--duration` (STOPPED,
+  uri kept: an episode end; a podcast's DIDL carries no duration since design 53-0, vibb's), Seek on a
   stopped transport is UPnP 701 (the hush and the settled seek), past the end 711; volume and mute.
+- **No event socket in the fake** (design 53 §3, round 53-a): the app dials `10.0.2.2:1443` and is refused - logcat
+  `VibbSonos` shows `sonos socket: ended (REFUSED ...)` with the backoff (1, 2, 5, 15 s) and, after the fifth, `parked
+  for 6 h` - so the emulator checks the polling fallback: with the player screen up and a room playing the fake's log
+  shows a GetPositionInfo every second (none with the screen on another tab or off), and with `--duration 90` the next
+  episode starts at the poll after the end (the STOPPED advance). The socket path itself is checked on the user's
+  speakers (design 53 §5).
 - Step 1 (`sonos/` core) has no screen yet: check the selftest, the seeding and the cache file. With step 3a: the
   "Spill av på" sheet lists Stua and Kjøkken (stale + "Søker etter høyttalere…" when the fake is down), switch phone ->
   Stua -> Kjøkken -> phone (the fake's log shows one Stop per room left, a bookmark before it), the same tile, the

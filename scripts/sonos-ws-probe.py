@@ -29,6 +29,14 @@ group's id changes with its members). --volume N sets this speaker and every roo
 group=/ungroup= to N (UPnP, each at its own ip) before the first command and puts each one's
 volume back after the last; with --do the run then ends by itself.
 
+--save FILE writes every message the speaker sends as a JSON array of `[header, body]` messages (one per
+line, rewritten after each), the music app's fixture format (design 53 §5 check 1,
+`music/app/src/test/resources/sonos/ws/`: split it into the scenario files, no conversion needed): the
+household id, every RINCON uid, every LAN address (IPv4 and IPv6 - a link-local IPv6 can carry the
+speaker's MAC) and every name (rooms, groups, titles) replaced by fake ones, consistently within the
+file - `Sonos_FAKEhousehold000000000000001` (one household: every id maps to it),
+`RINCON_000000000000014NN`, `192.168.1.NN`, `fd00::NN`, `Navn N` - so the capture can be committed as it is.
+
 Ctrl-C ends it. The X-Sonos-Api-Key below is the RFC 4122 example UUID that sonos-websocket sends;
 the speaker accepts it locally - it is not a secret.
 """
@@ -54,6 +62,54 @@ T0 = time.monotonic()
 
 def stamp() -> str:
     return f"{time.strftime('%H:%M:%S')} +{time.monotonic() - T0:7.2f}s"
+
+
+class Saver:
+    """--save: the messages as a JSON array, their ids, addresses and names replaced by fake ones (consistently)."""
+
+    UID = re.compile(r"RINCON_[0-9A-Fa-f]{6,}")
+    HOUSEHOLD = re.compile(r"Sonos_[A-Za-z0-9._-]+")
+    IPV4 = re.compile(r"\b(?:10|172|192|169)\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b")
+    # an IPv6 literal: compressed (with "::") or full (eight groups); never a time like 0:24:13
+    IPV6 = re.compile(r"(?i)(?<![\w:])(?:(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?"
+                      r"|::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4})(?![\w:])")
+    NAME_KEYS = {"name", "groupName", "roomName", "title", "artist", "album"}
+
+    def __init__(self, path: str):
+        self.path = path
+        self.messages = []
+        self.uids, self.ips, self.ip6s, self.names = {}, {}, {}, {}
+
+    def _uid(self, m):
+        return self.uids.setdefault(m.group(0), f"RINCON_{'0' * 12}014{len(self.uids) % 100:02d}")
+
+    def _ip(self, m):
+        return self.ips.setdefault(m.group(0), f"192.168.1.{16 + len(self.ips)}")
+
+    def _ip6(self, m):
+        return self.ip6s.setdefault(m.group(0).lower(), f"fd00::{16 + len(self.ip6s):x}")
+
+    def _text(self, v: str) -> str:
+        v = self.UID.sub(self._uid, v)
+        v = self.HOUSEHOLD.sub("Sonos_FAKEhousehold000000000000001", v)
+        v = self.IPV6.sub(self._ip6, v)
+        return self.IPV4.sub(self._ip, v)
+
+    def scrub(self, v, key=None):
+        if isinstance(v, dict):
+            return {k: self.scrub(x, k) for k, x in v.items()}
+        if isinstance(v, list):
+            return [self.scrub(x, key) for x in v]
+        if isinstance(v, str):
+            if key in self.NAME_KEYS:
+                return self.names.setdefault(v, f"Navn {len(self.names) + 1}")
+            return self._text(v)
+        return v
+
+    def save(self, header: dict, body: dict) -> None:
+        self.messages.append(json.dumps([self.scrub(header), self.scrub(body)], ensure_ascii=False))
+        with open(self.path, "w", encoding="utf-8") as out:  # whole each time: a Ctrl-C leaves a valid array
+            out.write("[\n  " + ",\n  ".join(self.messages) + "\n]\n")
 
 
 def short(body: dict) -> str:
@@ -170,7 +226,7 @@ async def run_steps(ws, session, steps: list, gap: float, live: dict, players: d
 
 async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio.Event,
                          steps: list | None = None, gap: float = 4.0, everything: bool = False,
-                         volume: int | None = None) -> None:
+                         volume: int | None = None, saver: Saver | None = None) -> None:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE  # the speaker's certificate is self-signed
@@ -197,6 +253,8 @@ async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio
                     break
                 continue
             header, body = msg.json()
+            if saver:
+                saver.save(header, body)
             if household is None and header.get("householdId"):
                 household = header["householdId"]
                 print(f"{stamp()} WS household {household}")
@@ -290,10 +348,12 @@ async def main() -> None:
     ap.add_argument("--gap", type=float, default=4.0, help="seconds between --do commands (default 4)")
     ap.add_argument("--all", action="store_true", help="also follow every other group's playback")
     ap.add_argument("--volume", type=int, help="with --do: this speaker and the rooms named set to N first, put back after")
+    ap.add_argument("--save", metavar="FILE", help="write every message to a JSON array, ids, addresses and names replaced (fixtures)")
     args = ap.parse_args()
     ready = asyncio.Event()
     async with aiohttp.ClientSession() as session:
-        tasks = [asyncio.create_task(websocket_side(session, args.ip, ready, args.do, args.gap, args.all, args.volume))]
+        saver = Saver(args.save) if args.save else None
+        tasks = [asyncio.create_task(websocket_side(session, args.ip, ready, args.do, args.gap, args.all, args.volume, saver))]
         if args.poll:
             tasks.append(asyncio.create_task(upnp_side(session, args.ip, ready)))
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

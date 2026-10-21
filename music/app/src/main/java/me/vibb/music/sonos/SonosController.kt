@@ -2,8 +2,11 @@ package me.vibb.music.sonos
 
 import kotlinx.coroutines.CancellationException
 import me.vibb.music.logic.Repeat
+import me.vibb.music.logic.SonosAnchor
+import me.vibb.music.logic.SonosMeasure
 import me.vibb.music.logic.advanceIndex
 import me.vibb.music.logic.durationByConsumableId
+import me.vibb.music.logic.sonosAnchor
 import me.vibb.music.logic.sonosMintCode
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
@@ -34,6 +37,10 @@ import kotlin.math.roundToInt
  * Positions: the snapshot holds what the speaker MEASURED (plus the duration carry). A seek's target,
  * the pause freeze and the extrapolation are display facts kept beside it, so the bookmark - the
  * only write, [bookmarkNow] - can never persist a guess (QA H3).
+ *
+ * Design 53 (round 53-a, ours): the speaker's event socket ([onSocket]) confirms our own verbs, re-bases
+ * the bar ([sonosAnchor], display only) and wakes confirm polls; every decision - ours, the advance,
+ * the follow, grouped away, the bookmark - stays a poll's.
  */
 
 /** The actor (design 26a §0): SOAP in order on one IO consumer, results back on the main thread. */
@@ -171,6 +178,10 @@ class SonosController(
     private val minter: StorytelMinter = StorytelMinter { _, _, _ -> Mint.NotConfigured },
     /** Design 26b §4.6 (d): the debug switch's fake on 10.0.2.2 may hand the speaker a private literal. */
     private val privateMintAllowed: () -> Boolean = { StorytelEndpoints.privateMintAllowed() },
+    /** The speaker's event socket (design 53 §2.2): its health and the liveness rule's hooks. */
+    private val events: SonosEventLink = SonosEventLink.NONE,
+    /** Wake the poller now: a confirm poll (design 53 §2.3). */
+    private val wakePoll: () -> Unit = {},
 ) {
     /**
      * The room: the uid we command (a group by its coordinator), and its label. Migration follow moves
@@ -293,6 +304,39 @@ class SonosController(
     /** Our last verb or play: its fast-poll window keeps the locks (§6.3). */
     private var verbAt = FAR_PAST
 
+    // -- design 53: the event socket and the display anchor --
+
+    /** What the bar shows ([sonosAnchor]): re-based by every measurement of ours, display only. */
+    private var anchor: SonosAnchor? = null
+
+    /** The socket's last state of our group and when it came (the liveness and disagreement rules). */
+    private var wsState: WsPlayback? = null
+    private var wsAt = FAR_PAST
+
+    /** A socket state that passed the anchor's gate: the effective transport until a newer poll. */
+    private var wsTr: Opt? = null
+
+    /** An IDLE, or a BUFFERING we didn't cause, came since the last ours poll: no socket measurement counts. */
+    private var wsBlocked = false
+
+    /** The generation an IDLE asked a confirm poll for. */
+    private var idleGen: Long? = null
+    private var idleAt = FAR_PAST
+
+    /** The takeover race (§2.3): that generation's one STOPPED near the end decides nothing. */
+    private var skipAdvance: Long? = null
+
+    /** An event that came while our answered play settled: the poll that sees it land applies it. */
+    private var parked: SocketEvent.Playback? = null
+    private var lastWakeAt = FAR_PAST
+    private var wakeQueued = false
+    private var disagreements = 0
+
+    /** The last non-forced bookmark from a poll: at most every [BOOKMARK_MIN_MS], unless the transport changed. */
+    private var bmAt = FAR_PAST
+    private var bmTr: TransportState? = null
+    private var bmStream: String? = null
+
     // -- what the renderer reads --
 
     /** True once per natural advance: the next index change is an automatic one. */
@@ -309,8 +353,17 @@ class SonosController(
 
     private fun opt(now: Long): Opt? = optTr?.takeIf { now - it.at <= SETTLE_MS }
 
-    /** The transport the screens should believe: our own verb's while it is held, else the speaker's. */
-    fun effectiveTransport(now: Long): TransportState? = opt(now)?.state ?: snap?.transport
+    /**
+     * The transport the screens should believe: our own verb's while it is held, else a socket state
+     * newer than the last poll (a pause from the Sonos app shows at once, design 53 §2.3), else the
+     * speaker's as polled.
+     */
+    fun effectiveTransport(now: Long): TransportState? = opt(now)?.state ?: wsNewer()?.state ?: snap?.transport
+
+    private fun wsNewer(): Opt? = wsTr?.takeIf { it.at > (snap?.measuredAt ?: FAR_PAST) }
+
+    /** The socket's last word is BUFFERING, newer than the last poll: the phase only (§2.3), never the transport. */
+    private fun wsBuffering(): Boolean = wsState == WsPlayback.BUFFERING && wsAt > (snap?.measuredAt ?: FAR_PAST)
 
     /**
      * `status()`'s `playing` (design 26a §3.3): a fresh snapshot, PLAYING, reachable, ours. What the
@@ -371,7 +424,8 @@ class SonosController(
             s == null -> spec(PlayPhase.BUFFERING, heldPwr)
             // the first failed polls are a transient: BUFFERING keeps the FGS (one failure must never read IDLE)
             !s.reachable -> if (s.failedPolls <= TRANSIENT_FAILURES) spec(PlayPhase.BUFFERING, heldPwr) else spec(PlayPhase.READY, false)
-            s.transitioning -> spec(PlayPhase.BUFFERING, heldPwr)
+            // the socket's BUFFERING is TRANSITIONING (design 53 §2.3): the phase, never the transport or playWhenReady
+            s.transitioning || (wsBuffering() && s.fresh(now) && s.ours) -> spec(PlayPhase.BUFFERING, heldPwr)
             !s.fresh(now) -> spec(PlayPhase.READY, false)
             !s.ours -> spec(PlayPhase.READY, false)
             tr == TransportState.PLAYING -> spec(PlayPhase.READY, true)
@@ -425,19 +479,33 @@ class SonosController(
         val s = snap
         optPos?.let { o -> if (now - o.at <= SEEK_HOLD_MS && o.uri == s?.uri) return Triple((o.s * 1000).toLong(), now, false) }
         frozen?.let { f -> if (opt(now)?.state == TransportState.PAUSED_PLAYBACK) return Triple((f.s * 1000).toLong(), now, false) }
-        val last = ((lastOursRel ?: 0.0) * 1000).toLong()
-        if (s == null || !s.ours) return Triple(last, now, false)
-        val rel = s.relS ?: return Triple(last, now, false)
-        val relMs = (rel * 1000).toLong()
-        val measuredAt = s.measuredAt ?: return Triple(relMs, now, false)
-        if (!s.fresh(now)) return Triple(relMs, now, false)
+        // design 53 §2.4: the anchor every measurement of ours re-bases (a poll's RelTime + 0.5 s, an event's exact
+        // position); a play or a step in flight keeps the old one until its seed (the speaker may still play the old item)
+        val a = anchor
+        val last = a?.posMs ?: ((lastOursRel ?: 0.0) * 1000).toLong()
+        if (s == null || !s.ours || a == null) return Triple(last, now, false)
+        if (!s.fresh(now)) return Triple(a.posMs, now, false)
+        val o = opt(now)
         return when {
-            // one age term: the poll's own measuredAt (vibb summed two clocks across its process split)
-            s.transport == TransportState.PLAYING && opt(now)?.state != TransportState.PAUSED_PLAYBACK -> Triple(relMs, measuredAt, true)
+            // one age term from the measurement's own instant (vibb summed two clocks across its process split)
+            a.moving && o?.state != TransportState.PAUSED_PLAYBACK -> Triple(a.posMs, a.at, true)
             // our resume while the speaker still reads PAUSED: it plays from our verb on
-            opt(now)?.state == TransportState.PLAYING -> Triple(relMs, opt(now)!!.at, true)
-            else -> Triple(relMs, now, false)
+            !a.moving && o?.state == TransportState.PLAYING -> Triple(a.posMs, maxOf(o.at, a.at), true)
+            else -> Triple(a.posMs, now, false)
         }
+    }
+
+    /** What the anchor is about: the generation, the item on the speaker and its uri, the last deliberate seek or start. */
+    private fun anchorKey(): String = "$gen|${playing?.itemKey}|${playing?.uri?.let(::normUri)}|$seekAt"
+
+    /**
+     * A measurement of our stream re-bases the anchor ([sonosAnchor]); [poll]: `RelTime` truncates, so
+     * its display value is half a second on (display only, never a [Fields] value the bookmark reads).
+     */
+    private fun measure(posMs: Long, at: Long, moving: Boolean, poll: Boolean, seed: Boolean = false) {
+        // a seed is no measurement: its own key, so the first real one after a play is taken at once
+        val key = if (seed) anchorKey() + "|seed" else anchorKey()
+        anchor = sonosAnchor(anchor, SonosMeasure(if (poll) posMs + POLL_HALF_MS else posMs, at, moving, key))
     }
 
     // -- the queue --
@@ -469,6 +537,8 @@ class SonosController(
         endsNear = 0
         ended = false
         endedFlag = false
+        anchor = null
+        forgetEvents()
         host.changed()
     }
 
@@ -492,6 +562,8 @@ class SonosController(
         pending = null
         optTr = null
         stepWant = null
+        anchor = null
+        forgetEvents()
         host.changed()
     }
 
@@ -522,6 +594,8 @@ class SonosController(
         stepWant = null
         seekWant = null
         endsNear = 0
+        anchor = null
+        forgetEvents()
         accept(live)
         host.log("sonos: adopted a live session on start [${idx + 1}/${items.size}] ${items[idx].title}")
         host.changed()
@@ -594,6 +668,8 @@ class SonosController(
     private fun resume(fallback: Boolean) {
         if (!mayPlay()) return host.log("sonos: resume refused - playing isn't allowed now")
         val now = elapsedMs()
+        // the liveness rule (design 53 §2.2, N3): a resume on a confirmed PAUSED owes an event
+        val owes = socketAgrees(TransportState.PAUSED_PLAYBACK, now)
         verbAt = now
         optTr = Opt(TransportState.PLAYING, now)
         frozen = null
@@ -605,6 +681,7 @@ class SonosController(
                 optTr = null
                 if (fallback && g == gen && !closed) restart()
             }
+            if (owes && r.getOrNull() == true) events.owed(now, elapsedMs())
             host.changed()
         }
     }
@@ -620,6 +697,8 @@ class SonosController(
         if (pending == null && snap?.ours != true) return
         val now = elapsedMs()
         bookmarkNow(force = false)
+        // the liveness rule (design 53 §2.2, N3): a pause on a confirmed PLAYING owes an event; one while paused doesn't
+        val owes = pending == null && socketAgrees(TransportState.PLAYING, now)
         if (effectiveTransport(now) == TransportState.PLAYING) {
             frozen = OptPos(spec(now).positionAt(now) / 1000.0, now, snap?.uri)
         }
@@ -632,9 +711,21 @@ class SonosController(
                 optTr = null
                 frozen = null
             }
+            if (owes && r.getOrNull() == true) events.owed(now, elapsedMs())
             host.changed()
         }
         host.changed()
+    }
+
+    /**
+     * The socket and a fresh ours poll agree on the state ([tr] when given) - the liveness rule owes an
+     * event only for a verb against a confirmed state (design 53 §2.2, revision check N3).
+     */
+    private fun socketAgrees(tr: TransportState?, now: Long): Boolean {
+        val ws = wsState ?: return false
+        val s = snap ?: return false
+        if (!events.healthy || ws == WsPlayback.BUFFERING || !s.fresh(now) || !s.ours || s.transitioning) return false
+        return ws.transport == s.transport && (tr == null || s.transport == tr)
     }
 
     /** The player's stop: the bookmark, then Stop when the stream is ours; the session is over. */
@@ -662,6 +753,16 @@ class SonosController(
         frozen = null
         stepWant = null
         seekWant = null
+        forgetEvents()
+    }
+
+    /** What the socket said before this play, load or end (design 53 §2.3): never carried across one. */
+    private fun forgetEvents() {
+        wsTr = null
+        wsBlocked = false
+        idleGen = null
+        skipAdvance = null
+        parked = null
     }
 
     /**
@@ -776,7 +877,10 @@ class SonosController(
         }
         val e = entry
         val item = items.getOrNull(idx)
-        val body = if (e != null && item != null) PlayBodies.build(e, item, uid, startS) else null
+        // art = null: the phone holds only hashes (a listing's `art`, the library's `cover`) the server serves
+        // to the phone's bearer - no http URL a speaker could fetch, so vibb's http-only rule yields nothing
+        // (design 53 §0.3, §2.1)
+        val body = if (e != null && item != null) PlayBodies.build(e, item, uid, startS, art = null) else null
         if (body == null || item == null) {
             host.log("sonos: nothing a speaker can play at ${idx + 1}")
             failed(why, SonosException("nothing-remote-playable"))
@@ -792,12 +896,15 @@ class SonosController(
         verbAt = now
         if (deliberate) seekAt = now
         index = idx
+        // the liveness rule (design 53 §2.2, N3): a new item against a state the socket and the poll agree on owes an event
+        val owes = socketAgrees(null, now)
         pending = Pending(item.key, now, null)
         optTr = Opt(TransportState.PLAYING, now)
         optPos = null
         frozen = null
         bmHold = null
         endsNear = 0
+        forgetEvents()
         val volume = restoreVolume
         // a session's start brings a louder speaker down to the parent's cap before Play (§5.3); a
         // step or an advance inside the session never does (a louder volume set elsewhere stays)
@@ -848,7 +955,14 @@ class SonosController(
                     }
                     r.onFailure { host.log("sonos: a superseded play failed (${it.javaClass.simpleName})") }
                 } else {
-                    r.fold({ res -> if (res == null) dropped(idx, startS, deliberate) else played(idx, item, res, startS, volume, volSet) }, { failed(why, it) })
+                    r.fold({ res ->
+                        if (res == null) {
+                            dropped(idx, startS, deliberate)
+                        } else {
+                            played(idx, item, res, startS, volume, volSet)
+                            if (owes) events.owed(now, elapsedMs())
+                        }
+                    }, { failed(why, it) })
                 }
             } catch (t: Exception) {
                 host.log("sonos: play result failed (${t.javaClass.simpleName})")
@@ -945,6 +1059,8 @@ class SonosController(
         seeded = true
         lastOursRel = startS
         lastOursDur = listed
+        // the seed's anchor: a new key (a play), so the bar jumps to the start at once (design 53 §2.4)
+        measure((startS * 1000).toLong(), now, moving = true, poll = false, seed = true)
         if (startS >= 5 && !res.sought) {
             bmHold = BmHold(item.key, startS, now)
             host.log("sonos: seek refused - playing from the top, bookmark held at ${startS.toInt()}s")
@@ -1010,6 +1126,11 @@ class SonosController(
             val landed = p.uri != null && polled.reachable && polled.ours && normUri(polled.uri) == normUri(p.uri)
             if (landed || (p.uri != null && now - p.at > SETTLE_MS)) {
                 pending = null
+                // design 53 §2.3: an event parked while our play settled counts once this poll saw the play land
+                parked?.let { e ->
+                    parked = null
+                    if (landed) playback(e, now)
+                }
             } else {
                 return // settle: the speaker may still report the PREVIOUS track; the seed stands
             }
@@ -1032,15 +1153,179 @@ class SonosController(
         }
         if (follow(s, now)) return
         if (!s.fresh(now) || !s.ours) return // foreign, hijacked or old data: observe, never act
+        // an ours poll: the socket's measurements count again (design 53 §2.3)
+        wsBlocked = false
+        agreement(s, now)
         val rel = s.relS
         val dur = s.durS
         if (rel != null && s.transport?.live == true) {
-            bookmarkNow(force = false)
+            // design 53 §2.4: the extra polls (confirm, 1 s) write at most every BOOKMARK_MIN_MS - a changed transport
+            // (a pause from the Sonos app) at once: that pause point is the bookmark that matters most; and another
+            // stream (a new item, a follow's uri) is another bookmark
+            val stream = playing?.let { "${it.itemKey}|${normUri(it.uri)}" }
+            if (now - bmAt >= BOOKMARK_MIN_MS || s.transport != bmTr || stream != bmStream) {
+                bmAt = now
+                bmTr = s.transport
+                bmStream = stream
+                bookmarkNow(force = false)
+            }
             endsNear = if (dur != null && dur > 0 && rel > dur - ENDS_NEAR_S) endsNear + 1 else 0
         }
         if (s.transport == TransportState.STOPPED && endsNear > 0 && playing != null) {
             endsNear = 0
-            advance()
+            idleGen = null
+            if (skipAdvance == gen) {
+                // the takeover race (design 53 §2.3): someone started a stream on our room at the episode's end
+                skipAdvance = null
+                host.log("sonos: the end was followed by a stream we didn't start - no advance")
+            } else {
+                advance()
+            }
+            return
+        }
+        // our own stream plays or pauses again: the takeover skip is over
+        if (s.transport?.live == true && !s.transitioning) skipAdvance = null
+        // an IDLE's confirm poll that still reads PLAYING or TRANSITIONING asks again every second, up to
+        // IDLE_RECHECK_UNTIL_MS after the IDLE: UPnP lags a change by 0.3-2.6 s (design 53 §0.1, qa-53a-code 4)
+        if (idleGen == gen && (s.transport == TransportState.PLAYING || s.transitioning)) {
+            if (now - idleAt < IDLE_RECHECK_UNTIL_MS) {
+                work.after(IDLE_RECHECK_MS) { if (!closed) wakePoll() }
+            } else {
+                idleGen = null
+            }
+        }
+    }
+
+    /**
+     * The disagreement rule (design 53 §2.2): two ours polls in a row that see PLAYING against the
+     * socket's PAUSED or IDLE (or the reverse), each [DISAGREE_AFTER_MS] or more after the socket's
+     * last event - it missed a change made outside the app: dead.
+     */
+    private fun agreement(s: Fields, now: Long) {
+        val ws = wsState
+        val polled = s.transport
+        val differs = events.healthy && ws != null && !s.transitioning && now - wsAt >= DISAGREE_AFTER_MS &&
+            ((polled == TransportState.PLAYING && (ws == WsPlayback.PAUSED || ws == WsPlayback.IDLE)) ||
+                ((polled == TransportState.PAUSED_PLAYBACK || polled == TransportState.STOPPED) && ws == WsPlayback.PLAYING))
+        disagreements = if (differs) disagreements + 1 else 0
+        if (disagreements >= 2) {
+            disagreements = 0
+            host.log("sonos: two polls disagree with the socket ($polled vs $ws) - closing it")
+            events.disagreed()
+        }
+    }
+
+    // -- the event socket (design 53 §2.3; main thread) --
+
+    /**
+     * One event of the speaker's socket. It never starts, stops or writes anything: it confirms our
+     * own verb, re-bases the bar, and wakes a confirm poll - the poll still decides ours, the advance,
+     * the follow and grouped away, only sooner.
+     */
+    fun onSocket(e: SocketEvent) {
+        if (closed) return
+        try {
+            val now = elapsedMs()
+            when (e) {
+                is SocketEvent.Playback -> {
+                    wsState = e.state
+                    wsAt = e.at
+                    if (session) {
+                        wake(immediate = e.state == WsPlayback.IDLE, now)
+                        playback(e, now)
+                    }
+                }
+                is SocketEvent.Moved -> if (session) wake(immediate = true, now)
+                is SocketEvent.Groups -> if (session) wake(immediate = false, now)
+                is SocketEvent.Health -> if (!e.healthy) {
+                    // a socket that went away says nothing more: polling alone, as before it
+                    wsState = null
+                    wsTr = null
+                    wsBlocked = false
+                    parked = null
+                    disagreements = 0
+                }
+            }
+        } catch (x: Exception) {
+            host.log("sonos socket event failed: $x")
+        }
+        host.changed()
+    }
+
+    /** A confirm poll, at most once per [EVENT_WAKE_MIN_MS] (an IDLE or a `MOVED` at once), never while the last poll failed. */
+    private fun wake(immediate: Boolean, now: Long) {
+        if (snap?.reachable == false) return // the UNREACHABLE backoff stands
+        val wait = EVENT_WAKE_MIN_MS - (now - lastWakeAt)
+        if (immediate || wait <= 0) {
+            lastWakeAt = now
+            wakePoll()
+            return
+        }
+        if (wakeQueued) return
+        wakeQueued = true
+        work.after(wait) {
+            wakeQueued = false
+            if (!closed && session && snap?.reachable != false) {
+                lastWakeAt = elapsedMs()
+                wakePoll()
+            }
+        }
+    }
+
+    /**
+     * A `playbackStatus` of our group (§2.3): BUFFERING is TRANSITIONING - the phase only; our own
+     * verb wins until it settles; outside it PLAYING and PAUSED are the effective transport and a
+     * measurement, under one gate: the snapshot fresh and ours, no play settling, no IDLE and no
+     * BUFFERING we didn't cause since the last ours poll. While our answered play settles the event
+     * is parked (the landing poll applies it); before the play answered it is the old track's, dropped.
+     */
+    private fun playback(e: SocketEvent.Playback, now: Long) {
+        val p = pending
+        if (p != null) {
+            if (p.uri != null) parked = e
+            return
+        }
+        val ours = now - verbAt <= SETTLE_MS
+        val s = snap
+        val open = s != null && s.fresh(now) && s.ours
+        when (e.state) {
+            WsPlayback.IDLE -> {
+                // the end, a takeover, a stop: the confirm poll decides (pollTick's STOPPED near the end)
+                wsBlocked = true
+                idleGen = gen
+                idleAt = now
+            }
+            WsPlayback.BUFFERING -> {
+                if (!ours) {
+                    wsBlocked = true
+                    if (idleGen == gen) skipAdvance = gen
+                }
+                // at most the anchor stops moving, at the extrapolated value - not under a verb of ours (a resume's
+                // start, a seek: the verb's intent and the seek hold show meanwhile)
+                val a = anchor
+                if (open && a != null && a.moving && opt(now) == null) anchor = a.copy(posMs = a.positionAt(e.at), at = e.at, moving = false)
+            }
+            WsPlayback.PLAYING, WsPlayback.PAUSED -> {
+                if (e.state == WsPlayback.PLAYING && !ours && idleGen == gen) skipAdvance = gen
+                val tr = e.state.transport
+                val o = opt(now)
+                if (o != null && o.state != tr) return // our own verb wins until SETTLE_MS or a poll decides
+                if (!open || wsBlocked) return
+                if (o != null) {
+                    // confirmed: the button settles now. Our resume's bar already ran from the tap (position()):
+                    // the anchor takes that motion first, so the event re-bases within the second, never a step
+                    // back by the command's latency (qa-53a-code 3)
+                    val a = anchor
+                    if (tr == TransportState.PLAYING && a != null && !a.moving) anchor = a.copy(at = maxOf(o.at, a.at), moving = true)
+                    optTr = null
+                    frozen = null
+                }
+                wsTr = Opt(tr, e.at)
+                val pos = e.positionMs ?: return
+                // the seek hold ends on an exact position near its target - never on a BUFFERING's pre-seek one
+                optPos?.let { if (abs(pos - (it.s * 1000).toLong()) <= SEEK_EVENT_TOL_MS) optPos = null }
+                measure(pos, e.at, moving = e.state == WsPlayback.PLAYING, poll = false)
+            }
         }
     }
 
@@ -1074,6 +1359,8 @@ class SonosController(
         if (s.ours && s.relS != null) {
             lastOursRel = s.relS
             lastOursDur = s.durS?.takeIf { it > 0 } ?: lastOursDur
+            // the bar's anchor (design 53 §2.4), at the instant the speaker measured it (GetPositionInfo's return)
+            if (s.reachable) measure((s.relS * 1000).toLong(), s.measuredAt ?: elapsedMs(), moving = s.transport == TransportState.PLAYING, poll = true)
         }
     }
 
@@ -1394,6 +1681,27 @@ class SonosController(
 
         /** The bookmark's age term at most (vibb's sidecar measurement lag; design 26a §9). */
         const val BOOKMARK_AGE_MAX_MS = 5_000L
+
+        /** Design 53 §2.4: a poll's non-forced bookmark at most this often (the confirm and 1 s polls), unless the transport changed. */
+        const val BOOKMARK_MIN_MS = 5_000L
+
+        /** Design 53 §2.3: an event wakes a confirm poll at most this often (an IDLE or a `MOVED` at once). */
+        const val EVENT_WAKE_MIN_MS = 1_000L
+
+        /** An IDLE's confirm poll that still reads PLAYING or TRANSITIONING asks once more after this. */
+        const val IDLE_RECHECK_MS = 1_000L
+
+        /** ... for this long after the IDLE: the UPnP lag measured (0.3-2.6 s), then the normal cadence. */
+        const val IDLE_RECHECK_UNTIL_MS = 3_000L
+
+        /** The seek hold ends on a PLAYING or PAUSED event this close to the target (the socket's position is exact). */
+        const val SEEK_EVENT_TOL_MS = 1_000L
+
+        /** `RelTime` truncates: a poll's display anchor is half a second on (design 53 §2.4, display only). */
+        const val POLL_HALF_MS = 500L
+
+        /** The disagreement rule: a poll counts against the socket only this long after its last event. */
+        const val DISAGREE_AFTER_MS = 3_000L
 
         /** The live classify of a switch home (`/state?live=1`, 1021-1039). */
         const val LIVE_BUDGET_MS = 1_500L

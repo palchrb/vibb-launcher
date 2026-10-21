@@ -84,8 +84,12 @@ class SonosSessionTest {
         spk.failOn = mapOf("getgroup" to { SpeakerUnreachable("x") })
         // an empty uri decides nothing, so only the aux could change the membership
         spk.position = spk.position.copy(trackUri = "")
-        repeat(11) { s.classify(spk) }
+        repeat(11) {
+            clock.advance(5_000) // 12 polls at the 5 s cadence: the aux's 60 s floor too (design 53 §2.4)
+            s.classify(spk)
+        }
         assertEquals("not again before the 12th poll", 1, spk.log.count { it == "getgroup" })
+        clock.advance(5_000)
         val f = s.classify(spk)
         assertEquals("the volume refreshed", 40, f.volume)
         assertTrue("a failed group read keeps the last topology", f.groupedAway)
@@ -173,7 +177,10 @@ class SonosSessionTest {
         val s = session()
         warm(s)
         val probe = Probe()
-        repeat(5) { s.maybeProbeMigration(stoppedEmpty, probe) }
+        repeat(5) {
+            clock.advance(1_500) // tries 1.5 s apart (design 53 §2.4)
+            s.maybeProbeMigration(stoppedEmpty, probe)
+        }
         assertEquals(SonosSession.MIGRATE_TRIES, probe.topology)
         assertNull(s.streamMoved)
         assertEquals(3, logs.count { it.startsWith("migration probe ") && "/3:" in it })
@@ -217,7 +224,10 @@ class SonosSessionTest {
         val snap = fields(TransportState.STOPPED, "")
         assertEquals("attempts land at seconds, not the 60 s stopped cadence", 5_000L, s.cadenceMs(TransportState.STOPPED, snap, 0))
         assertEquals("an episode-end STOPPED (uri retained) keeps its cadence", 60_000L, s.cadenceMs(TransportState.STOPPED, fields(TransportState.STOPPED, uri), 0))
-        repeat(3) { s.maybeProbeMigration(snap, Probe()) }
+        repeat(3) {
+            clock.advance(1_500)
+            s.maybeProbeMigration(snap, Probe())
+        }
         assertEquals(60_000L, s.cadenceMs(TransportState.STOPPED, snap, 0))
         val s2 = session()
         warm(s2)
@@ -248,6 +258,103 @@ class SonosSessionTest {
     }
 
     @Test
+    fun `d53 the 1 s display poll only while the player shows, the socket isn't healthy and ours plays fresh - freshness keeps the normal cadence`() {
+        var shown = true
+        var healthy = false
+        val s = SonosSession({ clock.now }, playerShown = { shown }, socketHealthy = { healthy })
+        s.adopt(kid, Kind.URL, uri)
+        val spk = speaker(uri)
+        clock.advance(31_000) // past the arm's fast window: the cruise is 15 s
+        assertEquals(1_000L, (s.tick({ spk }, null) as Tick.Next).delayMs)
+        assertEquals("freshness is the normal rule's cadence, never 1 s", 15_000L, s.snapshot.measuredCadenceMs)
+        assertTrue("so the screen going off doesn't read stale for seconds", s.snapshot.fresh(clock.now + 20_000))
+        healthy = true
+        assertEquals("a healthy socket pushes every change", 15_000L, (s.tick({ spk }, null) as Tick.Next).delayMs)
+        healthy = false
+        shown = false
+        assertEquals(15_000L, (s.tick({ spk }, null) as Tick.Next).delayMs)
+        shown = true
+        spk.transport = "PAUSED_PLAYBACK"
+        assertEquals("paused: no", 15_000L, (s.tick({ spk }, null) as Tick.Next).delayMs)
+        spk.transport = "PLAYING"
+        spk.position = spk.position.copy(trackUri = "https://elsewhere.example/x.mp3")
+        assertEquals("not ours: no", 15_000L, (s.tick({ spk }, null) as Tick.Next).delayMs)
+    }
+
+    @Test
+    fun `d53 an uncounted poll leaves the stall count and the last position alone - the stall needs frozen polls 5 s apart`() {
+        val s = session()
+        val spk = speaker(uri, rel = "0:07:11")
+        fun poll(rel: String): Double? {
+            spk.position = spk.position.copy(relTime = rel)
+            return (s.tick({ spk }, null) as Tick.Next).stallRetryAtS
+        }
+        clock.advance(5_000)
+        val retries = mutableListOf(poll("0:07:11"))
+        repeat(3) {
+            // a confirm poll a second later, another second read: neither a reset nor a count
+            clock.advance(1_000)
+            retries += poll("0:07:12")
+            clock.advance(4_000)
+            retries += poll("0:07:11")
+        }
+        assertEquals("the fourth counted frozen poll retries", listOf(null, null, null, null, null, null, 431.0), retries)
+    }
+
+    @Test
+    fun `d53 the probe's tries at least 1_5 s apart whatever woke the poll, the aux at most every 60 s, measuredAt at GetPositionInfo's return`() {
+        val s = session()
+        warm(s)
+        val probe = Probe()
+        s.maybeProbeMigration(stoppedEmpty, probe)
+        clock.advance(500)
+        s.maybeProbeMigration(stoppedEmpty, probe)
+        assertEquals("a confirm poll 0.5 s later doesn't try", 2, s.migrateTriesLeft)
+        clock.advance(1_000)
+        s.maybeProbeMigration(stoppedEmpty, probe)
+        assertEquals(1, s.migrateTriesLeft)
+
+        val a = session()
+        val spk = speaker(uri)
+        repeat(13) {
+            clock.advance(1_000) // the 1 s display poll
+            a.classify(spk)
+        }
+        assertEquals("12 polls but 13 s: one group read", 1, spk.log.count { it == "getgroup" })
+        clock.advance(60_000)
+        a.classify(spk)
+        assertEquals(2, spk.log.count { it == "getgroup" })
+
+        val stamped = session()
+        val slow = object : SpeakerIo by speaker(uri) {
+            override fun transportInfo(): String? {
+                clock.advance(400) // GetTransportInfo takes its time after GetPositionInfo returned
+                return "PLAYING"
+            }
+        }
+        val before = clock.now
+        assertEquals("stamped where it measured, not after the other reads", before, stamped.classify(slow, aux = false).measuredAt)
+    }
+
+    @Test
+    fun `d53 the tail cadence from the listing's hint when the speaker reads 0-00 - ours only, an adopt has none`() {
+        // design 53 §2.4: the DIDL no longer carries a podcast's duration, so a speaker that reads 0:00 keeps
+        // the 5 s tail polls from our play's listed duration - cadence only
+        val s = SonosSession({ clock.now })
+        s.beginPlay(kid, Kind.URL)
+        s.played(uri, hintS = 1453.0)
+        clock.advance(30_000)
+        val silent = fields(TransportState.PLAYING, uri).copy(ours = true, relS = 1420.0, durS = 0.0)
+        assertEquals("the hint's tail", 5_000L, s.cadenceMs(TransportState.PLAYING, silent, 0))
+        assertEquals("far from the end", 15_000L, s.cadenceMs(TransportState.PLAYING, silent.copy(relS = 400.0), 0))
+        assertEquals("the speaker's own duration wins", 15_000L, s.cadenceMs(TransportState.PLAYING, silent.copy(durS = 3600.0), 0))
+        assertEquals("not our stream: no hint", 15_000L, s.cadenceMs(TransportState.PLAYING, silent.copy(ours = false), 0))
+        s.adopt(kid, Kind.URL, uri)
+        clock.advance(30_000)
+        assertEquals("an adopt has no hint", 15_000L, s.cadenceMs(TransportState.PLAYING, silent, 0))
+    }
+
+    @Test
     fun `TRANSITIONING reports the last real state, or PLAYING at a fresh start`() {
         val s = session()
         assertEquals(TransportState.PLAYING, s.classify(speaker(uri, tr = "TRANSITIONING")).transport)
@@ -259,7 +366,10 @@ class SonosSessionTest {
     fun `stall - three frozen polls while PLAYING and ours give one retry per session`() {
         val s = session()
         val spk = speaker(uri, rel = "0:07:11")
-        val retries = (1..8).map { (s.tick({ spk }, null) as Tick.Next).stallRetryAtS }
+        val retries = (1..8).map {
+            clock.advance(5_000) // polls 5 s apart (design 53 §2.4)
+            (s.tick({ spk }, null) as Tick.Next).stallRetryAtS
+        }
         assertEquals(listOf(null, null, null, 431.0, null, null, null, null), retries)
         assertTrue(s.snapshot.retriedAt != null)
         // not ours, or not PLAYING: never
@@ -275,6 +385,7 @@ class SonosSessionTest {
         val spk = speaker(uri)
         val rels = listOf("0:07:11", "0:07:11", "0:07:11", "0:07:26", "0:07:26", "0:07:26", "0:07:26")
         val retries = rels.map { r ->
+            clock.advance(5_000)
             spk.position = spk.position.copy(relTime = r)
             (s.tick({ spk }, null) as Tick.Next).stallRetryAtS
         }

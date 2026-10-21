@@ -54,7 +54,7 @@ class SonosControllerTest {
         assertTrue(spec.playWhenReady)
         assertTrue(r.c.showsPlaying(r.now))
         r.advance(2_000)
-        assertEquals(433_000L, r.c.spec(r.now).positionAt(r.now))
+        assertEquals("RelTime + 0.5 s (it truncates; design 53 §2.4) + the age", 433_500L, r.c.spec(r.now).positionAt(r.now))
         assertEquals(1_453_000L, spec.durationMs)
         assertNull(r.c.rendererState(r.now))
         val w = r.store.writes.single()
@@ -72,7 +72,7 @@ class SonosControllerTest {
         val spec = r.c.spec(r.now)
         assertEquals(PlayPhase.READY, spec.phase)
         assertFalse(spec.playWhenReady)
-        assertEquals(431_000L, spec.positionAt(r.now))
+        assertEquals("the display anchor (RelTime + 0.5 s)", 431_500L, spec.positionAt(r.now))
     }
 
     // -- the state table (§3.2, QA H2) --
@@ -95,7 +95,7 @@ class SonosControllerTest {
         val spec = r.c.spec(r.now)
         assertEquals(PlayPhase.READY, spec.phase)
         assertFalse(spec.playWhenReady)
-        assertEquals("the last position held", 431_000L, spec.positionAt(r.now))
+        assertEquals("the last position held", 431_500L, spec.positionAt(r.now))
     }
 
     @Test
@@ -144,11 +144,11 @@ class SonosControllerTest {
         assertFalse(spec.playWhenReady)
         r.advance(60_000) // no poll since: stale - the last ours values, never zeroed (§3.3)
         assertEquals(RendererState.UNREACHABLE, r.c.rendererState(r.now))
-        assertEquals(431_000L, r.c.spec(r.now).positionAt(r.now))
+        assertEquals(431_500L, r.c.spec(r.now).positionAt(r.now))
         assertEquals(1_453_000L, r.c.spec(r.now).durationMs)
         r.speaker("0:07:30") // ours again (the household ungrouped it)
         r.poll()
-        assertEquals(450_000L, r.c.spec(r.now).positionAt(r.now))
+        assertEquals(450_500L, r.c.spec(r.now).positionAt(r.now))
     }
 
     @Test
@@ -354,7 +354,7 @@ class SonosControllerTest {
         r.advance(3_000)
         val spec = r.c.spec(r.now)
         assertFalse(spec.playWhenReady)
-        assertEquals("frozen, not snapped back to the 100 s measurement", 104_000L, spec.positionAt(r.now))
+        assertEquals("frozen, not snapped back to the 100 s measurement", 104_500L, spec.positionAt(r.now))
         assertEquals("the snapshot stays measured", 100.0, r.c.snap!!.relS!!, 0.0)
     }
 
@@ -460,15 +460,15 @@ class SonosControllerTest {
         assertEquals("seek 0:24:08", r.spk.commands.last())
         assertEquals(431.0, r.c.snap!!.relS!!, 0.0)
         assertEquals(writes, r.store.writes.size)
-        r.advance(1_000)
-        r.speaker("0:07:12")
+        r.advance(5_000) // a poll's bookmark at most every 5 s (design 53 §2.4)
+        r.speaker("0:07:16")
         r.poll()
         assertEquals("still held while the speaker isn't there", 1_448_000L, r.c.spec(r.now).positionAt(r.now))
-        assertEquals("the bookmark is the measurement", 432_000L, r.store.writes.last().posMs)
+        assertEquals("the bookmark is the measurement", 436_000L, r.store.writes.last().posMs)
         r.advance(1_000)
         r.speaker("0:24:05")
         r.poll()
-        assertEquals("landed within 6 s: the measurement shows", 1_445_000L, r.c.spec(r.now).positionAt(r.now))
+        assertEquals("landed within 6 s: the measurement shows (+ 0.5 s)", 1_445_500L, r.c.spec(r.now).positionAt(r.now))
     }
 
     @Test
@@ -482,7 +482,7 @@ class SonosControllerTest {
         r.advance(13_000)
         r.speaker("0:07:24")
         r.poll()
-        assertEquals(444_000L, r.c.spec(r.now).positionAt(r.now))
+        assertEquals(444_500L, r.c.spec(r.now).positionAt(r.now))
     }
 
     @Test
@@ -1374,7 +1374,10 @@ class SonosControllerTest {
         r.work.drain()
         assertEquals("a seek mints nothing", 1, r.minter.calls.size)
         // the stall retry: Stop, Play on the speaker's own uri (vibb `_stall_bookkeeping`)
-        repeat(5) { bookPolled("0:02:00") }
+        repeat(5) {
+            r.advance(5_000) // the stall counts polls 5 s apart (design 53 §2.4)
+            bookPolled("0:02:00")
+        }
         assertTrue(r.spk.commands.contains("stop"))
         assertEquals("the stall retry mints nothing", 1, r.minter.calls.size)
         // a step mints; a natural advance mints
@@ -1469,10 +1472,12 @@ class SonosControllerTest {
         bookPolled("0:01:00")
         assertEquals(721_893L, r.c.spec(r.now).durationMs)
         // a real length from the speaker wins (vibb: the lookup only fills a falsy one)
+        r.advance(5_000) // a poll's bookmark at most every 5 s (design 53 §2.4)
         bookPolled("0:01:05", dur = "0:12:30")
         assertEquals(750_000L, r.c.spec(r.now).durationMs)
         assertEquals("the speaker measured it", 750_000L, r.store.writes.last().durationMs)
         // the next zero: the lookup again (flagged), never erasing
+        r.advance(5_000)
         bookPolled("0:01:10")
         assertEquals(721_893L, r.c.spec(r.now).durationMs)
         assertNull(r.store.writes.last().durationMs)
@@ -1587,5 +1592,413 @@ class SonosControllerTest {
         r.work.drain()
         assertEquals(listOf("222" to "no_audio"), r.host.unavailable)
         assertEquals("the series, never the RSS entry now loaded", listOf(9L), r.host.unavailableEntries)
+    }
+
+    // -- design 53 §2.3-§2.4: the event socket (events only; every decision stays the poll's) --
+
+    /** Ours and PLAYING at [rel] of ep1, the socket healthy and agreeing. */
+    private fun live(rel: String = "0:07:11") {
+        r.link.healthy = true
+        playing(rel)
+        r.event(WsPlayback.PLAYING, hmsToS(rel)!!.toLong() * 1000 + 300)
+        r.c.shown(r.c.spec(r.now)) // what the renderer's flush does after every change
+    }
+
+    private fun setUrisNow() = r.spk.commands.count { it == "seturi" }
+
+    @Test
+    fun `d53 BUFFERING during a seek or a resume keeps playWhenReady, never changes the transport, never clears the seek hold`() {
+        live()
+        r.c.seek(600_000)
+        r.work.drain()
+        r.advance(200)
+        r.event(WsPlayback.BUFFERING, 431_500) // the pre-seek position
+        val spec = r.c.spec(r.now)
+        assertTrue("held: no Paused, no IsPlaying flip", spec.playWhenReady)
+        assertEquals(PlayPhase.BUFFERING, spec.phase)
+        assertEquals(TransportState.PLAYING, r.c.effectiveTransport(r.now))
+        assertTrue(r.c.showsPlaying(r.now))
+        assertEquals("the seek's target still shows", 600_000L, spec.positionAt(r.now))
+        r.advance(300)
+        r.event(WsPlayback.PLAYING, 600_100)
+        assertEquals("an exact position near the target ends the hold", 600_100L, r.c.spec(r.now).positionAt(r.now))
+        assertEquals(PlayPhase.READY, r.c.spec(r.now).phase)
+        // a resume from paused: BUFFERING keeps the play button's intent
+        r.event(WsPlayback.PAUSED, 601_000)
+        r.c.shown(r.c.spec(r.now))
+        r.c.playPause()
+        r.c.shown(r.c.spec(r.now))
+        r.advance(100)
+        r.event(WsPlayback.BUFFERING, 601_000)
+        assertTrue(r.c.spec(r.now).playWhenReady)
+        assertEquals(TransportState.PLAYING, r.c.effectiveTransport(r.now))
+    }
+
+    @Test
+    fun `d53 our own verb wins - a PAUSED event inside SETTLE_MS of our resume changes nothing, a matching one settles it`() {
+        live()
+        r.c.pause()
+        r.work.drain()
+        r.advance(200)
+        r.event(WsPlayback.PAUSED, 431_800)
+        r.advance(1_000)
+        r.c.playPause() // optTr PLAYING
+        r.advance(100)
+        r.event(WsPlayback.PAUSED, 431_800) // a late one, from before our resume
+        assertEquals(TransportState.PLAYING, r.c.effectiveTransport(r.now))
+        assertTrue(r.c.spec(r.now).playWhenReady)
+        r.advance(200)
+        r.event(WsPlayback.PLAYING, 431_900)
+        r.advance(SonosController.SETTLE_MS + 1) // our verb's window over: only the socket's word remains
+        assertEquals("confirmed by the socket", TransportState.PLAYING, r.c.effectiveTransport(r.now))
+        assertEquals("on from our tap (the event within the second re-bases, QA 3)", 432_100L + SonosController.SETTLE_MS + 1, r.c.spec(r.now).positionAt(r.now))
+    }
+
+    @Test
+    fun `d53 a pause from the Sonos app shows at once - the poll confirms it, the bookmark at once (not throttled)`() {
+        live()
+        val writes = r.store.writes.size
+        val wakes = r.wakes
+        r.advance(2_000)
+        r.event(WsPlayback.PAUSED, 433_400)
+        assertEquals(TransportState.PAUSED_PLAYBACK, r.c.effectiveTransport(r.now))
+        assertFalse(r.c.spec(r.now).playWhenReady)
+        assertEquals("the exact pause point", 433_400L, r.c.spec(r.now).positionAt(r.now + 5_000))
+        assertEquals("no store.save from an event", writes, r.store.writes.size)
+        assertEquals("a confirm poll asked", wakes + 1, r.wakes)
+        r.advance(300)
+        r.speaker("0:07:13", transport = "PAUSED_PLAYBACK")
+        r.poll()
+        assertEquals("a transport change writes at once, 2.3 s after the last", writes + 1, r.store.writes.size)
+        assertEquals(433_000L, r.store.writes.last().posMs)
+        assertEquals("the measured pause point holds against the poll's whole second", 433_400L, r.c.spec(r.now).positionAt(r.now))
+    }
+
+    @Test
+    fun `d53 an event while our answered play settles is parked and applied by the landing poll - one before the answer is dropped`() {
+        r.link.healthy = true
+        r.c.load(r.entry, r.items, 0, 0)
+        r.c.playTile()
+        r.event(WsPlayback.IDLE, 0) // the old track's, before the play answered
+        r.work.drain()
+        r.advance(400)
+        r.event(WsPlayback.PLAYING, 1_200) // ours, while pending
+        assertEquals("parked: the seed shows", 400L, r.c.spec(r.now).positionAt(r.now))
+        r.advance(1_000)
+        r.speaker("0:00:01")
+        r.poll()
+        assertEquals("applied by the landing poll: exact, the poll within a second ignored (healthy)", 2_200L, r.c.spec(r.now).positionAt(r.now))
+        assertTrue(r.c.showsPlaying(r.now))
+    }
+
+    @Test
+    fun `d53 no socket measurement after an IDLE or a BUFFERING we didn't cause until an ours poll`() {
+        live()
+        r.advance(SonosController.SETTLE_MS + 1) // nothing of ours in the window
+        r.event(WsPlayback.BUFFERING, 440_000)
+        r.advance(100)
+        r.event(WsPlayback.PLAYING, 900_000) // a takeover's start, perhaps
+        assertTrue("not taken: far from 900 s", r.c.spec(r.now).positionAt(r.now) < 500_000)
+        r.advance(400)
+        r.speaker("0:07:20")
+        r.poll()
+        r.event(WsPlayback.PAUSED, 441_000)
+        assertEquals("after an ours poll it counts", 441_000L, r.c.spec(r.now).positionAt(r.now))
+    }
+
+    /** Near the end of ep1, the socket healthy: the last tail poll seen. */
+    private fun nearTheEnd() {
+        live("0:23:58")
+        r.advance(5_000)
+        r.speaker("0:24:03")
+        r.poll()
+    }
+
+    @Test
+    fun `d53 IDLE near the end - a confirm poll at once, its STOPPED of ours advances through advance()`() {
+        nearTheEnd()
+        val wakes = r.wakes
+        r.advance(10_000)
+        r.event(WsPlayback.IDLE, 0)
+        assertEquals("the confirm poll at once", wakes + 1, r.wakes)
+        assertEquals("the event alone sends nothing", 1, setUrisNow())
+        r.advance(200)
+        r.speaker("0:24:13", transport = "STOPPED")
+        r.poll()
+        assertEquals("the next episode", 2, setUrisNow())
+        assertEquals(r.url(1), r.spk.lastUri)
+        assertTrue(r.c.takeAuto())
+        // a second wake and its poll: still exactly one play (pending, then the new item's)
+        r.event(WsPlayback.IDLE, 0)
+        r.poll()
+        assertEquals(2, setUrisNow())
+    }
+
+    @Test
+    fun `d53 IDLE near the end keeps Til slutten, repeat one and repeat all - and with playing not allowed sends nothing`() {
+        nearTheEnd()
+        var held = 0
+        r.c.holdAtEnd = { held++ }
+        r.event(WsPlayback.IDLE, 0)
+        r.speaker("0:24:13", transport = "STOPPED")
+        r.poll()
+        assertEquals("held at the end", 1, held)
+        assertEquals(1, setUrisNow())
+
+        val one = ControllerRig()
+        one.link.healthy = true
+        one.c.repeat = Repeat.ONE
+        one.start()
+        one.speaker("0:24:03")
+        one.poll()
+        one.event(WsPlayback.IDLE, 0)
+        one.speaker("0:24:13", transport = "STOPPED")
+        one.poll()
+        assertEquals("the same item again", listOf(one.url(0), one.url(0)), one.host.played.map { it.second })
+
+        val all = ControllerRig()
+        all.c.repeat = Repeat.ALL
+        all.start(index = 2)
+        all.speaker("0:24:03", uri = all.url(2))
+        all.poll()
+        all.event(WsPlayback.IDLE, 0)
+        all.speaker("0:24:13", transport = "STOPPED", uri = all.url(2))
+        all.poll()
+        assertEquals("wrapped", all.url(0), all.spk.lastUri)
+
+        val barred = ControllerRig()
+        barred.start()
+        barred.speaker("0:24:03")
+        barred.poll()
+        barred.allowed = false
+        val commands = barred.spk.commands.size
+        barred.event(WsPlayback.IDLE, 0)
+        barred.speaker("0:24:13", transport = "STOPPED")
+        barred.poll()
+        assertEquals("mayPlay false: no SOAP at all", commands, barred.spk.commands.size)
+    }
+
+    @Test
+    fun `d53 the takeover race - a PLAYING or BUFFERING we didn't cause after the IDLE, and that STOPPED decides nothing`() {
+        nearTheEnd()
+        r.advance(SonosController.SETTLE_MS + 1)
+        r.event(WsPlayback.IDLE, 0)
+        r.advance(100)
+        r.event(WsPlayback.BUFFERING, 0) // someone started a stream on our room at the episode's end
+        r.speaker("0:24:13", transport = "STOPPED") // the poll still reads ours, stopped
+        r.poll()
+        assertEquals("their stream is never replaced", 1, setUrisNow())
+        assertTrue(r.host.logs.any { "no advance" in it })
+    }
+
+    @Test
+    fun `d53 IDLE mid-item, IDLE while our play is pending, IDLE then x-rincon - nothing`() {
+        live("0:10:00")
+        r.event(WsPlayback.IDLE, 0)
+        r.speaker("0:10:00", transport = "STOPPED")
+        r.poll()
+        assertEquals("a stop mid-item is a human: stays stopped", 1, setUrisNow())
+
+        val p = ControllerRig()
+        p.link.healthy = true
+        p.start(drain = false)
+        p.event(WsPlayback.IDLE, 0)
+        p.work.drain()
+        assertEquals(1, p.spk.commands.count { it == "seturi" })
+
+        val g = ControllerRig()
+        g.start()
+        g.speaker("0:24:03")
+        g.poll()
+        g.event(WsPlayback.IDLE, 0)
+        g.speaker("0:20:34", uri = "x-rincon:RINCON_PARENT01400")
+        g.poll()
+        assertEquals("grouped away: not ours, nothing acts", 1, g.spk.commands.count { it == "seturi" })
+        assertEquals(RendererState.GROUPED_AWAY, g.c.rendererState(g.now))
+    }
+
+    @Test
+    fun `d53 the event wake - at most once a second (the rest trails), an IDLE at once, none while the last poll failed`() {
+        live()
+        val base = r.wakes
+        r.advance(1_000)
+        r.event(WsPlayback.PAUSED, 432_000)
+        r.advance(100)
+        r.event(WsPlayback.PLAYING, 432_000)
+        r.advance(100)
+        r.event(WsPlayback.PAUSED, 432_100)
+        assertEquals("one now", base + 1, r.wakes)
+        assertEquals("the rest trails once", 1, r.work.afters.size)
+        r.event(WsPlayback.IDLE, 0)
+        assertEquals("an IDLE at once", base + 2, r.wakes)
+        r.work.afters.clear()
+        r.spk.failOn = mapOf("getposition" to { SpeakerUnreachable("gone") })
+        r.advance(5_000)
+        r.poll()
+        val after = r.wakes
+        r.advance(2_000)
+        r.event(WsPlayback.PLAYING, 440_000)
+        r.event(WsPlayback.IDLE, 0)
+        assertEquals("the UNREACHABLE backoff stands", after, r.wakes)
+        assertTrue(r.work.afters.isEmpty())
+    }
+
+    @Test
+    fun `d53 liveness - a pause on a confirmed PLAYING owes an event, a seek while paused and a pause while paused owe none (N3)`() {
+        live()
+        r.c.pause()
+        r.work.drain()
+        assertEquals("the pause on PLAYING", 1, r.link.owed.size)
+        r.event(WsPlayback.PAUSED, 431_900)
+        r.advance(5_000)
+        r.speaker("0:07:11", transport = "PAUSED_PLAYBACK")
+        r.poll()
+        r.c.seek(100_000)
+        r.work.drain()
+        r.c.pause()
+        r.work.drain()
+        assertEquals("nothing owed for a seek or a pause while paused", 1, r.link.owed.size)
+        r.c.playPause()
+        r.work.drain()
+        assertEquals("the resume on PAUSED", 2, r.link.owed.size)
+        // a step on a confirmed PLAYING: owed too
+        r.event(WsPlayback.PLAYING, 100_000)
+        r.advance(5_000)
+        r.speaker("0:01:45")
+        r.poll()
+        r.c.stepTo(1, 0)
+        r.work.drain()
+        assertEquals(3, r.link.owed.size)
+        // without a healthy socket nothing is owed
+        r.link.healthy = false
+        r.advance(5_000)
+        r.speaker("0:00:05", uri = r.url(1))
+        r.poll()
+        r.c.pause()
+        r.work.drain()
+        assertEquals(3, r.link.owed.size)
+    }
+
+    @Test
+    fun `d53 disagreement - two ours polls against the socket's state, each 3 s after its last event, close it`() {
+        live()
+        r.advance(SonosController.DISAGREE_AFTER_MS)
+        r.event(WsPlayback.PLAYING, 434_500) // the socket's last word
+        r.advance(SonosController.DISAGREE_AFTER_MS)
+        r.speaker("0:07:20", transport = "PAUSED_PLAYBACK")
+        r.poll()
+        assertEquals(0, r.link.disagreements)
+        r.advance(5_000)
+        r.poll()
+        assertEquals("the socket missed a pause made outside the app", 1, r.link.disagreements)
+    }
+
+    @Test
+    fun `d53 the extra polls write a bookmark at most every 5 s - another item or a changed transport at once`() {
+        playing("0:07:11")
+        val writes = r.store.writes.size
+        r.advance(1_000)
+        r.speaker("0:07:12")
+        r.poll()
+        assertEquals("a confirm poll a second later: no write", writes, r.store.writes.size)
+        r.advance(4_000)
+        r.speaker("0:07:16")
+        r.poll()
+        assertEquals(writes + 1, r.store.writes.size)
+    }
+
+    // -- qa-53a-code's fixes --
+
+    @Test
+    fun `d53 under a healthy socket the bar keeps moving with polls 15 s apart - never stopped at the 60 s cap (QA 1)`() {
+        live() // the socket's one PLAYING: events come on a change only
+        repeat(6) { i ->
+            r.advance(15_000)
+            r.speaker(hms(431.0 + 15 * (i + 1)))
+            r.poll()
+        }
+        val shown = r.c.spec(r.now).positionAt(r.now)
+        assertTrue("about 431.3 s + 90 s, was $shown", kotlin.math.abs(shown - 521_300) < 1_000)
+    }
+
+    @Test
+    fun `d53 our resume confirmed by the socket - no step back by the command's latency (QA 3)`() {
+        live()
+        r.c.pause()
+        r.work.drain()
+        r.advance(200)
+        r.event(WsPlayback.PAUSED, 431_800)
+        r.advance(2_000)
+        r.c.playPause()
+        r.advance(300)
+        val before = r.c.spec(r.now).positionAt(r.now)
+        r.event(WsPlayback.PLAYING, 431_900) // the speaker started 0.2 s after our tap
+        val after = r.c.spec(r.now).positionAt(r.now)
+        assertTrue("$before -> $after", after >= before)
+        r.advance(1_000)
+        assertEquals("and it moves on", after + 1_000, r.c.spec(r.now).positionAt(r.now))
+    }
+
+    @Test
+    fun `d53 an IDLE's confirm poll that still reads PLAYING asks again every second, for up to 3 s (QA 4)`() {
+        nearTheEnd()
+        r.advance(10_000)
+        r.event(WsPlayback.IDLE, 0)
+        val wakes = r.wakes
+        r.advance(100)
+        r.speaker("0:24:12") // UPnP lags the change
+        r.poll()
+        assertEquals("one recheck a second later", wakes + 1, r.wakes)
+        r.advance(1_000)
+        r.poll()
+        assertEquals("and again", wakes + 2, r.wakes)
+        r.advance(2_000)
+        r.poll()
+        assertEquals("3 s after the IDLE: the normal cadence", wakes + 2, r.wakes)
+        r.speaker("0:24:13", transport = "STOPPED")
+        r.poll()
+        assertEquals("the advance still comes at the STOPPED", 2, setUrisNow())
+    }
+
+    @Test
+    fun `d53 the confirm polls read the old state within 3 s of an event - no disagreement (QA 5, M10)`() {
+        live()
+        r.advance(500)
+        r.event(WsPlayback.PAUSED, 432_000) // a pause from the Sonos app
+        r.advance(1_000)
+        r.poll() // UPnP still reads PLAYING
+        r.advance(1_000)
+        r.poll()
+        assertEquals(0, r.link.disagreements)
+    }
+
+    @Test
+    fun `d53 a PLAYING far from the seek's target keeps the hold - only one within a second ends it (QA 5, M11)`() {
+        live()
+        r.c.seek(600_000)
+        r.work.drain()
+        r.advance(200)
+        r.event(WsPlayback.PLAYING, 431_900) // the old place, before the seek took
+        assertEquals(600_000L, r.c.spec(r.now).positionAt(r.now))
+    }
+
+    @Test
+    fun `d53 an IDLE is never the effective transport, and nothing the socket says counts after it until an ours poll (QA 5)`() {
+        live()
+        r.advance(1_000)
+        r.event(WsPlayback.IDLE, 0)
+        assertEquals(TransportState.PLAYING, r.c.effectiveTransport(r.now))
+        assertTrue(r.c.spec(r.now).playWhenReady)
+        r.advance(100)
+        r.event(WsPlayback.PAUSED, 900_000)
+        assertEquals("blocked: neither the transport nor the place", TransportState.PLAYING, r.c.effectiveTransport(r.now))
+        assertTrue(r.c.spec(r.now).positionAt(r.now) < 500_000)
+        r.advance(100)
+        r.speaker("0:07:12")
+        r.poll()
+        r.advance(100)
+        r.event(WsPlayback.PAUSED, 432_400)
+        assertEquals(TransportState.PAUSED_PLAYBACK, r.c.effectiveTransport(r.now))
+        assertEquals(432_400L, r.c.spec(r.now).positionAt(r.now))
     }
 }

@@ -18,6 +18,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -77,7 +78,8 @@ internal class SonosRenderer(
     private val handler = Handler(Looper.getMainLooper())
     private val actorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val clock: () -> Long = SystemClock::elapsedRealtime
-    private val session = SonosSession(clock, SonosHome::log)
+    // design 53 §2.4: the 1 s display poll reads the player screen's flag and the socket's health, never a call from main
+    private val session = SonosSession(clock, SonosHome::log, playerShown = { PlayerHub.playerShown.value }, socketHealthy = { socket.healthy })
     private var poller: SonosPoller? = null
     private val transport = SonosTransport(session, home.speakers, home.nrk, SonosClock(clock), wake = { poller?.wake() }, log = SonosHome::log)
     private val actor = SonosActor(actorScope, Dispatchers.IO, post = { block -> handler.post { block() } }, postDelayed = { ms, block -> handler.postDelayed({ block() }, ms) })
@@ -125,6 +127,29 @@ internal class SonosRenderer(
         override fun log(message: String) = SonosHome.log(message)
     }
 
+    /**
+     * The speaker's event socket (design 53 §2.2): events only, to the cached ip of the uid we command;
+     * open while [socketWanted] says so ([updateSocket] after every change). Its events reach the
+     * controller on the main thread.
+     */
+    private val socket = SonosSocket(
+        clientFor = { ip -> home.socketClient(ip) },
+        resolveIp = { home.cache.resolve(it)?.ip },
+        clock = clock,
+        main = object : SocketMain {
+            override fun post(block: () -> Unit) {
+                handler.post { block() }
+            }
+
+            override fun postDelayed(delayMs: Long, block: () -> Unit) {
+                handler.postDelayed({ block() }, delayMs)
+            }
+        },
+        // posted once more: a close inside [updateSocket] reports its Health from within a flush
+        onEvent = { e -> handler.post { if (!released) controller.onSocket(e) } },
+        log = SonosHome::log,
+    )
+
     val controller: SonosController = SonosController(
         transport, actor, sonosStore, clock, uid, name, host, sleep = { delay(it) },
         restoreVolume = home.choice().takeIf { it.volumeUid == uid }?.volume,
@@ -138,6 +163,9 @@ internal class SonosRenderer(
         members = { roomMembers(home.rooms.state.value.rooms, it) },
         // a Storytel book's URL, minted inside the play's actor job (design 26b §5.1): the process's one account
         minter = { cid, timeoutMs, deadlineMs -> StorytelAccount.get(context).mint(cid, timeoutMs, deadlineMs) },
+        // design 53 §2.2-§2.3: the socket's health and liveness hooks, and the confirm poll an event asks for
+        events = socket,
+        wakePoll = { poller?.wake() },
     )
 
     private fun suspendedNow(): Boolean = try {
@@ -154,9 +182,34 @@ internal class SonosRenderer(
     /** The MediaItems the service built for the queue: the player's metadata (title, artist, art, duration). */
     private var mediaItems: List<MediaItem> = emptyList()
 
+    /** The Wi-Fi network and the player screen's flag, watched while this renderer lives (design 53 §2.2, §2.4). */
+    private val watches = mutableListOf<Job>()
+
     init {
         poller = SonosPoller(actorScope, actor, { transport.poll(home.probe) to session.snapshot }) { tick, fields -> controller.onPoll(tick, fields) }
             .also { it.start() }
+        // any change of the Wi-Fi network closes the socket and opens it on the new one
+        watches += scope.launch { home.wifiNetwork.collect { updateSocket() } }
+        // the player coming on screen polls at once (the 1 s display poll starts now, not at the next cadence)
+        watches += scope.launch { PlayerHub.playerShown.collect { if (it) poller?.wake() } }
+    }
+
+    /** The watches end with the renderer (never the actor's scope: its queued Stop still goes out). */
+    private fun unwatch() {
+        for (w in watches) w.cancel()
+        watches.clear()
+    }
+
+    /**
+     * The socket's lifetime (design 53 §2.2, [socketWanted]): armed (the session's own flag), Wi-Fi
+     * up, not closed or released, the uid not parked - the target the uid we command on this network,
+     * so a follow or a network change re-targets it. Cheap; run on every change.
+     */
+    private fun updateSocket() {
+        val uid = controller.uid
+        val network = home.wifiNetwork.value
+        val wanted = !released && socketWanted(session.armed, network, controller.closed, socket.parkedUntil(uid), uid, clock())
+        socket.want(if (wanted && network != null) SonosSocket.Target(uid, network) else null)
     }
 
     override val player: Player get() = sbp
@@ -332,6 +385,9 @@ internal class SonosRenderer(
         // the locks go with it: close() reports false when this renderer held them (never for another's, qa L4)
         controller.close()
         poller?.stop()
+        // no socket while the phone renders (design 53 §2.2): only a SonosRenderer owns one
+        unwatch()
+        socket.want(null)
         // the queued jobs (a hand-off's or an abandon's Stop) still go out; the scope ends after them
         actor.close()
         handler.removeCallbacksAndMessages(null)
@@ -369,6 +425,7 @@ internal class SonosRenderer(
 
     /** The player re-reads its state, then the service hears what changed (the local renderer's events, in kind). */
     private fun flush() {
+        updateSocket()
         val now = clock()
         val spec = controller.spec(now)
         controller.shown(spec)

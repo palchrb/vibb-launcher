@@ -1036,6 +1036,10 @@ findings, merge to `main`, full suite once.
   another group (`GROUPED_AWAY`) - each shown in "Spill av på" and the player as it happens; the socket's `groups`
   events and `groupCoordinatorChanged` `MOVED` (the new coordinator's url) make them immediate, the UPnP probe and
   `ZoneGroupState` stay the fallback. Test on the speakers with the hardware button, all four.
+  **Status (2026-10-21)**: written as `docs/design/53-sonos-grouping-precision.md` (QA'd, revised, Q2/Q4 answered);
+  rounds 53-0 (vibb's DIDL, the goldens) and 53-a (the event socket, the bar's anchor, the 1 s display poll, the IDLE
+  advance, the extra polls' guards, `sonos-ws-probe.py --save`) on branch `d53-a`, awaiting code QA; 53-b (grouping)
+  next. Owed on the speakers: design 53 §5 (the capture that replaces the provisional `ws/` fixtures first).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
@@ -1310,7 +1314,10 @@ findings, merge to `main`, full suite once.
   podcast, RSS or NRK series item the app sends the listing's `duration` on the `res`, which vibb sends only for
   Storytel, and never the picture vibb sends when it is http (`PlayBodies.build`, `SonosController` calls it without
   `art`). The user's rule is vibb's DIDL field for field; the speaker test `scripts/sonos-play-test.py --didl vibb|app`
-  shows whether a speaker refuses either. Fix after that: the app sends exactly vibb's fields.
+  shows whether a speaker refuses either. Fix after that: the app sends exactly vibb's fields. **Decided and done**
+  (design 53 §2.1, round 53-0, branch `d53-a`): a duration only for Storytel, no picture (the phone holds hashes only),
+  one `builtDidl` checked byte for byte against `scripts/sonos-play-test.py --golden`'s files; the listing's duration
+  rides as the session's tail-cadence hint only. Owed: design 53 §5 check 9 on the speakers.
 
 ## Open questions
 

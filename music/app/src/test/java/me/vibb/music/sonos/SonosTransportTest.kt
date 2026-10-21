@@ -139,11 +139,13 @@ class SonosTransportTest {
     }
 
     @Test
-    fun `url - the queue clear's errors are ignored, the DIDL carries the body`() = runBlocking {
+    fun `url - the queue clear's errors are ignored, the DIDL carries the body - never the cadence hint`() = runBlocking {
         val spk = FakeSpeaker("RINCON_X").apply { failOn = mapOf("clearqueue" to { UpnpFault(804, null) }) }
-        val r = rig(spk).play(body.copy(durationS = 1453.0, art = "http://10.0.0.5/c.jpg"))!!
+        // design 53 §2.1: a url body has no DIDL duration (vibb's); the listing's rides as the session's hint only
+        val r = rig(spk).play(body.copy(durationS = null, art = "http://10.0.0.5/c.jpg", cadenceHintS = 1453.0))!!
         assertEquals("http://c/e.mp3", r.uri)
-        assertEquals(didl("http://c/e.mp3", "Sommerfuglen", null, "Barnas Supersommer", "http://10.0.0.5/c.jpg", 1453.0), r.didl)
+        assertEquals(didl("http://c/e.mp3", "Sommerfuglen", null, "Barnas Supersommer", "http://10.0.0.5/c.jpg", null), r.didl)
+        assertFalse(r.didl.contains("duration="))
         assertEquals(r.didl, spk.lastMeta)
     }
 
@@ -261,7 +263,10 @@ class SonosTransportTest {
         }
         val t = rig(spk)
         t.adopt("RINCON_X", Kind.URL, "http://c/e.mp3")
-        repeat(6) { t.poll(null) }
+        repeat(6) {
+            t.poll(null)
+            clock.advance(5_000) // the stall counts polls 5 s apart (design 53 §2.4)
+        }
         val commands = spk.log.filter { !it.startsWith("get") }
         assertEquals(listOf("stop", "play", "seek 0:07:11"), commands)
         assertTrue(logs.contains("position frozen - one in-place retry"))
@@ -275,7 +280,10 @@ class SonosTransportTest {
         }
         val t = rig(spk)
         t.adopt("RINCON_X", Kind.URL, "http://c/e.mp3")
-        repeat(5) { t.poll(null) }
+        repeat(5) {
+            t.poll(null)
+            clock.advance(5_000)
+        }
         assertEquals(listOf("stop"), spk.log.filter { !it.startsWith("get") })
         assertTrue(logs.contains("stall retry failed (SpeakerUnreachable)"))
     }

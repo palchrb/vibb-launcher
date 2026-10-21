@@ -15,16 +15,25 @@ source (x-rincon-queue:<uid>#0), so its Play button never restarts our episode.
 The DIDL is built by vibb's `didl()` (Didl.kt), unchanged. --didl picks which fields go in:
   vibb  (default) what vibb's `_sonos_body` sends a podcast: title, album, the episode's picture
         when it is http; no duration
-  app   what the music app's `PlayBodies.build` sends today: title, album, the duration; no picture
+  app   what the music app's `PlayBodies.build` sent a podcast before design 53-0: title, album, the
+        duration; no picture (since 53-0 it sends vibb's: the default, without the picture it has none of)
   bare  the title only
 
     python3 -m pip install aiohttp
     python3 sonos-play-test.py 192.168.1.16 --dry-run          # NRK only: episodes + DIDL, no speaker
     python3 sonos-play-test.py 192.168.1.16                     # the whole run, ~2 minutes, at volume 1
     python3 sonos-play-test.py 192.168.1.16 --didl app --volume 12
+    python3 -I sonos-play-test.py --golden music/app/src/test/resources/sonos   # no speaker, no aiohttp
 
 It REPLACES what the speaker is playing and leaves it stopped (parked). The speaker's volume is
 set to 1 (--volume) before the first play and put back at the end. Needs sonos-ws-probe.py next to it.
+
+--golden DIR writes didl_url.xml, didl_nrk.xml and didl_storytel.xml: vibb's DIDL for each kind, with
+the per-kind arguments of vibb's `Session.play` and `_sonos_body` (url: title and album, no duration;
+nrk_program: the service uri, the show class, the protocol and the desc, no duration; Storytel: the
+minted url and the shelf's duration), for the fixed inputs below (no http art, the fallback serial, a
+fake signed url). The music app's PlayBodyTest compares `builtDidl(PlayBodies.build(...))` with each,
+byte for byte (design 53 §2.1).
 """
 
 import argparse
@@ -37,15 +46,28 @@ import sys
 import time
 from xml.sax.saxutils import escape
 
-try:
-    import aiohttp
-except ImportError:
-    sys.exit("needs aiohttp: python3 -m pip install aiohttp (or apt install python3-aiohttp)")
+aiohttp = probe = None  # loaded by load_network(): --golden needs neither
 
-_spec = importlib.util.spec_from_file_location("probe", pathlib.Path(__file__).with_name("sonos-ws-probe.py"))
-probe = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(probe)
-stamp, tag = probe.stamp, probe.tag
+
+def load_network():
+    global aiohttp, probe
+    try:
+        import aiohttp as _aiohttp
+    except ImportError:
+        sys.exit("needs aiohttp: python3 -m pip install aiohttp (or apt install python3-aiohttp)")
+    aiohttp = _aiohttp
+    spec = importlib.util.spec_from_file_location("probe", pathlib.Path(__file__).with_name("sonos-ws-probe.py"))
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+
+
+def stamp() -> str:
+    return probe.stamp()
+
+
+def tag(xml: str, name: str) -> str:
+    return probe.tag(xml, name)
+
 
 PSAPI = "https://psapi.nrk.no"
 
@@ -94,6 +116,52 @@ def didl(uri, title, artist=None, album=None, art=None, duration_s=None,
     tags.append(f'<res protocolInfo="{proto}"{dur}>{escape(uri)}</res>')
     return (f"<DIDL-Lite {DIDL_NS}>" '<item id="vibb-1" parentID="-1" restricted="true">'
             + "".join(tags) + "</item></DIDL-Lite>")
+
+
+# --- the golden DIDLs (design 53 §2.1): vibb's per-kind arguments, fixed inputs ------------------
+
+NRK_SID = 277
+NRK_SVCTYPE = NRK_SID * 256 + 7
+
+
+def nrk_program_uri(series: str, program_id: str, serial: str) -> str:
+    """sonosd.py `nrk_program_uri` with the serial given (no speaker to ask)."""
+    from urllib.parse import quote
+    return f"x-sonos-http:series%3a{quote(series)}%3a1%3a{program_id}.unknown?sid={NRK_SID}&flags=0&sn={serial}"
+
+
+def nrk_desc() -> str:
+    return f"SA_RINCON{NRK_SVCTYPE}_X_#Svc{NRK_SVCTYPE}-0-Token"
+
+
+# The same inputs as PlayBodyTest's (SonosFakes' entry and item): change both together.
+GOLDEN_TITLE = "Sommerfuglen"
+GOLDEN_URL = "https://podkast.example/ep12.mp3"
+GOLDEN_URL_ALBUM = "Barnas Supersommer"
+GOLDEN_NRK = ("barnas-supersommer", "MKTT81008181", "14", "Barnas supersommer")  # series, program id, serial, album
+GOLDEN_STORYTEL_URL = "https://cdn.example.invalid/book?token=FAKE-SIG-1"  # fake: a real one is a bearer
+GOLDEN_STORYTEL = ("Kokosbananas", 721.893)  # album, the shelf's dur_s
+
+
+def goldens() -> dict:
+    """vibb's `Session.play` for each `_sonos_body` kind: url and nrk_program carry no duration, Storytel does."""
+    series, program_id, serial, nrk_album = GOLDEN_NRK
+    st_album, st_dur = GOLDEN_STORYTEL
+    return {
+        "didl_url.xml": didl(GOLDEN_URL, GOLDEN_TITLE, None, GOLDEN_URL_ALBUM, None, None),
+        "didl_nrk.xml": didl(nrk_program_uri(series, program_id, serial), GOLDEN_TITLE, None, nrk_album, None, None,
+                             upnp_class="object.item.audioItem.show", protocol="sonos.com-http:*:audio/mpeg:*",
+                             desc=nrk_desc()),
+        "didl_storytel.xml": didl(GOLDEN_STORYTEL_URL, GOLDEN_TITLE, None, st_album, None, st_dur),
+    }
+
+
+def write_goldens(out: str) -> None:
+    folder = pathlib.Path(out)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, text in goldens().items():
+        (folder / name).write_text(text, encoding="utf-8")  # no trailing newline: compared byte for byte
+        print(f"{folder / name} ({len(text)} chars)")
 
 
 def built_for(ep: dict, mode: str) -> str:
@@ -425,17 +493,23 @@ class Run:
               f"({len(pushes)} while PLAYING) - many = it ticks, few = only on changes")
 
 
-async def main():
+def parse_args():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", help="the speaker's LAN address")
+    ap.add_argument("ip", nargs="?", help="the speaker's LAN address")
     ap.add_argument("--podcast", default="hallo_bablo", help="NRK podcast slug (radio.nrk.no/podkast/<slug>)")
     ap.add_argument("--didl", choices=("vibb", "app", "bare"), default="vibb", help="which fields go in (see above)")
     ap.add_argument("--volume", type=int, default=1,
                     help="the volume set before anything plays (default 1); the old one is put back at the end")
     ap.add_argument("--dry-run", action="store_true", help="NRK only: list the episodes and print the DIDL")
     ap.add_argument("--verbose", action="store_true", help="print every WS message")
+    ap.add_argument("--golden", metavar="DIR", help="write the golden DIDLs to DIR and end (no speaker, no network)")
     args = ap.parse_args()
+    if not args.golden and not args.ip:
+        ap.error("the speaker's ip is needed (or --golden DIR)")
+    return args
 
+
+async def main(args):
     async with aiohttp.ClientSession() as session:
         eps = await episodes(session, args.podcast, 2)
         if len(eps) < 2:
@@ -474,7 +548,12 @@ async def main():
 
 
 if __name__ == "__main__":
+    ARGS = parse_args()
+    if ARGS.golden:
+        write_goldens(ARGS.golden)
+        sys.exit(0)
+    load_network()
     try:
-        asyncio.run(main())
+        asyncio.run(main(ARGS))
     except KeyboardInterrupt:
         pass
