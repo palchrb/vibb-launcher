@@ -1302,7 +1302,11 @@ findings, merge to `main`, full suite once.
   other Fossify notification then - so the reader's `entries` kept a stale timer entry that NMS no longer has, and
   `clockShown` ranks ENDED/TIMER above STOPWATCH: one stale blank entry explains both. Fix also: reconcile `entries`
   with the listener's active notifications (Fossify's keys) on each Fossify post/removal and at the glance page's
-  show, so a missed removal can't stick; a blank entry never outranks a tile with content.
+  show, so a missed removal can't stick; a blank entry never outranks a tile with content. Later the same day the
+  stopwatch did show (the user's screenshot, 10:43) - consistent with the stale entry living until the next
+  `BadgeListenerService.sweep` (`ClockReader.connected` rebuilds `entries`; a sweep runs after each `apply()` with the
+  notification rule active), so it shows late rather than never. Also: the stopwatch tile shows "Stoppeklokke" twice
+  (the label and Fossify's text) - drop the small text when it equals the label.
 - **The lock's flashlight sits tight under "Lås opp"** (the user, 2026-10-21: "litt for tett på lås-opp knappen? Ser
   grafisk litt snålt ut"): the Nødsamtale/torch row is 2 dp under the 56 dp button (`view_lock_glance.xml`); proposed
   12-16 dp of air and a quieter torch (the music controls' dark round ground, peach only while lit), keeping
