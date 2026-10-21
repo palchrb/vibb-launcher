@@ -529,6 +529,14 @@ findings, merge to `main`, full suite once.
   app-op or `PACKAGE_USAGE_STATS` only; the DO exemption is only `hasObserverPermission`, package-level timers), the DO
   can't grant an app-op - the parent toggles Usage access once on the phone (PIN-gated Settings row, during a pause)
   or adb; check whether Android's "restricted settings" grey it out for a sideloaded launcher.
+  **The user's rule (2026-10-21): D is the condition.** Another app's call screen comes over the lock only while
+  usage access is granted, and then only that call screen (the activity that came up for the call; any other
+  activity resumed -> the lock again, with `FLAG_ACTIVITY_NO_USER_ACTION`, "Tilbake til samtalen"). Without usage
+  access: E (the call stays behind the lock, a call bar with "Legg på" from the CallStyle hang-up action, else "Lås
+  opp for å legge på"). Element X keeps today's behaviour with or without it (its call screen is isolated and it hangs
+  up without PiP), as a named exception by package + pinned signer like Fossify Clock. Usage events: read only during
+  a VoIP call over the lock, the last seconds, only the call app's package, memory only, never logged/stored/sent
+  (the report says granted yes/no), one file, a source-scan test.
 - **VoIP over the lock, small launcher fixes** (the user's emulator, 2026-10-21, approved): (1) the lock resumed
   during an IN_CALL sometimes finds nothing to reopen (`No VoIP call screen to bring back` at 16:35:17, the kid then
   needs the PIN to get back to their own call) - log which case it was (no IN_CALL notice with a content intent, or the
