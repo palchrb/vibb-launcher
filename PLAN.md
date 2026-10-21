@@ -1398,6 +1398,16 @@ findings, merge to `main`, full suite once.
   plays), else try 14; a refused play could retry once with a learned one. New NRK content comes as podcasts (plain
   mp3, no account), so only the older series depend on it.
 
+- **Fewer persistent notifications** (the user, 2026-10-21, a screenshot of the shade and the status bar: "virker for
+  meg som om disse varslene er der ganske permanent? mulig å unngå det?" ... "det er et vibb varsel i statuslinja. Det
+  er ikke krise, men det er der"): two foreground-service notifications ("Klar for kommandoer fra forelderen" -
+  `CommandListenerService`; "Innholdsfilteret er på" - `KidVpnService`), both on MIN channels, which NMS raises to LOW
+  for a foreground service (hence the status-bar icon). Proposal: the VPN drops its foreground state once `establish()`
+  succeeded (the always-on VPN's system binding keeps it alive; restore the notification if the filter is ever found
+  down), the anchor keeps one short notification ("Vibb One", no body). The icon stays while the anchor runs - Android
+  doesn't allow a hidden foreground service. Device check: the filter survives a night in Doze without its own
+  notification. Waiting for the user's go.
+
 ### To decide (the user)
 
 
