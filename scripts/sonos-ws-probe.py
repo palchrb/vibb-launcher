@@ -37,6 +37,9 @@ speaker's MAC) and every name (rooms, groups, titles) replaced by fake ones, con
 file - `Sonos_FAKEhousehold000000000000001` (one household: every id maps to it),
 `RINCON_000000000000014NN`, `192.168.1.NN`, `fd00::NN`, `Navn N` - so the capture can be committed as it is.
 
+--key UUID sends another X-Sonos-Api-Key (a random one tells whether the speaker checks it at all), --key none
+sends no key header.
+
 Ctrl-C ends it. The X-Sonos-Api-Key below is the RFC 4122 example UUID that sonos-websocket sends;
 the speaker accepts it locally - it is not a secret.
 """
@@ -56,6 +59,7 @@ except ImportError:
     sys.exit("needs aiohttp: python3 -m pip install aiohttp (or apt install python3-aiohttp)")
 
 API_KEY = "123e4567-e89b-12d3-a456-426655440000"
+KEY = API_KEY  # --key: another value, or "none" for no X-Sonos-Api-Key header at all
 PROTOCOL = "v1.api.smartspeaker.audio"
 T0 = time.monotonic()
 
@@ -231,7 +235,9 @@ async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE  # the speaker's certificate is self-signed
     url = f"wss://{ip}:1443/websocket/api"
-    async with session.ws_connect(url, headers={"X-Sonos-Api-Key": API_KEY}, protocols=(PROTOCOL,),
+    headers = {} if KEY.lower() == "none" else {"X-Sonos-Api-Key": KEY}
+    print(f"{stamp()} WS key: {'(no header)' if not headers else KEY}")
+    async with session.ws_connect(url, headers=headers, protocols=(PROTOCOL,),
                                   ssl=ctx, heartbeat=30) as ws:
         print(f"{stamp()} WS connected to {url}")
         # An empty command answers with the household id (sonos-websocket's trick).
@@ -349,7 +355,12 @@ async def main() -> None:
     ap.add_argument("--all", action="store_true", help="also follow every other group's playback")
     ap.add_argument("--volume", type=int, help="with --do: this speaker and the rooms named set to N first, put back after")
     ap.add_argument("--save", metavar="FILE", help="write every message to a JSON array, ids, addresses and names replaced (fixtures)")
+    ap.add_argument("--key", help="the X-Sonos-Api-Key to send instead of the example UUID; 'none' sends no header "
+                    "(does the speaker check it?)")
     args = ap.parse_args()
+    if args.key:
+        global KEY
+        KEY = args.key
     ready = asyncio.Event()
     async with aiohttp.ClientSession() as session:
         saver = Saver(args.save) if args.save else None
