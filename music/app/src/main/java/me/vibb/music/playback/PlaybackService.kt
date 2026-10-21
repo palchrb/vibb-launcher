@@ -577,9 +577,12 @@ class PlaybackService : MediaSessionService() {
                             // annet") and our group's volumes - once per opening, never on a timer
                             val sonos = renderer as? SonosRenderer
                             sonos?.controller?.readVolumes()
+                            // the uid read on main (qa-53b-code 12); the last opening's busy lines never shown again (9)
+                            val ours = sonos?.uid
+                            home.rooms.clearBusy()
                             launch(Dispatchers.IO) {
                                 home.rooms.refresh()
-                                sonos?.let { home.rooms.lookBusy(it.uid) }
+                                if (ours != null) home.rooms.lookBusy(ours)
                             }
                         }
                         Commands.ROOMS_RESCAN -> home.rooms.rescanInBackground()
@@ -1889,6 +1892,7 @@ class PlaybackService : MediaSessionService() {
             val out = withContext(Dispatchers.IO) {
                 home.verbs.join(ours, target.members, cap, still, joining = { u -> withContext(Dispatchers.Main) { c.joining(u) } })
             }
+            c.joinDone(target.members)
             if (out.failed.isNotEmpty() || out.stopped) groupPending.remove(row)
             if (out.failed.isNotEmpty()) groupFailed[row] = SystemClock.elapsedRealtime() + GROUP_FAILED_MS
             publish()
@@ -1921,7 +1925,12 @@ class PlaybackService : MediaSessionService() {
             Unit
         }
         if (member == c.uid) {
-            c.leaveGroup(members.firstOrNull { it != member }, done)
+            if (!c.leaveGroup(members.firstOrNull { it != member }, done)) {
+                // refused (the session ended meanwhile): nothing was sent - no no-contact line (qa-53b-code 11)
+                SonosHome.log("sonos: a leave of our coordinator refused - no session of ours")
+                groupPending.remove(member)
+                publish()
+            }
         } else {
             scope.launch { done(withContext(Dispatchers.IO) { home.verbs.leave(member) }) }
         }
@@ -2043,9 +2052,8 @@ class PlaybackService : MediaSessionService() {
         active = a
         applyModes(a)
         lastIndex = index
+        // design 53 §2.9: the adopt's baseline is the first fresh topology after it (the controller asks for it), nothing sent
         sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri, live)
-        // design 53 §2.9: the adopt's baseline - the household's group as the cache has it, nothing sent (Q4: accepted)
-        sonos.topology(roomsNow())
         publish()
         // a room the parent's scope no longer allows: adopted only to be bookmarked and stopped (§5.5)
         leaveDisallowedRoom()

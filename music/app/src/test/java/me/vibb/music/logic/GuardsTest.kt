@@ -411,6 +411,12 @@ class GuardsTest {
         // the belt: every play the room's controller sends asks the scope too
         assertTrue(renderer.contains("&& roomAllowed(this@SonosRenderer.uid, controller.accepted) },"))
         assertTrue(service.contains("roomAllowed = { uid, accepted -> sessionAllowed(roomScope, home.rooms.state.value.rooms, uid, accepted) },"))
+        // design 53 §2.7: the "+" and "−" belts - a join only where offered and in the scope, a leave only of a member (M21)
+        val join = service.substringAfter("private fun roomJoin(sonos: SonosRenderer, row: String) {").substringBefore("\n    }\n")
+        assertTrue(join.contains("if (target == null || !joinOffered(view, ours, c.liveSession(now), roomScope, row) || !playAllowed(suspendedNow())) {"))
+        assertTrue(join.indexOf("!joinOffered(") < join.indexOf("home.verbs.join("))
+        val leave2 = service.substringAfter("private fun roomLeave(sonos: SonosRenderer, member: String) {").substringBefore("\n    }\n")
+        assertTrue(leave2.indexOf("if (!leaveOffered(view, c.uid, c.liveSession(SystemClock.elapsedRealtime()), member)) {") in 0 until leave2.indexOf("home.verbs.leave("))
         // the kid's line, both languages
         assertTrue(code("src/main/java/me/vibb/music/ui/MusicRoot.kt").contains("PlayerHub.Message.ROOM_NOT_ALLOWED -> R.string.room_not_allowed"))
     }
@@ -468,7 +474,7 @@ class GuardsTest {
         // design 53 §2.12: a lone room as before; a group's every room through groupMove/groupStep, each clamped to the cap
         val device = sonos.substringAfter("fun setDeviceVolume(volume: Int) {").substringBefore("\n    }\n")
         assertTrue(device.contains("if (!groupLive()) return setVolume(volume)"))
-        assertTrue(device.contains("groupMove(roomVolumes(), volume, cap())"))
+        assertTrue(device.contains("setRooms(groupMove(deviceBase, volume, cap()))"))
         assertTrue(sonos.substringAfter("fun adjustVolume(delta: Int) {").substringBefore("\n    }\n").contains("groupStep(roomVolumes(), delta, cap())"))
         assertTrue(sonos.substringAfter("fun setRoomVolume(room: String, volume: Int) {").substringBefore("\n    }\n").contains("volumeTarget(volume, cap())"))
     }

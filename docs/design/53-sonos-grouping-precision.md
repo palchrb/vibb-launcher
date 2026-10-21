@@ -944,7 +944,50 @@ Built as §2.6-§2.9 and §2.12 specify, on main `a2d66476`; awaiting its code Q
 - The "Begge" line and a member's slider show only once that volume is known (the sheet's opening reads them).
 - The busy look runs only while a room renders (grouping can be offered only then).
 
-**Found, not built** (PLAN "To decide"): the sleep timer's fade on a group fades only the coordinator room.
+**Found, then decided by the user** (2026-10-21, "enig i at den bør slå av alle grouped høyttalere"): the sleep
+timer's fade on a group faded only the coordinator room - built in the fix round below.
+
+### 53-b fix round (qa-53b-code.md: 0 High, 4 Medium, 6 Low, 6 Nit - all taken)
+
+1. (M) A joiner is accepted (and capped, and known) only while a session of ours plays: a room grouped in while
+   nothing plays is judged by the scope at the next start, whose members cap it (the coordinator: Q4 is about a
+   running session going on). The deviation "a joiner seen while stopped is accepted" is withdrawn.
+2. (M) The adopt's baseline is the first **fresh** topology after it: the adopt asks for one (`host.groupsChanged`),
+   and the renderer's debounced refresh hands the rows to the controller whether or not the `StateFlow` emitted; the
+   adopt no longer takes the cache as an earlier process left it. A follow takes no baseline at all (with 8).
+3. (M) `setRooms` never sends a target equal to the known volume or above the cap (a raise leaves such a room
+   where it is), and a member's read replaces our own set only when it started after that room's last own set
+   (`volGen`, bumped by every own set and the joiner's cap).
+4. (M) One member whose volume can't be read no longer disables the group's keys, the system's slider or "Begge": the
+   known rooms move, a room that didn't answer isn't read again before every press (`unread`, until the next read),
+   and "Begge" needs two known volumes (`groupVolume`).
+5. (L) `VolumeSlider` lets go of its released hold after a second by itself (`LaunchedEffect`).
+6. (L) The system's slider on a group moves from its slide's base (taken at its first event after 1 s without one),
+   like "Begge" - sliding back restores the balance, as music/CLAUDE.md says.
+7. (L) Inside the group-change window the advance runs only when the probe's **last** try misses
+   (`Fields.probeMissed` = no tries left), or the window closed.
+8. (L) A follow keeps `knownMembers` and `accepted` as they were - also the rooms the topology already showed gone
+   with our stream (`knownLeft`, the grace) - so rooms our own "+" put there stay judged by the scope; only a room
+   neither known nor accepted is a joiner after it.
+9. (L) The busy lines are cleared at the sheet's opening before the new look, and by a look off Wi-Fi.
+10. (L) Tests for the six surviving mutations (M7, M13, M14, M15, M20, M21) - each now caught, with the findings' own
+    cases (a mutation run of nine after the fixes: all caught).
+11. (N) A refused "−" on our coordinator (no session) clears its Spinner and logs; never the no-contact line.
+12. (N) `ROOMS_REFRESH` reads our uid on main before the busy look's IO.
+13. (N) Our own "+" rooms stay known while the job runs (`joiningNow`, `joinDone`): a topology between `joining` and
+    the join never makes one a joiner from outside.
+14. (N) The view model drops the drag id when the sheet closes.
+15. (N) The sketch's "HØYTTALERE" section label is not in the app (the note and the string list leave it out) - a
+    question for the user at the device check.
+16. (N) `fake-sonos.py` refuses a coordinator joining one of its own members (fault 714; selftest 4b).
+
+**The group's sleep fade** (the user's decision): `fadeOutAndPause` steps every other member whose volume is known
+by the same 2/3, 1/3, 0 of its own volume through `MemberVolumes` (latest-wins, off our actor - a switched-off member
+never delays the Pause; each step never above the cap), our coordinator's Pause stops the group, and each room gets
+its own pre-fade volume back after it (also when the ramp is cancelled), as the coordinator's restore does today; the
+rooms' read generation is bumped at both ends, so a read during the ramp never reads as their volume. A member whose
+volume the app doesn't know is left alone (nothing to put back). Not carried across a crash: `renderer.json`'s ramp
+volume is still the coordinator's only (a process that dies mid-ramp leaves a member quiet until it is turned up).
 
 **Owed** (§5): checks 6, 7, 8, 8b and 8c on the user's speakers (with the socket: the four outside cases within ~1-2 s;
 check 7's report of the old coordinator's transport and TrackURI after a "−" on it - if Sonos keeps the stream on the

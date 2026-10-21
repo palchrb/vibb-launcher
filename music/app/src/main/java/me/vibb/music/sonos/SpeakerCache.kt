@@ -204,7 +204,10 @@ class RoomDirectory(
      * topology refresh, and at a `groups` event while it is open - never on a timer. Only on Wi-Fi.
      */
     suspend fun lookBusy(ours: String?): Set<String> {
-        if (!onWifi()) return emptySet()
+        if (!onWifi()) {
+            clearBusy()
+            return emptySet()
+        }
         val doc = cache.load()
         val rows = SpeakerCache.rooms(doc).filter { it.uid != ours && (ours == null || ours !in it.members) }.take(BUSY_MAX)
         val found = ConcurrentHashMap.newKeySet<String>()
@@ -227,6 +230,9 @@ class RoomDirectory(
         views.update { it.copy(busy = busy) }
         return busy
     }
+
+    /** No busy lines (the sheet opening, before its new look: the last opening's are stale; qa-53b-code 9). */
+    fun clearBusy() = views.update { it.copy(busy = emptySet()) }
 
     /**
      * `refresh_topology`: GetZoneGroupState against the cached speakers in uid order until one

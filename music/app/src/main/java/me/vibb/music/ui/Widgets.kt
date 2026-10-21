@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import me.vibb.music.data.Store
 import me.vibb.music.logic.DecodedCover
@@ -338,6 +339,13 @@ fun VolumeSlider(value: Int, fill: Color, label: String, modifier: Modifier = Mo
     var released by remember { mutableStateOf<Pair<Int, Long>?>(null) } // (volume, when)
     val change by rememberUpdatedState(onChange)
     val held = released?.takeIf { (v, at) -> v != value && SystemClock.elapsedRealtime() - at < 1_000 }?.first
+    // nothing else recomposes the sheet a second later (no position ticks here): let go of the hold then (qa-53b-code 5)
+    LaunchedEffect(released) {
+        if (released != null) {
+            delay(1_000)
+            released = null
+        }
+    }
     val frac = dragFrac ?: ((held ?: value).coerceIn(0, 100) / 100f)
     fun pct(f: Float): Int = (f.coerceIn(0f, 1f) * 100).roundToInt()
     fun send(f: Float, done: Boolean) {

@@ -164,6 +164,10 @@ class OutputRowsTest {
         val vm = moduleFile("src/main/java/me/vibb/music/ui/MusicViewModel.kt").readText()
         assertTrue(vm.contains("const val VOLUME_SEND_MS = 150L"))
         assertTrue(vm.contains("PlayerHub.sheetOpen.value = true") && vm.contains("PlayerHub.sheetOpen.value = false"))
+        // a drag cut off by the sheet closing never hands its base on (qa-53b-code 14); the thumb's hold lets go by itself (5)
+        assertTrue(vm.substringAfter("fun outputSheetClosed() {").substringBefore("\n    }\n").contains("volumeDrag = null"))
+        val slider = moduleFile("src/main/java/me/vibb/music/ui/Widgets.kt").readText().substringAfter("fun VolumeSlider(").substringBefore("\n}\n")
+        assertTrue(slider.contains("LaunchedEffect(released) {"))
     }
 
     /** Decision 3 (52-3, 52-5): the view model's wiring of the pure rules. */

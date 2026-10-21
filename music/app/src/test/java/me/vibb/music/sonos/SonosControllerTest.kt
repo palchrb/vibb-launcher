@@ -1047,6 +1047,34 @@ class SonosControllerTest {
     }
 
     @Test
+    fun `d53b the sleep ramp on a group fades every known room with ours, never above the cap, and puts each one's own volume back`() {
+        playing()
+        r.volumes.held[kitchenRoom] = 35 // Bad doesn't answer: never touched (no volume to put back)
+        r.c.topology(listOf(r.uid, kitchenRoom, "RINCON_BATH01400"))
+        r.capPct = 20
+        var done = false
+        r.c.fadeOutAndPause { done = true }
+        r.work.drain()
+        assertTrue(done)
+        assertEquals(listOf("volume 20", "volume 10", "volume 0", "pause", "volume 30"), r.spk.commands.drop(2))
+        assertEquals("2/3, 1/3, 0 of 35 (the first under the cap), then its own 35 back", listOf(20, 12, 0, 35), r.volumes.sets.filter { it.first == kitchenRoom }.map { it.second })
+        assertFalse(r.volumes.sets.any { it.first == "RINCON_BATH01400" })
+        assertEquals(35, r.c.roomVolumes()[kitchenRoom])
+        // cancelled: every room back at once
+        r.volumes.sets.clear()
+        r.c.playTile()
+        r.work.drain()
+        r.speaker("0:07:20")
+        r.poll()
+        r.c.fadeOutAndPause { }
+        r.c.cancelFade()
+        r.work.drain()
+        assertEquals(listOf(kitchenRoom to 35), r.volumes.sets)
+    }
+
+    private val kitchenRoom = "RINCON_KITCHEN01400"
+
+    @Test
     fun `the player offers the GET commands and the remote volume`() {
         val commands = SONOS_COMMANDS.toSet()
         for (c in listOf(
@@ -2013,6 +2041,9 @@ class SonosControllerTest {
     private class HouseProbe(val carries: Map<String, Pair<TransportState, String>>) : MigrationProbe {
         var looks = 0
 
+        /** The candidates' ips in the order the probe asked them. */
+        val asked = mutableListOf<String>()
+
         override fun refreshTopology(): SpeakerDoc {
             looks++
             return SpeakerDoc(
@@ -2029,7 +2060,10 @@ class SonosControllerTest {
             )
         }
 
-        override fun live(player: CachedPlayer): Pair<TransportState, String>? = carries[player.ip] ?: (TransportState.STOPPED to "")
+        override fun live(player: CachedPlayer): Pair<TransportState, String>? {
+            asked += player.ip
+            return carries[player.ip] ?: (TransportState.STOPPED to "")
+        }
     }
 
     /** Our stream found playing on this room at start (design 26a §4.7): adopted with zero commands. */
@@ -2117,13 +2151,14 @@ class SonosControllerTest {
         r.speaker("0:24:13", transport = "STOPPED") // the old coordinator kept our TrackURI
         r.poll()
         assertEquals(1, probe.looks)
+        assertEquals("the groups event's candidate Kjøkken asked first (Bad comes first in the household)", listOf("10.0.0.11"), probe.asked)
         assertEquals("followed to Kjøkken", kitchen, r.c.uid)
         assertEquals("no next episode here", 1, r.spk.commands.count { it == "seturi" })
         assertFalse(r.c.takeAuto())
     }
 
     @Test
-    fun `d53b a group change's window - the end waits for the probe, advances when it misses or once the window closed`() {
+    fun `d53b a group change's window - the end waits for the probe, advances when its last try misses or once the window closed`() {
         playing("0:23:59")
         r.c.topology(listOf(r.uid, kitchen))
         r.work.drain(afters = false)
@@ -2132,10 +2167,19 @@ class SonosControllerTest {
         r.speaker("0:24:13", transport = "STOPPED")
         r.poll()
         assertEquals(0, r.c.index)
-        // the probe ran and nobody carries our stream: the advance runs, gated as ever
-        r.probe = HouseProbe(emptyMap())
+        // the probe's tries, 1.5 s apart: the first two misses don't decide (the new coordinator may not show yet, QA 7)
+        val probe = HouseProbe(emptyMap())
+        r.probe = probe
         r.advance(2_000)
         r.poll()
+        r.advance(SonosSession.MIGRATE_SPACING_MS)
+        r.poll()
+        assertEquals(2, probe.looks)
+        assertEquals(0, r.c.index)
+        // the last try misses: nobody carries our stream - the advance runs, gated as ever
+        r.advance(SonosSession.MIGRATE_SPACING_MS)
+        r.poll()
+        assertEquals(3, probe.looks)
         assertEquals(1, r.c.index)
         assertEquals(r.url(1), r.host.played.last().second)
         // and with no probe at all, once the window closed
@@ -2156,7 +2200,7 @@ class SonosControllerTest {
         playing()
         val before = r.wakes
         var ok: Boolean? = null
-        r.c.leaveGroup(kitchen) { ok = it }
+        assertTrue("sent", r.c.leaveGroup(kitchen) { ok = it })
         r.work.drain(afters = false)
         assertEquals(true, ok)
         assertEquals("standalone", r.spk.commands.last())
@@ -2165,8 +2209,9 @@ class SonosControllerTest {
         r.c.stop()
         r.work.drain()
         ok = null
-        r.c.leaveGroup(kitchen) { ok = it }
-        assertEquals("no session: nothing sent", false, ok)
+        assertFalse("no session: refused, nothing sent", r.c.leaveGroup(kitchen) { ok = it })
+        r.work.drain()
+        assertNull("never a no-contact answer for a refusal (QA 11)", ok)
     }
 
     @Test
@@ -2238,5 +2283,185 @@ class SonosControllerTest {
         assertEquals(kitchen to 45, r.volumes.sets.last())
         assertFalse("never fights an external change", r.volumes.sets.any { it.first == bath })
         assertTrue(r.others.getValue(bath).commands.isEmpty())
+        // a room that left our group with our own set above the next cap is no longer ours to pull down (M15)
+        r.c.setRoomVolume(kitchen, 44)
+        r.capPct = null
+        r.c.setRoomVolume(kitchen, 70)
+        r.c.topology(listOf(r.uid, bath))
+        val sets = r.volumes.sets.size
+        r.capPct = 30
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals(sets, r.volumes.sets.size)
+        assertEquals("our coordinator follows", "volume 30", r.spk.commands.last())
+    }
+
+    // -- design 53-b fix round (qa-53b-code.md) --
+
+    @Test
+    fun `d53b QA 1 - a room grouped in while nothing of ours plays is no joiner - neither accepted nor capped, the next start caps it`() {
+        r.capPct = 40
+        val k = room(kitchen, 80)
+        playing()
+        r.c.stop()
+        r.work.drain()
+        r.c.topology(listOf(r.uid, kitchen))
+        r.work.drain()
+        assertTrue("the scope judges it as before Q4's exception (M7)", r.c.accepted.isEmpty())
+        assertTrue(k.commands.isEmpty())
+        // the next start's members cap it with the rest of the row
+        r.membersOf = { listOf(r.uid, kitchen) }
+        r.c.playTile()
+        r.work.drain()
+        assertEquals(listOf("volume 40"), k.commands)
+        assertTrue(r.c.accepted.isEmpty())
+        // ... while a session plays, a joiner is accepted (Q4) and capped
+        val b = room(bath, 90)
+        r.c.topology(listOf(r.uid, kitchen, bath))
+        r.work.drain()
+        assertEquals(setOf(bath), r.c.accepted)
+        assertEquals(listOf("volume 40"), b.commands)
+    }
+
+    @Test
+    fun `d53b QA 2 and 8 - a follow keeps the group's rooms known and accepted as they were - a louder new room is capped after it`() {
+        r.capPct = 40
+        room(kitchen, 30)
+        val b = room(bath, 30)
+        r.membersOf = { listOf(r.uid, kitchen, bath) } // the app put them there: known, not accepted
+        playing()
+        b.vol = 80 // turned up in the Sonos app since: never pulled down
+        r.c.topology(listOf(r.uid, kitchen, bath))
+        // the kid takes our room out by hold-Play: the topology shows it alone before the follow lands
+        r.c.topology(listOf(r.uid))
+        val regroups = r.host.regroups
+        r.c.onPoll(Tick.Next(5_000), hinted(uri = r.url(0)))
+        r.work.drain()
+        assertEquals(kitchen, r.c.uid)
+        assertTrue("the follow asks for a fresh topology", r.host.regroups > regroups)
+        r.c.topology(listOf(kitchen, bath)) // the fresh read, equal to the rows
+        r.work.drain()
+        assertTrue("nothing sent at a follow", b.commands.isEmpty())
+        assertTrue("rooms the app put there stay judged by the scope", r.c.accepted.isEmpty())
+        // a room the kids add afterwards is a joiner: accepted and capped
+        val loft = room("RINCON_LOFT01400", 90)
+        r.c.topology(listOf(kitchen, bath, loft.uid))
+        r.work.drain()
+        assertEquals(listOf("volume 40"), loft.commands)
+        assertEquals(setOf(loft.uid), r.c.accepted)
+    }
+
+    @Test
+    fun `d53b QA 2 - an adopt's baseline is the first fresh topology after it, asked for by the adopt`() {
+        r.capPct = 40
+        val k = room(kitchen, 80)
+        adopted()
+        assertEquals(1, r.host.regroups)
+        r.c.topology(listOf(r.uid, kitchen))
+        r.work.drain()
+        assertTrue(k.commands.isEmpty())
+        assertEquals(setOf(kitchen), r.c.accepted)
+    }
+
+    @Test
+    fun `d53b QA 13 - a topology between our join and its landing never makes our own room a joiner`() {
+        r.capPct = 40
+        val k = room(kitchen, 80)
+        playing()
+        r.c.joining(kitchen)
+        r.c.topology(listOf(r.uid)) // read before Kjøkken's join landed
+        r.c.topology(listOf(r.uid, kitchen))
+        r.work.drain()
+        assertTrue(k.commands.isEmpty())
+        assertTrue(r.c.accepted.isEmpty())
+        assertFalse(r.host.logs.any { it.contains("from outside") })
+        // after the job, a room that left is forgotten: joining again from outside is a new join
+        r.c.joinDone(listOf(kitchen))
+        r.c.topology(listOf(r.uid))
+        r.c.topology(listOf(r.uid, kitchen))
+        r.work.drain()
+        assertEquals(listOf("volume 40"), k.commands)
+    }
+
+    @Test
+    fun `d53b M13 - an accepted room that left stays accepted for the grace, then it is no longer`() {
+        playing()
+        r.c.topology(listOf(r.uid, kitchen))
+        assertEquals(setOf(kitchen), r.c.accepted)
+        r.c.topology(listOf(r.uid))
+        assertEquals("our stream may follow it", setOf(kitchen), r.c.accepted)
+        r.advance(SonosController.ACCEPTED_GRACE_MS)
+        r.c.topology(listOf(r.uid))
+        assertTrue(r.c.accepted.isEmpty())
+    }
+
+    @Test
+    fun `d53b QA 3 - a raise never sends a stale read back above the cap, an older read never replaces a newer set, a newer one does`() {
+        r.capPct = 40
+        room(kitchen, 80)
+        r.membersOf = { listOf(r.uid, kitchen) }
+        playing() // the start capped Kjøkken to 40
+        r.volumes.held[kitchen] = 80 // a read from before that cap
+        r.c.topology(listOf(r.uid, kitchen))
+        r.c.adjustVolume(3)
+        r.work.drain()
+        assertFalse("never above the cap", r.volumes.sets.any { it.second > 40 })
+        // a read started before our own set answers late: it never replaces the set (M14's area)
+        r.volumes.held[kitchen] = 35
+        r.volumes.deferred = true
+        r.c.readVolumes()
+        r.c.setRoomVolume(kitchen, 20)
+        r.volumes.answer()
+        assertEquals(20, r.c.roomVolumes()[kitchen])
+        // a read after it that differs (the Sonos app turned it up) replaces our set - and is never pulled down
+        r.volumes.held[kitchen] = 30
+        r.c.readVolumes()
+        r.volumes.answer()
+        assertEquals(30, r.c.roomVolumes()[kitchen])
+        val sets = r.volumes.sets.size
+        r.capPct = 25
+        r.c.capChanged()
+        r.work.drain()
+        assertEquals("not ours any more (M14)", sets, r.volumes.sets.size)
+    }
+
+    @Test
+    fun `d53b QA 4 - a member that can't be read never disables the group's keys or Begge - the known rooms move`() {
+        room(kitchen, 35)
+        playing()
+        r.volumes.held[kitchen] = 35 // Bad switched off: no answer
+        r.c.topology(listOf(r.uid, kitchen, bath))
+        r.c.adjustVolume(3)
+        r.work.drain()
+        assertEquals("volume 33", r.spk.commands.last())
+        assertEquals(kitchen to 38, r.volumes.sets.last())
+        val reads = r.volumes.reads.size
+        r.c.adjustVolume(3)
+        r.work.drain()
+        assertEquals("not asked again before every press", reads, r.volumes.reads.size)
+        assertEquals(kitchen to 41, r.volumes.sets.last())
+        assertEquals("Begge from the known rooms (36, 41)", 39, r.c.groupVolume())
+        r.c.setGroupVolume(48, drag = 7)
+        r.work.drain()
+        assertEquals(mapOf(r.uid to 45, kitchen to 50), r.c.roomVolumes())
+    }
+
+    @Test
+    fun `d53b QA 6 - the system's slider on a group moves from its slide's base like Begge - sliding back restores the balance`() {
+        room(kitchen, 35)
+        playing()
+        r.c.setVolume(55)
+        r.work.drain()
+        r.volumes.held[kitchen] = 35
+        r.c.topology(listOf(r.uid, kitchen))
+        r.capPct = 60
+        r.advance(2_000)
+        r.c.setDeviceVolume(60)
+        r.work.drain()
+        assertEquals(mapOf(r.uid to 60, kitchen to 50), r.c.roomVolumes())
+        r.advance(200)
+        r.c.setDeviceVolume(45)
+        r.work.drain()
+        assertEquals(mapOf(r.uid to 55, kitchen to 35), r.c.roomVolumes())
     }
 }

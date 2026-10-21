@@ -84,9 +84,20 @@ class FakeVolumes : MemberVolumes {
         held[uid] = volume
     }
 
+    /** With [deferred], a read answers what the rooms held when it was asked, but only at [answer] (a slow member). */
+    var deferred = false
+    private val waiting = mutableListOf<() -> Unit>()
+
     override fun read(uids: List<String>, then: (Map<String, Int>) -> Unit) {
         reads += uids
-        then(uids.mapNotNull { u -> held[u]?.let { u to it } }.toMap())
+        val answer = uids.mapNotNull { u -> held[u]?.let { u to it } }.toMap()
+        if (deferred) waiting += { then(answer) } else then(answer)
+    }
+
+    fun answer() {
+        val all = waiting.toList()
+        waiting.clear()
+        all.forEach { it() }
     }
 }
 

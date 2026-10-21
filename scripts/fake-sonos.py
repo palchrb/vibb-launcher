@@ -256,6 +256,10 @@ class Household:
         if coord is None or coord is spk:
             raise Fault(714)  # Illegal MIME-Type / no such group: the speaker refuses it
         coord = self.by_uid.get(coord.coordinator, coord)
+        if coord is spk:
+            # a coordinator joining one of its own members: the app never sends it (joinOffered refuses a row holding
+            # our uid), and the fake would hand its stream over first and end standalone - refused instead
+            raise Fault(714)
         if spk.coordinator == spk.uid:
             members = self.members_of(spk)
             if members:
@@ -686,6 +690,10 @@ def selftest():
         assert soap(stua, AV, "GetPositionInfo")[1]["TrackURI"] == uri, "the coordinator's stream moved to its member"
         assert soap(kjokken, AV, "GetPositionInfo")[1]["TrackURI"] == ""
         assert soap(kjokken, AV, "SetAVTransportURI", (("CurrentURI", f"x-rincon:{kjokken.uid}"), ("CurrentURIMetaData", "")))[1] == {"fault": "714"}
+        soap(kjokken, AV, "SetAVTransportURI", (("CurrentURI", f"x-rincon:{stua.uid}"), ("CurrentURIMetaData", "")))
+        assert soap(stua, AV, "SetAVTransportURI", (("CurrentURI", f"x-rincon:{kjokken.uid}"), ("CurrentURIMetaData", "")))[1] == {"fault": "714"}, \
+            "a coordinator joining its own member is refused"
+        assert soap(kjokken, AV, "GetPositionInfo")[1]["TrackURI"] == f"x-rincon:{stua.uid}"
         print("4b. grouping: join (x-rincon:, the room's own stream stops), a member's leave, the coordinator's leave (the stream moves) OK")
 
         # 5. the seed file the debug feed reads

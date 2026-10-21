@@ -134,8 +134,16 @@ class SonosSessionTest {
         warm(s)
         val probe = Probe()
         s.hint("RINCON_BATH")
-        assertTrue("it ran, nobody carries the stream: the advance guard's probeMissed", s.maybeProbeMigration(stoppedEmpty, probe))
+        assertFalse("a first try's miss decides nothing yet (qa-53b-code 7)", s.maybeProbeMigration(stoppedEmpty, probe))
         assertEquals("the hinted Bad first, then Kjøkken", listOf("10.0.0.12", "10.0.0.11"), probe.asked)
+        // only the last try's miss is the advance guard's probeMissed
+        val s3 = session()
+        warm(s3)
+        val misses = (1..SonosSession.MIGRATE_TRIES).map {
+            clock.advance(SonosSession.MIGRATE_SPACING_MS)
+            s3.maybeProbeMigration(stoppedEmpty, Probe())
+        }
+        assertEquals(listOf(false, false, true), misses)
         // our TrackURI kept, STOPPED: an episode's end - never probed outside the window...
         val kept = fields(TransportState.STOPPED, uri).copy(ours = true)
         clock.advance(2_000)

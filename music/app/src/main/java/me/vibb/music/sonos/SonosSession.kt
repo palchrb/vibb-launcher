@@ -124,7 +124,7 @@ data class Fields(
     val measuredCadenceMs: Long = SonosSession.POLL_MS,
     /** The speaker's raw state was TRANSITIONING ([transport] then reports the last real one). */
     val transitioning: Boolean = false,
-    /** This poll ran the migration probe and no coordinator carries our stream (design 53 §2.8's advance guard). */
+    /** This poll ran the migration probe's last try and no coordinator carries our stream (design 53 §2.8's advance guard). */
     val probeMissed: Boolean = false,
 ) {
     /** The uris as [redactUri] prints them: a Storytel book's TrackURI is a signed URL (design 26b §0). */
@@ -557,8 +557,8 @@ class SonosSession(
      * an ours+live sighting within [MIGRATE_WINDOW_MS], [MIGRATE_TRIES] attempts per transition; a
      * found hint ends the probing. A hijack (x-rincon) or an episode end (uri retained) never enters -
      * except, for [GROUP_WINDOW_MS] after our group changed (design 53 §2.8), a STOPPED of ours that kept
-     * its TrackURI: the old coordinator may keep it after leaving. True when the probe ran and no
-     * coordinator carries our stream (the controller's advance guard reads it as [Fields.probeMissed]).
+     * its TrackURI: the old coordinator may keep it after leaving. True when the probe's last try ran
+     * and no coordinator carries our stream (the controller's advance guard reads it as [Fields.probeMissed]).
      */
     fun maybeProbeMigration(fields: Fields, probe: MigrationProbe): Boolean {
         val now = elapsedMs()
@@ -578,7 +578,9 @@ class SonosSession(
             log("migration probe failed (${e.javaClass.simpleName})")
         }
         if (moved == null && migrateTries <= 0) log("migration probe: no coordinator carries our stream - settling into lost-session")
-        return moved == null
+        // only the last try's miss says nobody carries it: right after a coordinator left, the new one can still be
+        // missing from the topology or TRANSITIONING at the first try (qa-53b-code 7)
+        return moved == null && migrateTries <= 0
     }
 
     /**

@@ -192,6 +192,8 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     fun outputSheetClosed() {
         sheetOpen = false
         PlayerHub.sheetOpen.value = false
+        // a drag cut off by the sheet closing never hands its base to the next one (qa-53b-code 14)
+        volumeDrag = null
         headsets = emptyList()
         releaseA2dp()
     }

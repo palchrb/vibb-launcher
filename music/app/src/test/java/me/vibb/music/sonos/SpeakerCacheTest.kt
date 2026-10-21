@@ -246,7 +246,9 @@ class SpeakerCacheTest {
         assertEquals(setOf("RINCON_B"), rooms.state.value.busy)
         assertEquals("our own row (and the member in it) is never asked", setOf("192.168.1.22", "192.168.1.23", "192.168.1.24"), asked.map { it.first }.toSet())
         assertTrue(asked.all { it.second == RoomDirectory.BUSY_PER_MS })
-        // the next refresh keeps it until the next look
+        // the next refresh keeps it until the next look; the sheet's opening clears it first (qa-53b-code 9)
         assertEquals(setOf("RINCON_B"), rooms.view().busy)
+        rooms.clearBusy()
+        assertTrue(rooms.state.value.busy.isEmpty())
     }
 }

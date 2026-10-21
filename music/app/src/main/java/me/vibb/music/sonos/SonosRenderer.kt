@@ -112,8 +112,6 @@ internal class SonosRenderer(
             // the uri the adopt went out with (the hint's), through storedUri as every write (design 26b §5.3)
             writeChoice { it.followed(uid, name, entry, itemKey, uri) }
             onFollowed()
-            // design 53 §2.9: the baseline after a follow is the next topology - read it now
-            groupsChanged()
         }
 
         override fun storytelUnavailable(entryId: Long, itemKey: String, code: String) {
@@ -194,11 +192,15 @@ internal class SonosRenderer(
     /** The Wi-Fi network and the player screen's flag, watched while this renderer lives (design 53 §2.2, §2.4). */
     private val watches = mutableListOf<Job>()
 
-    /** [groupsChanged]'s debounced look: the topology, and the busy look while the sheet is open. */
+    /**
+     * [groupsChanged]'s debounced look: the topology - handed to the controller whether or not the rows changed (an
+     * equal view isn't emitted again, and an adopt's baseline waits for this fresh read; qa-53b-code 2) - and the busy
+     * look while the sheet is open.
+     */
     private val regroup = Runnable {
         val ours = controller.uid
         scope.launch(Dispatchers.IO) {
-            home.rooms.refreshQuietly()
+            if (home.rooms.refreshQuietly()) handler.post { topology(home.rooms.state.value.rooms) }
             if (PlayerHub.sheetOpen.value) home.rooms.lookBusy(ours)
         }
     }

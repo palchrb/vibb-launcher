@@ -476,13 +476,17 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   audio focus while a room renders (`LocalRenderer.standDown()`). **A group** (design 53 §2.12, the user's Q1; ours,
   not vibb's): the group's value is the mean of its rooms (the system's slider, the player, the sheet's "Begge"/"Alle");
   the keys move every room ±3 from its own last set, the system's slider and "Begge" add the same delta to every room
-  (from the drag's base, so dragging back restores the balance), each clamped to 0..100 and the cap per room
-  (`logic/GroupVolume.kt`: a raise leaves a room at or above the cap where it is) - never Sonos' `SetGroupVolume`;
-  a member's own slider sets that room only. Our coordinator's set goes through our actor, every other member's
-  through `RoomVolumes` (latest-wins, 1.5 s, off the actor). What the app knows of a room's volume is our own last set
+  (from the slide's or the drag's base, so sliding back restores the balance), each clamped to 0..100 and the cap per
+  room (`logic/GroupVolume.kt`: a raise leaves a room at or above the cap where it is, and `setRooms` never sends a
+  value above the cap) - never Sonos' `SetGroupVolume`; a member's own slider sets that room only; the known rooms
+  move when one can't be read. Our coordinator's set goes through our actor, every other member's through
+  `RoomVolumes` (latest-wins, 1.5 s, off the actor). What the app knows of a room's volume is our own last set
   (`volOpts`, per room), else the last read (the sheet opening, the members changing, a group key press while one is
-  unknown) - a member's read that differs replaces our set (the Sonos app changed it; never pulled down). `capChanged`
-  runs over every room our own set took above the new cap. A lone room is unchanged.
+  unknown) - a member's read that differs replaces our set (the Sonos app changed it; never pulled down), but only a
+  read started after that room's last own set (`volGen`). `capChanged` runs over every room of our group our own set
+  took above the new cap. The sleep timer's ramp fades every known room of the group with the coordinator (off the
+  actor for the others, never above the cap) and puts each one's own volume back after the Pause (the user,
+  2026-10-21). A lone room is unchanged.
 - **Bluetooth headphones** (design 52): `BLUETOOTH_CONNECT` is the app's only Bluetooth permission (the launcher's
   `MusicSync` grants it while a policy exists; without it the sheet is the old one). A headset tap only connects (or
   makes a connected one active) - the renderer never moves at the tap; on a Sonos room the headset gets `OUTPUT` once it
@@ -505,7 +509,9 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   whatever the scope while the room's event socket isn't healthy (the group watch, design 53 §2.8; one
   GetZoneGroupState, never discovery). **The exception (design 53 §2.8, the user's Q4: "det barna gjør manuelt bør
   respekteres")**: a room grouped into our running session from outside the app (a kid's hold-Play) is accepted for
-  this renderer's life (`SonosController.accepted`: exactly the `joiners`, plus an adopt's or a follow's baseline) -
+  this renderer's life (`SonosController.accepted`: the `joiners` seen while a session of ours plays - a room grouped
+  in while nothing plays is judged by the scope at the next start, qa-53b-code 1 -, plus an adopt's baseline, the
+  first fresh topology after it; a follow keeps the group's rooms known and accepted as they were) -
   the session's own checks use `sessionAllowed` (the leave, the controller's belt, our row in the sheet with that
   room's "−"), and a follow onto an accepted room plays on there. Everything the app starts or adds itself still needs
   `groupAllowed` (a pick of another row, a "+": only rows the scope allows get one), a parent's new scope still makes
@@ -527,11 +533,13 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   `GetTransportInfo`, once per opening and per `groups` event while the sheet is open (`PlayerHub.sheetOpen`), never on a
   timer. **Grouping done outside the app** is followed: a `groups` event refreshes the topology (debounced 300 ms) and
   the service's rooms.state collector hands our group's members to the renderer before `publish()` and the scope's
-  look - a joiner (`joiners`: a member not in `knownMembers` - what a start capped, an adopt's or a follow's baseline
-  taken with nothing sent, our own joins) is accepted and capped once when louder (never a volume set later from the
-  Sonos app); the label follows ("Stua + Kjøkken"); a `MOVED`, or former members now held by another coordinator, is
-  the follow's candidate; and for 8 s after a group change a STOPPED of ours near the end probes first (the old
-  coordinator may keep its TrackURI) - the advance only when no coordinator carries our stream (`Fields.probeMissed`).
+  look - a joiner (`joiners`: a member not in `knownMembers` - what a start capped, an adopt's baseline taken with
+  nothing sent, the rooms a follow brought along, our own joins in flight) seen while a session of ours plays is
+  accepted and capped once when louder (never a volume set later from the Sonos app); the label follows ("Stua +
+  Kjøkken"); a `MOVED`, or former members now held by another coordinator, is the follow's candidate; and for 8 s
+  after a group change a STOPPED of ours near the end probes first (the old coordinator may keep its TrackURI) - the
+  advance only when the probe's last try finds no coordinator carrying our stream (`Fields.probeMissed`) or the
+  window closed.
 - **Discovery never on a timer**: a cache miss, the sheet's "Se etter høyttalere" row or a failed play; opening the
   sheet is one topology refresh. Every URL is built with `HttpUrl.Builder` from an IP literal (no `Uri.parse("http`);
   SOAP is LAN control traffic and has no address guard, but the speaker-playable filter keeps a `publicOnly` entry's

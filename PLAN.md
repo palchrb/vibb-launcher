@@ -1041,7 +1041,11 @@ findings, merge to `main`, full suite once.
   advance, the extra polls' guards, `sonos-ws-probe.py --save`) merged after their code QA (`qa-53a-code.md`); 53-b
   (grouping: the UPnP verbs in `GroupVerbs`, the sheet per the approved sketch with the group block, "+"/"−", busy
   rows and per-room/"Begge" volume sliders, the four outside cases followed, Q4's accepted rooms, the joiner cap, the
-  advance guard, `fake-sonos.py`'s join/leave) on branch `d53-b`, awaiting code QA - see the note's "53-b status".
+  advance guard, `fake-sonos.py`'s join/leave) on branch `d53-b`; code QA `qa-53b-code.md` (0 High, 4 Medium, 6 Low,
+  6 Nit) and its fix round done - see the note's "53-b status". **Decided and done in that round** (the user,
+  2026-10-21: "enig i at den bør slå av alle grouped høyttalere"): the sleep timer's fade on a group fades every
+  known room with the coordinator and puts each one's own volume back after the Pause (found in 53-b: before, only
+  the coordinator faded).
   Owed on the speakers: design 53 §5 (the capture that replaces the provisional `ws/` fixtures first; checks 6-8c
   for 53-b).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
@@ -1314,11 +1318,6 @@ findings, merge to `main`, full suite once.
 
 ### To decide (the user)
 
-- **The sleep timer's fade on a Sonos group fades only the coordinator room** (found in design 53-b, 2026-10-21):
-  `SonosController.fadeOutAndPause` steps our coordinator's `SetVolume` (2/3, 1/3, 0) and then pauses the group - the
-  other rooms keep their volume until the Pause, so a grouped Kjøkken plays at full volume through Stua's fade. With
-  53-b's per-room volumes the fade could step every room the same way (each room's own base, put back after the
-  Pause), off the actor for the members like the "Begge" slider. Not built (not asked; vibb fades its one room).
 
 - **The app's DIDL differs from vibb's** (found 2026-10-21 against `pi/daemon.py` `_sonos_body`, branch pipewire): for a
   podcast, RSS or NRK series item the app sends the listing's `duration` on the `res`, which vibb sends only for
