@@ -1028,7 +1028,14 @@ findings, merge to `main`, full suite once.
   modifyGroupMembers` on the own group added and removed Edith in ~0.2 s, the group's id unchanged while its
   coordinator stays (`RINCON_...:100`, name "Sverre + 1"). So the phone keeps one socket, to the coordinator of the
   room it plays to, and follows a MOVED to the new coordinator's url; the grouping verbs can stay UPnP (`x-rincon:`,
-  `BecomeCoordinatorOfStandaloneGroup`, as soco) with WebSocket only for events.
+  `BecomeCoordinatorOfStandaloneGroup`, as soco) with WebSocket only for events. **Grouping from outside the app is
+  followed** (the user, 2026-10-21: the kids add and drop rooms by holding Play on a speaker, which can change the
+  coordinator - "Endres groups utenfor vår musikk app skal vi klare å følge med"): the four cases - a room joins our
+  group, a member leaves, our coordinator leaves (Sonos promotes a member and the stream moves: vibb's migration-follow,
+  stage B2, ported in `SonosSession`/`SonosController` `_sonos_stream_moved`, today a 0/5/10 s probe), our room joins
+  another group (`GROUPED_AWAY`) - each shown in "Spill av på" and the player as it happens; the socket's `groups`
+  events and `groupCoordinatorChanged` `MOVED` (the new coordinator's url) make them immediate, the UPnP probe and
+  `ZoneGroupState` stay the fallback. Test on the speakers with the hardware button, all four.
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
