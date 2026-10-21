@@ -8,10 +8,12 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.net.ConnectException
+import java.net.InetAddress
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 
@@ -57,13 +59,29 @@ fun socketUrl(ip: String): HttpUrl? {
 }
 
 /**
- * The host gate before any connect (design 53 §2.2): https to an IP literal in a private range
- * (`PlayBodies.privateLiteral`: RFC 1918, link-local, ULA ...) that is the cached ip of the uid we
- * command ([cachedIp]), port 1443, the socket's path. Anything else is never dialled.
+ * A speaker's address as design 53 §2.2 names it (qa-53a-code 6): RFC 1918 (10/8, 172.16/12, 192.168/16),
+ * link-local 169.254/16, IPv6 ULA fc00::/7 and link-local fe80::/10 - never loopback, `0.0.0.0/8`,
+ * CGNAT/the tailnet or anything the public-address guard's wider set also calls private. A literal is
+ * parsed, never looked up.
+ */
+fun speakerLiteral(host: String): Boolean {
+    if (!isIpLiteral(host)) return false
+    val b = runCatching { InetAddress.getByName(host) }.getOrNull()?.address?.map { it.toInt() and 0xFF } ?: return false
+    return when (b.size) {
+        4 -> b[0] == 10 || (b[0] == 172 && b[1] in 16..31) || (b[0] == 192 && b[1] == 168) || (b[0] == 169 && b[1] == 254)
+        16 -> (b[0] and 0xFE) == 0xFC || (b[0] == 0xFE && (b[1] and 0xC0) == 0x80)
+        else -> false
+    }
+}
+
+/**
+ * The host gate before any connect (design 53 §2.2): https to an IP literal in a speaker's range
+ * ([speakerLiteral]) that is the cached ip of the uid we command ([cachedIp]), port 1443, the socket's
+ * path. Anything else is never dialled.
  */
 fun socketGate(url: HttpUrl, cachedIp: String?): Boolean {
     val cached = cachedIp?.let(::socketUrl) ?: return false
-    return url.scheme == "https" && isIpLiteral(url.host) && PlayBodies.privateLiteral(url.host) &&
+    return url.scheme == "https" && speakerLiteral(url.host) &&
         url.host == cached.host && url.port == SONOS_WS_PORT && url.encodedPath == SONOS_WS_PATH
 }
 
@@ -77,12 +95,26 @@ fun socketGate(url: HttpUrl, cachedIp: String?): Boolean {
  * answer port 1400 (design 53 §2.2, "Trust").
  */
 @SuppressLint("CustomX509TrustManager", "TrustAllX509TrustManager")
-private object SpeakerTrust : X509TrustManager {
+private class SpeakerTrust(private val certLog: ((String) -> Unit)?) : X509TrustManager {
     override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
 
-    override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+    /**
+     * Accepted; a debug build ([certLog]) notes the leaf's subject and issuer once per process (design 53 §5
+     * check 10: whether a later check could pin the subject to the uid) - nothing else of the certificate.
+     */
+    override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+        val log = certLog ?: return
+        val leaf = chain?.firstOrNull() ?: return
+        if (CERT_LOGGED.compareAndSet(false, true)) {
+            log("sonos socket: certificate subject \"${leaf.subjectX500Principal.name}\", issuer \"${leaf.issuerX500Principal.name}\"")
+        }
+    }
 
     override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+
+    companion object {
+        val CERT_LOGGED = AtomicBoolean(false)
+    }
 }
 
 /**
@@ -91,13 +123,14 @@ private object SpeakerTrust : X509TrustManager {
  * (the probe's heartbeat: a missing pong closes it), [SpeakerTrust] and a host name verifier that
  * accepts exactly [ip]. Used for the socket and nothing else.
  */
-fun speakerSocketClient(base: OkHttpClient, ip: String): OkHttpClient {
-    val tls = SSLContext.getInstance("TLS").apply { init(null, arrayOf(SpeakerTrust), SecureRandom()) }
+fun speakerSocketClient(base: OkHttpClient, ip: String, certLog: ((String) -> Unit)? = null): OkHttpClient {
+    val trust = SpeakerTrust(certLog)
+    val tls = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), SecureRandom()) }
     val host = socketUrl(ip)?.host
     return base.newBuilder()
         .connectTimeout(2, TimeUnit.SECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
-        .sslSocketFactory(tls.socketFactory, SpeakerTrust)
+        .sslSocketFactory(tls.socketFactory, trust)
         .hostnameVerifier { name, _ -> host != null && name == host }
         .build()
 }
@@ -178,14 +211,26 @@ class Liveness {
     private var since: Long? = null
     private var deadline: Long? = null
 
-    /** A verb went out at [since] and its answer came at [answeredAt]. */
-    fun owe(since: Long, answeredAt: Long) {
+    /**
+     * The connection's last event (its receipt): the speaker pushes 0.0-0.4 s after a command, often before
+     * the verb's SOAP answer reaches main, so a debt can be paid before it is owed (qa-53a-code 2).
+     */
+    private var lastEventAt: Long? = null
+
+    /**
+     * A verb went out at [since] and its answer came at [answeredAt]: true when an event at or after [since]
+     * already came (paid at once - the check passed), else the event is owed within [LIVENESS_MS].
+     */
+    fun owe(since: Long, answeredAt: Long): Boolean {
+        if (lastEventAt?.let { it >= since } == true) return true
         if (this.since == null) this.since = since
         deadline = answeredAt + LIVENESS_MS
+        return false
     }
 
     /** An event at [at]: true when it paid an owed verb (the check passed). */
     fun seen(at: Long): Boolean {
+        lastEventAt = at
         val s = since ?: return false
         if (at < s) return false
         since = null
@@ -196,9 +241,11 @@ class Liveness {
     /** The owed event didn't come by its deadline. */
     fun missed(now: Long): Boolean = deadline?.let { now > it } ?: false
 
+    /** A new connection owes and remembers nothing. */
     fun clear() {
         since = null
         deadline = null
+        lastEventAt = null
     }
 
     companion object {
@@ -315,6 +362,7 @@ class SonosSocket(
             log("sonos socket: no client (${e.javaClass.simpleName})")
             return retry(t, SocketFailure.OTHER)
         }
+        liveness.clear() // the last event and any debt are this connection's
         conn = Conn(id, ws, t.uid)
     }
 
@@ -389,7 +437,11 @@ class SonosSocket(
 
     override fun owed(since: Long, answeredAt: Long) {
         if (!healthyNow) return
-        liveness.owe(since, answeredAt)
+        if (liveness.owe(since, answeredAt)) {
+            // its event came before the answer reached main: live (the backoff starts over, as in event())
+            backoff.passed()
+            return
+        }
         val id = conn?.id ?: return
         main.postDelayed(Liveness.LIVENESS_MS + 1) {
             if (conn?.id == id && liveness.missed(clock())) dead("no event for our verb within ${Liveness.LIVENESS_MS} ms")

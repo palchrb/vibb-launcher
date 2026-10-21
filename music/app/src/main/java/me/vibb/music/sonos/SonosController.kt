@@ -321,6 +321,7 @@ class SonosController(
 
     /** The generation an IDLE asked a confirm poll for. */
     private var idleGen: Long? = null
+    private var idleAt = FAR_PAST
 
     /** The takeover race (§2.3): that generation's one STOPPED near the end decides nothing. */
     private var skipAdvance: Long? = null
@@ -504,8 +505,7 @@ class SonosController(
     private fun measure(posMs: Long, at: Long, moving: Boolean, poll: Boolean, seed: Boolean = false) {
         // a seed is no measurement: its own key, so the first real one after a play is taken at once
         val key = if (seed) anchorKey() + "|seed" else anchorKey()
-        val m = SonosMeasure(if (poll) posMs + POLL_HALF_MS else posMs, at, moving, key, poll)
-        anchor = sonosAnchor(anchor, m, events.healthy)
+        anchor = sonosAnchor(anchor, SonosMeasure(if (poll) posMs + POLL_HALF_MS else posMs, at, moving, key))
     }
 
     // -- the queue --
@@ -1185,10 +1185,14 @@ class SonosController(
         }
         // our own stream plays or pauses again: the takeover skip is over
         if (s.transport?.live == true && !s.transitioning) skipAdvance = null
-        // an IDLE's confirm poll that still reads PLAYING or TRANSITIONING asks one more after a second
+        // an IDLE's confirm poll that still reads PLAYING or TRANSITIONING asks again every second, up to
+        // IDLE_RECHECK_UNTIL_MS after the IDLE: UPnP lags a change by 0.3-2.6 s (design 53 §0.1, qa-53a-code 4)
         if (idleGen == gen && (s.transport == TransportState.PLAYING || s.transitioning)) {
-            idleGen = null
-            work.after(IDLE_RECHECK_MS) { if (!closed) wakePoll() }
+            if (now - idleAt < IDLE_RECHECK_UNTIL_MS) {
+                work.after(IDLE_RECHECK_MS) { if (!closed) wakePoll() }
+            } else {
+                idleGen = null
+            }
         }
     }
 
@@ -1289,6 +1293,7 @@ class SonosController(
                 // the end, a takeover, a stop: the confirm poll decides (pollTick's STOPPED near the end)
                 wsBlocked = true
                 idleGen = gen
+                idleAt = now
             }
             WsPlayback.BUFFERING -> {
                 if (!ours) {
@@ -1307,7 +1312,11 @@ class SonosController(
                 if (o != null && o.state != tr) return // our own verb wins until SETTLE_MS or a poll decides
                 if (!open || wsBlocked) return
                 if (o != null) {
-                    // confirmed: the button settles now
+                    // confirmed: the button settles now. Our resume's bar already ran from the tap (position()):
+                    // the anchor takes that motion first, so the event re-bases within the second, never a step
+                    // back by the command's latency (qa-53a-code 3)
+                    val a = anchor
+                    if (tr == TransportState.PLAYING && a != null && !a.moving) anchor = a.copy(at = maxOf(o.at, a.at), moving = true)
                     optTr = null
                     frozen = null
                 }
@@ -1681,6 +1690,9 @@ class SonosController(
 
         /** An IDLE's confirm poll that still reads PLAYING or TRANSITIONING asks once more after this. */
         const val IDLE_RECHECK_MS = 1_000L
+
+        /** ... for this long after the IDLE: the UPnP lag measured (0.3-2.6 s), then the normal cadence. */
+        const val IDLE_RECHECK_UNTIL_MS = 3_000L
 
         /** The seek hold ends on a PLAYING or PAUSED event this close to the target (the socket's position is exact). */
         const val SEEK_EVENT_TOL_MS = 1_000L

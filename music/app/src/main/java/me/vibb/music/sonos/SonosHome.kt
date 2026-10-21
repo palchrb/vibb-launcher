@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import me.vibb.music.BuildConfig
 import okhttp3.OkHttpClient
 
 /*
@@ -83,7 +84,7 @@ class SonosHome(context: Context) {
     val soap = Soap { client() }
 
     /** The event socket's own client for [ip] (design 53 §2.2): this network's SOAP client with the speaker's limited trust. */
-    fun socketClient(ip: String): OkHttpClient = speakerSocketClient(client(), ip)
+    fun socketClient(ip: String): OkHttpClient = speakerSocketClient(client(), ip, certLog = if (BuildConfig.DEBUG) SonosHome::log else null)
     val cache = SpeakerCache(SonosFiles.cache(app))
 
     val rooms = RoomDirectory(

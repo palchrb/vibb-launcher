@@ -1651,7 +1651,7 @@ class SonosControllerTest {
         r.event(WsPlayback.PLAYING, 431_900)
         r.advance(SonosController.SETTLE_MS + 1) // our verb's window over: only the socket's word remains
         assertEquals("confirmed by the socket", TransportState.PLAYING, r.c.effectiveTransport(r.now))
-        assertEquals(431_900L + SonosController.SETTLE_MS + 1, r.c.spec(r.now).positionAt(r.now))
+        assertEquals("on from our tap (the event within the second re-bases, QA 3)", 432_100L + SonosController.SETTLE_MS + 1, r.c.spec(r.now).positionAt(r.now))
     }
 
     @Test
@@ -1905,5 +1905,100 @@ class SonosControllerTest {
         r.speaker("0:07:16")
         r.poll()
         assertEquals(writes + 1, r.store.writes.size)
+    }
+
+    // -- qa-53a-code's fixes --
+
+    @Test
+    fun `d53 under a healthy socket the bar keeps moving with polls 15 s apart - never stopped at the 60 s cap (QA 1)`() {
+        live() // the socket's one PLAYING: events come on a change only
+        repeat(6) { i ->
+            r.advance(15_000)
+            r.speaker(hms(431.0 + 15 * (i + 1)))
+            r.poll()
+        }
+        val shown = r.c.spec(r.now).positionAt(r.now)
+        assertTrue("about 431.3 s + 90 s, was $shown", kotlin.math.abs(shown - 521_300) < 1_000)
+    }
+
+    @Test
+    fun `d53 our resume confirmed by the socket - no step back by the command's latency (QA 3)`() {
+        live()
+        r.c.pause()
+        r.work.drain()
+        r.advance(200)
+        r.event(WsPlayback.PAUSED, 431_800)
+        r.advance(2_000)
+        r.c.playPause()
+        r.advance(300)
+        val before = r.c.spec(r.now).positionAt(r.now)
+        r.event(WsPlayback.PLAYING, 431_900) // the speaker started 0.2 s after our tap
+        val after = r.c.spec(r.now).positionAt(r.now)
+        assertTrue("$before -> $after", after >= before)
+        r.advance(1_000)
+        assertEquals("and it moves on", after + 1_000, r.c.spec(r.now).positionAt(r.now))
+    }
+
+    @Test
+    fun `d53 an IDLE's confirm poll that still reads PLAYING asks again every second, for up to 3 s (QA 4)`() {
+        nearTheEnd()
+        r.advance(10_000)
+        r.event(WsPlayback.IDLE, 0)
+        val wakes = r.wakes
+        r.advance(100)
+        r.speaker("0:24:12") // UPnP lags the change
+        r.poll()
+        assertEquals("one recheck a second later", wakes + 1, r.wakes)
+        r.advance(1_000)
+        r.poll()
+        assertEquals("and again", wakes + 2, r.wakes)
+        r.advance(2_000)
+        r.poll()
+        assertEquals("3 s after the IDLE: the normal cadence", wakes + 2, r.wakes)
+        r.speaker("0:24:13", transport = "STOPPED")
+        r.poll()
+        assertEquals("the advance still comes at the STOPPED", 2, setUrisNow())
+    }
+
+    @Test
+    fun `d53 the confirm polls read the old state within 3 s of an event - no disagreement (QA 5, M10)`() {
+        live()
+        r.advance(500)
+        r.event(WsPlayback.PAUSED, 432_000) // a pause from the Sonos app
+        r.advance(1_000)
+        r.poll() // UPnP still reads PLAYING
+        r.advance(1_000)
+        r.poll()
+        assertEquals(0, r.link.disagreements)
+    }
+
+    @Test
+    fun `d53 a PLAYING far from the seek's target keeps the hold - only one within a second ends it (QA 5, M11)`() {
+        live()
+        r.c.seek(600_000)
+        r.work.drain()
+        r.advance(200)
+        r.event(WsPlayback.PLAYING, 431_900) // the old place, before the seek took
+        assertEquals(600_000L, r.c.spec(r.now).positionAt(r.now))
+    }
+
+    @Test
+    fun `d53 an IDLE is never the effective transport, and nothing the socket says counts after it until an ours poll (QA 5)`() {
+        live()
+        r.advance(1_000)
+        r.event(WsPlayback.IDLE, 0)
+        assertEquals(TransportState.PLAYING, r.c.effectiveTransport(r.now))
+        assertTrue(r.c.spec(r.now).playWhenReady)
+        r.advance(100)
+        r.event(WsPlayback.PAUSED, 900_000)
+        assertEquals("blocked: neither the transport nor the place", TransportState.PLAYING, r.c.effectiveTransport(r.now))
+        assertTrue(r.c.spec(r.now).positionAt(r.now) < 500_000)
+        r.advance(100)
+        r.speaker("0:07:12")
+        r.poll()
+        r.advance(100)
+        r.event(WsPlayback.PAUSED, 432_400)
+        assertEquals(TransportState.PAUSED_PLAYBACK, r.c.effectiveTransport(r.now))
+        assertEquals(432_400L, r.c.spec(r.now).positionAt(r.now))
     }
 }

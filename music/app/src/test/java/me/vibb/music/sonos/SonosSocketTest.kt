@@ -121,6 +121,11 @@ class SonosSocketTest {
         assertFalse("nothing cached", socketGate(url, null))
         assertFalse("cleartext", socketGate(HttpUrl.Builder().scheme("http").host(ip).port(1443).encodedPath("/websocket/api").build(), ip))
         assertTrue("an IPv6 ULA", socketGate(socketUrl("fd00::5")!!, "fd00::5"))
+        // design 53 §2.2's ranges only, not the public-address guard's wider "private" (qa-53a-code 6)
+        for (ip in listOf("127.0.0.1", "0.0.0.0", "100.64.0.1", "100.100.1.1", "192.0.0.8", "::1", "2001:db8::1")) {
+            assertFalse(ip, socketGate(socketUrl(ip)!!, ip))
+        }
+        for (ip in listOf("10.0.2.2", "172.20.0.3", "169.254.10.1", "fe80::1")) assertTrue(ip, socketGate(socketUrl(ip)!!, ip))
     }
 
     @Test
@@ -161,6 +166,7 @@ class SonosSocketTest {
     @Test
     fun `the liveness rule - a verb owed an event that never came is a dead socket, and the session's reader says so`() {
         healthyNow()
+        clock.advance(1) // the verb goes out after the handshake's status (an event at or after it would pay it)
         socket.owed(since = clock.now, answeredAt = clock.now)
         clock.advance(Liveness.LIVENESS_MS + 1)
         main.runDue()
@@ -170,6 +176,26 @@ class SonosSocketTest {
         clock.advance(1_000)
         main.runDue()
         assertEquals(2, opened.size)
+    }
+
+    @Test
+    fun `the liveness rule - an event that came before the verb's answer reached main pays it (qa-53a-code 2)`() {
+        healthyNow()
+        val sent = clock.now
+        clock.advance(200)
+        event("PLAYBACK_STATE_PAUSED") // the speaker pushes 0.0-0.4 s after the command
+        clock.advance(100)
+        socket.owed(since = sent, answeredAt = clock.now) // the SOAP answer, through the actor, later
+        clock.advance(Liveness.LIVENESS_MS + 1)
+        main.runDue()
+        assertTrue(socket.healthy)
+        assertFalse(ws().cancelled)
+        // ... and an event from before the verb pays nothing
+        val later = clock.now
+        socket.owed(since = later, answeredAt = later)
+        clock.advance(Liveness.LIVENESS_MS + 1)
+        main.runDue()
+        assertTrue("owed and never paid", ws().cancelled)
     }
 
     @Test

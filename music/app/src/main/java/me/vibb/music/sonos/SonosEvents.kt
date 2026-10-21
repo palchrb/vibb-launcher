@@ -169,16 +169,22 @@ object SonosEvents {
                 household = hh
                 return Step(commands = listOf(command(next(), "groups:1", "getGroups", "householdId", hh)))
             }
-            return when {
-                type == "groups" -> groups(m)
-                type == "playbackStatus" -> playback(m, at)
-                type == "groupCoordinatorChanged" -> coordinatorChanged(m)
-                m.str("namespace") == "playback:1" && m.str("response") == "subscribe" -> {
-                    val ok = (m.header["success"] as? JsonPrimitive)?.booleanOrNull != false
-                    if (ok && (m.str("groupId") == null || m.str("groupId") == subscribed)) acked = true
-                    if (!ok) subscribed = null
-                    Step()
+            // the answer to our playback subscribe is told by its `response` first (qa-53a-code 7): it may carry the
+            // current status (design 53 §0.1 (f)) or a MOVED as its `type`, read as such after the ack
+            if (m.str("namespace") == "playback:1" && m.str("response") == "subscribe") {
+                val ok = (m.header["success"] as? JsonPrimitive)?.booleanOrNull != false
+                if (ok && (m.str("groupId") == null || m.str("groupId") == subscribed)) acked = true
+                if (!ok) subscribed = null
+                return when (type) {
+                    "playbackStatus" -> playback(m, at)
+                    "groupCoordinatorChanged" -> coordinatorChanged(m)
+                    else -> Step()
                 }
+            }
+            return when (type) {
+                "groups" -> groups(m)
+                "playbackStatus" -> playback(m, at)
+                "groupCoordinatorChanged" -> coordinatorChanged(m)
                 else -> Step()
             }
         }

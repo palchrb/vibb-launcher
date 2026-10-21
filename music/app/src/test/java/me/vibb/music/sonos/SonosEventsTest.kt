@@ -104,6 +104,19 @@ class SonosEventsTest {
     }
 
     @Test
+    fun `a subscribe answer is told by its response first - one carrying the status acks and is an event (qa-53a-code 7)`() {
+        val plan = SonosEvents.Plan(stua, ip)
+        val hs = messages("handshake.json")
+        feed(plan, hs[0])
+        feed(plan, hs[1])
+        val answer = "[{\"namespace\":\"playback:1\",\"groupId\":\"$stua:100\",\"response\":\"subscribe\",\"success\":true," +
+            "\"type\":\"playbackStatus\"},{\"playbackState\":\"PLAYBACK_STATE_PAUSED\",\"positionMillis\":5000}]"
+        val step = feed(plan, answer, at = 7L)
+        assertEquals(listOf(SocketEvent.Playback("$stua:100", WsPlayback.PAUSED, 5_000, 7L)), step.events)
+        assertTrue("acked and the status read", plan.healthy)
+    }
+
+    @Test
     fun `a refused subscribe is not healthy, the connection stays for groups`() {
         val plan = SonosEvents.Plan(stua, ip)
         val hs = messages("handshake.json")

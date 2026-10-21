@@ -16,8 +16,8 @@ data class SonosAnchor(val posMs: Long, val at: Long, val moving: Boolean, val k
     fun positionAt(now: Long): Long = if (moving) posMs + (now - at).coerceAtLeast(0) else posMs
 }
 
-/** One measurement: a socket event's exact position, or a poll's ([poll]) `RelTime` + half a second. */
-data class SonosMeasure(val posMs: Long, val at: Long, val moving: Boolean, val key: String, val poll: Boolean)
+/** One measurement: a socket event's exact position, or a poll's `RelTime` + half a second. */
+data class SonosMeasure(val posMs: Long, val at: Long, val moving: Boolean, val key: String)
 
 /** Within this of the old extrapolation a measurement re-bases smoothly; at it or more, the bar jumps. */
 const val SONOS_ANCHOR_JUMP_MS = 1_000L
@@ -28,15 +28,16 @@ const val SONOS_ANCHOR_JUMP_MS = 1_000L
  * extrapolation's value at the measurement's time - monotone and smooth, never frozen, never a
  * step, and every measurement moves [SonosAnchor.at] on, so the extrapolation cap is never reached
  * while measurements come. A difference of a second or more, a change of motion, a seek, a step, a
- * new item or a play takes the measurement at once. Under a healthy socket ([socketHealthy]) a poll
- * within the second changes nothing: the event is exact, a poll is not.
+ * new item or a play takes the measurement at once. So under a healthy socket a poll within the
+ * second never moves the bar's value (the event's exact position stands) - it only moves the instant
+ * on: events come on a change only, and an anchor nothing moved on would stop at the extrapolation's
+ * cap (qa-53a-code 1).
  */
-fun sonosAnchor(old: SonosAnchor?, m: SonosMeasure, socketHealthy: Boolean): SonosAnchor {
+fun sonosAnchor(old: SonosAnchor?, m: SonosMeasure): SonosAnchor {
     val fresh = SonosAnchor(m.posMs, m.at, m.moving, m.key)
     if (old == null || old.key != m.key || old.moving != m.moving) return fresh
     val predicted = old.positionAt(m.at)
     if (abs(m.posMs - predicted) >= SONOS_ANCHOR_JUMP_MS) return fresh
-    if (m.poll && socketHealthy) return old
     // never backwards in time: a measurement older than the anchor keeps the anchor's own instant
     return if (m.at <= old.at) old else SonosAnchor(predicted, m.at, m.moving, m.key)
 }

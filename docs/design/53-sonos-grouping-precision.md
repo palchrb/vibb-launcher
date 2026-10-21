@@ -564,7 +564,7 @@ entry; backlog items for anything found).
 
 ## 5. Owed device checks (the user's speakers, the Jelly Star, a debug build; logcat `VibbSonos`)
 
-1. **Capture**: `sonos-ws-probe.py <ip> --all --save ws.jsonl --do group=<room> ungroup=<room> --volume 0` once, and a
+1. **Capture**: `sonos-ws-probe.py <ip> --all --save ws.json --do group=<room> ungroup=<room> --volume 0` once, and a
    natural end with `sonos-play-test.py`; the fixtures come from them. The capture also records §0.1's (a)-(f): the
    position at the natural end's IDLE; BUFFERING on a seek and on a resume; a takeover from the Sonos app on our room
    (and whether it passes through IDLE - if not, `playbackMetadata:1` is reconsidered as an early hint); whether the
@@ -722,3 +722,65 @@ Ready for implementation; its four Lows are folded in:
   seek while paused with no event keeps the socket healthy.
 - **N4** - decided as accepted: "+" on a paused session joins the room; it is silent until resumed, and a busy room's
   own stream stops at once - the kid asked for it (§2.7).
+
+## 53-0 / 53-a status (2026-10-21, branch `d53-a`)
+
+Built as §2.1-§2.5 specify, in commits `a0fcb939` (53-0), `0ca41764` + `d9024cca` (53-a), then the code QA
+(`docs/review/qa-53a-code.md`) and its fix round. 53-b (§2.6-§2.9) is next.
+
+**53-0 - the DIDL.** `PlayBodies.build`: a `duration` only for a Storytel book, `art = null` from the controller (the
+phone holds hashes only); `PlayBody.cadenceHintS` (every kind's listed duration, the tail cadence only, never the
+DIDL); one pure `builtDidl(body, uri)` for `SonosTransport.play` and `PlayBodyTest`; `scripts/sonos-play-test.py
+--golden DIR` writes `didl_url.xml`, `didl_nrk.xml`, `didl_storytel.xml` (no aiohttp, no speaker) - the QA checked them
+equal to vibb's own `sonosd.py` output byte for byte. `didl()` untouched.
+
+**53-a - what was built.** `sonos/SonosEvents.kt` (pure: the messages, the handshake reducer `Plan`, `SocketEvent`),
+`sonos/SonosSocket.kt` (OkHttp's own WebSocket, `socketWanted`, the host gate, the limited trust, the backoff, the
+parks, `Liveness`), `logic/SonosAnchor.kt` (`sonosAnchor`), `SonosController.onSocket` and its poll-side rules
+(`pollTick`: the IDLE's confirm polls, `skipAdvance`, the disagreement rule, the bookmark throttle), `SonosSession`
+(the poll stamp, the 1 s display poll, the stall, probe and aux guards), the renderer's socket lifetime and
+`PlayerHub.playerShown`, `scripts/sonos-ws-probe.py --save`, the provisional `ws/` fixtures. Not here (53-b's): the
+group watch for every scope (`GuardsTest`'s watch line stays), the probe's hinted candidate (`transport.hint`) and the
+advance guard after a group change.
+
+**Where it differs from §2 (accepted by the code QA):**
+- `socketWanted` reads the session's own `armed` (volatile) at every flush, not `Fields.armed` per poll - a disarm by
+  `stop()` closes the socket at once.
+- The first handshake subscribes `playback:1` only for a group our player coordinates (the re-subscribe rule applied
+  from the start): a room grouped away at connect is open for `groups` but not healthy.
+- One parked event (the last), applied only when the landing poll saw the play land.
+- An IDLE is never the effective transport (only PLAYING and PAUSED are): the confirm poll decides STOPPED - no
+  Paused/Resumed flicker at an episode's end.
+- A wake inside the second trails once at its end (still at most one a second) instead of being dropped.
+- The socket's BUFFERING stops the anchor only outside a verb of ours (under a resume or a seek the verb's intent and
+  the seek hold show).
+- A play's seed has its own anchor key, so the first real measurement after a play is taken at once.
+- The poll's bookmark throttle also lets a changed stream (a new item, a follow's uri) through.
+- `SourceScanTest`'s "no Network binding" scan allows `tls.socketFactory` in `SonosSocket.kt` (the TLS factory over
+  the client's own unbound sockets).
+- `--save` replaces names too (rooms, groups, titles - the kids' names), not only ids.
+
+**The code QA's fixes (`qa-53a-code.md`):**
+1. (High) The bar no longer freezes 60 s after the last event: a poll within the second keeps the old extrapolation's
+   value but moves the anchor's instant on, socket or not (events come on a change only). `SonosAnchorTest` and a
+   `SonosControllerTest` case (a healthy socket, polls 15 s apart for 90 s).
+2. (High) `Liveness` keeps the connection's last event: an event that came after the verb went out but before its SOAP
+   answer reached main pays the debt (and resets the backoff). `SonosSocketTest` case with the event before `owed`.
+3. (Low) A PLAYING that confirms our resume first gives the anchor the motion the bar showed (from the tap), so it
+   re-bases within the second - no step back. A rebuffer we didn't cause stands still until the confirm poll (accepted
+   as designed: a takeover must not move the bar; §5 check 4 reports it).
+4. (Low) An IDLE's confirm poll that still reads PLAYING or TRANSITIONING asks again every second up to 3 s after the
+   IDLE (UPnP lags 0.3-2.6 s), then the normal cadence; §5 check 3 reports the gap measured.
+5. (Low) Tests for the older-measurement guard, the disagreement rule's 3 s guard, the seek hold's tolerance, an IDLE
+   never effective and blocking measurements until an ours poll.
+6. (Low) The host gate takes this note's ranges only (`speakerLiteral`: RFC 1918, link-local, ULA/link-local IPv6),
+   never loopback, `0.0.0.0/8` or the tailnet.
+7. (Low) The playback subscribe's answer is told by its `response` first; one carrying the status (§0.1 (f)) acks and
+   is an event.
+8. (Low) This section; §5 check 10's log: a debug build logs the leaf certificate's subject and issuer once per process
+   (`SpeakerTrust`, through `SonosHome`'s log).
+9. (Nit) `--save` writes the fixtures' JSON array format and scrubs IPv6 literals too.
+
+**Owed** (§5): the capture first (it replaces the provisional `ws/` fixtures), then checks 2-5 and 9-11 on the user's
+speakers; the emulator round §6h (the fallback: the refused socket parked after five, the 1 s polls, the STOPPED
+advance with `--duration`).

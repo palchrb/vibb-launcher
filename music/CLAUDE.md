@@ -161,7 +161,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   can name hosts but not ranges. What may be fetched is the app's own rule (the public-only client's address checks,
   Sonos URLs from IP literals); trust is the system's CAs only - **with one exception** (design 53 §2.2): the Sonos event
   socket's own client (`speakerSocketClient`, `SonosSocket.kt`) accepts the speaker's self-signed certificate, only for
-  `wss` to the cached ip literal of the uid we command, in a private range, port 1443, `/websocket/api` (`socketGate`,
+  `wss` to the cached ip literal of the uid we command, in a speaker's range (`speakerLiteral`: RFC 1918, link-local,
+  IPv6 ULA/link-local - never loopback or the tailnet), port 1443, `/websocket/api` (`socketGate`,
   checked before any connect), its host name verifier accepting exactly that ip. No other client gets that trust, and a
   URL from a socket message (a `MOVED`'s, a player's `websocketUrl`) is never dialled (`SourceScanTest`'s `d53`).
 - Positions are keyed by (entry key, item key), never by URL.
@@ -428,7 +429,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   (a follow) closes it and opens it again; none while the phone renders (only a `SonosRenderer` owns one). Healthy =
   open, our coordinator's `playback:1` subscribed and acknowledged, its `getPlaybackStatus` read, and live: a verb of
   ours against a confirmed opposite state (a pause on PLAYING, a resume on PAUSED, a play or a step against the state
-  the socket and the poll agree on - never a seek while paused or a no-op, N3) owes a `playbackStatus` within 3 s, and
+  the socket and the poll agree on - never a seek while paused or a no-op, N3) owes a `playbackStatus` within 3 s -
+  one that came after the verb went out, also before its SOAP answer reached main, pays it (qa-53a-code 2) -, and
   two ours polls against the socket's state 3 s after its last event also close it. Reconnects 1, 2, 5, 15, 60 s, then
   300 s, reset only after a healthy socket passed a liveness check; an HTTP answer or five refused connects park the uid
   6 h (process memory). An event (on main, `SonosController.onSocket`): BUFFERING is TRANSITIONING (the phase only - never
@@ -441,8 +443,9 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   (`advance()`: `mayPlay`, "Til slutten", repeat); a BUFFERING or PLAYING we didn't cause between the IDLE and that poll
   sets `skipAdvance` - someone else's stream is never replaced. **The bar** (`sonosAnchor`): every measurement of the
   same item in the same motion within a second re-bases smoothly, a second or more (or a seek, a step, a new item, a play)
-  jumps; a poll is `RelTime + 0.5 s` at GetPositionInfo's return, and under a healthy socket a poll only re-bases at a
-  second or more - display only. **The extra polls** (confirm polls; the 1 s display poll while `PlayerHub.playerShown`
+  jumps; a poll is `RelTime + 0.5 s` at GetPositionInfo's return - within the second it never moves the value (the
+  event's exact position stands under a healthy socket) but always moves the anchor's instant on, or the bar would stop
+  at the 60 s extrapolation cap (events come on a change only; qa-53a-code 1) - display only. **The extra polls** (confirm polls; the 1 s display poll while `PlayerHub.playerShown`
   and the snapshot is ours, fresh and PLAYING, only without a healthy socket) change nothing else: freshness keeps the
   normal cadence, the stall counts polls 5 s apart (an uncounted one leaves the count alone), the probe tries 1.5 s
   apart, the aux at most every 60 s, a poll's bookmark at most every 5 s unless the transport or the stream changed;
