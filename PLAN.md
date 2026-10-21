@@ -509,8 +509,13 @@ findings, merge to `main`, full suite once.
   doubts the chats are reachable; device check: lock, ring the phone from another Element X account, answer, try Back
   and the call screen's minimise arrow), music P-L4 (are "Pål"/"Ella" in `server/testdata/spotify/` real names?).
   **S-M4 checked on the emulator 2026-10-21 (Element X): no way to the chats** - Back does nothing in
-  `ElementCallActivity`, the minimise arrow does nothing, Home and Recents land on the lock -> Low; the fix is only
-  the kiosk-on narrowing (lock task = the call app + helpers during the call). WhatsApp still to check (the user).
+  `ElementCallActivity`, the minimise arrow does nothing, Home and Recents land on the lock. **WhatsApp (same day):
+  its call screen's arrow leads straight into the chats over the lock -> S-M4 stays Medium**; Element X may add such
+  an arrow any day. Needs a design: either (E) the call stays behind the lock after the answer, the lock showing an
+  in-call bar (app, time, hang up through the CallStyle hang-up action) - no setup, audio only until the PIN - or (D)
+  only the call's own activity over the lock, seen through usage events (`PACKAGE_USAGE_STATS` app-op, adb at
+  provisioning like the listener and the roles), anything else re-fronts the lock with "Tilbake til samtalen"; E as
+  D's fallback.
 - **VoIP over the lock, small launcher fixes** (the user's emulator, 2026-10-21, approved): (1) the lock resumed
   during an IN_CALL sometimes finds nothing to reopen (`No VoIP call screen to bring back` at 16:35:17, the kid then
   needs the PIN to get back to their own call) - log which case it was (no IN_CALL notice with a content intent, or the
