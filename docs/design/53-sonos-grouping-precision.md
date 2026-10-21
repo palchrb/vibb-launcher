@@ -363,8 +363,14 @@ it.
   so a + exists only on allowed rows and **the app's own join never adds a room outside the scope**. The one exception
   is our own row: a room the kids grouped in by hand stays a member of it (§2.8, the user's answer to Q4), so our row
   is kept by `sessionAllowed` and that room shows in the block with its "−" like any member.
-- The sketch's bottom paragraphs ("+ betyr «spill også her» ...", "− tar et rom ut ...", "Et rom som spiller noe annet
-  ...") sit outside the sheet's frame and are read as the artboards' captions, not sheet text (§7 Q3).
+- **No hint lines** (decided by the user, §7 Q3): the sketch's bottom paragraphs on boards 1-4 ("+ betyr «spill også
+  her» ...", "− tar et rom ut ...", "Et rom som spiller noe annet ...", "«Begge» flytter alle rommene ...") are
+  captions; the sheet shows none of them. The buttons and sliders carry their content descriptions for TalkBack.
+- **The order stays design 52's** (the user, 2026-10-21: the phone, wired - minijack/USB-C - and Bluetooth outputs stay
+  above the Sonos rooms): `outputSheetRows` keeps the phone, the routed outputs (Bluetooth, wired), the paired headsets
+  not routed now, then the rooms - our group block with its "Begge"/"Alle" line, its member lines, their "−" and
+  sliders among them, wherever its row sorts - then "Se etter høyttalere". The group block and its sliders are one
+  `SheetItem.Group` in the rooms' part, never above an output; `OutputRowsTest` pins it (§3).
 - `Room.names` becomes the known members' `(uid, name)` pairs, coordinator first (its readers take the names); no
   second field.
 - Strings (`values` + `values-nb`): `room_switch_here` "Tap to switch here" / "Trykk for å bytte hit",
@@ -585,7 +591,10 @@ of the sketch (`group-page/spill-av-pa-grupper.html`, "Volum i gruppe"): "jeg sy
   group set every member, the coordinator through the actor and the others through `RoomVolumes`; a member's own set
   touches only it; `capChanged` pulls down each room whose own last set is above the new cap and leaves a louder
   volume set elsewhere alone; a play's result never overwrites a newer set of that room); `OutputRowsTest` (the
-  "Begge"/"Alle" line and the member sliders only in a group block, none on a lone room);
+  "Begge"/"Alle" line and the member sliders only in a group block, none on a lone room; the order with grouping -
+  `the order - phone, routed outputs, paired-not-routed, rooms, Se etter hoyttalere` gets a twin with a
+  `SheetItem.Group` (our block with sliders) and a "+" row: phone, Bluetooth, wired, the paired headsets, then the
+  group block and the other rooms, then the rescan row - the existing test stays as it is; no hint-line item exists);
   `FitTest` (§2.7, §2.12); `GuardsTest` (the group watch line; the `rooms.state` collector hands the members to the renderer
   before `publish()` and `leaveIfNotAllowed()`; `toRoom`'s same-room shortcut before its scope check); `SourceScanTest` `d53` (the trust manager,
   `checkServerTrusted` and a `HostnameVerifier` only in `SonosSocket.kt`; the socket client used for nothing else; no
@@ -697,7 +706,7 @@ entry; backlog items for anything found).
   user's answer to Q4, §2.8).
 - The poll's display anchor is `RelTime + 0.5 s` (§2.4); vibb shows the truncated second. Display only.
 
-## 7. Open questions (the user) - Q3 open; Q1, Q2 and Q4 decided 2026-10-21
+## 7. Questions for the user - all four decided 2026-10-21
 
 - **Q1. Volume on a group - decided 2026-10-21: both together and per room.** The user: "Volum i en gruppe burde
   ideelt sett kunne styres både sammen og individuelt", and after board 4 of the sketch: "jeg synes volumbiten så bra
@@ -708,9 +717,9 @@ entry; backlog items for anything found).
   stands). The user: "gir mening for meg at vi ikke viser et minustegn på enkelthøyttalere som spiller alene". A group
   block always has two or more rooms; the last room is an ordinary selected row and stopping stays the play button's
   (§2.7).
-- **Q3. The sketch's bottom lines.** Read as captions (they sit outside the sheet's frame), not shown in the app (the
-  buttons carry "Spill også i X" / "Ta X ut av gruppen" for TalkBack). Should the sheet show one quiet hint line
-  instead? Default: no line.
+- **Q3. The sketch's bottom lines - decided 2026-10-21: no hint lines.** The user: "Ja vi tar bort hjelpetekstene".
+  Every bottom paragraph of boards 1-4 is a caption; the sheet shows none (§2.7; the buttons and sliders carry
+  "Spill også i X", "Ta X ut av gruppen", "Volum i ..." for TalkBack).
 - **Q4. A forbidden room grouped in from outside** (QA 53-14) - **decided 2026-10-21, not the default: the kids' own
   grouping is respected.** The user: "om barna legger til en høyttaler selv, så mener jeg appen bør bare akseptere at
   den er lagt til der og da og fortsette å spille. det barna gjør manuelt bør respekteres". A room added from outside
@@ -783,7 +792,11 @@ Each finding was checked against the code before it was taken; all were taken, n
   board 4 of the sketch "jeg synes volumbiten så bra ut jeg" - §2.12 (the "Begge" slider and one per room, the keys and
   the player's slider as "Begge", equal deltas clamped to each room's cap, why not `GroupRenderingControl`), §3's
   `GroupVolumeTest`/`SonosControllerTest`/`OutputRowsTest`/`FitTest` cases, §5 check 8c; in 53-b.
-- **Q3** (the hint line) is still open.
+- **Q3** (the hint line): "Ja vi tar bort hjelpetekstene" - no hint lines; all of the sketch's bottom paragraphs
+  (boards 1-4) are captions (§2.7).
+- **The sheet's order** (the user, with Q3): the phone, wired (minijack/USB-C) and Bluetooth outputs stay above the
+  Sonos rooms - design 52's `outputSheetRows` order, kept with the group block and its sliders in the rooms' part
+  (§2.7), pinned in `OutputRowsTest`.
 
 ## Revision check (2026-10-21, qa-53-revision-check.md)
 
