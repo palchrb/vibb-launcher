@@ -6,7 +6,9 @@ name: Music
 #   included), the launcher's copies of the bridge's AIDL and contract and of Spotify's host list
 #   (BridgeTest compares them), scripts/fake-sonos.py, scripts/fake-storytel.py or scripts/fake-spotify.py
 #   (they serve the Sonos, Storytel and Spotify fixtures in music/app/src/test/resources/ - the Spotify
-#   fake also server/testdata/spotify/, watched here too; their --selftests run here) or
+#   fake also server/testdata/spotify/, the Storytel fake server/testdata/storytel/ (design 58), watched
+#   here too; their --selftests run here), Storytel's token answers (the server's and the launcher's
+#   copies, design 58 §8) or
 #   scripts/fake-audio.py (design 30's fake podcast host; its --selftest too) changed, and
 #   uploads the debug APK as a workflow artifact. Nothing is published, no secrets.
 # - A tag music-vX.Y.Z (release) or music-vX.Y.Z-rc.N (release candidate) on a commit that is on
@@ -64,7 +66,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/(music_(library|listing|icons|state)|spotify_hosts)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/spotify/|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$|scripts/fake-spotify\.py$|scripts/fake-audio\.py$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/(music_(library|listing|icons|state)|spotify_hosts)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/spotify/|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$|scripts/fake-spotify\.py$|scripts/fake-audio\.py$|server/testdata/storytel_token_answers\.json$|launcher/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel/)'; then
           changed=true
         else
           changed=false

@@ -26,7 +26,7 @@ class BridgeTest {
 
     @Test
     fun `the bridge's AIDL is byte-identical in both apps`() {
-        for (name in listOf("IMusicBridge.aidl", "IStorytelCallback.aidl", "ISpotifyTokenCallback.aidl")) {
+        for (name in listOf("IMusicBridge.aidl", "IStorytelCallback.aidl", "ISpotifyTokenCallback.aidl", "IStorytelTokenCallback.aidl")) {
             val ours = moduleFile("src/main/aidl/me/vibb/bridge/$name")
             val theirs = repo("launcher/app/src/main/aidl/me/vibb/bridge/$name")
             assertEquals("$name differs from launcher/'s copy", theirs.readText(), ours.readText())
@@ -39,9 +39,17 @@ class BridgeTest {
             listOf(
                 "version", "openLibrary", "openCover", "openFile", "releaseFile", "getStorytelLogin", "reportState",
                 "setNowPlaying", "setForeground", "listingVersion", "openListing", "wantArt", "getSpotifyToken",
+                "getStorytelToken",
             ),
             methods,
         )
+    }
+
+    @Test
+    fun `the Storytel session's statuses and wait are the shared contract's (design 58 §3)`() {
+        val storytel = contract["storytel_token"] as JsonObject
+        assertEquals((storytel["statuses"] as JsonArray).map { (it as JsonPrimitive).content }, StorytelBridgeToken.STATUSES)
+        assertEquals((storytel["timeout_ms"] as JsonPrimitive).content.toLong(), StorytelBridgeToken.TIMEOUT_MS)
     }
 
     @Test

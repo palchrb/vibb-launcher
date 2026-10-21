@@ -1185,7 +1185,7 @@ pub struct Accounts {
     /// The add form's budget ([ADD_BUDGET]; the tests shorten it).
     add_budget: std::sync::Mutex<Duration>,
     /// Each phone's token asks in the last [PHONE_TOKEN_WINDOW] ([Accounts::phone_ask]).
-    phone_asks: std::sync::Mutex<HashMap<i64, VecDeque<Instant>>>,
+    phone_asks: crate::music_net::PhoneAsks,
     /// The token route's budget ([PHONE_TOKEN_BUDGET]; the tests shorten it).
     phone_token_budget: std::sync::Mutex<Duration>,
 }
@@ -1209,7 +1209,10 @@ impl Accounts {
             quota_until: Default::default(),
             skew: Default::default(),
             add_budget: std::sync::Mutex::new(ADD_BUDGET),
-            phone_asks: Default::default(),
+            phone_asks: crate::music_net::PhoneAsks::new(
+                PHONE_TOKENS_PER_WINDOW,
+                PHONE_TOKEN_WINDOW,
+            ),
             phone_token_budget: std::sync::Mutex::new(PHONE_TOKEN_BUDGET),
         }
     }
@@ -1229,26 +1232,7 @@ impl Accounts {
     /// [PHONE_TOKEN_WINDOW], else `Err(seconds)` until the oldest ask leaves the window (at least
     /// 1). A refused ask isn't counted. Phones with no ask left in the window are forgotten.
     pub fn phone_ask(&self, device: i64) -> Result<(), u64> {
-        let now = self.now();
-        let mut asks = lock(&self.phone_asks);
-        asks.retain(|_, times| {
-            while times
-                .front()
-                .is_some_and(|at| now.saturating_duration_since(*at) >= PHONE_TOKEN_WINDOW)
-            {
-                times.pop_front();
-            }
-            !times.is_empty()
-        });
-        let times = asks.entry(device).or_default();
-        if times.len() >= PHONE_TOKENS_PER_WINDOW {
-            let oldest = times.front().copied().unwrap_or(now);
-            let wait = PHONE_TOKEN_WINDOW.saturating_sub(now.saturating_duration_since(oldest));
-            // Rounded up: asking again after it never meets the same refusal.
-            return Err((wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1));
-        }
-        times.push_back(now);
-        Ok(())
+        self.phone_asks.ask(device, self.now())
     }
 
     /// The add form's budget for a short link and the add check together ([ADD_BUDGET]).
@@ -4647,7 +4631,7 @@ pub(crate) mod tests {
         accounts.advance(PHONE_TOKEN_WINDOW);
         assert_eq!(accounts.phone_ask(1), Ok(()));
         assert_eq!(
-            lock(&accounts.phone_asks).len(),
+            accounts.phone_asks.phones(),
             1,
             "phones with no ask left in the hour are forgotten"
         );

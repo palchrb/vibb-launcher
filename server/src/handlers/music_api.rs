@@ -12,6 +12,8 @@
 //!   phone's switch is off or none is stored, 503 without a usable key.
 //! - `POST /api/devices/music/spotify/token`: an access token of the Spotify account this phone
 //!   plays as (design 26c §2.6), `no-store`, always a JSON `status`; at most 20 a rolling hour.
+//! - `POST /api/devices/music/storytel/token`: the server's Storytel session (design 58 §2.2),
+//!   `no-store`, always a JSON `status`; at most 20 a rolling hour. The phone never gets the login.
 
 use std::io::Write;
 
@@ -391,6 +393,142 @@ pub async fn spotify_token(
             spotify_status(StatusCode::INTERNAL_SERVER_ERROR, "unreachable")
         }
         _ => spotify_status(StatusCode::BAD_GATEWAY, "unreachable"),
+    }
+}
+
+/// `POST /api/devices/music/storytel/token`'s body limit (design 58 §2.2): `{"stale": "<g>:<16 hex>"}`.
+pub const STORYTEL_TOKEN_BODY_LIMIT: usize = 256;
+
+/// `stale` from the token route's body, read leniently (design 58 §2.2): anything but a JSON object
+/// with a valid session is a plain ask.
+fn stale_session(body: &[u8]) -> Option<String> {
+    let body: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let stale = body.get("stale")?.as_str()?;
+    crate::storytel::valid_session(stale).then(|| stale.to_string())
+}
+
+/// `POST /api/devices/music/storytel/token` (design 58 §2.2): the server's own Storytel JWT for
+/// this phone, `{"stale": "<session>"}` after a 401 with that session (else `{}` or nothing; the
+/// body is read as bytes, so any content type is a plain ask). Checked in this order: this phone's
+/// switch and a stored login (404 `off`, not counted), the phone's 20 asks an hour (429 `busy`), the
+/// key by its fingerprint only (503 `key`, nothing opened or written), then
+/// [crate::storytel::Account::phone_jwt] within [crate::storytel::PHONE_JWT_BUDGET] as a task of
+/// its own (a login still running then is kept for the next ask). 200 `ok` with the JWT,
+/// `expires_in_s` (what is left minus a minute) and the session; 409 `refused` with
+/// `retry_after_s`; 429 `busy` with `retry_after_s`; 502 `unreachable`; 500 `unreachable` on a
+/// database error. The JWT, its session and the body are never logged or stored, and no security
+/// event is written per ask (server review I11).
+pub async fn storytel_token(
+    State(state): State<AppState>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    body: Result<axum::body::Bytes, axum::extract::rejection::BytesRejection>,
+) -> Response {
+    use crate::storytel::StorytelError;
+    let stale = body.ok().and_then(|body| stale_session(&body));
+    let answer = |status: StatusCode, body: serde_json::Value| {
+        tracing::debug!(
+            device_id = device.id,
+            status = body["status"].as_str().unwrap_or_default(),
+            "storytel: a phone's token ask"
+        );
+        spotify_answer(status, body)
+    };
+    let word =
+        |status: StatusCode, word: &str| answer(status, serde_json::json!({ "status": word }));
+    let switch: Result<Option<bool>, sqlx::Error> =
+        sqlx::query_scalar("SELECT music_storytel FROM device_policy WHERE device_id = ?")
+            .bind(device.id)
+            .fetch_optional(&state.db)
+            .await;
+    let stored: Result<(bool, Option<String>), sqlx::Error> = sqlx::query_as(
+        "SELECT ciphertext IS NOT NULL, key_fingerprint FROM music_storytel WHERE id = 1",
+    )
+    .fetch_one(&state.db)
+    .await;
+    let (switch, (stored, fingerprint)) = match (switch, stored) {
+        (Ok(switch), Ok(stored)) => (switch, stored),
+        (Err(err), _) | (_, Err(err)) => {
+            tracing::error!(device_id = device.id, %err, "storytel token lookup failed");
+            return word(StatusCode::INTERNAL_SERVER_ERROR, "unreachable");
+        }
+    };
+    if switch != Some(true) || !stored {
+        return word(StatusCode::NOT_FOUND, "off");
+    }
+    if let Err(retry_after) = state.storytel.phone_ask(device.id) {
+        tracing::info!(
+            device_id = device.id,
+            "storytel: a phone's token asks are over its limit"
+        );
+        return answer(
+            StatusCode::TOO_MANY_REQUESTS,
+            serde_json::json!({ "status": "busy", "retry_after_s": retry_after }),
+        );
+    }
+    let key_fits = state
+        .music_key
+        .as_ref()
+        .is_some_and(|key| fingerprint.as_deref() == Some(key.fingerprint.as_str()));
+    if !key_fits {
+        return word(StatusCode::SERVICE_UNAVAILABLE, "key");
+    }
+    let task = tokio::spawn(
+        state
+            .storytel
+            .clone()
+            .phone_jwt(state.clone(), device.id, stale),
+    );
+    let err = match tokio::time::timeout(state.storytel.phone_budget(), task).await {
+        Ok(Ok(Ok(jwt))) => {
+            return answer(
+                StatusCode::OK,
+                serde_json::json!({
+                    "status": "ok",
+                    "jwt": jwt.jwt.secret(),
+                    "expires_in_s": jwt.left.saturating_sub(crate::storytel::MARGIN).as_secs(),
+                    "session": jwt.session,
+                }),
+            );
+        }
+        Ok(Ok(Err(err))) => err,
+        Ok(Err(err)) => {
+            tracing::error!(device_id = device.id, %err, "storytel: the token task failed");
+            StorytelError::Database("the token task failed".to_string())
+        }
+        // The task goes on: a login it started is kept for the next ask.
+        Err(_) => StorytelError::Fetch(crate::music_net::FetchError::Timeout),
+    };
+    tracing::info!(device_id = device.id, code = %err.code(), "storytel: no session for a phone");
+    let busy = |seconds: u64| {
+        answer(
+            StatusCode::TOO_MANY_REQUESTS,
+            serde_json::json!({ "status": "busy", "retry_after_s": seconds }),
+        )
+    };
+    let refused = |seconds: u64| {
+        answer(
+            StatusCode::CONFLICT,
+            serde_json::json!({ "status": "refused", "retry_after_s": seconds }),
+        )
+    };
+    let until_secs = |until: chrono::DateTime<chrono::Utc>| {
+        crate::storytel::wait_secs(
+            (until - state.music_sweep.now())
+                .to_std()
+                .unwrap_or_default(),
+        )
+    };
+    match err {
+        StorytelError::NotConfigured => word(StatusCode::NOT_FOUND, "off"),
+        StorytelError::KeyUnusable => word(StatusCode::SERVICE_UNAVAILABLE, "key"),
+        StorytelError::Cooldown { until } => refused(until_secs(until)),
+        StorytelError::Refused(_) => {
+            refused(crate::storytel::LOGIN_COOLDOWN.num_seconds().unsigned_abs())
+        }
+        StorytelError::Busy { wait } => busy(crate::storytel::wait_secs(wait)),
+        StorytelError::Backoff { until } => busy(until_secs(until)),
+        StorytelError::Database(_) => word(StatusCode::INTERNAL_SERVER_ERROR, "unreachable"),
+        _ => word(StatusCode::BAD_GATEWAY, "unreachable"),
     }
 }
 

@@ -290,6 +290,8 @@ class SourceScanTest {
     fun `every type holding a Storytel secret prints it redacted`() {
         val holders = mapOf(
             "src/main/java/me/vibb/music/bridge/StorytelLogin.kt" to listOf("data class Login("),
+            // design 58: the server's session through the bridge
+            "src/main/java/me/vibb/music/bridge/StorytelBridgeToken.kt" to listOf("data class Ok("),
             "src/main/java/me/vibb/music/storytel/StorytelHttp.kt" to listOf("data class StorytelRequest(", "class StorytelResponse("),
             "src/main/java/me/vibb/music/storytel/StorytelApi.kt" to listOf("class Url(", "private class Jwt("),
             // design 26b step 4b: a Storytel play's signed URL in memory - the body, the result, a snapshot, a hint

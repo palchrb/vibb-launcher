@@ -26,6 +26,7 @@ import kotlinx.serialization.json.longOrNull
 import me.vibb.bridge.IMusicBridge
 import me.vibb.bridge.ISpotifyTokenCallback
 import me.vibb.bridge.IStorytelCallback
+import me.vibb.bridge.IStorytelTokenCallback
 import java.io.File
 
 private const val LOG_TAG = "MusicBridge"
@@ -34,8 +35,9 @@ private const val LOG_TAG = "MusicBridge"
  * The bridge the music app binds (design 21 §2, 21b §5): a bound service, not a ContentProvider, so
  * the launcher's own update only disconnects the player instead of killing it. Exported behind the
  * launcher's signature permission `<applicationId>.permission.MUSIC_BRIDGE`, and every call checks
- * that the caller is the music app ([callerAllowed]). Files go out read-only; the Storytel login and
- * a Spotify access token (design 26c §6.1) are fetched on request and answered in memory only.
+ * that the caller is the music app ([callerAllowed]). Files go out read-only; the Storytel login, a
+ * Spotify access token (design 26c §6.1) and the server's Storytel session (design 58 §4) are fetched
+ * on request and answered in memory only.
  */
 class MusicBridgeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -152,6 +154,12 @@ class MusicBridgeService : Service() {
             callback ?: return
             scope.launch { answerSpotify(callback) }
         }
+
+        override fun getStorytelToken(stale: String?, callback: IStorytelTokenCallback?) {
+            check()
+            callback ?: return
+            scope.launch { answerStorytelToken(stale, callback) }
+        }
     }
 
     /**
@@ -182,6 +190,38 @@ class MusicBridgeService : Service() {
             callback.onToken(answer.status, answer.accessToken, answer.expiresInMs, answer.account)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Spotify token not answered (${e.javaClass.simpleName})")
+        }
+    }
+
+    /**
+     * The server's Storytel session for the music app (design 58 §4): asked of the server at every call
+     * (no cache: the music app keeps the JWT in memory, one source of expiry), [stale] passed on as the
+     * request's `stale` when it is a session, within [STORYTEL_TOKEN_TIMEOUT_MS], answered through the
+     * callback in memory only - never logged, never stored. A transport failure, a timeout or no server
+     * set up answers `launcher`.
+     */
+    private suspend fun answerStorytelToken(stale: String?, callback: IStorytelTokenCallback) {
+        val answer = try {
+            withTimeout(STORYTEL_TOKEN_TIMEOUT_MS) {
+                val mdm = LauncherPreferences.mdm()
+                val url = mdm.serverUrl()
+                val token = mdm.deviceToken()
+                if (url == null || token == null) {
+                    StorytelTokenAnswer.LAUNCHER
+                } else {
+                    val response = createMusicServer(url, token).storytelToken(stale)
+                    val body = if (response.isSuccessful) response.body()?.use { it.string() } else response.errorBody()?.use { it.string() }
+                    storytelTokenAnswer(response.code(), body)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Storytel session not fetched (${e.javaClass.simpleName})")
+            StorytelTokenAnswer.LAUNCHER
+        }
+        try {
+            callback.onToken(answer.status, answer.jwt, answer.expiresInMs, answer.session)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Storytel session not answered (${e.javaClass.simpleName})")
         }
     }
 

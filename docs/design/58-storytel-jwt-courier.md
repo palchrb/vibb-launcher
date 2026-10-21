@@ -1145,3 +1145,64 @@ The fixes for `docs/review/qa-58-revision-check.md`.
 | **N-13 (L)** PLAN.md's entry is stale | Not edited here: the coordinator updates the PLAN entry. |
 | **N-14 (L)** no reader for `aes_vectors.json` | §8: `fake_login_fixtures_match` reads it, checks every vector, and checks the copied request's `pwd` hex. |
 | "Where the JWT could hide": the card's facts | §2.7: from the account's memory, never a database column. |
+
+## Step 1 status (2026-10-21, branch `design-58-step1`; steps 1 and 4 in one commit)
+
+**Built:**
+- **Server 0.35.0** (not 0.34.0: design 57's prep release takes that number in parallel).
+  - §2.1: `jwt_payload`/`jwt_life` (URL-safe base64, padding indifferent; `min(exp - iat, exp - now)` with a sane
+    clock, at least 60 s, else `exp - iat` at least 300 s, at most 24 h, 30 min fallback), `JWT_TTL` gone. The JWT is
+    out of the session's lock: `jwt` a std `Mutex<Option<KeptJwt>>` (`made`, `life`, `generation`, a random
+    `session`), `login_lock` for one login at a time, `Session` keeps only the shelf and `sent`. `Account::phone_jwt`
+    follows rules 1-4 (the plain columns only; `PHONE_MIN_LEFT`; the kept JWT through a cooldown, backoff or cap while
+    it has 121 s or more; one login counted in the cap).
+  - §2.2: `POST /api/devices/music/storytel/token` (256-byte body limit, the body read as bytes; the check order
+    off -> limit -> key by fingerprint -> the spawned `phone_jwt` within 8 s). The old route stays.
+  - §2.3: `classify_login` in `login_with`; the login backoff (1 min doubling to 30, per generation); the phone-login
+    cap; the force's rules (session re-checked under the lock, `FORCE_MIN_AGE`, 3 forces an hour per phone, counted
+    only when it logs in); a declined force answers `refused` or `busy` with the wait; a forced login that fails as
+    an outage keeps the old JWT; the sweep's 401 forces only while the refused session is the kept one; the save's
+    probe classifies the same way and touches no backoff or cooldown (its wording follows the split).
+  - §7.3: `music_net::PhoneAsks`, used by Spotify's and Storytel's token routes.
+  - §2.7: one `info` line per login (`login_with`, the probe's too) and the card's facts under the Storytel ⓘ
+    ("Session: lives N min; holds an e-mail address: yes/no/unknown", "not known yet" after a start).
+  - Step 4: `STORYTEL_BASE` (`storytel::Config::from_env`: loopback only, the host compared exactly; `Reach::Any`
+    for the login and the bookshelf only; the fake-login guard, the probe included; `FORCE_MIN_AGE` 10 s; a warning at
+    every start).
+- **Both apps**: §3's AIDL (the import, `getStorytelLogin`'s comment, `getStorytelToken` appended),
+  `IStorytelTokenCallback.aidl`, `bridge_contract.json`'s `storytel_token`, all byte-identical.
+- **Launcher**: `StorytelTokenCourier.kt` (§4's parser, `staleBody`, `STORYTEL_JWT_CAPABILITY`),
+  `MusicServer.storytelToken`, `MusicBridgeService.getStorytelToken`/`answerStorytelToken`, the capability appended
+  to `STATUS_CAPABILITIES`.
+- **Music app**: `bridge/StorytelBridgeToken.kt` (§5.4's `JwtResult`, `jwtResult`, `ask`, `get`); nothing calls it.
+- **Shared**: `server/testdata/storytel_token_answers.json` and its two copies; the login fixtures copied to
+  `server/testdata/storytel/` (`fake_login_request.json`, `fake_login_answers.json`, `aes_vectors.json`; the music
+  originals stay); `scripts/fake-storytel.py` reads them, and gains the bookshelf, `--login-5xx` and
+  `--revoke-after K` (the next JWT issued at a login); the CI path lists and the root `CLAUDE.md`;
+  `docs/testing/emulator.md` §6i B.
+
+**Deviations from the note:**
+- §2.5's PWA rows (the Music page's "Storytel login" cases, the footer's new sentence and remedy) and the server's
+  reading of `storytel_jwt_v1` wait for step 3: until the music app stops logging in itself, "Update Vibb One" would
+  be wrong and "the phones never get the password" untrue. The launcher already sends the capability.
+- The fake-login guard reads the e-mail's whole domain: `example.invalid` or a name under it. "Ending
+  `.example.invalid`" would refuse the fixtures' own `k@example.invalid`.
+- §9's `payload_has_email=no` for `FAKE-JWT-1` is `unknown` (no dots), as §2.7 says since QA N-5.
+- A check card's backoff wording is "Storytel couldn't be reached - the server tries again in a few minutes." (the
+  card keeps a code only); the picker's error has the time ("trying again at HH:MM").
+- A body over the 256-byte limit is a plain ask (the limit's rejection reads as no `stale`), so the answer stays JSON.
+- The answered life is at least `PHONE_FLOOR` (121 s) also on the fast path, so `expires_in_s` is never below 61
+  for a short-lived JWT either.
+- The card shows "Storytel wasn't asked: STORYTEL_BASE is set and this login isn't a fake one." when the guard
+  refused the save's probe (`storytel_off` in `login_error`).
+- The fake's `/fake/jwt` is step 2's; its `--revoke-after` issues the next JWT at a login only.
+
+**Tests** (each suite run whole before the commit):
+- server: 1131 (`cargo test`; the two `tests::summary` tests that read the wall clock fail in the minutes after
+  Oslo's midnight whatever the change, and pass after it), `cargo fmt --check`, `cargo clippy --all-targets` (the
+  13 known warnings, none new);
+- launcher: 1506 unit tests, `assembleDebug` and `assembleRelease` (a local tsnet stub) with `-PwarningsAsErrors=true`;
+- music app: 1170 unit tests, `assembleDebug` and `assembleRelease` with `-PwarningsAsErrors=true`;
+- `python3 -I scripts/fake-storytel.py --selftest` OK.
+
+Not built here: §8's retired-route, migration and PWA-row tests (step 3), the music tests of step 2.

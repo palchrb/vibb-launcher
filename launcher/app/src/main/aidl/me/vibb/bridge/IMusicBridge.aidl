@@ -6,6 +6,7 @@ package me.vibb.bridge;
 
 import me.vibb.bridge.ISpotifyTokenCallback;
 import me.vibb.bridge.IStorytelCallback;
+import me.vibb.bridge.IStorytelTokenCallback;
 
 interface IMusicBridge {
     /** The bridge's version: 1. */
@@ -23,7 +24,9 @@ interface IMusicBridge {
     /** The music app has its copy of file [id] (checked against [sha256]): the launcher deletes its own. */
     oneway void releaseFile(long id, String sha256);
 
-    /** The Storytel login, through [callback], when the launcher's generation isn't [haveGeneration]. */
+    /** Retired from design 58 step 3: the launcher then answers generation 0 ("delete yours") whenever
+     *  [haveGeneration] isn't the policy's, and never asks the server; the music app no longer calls it after step 2.
+     *  Kept for the transaction codes. */
     oneway void getStorytelLogin(long haveGeneration, IStorytelCallback callback);
 
     /** The music app's state: key "report" (a JSON object, for `music_state`), and "held_files" /
@@ -53,4 +56,8 @@ interface IMusicBridge {
     /** A Spotify access token for this phone's account (design 26c §2.6, §6.1), through [callback]; the launcher
      *  never caches or logs it. */
     oneway void getSpotifyToken(ISpotifyTokenCallback callback);
+
+    /** A Storytel session (JWT) of the family's account (design 58 §2.2, §4), through [callback]. [stale] is the
+     *  session ("<generation>:<16 hex>") Storytel answered 401 to, else null. The launcher never caches or logs it. */
+    oneway void getStorytelToken(String stale, IStorytelTokenCallback callback);
 }

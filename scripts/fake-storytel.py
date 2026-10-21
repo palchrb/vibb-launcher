@@ -1,32 +1,42 @@
 #!/usr/bin/env python3
 # fake-storytel.py - a fake Storytel for the music app on the emulator (design 26b §4.6, step 3;
-# docs/testing/emulator.md §6i).
+# docs/testing/emulator.md §6i) and for the server's chain under STORYTEL_BASE (design 58 §2.6, §6i B).
 #
 # Part of handy (palchrb/vibb-launcher), licensed under the GNU General Public License v3.0 or later
 # (LICENSE). Modelled on palchrb/vibb's test fakes and its rule that both fakes answer from ONE source
 # of truth (tests/sonos_contract.py; MIT License, Copyright (c) 2026 palchrb; see NOTICE.md), and on
 # scripts/fake-sonos.py. Python 3, stdlib only; run it with `python3 -I`.
-"""A fake Storytel: the login, the asset call's 302 and a CDN serving silent WAV books.
+"""A fake Storytel: the login, the bookshelf, the asset call's 302 and a CDN serving silent WAV books.
 
     python3 -I scripts/fake-storytel.py                          # port 8730, books 111:20,222:5,333:5 (MB)
     python3 -I scripts/fake-storytel.py --drop-at 40 --token-ttl 30
     python3 -I scripts/fake-storytel.py --locked 222
     python3 -I scripts/fake-storytel.py --refuse
+    python3 -I scripts/fake-storytel.py --login-5xx              # design 58: a login outage (Q-B)
+    python3 -I scripts/fake-storytel.py --revoke-after 1         # design 58: the JWT revoked after the first book
     python3 -I scripts/fake-storytel.py --slow-mint 5 --no-download 222,333   # design 26b step 4b, with fake-sonos.py
     python3 -I scripts/fake-storytel.py --print-listing 5 > debug-feed/items/5.json
     python3 -I scripts/fake-storytel.py --selftest
 
-Every answer comes from the fixtures in music/app/src/test/resources/storytel/ - the same files the JVM
-tests read (StorytelApiTest): the login is accepted only for login_request.json's email and `pwd` hex
-(stdlib Python has no AES, so the hex is compared as the fixture spells it; aes_vectors.json pins it),
-answered with login_ok.json's (or login_no_jwt.json's) body; the asset call answers asset_302.json's
-status with a Location shaped like the fixture's (`consumableId` and `token` in the query) and
-asset_locked.json's status for a locked book. Every value is fake (FAKE-JWT-1, FAKE-SIG-<n>,
+Every answer comes from fixtures the tests read. The login (design 58 step 1: the server's copies) is in
+server/testdata/storytel/ - fake_login_request.json, fake_login_answers.json, aes_vectors.json, read by the
+server's fake_login_fixtures_match - and the bookshelf is the server's bookshelf.json; the music app's
+originals in music/app/src/test/resources/storytel/ hold the same login values until design 58 step 2
+(StorytelApiTest), so the old music app on §6i and the server's chain on §6i B log in alike. The login is
+accepted only for fake_login_request.json's email and `pwd` hex (stdlib Python has no AES, so the hex is
+compared as the fixture spells it; aes_vectors.json pins it), answered with fake_login_answers.json's `ok`
+(or `no_jwt`) body, its jwt the current FAKE-JWT-<n>; the asset call answers asset_302.json's status with a
+Location shaped like the fixture's (`consumableId` and `token` in the query) and asset_locked.json's status
+for a locked book (both in the music app's resources). Every value is fake (FAKE-JWT-<n>, FAKE-SIG-<n>,
 k@example.invalid): nothing here may look like a real account.
 
-    GET /api/login.action?m=1&uid=<email>&pwd=<hex>   200 + {"accountInfo": {"jwt": "FAKE-JWT-1"}};
-                                                       --refuse (or another login): 403; --no-jwt: 200 without one
-    GET /assets/v2/consumables/<cid>/abook            the bearer checked (401 without it); 302 to
+    GET /api/login.action?m=1&uid=<email>&pwd=<hex>   200 + {"accountInfo": {"jwt": "FAKE-JWT-<n>"}};
+                                                       --refuse (or another login): 403; --no-jwt: 200 without one;
+                                                       --login-5xx: 503; after a revoke it issues FAKE-JWT-<n+1>
+    POST /libraries/bookshelf                          the current JWT checked (401 otherwise); bookshelf.json
+    GET /assets/v2/consumables/<cid>/abook            the current JWT checked (401 without it or another one;
+                                                       --revoke-after K: after the K-th accepted call the JWT is
+                                                       revoked - 401 - until a login issues the next); 302 to
                                                        http://<advertise>:<port>/cdn/<cid>.wav?consumableId=<cid>&token=FAKE-SIG-<n>
                                                        (--slow-mint S: after S seconds); a --locked cid: 403, no Location
     GET /cdn/<cid>.wav                                 a silent WAV of --books cid:MB; Range (206, 416 past the end);
@@ -52,7 +62,10 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The asset call's fixtures (the music app reads them).
 FIXTURES = os.path.join(HERE, "..", "music", "app", "src", "test", "resources", "storytel")
+# The login's and the bookshelf's (design 58 step 1: the server reads them; fake_login_fixtures_match).
+SERVER_FIXTURES = os.path.join(HERE, "..", "server", "testdata", "storytel")
 T0 = time.monotonic()
 RATE = 22050          # Hz, 16-bit mono: 44 100 bytes a second of silence
 HEADER = 44
@@ -63,9 +76,13 @@ def log(msg):
     print(f"[{time.monotonic() - T0:7.1f}] {msg}", flush=True)
 
 
-def fixture(name):
-    with open(os.path.join(FIXTURES, name), encoding="utf-8") as f:
+def fixture(name, where=FIXTURES):
+    with open(os.path.join(where, name), encoding="utf-8") as f:
         return json.load(f)
+
+
+def server_fixture(name):
+    return fixture(name, SERVER_FIXTURES)
 
 
 def wav_header(size):
@@ -85,12 +102,20 @@ class Storytel:
     """The fake's state: the fixtures, the books, the minted tokens."""
 
     def __init__(self, args):
-        self.request = fixture("login_request.json")
-        self.ok = fixture("login_ok.json")
-        self.no_jwt_answer = fixture("login_no_jwt.json")
+        self.request = server_fixture("fake_login_request.json")
+        answers = server_fixture("fake_login_answers.json")
+        self.ok, self.no_jwt_answer = answers["ok"], answers["no_jwt"]
+        with open(os.path.join(SERVER_FIXTURES, "bookshelf.json"), "rb") as f:
+            self.shelf = f.read()
         self.asset = fixture("asset_302.json")
         self.locked_answer = fixture("asset_locked.json")
-        self.jwt = self.ok["body"]["accountInfo"]["jwt"]
+        first = self.ok["body"]["accountInfo"]["jwt"]
+        assert first == "FAKE-JWT-1", first
+        self.jwt_n = 1            # the current JWT is FAKE-JWT-<jwt_n>
+        self.revoked = False      # the current JWT answers 401 until a login issues the next
+        self.revoke_after = getattr(args, "revoke_after", 0) or 0
+        self.accepted = 0         # asset calls accepted with the current JWT so far
+        self.login_5xx = getattr(args, "login_5xx", False)
         self.books = {}
         for part in filter(None, (args.books or "").split(",")):
             cid, _, mb = part.partition(":")
@@ -107,6 +132,14 @@ class Storytel:
         self.serial = 0
         self.dropped = set()    # books whose first transfer was cut already
         self.logins = 0
+
+    @property
+    def jwt(self):
+        return f"FAKE-JWT-{self.jwt_n}"
+
+    def bearer_ok(self, header):
+        """The request's bearer is the current JWT and it isn't revoked."""
+        return header == f"Bearer {self.jwt}" and not self.revoked
 
     def location(self, cid):
         """A CDN URL shaped like asset_302.json's Location: the same query names, our host."""
@@ -149,12 +182,28 @@ def handler_for(st):
             c = re.match(r"^/cdn/([^/]+)\.wav$", url.path)
             if url.path == "/api/login.action":
                 return self.login(query)
+            if url.path == "/libraries/bookshelf":
+                return self.send(405)
             if m:
                 return self.mint(m.group(1))
             if c:
                 return self.cdn(c.group(1), query)
             log(f"GET {url.path}: 404")
             self.send(404)
+
+        def do_POST(self):
+            url = urllib.parse.urlsplit(self.path)
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                self.rfile.read(min(length, 65536))
+            if url.path != "/libraries/bookshelf":
+                log(f"POST {url.path}: 404")
+                return self.send(404)
+            if not st.bearer_ok(self.headers.get("Authorization")):
+                log(f"bookshelf: 401 ({'revoked' if st.revoked else 'no bearer or another one'})")
+                return self.send(401)
+            log(f"bookshelf: 200 ({len(st.shelf)} bytes)")
+            self.send(200, st.shelf, [("Content-Type", "application/json")])
 
         def login(self, query):
             st.logins += 1
@@ -164,13 +213,27 @@ def handler_for(st):
             if st.refuse or not known:
                 log(f"login #{st.logins}: 403 ({'--refuse' if st.refuse else 'not the fixture login'})")
                 return self.send(403, b'{"error":"refused"}', [("Content-Type", "application/json")])
-            answer = st.no_jwt_answer if st.no_jwt else st.ok
-            log(f"login #{st.logins}: {answer['status']}{' without a jwt' if st.no_jwt else ''}")
-            self.send(answer["status"], json.dumps(answer["body"]).encode(), [("Content-Type", "application/json")])
+            if st.login_5xx:
+                log(f"login #{st.logins}: 503 (--login-5xx)")
+                return self.send(503, b'{"error":"unavailable"}', [("Content-Type", "application/json")])
+            if st.no_jwt:
+                log(f"login #{st.logins}: {st.no_jwt_answer['status']} without a jwt")
+                return self.send(st.no_jwt_answer["status"], json.dumps(st.no_jwt_answer["body"]).encode(),
+                                 [("Content-Type", "application/json")])
+            with st.lock:
+                if st.revoked:
+                    st.jwt_n += 1
+                    st.revoked, st.accepted = False, 0
+                    log(f"jwt #{st.jwt_n} (a login after the revoke)")
+                jwt = st.jwt
+            body = json.loads(json.dumps(st.ok["body"]))
+            body["accountInfo"]["jwt"] = jwt
+            log(f"login #{st.logins}: {st.ok['status']} jwt #{st.jwt_n}")
+            self.send(st.ok["status"], json.dumps(body).encode(), [("Content-Type", "application/json")])
 
         def mint(self, cid):
-            if self.headers.get("Authorization") != f"Bearer {st.jwt}":
-                log(f"asset {cid}: 401 (no bearer or another one)")
+            if not st.bearer_ok(self.headers.get("Authorization")):
+                log(f"asset {cid}: 401 ({'revoked' if st.revoked else 'no bearer or another one'})")
                 return self.send(401)
             if cid in st.locked or cid not in st.books:
                 status = st.locked_answer["status"]
@@ -179,6 +242,11 @@ def handler_for(st):
             if st.slow_mint:
                 time.sleep(st.slow_mint)
             location, token = st.location(cid)
+            with st.lock:
+                st.accepted += 1
+                if st.revoke_after and st.accepted >= st.revoke_after:
+                    st.revoked = True
+                    log(f"jwt #{st.jwt_n} revoked after asset call #{st.accepted} (--revoke-after)")
             log(f"asset {cid}: {st.asset['status']} -> /cdn/{cid}.wav token={token}")
             self.send(st.asset["status"], headers=[("Location", location)])
 
@@ -258,31 +326,40 @@ def serve(st, bind):
 # --- the selftest ---------------------------------------------------------------------------------
 
 def selftest():
-    # 1. The fixtures the JVM tests read hold what this fake answers from, and agree with each other.
-    request, ok, no_jwt = fixture("login_request.json"), fixture("login_ok.json"), fixture("login_no_jwt.json")
-    asset, locked, vectors = fixture("asset_302.json"), fixture("asset_locked.json"), fixture("aes_vectors.json")
+    # 1. The fixtures the tests read hold what this fake answers from, and agree with each other.
+    request, answers = server_fixture("fake_login_request.json"), server_fixture("fake_login_answers.json")
+    ok, no_jwt = answers["ok"], answers["no_jwt"]
+    asset, locked, vectors = fixture("asset_302.json"), fixture("asset_locked.json"), server_fixture("aes_vectors.json")
+    # Until design 58 step 2 the music app's originals (StorytelApiTest) hold the same login values.
+    assert fixture("login_request.json") == request and fixture("login_ok.json") == ok
+    assert fixture("login_no_jwt.json") == no_jwt and fixture("aes_vectors.json") == vectors
+    shelf = server_fixture("bookshelf.json")
+    assert isinstance(shelf.get("items"), dict) and shelf["items"], "the bookshelf has books"
     assert request["query"] == urllib.parse.urlencode({"m": "1", "uid": request["email"], "pwd": request["pwd"]}), request
     assert {"password": request["password"], "hex": request["pwd"]} in vectors["vectors"], "the pwd is an AES vector"
     assert ok["status"] == 200 and ok["body"]["accountInfo"]["jwt"].startswith("FAKE-JWT-")
     assert no_jwt["status"] == 200 and "jwt" not in no_jwt["body"]["accountInfo"]
     assert 300 <= asset["status"] < 400 and urllib.parse.parse_qs(urllib.parse.urlsplit(asset["location"]).query)["token"][0].startswith("FAKE-SIG-")
     assert locked["status"] == 403 and locked["location"] is None
-    for name in os.listdir(FIXTURES):
-        text = open(os.path.join(FIXTURES, name), encoding="utf-8").read()
-        assert "eyJ" not in text and "@" not in text.replace("k@example.invalid", "").replace("%40", ""), name
-    print(f"1. {len(os.listdir(FIXTURES))} fixtures parse, agree with each other and hold fake values only OK")
+    names = [os.path.join(FIXTURES, n) for n in os.listdir(FIXTURES)] + \
+        [os.path.join(SERVER_FIXTURES, n) for n in os.listdir(SERVER_FIXTURES)]
+    for path in names:
+        text = open(path, encoding="utf-8").read()
+        assert "eyJ" not in text and "@" not in text.replace("k@example.invalid", "").replace("%40", ""), path
+    print(f"1. {len(names)} fixtures parse, agree with each other and hold fake values only OK")
 
     def start(**over):
         ns = argparse.Namespace(books="111:0.2,222:0.05,333:0.05", locked="", refuse=False, no_jwt=False, token_ttl=0.0,
-                                drop_at=0, slow_mint=0.0, advertise="127.0.0.1", port=0, no_download="")
+                                drop_at=0, slow_mint=0.0, advertise="127.0.0.1", port=0, no_download="",
+                                login_5xx=False, revoke_after=0)
         for k, v in over.items():
             setattr(ns, k, v)
         st = Storytel(ns)
         return st, serve(st, "127.0.0.1")
 
-    def get(st, path, headers=None):
+    def get(st, path, headers=None, method="GET", body=None):
         conn = http.client.HTTPConnection("127.0.0.1", st.port, timeout=10)
-        conn.request("GET", path, headers=headers or {})
+        conn.request(method, path, body=body, headers=headers or {})
         r = conn.getresponse()        # http.client never follows a redirect: the 302 is ours
         body = r.read()
         conn.close()
@@ -379,6 +456,39 @@ def selftest():
     finally:
         srv.shutdown()
     print("5c. --no-download 222: it mints (for a Sonos room) but the CDN answers 503, while 111 downloads OK")
+
+    # 6. design 58: the bookshelf (the server's chain), --login-5xx, --revoke-after
+    st, srv = start()
+    try:
+        form = {"Content-Type": "application/x-www-form-urlencoded"}
+        status, _, body = get(st, "/libraries/bookshelf", dict(bearer, **form), "POST", b'{"items":[]}')
+        assert status == 200 and json.loads(body) == shelf, status
+        assert get(st, "/libraries/bookshelf", form, "POST", b'{"items":[]}')[0] == 401
+        assert get(st, "/libraries/bookshelf", {"Authorization": "Bearer FAKE-JWT-9"}, "POST", b"{}")[0] == 401
+        assert get(st, "/libraries/bookshelf")[0] == 405
+    finally:
+        srv.shutdown()
+    st, srv = start(login_5xx=True)
+    try:
+        status, _, body = get(st, "/api/login.action?" + request["query"])
+        assert status == 503 and b"FAKE-JWT" not in body, (status, body)
+    finally:
+        srv.shutdown()
+    st, srv = start(revoke_after=1)
+    try:
+        assert get(st, "/assets/v2/consumables/111/abook", bearer)[0] == asset["status"], "the first book"
+        assert get(st, "/assets/v2/consumables/222/abook", bearer)[0] == 401, "revoked: the second book"
+        assert get(st, "/libraries/bookshelf", bearer, "POST", b"{}")[0] == 401
+        status, _, body = get(st, "/api/login.action?" + request["query"])
+        assert status == 200 and json.loads(body)["accountInfo"]["jwt"] == "FAKE-JWT-2", body
+        second = {"Authorization": "Bearer FAKE-JWT-2"}
+        assert get(st, "/assets/v2/consumables/222/abook", bearer)[0] == 401, "the old JWT stays refused"
+        assert get(st, "/assets/v2/consumables/222/abook", second)[0] == asset["status"]
+        status, _, body = get(st, "/api/login.action?" + request["query"])
+        assert json.loads(body)["accountInfo"]["jwt"] == "FAKE-JWT-3", "revoked again after one call"
+    finally:
+        srv.shutdown()
+    print("6. design 58: the bookshelf behind the JWT, --login-5xx 503, --revoke-after 1 (401, then FAKE-JWT-2) OK")
     print("\nFAKE STORYTEL SELFTEST OK - answers built from the same fixtures the JVM tests read.")
 
 
@@ -393,6 +503,10 @@ def main():
     p.add_argument("--locked", default="", help="cids whose asset call answers 403 without a Location: 222,333")
     p.add_argument("--refuse", action="store_true", help="refuse every login (403)")
     p.add_argument("--no-jwt", action="store_true", help="answer the login 200 without a jwt")
+    p.add_argument("--login-5xx", action="store_true", help="answer the login 503 (design 58: an outage, not a refusal)")
+    p.add_argument("--revoke-after", type=int, default=0, metavar="K",
+                   help="after the K-th accepted asset call the JWT answers 401 until a login issues the next "
+                        "(design 58: K=1 is the second book)")
     p.add_argument("--token-ttl", type=float, default=0.0, help="seconds a minted token is valid (default: forever)")
     p.add_argument("--drop-at", type=int, default=0, help="close each book's first transfer at this percent")
     p.add_argument("--slow-mint", type=float, default=0.0, help="seconds before every 302 (step 4b's mint in flight)")

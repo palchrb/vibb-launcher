@@ -1,21 +1,31 @@
 //! The server's Storytel client (design `docs/design/26b-storytel.md` §0, §1.1 and §2.1, with its
-//! QA review and decisions): the family's login (the sealed `music_storytel` row, phase 1), the
-//! bookshelf and its grouping into series and standalone books. It reads the **shelf only** -
-//! never bookmarks, never audio: the phones log in by themselves and mint the audio URLs.
+//! QA review and decisions; design 58 for the phones' session): the family's login (the sealed
+//! `music_storytel` row, phase 1), the bookshelf and its grouping into series and standalone books.
+//! It reads the **shelf only** - never bookmarks, never audio. The phones mint the audio URLs
+//! themselves; from design 58 they ask this server for its JWT (`POST
+//! /api/devices/music/storytel/token`, [Account::phone_jwt]) instead of logging in.
 //!
-//! - **One account** ([Account], `AppState.storytel`): a tokio `Mutex` so one login runs at a
-//!   time; the JWT (1 h, re-login once on a 401) and the last shelf (5 minutes for a routine read)
-//!   in memory only, both for the login generation they were made with.
-//! - **The refused-login cooldown**: a refused login (any status but 200) is stamped in
-//!   `music_storytel.login_refused_at` with its generation; for an hour after it no login is tried
-//!   for that generation (no request at all), and saving the login again (a new generation) retries
-//!   at once. A login the server can't reach (or one without a JWT) is no refusal.
+//! - **One account** ([Account], `AppState.storytel`): the JWT in a std `Mutex` never held across
+//!   an `.await` (design 58 §2.1: a phone never waits behind a shelf read), one login at a time
+//!   server-wide (`login_lock`), the last shelf (5 minutes for a routine read) under its own tokio
+//!   `Mutex`; all in memory only, each for the login generation it was made with. The JWT's life
+//!   comes from its own claims ([jwt_life]), and a 401 logs in again only while the kept session is
+//!   the one refused.
+//! - **The refused-login cooldown**: a refused login (a 4xx other than 408 and 429,
+//!   [classify_login]) is stamped in `music_storytel.login_refused_at` with its generation; for an
+//!   hour after it no login is tried for that generation (no request at all), and saving the login
+//!   again (a new generation) retries at once.
+//! - **The login backoff** (design 58 §2.3): any other failed login (a 5xx, 408, 429, any other
+//!   non-200, a transport error, a timeout, no JWT, a too-short life) is an outage: no login for 1
+//!   minute, doubling to 30, reset by a login or a new generation. The phones' logins are capped
+//!   server-wide too ([Account::phone_jwt]).
 //! - **Every request** goes through `AppState.music_fetch` (one in flight server-wide, 200 ms
-//!   apart), [Reach::Public].
-//! - **Secrets**: the password, the encrypted password (`pwd=`), the e-mail and the JWT never reach
-//!   a log, an error text, an event, a page or `music_state`. [StoredLogin] and [Jwt] have no
-//!   `Debug` and no `Display` (QA L9); errors carry codes and statuses only, and `music_net` drops
-//!   the URL from every transport error.
+//!   apart), [Reach::Public] - but the login and the bookshelf under `STORYTEL_BASE` ([Config]).
+//! - **Secrets**: the password, the encrypted password (`pwd=`), the e-mail, the JWT, its payload and
+//!   its session never reach a log, an error text, an event, a page or `music_state`.
+//!   [StoredLogin], [Jwt], [Login], [KeptJwt] and [PhoneJwt] have no `Debug` and no `Display` (QA
+//!   L9); errors carry codes and statuses only, and `music_net` drops the URL from every transport
+//!   error.
 //!
 //! UPSTREAM: storytel-player, tag 1.3.0 (github.com/debba/storytel-player, `server/storytelApi.ts`,
 //! `server/passwordCrypt.ts`). Every URL, header and body quirk lives in the constants below.
@@ -26,20 +36,22 @@
 //! (c) palchrb; itself after storytel-player 1.3.0 by debba, MIT), reimplemented in Rust under
 //! GPL-3.0 with 26b's changes (see NOTICE.md and 26b §9): AES in-process instead of `openssl`, the
 //! JWT and the shelf in memory only, the cooldown in the database and tied to the login generation,
-//! a book without a `model.id` skipped instead of keyed "None", a consumable id seen twice kept once.
+//! a book without a `model.id` skipped instead of keyed "None", a consumable id seen twice kept once;
+//! and design 58's: the JWT's life from its claims (storytel-player 2ca1e2d's rule), an outage
+//! backs off instead of waiting vibb's hour.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use chrono::{DateTime, Datelike, TimeDelta, Utc};
 use serde::Deserialize;
 use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 use tokio::time::Instant;
 
 use crate::AppState;
-use crate::music_net::{FetchError, Kind, Reach, SourceRequest};
+use crate::music_net::{FetchError, Kind, PhoneAsks, Reach, SourceRequest};
 use crate::music_sweep::{parse_stamp, stamp};
 
 // --- CONSTANTS: everything upstream might move lives here ---------------------------------------
@@ -54,8 +66,43 @@ pub const BOOKSHELF_CONTENT_TYPE: &str = "application/x-www-form-urlencoded";
 /// passwordCrypt.ts: AES-128-CBC with a public key and IV - `pwd=` is as good as the password.
 const AES_KEY: [u8; 16] = *b"VQZBJ6TD8M9WBUWT";
 const AES_IV: [u8; 16] = *b"joiwef08u23j341a";
-/// login.action gives no expiry: a JWT is used for an hour, and a 401 logs in again once.
-pub const JWT_TTL: Duration = Duration::from_secs(3600);
+/// A kept JWT is used while more than this is left of it, and a phone is told its life minus this
+/// (design 58 §2.1).
+pub const MARGIN: Duration = Duration::from_secs(60);
+/// A JWT's life when its claims can't be read (storytel-player's 1800 s).
+pub const JWT_LIFE_FALLBACK: Duration = Duration::from_secs(30 * 60);
+/// The shortest life `exp - iat` gives while the server's wall clock can't be trusted.
+pub const JWT_LIFE_FLOOR: Duration = Duration::from_secs(300);
+/// The shortest life with a sane wall clock (`exp - now` of a still-valid older token).
+pub const JWT_LIFE_SANE_FLOOR: Duration = Duration::from_secs(60);
+/// The longest life we use a JWT for, whatever its claims say (ours).
+pub const JWT_LIFE_CAP: Duration = Duration::from_secs(24 * 3600);
+/// A wall clock before this year isn't trusted for `exp - now` (a Pi without its time yet).
+const SANE_YEAR: i32 = 2026;
+/// A phone is answered a JWT only with more than `2 x` [MARGIN] left, so `expires_in_s` is at
+/// least 61 (design 58 QA N-6); a fresh login leaving less is an outage (`short_life`).
+pub const PHONE_FLOOR: Duration = Duration::from_secs(2 * 60 + 1);
+/// The phones' token route's budget (design 58 §2.2), under the launcher's 10 s: a login still
+/// running then finishes on its own and is kept.
+pub const PHONE_JWT_BUDGET: Duration = Duration::from_secs(8);
+/// A phone's asks in [PHONE_WINDOW] (design 58 §7.3), then `busy`.
+pub const PHONE_JWT_ASKS_PER_WINDOW: usize = 20;
+/// A phone's forced logins (after its 401) in [PHONE_WINDOW] (design 58 §2.3).
+pub const PHONE_FORCES_PER_WINDOW: usize = 3;
+/// The rolling window of the phones' limits and the server-wide phone-login cap.
+pub const PHONE_WINDOW: Duration = Duration::from_secs(3600);
+/// The login backoff after an outage: 1 minute, doubling to 30 (design 58 §2.3).
+pub const LOGIN_BACKOFF_MIN: Duration = Duration::from_secs(60);
+pub const LOGIN_BACKOFF_MAX: Duration = Duration::from_secs(30 * 60);
+/// The server-wide cap on logins the phones' asks cause: at least this many an hour.
+pub const PHONE_LOGINS_MIN: usize = 6;
+/// A forced login needs the kept JWT this old at most (`min(5 min, life / 2)`; 10 s under
+/// `STORYTEL_BASE`, design 58 §2.6).
+const FORCE_MIN_AGE_CAP: Duration = Duration::from_secs(5 * 60);
+const FORCE_MIN_AGE_FAKE: Duration = Duration::from_secs(10);
+/// A phone gets the kept JWT while it has `min(15 min, life / 2)` left: above the phone's prefetch
+/// point, so a prefetch gets a new one (design 58 QA 58-1).
+const PHONE_MIN_LEFT_CAP: Duration = Duration::from_secs(15 * 60);
 /// No login is tried this long after a refused one (for the same login generation).
 pub const LOGIN_COOLDOWN: TimeDelta = TimeDelta::hours(1);
 /// A routine read of the shelf is served from memory this long (vibb `RAW_SHELF_TTL_S`).
@@ -115,6 +162,212 @@ pub fn login_url(base: &str, email: &str, password: &str) -> String {
         .append_pair("pwd", &encrypt_password(password))
         .finish();
     format!("{base}?{query}")
+}
+
+// --- STORYTEL_BASE: the emulator chain (design 58 §2.6) ------------------------------------------
+
+/// Where the login and the bookshelf go. `STORYTEL_BASE` in `.env` (a loopback URL only, its host
+/// compared exactly) sends both to the fake Storytel with [Reach::Any], and then only a fake login
+/// (an e-mail ending `.example.invalid`) is ever sent.
+#[derive(Clone)]
+pub struct Config {
+    pub login_url: String,
+    pub bookshelf: String,
+    /// The fake's base while `STORYTEL_BASE` is set.
+    pub fake_base: Option<String>,
+    /// Why `STORYTEL_BASE` was ignored, for the start's log.
+    pub warnings: Vec<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            login_url: LOGIN_URL.to_string(),
+            bookshelf: BOOKSHELF.to_string(),
+            fake_base: None,
+            warnings: Vec::new(),
+        }
+    }
+}
+
+/// `http://<127.0.0.1|[::1]|localhost>:<port>` with nothing else, as Spotify's overrides are read
+/// (QA N-12: the host is compared exactly, so `127.0.0.1.evil.example` is no loopback).
+fn loopback_base(value: &str) -> Option<String> {
+    let url = reqwest::Url::parse(value.trim()).ok()?;
+    let host_ok = matches!(
+        url.host_str(),
+        Some("127.0.0.1") | Some("[::1]") | Some("localhost")
+    );
+    let clean = url.scheme() == "http"
+        && host_ok
+        && url.port().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.path() == "/";
+    clean.then(|| url.as_str().trim_end_matches('/').to_string())
+}
+
+impl Config {
+    pub fn from_env() -> Self {
+        Config::from_vars(&std::env::vars().collect())
+    }
+
+    pub fn from_vars(vars: &HashMap<String, String>) -> Self {
+        let Some(value) = vars
+            .get("STORYTEL_BASE")
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        else {
+            return Config::default();
+        };
+        match loopback_base(value) {
+            Some(base) => Config {
+                login_url: format!("{base}/api/login.action"),
+                bookshelf: format!("{base}/libraries/bookshelf"),
+                fake_base: Some(base),
+                warnings: Vec::new(),
+            },
+            None => Config {
+                warnings: vec![
+                    "STORYTEL_BASE is honoured only as http://127.0.0.1:<port>, http://[::1]:<port> \
+                     or http://localhost:<port> (the fake Storytel, design 58 §2.6) - ignored"
+                        .to_string(),
+                ],
+                ..Config::default()
+            },
+        }
+    }
+
+    /// The login's and the bookshelf's reach: [Reach::Any] only with the loopback override.
+    pub fn reach(&self) -> Reach {
+        if self.fake_base.is_some() {
+            Reach::Any
+        } else {
+            Reach::Public
+        }
+    }
+}
+
+/// An e-mail the fake may get: one at `example.invalid` or a name under it (RFC 2606 names, never a
+/// real one), compared on the whole domain.
+fn fake_login(email: &str) -> bool {
+    email.rsplit_once('@').is_some_and(|(_, domain)| {
+        let domain = domain.to_ascii_lowercase();
+        domain == "example.invalid" || domain.ends_with(".example.invalid")
+    })
+}
+
+// --- the JWT's claims (design 58 §2.1, §2.7) ------------------------------------------------------
+
+/// A JWT's second part: URL-safe base64, padded or not (storytel-player decodes it the same way).
+const PAYLOAD_BASE64: base64::engine::GeneralPurpose = base64::engine::GeneralPurpose::new(
+    &base64::alphabet::URL_SAFE,
+    base64::engine::GeneralPurposeConfig::new()
+        .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
+);
+
+/// The JWT's payload as JSON, `None` when there are no dots or the base64 or the JSON is bad. Never
+/// logged, stored or kept: read into [jwt_life] and [payload_has_email], then dropped.
+pub fn jwt_payload(jwt: &str) -> Option<Value> {
+    use base64::Engine;
+    let payload = jwt.split('.').nth(1)?;
+    let bytes = PAYLOAD_BASE64.decode(payload).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// How long a JWT is used, from its claims (design 58 §2.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JwtLife {
+    /// `exp - iat` (at most the cap), or the fallback: the token's own life.
+    pub life: Duration,
+    /// What we use of it from the login on: `min(exp - iat, exp - now)` with a sane wall clock
+    /// (at least 60 s), else `exp - iat` (at least 300 s); never past [JWT_LIFE_CAP].
+    pub left: Duration,
+    /// `exp` and `iat` were read as numbers (else the fallback applied).
+    pub claims: bool,
+}
+
+fn seconds(value: f64) -> Duration {
+    Duration::from_secs_f64(value.clamp(0.0, JWT_LIFE_CAP.as_secs_f64()))
+}
+
+/// [JwtLife] from the payload, `wall_now` the server's clock. Pure.
+pub fn jwt_life(payload: Option<&Value>, wall_now: DateTime<Utc>) -> JwtLife {
+    let claims = payload.and_then(|p| Some((p.get("exp")?.as_f64()?, p.get("iat")?.as_f64()?)));
+    let Some((exp, iat)) = claims else {
+        return JwtLife {
+            life: JWT_LIFE_FALLBACK,
+            left: JWT_LIFE_FALLBACK,
+            claims: false,
+        };
+    };
+    let span = exp - iat;
+    let left = if wall_now.year() >= SANE_YEAR {
+        seconds(span.min(exp - wall_now.timestamp() as f64)).max(JWT_LIFE_SANE_FLOOR)
+    } else {
+        seconds(span).max(JWT_LIFE_FLOOR)
+    };
+    JwtLife {
+        life: seconds(span),
+        left: left.min(JWT_LIFE_CAP),
+        claims: true,
+    }
+}
+
+/// Whether the JWT's payload holds an e-mail address (design 58 §2.7, QA N-5): a word for the log
+/// and the card, never a value or a claim name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Presence {
+    Yes,
+    No,
+    Unknown,
+}
+
+impl Presence {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Presence::Yes => "yes",
+            Presence::No => "no",
+            Presence::Unknown => "unknown",
+        }
+    }
+}
+
+/// `yes` when any string value at any depth equals `email` (case-insensitive) or holds an `@`;
+/// `no` when the payload is a JSON object and none does; `unknown` when it couldn't be read.
+pub fn payload_has_email(payload: Option<&Value>, email: &str) -> Presence {
+    fn holds(value: &Value, email: &str) -> bool {
+        match value {
+            Value::String(s) => s.contains('@') || s.eq_ignore_ascii_case(email),
+            Value::Array(items) => items.iter().any(|v| holds(v, email)),
+            Value::Object(map) => map.values().any(|v| holds(v, email)),
+            _ => false,
+        }
+    }
+    match payload {
+        Some(value) if holds(value, email) => Presence::Yes,
+        Some(Value::Object(_)) => Presence::No,
+        _ => Presence::Unknown,
+    }
+}
+
+/// A session string: `<generation>:<16 lowercase hex>` (design 58 §2.2; the phones' `stale`).
+pub fn valid_session(session: &str) -> bool {
+    session.split_once(':').is_some_and(|(generation, hex)| {
+        (1..=18).contains(&generation.len())
+            && generation.bytes().all(|b| b.is_ascii_digit())
+            && hex.len() == 16
+            && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
+}
+
+/// A new session for a JWT of `generation`: random per login, so a restart never repeats one (QA
+/// 58-5). It names the JWT and nothing else.
+fn new_session(generation: i64) -> String {
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
+    format!("{generation}:{:016x}", OsRng.next_u64())
 }
 
 // --- targets (no I/O) ----------------------------------------------------------------------------
@@ -466,18 +719,32 @@ pub fn normalize_shelf(raw: &[u8]) -> Result<Vec<Group>, ShelfError> {
 /// message) and a text for the picker. Nothing here holds a URL, the login or the JWT.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StorytelError {
-    /// No login stored, or no key on this server (`storytel_off`).
+    /// No login stored, or no key on this server (`storytel_off`); also a real login while
+    /// `STORYTEL_BASE` is set (design 58 §2.6).
     NotConfigured,
     /// The login was sealed with another key (`storytel_key`): enter it again (QA L4).
     KeyUnusable,
-    /// The login answered this status (not 200): a refusal, the cooldown starts.
+    /// The login was refused with this status (a 4xx other than 408 and 429): the cooldown starts.
     Refused(u16),
     /// Inside the refused-login cooldown: no request was made.
     Cooldown {
         until: DateTime<Utc>,
     },
-    /// 200 without `accountInfo.jwt`.
+    /// The login answered this other non-200 status: an outage (design 58 §2.3), the backoff starts.
+    LoginStatus(u16),
+    /// 200 without `accountInfo.jwt`: an outage.
     NoJwt,
+    /// Storytel's JWT would leave a phone less than [PHONE_FLOOR]: an outage (design 58 QA N-6).
+    ShortLife,
+    /// Inside the login backoff (design 58 §2.3): no request was made.
+    Backoff {
+        until: DateTime<Utc>,
+    },
+    /// A phone's ask that can't log in now: past the phone-login cap, or a force that isn't
+    /// allowed yet (design 58 §2.3). Ask again after `wait`.
+    Busy {
+        wait: Duration,
+    },
     Fetch(FetchError),
     /// The bookshelf answered this status.
     Status(u16),
@@ -494,13 +761,29 @@ impl StorytelError {
             StorytelError::Refused(_) | StorytelError::Cooldown { .. } => {
                 "login_refused".to_string()
             }
+            StorytelError::LoginStatus(code) | StorytelError::Status(code) => {
+                format!("http_{code}")
+            }
             StorytelError::NoJwt => "no_jwt".to_string(),
+            StorytelError::ShortLife => "short_life".to_string(),
+            StorytelError::Backoff { .. } => "login_backoff".to_string(),
+            StorytelError::Busy { .. } => "busy".to_string(),
             StorytelError::Fetch(err) => err.code().to_string(),
-            StorytelError::Status(code) => format!("http_{code}"),
             StorytelError::TooBig => "too_big".to_string(),
             StorytelError::BadShelf => "bad_shelf".to_string(),
             StorytelError::Database(_) => "database".to_string(),
         }
+    }
+
+    /// A failed login that is an outage, not a refusal (design 58 §2.3): it starts the backoff.
+    fn is_outage(&self) -> bool {
+        matches!(
+            self,
+            StorytelError::LoginStatus(_)
+                | StorytelError::NoJwt
+                | StorytelError::ShortLife
+                | StorytelError::Fetch(_)
+        )
     }
 
     /// The picker's text, times in `zone` (design 31 M4) and relative to `now`.
@@ -527,13 +810,23 @@ impl StorytelError {
             StorytelError::NoJwt => {
                 "Storytel took the login but sent no session - try again later.".to_string()
             }
+            StorytelError::ShortLife => {
+                "Storytel sent a session that ends at once - try again later.".to_string()
+            }
+            StorytelError::Backoff { until } => format!(
+                "Storytel couldn't be reached - trying again at {}.",
+                zone.until(*until, now)
+            ),
+            StorytelError::Busy { .. } => "Storytel is busy - try again later.".to_string(),
             StorytelError::Fetch(FetchError::Timeout) => {
                 "Storytel didn't answer in time - try again later.".to_string()
             }
             StorytelError::Fetch(_) => {
                 "Storytel couldn't be reached - try again later.".to_string()
             }
-            StorytelError::Status(code) => format!("Storytel answered {code} - try again later."),
+            StorytelError::LoginStatus(code) | StorytelError::Status(code) => {
+                format!("Storytel answered {code} - try again later.")
+            }
             StorytelError::TooBig => "The Storytel shelf is too big to read.".to_string(),
             StorytelError::BadShelf => "Storytel sent a shelf this server can't read.".to_string(),
             StorytelError::Database(_) => {
@@ -559,12 +852,18 @@ pub struct StoredLogin {
 }
 
 /// A Storytel session token: a bearer for the family's account. No `Debug`, no `Display`, never
-/// stored (QA L9).
+/// stored or logged (QA L9); cloned out of the account for one use (design 58 §2.1).
+#[derive(Clone)]
 pub struct Jwt(String);
 
 impl Jwt {
     fn bearer(&self) -> String {
         format!("Bearer {}", self.0)
+    }
+
+    /// The token itself, for the phones' answer only (design 58 §2.2).
+    pub fn secret(&self) -> &str {
+        &self.0
     }
 }
 
@@ -606,6 +905,12 @@ pub fn cooldown_until(
 /// The `music_storytel` row opened with the server's key. `NotConfigured` without a login or a
 /// key, `KeyUnusable` (stored as the card's `storytel_key`) when it was sealed with another key.
 pub async fn credentials(state: &AppState) -> Result<Credentials, StorytelError> {
+    open_login(state, true).await
+}
+
+/// [credentials]; `report` = warn and record `storytel_key` when the key can't open the row (a
+/// phone's ask does that once per generation, design 58 §2.2).
+async fn open_login(state: &AppState, report: bool) -> Result<Credentials, StorytelError> {
     type Row = (
         Option<Vec<u8>>,
         Option<Vec<u8>>,
@@ -632,8 +937,10 @@ pub async fn credentials(state: &AppState) -> Result<Credentials, StorytelError>
         .open(&ciphertext, &nonce, &fingerprint)
         .and_then(|plain| serde_json::from_slice::<StoredLogin>(&plain).ok())
     else {
-        tracing::warn!("storytel: the saved login can't be opened with this server's key");
-        record(state, generation, Outcome::Failed("storytel_key")).await;
+        if report {
+            tracing::warn!("storytel: the saved login can't be opened with this server's key");
+            record(state, generation, Outcome::Failed("storytel_key")).await;
+        }
         return Err(StorytelError::KeyUnusable);
     };
     Ok(Credentials {
@@ -642,6 +949,47 @@ pub async fn credentials(state: &AppState) -> Result<Credentials, StorytelError>
         refused_at,
         refused_generation,
     })
+}
+
+/// The row's plain columns (design 58 QA N-8): what a phone's ask needs before any login - never
+/// an open of the sealed login.
+struct Plain {
+    generation: i64,
+    refused_at: Option<String>,
+    refused_generation: Option<i64>,
+}
+
+impl Plain {
+    async fn read(state: &AppState) -> Result<Plain, StorytelError> {
+        let (stored, generation, refused_at, refused_generation): (
+            bool,
+            i64,
+            Option<String>,
+            Option<i64>,
+        ) = sqlx::query_as(
+            "SELECT ciphertext IS NOT NULL, generation, login_refused_at, \
+             login_refused_generation FROM music_storytel WHERE id = 1",
+        )
+        .fetch_one(&state.db)
+        .await?;
+        if !stored {
+            return Err(StorytelError::NotConfigured);
+        }
+        Ok(Plain {
+            generation,
+            refused_at,
+            refused_generation,
+        })
+    }
+
+    fn cooldown_until(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        cooldown_until(
+            self.refused_at.as_deref(),
+            self.refused_generation,
+            self.generation,
+            now,
+        )
+    }
 }
 
 /// What an attempt did, for the row (only ever for the generation it was made with).
@@ -681,50 +1029,110 @@ async fn record(state: &AppState, generation: i64, outcome: Outcome<'_>) {
     }
 }
 
+/// The two facts of a login the card shows and the log line prints (design 58 §2.7): numbers and
+/// words only, never the payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoginFacts {
+    pub life_s: u64,
+    pub left_s: u64,
+    pub claims: bool,
+    pub has_email: Presence,
+}
+
+/// A login Storytel took: the JWT, how long it is used from now ([jwt_life]) and its facts. No
+/// `Debug`, no `Display`.
+pub struct Login {
+    jwt: Jwt,
+    life: Duration,
+    facts: LoginFacts,
+}
+
+/// The login's answer (design 58 §2.3, QA N-4): 200 with a non-empty `accountInfo.jwt` is the JWT;
+/// a 4xx other than 408 and 429 is a refusal ([StorytelError::Refused]); any other status is an
+/// outage ([StorytelError::LoginStatus]), and 200 without a JWT too ([StorytelError::NoJwt]).
+pub fn classify_login(status: u16, body: &[u8]) -> Result<String, StorytelError> {
+    match status {
+        200 => serde_json::from_slice::<Value>(body)
+            .ok()
+            .and_then(|body| {
+                body.get("accountInfo")?
+                    .get("jwt")?
+                    .as_str()
+                    .filter(|jwt| !jwt.is_empty())
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| {
+                tracing::warn!("storytel: login answered 200 without a session");
+                StorytelError::NoJwt
+            }),
+        400..=499 if status != 408 && status != 429 => {
+            tracing::info!(status, "storytel: login refused");
+            Err(StorytelError::Refused(status))
+        }
+        _ => {
+            tracing::warn!(
+                status,
+                "storytel: the login failed (an outage, not a refusal)"
+            );
+            Err(StorytelError::LoginStatus(status))
+        }
+    }
+}
+
 /// The login request alone (vibb `login` minus the stored login and the cooldown): GET
-/// `login.action?m=1&uid=..&pwd=..`, redirects followed. Not 200 = `Refused` (a 5xx too: "a
-/// refusal, not an outage"); 200 without a non-empty `accountInfo.jwt` = `NoJwt`. Touches no
-/// database: the save's probe uses it with the login being entered.
+/// `login.action?m=1&uid=..&pwd=..`, redirects followed, read by [classify_login]; the JWT's life
+/// from its claims and one `info` line with the facts (design 58 §2.7). Touches no database: the
+/// save's probe uses it with the login being entered. Under `STORYTEL_BASE` only a fake login is
+/// sent (§2.6).
 pub async fn login_with(
     state: &AppState,
     email: &str,
     password: &str,
-) -> Result<Jwt, StorytelError> {
+) -> Result<Login, StorytelError> {
+    let config = state.storytel.config();
+    if config.fake_base.is_some() && !fake_login(email) {
+        tracing::warn!(
+            "storytel: STORYTEL_BASE is set: the stored login isn't a fake one, not sent"
+        );
+        return Err(StorytelError::NotConfigured);
+    }
     let request = SourceRequest::new(
-        login_url(LOGIN_URL, email, password),
+        login_url(&config.login_url, email, password),
         Kind::Login,
-        Reach::Public,
+        config.reach(),
     );
     let response = state
         .music_fetch
         .get(request)
         .await
         .map_err(StorytelError::Fetch)?;
-    if response.status != 200 {
-        tracing::info!(status = response.status, "storytel: login refused");
-        return Err(StorytelError::Refused(response.status));
-    }
-    let jwt = serde_json::from_slice::<Value>(&response.body)
-        .ok()
-        .and_then(|body| {
-            body.get("accountInfo")?
-                .get("jwt")?
-                .as_str()
-                .filter(|jwt| !jwt.is_empty())
-                .map(str::to_string)
-        });
-    match jwt {
-        Some(jwt) => Ok(Jwt(jwt)),
-        None => {
-            tracing::warn!("storytel: login answered 200 without a session");
-            Err(StorytelError::NoJwt)
-        }
-    }
+    let jwt = classify_login(response.status, &response.body)?;
+    let payload = jwt_payload(&jwt);
+    let life = jwt_life(payload.as_ref(), state.music_sweep.now());
+    let facts = LoginFacts {
+        life_s: life.life.as_secs(),
+        left_s: life.left.as_secs(),
+        claims: life.claims,
+        has_email: payload_has_email(payload.as_ref(), email),
+    };
+    drop(payload);
+    tracing::info!(
+        "storytel: logged in (life_s={}, left_at_login_s={}, claims={}, payload_has_email={})",
+        facts.life_s,
+        facts.left_s,
+        if facts.claims { "yes" } else { "no" },
+        facts.has_email.as_str()
+    );
+    Ok(Login {
+        jwt: Jwt(jwt),
+        life: life.left,
+        facts,
+    })
 }
 
-fn shelf_request(jwt: &Jwt) -> SourceRequest {
+fn shelf_request(config: &Config, jwt: &Jwt) -> SourceRequest {
     use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
-    let mut request = SourceRequest::new(BOOKSHELF, Kind::Shelf, Reach::Public);
+    let mut request = SourceRequest::new(config.bookshelf.clone(), Kind::Shelf, config.reach());
     request.method = reqwest::Method::POST;
     request.headers = vec![
         (AUTHORIZATION, jwt.bearer()),
@@ -749,44 +1157,61 @@ fn read_shelf(response: crate::music_net::SourceResponse) -> Result<Vec<Group>, 
 /// What the save's probe found (§2.3).
 pub enum Probe {
     /// Storytel took the login and sent the shelf: both are kept for the new generation.
-    Accepted { jwt: Jwt, shelf: Vec<Group> },
-    /// Not 200 (`status`), or 200 without a JWT (`None`): nothing is stored.
-    Refused { status: Option<u16> },
+    Accepted { login: Login, shelf: Vec<Group> },
+    /// Not 200 (`status`), or 200 without a JWT (`None`): nothing is stored. `outage` = Storytel's
+    /// trouble, not a wrong password (design 58 §2.3's split; the wording follows it).
+    Refused { status: Option<u16>, outage: bool },
     /// A transport error, the shelf failing, or past the budget: stored anyway, with this code.
-    Unreachable { code: String, jwt: Option<Jwt> },
+    Unreachable { code: String, login: Option<Login> },
 }
 
 /// The save's probe (vibb `/storytel/credentials`): one login with the entered login and one
-/// bookshelf, within `budget` in all (the wait for the gate included). No cooldown applies, and
-/// none is stamped.
+/// bookshelf, within `budget` in all (the wait for the gate included). No cooldown or backoff
+/// applies, and none is stamped (design 58 §2.3: the save is the parent's own act).
 pub async fn probe(state: &AppState, email: &str, password: &str, budget: Duration) -> Probe {
     let attempt = async {
-        let jwt = match login_with(state, email, password).await {
-            Ok(jwt) => jwt,
+        let login = match login_with(state, email, password).await {
+            Ok(login) => login,
             Err(StorytelError::Refused(status)) => {
                 return Probe::Refused {
                     status: Some(status),
+                    outage: false,
                 };
             }
-            Err(StorytelError::NoJwt) => return Probe::Refused { status: None },
+            Err(StorytelError::LoginStatus(status)) => {
+                return Probe::Refused {
+                    status: Some(status),
+                    outage: true,
+                };
+            }
+            Err(StorytelError::NoJwt) => {
+                return Probe::Refused {
+                    status: None,
+                    outage: true,
+                };
+            }
             Err(err) => {
                 return Probe::Unreachable {
                     code: err.code(),
-                    jwt: None,
+                    login: None,
                 };
             }
         };
-        let shelf = match state.music_fetch.get(shelf_request(&jwt)).await {
+        let shelf = match state
+            .music_fetch
+            .get(shelf_request(state.storytel.config(), &login.jwt))
+            .await
+        {
             Ok(response) => read_shelf(response),
             Err(err) => Err(StorytelError::Fetch(err)),
         };
         match shelf {
-            Ok(shelf) => Probe::Accepted { jwt, shelf },
+            Ok(shelf) => Probe::Accepted { login, shelf },
             Err(err) => {
                 tracing::warn!(code = %err.code(), "storytel: the probe's bookshelf failed");
                 Probe::Unreachable {
                     code: err.code(),
-                    jwt: Some(jwt),
+                    login: Some(login),
                 }
             }
         }
@@ -797,16 +1222,48 @@ pub async fn probe(state: &AppState, email: &str, password: &str, budget: Durati
             tracing::warn!("storytel: the probe took too long");
             Probe::Unreachable {
                 code: "timeout".to_string(),
-                jwt: None,
+                login: None,
             }
         }
     }
 }
 
-struct KeptJwt {
+/// The JWT the account keeps (design 58 §2.1). No `Debug`, no `Display`.
+pub struct KeptJwt {
     jwt: Jwt,
-    expires: Instant,
+    made: Instant,
+    life: Duration,
     generation: i64,
+    session: String,
+}
+
+impl KeptJwt {
+    fn left(&self, now: Instant) -> Duration {
+        (self.made + self.life).saturating_duration_since(now)
+    }
+
+    fn handed(&self, now: Instant) -> PhoneJwt {
+        PhoneJwt {
+            jwt: self.jwt.clone(),
+            left: self.left(now),
+            session: self.session.clone(),
+        }
+    }
+}
+
+/// A JWT handed out of the account: to a phone (design 58 §2.2) or to the sweep. No `Debug`, no
+/// `Display`.
+pub struct PhoneJwt {
+    pub jwt: Jwt,
+    /// What is left of it (the phone is told this minus [MARGIN]).
+    pub left: Duration,
+    /// `"<generation>:<16 hex>"`: names this JWT, nothing else.
+    pub session: String,
+}
+
+/// `min(cap, life / 2)`.
+fn half_life(life: Duration, cap: Duration) -> Duration {
+    (life / 2).min(cap)
 }
 
 struct KeptShelf {
@@ -817,87 +1274,367 @@ struct KeptShelf {
 
 #[derive(Default)]
 struct Session {
-    jwt: Option<KeptJwt>,
     shelf: Option<KeptShelf>,
     /// Requests sent through this session (logins and shelves): the sweep's check counts what one
     /// read cost ([Account::shelf_counted]).
     sent: u32,
 }
 
-/// `AppState.storytel`: the server's one Storytel session.
+/// The login backoff after an outage (design 58 §2.3), for one generation.
+struct Backoff {
+    generation: i64,
+    until: Instant,
+    step: Duration,
+}
+
+/// What bounds the logins (design 58 §2.3) and what the card knows of the last one (§2.7).
 #[derive(Default)]
+struct Gate {
+    backoff: Option<Backoff>,
+    /// Logins the phones' asks caused, server-wide, in the last [PHONE_WINDOW].
+    phone_logins: VecDeque<Instant>,
+    /// The last login's facts, in memory only ("not known yet" after a restart).
+    last: Option<LoginFacts>,
+    /// The generation a phone's ask recorded `storytel_key` for (at most once each, QA 58-9).
+    key_reported: Option<i64>,
+}
+
+/// `AppState.storytel`: the server's one Storytel session.
 pub struct Account {
+    config: Config,
+    /// The shelf (the shelf read holds it across its fetch; no phone needs it).
     session: tokio::sync::Mutex<Session>,
+    /// The kept JWT: never held across an `.await` (design 58 §2.1).
+    jwt: std::sync::Mutex<Option<KeptJwt>>,
+    /// One login at a time server-wide. Nothing takes `session` while holding it.
+    login_lock: tokio::sync::Mutex<()>,
+    gate: std::sync::Mutex<Gate>,
+    /// Each phone's token asks ([PHONE_JWT_ASKS_PER_WINDOW]) and forced logins
+    /// ([PHONE_FORCES_PER_WINDOW]).
+    asks: PhoneAsks,
+    forces: PhoneAsks,
+    /// The token route's budget ([PHONE_JWT_BUDGET]; the tests shorten it).
+    phone_budget: std::sync::Mutex<Duration>,
     /// The tests move the JWT's and the shelf's clock forward.
     skew: std::sync::Mutex<Duration>,
 }
 
+impl Default for Account {
+    fn default() -> Self {
+        Account::new(Config::default())
+    }
+}
+
+fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whole seconds, rounded up, at least 1 (a wait a phone honours).
+pub fn wait_secs(wait: Duration) -> u64 {
+    (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1)
+}
+
 impl Account {
-    fn now(&self) -> Instant {
-        Instant::now() + *self.skew.lock().unwrap_or_else(|e| e.into_inner())
+    pub fn new(config: Config) -> Self {
+        Account {
+            config,
+            session: Default::default(),
+            jwt: Default::default(),
+            login_lock: Default::default(),
+            gate: Default::default(),
+            asks: PhoneAsks::new(PHONE_JWT_ASKS_PER_WINDOW, PHONE_WINDOW),
+            forces: PhoneAsks::new(PHONE_FORCES_PER_WINDOW, PHONE_WINDOW),
+            phone_budget: std::sync::Mutex::new(PHONE_JWT_BUDGET),
+            skew: Default::default(),
+        }
     }
 
-    /// Moves this account's clock (the JWT's expiry, the shelf's age) forward.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    fn now(&self) -> Instant {
+        Instant::now() + *lock(&self.skew)
+    }
+
+    /// Moves this account's clock (the JWT's expiry, the shelf's age, the backoff and the limits)
+    /// forward.
     #[cfg(test)]
     pub fn advance(&self, by: Duration) {
-        *self.skew.lock().unwrap_or_else(|e| e.into_inner()) += by;
+        *lock(&self.skew) += by;
     }
 
-    /// vibb `login`: the cooldown first (no request inside it), then [login_with] with the stored
-    /// login; the outcome stamped for this generation.
+    /// The token route's budget for one ask ([PHONE_JWT_BUDGET]).
+    pub fn phone_budget(&self) -> Duration {
+        *lock(&self.phone_budget)
+    }
+
+    /// A shorter token route budget (the tests).
+    #[cfg(test)]
+    pub fn set_phone_budget(&self, budget: Duration) {
+        *lock(&self.phone_budget) = budget;
+    }
+
+    /// One token ask of `device` (design 58 §7.3): `Ok` within [PHONE_JWT_ASKS_PER_WINDOW] asks a
+    /// rolling hour, else `Err(seconds)` to wait. A refused ask isn't counted.
+    pub fn phone_ask(&self, device: i64) -> Result<(), u64> {
+        self.asks.ask(device, self.now())
+    }
+
+    /// The last login's facts (design 58 §2.7), `None` until a login since the start.
+    pub fn facts(&self) -> Option<LoginFacts> {
+        lock(&self.gate).last
+    }
+
+    /// `FORCE_MIN_AGE` for a JWT of `life`: `min(5 min, life / 2)`, 10 s under `STORYTEL_BASE`.
+    fn force_min_age(&self, life: Duration) -> Duration {
+        if self.config.fake_base.is_some() {
+            FORCE_MIN_AGE_FAKE
+        } else {
+            half_life(life, FORCE_MIN_AGE_CAP)
+        }
+    }
+
+    /// The kept JWT handed out when `usable` says so.
+    fn kept_if(&self, usable: impl FnOnce(&KeptJwt, Instant) -> bool) -> Option<PhoneJwt> {
+        let now = self.now();
+        let kept = lock(&self.jwt);
+        kept.as_ref()
+            .filter(|kept| usable(kept, now))
+            .map(|kept| kept.handed(now))
+    }
+
+    /// The backoff's wait for `generation` now, if it runs.
+    fn backoff_wait(gate: &Gate, generation: i64, now: Instant) -> Option<Duration> {
+        gate.backoff
+            .as_ref()
+            .filter(|b| b.generation == generation && now < b.until)
+            .map(|b| b.until - now)
+    }
+
+    /// The phone-login cap's wait now, if it is reached: `max(6, 2 x ceil(3600 / life))` a rolling
+    /// hour, the life the last login's (30 minutes before the first).
+    fn cap_wait(gate: &mut Gate, now: Instant) -> Option<Duration> {
+        while gate
+            .phone_logins
+            .front()
+            .is_some_and(|at| now.saturating_duration_since(*at) >= PHONE_WINDOW)
+        {
+            gate.phone_logins.pop_front();
+        }
+        let life = gate
+            .last
+            .map_or(JWT_LIFE_FALLBACK.as_secs(), |facts| facts.left_s)
+            .max(1);
+        let bound = PHONE_LOGINS_MIN.max(2 * PHONE_WINDOW.as_secs().div_ceil(life) as usize);
+        (gate.phone_logins.len() >= bound).then(|| {
+            let oldest = gate.phone_logins.front().copied().unwrap_or(now);
+            PHONE_WINDOW.saturating_sub(now.saturating_duration_since(oldest))
+        })
+    }
+
+    /// vibb `login` under `login_lock` (the caller holds it): the cooldown and the backoff first
+    /// (no request inside either), then [login_with] with the stored login, the outcome stamped for
+    /// this generation. A login is kept; a refusal drops the kept JWT and stamps the cooldown; an
+    /// outage starts the backoff and keeps the old JWT for the others (design 58 QA 58-7).
     async fn login(
         &self,
         state: &AppState,
-        session: &mut Session,
         credentials: &Credentials,
-    ) -> Result<(), StorytelError> {
-        if let Some(until) = credentials.cooldown_until(state.music_sweep.now()) {
+        sent: &mut u32,
+    ) -> Result<PhoneJwt, StorytelError> {
+        let generation = credentials.generation;
+        let wall = state.music_sweep.now();
+        if let Some(until) = credentials.cooldown_until(wall) {
             tracing::info!(until = %until.format("%H:%M UTC"), "storytel: login waits (refused earlier)");
             return Err(StorytelError::Cooldown { until });
         }
-        let generation = credentials.generation;
-        session.sent += 1;
-        match login_with(state, &credentials.login.email, &credentials.login.password).await {
-            Ok(jwt) => {
-                tracing::info!(generation, "storytel: logged in");
+        if let Some(wait) = Self::backoff_wait(&lock(&self.gate), generation, self.now()) {
+            let until = wall + TimeDelta::seconds(wait_secs(wait) as i64);
+            tracing::info!(until = %until.format("%H:%M UTC"), "storytel: login waits (Storytel couldn't be reached)");
+            return Err(StorytelError::Backoff { until });
+        }
+        *sent += 1;
+        let result = login_with(state, &credentials.login.email, &credentials.login.password)
+            .await
+            .and_then(|login| {
+                if login.life < PHONE_FLOOR {
+                    tracing::warn!(
+                        left_s = login.life.as_secs(),
+                        "storytel: the session Storytel sent ends at once"
+                    );
+                    Err(StorytelError::ShortLife)
+                } else {
+                    Ok(login)
+                }
+            });
+        let now = self.now();
+        match result {
+            Ok(login) => {
                 record(state, generation, Outcome::LoginOk).await;
-                session.jwt = Some(KeptJwt {
-                    jwt,
-                    expires: self.now() + JWT_TTL,
+                let kept = KeptJwt {
+                    jwt: login.jwt,
+                    made: now,
+                    life: login.life,
                     generation,
-                });
-                Ok(())
+                    session: new_session(generation),
+                };
+                let handed = kept.handed(now);
+                {
+                    let mut gate = lock(&self.gate);
+                    gate.backoff = None;
+                    gate.last = Some(login.facts);
+                }
+                *lock(&self.jwt) = Some(kept);
+                Ok(handed)
             }
             Err(err) => {
-                session.jwt = None;
                 if matches!(err, StorytelError::Refused(_)) {
+                    lock(&self.jwt).take();
                     record(state, generation, Outcome::Refused).await;
-                } else {
+                } else if err.is_outage() {
                     record(state, generation, Outcome::Failed(&err.code())).await;
+                    let mut gate = lock(&self.gate);
+                    let step = match &gate.backoff {
+                        Some(b) if b.generation == generation => {
+                            (b.step * 2).min(LOGIN_BACKOFF_MAX)
+                        }
+                        _ => LOGIN_BACKOFF_MIN,
+                    };
+                    gate.backoff = Some(Backoff {
+                        generation,
+                        until: now + step,
+                        step,
+                    });
+                    tracing::info!(code = %err.code(), backoff_s = step.as_secs(), "storytel: no login for a while");
                 }
                 Err(err)
             }
         }
     }
 
-    /// vibb `_bearer`: the kept JWT while it is fresh and of this generation, else a login.
-    async fn bearer<'s>(
+    /// vibb `_bearer` for the sweep: the kept JWT while it is of this generation with more than
+    /// [MARGIN] left - and, after a 401 (`rejected`, the session refused), only when it is another
+    /// one (design 58 QA 58-7: a concurrent re-login is used as it is) - else one login, its request
+    /// counted in `sent`.
+    async fn bearer(
         &self,
         state: &AppState,
-        session: &'s mut Session,
         credentials: &Credentials,
-        force: bool,
-    ) -> Result<&'s Jwt, StorytelError> {
-        let fresh = session.jwt.as_ref().is_some_and(|kept| {
-            kept.generation == credentials.generation && self.now() < kept.expires
-        });
-        if force || !fresh {
-            self.login(state, session, credentials).await?;
+        rejected: Option<&str>,
+        sent: &mut u32,
+    ) -> Result<PhoneJwt, StorytelError> {
+        let usable = |kept: &KeptJwt, now: Instant| {
+            kept.generation == credentials.generation
+                && kept.left(now) > MARGIN
+                && rejected.is_none_or(|session| kept.session != session)
+        };
+        if let Some(jwt) = self.kept_if(usable) {
+            return Ok(jwt);
         }
-        Ok(&session.jwt.as_ref().expect("a login keeps its JWT").jwt)
+        let _one = self.login_lock.lock().await;
+        if let Some(jwt) = self.kept_if(usable) {
+            return Ok(jwt);
+        }
+        self.login(state, credentials, sent).await
     }
 
-    /// vibb `bookshelf` through `_api`: the bearer, one re-login and one retry on a 401, never two.
+    /// A phone's JWT (design 58 §2.1, §2.3), `stale` the session it got a 401 with. In order:
+    /// 1. the row's plain columns (never an open of the login, QA N-8);
+    /// 2. the kept JWT of this generation with at least `min(15 min, life / 2)` left, unless this
+    ///    ask forces (its `stale` is the kept session);
+    /// 3. no login now (the cooldown, the backoff, the phone-login cap; for a force also the kept
+    ///    JWT younger than `FORCE_MIN_AGE` or this phone's 3 forces an hour): a plain ask still
+    ///    gets a kept JWT with more than 2 minutes left (QA N-9), else `Cooldown` or `Busy` with
+    ///    the wait; a declined force never gets the JWT it names (QA N-1);
+    /// 4. one login, counted in the phone-login cap (and as this phone's force when it forces).
+    ///
+    /// The route runs it as a task of its own, so a login outliving the route's budget is kept.
+    pub async fn phone_jwt(
+        self: Arc<Self>,
+        state: AppState,
+        device: i64,
+        stale: Option<String>,
+    ) -> Result<PhoneJwt, StorytelError> {
+        let stale = stale.as_deref();
+        let plain = Plain::read(&state).await?;
+        let fresh = |generation: i64| {
+            move |kept: &KeptJwt, now: Instant| {
+                kept.generation == generation
+                    && stale != Some(kept.session.as_str())
+                    && kept.left(now) >= half_life(kept.life, PHONE_MIN_LEFT_CAP).max(PHONE_FLOOR)
+            }
+        };
+        if let Some(jwt) = self.kept_if(fresh(plain.generation)) {
+            return Ok(jwt);
+        }
+        let _one = self.login_lock.lock().await;
+        // Again under the lock: a login or a refusal may have landed while this ask waited.
+        let plain = Plain::read(&state).await?;
+        if let Some(jwt) = self.kept_if(fresh(plain.generation)) {
+            return Ok(jwt);
+        }
+        let now = self.now();
+        let wall = state.music_sweep.now();
+        let (force, life, age) = match lock(&self.jwt).as_ref() {
+            Some(kept) if kept.generation == plain.generation => (
+                stale == Some(kept.session.as_str()),
+                kept.life,
+                now.saturating_duration_since(kept.made),
+            ),
+            _ => (false, Duration::ZERO, Duration::ZERO),
+        };
+        // A plain ask while no login can be made: the kept JWT while it still serves (QA N-9).
+        let kept_on = || {
+            (!force)
+                .then(|| {
+                    self.kept_if(|kept, now| {
+                        kept.generation == plain.generation && kept.left(now) >= PHONE_FLOOR
+                    })
+                })
+                .flatten()
+        };
+        if let Some(until) = plain.cooldown_until(wall) {
+            return kept_on().ok_or(StorytelError::Cooldown { until });
+        }
+        let wait = {
+            let mut gate = lock(&self.gate);
+            let mut wait = Self::backoff_wait(&gate, plain.generation, now)
+                .into_iter()
+                .chain(Self::cap_wait(&mut gate, now))
+                .max();
+            if force {
+                let young = self
+                    .force_min_age(life)
+                    .checked_sub(age)
+                    .filter(|left| !left.is_zero());
+                let spent = self.forces.wait(device, now).map(Duration::from_secs);
+                wait = wait.into_iter().chain(young).chain(spent).max();
+            }
+            wait
+        };
+        if let Some(wait) = wait {
+            return kept_on().ok_or(StorytelError::Busy {
+                wait: wait.max(Duration::from_secs(1)),
+            });
+        }
+        let first_report = lock(&self.gate).key_reported != Some(plain.generation);
+        let credentials = match open_login(&state, first_report).await {
+            Err(StorytelError::KeyUnusable) => {
+                lock(&self.gate).key_reported = Some(plain.generation);
+                return Err(StorytelError::KeyUnusable);
+            }
+            other => other?,
+        };
+        lock(&self.gate).phone_logins.push_back(now);
+        if force {
+            self.forces.record(device, now);
+        }
+        self.login(&state, &credentials, &mut 0).await
+    }
+
+    /// vibb `bookshelf` through `_api`: the bearer, one re-login and one retry on a 401 while the
+    /// refused session is still the kept one, never two.
     async fn fetch_shelf(
         &self,
         state: &AppState,
@@ -905,11 +1642,12 @@ impl Account {
         credentials: &Credentials,
     ) -> Result<Vec<Group>, StorytelError> {
         let mut response = None;
+        let mut rejected: Option<String> = None;
         for attempt in 0..2 {
             let jwt = self
-                .bearer(state, session, credentials, attempt == 1)
+                .bearer(state, credentials, rejected.as_deref(), &mut session.sent)
                 .await?;
-            let request = shelf_request(jwt);
+            let request = shelf_request(&self.config, &jwt.jwt);
             session.sent += 1;
             let answer = state
                 .music_fetch
@@ -929,6 +1667,7 @@ impl Account {
                 break;
             }
             tracing::info!(attempt, "storytel: bookshelf 401, logging in again");
+            rejected = Some(jwt.session);
         }
         let response = response.expect("at least one attempt");
         match read_shelf(response) {
@@ -1046,23 +1785,29 @@ impl Account {
         }
     }
 
-    /// After a save: the probe's JWT and shelf (when it got them) for the new generation; nothing
+    /// After a save: the probe's login (when it got one) and shelf for the new generation; nothing
     /// else of the old login stays.
     ///
-    /// Never waits (QA L1): while a read holds the session (it may sit behind the gate), what the
-    /// probe got is dropped - the generation check keeps the old session from being used, so the
-    /// cost is one more login.
-    pub fn keep(&self, generation: i64, jwt: Option<Jwt>, shelf: Option<Vec<Group>>) {
+    /// Never waits (QA L1): the JWT is kept at once (its lock is never held across an `.await`);
+    /// while a read holds the session (it may sit behind the gate) the probe's shelf is dropped -
+    /// the generation check keeps the old one from being used.
+    pub fn keep(&self, generation: i64, login: Option<Login>, shelf: Option<Vec<Group>>) {
         let now = self.now();
+        let kept = login.map(|login| {
+            lock(&self.gate).last = Some(login.facts);
+            KeptJwt {
+                jwt: login.jwt,
+                made: now,
+                life: login.life,
+                generation,
+                session: new_session(generation),
+            }
+        });
+        *lock(&self.jwt) = kept;
         let Ok(mut session) = self.session.try_lock() else {
-            tracing::debug!("storytel: the session is busy, the probe's login isn't kept");
+            tracing::debug!("storytel: the session is busy, the probe's shelf isn't kept");
             return;
         };
-        session.jwt = jwt.map(|jwt| KeptJwt {
-            jwt,
-            expires: now + JWT_TTL,
-            generation,
-        });
         session.shelf = shelf.map(|groups| KeptShelf {
             groups: Arc::new(groups),
             at: now,
@@ -1072,6 +1817,7 @@ impl Account {
 
     /// Drops the JWT and the shelf (save and clear; the generation check covers a race).
     pub async fn forget(&self) {
+        lock(&self.jwt).take();
         *self.session.lock().await = Session::default();
     }
 }
@@ -1120,6 +1866,24 @@ mod tests {
             .iter()
             .filter(|u| u.starts_with(prefix))
             .count()
+    }
+
+    /// A login as `login_with` makes it, for `keep` (no claims: the fallback life).
+    fn fake_login_ok(jwt: &str) -> Login {
+        Login {
+            jwt: Jwt(jwt.to_string()),
+            life: JWT_LIFE_FALLBACK,
+            facts: LoginFacts {
+                life_s: JWT_LIFE_FALLBACK.as_secs(),
+                left_s: JWT_LIFE_FALLBACK.as_secs(),
+                claims: false,
+                has_email: Presence::Unknown,
+            },
+        }
+    }
+
+    fn kept_generation(account: &Account) -> Option<i64> {
+        lock(&account.jwt).as_ref().map(|kept| kept.generation)
     }
 
     #[test]
@@ -1180,6 +1944,12 @@ mod tests {
         assert!(!Has::<StoredLogin>(PhantomData).has_display());
         assert!(!Has::<Jwt>(PhantomData).has_debug());
         assert!(!Has::<Jwt>(PhantomData).has_display());
+        assert!(!Has::<Login>(PhantomData).has_debug());
+        assert!(!Has::<Login>(PhantomData).has_display());
+        assert!(!Has::<KeptJwt>(PhantomData).has_debug());
+        assert!(!Has::<KeptJwt>(PhantomData).has_display());
+        assert!(!Has::<PhoneJwt>(PhantomData).has_debug());
+        assert!(!Has::<PhoneJwt>(PhantomData).has_display());
         assert!(!Has::<Credentials>(PhantomData).has_debug());
         assert!(!Has::<Credentials>(PhantomData).has_display());
         assert!(!Has::<SourceRequest>(PhantomData).has_debug());
@@ -1444,12 +2214,13 @@ mod tests {
         assert_eq!(calls_to(&app, LOGIN_URL), 1);
         assert_eq!(calls_to(&app, BOOKSHELF), 2);
 
-        // Past the hour the JWT is renewed before it is used.
+        // Past its life (no claims: the 30-minute fallback, less the margin) the JWT is renewed
+        // before it is used.
         app.fetch.answer(BOOKSHELF, 200, fixture("bookshelf.json"));
         app.fetch.clear_calls();
         account.bookshelf(&app.state).await.unwrap();
         assert_eq!(calls_to(&app, LOGIN_URL), 0);
-        account.advance(JWT_TTL);
+        account.advance(JWT_LIFE_FALLBACK - MARGIN);
         account.bookshelf(&app.state).await.unwrap();
         assert_eq!(calls_to(&app, LOGIN_URL), 1);
 
@@ -1506,21 +2277,21 @@ mod tests {
             );
             assert_eq!(app.fetch.count(), 0, "{minutes} min: no request");
         }
-        // A 5xx is a refusal too; past the hour it is tried again.
+        // Past the hour it is tried again; a 5xx is an outage now (design 58 §2.3): no cooldown,
+        // the backoff instead.
         app.state
             .music_sweep
             .set_clock(Some(t0 + TimeDelta::minutes(61)));
         app.fetch.answer(&login(EMAIL, "stale-pw"), 503, "busy");
         app.fetch.clear_calls();
-        assert_eq!(
-            account.bookshelf(&app.state).await.unwrap_err(),
-            StorytelError::Refused(503)
-        );
+        let err = account.bookshelf(&app.state).await.unwrap_err();
+        assert_eq!(err, StorytelError::LoginStatus(503));
+        assert_eq!(err.code(), "http_503");
         assert_eq!(app.fetch.count(), 1);
         app.fetch.clear_calls();
         assert!(matches!(
             account.bookshelf(&app.state).await.unwrap_err(),
-            StorytelError::Cooldown { .. }
+            StorytelError::Backoff { .. }
         ));
         assert_eq!(app.fetch.count(), 0);
         // A new password (the save's new generation) retries at once.
@@ -1530,27 +2301,35 @@ mod tests {
         app.fetch.clear_calls();
         account.bookshelf(&app.state).await.unwrap();
         assert_eq!(calls_to(&app, LOGIN_URL), 1);
-        // 200 without a JWT and an unreachable login: errors, no cooldown.
-        for (status, body, code) in [
+        // 200 without a JWT and an unreachable login: errors, no cooldown; the next read inside
+        // the backoff sends nothing.
+        for (generation, (status, body, code)) in [
             (200, &br#"{"accountInfo":{}}"#[..], "no_jwt"),
             (200, &b"not json"[..], "no_jwt"),
             (200, &br#"{"accountInfo":{"jwt":""}}"#[..], "no_jwt"),
-        ] {
-            store(&app, EMAIL, "x", 3).await;
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            store(&app, EMAIL, "x", 3 + generation as i64).await;
             app.fetch.answer(&login(EMAIL, "x"), status, body);
             account.forget().await;
             let err = account.bookshelf(&app.state).await.unwrap_err();
             assert_eq!(err.code(), code);
+            app.fetch.clear_calls();
             assert_eq!(
                 account.bookshelf(&app.state).await.unwrap_err().code(),
-                code
+                "login_backoff"
             );
+            assert_eq!(app.fetch.count(), 0);
         }
+        store(&app, EMAIL, "x", 10).await;
         app.fetch.fail(&login(EMAIL, "x"), FetchError::Timeout);
         assert_eq!(
             account.bookshelf(&app.state).await.unwrap_err().code(),
             "timeout"
         );
+        store(&app, EMAIL, "x", 11).await;
         app.fetch
             .fail(&login(EMAIL, "x"), FetchError::Network("reset".to_string()));
         app.fetch.clear_calls();
@@ -1666,31 +2445,49 @@ mod tests {
         }
         app.fetch.delay(300);
         match probe(&app.state, EMAIL, PASSWORD, Duration::from_millis(100)).await {
-            Probe::Unreachable { code, jwt } => {
+            Probe::Unreachable { code, login } => {
                 assert_eq!(code, "timeout");
-                assert!(jwt.is_none());
+                assert!(login.is_none());
             }
             _ => panic!("past the budget = unreachable"),
         }
         app.fetch.delay(0);
         app.fetch.answer(BOOKSHELF, 502, "");
         match probe(&app.state, EMAIL, PASSWORD, PROBE_BUDGET).await {
-            Probe::Unreachable { code, jwt } => {
+            Probe::Unreachable { code, login } => {
                 assert_eq!(code, "http_502");
-                assert!(jwt.is_some(), "the login itself was taken");
+                assert!(login.is_some(), "the login itself was taken");
             }
             _ => panic!("the shelf failing = unreachable"),
         }
         app.fetch.answer(&login(EMAIL, PASSWORD), 401, "");
         assert!(matches!(
             probe(&app.state, EMAIL, PASSWORD, PROBE_BUDGET).await,
-            Probe::Refused { status: Some(401) }
+            Probe::Refused {
+                status: Some(401),
+                outage: false
+            }
         ));
         app.fetch.answer(&login(EMAIL, PASSWORD), 200, "{}");
         assert!(matches!(
             probe(&app.state, EMAIL, PASSWORD, PROBE_BUDGET).await,
-            Probe::Refused { status: None }
+            Probe::Refused {
+                status: None,
+                outage: true
+            }
         ));
+        // Design 58 §2.3: the probe classifies like every login, but touches no backoff.
+        app.fetch.answer(&login(EMAIL, PASSWORD), 503, "");
+        for _ in 0..2 {
+            assert!(matches!(
+                probe(&app.state, EMAIL, PASSWORD, PROBE_BUDGET).await,
+                Probe::Refused {
+                    status: Some(503),
+                    outage: true
+                }
+            ));
+        }
+        assert!(lock(&app.state.storytel.gate).backoff.is_none());
         // The probe never stamps the cooldown.
         let refused: Option<String> =
             sqlx::query_scalar("SELECT login_refused_at FROM music_storytel")
@@ -1812,29 +2609,744 @@ mod tests {
             "Storytel didn't answer in time - try again later."
         );
         app.fetch.delay(0);
-        // A read holds the session: keep returns at once and keeps nothing.
+        // A read holds the session: keep returns at once; the JWT is kept (its lock is never held
+        // across an await), the shelf isn't.
         let held = account.session.lock().await;
         let kept = tokio::time::timeout(Duration::from_secs(1), async {
-            account.keep(2, Some(Jwt("FAKE-JWT-2".into())), Some(Vec::new()))
+            account.keep(2, Some(fake_login_ok("FAKE-JWT-2")), Some(Vec::new()))
         })
         .await;
         assert!(kept.is_ok());
-        assert!(held.jwt.is_none() && held.shelf.is_none());
+        assert!(held.shelf.is_none());
+        assert_eq!(kept_generation(account), Some(2));
         drop(held);
         // Free: kept for its generation.
-        account.keep(1, Some(Jwt("FAKE-JWT-2".into())), None);
-        assert_eq!(
-            account
-                .session
-                .lock()
-                .await
-                .jwt
-                .as_ref()
-                .map(|k| k.generation),
-            Some(1)
-        );
+        account.keep(1, Some(fake_login_ok("FAKE-JWT-2")), None);
+        assert_eq!(kept_generation(account), Some(1));
         app.fetch.clear_calls();
         account.bookshelf(&app.state).await.unwrap();
         assert_eq!(calls_to(&app, LOGIN_URL), 0, "the kept JWT is used");
+    }
+
+    // --- design 58: the phones' session ----------------------------------------------------------
+
+    /// The wall clock the claims tests and the phones' asks run at (a sane year).
+    fn wall() -> DateTime<Utc> {
+        parse_stamp("2026-10-21 10:00:00").unwrap()
+    }
+
+    /// A JWT whose claims a test reads, built at run time (no `eyJ` literal is committed, design
+    /// 58 §8): `FAKE-JWT-HEAD.<base64url payload>.FAKE-SIG`.
+    fn claims_jwt(payload: serde_json::Value) -> String {
+        use base64::Engine;
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string());
+        format!("FAKE-JWT-HEAD.{payload}.FAKE-SIG")
+    }
+
+    fn login_body(jwt: &str) -> Vec<u8> {
+        serde_json::json!({"accountInfo": {"jwt": jwt}})
+            .to_string()
+            .into_bytes()
+    }
+
+    /// A JWT living `life_s` from [wall] on, issued `age_s` before it.
+    fn living(life_s: i64, age_s: i64) -> String {
+        let iat = wall().timestamp() - age_s;
+        claims_jwt(serde_json::json!({"iat": iat, "exp": iat + life_s, "sub": "1"}))
+    }
+
+    /// An app with the login stored for generation 1 at [wall], Storytel answering `body`.
+    async fn phone_app(body: &[u8]) -> TestApp {
+        let app = TestApp::new().await;
+        app.state.music_sweep.set_clock(Some(wall()));
+        store(&app, EMAIL, PASSWORD, 1).await;
+        app.fetch
+            .answer(&login(EMAIL, PASSWORD), 200, body.to_vec());
+        app
+    }
+
+    async fn ask(
+        app: &TestApp,
+        device: i64,
+        stale: Option<&str>,
+    ) -> Result<PhoneJwt, StorytelError> {
+        app.state
+            .storytel
+            .clone()
+            .phone_jwt(app.state.clone(), device, stale.map(str::to_string))
+            .await
+    }
+
+    /// A `busy` answer's wait in whole seconds, rounded up as the route does (the test's own
+    /// milliseconds don't count).
+    fn busy_wait(result: Result<PhoneJwt, StorytelError>) -> u64 {
+        match result {
+            Err(StorytelError::Busy { wait }) => wait_secs(wait),
+            Err(err) => panic!("busy, not {err:?}"),
+            Ok(_) => panic!("busy, not a JWT"),
+        }
+    }
+
+    #[test]
+    fn jwt_life_from_claims() {
+        let now = wall();
+        let t = now.timestamp();
+        let life = |payload: serde_json::Value, at: DateTime<Utc>| jwt_life(Some(&payload), at);
+        let secs = Duration::from_secs;
+        // A fresh token: its own life.
+        let fresh = life(serde_json::json!({"iat": t, "exp": t + 3600}), now);
+        assert_eq!(
+            (fresh.life, fresh.left, fresh.claims),
+            (secs(3600), secs(3600), true)
+        );
+        // An older one handed back: what is left of it, not exp - iat (QA 58-16).
+        let old = life(serde_json::json!({"iat": t - 3000, "exp": t + 600}), now);
+        assert_eq!((old.life, old.left), (secs(3600), secs(600)));
+        // Expired already: the sane floor.
+        let gone = life(serde_json::json!({"iat": t - 4000, "exp": t - 400}), now);
+        assert_eq!(gone.left, JWT_LIFE_SANE_FLOOR);
+        // A clock that can't be trusted: exp - iat, at least 300 s.
+        let early = parse_stamp("2001-01-01 00:00:00").unwrap();
+        let short = life(serde_json::json!({"iat": t, "exp": t + 100}), early);
+        assert_eq!((short.life, short.left), (secs(100), JWT_LIFE_FLOOR));
+        let long = life(serde_json::json!({"iat": t - 3000, "exp": t + 600}), early);
+        assert_eq!(long.left, secs(3600), "no wall clock: exp - iat");
+        // Never past the cap; floats are numbers too.
+        let huge = life(serde_json::json!({"iat": t, "exp": t + 10 * 86_400}), now);
+        assert_eq!((huge.life, huge.left), (JWT_LIFE_CAP, JWT_LIFE_CAP));
+        let float = life(
+            serde_json::json!({"iat": t as f64, "exp": t as f64 + 900.5}),
+            now,
+        );
+        assert_eq!(float.left.as_secs(), 900);
+        // The fallback: a claim missing or not a number, no payload.
+        for payload in [
+            serde_json::json!({"iat": t}),
+            serde_json::json!({"exp": t + 60}),
+            serde_json::json!({"iat": t, "exp": "later"}),
+            serde_json::json!([t, t + 60]),
+        ] {
+            let read = life(payload.clone(), now);
+            assert_eq!(
+                (read.life, read.left, read.claims),
+                (JWT_LIFE_FALLBACK, JWT_LIFE_FALLBACK, false),
+                "{payload}"
+            );
+        }
+        assert_eq!(jwt_life(None, now).left, JWT_LIFE_FALLBACK);
+        // The payload: the second part, URL-safe base64 with or without padding.
+        assert_eq!(jwt_payload("FAKE-JWT-1"), None, "no dots");
+        assert_eq!(jwt_payload("a.%%%.b"), None, "not base64");
+        assert_eq!(jwt_payload("a.bm90IGpzb24.b"), None, "not JSON");
+        let padded = {
+            use base64::Engine;
+            base64::engine::general_purpose::URL_SAFE.encode(r#"{"iat":12}"#)
+        };
+        assert!(padded.ends_with('='));
+        assert_eq!(
+            jwt_payload(&format!("h.{padded}.s")),
+            Some(serde_json::json!({"iat": 12}))
+        );
+        assert_eq!(
+            jwt_payload(&claims_jwt(serde_json::json!({"exp": 5}))),
+            Some(serde_json::json!({"exp": 5}))
+        );
+    }
+
+    #[test]
+    fn payload_has_email_is_a_word() {
+        let has = |payload: serde_json::Value| payload_has_email(Some(&payload), EMAIL);
+        assert_eq!(
+            has(serde_json::json!({"sub": "1", "deep": {"list": ["K@Example.Invalid"]}})),
+            Presence::Yes
+        );
+        assert_eq!(
+            has(serde_json::json!({"who": "someone@elsewhere"})),
+            Presence::Yes,
+            "any @"
+        );
+        assert_eq!(
+            has(serde_json::json!({"sub": "1", "exp": 5, "roles": ["a"], "n": null})),
+            Presence::No
+        );
+        assert_eq!(payload_has_email(None, EMAIL), Presence::Unknown);
+        assert_eq!(
+            has(serde_json::json!(["a", 1])),
+            Presence::Unknown,
+            "decoded, but no object"
+        );
+        assert_eq!(
+            [Presence::Yes, Presence::No, Presence::Unknown].map(Presence::as_str),
+            ["yes", "no", "unknown"]
+        );
+    }
+
+    /// §2.7: every login logs one line of numbers and words, the save's probe's too - never the
+    /// e-mail, a claim's name or the JWT.
+    #[tokio::test]
+    async fn the_login_line_holds_no_value() {
+        use crate::tests::music_spotify::{CAPTURE, install_capture};
+        install_capture();
+        CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+        let jwt = claims_jwt(serde_json::json!({
+            "iat": wall().timestamp(), "exp": wall().timestamp() + 3600, "preferred_mailbox": EMAIL,
+        }));
+        let app = phone_app(&login_body(&jwt)).await;
+        app.fetch.answer(BOOKSHELF, 200, fixture("bookshelf.json"));
+        assert!(matches!(
+            probe(&app.state, EMAIL, PASSWORD, PROBE_BUDGET).await,
+            Probe::Accepted { .. }
+        ));
+        ask(&app, 1, None).await.unwrap();
+        let lines = CAPTURE.with(|capture| capture.borrow_mut().take()).unwrap();
+        let logged: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.contains("storytel: logged in"))
+            .collect();
+        assert_eq!(logged.len(), 2, "the probe's and the phone's: {lines:?}");
+        for line in &logged {
+            assert!(
+                line.contains(
+                    "(life_s=3600, left_at_login_s=3600, claims=yes, payload_has_email=yes)"
+                ),
+                "{line}"
+            );
+        }
+        for line in &lines {
+            for secret in [
+                EMAIL,
+                "example.invalid",
+                "preferred_mailbox",
+                "FAKE-JWT",
+                &jwt,
+            ] {
+                assert!(!line.contains(secret), "{line}");
+            }
+        }
+        // The card's facts, from memory.
+        assert_eq!(
+            app.state.storytel.facts(),
+            Some(LoginFacts {
+                life_s: 3600,
+                left_s: 3600,
+                claims: true,
+                has_email: Presence::Yes
+            })
+        );
+        assert_eq!(Account::default().facts(), None, "not known after a start");
+    }
+
+    #[test]
+    fn classify_login_splits_refusals_from_outages() {
+        assert_eq!(classify_login(200, LOGIN_OK).unwrap(), "FAKE-JWT-1");
+        for status in [400, 401, 403, 404, 451, 499] {
+            assert_eq!(
+                classify_login(status, LOGIN_OK).unwrap_err(),
+                StorytelError::Refused(status),
+                "{status}"
+            );
+        }
+        for status in [100, 204, 302, 304, 408, 429, 500, 502, 503] {
+            let err = classify_login(status, LOGIN_OK).unwrap_err();
+            assert_eq!(err, StorytelError::LoginStatus(status), "{status}");
+            assert!(err.is_outage());
+        }
+        for body in [&b"{}"[..], br#"{"accountInfo":{"jwt":""}}"#, b"<html>"] {
+            assert_eq!(classify_login(200, body).unwrap_err(), StorytelError::NoJwt);
+        }
+        for outage in [
+            StorytelError::NoJwt,
+            StorytelError::ShortLife,
+            StorytelError::Fetch(FetchError::Timeout),
+            StorytelError::Fetch(FetchError::Network("reset".into())),
+        ] {
+            assert!(outage.is_outage(), "{outage:?}");
+        }
+        assert!(!StorytelError::Refused(403).is_outage());
+    }
+
+    /// QA N-8: a kept JWT is answered from the plain columns - a key that can't open the row
+    /// still gets it, with no `login_error` write.
+    #[tokio::test]
+    async fn a_kept_jwt_needs_no_open() {
+        let app = phone_app(LOGIN_OK).await;
+        let first = ask(&app, 1, None).await.unwrap();
+        assert_eq!(first.jwt.secret(), "FAKE-JWT-1");
+        assert!(valid_session(&first.session) && first.session.starts_with("1:"));
+        let mut other = app.state.clone();
+        other.music_key = Some(Arc::new(crate::music_secret::MusicKey::from_bytes(
+            &[1; 32],
+        )));
+        app.fetch.clear_calls();
+        let again = other
+            .storytel
+            .clone()
+            .phone_jwt(other.clone(), 2, None)
+            .await
+            .unwrap();
+        assert_eq!(again.session, first.session);
+        assert_eq!(app.fetch.count(), 0);
+        let error: Option<String> = sqlx::query_scalar("SELECT login_error FROM music_storytel")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(error, None);
+        // A login it must make with that key: KeyUnusable, recorded once per generation.
+        app.state.storytel.forget().await;
+        for _ in 0..2 {
+            assert_eq!(
+                other
+                    .storytel
+                    .clone()
+                    .phone_jwt(other.clone(), 2, None)
+                    .await
+                    .err(),
+                Some(StorytelError::KeyUnusable)
+            );
+        }
+        let error: Option<String> = sqlx::query_scalar("SELECT login_error FROM music_storytel")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(error.as_deref(), Some("storytel_key"));
+        assert_eq!(app.fetch.count(), 0);
+    }
+
+    /// QA N-9: through a backoff a plain ask gets the kept JWT while it has more than 2 minutes
+    /// left, then `busy` to the backoff's end.
+    #[tokio::test]
+    async fn a_kept_jwt_is_handed_out_during_a_backoff() {
+        let app = phone_app(&login_body(&living(600, 0))).await;
+        let account = &app.state.storytel;
+        let first = ask(&app, 1, None).await.unwrap();
+        // Below min(15 min, life / 2) = 300 s left, an ask logs in - and Storytel is down.
+        account.advance(Duration::from_secs(430));
+        app.fetch.answer(&login(EMAIL, PASSWORD), 503, "");
+        assert_eq!(
+            ask(&app, 1, None).await.err(),
+            Some(StorytelError::LoginStatus(503))
+        );
+        app.fetch.clear_calls();
+        let kept = ask(&app, 2, None).await.unwrap();
+        assert_eq!(kept.session, first.session, "170 s left: still answered");
+        account.advance(Duration::from_secs(55));
+        let wait = busy_wait(ask(&app, 2, None).await);
+        assert_eq!(wait, 5, "115 s left: busy to the backoff's end");
+        assert_eq!(app.fetch.count(), 0, "nothing sent inside the backoff");
+    }
+
+    /// QA N-6: a login leaving less than 2 minutes is an outage: the phone gets nothing and the
+    /// backoff starts.
+    #[tokio::test]
+    async fn a_short_fresh_life_is_an_outage() {
+        let app = phone_app(&login_body(&living(3600, 3540))).await;
+        assert_eq!(
+            ask(&app, 1, None).await.err(),
+            Some(StorytelError::ShortLife)
+        );
+        let error: Option<String> = sqlx::query_scalar("SELECT login_error FROM music_storytel")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(error.as_deref(), Some("short_life"));
+        app.fetch.clear_calls();
+        assert_eq!(
+            busy_wait(ask(&app, 1, None).await),
+            LOGIN_BACKOFF_MIN.as_secs()
+        );
+        assert_eq!(app.fetch.count(), 0);
+        // 121 s left is enough.
+        let app = phone_app(&login_body(&living(3600, 3479))).await;
+        assert_eq!(ask(&app, 1, None).await.unwrap().left, PHONE_FLOOR);
+    }
+
+    /// QA N-1: a force that isn't allowed answers a wait, never the JWT it names.
+    #[tokio::test]
+    async fn a_declined_force_answers_a_wait() {
+        let app = phone_app(LOGIN_OK).await;
+        let account = &app.state.storytel;
+        let first = ask(&app, 1, None).await.unwrap();
+        // Too young: FORCE_MIN_AGE = min(5 min, 30 min / 2).
+        account.advance(Duration::from_secs(100));
+        assert_eq!(busy_wait(ask(&app, 1, Some(&first.session)).await), 200);
+        // Old enough: one login, another JWT.
+        app.fetch
+            .answer(&login(EMAIL, PASSWORD), 200, login_body("FAKE-JWT-2"));
+        account.advance(Duration::from_secs(200));
+        let second = ask(&app, 1, Some(&first.session)).await.unwrap();
+        assert_eq!(second.jwt.secret(), "FAKE-JWT-2");
+        assert_ne!(second.session, first.session);
+        // This phone's three forces an hour: the fourth waits for the oldest to leave.
+        let mut current = second.session;
+        for n in 3..=4 {
+            app.fetch.answer(
+                &login(EMAIL, PASSWORD),
+                200,
+                login_body(&format!("FAKE-JWT-{n}")),
+            );
+            account.advance(Duration::from_secs(300));
+            current = ask(&app, 1, Some(&current)).await.unwrap().session;
+        }
+        account.advance(Duration::from_secs(300));
+        app.fetch.clear_calls();
+        assert_eq!(
+            busy_wait(ask(&app, 1, Some(&current)).await),
+            3600 - 900,
+            "the first force was 900 s ago"
+        );
+        assert_eq!(app.fetch.count(), 0);
+        // Another phone may still force.
+        app.fetch
+            .answer(&login(EMAIL, PASSWORD), 200, login_body("FAKE-JWT-5"));
+        current = ask(&app, 2, Some(&current)).await.unwrap().session;
+        // Inside a cooldown: `refused` to its end; a plain ask still gets the kept JWT.
+        sqlx::query(
+            "UPDATE music_storytel SET login_refused_at = '2026-10-21 09:40:00', \
+             login_refused_generation = 1",
+        )
+        .execute(&app.db)
+        .await
+        .unwrap();
+        account.advance(Duration::from_secs(300));
+        assert_eq!(
+            ask(&app, 3, Some(&current)).await.err(),
+            Some(StorytelError::Cooldown {
+                until: parse_stamp("2026-10-21 10:40:00").unwrap()
+            })
+        );
+        assert_eq!(ask(&app, 3, None).await.unwrap().session, current);
+        assert_eq!(app.fetch.count(), 1, "only phone 2's force logged in");
+    }
+
+    /// Design 58 §2.1: a phone's ask never waits behind a shelf read sitting in the gate.
+    #[tokio::test]
+    async fn a_kept_jwt_is_answered_while_a_shelf_read_waits() {
+        let app = phone_app(LOGIN_OK).await;
+        let first = ask(&app, 1, None).await.unwrap();
+        app.fetch.answer(BOOKSHELF, 200, fixture("bookshelf.json"));
+        app.fetch.hold();
+        let state = app.state.clone();
+        let read = tokio::spawn(async move { state.storytel.bookshelf(&state).await });
+        app.fetch.wait_in_flight().await;
+        let answered = tokio::time::timeout(Duration::from_secs(1), ask(&app, 2, None))
+            .await
+            .expect("not behind the shelf read")
+            .unwrap();
+        assert_eq!(answered.session, first.session);
+        app.fetch.release();
+        read.await.unwrap().unwrap();
+    }
+
+    /// QA 58-7: the session is re-checked under the lock; a newer kept JWT is answered without a
+    /// login; a force that fails as an outage keeps the JWT for the other phones.
+    #[tokio::test]
+    async fn a_force_relogs_only_for_the_stale_kept_old_jwt() {
+        let app = phone_app(LOGIN_OK).await;
+        let account = &app.state.storytel;
+        let first = ask(&app, 1, None).await.unwrap();
+        account.advance(Duration::from_secs(300));
+        app.fetch
+            .answer(&login(EMAIL, PASSWORD), 200, login_body("FAKE-JWT-2"));
+        let second = ask(&app, 1, Some(&first.session)).await.unwrap();
+        // Phone 2's 401 on the first JWT: the newer one, no login.
+        app.fetch.clear_calls();
+        let newer = ask(&app, 2, Some(&first.session)).await.unwrap();
+        assert_eq!(
+            (newer.jwt.secret(), newer.session.as_str()),
+            ("FAKE-JWT-2", second.session.as_str())
+        );
+        assert_eq!(app.fetch.count(), 0);
+        // A force that fails as an outage: that phone gets nothing, the others the kept JWT.
+        account.advance(Duration::from_secs(300));
+        app.fetch.answer(&login(EMAIL, PASSWORD), 502, "");
+        assert_eq!(
+            ask(&app, 3, Some(&second.session)).await.err(),
+            Some(StorytelError::LoginStatus(502))
+        );
+        assert_eq!(ask(&app, 4, None).await.unwrap().session, second.session);
+        // A refusal drops it.
+        account.advance(Duration::from_secs(60));
+        store(&app, EMAIL, PASSWORD, 2).await;
+        app.fetch.answer(&login(EMAIL, PASSWORD), 403, "");
+        assert_eq!(
+            ask(&app, 4, None).await.err(),
+            Some(StorytelError::Refused(403))
+        );
+        assert!(lock(&account.jwt).is_none());
+    }
+
+    /// QA 58-7: the sweep logs in after a 401 only while the refused session is the kept one.
+    #[tokio::test]
+    async fn the_sweeps_401_follows_the_kept_session() {
+        let app = phone_app(LOGIN_OK).await;
+        let account = &app.state.storytel;
+        let first = ask(&app, 1, None).await.unwrap();
+        account.advance(Duration::from_secs(300));
+        app.fetch
+            .answer(&login(EMAIL, PASSWORD), 200, login_body("FAKE-JWT-2"));
+        let second = ask(&app, 1, Some(&first.session)).await.unwrap();
+        // The sweep's 401 was on the first JWT: the phone's re-login serves it.
+        let credentials = credentials(&app.state).await.unwrap();
+        app.fetch.clear_calls();
+        let mut sent = 0;
+        let jwt = account
+            .bearer(&app.state, &credentials, Some(&first.session), &mut sent)
+            .await
+            .unwrap();
+        assert_eq!((jwt.session, sent), (second.session.clone(), 0));
+        assert_eq!(app.fetch.count(), 0);
+        // A 401 on the kept one logs in once; two 401s on one JWT make one login.
+        app.fetch.answer(BOOKSHELF, 401, "expired");
+        assert_eq!(
+            account.bookshelf(&app.state).await.unwrap_err(),
+            StorytelError::Status(401)
+        );
+        assert_eq!(calls_to(&app, LOGIN_URL), 1);
+        assert_eq!(calls_to(&app, BOOKSHELF), 2);
+    }
+
+    /// §2.3: one failed login backs every phone off - 1 minute, doubling - reset by a login and by
+    /// a new generation.
+    #[tokio::test]
+    async fn a_failed_login_backs_off_for_every_phone() {
+        let app = phone_app(LOGIN_OK).await;
+        let account = &app.state.storytel;
+        app.fetch.answer(&login(EMAIL, PASSWORD), 503, "");
+        assert!(ask(&app, 1, None).await.is_err());
+        app.fetch.clear_calls();
+        assert_eq!(busy_wait(ask(&app, 2, None).await), 60);
+        account.advance(Duration::from_secs(60));
+        assert!(ask(&app, 2, None).await.is_err());
+        assert_eq!(app.fetch.count(), 1, "one login after the first minute");
+        assert_eq!(busy_wait(ask(&app, 3, None).await), 120);
+        // The sweep waits too, and says when it tries again.
+        let err = account.bookshelf(&app.state).await.unwrap_err();
+        assert_eq!(err.code(), "login_backoff");
+        assert!(
+            err.message(&crate::display_time::Zone::utc_fallback(), wall())
+                .contains("trying again at 10:02 UTC"),
+            "{}",
+            err.message(&crate::display_time::Zone::utc_fallback(), wall())
+        );
+        for _ in 0..6 {
+            let wait = busy_wait(ask(&app, 3, None).await);
+            account.advance(Duration::from_secs(wait));
+            assert!(ask(&app, 3, None).await.is_err());
+        }
+        assert_eq!(
+            busy_wait(ask(&app, 3, None).await),
+            LOGIN_BACKOFF_MAX.as_secs()
+        );
+        // A login resets it.
+        account.advance(LOGIN_BACKOFF_MAX);
+        app.fetch.answer(&login(EMAIL, PASSWORD), 200, LOGIN_OK);
+        ask(&app, 3, None).await.unwrap();
+        account.forget().await;
+        app.fetch.answer(&login(EMAIL, PASSWORD), 503, "");
+        assert!(ask(&app, 3, None).await.is_err());
+        assert_eq!(
+            busy_wait(ask(&app, 3, None).await),
+            LOGIN_BACKOFF_MIN.as_secs()
+        );
+        // So does a new generation (a save).
+        store(&app, EMAIL, PASSWORD, 2).await;
+        app.fetch.clear_calls();
+        assert!(ask(&app, 3, None).await.is_err());
+        assert_eq!(app.fetch.count(), 1, "logged in at once");
+    }
+
+    /// Q-B: a 5xx at login is an outage - no cooldown stamp, its code recorded, the backoff.
+    #[tokio::test]
+    async fn a_5xx_login_is_an_outage_not_a_refusal() {
+        let app = phone_app(LOGIN_OK).await;
+        app.fetch.answer(&login(EMAIL, PASSWORD), 503, "");
+        assert_eq!(
+            ask(&app, 1, None).await.err(),
+            Some(StorytelError::LoginStatus(503))
+        );
+        let row: (Option<String>, Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT login_refused_at, login_refused_generation, login_error FROM music_storytel",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(row, (None, None, Some("http_503".to_string())));
+        assert!(lock(&app.state.storytel.gate).backoff.is_some());
+    }
+
+    /// §2.3: the logins the phones cause are capped server-wide: max(6, 2 x logins an hour).
+    #[tokio::test]
+    async fn phone_logins_are_capped_server_wide() {
+        let app = phone_app(&login_body(&living(3600, 0))).await;
+        let account = &app.state.storytel;
+        let mut current = ask(&app, 0, None).await.unwrap().session;
+        for device in 1..=5 {
+            account.advance(Duration::from_secs(300));
+            current = ask(&app, device, Some(&current)).await.unwrap().session;
+        }
+        assert_eq!(calls_to(&app, LOGIN_URL), 6);
+        account.advance(Duration::from_secs(300));
+        assert_eq!(
+            busy_wait(ask(&app, 6, Some(&current)).await),
+            3600 - 1800,
+            "until the first login leaves the hour"
+        );
+        assert_eq!(calls_to(&app, LOGIN_URL), 6);
+        assert_eq!(
+            ask(&app, 7, None).await.unwrap().session,
+            current,
+            "a plain ask gets the kept JWT"
+        );
+        // A shorter life raises the bound: 2 x ceil(3600 / 600) = 12.
+        lock(&account.gate).last.as_mut().unwrap().left_s = 600;
+        assert!(ask(&app, 6, Some(&current)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn sessions_are_unique_across_an_account_rebuild() {
+        let app = phone_app(LOGIN_OK).await;
+        let first = ask(&app, 1, None).await.unwrap();
+        let mut rebuilt = app.state.clone();
+        rebuilt.storytel = Arc::new(Account::default());
+        let second = rebuilt
+            .storytel
+            .clone()
+            .phone_jwt(rebuilt.clone(), 1, None)
+            .await
+            .unwrap();
+        assert_ne!(first.session, second.session);
+        assert!(valid_session(&second.session));
+        for bad in [
+            "1:00000000000000a",
+            "1:00000000000000A1",
+            ":0000000000000001",
+            "x:0000000000000001",
+            "1;0000000000000001",
+            "1234567890123456789:0000000000000001",
+        ] {
+            assert!(!valid_session(bad), "{bad}");
+        }
+        assert!(valid_session("123456789012345678:0123456789abcdef"));
+    }
+
+    #[test]
+    fn the_life_fits_the_launchers_bound() {
+        // The launcher takes expires_in_s in 1..86400; the route says what is left minus MARGIN.
+        assert!((JWT_LIFE_CAP - MARGIN).as_secs() <= 86_400);
+        assert!((PHONE_FLOOR - MARGIN).as_secs() >= 61);
+        assert!(PHONE_FLOOR > 2 * MARGIN);
+    }
+
+    /// §2.6, QA 58-11, N-12: the override only on loopback (the host compared exactly), only
+    /// then `Reach::Any`, and then only a fake login is ever sent - the save's probe's too.
+    #[tokio::test]
+    async fn the_override_sends_only_a_fake_login() {
+        let vars = |value: &str| {
+            Config::from_vars(&HashMap::from([(
+                "STORYTEL_BASE".to_string(),
+                value.to_string(),
+            )]))
+        };
+        for (value, base) in [
+            ("http://127.0.0.1:8730", "http://127.0.0.1:8730"),
+            ("http://127.0.0.1:8730/", "http://127.0.0.1:8730"),
+            (" http://[::1]:8730 ", "http://[::1]:8730"),
+            ("http://localhost:8730", "http://localhost:8730"),
+        ] {
+            let config = vars(value);
+            assert_eq!(config.fake_base.as_deref(), Some(base), "{value}");
+            assert_eq!(config.login_url, format!("{base}/api/login.action"));
+            assert_eq!(config.bookshelf, format!("{base}/libraries/bookshelf"));
+            assert_eq!(config.reach(), Reach::Any);
+            assert!(config.warnings.is_empty());
+        }
+        for value in [
+            "http://127.0.0.1.evil.example:8730",
+            "http://localhost.example.invalid:8730",
+            "https://127.0.0.1:8730",
+            "http://127.0.0.1",
+            "http://127.0.0.1:8730/api",
+            "http://user@127.0.0.1:8730",
+            "http://10.0.2.2:8730",
+            "127.0.0.1:8730",
+        ] {
+            let config = vars(value);
+            assert_eq!(config.fake_base, None, "{value}");
+            assert_eq!(config.login_url, LOGIN_URL);
+            assert_eq!(config.reach(), Reach::Public);
+            assert_eq!(config.warnings.len(), 1, "{value}");
+        }
+        assert!(vars("").warnings.is_empty());
+        assert_eq!(Config::default().reach(), Reach::Public);
+
+        // The fake-login guard reads the whole domain.
+        for email in [
+            "k@example.invalid",
+            "K@Example.Invalid",
+            "x@kids.example.invalid",
+        ] {
+            assert!(super::fake_login(email), "{email}");
+        }
+        for email in [
+            "parent@example.org",
+            "x@evilexample.invalid",
+            "example.invalid@example.org",
+            "x@example.invalid.example.org",
+            "no-at-sign.example.invalid",
+        ] {
+            assert!(!super::fake_login(email), "{email}");
+        }
+        let fake = vars("http://127.0.0.1:8730");
+        let fake_login = |email: &str| login_url(&fake.login_url, email, PASSWORD);
+        let app = TestApp::new().await;
+        let mut state = app.state.clone();
+        state.storytel = Arc::new(Account::new(fake.clone()));
+        assert_eq!(
+            state.storytel.force_min_age(JWT_LIFE_FALLBACK),
+            FORCE_MIN_AGE_FAKE
+        );
+        // A login that isn't a fake one: nothing sent, the phone's ask and the probe alike.
+        let real = "parent@example.org";
+        store(&app, real, PASSWORD, 1).await;
+        app.fetch.answer(&fake_login(real), 200, LOGIN_OK);
+        assert_eq!(
+            state
+                .storytel
+                .clone()
+                .phone_jwt(state.clone(), 1, None)
+                .await
+                .err(),
+            Some(StorytelError::NotConfigured)
+        );
+        assert!(matches!(
+            probe(&state, real, PASSWORD, PROBE_BUDGET).await,
+            Probe::Unreachable { code, login: None } if code == "storytel_off"
+        ));
+        assert_eq!(app.fetch.count(), 0);
+        // A fake one goes to the fake, with Reach::Any; the bookshelf too.
+        store(&app, EMAIL, PASSWORD, 2).await;
+        app.fetch.answer(&fake_login(EMAIL), 200, LOGIN_OK);
+        app.fetch
+            .answer(&fake.bookshelf, 200, fixture("bookshelf.json"));
+        state
+            .storytel
+            .clone()
+            .phone_jwt(state.clone(), 1, None)
+            .await
+            .unwrap();
+        state.storytel.bookshelf(&state).await.unwrap();
+        let reaches = app.fetch.reaches.lock().unwrap().clone();
+        assert_eq!(
+            reaches,
+            vec![
+                (fake_login(EMAIL), Reach::Any),
+                (fake.bookshelf.clone(), Reach::Any)
+            ]
+        );
+        // Without the override nothing changes.
+        assert_eq!(
+            app.state.storytel.force_min_age(JWT_LIFE_FALLBACK),
+            Duration::from_secs(300)
+        );
     }
 }

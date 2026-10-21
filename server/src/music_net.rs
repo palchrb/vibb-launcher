@@ -548,6 +548,89 @@ impl Source for Gated {
     }
 }
 
+/// A per-phone rolling limit of asks (design 26c §2.6's `phone_ask`, lifted here by design 58
+/// §7.3 so Spotify's and Storytel's token routes use one each): at most `limit` in `window` per
+/// device. Phones with nothing left in the window are forgotten. In memory only.
+pub struct PhoneAsks {
+    limit: usize,
+    window: Duration,
+    asks: std::sync::Mutex<
+        std::collections::HashMap<i64, std::collections::VecDeque<tokio::time::Instant>>,
+    >,
+}
+
+impl PhoneAsks {
+    pub fn new(limit: usize, window: Duration) -> Self {
+        PhoneAsks {
+            limit,
+            window,
+            asks: Default::default(),
+        }
+    }
+
+    /// The wait before `device` may ask again at `now` (rounded up to whole seconds, at least 1),
+    /// or `None` while it is within its limit. Counts nothing.
+    pub fn wait(&self, device: i64, now: tokio::time::Instant) -> Option<u64> {
+        let mut asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());
+        self.prune(&mut asks, now);
+        let times = asks.get(&device)?;
+        if times.len() < self.limit {
+            return None;
+        }
+        let oldest = times.front().copied().unwrap_or(now);
+        let wait = self
+            .window
+            .saturating_sub(now.saturating_duration_since(oldest));
+        // Rounded up: asking again after it never meets the same refusal.
+        Some((wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1))
+    }
+
+    /// Counts one ask of `device` at `now`.
+    pub fn record(&self, device: i64, now: tokio::time::Instant) {
+        let mut asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());
+        asks.entry(device).or_default().push_back(now);
+    }
+
+    /// One ask of `device`: `Ok` (and counted) within the limit, else `Err(seconds)` until the
+    /// oldest ask leaves the window. A refused ask isn't counted.
+    pub fn ask(&self, device: i64, now: tokio::time::Instant) -> Result<(), u64> {
+        let mut asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());
+        self.prune(&mut asks, now);
+        let times = asks.entry(device).or_default();
+        if times.len() >= self.limit {
+            let oldest = times.front().copied().unwrap_or(now);
+            let wait = self
+                .window
+                .saturating_sub(now.saturating_duration_since(oldest));
+            return Err((wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1));
+        }
+        times.push_back(now);
+        Ok(())
+    }
+
+    fn prune(
+        &self,
+        asks: &mut std::collections::HashMap<i64, std::collections::VecDeque<tokio::time::Instant>>,
+        now: tokio::time::Instant,
+    ) {
+        asks.retain(|_, times| {
+            while times
+                .front()
+                .is_some_and(|at| now.saturating_duration_since(*at) >= self.window)
+            {
+                times.pop_front();
+            }
+            !times.is_empty()
+        });
+    }
+
+    /// How many phones have an ask in the window (the tests).
+    #[cfg(test)]
+    pub fn phones(&self) -> usize {
+        self.asks.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

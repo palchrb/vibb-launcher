@@ -37,7 +37,7 @@ class MusicPlanTest {
 
     @Test
     fun `the bridge's AIDL is byte-identical in both apps`() {
-        for (name in listOf("IMusicBridge.aidl", "IStorytelCallback.aidl", "ISpotifyTokenCallback.aidl")) {
+        for (name in listOf("IMusicBridge.aidl", "IStorytelCallback.aidl", "ISpotifyTokenCallback.aidl", "IStorytelTokenCallback.aidl")) {
             val ours = module("src/main/aidl/me/vibb/bridge/$name")
             val theirs = repo("music/app/src/main/aidl/me/vibb/bridge/$name")
             assertEquals("$name differs from music/'s copy", theirs.readText(), ours.readText())
@@ -50,9 +50,18 @@ class MusicPlanTest {
             listOf(
                 "version", "openLibrary", "openCover", "openFile", "releaseFile", "getStorytelLogin", "reportState",
                 "setNowPlaying", "setForeground", "listingVersion", "openListing", "wantArt", "getSpotifyToken",
+                "getStorytelToken",
             ),
             methods,
         )
+    }
+
+    @Test
+    fun `Storytel's token answers are the server's and the music app's (design 58 §8)`() {
+        val ours = javaClass.classLoader!!.getResource("storytel_token_answers.json")!!.readText()
+        assertEquals("the music app's copy", repo("music/app/src/test/resources/storytel_token_answers.json").readText(), ours)
+        assertEquals("the server's copy", repo("server/testdata/storytel_token_answers.json").readText(), ours)
+        assertTrue("the courier is a capability", STORYTEL_JWT_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
     }
 
     @Test
@@ -678,6 +687,10 @@ class MusicPlanTest {
         val spotify = contract["spotify_token"] as kotlinx.serialization.json.JsonObject
         assertEquals((spotify["statuses"] as kotlinx.serialization.json.JsonArray).map { (it as JsonPrimitive).content }, SPOTIFY_TOKEN_STATUSES)
         assertEquals((spotify["timeout_ms"] as JsonPrimitive).content.toLong(), SPOTIFY_TOKEN_TIMEOUT_MS)
+        // The Storytel session's statuses and the launcher's wait (design 58 §3).
+        val storytel = contract["storytel_token"] as kotlinx.serialization.json.JsonObject
+        assertEquals((storytel["statuses"] as kotlinx.serialization.json.JsonArray).map { (it as JsonPrimitive).content }, STORYTEL_TOKEN_STATUSES)
+        assertEquals((storytel["timeout_ms"] as JsonPrimitive).content.toLong(), STORYTEL_TOKEN_TIMEOUT_MS)
     }
 
     @Test
@@ -685,7 +698,7 @@ class MusicPlanTest {
         val source = module("src/main/java/com/kidslauncher/mdm/music/MusicBridgeService.kt").readText()
         val binder = source.substringAfter("object : IMusicBridge.Stub() {").substringBefore("\n    }\n")
         val methods = Regex("override fun (\\w+)\\([^)]*\\)[^{]*\\{\\s*([^\\n]*)").findAll(binder).toList()
-        assertEquals("all of IMusicBridge's methods", 13, methods.size)
+        assertEquals("all of IMusicBridge's methods", 14, methods.size)
         for (m in methods) assertEquals("${m.groupValues[1]} must call check() first", "check()", m.groupValues[2].trim())
     }
 }

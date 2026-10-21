@@ -24,7 +24,7 @@ class ContractFilesTest {
 
     @Test
     fun `the shared files are identical to the server's copies`() {
-        for (name in listOf("music_library.json", "music_listing.json", "music_icons.json", "spotify_hosts.json")) {
+        for (name in listOf("music_library.json", "music_listing.json", "music_icons.json", "spotify_hosts.json", "storytel_token_answers.json")) {
             assertEquals("$name differs from the server's copy", server(name).readText(), Fixtures.resource(name))
         }
     }

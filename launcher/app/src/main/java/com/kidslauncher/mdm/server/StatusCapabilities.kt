@@ -24,4 +24,5 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     BATTERY_CAPABILITY,
     INSTALL_NOW_CAPABILITY,
     POWER_CAPABILITY,
+    com.kidslauncher.mdm.music.STORYTEL_JWT_CAPABILITY,
 )
