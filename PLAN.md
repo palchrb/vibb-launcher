@@ -698,10 +698,11 @@ findings, merge to `main`, full suite once.
   `Settings.System.SOUND_EFFECTS_ENABLED` (touch sounds), `HAPTIC_FEEDBACK_ENABLED` (touch vibration) and
   `DTMF_TONE_WHEN_DIALING` (dial-pad tones) - writable with the WRITE_SETTINGS app-op design 34 P12 already
   grants (`ClockFormatSetting`; without it the row is read-only and says so). The keyboard's own key sound
-  and vibration are the keyboard app's settings (Gboard's), not Android's - say so, or open nothing. Our own
+  and vibration are the keyboard app's settings (HeliBoard's since 2026-10-21, Gboard's elsewhere), not Android's -
+  say so, or open nothing. Our own
   keys (the PIN lock, the phone book) follow the system switches. A Quick controls bit like design 18's
   sound row (the parent decides whether the row shows); never on the PIN lock. Launcher + the server's
-  switch. Approved 2026-10-16.
+  switch. Approved 2026-10-16; the user asked for it again 2026-10-21 ("tastelyd" on Kid Settings).
 
 - **Notifications to the parent, phase 1: Web Push and an inbox in the PWA** (the user, 2026-10-16: "la oss
   begynne med web push", and "the PWA needs a clear place where we see notifications"):
