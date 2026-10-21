@@ -40,8 +40,9 @@ it), `RINCON_000000000000014NN`, `10.0.0.NN`, `fd00::NN`, `Navn N`, `FAKE-SERIAL
 `lc_FAKElocationNN`, `item-N`, `https://images.example.invalid/N.jpg` - and every Spotify id (`spotify:<kind>:<id>`,
 plain or percent-encoded; design 54) by the fake ids of `server/testdata/spotify/` (the playlist fixture's playable
 tracks first, in its order; `9Fake<Kind>Z...` once those run out or without the repo next to the script), so the
-capture can be committed as it is. --rescrub IN OUT runs an earlier capture through today's rules (no speaker, no
-aiohttp needed).
+capture can be committed as it is - also double-encoded (`spotify%253a...`), as an `open.spotify.com/<kind>/<id>` link
+and in `spotify:user:<name>:...` (the name -> `fakeuser`). --rescrub IN OUT runs an earlier capture through today's
+rules (no speaker, no aiohttp needed); --selftest checks those rules on made-up values.
 
 --key UUID sends another X-Sonos-Api-Key (a random one tells whether the speaker checks it at all), --key none
 sends no key header.
@@ -104,7 +105,12 @@ class Saver:
     # design 54 (N10): a Spotify id - `spotify:<kind>:<id>`, also percent-encoded as a TrackURI carries it
     # (`spotify%3atrack%3a<id>`) - replaced consistently by an id of server/testdata/spotify/, so the fake speaker and
     # the fixtures name the same tracks; an id that is already fake (`...Fake...`) stays
-    SPOTIFY = re.compile(r"(?i)(spotify(?::|%3a))(track|episode|playlist|album|show|artist)(:|%3a)([A-Za-z0-9]{22})(?![A-Za-z0-9])")
+    # qa-54a1-code 10: also double-encoded (`spotify%253atrack%253a<id>`, Sonos' art paths), an `open.spotify.com/<kind>/<id>`
+    # link, and the old `spotify:user:<name>:playlist:<id>` form (the user's name scrubbed by SPOTIFY_USER first)
+    SEP = r"(?::|%3a|%253a)"
+    SPOTIFY = re.compile(rf"(?i)((?:spotify{SEP}(?:user{SEP}[^:%\"&?/\s]+{SEP})?)|(?:spotify\.com/(?:user/[^/\"?\s]+/)?))"
+                         rf"(track|episode|playlist|album|show|artist)({SEP}|/)([A-Za-z0-9]{{22}})(?![A-Za-z0-9])")
+    SPOTIFY_USER = re.compile(rf"(?i)(spotify{SEP}user{SEP}|spotify\.com/user/)([^:%\"&?/\s]+)")
 
     def __init__(self, path: str):
         self.path = path
@@ -149,6 +155,7 @@ class Saver:
         return self.ip6s.setdefault(m.group(0).lower(), f"fd00::{16 + len(self.ip6s):x}")
 
     def _text(self, v: str) -> str:
+        v = self.SPOTIFY_USER.sub(lambda m: m.group(1) + "fakeuser", v)
         v = self.SPOTIFY.sub(self._spotify, v)
         v = self.UID.sub(self._uid, v)
         v = self.HOUSEHOLD.sub("Sonos_FAKEhousehold000000000000001", v)
@@ -213,6 +220,27 @@ def spotify_pools() -> dict:
             add("episode", (it or {}).get("id"))
     add("track", load("track.json").get("id"))
     return pools
+
+
+def selftest() -> None:
+    """The scrub's Spotify rules on made-up ids (never a real one here): every form the 54-0 remainder can capture."""
+    sv = Saver("")
+    track, playlist = "Zz00000000000000000001", "Zz00000000000000000002"
+    cases = [
+        (f"spotify:track:{track}", "spotify:track:1FakeTrackA00000000001"),
+        (f"x-sonos-spotify:spotify%3atrack%3a{track}?sid=9&flags=8232&sn=6",
+         "x-sonos-spotify:spotify%3atrack%3a1FakeTrackA00000000001?sid=9&flags=8232&sn=6"),
+        (f"/getaa?s=1&u=x-sonos-spotify%3aspotify%253atrack%253a{track}%3fsid%3d9",
+         "/getaa?s=1&u=x-sonos-spotify%3aspotify%253atrack%253a1FakeTrackA00000000001%3fsid%3d9"),
+        (f"https://open.spotify.com/playlist/{playlist}?si=abc", "https://open.spotify.com/playlist/0FakePlaylistKveld0001?si=abc"),
+        (f"spotify:user:someparent:playlist:{playlist}", "spotify:user:fakeuser:playlist:0FakePlaylistKveld0001"),
+        ("https://open.spotify.com/user/someparent", "https://open.spotify.com/user/fakeuser"),
+        ("spotify:track:1FakeTrackC00000000003", "spotify:track:1FakeTrackC00000000003"),  # already fake: kept
+    ]
+    for raw, want in cases:
+        got = sv.scrub(raw, "objectId")
+        assert got == want, (raw, got, want)
+    print(f"{len(cases)} scrub forms OK")
 
 
 def rescrub(src: str, dst: str) -> None:
@@ -508,7 +536,7 @@ async def upnp_side(session: aiohttp.ClientSession, ip: str, ready: asyncio.Even
 
 async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("ip", help="the speaker's LAN address (Sonos app › Settings › System › About)")
+    ap.add_argument("ip", nargs="?", help="the speaker's LAN address (Sonos app › Settings › System › About)")
     ap.add_argument("--poll", action="store_true", help="also poll UPnP GetPositionInfo every second")
     ap.add_argument("--do", nargs="+", metavar="CMD", help="commands to send, in order (see above)")
     ap.add_argument("--gap", type=float, default=4.0, help="seconds between --do commands (default 4)")
@@ -523,10 +551,16 @@ async def main() -> None:
                     "alone, the SAN's udn against the uid; then exit (no aiohttp)")
     ap.add_argument("--uid", help="with --root: the uid to compare (default: the device description's UDN)")
     ap.add_argument("--port", type=int, default=1443, help=argparse.SUPPRESS)  # --root against a local test server
+    ap.add_argument("--selftest", action="store_true", help="check the --save scrub's rules on made-up values, then exit")
     args = ap.parse_args()
+    if args.selftest:
+        selftest()
+        return
     if args.rescrub:
         rescrub(*args.rescrub)
         return
+    if not args.ip:
+        ap.error("the speaker's ip is needed")
     if args.root:
         sys.exit(check_root(args.ip, args.root, args.uid, args.port))
     if aiohttp is None:

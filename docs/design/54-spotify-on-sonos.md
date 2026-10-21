@@ -877,8 +877,10 @@ Built as §4 lists it; nothing changes for the kid (`speakerDropReason` still `"
   `SpeakerUnreachable` without a second try; not found = `first`, no seek), `findInQueue`, `readQueue` (an `UpdateID`
   that moves between pages reads the queue again once), `learnQueue` + `shareBaseline` (adopt's read; the baseline only
   through the second), `queuePlay` (hushed, the cap on a START, `session.jumped` re-arms a disarmed session),
-  `setPlayMode`, `playMode`, `sleepTimer`. **The park clears the queue for every kind** (Stop, clear, the queue uri;
-  a refused clear logged) - `SonosLifecycleTest`'s bedtime look now sees `clearqueue`. **The speaker's sleep timer is
+  `setPlayMode`, `playMode`, `sleepTimer`. **The park clears the queue for a share link only** (Stop, the queue uri,
+  then the clear; a refused clear logged) - the fix round's change of §2.9's "every kind" (qa-54a1-code 8): a queue the
+  household built survives an NRK or podcast session's bedtime park, and a slow clear never costs 26a M5's queue uri.
+  **The speaker's sleep timer is
   in a1 as SOAP**: `playShare`'s step 10b (`sleepTimer`; null clears only ours), and our own Stop and the park clear it
   only while `GetRemainingSleepTimerDuration` is within 30 s of what our last set has left (`session.ownSleepTimer`); a
   hand-off clears it through its Stop. Nothing sets one yet: the edge (`suspend_at_ms`) and when to set it are 54-a2's.
@@ -908,8 +910,23 @@ Built as §4 lists it; nothing changes for the kid (`speakerDropReason` still `"
   round.
 
 **54-a2 inherits**: `adopt` clears the share knowledge, so the adopt's classify runs on vibb's prefix rule - with a
-persisted baseline the look must call `shareSet` + `shareRead` before it classifies (an `adoptLive` parameter); a
-`playShare` stopped by its second gate has replaced the queue but returns null (the controller can't take that map -
-§2.3's "a superseded transfer"); the controller feeds `shareContainer` and decides trust with `versionCheck`; the sleep
+persisted baseline the look must call `shareSet` + `shareRead` before it classifies (an `adoptLive` parameter);
+`adoptLive` re-adopts with `kindOfUri(kept)` whenever `keep` names another uri, and the service's `keep` returns the live
+TrackURI - for a share session that is an `x-sonos-spotify:` track, so the session would become a one-track `url` one
+whose next track is "not ours": for a queue marker `keep` returns the stored marker, or `adoptLive` keeps
+`SPOTIFY_SHARELINK` when it adopted with it (qa-54a1-code 9); a `playShare` whose second gate closed returns its start
+with `played = false` (the queue was replaced: the controller keeps that map, §2.3); the controller feeds `shareContainer` and decides trust with `versionCheck`; the sleep
 timer's edge, its re-set at boundaries and follows (`sleepTimer`), and `GetTransportSettings` before a correction
 (`playMode`); music/CLAUDE.md, emulator.md §6h and the rest of §4's docs.
+
+**54-a1 fix round** (`docs/review/qa-54a1-code.md`, 0 High, 1 Medium, 9 Low, 2 Nit - all taken): `ours` for a share link
+adds to vibb's uri equality instead of replacing it (1: a transfer that never landed keeps the previous stream ours, so
+the park and every Stop gate still stop it), `lastOursTrack`/`lastOursRel` only from an ours, live queue track and never
+overwritten with nothing (1, 7); the second gate's transfer keeps its map in the session and returns it (2); a second
+queue edit during a read leaves no baseline (3); short Browse pages read on from where they ended (4); the start takes
+the map's slot of a duplicate once every earlier position is read, the nearest occurrence only on a partial read (5); an
+unanswered `BrowseMetadata` is cached, asked again after 60 s (6); the park sends the queue uri before its clear and
+clears for a share link only (8); 9 above; the probe's scrub covers `%253a`, `open.spotify.com/<kind>/<id>` and
+`spotify:user:<name>` (`--selftest`; both committed captures re-scrub byte-identical) (10); `MediaInfo` prints its uri as
+the other holders do, `play()` refuses a share body before it touches the session, music/CLAUDE.md's park line, and the
+"not-ours?" line is vibb's: none for the share kind (11, 12).

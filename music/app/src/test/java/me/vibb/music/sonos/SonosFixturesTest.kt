@@ -72,6 +72,10 @@ class SonosFixturesTest {
             assertEquals(queueUri("RINCON_000E58A0B1C201400"), it["CurrentURI"])
         }
         assertEquals("0:59:43", reply("sleep_timer.xml", "GetRemainingSleepTimerDuration")["RemainingSleepTimerDuration"])
+        // qa-54a1-code 11: a holder of a CurrentURI prints it as the others do - no token, no Spotify id
+        val signed = MediaInfo(1, "https://cdn.example.invalid/book?token=FAKE-SIG-3").toString()
+        assertFalse(signed, signed.contains("FAKE-SIG"))
+        assertFalse(MediaInfo(1, "x-sonos-spotify:spotify%3atrack%3a1FakeTrackC00000000003?sid=9").toString().contains("Fake"))
         try {
             Soap.parseResponse(500, fixture("fault_800.xml"), "AddURIToQueue")
             fail()

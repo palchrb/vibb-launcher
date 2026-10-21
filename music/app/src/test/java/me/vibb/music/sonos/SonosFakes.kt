@@ -183,9 +183,16 @@ class FakeSpeaker(
 
     override fun seekTrack(position: Int) = record("seektrack $position", "seektrack")
 
+    /** At most this many items a Browse answers (a speaker may answer fewer than asked). */
+    var browseCap = Int.MAX_VALUE
+
+    /** Runs before each Browse answers (an edit from the Sonos app between pages). */
+    var beforeBrowse: () -> Unit = {}
+
     override fun browseQueue(start: Int, count: Int): QueuePage {
         record("getbrowse $start $count", "browse")
-        return QueuePage(queue.drop(start).take(count), queue.size, updateId.toString())
+        beforeBrowse()
+        return QueuePage(queue.drop(start).take(minOf(count, browseCap)), queue.size, updateId.toString())
     }
 
     override fun queueMeta(): QueueMeta {

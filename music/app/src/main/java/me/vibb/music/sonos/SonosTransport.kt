@@ -5,6 +5,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import me.vibb.music.logic.QUEUE_MAX_PAGES
 import me.vibb.music.logic.QUEUE_PAGE
+import me.vibb.music.logic.QueueMap
 import me.vibb.music.logic.QueueRead
 import me.vibb.music.logic.positionNearest
 import me.vibb.music.logic.queuePagesAround
@@ -102,9 +103,19 @@ class ShareRefused(message: String) : SonosException(message)
 /**
  * A share link's start (design 54 §2.2): the queue's [first] added position and [length], the [position] it plays
  * from, whether the start item was [found] in the queue (not found: `first` at 0, no seek - N4), the service type
- * [sn] that took it, and the pages read so far ([read]; the rest comes from [SonosTransport.readQueue]).
+ * [sn] that took it, and the pages read so far ([read]; the rest comes from [SonosTransport.readQueue]). [played] false:
+ * the queue was replaced but the play's second gate closed - nothing was set playing (qa-54a1-code 2: the caller keeps
+ * the map of every transfer that landed, design 54 §2.3).
  */
-data class ShareStart(val first: Int, val length: Int, val position: Int, val found: Boolean, val sn: Int, val read: QueueRead)
+data class ShareStart(
+    val first: Int,
+    val length: Int,
+    val position: Int,
+    val found: Boolean,
+    val sn: Int,
+    val read: QueueRead,
+    val played: Boolean = true,
+)
 
 /** Elapsed time (SystemClock.elapsedRealtime on the phone: it counts deep sleep) and the waits. */
 class SonosClock(val elapsedMs: () -> Long, val sleep: suspend (Long) -> Unit = { delay(it) })
@@ -154,6 +165,8 @@ class SonosTransport(
      * [UnknownUid], [UpnpFault] or [SpeakerUnreachable] - the failed-play path is the caller's.
      */
     suspend fun play(body: PlayBody, cap: Int? = null, members: List<String> = emptyList(), gate: () -> Boolean = { true }): PlayResult? = mutex.withLock {
+        // design 54: a share link is the speaker's own queue - its own sequence; refused before the session or a speaker is touched
+        if (body.kind == Kind.SPOTIFY_SHARELINK) throw SonosException("spotify_sharelink plays through playShare")
         session.beginPlay(body.uid, body.kind)
         val spk = speakers.speaker(body.uid, verify = true, budgetMs = null)
         val start = body.startS
@@ -184,8 +197,7 @@ class SonosTransport(
                     spk.play()
                     uri to built
                 }
-                // design 54: a share link is the speaker's own queue - its own sequence
-                Kind.SPOTIFY_SHARELINK -> throw SonosException("spotify_sharelink plays through playShare")
+                Kind.SPOTIFY_SHARELINK -> throw SonosException("spotify_sharelink plays through playShare") // refused above
             }
             session.played(uri, body.cadenceHintS)
             if (capped != null) session.ownVolume(capped)
@@ -252,21 +264,26 @@ class SonosTransport(
             if (length < first) throw ShareRefused("the link added no tracks")
             log("share: ${link.type.wire} added ${added.added ?: "?"} (first $first, queue $length) by service $sn")
             val idx = body.trackIndex
-            val want = idx?.let { body.listed?.getOrNull(it) }
+            val listed = body.listed.orEmpty()
             var read = QueueRead(length, emptyMap(), null)
             var position: Int? = null
-            if (want != null) {
-                val (p, r) = findInQueue(spk, want, first + (idx ?: 0), read)
+            if (idx != null && idx in listed.indices) {
+                val (p, r) = findInQueue(spk, listed, idx, first + idx, read)
                 position = p
                 read = r
             }
             val start = position ?: first
             log(if (position != null) "share: the start item at queue position $start" else "share: the start item isn't in the queue - position $start, no seek")
-            if (!gate()) return@withLock null
+            // the queue is the target's from here on, whatever the gate says (qa-54a1-code 2): the session knows it, so a
+            // Play pressed on the speaker classifies as ours, and the caller gets the map of a transfer that landed
+            session.shareSet(link.canonical, listed)
+            session.shareRead(read)
+            if (!gate()) {
+                log("share: the queue was replaced, the play went no further (gate)")
+                return@withLock PlayResult(body.uid, queueUri(body.uid), true, link.metadata(sn), capped, share = ShareStart(first, length, start, position != null, sn, read, played = false))
+            }
             playFromQueue(spk, body.uid, start)
             session.played(queueUri(body.uid), body.cadenceHintS)
-            session.shareSet(link.canonical, body.listed.orEmpty())
-            session.shareRead(read)
             if (capped != null) session.ownVolume(capped)
             val sought = if (position != null && body.startS >= 5) seekSettled(spk, body.startS) else true
             applySleepTimer(spk, body.uid, sleepTimer)
@@ -300,15 +317,22 @@ class SonosTransport(
     }
 
     /**
-     * The start's position (design 54 §2.2 step 7): [uri] in the queue nearest the 1-based guess [near] - the guess's
-     * page of [QUEUE_PAGE] first, then the others outward until a hit, at most [QUEUE_MAX_PAGES]. The pages read go into
-     * the returned read. A Browse that fails ends the search with no hit (the start plays the first added position).
+     * The start's position (design 54 §2.2 step 7): our item [index] of [listed] in the queue - the guess [near]'s page of
+     * [QUEUE_PAGE] first, then the others outward, at most [QUEUE_MAX_PAGES]. Its slot as the map counts it (the k-th
+     * occurrence for our k-th, `QueueMap`) once every position before that slot is read - always for a queue of one page,
+     * so a start and the map never disagree on a duplicate (qa-54a1-code 5); a partial read falls back to the occurrence
+     * nearest the guess. A complete read without a slot is no hit. The pages read go into the returned read; a Browse that
+     * fails ends the search with no hit (the start plays the first added position).
      */
-    internal fun findInQueue(spk: SpeakerControl, uri: String, near: Int, from: QueueRead): Pair<Int?, QueueRead> {
+    internal fun findInQueue(spk: SpeakerControl, listed: List<String>, index: Int, near: Int, from: QueueRead): Pair<Int?, QueueRead> {
         var read = from
+        val uri = listed[index]
         try {
             for (start in queuePagesAround(near, read.length)) {
-                read = readPage(spk, read, start)
+                read = readRange(spk, read, start, start + QUEUE_PAGE)
+                val slot = QueueMap(listed, read).slotOf(index)
+                if (slot != null && (1 until slot).all { it in read.tracks }) return slot to read
+                if (read.complete) return null to read
                 positionNearest(read, uri, near)?.let { return it to read }
             }
         } catch (e: SonosException) {
@@ -317,38 +341,53 @@ class SonosTransport(
         return null to read
     }
 
-    /** One Browse page at 0-based [start] into [read]: its items decoded (vibb's `track_spotify_uri`), its `TotalMatches` the length. */
-    private fun readPage(spk: SpeakerControl, read: QueueRead, start: Int): QueueRead {
-        val page = spk.browseQueue(start, QUEUE_PAGE)
+    /**
+     * One Browse at 0-based [start] for [count] items into [read]: its items decoded (vibb's `track_spotify_uri`), its
+     * `TotalMatches` the length. Also how many came back (a speaker may answer fewer than asked, `NumberReturned`).
+     */
+    private fun readPage(spk: SpeakerControl, read: QueueRead, start: Int, count: Int = QUEUE_PAGE): Pair<QueueRead, Int> {
+        val page = spk.browseQueue(start, count)
         val sized = page.total?.takeIf { it >= 0 }?.let { read.copy(length = minOf(it, QUEUE_PAGE * QUEUE_MAX_PAGES)) } ?: read
-        return sized.withPage(start + 1, page.res.map(::trackSpotifyUri), page.updateId ?: read.updateId)
+        return sized.withPage(start + 1, page.res.map(::trackSpotifyUri), page.updateId ?: read.updateId) to page.res.size
+    }
+
+    /** The 0-based range [from] until [until] of the queue, read until covered - a short page asks again from its end (qa-54a1-code 4). */
+    private fun readRange(spk: SpeakerControl, from0: QueueRead, from: Int, until: Int): QueueRead {
+        var read = from0
+        while (true) {
+            val missing = (from + 1..minOf(until, read.length)).firstOrNull { it !in read.tracks } ?: return read
+            val (next, got) = readPage(spk, read, missing - 1, until - (missing - 1))
+            read = next
+            if (got == 0) return read
+        }
     }
 
     /**
-     * Every page of the queue [read] lacks (design 54 §2.3), at most [QUEUE_MAX_PAGES]. A page whose `UpdateID` differs
-     * from what was read before means the queue changed under the read: it starts over once, from nothing.
+     * Every position of the queue [from] lacks (design 54 §2.3), at most [QUEUE_PAGE] x [QUEUE_MAX_PAGES]; a short page
+     * asks again from where it ended (qa-54a1-code 4). A page whose `UpdateID` differs from what was read before means the
+     * queue changed under the read: it starts over once, from nothing; a second change returns the read without a
+     * baseline (`updateId` null: `versionCheck` says read again - qa-54a1-code 3).
      */
     private fun readRest(spk: SpeakerControl, from: QueueRead): QueueRead {
         var read = from
-        var again = true
-        var start = 0
-        while (start < read.length && start < QUEUE_PAGE * QUEUE_MAX_PAGES) {
-            if ((start + 1..minOf(read.length, start + QUEUE_PAGE)).all { it in read.tracks }) {
-                start += QUEUE_PAGE
-                continue
-            }
+        var restarted = false
+        while (true) {
+            val missing = (1..minOf(read.length, QUEUE_PAGE * QUEUE_MAX_PAGES)).firstOrNull { it !in read.tracks } ?: return read
             val before = read.updateId
-            read = readPage(spk, read, start)
-            if (before != null && read.updateId != null && read.updateId != before && again) {
-                again = false
+            val (next, got) = readPage(spk, read, missing - 1)
+            read = next
+            if (before != null && read.updateId != null && read.updateId != before) {
+                if (restarted) {
+                    log("share: the queue changed again while it was read - no baseline")
+                    return read.copy(updateId = null)
+                }
+                restarted = true
                 log("share: the queue changed while it was read - reading it again")
                 read = QueueRead(read.length, emptyMap(), null)
-                start = 0
                 continue
             }
-            start += QUEUE_PAGE
+            if (got == 0) return read
         }
-        return read
     }
 
     /**
@@ -605,12 +644,13 @@ class SonosTransport(
     }
 
     /**
-     * The suspension's Stop (design 26a §6.1, QA M5): Stop, the speaker's queue cleared (design 54 §2.9, every kind: a
-     * share link's queue would otherwise play on the speaker's own Play button during a time rule; an empty queue costs
-     * nothing), then the speaker's own queue as its source ([queueUri], no metadata), so the speaker's Play button plays
-     * that (empty) queue and never our episode from 0:00 - after a Stop a Sonos keeps its AVTransportURI (sonosd.py
-     * 894-896). Disarmed. A refused clear or queue uri is logged; the Stop already happened. Our own sleep timer last
-     * (only while it is still ours). [budgetMs]: every SOAP within it (the bedtime path's time left, §6.1), null for
+     * The suspension's Stop (design 26a §6.1, QA M5): Stop, then the speaker's own queue as its source ([queueUri], no
+     * metadata), so the speaker's Play button plays that queue and never our episode from 0:00 - after a Stop a Sonos keeps
+     * its AVTransportURI (sonosd.py 894-896). For a share link the queue is then cleared too (design 54 §2.9: its Play
+     * button would otherwise play the playlist during a time rule) - after the queue uri, so a slow clear never costs the
+     * one 26a M5 needs, and only for that kind: a queue the household built is kept at an NRK or podcast session's park
+     * (qa-54a1-code 8). Disarmed. A refused queue uri or clear is logged; the Stop already happened. Our own sleep timer
+     * last (only while it is still ours). [budgetMs]: every SOAP within it (the bedtime path's time left, §6.1), null for
      * the client's timeouts.
      */
     suspend fun park(ifUid: String? = null, budgetMs: Long? = null): Boolean = verb(ifUid, budgetMs) {
@@ -618,14 +658,16 @@ class SonosTransport(
         session.disarm()
         val uid = session.uid.orEmpty()
         try {
-            it.removeAllTracksFromQueue()
-        } catch (e: SonosException) {
-            log("park: the queue wasn't cleared (${e.javaClass.simpleName})")
-        }
-        try {
             it.setAvTransportUri(queueUri(uid), "")
         } catch (e: SonosException) {
             log("park: the queue uri was refused (${e.javaClass.simpleName}) - stopped only")
+        }
+        if (session.kind == Kind.SPOTIFY_SHARELINK) {
+            try {
+                it.removeAllTracksFromQueue()
+            } catch (e: SonosException) {
+                log("park: the queue wasn't cleared (${e.javaClass.simpleName})")
+            }
         }
         clearOwnSleepTimer(it, uid)
         wake()

@@ -855,8 +855,25 @@ class SonosSessionTest {
         val s2 = shareSession()
         assertFalse("a queue someone replaced: a track in neither list and a moved version", s2.classify(edited).ours)
         assertTrue("a moved version alone keeps ours", s2.classify(queueSpeaker(qA).apply { updateId = 41 }).ours)
-        val silent = queueSpeaker(qG).apply { failOn = mapOf("queuemeta" to { SpeakerUnreachable("x") }) }
-        assertTrue("no answer decides nothing against ours", shareSession().classify(silent).ours)
+        var tries = 0
+        val silent = queueSpeaker(qG).apply {
+            failOn = mapOf(
+                "queuemeta" to {
+                    tries++
+                    SpeakerUnreachable("x")
+                },
+            )
+        }
+        val quiet = shareSession()
+        assertTrue("no answer decides nothing against ours", quiet.classify(silent).ours)
+        // qa-54a1-code 6: no answer is cached too - one try per track, again only after a minute
+        assertTrue(quiet.classify(silent).ours)
+        assertEquals(1, tries)
+        silent.failOn = emptyMap()
+        silent.updateId = 41
+        assertTrue("still the cached no-answer", quiet.classify(silent).ours)
+        clock.advance(SonosSession.UNKNOWN_RETRY_MS)
+        assertFalse("asked again after a minute: the queue was replaced", quiet.classify(silent).ours)
         // the socket's container: another playlist contradicts, an absent or unseen one is no evidence
         val s3 = shareSession()
         s3.shareContainer("spotify:playlist:FAKEforeignList000001")
@@ -891,6 +908,13 @@ class SonosSessionTest {
     fun `d54 sonos_migrate_probe 3 - a share link follows only the exact track at a continuous position`() {
         val s = shareSession()
         s.classify(queueSpeaker(qC, rel = "0:01:00"))
+        // qa-54a1-code 7 (M20): a live sighting with no RelTime keeps the last place; a live track that isn't ours (a
+        // guest's playlist on the speaker) and a live direct uri record nothing
+        s.classify(queueSpeaker(qC, rel = "NOT_IMPLEMENTED"))
+        s.shareContainer("spotify:playlist:FAKEforeignList000001")
+        assertFalse(s.classify(queueSpeaker(qA, rel = "0:03:00")).ours)
+        s.shareContainer(null)
+        s.classify(queueSpeaker("https://podkast.example/ep12.mp3", rel = "0:03:00"))
         val probe = Probe()
         probe.candidates["10.0.0.11"] = TransportState.PLAYING to qA
         probe.positions["10.0.0.11"] = 62.0

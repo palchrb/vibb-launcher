@@ -66,7 +66,10 @@ data class QueuePage(val res: List<String?>, val total: Int?, val updateId: Stri
 }
 
 /** `GetMediaInfo`: the queue's `NrTracks` and the transport's `CurrentURI` (Spotify Connect's `x-sonos-vli:` is never ours). */
-data class MediaInfo(val nrTracks: Int?, val currentUri: String?)
+data class MediaInfo(val nrTracks: Int?, val currentUri: String?) {
+    /** A Storytel play's `CurrentURI` is a signed URL, a queue track's names the kid's track: printed as the other holders print a uri. */
+    override fun toString(): String = "MediaInfo(nrTracks=$nrTracks, currentUri=${Fields.shown(currentUri)})"
+}
 
 /** Every speaker listens here; only the debug feed (the emulator's fake speaker) sets another port. */
 const val SONOS_PORT = 1400

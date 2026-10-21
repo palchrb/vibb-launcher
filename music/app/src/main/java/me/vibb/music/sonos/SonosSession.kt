@@ -282,7 +282,7 @@ class SonosSession(
         var container: String? = null
 
         /** The last track neither list names and whether the queue's version had moved for it (read once per track). */
-        var unknown: Pair<String, Boolean>? = null
+        var unknown: Unknown? = null
     }
 
     private var share: Share? = null
@@ -563,9 +563,12 @@ class SonosSession(
         val shareKind = kind == Kind.SPOTIFY_SHARELINK
         val spotify = if (shareKind) trackSpotifyUri(trackUri) else null
         // design 26b §5.3: a Storytel marker (a look before the live uri is known) matches by consumableId; design 54
-        // §2.5: a share link's queue by vibb's prefix rule unless contradicted
-        val ours = if (shareKind) shareIsOurs(io, spotify) else sameStream(uri, trackUri)
-        if (!ours && !uri.isNullOrEmpty() && trackUri.isNotEmpty() && oursLogged != trackUri) {
+        // §2.5: vibb's `_classify` - the uri equality always counts, and for a share link also a Spotify queue track by
+        // the prefix rule unless contradicted (qa-54a1-code 1: a transfer that never landed leaves the session's kind
+        // set over the previous uri, and that stream must stay ours - the park and every Stop gate read it)
+        val ours = sameStream(uri, trackUri) || (shareKind && shareIsOurs(io, spotify))
+        // vibb logs "not ours" only for the other kinds (`self.kind != "spotify_sharelink"`)
+        if (!ours && !shareKind && !uri.isNullOrEmpty() && trackUri.isNotEmpty() && oursLogged != trackUri) {
             oursLogged = trackUri
             // design 26b §5.7: scheme, host and path only - a signed URL's query is a bearer; design 54 §2.14: no Spotify id
             log("not-ours? speaker=${Fields.shown(trackUri)} vs set=${Fields.shown(uri)}")
@@ -601,9 +604,11 @@ class SonosSession(
         if (aux) auxN--
         // design 54 §2.5: no lost-session and no DIDL check for a share link (vibb's sharelink branch)
         val lost = !shareKind && transport == TransportState.STOPPED && trackUri.isEmpty()
-        if (shareKind && ours && transport.live) {
+        // vibb keeps the last track and place when a sighting has none (`track_spotify_uri or last`, `if rel is not None`):
+        // only an ours + live queue track records them (qa-54a1-code 1, 7)
+        if (spotify != null && ours && transport.live) {
             lastOursTrack = spotify
-            lastOursRel = rel
+            rel?.let { lastOursRel = it }
         }
         if (ours && !didlChecked && !shareKind) {
             didlChecked = true
@@ -643,23 +648,30 @@ class SonosSession(
         if (spotify == null) return false
         val byContainer = containerContradicts(sh.container, sh.target)
         val known = spotify in sh.listed || spotify in sh.queue
-        val moved = if (known || byContainer) {
+        val base = sh.baseline
+        val moved = if (known || byContainer || base == null) {
             null
         } else {
-            val base = sh.baseline
-            sh.unknown?.takeIf { it.first == spotify }?.second ?: if (base == null) {
-                null
+            val cached = sh.unknown?.takeIf { it.track == spotify && (it.moved != null || elapsedMs() - it.at < UNKNOWN_RETRY_MS) }
+            if (cached != null) {
+                cached.moved
             } else {
-                try {
-                    val now = io.queueMeta().updateId
-                    (now != null && now != base).also { sh.unknown = spotify to it }
+                // one try per such track; no answer is cached too (qa-54a1-code 6: never a Browse at every poll), and
+                // tried again only after UNKNOWN_RETRY_MS. No answer decides nothing against ours.
+                val now = try {
+                    io.queueMeta().updateId?.let { it != base } ?: false
                 } catch (_: Exception) {
-                    null // no answer decides nothing against ours
+                    null
                 }
+                sh.unknown = Unknown(spotify, now, elapsedMs())
+                now
             }
         }
         return shareOurs(spotify, byContainer, known, moved)
     }
+
+    /** A track neither list names: whether the queue's version had moved for it (null: no answer) and when it was asked. */
+    private data class Unknown(val track: String, val moved: Boolean?, val at: Long)
 
     /**
      * `publish`: a new [seq], the session's identity, and the hint while one is pending. A reachable
@@ -851,5 +863,8 @@ class SonosSession(
 
         /** Design 53 §2.8: after our group changed, a STOPPED of ours with its TrackURI kept is probed this long (the controller's SETTLE_MS). */
         const val GROUP_WINDOW_MS = 8_000L
+
+        /** Design 54 (qa-54a1-code 6): an unknown track's `BrowseMetadata` that didn't answer is asked again after this. */
+        const val UNKNOWN_RETRY_MS = 60_000L
     }
 }

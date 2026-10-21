@@ -1,6 +1,9 @@
 package me.vibb.music.sonos
 
 import kotlinx.coroutines.runBlocking
+import me.vibb.music.logic.VersionCheck
+import me.vibb.music.logic.VersionSource
+import me.vibb.music.logic.versionCheck
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -388,10 +391,101 @@ class SonosTransportTest {
         assertTrue("nothing changed the room", first.log.none { it.startsWith("playmode") || it == "clearqueue" || it.startsWith("addqueue") })
         val second = queueSpeaker()
         var asked = 0
-        assertNull(rig(second).playShare(share(startS = 30.0), gate = { ++asked == 1 }))
+        val t = rig(second)
+        val gated = t.playShare(share(index = 2, startS = 30.0), gate = { ++asked == 1 })!!
         assertEquals(2, asked)
         assertTrue("the add went out, the play didn't", second.log.contains("addqueue 2311") && second.log.none { it == "seturi" || it.startsWith("seektrack") || it == "play" })
         assertFalse("the mute put back", second.muted)
+        // qa-54a1-code 2: the queue was replaced - its map comes back, and the session knows the queue is the target's
+        val start = gated.share!!
+        assertFalse(start.played)
+        assertEquals(listOf(1, 5, 4), listOf(start.first, start.length, start.position))
+        assertTrue(start.read.complete)
+        assertEquals("spotify:playlist:0FakePlaylistKveld0001", t.session.shareTarget)
+        assertFalse("nothing was set playing: not armed", t.session.armed)
+    }
+
+    @Test
+    fun `d54 qa-1 a transfer that never landed leaves the podcast ours - the second gate, a refusal, a network failure`() = runBlocking {
+        val podcast = PositionInfo("1", body.uri, "0:01:00", "0:24:13", "<x/>")
+        val endings = listOf<Pair<(FakeSpeaker) -> Unit, () -> Boolean>>(
+            { _: FakeSpeaker -> } to run { var n = 0; { ++n == 1 } },
+            { s: FakeSpeaker -> s.addFaults = mapOf(2311 to { UpnpFault(800, null) }, 3079 to { UpnpFault(800, null) }) } to { true },
+            { s: FakeSpeaker -> s.addFaults = mapOf(2311 to { SpeakerUnreachable("timeout") }) } to { true },
+        )
+        for ((setUp, gate) in endings) {
+            val spk = queueSpeaker()
+            val t = rig(spk)
+            t.play(body)!!
+            spk.position = podcast
+            setUp(spk)
+            try {
+                t.playShare(share(), gate = gate)
+            } catch (_: SonosException) {
+            }
+            assertEquals("the kind is set before the SOAP", Kind.SPOTIFY_SHARELINK, t.session.kind)
+            val live = t.liveRefresh(1_000)!!
+            assertTrue("our podcast is still ours: vibb's uri equality always counts", live.ours)
+            assertNull(live.trackSpotifyUri)
+            spk.log.clear()
+            assertTrue(t.park())
+            assertEquals("the park stops it", "stop", spk.log.first())
+        }
+    }
+
+    @Test
+    fun `d54 qa-3 qa-4 a queue edited twice during a read has no baseline, short pages are read on`() = runBlocking {
+        val spk = FakeSpeaker("RINCON_X").apply { shareTracks = (1..150).map { FakeSpeaker.qTrack("1FakeTrackQ%011d".format(it)) } }
+        val t = rig(spk)
+        val r = t.playShare(share(index = 0, uris = listOf("spotify:track:1FakeTrackQ00000000001")))!!
+        // an edit before the rest's first page (read again from the top), and another before its last page
+        var browses = 0
+        spk.beforeBrowse = { if (++browses == 1 || browses == 3) spk.updateId++ }
+        val read = t.readQueue("RINCON_X", r.share!!.read)!!
+        assertNull("no baseline: versionCheck says read again", read.updateId)
+        assertEquals(VersionCheck.REREAD, versionCheck(read, VersionSource.UPNP, spk.updateId.toString()))
+        assertTrue(logs.contains("share: the queue changed again while it was read - no baseline"))
+        // a speaker that answers at most 50 items: the read of 150 is complete all the same
+        spk.beforeBrowse = {}
+        spk.browseCap = 50
+        spk.log.clear()
+        val whole = t.learnQueue("RINCON_X")!!
+        assertTrue(whole.complete)
+        assertEquals(150, whole.tracks.size)
+        assertEquals(listOf("getqueuemeta", "getbrowse 0 100", "getbrowse 50 100", "getbrowse 100 100"), spk.log)
+        // the start's home page too
+        val capped = FakeSpeaker("RINCON_X").apply {
+            shareTracks = (1..80).map { FakeSpeaker.qTrack("1FakeTrackQ%011d".format(it)) }
+            browseCap = 50
+        }
+        val start = rig(capped).playShare(share(index = 0, uris = listOf("spotify:track:1FakeTrackQ00000000070")))!!.share!!
+        assertEquals(70, start.position)
+        assertTrue(start.read.complete)
+    }
+
+    @Test
+    fun `d54 qa-5 the start and the map agree on a duplicate - the k-th occurrence once the earlier positions are read`() = runBlocking {
+        val x = FakeSpeaker.qTrack("1FakeTrackG00000000007")
+        val spk = FakeSpeaker("RINCON_X").apply { shareTracks = listOf(FakeSpeaker.qTrack(a), x, x, x, FakeSpeaker.qTrack(a)) }
+        val two = listOf("spotify:track:$a", "spotify:track:$a")
+        val r = rig(spk).playShare(share(index = 1, uris = two))!!
+        assertEquals("our second A is the queue's second A, not the one nearest the guess", 5, r.share!!.position)
+        assertTrue(spk.log.contains("seektrack 5"))
+    }
+
+    @Test
+    fun `d54 nit - play refuses a share body before the session or a speaker is touched`() = runBlocking {
+        val spk = FakeSpeaker("RINCON_X")
+        val t = rig(spk)
+        t.play(body)!!
+        spk.log.clear()
+        try {
+            t.play(share())
+            fail()
+        } catch (_: SonosException) {
+        }
+        assertEquals(Kind.URL, t.session.kind)
+        assertTrue(spk.log.isEmpty())
     }
 
     @Test
@@ -487,21 +581,23 @@ class SonosTransportTest {
     }
 
     @Test
-    fun `d54 the park clears the queue for every kind, our sleep timer goes with our Stop or the park, only while it is ours`() = runBlocking {
+    fun `d54 the park - the queue uri, then the clear for a share link only, our sleep timer goes with our Stop or the park, only while it is ours`() = runBlocking {
         val spk = FakeSpeaker("RINCON_X")
         val t = rig(spk)
         t.play(body)!!
         spk.log.clear()
         assertTrue(t.park())
-        assertEquals(listOf("stop", "clearqueue", "seturi"), spk.log)
+        assertEquals("a podcast's park keeps the household's queue (qa-54a1-code 8)", listOf("stop", "seturi"), spk.log)
         assertEquals(queueUri("RINCON_X"), spk.lastUri)
-        // a refused clear: the queue uri still goes out
-        val stubborn = FakeSpeaker("RINCON_X").apply { failOn = mapOf("clearqueue" to { UpnpFault(804, null) }) }
+        // a share link's: after the queue uri; a refused clear is logged, the park done
+        val stubborn = queueSpeaker()
         val t2 = rig(stubborn)
-        t2.play(body.copy(startS = 0.0))
+        t2.playShare(share())!!
+        stubborn.failOn = mapOf("clearqueue" to { UpnpFault(804, null) })
         stubborn.log.clear()
         assertTrue(t2.park())
         assertEquals(listOf("stop", "seturi"), stubborn.log)
+        assertEquals(queueUri("RINCON_X"), stubborn.lastUri)
         assertTrue(logs.contains("park: the queue wasn't cleared (UpnpFault)"))
         // ours: cleared by the Stop
         val q = queueSpeaker()
@@ -518,7 +614,7 @@ class SonosTransportTest {
         q.sleepRemaining = "0:20:00"
         q.log.clear()
         assertTrue(t3.park())
-        assertEquals(listOf("stop", "clearqueue", "seturi", "getsleeptimer"), q.log)
+        assertEquals(listOf("stop", "seturi", "clearqueue", "getsleeptimer"), q.log)
         assertEquals("0:20:00", q.sleepRemaining)
         // none of ours: not even read
         q.log.clear()
