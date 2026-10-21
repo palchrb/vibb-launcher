@@ -29,7 +29,7 @@ It touches the server, the launcher, the music app, and the bridge contract in b
    - The lifetime and `payload_has_email` log line goes in, and it gates step 2's release (§2.7).
    - A loopback-only `STORYTEL_BASE`, with a fake-login guard (§2.6).
 8. **The answers to QA's questions:**
-   - **Q-A** (an e-mail inside the JWT) is decided after step 1's measurement. Both branches are written out in §2.7.
+   - **Q-A** (an e-mail inside the JWT) is decided after step 1's measurement. Branch (a) is this design. Branch (b) is outlined in §2.7 and would be its own design 58b.
    - **Q-B:** a Storytel 5xx, 408 or 429 at login is an outage with a short backoff, not vibb's hour-long cooldown
      (§2.3). It is a recorded deviation from vibb (§2.3, "Deviation").
 
@@ -165,14 +165,24 @@ The payload is parsed into the life and one boolean (§2.7), then dropped. It is
 StorytelError>`.
 - `PhoneJwt` is `{jwt, left, session}`, with no `Debug` and no `Display`.
 - Rules in order:
-  1. `credentials(state)` gives the generation and the cooldown (the key is the route's check, §2.2).
+  1. **The generation and the cooldown** come from one query of the row's plain columns:
+     - `generation`, `login_refused_at`, `login_refused_generation`, and whether `ciphertext` is set;
+     - **never an open of the sealed login** (QA N-8);
+     - only rule 4's login calls `credentials(state)`, so the password is in memory only for a login;
+     - the key is the route's check (§2.2).
   2. **The kept JWT is answered** while it is of this generation and has at least `PHONE_MIN_LEFT` left, unless
      §2.3's force applies. `PHONE_MIN_LEFT` = `min(15 min, life / 2)`. It sits above the phone's prefetch point
      (§5.1, at most 10 min plus the 60 s margin), so a prefetch gets a new JWT, not the same one (QA 58-1).
-  3. **No login now:** inside the cooldown it is `Cooldown { until }`; inside the backoff or past the cap it is
-     `Busy { until }`. No request is made in either case.
-  4. **Otherwise one login** (§2.2 runs it as a task), counted in the phone-login window. A fresh login is answered
-     whatever its life.
+  3. **No login now** (inside the cooldown or the backoff, or past the cap). No request is made.
+     - **A plain ask still gets the kept JWT** of this generation while it has more than `2 × MARGIN` (120 s) left
+       (QA N-9). Every phone keeps working on a valid JWT through an outage.
+     - **Otherwise:** `Cooldown { until }` inside the cooldown, `Busy { until }` inside the backoff or past the cap.
+     - A declined force never gets the kept JWT (§2.3).
+  4. **Otherwise one login** (§2.2 runs it as a task), counted in the phone-login window.
+     - A fresh login is answered when it leaves more than `2 × MARGIN`.
+     - **Less than that** (Storytel handed back a token about to expire, QA N-6): `Outage("short_life")`, which starts
+       the backoff (§2.3), and the phone gets `unreachable`. So `expires_in_s` is never below 61, and the launcher's
+       1..86 400 bound always holds.
 - **How often the server logs in:**
   - With an hour's life, a login is due 45 minutes after the last while phones use Storytel.
   - There are none while no phone or sweep does.
@@ -194,7 +204,7 @@ The route sits behind the device bearer (`require_device_token`, `S/device_route
 | 200 | `{"status": "ok", "jwt": "FAKE-JWT-1", "expires_in_s": 3540, "session": "7:00000000000000a1"}` | `expires_in_s` = what is left minus `MARGIN` (60 s) |
 | 404 | `{"status": "off"}` | this phone's `music_storytel` switch is off, or no login is stored |
 | 409 | `{"status": "refused", "retry_after_s": 2400}` | Storytel refused the login now (3600), or the cooldown runs (until its end, at least 1) |
-| 429 | `{"status": "busy", "retry_after_s": 30}` | this phone's asks are over the limit, the login backoff runs, or the phone-login cap is reached (§2.3) |
+| 429 | `{"status": "busy", "retry_after_s": 30}` | this phone's asks are over the limit; the login backoff runs or the phone-login cap is reached and no kept JWT has 2 min left; or a force is declined (§2.3) |
 | 502 | `{"status": "unreachable"}` | the login failed as an outage (§2.3), or the budget ran out |
 | 503 | `{"status": "key"}` | no music key on this server, or the row was sealed with another key |
 | 500 | `{"status": "unreachable"}` | a database error |
@@ -233,17 +243,23 @@ The route sits behind the device bearer (`require_device_token`, `S/device_route
 ### 2.3 Failed logins, the force, and the bounds (QA 58-3, 58-7, 58-8)
 
 **A refusal and an outage are now different** (the user's Q-B):
+- **One function decides:** `classify_login(status, body)` in `login_with`, which every login uses, the save's probe
+  included.
 - **A refusal is a 4xx other than 408 and 429.** It stamps the hour-long cooldown, as today.
-- **An outage, for every login the server makes:**
-  - which: a 5xx, a 408, a 429, a transport error, a timeout, or 200 without a JWT (`no_jwt`);
+- **An outage, for every login made through `Account`** (the sweep's and the phones'):
+  - which: a 5xx, a 408, a 429, **any other non-200** (a 1xx, a 204, a 3xx the redirect policy didn't follow, ...;
+    QA N-4), a transport error, a timeout, 200 without a JWT (`no_jwt`), or a too-short life (§2.1);
   - `Outage(code)`: no cooldown stamp; `login_error` records the code (`http_503`, `network`, `no_jwt`, ...);
   - **the login backoff** starts: no login for 1 min, doubling to 30 min (`LOGIN_BACKOFF_MIN` .. `LOGIN_BACKOFF_MAX`);
   - the backoff resets on a successful login or a new generation.
 - **Inside the backoff:**
   - a phone gets `busy` with `retry_after_s` to the backoff's end, and nothing is sent;
   - the sweep's check fails with `login_backoff` ("Storytel couldn't be reached - trying again at HH:MM").
-- **What the backoff doesn't cover:** the parent's save probe. A save is the parent's own act and keeps its own
-  answer and wording.
+- **What the backoff doesn't cover:** the parent's save probe. A save is the parent's own act.
+  - It uses the same classification but touches neither the backoff nor the cooldown.
+  - It stores nothing on any non-200, as today.
+  - Its wording follows the split: "Storytel refused the login" for a refusal, "Storytel answered with an error - try
+    again later" for an outage.
 - **Deviation from vibb** (26b §9 gains the row): vibb treats any non-200 login as a refusal and waits an hour.
   - That was right for one device logging in for itself.
   - Here one shared login serves every phone. A Storytel outage of a minute would stop Storytel on every phone for an
@@ -264,10 +280,16 @@ The route sits behind the device bearer (`require_device_token`, `S/device_route
   - this phone has caused fewer than `PHONE_FORCES_PER_WINDOW` (3) forced logins in the rolling hour;
   - no cooldown, backoff or cap stands in the way.
 - **A force counts against the phone only when it logs in.**
-- **Otherwise the server answers what it holds:**
-  - a newer JWT (a concurrent re-login): the phone's `used` rule, without a login;
-  - the same JWT: the phone's rule ends the run (§5.1).
-- **A forced login that fails as an outage keeps the old JWT** (§2.1).
+- **When the kept JWT is newer than `stale`** (a concurrent re-login), it is answered: the phone's `used` rule,
+  without a login.
+- **A declined force never gets the old JWT back** (QA N-1). It gets a wait the phone honours:
+  - `refused`, with `retry_after_s` to the cooldown's end, inside a cooldown;
+  - otherwise `busy`, with `retry_after_s` to the earliest moment the force would be allowed: the JWT reaching
+    `FORCE_MIN_AGE`, the backoff's end, the cap's window freeing a slot, or this phone's oldest force leaving its
+    window (at least 1 s).
+  - The phone drops the refused JWT and comes back after the wait (§5.1, §5.3).
+- **A forced login that fails as an outage keeps the old JWT** (§2.1) for the plain asks of other phones. The phone
+  that forced gets `unreachable`.
 
 **The sweep's own 401 follows the same rule** (QA 58-7). `fetch_shelf` forces only while the kept session is the one
 that got the 401; a newer one is used as it is. That is Spotify's server rule: "only when the rejected token is still
@@ -336,7 +358,9 @@ the kept one."
 ### 2.6 `STORYTEL_BASE`: the emulator chain (the user's yes, with QA 58-11's guard)
 
 `STORYTEL_BASE` in `.env` is Spotify's `Config::from_env` (`S/main.rs:389-398`) for Storytel:
-- **Taken only for a loopback URL** (`127.0.0.1`, `::1`, `localhost`). Anything else is ignored with a warning.
+- **Taken only for a loopback URL.** The value is parsed as a URL, and its **host** is compared exactly with
+  `127.0.0.1`, `::1` or `localhost`, as Spotify's `Config::from_env` does (QA N-12). `http://127.0.0.1.evil.example`
+  is refused. Anything else is ignored with a warning.
 - **While it is set:**
   - a warning at every start;
   - the login and the bookshelf go to `<base>/api/login.action` and `<base>/libraries/bookshelf`;
@@ -354,57 +378,85 @@ the kept one."
 
 ### 2.7 The lifetime line, the e-mail check, and Q-A (QA 58-4, 58-16)
 
-**At every login the server logs one `info` line:**
+**At every login the server logs one `info` line.** It is logged in `login_with`, so the save's probe logs it too
+(QA N-7):
 
 ```
 storytel: logged in (life_s=3600, left_at_login_s=3600, claims=yes, payload_has_email=no)
 ```
 
 - `claims` says whether `exp`/`iat` were read, or the fallback applied.
-- `payload_has_email` is the boolean only:
-  - **yes** when any string value in the payload, at any depth, equals the stored e-mail (case-insensitive) or
+- `payload_has_email` is a word, never a value or a claim name:
+  - **yes** when any string value in the payload, at any depth, equals the e-mail just used (case-insensitive) or
     contains `@`;
-  - never a value, never a claim name.
-- The PWA's Storytel card shows the same two facts under its ⓘ: "Session: lives N min; holds an e-mail address:
-  yes/no".
+  - **no** when the payload decoded to a JSON object and none does;
+  - **unknown** when the payload couldn't be decoded: no dots, other base64, not JSON (QA N-5).
+- The PWA's Storytel card shows the same facts under its ⓘ: "Session: lives N min; holds an e-mail address:
+  yes/no/unknown".
+  - They come from the account's memory: the last login's two facts, never a database column.
+  - After a restart the card says "not known yet" until the next login.
 
 **Step 1 measures. Its result decides Q-A before step 2 ships.** Step 1's server can go out on its own release:
-- its new route has no caller yet;
-- the sweep's next login prints the line;
-- the user reads it on the Pi (`journalctl -u kid-phone-server | grep "storytel: logged in"`).
+- **Its new route has no caller yet.**
+- **The trigger.** The user saves the Storytel login again in Music › Settings: the probe logs in and prints the
+  line. A sweep login prints it too, but only while a Storytel series is ticked.
+- **The sample.** The user reads **two** lines at least an hour apart: the save's, then a later sweep or phone login.
+  `left_at_login_s` shows whether Storytel hands back a fresh token each time.
+  - On the Pi: `journalctl -u kid-phone-server | grep "storytel: logged in"`.
+- **Only `payload_has_email=no` clears the gate.** It implies a decoded payload. `unknown` is decided by the user like
+  `yes`.
 
 **(a) `payload_has_email=no`, or the user accepts it:**
 - Steps 2 and 3 go on as written.
 - If accepted with `yes`, §7.2 records that every Storytel phone carries the family's e-mail inside the JWT (never the
   password), and decision 1 gets that exception, written down.
 
-**(b) `yes`, and the user won't accept it: the server mints each book's audio link itself.**
-- The phone never gets a Storytel session.
-- **On the server:** `POST /api/devices/music/storytel/asset` with `{"cid": "<id>"}`.
-  - The server makes the asset call with its JWT, through the gate, without following the 302, with §2.3's 401 rule.
-  - It answers `{"status": "ok", "url": "<the signed CDN URL>"}`, or the same failure words.
-  - The URL is a bearer for that book only, as today: never logged or stored.
-- **On the bridge:** `getStorytelAsset(String cid, IStorytelAssetCallback cb)` is appended in step 2b, in its own
-  contract commit.
-  - Step 1's `getStorytelToken` and its route stay and are never called. AIDL methods are never removed.
-  - The token route then answers `off` to every phone (one line), so nothing hands out a JWT.
-- **On the phone:** `StorytelAccount.mint` asks for the URL through the bridge instead of making the asset call.
-  - Everything after the mint is unchanged: the CDN download, Range, a room's play.
-  - There is no JWT and no prefetch. A room's advance needs a server mint inside its 10 s. The server's JWT is warm
-    whenever a phone plays, but a cold one is 58-1's case again. The mitigation is a server-side prefetch while a
-    phone's room session is reported playing; that design is left to 2b.
+**(b) `yes` or `unknown`, and the user won't accept it: the server mints each book's audio link itself.**
 
-**The measurement that decides (b) is possible:**
+**Not built in this design.** It would be **design 58b**, written only if the measurement below says (b) is possible
+and the user picks it (QA N-3). Then step 2 is replaced by 58b's steps. Step 1's token route and `getStorytelToken`
+stay but answer `off` to every phone, since AIDL methods are never removed.
+
+The outline below lets the user choose on the evidence. 58b fixes the numbers.
+
+- **The route:** `POST /api/devices/music/storytel/asset` with `{"cid": "<id>"}`.
+  - The server makes the asset call with its JWT, without following the 302, with §2.3's 401 rule.
+  - It answers `{"status": "ok", "url": "<the signed CDN URL>"}`.
+  - The URL is a bearer for one book, as today: never logged or stored.
+- **Its limits:**
+  - per phone, about 60 mints a rolling hour (a series' downloads and a room's plays, not the token route's 20);
+  - an asset call is no login, so §2.3's login backoff, cap and cooldown still bound the logins behind it;
+  - an 8 s budget with the spawned task kept, as §2.2.
+- **Its answer rows** go into a `storytel_asset_answers.json` contract file, the token file's twin:
+  - `ok`;
+  - `off`, `refused`, `busy`, `unreachable`, `key`, as §2.2;
+  - `no_audio` for the asset call's 403/404/410/451, with the status;
+  - `failed` for any other status.
+- **The bridge:**
+  - `oneway void getStorytelAsset(String cid, IStorytelAssetCallback callback)`, appended;
+  - `onAsset(String status, String url, int httpStatus, long waitMs)`;
+  - a capability `storytel_asset_v1`;
+  - `bridge_contract.json`'s `storytel_asset` with the statuses and a 10 s timeout.
+- **The phone:** `StorytelAccount.mint` asks the bridge for the URL instead of making the asset call. Everything after
+  the mint is unchanged: the CDN download, Range, a room's play.
+- **The room's advance (58-1's case without a JWT on the phone).** There is nothing to prefetch on the phone.
+  - **Proposed:** while a room plays a book, the phone mints the **next** book's URL in the background a few minutes
+    before the end, keeps it in memory, and the advance uses it if it is still valid.
+  - Check 2 gives the URL's validity.
+  - If the URL lives less than a book's tail, the advance mints and the server's JWT is kept warm by the prefetch-like
+    asks of the room's phone.
+
+**The measurement that decides whether (b) is possible:**
 - **Check 1:** does a CDN URL minted from the Pi's IP play on a phone on mobile data, with another IP and carrier NAT?
-  - With step 1's server and `STORYTEL_BASE` unset, the user runs `scripts/storytel-mint-probe.py` on the Pi (new,
-    stdlib, `-I`).
+  - With step 1's server and `STORYTEL_BASE` unset, the user runs `scripts/storytel-mint-probe.py` on the Pi. It is
+    new, Python 3 stdlib only, run with `-I`.
   - The script asks for the family's login at a prompt (never stored, never in argv). It logs in, mints one book's
-    URL, and prints it **only to the terminal**, as a QR code and as text.
-  - On the parent's own phone, with Wi-Fi off, the user opens it. A 200 or 206 with audio means yes. The script never
-    writes a file and never logs.
+    URL, and prints it **only to the terminal**, as text. There is no QR code: the stdlib has no encoder.
+  - On the parent's own phone, with Wi-Fi off, the user opens it, typed or copied there by hand. It grants one book
+    and expires. A 200 or 206 with audio means yes. The script never writes a file and never logs.
 - **Check 2:** how long the URL stays valid. The script fetches the first byte again every 10 minutes for 2 hours and
   prints only the status.
-- **Both answers go into this note before 2b is designed further.**
+- **Both answers go into this note.** 58b starts from them.
 
 ## 3. The bridge contract (one commit in both apps, step 1)
 
@@ -541,9 +593,18 @@ The AIDL stays byte-identical in `launcher/` and `music/`, with methods appended
 - **When it is due:**
   - the kept JWT has less than `PREFETCH_LEFT` left, `min(10 min, its life on the phone / 3)`, and hasn't expired;
   - or there is none;
-  - and no ask is in flight, no wait runs, and the last failed prefetch was at least `PREFETCH_RETRY_MS` (2 min) ago.
-- **"The same JWT back"** is told by the JWT's value, not by the session or the expiry. It is no refresh, and it is
-  tried again in 2 minutes. §2.1's `PHONE_MIN_LEFT` makes it rare.
+  - and no ask is in flight, and no wait runs (`holdUntil`, `busyUntil`, `refusedUntil`, `offUntil`, `keyUntil`);
+  - and the prefetch's own backoff has passed (below).
+- **A short life is never prefetched** (QA N-6).
+  - The arithmetic needs `(L - 60 s) / 3 + 60 s < L / 2`, so only a JWT whose life on the phone `L` (at receipt) is
+    above 240 s is prefetched.
+  - Below that, the advance asks as any mint does. The server never hands out less than 61 s (§2.1).
+- **The prefetch's backoff** (QA N-10): after a failed or "same back" prefetch the next one waits 2, then 4, then 8
+  minutes (`PREFETCH_RETRY_MS`, doubling, at most 8). A new JWT resets it.
+  - So a room playing through an outage spends at most about 10 asks an hour on prefetches, inside the server's 20.
+  - The server's `busy` and the phone's `holdUntil` stop it earlier.
+- **"The same JWT back"** is told by the JWT's value, not by the session or the expiry. It is no refresh and counts as
+  a failed prefetch. §2.1's `PHONE_MIN_LEFT` makes it rare.
 - **At a room start:** when the service sends a Storytel play to a room, it calls `prefetchIfDue()` before the actor
   job is queued. An in-flight ask is shared with the actor's mint, and a late answer is kept, so a second tap is
   quick.
@@ -556,9 +617,15 @@ The AIDL stays byte-identical in `launcher/` and `music/`, with methods appended
 1. The asset call answers 401.
 2. The phone asks once with `stale` = the JWT's session.
 3. A JWT with a **different value** back is retried once.
-4. **The same value back** (the server judged it too young, or the force wasn't allowed, §2.3) is `Failed(401)` at once,
-   with no second request.
-5. A second 401 on the new JWT drops it (`:118-120`). `mintStopsRun` stops the run (`M/logic/Storytel.kt:115-116`).
+4. **A declined force** answers `busy` or `refused` with a wait (§2.3, QA N-1).
+   - The 401'd JWT is dropped. The mint is `LoginFailed("busy", wall + wait)` or `Refused(wall + wait)`, and the
+     waits of the table below apply.
+   - The download worker comes back at the wait's end (§5.3).
+5. **The same value back** should no longer happen, since the server never answers a force with the JWT it names. It
+   stays a belt: `Failed(401)` at once, with no second request, the JWT dropped, and the worker back in 2 minutes
+   (§5.3).
+6. A second 401 on the new JWT drops it (`:118-120`). `mintStopsRun` stops the run (`M/logic/Storytel.kt:115-116`).
+   The worker comes back in 2 minutes, as in step 5.
 
 **What the ask's answers become:**
 
@@ -602,9 +669,12 @@ Inside a wait there is no ask, and `mint` answers the same `Mint`. A generation 
 - **When an ask fails after the prompt retry:**
   - `LoginFailed` stops the run with no item error, as today.
   - **The worker now comes back on its own.** `DownloadRun.storytelRefusedUntil` (`DownloadRun.kt:85`, `:139`)
-    becomes `storytelBackAt`: a `Refused`'s end or a `LoginFailed`'s `backAtWallMs`.
-  - `Downloads.kt:172-174` re-enqueues at the earliest of it and `nextRetryAt`: 2 min after `unreachable`, the server's
-    wait after `busy`, 10 min after `key`.
+    becomes `storytelBackAt`. It is set from:
+    - a `Refused`'s end;
+    - a `LoginFailed`'s `backAtWallMs`;
+    - **a 401 stop** (`Failed(401)`, §5.1 steps 5-6): now + 2 min (QA N-1).
+  - `Downloads.kt:172-174` re-enqueues at the earliest of it and `nextRetryAt`: 2 min after `unreachable` or a 401
+    stop, the server's wait after `busy` or a declined force, 10 min after `key`.
   - Nothing waits for the 6 h backstop.
 - **A room** needs Wi-Fi anyway.
   - A failed mint is the room's failed play, `login_failed` (`sonosMintCode`, `M/logic/Storytel.kt:125-131`).
@@ -661,13 +731,17 @@ never a login on a phone.
 | Server | Launcher | Music app | What happens |
 |---|---|---|---|
 | new | old | old | The generation moved (§2.4). The old app asks for the login, the old launcher gets the empty 404 and answers 0, and the app deletes `storytel.bin`. Storytel stops on this phone until the app is updated. Device › Music: "Update Vibb One" (§2.5). |
-| new | new | old | The same through the new launcher's immediate 0. The row says "None", from the old app's `none`. |
+| new | new | old | The same through the new launcher's immediate 0. The row says "None", from the old app's `none`: accepted (QA N-11, below). |
 | new | old | new | The old launcher drops the app's `getStorytelToken`: a 10 s timeout, `LoginFailed("unreachable")`, the worker back every 2 min. **The report says `ok`, and `waiting` gives no `login` wait** (QA 58-10). The parent sees "Update Vibb One", from the missing `storytel_jwt_v1`. |
 | new | new | new | Works. |
 | old | new | new | The launcher's POST meets an empty 404, which is `off`. The app reports `none`, and its old login is already purged. No new books come until the server is updated. |
 | old | new | old | Equal generations: the old app keeps its stored login and works. On the first parent save after that, the launcher answers 0 and the app deletes it. |
 | old | old | new | Like row 3, without the PWA row (an old server). |
 
+- **Row 2's "None" is accepted** (QA N-11).
+  - The old app reports `none` honestly, and Device › Music shows the music app's version beside it.
+  - The case lasts only from the server and launcher update until the music app's.
+  - An "Update Vibb Music" hint would need a `music_state` contract change for a gap of days.
 - **The old route needs no grace period:** its only callers (older launchers) are told "delete yours" by the fallback.
 - **The `getStorytelLogin` AIDL method and `IStorytelCallback.aidl` stay forever** (transaction codes).
 - **No `server-v*` tag goes out between steps 1 and 3 unless step 1 releases alone** for §2.7's measurement. Then step
@@ -724,7 +798,8 @@ never a login on a phone.
   - **That cap is the whole bound for a hostile or buggy phone.** It replaces the first draft's "3 an hour" claim.
 - **On the phone:**
   - `holdUntil` (30 s after an `unreachable`) and the waits keep a kid's taps and a looping job off the 20 asks;
-  - the prefetch asks about once per JWT lifetime while a room plays.
+  - the prefetch asks about once per JWT lifetime while a room plays; failed ones back off 2, 4, 8 minutes, so a room
+    in an outage stays under about 10 asks an hour (§5.1, QA N-10).
 - **Other limits that still apply:** the device API's bucket (`S/limits.rs:25-26`) and the 256-byte body limit.
 
 ### 7.4 The reviews
@@ -771,11 +846,19 @@ fake values only.
 - `storytel::tests`:
   - `jwt_life_from_claims`: `min(exp - iat, exp - now)` with a sane clock, `exp - iat` without, the floors, the cap,
     the fallback;
-  - `payload_has_email`: yes for the stored e-mail, yes for any `@`, no otherwise; the captured line holds neither a
-    value nor a claim name;
+  - `payload_has_email`: yes for the e-mail used, yes for any `@`, no for a decoded payload without either, unknown for
+    an undecodable one; the captured line holds neither a value nor a claim name, and the save's probe logs it too;
+  - `classify_login`: a 4xx other than 408/429 is a refusal; 5xx, 408, 429, 1xx, 204, an unfollowed 3xx, transport,
+    timeout, `no_jwt` and a too-short life are outages; the probe touches no backoff or cooldown;
+  - `a_kept_jwt_needs_no_open`: the fast path reads the plain columns only (a key that can't open the row still
+    answers a kept JWT; no `login_error` write);
+  - `a_kept_jwt_is_handed_out_during_a_backoff`: above 120 s left it is answered, below it `busy`;
+  - `a_short_fresh_life_is_an_outage`: a login leaving under 120 s answers `unreachable` and starts the backoff;
+  - `a_declined_force_answers_a_wait`: a too-young JWT means `busy` to its `FORCE_MIN_AGE`; a spent force budget
+    means `busy` to the window; inside a cooldown, `refused`; never the named JWT;
   - `a_kept_jwt_is_answered_while_a_shelf_read_waits`;
-  - `a_force_relogs_only_for_the_stale_kept_old_jwt`: the session re-checked under the lock, a too-young JWT given
-    back, the fourth force in an hour given back, a force that fails as an outage keeping the JWT;
+  - `a_force_relogs_only_for_the_stale_kept_old_jwt`: the session re-checked under the lock, a newer kept JWT answered
+    without a login, a force that fails as an outage keeping the JWT for the others;
   - `the_sweeps_401_follows_the_kept_session`: two 401s on one JWT make one login;
   - `a_failed_login_backs_off_for_every_phone`: no second login inside the backoff, `busy` with its wait, doubling,
     reset on success and on a new generation;
@@ -784,7 +867,7 @@ fake values only.
   - `sessions_are_unique_across_an_account_rebuild`;
   - `the_life_fits_the_launchers_bound`: `JWT_LIFE_CAP - MARGIN <= 86 400`;
   - `the_override_sends_only_a_fake_login`: a real e-mail with `STORYTEL_BASE` set sends nothing; `Reach::Any` only
-    with the override;
+    with the override; the host compared exactly (`http://127.0.0.1.evil.example` refused);
   - `secret_types_have_no_debug` gains `KeptJwt` and `PhoneJwt`.
 - `src/tests/music_storytel.rs`:
   - each row of `storytel_token_answers.json` produced and compared;
@@ -799,8 +882,10 @@ fake values only.
 - `the_storytel_login_is_write_only_sealed_and_generational` (`S/tests/music.rs:3669`) loses its GET and
   `storytel_login_sent` parts (step 3).
 - `policy_json_keys_snapshot` is unchanged.
-- `fake_login_fixtures_match`: the moved login request's `pwd` hex equals `encrypt_password(<its password>)`.
-  `password_vectors` (`S/storytel.rs:1126-1145`) keeps its inline vectors.
+- `fake_login_fixtures_match` (QA N-14) reads `aes_vectors.json`, checks `encrypt_password` on every vector in it, and
+  checks that the copied login request's `pwd` hex is `encrypt_password(<its password>)`. That is what lets the
+  stdlib fake compare a hex it can't compute. `password_vectors` (`S/storytel.rs:1126-1145`) keeps its inline
+  vectors.
 
 **Launcher:**
 - `StorytelTokenCourierTest`: the shared answers, an incomplete `ok` as `launcher`, the waits' bounds and defaults, a
@@ -813,13 +898,15 @@ fake values only.
   - one shared ask;
   - a 6 s answer to a 4 s waiter kept for the next mint;
   - the prompt retry (`unreachable` then `ok` 5 s later gives one JWT, once only);
-  - the prefetch: due at `PREFETCH_LEFT` while a room plays, not otherwise, not twice, the same value back means no
-    refresh and a retry in 2 minutes;
+  - the prefetch: due at `PREFETCH_LEFT` while a room plays, not otherwise, not twice, never for a life of 240 s or
+    less, not inside `holdUntil` or a wait, backing off 2, 4, 8 minutes after a failure or the same value back, and
+    reset by a new JWT;
   - an advance's mint makes no ask after a prefetch;
   - each row of §5.1's table, with no ask inside a wait;
   - `holdUntil`;
   - a generation change and generation 0;
-  - the 401's different-value and same-value cases.
+  - the 401's cases: a different value (one retry), a declined force's `busy`/`refused` (the JWT dropped, the wait
+    kept), the same value (`Failed(401)`).
 - `StorytelApiTest` (the asset call): the 302 captured and never followed, the status classes, the deadline, a
   cancelled call ending at once, the debug base for `10.0.2.2` and loopback only.
 - `StorytelBridgeTokenTest`: `jwtResult`, the contract's statuses and timeout.
@@ -843,15 +930,26 @@ fake values only.
 - `payload_has_email`;
 - the `FAKE-JWT-` filter on the bridge path;
 - the override's fake-login guard;
-- the purge's `AtomicBoolean`.
+- the purge's `AtomicBoolean`;
+- the declined force's wait (QA N-1) and the 401 stop in `storytelBackAt`;
+- the fast path's plain-column read (QA N-8);
+- the kept JWT through a backoff (QA N-9);
+- `payload_has_email=unknown` (QA N-5);
+- the prefetch's 240 s guard and its backoff (QA N-6, N-10).
 
 **Fixtures and the fake** (`scripts/fake-storytel.py`, `--selftest`, CI `music.yml`; QA 58-12):
 
-- **The login fixtures** leave the music app and move under new names, so they don't collide with the server's
-  existing `login_ok.json` (a bare body):
+- **The login fixtures are copied in step 1, and the originals are deleted in step 2** (QA N-2). Their new names
+  don't collide with the server's existing `login_ok.json` (a bare body):
   - `server/testdata/storytel/fake_login_request.json` (the e-mail, the password, the `pwd` hex);
   - `fake_login_answers.json` (`ok` and `no_jwt`, each `{status, body}`);
   - `aes_vectors.json`.
+- **The originals stay until step 2:** `login_request.json`, `login_ok.json`, `login_no_jwt.json` and `aes_vectors.json`
+  in `music/app/src/test/resources/storytel/`.
+  - `StorytelApiTest.kt:39`, `:53`, `:89`, `:202` read them while the music app still logs in itself.
+  - Step 2 deletes them with the login code and those tests.
+- **The fake switches to the server copies in step 1.** Its `login.action` serves both readers from the same values:
+  the server in the chain, and the old music app on §6i A until step 2.
 - **The fake's login** (for §2.6's chain):
   - `login.action` accepts only that request, answering `FAKE-JWT-<n>`;
   - `--refuse` answers it 403;
@@ -907,6 +1005,10 @@ fake values only.
     `claims=no` (no dots in `FAKE-JWT-1`) and `payload_has_email=no`.
   - A second phone (or `pm clear` and a re-enrol) gets the same JWT with no new login.
   - `--revoke-after 1`: the server's force logs in once after `FORCE_MIN_AGE`'s 10 s, and the run continues.
+  - **A declined force (QA N-1):** `--revoke-after 1` within 10 s of the save's login.
+    - The phone's force gets `busy` with the few seconds left, not the old JWT.
+    - The download job comes back after the wait, the force logs in, and the book completes.
+    - There is no sync nudge in between.
   - `--login-5xx` after a revoke: no second login within a minute; the PWA says "Storytel can't be reached".
   - **The guard:** save a non-`.example.invalid` e-mail with the override set. The fake logs nothing, and the server
     logs "the stored login isn't a fake one".
@@ -930,18 +1032,21 @@ fake values only.
    - Launcher: §4's courier and `MusicServer.storytelToken`.
    - Music app: §5.4's call and its result. Nothing mints with it yet.
    - The shared answers file and its CI paths.
+   - The login fixtures **copied** to `server/testdata/storytel/` (§8), the fake reading them, and
+     `fake_login_fixtures_match`. The music originals stay.
    - Every test of §3.5, §8's server and launcher parts. Server version 0.34.0.
    - **This server may release on its own** (§6). §2.7's line then gates step 2.
-2. **The music app on the JWT** (`music/` only): §5.1-§5.3, §5.5, §5.6, the fake's `/fake/jwt`, §6i A and the music
-   tests of §8.
+2. **The music app on the JWT** (`music/` and the fake): §5.1-§5.3, §5.5, §5.6, the fake's `/fake/jwt`, §6i A and
+   the music tests of §8.
+   - It deletes the music app's login fixtures with the code and tests that read them.
    - **Built after Q-A is answered.**
-   - With (b), this step is replaced by 2b (§2.7), designed as an addendum to this note.
+   - With (b), this step is replaced by design 58b (§2.7).
 3. **The retirement** (`server/` and `launcher/`, one commit):
    - Server: the old route, its event and `StorytelLogin`; the migration (§2.4); the PWA rows (§2.5).
    - Launcher: `getStorytelLogin`'s 0; `MusicServer.storytel()` removed.
    - Their tests. Server version bump, again if step 1 went out alone.
-4. **The chain:** §2.6's `STORYTEL_BASE` with its guard, the fake's login and bookshelf, the fixtures' move, §6i B.
-   It can go with step 1.
+4. **The chain:** §2.6's `STORYTEL_BASE` with its guard, the fake's bookshelf, §6i B.
+   - It can go with step 1: the fixtures are already copied there and nothing of the music app's is moved.
 5. **Docs:**
    - `music/CLAUDE.md`: `:66-70`, `:110-114`, `:189-191`, `:235-245`, `:258-263`, `:264-271`, and "Storytel on a
      room": the prefetch.
@@ -967,7 +1072,7 @@ fake values only.
 book's link (b)?
 - Decided after step 1's line.
 - (b) needs its two checks first (§2.7): a Pi-minted link playing on a phone on mobile data, and how long the link
-  lives.
+  lives. It would then be designed as 58b (§2.7's outline).
 
 ## 12. Not verified here
 
@@ -1018,3 +1123,25 @@ Every finding of `docs/review/qa-58-design.md` and how it is fixed.
 | Tests to add (QA's list) | All in §8, with the mutation targets. |
 | Device checks to add (QA's list) | All in §9. |
 | QA's questions | Q-B, Q1, Q2 and Q3 answered (§0, §11). Q-A stays open until step 1's line, with both branches written (§2.7). |
+
+## Revision for qa-58-revision-check (2026-10-21)
+
+The fixes for `docs/review/qa-58-revision-check.md`.
+
+| Finding | Fix |
+|---|---|
+| **N-1 (M)** a declined force got the old JWT back, and the run stopped with no way back | §2.3: a declined force answers `refused` (inside a cooldown) or `busy` with the wait to the earliest allowed force: the age, the backoff, the cap's window, or the phone's force window. Never the named JWT. §2.2's `busy` row. §5.1 401 steps 4-6: the JWT is dropped and the wait kept. "The same value back" stays only as a belt. §5.3: `storytelBackAt` also takes a 401 stop (+2 min). Tests, a mutation target, a §9 chain check. |
+| **N-2 (M)** the fixture move broke the music suite and the fake before step 2 | §8 and §10: step 1 **copies** the login fixtures to `server/testdata/storytel/` under the `fake_login_*` names, and the fake reads the copies. The music originals stay for `StorytelApiTest` until step 2 deletes them with the login code. Step 4 moves nothing of the music app's. |
+| **N-3 (M)** branch (b) was a sketch; the probe's QR wasn't stdlib | §2.7: (b) is marked **not built in this design: a design 58b if the measurement says so**, with an outline to choose on: route, limits, answer rows and their contract file, AIDL method and callback, capability, and the advance's mitigation (mint the next book's URL ahead). The probe prints text only. §0, §10 step 2 and §11 say 58b. |
+| **N-4 (L)** other non-200 login answers unclassified | §2.3: `classify_login` in `login_with`. Any non-200 that isn't a refusal (a 4xx other than 408/429) is an outage. The save's probe classifies the same way but touches no backoff or cooldown and stores nothing, as today. Test. |
+| **N-5 (L)** `payload_has_email=no` when the payload couldn't be read | §2.7: yes, no or `unknown`. Only `no` clears the gate; `unknown` is decided like `yes`. Test. |
+| **N-6 (L)** short lives: the prefetch arithmetic, `expires_in_s` 0 | §2.1 rule 4: a fresh login leaving under 2 × `MARGIN` is `Outage("short_life")` (backoff, `unreachable`), so `expires_in_s` is at least 61. §5.1: no prefetch for a life on the phone of 240 s or less. Tests. |
+| **N-7 (L)** the measurement had no trigger and one sample | §2.7: the line is logged in `login_with`, so re-saving the login triggers it. Read two lines an hour apart. The card's facts come from memory, never a column. |
+| **N-8 (L)** the fast path opened the sealed password | §2.1 rule 1: the plain columns only; `credentials()` only for a login. Test. |
+| **N-9 (L)** a valid kept JWT was withheld in a backoff, cooldown or cap | §2.1 rule 3: a plain ask gets the kept JWT while it has over 2 × `MARGIN` left. §2.2's row. Test. |
+| **N-10 (L)** prefetch retries could outrun 20 an hour | §5.1: the prefetch honours `holdUntil` and every wait, and backs off 2, 4, 8 minutes, reset by a new JWT. §7.3. Test. |
+| **N-11 (L)** "None" for a new launcher with an old music app | Accepted, with its reason, in §6: the old app reports honestly, its version shows beside it, and the gap is days. A hint would need a `music_state` change. |
+| **N-12 (L)** `STORYTEL_BASE` host parsing | §2.6: parsed, with the host compared exactly; `127.0.0.1.evil.example` refused. Test. |
+| **N-13 (L)** PLAN.md's entry is stale | Not edited here: the coordinator updates the PLAN entry. |
+| **N-14 (L)** no reader for `aes_vectors.json` | §8: `fake_login_fixtures_match` reads it, checks every vector, and checks the copied request's `pwd` hex. |
+| "Where the JWT could hide": the card's facts | §2.7: from the account's memory, never a database column. |
