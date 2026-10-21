@@ -1028,7 +1028,12 @@ findings, merge to `main`, full suite once.
   modifyGroupMembers` on the own group added and removed Edith in ~0.2 s, the group's id unchanged while its
   coordinator stays (`RINCON_...:100`, name "Sverre + 1"). So the phone keeps one socket, to the coordinator of the
   room it plays to, and follows a MOVED to the new coordinator's url; the grouping verbs can stay UPnP (`x-rincon:`,
-  `BecomeCoordinatorOfStandaloneGroup`, as soco) with WebSocket only for events. **Grouping from outside the app is
+  `BecomeCoordinatorOfStandaloneGroup`, as soco) with WebSocket only for events. **The key, measured the same day**
+  (`sonos-ws-probe.py --key`, the user's Pi, Sverre): no `X-Sonos-Api-Key` header -> the upgrade is refused (HTTP
+  400); a random UUID -> accepted, the full handshake runs. The local endpoint needs the header but doesn't check its
+  value - the RFC 4122 example UUID is no secret and no borrowed key (it is in `jjlawren/sonos-websocket`'s first
+  commit, 2023-04-09, and in Music Assistant's `aiosonos`; SmartThings' official driver sends its own Sonos-issued key
+  to the same port 1443). **Grouping from outside the app is
   followed** (the user, 2026-10-21: the kids add and drop rooms by holding Play on a speaker, which can change the
   coordinator - "Endres groups utenfor vår musikk app skal vi klare å følge med"): the four cases - a room joins our
   group, a member leaves, our coordinator leaves (Sonos promotes a member and the stream moves: vibb's migration-follow,
