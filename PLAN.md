@@ -515,7 +515,20 @@ findings, merge to `main`, full suite once.
   in-call bar (app, time, hang up through the CallStyle hang-up action) - no setup, audio only until the PIN - or (D)
   only the call's own activity over the lock, seen through usage events (`PACKAGE_USAGE_STATS` app-op, adb at
   provisioning like the listener and the roles), anything else re-fronts the lock with "Tilbake til samtalen"; E as
-  D's fallback.
+  D's fallback. Measured: WhatsApp's ongoing call is CallStyle (callType 2) with `hangUpIntent` (a broadcast), call
+  screen `com.whatsapp/.calling.ui.VoipActivityV2`; Element X's ongoing call is a plain notification on
+  `call_foreground_service_channel`, content intent only - no hang-up anywhere: Element X source (main 2a8ce3ef,
+  2026-10-21) exports nothing in `features/call` (`ElementCallActivity` no filter, `CallForegroundService`,
+  `DeclineCallBroadcastReceiver` exported=false). `ElementCallActivity` has its own task (`taskAffinity
+  io.element.android.features.call`, singleTask), so its Back can't reach the chats - why "Tilbake til samtalen" is
+  safe there. **Element X hangs up when it can't enter PiP** (`PictureInPicturePresenter`: "Cannot enter PiP mode,
+  hangup the call"; `onUserLeaveHint` -> PiP, auto-enter on S+) and when a PiP exits while the activity isn't
+  started; PiP is refused in lock task (why design 17 starts no lock task during a kiosk-off VoIP call) - so any lock
+  start over a live call must carry `FLAG_ACTIVITY_NO_USER_ACTION` (no leave hint), and the kiosk-on case needs a check.
+  Usage access (D): no device-owner exemption for `queryEvents` (AOSP `UsageStatsService.hasQueryPermission`: the
+  app-op or `PACKAGE_USAGE_STATS` only; the DO exemption is only `hasObserverPermission`, package-level timers), the DO
+  can't grant an app-op - the parent toggles Usage access once on the phone (PIN-gated Settings row, during a pause)
+  or adb; check whether Android's "restricted settings" grey it out for a sideloaded launcher.
 - **VoIP over the lock, small launcher fixes** (the user's emulator, 2026-10-21, approved): (1) the lock resumed
   during an IN_CALL sometimes finds nothing to reopen (`No VoIP call screen to bring back` at 16:35:17, the kid then
   needs the PIN to get back to their own call) - log which case it was (no IN_CALL notice with a content intent, or the
