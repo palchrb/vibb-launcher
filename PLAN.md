@@ -519,6 +519,12 @@ findings, merge to `main`, full suite once.
   Emergency SOS" (16:37:12) - the SOS guess must not fire for the VoIP wake/FSI; (3) Home pressed during a VoIP call
   with the kiosk off flashes BlockedAppActivity (the app-block bit is on while the call is pinned) before the lock.
   Long list, not now: the caller's name/picture on the ring card from CallStyle's `EXTRA_CALL_PERSON`, memory only.
+  (4) **READ_PHONE_STATE for allowed apps** (the user, 2026-10-21, option 1): while calls are managed the third-party
+  CALL_PHONE/ANSWER_PHONE_CALLS denial greys the whole Phone group in Settings ("not allowed by admin"), so WhatsApp
+  can't get READ_PHONE_STATE (it asks for it to know a carrier call is on). Grant READ_PHONE_STATE by policy to every
+  allowlisted app that requests it, whenever the denial is set; CALL_PHONE/ANSWER_PHONE_CALLS stay denied. Unmanaged
+  calls: back to the phone's own choice. Test workaround: `adb shell pm grant com.whatsapp
+  android.permission.READ_PHONE_STATE`.
 - **Stuck in Recents after an unlock** (the user's emulator, 2026-10-21 ~16:55, not reproduced, no lock log kept): the
   user had just unlocked to grant WhatsApp its call permissions; then "app not available", the lock, and after the
   unlock quickstep's empty RecentsActivity on top with lock task LOCKED, HOME resolving to ours but `am start -c HOME`
