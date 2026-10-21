@@ -704,6 +704,9 @@ findings, merge to `main`, full suite once.
   (`KEYGUARD_DISABLE_SECURE_NOTIFICATIONS`), "Lås opp" -> Android's PIN pad; prototype behind a debug switch first. It
   would make design 57 unnecessary, so **design 57's prep release (branch `worktree-agent-a689b601f638554b8`) is held
   unmerged** until the user decides (it would ask parents for usage access). Five questions to the user (note §10).
+  Its code QA (`docs/review/qa-57-prep-code.md`, on that branch, `a8750fb6`): 0 High / 0 Medium / 3 Low / 5 Nit,
+  mutations 21/25 - the Lows (Android 14's unfixable Attention row, the Settings row can't revoke, three untested
+  paths) wait for the fix round if the branch is ever merged.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
