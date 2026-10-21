@@ -1264,6 +1264,14 @@ findings, merge to `main`, full suite once.
 - The server seeds the launcher's catalog row itself (merged 1b0a888d; goes out with the next
   `server-v*`).
 
+### To decide (the user)
+
+- **The app's DIDL differs from vibb's** (found 2026-10-21 against `pi/daemon.py` `_sonos_body`, branch pipewire): for a
+  podcast, RSS or NRK series item the app sends the listing's `duration` on the `res`, which vibb sends only for
+  Storytel, and never the picture vibb sends when it is http (`PlayBodies.build`, `SonosController` calls it without
+  `art`). The user's rule is vibb's DIDL field for field; the speaker test `scripts/sonos-play-test.py --didl vibb|app`
+  shows whether a speaker refuses either. Fix after that: the app sends exactly vibb's fields.
+
 ## Open questions
 
 - **Full Tailscale for the kid** (wanted: Immich and other tailnet services

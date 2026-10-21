@@ -398,8 +398,10 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   Autoplay after a list and after a context, the leftover queue add, shuffle and repeat).
 - **The DIDL is vibb's, field for field, and is never extended** (the user, 2026-10-20: "Ikke endre noe i didl!!" ...
   "å sende med mer enn vi gjør i vibb pi gjør at det blir rejected"): a speaker refuses a `SetAVTransportURI` whose
-  metadata carries more than vibb's (`Didl`) - no `duration` on the `res`, no `albumArtURI`, nothing added. The native
-  Sonos app shows no length or picture for our streams; the music app covers that for the kid.
+  metadata carries more than vibb's. `Didl` is vibb's `didl()`; what goes into it is vibb's `_sonos_body` (daemon.py,
+  branch pipewire): title, album, the picture when it is http, a `duration` on the `res` only for Storytel - nothing
+  added. (Checked 2026-10-21: the app's `PlayBodies.build` sends the listing's duration for every kind and no picture -
+  PLAN, Fix backlog.)
 - **Nothing starts by itself on Sonos either**: adopt sends nothing, a stale or unreachable speaker shows the play
   button, room -> phone plays on only when the speaker was PLAYING. **Every play path is gated** (`playAllowed`, then
   the controller's `mayPlay` before any SOAP): a start, a resume, a step, a natural advance, OUTPUT to a `sonos:` key
