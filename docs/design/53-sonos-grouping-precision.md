@@ -153,7 +153,8 @@ app is exactly today's plus the 1 s display poll of §2.4: **we lose speed, neve
   whose `websocketUrl` host equals the ip we dialled) -> its group -> `playback:1 subscribe` (that `groupId`), then
   `playback:1 getPlaybackStatus` (its reply is handled as an event), and `groups:1 subscribe` (householdId). Not
   subscribed: `playbackMetadata:1` (only our title; reconsidered if §0.1 (c) shows a takeover without an IDLE) and
-  `groupVolume:1` (no reader: the slider is the coordinator's own volume, §7 Q1). A `groups` event re-subscribes
+  `groupVolume:1` (no reader: a group's volume is computed from each room's own, §2.12 - Sonos' group volume can't
+  respect a cap per room). A `groups` event re-subscribes
   `playback:1` only when the group holding our player has another id **and its `coordinatorId` is our player** (while
   grouped away it would only earn a `MOVED` back). A `success: false` answer to our playback subscribe, or a `MOVED` for
   it (our uid no longer coordinates), leaves the socket open for `groups` but **not healthy**.
@@ -478,6 +479,62 @@ comment; it looks fake because it is the example. The golden DIDLs' Storytel URL
 `.invalid`). All new code GPL-3.0; the protocol steps follow our own probe scripts (the sonos-websocket library is read
 for the handshake, not copied).
 
+### 2.12 Volume in a group (53-b; the user's answer to Q1)
+
+The user (2026-10-21): "Volum i en gruppe burde ideelt sett kunne styres både sammen og individuelt", and after board 4
+of the sketch (`group-page/spill-av-pa-grupper.html`, "Volum i gruppe"): "jeg synes volumbiten så bra ut jeg".
+
+- **The sheet's group block** (board 4): under the group's title row a "Begge" slider (two rooms; "Alle" for three or
+  more) - the label at 13/700 in `Palette.sub`, 44 dp wide, the track peach, indented 38 dp like the member lines -
+  moves every room together. Each member line keeps its name and "−" (48 dp) and gets, under them, its own quieter
+  slider: a small speaker glyph (`Icons.volume`, stroked like the others) and a track at 75 % peach, the line at 90 %
+  opacity; it moves that room only. Content descriptions "Volum i begge rommene" / "Volum i alle rommene" and "Volum i
+  Stua". A **lone room is unchanged**: no slider in the sheet, the keys and the system's slider as today.
+- **The group's value** is the mean of the members' volumes (the sketch: Stua 55, Kjøkken 35, "Begge" 45; Sonos'
+  own group volume is shown the same way). It is what the "Begge" slider, the platform session's device volume
+  (`setDeviceVolume`, the system's volume panel) and the player show while a group plays.
+- **A group move = the same delta for every room, clamped per room**: dragging "Begge" from the mean m to m' adds
+  m' - m to each room's volume **as it was when the drag began** (a base snapshot, so dragging back restores the
+  balance within one drag), each result clamped to 0..100 and to the parents' cap (`volumeTarget(v, cap())`, the cap
+  read live as today). **The phone's volume keys and the player's / system's slider move the whole group the same way**
+  (a key press = ±3 to each room from its own last set; a system-slider value = the new mean); while the
+  household's volumes are unknown a key press reads them first (below). A member's own slider sets that room only,
+  clamped the same way. A raise never takes any room above the cap; a room already at the cap stays there while the
+  others rise; a room at 0 stays at 0 on a lower.
+- **Why not Sonos' `GroupRenderingControl`** (`SetGroupVolume` / `SetRelativeGroupVolume` on the coordinator, after a
+  `SnapshotGroupVolume`): it keeps the members' proportions and scales them on the speaker - there is no per-room
+  limit, so raising a group with one room at the cap would take that room above it. The parents' cap is per room
+  (§2.9, 26a §5.3: "every set of ours is clamped"), so every set stays our own `RenderingControl SetVolume` per room,
+  and the group value is ours (the mean). Equal deltas rather than proportions: the keys are already ±3 steps, a
+  proportional raise would take a room at 0 nowhere, and a delta is what "the same for both" looks like on two
+  sliders.
+- **Where the sets run**: the coordinator's own as today (our actor, `transport.volume`, `session.ownVolume`); every
+  other member's in a per-room, latest-wins job on IO (`RoomVolumes`: one conflated value per uid, 1.5 s budget, a
+  drag sends at most one set per room at a time), never in our actor - a switched-off member never delays a Pause. The
+  controller's `volOpt` becomes per room (`volOpt: Map<String, Int>`, our own last set per uid; `volSets` per uid too,
+  so a play's result never overwrites a newer set of that room, L1).
+- **What the app knows of each room's volume**: our own last set, else the last read. The members' `GetVolume`s are
+  read (in parallel, 1 s each, off our actor) when the sheet opens - beside the busy look -, when the group's members
+  change, and before the first group key press of a session whose members' volumes are unknown; the coordinator's
+  stays the session's aux read. A volume changed in the Sonos app shows at the next of these reads (no socket for
+  volume: §2.2).
+- **The cap**: unchanged per room - a start caps every member (26a §5.3), a joiner is capped once (§2.9, the accepted
+  ones of Q4 too), a cap lowered at a restrictions broadcast pulls each room whose **own last set by us** is above it
+  down once (`capChanged` over the map), and a louder volume set elsewhere is never pulled down.
+- **The UI pieces**: a `VolumeSlider` composable in `ui/Widgets.kt` (Compose foundation only, no Material: a track, a
+  fill and an 18 dp thumb, a horizontal drag and tap, `semantics { progressBarRangeInfo; setProgress }` for TalkBack,
+  the touch height 48 dp); the view model sends `Commands.ROOM_VOLUME` (`ARG_OUTPUT` = a member's uid, or the group's
+  coordinator with `ARG_GROUP = true`; `ARG_VOLUME`) at most every 150 ms while dragging and once at the release. The
+  values come back as published state (`PlayerHub.State.roomVolumes`: uid -> volume, and the group's mean). Not a play
+  (not in `PLAYS`), but nothing is set while the session isn't ours. `FitTest`: the block with the "Begge" line and two
+  and three member lines with their sliders at 320 dp, and the sheet's scroll when it is taller than
+  `OUTPUT_SHEET_MAX_SHARE`. Strings (`values` + `values-nb`): `group_volume_both` "Both" / "Begge",
+  `group_volume_all` "All" / "Alle", `group_volume_cd_both` "Volume in both rooms" / "Volum i begge rommene",
+  `group_volume_cd_all` "Volume in all rooms" / "Volum i alle rommene", `room_volume_cd` "Volume in %1$s" /
+  "Volum i %1$s".
+- **Pure rules** in `logic/` (`GroupVolume.kt`): `groupMean(volumes)`, `groupMove(base, newMean, cap)` (the per-room
+  targets, clamped), `groupStep(current, delta, cap)` (a key press), tested alone.
+
 ## 3. Tests (lean; JVM)
 
 - 53-0: `PlayBodyTest` through the shared `builtDidl` against the generated goldens (url, nrk, Storytel), duration only
@@ -522,7 +579,14 @@ for the handshake, not copied).
   keep passing with an empty `accepted`); `SonosControllerTest` `d53b` (`joiners`: an outside joiner outside the scope
   is reported once, accepted and capped when louder; an adopt's baseline members are accepted with nothing sent);
   `OutputRowsTest` (our row kept with the accepted room and its "−"; no "+" on an out-of-scope row);
-  `FitTest` (§2.7); `GuardsTest` (the group watch line; the `rooms.state` collector hands the members to the renderer
+  `GroupVolumeTest` (Q1: the mean; a group move adds the same delta to each room from the drag's base and clamps each
+  to 0..100 and the cap; a room at the cap stays while the others rise; dragging back restores the balance; a key
+  press ±3 per room; a lone room has no group rule); `SonosControllerTest` `d53b` (the keys and `setDeviceVolume` on a
+  group set every member, the coordinator through the actor and the others through `RoomVolumes`; a member's own set
+  touches only it; `capChanged` pulls down each room whose own last set is above the new cap and leaves a louder
+  volume set elsewhere alone; a play's result never overwrites a newer set of that room); `OutputRowsTest` (the
+  "Begge"/"Alle" line and the member sliders only in a group block, none on a lone room);
+  `FitTest` (§2.7, §2.12); `GuardsTest` (the group watch line; the `rooms.state` collector hands the members to the renderer
   before `publish()` and `leaveIfNotAllowed()`; `toRoom`'s same-room shortcut before its scope check); `SourceScanTest` `d53` (the trust manager,
   `checkServerTrusted` and a `HostnameVerifier` only in `SonosSocket.kt`; the socket client used for nothing else; no
   `wss://` literal; the strings in both languages).
@@ -554,7 +618,8 @@ Sequential (all touch the Sonos package), each with its code QA and fix round.
 - **53-b - grouping** (branch `sonos-53b`): §2.6-§2.9 - the verbs and `GroupVerbs`, `ROOM_JOIN`/`ROOM_LEAVE`, the sheet,
   `PlayerHub.sheetOpen` and the busy look, published pending/failed, the label, `knownMembers` and the joiner cap, the
   poll burst, the candidate (from `MOVED` or `groups`) and the advance guard, the group watch for every scope,
-  fake-sonos' verbs. Delivers the approved sketch and the four outside cases "as it happens".
+  fake-sonos' verbs, volume in a group (§2.12: `GroupVolume`, `RoomVolumes`, `ROOM_VOLUME`, `VolumeSlider`, the per-room
+  `volOpt`). Delivers the approved sketch with board 4 and the four outside cases "as it happens".
 
 Docs with each round: music/CLAUDE.md (53-0: the DIDL rule's "Checked 2026-10-21" sentence becomes "done"; 53-a: the
 socket's rule and its trust exception to "the system's CAs only", the extra polls' guards; 53-b: grouping, the cap and
@@ -605,6 +670,11 @@ entry; backlog items for anything found).
    the sheet's block with its "−" and no other out-of-scope row gets a "+", Kjøkken at 80 is brought down to the cap,
    the next episode advances on the group; the kid takes Stua out by hold-Play - the music follows to Kjøkken and plays
    on; switching home and picking Stua + Kjøkken's row again is refused as before (the app never starts there itself).
+8c. **Volume in a group** (Q1): Stua 55 and Kjøkken 35 show "Begge" at 45; dragging "Begge" up 10 gives 65 and 45;
+   with the cap 60 the same drag gives 60 and 45 (Stua never above it), and dragging back gives 55 and 35 again; the
+   phone's volume keys and the system's volume panel move both rooms by the same steps; Kjøkken's own slider moves
+   Kjøkken only; a volume changed in the Sonos app shows at the next sheet opening; a lone room has no slider in the
+   sheet and its keys work as before; a switched-off member doesn't delay Pause.
 9. **The DIDL**: a podcast, an NRK series item and a Storytel book each play, `didl accepted` in logcat, the Sonos
    app shows title and album; `sonos-play-test.py --didl vibb` and the app's DIDL are the same string.
 10. **The certificate and the key** on every speaker model in the house: the socket opens; a debug build logs the
@@ -621,15 +691,19 @@ entry; backlog items for anything found).
 - vibb advances on STOPPED near the end at its poll; 53 advances on the confirm poll an `IDLE` asks for (§2.3), and
   holds the advance for the probe right after a group change of ours (§2.8).
 - vibb caps nothing on grouping; the cap on joining rooms is the parent's rule extended (§2.9).
+- vibb's volume is the coordinator room's own; 53 moves the whole group by equal steps, each room capped, and gives
+  each room its own slider in the sheet (the user's answer to Q1, §2.12).
 - vibb has no room scope; the app's scope (26a §5.5) no longer undoes grouping done by hand during a session (the
   user's answer to Q4, §2.8).
 - The poll's display anchor is `RelTime + 0.5 s` (§2.4); vibb shows the truncated second. Display only.
 
-## 7. Open questions (the user) - Q1 and Q3 open, Q2 and Q4 decided 2026-10-21
+## 7. Open questions (the user) - Q3 open; Q1, Q2 and Q4 decided 2026-10-21
 
-- **Q1. Volume on a group.** The keys and the slider set the coordinator room's own volume (vibb's, 26a §5.3), so in
-  "Stua + Kjøkken" only Stua changes. Move them to the whole group (each member ±3 from its own volume, each capped;
-  or Sonos' `GroupRenderingControl`)? Default in 53: unchanged (a joiner is capped anyway, §2.9).
+- **Q1. Volume on a group - decided 2026-10-21: both together and per room.** The user: "Volum i en gruppe burde
+  ideelt sett kunne styres både sammen og individuelt", and after board 4 of the sketch: "jeg synes volumbiten så bra
+  ut jeg". A "Begge" slider in the group block moves every room, each member its own slider, the keys and the player's
+  slider move the group like "Begge", the parents' cap per room (equal deltas clamped per room, not Sonos'
+  `SetGroupVolume`); a lone room unchanged. The spec is §2.12.
 - **Q2. "Tas det siste ut, stopper den." - decided 2026-10-21: no "−" on a room that plays alone** (the default
   stands). The user: "gir mening for meg at vi ikke viser et minustegn på enkelthøyttalere som spiller alene". A group
   block always has two or more rooms; the last room is an ordinary selected row and stopping stays the play button's
@@ -705,7 +779,11 @@ Each finding was checked against the code before it was taken; all were taken, n
   room), §2.7's scope bullet (our row kept, the accepted room with its "−", "+" in scope only), §2.9 (the cap still
   applies - decided here, for the user to see), §3's `RoomScopeTest`/`SonosControllerTest`/`OutputRowsTest`/
   `GuardsTest` cases, §5 check 8b. 53-b carries it; music/CLAUDE.md's "Room scope" rule gets the exception with it.
-- **Q1** (group volume) and **Q3** (the hint line) are still open.
+- **Q1** (group volume): "Volum i en gruppe burde ideelt sett kunne styres både sammen og individuelt", and after
+  board 4 of the sketch "jeg synes volumbiten så bra ut jeg" - §2.12 (the "Begge" slider and one per room, the keys and
+  the player's slider as "Begge", equal deltas clamped to each room's cap, why not `GroupRenderingControl`), §3's
+  `GroupVolumeTest`/`SonosControllerTest`/`OutputRowsTest`/`FitTest` cases, §5 check 8c; in 53-b.
+- **Q3** (the hint line) is still open.
 
 ## Revision check (2026-10-21, qa-53-revision-check.md)
 
