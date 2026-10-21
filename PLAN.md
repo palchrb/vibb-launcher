@@ -699,8 +699,14 @@ findings, merge to `main`, full suite once.
   the shape of Element X's missed-call notification (category, channel, whether the caller's person is on it) - capture
   it on the Jelly Star first, then a short design note; launcher only. Approved 2026-10-15.
 
+- **Design 59, Android's own lock screen (assessment, 2026-10-21):** recommends the hybrid - a real Android PIN as
+  the gate, our glance page as a `showWhenLocked` face over it, Android's lock-screen notifications off
+  (`KEYGUARD_DISABLE_SECURE_NOTIFICATIONS`), "Lås opp" -> Android's PIN pad; prototype behind a debug switch first. It
+  would make design 57 unnecessary, so **design 57's prep release (branch `worktree-agent-a689b601f638554b8`) is held
+  unmerged** until the user decides (it would ask parents for usage access). Five questions to the user (note §10).
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** (1) the device token (and the other
-  CE-stored secrets P-L5 names: the kid PIN's hash and salt) wrapped with a non-exportable AndroidKeyStore key, so a
+  CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
+  plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
   copied data directory (root, a backup) is useless - launcher fix round; (2) a **hardware-bound device token**: at
   enrolment the phone makes a key pair in the Keystore (StrongBox when `android.hardware.strongbox_keystore`, else
   TEE), the server binds the token to its public key and every request is signed (key attestation checks the key is
