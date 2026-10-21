@@ -149,11 +149,13 @@ class CommandListenerService : Service() {
         super.onDestroy()
     }
 
+    /** The phone's one standing notification: "Vibb One", no body (PLAN "Fewer persistent
+     * notifications"; the VPN drops its own once the filter is up). Android shows a foreground
+     * service's notification at LOW at least, so its status-bar icon stays while this runs. */
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_LISTENER)
             .setSmallIcon(R.drawable.baseline_settings_24)
             .setContentTitle(getString(R.string.notification_listener_title))
-            .setContentText(getString(R.string.notification_listener_text))
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setOngoing(true)
             .setSilent(true)
