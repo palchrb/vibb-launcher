@@ -691,6 +691,16 @@ async fn healthz(axum::extract::State(state): axum::extract::State<AppState>) ->
     }
 }
 
+/// `GET /ping` (a session): an empty 204, never cached - `static/reconnect.js` asks it after the
+/// PWA was away or while a tapped page doesn't come, to know the server is reachable again.
+async fn ping() -> Response {
+    (
+        StatusCode::NO_CONTENT,
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+    )
+        .into_response()
+}
+
 /// Unknown paths: an empty 404 (both listeners).
 async fn not_found() -> StatusCode {
     StatusCode::NOT_FOUND
@@ -771,6 +781,9 @@ pub fn build_admin_router(
 
     let admin_routes = Router::new()
         .route("/", get(|| async { Redirect::to("/devices") }))
+        // static/reconnect.js's ping (2026-10-21): is the server there, and is the session? An
+        // empty 204 behind the session check (signed out: the login's redirect).
+        .route("/ping", get(ping))
         .route("/devices", get(handlers::devices::list_devices))
         .route("/schedules", get(handlers::schedules::show_schedules))
         .route(

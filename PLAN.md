@@ -1375,6 +1375,18 @@ findings, merge to `main`, full suite once.
 - **The notification filter on by default for new phones** (the user, 2026-10-21: "Varselfilter kan gjerne være på som
   standard, alt som er viktig for funksjon/hindre ting utenfor launcher bør vel gjerne bare være med"): server
   migration so a new `device_policy` row gets `notification_auto_cancel = 1`; existing phones keep their setting.
+  **Done 2026-10-21 (branch `srv-sweep-resume`)**: no migration needed - `insert_device_with_policy` inserts it as 1
+  (the `quick_controls_mask` pattern; the column default stays 0, so phones created before keep their value).
+- **The Spotify checks touch Spotify less** (approved 2026-10-21). **Done (branch `srv-sweep-resume`)**: an unchanged
+  playlist `snapshot_id` never reads the items again (the user: "om snapshot ID er lik, så er det vel ingen grunn til å
+  sjekke alle spor?"; only a moved snapshot or Check now); a context-mode playlist tries its items at most daily (at once
+  for Check now or a newer login); a show's gate reads `limit=1` and stops on the same newest episode and count.
+- **The PWA "does nothing" on a tap after being away** (the user, 2026-10-21; the network over Tailscale not up yet,
+  no loading indicator in an installed PWA; "En subtil reconnecting hadde vært bra!"). **Done (branch
+  `srv-sweep-resume`)**: `static/reconnect.js` - the tapped link marked and a bar at once, a calm "Connecting…" chip
+  after 3 s that pings `GET /ping` and starts the navigation again by itself, "Try again" after 20 s; back after 10
+  minutes hidden: a ping and a reload in place keeping the scroll place. Owed: the iPhone PWA after being away (and
+  the Android one) - a tab tapped before the network is up shows the chip and the page arrives without another tap.
 - **Design 55 (to write): controls on the lock's clock tile** (the user, 2026-10-21, iPhone-like): stopwatch running -
   pause and lap; paused - play and X (stop, reset, the notification goes); timer running - pause and X; paused - play
   and X; ended - restart and X. Needs research of what Fossify Clock exposes (today: only the ended timer's single

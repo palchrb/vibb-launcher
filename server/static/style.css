@@ -2135,3 +2135,23 @@ details.app-display[open] > summary .section-chev {
 /* A short value beside a button (the phone's running version next to Install Now): never wrapped
    or squeezed - the label column with its sub-line gives way instead (the user, 2026-10-20: "0.30." / "0"). */
 .row-value-keep { flex: none; min-width: auto; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+
+/* ---- Connecting (static/reconnect.js, 2026-10-21): a tap is never "nothing" after being away ---- */
+/* The tapped link at once: the tab in its "on" colour, a row pressed, any other link dimmed. */
+.is-pending { opacity: 0.6; }
+.tab.is-pending { color: var(--tab-on); opacity: 1; }
+.row.is-pending { background: var(--row-active); opacity: 1; }
+/* A thin bar along the top while the page comes; it never takes a tap. Both are absolute, never
+   fixed (design 43: the shell's document doesn't scroll, so its top is the screen's, and an iOS
+   standalone app's stale viewport moved fixed boxes). */
+.net-progress { position: absolute; z-index: 2000; top: env(safe-area-inset-top, 0px); left: 0; right: 0; height: 3px; overflow: hidden; pointer-events: none; }
+.net-progress::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%; background: var(--tint); animation: net-progress 1.2s ease-in-out infinite; }
+@keyframes net-progress { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+/* "Connecting…": a small calm chip at the top - no alarm colour, no modal, the page usable under
+   it; "Try again" in it only after 20 s. */
+.net-chip { position: absolute; z-index: 2000; top: calc(env(safe-area-inset-top, 0px) + 10px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; max-width: calc(100% - 32px); min-height: 36px; padding: 0 14px; border-radius: 18px; background: var(--surface); color: var(--label-2); box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); font-size: 0.875rem; white-space: nowrap; }
+.net-retry { min-height: 36px; margin: 0 -6px 0 10px; padding: 0 6px; border: 0; background: none; color: var(--tint); font: inherit; font-weight: 600; cursor: pointer; }
+.net-progress[hidden], .net-chip[hidden], .net-retry[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) {
+    .net-progress::before { width: 100%; opacity: 0.5; }
+}

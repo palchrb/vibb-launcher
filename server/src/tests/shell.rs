@@ -1029,3 +1029,43 @@ fn every_class_a_template_uses_is_in_style_css() {
     );
     assert!(!css.contains("card"));
 }
+
+/// 2026-10-21, a tap after being away never "does nothing": every page carries
+/// `static/reconnect.js` (deferred, from the head partial), and its ping `GET /ping` is an empty
+/// 204 that is never cached with a session and the login's redirect without one. The backup
+/// download is marked `download`, so the script never waits for a page that won't come.
+#[tokio::test]
+async fn every_page_carries_the_connecting_script_and_its_ping() {
+    let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
+    assert!(head.contains("<script src=\"/static/reconnect.js?v=1\" defer></script>"));
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    for page in [
+        "/devices".to_string(),
+        device_page(id, Section::Summary),
+        "/apps".to_string(),
+        "/music".to_string(),
+        "/settings".to_string(),
+    ] {
+        let html = app.get_page(&page, &cookie).await.text();
+        assert!(html.contains("/static/reconnect.js?v=1"), "{page}");
+    }
+    let signed_out = app.request(Method::GET, "/login", None, None).await;
+    assert!(signed_out.text().contains("/static/reconnect.js?v=1"));
+
+    let ping = app.get_page("/ping", &cookie).await;
+    assert_eq!(ping.status, StatusCode::NO_CONTENT);
+    assert!(ping.body.is_empty());
+    assert_eq!(
+        ping.headers
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store")
+    );
+    let ping = app.request(Method::GET, "/ping", None, None).await;
+    assert_redirect(&ping, "/login", None);
+
+    let backups = std::fs::read_to_string("templates/backups.html").unwrap();
+    assert!(backups.contains("/download\" class=\"button-small\" download>"));
+}
