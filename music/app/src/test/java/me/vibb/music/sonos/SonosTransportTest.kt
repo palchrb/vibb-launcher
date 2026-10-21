@@ -263,7 +263,10 @@ class SonosTransportTest {
         }
         val t = rig(spk)
         t.adopt("RINCON_X", Kind.URL, "http://c/e.mp3")
-        repeat(6) { t.poll(null) }
+        repeat(6) {
+            t.poll(null)
+            clock.advance(5_000) // the stall counts polls 5 s apart (design 53 §2.4)
+        }
         val commands = spk.log.filter { !it.startsWith("get") }
         assertEquals(listOf("stop", "play", "seek 0:07:11"), commands)
         assertTrue(logs.contains("position frozen - one in-place retry"))
@@ -277,7 +280,10 @@ class SonosTransportTest {
         }
         val t = rig(spk)
         t.adopt("RINCON_X", Kind.URL, "http://c/e.mp3")
-        repeat(5) { t.poll(null) }
+        repeat(5) {
+            t.poll(null)
+            clock.advance(5_000)
+        }
         assertEquals(listOf("stop"), spk.log.filter { !it.startsWith("get") })
         assertTrue(logs.contains("stall retry failed (SpeakerUnreachable)"))
     }

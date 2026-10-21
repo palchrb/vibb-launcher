@@ -1,0 +1,16 @@
+[
+  [{"namespace": "playback:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "type": "playbackStatus"},
+   {"_objectType": "playbackStatus", "playbackState": "PLAYBACK_STATE_PAUSED", "positionMillis": 440120, "previousPositionMillis": 439900}],
+  [{"namespace": "playback:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "type": "playbackStatus"},
+   {"_objectType": "playbackStatus", "playbackState": "PLAYBACK_STATE_BUFFERING", "positionMillis": 440120}],
+  [{"namespace": "playback:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "type": "playbackStatus"},
+   {"_objectType": "playbackStatus", "playbackState": "PLAYING", "positionMillis": 440300}],
+  [{"namespace": "playback:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "type": "playbackStatus"},
+   {"_objectType": "playbackStatus", "playbackState": "PLAYBACK_STATE_IDLE", "positionMillis": 0}],
+  [{"namespace": "playback:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001401:7", "type": "playbackStatus"},
+   {"_objectType": "playbackStatus", "playbackState": "PLAYBACK_STATE_PLAYING", "positionMillis": 12000}],
+  [{"namespace": "playbackMetadata:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "type": "metadataStatus"},
+   {"_objectType": "metadataStatus", "container": {"name": "Sommerfuglen"}}],
+  [{"namespace": "playback:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "type": "playbackStatus"},
+   {"_objectType": "playbackStatus", "playbackState": "PLAYBACK_STATE_SOMETHING_NEW", "positionMillis": 1}]
+]

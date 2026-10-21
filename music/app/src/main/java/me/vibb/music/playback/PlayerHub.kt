@@ -169,6 +169,13 @@ object PlayerHub {
     internal val mutableMessages = MutableSharedFlow<Message>(extraBufferCapacity = 4)
     val messages: SharedFlow<Message> = mutableMessages
 
+    /**
+     * The player screen shows: composed, its activity resumed (`PlayerScreen` sets it). A Sonos room
+     * without a healthy event socket polls every second meanwhile (design 53 §2.4); the session reads
+     * the value, nothing calls into it.
+     */
+    val playerShown = MutableStateFlow(false)
+
     /** The live position (ms), read on the main thread; null without a live queue. */
     @Volatile internal var position: (() -> Long)? = null
 

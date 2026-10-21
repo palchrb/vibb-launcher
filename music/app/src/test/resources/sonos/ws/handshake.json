@@ -1,0 +1,20 @@
+[
+  [{"householdId": "Sonos_FAKEhousehold000000000000001", "success": false, "type": "globalError"},
+   {"_objectType": "globalError", "errorCode": "ERROR_MISSING_PARAMETERS"}],
+  [{"namespace": "groups:1", "householdId": "Sonos_FAKEhousehold000000000000001", "response": "getGroups", "success": true, "type": "groups", "cmdId": "vibb-2"},
+   {"_objectType": "groups",
+    "groups": [
+      {"_objectType": "group", "id": "RINCON_00000000000001400:100", "name": "Stua", "coordinatorId": "RINCON_00000000000001400", "playbackState": "PLAYBACK_STATE_PLAYING", "playerIds": ["RINCON_00000000000001400"]},
+      {"_objectType": "group", "id": "RINCON_00000000000001401:7", "name": "Kjøkken", "coordinatorId": "RINCON_00000000000001401", "playbackState": "PLAYBACK_STATE_IDLE", "playerIds": ["RINCON_00000000000001401"]}
+    ],
+    "players": [
+      {"_objectType": "player", "id": "RINCON_00000000000001400", "name": "Stua", "websocketUrl": "wss://192.168.1.16:1443/websocket/api", "capabilities": ["PLAYBACK", "CLOUD", "AUDIO_CLIP"]},
+      {"_objectType": "player", "id": "RINCON_00000000000001401", "name": "Kjøkken", "websocketUrl": "wss://192.168.1.17:1443/websocket/api", "capabilities": ["PLAYBACK", "CLOUD"]}
+    ]}],
+  [{"namespace": "playback:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "response": "subscribe", "success": true, "type": "none", "cmdId": "vibb-3"},
+   {}],
+  [{"namespace": "playback:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "response": "getPlaybackStatus", "success": true, "type": "playbackStatus", "cmdId": "vibb-4"},
+   {"_objectType": "playbackStatus", "playbackState": "PLAYBACK_STATE_PLAYING", "positionMillis": 431250, "previousPositionMillis": 0, "isDucking": false}],
+  [{"namespace": "groups:1", "householdId": "Sonos_FAKEhousehold000000000000001", "response": "subscribe", "success": true, "type": "none", "cmdId": "vibb-5"},
+   {}]
+]

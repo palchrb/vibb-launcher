@@ -58,6 +58,21 @@ class FakeStore(private val spk: FakeSpeaker) : SonosStore {
     }
 }
 
+/** The socket's side for the controller (design 53 §2.2): its health, and what the controller owed or reported. */
+class FakeLink : SonosEventLink {
+    override var healthy = false
+    val owed = mutableListOf<Pair<Long, Long>>()
+    var disagreements = 0
+
+    override fun owed(since: Long, answeredAt: Long) {
+        owed += since to answeredAt
+    }
+
+    override fun disagreed() {
+        disagreements++
+    }
+}
+
 class FakeHost : SonosHost {
     var changes = 0
     val played = mutableListOf<Pair<String, String>>()
@@ -160,10 +175,16 @@ class ControllerRig(val uid: String = "RINCON_KID01400") {
     /** Storytel's account (design 26b §5.1) and the debug switch's private-literal allowance (§4.6 (d)). */
     val minter = FakeMinter(clock)
     var privateMint = false
+    /** The event socket as the controller sees it (design 53), and the confirm polls it asked for. */
+    val link = FakeLink()
+    var wakes = 0
     val c = SonosController(
         transport, work, store, { clock.now }, uid, "Barnerom", host, sleep = clock.clock.sleep, mayPlay = { allowed }, cap = { capPct },
-        minter = minter, privateMintAllowed = { privateMint },
+        minter = minter, privateMintAllowed = { privateMint }, events = link, wakePoll = { wakes++ },
     )
+
+    /** One event of the socket, received now (design 53 §2.3). */
+    fun event(state: WsPlayback, posMs: Long? = null, at: Long = clock.now) = c.onSocket(SocketEvent.Playback("$uid:100", state, posMs, at))
 
     val entry = SonosFakes.entry()
     val items: List<PlayItem> = (1..3).map { SonosFakes.item(key = "ep$it", url = "https://podkast.example/ep$it.mp3") }

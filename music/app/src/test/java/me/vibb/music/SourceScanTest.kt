@@ -180,8 +180,11 @@ class SourceScanTest {
         assertTrue(sets.any { it.name == "debug" })
         val files = sets.flatMap { set -> set.walk().filter { it.isFile && it.extension in setOf("kt", "java") }.toList() }
         assertTrue(files.size > 30)
+        // design 53 §2.2: the event socket's TLS context hands OkHttp its SSLSocketFactory, which wraps the client's own
+        // unbound sockets (the SOAP client's, bound to no Network) - that one expression, in that one file
+        val allowed = mapOf("SonosSocket.kt" to "tls.socketFactory")
         for (f in files) {
-            val text = code(f)
+            val text = code(f).let { t -> allowed[f.name]?.let { t.replace(it, "") } ?: t }
             for (token in banned) if (text.contains(token)) fail("${f.name} references $token")
         }
     }
@@ -647,6 +650,25 @@ class SourceScanTest {
         val others = moduleFile("src").walk().filter { it.isFile && it.name == "network_security_config.xml" }.map { it.path }.toList()
         assertEquals(others.toString(), 1, others.size)
         for (variant in listOf("src/debug/AndroidManifest.xml")) assertFalse(moduleFile(variant).readText().contains("networkSecurityConfig"))
+    }
+
+    /**
+     * Design 53 §2.2's one exception to "the system CAs only": the speaker's self-signed certificate,
+     * accepted only on the event socket's own client, for the one gated ip literal - nowhere else.
+     */
+    @Test
+    fun `d53 - the speaker's trust lives in SonosSocket only, its client is the socket's, and no wss URL is written down`() {
+        val main = sources("src/main/java")
+        val trust = Regex("X509TrustManager|checkServerTrusted|hostnameVerifier|HostnameVerifier|sslSocketFactory|SSLContext")
+        val holders = main.filter { trust.containsMatchIn(code(it)) }.map { it.name }
+        assertEquals(listOf("SonosSocket.kt"), holders)
+        val clients = main.filter { "speakerSocketClient(" in code(it) }.map { it.name }.sorted()
+        assertEquals("built in SonosSocket.kt, asked for by SonosHome only", listOf("SonosHome.kt", "SonosSocket.kt"), clients)
+        assertEquals("used by the renderer's socket only", listOf("SonosRenderer.kt"), main.filter { "socketClient(" in code(it) && it.name != "SonosHome.kt" && it.name != "SonosSocket.kt" }.map { it.name })
+        assertTrue("no wss:// literal: every URL is built from the cached ip", main.none { "wss://" in code(it) })
+        val socket = code(moduleFile("src/main/java/me/vibb/music/sonos/SonosSocket.kt"))
+        assertTrue("the gate before the dial", socket.indexOf("socketGate(url, ip)") in 0 until socket.indexOf("newWebSocket("))
+        assertTrue(socket.contains(".hostnameVerifier { name, _ -> host != null && name == host }"))
     }
 
     // Design 52: Bluetooth headphones in "Spill av på".

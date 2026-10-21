@@ -1,0 +1,4 @@
+[
+  [{"namespace": "playback:1", "householdId": "Sonos_FAKEhousehold000000000000001", "groupId": "RINCON_00000000000001400:100", "response": "subscribe", "success": false, "type": "globalError", "cmdId": "vibb-3"},
+   {"_objectType": "globalError", "errorCode": "ERROR_INVALID_OBJECT_ID"}]
+]

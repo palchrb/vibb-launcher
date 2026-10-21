@@ -12,6 +12,9 @@ package me.vibb.music.sonos
  * Storytel (design 26b §5.3, §5.7): "ours" is [sameStream] - a stored marker `storytel:book:<cid>`
  * matches the live signed URL by its `consumableId`, anything else is [normUri] equality as before; and
  * a uri goes into a log line only through [redactUri] (a signed URL's query is a bearer).
+ *
+ * Design 53 §2.4 (ours): the poll is stamped at GetPositionInfo's return; the 1 s display poll and an
+ * event's confirm polls pass guards so they change nothing else (freshness, the stall, the probe, the aux).
  */
 
 import me.vibb.music.logic.redactUri
@@ -155,7 +158,16 @@ sealed interface Tick {
     data class Next(val delayMs: Long, val stallRetryAtS: Double? = null) : Tick
 }
 
-class SonosSession(private val elapsedMs: () -> Long, private val log: (String) -> Unit = {}) {
+class SonosSession(
+    private val elapsedMs: () -> Long,
+    private val log: (String) -> Unit = {},
+    /** The player screen shows (`PlayerHub.playerShown`, design 53 §2.4): read, never called from main. */
+    private val playerShown: () -> Boolean = { false },
+    /** The event socket is healthy (a volatile flag, design 53 §2.2). */
+    private val socketHealthy: () -> Boolean = { false },
+) {
+    /** Volatile: the renderer reads it on main for the event socket's lifetime (design 53 §2.2). */
+    @Volatile
     var armed = false
         private set
     var uid: String? = null
@@ -193,6 +205,11 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
     private var oursLogged: String? = null
     private var downSince: Long? = null
     private var fails = 0
+
+    /** Design 53 §2.4's guards against the extra polls: the last counted stall poll, probe try and aux read. */
+    private var stallAt: Long? = null
+    private var probedAt: Long? = null
+    private var auxAt: Long? = null
 
     /** The listing's duration of the item we played: the tail cadence's only (null after an adopt). */
     private var cadenceHintS: Double? = null
@@ -239,6 +256,13 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         newSession()
     }
 
+    /** The extra polls' guards start over with a session (its first poll counts, reads the aux, may probe). */
+    private fun resetGuards() {
+        stallAt = null
+        probedAt = null
+        auxAt = null
+    }
+
     /**
      * What a new session (a play or an adopt) must not inherit (qa-26a-step1-code H1, H2, M1): the
      * down streak and the failure count (a play after a long STOPPED would be disarmed by its own
@@ -247,6 +271,7 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
      * publish the old episode's position as ours). vibb's `down_since` is the same latent bug.
      */
     private fun newSession() {
+        resetGuards()
         downSince = null
         fails = 0
         lastTr = null
@@ -331,10 +356,19 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
             return Tick.Disarmed
         }
         val delay = cadenceMs(tr, snap, fails)
+        // freshness keeps the normal rule's cadence, never the 1 s one: the screen going off must not read stale
         if (snap.reachable) lastCadence = delay
-        snapshot = snapshot.copy(nextPollMs = delay, measuredCadenceMs = lastCadence)
-        return Tick.Next(delay, retry)
+        val next = if (precise(snap, now)) minOf(delay, POLL_PRECISE_MS) else delay
+        snapshot = snapshot.copy(nextPollMs = next, measuredCadenceMs = lastCadence)
+        return Tick.Next(next, retry)
     }
+
+    /**
+     * The 1 s display poll (design 53 §2.4): while the player screen shows and the last snapshot is
+     * ours, fresh and PLAYING - only without a healthy socket (it pushes every change, exactly).
+     */
+    private fun precise(snap: Fields, now: Long): Boolean =
+        snap.reachable && snap.ours && snap.transport == TransportState.PLAYING && snap.fresh(now) && playerShown() && !socketHealthy()
 
     /**
      * `_classify`: one GetPositionInfo + one GetTransportInfo -> the snapshot's fields. Volume and
@@ -344,6 +378,8 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
      */
     fun classify(io: SpeakerIo, aux: Boolean = true): Fields {
         val pos = io.positionInfo()
+        // design 53 §2.4: the poll is stamped where it measured - right after GetPositionInfo, the earlier and truer time
+        val measuredAt = elapsedMs()
         var transport = TransportState.parse(io.transportInfo())
         val transitioning = transport == TransportState.TRANSITIONING
         if (transitioning) {
@@ -371,8 +407,10 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
             auxGroupedAway = false
             auxCoordinator = null
         }
-        if (aux && auxN <= 0) {
+        val auxDue = auxAt?.let { measuredAt - it >= AUX_MIN_MS } ?: true
+        if (aux && auxN <= 0 && auxDue) {
             auxN = AUX_EVERY
+            auxAt = measuredAt
             try {
                 val coordinator = io.groupCoordinator()
                 val away = coordinator != null && coordinator != io.uid
@@ -402,10 +440,11 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         if (ours && transport.live) {
             oursAt = elapsedMs()
             migrateTries = MIGRATE_TRIES
+            probedAt = null
             moved = null
         }
         return Fields(
-            armed = armed, uid = uid, kind = kind, seq = seq, measuredAt = elapsedMs(),
+            armed = armed, uid = uid, kind = kind, seq = seq, measuredAt = measuredAt,
             reachable = true, transport = transport, relS = rel, durS = dur, uri = trackUri, ours = ours,
             foreignUri = if (ours) null else trackUri.ifEmpty { null },
             groupedAway = auxGroupedAway, coordinator = auxCoordinator, lostSession = lost, volume = auxVolume,
@@ -472,8 +511,14 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         if (fields.transport != TransportState.PLAYING || !fields.ours) {
             frozen = 0
             lastPos = null
+            stallAt = null
             return null
         }
+        // design 53 §2.4: a poll counts only POLL_MS or more after the last counted one; an uncounted one (a confirm
+        // or a 1 s poll) leaves the count and the last position alone - "the same RelTime at polls 5 s or more apart"
+        val at = fields.measuredAt ?: elapsedMs()
+        if (stallAt?.let { at - it < POLL_MS } == true) return null
+        stallAt = at
         val rel = fields.relS
         if (rel != null && rel == lastPos) frozen++ else frozen = 0
         lastPos = rel
@@ -494,7 +539,11 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         if (!(fields.transport == TransportState.STOPPED && fields.uri.isNullOrEmpty())) return
         if (moved != null || migrateTries <= 0) return
         val ours = oursAt ?: return
-        if (elapsedMs() - ours > MIGRATE_WINDOW_MS) return
+        val now = elapsedMs()
+        if (now - ours > MIGRATE_WINDOW_MS) return
+        // design 53 §2.4: a try only MIGRATE_SPACING_MS after the last, whatever woke the poll
+        if (probedAt?.let { now - it < MIGRATE_SPACING_MS } == true) return
+        probedAt = now
         migrateTries--
         log("migration probe ${MIGRATE_TRIES - migrateTries}/$MIGRATE_TRIES: our uid stopped empty - looking for the stream on another coordinator")
         try {
@@ -539,5 +588,14 @@ class SonosSession(private val elapsedMs: () -> Long, private val log: (String) 
         const val MIGRATE_WINDOW_MS = 90_000L
         const val STALL_POLLS = 3
         const val MAX_CANDIDATES = 6
+
+        /** Design 53 §2.4: the display poll while the player shows without a healthy socket. */
+        const val POLL_PRECISE_MS = 1_000L
+
+        /** The aux reads (volume, the group's coordinator) at most this often, however many polls. */
+        const val AUX_MIN_MS = 60_000L
+
+        /** The migration probe's tries at least this far apart. */
+        const val MIGRATE_SPACING_MS = 1_500L
     }
 }
