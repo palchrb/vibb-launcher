@@ -229,6 +229,17 @@ class SonosEventsTest {
     }
 
     @Test
+    fun `d53d metadata of another group is no event (qa-53d-code 5)`() {
+        val plan = SonosEvents.Plan(stua, ip)
+        shaken(plan)
+        val other = "[{\"namespace\":\"playbackMetadata:1\",\"groupId\":\"$kjokken:7\",\"type\":\"metadataStatus\"}," +
+            "{\"container\":{\"id\":{\"objectId\":\"vibb-1\"}}}]"
+        assertTrue(feed(plan, other).events.isEmpty())
+        val ours = other.replace("$kjokken:7", "$stua:100")
+        assertEquals(listOf(SocketEvent.Metadata("$stua:100", OUR_OBJECT_ID, 1L)), feed(plan, ours).events)
+    }
+
+    @Test
     fun `d53d our DIDL's item id is the one the hint looks for`() {
         val built = didl("https://podkast.example/ep1.mp3", "Episode 1", null, "Podden", null, null)
         assertTrue(built, "<item id=\"$OUR_OBJECT_ID\"" in built)

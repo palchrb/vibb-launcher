@@ -96,6 +96,20 @@ internal class SonosRenderer(
             if (a.items.getOrNull(index)?.key != itemKey) return
             persistPlace(context, store, scope, writer, a, index, posMs, durationMs, shownDurationMs, force)
         }
+
+        // design 53-d (qa-53d-code 1): bound to the queue held now; once the service holds another, the old item's place
+        // and its entry's bookmark only - never the stored queue's row, which is the new queue's
+        override fun pin(): SonosStore {
+            val a = queue() ?: return this
+            return object : SonosStore {
+                override fun savedPosMs(itemKey: String): Long = resumeFrom(a.positions[itemKey])
+
+                override fun save(index: Int, itemKey: String, posMs: Long, durationMs: Long?, shownDurationMs: Long?, force: Boolean) {
+                    if (a.items.getOrNull(index)?.key != itemKey) return
+                    persistPlace(context, store, scope, writer, a, index, posMs, durationMs, shownDurationMs, force, withQueue = queue() === a)
+                }
+            }
+        }
     }
 
     private val host = object : SonosHost {

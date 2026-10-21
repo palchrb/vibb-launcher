@@ -620,7 +620,7 @@ class SonosSessionTest {
         val playing = Fields(
             armed = true, uid = kid, kind = Kind.URL, seq = 1, measuredAt = clock.now, reachable = true,
             transport = TransportState.PLAYING, relS = 431.0, durS = 1453.0, uri = ep, ours = true, foreignUri = null,
-            groupedAway = false, coordinator = null, lostSession = false, volume = 31, retriedAt = null, nextPollMs = 15_000,
+            groupedAway = false, coordinator = null, lostSession = false, volume = 31, volumeAt = clock.now, retriedAt = null, nextPollMs = 15_000,
             measuredCadenceMs = 15_000,
         )
         assertEquals("STATE_PLAYING", playing, s.snapshot)

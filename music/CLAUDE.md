@@ -466,7 +466,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   same item in the same motion within a second re-bases smoothly, a second or more (or a seek, a step, a new item, a play)
   jumps; a poll is `RelTime + 0.5 s` at GetPositionInfo's return - within the second it never moves the value (the
   event's exact position stands under a healthy socket) but always moves the anchor's instant on, or the bar would stop
-  at the 60 s extrapolation cap (events come on a change only; qa-53a-code 1) - display only. **The extra polls** (confirm polls; the 1 s display poll while `PlayerHub.playerShown`
+  at the extrapolation cap (70 s since 53-d; events come on a change only; qa-53a-code 1) - display only. **The extra polls** (confirm polls; the 1 s display poll while `PlayerHub.playerShown`
   and the snapshot is ours, fresh and PLAYING, only without a healthy socket) change nothing else: freshness keeps the
   normal cadence, the stall counts polls 5 s apart (an uncounted one leaves the count alone), the probe tries 1.5 s
   apart, the aux at most every 60 s, a poll's bookmark at most every 5 s unless the transport or the stream changed;
@@ -476,7 +476,12 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   verb window, TRANSITIONING, STOPPED, the migration window and the backoff are unchanged, and without a healthy socket
   everything is the 5/15 s cadence and the 1 s display poll as before. The bar's extrapolation cap is 70 s
   (`POLL_SLOW_MS` + the freshness slack); the socket going unhealthy wakes a poll at once; a poll that disagrees with a
-  healthy socket looks again 3 s later. ~162 UPnP calls for an hour of a podcast instead of ~542 (design 53 "53-d
+  healthy socket looks again 3 s later. Because a measurement can be a minute old: a step, a new pick and the
+  player's stop read the old item's place live first when the last measurement is older than 15 s
+  (`bookmarkLiveFirst`, in the actor ahead of the play or Stop, never ending a play's settle; a new pick writes through
+  the store pinned at the service's last `saveNow` - the old queue's place and bookmark, never the new queue's row), and
+  with no volume set of ours as the base the keys and the sleep fade read GetVolume first when the last read is over
+  60 s old (`readVolume`; a parent's own turn-down on the speaker is never stepped or ramped back up). ~162 UPnP calls for an hour of a podcast instead of ~542 (design 53 "53-d
   status"). **Our DIDL's id as a hint** (53-d): `playbackMetadata:1` is subscribed for the container's object id only
   (`SocketEvent.Metadata`, never a title); `vibb-1` (`OUR_OBJECT_ID`, the DIDL's `item id`) since our play went out plus
   a parked PLAYING/PAUSED of a new `itemId` re-base the bar and show READY while the play settles - display only:

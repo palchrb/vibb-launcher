@@ -116,6 +116,8 @@ data class Fields(
     val coordinator: String? = null,
     val lostSession: Boolean = false,
     val volume: Int? = null,
+    /** When [volume] was last READ from the speaker (an aux read or a read before a key press or the fade; design 53-d). */
+    val volumeAt: Long? = null,
     val retriedAt: Long? = null,
     val streamMoved: Moved? = null,
     val error: String? = null,
@@ -132,7 +134,7 @@ data class Fields(
     override fun toString(): String =
         "Fields(armed=$armed, uid=$uid, kind=$kind, seq=$seq, measuredAt=$measuredAt, reachable=$reachable, transport=$transport, " +
             "relS=$relS, durS=$durS, uri=${uri?.let(::redactUri)}, ours=$ours, foreignUri=${foreignUri?.let(::redactUri)}, " +
-            "groupedAway=$groupedAway, coordinator=$coordinator, lostSession=$lostSession, volume=$volume, retriedAt=$retriedAt, " +
+            "groupedAway=$groupedAway, coordinator=$coordinator, lostSession=$lostSession, volume=$volume, volumeAt=$volumeAt, retriedAt=$retriedAt, " +
             "streamMoved=$streamMoved, error=$error, failedPolls=$failedPolls, nextPollMs=$nextPollMs, " +
             "measuredCadenceMs=$measuredCadenceMs, transitioning=$transitioning, probeMissed=$probeMissed)"
 
@@ -196,6 +198,7 @@ class SonosSession(
     private var lastPos: Double? = null
     private var retriedAt: Long? = null
     private var auxVolume: Int? = null
+    private var auxVolumeAt: Long? = null
     private var auxGroupedAway = false
     private var auxCoordinator: String? = null
     private var auxN = 0
@@ -274,6 +277,7 @@ class SonosSession(
         retriedAt = null
         // new session: forget the old speaker's volume and topology, refresh them on the first poll
         auxVolume = null
+        auxVolumeAt = null
         auxGroupedAway = false
         auxCoordinator = null
         auxN = 0
@@ -340,6 +344,17 @@ class SonosSession(
         snapshot = snapshot.copy(volume = volume)
     }
 
+    /**
+     * Design 53-d (qa-53d-code 2): a GetVolume read outside the aux (before a key press or the sleep fade, when no set
+     * of ours is the base and the last read is old) - the snapshot's volume and its read time.
+     */
+    fun volumeRead(volume: Int) {
+        val at = elapsedMs()
+        auxVolume = volume
+        auxVolumeAt = at
+        snapshot = snapshot.copy(volume = volume, volumeAt = at)
+    }
+
     // -- the poll --
 
     /**
@@ -381,12 +396,13 @@ class SonosSession(
             snapshot = snap.copy(armed = false, seq = seq)
             return Tick.Disarmed
         }
-        val delay = cadenceMs(tr, snap, fails)
-        // design 53-d: said once per change, for the device check (one line, never per poll)
+        // one reading of the socket's health for the cadence and the line (qa-53d-code 8)
         val slow = relaxed(snap)
+        val delay = cadenceMs(tr, snap, fails, slow)
+        // design 53-d: said once per change, for the device check (one line, never per poll)
         if (slow != slowLogged) {
             slowLogged = slow
-            log(if (slow) "sonos: the socket is healthy - the regular UPnP check once a minute" else "sonos: the regular UPnP check at 5/15 s")
+            log(if (slow) "sonos: the regular UPnP check once a minute (socket healthy)" else "sonos: the regular UPnP check at 5/15 s")
         }
         // freshness keeps the normal rule's cadence, never the 1 s one: the screen going off must not read stale
         if (snap.reachable) lastCadence = delay
@@ -453,6 +469,7 @@ class SonosSession(
             }
             try {
                 auxVolume = io.volume()
+                auxVolumeAt = measuredAt
             } catch (_: Exception) {
                 // keep the last known volume
             }
@@ -479,7 +496,7 @@ class SonosSession(
             armed = armed, uid = uid, kind = kind, seq = seq, measuredAt = measuredAt,
             reachable = true, transport = transport, relS = rel, durS = dur, uri = trackUri, ours = ours,
             foreignUri = if (ours) null else trackUri.ifEmpty { null },
-            groupedAway = auxGroupedAway, coordinator = auxCoordinator, lostSession = lost, volume = auxVolume,
+            groupedAway = auxGroupedAway, coordinator = auxCoordinator, lostSession = lost, volume = auxVolume, volumeAt = auxVolumeAt,
             transitioning = transitioning,
         )
     }
@@ -515,12 +532,11 @@ class SonosSession(
      * the cruise cut short where the tail begins; the tail, the verb window, TRANSITIONING, the migration window and
      * the backoff stay as they are.
      */
-    fun cadenceMs(tr: TransportState?, snap: Fields, fails: Int): Long {
+    fun cadenceMs(tr: TransportState?, snap: Fields, fails: Int, slow: Boolean = relaxed(snap)): Long {
         val now = elapsedMs()
         if (tr == TransportState.UNREACHABLE) return minOf(POLL_MS * (1L shl minOf(fails, 6)), 300_000L)
         val fast = fastAt
         if (snap.transitioning || (fast != null && now - fast < VERB_FAST_MS)) return POLL_MS
-        val slow = relaxed(snap)
         return when (tr) {
             TransportState.PAUSED_PLAYBACK -> if (slow) POLL_SLOW_MS else POLL_PAUSED_MS
             TransportState.STOPPED -> {

@@ -70,6 +70,13 @@ interface SonosStore {
      * With [force] the write lands before this returns.
      */
     fun save(index: Int, itemKey: String, posMs: Long, durationMs: Long?, shownDurationMs: Long?, force: Boolean)
+
+    /**
+     * Design 53-d (qa-53d-code 1): a store bound to the queue the service holds now - a live bookmark that lands after
+     * a new pick still writes the old item's place (its position and its entry's bookmark; the stored queue's row only
+     * while that queue is still the service's).
+     */
+    fun pin(): SonosStore = this
 }
 
 /**
@@ -436,6 +443,15 @@ class SonosController(
     private var wakeQueued = false
     private var disagreements = 0
 
+    /** The store as the last [bookmarkNow] found it (qa-53d-code 1: the old queue's, for a live bookmark after a new pick). */
+    private var pinned: SonosStore? = null
+
+    /** Key presses waiting for a GetVolume read (qa-53d-code 2): their summed delta. */
+    private var keyDelta: Int? = null
+
+    /** When our own read ([SonosTransport.readVolume]) last answered. */
+    private var volumeReadAt = FAR_PAST
+
     /** The last non-forced bookmark from a poll: at most every [BOOKMARK_MIN_MS], unless the transport changed. */
     private var bmAt = FAR_PAST
     private var bmTr: TransportState? = null
@@ -640,6 +656,9 @@ class SonosController(
      */
     fun load(entry: Entry, items: List<PlayItem>, startIndex: Int, startMs: Long) {
         if (closed) return
+        // qa-53d-code 1: the old item's place from a live read when the last measurement is old (the service already
+        // switched its queue, so the store the last bookmarkNow saw)
+        pinned?.let { bookmarkLiveFirst(it) }
         this.entry = entry
         this.items = items
         index = if (items.isEmpty()) 0 else startIndex.coerceIn(items.indices)
@@ -859,6 +878,7 @@ class SonosController(
     fun stop() {
         if (closed || !session) return
         bookmarkNow(force = true)
+        bookmarkLiveFirst(store)
         val ours = snap?.ours == true
         endSession()
         ownsSpeaker = false
@@ -966,6 +986,8 @@ class SonosController(
             host.changed()
             return
         }
+        // qa-53d-code 1: under the slow check the last measurement may be a minute old - the old item's place first
+        bookmarkLiveFirst(store)
         gen++
         pending = Pending(items[idx].key, now, null)
         stepWant = idx
@@ -1327,7 +1349,11 @@ class SonosController(
             return
         }
         // our own stream plays or pauses again: the takeover skip is over
-        if (s.transport?.live == true && !s.transitioning) skipAdvance = null
+        if (s.transport?.live == true && !s.transitioning) {
+            skipAdvance = null
+            // qa-53d-code 3: the IDLE is decided too - unless its own confirm still waits for UPnP's STOPPED
+            if (confirm?.state != TransportState.STOPPED) idleGen = null
+        }
     }
 
     /**
@@ -1616,6 +1642,7 @@ class SonosController(
                 name = mv.name
                 // new speaker, new volume world
                 volOpts.clear()
+                volumeReadAt = FAR_PAST
                 volRead.clear()
                 unread.clear()
                 // design 53 §2.9 (qa-53b-code 2, 8): the stream's group moved with it - its rooms stay known and accepted
@@ -1692,6 +1719,7 @@ class SonosController(
      */
     fun bookmarkNow(force: Boolean) {
         if (closed) return
+        pinned = store.pin()
         val s = snap ?: return
         val pl = playing?.takeIf { it.index >= 0 && it.entryId == entry?.id } ?: return
         if (seeded || !s.ours || normUri(s.uri) != normUri(pl.uri)) return
@@ -1708,6 +1736,41 @@ class SonosController(
         }
         val shown = s.durS?.takeIf { it > 0 }?.let { (it * 1000).toLong() }
         store.save(pl.index, w.itemKey, w.posMs, w.durationMs, shown, force)
+    }
+
+    /**
+     * Design 53-d (qa-53d-code 1): before a step, a new pick or the player's stop replaces our item, its place from one
+     * live read when the last measurement is older than [LIVE_BOOKMARK_AFTER_MS] - under the slow check it can be a
+     * minute old. The read goes into the actor ahead of the play or the Stop (one GetPositionInfo + GetTransportInfo,
+     * the hand-off's [SonosTransport.liveRefresh]); its result is bookmarked for that item with `force` through [to] -
+     * never through `live()`, which would end a play's settle (`pending`), and never into the controller's snapshot.
+     */
+    private fun bookmarkLiveFirst(to: SonosStore) {
+        if (closed || !session || !ownsSpeaker || seeded || pending != null) return
+        val s = snap ?: return
+        val pl = playing?.takeIf { it.index >= 0 && it.entryId == entry?.id } ?: return
+        if (!s.ours || s.transport?.live != true || normUri(s.uri) != normUri(pl.uri)) return
+        val at = s.measuredAt ?: return
+        if (elapsedMs() - at <= LIVE_BOOKMARK_AFTER_MS) return
+        val hold = bmHold?.takeIf { it.itemKey == pl.itemKey }
+        val sought = seekAt
+        val target = uid
+        work.submit({ transport.liveRefresh(LIVE_BUDGET_MS) }) { r ->
+            r.getOrNull()?.let { f -> if (f.uid == target) bookmarkLive(f, pl, hold, sought, to) }
+        }
+    }
+
+    /** One live read's place of [pl] ([bookmarkLiveFirst]): the same measured-only rules as [bookmarkNow]. */
+    private fun bookmarkLive(f: Fields, pl: Playing, hold: BmHold?, seekAtMs: Long, to: SonosStore) {
+        if (closed || !f.reachable || !f.ours || normUri(f.uri) != normUri(pl.uri)) return
+        val now = elapsedMs()
+        val age = f.measuredAt?.let { (now - it).coerceIn(0, BOOKMARK_AGE_MAX_MS) } ?: 0L
+        // the speaker's own duration only (a live read carries no listing's)
+        val input = BookmarkInput(pl.itemKey, true, f.transport, f.relS, f.durS, false, age)
+        val verdict = SonosBookmarks.decide(input, hold, to.savedPosMs(pl.itemKey) / 1000.0, seekAtMs, now)
+        val w = verdict.write ?: return host.log("sonos: live bookmark not written: ${verdict.why}")
+        val shown = f.durS?.takeIf { it > 0 }?.let { (it * 1000).toLong() }
+        to.save(pl.index, w.itemKey, w.posMs, w.durationMs, shown, force = true)
     }
 
     // -- switching (§4.6) --
@@ -2029,10 +2092,37 @@ class SonosController(
     fun adjustVolume(delta: Int) {
         if (closed) return
         if (groupLive()) return withRoomVolumes { setRooms(groupStep(roomVolumes(), delta, cap())) }
-        val base = volOpt ?: snap?.volume ?: 50
+        if (volOpt == null && volumeStale()) {
+            // qa-53d-code 2: no set of ours is the base and the last read is old (the slow check reads it every ~12 min) -
+            // read it first, so a parent's own turn-down on the speaker is the base, never stepped back up from
+            keyDelta?.let {
+                keyDelta = it + delta
+                return
+            }
+            keyDelta = delta
+            val target = uid
+            work.submit({ transport.readVolume(target) }) { r ->
+                val d = keyDelta ?: return@submit
+                keyDelta = null
+                if (r.getOrNull() != null) volumeReadAt = elapsedMs()
+                r.exceptionOrNull()?.let { host.log("sonos: volume read failed (${it.javaClass.simpleName})") }
+                if (!closed) stepVolume(volOpt ?: r.getOrNull() ?: snap?.volume ?: 50, d)
+            }
+            return
+        }
+        stepVolume(volOpt ?: snap?.volume ?: 50, delta)
+    }
+
+    private fun stepVolume(base: Int, delta: Int) {
         val c = cap()?.takeIf { it in 1..99 }
         if (delta > 0 && c != null && base >= c) return host.log("sonos: volume at the cap ($c) - up ignored")
         setVolume(base + delta)
+    }
+
+    /** Our room's volume was last read more than [SonosSession.AUX_MIN_MS] ago, or never (qa-53d-code 2). */
+    private fun volumeStale(): Boolean {
+        val at = maxOf(snap?.volumeAt ?: FAR_PAST, volumeReadAt)
+        return elapsedMs() - at > SonosSession.AUX_MIN_MS
     }
 
     /**
@@ -2142,7 +2232,30 @@ class SonosController(
         val now = elapsedMs()
         val s = snap
         if (closed || !session || s == null || !s.ours || effectiveTransport(now) != TransportState.PLAYING) return done()
-        val base = volOpt ?: s.volume
+        if (volOpt == null && volumeStale()) {
+            // qa-53d-code 2: the ramp's base - and what it puts back after the Pause - is read first when no set of ours is
+            // one and the last read is old: a parent's turn-down at bedtime is never undone
+            fade?.set(true)
+            val reading = AtomicBoolean(false)
+            fade = reading
+            val target = uid
+            work.submit({ transport.readVolume(target) }) { r ->
+                if (fade === reading) fade = null
+                if (r.getOrNull() != null) volumeReadAt = elapsedMs()
+                r.exceptionOrNull()?.let { host.log("sonos: volume read failed (${it.javaClass.simpleName})") }
+                // a pause or a new timer meanwhile cancelled it: no ramp, no end reported (as a cancelled ramp)
+                if (!reading.get()) fadeFrom(done, r.getOrNull())
+            }
+            return
+        }
+        fadeFrom(done, null)
+    }
+
+    private fun fadeFrom(done: () -> Unit, read: Int?) {
+        val now = elapsedMs()
+        val s = snap
+        if (closed || !session || s == null || !s.ours || effectiveTransport(now) != TransportState.PLAYING) return done()
+        val base = volOpt ?: read ?: s.volume
         if (base == null) {
             pause()
             return done()
@@ -2236,6 +2349,12 @@ class SonosController(
 
         /** The disagreement rule: a poll counts against the socket only this long after its last event. */
         const val DISAGREE_AFTER_MS = 3_000L
+
+        /**
+         * Design 53-d (qa-53d-code 1): a step, a new pick or the player's stop reads the old item's place live first when
+         * the last measurement is older than this (today's cruise: without the slow check it rarely is).
+         */
+        const val LIVE_BOOKMARK_AFTER_MS = SonosSession.POLL_CRUISE_MS
 
         /** The live classify of a switch home (`/state?live=1`, 1021-1039). */
         const val LIVE_BUDGET_MS = 1_500L

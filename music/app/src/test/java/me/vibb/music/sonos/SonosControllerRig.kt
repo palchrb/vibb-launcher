@@ -21,7 +21,11 @@ class FakeWork : SonosWork {
         }
     }
 
+    /** Every delay asked of [after], in order (qa-53d-code 4: [drain] runs the blocks at once, so a test reads their spacing here). */
+    val delays = mutableListOf<Long>()
+
     override fun after(delayMs: Long, block: () -> Unit) {
+        delays.add(delayMs)
         afters.add(delayMs to block)
     }
 

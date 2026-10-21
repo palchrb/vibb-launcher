@@ -1167,7 +1167,10 @@ is bookmarked, and the advance, the follow, the park and every gate read UPnP as
 unchanged item) is no evidence: the seed shows until the landing poll, as in 53-a. The capture's first play (messages
 30-33: IDLE, BUFFERING item-2, metadata `vibb-1`, PLAYING 1186 ms) is replayed through `SonosEvents.Plan` into the
 controller (`SonosControllerTest` `d53d`); the capture shows the id on every play of ours (play, next, previous, the
-advance) and none at the subscribe's push and the park.
+advance) and none at the subscribe's push and the park. `vibb-1` is every vibb's id: a play the vibb Pi or a sibling's
+phone starts on the same room while ours settles carries it too, so the bar may show their position for up to
+`SETTLE_MS` until the landing poll reads their TrackURI (not ours: TAKEN_OVER as before) - display only, bounded, not a
+bug at the device check (qa-53d-code 6).
 
 **(3) The slow UPnP check while the socket is healthy** (`SonosSession.relaxed`, `POLL_SLOW_MS` = **60 s**). While
 `socketHealthy()` (53-a's definition: open, our coordinator's playback subscribed, acknowledged and read, live - a
@@ -1196,7 +1199,7 @@ Why 60 and not 120, and what had to move with it:
 - **The migration probe**: unchanged (STOPPED's window polls at 5 s); with the socket a `MOVED`/`groups` event starts the
   burst as in 53-b.
 - The 60 s locks renewal (`SonosLocks.RENEW_MS` 5 min) is re-asserted at every refresh, still ≥ 5 per renewal.
-- A one-line log when the slow check starts or ends (`the socket is healthy - the regular UPnP check once a minute`),
+- A one-line log when the slow check starts or ends (`the regular UPnP check once a minute (socket healthy)`),
   for the device check.
 
 **UPnP calls, an hour of one podcast playing from the start, the screen off** (`SonosSessionTest` `d53d`, simulated;
@@ -1227,3 +1230,40 @@ the socket` on a play, a next and the advance, the bar exact before UPnP confirm
 (`x-sonos-http:`) and a Storytel play carry `vibb-1` (the capture had direct-URI plays only; without it nothing
 changes); (e) the socket killed (the speaker's power, a Wi-Fi switch): today's cadence at once (the line `the regular
 UPnP check at 5/15 s`); (f) a stall, if one can be provoked: the retry within ~90 s.
+
+### 53-d fix round (qa-53d-code.md: 0 High, 2 Medium, 3 Low, 3 Nit - all taken)
+
+1. (M) **A step, a new pick or the player's stop bookmarked the old item from a measurement up to a minute old** (the
+   bookmark clock bullet above missed them). `bookmarkLiveFirst`: when the last measurement of our playing item is
+   older than `LIVE_BOOKMARK_AFTER_MS` (15 s, today's cruise - so without the slow check it rarely runs), one
+   `liveRefresh` goes into the actor ahead of the step's play, the pick's play or the Stop, and its result is bookmarked
+   for that item with `force` (`bookmarkLive`: the measured-only rules of `bookmarkNow`, the old item's hold and seek
+   time captured) - never through `live()`, so a play's settle (`pending`) is untouched and the snapshot isn't the old
+   item's again. A new pick of another entry: the service has already switched its queue when `load` runs, so the
+   write goes through the store **pinned at the service's last `saveNow`** (`SonosStore.pin()`; the renderer's pin
+   writes the old item's position and its entry's bookmark, and the stored queue's row only while that queue is still
+   the service's - `persistPlace(withQueue)`).
+2. (M) **The base of the keys and of the sleep fade could be a read 12 minutes old** (no set of ours: `volOpt` is null
+   until the kid sets one or a start caps). Now, with no own set and the last read older than `AUX_MIN_MS` (60 s;
+   `Fields.volumeAt`), the keys read GetVolume in the actor first (`SonosTransport.readVolume`; presses during the read
+   add up, one read) and the fade reads it before its ramp - the ramp and the volume put back after the Pause are the
+   speaker's real one, so a parent's turn-down on the speaker at bedtime is never undone. No periodic cost. The aux
+   bullet above is corrected by this.
+3. (L) An IDLE's confirm superseded by a PLAYING left `idleGen` for the generation (a later rebuffer near the end could
+   skip the advance): an ours live poll now clears `idleGen` with `skipAdvance`, unless an IDLE's confirm still waits
+   for UPnP's STOPPED.
+4. (L) The rig's `FakeWork` records every `after` delay (`delays`): the recheck's 1 s and the second look's 3 s are
+   pinned.
+5. (L) Tests for the metadata from before the play went out (no evidence) and another group's metadata (no event).
+6. (N) The `vibb-1` sibling-phone case, in (2) above.
+7. (N) music/CLAUDE.md's extrapolation cap says 70 s; design 54 takes the renamed constants at its next revision
+   (PLAN) - its text is not edited here.
+8. (N) One `relaxed` reading per tick for the cadence and the line; the line reads "the regular UPnP check once a
+   minute (socket healthy)" / "... at 5/15 s".
+
+Mutations after the round (each against the Sonos tests, reverted): the QA's five survivors M14-M18 and three of the
+round's own (no live read, the volume never stale, the new `idleGen` clear removed) - all caught.
+
+**Owed, added** (qa-53d-code): to (a) a skip to the next episode about 50 s after a slow poll, then back - the old
+episode resumes where it was left; to (b) the volume turned down on the speaker's own buttons, then a sleep-timer end
+and a key press - the fade starts from the turned-down volume and leaves it there.

@@ -1384,8 +1384,13 @@ findings, merge to `main`, full suite once.
   the container's object id, `vibb-1` + the new item's parked event re-basing the bar and showing READY while our play
   settles (display only); the slow check **60 s** while the socket is healthy (cruise and paused; the 5 s tail, verb
   window and the rest unchanged; the extrapolation cap 70 s; a frozen position back to 15 s; health lost wakes a poll;
-  a disagreeing poll looks again in 3 s) - an hour of a podcast **542 -> 162 UPnP calls**. Awaiting its code QA; owed on
-  the speakers: the note's 53-d (a)-(f).
+  a disagreeing poll looks again in 3 s) - an hour of a podcast **542 -> 162 UPnP calls**. Code QA `qa-53d-code.md`
+  (0 High, 2 Medium, 3 Low, 3 Nit) and its fix round done: a step, a new pick and the stop read the old item's place
+  live when the last measurement is over 15 s old; the keys and the sleep fade read the volume first when no own set
+  is the base and the last read is over 60 s old; the note's "53-d fix round". Owed on the speakers: the note's 53-d
+  (a)-(f) with the fix round's additions. **Design 54 takes 53-d's renamed constants at its next revision**
+  (`IDLE_RECHECK_MS`/`IDLE_RECHECK_UNTIL_MS` -> `CONFIRM_EVERY_MS`/`CONFIRM_UNTIL_MS`, 4 s; `54-spotify-on-sonos.md`
+  308-310 and 790).
 - **The notification filter on by default for new phones** (the user, 2026-10-21: "Varselfilter kan gjerne være på som
   standard, alt som er viktig for funksjon/hindre ting utenfor launcher bør vel gjerne bare være med"): server
   migration so a new `device_policy` row gets `notification_auto_cancel = 1`; existing phones keep their setting.
