@@ -508,6 +508,17 @@ findings, merge to `main`, full suite once.
   phone in plaintext), launcher S-M3 (browser "secure DNS" bypass) and S-M4 (a VoIP call over the PIN lock - the user
   doubts the chats are reachable; device check: lock, ring the phone from another Element X account, answer, try Back
   and the call screen's minimise arrow), music P-L4 (are "Pål"/"Ella" in `server/testdata/spotify/` real names?).
+  **S-M4 checked on the emulator 2026-10-21 (Element X): no way to the chats** - Back does nothing in
+  `ElementCallActivity`, the minimise arrow does nothing, Home and Recents land on the lock -> Low; the fix is only
+  the kiosk-on narrowing (lock task = the call app + helpers during the call). WhatsApp still to check (the user).
+- **VoIP over the lock, small launcher fixes** (the user's emulator, 2026-10-21, approved): (1) the lock resumed
+  during an IN_CALL sometimes finds nothing to reopen (`No VoIP call screen to bring back` at 16:35:17, the kid then
+  needs the PIN to get back to their own call) - log which case it was (no IN_CALL notice with a content intent, or the
+  send threw) and show a "Tilbake til samtalen" button on the lock whenever a VoIP call is IN_CALL and the reopen
+  didn't bring it up; (2) a VoIP ring's own screen coming up right after the wake's screen-on is logged as "probably
+  Emergency SOS" (16:37:12) - the SOS guess must not fire for the VoIP wake/FSI; (3) Home pressed during a VoIP call
+  with the kiosk off flashes BlockedAppActivity (the app-block bit is on while the call is pinned) before the lock.
+  Long list, not now: the caller's name/picture on the ring card from CallStyle's `EXTRA_CALL_PERSON`, memory only.
 
 - **No network after the VPN (re)starts** (the user's emulator, 2026-10-19, launcher 0.29.0 release): every upstream
   socket of design 36's DNS engine was refused by `protect()` - Android's `Socket()` has no descriptor until a bind -,
