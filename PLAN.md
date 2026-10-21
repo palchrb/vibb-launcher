@@ -1394,7 +1394,11 @@ findings, merge to `main`, full suite once.
   reachable from the lock today. Options: (a) a contribution to Fossify adding notification actions as broadcast
   PendingIntents (stopwatch: pause/resume/lap/reset; timer: pause/resume/stop; ended: restart/dismiss) - the lock then
   sends them like today's Stopp; (b) Vibb One's own timer/stopwatch on the lock (alarms stay Fossify's); (c) as today,
-  the tile opens Fossify after the unlock. Waiting for the user.
+  the tile opens Fossify after the unlock. **Parked** (the user, 2026-10-21: "da får vi bare vente"): Fossify already
+  has the requests open - FossifyOrg/Clock #245 (stopwatch: pause/resume, lap, reset) and #246 (timer: pause/resume,
+  reset), since 2025-07, labels "feature request"/"needs triage"; their rules allow AI contributions but take PRs only
+  for issues labelled `help wanted` and ask for a 👍 instead of "+1" comments. When either gets `help wanted` or ships,
+  pick this up (the lock reads the actions as it reads today's Stopp; ask for an action extra to tell them apart).
 
 - **Design 54's measuring run done early** (the user's Pi, 2026-10-21, `sonos-play-test.py --spotify` + the probe's
   `--save`; raw files in the session scratchpad, to be scrubbed into fixtures by 54-a1): sn 2311 took the ShareLink in
