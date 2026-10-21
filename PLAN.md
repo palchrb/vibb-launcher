@@ -1014,6 +1014,15 @@ findings, merge to `main`, full suite once.
   (the user, 2026-10-20: "Ikke endre noe i didl!!" - no duration, no art, nothing added to what the room is sent; the
   music app covers the gap for the kid; and the reason - "å sende med mer enn vi gjør i vibb pi gjør at det blir
   rejected": the speaker refuses metadata beyond vibb's; `music/CLAUDE.md` carries the rule).
+  **Measured 2026-10-21** (`scripts/sonos-play-test.py` on the user's Pi, speaker Sverre, Hallo Bablo, both `--didl
+  vibb` and `--didl app` accepted): the local WebSocket pushes `playbackStatus` on every change only (BUFFERING,
+  PLAYING, PAUSED, IDLE - no ticks; 8 events while playing over ~60 s), each with an exact `positionMillis`, 0.0-0.4 s
+  after the command (the 1 s UPnP poll: 0.3-2.6 s); the natural end is `IDLE` the moment the audio ends (16.5 s after
+  a seek to 15 s before the end) - the app's advance then plays the next within ~0.7 s, where today's 5/15 s poll
+  leaves up to 15 s of silence. `metadataStatus` carries only `container` = our `dc:title` (no track, duration or
+  art, whichever DIDL). So for (2)+(3): a WebSocket subscription anchors the position on each event and the phone
+  extrapolates between, and `IDLE` near the end advances at once; UPnP polling stays the fallback and the commands
+  stay UPnP. A grouped room's events and `groups:1 modifyGroupMembers` from one socket are still untested.
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
