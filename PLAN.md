@@ -1474,6 +1474,15 @@ findings, merge to `main`, full suite once.
   the pause/override on and off: the filter goes and comes back, no notification left; (5) no
   `ForegroundServiceDidNotStartInTimeException` in a day's logcat (every sync calls `start`).
 
+- **The speaker's own Next/Previous on a podcast (measured 2026-10-21, the user's Pi, Sverre, `sonos-play-test.py
+  --press`)**: a double press (Next) did nothing at all - no socket event, UPnP kept counting (`canSkip: false` for our
+  one-URI stream); a triple press (Previous) restarted the same episode at 0 (socket BUFFERING position 0 with
+  `previousPositionMillis` 12248, same `itemId`, then PLAYING; UPnP TRANSITIONING 0:00:00), which matches the app's own
+  "previous more than 5 s in restarts the episode"; a PAUSED at 4.75 s followed 5 s later (unexplained - possibly a
+  press read as a single tap). So the speaker's Next can't drive the app (nothing to observe) without a Sonos queue, which
+  the user ruled out for podcasts; Previous is visible as an outside seek to 0 that the app follows (device check: the
+  app's bar and bookmark follow it).
+
 ### To decide (the user)
 
 
