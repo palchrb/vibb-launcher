@@ -2,6 +2,7 @@ package me.vibb.music.sonos
 
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -48,10 +49,29 @@ class SonosTrustTest {
         assertNull(refusal("leaf_via_intermediate", "test_intermediate", "test_root"))
         assertNull("the udn's case", refusal("leaf_good", uid = uid.lowercase()))
         assertEquals(listOf(uid), certificateUdns(cert("leaf_good")))
+        // qa-53c-code 4: the CA vouches for every name it lists - ours among others is enough
+        assertEquals(listOf("RINCON_00000000000001401", uid), certificateUdns(cert("leaf_two_udns")))
+        assertNull("our udn second", refusal("leaf_two_udns"))
+        assertNull("the other one first", refusal("leaf_two_udns", uid = "RINCON_00000000000001401"))
+    }
+
+    /**
+     * qa-53c-code 3: the udn's spelling against the uid the app commands. Measured on the user's speaker (2026-10-21,
+     * here with a fake MAC): its SAN held `URI:urn:sonos:udn:RINCON_<12 hex>01400` and its device description
+     * `<UDN>uuid:RINCON_<12 hex>01400</UDN>`; the app's uid is the latter without `uuid:` (`Soap.parseUdn`) - the
+     * SAN's value after the prefix, character for character.
+     */
+    @Test
+    fun `the SAN's udn is spelt as the uid the app reads from the device description`() {
+        val description = "<root xmlns=\"urn:schemas-upnp-org:device-1-0\"><device><UDN>uuid:$uid</UDN></device></root>"
+        val ours = Soap.parseUdn(description)
+        assertEquals(uid, ours)
+        assertEquals(listOf(ours), certificateUdns(cert("leaf_good")))
+        assertNull(refusal("leaf_good", uid = ours!!))
     }
 
     @Test
-    fun `another uid, no udn, another root, a self-signed or expired leaf, a missing intermediate - each refused`() {
+    fun `another uid, no udn, another root, a self-signed leaf, a missing intermediate - each refused`() {
         assertEquals("udn mismatch", refusal("leaf_wrong_udn"))
         assertEquals("udn mismatch", refusal("leaf_good", uid = "RINCON_00000000000001401"))
         assertEquals("udn mismatch", refusal("leaf_good", uid = ""))
@@ -60,11 +80,25 @@ class SonosTrustTest {
         assertEquals("chain", refusal("leaf_other_root"))
         assertEquals("chain", refusal("leaf_other_root", "other_root"))
         assertEquals("chain", refusal("leaf_self_signed"))
-        assertEquals("chain", refusal("leaf_expired"))
         assertEquals("the intermediate not sent: never fetched", "chain", refusal("leaf_via_intermediate"))
         assertEquals("no chain", speakerCertRefusal(emptyArray(), ecdhe, uid, testRoots))
         assertEquals("no chain", speakerCertRefusal(null, ecdhe, uid, testRoots))
         assertEquals("the anchor itself as the leaf: trusted, but it names no player", "no udn", refusal("test_root"))
+    }
+
+    /** qa-53c-code 5: a speaker's own valid leaf (CA:FALSE) can't mint a certificate naming our udn. */
+    @Test
+    fun `a leaf used as an issuer is refused - with or without the root sent along`() {
+        assertEquals("chain", refusal("leaf_under_leaf", "leaf_good"))
+        assertEquals("chain", refusal("leaf_under_leaf", "leaf_good", "test_root"))
+        assertEquals("chain", refusal("leaf_under_leaf"))
+    }
+
+    /** qa-53c-code 2: outside its dates is the phone's clock as likely as the certificate - a class of its own. */
+    @Test
+    fun `a leaf outside its dates is refused as dates, not chain`() {
+        assertEquals(CERT_DATES, refusal("leaf_expired"))
+        assertEquals(CERT_DATES, refusal("leaf_not_yet_valid"))
     }
 
     @Test
@@ -78,6 +112,7 @@ class SonosTrustTest {
             fail("a chain to another root")
         } catch (e: SpeakerCertificateException) {
             assertEquals("speaker certificate refused: chain", e.message)
+            assertEquals("chain", e.reason)
         }
         assertEquals(listOf("sonos socket: certificate refused (chain)"), logs)
         try {
@@ -87,39 +122,58 @@ class SonosTrustTest {
         }
     }
 
+    /** qa-53c-code 11 (M8): the host name verifier accepts exactly the dialled ip - no other name, no uid. */
     @Test
-    fun `a refusal logs its class, a debug build the leaf's CNs and the verdict once - never the SAN`() {
+    fun `the socket's client verifies the host name as exactly its ip`() {
+        val verifier = speakerSocketClient(OkHttpClient(), "10.0.0.5", uid).hostnameVerifier
+        assertTrue(verifier.verify("10.0.0.5", null))
+        for (name in listOf("10.0.0.6", uid, "sonos-000000000000.local", "", "10.0.0.50")) assertFalse(name, verifier.verify(name, null))
+        val v6 = speakerSocketClient(OkHttpClient(), "fd00::5", uid).hostnameVerifier
+        assertTrue("OkHttp's canonical form", v6.verify("fd00::5", null))
+        assertFalse(speakerSocketClient(OkHttpClient(), "not an ip", uid).hostnameVerifier.verify("not an ip", null))
+    }
+
+    @Test
+    fun `a refusal logs its class, a debug build the leaf's CNs and the verdict once per uid and verdict - never the SAN`() {
         val logs = mutableListOf<String>()
         val debug = mutableListOf<String>()
-        val testRoot = cert("test_root")
-        // a uid of this test's own: the debug line is once per uid and process
-        val udn = speakerSocketClient(OkHttpClient(), "10.0.0.5", "RINCON_00000000000001499", { logs += it }, { debug += it }, testRoot)
-        try {
-            udn.x509TrustManager!!.checkServerTrusted(arrayOf(cert("leaf_good")), ecdhe)
-            fail("another uid")
-        } catch (_: SpeakerCertificateException) {
+        val client = speakerSocketClient(OkHttpClient(), "10.0.0.5", uid, { logs += it }, { debug += it }, testRoots)
+        val trust = client.x509TrustManager!!
+        repeat(2) {
+            try {
+                trust.checkServerTrusted(arrayOf(cert("leaf_wrong_udn")), ecdhe)
+                fail("another uid's certificate (a stale ip)")
+            } catch (_: SpeakerCertificateException) {
+            }
         }
-        assertEquals(listOf("sonos socket: certificate refused (udn mismatch)"), logs)
-        assertEquals(listOf("sonos socket: certificate CN \"TEST00000000\", issuer CN \"Vibb Test Root\" - refused (udn mismatch)"), debug)
-
-        val good = speakerSocketClient(OkHttpClient(), "10.0.0.5", uid, { logs += it }, { debug += it }, testRoot)
-        good.x509TrustManager!!.checkServerTrusted(arrayOf(cert("leaf_good")), ecdhe)
-        good.x509TrustManager!!.checkServerTrusted(arrayOf(cert("leaf_good")), ecdhe)
-        assertEquals("an accepted certificate logs nothing in a release build", 1, logs.size)
+        assertEquals(List(2) { "sonos socket: certificate refused (udn mismatch)" }, logs)
+        // qa-53c-code 7: a first refusal never hides the later verified line check 10 looks for
+        trust.checkServerTrusted(arrayOf(cert("leaf_good")), ecdhe)
+        trust.checkServerTrusted(arrayOf(cert("leaf_good")), ecdhe)
+        assertEquals("an accepted certificate logs nothing in a release build", 2, logs.size)
         assertEquals(
-            "once per uid",
-            listOf("sonos socket: certificate CN \"TEST00000000\", issuer CN \"Vibb Test Root\" - verified (the pinned root, the udn)"),
-            debug.drop(1),
+            listOf(
+                "sonos socket: certificate CN \"TEST00000000\", issuer CN \"Vibb Test Root\", valid to 2120 - refused (udn mismatch)",
+                "sonos socket: certificate CN \"TEST00000000\", issuer CN \"Vibb Test Root\", valid to 2120 - verified (the pinned root, the udn)",
+            ),
+            debug,
         )
         for (line in logs + debug) {
             for (secret in listOf("urn:sonos", "RINCON", "Sonos_TEST", "sonos-0000")) assertTrue(line, secret !in line)
         }
     }
 
+    /** qa-53c-code 8: the first CN relative name only - not one inside another attribute's value - printable, capped. */
     @Test
-    fun `commonName reads an RFC 2253 name with its escapes`() {
+    fun `commonName reads an RFC 2253 name with its escapes, printable and capped`() {
         assertEquals("Sonos\\, Inc", commonName(X500Principal("CN=Sonos\\, Inc, O=Vibb Test")))
         assertEquals("TEST00000000", commonName(X500Principal("O=Vibb Test, OU=Test Devices, CN=TEST00000000")))
         assertNull(commonName(X500Principal("O=Vibb Test")))
+        assertEquals("Real", commonName(X500Principal("O=Evil\\,CN=Fake, CN=Real")))
+        assertNull("a CN inside a value is no CN", commonName(X500Principal("O=Evil\\,CN=Fake")))
+        assertEquals("a", commonName(X500Principal("CN=a+O=b")))
+        val wild = commonName(X500Principal("CN=a\u0007b\u001b[31m" + "x".repeat(100)))!!
+        assertTrue(wild, wild.none { it.isISOControl() })
+        assertEquals(64, wild.length)
     }
 }

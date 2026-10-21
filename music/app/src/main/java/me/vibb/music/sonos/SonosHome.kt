@@ -88,7 +88,8 @@ class SonosHome(context: Context) {
      * trusting the pinned Sonos root only, the certificate naming [uid].
      */
     fun socketClient(ip: String, uid: String): OkHttpClient =
-        speakerSocketClient(client(), ip, uid, log = ::log, certLog = if (BuildConfig.DEBUG) ::log else null)
+        // named: two Strings, and swapped every speaker would be refused (udn mismatch) - SourceScanTest's d53 pins it
+        speakerSocketClient(client(), ip = ip, uid = uid, log = ::log, certLog = if (BuildConfig.DEBUG) ::log else null)
     val cache = SpeakerCache(SonosFiles.cache(app))
 
     val rooms = RoomDirectory(

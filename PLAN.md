@@ -1064,7 +1064,9 @@ findings, merge to `main`, full suite once.
   against the pinned Sonos root alone (`SONOS_ROOT_PEM`, its fingerprint tested) and the leaf's `urn:sonos:udn:`
   against the uid we dial, in the handshake; a refused certificate counts as a refused connect (five park) and logs
   its reason class only; intermediates the speaker sends are path-built under the root - see the note's "53-c
-  status". Owed on the speakers: design 53 §5 (checks 2-5, 9-11 - check 10 now the phone's TLS accepting the chain:
+  status". Code QA `qa-53c-code.md` (0 High, 1 Medium, 5 Low, 5 Nit) and its fix round done: a park holds for the ip
+  it was earned at (a stale ip after a DHCP shuffle never parks a good speaker, 53-a's TCP case too), `dates` never
+  parks (a phone clock far off), several udns, a leaf as issuer, `sonos-ws-probe.py --root` (check 10 from the Pi). Owed on the speakers: design 53 §5 (checks 2-5, 9-11 - check 10 now the phone's TLS accepting the chain:
   `certificate CN ..., issuer CN "Sonos Device Authentication Root CA" - verified` in logcat; checks 6-8c
   for 53-b).
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the

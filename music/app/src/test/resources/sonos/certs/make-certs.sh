@@ -37,3 +37,7 @@ selfsigned leaf_self_signed "TEST00000000" "basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=serverAuth,clientAuth
 $(san $UDN)"
+sign leaf_two_udns "TEST00000000" test_root "$(leaf_ext 'subjectAltName=URI:urn:sonos:udn:RINCON_00000000000001401,URI:urn:sonos:udn:RINCON_00000000000001400')" 20200101000000Z 21200101000000Z
+sign leaf_not_yet_valid "TEST00000000" test_root "$(leaf_ext "$(san $UDN)")" 21000101000000Z 21200101000000Z
+# a leaf (CA:FALSE) used as an issuer: a speaker's own key minting a certificate that names our udn
+sign leaf_under_leaf "TEST00000001" leaf_good "$(leaf_ext "$(san $UDN)")" 20200101000000Z 21200101000000Z

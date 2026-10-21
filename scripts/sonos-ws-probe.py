@@ -43,6 +43,14 @@ it), `RINCON_000000000000014NN`, `10.0.0.NN`, `fd00::NN`, `Navn N`, `FAKE-SERIAL
 --key UUID sends another X-Sonos-Api-Key (a random one tells whether the speaker checks it at all), --key none
 sends no key header.
 
+--root PEM checks the speaker's certificate the way the music app does (design 53, round 53-c; no aiohttp, then
+exits): the chain against that root alone (the Sonos Device Authentication Root CA: cut `SONOS_ROOT_PEM` out of
+`music/app/src/main/java/me/vibb/music/sonos/SonosSocket.kt`), then whether its SAN holds a `urn:sonos:udn:` equal
+to the speaker's uid (its device description's UDN at port 1400 without `uuid:`, or --uid). It prints the issuer CN,
+the leaf's last year and the verdict - never the SAN's values (the household, a user, the serial are in it); a
+mismatch prints only the two spellings' shape (prefix, length, last five characters). A Pi-side twin of design 53
+§5 check 10 for the models the phone hasn't met.
+
 Ctrl-C ends it. The X-Sonos-Api-Key below is the RFC 4122 example UUID that sonos-websocket sends;
 the speaker accepts it locally - it is not a secret.
 """
@@ -151,6 +159,57 @@ def rescrub(src: str, dst: str) -> None:
     for header, body in messages:
         saver.save(header, body)
     print(f"{len(messages)} messages scrubbed into {dst}")
+
+
+UDN_PREFIX = "urn:sonos:udn:"
+
+
+def shape(value: str) -> str:
+    """A spelling's shape, never the value: what comes before the first '_', the length, the last five characters."""
+    prefix = value.split("_", 1)[0] + "_" if "_" in value else "(no '_')"
+    return f"prefix {prefix!r}, length {len(value)}, ends {value[-5:]!r}"
+
+
+def device_uid(ip: str) -> str | None:
+    """The speaker's device description's UDN without `uuid:` - the uid the music app commands (Soap.parseUdn)."""
+    import urllib.request
+    with urllib.request.urlopen(f"http://{ip}:1400/xml/device_description.xml", timeout=5) as r:  # noqa: S310 - a LAN literal
+        m = re.search(r"<UDN>\s*(?:uuid:)?([^<\s]+)\s*</UDN>", r.read().decode("utf-8", "replace"))
+    return m.group(1) if m else None
+
+
+def check_root(ip: str, root: str, uid: str | None, port: int = 1443) -> int:
+    """--root: the chain against `root` alone, then the SAN's udn against the uid - the app's two checks (53-c)."""
+    import socket
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # not create_default_context: no X509_STRICT, as the platform's PKIX
+    ctx.check_hostname = False  # the leaf names no ip; the app's verifier accepts exactly the dialled one
+    ctx.load_verify_locations(cafile=root)
+    try:
+        with socket.create_connection((ip, port), timeout=5) as raw, ctx.wrap_socket(raw) as tls:
+            cert = tls.getpeercert()
+    except ssl.SSLCertVerificationError as e:
+        print(f"chain: refused against {root} ({e.verify_message})")  # an OpenSSL reason, no certificate value
+        return 1
+    issuer = dict(x[0] for x in cert.get("issuer", ())).get("commonName")
+    year = time.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").tm_year
+    print(f"chain: verified against {root} (issuer CN {issuer!r}, the leaf valid to {year})")
+    udns = [v[len(UDN_PREFIX):] for k, v in cert.get("subjectAltName", ()) if k == "URI" and v.startswith(UDN_PREFIX)]
+    if uid is None:
+        uid = device_uid(ip)
+        if uid is None:
+            print("udn: no UDN in the device description - pass --uid")
+            return 1
+    if not udns:
+        print("udn: none in the SAN (the app refuses: no udn)")
+        return 1
+    if any(u.lower() == uid.lower() for u in udns):
+        print(f"udn: the SAN names the uid (one of {len(udns)}) - the app accepts")
+        return 0
+    print("udn: the SAN names another player (the app refuses: udn mismatch)")
+    for u in udns:
+        print(f"  the SAN's udn: {shape(u)}")
+    print(f"  the uid:       {shape(uid)}")
+    return 1
 
 
 def short(body: dict) -> str:
@@ -270,7 +329,7 @@ async def websocket_side(session: aiohttp.ClientSession, ip: str, ready: asyncio
                          volume: int | None = None, saver: Saver | None = None) -> None:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE  # the speaker's certificate is self-signed
+    ctx.verify_mode = ssl.CERT_NONE  # a spike: reads only (the app pins the Sonos root and the udn - --root checks that)
     url = f"wss://{ip}:1443/websocket/api"
     headers = {} if KEY.lower() == "none" else {"X-Sonos-Api-Key": KEY}
     print(f"{stamp()} WS key: {'(no header)' if not headers else KEY}")
@@ -396,10 +455,16 @@ async def main() -> None:
                     "(does the speaker check it?)")
     ap.add_argument("--rescrub", nargs=2, metavar=("IN", "OUT"),
                     help="scrub an earlier --save capture again with today's rules (no speaker, no aiohttp); ip is ignored")
+    ap.add_argument("--root", metavar="PEM", help="check the certificate as the app does: the chain against this root "
+                    "alone, the SAN's udn against the uid; then exit (no aiohttp)")
+    ap.add_argument("--uid", help="with --root: the uid to compare (default: the device description's UDN)")
+    ap.add_argument("--port", type=int, default=1443, help=argparse.SUPPRESS)  # --root against a local test server
     args = ap.parse_args()
     if args.rescrub:
         rescrub(*args.rescrub)
         return
+    if args.root:
+        sys.exit(check_root(args.ip, args.root, args.uid, args.port))
     if aiohttp is None:
         sys.exit("needs aiohttp: python3 -m pip install aiohttp (or apt install python3-aiohttp)")
     if args.key:
