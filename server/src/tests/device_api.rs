@@ -498,7 +498,8 @@ async fn create_device_inserts_policy_row() {
 }
 
 /// Kid Settings (Quick Controls): a new device starts with Wi-Fi, Bluetooth and brightness on,
-/// and its policy says so; a device that existed before keeps what it had.
+/// and the notification filter on (2026-10-21), and its policy says so; a device that existed
+/// before keeps what it had.
 #[tokio::test]
 async fn a_new_device_starts_with_all_kid_settings_on() {
     let app = TestApp::new().await;
@@ -530,6 +531,17 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
         "Wi-Fi, Bluetooth, brightness, sound (design 18)"
     );
     assert_eq!(mask(existing).await.unwrap(), 0);
+    // The notification filter starts on for a new phone (2026-10-21); an existing one keeps its
+    // stored value.
+    let filter = |device: i64| {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT notification_auto_cancel FROM device_policy WHERE device_id = ?",
+        )
+        .bind(device)
+        .fetch_one(&app.db)
+    };
+    assert!(filter(id).await.unwrap());
+    assert!(!filter(existing).await.unwrap());
 
     let enrolled = app
         .request(
@@ -547,6 +559,7 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await;
     assert_eq!(policy.json()["quick_controls_mask"], 15);
+    assert_eq!(policy.json()["notification_auto_cancel"], true);
 }
 
 #[tokio::test]
