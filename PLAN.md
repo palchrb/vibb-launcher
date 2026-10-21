@@ -552,6 +552,14 @@ findings, merge to `main`, full suite once.
   allowlisted app that requests it, whenever the denial is set; CALL_PHONE/ANSWER_PHONE_CALLS stay denied. Unmanaged
   calls: back to the phone's own choice. Test workaround: `adb shell pm grant com.whatsapp
   android.permission.READ_PHONE_STATE`.
+- **Browser "secure DNS" bypass (launcher S-M3, approved 2026-10-21, the user's yes to all three):** (1) Chrome's
+  managed config `DnsOverHttpsMode=off` through `setApplicationRestrictions` for an allowlisted Chrome (and any
+  Chromium-based browser that reads Chrome's keys - check per browser); (2) a built-in DoH-host block category in the
+  phone's DNS filter (`dns.google`, `cloudflare-dns.com`, `mozilla.cloudflare-dns.com`, `dns.quad9.net`, `doh.*`...),
+  never the launcher's own upstreams (protected sockets, IP literals); (3) Firefox's canary `use-application-dns.net`
+  answered NXDOMAIN. Later, if wanted: route the public resolvers' IPs into the tunnel and drop 443 to them.
+- **The server's exposure (the user, 2026-10-21):** a public HTTPS endpoint for the phones, the PWA over the tailnet
+  only. So the phone-intake budgets (server L1/L3/L4) and launcher S-M1 (refuse a non-https server URL) matter.
 - **Stuck in Recents after an unlock** (the user's emulator, 2026-10-21 ~16:55, not reproduced, no lock log kept): the
   user had just unlocked to grant WhatsApp its call permissions; then "app not available", the lock, and after the
   unlock quickstep's empty RecentsActivity on top with lock task LOCKED, HOME resolving to ours but `am start -c HOME`
