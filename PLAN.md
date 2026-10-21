@@ -533,7 +533,10 @@ findings, merge to `main`, full suite once.
   **Measured 2026-10-21 (the user's emulator):** WhatsApp's call-screen arrow starts `com.whatsapp/.home.ui.HomeActivity`
   in another task (t21 vs the call's t20) - a new activity, so design 57 sees it; Element X rings in
   `io.element.android.features.call.impl.ui.IncomingCallActivity` and talks in `...ui.ElementCallActivity`, both in the
-  call task (t25), separate from its main screens.
+  call task (t25), separate from its main screens. WhatsApp rings and talks in the same `VoipActivityV2` instance (one
+  record through ring and call, a new task per call: t30, t33, t35), so answering on WhatsApp's own ring screen raises
+  no new RESUMED event - design 57 must trust an activity our own full-screen-intent send opened through the answer
+  (it is the call screen too), without a second tap.
   **The user's rule (2026-10-21): D is the condition.** Another app's call screen comes over the lock only while
   usage access is granted, and then only that call screen (the activity that came up for the call; any other
   activity resumed -> the lock again, with `FLAG_ACTIVITY_NO_USER_ACTION`, "Tilbake til samtalen"). Without usage
