@@ -39,6 +39,10 @@ class VibbOneNameTest {
         assertEquals("Vibb One", string("src/main/res/values-nb/strings.xml", "notification_listener_title"))
         assertEquals("Vibb One filter", string("src/main/res/values/strings.xml", "vpn_session"))
         assertEquals("Vibb One-filter", string("src/main/res/values-nb/strings.xml", "vpn_session"))
+        // The VPN's own notification shows only while the filter is starting or down (PLAN "Fewer
+        // persistent notifications", qa-lfix-notifs-code): it says so, with no body.
+        assertEquals("Content filter connecting…", string("src/main/res/values/strings.xml", "notification_vpn_filter_title"))
+        assertEquals("Innholdsfilteret kobler til …", string("src/main/res/values-nb/strings.xml", "notification_vpn_filter_title"))
         val vpn = file("src/main/java/com/kidslauncher/mdm/server/KidVpnService.kt").readText()
         assertTrue(".setSession(getString(R.string.vpn_session))" in vpn)
         assertEquals(1, Regex("""\.setSession\(""").findAll(vpn).count())

@@ -92,23 +92,31 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
 ## Push, battery and Play (handy step 7, design `docs/design/07-battery-fcm-play.md`, at the monorepo root; FCM removed in design 19)
 
 - **Anchor** (`CommandListenerService`, `specialUse` with subtype - `dataSync` is capped at 6 h/day and can't start from BOOT_COMPLETED on Android 15): all background syncs and the SSE stream, held whenever it runs (since design 19; read timeout 300 s vs. the server's keepalive, 240 s by default). It syncs once at start and arms the backstop. `SyncRunner.request` takes a timed partial wake lock, then `startForegroundService(ACTION_SYNC)` (also revives a dead anchor - device owners may start FGS from the background); runs coalesce (`SyncCoalescer`: a burst = one extra run), 10 min/5 min timeouts (APK downloads run inside; `CancellationException` is rethrown in the update loop), 11 min wake lock cap, released only when no run and no undelivered request is left. Every launched `apply()` is wrapped - an exception reaching the crash handler would end the call path. A re-check re-applies until the enforced Play key equals the current one (screen on right after screen off).
-- **Notifications in the shade** (PLAN "Fewer persistent notifications", 2026-10-21, branch `lfix-notifs`): the anchor's
-  is the phone's one standing notification - "Vibb One" (`notification_listener_title`, en/nb), no body, MIN channel
-  `launcher:command_listener`, id 1002; NMS shows a foreground service's at LOW at least, so its status-bar icon stays
-  while the anchor runs (Android has no hidden FGS). `KidVpnService` goes foreground first in `onCreate` as before and
-  drops it (`stopForeground(STOP_FOREGROUND_REMOVE)`, only in `settleForeground`, run by `onStartCommand` and a dead
-  read loop) once the tunnel is up **and** `isAlwaysOn` (pure `vpnHoldsForeground`, `QuietNotificationsTest`): AOSP's
-  `Vpn.establish` binds an established VpnService from system_server with `BIND_AUTO_CREATE | BIND_FOREGROUND_SERVICE`
-  (= `PROCESS_STATE_BOUND_FOREGROUND_SERVICE`, the Doze network threshold `FOREGROUND_THRESHOLD_STATE`), and always-on
-  restarts it when the tunnel is gone. A failed establish, a dead read loop (the tunnel is closed so the next start
-  establishes anew) or a VPN that isn't always-on yet (first launch before the first sync) holds or takes the
-  notification back. Setting always-on while our tunnel already runs restarts nothing (`setAlwaysOnPackageInternal`
-  only updates its notice), so `applyVpnRestrictions`' `start()` right after is what re-checks; clearing it revokes
-  the tunnel (`prepareInternal(LEGACY_VPN)` -> `onRevoke`). `KidVpnService.start` is a plain `startService` while the
-  VPN runs without its foreground state (no notification posted and removed at every `apply()`), else
-  `startForegroundService` with `EXTRA_FOREGROUND`, which `onStartCommand` answers with `startForeground` before anything
-  else - a `startForegroundService` on a service that dropped it demands one within seconds. Not device-tested: PLAN's
-  checks (one notification in the shade, the filter through a night in Doze and a reboot without its notification).
+- **Notifications in the shade** (PLAN "Fewer persistent notifications", 2026-10-21, branch `lfix-notifs`, code QA
+  `qa-lfix-notifs-code.md`): the anchor's is the phone's one standing notification - "Vibb One"
+  (`notification_listener_title`, en/nb), no body, MIN channel `launcher:command_listener`, id 1002; NMS shows a
+  foreground service's at LOW at least, so its status-bar icon stays while the anchor runs (Android has no hidden FGS).
+  `KidVpnService` goes foreground first in `onCreate` as before and drops it (`stopForeground(STOP_FOREGROUND_REMOVE)`,
+  only on `VpnSettle.DROP` in `settleForeground`) once the tunnel is up **and** `isAlwaysOn` (a throw counts as not):
+  AOSP's `Vpn.establish` binds an established VpnService from system_server with `BIND_AUTO_CREATE |
+  BIND_FOREGROUND_SERVICE` (= `PROCESS_STATE_BOUND_FOREGROUND_SERVICE`, the Doze network threshold
+  `FOREGROUND_THRESHOLD_STATE`), and the anchor's FGS is in the same process anyway. The state - tunnel, foreground,
+  stop, the retry's back-off - is the pure `VpnTunnelState` (`server/VpnForeground.kt`, `vpnHoldsForeground`,
+  `QuietNotificationsTest`), changed on the main thread only (`onRevoke` comes on a binder thread and posts its stop
+  there). A failed establish or a VPN that isn't always-on yet (first launch before the first sync) holds the
+  notification; a read loop that ends (a thrown read or end of stream) closes the tunnel, takes the notification back
+  and retries inside the service - 5 s doubling to 5 min, reset by a tunnel that held 10 min, one chain at most
+  (Handler time: the retry waits out deep sleep). The notification then reads "Content filter connecting…" /
+  "Innholdsfilteret kobler til …", no body - it shows only while the filter is starting or down. Setting always-on
+  while our tunnel already runs restarts nothing (`VpnManagerService.setAlwaysOnVpnPackage` calls `startAlwaysOnVpn`,
+  which skips a connected VPN), so `applyVpnRestrictions`' `start()` right after is what re-checks; while the tunnel is
+  down every `apply()` also gets the system's plain always-on start (a second heal path). Clearing it revokes the
+  tunnel (`prepareInternal(LEGACY_VPN)` -> `onRevoke`). `KidVpnService.start` is a plain `startService` whenever an
+  instance runs (`vpnStartKind`: a started record skips the background check and carries no `fgRequired`, so a stop
+  racing it can't crash us, and nothing is re-posted at every sync), else `startForegroundService` with
+  `EXTRA_FOREGROUND`, which `onStartCommand` answers with `startForeground` before anything else (also the
+  `IllegalStateException` fallback). Not device-tested: PLAN's checks (one notification in the shade, the filter
+  through a night in Doze and a reboot without its notification).
 - **Backstop** (`push/BackstopAlarm.kt`): `setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP)`, request code 7, `backstopDelayMs`: 30 min, 15 while SSE is down (on the up->down edge, and only ever moved earlier then - a flapping stream must not push it out; each reconnect syncs once instead), sooner for an interval location policy, floor 9 min. Its sync request also reconnects a stalled or stale SSE stream (`checkStream`, design 19 below).
 - **Play** (pure `play/PlayPolicy.kt`, `PlayPolicyTest`; `play/PlayRuntime.kt`): Play services + GSF are in `neverRestrict` (other apps' FCM - Element X; ours is gone since design 19). The Play Store is never hidden but **suspended** while apps are managed (also during a lock, also if allowlisted) except in install mode and the nightly update window (02:00-04:00, only while the screen is off - screen-on ends it at once, screen-off resumes it); never pinned or shown on Home/drawer (`AppFilter`, `playPackageLaunchable`) except in install mode **and, in the drawer only, while the override or the pause is open (design 28: `PlayRuntime.storeListable` feeds `AppFilter`; Home's grid drops the store outside install mode with `playPackageOnHome` in `refreshApps`); a window's edges reload the app list** (`Application.initRest`'s `WindowRelock.addListener { loadApps() }` - not Play's suspension edge, which never comes on a GMS phone). Override/pause lift it like any app restriction. `shouldSuspendNewPackage` leaves Play packages to `apply()`; a vending (re)install re-applies. `AppEnforcer.lastEnforcedPlayState` + `PlayState.key()` make `reevaluateLockReasonFromCache` re-apply on install-mode start/end and window edges (screen on/off, `TimeRuleAlarm` also wakes for `PlayRuntime.nextEdge`).
 - **Install mode**: Settings -> "Install from Play" (Settings gate + the PIN again, shared lockout; refused unless managed, with a PIN, no time lock, Play installed - `canStartInstallMode`). 15 min by wall clock, elapsed realtime and boot count (`timedWindowActive`), CE prefs `play_state`; pins only the Play Store, unsuspends it, opens it; ongoing notification with "End now" (`InstallModeReceiver`). Ends on expiry (boundary alarm), "End now", reboot, or a time lock beginning (`apply` cancels it); then Home is brought to front. Reported as `install_mode.until_ms`.

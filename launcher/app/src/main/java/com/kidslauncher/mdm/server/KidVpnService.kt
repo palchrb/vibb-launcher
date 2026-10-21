@@ -10,6 +10,7 @@ import android.net.VpnService
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -68,7 +69,9 @@ private const val MTU = 32767
  * the real response relayed back. The phone's lists always decide first.
  */
 class KidVpnService : VpnService() {
-    private var pfd: ParcelFileDescriptor? = null
+    /** The tunnel, the foreground state, the stop and the retry's back-off (pure [VpnTunnelState],
+     * `QuietNotificationsTest`); changed on the main thread only - `onRevoke` posts there. */
+    private val state = VpnTunnelState<ParcelFileDescriptor>()
     private val scope = CoroutineScope(Dispatchers.IO + Job())
 
     /** The parent's own server at work (design 36), while the VPN is up and one is configured. */
@@ -79,19 +82,19 @@ class KidVpnService : VpnService() {
     private val providerDoh = lazy { buildDohClient(IP_LITERAL_DNS, ::protect) }
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastNetwork: NetworkSnapshot? = null
-    private var stopped = false
     private val main = Handler(Looper.getMainLooper())
 
-    /** Whether we hold the foreground state now (main thread only) - see [settleForeground]. */
-    private var foreground = false
+    /** One retry chain at most: every post replaces the pending one. */
+    private val retry = Runnable { retryTunnel() }
 
     override fun onCreate() {
         super.onCreate()
         // Must be the first thing this service does, unconditionally - see CommandListenerService's
         // own established gotcha for this same API-34 requirement (this is also a Service). Dropped
-        // only in onStartCommand's settleForeground, once the filter is up and always-on.
+        // only in settleForeground, once the filter is up and always-on.
         startForeground(VPN_FILTER_NOTIFICATION_ID, buildNotification())
-        foreground = true
+        state.enteredForeground()
+        running = state
         DnsFilterEngine.loadFromDisk(applicationContext)
         startVpn()
     }
@@ -101,40 +104,33 @@ class KidVpnService : VpnService() {
         // dropped it (ForegroundServiceDidNotStartInTimeException otherwise). The system's
         // always-on start and start()'s plain one carry no extra.
         if (intent?.getBooleanExtra(EXTRA_FOREGROUND, false) == true) enterForeground()
-        if (pfd == null) startVpn()
+        if (state.tunnel == null) startVpn()
         settleForeground()
         return START_STICKY
     }
 
     /**
      * Holds the foreground state only while the filter isn't both up and the always-on VPN
-     * ([vpnHoldsForeground]; PLAN "Fewer persistent notifications"): an established, always-on
-     * VpnService is kept alive by the system's own binding, so the notification goes. A filter that
-     * is down (establish failed, the read loop died) or not always-on yet takes it back.
+     * ([VpnTunnelState.settle], [vpnHoldsForeground]; PLAN "Fewer persistent notifications"): an
+     * established, always-on VpnService is kept alive by the system's own binding, so the
+     * notification goes. A filter that is down (establish failed, the read loop died) or not
+     * always-on yet takes it back.
      */
     private fun settleForeground() {
-        if (stopped) return
-        val alwaysOn = try {
-            isAlwaysOn
-        } catch (e: Exception) {
-            false
-        }
-        val hold = vpnHoldsForeground(tunnelUp = pfd != null, alwaysOnIsOurs = alwaysOn)
-        if (hold && !foreground) {
-            enterForeground()
-        } else if (!hold && foreground) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            foreground = false
-            runningWithoutForeground = true
-            Log.i(LOG_TAG, "Filter up and always-on: foreground state dropped")
+        when (state.settle { isAlwaysOn }) {
+            VpnSettle.ENTER -> enterForeground()
+            VpnSettle.DROP -> {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                Log.i(LOG_TAG, "Filter up and always-on: foreground state dropped")
+            }
+            VpnSettle.NONE -> Unit
         }
     }
 
     private fun enterForeground() {
         try {
             startForeground(VPN_FILTER_NOTIFICATION_ID, buildNotification())
-            foreground = true
-            runningWithoutForeground = false
+            state.enteredForeground()
         } catch (e: Exception) {
             // A device owner with VPN consent is exempt from the background FGS-start rule
             // (REASON_DEVICE_OWNER, REASON_OP_ACTIVATE_VPN); logged in case a build isn't.
@@ -143,6 +139,7 @@ class KidVpnService : VpnService() {
     }
 
     private fun startVpn() {
+        if (state.stopped) return
         try {
             val builder = Builder()
                 // Android's VPN settings and its key dialog show it (design 34 P11; en/nb).
@@ -167,7 +164,7 @@ class KidVpnService : VpnService() {
                 Log.w(LOG_TAG, "VPN establish() returned null - permission revoked or another VPN active")
                 return
             }
-            pfd = established
+            state.established(established, SystemClock.elapsedRealtime())
             DnsFilterEngine.onCustomChanged = ::syncCustom
             syncCustom()
             watchNetwork()
@@ -182,7 +179,7 @@ class KidVpnService : VpnService() {
     @Synchronized
     private fun syncCustom() {
         val wanted = DnsFilterEngine.customUpstream()
-        val config = wanted.takeUnless { stopped }
+        val config = wanted.takeUnless { state.stopped }
         val changed = config != custom?.config
         if (changed) custom?.close()
         val cacheFile = File(noBackupFilesDir, BootstrapDiskCache.FILE_NAME)
@@ -253,23 +250,47 @@ class KidVpnService : VpnService() {
                 main.post { tunnelLost(fd) }
                 return
             }
-            if (length <= 0) continue
+            if (length < 0) {
+                // End of stream: the tunnel is gone as surely as a thrown read (qa-lfix-notifs-code #4).
+                Log.w(LOG_TAG, "VPN interface at end of stream, stopping read loop")
+                main.post { tunnelLost(fd) }
+                return
+            }
+            if (length == 0) continue
             val packetData = buffer.copyOfRange(0, length)
             scope.launch { handlePacket(packetData, output, writeLock) }
         }
     }
 
-    /** The read loop died outside a stop: the filter is down - the tunnel is closed so the next
-     * start establishes a new one, and the foreground state comes back. */
+    /** The read loop died outside a stop: the filter is down - the tunnel is closed, the foreground
+     * state comes back and the service tries again by itself (5 s doubling to 5 min,
+     * [VpnTunnelState.readLoopEnded]) - the next `apply()`'s start would too, but may be far off. */
     private fun tunnelLost(fd: ParcelFileDescriptor) {
-        if (stopped || pfd !== fd) return
+        val retryMs = state.readLoopEnded(fd, SystemClock.elapsedRealtime()) ?: return
         try {
             fd.close()
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to close the dead VPN interface: ${e.javaClass.simpleName}")
         }
-        pfd = null
         settleForeground()
+        Log.w(LOG_TAG, "Tunnel lost, retrying in $retryMs ms")
+        scheduleRetry(retryMs)
+    }
+
+    private fun retryTunnel() {
+        if (!state.retryDue()) return
+        startVpn()
+        settleForeground()
+        if (state.tunnel == null) {
+            val nextMs = state.retryFailed()
+            Log.w(LOG_TAG, "Tunnel retry failed, next in $nextMs ms")
+            scheduleRetry(nextMs)
+        }
+    }
+
+    private fun scheduleRetry(delayMs: Long) {
+        main.removeCallbacks(retry)
+        main.postDelayed(retry, delayMs)
     }
 
     private fun handlePacket(data: ByteArray, output: FileOutputStream, writeLock: Any) {
@@ -332,17 +353,21 @@ class KidVpnService : VpnService() {
     private fun buildNotification() =
         NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_VPN_FILTER)
             .setSmallIcon(R.drawable.baseline_bug_report_24)
+            // Shown only while the filter is starting or down (vpnHoldsForeground): "connecting".
             .setContentTitle(getString(R.string.notification_vpn_filter_title))
-            .setContentText(getString(R.string.notification_vpn_filter_text))
             .setOngoing(true)
             .setSilent(true)
             .build()
 
     override fun onRevoke() {
         // The user (or another VPN app taking over) revoked our VPN permission directly - stop
-        // cleanly rather than leaving a dangling foreground service with a dead tunnel.
-        stopSelfCleanly()
-        super.onRevoke()
+        // cleanly rather than leaving a dangling foreground service with a dead tunnel. Called on a
+        // binder thread (VpnService.Callback): the state changes on main, as everywhere else
+        // (qa-lfix-notifs-code #3); super.onRevoke() is only stopSelf().
+        main.post {
+            stopSelfCleanly()
+            stopSelf()
+        }
     }
 
     override fun onDestroy() {
@@ -351,7 +376,8 @@ class KidVpnService : VpnService() {
     }
 
     private fun stopSelfCleanly() {
-        runningWithoutForeground = false
+        val fd = state.stop()
+        if (running === state) running = null
         main.removeCallbacksAndMessages(null)
         DnsFilterEngine.onCustomChanged = null
         networkCallback?.let { callback ->
@@ -359,7 +385,6 @@ class KidVpnService : VpnService() {
         }
         networkCallback = null
         synchronized(this) {
-            stopped = true
             custom?.close()
             custom = null
             live = null
@@ -367,20 +392,19 @@ class KidVpnService : VpnService() {
         scope.cancel()
         evictProviderDoh()
         try {
-            pfd?.close()
+            fd?.close()
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to close VPN interface", e)
         }
-        pfd = null
     }
 
     companion object {
         /** A `startForegroundService` start: onStartCommand calls startForeground first. */
         const val EXTRA_FOREGROUND = "com.kidslauncher.mdm.vpn.FOREGROUND"
 
-        /** An instance runs with its foreground state dropped (the filter up and always-on). */
+        /** The running instance's state, `null` when none ([vpnStartKind]). */
         @Volatile
-        private var runningWithoutForeground = false
+        private var running: VpnTunnelState<*>? = null
 
         /** The running service's [CustomDns], for the status report. */
         @Volatile
@@ -401,15 +425,15 @@ class KidVpnService : VpnService() {
          * this call - this just closes the gap between a fresh app launch and the first successful
          * sync, so filtering doesn't need to wait on that.
          *
-         * Every `apply()` calls this. While the service runs without its foreground state it is a
-         * plain `startService` - our uid is never idle then (the system's VPN binding, the anchor) -
-         * so no notification is posted and removed each time; a `startForegroundService` would
-         * demand a `startForeground` within seconds. Otherwise `startForegroundService` with
-         * [EXTRA_FOREGROUND], which onStartCommand answers with startForeground first.
+         * Every `apply()` calls this. While an instance runs it is a plain `startService`
+         * ([vpnStartKind]; qa-lfix-notifs-code #2): a started record skips the background check and
+         * never carries `fgRequired`, so a stop racing the start can't crash us, and no notification
+         * is posted and removed each time. With none running, `startForegroundService` with
+         * [EXTRA_FOREGROUND] - `onCreate`'s startForeground answers it first; also the fallback.
          */
         fun start(context: Context) {
             val intent = Intent(context, KidVpnService::class.java)
-            if (runningWithoutForeground) {
+            if (vpnStartKind(running) == VpnStartKind.PLAIN) {
                 try {
                     context.startService(intent)
                     return
