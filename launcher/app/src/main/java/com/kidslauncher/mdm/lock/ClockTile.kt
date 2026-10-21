@@ -44,8 +44,16 @@ fun clockKind(packageName: String, verified: Boolean, channelId: String?): Clock
     }
 }
 
-/** With several, the tile shows the one that matters most: an ended timer, then a running one, then the stopwatch. */
-fun clockShown(kinds: Collection<ClockKind>): ClockKind? = ClockKind.entries.sortedBy { clockRank(it) }.firstOrNull { it in kinds }
+/**
+ * With several, the tile shows the one that matters most: an ended timer, then a running one, then
+ * the stopwatch. A [ClockTile.blank] one is never shown (the empty "Timer" card, 2026-10-21): it
+ * can't outrank a tile with content, and alone it shows nothing.
+ */
+fun clockShown(tiles: Collection<ClockTile>): ClockTile? = tiles.filterNot { it.blank }.minByOrNull { clockRank(it.kind) }
+
+/** The kept keys the listener no longer has active - dropped, so a removal the reader missed can't
+ * keep a tile up (2026-10-21: a stale timer entry hid the stopwatch until the next sweep). */
+fun clockStale(kept: Collection<String>, active: Collection<String>): Set<String> = kept.toSet() - active.toSet()
 
 private fun clockRank(kind: ClockKind): Int = when (kind) {
     ClockKind.ENDED -> 0
@@ -59,6 +67,10 @@ private fun clockRank(kind: ClockKind): Int = when (kind) {
  * cleaned notification text. The redacted [toString] names nothing the app wrote.
  */
 data class ClockTile(val kind: ClockKind, val seconds: Long?, val title: String?, val text: String?) {
+    /** Nothing to show - no time, no title, no text (the system's autogroup summary on a timer
+     * channel has this shape): the reader keeps none, [clockShown] shows none. */
+    val blank: Boolean get() = seconds == null && title == null && text == null
+
     override fun toString() = "ClockTile($kind, time=${seconds != null})"
 
     companion object {
@@ -96,6 +108,16 @@ fun clockTileTime(tile: ClockTile, receivedAtMs: Long, nowMs: Long): String? = w
     tile.kind == ClockKind.ENDED -> tile.text ?: tile.title
     else -> clockSecondsNow(tile, receivedAtMs, nowMs)?.let { clockText(it * 1000) } ?: tile.title
 }
+
+/**
+ * The tile's small line under the time: a running timer's or the stopwatch's text ("1 timer er i
+ * gang"), never an ended timer's (its text is the big line), and none when it only repeats our own
+ * [label] (the stopwatch's "Stoppeklokke" under our "Stoppeklokke"; case and spacing aside).
+ */
+fun clockSmallText(tile: ClockTile, label: String): String? =
+    tile.text?.takeIf { tile.kind != ClockKind.ENDED && clockWords(it) != clockWords(label) }
+
+private fun clockWords(s: String): String = s.trim().replace(Regex("""\s+"""), " ").lowercase()
 
 /** The local tick runs only while the tile shows on the page: a stopwatch always, a timer above 0. */
 fun clockTicks(tile: ClockTile?, receivedAtMs: Long, nowMs: Long, shown: Boolean): Boolean {

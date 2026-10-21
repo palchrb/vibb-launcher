@@ -300,6 +300,36 @@ class LockGlanceGuardTest {
     }
 
     @Test
+    fun `the clock reader keeps no summary or blank tile and checks its keys against the listener (fix 2026-10-21)`() {
+        val clockReader = code("ClockReader.kt")
+        val read = body(clockReader, "read")
+        // A group summary (the system's autogroup summary on a timer channel) is skipped before its extras are read.
+        val summary = read.indexOf("if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return null")
+        assertTrue(read, summary > read.indexOf("clockKind(") && summary < read.indexOf("val extras = n.extras"))
+        assertTrue(read.contains("if (tile.blank) return null"))
+        // The check asks the listener for exactly the kept keys and keeps the clock app's only.
+        val stale = body(clockReader, "dropStale")
+        assertTrue(stale.contains("lookup?.invoke(entries.keys.toTypedArray()) ?: return false"))
+        assertTrue(stale.contains("active.filter { it.packageName == ClockApp.PACKAGE }.map { it.key }"))
+        for (name in listOf("posted", "removed", "reconcile")) assertTrue(name, body(clockReader, name).contains("dropStale()"))
+        for (name in listOf("posted", "removed")) {
+            assertTrue(name, body(clockReader, name).contains("if (sbn.packageName != ClockApp.PACKAGE) return@guarded"))
+        }
+        assertTrue(body(clockReader, "disconnected").contains("lookup = null"))
+        // Every entry point catches everything (the listener's and the panel's calls).
+        val publicFuns = Regex("""^    fun (\w+)\(""", RegexOption.MULTILINE).findAll(clockReader).map { it.groupValues[1] }.toList()
+        assertEquals(listOf("addListener", "removeListener", "attach", "connected", "disconnected", "unverified", "posted", "removed", "reconcile"), publicFuns)
+        for (name in publicFuns - setOf("addListener", "removeListener")) assertTrue(name, body(clockReader, name).contains("= guarded {"))
+        // The wiring: the listener's lookup by key, the page's check when it shows, the lost signer.
+        val listener = code("BadgeListenerService.kt")
+        assertTrue(listener.contains("ClockReader.attach { keys -> activeOrNull(keys) }"))
+        assertTrue(listener.indexOf("ClockReader.attach {") < listener.indexOf("sweep()"))
+        assertTrue(listener.contains("getActiveNotifications(keys).orEmpty().filterNotNull()"))
+        assertTrue(body(panel, "resumeNow").contains("ClockReader.reconcile()"))
+        assertTrue(code("ClockApp.kt").contains("Handler(Looper.getMainLooper()).post { ClockReader.unverified() }"))
+    }
+
+    @Test
     fun `Stopp sends one broadcast with background starts denied, never an activity (design 42)`() {
         val actions = code("ClockActions.kt")
         assertEquals(1, Regex("""\.send\(""").findAll(actions).count())
