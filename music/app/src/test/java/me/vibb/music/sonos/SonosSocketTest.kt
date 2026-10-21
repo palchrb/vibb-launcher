@@ -73,14 +73,20 @@ class SonosSocketTest {
     private var cachedIp: String? = ip
     private val parks = SocketParks()
     private val network = Any()
+
+    /** The (ip, uid) each client was asked for: the certificate is checked against that uid. */
+    private val clients = mutableListOf<Pair<String, String>>()
+    private val logs = mutableListOf<String>()
     private val socket = SonosSocket(
-        clientFor = { _ ->
+        clientFor = { ip, uid ->
+            clients += ip to uid
             WebSocket.Factory { request, listener -> FakeWs(request).also { opened += it to listener } }
         },
         resolveIp = { cachedIp },
         clock = { clock.now },
         main = main,
         onEvent = { events += it },
+        log = { logs += it },
         parks = parks,
     )
 
@@ -244,12 +250,20 @@ class SonosSocketTest {
     fun `an HTTP answer instead of the upgrade parks the uid for 6 h - so do five refused connects in a row`() {
         socket.want(SonosSocket.Target(uid, network))
         listener().onFailure(ws(), java.net.ProtocolException("Expected HTTP 101"), response(403))
-        val until = parks.parkedUntil(uid, clock.now)
+        val until = parks.parkedUntil(uid, ip, clock.now)
         assertNotNull(until)
         assertEquals(clock.now + SocketBackoff.PARK_MS, until)
-        assertTrue("no retry while parked", main.delayed.isEmpty())
-        assertFalse(socketWanted(true, network, false, socket.parkedUntil(uid), uid, clock.now))
-        assertTrue("after the park", socketWanted(true, network, false, socket.parkedUntil(uid), uid, clock.now + SocketBackoff.PARK_MS))
+        assertEquals("only the park's re-check is due", listOf(clock.now + SocketBackoff.PARK_RECHECK_MS), main.delayed.map { it.first })
+        val parkedAt = clock.now
+        while (clock.now < parkedAt + SocketBackoff.PARK_MS - SocketBackoff.PARK_RECHECK_MS) {
+            clock.advance(SocketBackoff.PARK_RECHECK_MS)
+            main.runDue()
+        }
+        assertEquals("nothing dialled while parked at that ip", 1, opened.size)
+        assertEquals("the park logged once", 1, logs.count { "parked" in it })
+        clock.advance(SocketBackoff.PARK_RECHECK_MS)
+        main.runDue()
+        assertEquals("dialled again at the park's end", 2, opened.size)
 
         val other = "RINCON_00000000000001401"
         socket.want(SonosSocket.Target(other, network))
@@ -258,21 +272,112 @@ class SonosSocketTest {
             clock.advance(60_000)
             main.runDue()
         }
-        assertNull(parks.parkedUntil(other, clock.now))
+        assertNull(parks.parkedUntil(other, ip, clock.now))
         listener().onFailure(ws(), ConnectException("refused"), null)
-        assertNotNull("the fifth refused connect (an S1 speaker, no port 1443)", parks.parkedUntil(other, clock.now))
-        assertEquals(5, opened.size - 1)
+        assertNotNull("the fifth refused connect (an S1 speaker, no port 1443)", parks.parkedUntil(other, ip, clock.now))
+        assertEquals(5, opened.size - 2)
+    }
+
+    /** qa-53c-code 1: a park is about the address it was earned at - the cache naming another ip voids it. */
+    @Test
+    fun `d53c - a park at a stale ip is void once the cache names another, and the socket dials it`() {
+        socket.want(SonosSocket.Target(uid, network))
+        listener().onFailure(ws(), java.net.ProtocolException("Expected HTTP 101"), response(404))
+        assertNotNull(parks.parkedUntil(uid, ip, clock.now))
+        cachedIp = "192.168.1.17" // the next topology healed the cache
+        clock.advance(SocketBackoff.PARK_RECHECK_MS)
+        main.runDue()
+        assertEquals("dialled at the new ip within one re-check", 2, opened.size)
+        assertEquals("https://192.168.1.17:1443/websocket/api", ws().request().url.toString())
+        assertNull("void at the new ip", parks.parkedUntil(uid, "192.168.1.17", clock.now))
+        assertNull("and dropped", parks.parkedUntil(uid, ip, clock.now))
+    }
+
+    /** qa-53c-code 1: four refusals at the old ip and one at the new one never park a good speaker. */
+    @Test
+    fun `d53c - refusals at a stale ip don't count at the new one - certificates and TCP alike`() {
+        socket.want(SonosSocket.Target(uid, network))
+        val mismatch = javax.net.ssl.SSLHandshakeException("x").apply { initCause(SpeakerCertificateException("udn mismatch")) }
+        for (refusal in listOf<Throwable>(mismatch, ConnectException("refused"))) {
+            cachedIp = ip
+            socket.want(null)
+            socket.want(SonosSocket.Target(uid, network))
+            repeat(4) {
+                listener().onFailure(ws(), refusal, null)
+                // another of the house's speakers answered at the old ip; the next topology healed the cache
+                if (it == 3) cachedIp = "192.168.1.17"
+                clock.advance(300_000)
+                main.runDue()
+            }
+            assertEquals("https://192.168.1.17:1443/websocket/api", ws().request().url.toString())
+            listener().onFailure(ws(), refusal, null)
+            assertNull("the fifth refusal, the first at the new ip", parks.parkedUntil(uid, "192.168.1.17", clock.now))
+            clock.advance(300_000)
+            main.runDue()
+            repeat(3) {
+                listener().onFailure(ws(), refusal, null)
+                clock.advance(300_000)
+                main.runDue()
+            }
+            assertNull("four at the new ip", parks.parkedUntil(uid, "192.168.1.17", clock.now))
+            listener().onFailure(ws(), refusal, null)
+            assertNotNull("five at the new ip park it", parks.parkedUntil(uid, "192.168.1.17", clock.now))
+            parks.park(uid, 0, ip) // over, for the next round
+        }
+    }
+
+    /** 53-c: a refused certificate is a refused connect (it won't change): five in a row park; its client is our uid's. */
+    @Test
+    fun `d53c - a refused certificate counts as a refused connect, its message never logged - other TLS failures don't park`() {
+        socket.want(SonosSocket.Target(uid, network))
+        assertEquals(listOf(ip to uid), clients)
+        val refused = javax.net.ssl.SSLHandshakeException("TLS failed: CN=SECRET").apply {
+            initCause(java.security.cert.CertificateException(SpeakerCertificateException("udn mismatch")))
+        }
+        repeat(4) {
+            listener().onFailure(ws(), refused, null)
+            clock.advance(60_000)
+            main.runDue()
+        }
+        assertNull(parks.parkedUntil(uid, ip, clock.now))
+        listener().onFailure(ws(), refused, null)
+        assertNotNull("the fifth refused certificate", parks.parkedUntil(uid, ip, clock.now))
+        assertTrue(logs.toString(), logs.any { "REFUSED: certificate refused, udn mismatch" in it })
+        assertTrue("the platform's message is never logged", logs.none { "SECRET" in it })
+
+        val other = "RINCON_00000000000001401"
+        socket.want(SonosSocket.Target(other, network))
+        assertEquals(ip to other, clients.last())
+        repeat(6) {
+            listener().onFailure(ws(), javax.net.ssl.SSLHandshakeException("reset"), null)
+            clock.advance(400_000)
+            main.runDue()
+        }
+        assertNull("another TLS failure backs off without a park", parks.parkedUntil(other, ip, clock.now))
+    }
+
+    /** qa-53c-code 2: a phone clock far off refuses every speaker's dates - backed off, never parked. */
+    @Test
+    fun `d53c - a certificate outside its dates backs off but never parks`() {
+        socket.want(SonosSocket.Target(uid, network))
+        val dates = javax.net.ssl.SSLHandshakeException("x").apply { initCause(SpeakerCertificateException(CERT_DATES)) }
+        repeat(7) {
+            listener().onFailure(ws(), dates, null)
+            clock.advance(400_000)
+            main.runDue()
+        }
+        assertNull(parks.parkedUntil(uid, ip, clock.now))
+        assertEquals(8, opened.size)
+        assertTrue(logs.toString(), logs.any { "OTHER: certificate refused, dates" in it })
     }
 
     @Test
-    fun `socketWanted - opens when armed, closes at a disarm, a stop, the release, without Wi-Fi or parked`() {
-        val now = clock.now
-        assertTrue(socketWanted(armed = true, wifiNetwork = network, closed = false, parkedUntil = null, uid = uid, now = now))
-        assertFalse("the disarm, a stop, the park (the session disarms)", socketWanted(false, network, false, null, uid, now))
-        assertFalse("the hand-off and the release (closed)", socketWanted(true, network, true, null, uid, now))
-        assertFalse("no Wi-Fi", socketWanted(true, null, false, null, uid, now))
-        assertFalse("parked", socketWanted(true, network, false, now + 1, uid, now))
-        assertFalse("no uid", socketWanted(true, network, false, null, "", now))
+    fun `socketWanted - opens when armed, closes at a disarm, a stop, the release, without Wi-Fi`() {
+        assertTrue(socketWanted(armed = true, wifiNetwork = network, closed = false, uid = uid))
+        assertFalse("the disarm, a stop (the session disarms)", socketWanted(false, network, false, uid))
+        assertFalse("the hand-off and the release (closed)", socketWanted(true, network, true, uid))
+        assertFalse("no Wi-Fi", socketWanted(true, null, false, uid))
+        assertFalse("no uid", socketWanted(true, network, false, ""))
     }
 
     @Test

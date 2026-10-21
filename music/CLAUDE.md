@@ -58,7 +58,7 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   always-on VPN allows no bypass, so the bind is EPERM - 26a §6.5, `SourceScanTest`), `SsdpScanner` (MulticastLock for
   the round only), `SonosLocks`, `SonosSuspension`, `SonosTail`; the event socket (design 53 §2.2): pure `SonosEvents`
   (the messages, the handshake reducer `Plan`, `SocketEvent`) and `SonosSocket` (OkHttp's own WebSocket: `socketWanted`,
-  the host gate, the speaker's limited trust, the backoff, the parks, the liveness rule); the bar's anchor is
+  the host gate, the speaker's pinned trust (53-c), the backoff, the parks, the liveness rule); the bar's anchor is
   `logic/SonosAnchor.kt`. Grouping (design 53-b): `GroupVerbs` (soco's join/leave on other rooms, off the actor, one
   Mutex) and `RoomVolumes` (the members' volumes, latest-wins per room, off the actor); the group's volume rules are
   `logic/GroupVolume.kt`; the scope's and the sheet's belts (`sessionAllowed`, `groupingOffered`, `joinOffered`,
@@ -165,12 +165,21 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
 - **Cleartext http is allowed** (`res/xml/network_security_config.xml`, qa-30-s3b-code H2; `SourceScanTest`): Sonos
   SOAP to a speaker's LAN address, http enclosures, `lan` feeds and the emulator's fakes all need it, and a config
   can name hosts but not ranges. What may be fetched is the app's own rule (the public-only client's address checks,
-  Sonos URLs from IP literals); trust is the system's CAs only - **with one exception** (design 53 §2.2): the Sonos event
-  socket's own client (`speakerSocketClient`, `SonosSocket.kt`) accepts the speaker's self-signed certificate, only for
-  `wss` to the cached ip literal of the uid we command, in a speaker's range (`speakerLiteral`: RFC 1918, link-local,
-  IPv6 ULA/link-local - never loopback or the tailnet), port 1443, `/websocket/api` (`socketGate`,
-  checked before any connect), its host name verifier accepting exactly that ip. No other client gets that trust, and a
-  URL from a socket message (a `MOVED`'s, a player's `websocketUrl`) is never dialled (`SourceScanTest`'s `d53`).
+  Sonos URLs from IP literals); trust is the system's CAs only - **with one exception** (design 53 §2.2, round 53-c): the
+  Sonos event socket's own client (`speakerSocketClient`, `SonosSocket.kt`) trusts **the pinned Sonos Device
+  Authentication Root CA alone** (`SONOS_ROOT_PEM`, its SHA-256 checked by `SonosTrustTest`; a `KeyStore` holding only
+  it - never the system's CAs, never trust-all; intermediates the speaker sends are path-built under it) **and the
+  leaf's SAN `urn:sonos:udn:` must equal the uid we dial** (`speakerCertRefusal`, in the handshake, before any message),
+  only for `wss` to the cached ip literal of that uid, in a speaker's range (`speakerLiteral`: RFC 1918, link-local,
+  IPv6 ULA/link-local - never loopback or the tailnet), port 1443, `/websocket/api` (`socketGate`, checked before any
+  connect), its host name verifier accepting exactly that ip. A refused certificate counts as a refused connect (five
+  in a row at one ip park the uid; polling stays) but `dates` (the phone's clock, likely: backed off, never parked), and
+  logs its reason class only (`chain`, `dates`, `no udn`, `udn mismatch`) - never the certificate's identifiers (its
+  SAN holds the household, a user, the serial); a debug build logs the leaf's subject CN, issuer CN and last year once
+  per uid and verdict. `SpeakerTrust` stays a plain `X509TrustManager` calling the 2-argument check (no host reaches the
+  platform's trust manager: no per-host policy, no Certificate Transparency - qa-53c-code 6). No other client gets
+  that trust, and a URL from a socket message (a `MOVED`'s, a player's `websocketUrl`) is never dialled
+  (`SourceScanTest`'s `d53`).
 - Positions are keyed by (entry key, item key), never by URL.
 - A public entry's audio never comes from a private address (21b §2.7): every entry except one the library marks
   `lan` (an RSS feed on the LAN or tailnet).
@@ -439,8 +448,10 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   the socket and the poll agree on - never a seek while paused or a no-op, N3) owes a `playbackStatus` within 3 s -
   one that came after the verb went out, also before its SOAP answer reached main, pays it (qa-53a-code 2) -, and
   two ours polls against the socket's state 3 s after its last event also close it. Reconnects 1, 2, 5, 15, 60 s, then
-  300 s, reset only after a healthy socket passed a liveness check; an HTTP answer or five refused connects park the uid
-  6 h (process memory). An event (on main, `SonosController.onSocket`): BUFFERING is TRANSITIONING (the phase only - never
+  300 s, reset only after a healthy socket passed a liveness check; an HTTP answer or five refused connects (TCP or a
+  refused certificate) at one ip park the uid 6 h at that ip (process memory) - another ip in the cache voids the park
+  and restarts the streak, so a stale ip never parks a good speaker; the park is the socket's own (re-checked every
+  300 s), not `socketWanted`'s (qa-53c-code 1). An event (on main, `SonosController.onSocket`): BUFFERING is TRANSITIONING (the phase only - never
   the transport, `playWhenReady`, a `Paused`/`Resumed` or a USER pause); our own verb wins until `SETTLE_MS` (a matching
   state confirms it); outside it a PLAYING or PAUSED newer than the last poll is the effective transport and a
   measurement - only while the snapshot is fresh and ours, no play settles (an answered play's event is parked for the

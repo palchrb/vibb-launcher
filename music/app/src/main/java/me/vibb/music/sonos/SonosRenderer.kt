@@ -138,7 +138,7 @@ internal class SonosRenderer(
      * controller on the main thread.
      */
     private val socket = SonosSocket(
-        clientFor = { ip -> home.socketClient(ip) },
+        clientFor = { ip, uid -> home.socketClient(ip, uid) },
         resolveIp = { home.cache.resolve(it)?.ip },
         clock = clock,
         main = object : SocketMain {
@@ -252,13 +252,14 @@ internal class SonosRenderer(
 
     /**
      * The socket's lifetime (design 53 §2.2, [socketWanted]): armed (the session's own flag), Wi-Fi
-     * up, not closed or released, the uid not parked - the target the uid we command on this network,
-     * so a follow or a network change re-targets it. Cheap; run on every change.
+     * up, not closed or released - the target the uid we command on this network, so a follow or a
+     * network change re-targets it; a park is the socket's own (53-c: it holds for an ip). Cheap; run on
+     * every change.
      */
     private fun updateSocket() {
         val uid = controller.uid
         val network = home.wifiNetwork.value
-        val wanted = !released && socketWanted(session.armed, network, controller.closed, socket.parkedUntil(uid), uid, clock())
+        val wanted = !released && socketWanted(session.armed, network, controller.closed, uid)
         socket.want(if (wanted && network != null) SonosSocket.Target(uid, network) else null)
     }
 
