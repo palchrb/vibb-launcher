@@ -1022,7 +1022,13 @@ findings, merge to `main`, full suite once.
   leaves up to 15 s of silence. `metadataStatus` carries only `container` = our `dc:title` (no track, duration or
   art, whichever DIDL). So for (2)+(3): a WebSocket subscription anchors the position on each event and the phone
   extrapolates between, and `IDLE` near the end advances at once; UPnP polling stays the fallback and the commands
-  stay UPnP. A grouped room's events and `groups:1 modifyGroupMembers` from one socket are still untested.
+  stay UPnP. **Grouping, measured the same day** (`sonos-ws-probe.py --all --do group=Edith ungroup=Edith`): one
+  socket follows only the groups its speaker coordinates - subscribing to another group answers
+  `groupCoordinatorChanged` `GROUP_STATUS_MOVED` with that coordinator's `websocketUrl` (connect there); `groups:1
+  modifyGroupMembers` on the own group added and removed Edith in ~0.2 s, the group's id unchanged while its
+  coordinator stays (`RINCON_...:100`, name "Sverre + 1"). So the phone keeps one socket, to the coordinator of the
+  room it plays to, and follows a MOVED to the new coordinator's url; the grouping verbs can stay UPnP (`x-rincon:`,
+  `BecomeCoordinatorOfStandaloneGroup`, as soco) with WebSocket only for events.
 - **Home Wi-Fi as a trigger** (the user, 2026-10-19, "mer en tanke"): the parent marks one network as home; the
   phone reports joining/leaving it (the launcher already holds fine location and the device owner grants it, so the
   SSID is readable; debounce: home after ~2 min on it, away after ~10 min off it); events `arrived_home`/`left_home`
