@@ -138,7 +138,7 @@ internal class SonosRenderer(
      * controller on the main thread.
      */
     private val socket = SonosSocket(
-        clientFor = { ip -> home.socketClient(ip) },
+        clientFor = { ip, uid -> home.socketClient(ip, uid) },
         resolveIp = { home.cache.resolve(it)?.ip },
         clock = clock,
         main = object : SocketMain {

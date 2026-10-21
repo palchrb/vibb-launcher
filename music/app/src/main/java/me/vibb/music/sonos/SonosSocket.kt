@@ -9,18 +9,22 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.net.ConnectException
 import java.net.InetAddress
+import java.security.KeyStore
 import java.security.SecureRandom
+import java.security.cert.CertificateException
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
+import javax.security.auth.x500.X500Principal
 
 /*
  * The speaker's local event socket, the connection (design 53 §2.2): OkHttp's own WebSocket (no new
  * dependency) to `wss://<cached ip>:1443/websocket/api`, its lifetime ([socketWanted]), the host gate
- * and the limited trust, the backoff and the parks, the liveness rule and the health the session
+ * and the pinned trust (the Sonos root, the udn: round 53-c), the backoff and the parks, the liveness rule and the health the session
  * reads. Ours (GPL-3.0 or later): vibb polls only. Android-free but for [SuppressLint] (the main
  * thread comes in as [SocketMain]); SonosSocketTest drives it through a fake [WebSocket.Factory].
  *
@@ -86,45 +90,177 @@ fun socketGate(url: HttpUrl, cachedIp: String?): Boolean {
 }
 
 /**
- * The speaker's self-signed certificate, accepted - for the one gated host only: the socket's own
- * client verifies the host name as exactly that ip ([speakerSocketClient]), and no other client
- * ever uses this trust (OkHttp pools by `Address`, the socket factory and the verifier included).
- * Enough because the socket only reads, and what it says is checked: a spoofed event can at worst
- * re-base the bar until the next poll or wake a poll (rate limited); every decision is UPnP's, and
- * UPnP to the same address is already cleartext - pinning would add nothing against someone who can
- * answer port 1400 (design 53 §2.2, "Trust").
+ * The Sonos Device Authentication Root CA (`O=Sonos, Inc`, `OU=Sonos Devices`, valid 2015-10-05..2055-09-25, SHA-256
+ * [SONOS_ROOT_SHA256]): the root a speaker's own certificate chains to (design 53, "53-c status"). A public
+ * certificate and nothing else - the copy in github.com/nickblt/sonos-websocket, `src/certs/sonos-ca.pem` (no code
+ * taken from there), kept because its fingerprint matched the root of the user's speaker's own chain (`openssl
+ * s_client` to the speaker at 1443, 2026-10-21: leaf -> this root, `Verify return code: 0 (ok)`). SonosTrustTest
+ * checks the fingerprint.
  */
-@SuppressLint("CustomX509TrustManager", "TrustAllX509TrustManager")
-private class SpeakerTrust(private val certLog: ((String) -> Unit)?) : X509TrustManager {
-    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+const val SONOS_ROOT_PEM = """
+-----BEGIN CERTIFICATE-----
+MIIGUzCCBDugAwIBAgIJAN526bolv8HvMA0GCSqGSIb3DQEBCwUAMIGVMQswCQYD
+VQQGEwJVUzETMBEGA1UECAwKQ2FsaWZvcm5pYTEWMBQGA1UEBwwNU2FudGEgQmFy
+YmFyYTETMBEGA1UECgwKU29ub3MsIEluYzEWMBQGA1UECwwNU29ub3MgRGV2aWNl
+czEsMCoGA1UEAwwjU29ub3MgRGV2aWNlIEF1dGhlbnRpY2F0aW9uIFJvb3QgQ0Ew
+IBcNMTUxMDA1MDE1MDM4WhgPMjA1NTA5MjUwMTUwMzhaMIGVMQswCQYDVQQGEwJV
+UzETMBEGA1UECAwKQ2FsaWZvcm5pYTEWMBQGA1UEBwwNU2FudGEgQmFyYmFyYTET
+MBEGA1UECgwKU29ub3MsIEluYzEWMBQGA1UECwwNU29ub3MgRGV2aWNlczEsMCoG
+A1UEAwwjU29ub3MgRGV2aWNlIEF1dGhlbnRpY2F0aW9uIFJvb3QgQ0EwggIiMA0G
+CSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCYP0pOHXxJNjApEW1sl1pXZmty0HAI
+nDAO75u1wyazBmgtReQVK+OSrW3nm1obhZIaZy7tsz7oEgVI79pPwFSeEa9wsoaG
+5UzfiasSu5rsf+s5yGL7nnN658nNEIVDZAJdh6FAXzIt2TsvBqYp7HdO66ZBEBb9
+UK5848WlbQnLFyab4ZihuCHklxVzeOsalLDiQWdXhmM9GHar/gy9rufKvmSwlXPi
+hhU5KgwoK9rW9pIb8bAbTT3uiRfQh8SmH041CT28YXSDKLvPnja8xbigIVG0r8Fo
+w9L7F7az4lW1OaIuszNbejUjd+9yw4fBHeg9cEwcrkqkklIrtpjyDIpwN8dBf7Ff
+kUBQhHlbQyX37PsCl8pbpKsMrEvjDbTJW893slmIjnf0XLYqAr+JOsKZDs9VQRED
+mJJAUWKKz9H1J/Ed+rId7OGmAD1DeWDnHsgszU+38eS6Tcscdiuor+R94Wb+mSGg
+VL6rWWsLTW4lbmcYcKYCt5KMycr8bVw4kDxHKJmZVqcug7GfyMpcy8alE9NgswaM
+SNMpKPL/XABmvcLmd3O1xr15m5USrkdva1U/O90PLu73H1Uw/qGjx6KBKjygRDPl
+grLRGBv+yHd3+5u0ztCD5Ag9R9xTxq5Pep/UwA4XTAZbsuOddH2lg+3iMYsDubEq
+SmKdWDDK+W0zGwIDAQABo4GhMIGeMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYE
+FPKs3CiyYmhuy6zGRmirXT9ti4IRMB8GA1UdIwQYMBaAFPKs3CiyYmhuy6zGRmir
+XT9ti4IRMA4GA1UdDwEB/wQEAwIBBjA7BgNVHR8ENDAyMDCgLqAshipodHRwOi8v
+Y2VydHMud3Muc29ub3MuY29tL2NlcnRzL2RldmljZS9jcmwwDQYJKoZIhvcNAQEL
+BQADggIBAA/ISAUd1IKddANWy5MgqRCwJYWtGOriFqp9GcvPbrLUz6SfJ86lZCFz
+4GSrTSKQICXVaGuLOnC7fQMiBTbq9R7eKih5hrQZz8O/LqvobgLUNMzS1ahvgqx8
+Yz0avj6T4//MKQSd4mt5wS6b3zCl7AZwtwA9drCcoAyUegl2/Pp4DoIRm9w91POL
+GurgSmHJ8D+8GZwyi5V9LWuvaglI97MzzmisgxRerkOEXFlT4fM6nT70bk39bFhK
+CQZmrRigrYA0A1rHemt0xr1YtdUkK3Uyu1yvSScXguIq/H/SGnOtcCX/q6uOBHRO
+hKAxLscUgEQefLbGo2awMJGdheNIAyTMA3jjd1rLpAFPbDaMPfDM8Wkmu0/SrJob
+uBaHP/xDd5A47J0dv3enkFnuaYkt0w9qiiUzXQzk8h6Si5VQ65EyxLyU/xxRt7Bk
+vU5XbaL5lL8AvAJBxO4Az1a+aLY0gXJzSCvuOH+9pdhDBU2DBr6ji9eCAp1fjESd
+JG5kQlpYoDrr+BT4divD5Onnq6OY3l2iVQW8V5JzELtn+YXjekjxrRTUKB+AJe3o
+PCBKkzssZY5+sXEQVIVXoRMk4xivZXyidTPqNlNFGuz57N7Qi/okHYOzeBuTZZiQ
+lpUhu6Y8JTH5zRGs/zdwXTIDbB0hQyoDHlIRcHcP6Ywg4Y6C+OL7
+-----END CERTIFICATE-----
+"""
 
-    /**
-     * Accepted; a debug build ([certLog]) notes the leaf's subject and issuer once per process (design 53 §5
-     * check 10: whether a later check could pin the subject to the uid) - nothing else of the certificate.
-     */
+/** [SONOS_ROOT_PEM]'s SHA-256 over its DER, as `openssl x509 -fingerprint -sha256` prints it. */
+const val SONOS_ROOT_SHA256 = "42:DC:D4:A7:D4:B2:3B:D2:86:83:B4:03:37:7B:A8:8A:16:9B:35:78:EC:94:F4:15:BB:E6:FD:48:3D:D5:A0:8F"
+
+/** What a speaker's certificate names its player by: `urn:sonos:udn:RINCON_<...>`, a URI in its SAN. */
+const val SONOS_UDN_PREFIX = "urn:sonos:udn:"
+
+private val SONOS_ROOT: X509Certificate by lazy { pemCertificate(SONOS_ROOT_PEM) }
+
+/** The pinned root ([SONOS_ROOT_PEM]), parsed once. */
+fun sonosRoot(): X509Certificate = SONOS_ROOT
+
+fun pemCertificate(pem: String): X509Certificate =
+    CertificateFactory.getInstance("X.509").generateCertificate(pem.trim().byteInputStream()) as X509Certificate
+
+/**
+ * A trust manager whose one anchor is [root]: the platform's own chain validation (the path built over the
+ * intermediates the server sends, validity, signatures, the CA flags, the leaf's key usages) over a `KeyStore`
+ * holding [root] alone - never the system's CAs, never trust-all.
+ */
+fun rootOnlyTrust(root: X509Certificate): X509TrustManager {
+    val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+        load(null, null)
+        setCertificateEntry("pinned-root", root)
+    }
+    val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(store) }
+    return factory.trustManagers.filterIsInstance<X509TrustManager>().single()
+}
+
+/** The players a certificate names: its SAN's `urn:sonos:udn:` URIs, the prefix taken off (`RINCON_<...>`). */
+fun certificateUdns(leaf: X509Certificate): List<String> =
+    leaf.subjectAlternativeNames.orEmpty()
+        .filter { it.size >= 2 && it[0] == SAN_URI }
+        .mapNotNull { (it[1] as? String)?.takeIf { uri -> uri.startsWith(SONOS_UDN_PREFIX) }?.removePrefix(SONOS_UDN_PREFIX) }
+
+/** `GeneralName`'s uniformResourceIdentifier, as `getSubjectAlternativeNames` numbers it. */
+private const val SAN_URI = 6
+
+/**
+ * Why the speaker's [chain] is refused for [uid] - a reason class only, never anything of the certificate (its SAN
+ * also holds the household, a user and the serial) - or null: accepted. Accepted = the chain verifies against
+ * [roots] (the pinned root's [rootOnlyTrust]; a chain with intermediates under it too, as long as the speaker sends
+ * them) and the leaf's SAN names our player: a `urn:sonos:udn:` equal to [uid], the uid whose cached ip was dialled.
+ */
+fun speakerCertRefusal(chain: Array<out X509Certificate>?, authType: String?, uid: String, roots: X509TrustManager): String? {
+    if (chain.isNullOrEmpty()) return "no chain"
+    try {
+        roots.checkServerTrusted(chain, authType?.takeIf { it.isNotEmpty() } ?: "UNKNOWN")
+    } catch (_: Exception) {
+        return "chain"
+    }
+    val udns = try {
+        certificateUdns(chain[0])
+    } catch (_: Exception) {
+        return "san unreadable"
+    }
+    return when {
+        udns.isEmpty() -> "no udn"
+        udns.none { it.equals(uid, ignoreCase = true) } -> "udn mismatch"
+        else -> null
+    }
+}
+
+/** A certificate the socket refused ([speakerCertRefusal]); its message is the reason class only. */
+class SpeakerCertificateException(reason: String) : CertificateException("speaker certificate refused: $reason")
+
+private val CN = Regex("""(?:^|[,+])CN=((?:\\.|[^,+\\])*)""")
+
+/** The `CN` of a principal (RFC 2253, its escapes kept), or null. */
+fun commonName(principal: X500Principal): String? = CN.find(principal.getName(X500Principal.RFC2253))?.groupValues?.get(1)
+
+/**
+ * The speaker's certificate, checked (design 53 §2.2 "Trust", round 53-c): its chain against the pinned Sonos root
+ * only and its SAN's udn against the [uid] we dial ([speakerCertRefusal]), in the handshake - before any message.
+ * A refusal logs its reason class ([log], every build) and fails the handshake with a [SpeakerCertificateException]:
+ * a failed connect, counted as a refused one (the backoff, five in a row park the uid). A debug build ([certLog])
+ * notes the leaf's subject CN and issuer CN with the verdict once per uid and process (design 53 §5 check 10) -
+ * never the SAN.
+ */
+@SuppressLint("CustomX509TrustManager")
+private class SpeakerTrust(
+    private val uid: String,
+    private val roots: X509TrustManager,
+    private val log: (String) -> Unit,
+    private val certLog: ((String) -> Unit)?,
+) : X509TrustManager {
+    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?): Unit =
+        throw CertificateException("the speaker socket takes no client certificate")
+
     override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-        val log = certLog ?: return
-        val leaf = chain?.firstOrNull() ?: return
-        if (CERT_LOGGED.compareAndSet(false, true)) {
-            log("sonos socket: certificate subject \"${leaf.subjectX500Principal.name}\", issuer \"${leaf.issuerX500Principal.name}\"")
+        val refusal = speakerCertRefusal(chain, authType, uid, roots)
+        val leaf = chain?.firstOrNull()
+        if (certLog != null && leaf != null && CERT_LOGGED.add(uid)) {
+            val verdict = refusal?.let { "refused ($it)" } ?: "verified (the pinned root, the udn)"
+            certLog.invoke(
+                "sonos socket: certificate CN \"${commonName(leaf.subjectX500Principal)}\", issuer CN \"${commonName(leaf.issuerX500Principal)}\" - $verdict",
+            )
+        }
+        if (refusal != null) {
+            log("sonos socket: certificate refused ($refusal)")
+            throw SpeakerCertificateException(refusal)
         }
     }
 
-    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+    override fun getAcceptedIssuers(): Array<X509Certificate> = roots.acceptedIssuers
 
     companion object {
-        val CERT_LOGGED = AtomicBoolean(false)
+        val CERT_LOGGED: MutableSet<String> = ConcurrentHashMap.newKeySet()
     }
 }
 
 /**
- * The socket's own client for [ip]: the SOAP client's ([base]: unbound to any `Network`, design 26a
- * §6.5) with connect 2 s (the read timeout is cleared by OkHttp after the upgrade), the 30 s ping
- * (the probe's heartbeat: a missing pong closes it), [SpeakerTrust] and a host name verifier that
- * accepts exactly [ip]. Used for the socket and nothing else.
+ * The socket's own client for [ip], the cached ip of [uid]: the SOAP client's ([base]: unbound to any `Network`,
+ * design 26a §6.5) with connect 2 s (the read timeout is cleared by OkHttp after the upgrade), the 30 s ping (the
+ * probe's heartbeat: a missing pong closes it), [SpeakerTrust] over [root] alone (the pinned Sonos root; a test
+ * passes its own) and a host name verifier that accepts exactly [ip]. Used for the socket and nothing else.
  */
-fun speakerSocketClient(base: OkHttpClient, ip: String, certLog: ((String) -> Unit)? = null): OkHttpClient {
-    val trust = SpeakerTrust(certLog)
+fun speakerSocketClient(
+    base: OkHttpClient,
+    ip: String,
+    uid: String,
+    log: (String) -> Unit = {},
+    certLog: ((String) -> Unit)? = null,
+    root: X509Certificate = sonosRoot(),
+): OkHttpClient {
+    val trust = SpeakerTrust(uid, rootOnlyTrust(root), log, certLog)
     val tls = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), SecureRandom()) }
     val host = socketUrl(ip)?.host
     return base.newBuilder()
@@ -137,13 +273,16 @@ fun speakerSocketClient(base: OkHttpClient, ip: String, certLog: ((String) -> Un
 
 /** Why a connection ended. */
 enum class SocketFailure {
-    /** A TCP refusal (an S1 speaker, a firmware without port 1443). */
+    /**
+     * A TCP refusal (an S1 speaker, a firmware without port 1443), or the speaker's certificate refused
+     * ([SpeakerCertificateException]: another try meets the same certificate).
+     */
     REFUSED,
 
     /** An HTTP answer instead of the upgrade (401/403/404: the key or the endpoint closed by a firmware update). */
     HTTP,
 
-    /** A timeout, TLS, a reset, a close, a dead ping, a liveness miss. */
+    /** A timeout, TLS (but a refused certificate), a reset, a close, a dead ping, a liveness miss. */
     OTHER,
 }
 
@@ -287,8 +426,8 @@ interface SonosEventLink {
  * closes it. Every failure leaves the app on polling - speed lost, never a feature.
  */
 class SonosSocket(
-    /** The socket's own client for an ip ([speakerSocketClient]); an [OkHttpClient] is a [WebSocket.Factory]. */
-    private val clientFor: (ip: String) -> WebSocket.Factory,
+    /** The socket's own client for a uid's cached ip ([speakerSocketClient]); an [OkHttpClient] is a [WebSocket.Factory]. */
+    private val clientFor: (ip: String, uid: String) -> WebSocket.Factory,
     /** The cached ip of a uid (`SpeakerCache.resolve`). */
     private val resolveIp: (uid: String) -> String?,
     private val clock: () -> Long,
@@ -357,7 +496,7 @@ class SonosSocket(
             .header("Sec-WebSocket-Protocol", SONOS_WS_PROTOCOL)
             .build()
         val ws = try {
-            clientFor(ip).newWebSocket(request, Listener(id, t.uid, ip))
+            clientFor(ip, t.uid).newWebSocket(request, Listener(id, t.uid, ip))
         } catch (e: Exception) {
             log("sonos socket: no client (${e.javaClass.simpleName})")
             return retry(t, SocketFailure.OTHER)
@@ -484,12 +623,15 @@ class SonosSocket(
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            // the platform wraps the trust manager's refusal (an SSLHandshakeException caused by it)
+            val certificate = generateSequence(t) { it.cause }.take(8).any { it is SpeakerCertificateException }
             val why = when {
                 response != null -> SocketFailure.HTTP
-                t is ConnectException -> SocketFailure.REFUSED
+                t is ConnectException || certificate -> SocketFailure.REFUSED
                 else -> SocketFailure.OTHER
             }
-            val detail = response?.let { "HTTP ${it.code}" } ?: t.javaClass.simpleName
+            // never the message: a platform's TLS error may quote the certificate
+            val detail = response?.let { "HTTP ${it.code}" } ?: if (certificate) "certificate refused" else t.javaClass.simpleName
             main.post { ended(id, why, detail) }
         }
     }

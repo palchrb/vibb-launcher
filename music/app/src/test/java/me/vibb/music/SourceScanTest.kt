@@ -653,15 +653,34 @@ class SourceScanTest {
     }
 
     /**
-     * Design 53 §2.2's one exception to "the system CAs only": the speaker's self-signed certificate,
-     * accepted only on the event socket's own client, for the one gated ip literal - nowhere else.
+     * Design 53 §2.2's one exception to "the system CAs only": the speaker's certificate, checked against the pinned
+     * Sonos root alone and its udn against our uid (53-c), only on the event socket's own client, for the one gated ip
+     * literal - nowhere else, and no trust-all anywhere.
      */
     @Test
     fun `d53 - the speaker's trust lives in SonosSocket only, its client is the socket's, and no wss URL is written down`() {
-        val main = sources("src/main/java")
-        val trust = Regex("X509TrustManager|checkServerTrusted|hostnameVerifier|HostnameVerifier|sslSocketFactory|SSLContext")
+        val main = sources("src/main/java") + sources("src/debug/java")
+        val trust = Regex(
+            "X509TrustManager|TrustManagerFactory|TrustManager\\b|checkServerTrusted|hostnameVerifier|HostnameVerifier|" +
+                "sslSocketFactory|SSLContext|setCertificateEntry|CertificateFactory|CertPath|TrustAnchor",
+        )
         val holders = main.filter { trust.containsMatchIn(code(it)) }.map { it.name }
         assertEquals(listOf("SonosSocket.kt"), holders)
+        for (f in main) assertFalse("${f.name}: no trust-all", Regex("TrustAll|ALLOW_ALL|InsecureTrust").containsMatchIn(f.readText()))
+        val trustCode = code(moduleFile("src/main/java/me/vibb/music/sonos/SonosSocket.kt"))
+        // one anchor store: a KeyStore holding the pinned root alone, the factory initialised with it (never null: the system CAs)
+        assertEquals(listOf("setCertificateEntry(\"pinned-root\", root)"), Regex("setCertificateEntry\\([^)]*\\)").findAll(trustCode).map { it.value }.toList())
+        assertEquals(
+            listOf("init(store)"),
+            Regex("TrustManagerFactory\\.getInstance\\([^\\n]*\\.apply \\{ (init\\([^)]*\\)) \\}").findAll(trustCode).map { it.groupValues[1] }.toList(),
+        )
+        assertEquals("one factory", 1, Regex("TrustManagerFactory\\.getInstance\\(").findAll(trustCode).count())
+        assertEquals("one SSLContext, over the SpeakerTrust", listOf("init(null, arrayOf(trust), SecureRandom())"), Regex("init\\(null[^\\n]*\\)\\)").findAll(trustCode).map { it.value }.toList())
+        val check = trustCode.substringAfter("override fun checkServerTrusted(").substringBefore("override fun getAcceptedIssuers")
+        assertTrue("every chain goes through the root and the udn", check.contains("speakerCertRefusal(chain, authType, uid, roots)"))
+        assertTrue("a refusal throws", check.contains("throw SpeakerCertificateException(refusal)"))
+        assertTrue(trustCode.contains("val trust = SpeakerTrust(uid, rootOnlyTrust(root), log, certLog)"))
+        assertEquals("one place the root comes from", 1, Regex("root: X509Certificate = sonosRoot\\(\\)").findAll(trustCode).count())
         val clients = main.filter { "speakerSocketClient(" in code(it) }.map { it.name }.sorted()
         assertEquals("built in SonosSocket.kt, asked for by SonosHome only", listOf("SonosHome.kt", "SonosSocket.kt"), clients)
         assertEquals("used by the renderer's socket only", listOf("SonosRenderer.kt"), main.filter { "socketClient(" in code(it) && it.name != "SonosHome.kt" && it.name != "SonosSocket.kt" }.map { it.name })

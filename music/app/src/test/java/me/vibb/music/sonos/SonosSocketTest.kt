@@ -73,14 +73,20 @@ class SonosSocketTest {
     private var cachedIp: String? = ip
     private val parks = SocketParks()
     private val network = Any()
+
+    /** The (ip, uid) each client was asked for: the certificate is checked against that uid. */
+    private val clients = mutableListOf<Pair<String, String>>()
+    private val logs = mutableListOf<String>()
     private val socket = SonosSocket(
-        clientFor = { _ ->
+        clientFor = { ip, uid ->
+            clients += ip to uid
             WebSocket.Factory { request, listener -> FakeWs(request).also { opened += it to listener } }
         },
         resolveIp = { cachedIp },
         clock = { clock.now },
         main = main,
         onEvent = { events += it },
+        log = { logs += it },
         parks = parks,
     )
 
@@ -262,6 +268,36 @@ class SonosSocketTest {
         listener().onFailure(ws(), ConnectException("refused"), null)
         assertNotNull("the fifth refused connect (an S1 speaker, no port 1443)", parks.parkedUntil(other, clock.now))
         assertEquals(5, opened.size - 1)
+    }
+
+    /** 53-c: a refused certificate is a refused connect (it won't change): five in a row park; its client is our uid's. */
+    @Test
+    fun `d53c - a refused certificate counts as a refused connect, its message never logged - other TLS failures don't park`() {
+        socket.want(SonosSocket.Target(uid, network))
+        assertEquals(listOf(ip to uid), clients)
+        val refused = javax.net.ssl.SSLHandshakeException("TLS failed: CN=SECRET").apply {
+            initCause(java.security.cert.CertificateException(SpeakerCertificateException("udn mismatch")))
+        }
+        repeat(4) {
+            listener().onFailure(ws(), refused, null)
+            clock.advance(60_000)
+            main.runDue()
+        }
+        assertNull(parks.parkedUntil(uid, clock.now))
+        listener().onFailure(ws(), refused, null)
+        assertNotNull("the fifth refused certificate", parks.parkedUntil(uid, clock.now))
+        assertTrue(logs.toString(), logs.any { "REFUSED: certificate refused" in it })
+        assertTrue("the platform's message is never logged", logs.none { "SECRET" in it })
+
+        val other = "RINCON_00000000000001401"
+        socket.want(SonosSocket.Target(other, network))
+        assertEquals(ip to other, clients.last())
+        repeat(6) {
+            listener().onFailure(ws(), javax.net.ssl.SSLHandshakeException("reset"), null)
+            clock.advance(400_000)
+            main.runDue()
+        }
+        assertNull("another TLS failure backs off without a park", parks.parkedUntil(other, clock.now))
     }
 
     @Test

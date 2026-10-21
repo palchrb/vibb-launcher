@@ -58,7 +58,7 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   always-on VPN allows no bypass, so the bind is EPERM - 26a §6.5, `SourceScanTest`), `SsdpScanner` (MulticastLock for
   the round only), `SonosLocks`, `SonosSuspension`, `SonosTail`; the event socket (design 53 §2.2): pure `SonosEvents`
   (the messages, the handshake reducer `Plan`, `SocketEvent`) and `SonosSocket` (OkHttp's own WebSocket: `socketWanted`,
-  the host gate, the speaker's limited trust, the backoff, the parks, the liveness rule); the bar's anchor is
+  the host gate, the speaker's pinned trust (53-c), the backoff, the parks, the liveness rule); the bar's anchor is
   `logic/SonosAnchor.kt`. Grouping (design 53-b): `GroupVerbs` (soco's join/leave on other rooms, off the actor, one
   Mutex) and `RoomVolumes` (the members' volumes, latest-wins per room, off the actor); the group's volume rules are
   `logic/GroupVolume.kt`; the scope's and the sheet's belts (`sessionAllowed`, `groupingOffered`, `joinOffered`,
@@ -165,12 +165,18 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
 - **Cleartext http is allowed** (`res/xml/network_security_config.xml`, qa-30-s3b-code H2; `SourceScanTest`): Sonos
   SOAP to a speaker's LAN address, http enclosures, `lan` feeds and the emulator's fakes all need it, and a config
   can name hosts but not ranges. What may be fetched is the app's own rule (the public-only client's address checks,
-  Sonos URLs from IP literals); trust is the system's CAs only - **with one exception** (design 53 §2.2): the Sonos event
-  socket's own client (`speakerSocketClient`, `SonosSocket.kt`) accepts the speaker's self-signed certificate, only for
-  `wss` to the cached ip literal of the uid we command, in a speaker's range (`speakerLiteral`: RFC 1918, link-local,
-  IPv6 ULA/link-local - never loopback or the tailnet), port 1443, `/websocket/api` (`socketGate`,
-  checked before any connect), its host name verifier accepting exactly that ip. No other client gets that trust, and a
-  URL from a socket message (a `MOVED`'s, a player's `websocketUrl`) is never dialled (`SourceScanTest`'s `d53`).
+  Sonos URLs from IP literals); trust is the system's CAs only - **with one exception** (design 53 §2.2, round 53-c): the
+  Sonos event socket's own client (`speakerSocketClient`, `SonosSocket.kt`) trusts **the pinned Sonos Device
+  Authentication Root CA alone** (`SONOS_ROOT_PEM`, its SHA-256 checked by `SonosTrustTest`; a `KeyStore` holding only
+  it - never the system's CAs, never trust-all; intermediates the speaker sends are path-built under it) **and the
+  leaf's SAN `urn:sonos:udn:` must equal the uid we dial** (`speakerCertRefusal`, in the handshake, before any message),
+  only for `wss` to the cached ip literal of that uid, in a speaker's range (`speakerLiteral`: RFC 1918, link-local,
+  IPv6 ULA/link-local - never loopback or the tailnet), port 1443, `/websocket/api` (`socketGate`, checked before any
+  connect), its host name verifier accepting exactly that ip. A refused certificate counts as a refused connect (five
+  in a row park the uid; polling stays) and logs its reason class only (`chain`, `no udn`, `udn mismatch`) - never the
+  certificate's identifiers (its SAN holds the household, a user, the serial); a debug build logs the leaf's subject
+  CN and issuer CN once per uid. No other client gets that trust, and a URL from a socket message (a `MOVED`'s, a
+  player's `websocketUrl`) is never dialled (`SourceScanTest`'s `d53`).
 - Positions are keyed by (entry key, item key), never by URL.
 - A public entry's audio never comes from a private address (21b §2.7): every entry except one the library marks
   `lan` (an RSS feed on the LAN or tailnet).

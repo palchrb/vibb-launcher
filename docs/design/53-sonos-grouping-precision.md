@@ -16,7 +16,9 @@ user: not now). The design QA is `qa-53-design.md`; what it changed is listed in
 
 - `wss://<ip>:1443/websocket/api`, request header `X-Sonos-Api-Key: 123e4567-e89b-12d3-a456-426655440000` (the RFC 4122
   example UUID that `sonos-websocket` sends; the speaker accepts it locally - **public, not a secret**), subprotocol
-  `v1.api.smartspeaker.audio`, a self-signed certificate. Messages are JSON arrays `[header, body]`; a command carries
+  `v1.api.smartspeaker.audio`, a certificate the browser calls self-signed - in fact (measured later the same day) a
+  leaf under the Sonos Device Authentication Root CA, its SAN naming the player (`urn:sonos:udn:RINCON_<...>`; "53-c
+  status"). Messages are JSON arrays `[header, body]`; a command carries
   `namespace`, `command`, a `cmdId`, and `householdId` or `groupId`.
 - An empty command `[{}, {}]` answers with the `householdId`. `groups:1 getGroups` / `subscribe` (householdId) give
   `groups` (`groups[]`: `id`, `name`, `coordinatorId`, `playerIds`; `players[]`: `id`, `name`, `websocketUrl`).
@@ -189,7 +191,10 @@ app is exactly today's plus the 1 s display poll of §2.4: **we lose speed, neve
   what it says is checked - a spoofed event can at worst re-base the bar until the next poll or wake a poll (rate
   limited, §2.3); the IDLE advance and every ours decision are UPnP's, and UPnP to the same address is already
   cleartext. Certificate pinning would add nothing against an attacker who can already answer port 1400. The lint ids
-  for a custom trust manager are suppressed on that one class with this reason.
+  for a custom trust manager are suppressed on that one class with this reason. **Superseded by round 53-c** (the
+  same day, once the speaker's chain was read): the trust manager verifies the chain against the pinned Sonos root
+  alone and the leaf's `urn:sonos:udn:` against the uid we dial - cheap, and it keeps a spoofer on the LAN from
+  feeding the bar at all ("53-c status").
 - **Threading**: OkHttp's reader thread parses (messages over 64 KB dropped), stamps `SystemClock.elapsedRealtime()` at
   receipt, and posts a compact `SocketEvent` to the main thread (the renderer's `Handler`), where the controller lives.
   Commands are sent from the listener (OkHttp's `send` is thread-safe). The socket never goes through the actor: SOAP
@@ -705,7 +710,10 @@ entry; backlog items for anything found).
 9. **The DIDL**: a podcast, an NRK series item and a Storytel book each play, `didl accepted` in logcat, the Sonos
    app shows title and album; `sonos-play-test.py --didl vibb` and the app's DIDL are the same string.
 10. **The certificate and the key** on every speaker model in the house: the socket opens; a debug build logs the
-    certificate's subject and issuer once (for a possible later check that the subject names the uid).
+    certificate's subject and issuer once (for a possible later check that the subject names the uid). Since 53-c:
+    the line is `sonos socket: certificate CN "<mac>", issuer CN "<issuer>" - verified (the pinned root, the udn)`,
+    once per uid - a `refused (chain)` there (a model with an intermediate it doesn't send, or another root) or
+    `refused (no udn|udn mismatch)` means that model polls only; report the issuer CN.
 11. **Battery**: no socket while the phone renders; the socket closes at the disarm (10 min paused) and at a switch
     home (logcat).
 
@@ -1015,3 +1023,55 @@ capture's other groups answering MOVED had ended ours (§5 check 1 lists the fiv
 **Owed** (§5): checks 6, 7, 8, 8b and 8c on the user's speakers (with the socket: the four outside cases within ~1-2 s;
 check 7's report of the old coordinator's transport and TrackURI after a "−" on it - if Sonos keeps the stream on the
 leaving room, `DelegateGroupCoordinationTo` first, a change in this note); the emulator round §6h's grouping step.
+
+## 53-c status (2026-10-21, branch `d53-c`)
+
+A small hardening round, from the user's `openssl s_client` to a speaker at 1443 (PLAN, design 53's "The certificate,
+checked the same day"): the leaf (`CN=<mac>`, `OU=Sonos Devices`, `O=Sonos, Inc`) chains straight to the **Sonos
+Device Authentication Root CA** (2015-10-05..2055-09-25, SHA-256 `42:DC:D4:A7:...:D5:A0:8F`), `Verify return code: 0`,
+and its SAN holds `urn:sonos:udn:RINCON_<uid>` (with `sonos-<mac>.local`, `sonos-<mac>.smartspeaker.audio` and the
+household, user, auid and serial URNs - identifiers that are never logged). §2.2's trust-any-on-the-gated-ip is
+replaced; the gate itself is unchanged.
+
+**What was built** (`sonos/SonosSocket.kt`, still the only trust code - `SourceScanTest`'s `d53`):
+- `SONOS_ROOT_PEM`: the root, a public certificate only - the copy in github.com/nickblt/sonos-websocket
+  `src/certs/sonos-ca.pem` (that repo has no licence; no code taken), kept because its fingerprint matched the user's
+  speaker's chain. `SonosTrustTest` checks its SHA-256 (`SONOS_ROOT_SHA256`), subject and self-signature.
+- `rootOnlyTrust(root)`: the platform's `TrustManagerFactory` over a `KeyStore` holding that root alone (Android's
+  documented "unknown CA" pattern: under the network security config it is a config of that store only) - never the
+  system CAs, never trust-all.
+- `speakerCertRefusal(chain, authType, uid, roots)`: the chain through it (`chain`), then the leaf's SAN URIs
+  `urn:sonos:udn:` - none (`no udn`), or none equal to the uid whose cached ip was dialled, case aside (`udn
+  mismatch`). `SpeakerTrust` (the socket client's trust manager, per (ip, uid): `clientFor(ip, uid)`,
+  `SonosHome.socketClient(ip, uid)`) runs it in the handshake - before any message - and throws a
+  `SpeakerCertificateException` carrying only the reason class; `checkClientTrusted` refuses; `getAcceptedIssuers` is
+  the root. The host name verifier still accepts exactly the cached ip, the gate (`socketGate`) still runs before any
+  dial.
+- A refused certificate is a socket failure counted as a refused connect (the listener finds the exception in the
+  failure's causes): the backoff, five in a row park the uid for 6 h - the same certificate would come back - and
+  polling stays. Other TLS failures stay `OTHER`. Logged: `sonos socket: certificate refused (<reason>)` (every build)
+  and `ended (REFUSED: certificate refused)` - never the platform's message, which may quote the certificate.
+- §5 check 10's debug line now names the leaf's subject CN and issuer CN only (never the SAN), with the verdict, once
+  per uid and process: `sonos socket: certificate CN "<mac>", issuer CN "<issuer>" - verified (the pinned root, the
+  udn)` or `- refused (<reason>)`.
+
+**Intermediates**: the user's chain was root -> leaf. Another model may sign through an intermediate; one the speaker
+sends in its chain is path-built under the pinned root (the platform's validation; `SonosTrustTest` has the case, in
+order and with the root sent along). One it doesn't send is never fetched (no AIA): that model is refused (`chain`)
+and polls only - check 10 reports the issuer CN, and the intermediate would then be added beside the root, not instead
+of the check.
+
+**Tests**: `SonosTrustTest` over throwaway test certificates (`src/test/resources/sonos/certs/`, a "Vibb Test Root",
+an other root, an intermediate and eight leaves made by its `make-certs.sh`, the keys deleted; README there): the good
+chain and the intermediate chain pass; another udn, no SAN, a DNS-only SAN, another root, a self-signed leaf, an
+expired leaf, a missing intermediate and an empty chain are each refused with their class; the real client's anchors
+are the Sonos root alone (the test root's good chain is refused by it); the logs carry no SAN value. `SonosSocketTest`:
+five refused certificates park, the platform's message isn't logged, another TLS failure doesn't park, the client is
+asked for our uid. `SourceScanTest`'s `d53`: the trust tokens in `SonosSocket.kt` only (main and debug), no trust-all,
+one `setCertificateEntry` of the pinned root, the factory initialised with that store, one `SSLContext` over
+`SpeakerTrust`, every chain through `speakerCertRefusal`.
+
+**Owed** (§5 check 10, a debug build on the Jelly Star): the phone's own TLS stack (Conscrypt under the network
+security config) accepting the speaker's chain against the pinned root - logcat `VibbSonos` shows `certificate CN
+"...", issuer CN "Sonos Device Authentication Root CA" - verified (the pinned root, the udn)` and then `open to
+RINCON_...` and `healthy`; on every speaker model in the house.
