@@ -231,6 +231,12 @@
     <string name="settings_mdm_background_connection_ask">Battery optimisation is on - tap to allow</string>
     <string name="settings_mdm_background_connection_pause_first">Pause all restrictions first (Android\'s Settings is hidden while the phone is managed), tap here, then end the pause</string>
     <string name="settings_mdm_background_connection_unknown">Unknown</string>
+    <string name="settings_mdm_calls_over_lock">Calls over the lock</string>
+    <string name="settings_mdm_calls_over_lock_on">On - the call screen can show over the lock</string>
+    <string name="settings_mdm_calls_over_lock_open">Off - tap and turn on Usage access for Vibb One</string>
+    <string name="settings_mdm_calls_over_lock_pause_first">Off - pause the phone first</string>
+    <string name="settings_mdm_calls_over_lock_needs_15">Needs Android 15</string>
+    <string name="settings_mdm_calls_over_lock_unknown">Unknown</string>
     <string name="toast_mdm_sync_done">Sync complete.</string>
     <string name="toast_mdm_sync_failed">Sync failed - couldn\'t reach the server.</string>
 

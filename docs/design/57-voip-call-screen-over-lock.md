@@ -862,3 +862,28 @@ Row numbers in the table above are those of that revision; §2.4 has been renumb
 | N8 (Low, part) | `learnedAtWallMs` orders the 32-entry cap; the signer is the set of current signers, any difference fails closed; a learn waits for the launcher-activity read | §2.3, §3.3 |
 | N9-N12 (Low) | Left for code QA, as the check proposes: `voip_usage_v1` unread by the server, a shared status fixture, Q-A's FSI flash for a launcher-activity ring screen, a fail-streak report, (d)'s "ours" wording | - |
 | New measurements | WhatsApp video Back -> PiP over the lock (accepted for a trusted class, §2.4; never lock task over it, §2.6; the refused-PiP reaction is check 11), Decline -> our lock, the op reset confirmed, Element's PiP comparison half done; step 1 is now a table of done and open items | §1, §2.4, §10 |
+
+## Prep release status (step 2, 2026-10-21)
+
+Built on branch `worktree-agent-a689b601f638554b8` (one commit, launcher and server together; not tagged). Nothing
+changes for the kid: no gate, no watcher, no usage-events read.
+- Launcher: the manifest's `PACKAGE_USAGE_STATS`; `lock/UsageAccess.kt` (§3.1's read with `checkOpNoThrow` - on
+  SDK 36 `unsafeCheckOpNoThrow` is deprecated and `-PwarningsAsErrors` refuses it; the mode watcher registered at
+  `initRest` reads on its binder thread and asks for a sync on a change - there is no `VoipCalls.evaluate` to run on
+  the main thread yet); `lock_state.usage_access_granted` / `voip_over_lock_unsupported`, capability
+  `voip_usage_v1`; the Settings row (`lock/UsageAccessRow.kt`, §6, the §8 strings in en and nb), whose state is
+  NEEDS_ANDROID_15 first on Android 14. Tests: `UsageAccessTest` (the grant rule, the row, the page choice, the
+  manifest line, the contract, and a scan that no `src/main` file touches `UsageStatsManager` or a usage event),
+  `PolicyResponseCompatTest`.
+- Server 0.34.0: the two `LockState` fields (lenient), `kid_lock::voip_over_lock` with the §7.2 words in both sets
+  (prep without `voip_gated_v1`), the warning above the Child PIN group and the Attention row (`voip-over-lock`,
+  Action). The Android 15 note wins over the Usage access note on an Android 14 phone (the grant can't help there).
+  Tests: `kid_lock::tests::voip_usage_notes`, `usage_access_fields_round_trip_leniently`,
+  `attention::tests::voip_usage_row`, `step10::usage_access_status_contract`.
+- Contract (N9): `server/testdata/usage_access_status.json`, byte-identical in the launcher's test resources, in
+  both CI path filters and the root `CLAUDE.md`. `voip_usage_v1` stays unread by the server (N9's other half).
+- Docs: `docs/setup/usage-access.md`, `docs/testing/emulator.md` §4's `appops set` line.
+- Suites: launcher 1506 unit tests (debug, `-PwarningsAsErrors`; `assembleRelease` builds), server 1112, `cargo fmt
+  --check` clean, clippy the 13 known warnings.
+- Not device-tested: check 9 (the row and Android's page during a pause, the nb labels), check 8 (restricted
+  settings), that the mode watcher fires for an `appops set` from adb.

@@ -189,6 +189,12 @@
     <string name="settings_mdm_background_connection_ask">Batterioptimalisering er på - trykk for å tillate</string>
     <string name="settings_mdm_background_connection_pause_first">Sett alle begrensninger på pause først (Androids innstillinger er skjult mens telefonen er styrt), trykk her, og avslutt pausen etterpå</string>
     <string name="settings_mdm_background_connection_unknown">Ukjent</string>
+    <string name="settings_mdm_calls_over_lock">Samtaler over låsen</string>
+    <string name="settings_mdm_calls_over_lock_on">På - samtaleskjermen kan vises over låsen</string>
+    <string name="settings_mdm_calls_over_lock_open">Av - trykk og slå på Bruksdata for Vibb One</string>
+    <string name="settings_mdm_calls_over_lock_pause_first">Av - sett telefonen på pause først</string>
+    <string name="settings_mdm_calls_over_lock_needs_15">Krever Android 15</string>
+    <string name="settings_mdm_calls_over_lock_unknown">Ukjent</string>
     <string name="settings_mdm_restrictions_paused_pin_title">Skriv inn PIN-koden for å sette begrensningene på pause</string>
     <string name="toast_mdm_pause_needs_pin">Pause krever en PIN-kode. Sett en for denne telefonen på serveren først.</string>
     <string name="settings_gate_dialog_title">Skriv inn koden for å åpne innstillingene</string>

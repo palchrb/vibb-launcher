@@ -852,6 +852,19 @@ class PolicyResponseCompatTest {
         )
         assertEquals("[]", json["lock_state"]!!.jsonObject["voip_fsi_denied"].toString())
         assertEquals("[]", json["lock_state"]!!.jsonObject["voip_rang"].toString())
+        // Design 57 §7.1: the two prep-release keys - absent for null (above), the server's names when known.
+        val usage = ServerJson.parseToJsonElement(
+            ServerJson.encodeToString(
+                com.kidslauncher.mdm.server.dto.LockStateReport.serializer(),
+                com.kidslauncher.mdm.server.dto.LockStateReport(
+                    active = true, inactive = null, locked = false, failures = 0, backoffUntilMs = null, exemptYields = 0,
+                    voipFsiDenied = emptyList(), voipRang = emptyList(),
+                    usageAccessGranted = true, voipOverLockUnsupported = true,
+                ),
+            ),
+        ).jsonObject
+        assertEquals("true", usage["usage_access_granted"].toString())
+        assertEquals("true", usage["voip_over_lock_unsupported"].toString())
         // Design r7 §1.1.3: an entry is the server's `{package, last_at_ms}`.
         val rang = com.kidslauncher.mdm.server.dto.LockStateReport(
             active = true, inactive = null, locked = true, failures = 0, backoffUntilMs = null, exemptYields = 0,

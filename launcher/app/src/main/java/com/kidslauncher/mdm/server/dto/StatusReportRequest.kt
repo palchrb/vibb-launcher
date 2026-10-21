@@ -264,6 +264,12 @@ data class LockStateReport(
      * phone locked) in the last 7 days, newest first, at most 8. Package names and times only;
      * always sent (`[]`). */
     val voipRang: List<VoipRang>,
+    /** Design 57 §7.1 (prep release): whether the parent gave Vibb One Usage access (the
+     * GET_USAGE_STATS app-op); left out when unreadable. Contract `usage_access_status.json`. */
+    val usageAccessGranted: Boolean? = null,
+    /** Design 57 §7.1: `true` only below Android 15 (no per-package usage events, so VoIP calls
+     * won't show over the lock there), else left out. */
+    val voipOverLockUnsupported: Boolean? = null,
 )
 
 /** One `lock_state.voip_rang` entry: `{"package": ..., "last_at_ms": ...}` (the server's keys). */

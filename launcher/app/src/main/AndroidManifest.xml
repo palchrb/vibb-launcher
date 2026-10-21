@@ -82,6 +82,13 @@
     <!-- Design 19b: Android's "allow to run in the background" dialog (Settings' Background
          connection row) - without it the dialog finishes silently. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Design 57 §3.1: Usage access (the GET_USAGE_STATS app-op), which the parent grants for VoIP
+         calls over the PIN lock. Without this line Vibb One isn't on Android's Usage access page and
+         Android resets the op at once (PermissionPolicyService). Never remove it: a later build
+         without it would reset the grant at its update (UsageAccessTest). -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
     <!-- Design 17: the PIN lock's own ring for a VoIP call vibrates (lock.VoipRinger). -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- LOCKED_BOOT_COMPLETED for calls.BootCallReceiver (direct boot, task 15). -->

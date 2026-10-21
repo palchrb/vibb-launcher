@@ -71,7 +71,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/aidl/|music/app/src/main/AndroidManifest\.xml$|music/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/(music_(library|listing|state)|spotify_hosts|time_status_report|dns_upstream_status|power_report)\.json$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/aidl/|music/app/src/main/AndroidManifest\.xml$|music/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/(music_(library|listing|state)|spotify_hosts|time_status_report|dns_upstream_status|power_report|usage_access_status)\.json$)'; then
           changed=true
         else
           changed=false

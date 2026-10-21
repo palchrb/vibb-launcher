@@ -1,0 +1,1 @@
+{"lock_reason":"NONE","kiosk_engaged":true,"capabilities":["pin_lock_v1","voip_usage_v1"],"lock_state":{"active":true,"inactive":null,"locked":true,"failures":0,"backoff_until_ms":null,"exempt_yields":0,"voip_fsi_denied":[],"voip_rang":[],"usage_access_granted":false,"voip_over_lock_unsupported":true}}

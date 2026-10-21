@@ -44,6 +44,11 @@
         android:key="settings_mdm_background_connection"
         android:title="@string/settings_mdm_background_connection" />
 
+    <!-- Design 57 §6: Usage access for VoIP calls over the lock; the summary is set in code. -->
+    <Preference
+        android:key="settings_mdm_calls_over_lock"
+        android:title="@string/settings_mdm_calls_over_lock" />
+
     <Preference
         android:key="settings_play_install_mode"
         android:title="@string/settings_play_install_mode"

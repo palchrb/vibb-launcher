@@ -831,6 +831,7 @@ pub async fn view_lock(
         has_capability(latest.as_ref(), crate::kid_lock::PIN_LOCK_CAPABILITY),
         latest.is_some(),
         now.timestamp_millis(),
+        has_capability(latest.as_ref(), crate::kid_lock::VOIP_GATED_CAPABILITY),
     );
     // The report's time on "On the phone", so an old report never reads as now (qa-31-s4-code L3).
     let reported = latest

@@ -1630,6 +1630,7 @@ object PinLockRuntime {
         val wait = backoffRemaining(refreshBackoff(backoff, now), now)
         val yields = exemptYields
         exemptYields = 0
+        val (usageAccessGranted, voipOverLockUnsupported) = UsageAccess.report(app)
         return LockStateReport(
             active = mode != LockMode.DISABLED,
             inactive = inactive?.wire,
@@ -1639,6 +1640,8 @@ object PinLockRuntime {
             exemptYields = yields,
             voipFsiDenied = VoipCalls.fsiDenied,
             voipRang = VoipCalls.rangReport(app).map { VoipRang(it.packageName, it.lastAtMs) },
+            usageAccessGranted = usageAccessGranted,
+            voipOverLockUnsupported = voipOverLockUnsupported,
         )
     }
 

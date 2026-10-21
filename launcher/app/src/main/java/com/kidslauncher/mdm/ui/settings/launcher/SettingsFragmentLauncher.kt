@@ -22,6 +22,10 @@ import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.copyToClipboard
 import com.kidslauncher.mdm.getDeviceInfo
+import com.kidslauncher.mdm.lock.UsageAccess
+import com.kidslauncher.mdm.lock.UsageAccessRow
+import com.kidslauncher.mdm.lock.UsageAccessSettings
+import com.kidslauncher.mdm.lock.usageAccessRowState
 import com.kidslauncher.mdm.server.BatteryExemption
 import com.kidslauncher.mdm.server.BatteryRow
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
@@ -49,6 +53,7 @@ import kotlinx.coroutines.withContext
 
 private const val LOG_TAG = "SettingsFragmentLauncher"
 private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
+private const val CALLS_OVER_LOCK = "settings_mdm_calls_over_lock"
 
 /**
  * "Set"/"Not set" alone left no way to tell *which* key is configured, or to notice a stale one
@@ -84,6 +89,17 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "battery_exemption")
         }
         updateBatteryRow()
+    }
+
+    /** Design 57 §6: Usage access before Android's page opened - a change on return asks for a
+     * sync, as the battery row does. */
+    private var usageAccessBeforePage: Boolean? = null
+    private val usageAccessPageLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val context = context ?: return@registerForActivityResult
+        if (UsageAccess.refresh(context) != usageAccessBeforePage) {
+            com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "usage_access")
+        }
+        updateUsageAccessRow()
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -183,6 +199,26 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             true
         }
 
+        // Design 57 §6 (prep release): Android's Usage access page for Vibb One, opened only when
+        // it resolves to an unsuspended system package - on a managed phone during the pause.
+        findPreference<Preference>(CALLS_OVER_LOCK)?.setOnPreferenceClickListener {
+            val context = requireContext()
+            val intent = UsageAccessSettings.pageIntent(context)
+            val granted = UsageAccess.refresh(context)
+            if (intent != null &&
+                usageAccessRowState(granted, android.os.Build.VERSION.SDK_INT, pageAvailable = true) == UsageAccessRow.CAN_OPEN
+            ) {
+                usageAccessBeforePage = granted
+                try {
+                    usageAccessPageLauncher.launch(intent)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Couldn't open the usage access page", e)
+                }
+            }
+            updateUsageAccessRow()
+            true
+        }
+
         val restrictionsPaused = findPreference<SwitchPreference>(mdm.keys().restrictionsPaused())
         // isActive() clears a pause that has run out, so the switch never shows a stale "on".
         restrictionsPaused?.isChecked = RestrictionsPause.isActive()
@@ -260,6 +296,26 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         super.onResume()
         // Re-read every time: a pause started or ended, or the dialog answered.
         updateBatteryRow()
+        updateUsageAccessRow()
+    }
+
+    private fun updateUsageAccessRow() {
+        val context = context ?: return
+        val row = findPreference<Preference>(CALLS_OVER_LOCK) ?: return
+        val state = usageAccessRowState(
+            UsageAccess.refresh(context),
+            android.os.Build.VERSION.SDK_INT,
+            UsageAccessSettings.pageIntent(context) != null,
+        )
+        row.summary = getString(
+            when (state) {
+                UsageAccessRow.ON -> R.string.settings_mdm_calls_over_lock_on
+                UsageAccessRow.CAN_OPEN -> R.string.settings_mdm_calls_over_lock_open
+                UsageAccessRow.PAUSE_FIRST -> R.string.settings_mdm_calls_over_lock_pause_first
+                UsageAccessRow.NEEDS_ANDROID_15 -> R.string.settings_mdm_calls_over_lock_needs_15
+                UsageAccessRow.UNKNOWN -> R.string.settings_mdm_calls_over_lock_unknown
+            },
+        )
     }
 
     private fun updateBatteryRow() {

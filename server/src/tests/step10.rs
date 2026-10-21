@@ -511,3 +511,108 @@ async fn in_call_ui_failure_is_a_call_warning() {
         .text();
     assert!(html.contains("couldn&#39;t show over the lock"), "{html}");
 }
+
+/// The launcher's status body with `lock_state.usage_access_granted` and
+/// `voip_over_lock_unsupported` (design 57 §7.1, the prep release; the shared contract: the
+/// launcher's `UsageAccessTest` encodes exactly this; byte-identical in its test resources).
+const USAGE_ACCESS_STATUS: &str = include_str!("../../testdata/usage_access_status.json");
+
+/// The launcher keeps a byte-identical copy of the contract in its test resources.
+#[test]
+fn the_usage_access_contract_matches_the_launchers_copy() {
+    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../launcher/app/src/test/resources/usage_access_status.json");
+    let copy = std::fs::read_to_string(&copy_path)
+        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
+    assert_eq!(copy, USAGE_ACCESS_STATUS, "{} differs", copy_path.display());
+}
+
+/// Design 57 §7.1/§7.2: the launcher's body is stored with both fields, Lock Screen & PINs warns
+/// in the prep words (nothing is gated yet) and the summary has the Attention row; a grant on
+/// Android 15 makes both go.
+#[tokio::test]
+async fn usage_access_status_contract() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    set_override(&app, &cookie, id, &[("new_pin", "246810")]).await;
+    set_kid_pin(&app, &cookie, id, "1357").await;
+    let report: Value = serde_json::from_str(USAGE_ACCESS_STATUS).unwrap();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(report.clone()),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let stored: String = sqlx::query_scalar(
+        "SELECT lock_state_json FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let stored: Value = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored["usage_access_granted"], json!(false));
+    assert_eq!(stored["voip_over_lock_unsupported"], json!(true));
+
+    // Android 14: the prep words of the Android 15 note, above the Child PIN group.
+    let html = lock_page(&app, &cookie, id).await;
+    let group = child_group(&html);
+    assert!(
+        group.contains("Calls over the lock will need Android 15"),
+        "{group}"
+    );
+    assert!(!group.contains("Turn on Usage access"), "{group}");
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(
+        summary.contains("data-attention=\"voip-over-lock\""),
+        "{summary}"
+    );
+
+    // Android 15 without the grant: the Usage access note, its fix behind the ⓘ.
+    let mut body = report.clone();
+    body["lock_state"]
+        .as_object_mut()
+        .unwrap()
+        .remove("voip_over_lock_unsupported");
+    post_status(&app, &token, body.clone()).await;
+    let html = lock_page(&app, &cookie, id).await;
+    let group = child_group(&html);
+    assert!(
+        group.contains("Turn on Usage access for Vibb One"),
+        "{group}"
+    );
+    let command = group
+        .find("adb shell appops set me.vibb.launcher GET_USAGE_STATS allow")
+        .expect("the fix");
+    assert!(
+        group[..command].contains("aria-label=\"How to fix it\""),
+        "{group}"
+    );
+    // The gating release's words once the launcher says it gates.
+    let mut gated = body.clone();
+    gated["capabilities"] = json!(["pin_lock_v1", "voip_usage_v1", "voip_gated_v1"]);
+    post_status(&app, &token, gated).await;
+    let html = lock_page(&app, &cookie, id).await;
+    assert!(
+        child_group(&html).contains("Calls in apps don&#39;t ring over the lock"),
+        "{html}"
+    );
+
+    // Granted: no note, no row.
+    body["lock_state"]["usage_access_granted"] = json!(true);
+    post_status(&app, &token, body).await;
+    let html = lock_page(&app, &cookie, id).await;
+    assert!(!child_group(&html).contains("Usage access"), "{html}");
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(!summary.contains("voip-over-lock"), "{summary}");
+}

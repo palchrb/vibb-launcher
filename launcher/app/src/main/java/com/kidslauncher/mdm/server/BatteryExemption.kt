@@ -47,8 +47,15 @@ object BatteryExemption {
      * an unsuspended system package ([dialogTarget]). Started without NEW_TASK, from the activity. */
     fun dialogIntent(context: Context): Intent? = try {
         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
-        val info = context.packageManager.resolveActivity(intent, PackageManager.MATCH_SYSTEM_ONLY)?.activityInfo
-        val resolved = info?.let {
+        dialogTarget(resolveSystemOnly(context, intent), context.packageName)?.let { intent.setClassName(it.packageName, it.className) }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** What [intent] resolves to among system packages (`MATCH_SYSTEM_ONLY`), with its flags;
+     * null when nothing does. Also the Usage access row's (design 57 §6). */
+    fun resolveSystemOnly(context: Context, intent: Intent): ResolvedDialog? =
+        context.packageManager.resolveActivity(intent, PackageManager.MATCH_SYSTEM_ONLY)?.activityInfo?.let {
             val flags = it.applicationInfo.flags
             ResolvedDialog(
                 it.packageName,
@@ -57,8 +64,4 @@ object BatteryExemption {
                 suspended = flags and ApplicationInfo.FLAG_SUSPENDED != 0,
             )
         }
-        dialogTarget(resolved, context.packageName)?.let { intent.setClassName(it.packageName, it.className) }
-    } catch (e: Exception) {
-        null
-    }
 }

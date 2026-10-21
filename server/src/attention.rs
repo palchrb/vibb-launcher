@@ -60,6 +60,9 @@ pub enum Kind {
     /// The boot cover was armed but not shown: another home screen came up at boot.
     BootCoverNotShown,
     NoNotificationAccess,
+    /// Design 57 §7.2: calls in apps need (or will need) Usage access or Android 15 to show over
+    /// the lock - the Child PIN group's warning.
+    VoipOverLock(crate::kid_lock::VoipOverLock),
     Calls(CallProblem),
     LedgerUnreadable,
     LauncherWithoutRules,
@@ -141,6 +144,7 @@ impl AttentionItem {
             Kind::NotHomeApp => "not-home-app",
             Kind::BootCoverNotShown => "boot-cover-not-shown",
             Kind::NoNotificationAccess => "notification-access",
+            Kind::VoipOverLock(_) => "voip-over-lock",
             Kind::Calls(_) => "calls",
             Kind::LedgerUnreadable => "screen-time-record",
             Kind::LauncherWithoutRules => "launcher-without-rules",
@@ -186,6 +190,8 @@ pub struct Facts {
     pub not_home_app: bool,
     pub boot_cover_not_shown: bool,
     pub no_notification_access: bool,
+    /// Design 57 §7.2: [crate::kid_lock::voip_over_lock], the Child PIN group's note.
+    pub voip_over_lock: Option<crate::kid_lock::VoipOverLock>,
     /// From the call report, in its order (`Waiting` left out by [items]).
     pub calls: Vec<CallProblem>,
     pub ledger_unreadable: bool,
@@ -232,6 +238,9 @@ pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
     add(facts.not_home_app, Kind::NotHomeApp);
     add(facts.boot_cover_not_shown, Kind::BootCoverNotShown);
     add(facts.no_notification_access, Kind::NoNotificationAccess);
+    if let Some(voip) = facts.voip_over_lock {
+        add(true, Kind::VoipOverLock(voip));
+    }
     for problem in &facts.calls {
         add(problem.needs_attention(), Kind::Calls(*problem));
     }
@@ -286,6 +295,7 @@ fn level(kind: Kind) -> Level {
         | Kind::NotHomeApp
         | Kind::BootCoverNotShown
         | Kind::NoNotificationAccess
+        | Kind::VoipOverLock(_)
         | Kind::Calls(_)
         | Kind::LedgerUnreadable
         | Kind::LauncherWithoutRules
@@ -324,6 +334,7 @@ fn title(kind: Kind) -> String {
         Kind::NotHomeApp => "Vibb One isn't the Home app",
         Kind::BootCoverNotShown => "Boot cover wasn't shown",
         Kind::NoNotificationAccess => "Notification access off",
+        Kind::VoipOverLock(voip) => voip.title(),
         Kind::Calls(problem) => problem.title(),
         Kind::LedgerUnreadable => "Screen-time record unreadable",
         Kind::LauncherWithoutRules => "Vibb One too old for time rules",
@@ -361,7 +372,7 @@ fn target(kind: Kind, id: i64) -> String {
         }
         Kind::NotHomeApp | Kind::BootCoverNotShown => ("/advanced", "updates"),
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
-        Kind::ChildLockOff => ("/lock", "child-pin"),
+        Kind::ChildLockOff | Kind::VoipOverLock(_) => ("/lock", "child-pin"),
         Kind::NoNotificationAccess => ("/home", "layout"),
         Kind::IncomingCallsNotBlocked | Kind::Calls(_) => {
             return format!("/devices/{id}/calls");
@@ -585,6 +596,12 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
         // Home Screen's own warning, so the row and the page agree.
         no_notification_access: crate::handlers::device_pages::notification_access_note(latest)
             .is_some(),
+        // Lock Screen & PINs' own note, so the row and the page agree.
+        voip_over_lock: crate::kid_lock::voip_over_lock(
+            policy,
+            lock_state.as_ref(),
+            capability(crate::kid_lock::VOIP_GATED_CAPABILITY),
+        ),
         calls: s.call_problems.to_vec(),
         // Device › Time reads the same typed report.
         ledger_unreadable: latest
@@ -634,6 +651,7 @@ mod tests {
             not_home_app: true,
             boot_cover_not_shown: true,
             no_notification_access: true,
+            voip_over_lock: Some(crate::kid_lock::VoipOverLock::NeedsUsageAccess { gated: false }),
             calls: vec![CallProblem::Waiting, CallProblem::AnyoneCanCall],
             ledger_unreadable: true,
             launcher_without_rules: true,
@@ -731,6 +749,7 @@ mod tests {
                 "Vibb One isn't the Home app",
                 "Boot cover wasn't shown",
                 "Notification access off",
+                "Turn on Usage access for Vibb One",
                 "Anyone can call this phone",
                 "Screen-time record unreadable",
                 "Vibb One too old for time rules",
@@ -773,6 +792,14 @@ mod tests {
             .collect();
         kinds.push(Kind::BlockedApps(1));
         kinds.push(Kind::MusicFailing(1));
+        for gated in [false, true] {
+            kinds.push(Kind::VoipOverLock(
+                crate::kid_lock::VoipOverLock::NeedsUsageAccess { gated },
+            ));
+            kinds.push(Kind::VoipOverLock(
+                crate::kid_lock::VoipOverLock::NeedsAndroid15 { gated },
+            ));
+        }
         kinds.extend(CallProblem::ALL.iter().map(|p| Kind::Calls(*p)));
         for kind in kinds {
             let title = title(kind);
@@ -791,6 +818,23 @@ mod tests {
             title(Kind::MusicFailing(1)),
             "1 music entry fails on the phone"
         );
+    }
+
+    /// Design 57 §7.2: the Usage access row is an Action (orange) like notification access, right
+    /// after it, and never a parent notification (Attention rows aren't `parent_events`).
+    #[test]
+    fn voip_usage_row() {
+        let facts = Facts {
+            voip_over_lock: Some(crate::kid_lock::VoipOverLock::NeedsAndroid15 { gated: true }),
+            no_notification_access: true,
+            ..Default::default()
+        };
+        let rows = items(4, &facts);
+        let keys: Vec<&str> = rows.iter().map(AttentionItem::key).collect();
+        assert_eq!(keys, ["notification-access", "voip-over-lock"]);
+        assert_eq!(rows[1].level, Level::Action);
+        assert_eq!(rows[1].title, "Calls in apps can't show over the lock");
+        assert!(items(4, &Facts::default()).is_empty());
     }
 
     #[test]
@@ -830,6 +874,8 @@ mod tests {
             "/devices/7/advanced#updates"
         );
         assert_eq!(target("child-lock-off"), "/devices/7/lock#child-pin");
+        // Design 57: the Child PIN group's Usage access warning.
+        assert_eq!(target("voip-over-lock"), "/devices/7/lock#child-pin");
         // Step 5: Home Screen.
         assert_eq!(target("notification-access"), "/devices/7/home#layout");
         // Step 9: Device › Time, its warnings at the top.

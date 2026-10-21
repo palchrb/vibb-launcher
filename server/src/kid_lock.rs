@@ -12,6 +12,10 @@ use crate::security;
 
 /// The launcher capability that understands `kid_lock`.
 pub const PIN_LOCK_CAPABILITY: &str = "pin_lock_v1";
+/// Design 57 §7.1: a launcher that lets VoIP calls over the lock only with Usage access (the
+/// gating release). Without it the Usage access notes speak of the next update (the prep words).
+/// The prep release's `voip_usage_v1` (it reports the grant) isn't read: its report says it.
+pub const VOIP_GATED_CAPABILITY: &str = "voip_gated_v1";
 /// Kid PINs are 4-6 digits; the parent chooses (default 4, decision after QA review).
 pub const KID_PIN_MIN: usize = 4;
 pub const KID_PIN_MAX: usize = 6;
@@ -113,6 +117,29 @@ pub struct LockState {
     /// `{package, last_at_ms}` is dropped, never the whole `lock_state`; a missing field is empty.
     #[serde(deserialize_with = "lenient_voip_rang")]
     pub voip_rang: Vec<VoipRang>,
+    /// Design 57 §7.1: whether the parent gave Vibb One Usage access (the GET_USAGE_STATS app-op);
+    /// absent when the phone couldn't read it or is older. Lenient: anything but a JSON boolean is
+    /// absent, never the whole `lock_state`.
+    #[serde(
+        deserialize_with = "lenient_bool",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub usage_access_granted: Option<bool>,
+    /// Design 57 §7.1: `true` below Android 15 (VoIP calls can't show over the lock there), else
+    /// absent. Lenient like [LockState::usage_access_granted].
+    #[serde(
+        deserialize_with = "lenient_bool",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub voip_over_lock_unsupported: Option<bool>,
+}
+
+/// A JSON boolean, else `None` (design 57: a newer or odd launcher never drops the `lock_state`).
+fn lenient_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(serde_json::Value::deserialize(deserializer)?.as_bool())
 }
 
 /// One `lock_state.voip_rang` entry: a package name and the wall time (ms) of its last ring over
@@ -239,6 +266,9 @@ pub enum LockNote {
     /// An allowed VoIP app (a valid package name) can't show full-screen notifications, so its
     /// calls can't ring over the lock (design 17, QA #11).
     CallsCantRing(String),
+    /// Design 57 §7.2: VoIP calls over the lock need (or, before the gating release, will need)
+    /// Usage access or Android 15 - see [voip_over_lock].
+    VoipOverLock(VoipOverLock),
     /// No report yet from a launcher that has the lock.
     Waiting,
     /// The lock is on; whether the phone is locked right now.
@@ -334,6 +364,11 @@ impl LockNote {
                      adb shell appops set {package} USE_FULL_SCREEN_INTENT allow"
                 )),
             ),
+            LockNote::VoipOverLock(voip) => warning(
+                voip.title(),
+                voip.sentence().to_string(),
+                voip.fix().map(str::to_string),
+            ),
             LockNote::Waiting => row("On the phone", "Waiting for a report".to_string(), None),
             LockNote::On { locked } => {
                 let state = if *locked { "Locked" } else { "Unlocked" };
@@ -373,6 +408,91 @@ impl LockNote {
     }
 }
 
+/// Design 57 §7.2: why calls in apps don't (or, from the gating release, won't) show over the lock.
+/// `gated`: the report's launcher has [VOIP_GATED_CAPABILITY] - else the prep words, which speak of
+/// the next update.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoipOverLock {
+    /// The phone reports Usage access off.
+    NeedsUsageAccess { gated: bool },
+    /// The phone runs Android 14 (no per-package usage events).
+    NeedsAndroid15 { gated: bool },
+}
+
+/// The fix behind the usage-access note's ⓘ (design 57 §7.2).
+const USAGE_ACCESS_FIX: &str = "During a pause, on the phone: Vibb One's Settings (Parent PIN) › \
+     Calls over the lock (or Settings › Apps › Special app access › Usage access › Vibb One). If \
+     the switch is greyed: tap it, OK, then App info › ⋮ › Allow restricted settings. With USB \
+     debugging allowed: adb shell appops set me.vibb.launcher GET_USAGE_STATS allow (a debug build: \
+     me.vibb.launcher.debug).";
+
+impl VoipOverLock {
+    /// The warning's title, also the Attention row's (at most 8 words).
+    pub fn title(self) -> &'static str {
+        match self {
+            VoipOverLock::NeedsUsageAccess { gated: true } => {
+                "Calls in apps don't ring over the lock"
+            }
+            VoipOverLock::NeedsUsageAccess { gated: false } => "Turn on Usage access for Vibb One",
+            VoipOverLock::NeedsAndroid15 { gated: true } => {
+                "Calls in apps can't show over the lock"
+            }
+            VoipOverLock::NeedsAndroid15 { gated: false } => {
+                "Calls over the lock will need Android 15"
+            }
+        }
+    }
+
+    fn sentence(self) -> &'static str {
+        match self {
+            VoipOverLock::NeedsUsageAccess { gated: true } => {
+                "WhatsApp, Signal and Element calls ring only quietly while the phone is locked, and \
+                 the call screen opens only after unlocking, until Usage access is on for Vibb One."
+            }
+            VoipOverLock::NeedsUsageAccess { gated: false } => {
+                "From the next Vibb One update, calls in apps show over the lock only with Usage access."
+            }
+            VoipOverLock::NeedsAndroid15 { gated: true } => {
+                "This needs Android 15 or newer. Calls ring quietly while the phone is locked and open \
+                 after unlocking."
+            }
+            VoipOverLock::NeedsAndroid15 { gated: false } => {
+                "From the next Vibb One update, calls in apps show over the lock only on Android 15 or \
+                 newer; on this phone they will ring quietly and open after unlocking."
+            }
+        }
+    }
+
+    fn fix(self) -> Option<&'static str> {
+        match self {
+            VoipOverLock::NeedsUsageAccess { .. } => Some(USAGE_ACCESS_FIX),
+            VoipOverLock::NeedsAndroid15 { .. } => None,
+        }
+    }
+}
+
+/// Design 57 §7.2: the note for a phone whose lock is active (a Child PIN here, `active` in its
+/// report) and whose VoIP calls can ring at all (calls unmanaged, or managed and on - QA 57-18).
+/// Android 14 first (Usage access can't help there); Usage access only when the phone reports it
+/// off (`Some(false)`) - never for a report without it. `gated`: [VOIP_GATED_CAPABILITY].
+pub fn voip_over_lock(
+    policy: &DevicePolicy,
+    state: Option<&LockState>,
+    gated: bool,
+) -> Option<VoipOverLock> {
+    let state = state?;
+    if policy_kid_lock(policy).is_none() || !state.active {
+        return None;
+    }
+    if policy.calls_managed && !policy.calls_enabled {
+        return None;
+    }
+    if state.voip_over_lock_unsupported == Some(true) {
+        return Some(VoipOverLock::NeedsAndroid15 { gated });
+    }
+    (state.usage_access_granted == Some(false)).then_some(VoipOverLock::NeedsUsageAccess { gated })
+}
+
 /// The Child PIN group's "rang over the lock" lines (design r7 §1.1.3): one per package in the
 /// phone's `voip_rang`, newest first, named by `labels` (package -> the name the Apps page shows)
 /// or else by the package, the time in the device page's zone. None without a Child PIN.
@@ -408,13 +528,15 @@ pub fn rang_notes(
 
 /// The Child PIN group from the policy and the phone's report (`state`, `None` = no report from a
 /// launcher that has the lock), whether the reporting launcher has the lock at all (`capable`),
-/// and the safe-boot switch (QA 10 #7: safe mode skips our lock). `now_ms` for the backoff.
+/// and the safe-boot switch (QA 10 #7: safe mode skips our lock). `now_ms` for the backoff;
+/// `voip_gated`: the launcher has [VOIP_GATED_CAPABILITY] (design 57's words).
 pub fn lock_card(
     policy: &DevicePolicy,
     state: Option<&LockState>,
     capable: bool,
     reported: bool,
     now_ms: i64,
+    voip_gated: bool,
 ) -> LockCard {
     let kid_lock = policy_kid_lock(policy);
     let mut card = LockCard {
@@ -445,6 +567,9 @@ pub fn lock_card(
             .iter()
             .map(|package| LockNote::CallsCantRing(package.clone())),
     );
+    if let Some(voip) = voip_over_lock(policy, Some(state), voip_gated) {
+        card.notes.push(LockNote::VoipOverLock(voip));
+    }
     if state.active {
         card.notes.push(LockNote::On {
             locked: state.locked,
@@ -626,7 +751,7 @@ mod tests {
     #[test]
     fn card_warns_about_safe_boot_capability_and_inactive_states() {
         let mut p = policy_with_pins(Some("1234"), Some("999999"));
-        let card = lock_card(&p, None, false, true, 0);
+        let card = lock_card(&p, None, false, true, 0, false);
         assert_eq!(
             card.notes,
             [LockNote::SafeModeAllowed, LockNote::NeedsUpdate]
@@ -645,7 +770,7 @@ mod tests {
                 inactive: Some(inactive.to_string()),
                 ..Default::default()
             };
-            let card = lock_card(&p, Some(&state), true, true, 0);
+            let card = lock_card(&p, Some(&state), true, true, 0, false);
             assert_eq!(card.notes, [LockNote::Off(typed)], "{inactive}");
             assert!(card.notes[0].note(None).warning, "{inactive}");
         }
@@ -653,10 +778,14 @@ mod tests {
             inactive: Some("no_pin".to_string()),
             ..Default::default()
         };
-        assert!(lock_card(&p, Some(&state), true, true, 0).notes.is_empty());
+        assert!(
+            lock_card(&p, Some(&state), true, true, 0, false)
+                .notes
+                .is_empty()
+        );
         // No report yet from a launcher with the lock.
         assert_eq!(
-            lock_card(&p, None, true, false, 0).notes,
+            lock_card(&p, None, true, false, 0, false).notes,
             [LockNote::Waiting]
         );
 
@@ -668,7 +797,7 @@ mod tests {
             exempt_yields: 2,
             ..Default::default()
         };
-        let card = lock_card(&p, Some(&state), true, true, 0);
+        let card = lock_card(&p, Some(&state), true, true, 0, false);
         assert_eq!(
             card.notes,
             [
@@ -744,7 +873,7 @@ mod tests {
             voip_fsi_denied: vec!["io.element.android.x".to_string()],
             ..Default::default()
         };
-        let card = lock_card(&p, Some(&state), true, true, 0);
+        let card = lock_card(&p, Some(&state), true, true, 0, false);
         assert_eq!(
             card.notes,
             [
@@ -755,6 +884,133 @@ mod tests {
         let fix = card.notes[0].note(None).fix.unwrap();
         assert!(fix.contains("io.element.android.x"));
         assert!(fix.contains("USE_FULL_SCREEN_INTENT"));
+    }
+
+    /// Design 57 §7.2 (prep release): the Usage access and Android 15 notes, their prep and gated
+    /// words, and when they stay silent.
+    #[test]
+    fn voip_usage_notes() {
+        let mut p = policy_with_pins(Some("1234"), Some("999999"));
+        p.hardening.disallow_safe_boot = true;
+        let state = |granted: Option<bool>, unsupported: Option<bool>| LockState {
+            active: true,
+            usage_access_granted: granted,
+            voip_over_lock_unsupported: unsupported,
+            ..Default::default()
+        };
+        let notes = |p: &DevicePolicy, s: &LockState, gated: bool| {
+            lock_card(p, Some(s), true, true, 0, gated).notes
+        };
+        let off = state(Some(false), None);
+        let prep = VoipOverLock::NeedsUsageAccess { gated: false };
+        assert_eq!(
+            notes(&p, &off, false),
+            [LockNote::VoipOverLock(prep), LockNote::On { locked: false }]
+        );
+        let words = LockNote::VoipOverLock(prep).note(None);
+        assert!(words.warning);
+        assert_eq!(words.title, "Turn on Usage access for Vibb One");
+        assert_eq!(
+            words.detail.as_deref(),
+            Some(
+                "From the next Vibb One update, calls in apps show over the lock only with Usage access."
+            )
+        );
+        let fix = words.fix.unwrap();
+        assert!(fix.contains("Calls over the lock"), "{fix}");
+        assert!(fix.contains("Allow restricted settings"), "{fix}");
+        assert!(
+            fix.contains("adb shell appops set me.vibb.launcher GET_USAGE_STATS allow"),
+            "{fix}"
+        );
+        assert!(fix.contains("me.vibb.launcher.debug"), "{fix}");
+        // The gating release's words.
+        let gated =
+            LockNote::VoipOverLock(VoipOverLock::NeedsUsageAccess { gated: true }).note(None);
+        assert_eq!(gated.title, "Calls in apps don't ring over the lock");
+        assert!(
+            gated
+                .detail
+                .unwrap()
+                .contains("ring only quietly while the phone is locked")
+        );
+        assert_eq!(
+            notes(&p, &off, true)[0],
+            LockNote::VoipOverLock(VoipOverLock::NeedsUsageAccess { gated: true })
+        );
+        // Granted, or not reported (an older launcher, an unreadable op): silent.
+        for silent in [state(Some(true), None), state(None, None)] {
+            assert_eq!(notes(&p, &silent, false), [LockNote::On { locked: false }]);
+        }
+        // Android 14: its own note, in prep and gated words, whatever the grant.
+        for granted in [Some(false), Some(true), None] {
+            let a14 = state(granted, Some(true));
+            assert_eq!(
+                notes(&p, &a14, false)[0],
+                LockNote::VoipOverLock(VoipOverLock::NeedsAndroid15 { gated: false })
+            );
+            assert_eq!(
+                notes(&p, &a14, true)[0],
+                LockNote::VoipOverLock(VoipOverLock::NeedsAndroid15 { gated: true })
+            );
+        }
+        let a14 = LockNote::VoipOverLock(VoipOverLock::NeedsAndroid15 { gated: false }).note(None);
+        assert_eq!(a14.title, "Calls over the lock will need Android 15");
+        assert!(
+            a14.detail
+                .unwrap()
+                .starts_with("From the next Vibb One update")
+        );
+        let a14 = LockNote::VoipOverLock(VoipOverLock::NeedsAndroid15 { gated: true }).note(None);
+        assert_eq!(a14.title, "Calls in apps can't show over the lock");
+        assert!(
+            a14.detail
+                .unwrap()
+                .starts_with("This needs Android 15 or newer.")
+        );
+        // An inactive lock, no Child PIN, or calls managed and off: silent.
+        let inactive = LockState {
+            active: false,
+            ..off.clone()
+        };
+        assert!(voip_over_lock(&p, Some(&inactive), false).is_none());
+        assert!(
+            voip_over_lock(&policy_with_pins(None, Some("999999")), Some(&off), false).is_none()
+        );
+        assert!(voip_over_lock(&p, None, false).is_none());
+        let mut calls_off = p.clone();
+        calls_off.calls_managed = true;
+        calls_off.calls_enabled = false;
+        assert!(voip_over_lock(&calls_off, Some(&off), false).is_none());
+        let mut calls_on = calls_off.clone();
+        calls_on.calls_enabled = true;
+        assert_eq!(voip_over_lock(&calls_on, Some(&off), false), Some(prep));
+    }
+
+    /// Design 57 §7.1: both fields kept by the sanitizer, left out when absent, and lenient.
+    #[test]
+    fn usage_access_fields_round_trip_leniently() {
+        let stored =
+            |v: serde_json::Value| parse_lock_state(sanitize_lock_state(&v, 0).as_deref()).unwrap();
+        let s = stored(serde_json::json!({
+            "active": true, "usage_access_granted": false, "voip_over_lock_unsupported": true
+        }));
+        assert_eq!(s.usage_access_granted, Some(false));
+        assert_eq!(s.voip_over_lock_unsupported, Some(true));
+        let s = stored(serde_json::json!({ "active": true, "usage_access_granted": true }));
+        assert_eq!(s.usage_access_granted, Some(true));
+        assert_eq!(s.voip_over_lock_unsupported, None);
+        // Missing: absent, and not written back.
+        let json = sanitize_lock_state(&serde_json::json!({ "active": true }), 0).unwrap();
+        assert!(!json.contains("usage_access_granted"), "{json}");
+        assert!(!json.contains("voip_over_lock_unsupported"), "{json}");
+        // Not a boolean: absent, the rest of lock_state kept.
+        let s = stored(serde_json::json!({
+            "active": true, "failures": 3, "usage_access_granted": "yes", "voip_over_lock_unsupported": 1
+        }));
+        assert_eq!(s.failures, 3);
+        assert_eq!(s.usage_access_granted, None);
+        assert_eq!(s.voip_over_lock_unsupported, None);
     }
 
     #[test]
@@ -895,7 +1151,7 @@ mod tests {
             "Signal".to_string(),
         )]);
         let p = policy_with_pins(Some("1234"), Some("999999"));
-        let card = lock_card(&p, Some(&state), true, true, 0);
+        let card = lock_card(&p, Some(&state), true, true, 0, false);
         // Not in lock_card's own notes (the page adds them with the names).
         assert!(
             !card
@@ -925,13 +1181,13 @@ mod tests {
             ]
         );
         // No Child PIN: nothing.
-        let card = lock_card(&DevicePolicy::default(), Some(&state), true, true, 0);
+        let card = lock_card(&DevicePolicy::default(), Some(&state), true, true, 0, false);
         assert!(rang_notes(&card, Some(&state), &labels, &zone, now).is_empty());
     }
 
     #[test]
     fn no_pin_no_warnings() {
-        let card = lock_card(&DevicePolicy::default(), None, false, true, 0);
+        let card = lock_card(&DevicePolicy::default(), None, false, true, 0, false);
         assert!(!card.pin_set);
         assert!(card.notes.is_empty());
     }

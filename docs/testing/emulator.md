@@ -100,6 +100,10 @@ adb shell cmd role add-role-holder android.app.role.CALL_REDIRECTION $P
 # Security review L7: the incoming-call filter when the launcher isn't the phone app.
 adb shell cmd role add-role-holder android.app.role.CALL_SCREENING $P
 adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeListenerService
+# Design 57: VoIP calls over the lock need Usage access (the gating release); the prep release reports it. Only on
+# a build that declares PACKAGE_USAGE_STATS (launcher 0.35.0+), else Android resets it at once; `pm grant $P
+# android.permission.PACKAGE_USAGE_STATS` works too. On a phone: docs/setup/usage-access.md.
+adb shell appops set $P GET_USAGE_STATS allow
 # Design 34 P12 (step 6): the PWA's clock format (Follow / 24 h / 12 h) goes to TIME_12_24 through the
 # WRITE_SETTINGS app-op, which a device owner can't grant itself (TIME_12_24 isn't on setSystemSetting's list;
 # kid Settings' brightness is, so it needs no app-op). Without it the PWA's Home Screen warns.

@@ -401,6 +401,9 @@ class Application : android.app.Application() {
         // Design 38 §4.2: the shutdown's client built in advance (off the main thread), and again
         // whenever the tsnet proxy comes up. Everything caught.
         com.kidslauncher.mdm.server.PowerEvents.init(this)
+        // Design 57 (prep release): Usage access read in the background, and a sync when it
+        // changes (Android's mode watcher). Everything caught.
+        com.kidslauncher.mdm.lock.UsageAccess.init(this)
         // Design 19: what the FCM era left (push_state with the Firebase installation ID, the
         // SDK's files and jobs) is deleted once, in the background.
         com.kidslauncher.mdm.push.FirebaseCleanup.runOnceInBackground(this)
