@@ -345,7 +345,8 @@ object SelfUpdate {
         }
         // A typed HOME start (design 16, QA #1); Home's onResume roots lock task with the kiosk on
         // and shows the lock when LOCKED - showIfLocked is the backstop.
-        com.kidslauncher.mdm.lock.HomeFront.bring(app, "after $why")
+        // As Android's face with its keyguard locked: after the unlock (59d step A, qa-59b-code B-1).
+        com.kidslauncher.mdm.lock.HomeFront.bringAfterUnlock(app, "after $why")
         PinLockRuntime.showIfLocked(app)
     }
 }

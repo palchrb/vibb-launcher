@@ -296,6 +296,13 @@ object VoipCalls {
         false
     }
 
+    /** The audio mode is `IN_COMMUNICATION` now (design 59b §4: the face's reopen gate, [voipReopenDue]). */
+    fun inCommunication(context: Context): Boolean = audioInCommunication(context)
+
+    /** The lock's view of the ring changed outside a pass (design 59b §4: the platform ring's grace wrote its try) - the
+     * listeners (the glance's ring card) render again. Main thread. */
+    fun changed() = listeners.toList().forEach { it() }
+
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     private fun store(context: Context, r: VoipRecord?) {
@@ -396,13 +403,15 @@ object VoipCalls {
      * exemptions are the caller's, not the sender's. A refused start is silent (17b: the lock checks
      * that it left the front, [VOIP_FSI_CHECK_MS]); a re-posted notification's cancelled intent
      * throws (then `false`: the card says so, the next post brings the new one). Never while another
-     * call (emergency included) or the emergency flow is on (17b QA #5).
+     * call (emergency included) or the emergency flow is on (17b QA #5). Every send is one of our own starts for the
+     * face's loss rule (design 59b §3, [PinLockRuntime.noteOwnStart]).
      */
     private fun send(context: Context, intent: PendingIntent): Boolean = try {
         if (PinLockRuntime.voipCallOrEmergency(context)) {
             Log.i(LOG_TAG, "Another call or the emergency flow is on: nothing sent")
             false
         } else {
+            PinLockRuntime.noteOwnStart("a call app's intent")
             intent.send(context, 0, null, null, null, null, VisibleSender.options())
             true
         }

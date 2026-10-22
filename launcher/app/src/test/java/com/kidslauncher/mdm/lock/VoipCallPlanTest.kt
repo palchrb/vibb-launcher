@@ -483,4 +483,78 @@ class VoipCallPlanTest {
         assertEquals(1_500L, VOIP_FSI_CHECK_MS)
         assertTrue("the settle is well inside the check", VOIP_FSI_SETTLE_MS in 1 until VOIP_FSI_CHECK_MS)
     }
+
+    // ---- design 59b §4: the platform's ring as Android's face ----------------------------------------------------
+
+    @Test
+    fun `59b - as the face with Android locked a ring with its full-screen intent gets no lock-up or wake of ours`() {
+        assertTrue(voipPlatformRing(face = true, androidLocked = true, hasFullScreen = true))
+        assertFalse("FSI_DENIED: the card at once, as before", voipPlatformRing(true, true, hasFullScreen = false))
+        assertFalse("Android open", voipPlatformRing(true, androidLocked = false, hasFullScreen = true))
+        assertFalse("own mode", voipPlatformRing(face = false, androidLocked = true, hasFullScreen = true))
+        assertEquals(LockStep(LockMode.LOCKED), step(LockMode.LOCKED, LockEvent.VoipRinging(platformRing = true)))
+        assertEquals("another call still wins", LockStep(LockMode.LOCKED, recheck = true), step(LockMode.LOCKED, LockEvent.VoipRinging(ourCall = true, platformRing = true)))
+        assertEquals("own mode unchanged", LockStep(LockMode.LOCKED, showLock = true, wake = true), step(LockMode.LOCKED, LockEvent.VoipRinging()))
+        // Never the resumed lock's 17b send for the platform's ring; own mode's due as before.
+        assertFalse(voipFsiDue(5L, locked = true, dismissed = false, otherScreen = false, hasFullScreen = true, last = null, platformRing = true))
+        assertTrue(voipFsiDue(5L, locked = true, dismissed = false, otherScreen = false, hasFullScreen = true, last = null))
+    }
+
+    private fun grace(
+        now: Long,
+        last: VoipFsiTry? = null,
+        resumedSinceRing: Boolean = false,
+        interactive: Boolean = true,
+        androidLocked: Boolean = true,
+        otherScreen: Boolean = false,
+        hasFullScreen: Boolean = true,
+        locked: Boolean = true,
+    ) = voipRingStep(
+        1_000L, locked, dismissed = false, otherScreen = otherScreen, hasFullScreen = hasFullScreen, last = last,
+        resumedSinceRing = resumedSinceRing, interactive = interactive, androidLocked = androidLocked, nowElapsedMs = now,
+    )
+
+    @Test
+    fun `59b - the grace always ends in this ring's try - the one heads-up send, the platform's turn, or the dark wake`() {
+        assertEquals(VoipGrace(VoipGraceAct.WAIT, 2_000L), grace(now = 2_000L))
+        // The heads-up case: in front since the ring's first sight, the screen on, Android locked - the one send.
+        assertEquals(VoipGrace(VoipGraceAct.SEND), grace(now = 4_000L, resumedSinceRing = true))
+        // The platform had its turn: its screen came (the glance paused), or Android isn't locked.
+        assertEquals(VoipGrace(VoipGraceAct.PLATFORM), grace(now = 4_000L, resumedSinceRing = false))
+        assertEquals(VoipGrace(VoipGraceAct.PLATFORM), grace(now = 4_000L, resumedSinceRing = true, androidLocked = false))
+        // Still dark (DND): the wake and the card, never a send.
+        assertEquals(VoipGrace(VoipGraceAct.WAKE), grace(now = 4_000L, resumedSinceRing = true, interactive = false))
+        // Another call, the emergency flow or an alarm: look again later.
+        assertEquals(VoipGraceAct.WAIT, grace(now = 4_000L, otherScreen = true).act)
+        // Done: this ring's try written, unlocked, no full-screen intent (the card at once), no ring.
+        assertEquals(VoipGraceAct.NONE, grace(now = 4_000L, last = VoipFsiTry(1_000L, 4_000L, sent = false)).act)
+        assertEquals(VoipGraceAct.NONE, grace(now = 4_000L, locked = false).act)
+        assertEquals(VoipGraceAct.NONE, grace(now = 4_000L, hasFullScreen = false).act)
+        assertEquals(VoipGraceAct.NONE, voipRingStep(null, true, false, false, true, null, true, true, true, 4_000L).act)
+        // What the grace writes: sent = false is CARD at once and never a later send.
+        val platformTry = VoipFsiTry(1_000L, 4_000L, sent = false)
+        assertEquals(VoipRingUi.CARD, voipRingUi(1_000L, true, false, false, true, platformTry, 4_001L))
+        assertFalse(voipFsiDue(1_000L, true, false, false, true, platformTry))
+        assertEquals("during the grace the plain glance", VoipRingUi.WAIT, voipRingUi(1_000L, true, false, false, true, null, 2_000L))
+    }
+
+    @Test
+    fun `59b - the grace's timer from the ringing edge, dropped with the ring, and the reopen only in a call`() {
+        val runtime = src("lock/PinLockRuntime.kt")
+        val phase = runtime.substringAfter("fun onVoipPhase(").substringBefore("\n    }\n")
+        assertTrue(phase.contains("if (after != VoipPhase.RINGING) handler.removeCallbacks(voipGrace)"))
+        assertTrue(phase.contains("val platform = voipPlatformRing(AndroidLock.faceOn, AndroidLock.refrontHeld(app), VoipCalls.ringHasFullScreen)"))
+        assertTrue(phase.contains("LockEvent.VoipRinging(ours, !ours && telecom, emergency, alarm, platformRing = platform)"))
+        assertTrue(phase.contains("if (platform) handler.postDelayed(voipGrace, VOIP_PLATFORM_GRACE_MS)"))
+        assertTrue(runtime.contains("platformRing = ringId == voipPlatformRingId,"))
+        val grace = runtime.substringAfter("private val voipGrace: Runnable = Runnable {").substringBefore("\n    }\n")
+        assertTrue(grace.contains("VoipGraceAct.WAIT -> handler.postDelayed(voipGrace, grace.waitMs)"))
+        assertTrue(grace.contains("resumedSinceRing = lockResumed && (lockPausedAt ?: Long.MIN_VALUE) < ringId,"))
+        assertTrue(grace.contains("show(app, wake = WakeKind.VOIP)"))
+        // Q59b-9: as the face the reopen needs IN_COMMUNICATION; own mode always.
+        assertTrue(voipReopenDue(face = false, audioInCommunication = false))
+        assertTrue(voipReopenDue(face = true, audioInCommunication = true))
+        assertFalse(voipReopenDue(face = true, audioInCommunication = false))
+        assertTrue(runtime.contains("if (!voipReopenDue(AndroidLock.faceOn, VoipCalls.inCommunication(it))) {"))
+    }
 }

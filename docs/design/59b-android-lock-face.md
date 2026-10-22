@@ -1,7 +1,9 @@
 # 59b - Android's lock as the gate: keeping our face in front, the WhatsApp ring, the look of Android's pad
 
-Status: design, revised 2026-10-22 from its QA (`docs/review/qa-59b-design.md`, Q59b-1..12; one line per finding at
-the end). Nothing built yet. Base: design 59 (§3.3, "Step 3 as built"), assessment 59 §4.2, the RC run
+Status: built 2026-10-22 on `design-59b` (steps 0-4; "As built" at the end), revised before that from its QA
+(`docs/review/qa-59b-design.md`, Q59b-1..12; one line per finding at the end) and the revision check
+(`qa-59b-revision-check.md`, N1-N7). §2 amends design 59 §3.3's "Home below" (N1: said there too). §4.4's re-posted-ring
+rule is **not built**: a notice dump at flip + 15 s (§7) must confirm the cause first. Base: design 59 (§3.3, "Step 3 as built"), assessment 59 §4.2, the RC run
 (`docs/testing/2026-10-22-d59-rc-run.md`), and the user's reports and logs on 0.36.0-rc.1 (android mode, emulator).
 AOSP references are `android16-release`; launcher paths are under `lock/` unless named.
 
@@ -254,10 +256,12 @@ To confirm the double start, make 10 dark video rings, then audio as the control
 ## 10. Emulator checks
 
 1. During a call, the chat arrow, then SystemUI's face, then the PIN on its pad: the chats stay on top for 10 s, with
-   no `the lock left` line. The same with the kiosk off.
+   no `the lock left` line. The same with the kiosk off. **N6:** once with the kiosk on and the glance the lock-task
+   root (`startedLockTask`: the 1 s fallback rooted it): Home comes (it re-roots the kiosk).
 2. DeskClock over the glance, relaunched three times: exactly two `re-front` lines, then SystemUI's face; a swipe up
    and the PIN stay in DeskClock.
-3. "Lås opp": the pad stays up for 30 s; its Emergency dialer stays; Back returns to the glance.
+3. "Lås opp": the pad stays up for 30 s; its Emergency dialer stays; Back returns to the glance. **N6:** "Lås opp" +
+   PIN and a row + PIN land on Home with the row's target above it (the in-front leave is unchanged).
 4. SOS (five presses), an alarm and `gsm call` stay in front.
 5. Ten rings in a row, alternating video and audio, screen dark, plus five with the glance on screen:
    - no black screen;
@@ -270,12 +274,18 @@ To confirm the double start, make 10 dark video rings, then audio as the control
 7. SystemUI's face and the pad over the night ground with the mark (the photo when opted in); the generic disclosure;
    Home's wallpaper unchanged; `theme_customization_overlay_packages` before = after, read once the apply is done.
 8. §6's capture over 20 quick power presses; any RELOCK line is a finding.
+9. (The user's rc.1 recording, after this note's QA.) The pad's success: from the success to Home, frame by frame
+   (`adb emu screenrecord`), the glance page as it was - never "Skriv inn koden din", the back arrow and Nødsamtale
+   without keys; the glance goes as a fade. A dark overlay over Home that remains is SystemUI's keyguard-going-away.
+10. At screen-on, frame by frame: the frame before the glance's first is the lock wallpaper - now the night ground with
+    the mark (step 3), no longer Home's colour.
 
 ## QA fixes (`docs/review/qa-59b-design.md`)
 
 - Q59b-1: step 0, `lockLeave(.., glanceInFront)`: an unlock on Android's own face or pad finishes the glance under the
   app with no Home; the kiosk-root exception is kept; own mode is unchanged (§1, §2, check 1).
-- Q59b-2: §2.1 dropped: IN_CALL keeps `Yield("voip")`, and the old open question 3 is moot (§3).
+- Q59b-2: the QA's §2.1 (the draft's re-front during IN_CALL) dropped: IN_CALL keeps `Yield("voip")`, and the old open
+  question 3 is moot (§3).
 - Q59b-3: a dedicated `androidRefronts`, reset only at a screen-off and at `USER_PRESENT`, cap 2 per screen-on (§3,
   check 2).
 - Q59b-4: the grace always writes `voipFsiTry` (the one send, or `sent = false` -> CARD); no send after a dark grace
@@ -292,3 +302,68 @@ To confirm the double start, make 10 dark video rings, then audio as the control
 - Q59b-11: no organisation name, and why; a later setter clears it on the rollback and the unmanaged path (§5).
 - Q59b-12: the dark row is face mode only; the manifest pin covers `turnScreenOn`/`dismissKeyguard`; steps renumbered
   from 0 (§3, §8, §9).
+
+## As built (2026-10-22, branch `design-59b`)
+
+Launcher only, no contract change. Every new rule is gated on the face (`AndroidLock.faceOn`, and Android locked where
+§3/§4 say so); own mode's rows are pinned unchanged. Tests: `AndroidLockFaceTest` (new), `LockTaskRootTest`,
+`VoipCallPlanTest`, `WallpapersTest`, `PinLockManifestTest`, and the source pins they moved in `AndroidLockPlanTest`,
+`LockUpTest`, `LockUpPlanTest`, `BootMarkPlanTest`.
+
+- **Step 0** (§2): `lockLeave(.., glanceInFront = true)` and `leaveInFront(androidFace, resumed)` in `LockTaskRoot.kt`;
+  `PinLockActivity.leave` passes `leaveInFront(AndroidLock.faceOn, resumed)` and drops the row target when not in front.
+  Kiosk on: `homeFirst = glanceInFront || startedLockTask`; kiosk off: `glanceInFront && !callLive`; `stopLockTaskFirst`
+  never reads it. `presentLeave` re-reads once (`presentReread`, reset by every `androidUnlockHook`) after
+  `ANDROID_ANSWER_WAIT_MS` (N3).
+- **Step 1** (§4): `voipPlatformRing(face, androidLocked, hasFullScreen)` sets `VoipRinging.platformRing` (no lock-up,
+  no wake) and the ring id in `PinLockRuntime.voipPlatformRingId`; `voipFsiDue(.., platformRing)` keeps the resumed
+  glance's 17b send off it. The grace is the named timer `voipGrace` (N4), posted at the ringing edge for
+  `VOIP_PLATFORM_GRACE_MS` and dropped when the phase leaves RINGING; `voipRingStep` gives WAIT / SEND (the one
+  heads-up send, `VoipFsiTry(sent = true)`) / PLATFORM (`sent = false`, the card) / WAKE (`sent = false`, then
+  `show(wake = VOIP)` - the dark trigger N4 asked for); another call, the emergency flow or an alarm waits again. "Resumed
+  since the ring's first sight" = `lockResumed` and no glance pause (`lockPausedAt`) since the ring id - `notePause`'s
+  mark alone can't tell it (a pause with nothing pending marks nothing). The reopen: `voipReopenDue(face,
+  VoipCalls.inCommunication)`. §4.4 is not built (above).
+- **Step 2** (§3): `RefrontInputs.android: AndroidLoss?` (`androidLoss(face, secure, locked, present)`: LOCKED, OPEN with
+  the mark, else `null` = own mode's rows, the RELOCK backstop), `androidOurs` (`androidLossOurs`: the ask -
+  `PinLockRuntime.noteAndroidAsk` from `askAndroid`/`closeAsk`, bounded by `ANDROID_ASK_OPEN_MS` 2 min, its answer for
+  `ANDROID_ASK_SETTLE_MS` 1 s -, `ownStartAt` for `OWN_START_MS` 2 s, `ownOthersResumed`) and `androidRefronts`
+  (zeroed only at the screen-off and `USER_PRESENT`; `ANDROID_REFRONT_CAP` 2). `androidLossStep` replaces the blanket
+  stop; own mode's ladder is unchanged (the exemptions are one shared `exemptYield`). `Refront(.., noUserAction = true)`
+  only from the face's rule, `show(noUserAction)` adds `FLAG_ACTIVITY_NO_USER_ACTION` only then (N5); the log line
+  `AndroidLock: re-front #n (the glance paused|stopped)`. `noteOwnStart` is stamped by `PinLockRuntime.startOwn` (the
+  call screen, both wakes; `LockActivity.start` in ui/) and `VoipCalls.send`; the source test's allowlist is
+  `HomeFront`, `GlanceOpener`, `BootCover*` and the glance's own start in `show()` (N2).
+- **Step 3** (§5): `WallpaperFill.NightMark` (`"night_mark"`), drawn by `WallpaperRender` (night, four peach rings at
+  the splash's resting alpha, the core; the outer radius 0.27 of the short side) at the screen size;
+  `lockScreenFill(home, androidFace)` and `wallpaperKey(.., androidFace)` from `AndroidLock.faceOn` in the applier.
+- **Step 4** (§6): `AndroidLock: screen-on: keyguardLocked=..` beside the screen-off's lock-up line.
+- **Deviations**:
+  - §3's order: Android open with the mark is the second row (after the dark one), before the exemptions and "ours" -
+    a pending yield's recheck must not keep our lock LOCKED over an Android the kid unlocked (Q59b-6's own door); the
+    leave goes through the glance's `USER_PRESENT` path, so an open ask still answers first.
+  - The face's "sos" yield now runs (design 59 stopped first): a probable SOS stays in front, lock task narrowed as in
+    own mode.
+  - The time-rule screen isn't showWhenLocked; it is stamped anyway (it un-occludes the keyguard until the glance comes
+    back on top of it). `KidInCallService`'s and Home's call-screen starts stay unstamped: our call yields first.
+  - From the user's rc.1 recording (after the QA): under Android's PIN pad the glance page stays drawn over the keypad
+    stage (`glancePageShown(stage, androidPad)`, `GlancePanel.androidPad`, from `render()`): the stage's left-overs
+    (the prompt, the back arrow, Nødsamtale with the keys hidden) were what showed for ~0.5 s once the pad succeeded and
+    went - not a re-render at the leave; the stage and a row's target are kept under it. The face's leave sets a close
+    fade (`overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, fade_out)`; whether Shell honours it for the task's
+    close is check 9). The screen-on frame of Android's face is the lock wallpaper under the not-yet-drawn glance: the
+    glance is already started at the screen-off (LOCK alone, or NONE on top) and can't draw while dark (no
+    turn-screen-on, design 32 §7) - step 3 makes that frame the night ground with the mark (check 10).
+- **The code QA's fix round** (`docs/review/qa-59b-code.md`, "Fixed in"; 59d steps A and D built here):
+  - B-1: as the face with Android locked the glance roots lock task itself (`lockTaskEntry(.., androidLocked)`), and
+    Home after a policy edge and the time-rule screen wait for the unlock (`KeyguardCover.afterAndroidUnlock`,
+    `HomeFront.bringAfterUnlock`, `LockActivity.start`), run when our lock leaves LOCKED (`runAfterUnlock`).
+  - B-2: the face's "sos" yield without the narrowed lock task (59d D); no edge count (AOSP intercepts the gesture's
+    presses after the second, so it would miss a real SOS).
+  - B-3: a cancelled ask stays ours for the ask's 2 min; the face re-fronts only on a fresh pause or stop.
+  - B-4: the pad's success leaves as in front (`leaveFromAsk`). B-5: Android open with no `USER_PRESENT` waits once
+    (`AndroidWait`), then own mode's backstop. B-6: no digit under the pad; `noteOwnStart`'s stamp pinned.
+- **What the emulator run should look at hardest**: checks 1 (both kiosk settings, no `the lock left`), 2 (exactly two
+  `re-front` lines - a kiosk-on glance without lock task spends one on Home's root start, which can't resume under the
+  keyguard; the re-front then lets the 1 s fallback root it), 5/5b (one `VoipActivityV2` start per dark ring, the
+  `VoIP ring:` lines), 6b, 7 and 9-10.

@@ -116,7 +116,8 @@ class SosYieldTest {
         val check = body(runtime, "runRefrontCheck")
         assertTrue(check.contains("val sos = sosMarkKept(action)"))
         assertTrue(check.contains("if (!sos) sosFlowUntilElapsed = 0L"))
-        assertTrue(check.contains("narrowForSos(context, sos)"))
+        // 59d D (qa-59b-code B-2): own mode only - as the face the yield narrows nothing.
+        assertTrue(check.contains("narrowForSos(context, sos && inputs.android == null)"))
         assertTrue(body(runtime, "onLockResumed").contains("narrowForSos(context, false)"))
         assertTrue(body(runtime, "narrowForSos").contains("LockTaskChrome.sosYield(context.applicationContext, on)"))
         val chrome = code("java/com/kidslauncher/mdm/lock/LockTaskChrome.kt")

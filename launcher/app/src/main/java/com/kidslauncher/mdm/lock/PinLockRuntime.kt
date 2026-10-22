@@ -185,6 +185,69 @@ object PinLockRuntime {
 
     /** Our resumed activities other than the lock (bug 25b-H). Main thread. */
     private var ownOthersResumed = 0
+
+    // ---- design 59b §3: the face's loss rule ([androidLossStep]) ----------------------------------------------------
+
+    /** The face's re-fronts since the last screen-off or `USER_PRESENT` - the cap's count ([ANDROID_REFRONT_CAP]; a
+     * resume, pause or stop never zeroes it, unlike [refrontAttempt]). Main thread. */
+    private var androidRefronts = 0
+
+    /** What the glance last lost the front to ("paused"/"stopped"), for the re-front's log line. Main thread. */
+    private var androidLossWhy = "lost the front"
+
+    /** The last of our own starts ([noteOwnStart], elapsed; `null` = none). Any thread. */
+    @Volatile
+    private var ownStartAt: Long? = null
+
+    /** The open ask for Android's PIN pad and the last answer or close of one (`PinLockActivity`, [noteAndroidAsk];
+     * elapsed). Main thread. */
+    private var androidAskAt: Long? = null
+    private var androidAnsweredAt: Long? = null
+
+    /** qa-59b-code B-3: a *cancelled* ask's start (elapsed) - the pad's Emergency button may hide the bouncer with a
+     * cancel, and Android's Emergency dialer then stops the glance: still ours for [ANDROID_ASK_OPEN_MS] from the ask.
+     * Cleared by a new ask and the screen-off. Main thread. */
+    private var androidCancelledAskAt: Long? = null
+
+    /** qa-59b-code B-3: the pending re-front check was scheduled by a fresh pause or stop of the glance (consumed by the
+     * check). Main thread. */
+    private var androidLossPending = false
+
+    /** qa-59b-code B-5: the face already waited once for `USER_PRESENT` with Android open ([RefrontAction.AndroidWait]).
+     * Main thread. */
+    private var androidWaited = false
+
+    /**
+     * Design 59b §3 step 3 (Q59b-8): one of our own starts - an activity of ours ([startOwn]) or a call app's intent sent
+     * from the lock (`VoipCalls.send`) - so the face's loss rule doesn't cover it. The one stamping point.
+     */
+    fun noteOwnStart(why: String) {
+        ownStartAt = SystemClock.elapsedRealtime()
+        if (AndroidLock.faceOn) Log.d(ANDROID_LOCK_TAG, "own start: $why")
+    }
+
+    /** Every start of one of our own screens over the glance (InCallActivity, VoipWakeActivity, the time-rule screen) goes
+     * through here ([noteOwnStart]) - the glance's own start in [show] is the one exception (a source test). */
+    fun startOwn(context: Context, intent: Intent, why: String) {
+        noteOwnStart(why)
+        context.startActivity(intent)
+    }
+
+    /** `PinLockActivity`'s ask for Android's PIN pad opened ([open]) or closed (answered, recovered, dropped). Main thread. */
+    fun noteAndroidAsk(open: Boolean, cancelled: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        if (open) {
+            androidAskAt = now
+            androidCancelledAskAt = null
+        } else {
+            if (androidAskAt != null) {
+                androidAnsweredAt = now
+                // B-3: a cancel (the pad's Emergency button) stays ours for the ask's whole window.
+                if (cancelled) androidCancelledAskAt = androidAskAt
+            }
+            androidAskAt = null
+        }
+    }
     private val ownScreens = object : android.app.Application.ActivityLifecycleCallbacks {
         override fun onActivityResumed(activity: android.app.Activity) {
             if (activity !is PinLockActivity) ownOthersResumed++
@@ -635,6 +698,12 @@ object PinLockRuntime {
                 // The camera gesture must not open a camera over the lock (background thread).
                 CameraLock.onLockChanged(context)
                 if (result.mode != LockMode.LOCKED && !LockTaskChrome.hasPlan) requestApply(context)
+                // Design 59d step A: what waited for Android's unlock (Home, the time-rule screen) goes now - posted, so
+                // the glance's own leave comes first.
+                if (result.mode != LockMode.LOCKED) {
+                    val app = context.applicationContext
+                    handler.post { KeyguardCover.runAfterUnlock(app, "our lock left LOCKED") }
+                }
             }
             modeListeners.toList().forEach { it() }
             // A ring that began unlocked rings once the phone locks; unlocking stops it (#5).
@@ -657,7 +726,12 @@ object PinLockRuntime {
         if (result.showVoipCall) {
             KeyguardCover.whenUnlocked(context, "the VoIP call screen") {
                 if (mode == LockMode.LOCKED && !ourCall() && VoipCalls.phase == VoipPhase.IN_CALL) {
-                    if (!VoipCalls.reopenCall(it)) Log.i(LOG_TAG, "No VoIP call screen to bring back")
+                    // Design 59b §4 (Q59b-9): as Android's face, only a call (IN_COMMUNICATION) - never a flipped ring.
+                    if (!voipReopenDue(AndroidLock.faceOn, VoipCalls.inCommunication(it))) {
+                        AndroidLock.note(it, "VoIP IN_CALL without IN_COMMUNICATION - no call screen sent")
+                    } else if (!VoipCalls.reopenCall(it)) {
+                        Log.i(LOG_TAG, "No VoIP call screen to bring back")
+                    }
                 }
             }
         }
@@ -772,7 +846,7 @@ object PinLockRuntime {
     /** Our call screen in front of the lock (inside the lock task - our package is pinned). */
     private fun showCall(context: Context) {
         try {
-            context.startActivity(com.kidslauncher.mdm.calls.InCallActivity.intent(context))
+            startOwn(context, com.kidslauncher.mdm.calls.InCallActivity.intent(context), "the call screen")
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't bring the call screen to the front", e)
         }
@@ -788,6 +862,11 @@ object PinLockRuntime {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 screenOffs++
                 endNoticeWake()
+                // Design 59b §3: the face's re-front cap is per screen-on; an ask dies with the screen-off.
+                androidRefronts = 0
+                androidAskAt = null
+                androidCancelledAskAt = null
+                androidWaited = false
                 // The lock-up first ([lockUp]). This broadcast comes after the display is off, and the
                 // lock can't draw while dark: it is drawn only after the next screen-on (design 32).
                 rememberAlarm(app)
@@ -820,6 +899,8 @@ object PinLockRuntime {
                 handler.removeCallbacks(screenOffWork)
                 if (intent.action == Intent.ACTION_SCREEN_ON) {
                     lastScreenOnElapsed = SystemClock.elapsedRealtime()
+                    // Design 59b §6: one line per screen-on with the keyguard read (the screen-off has its lock-up's).
+                    AndroidLock.note(app, "screen-on")
                     // A screen-on well after a notice wake is the kid's own (power): the 15 s end (qa-l7-b-code 3).
                     if (noticeWakeEndsAtScreenOn(noticeWokeAt, SystemClock.elapsedRealtime())) endNoticeWake()
                     PlayRuntime.suspendStoreAtScreenOn(app)
@@ -877,6 +958,9 @@ object PinLockRuntime {
             // rides the background queue) never marks the next wake.
             if (!interactive(app)) return
             AndroidLock.userPresent()
+            // Design 59b §3: Android open - the face's re-front count starts again.
+            androidRefronts = 0
+            androidWaited = false
             AndroidLock.note(app, "USER_PRESENT")
             if (mode != LockMode.LOCKED) return
             if (AndroidLock.step(app, FaceTrigger.USER_PRESENT) != FaceStep.LEAVE) return
@@ -954,8 +1038,15 @@ object PinLockRuntime {
         val ours = ourCall()
         val emergency = emergencyFlowNow(telecom)
         val alarm = alarmNow(app)
+        if (after != VoipPhase.RINGING) handler.removeCallbacks(voipGrace)
         if (after == VoipPhase.RINGING && before != VoipPhase.RINGING) {
-            dispatch(app, LockEvent.VoipRinging(ours, !ours && telecom, emergency, alarm))
+            // Design 59b §4: as Android's face with Android locked, the ring's full-screen intent is the platform's - no
+            // lock-up or wake of ours; the grace's timer decides after VOIP_PLATFORM_GRACE_MS (N4).
+            val platform = voipPlatformRing(AndroidLock.faceOn, AndroidLock.refrontHeld(app), VoipCalls.ringHasFullScreen)
+            voipPlatformRingId = if (platform) VoipCalls.ringId else null
+            dispatch(app, LockEvent.VoipRinging(ours, !ours && telecom, emergency, alarm, platformRing = platform))
+            handler.removeCallbacks(voipGrace)
+            if (platform) handler.postDelayed(voipGrace, VOIP_PLATFORM_GRACE_MS)
         }
         if (after == VoipPhase.NONE && before != VoipPhase.NONE) {
             dispatch(app, LockEvent.VoipEnded(interactive(app), ours, !ours && telecom, emergency, alarm))
@@ -1004,6 +1095,58 @@ object PinLockRuntime {
     /** The lock's try at the app's own ring screen (design 17b), one per ring. */
     private var voipFsiTry: VoipFsiTry? = null
 
+    /** Design 59b §4: the ring ([VoipCalls.ringId]) whose full-screen intent is the platform's ([voipPlatformRing]);
+     * `null` = none. Main thread. */
+    private var voipPlatformRingId: Long? = null
+
+    /** The glance's last pause (elapsed; `null` = none in this process) - "resumed since the ring's first sight". */
+    private var lockPausedAt: Long? = null
+
+    /**
+     * Design 59b §4 (N4): the platform ring's grace timer, posted at the ringing edge and dropped when the ring ends -
+     * [voipRingStep] after [VOIP_PLATFORM_GRACE_MS]: the one heads-up send, "the platform had its turn" (the card), or,
+     * still dark, the wake and the card. Main thread.
+     */
+    private val voipGrace: Runnable = Runnable {
+        val app = appContext ?: return@Runnable
+        val ringId = VoipCalls.ringId
+        if (ringId == null || ringId != voipPlatformRingId) return@Runnable
+        val now = SystemClock.elapsedRealtime()
+        val grace = voipRingStep(
+            ringId = ringId,
+            locked = mode == LockMode.LOCKED,
+            dismissed = voipRingDismissed,
+            otherScreen = voipOtherScreen(app),
+            hasFullScreen = VoipCalls.ringHasFullScreen,
+            last = voipFsiTry,
+            resumedSinceRing = lockResumed && (lockPausedAt ?: Long.MIN_VALUE) < ringId,
+            interactive = interactive(app),
+            androidLocked = AndroidLock.refrontHeld(app),
+            nowElapsedMs = now,
+        )
+        when (grace.act) {
+            VoipGraceAct.NONE -> Unit
+            VoipGraceAct.WAIT -> handler.postDelayed(voipGrace, grace.waitMs)
+            VoipGraceAct.SEND -> {
+                val sent = VoipCalls.showRingScreen(app)
+                voipFsiTry = VoipFsiTry(ringId, now, sent)
+                Log.i(ANDROID_LOCK_TAG, "VoIP ring: the heads-up case - the app's ring screen ${if (sent) "sent" else "couldn't be sent: the card"}")
+                if (sent) handler.postDelayed({ VoipCalls.changed() }, VOIP_FSI_CHECK_MS)
+            }
+            VoipGraceAct.PLATFORM -> {
+                voipFsiTry = VoipFsiTry(ringId, now, sent = false)
+                Log.i(ANDROID_LOCK_TAG, "VoIP ring: the platform had its turn - the card from here")
+            }
+            VoipGraceAct.WAKE -> {
+                voipFsiTry = VoipFsiTry(ringId, now, sent = false)
+                Log.i(ANDROID_LOCK_TAG, "VoIP ring: still dark after the grace - the wake and the card")
+                show(app, wake = WakeKind.VOIP)
+            }
+        }
+        // The glance renders the ring again (the card after PLATFORM or WAKE).
+        if (grace.act != VoipGraceAct.WAIT && grace.act != VoipGraceAct.NONE) VoipCalls.changed()
+    }
+
     /** Another call (ours or Telecom's, emergency included) or the emergency dialer flow is on: no
      * VoIP intent is ever sent ([VoipCalls] checks it at every send, 17b QA #5). */
     fun voipCallOrEmergency(context: Context): Boolean {
@@ -1033,7 +1176,10 @@ object PinLockRuntime {
     fun voipFsiDueNow(context: Context): Boolean {
         val ringId = VoipCalls.ringId ?: return false
         if (!interactive(context.applicationContext)) return false
-        return voipFsiDue(ringId, mode == LockMode.LOCKED, voipRingDismissed, voipOtherScreen(context), VoipCalls.ringHasFullScreen, voipFsiTry)
+        return voipFsiDue(
+            ringId, mode == LockMode.LOCKED, voipRingDismissed, voipOtherScreen(context), VoipCalls.ringHasFullScreen, voipFsiTry,
+            platformRing = ringId == voipPlatformRingId,
+        )
     }
 
     /** Design 17b: the resumed, settled lock sends the ring's full-screen intent - once per ring,
@@ -1382,6 +1528,9 @@ object PinLockRuntime {
      *
      * Design 32 (QA L6): every start but [lockUp]'s own ([fromLockUp]) clears [lockOnTop] here, so no
      * call site can forget it - except the ScreenOn backstop of the same lock-up ([sameLockUp]).
+     *
+     * [noUserAction] (design 59b §3 step 5, the face's re-front only): `FLAG_ACTIVITY_NO_USER_ACTION` - the covered app
+     * gets no user-leave hint (no PiP, no Element hang-up).
      */
     fun show(
         context: Context,
@@ -1389,6 +1538,7 @@ object PinLockRuntime {
         ask: LockAsk = LockAsk.AT_ONCE,
         sameLockUp: Boolean = false,
         fromLockUp: Boolean = false,
+        noUserAction: Boolean = false,
     ): Boolean {
         if (!fromLockUp) {
             // The backstop's start onto the lock on top: its new-intent pause keeps the mark.
@@ -1407,17 +1557,18 @@ object PinLockRuntime {
                 // Shell's default close of the app the kid was in remain: the lock's own task is a
                 // task change, and no public option overrides its transition (qa-32-s2-code M1).
                 Intent(context, PinLockActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION),
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                    .addFlags(if (noUserAction) Intent.FLAG_ACTIVITY_NO_USER_ACTION else 0),
             )
             started = true
             when (wake) {
                 WakeKind.VOIP -> {
                     voipWakeAskedAt = SystemClock.elapsedRealtime()
                     voipWakeGone = false
-                    context.startActivity(VoipWakeActivity.intent(context, WakeKind.VOIP))
+                    startOwn(context, VoipWakeActivity.intent(context, WakeKind.VOIP), "the VoIP wake")
                 }
                 // No voipWakePaused bookkeeping for a notice (17b's try detection stays the ring's).
-                WakeKind.NOTICE -> context.startActivity(VoipWakeActivity.intent(context, WakeKind.NOTICE))
+                WakeKind.NOTICE -> startOwn(context, VoipWakeActivity.intent(context, WakeKind.NOTICE), "the notice wake")
                 null -> Unit
             }
         } catch (e: Exception) {
@@ -1447,6 +1598,8 @@ object PinLockRuntime {
         // Back after a call the system dialer showed: the camera policy follows (qa-25b-25f M1).
         updateCallForCamera(context, telecomInCall(context))
         handler.removeCallbacks(refrontCheck)
+        androidLossPending = false
+        androidWaited = false
         // During our call, the call screen goes back on top (qa-10-code #1).
         dispatch(context.applicationContext, LockEvent.LockResumed(ourCall(), VoipCalls.phase))
         // qa-16d-code #2: a desync that begins with the screen on (a quickstep restart, the lock back
@@ -1464,7 +1617,11 @@ object PinLockRuntime {
      * pauses it - the re-front check runs after [PAUSE_REFRONT_MS] (bug 25b-A). */
     fun onLockPaused(finishing: Boolean = false) {
         lockResumed = false
-        if (!finishing) appContext?.let { AndroidLock.note(it, "the glance paused") }
+        if (!finishing) {
+            appContext?.let { AndroidLock.note(it, "the glance paused") }
+            androidLossWhy = "the glance paused"
+            lockPausedAt = SystemClock.elapsedRealtime()
+        }
         // Design 32: the sleep's own pause keeps the lock on top; an interactive one doesn't - unless
         // it is the backstop's new-intent delivery ([newIntentPauseKept]; the new intent decides).
         val wasOnTop = lockOnTop
@@ -1474,6 +1631,7 @@ object PinLockRuntime {
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
         // Just after a screen-on the stop that marks Emergency SOS may still come (bug 25b-H).
+        markAndroidLoss()
         handler.postDelayed(refrontCheck, pauseRefrontDelayMs(lastScreenOnElapsed, SystemClock.elapsedRealtime()))
     }
 
@@ -1483,7 +1641,10 @@ object PinLockRuntime {
         lockResumed = false
         // Design 59's prototype: an interactive stop is something over the glance - with Android's keyguard
         // locked only a showWhenLocked window, or the keyguard un-occluded (SystemUI's own lock face).
-        if (!finishing) appContext?.let { AndroidLock.note(it, "the glance stopped") }
+        if (!finishing) {
+            appContext?.let { AndroidLock.note(it, "the glance stopped") }
+            androidLossWhy = "the glance stopped"
+        }
         newIntentPauseHeld = false
         backstopOntoTopAt = null
         lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.STOP, interactive = interactiveOrUnknown())
@@ -1493,7 +1654,14 @@ object PinLockRuntime {
         handler.removeCallbacks(refrontCheck)
         // As quick as the pause's check (bug 25b-A): whatever came over the lock - Recents, a
         // SystemUI restart, an app - is covered again within PAUSE_REFRONT_MS.
+        markAndroidLoss()
         handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)
+    }
+
+    /** qa-59b-code B-3/B-5: the check just scheduled is a fresh loss of the front; a new loss waits for USER_PRESENT anew. */
+    private fun markAndroidLoss() {
+        androidLossPending = true
+        androidWaited = false
     }
 
     /** PinLockActivity.onDestroy: the next screen-off starts the lock again (design 32). */
@@ -1546,6 +1714,7 @@ object PinLockRuntime {
         val context = appContext ?: return
         val telecom = telecomInCall(context)
         updateCallForCamera(context, telecom)
+        val now = SystemClock.elapsedRealtime()
         val inputs = RefrontInputs(
             locked = chromeLocked,
             lockResumed = lockResumed,
@@ -1555,19 +1724,26 @@ object PinLockRuntime {
             emergencyFlow = emergencyFlowNow(telecom),
             alarmRinging = alarmNow(context),
             voipCall = VoipCalls.phase != VoipPhase.NONE,
-            sosFlow = sosFlowNow(sosFlowUntilElapsed, SystemClock.elapsedRealtime(), ownOthersResumed > 0),
+            sosFlow = sosFlowNow(sosFlowUntilElapsed, now, ownOthersResumed > 0),
             coverOn = KeyguardCover.coverOn,
             lockOnTop = lockOnTop,
-            // Design 59 (P59-3): Android's secure keyguard locked under the face (no binder call without it).
-            androidGate = chromeLocked && !lockResumed && AndroidLock.refrontHeld(context),
+            // Design 59b §3 (P59-3): the face's loss rule - Android locked under it, or open with USER_PRESENT (no binder
+            // call without the face, or with the glance in front).
+            android = if (chromeLocked && !lockResumed) AndroidLock.loss(context) else null,
+            androidOurs = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, now),
+            androidRefronts = androidRefronts,
+            androidFreshLoss = androidLossPending,
+            androidWaited = androidWaited,
         )
+        androidLossPending = false
         val action = refrontAction(inputs, refrontAttempt)
-        if (inputs.androidGate) AndroidLock.note(context, "the glance isn't in front - no re-front, Android's keyguard guards")
         // qa-25b-25f H1: the mark ends on anything but its own yield; while it runs, only our
         // package, the helpers and the SOS app stay in lock task.
         val sos = sosMarkKept(action)
         if (!sos) sosFlowUntilElapsed = 0L
-        narrowForSos(context, sos)
+        // 59d D (qa-59b-code B-2): as the face SOS is an exemption only - Android's locked keyguard holds, so lock task
+        // isn't narrowed for it.
+        narrowForSos(context, sos && inputs.android == null)
         when (action) {
             RefrontAction.Stop -> yielding = null
             is RefrontAction.Yield -> {
@@ -1584,9 +1760,24 @@ object PinLockRuntime {
             is RefrontAction.Refront -> {
                 yielding = null
                 refrontAttempt++
+                // Design 59b §3: the face's re-front, counted for the cap.
+                if (action.noUserAction) Log.i(ANDROID_LOCK_TAG, "re-front #${++androidRefronts} ($androidLossWhy)")
                 // Design 16e: the boot's first lock may still wait for the mark (its backstop ends it).
-                if (show(context, ask = LockAsk.BOOT)) Log.i(LOG_TAG, "Re-fronting the lock (#$refrontAttempt)")
+                if (show(context, ask = LockAsk.BOOT, noUserAction = action.noUserAction)) Log.i(LOG_TAG, "Re-fronting the lock (#$refrontAttempt)")
                 handler.postDelayed(refrontCheck, action.nextCheckMs)
+            }
+            RefrontAction.AndroidWait -> {
+                // B-5: Android open with no USER_PRESENT yet - one wait for it, then own mode's backstop.
+                yielding = null
+                androidWaited = true
+                handler.postDelayed(refrontCheck, ANDROID_ANSWER_WAIT_MS)
+            }
+            RefrontAction.AndroidLeave -> {
+                // Design 59b §2 (Q59b-6): the kid unlocked Android - the glance's USER_PRESENT leave (no Home), or with no
+                // glance the runtime's own.
+                yielding = null
+                val hook = androidUnlockHook
+                if (hook != null) hook() else dispatch(context, LockEvent.Unlocked(screenOffs, screenOffs))
             }
             RefrontAction.DarkLockUp -> {
                 // Design 32 step 2 (M5): a system-dialer call ended while dark under the keyguard cover -

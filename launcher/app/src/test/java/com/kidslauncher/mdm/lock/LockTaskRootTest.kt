@@ -1,6 +1,8 @@
 package com.kidslauncher.mdm.lock
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Design 16 (QA #2/#5(a)): with the kiosk on Home roots lock task, and the lock leaves through Home -
@@ -62,5 +64,51 @@ class LockTaskRootTest {
         // QA L2: never Home over a live call (ours, Telecom's, VoIP - Element hangs up when its PiP goes).
         assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = false), lockLeave(kioskOn = false, startedLockTask = true, lockTaskRunning = true, callLive = true))
         assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = false), lockLeave(kioskOn = false, startedLockTask = false, lockTaskRunning = false, callLive = true))
+    }
+
+    @Test
+    fun `59b step 0 - the face stopped under an app leaves without Home, but a kiosk root still re-roots through it`() {
+        for (call in listOf(false, true)) {
+            // Kiosk off: no Home; the lock task stopped first only when it is ours, as before.
+            assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = false), lockLeave(false, startedLockTask = true, lockTaskRunning = true, callLive = call, glanceInFront = false))
+            assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = false), lockLeave(false, startedLockTask = false, lockTaskRunning = true, callLive = call, glanceInFront = false))
+            assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = false), lockLeave(false, startedLockTask = false, lockTaskRunning = false, callLive = call, glanceInFront = false))
+            // Kiosk on, not the root: nothing to stop, no Home.
+            assertEquals(LockLeave(stopLockTaskFirst = false, homeFirst = false), lockLeave(true, startedLockTask = false, lockTaskRunning = true, callLive = call, glanceInFront = false))
+            // Kiosk on, the lock-task root: stopping drops the kiosk - Home re-roots it.
+            assertEquals(LockLeave(stopLockTaskFirst = true, homeFirst = true), lockLeave(true, startedLockTask = true, lockTaskRunning = true, callLive = call, glanceInFront = false))
+        }
+        // stopLockTaskFirst never depends on glanceInFront (stopOwnLockTask reads the default and must agree).
+        for (kiosk in listOf(true, false)) for (started in listOf(true, false)) for (running in listOf(true, false)) for (call in listOf(true, false)) {
+            assertEquals(
+                lockLeave(kiosk, started, running, call).stopLockTaskFirst,
+                lockLeave(kiosk, started, running, call, glanceInFront = false).stopLockTaskFirst,
+            )
+            assertEquals("in front: today's rows", lockLeave(kiosk, started, running, call), lockLeave(kiosk, started, running, call, glanceInFront = true))
+        }
+        // Own mode always in front; the face only when resumed at the leave.
+        assertTrue(leaveInFront(androidFace = false, resumed = false))
+        assertTrue(leaveInFront(androidFace = false, resumed = true))
+        assertTrue(leaveInFront(androidFace = true, resumed = true))
+        assertFalse(leaveInFront(androidFace = true, resumed = false))
+        // qa-59b-code B-4: the pad's success is the glance's own ask - in front whatever the lifecycle reads.
+        assertTrue(leaveInFront(androidFace = true, resumed = false, fromAsk = true))
+    }
+
+    @Test
+    fun `59b step 0 - the glance reads its leave from the face and its resume, and drops a row target only then`() {
+        val activity = listOf("src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt", "app/src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
+            .map { java.io.File(it) }.first { it.exists() }.readText()
+        val leave = activity.substringAfter("private fun leave() {").substringBefore("\n    }\n")
+        assertTrue(leave.contains("val inFront = leaveInFront(AndroidLock.faceOn, resumed, fromAsk = leaveFromAsk)"))
+        // B-4: set only on the pad's success, right before its unlock.
+        assertEquals(1, Regex("leaveFromAsk = true").findAll(activity).count())
+        assertTrue(activity.substringAfter("private fun androidAnswered(").substringBefore("\n    }\n")
+            .contains("leaveFromAsk = true\n                unlock(offs)"))
+        assertTrue(leave.contains("if (!inFront) pendingOpen = null"))
+        assertTrue(leave.contains("PinLockRuntime.callLiveNow(this), glanceInFront = inFront))"))
+        assertTrue("the root's retry stays", leave.contains("go(rootLeave)"))
+        // stopOwnLockTask keeps the default (in front): its stop agrees with every row.
+        assertTrue(activity.substringAfter("private fun stopOwnLockTask() {").substringBefore("\n    }\n").contains("callLive = false).stopLockTaskFirst"))
     }
 }

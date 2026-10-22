@@ -123,6 +123,7 @@ fun inkForFill(fill: WallpaperFill): InkChoice? = when (fill) {
     is WallpaperFill.Solid -> inkForColours(listOf(fill.argb))
     is WallpaperFill.Gradient -> inkForColours(listOf(fill.from, fill.to))
     is WallpaperFill.Image -> null // needs the pixels: inkForImage
+    WallpaperFill.NightMark -> inkForColours(listOf(WallpaperRender.NIGHT_ARGB))
 }
 
 /**

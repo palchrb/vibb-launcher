@@ -88,6 +88,10 @@ sealed interface LockEvent {
         val systemCall: Boolean = false,
         val emergencyFlow: Boolean = false,
         val alarmRinging: Boolean = false,
+        /** Design 59b §4 ([voipPlatformRing]): as Android's face with Android locked, the ring's full-screen intent is
+         * the platform's - SystemUI launches it and wakes the screen; no lock-up and no wake of ours (the grace,
+         * [voipRingStep], decides after it). */
+        val platformRing: Boolean = false,
     ) : LockEvent {
         val otherScreen: Boolean get() = ourCall || systemCall || emergencyFlow || alarmRinging
     }
@@ -208,6 +212,7 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
     is LockEvent.VoipRinging -> when {
         mode != LockMode.LOCKED -> LockStep(mode)
         event.otherScreen -> LockStep(mode, recheck = true)
+        event.platformRing -> LockStep(mode)
         else -> LockStep(mode, showLock = true, wake = true)
     }
 

@@ -267,7 +267,77 @@ fun voipFsiDue(
     otherScreen: Boolean,
     hasFullScreen: Boolean,
     last: VoipFsiTry?,
-): Boolean = ringId != null && locked && !dismissed && !otherScreen && hasFullScreen && last?.ringId != ringId
+    /** Design 59b §4: the platform's ring ([voipPlatformRing]) - never the resumed lock's send; the grace
+     * ([voipRingStep]) writes this ring's try. */
+    platformRing: Boolean = false,
+): Boolean = ringId != null && locked && !dismissed && !otherScreen && hasFullScreen && last?.ringId != ringId && !platformRing
+
+/**
+ * Design 59b §4 (the WhatsApp black screen, a race): as Android's face ([face]) with Android's secure keyguard locked
+ * ([androidLocked]), a ring with its full-screen intent ([hasFullScreen]) is the platform's - SystemUI launches it
+ * itself (`FullScreenIntentDecisionProvider`: not interactive, or the keyguard showing or occluded) and wakes the
+ * screen; our lock-up, wake and 17b send would move the same activity again while it starts. Own mode: never.
+ */
+fun voipPlatformRing(face: Boolean, androidLocked: Boolean, hasFullScreen: Boolean): Boolean = face && androidLocked && hasFullScreen
+
+/** Design 59b §4: how long the platform has for a ring's full-screen intent before the lock acts ([voipRingStep]). */
+const val VOIP_PLATFORM_GRACE_MS = 3_000L
+
+/** [voipRingStep]'s verdicts. */
+enum class VoipGraceAct {
+    /** Nothing (no ring, not LOCKED, Avvis, no full-screen intent - the card at once -, or this ring's try is written). */
+    NONE,
+
+    /** Not yet: look again in [VoipGrace.waitMs] (the grace runs, or another call, the emergency flow or an alarm is
+     * in front). */
+    WAIT,
+
+    /** The heads-up case: the glance in front since the ring's first sight, the screen on, Android locked - the one
+     * send of the app's ring screen (`VoipFsiTry(sent = true)`). */
+    SEND,
+
+    /** The platform had its turn: `VoipFsiTry(sent = false)` - the card from now on, never a later send. */
+    PLATFORM,
+
+    /** Still dark (DND rings this way): the wake and the card - `VoipFsiTry(sent = false)`, no send. */
+    WAKE,
+}
+
+data class VoipGrace(val act: VoipGraceAct, val waitMs: Long = 0L)
+
+/**
+ * Design 59b §4 (Q59b-4, N4): the platform ring's grace, [VOIP_PLATFORM_GRACE_MS] from the ring's first sight
+ * ([ringId] is `ringStartedElapsedMs`), run by the runtime's timer from the ringing edge. It always ends in this ring's
+ * try ([VoipFsiTry]) - so [voipRingUi] gives CARD after it unless the one heads-up send went out.
+ * [resumedSinceRing]: the glance resumed now and not paused since the ring's first sight.
+ */
+fun voipRingStep(
+    ringId: Long?,
+    locked: Boolean,
+    dismissed: Boolean,
+    otherScreen: Boolean,
+    hasFullScreen: Boolean,
+    last: VoipFsiTry?,
+    resumedSinceRing: Boolean,
+    interactive: Boolean,
+    androidLocked: Boolean,
+    nowElapsedMs: Long,
+): VoipGrace = when {
+    ringId == null || !locked || dismissed || !hasFullScreen || last?.ringId == ringId -> VoipGrace(VoipGraceAct.NONE)
+    nowElapsedMs - ringId in 0 until VOIP_PLATFORM_GRACE_MS -> VoipGrace(VoipGraceAct.WAIT, VOIP_PLATFORM_GRACE_MS - (nowElapsedMs - ringId))
+    otherScreen -> VoipGrace(VoipGraceAct.WAIT, VOIP_PLATFORM_GRACE_MS)
+    !interactive -> VoipGrace(VoipGraceAct.WAKE)
+    resumedSinceRing && androidLocked -> VoipGrace(VoipGraceAct.SEND)
+    else -> VoipGrace(VoipGraceAct.PLATFORM)
+}
+
+/**
+ * Design 59b §4 (Q59b-9): the lock's resume during a VoIP call sends the call screen again only with the audio in
+ * `IN_COMMUNICATION` as Android's face - that tells the call from a ring that flipped to IN_CALL (a re-posted ring
+ * notice) and never moves a ring screen again; a Back within the grace still gets the call screen back. Own mode:
+ * as before.
+ */
+fun voipReopenDue(face: Boolean, audioInCommunication: Boolean): Boolean = !face || audioInCommunication
 
 /**
  * The card is the fallback (17b): at once without a full-screen intent (Android dropped it), else

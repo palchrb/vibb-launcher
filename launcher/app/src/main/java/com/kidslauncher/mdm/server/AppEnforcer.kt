@@ -753,7 +753,7 @@ object AppEnforcer {
 
     /** A typed HOME start (design 16, QA #1), never an explicit component. */
     private fun bringHomeToFront(context: Context) {
-        com.kidslauncher.mdm.lock.HomeFront.bring(context, "a role change")
+        com.kidslauncher.mdm.lock.HomeFront.bringAfterUnlock(context, "a role change")
     }
 
     /** See [ownPermissionsToFix]: every role-grantable permission our manifest requests, set to

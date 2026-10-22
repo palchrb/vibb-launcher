@@ -22,11 +22,16 @@ sealed interface WallpaperFill {
     /** An uploaded photo, cached as `<hash>.jpg`. */
     data class Image(val hash: String) : WallpaperFill
 
+    /** Design 59b §5: the night ground with the Vibb mark - only ever the lock wallpaper behind Android's own face and
+     * pad ([lockScreenFill] as the face), drawn by [WallpaperRender] at the screen size, no asset. */
+    data object NightMark : WallpaperFill
+
     /** A stable description, part of the applied key ([wallpaperKey]). */
     fun describe(): String = when (this) {
         is Solid -> "solid:%08x".format(argb)
         is Gradient -> "gradient:%08x:%08x".format(from, to)
         is Image -> "image:$hash"
+        NightMark -> "night_mark"
     }
 }
 
@@ -88,9 +93,15 @@ fun effectiveWallpaper(allowed: List<Wallpaper>, pickedId: Long?, cachedHashes: 
 /**
  * The lock screen: a photo only when the parent ticked "also on the lock screen" (anyone holding
  * the locked phone sees it, QA 08 #1); otherwise navy. Colours go on both.
+ * Design 59b §5 ([androidFace]: Android's own face and pad show this wallpaper): the night ground with the Vibb mark
+ * (the user's decision) - the parent's lock-photo opt-in still wins (no new family data: the opt-in is the parent's).
  */
-fun lockScreenFill(home: Wallpaper): WallpaperFill =
-    if (home.fill is WallpaperFill.Image && !home.lockScreen) NAVY.fill else home.fill
+fun lockScreenFill(home: Wallpaper, androidFace: Boolean = false): WallpaperFill = when {
+    home.fill is WallpaperFill.Image && home.lockScreen -> home.fill
+    androidFace -> WallpaperFill.NightMark
+    home.fill is WallpaperFill.Image -> NAVY.fill
+    else -> home.fill
+}
 
 /**
  * The PIN lock's background (design 25, "Lock background"): the parent's own lock wallpaper

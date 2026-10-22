@@ -31,9 +31,71 @@ data class RefrontInputs(
     val coverOn: Boolean = false,
     /** Design 32: the lock is the top task since its lock-up ([lockOnTopAfter], best effort). */
     val lockOnTop: Boolean = false,
-    /** Design 59: the glance is Android's face and Android's secure keyguard is locked ([androidRefrontHeld]). */
-    val androidGate: Boolean = false,
+    /** Design 59b §3: the glance is Android's face and [androidLoss] applies (`null`: own mode's rows). */
+    val android: AndroidLoss? = null,
+    /** Design 59b §3 step 3: the loss is ours ([androidLossOurs]): the PIN pad's ask, one of our own starts, one of our
+     * own screens resumed. */
+    val androidOurs: Boolean = false,
+    /** Design 59b §3 step 6: the face's re-fronts since the last screen-off or `USER_PRESENT` ([ANDROID_REFRONT_CAP]). */
+    val androidRefronts: Int = 0,
+    /** qa-59b-code B-3: this check was scheduled by a fresh pause or stop of the glance - not a yield's recheck or a
+     * re-front's own follow-up. The face re-fronts only then. */
+    val androidFreshLoss: Boolean = false,
+    /** qa-59b-code B-5: Android read open with no `USER_PRESENT` once already ([AndroidLoss.WAIT]) - this check is the
+     * wait's end: own mode's rows, the RELOCK backstop. */
+    val androidWaited: Boolean = false,
 )
+
+/** Design 59b §3: what Android's keyguard is while the face lost the front. */
+enum class AndroidLoss {
+    /** Android's secure keyguard is locked under the face: a re-front can only occlude it again, never open it. */
+    LOCKED,
+
+    /** Android is open with a `USER_PRESENT` since our lock last went LOCKED: the kid unlocked it - the leave without
+     * Home (design 59b §2), never a re-front. */
+    OPEN,
+
+    /** qa-59b-code B-5: Android is open and no `USER_PRESENT` came yet (a background broadcast, often late): one wait of
+     * [ANDROID_ANSWER_WAIT_MS] for it ([RefrontAction.AndroidWait]), then own mode's re-front - the RELOCK backstop. */
+    WAIT,
+}
+
+/**
+ * Design 59b §3/§2 (Q59b-6, qa-59b-code B-5): [androidLoss]'s input from the face's live reads - `null` without the
+ * face or a credential (own mode's rows); Android open with no `USER_PRESENT` waits once for it before own mode's
+ * re-front, the backstop that RELOCKs an unexpectedly open Android, runs.
+ */
+fun androidLoss(face: Boolean, deviceSecure: Boolean, androidLocked: Boolean, presentSinceLocked: Boolean): AndroidLoss? = when {
+    !face || !deviceSecure -> null
+    androidLocked -> AndroidLoss.LOCKED
+    presentSinceLocked -> AndroidLoss.OPEN
+    else -> AndroidLoss.WAIT
+}
+
+/** Design 59b §3 step 6 (Q59b-3): at most this many re-fronts per screen-on - then SystemUI's face (with our ground)
+ * until the screen-off. Own mode never gives up (QA 10 #2); here a cap leaves only Android's locked keyguard. */
+const val ANDROID_REFRONT_CAP = 2
+
+/** Design 59b §3 step 3 (Q59b-8): one of our own starts ([PinLockRuntime.noteOwnStart]) counts as ours this long. */
+const val OWN_START_MS = 2_000L
+
+/**
+ * Design 59b §3 step 3: an open ask for Android's PIN pad counts as ours at most this long - a stamp, so a lost
+ * callback expires; the pad's Emergency dialer stops the glance while it is open.
+ */
+const val ANDROID_ASK_OPEN_MS = 2 * 60_000L
+
+/**
+ * Design 59b §3 step 3: the face lost the front to something of ours - the ask for Android's PIN pad ([askedAtMs],
+ * elapsed, `null` = none open, [ANDROID_ASK_OPEN_MS]) or its answer less than [ANDROID_ASK_SETTLE_MS] ago
+ * ([answeredAtMs]), one of our own starts less than [OWN_START_MS] ago ([ownStartAtMs]), or another of our screens
+ * resumed ([ownOthersResumed]).
+ */
+fun androidLossOurs(askedAtMs: Long?, answeredAtMs: Long?, ownStartAtMs: Long?, ownOthersResumed: Boolean, nowMs: Long): Boolean =
+    (askedAtMs != null && nowMs - askedAtMs in 0 until ANDROID_ASK_OPEN_MS) ||
+        (answeredAtMs != null && nowMs - answeredAtMs in 0 until ANDROID_ASK_SETTLE_MS) ||
+        (ownStartAtMs != null && nowMs - ownStartAtMs in 0 until OWN_START_MS) ||
+        ownOthersResumed
 
 /** How long after "Emergency call" the lock stays out of the way even without a call. */
 const val EMERGENCY_FLOW_MS = 2 * 60_000L
@@ -49,8 +111,18 @@ sealed interface RefrontAction {
      * fight it; look again in [recheckMs]. Each such episode is counted and reported. */
     data class Yield(val reason: String, val recheckMs: Long = EXEMPT_RECHECK_MS) : RefrontAction
 
-    /** Bring the lock back now and look again in [nextCheckMs]. */
-    data class Refront(val nextCheckMs: Long) : RefrontAction
+    /** Bring the lock back now and look again in [nextCheckMs]. [noUserAction]: the face's re-front (design 59b §3
+     * step 5) - `FLAG_ACTIVITY_NO_USER_ACTION`, so the covered app gets no user-leave hint (no PiP, no Element
+     * hang-up, design 57). */
+    data class Refront(val nextCheckMs: Long, val noUserAction: Boolean = false) : RefrontAction
+
+    /** Design 59b §2 (Q59b-6): as the face, Android is open with a `USER_PRESENT` since the LOCKED edge - the leave
+     * without Home (the glance's `USER_PRESENT` path), never a re-front. */
+    data object AndroidLeave : RefrontAction
+
+    /** qa-59b-code B-5: as the face, Android open with no `USER_PRESENT` yet - look again in [ANDROID_ANSWER_WAIT_MS]
+     * (the broadcast leaves; else own mode's backstop), never a re-front at once (Q59b-1's narrow race). */
+    data object AndroidWait : RefrontAction
 
     /**
      * Design 32 step 2 (M5): while dark under the keyguard cover, with the lock not on top and nothing
@@ -75,13 +147,17 @@ fun refrontDelayMs(attempt: Int): Long = when {
  */
 fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     !inputs.locked || inputs.lockResumed -> RefrontAction.Stop
-    // Design 59 §4.2: nothing that isn't showWhenLocked can show over Android's locked keyguard - no fight with
-    // its PIN pad; the glance comes back at the next screen-off and after our call.
-    inputs.androidGate -> RefrontAction.Stop
+    // B-5: the face's one wait for USER_PRESENT is over - own mode's rows (the RELOCK backstop).
+    inputs.android != null && !(inputs.android == AndroidLoss.WAIT && inputs.androidWaited) -> androidLossStep(inputs, attempt)
     // The screen off: nothing - except under the keyguard cover with the lock not on top (design 32
     // step 2, M5): the exempt screens are still yielded to (the system_call yield keeps looking every
     // 2 s while dark), and once none is left the lock-up runs while dark ([RefrontAction.DarkLockUp]).
     !inputs.interactive && !(inputs.coverOn && !inputs.lockOnTop) -> RefrontAction.Stop
+    else -> exemptYield(inputs) ?: if (!inputs.interactive) RefrontAction.DarkLockUp else RefrontAction.Refront(refrontDelayMs(attempt + 1))
+}
+
+/** The named exempt screens, in their order - own mode's and the face's alike. */
+private fun exemptYield(inputs: RefrontInputs): RefrontAction.Yield? = when {
     inputs.ourCall -> RefrontAction.Yield("call")
     inputs.telecomInCall -> RefrontAction.Yield("system_call")
     inputs.emergencyFlow -> RefrontAction.Yield("emergency")
@@ -92,8 +168,35 @@ fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     // Last (qa-25b-25f M2): a probable SOS never hides a woken alarm, a call or a VoIP call - their
     // yields end their own exemptions (the alarm's on a yield named "alarm").
     inputs.sosFlow -> RefrontAction.Yield("sos")
-    !inputs.interactive -> RefrontAction.DarkLockUp
-    else -> RefrontAction.Refront(refrontDelayMs(attempt + 1))
+    else -> null
+}
+
+/**
+ * Design 59b §3, the face's loss rule (replacing design 59's blanket stop): SystemUI's face over the glance (an app that
+ * isn't showWhenLocked un-occluded the keyguard) is covered again fast - only for an unexpected loss, at most
+ * [ANDROID_REFRONT_CAP] times per screen-on. Android's keyguard stays locked under it either way: the glance is
+ * showWhenLocked with no dismiss, so a re-front only occludes it again - a look, never a path past the PIN.
+ * 1. The screen off: nothing (the screen-off's lock-up and the sleep check own the dark) - before the exemptions only
+ *    here; own mode's dark cover row ([RefrontAction.DarkLockUp]) is unchanged.
+ * 2. Android open with a `USER_PRESENT` since the LOCKED edge: the leave without Home, never a re-front (Q59b-6) - before
+ *    the exemptions, so a pending yield's recheck never keeps our lock LOCKED over an Android the kid unlocked.
+ * 3. Android open with no `USER_PRESENT` yet: one wait for it (qa-59b-code B-5), then own mode's backstop.
+ * 4. The exemptions, as own mode's (a VoIP call ringing **or** live yields - no re-front over a call screen, Q59b-2;
+ *    a probable SOS too, without own mode's narrowed lock task - 59d D).
+ * 5. Ours (the PIN pad's ask, our own start, our own screen): nothing.
+ * 6. The cap reached, or a check no fresh pause or stop scheduled (a yield's recheck, a re-front's follow-up -
+ *    qa-59b-code B-3: what is in front after a yield is the platform's, e.g. Android's own Emergency dialer): nothing -
+ *    SystemUI's face until the screen-off.
+ * 7. Else the re-front, with no user-leave hint.
+ */
+fun androidLossStep(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
+    !inputs.interactive -> RefrontAction.Stop
+    inputs.android == AndroidLoss.OPEN -> RefrontAction.AndroidLeave
+    inputs.android == AndroidLoss.WAIT -> RefrontAction.AndroidWait
+    else -> exemptYield(inputs) ?: when {
+        inputs.androidOurs || inputs.androidRefronts >= ANDROID_REFRONT_CAP || !inputs.androidFreshLoss -> RefrontAction.Stop
+        else -> RefrontAction.Refront(refrontDelayMs(attempt + 1), noUserAction = true)
+    }
 }
 
 /**

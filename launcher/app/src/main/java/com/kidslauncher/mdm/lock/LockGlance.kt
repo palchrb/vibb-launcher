@@ -24,6 +24,14 @@ const val LOCK_GLANCE_CAPABILITY = "lock_glance_v1"
 enum class LockStage { GLANCE, KEYPAD }
 
 /**
+ * Whether the glance page is on screen. Design 59b (the user's rc.1 recording): as Android's face the keypad stage is
+ * Android's PIN pad ([androidPad]) - our keys are hidden, and what was left of the stage (the prompt, the back arrow,
+ * "Nødsamtale") showed for ~0.5 s once the pad succeeded and went, while the glance left. So the page stays drawn over
+ * the stage under the pad (the stage, with a row's target, is kept), and the leave shows the face as drawn.
+ */
+fun glancePageShown(stage: LockStage, androidPad: Boolean): Boolean = stage == LockStage.GLANCE || androidPad
+
+/**
  * What a row opens after the code (memory only; redacted toString - a conversation key can be a
  * room ID). [Conversation]: the row's newest notification ([notificationKey], posted at
  * [postTimeMs]); [MissedCalls]: one contact's sheet ([number]), else the phone book.

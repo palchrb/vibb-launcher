@@ -42,6 +42,10 @@ class PinLockManifestTest {
             .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
             .replace(Regex("//[^\\n]*"), "")
         assertTrue(!code.contains("setTurnScreenOn") && !code.contains("turnScreenOn"))
+        // Design 59b §3 (Q59b-12): no dismiss window either - the glance on top occludes Android's keyguard and dismisses
+        // nothing, so the face's re-front can't pass the PIN. requestDismissKeyguard (the pad, the cover) is an ask only.
+        assertEquals("", lock.getAttributeNS(ns, "dismissKeyguard"))
+        assertTrue(!code.contains("FLAG_DISMISS_KEYGUARD") && !code.contains("setDismissKeyguard") && !code.contains("FLAG_SHOW_WHEN_LOCKED"))
         val onCreate = code.substringAfter("override fun onCreate(").substringBefore("\n    }\n")
         val secure = onCreate.indexOf("window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)")
         assertTrue(secure in 0 until onCreate.indexOf("setContentView("))

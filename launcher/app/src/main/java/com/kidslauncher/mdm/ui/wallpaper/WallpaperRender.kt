@@ -47,6 +47,7 @@ object WallpaperRender {
                 canvas.drawRect(bounds, paint)
                 paint.shader = null
             }
+            WallpaperFill.NightMark -> drawNightMark(canvas, bounds, paint)
             is WallpaperFill.Image -> {
                 if (bitmap == null) {
                     paint.color = PHOTO_PLACEHOLDER
@@ -59,6 +60,39 @@ object WallpaperRender {
                 }
             }
         }
+    }
+
+    /** Design 59b §5: `kid_ground`, the mark's rings (`kid_accent`) and core (`kid_core`) - the palette's own values. */
+    const val NIGHT_ARGB: Int = 0xFF0C0C14.toInt()
+    private const val MARK_RING_ARGB: Int = 0xFFF0A884.toInt()
+    private const val MARK_CORE_ARGB: Int = 0xFFFBE4DC.toInt()
+
+    /** The mark in its own units (`scripts/vibb-icon.py`'s geometry): four rings, the core, the stroke. */
+    private val MARK_RINGS = floatArrayOf(25.0f, 19.6f, 14.4f, 9.4f)
+    private const val MARK_CORE = 4.3f
+    private const val MARK_STROKE = 2.6f
+
+    /** The rings at Home's resting breath (the splash's 0.55), so the mark is calm behind SystemUI's clock. */
+    private const val MARK_RING_ALPHA = 140
+
+    /** The outer ring's radius as a share of the shorter side - Home's night mark at the Jelly Star's width. */
+    private const val MARK_RADIUS_SHARE = 0.27f
+
+    /** Design 59b §5: the night ground with the Vibb mark centred - the lock wallpaper as Android's face. */
+    private fun drawNightMark(canvas: Canvas, bounds: Rect, paint: Paint) {
+        paint.color = NIGHT_ARGB
+        canvas.drawRect(bounds, paint)
+        val scale = minOf(bounds.width(), bounds.height()) * MARK_RADIUS_SHARE / MARK_RINGS[0]
+        val cx = bounds.exactCenterX()
+        val cy = bounds.exactCenterY()
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = MARK_STROKE * scale
+        paint.color = MARK_RING_ARGB
+        paint.alpha = MARK_RING_ALPHA
+        for (r in MARK_RINGS) canvas.drawCircle(cx, cy, r * scale, paint)
+        paint.style = Paint.Style.FILL
+        paint.color = MARK_CORE_ARGB
+        canvas.drawCircle(cx, cy, MARK_CORE * scale, paint)
     }
 
     /** The part of a `w`×`h` image that fills [bounds] without distortion (centre crop). */

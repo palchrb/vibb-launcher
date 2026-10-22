@@ -213,9 +213,9 @@ class AndroidLockPlanTest {
         val activity = code("$lock/PinLockActivity.kt")
         assertTrue(body(activity, "actAsFace").contains("handler.postDelayed(faceWait, AndroidLock.waitMs(PinLockRuntime.screenOffs))"))
         // M4: USER_PRESENT leaves only on faceStep's LEAVE.
-        val present = activity.substringAfter("private val presentLeave = Runnable {").substringBefore("\n    }\n")
+        val present = activity.substringAfter("private val presentLeave: Runnable = Runnable {").substringBefore("\n    }\n")
         assertTrue(present.contains("val step = AndroidLock.step(this, FaceTrigger.USER_PRESENT)"))
-        assertTrue(present.contains("if (step == FaceStep.LEAVE) actAsFace(step, \"USER_PRESENT\")"))
+        assertTrue(present.contains("if (step == FaceStep.LEAVE) {\n                actAsFace(step, \"USER_PRESENT\")"))
         // M5: the wait's end reads AFTER_WAIT (it relocks), never RESUME (which waits again).
         assertTrue(activity.substringAfter("private val faceWait = Runnable {").substringBefore("\n    }\n")
             .contains("actAsFace(AndroidLock.step(this, FaceTrigger.AFTER_WAIT), \"the glance's wait\")"))
@@ -305,7 +305,8 @@ class AndroidLockPlanTest {
         assertFalse(androidRefrontHeld(true, true, false))
         assertFalse(androidRefrontHeld(false, true, true))
         val base = RefrontInputs(locked = true, lockResumed = false, interactive = true, ourCall = false, telecomInCall = false, emergencyFlow = false, alarmRinging = false)
-        assertEquals(RefrontAction.Stop, refrontAction(base.copy(androidGate = true), 0))
+        // Design 59b: Android locked under the face is the loss rule's (AndroidLockFaceTest), no longer a blanket stop.
+        assertEquals(RefrontAction.Stop, refrontAction(base.copy(android = AndroidLoss.LOCKED, interactive = false), 0))
         assertTrue(cameraLockEngaged(locked = true, androidGuardsCamera = false))
         assertFalse(cameraLockEngaged(locked = true, androidGuardsCamera = true))
         assertFalse(cameraLockEngaged(locked = false, androidGuardsCamera = false))
@@ -315,7 +316,7 @@ class AndroidLockPlanTest {
         assertFalse(secureCameraHeld(false, KEYGUARD_SECURE_CAMERA))
         val android = code("$lock/AndroidLock.kt")
         assertTrue(body(android, "refrontHeld").contains("faceOn && androidRefrontHeld(true, deviceSecure(context), androidLocked(context))"))
-        assertTrue(body(code("$lock/PinLockRuntime.kt"), "runRefrontCheck").contains("androidGate = chromeLocked && !lockResumed && AndroidLock.refrontHeld(context),"))
+        assertTrue(body(code("$lock/PinLockRuntime.kt"), "runRefrontCheck").contains("android = if (chromeLocked && !lockResumed) AndroidLock.loss(context) else null,"))
         assertTrue(code("$lock/CameraLock.kt").contains("val locked = cameraLockEngaged(PinLockRuntime.chromeLocked, AndroidLock.cameraGuarded())"))
         assertTrue(android.contains("fun cameraGuarded(): Boolean = faceOn && KeyguardCover.androidCameraGuard"))
         assertTrue(code("$lock/KeyguardCover.kt").contains("androidCameraGuard = androidOn && secureCameraHeld(managed, written.features)"))
@@ -425,7 +426,7 @@ class AndroidLockPlanTest {
         // The face's unlock() calls: only from actAsFace's LEAVE and the pad's success.
         val face = activity.substringAfter("fun closeAsk(").substringBefore("private val waitTicker")
         assertEquals(2, Regex("unlock\\(").findAll(face).count())
-        assertTrue(body(activity, "androidAnswered").contains("if (offs == PinLockRuntime.screenOffs && AndroidLock.step(this, FaceTrigger.PAD_SUCCEEDED) == FaceStep.LEAVE) unlock(offs) else glance?.back()"))
+        assertTrue(body(activity, "androidAnswered").contains("if (offs == PinLockRuntime.screenOffs && AndroidLock.step(this, FaceTrigger.PAD_SUCCEEDED) == FaceStep.LEAVE) {\n                leaveFromAsk = true\n                unlock(offs)\n            } else {\n                glance?.back()"))
         assertTrue(body(activity, "actAsFace").contains("FaceStep.LEAVE -> {"))
         assertTrue(body(activity, "resumeAsFace").contains("return actAsFace(AndroidLock.step(this, FaceTrigger.RESUME), \"the glance's resume\")"))
         assertTrue(body(activity, "tapAsFace").contains("val step = AndroidLock.step(this, FaceTrigger.UNLOCK_TAP)"))

@@ -39,6 +39,12 @@ object HomeFront {
             .addFlags(if (animate) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
             .putExtra(EXTRA_BROUGHT, true)
 
+    /** Design 59d step A (qa-59b-code B-1): a Home start after a policy edge (the relock, install mode's end, the update,
+     * a role change) - as Android's face with its keyguard locked it waits for the unlock
+     * ([KeyguardCover.afterAndroidUnlock]); at once otherwise. */
+    fun bringAfterUnlock(context: Context, why: String) =
+        KeyguardCover.afterAndroidUnlock(context, "Home ($why)") { bring(it, why) }
+
     /**
      * Starts our Home; `false` if the platform refused. [animate] false: no open transition - only
      * design 32's lock-up passes it. Every other start ends the lock-up's dark mark first
