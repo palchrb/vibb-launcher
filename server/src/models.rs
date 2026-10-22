@@ -644,6 +644,11 @@ pub const REDELIVER_WINDOW_MINUTES: i64 = 15;
 pub const COMMAND_OPEN: &str =
     "received_at IS NULL AND acknowledged_at IS NULL AND cancelled_at IS NULL";
 
+/// When the device bound as `?1` was enrolled (`''` before any): a status report or a command row
+/// older than it belongs to an earlier install (design 59 S59-2, S59-3).
+pub const ENROLLED_AT: &str =
+    "COALESCE((SELECT enrolled_at FROM devices WHERE devices.id = ?1), '')";
+
 /// Status-report capability of a launcher that confirms each command before running it
 /// (`POST /api/devices/command-receipt`, security review L12).
 pub const COMMAND_RECEIPT_CAPABILITY: &str = "command_receipt_v1";

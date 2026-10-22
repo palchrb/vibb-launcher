@@ -74,11 +74,14 @@ fn waiting_pin_row() -> String {
 /// to android and "Send the Child PIN again" (`report: None`), and at a status report (`report`,
 /// [after_lock_report]): then only when the phone needs the PIN - it reports Vibb One's lock (a
 /// phone updated after the switch), or a rev that is a number other than the current one (never
-/// `null`, a PIN changed on the phone: open question 4) - and while the newest row is neither in
-/// flight (delivered within the re-delivery window, no answer yet: no duplicate) nor answered (a
-/// refusal, or an answer that didn't change the report, e.g. an unmanaged phone keeps reporting
-/// its own lock: never a loop; the parent's "Send again" retries). One statement, so a save can
-/// run it in its own transaction. Returns whether a row was made.
+/// `null`, a PIN changed on the phone: open question 4) - and while the newest row of this
+/// enrollment is neither in flight (delivered within the re-delivery window and not used up, no
+/// answer yet: no duplicate) nor answered (a refusal, or an answer that didn't change the report,
+/// e.g. an unmanaged phone keeps reporting its own lock: never a loop; the parent's "Send again"
+/// retries). An answered row carried the PIN of the rev stored when it went out: the pop hands a
+/// row out only at the rev it read (S59-1). Reports and rows from before the enrollment are an
+/// earlier install's (S59-2, S59-3). One statement, so a save can run it in its own transaction.
+/// Returns whether a row was made.
 pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
     db: E,
     device_id: i64,
@@ -92,14 +95,17 @@ pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
            AND EXISTS (SELECT 1 FROM device_status s, json_each(CASE \
                WHEN json_valid(s.capabilities_json) THEN s.capabilities_json ELSE '[]' END) c \
              WHERE s.id = (SELECT id FROM device_status WHERE device_id = ?1 \
-               ORDER BY reported_at DESC, id DESC LIMIT 1) AND c.value = ?8) \
+               AND reported_at >= {enrolled} ORDER BY reported_at DESC, id DESC LIMIT 1) \
+               AND c.value = ?8) \
            AND NOT EXISTS (SELECT 1 FROM device_commands WHERE {waiting}) \
            AND (NOT ?4 OR ((?5 OR (?6 IS NOT NULL AND ?6 != kid_pin_rev)) \
              AND NOT EXISTS (SELECT 1 FROM device_commands WHERE id = \
-               (SELECT MAX(id) FROM device_commands WHERE device_id = ?1 AND command = ?2) \
-               AND (acknowledged_at IS NOT NULL OR (cancelled_at IS NULL \
+               (SELECT MAX(id) FROM device_commands WHERE device_id = ?1 AND command = ?2 \
+                 AND requested_at >= {enrolled}) \
+               AND (acknowledged_at IS NOT NULL OR (cancelled_at IS NULL AND deliveries < ?9 \
                     AND first_delivered_at > datetime('now', ?7))))))",
-        waiting = waiting_pin_row()
+        waiting = waiting_pin_row(),
+        enrolled = crate::models::ENROLLED_AT
     );
     let done = sqlx::query(&sql)
         .bind(device_id)
@@ -113,6 +119,7 @@ pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
             crate::models::REDELIVER_WINDOW_MINUTES
         ))
         .bind(ANDROID_KEYGUARD_CAPABILITY)
+        .bind(crate::models::MAX_COMMAND_DELIVERIES)
         .execute(db)
         .await?;
     Ok(done.rows_affected() > 0)
@@ -674,6 +681,12 @@ pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
         "saved_not_kept" => (
             "Child PIN saved. This server can't keep a copy to show later or send for Android's \
              lock: its key file couldn't be read.",
+            false,
+        ),
+        "saved_safe_boot_not_kept" => (
+            "Child PIN saved, and Block safe mode is now on: safe mode would skip the lock. This \
+             server can't keep a copy to show later or send for Android's lock: its key file \
+             couldn't be read.",
             false,
         ),
         "cleared" => (

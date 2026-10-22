@@ -325,6 +325,32 @@ async fn without_the_key_a_pin_is_saved_but_not_kept() {
         .await
         .text();
     assert!(html.contains("keep a copy to show later"), "{html}");
+    // A first Child PIN without the key says both things (qa-59-step1 N-1).
+    let (two, _) = app.enrolled_device("two").await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{two}/parent-pin"),
+            Some(&cookie),
+            &[("new_pin", "246810")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        save_via(&app, &keyless, &cookie, two, "1357").await,
+        "saved_safe_boot_not_kept"
+    );
+    let html = app
+        .get_page(
+            &format!("/devices/{two}/lock?notice=saved_safe_boot_not_kept"),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(
+        html.contains("Block safe mode is now on") && html.contains("keep a copy to show later"),
+        "{html}"
+    );
 }
 
 /// §2.1's queue rule at a save: android, a sealed PIN, the capability in the last report and none
@@ -393,6 +419,14 @@ async fn set_kid_pin_carries_the_pin_only_where_it_may() {
         )
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT);
+    // Past the re-delivery gap, where an unconfirmed row would go out again (qa-59-step1 N-3).
+    sqlx::query(
+        "UPDATE device_commands SET delivered_at = datetime('now', '-3 minutes') WHERE id = ?",
+    )
+    .bind(command["id"].as_i64().unwrap())
+    .execute(&app.db)
+    .await
+    .unwrap();
     let res = fetch(&app, &token).await;
     assert!(res.json()["pending_command"].is_null());
 
@@ -481,7 +515,7 @@ async fn a_status_report_sends_the_pin_to_a_phone_that_needs_it() {
     fetch(&app, &token).await;
     sqlx::query(
         "UPDATE device_commands SET first_delivered_at = datetime('now', '-20 minutes'), \
-         delivered_at = datetime('now', '-20 minutes'), deliveries = 3 \
+         delivered_at = datetime('now', '-20 minutes') \
          WHERE device_id = ? AND command = 'set_kid_pin'",
     )
     .bind(id)
@@ -496,8 +530,98 @@ async fn a_status_report_sends_the_pin_to_a_phone_that_needs_it() {
     report(&app, &token, &CAPS, lock_state("android", json!(1))).await;
     let rows = pin_rows(&app, id).await;
     assert_eq!(rows.len(), 3);
-    // Refused: the parent's button retries, not the intake.
-    answer(&app, &token, rows[2].0, false, "refused: no_token").await;
+    // Out and used up by a later pop (retired, still inside the window): not in flight (N-2).
+    fetch(&app, &token).await;
+    sqlx::query("UPDATE device_commands SET deliveries = 3 WHERE id = ?")
+        .bind(rows[2].0)
+        .execute(&app.db)
+        .await
+        .unwrap();
     report(&app, &token, &CAPS, lock_state("android", json!(1))).await;
-    assert_eq!(pin_rows(&app, id).await.len(), 3);
+    let rows = pin_rows(&app, id).await;
+    assert_eq!(rows.len(), 4);
+    // Refused: the parent's button retries, not the intake.
+    answer(&app, &token, rows[3].0, false, "refused: no_token").await;
+    report(&app, &token, &CAPS, lock_state("android", json!(1))).await;
+    assert_eq!(pin_rows(&app, id).await.len(), 4);
+}
+
+/// qa-59-step1 S59-1: a save that commits while a poll is building its answer. The poll read the
+/// older rev, so its pop leaves the row waiting - it never goes out with the older PIN, which the
+/// phone would confirm and the intake then couldn't heal - and the next poll carries the new PIN.
+#[tokio::test]
+async fn a_save_racing_a_poll_never_loses_the_new_pin() {
+    let (app, cookie, id, token) = setup().await;
+    save(&app, &cookie, id, "1357").await;
+    android(&app, id).await;
+    report(&app, &token, &CAPS, None).await;
+    // The poll read rev 1; the save of 2468 commits before its pop (the row it queued waits).
+    save(&app, &cookie, id, "2468").await;
+    assert_eq!(kept(&app, id).await.rev, 2);
+    let stale = crate::handlers::device_api::pop_command(&app.db, id, true, 1)
+        .await
+        .unwrap();
+    assert!(stale.is_none(), "{stale:?}");
+    assert!(!pin_rows(&app, id).await[0].1, "still waiting");
+    // Any other command still goes out from such a poll.
+    sqlx::query("INSERT INTO device_commands (device_id, command) VALUES (?, 'ring')")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let ring = crate::handlers::device_api::pop_command(&app.db, id, true, 1)
+        .await
+        .unwrap();
+    assert_eq!(ring.map(|r| r.1).as_deref(), Some("ring"));
+    // The next poll: the new PIN, with the hash it belongs to.
+    let policy = fetch(&app, &token).await.json();
+    assert_eq!(policy["pending_command"]["pin"], "2468");
+    assert_eq!(policy["kid_lock"]["pin_rev"], 2);
+}
+
+/// qa-59-step1 S59-2 and S59-3: a phone enrolled into the row anew. The earlier install's reports
+/// don't make it capable, and its answered `set_kid_pin` doesn't stop the intake.
+#[tokio::test]
+async fn a_re_enrolled_phone_counts_only_its_own_reports_and_rows() {
+    let (app, cookie, id, token) = setup().await;
+    save(&app, &cookie, id, "1357").await;
+    android(&app, id).await;
+    report(&app, &token, &CAPS, lock_state("own", json!(1))).await;
+    let sent = fetch(&app, &token).await.json()["pending_command"].clone();
+    answer(&app, &token, sent["id"].as_i64().unwrap(), true, "pin set").await;
+    // An hour later the phone is reset and enrolled into the row again.
+    for table in [
+        ("device_commands", "requested_at"),
+        ("device_status", "reported_at"),
+    ] {
+        sqlx::query(&format!(
+            "UPDATE {} SET {} = datetime('now', '-1 hour') WHERE device_id = ?",
+            table.0, table.1
+        ))
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let code = app.new_code(id, crate::enrollment::Kind::Qr).await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/enroll",
+            None,
+            Some(json!({ "enrollment_code": code })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let token = res.json()["device_token"].as_str().unwrap().to_string();
+    // Before its first report: the earlier install's capability counts for nothing (S59-3).
+    save(&app, &cookie, id, "2468").await;
+    assert_eq!(pin_rows(&app, id).await.len(), 1);
+    // Its first report, on Vibb One's lock: the earlier answer doesn't block it (S59-2).
+    report(&app, &token, &CAPS, lock_state("own", Value::Null)).await;
+    assert_eq!(pin_rows(&app, id).await.len(), 2);
+    assert_eq!(
+        fetch(&app, &token).await.json()["pending_command"]["pin"],
+        "2468"
+    );
 }

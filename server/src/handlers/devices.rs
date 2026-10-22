@@ -2321,12 +2321,14 @@ pub async fn update_kid_lock(
             Ok(true) => Ok(()),
             Err(err) => Err(err),
         };
-        let code = if first && !current.hardening.disallow_safe_boot {
-            "saved_safe_boot"
-        } else if sealed.is_none() {
-            "saved_not_kept"
-        } else {
-            "saved"
+        let code = match (
+            first && !current.hardening.disallow_safe_boot,
+            sealed.is_some(),
+        ) {
+            (true, true) => "saved_safe_boot",
+            (true, false) => "saved_safe_boot_not_kept",
+            (false, false) => "saved_not_kept",
+            (false, true) => "saved",
         };
         (result, "kid_pin_changed", code)
     };

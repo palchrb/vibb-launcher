@@ -544,3 +544,8 @@ Server 0.37.0 (migration `0085_kid_keyguard.sql`) and the launcher's DTOs, in on
   `PolicyGate.kt`) and from the policy applied after the command's dispatch, so no policy held in memory keeps it past
   the dispatch. The launcher's `LockStateReport` fields and the stamping of `PowerOn.unlockedAtMs` stay step 4 (the
   DTO field exists; nothing sets it yet).
+- **Code QA fixes** (`qa-59-step1-code.md`): the pop hands a `set_kid_pin` out only while the stored `kid_pin_rev` is
+  the one its answer read (S59-1: a save racing a poll left the older PIN going out, answered, and the intake unable
+  to heal); the queue rule and `last_capabilities` count only rows and reports since `devices.enrolled_at` (S59-2,
+  S59-3); a row used up by a later pop is not in flight (N-2); a first PIN without the key flashes
+  `saved_safe_boot_not_kept` (N-1).

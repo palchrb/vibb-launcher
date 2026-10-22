@@ -112,7 +112,12 @@ Step 1 (the contract and the storage; the switch, the reveal and the page's word
   `keyguard: own` (a phone updated after the switch) or a `pin_rev` number other than the current (never `null`, open
   question 4) - and the newest row is neither in flight (delivered within `REDELIVER_WINDOW_MINUTES`, no answer:
   qa-59-revision L-2) nor answered (any answer: a refusal, or a success the phone's report didn't follow, e.g. an
-  unmanaged phone reporting its own lock - no loop; step 2's "Send again" retries). Never expires. **Delivery**
+  unmanaged phone reporting its own lock - no loop; step 2's "Send again" retries). In flight excludes a row used up
+  by a later pop. Only reports and rows since `devices.enrolled_at` (`models::ENROLLED_AT`) count, in
+  `device_api::last_capabilities` too - a phone enrolled into the row anew isn't the install that reported before
+  (qa-59-step1 S59-2/S59-3). The pop (`device_api::pop_command`) hands a `set_kid_pin` out only while the stored
+  `kid_pin_rev` is the one the answer read: a save racing a poll leaves the row waiting for the next poll, so an
+  answered row always carried its rev's PIN (S59-1). Never expires. **Delivery**
   (`build_policy`, `kid_lock::deliverable_pin`): `pending_command.pin` opened from the same `device_policy` row as the
   answer's `kid_lock`, only in android mode and with the capability in the last report; otherwise left out (the phone
   answers `refused: no_pin`), logged. Every device answer is `no-store` already (`limits`).

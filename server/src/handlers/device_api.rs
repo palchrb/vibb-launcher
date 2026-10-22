@@ -350,41 +350,7 @@ pub(crate) async fn build_policy(
     let receipts = capabilities
         .iter()
         .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);
-    let pop = format!(
-        "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1, \
-           first_delivered_at = COALESCE(first_delivered_at, datetime('now')) \
-         WHERE id = (SELECT id FROM device_commands WHERE device_id = ? \
-           AND {} \
-           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
-           AND (delivered_at IS NULL OR (? AND deliveries < ? \
-                AND delivered_at <= datetime('now', ?) \
-                AND first_delivered_at > datetime('now', ?))) \
-          ORDER BY requested_at ASC, id ASC LIMIT 1) \
-         RETURNING id, command, requested_at, payload",
-        crate::models::COMMAND_OPEN
-    );
-    let popped = sqlx::query_as::<_, (i64, String, String, Option<String>)>(&pop)
-        .bind(device_id)
-        .bind(crate::models::EXPIRING_COMMANDS[0])
-        .bind(crate::models::EXPIRING_COMMANDS[1])
-        .bind(crate::models::EXPIRING_COMMANDS[2])
-        .bind(crate::models::EXPIRING_COMMANDS[3])
-        .bind(format!(
-            "-{} minutes",
-            crate::models::COMMAND_EXPIRY_MINUTES
-        ))
-        .bind(receipts)
-        .bind(crate::models::MAX_COMMAND_DELIVERIES)
-        .bind(format!(
-            "-{} minutes",
-            crate::models::REDELIVER_AFTER_MINUTES
-        ))
-        .bind(format!(
-            "-{} minutes",
-            crate::models::REDELIVER_WINDOW_MINUTES
-        ))
-        .fetch_optional(&state.db)
-        .await?;
+    let popped = pop_command(&state.db, device_id, receipts, policy.kid_pin_rev).await?;
     if let Some((id, _, requested_at, _)) = &popped {
         // Commands run in the order they were asked for (QA Low 1): once this one is out, an older
         // one the phone didn't confirm is never offered again - a lost "pause" must not run after
@@ -511,6 +477,58 @@ pub(crate) async fn build_policy(
         music,
         lock_glance,
     })
+}
+
+/// The next command for this device (the pop of [build_policy], one statement): marks it delivered
+/// and returns `(id, command, requested_at, payload)`. `kid_pin_rev` is the rev of the
+/// `device_policy` row the answer was built from: a `set_kid_pin` goes out only while it is still
+/// the stored one (design 59 S59-1) - a save that committed since stays waiting, its nudge brings
+/// the next poll, and the PIN never goes out older than the stored hash.
+pub(crate) async fn pop_command(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    receipts: bool,
+    kid_pin_rev: i64,
+) -> Result<Option<(i64, String, String, Option<String>)>, sqlx::Error> {
+    let pop = format!(
+        "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1, \
+           first_delivered_at = COALESCE(first_delivered_at, datetime('now')) \
+         WHERE id = (SELECT id FROM device_commands WHERE device_id = ? \
+           AND {} \
+           AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
+           AND (command != ? OR (SELECT kid_pin_rev FROM device_policy \
+                WHERE device_policy.device_id = device_commands.device_id) = ?) \
+           AND (delivered_at IS NULL OR (? AND deliveries < ? \
+                AND delivered_at <= datetime('now', ?) \
+                AND first_delivered_at > datetime('now', ?))) \
+          ORDER BY requested_at ASC, id ASC LIMIT 1) \
+         RETURNING id, command, requested_at, payload",
+        crate::models::COMMAND_OPEN
+    );
+    sqlx::query_as(&pop)
+        .bind(device_id)
+        .bind(crate::models::EXPIRING_COMMANDS[0])
+        .bind(crate::models::EXPIRING_COMMANDS[1])
+        .bind(crate::models::EXPIRING_COMMANDS[2])
+        .bind(crate::models::EXPIRING_COMMANDS[3])
+        .bind(format!(
+            "-{} minutes",
+            crate::models::COMMAND_EXPIRY_MINUTES
+        ))
+        .bind(crate::kid_lock::SET_KID_PIN)
+        .bind(kid_pin_rev)
+        .bind(receipts)
+        .bind(crate::models::MAX_COMMAND_DELIVERIES)
+        .bind(format!(
+            "-{} minutes",
+            crate::models::REDELIVER_AFTER_MINUTES
+        ))
+        .bind(format!(
+            "-{} minutes",
+            crate::models::REDELIVER_WINDOW_MINUTES
+        ))
+        .fetch_optional(db)
+        .await
 }
 
 /// The device's effective rules and budget (its own while `custom_schedule_enabled`, else the
@@ -1619,15 +1637,18 @@ pub(crate) async fn sends_command_receipts(
         .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY))
 }
 
-/// The capabilities of this device's latest status report (none without one, or unreadable).
+/// The capabilities of this device's latest status report since its enrollment (none without one,
+/// or unreadable): a phone enrolled into the row anew is not the install that reported before it
+/// (design 59 S59-3).
 pub(crate) async fn last_capabilities(
     db: &sqlx::SqlitePool,
     device_id: i64,
 ) -> Result<Vec<String>, sqlx::Error> {
-    let capabilities: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT capabilities_json FROM device_status WHERE device_id = ? \
+    let capabilities: Option<Option<String>> = sqlx::query_scalar(&format!(
+        "SELECT capabilities_json FROM device_status WHERE device_id = ?1 AND reported_at >= {} \
          ORDER BY reported_at DESC, id DESC LIMIT 1",
-    )
+        crate::models::ENROLLED_AT
+    ))
     .bind(device_id)
     .fetch_optional(db)
     .await?;
