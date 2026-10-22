@@ -279,10 +279,12 @@ async fn a_start_without_a_shutdown_switches_and_re_enrollment() {
         )
         .await;
     assert_eq!(res.status, StatusCode::NO_CONTENT);
-    sqlx::query("UPDATE notification_settings SET push_phone_on = 0")
-        .execute(&app.db)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO notification_prefs (admin_id, push_phone_on) SELECT id, 0 FROM admin_users",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
     let boot = Utc::now() + Duration::seconds(2);
     post(&app, &token, json!({ "on": on(boot, 7) })).await;
     let rows = events(&app, id).await;

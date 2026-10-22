@@ -32,7 +32,7 @@
                     <details class="confirm"{% if refused.is_some() %} open{% endif %}>
                         <summary class="row">Restore…</summary>
                         <form method="post" action="/backups/{{ b.filename }}/restore#backups" class="confirm-body">
-                            <p>Replace everything on this server with this backup? What is here now is kept in a safety copy, and the server restarts.</p>
+                            <p>Replace everything on this server with this backup? What is here now is kept in a safety copy, and the server restarts. Parent accounts come back as they were in this backup.</p>
                             <label class="field-label" for="confirm_{{ b.filename }}">Type {{ b.filename }} to confirm</label>
                             <input type="text" id="confirm_{{ b.filename }}" name="confirm_filename" autocomplete="off" autocapitalize="none" spellcheck="false"{% if refused.is_some() %} aria-invalid="true" aria-describedby="restore-error" autofocus{% endif %}>
                             {% if let Some(why) = refused %}<p class="field-error" id="restore-error">{{ why }}</p>{% endif %}

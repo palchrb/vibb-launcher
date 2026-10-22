@@ -394,3 +394,38 @@ Notes for steps 3-5 and the code QA; `docs/notes/server/connectivity.md`, "Paren
   removed (`cap_of_eight`).
 - P62-4: `reveal.js` removes the shown secret after 5 minutes, when the CSS hides it, so Copy ends with it
   (`reveal.js?v=3`; `jstest/reveal.test.js`).
+
+## Steps 3-5 as built (2026-10-22, branch `design-62-step345`)
+
+- **Step 3:** `parents::reset_parent` (§4.3, never yourself, `BEGIN IMMEDIATE` with the push subscriptions) behind
+  `POST /account/parents/{id}/reset` (the password and the one-time password's hash in one gated job, `record_reauth`,
+  `parent_reset`; the answer as Add's, "New one-time password for Pappa", reloading as the GET of its path). Every
+  other parent's row has both confirms, labelled "Reset…"/"Remove…" when ready and "New One-Time Password…"/
+  "Withdraw…" when not; ids `reset-{id}`/`remove-{id}` (step 2's `withdraw-` ids renamed). Remove drops the parent's
+  Spotify login in progress (`spotify::Accounts::forget_pending`) and, from step 5, its prefs and reads. N3 as in
+  step 2 for Reset: after no row, signed out or "already removed". Your own row still has no action: §3 says so, and
+  self-removal stays reachable only by the route (the same guard, then `/login`); browser step 7's "removing yourself
+  is refused" is the route's answer. The Backups restore confirm has its line. Race tests call the statements on two
+  pool connections (`remove_each_other_leaves_one`, `reset_vs_remove_one_wins`) and hold Add's body past the actor's
+  removal (`held_request_of_a_removed_actor_changes_nothing`).
+- **Step 4:** `requested_by` in the four inserts (`locate::queue_command`/`send` take the `AdminUser`; `window_relock`
+  and Install Now pass the id; `kid_lock::queue_pin_command(.., requested_by)`, `None` from a status report).
+  `parents::Names` (one read per page, removed accounts included): `requester` ("· Pappa" on Locate's Requests and the
+  summary's Activity, only when `admin_users` has more than one row), `of_username` (lifts' creators), `logged` (the
+  security log's "Mamma (mamma)"). Install Now's answer row on the launcher page shows no "by" (not in §6's list). The
+  policy's `pending_command` keys are pinned by `command_by_shows_with_two_accounts`.
+- **Step 5:** 0088 as §1, plus `idx_parent_event_reads_event` (the cascade from `parent_events` looks reads up by
+  event). Every reader in §5's table moved; `send_one`'s badge counts through the delivery's subscription in SQL
+  rather than carrying `admin_id` in `Due` (its row tuple is at sqlx's 16-column limit). `read_everything` seeds Add and
+  the CLI restore. The five `Bell::load` callers and the music/locate page renderers take the admin.
+
+**The code QA's fix round** (`docs/review/qa-62-step345-code.md`):
+- P62b-1: §5's table gains a row - the inbox's delivery line (`notifications::delivery_lines`) reads only the
+  signed-in parent's subscriptions (`AND s.admin_id = ?`); `inbox_delivery_line_is_each_parents`.
+- P62b-2: `reset_parent` returns `username` and `display_name` with `invite_expires_at` (`Reset::Done { expires_at,
+  username, name }`); the handler logs `parent_reset` first and renders from that, with no second read.
+- P62b-3: Reset drops the target's Spotify login in progress too (`forget_pending`), as Remove does.
+- P62b-4: the QA's four probes are tests (`open_is_each_parents`, `read_all_is_each_parents`,
+  `stale_actor_reset_writes_nothing`, `remove_drops_reads`); both race tests run their join in both polling orders,
+  and `the_pairs_in_both_orders` runs each pair one after the other in both orders (the first commit wins, the
+  second answers "signed out").

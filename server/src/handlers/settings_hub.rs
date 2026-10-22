@@ -49,7 +49,12 @@ pub struct HubValues {
     pub about: String,
 }
 
-pub async fn settings_hub(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn settings_hub(
+    State(state): State<AppState>,
+    axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
+        crate::security::CurrentAdmin,
+    >,
+) -> impl IntoResponse {
     let zone = Zone::load(&state.db).await;
     let values = hub_values(
         &state.db,
@@ -62,7 +67,7 @@ pub async fn settings_hub(State(state): State<AppState>) -> impl IntoResponse {
         SettingsHubTemplate {
             title: "Settings".to_string(),
             values,
-            bell: crate::parent_events::Bell::load(&state.db).await,
+            bell: crate::parent_events::Bell::load(&state.db, admin.id).await,
         }
         .render()
         .unwrap(),

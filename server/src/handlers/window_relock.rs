@@ -187,6 +187,7 @@ async fn queue_own_command(
     device_id: i64,
     command: &str,
     payload: Option<&str>,
+    requested_by: i64,
 ) -> Result<bool, sqlx::Error> {
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM devices WHERE id = ?")
         .bind(device_id)
@@ -195,12 +196,16 @@ async fn queue_own_command(
     if exists.is_none() {
         return Ok(false);
     }
-    sqlx::query("INSERT INTO device_commands (device_id, command, payload) VALUES (?, ?, ?)")
-        .bind(device_id)
-        .bind(command)
-        .bind(payload)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO device_commands (device_id, command, payload, requested_by) \
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(device_id)
+    .bind(command)
+    .bind(payload)
+    .bind(requested_by)
+    .execute(&state.db)
+    .await?;
     let _ = state.command_notify.send(device_id);
     Ok(true)
 }
@@ -208,13 +213,13 @@ async fn queue_own_command(
 async fn queue(
     state: &AppState,
     id: i64,
-    admin: &str,
+    admin: &crate::models::AdminUser,
     command: &str,
     notice: &str,
     allow: Option<&[AllowedBlock]>,
 ) -> Response {
     let payload = allow.and_then(|a| serde_json::to_string(a).ok());
-    match queue_own_command(state, id, command, payload.as_deref()).await {
+    match queue_own_command(state, id, command, payload.as_deref(), admin.id).await {
         Ok(true) => {
             let detail = match allow {
                 Some(a) => format!(
@@ -229,7 +234,7 @@ async fn queue(
             security::record_security_event(
                 &state.db,
                 "device_command_queued",
-                Some(admin),
+                Some(&admin.username),
                 None,
                 Some(&detail),
             )
@@ -258,15 +263,7 @@ pub async fn end_windows(
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    queue(
-        &state,
-        id,
-        &admin.username,
-        END_WINDOWS,
-        "end_windows_sent",
-        None,
-    )
-    .await
+    queue(&state, id, &admin, END_WINDOWS, "end_windows_sent", None).await
 }
 
 #[derive(serde::Deserialize)]
@@ -296,7 +293,7 @@ pub async fn allow_blocked(
     queue(
         &state,
         id,
-        &admin.username,
+        &admin,
         ALLOW_BLOCKED,
         "allow_blocked_sent",
         Some(&allow),
@@ -312,15 +309,7 @@ pub async fn start_pause(
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
-    queue(
-        &state,
-        id,
-        &admin.username,
-        START_PAUSE,
-        "start_pause_sent",
-        None,
-    )
-    .await
+    queue(&state, id, &admin, START_PAUSE, "start_pause_sent", None).await
 }
 
 /// The latest report's `relock_blocks`, read before a new report is stored.

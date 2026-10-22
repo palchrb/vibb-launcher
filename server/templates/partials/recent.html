@@ -4,7 +4,7 @@
 {% macro row(c, device_id, back, group) %}
             <div class="row" data-command="{{ c.kind }}">
                 <span class="row-label">{{ c.label }}{% if let Some(detail) = c.detail %}<span class="row-sub"{% if let Some(raw) = c.detail_title %} title="{{ raw }}"{% endif %}>{{ detail }}</span>{% endif %}</span>
-                <span class="row-value" title="{{ c.asked_exact }}">{{ c.asked }} · <span class="tone-{{ c.tone }}">{{ c.word }}</span></span>
+                <span class="row-value" title="{{ c.asked_exact }}">{{ c.asked }}{% if let Some(by) = c.by %} · {{ by }}{% endif %} · <span class="tone-{{ c.tone }}">{{ c.word }}</span></span>
                 {% if let Some(cancel_id) = c.cancel_id %}
                 <form method="post" action="/devices/{{ device_id }}/commands/{{ cancel_id }}/cancel#{{ group }}" class="row-form">
                     <input type="hidden" name="back" value="{{ back }}">

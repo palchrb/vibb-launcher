@@ -429,6 +429,7 @@ mod tests {
             succeeded: None,
             cancelled_at: None,
             cancel_reason: None,
+            requested_by: None,
         };
         match status {
             "waiting" => {}

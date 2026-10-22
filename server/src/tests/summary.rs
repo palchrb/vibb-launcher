@@ -931,7 +931,7 @@ async fn an_event_opens_where_it_happened_or_this_phones_inbox() {
         .await;
     assert_redirect(&res, &format!("/devices/{id}/lock"), Some("parent-pin"));
     let read: bool =
-        sqlx::query_scalar("SELECT read_at IS NOT NULL FROM parent_events WHERE id = ?")
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM parent_event_reads WHERE event_id = ?)")
             .bind(pin)
             .fetch_one(&app.db)
             .await

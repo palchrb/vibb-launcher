@@ -7,8 +7,10 @@
 //!   still its own and the actor is ready" in the statement itself. SQLite runs writes one at a
 //!   time, so that is the race guard: a request held past a Reset, a removal or a sign-out
 //!   everywhere changes nothing.
-//! - [add_parent] (§4.1) and [remove_parent] (§4.2; Withdraw is its label on a not-ready row).
-//!   Reset and the "Remove…" label on a ready row come with design 62 step 3.
+//! - [add_parent] (§4.1), [remove_parent] (§4.2; "Withdraw…" is its label on a not-ready row,
+//!   "Remove…" on a ready one) and [reset_parent] (§4.3; "New One-Time Password…" on a not-ready
+//!   row, "Reset…" on a ready one). Each runs in one `BEGIN IMMEDIATE` transaction with the
+//!   account's other rows (its push subscriptions, its Notify Me About and read state).
 
 use crate::models::AdminUser;
 
@@ -52,6 +54,7 @@ pub async fn add_parent(
     display_name: Option<&str>,
     otp_hash: &str,
 ) -> Result<Added, sqlx::Error> {
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let inserted: Result<Option<(i64, String)>, sqlx::Error> = sqlx::query_as(concat!(
         "INSERT INTO admin_users (username, display_name, password_hash, must_change_password, \
          totp_enabled, invited_by, invite_expires_at) \
@@ -68,11 +71,16 @@ pub async fn add_parent(
     .bind(actor.id)
     .bind(actor.session_epoch)
     .bind(MAX_PARENTS)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await;
     match inserted {
-        Ok(Some((id, expires_at))) => return Ok(Added::Done { id, expires_at }),
-        Ok(None) => {}
+        Ok(Some((id, expires_at))) => {
+            // A new parent starts with nothing unread (§4.1, step 5).
+            crate::parent_events::read_everything(&mut *tx, id).await?;
+            tx.commit().await?;
+            return Ok(Added::Done { id, expires_at });
+        }
+        Ok(None) => tx.rollback().await?,
         Err(sqlx::Error::Database(err)) if err.is_unique_violation() => return Ok(Added::Taken),
         Err(err) => return Err(err),
     }
@@ -102,7 +110,7 @@ pub enum Removed {
 }
 
 /// The soft remove (§4.2), also Withdraw's: the row and its username stay, its password, 2FA,
-/// sessions and push subscriptions go, in one transaction. Never the last ready account - the
+/// sessions, push subscriptions, Notify Me About and read state go, in one transaction. Never the last ready account - the
 /// guard counts the ready accounts other than the target, so removing a waiting one is always
 /// allowed while the actor is ready. Why nothing happened is read after the statement
 /// (qa-62-revision-check N3).
@@ -128,10 +136,16 @@ pub async fn remove_parent(
     .execute(&mut *tx)
     .await?;
     if done.rows_affected() == 1 {
-        sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
-            .bind(target)
-            .execute(&mut *tx)
-            .await?;
+        for table in [
+            "push_subscriptions",
+            "notification_prefs",
+            "parent_event_reads",
+        ] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE admin_id = ?"))
+                .bind(target)
+                .execute(&mut *tx)
+                .await?;
+        }
         tx.commit().await?;
         return Ok(Removed::Done);
     }
@@ -152,6 +166,71 @@ pub async fn remove_parent(
     })
 }
 
+/// What [reset_parent] did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Reset {
+    /// When the new one-time password stops working (SQLite text, UTC), and the account as the
+    /// statement left it (no second read: qa-62-step345-code P62b-2).
+    Done {
+        expires_at: String,
+        username: String,
+        name: String,
+    },
+    /// No such account, or it was removed.
+    Gone,
+    /// Your own account: change your password or reset your 2FA instead.
+    Yourself,
+    /// The actor's session ended (or it isn't ready): nothing was written.
+    SignedOut,
+}
+
+/// Reset another parent (§4.3): a new one-time password's hash, the forced first sign-in again
+/// with 72 hours, every session and push subscription of it ended, in one transaction. The
+/// target's own held requests then fail their epoch condition, so the Reset can't be undone.
+pub async fn reset_parent(
+    db: &sqlx::SqlitePool,
+    actor: &AdminUser,
+    target: i64,
+    otp_hash: &str,
+) -> Result<Reset, sqlx::Error> {
+    if target == actor.id {
+        return Ok(Reset::Yourself);
+    }
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let done: Option<(String, String, Option<String>)> = sqlx::query_as(concat!(
+        "UPDATE admin_users SET password_hash = ?1, must_change_password = 1, totp_secret = NULL, \
+         totp_enabled = 0, totp_last_step = NULL, failed_login_attempts = 0, locked_until = NULL, \
+         lock_count = 0, reauth_wrong = 0, invite_expires_at = datetime('now', '+72 hours'), \
+         session_epoch = session_epoch + 1 \
+         WHERE id = ?2 AND id != ?3 AND removed_at IS NULL AND ",
+        actor_ok!("3", "4"),
+        " RETURNING invite_expires_at, username, display_name"
+    ))
+    .bind(otp_hash)
+    .bind(target)
+    .bind(actor.id)
+    .bind(actor.session_epoch)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((expires_at, username, display_name)) = done {
+        sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
+            .bind(target)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(Reset::Done {
+            expires_at,
+            name: display_name.unwrap_or_else(|| username.clone()),
+            username,
+        });
+    }
+    tx.rollback().await?;
+    if !actor_still_ok(db, actor).await? {
+        return Ok(Reset::SignedOut);
+    }
+    Ok(Reset::Gone)
+}
+
 /// The actor condition on its own, for the answer after a statement wrote nothing.
 async fn actor_still_ok(db: &sqlx::SqlitePool, actor: &AdminUser) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(concat!("SELECT ", actor_ok!("1", "2")))
@@ -168,7 +247,8 @@ pub struct ParentRow {
     pub username: String,
     /// "pappa · Signed in 14:02 · from 10.0.0.3", "pappa · Waiting · until Fri 14:02", ...
     pub sub: String,
-    /// Not ready (and not you): its action is "Withdraw…".
+    pub you: bool,
+    /// Not ready (and not you): its actions read "New One-Time Password…" and "Withdraw…".
     pub waiting: bool,
 }
 
@@ -245,7 +325,63 @@ pub async fn rows(
             sub: format!("{} · {state}", account.username),
             username: account.username.clone(),
             waiting: !you && !account.ready(),
+            you,
         });
     }
     Ok(rows)
+}
+
+/// Who did what, as a page names them (design 62 §6): every account, removed ones too (history
+/// keeps them), read once per page.
+#[derive(Default)]
+pub struct Names {
+    /// id -> the display name, else the username.
+    by_id: std::collections::HashMap<i64, String>,
+    /// username -> its display name, for accounts that have one.
+    display: std::collections::HashMap<String, String>,
+    /// More than one account has ever existed: commands say who asked.
+    several: bool,
+}
+
+impl Names {
+    pub async fn load(db: &sqlx::SqlitePool) -> Result<Names, sqlx::Error> {
+        let rows: Vec<(i64, String, Option<String>)> =
+            sqlx::query_as("SELECT id, username, display_name FROM admin_users")
+                .fetch_all(db)
+                .await?;
+        let mut names = Names {
+            several: rows.len() > 1,
+            ..Names::default()
+        };
+        for (id, username, display) in rows {
+            names
+                .by_id
+                .insert(id, display.clone().unwrap_or_else(|| username.clone()));
+            if let Some(display) = display {
+                names.display.insert(username, display);
+            }
+        }
+        Ok(names)
+    }
+
+    /// A command's "· Mamma": its requester's name, only in a family with more than one account
+    /// (a one-parent family sees no change), and never for a command the server queued itself.
+    pub fn requester(&self, requested_by: Option<i64>) -> Option<String> {
+        self.several
+            .then(|| requested_by.and_then(|id| self.by_id.get(&id).cloned()))
+            .flatten()
+    }
+
+    /// A username as a "by" line shows it: its display name, else itself (a lift's `created_by`).
+    pub fn of_username<'a>(&'a self, username: &'a str) -> &'a str {
+        self.display.get(username).map_or(username, String::as_str)
+    }
+
+    /// A username as the security log shows it: "Mamma (mamma)", else the username as stored.
+    pub fn logged(&self, username: &str) -> String {
+        match self.display.get(username) {
+            Some(display) => format!("{display} ({username})"),
+            None => username.to_string(),
+        }
+    }
 }

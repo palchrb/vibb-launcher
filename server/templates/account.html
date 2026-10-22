@@ -126,12 +126,12 @@
         <h2 class="group-header" id="parents-title">Parents</h2>
         <div class="group">
             {%- if let Some(o) = otp %}
-            {#- Add Parent's answer (design 62 §3): the one-time password only in this POST's page,
+            {#- Add Parent's and Reset's answer (design 62 §3): the one-time password only in this POST's page,
                 never in an address or a file. static/reveal.js makes a reload a plain GET and
                 removes it when the page is left; without JS the CSS hides it after 5 minutes. -#}
             <div class="cell" id="parent-otp" data-reveal>
                 <div class="edit-body" role="status">
-                    <p class="field-label">One-time password for {{ o.name }} &middot; sign in as {{ o.username }}</p>
+                    <p class="field-label">{{ o.title }} for {{ o.name }} &middot; sign in as {{ o.username }}</p>
                     <p class="secret-once" translate="no">{% for chunk in o.chunks %}<span>{{ chunk }}</span>{% endfor %}</p>
                     <button type="button" class="button-small button-secondary copy-secret" data-copy-secret hidden>Copy</button>
                     <p class="field-hint pin-line">Copy it before you leave this page - it's shown only once. It works until {{ o.until }}; {{ o.name }} sets a new password and two-factor login at the first sign-in.</p>
@@ -142,16 +142,29 @@
             <div class="row" data-parent="{{ p.username }}">
                 <span class="row-label">{{ p.name }}<span class="row-sub">{{ p.sub }}</span></span>
             </div>
-            {%- if p.waiting %}
-            <details class="confirm cell" id="withdraw-{{ p.id }}"{% if self.withdraw_error(p.id).is_some() %} open{% endif %}>
-                <summary class="row">Withdraw&hellip;</summary>
-                <form method="post" action="/account/parents/{{ p.id }}/remove#parents" class="confirm-body">
-                    <p>Withdraw {{ p.name }}'s invitation? The one-time password stops working at once. The username {{ p.username }} stays taken.</p>
+            {%- if !p.you %}
+            {#- Another parent's two actions (design 62 §3): the same Reset and the same soft Remove
+                for every row, only the labels differ while it isn't ready. -#}
+            <details class="confirm cell" id="reset-{{ p.id }}"{% if self.parent_reset_error(p.id).is_some() %} open{% endif %}>
+                <summary class="row">{% if p.waiting %}New One-Time Password{% else %}Reset{% endif %}&hellip;</summary>
+                <form method="post" action="/account/parents/{{ p.id }}/reset#parents" class="confirm-body">
+                    {% if p.waiting %}<p>Make a new one-time password for {{ p.name }}? The one they have stops working at once.</p>{% else %}<p>Reset {{ p.name }}'s password and two-factor login? {{ p.name }} is signed out everywhere and signs in again with a new one-time password from you.</p>{% endif %}
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
-                    <label class="field-label" for="withdraw_password_{{ p.id }}">Your password</label>
-                    <input type="password" id="withdraw_password_{{ p.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.withdraw_error(p.id) %} aria-invalid="true" aria-describedby="withdraw-error-{{ p.id }}" autofocus>
-                    <p class="field-error" id="withdraw-error-{{ p.id }}">{{ why }}</p>{% else %}>{% endif %}
-                    <button type="submit" class="button-destructive">Withdraw Invitation</button>
+                    <label class="field-label" for="reset_password_{{ p.id }}">Your password</label>
+                    <input type="password" id="reset_password_{{ p.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.parent_reset_error(p.id) %} aria-invalid="true" aria-describedby="reset-error-{{ p.id }}" autofocus>
+                    <p class="field-error" id="reset-error-{{ p.id }}">{{ why }}</p>{% else %}>{% endif %}
+                    <button type="submit" class="button-destructive">{% if p.waiting %}New One-Time Password{% else %}Reset {{ p.name }}{% endif %}</button>
+                </form>
+            </details>
+            <details class="confirm cell" id="remove-{{ p.id }}"{% if self.remove_error(p.id).is_some() %} open{% endif %}>
+                <summary class="row">{% if p.waiting %}Withdraw{% else %}Remove{% endif %}&hellip;</summary>
+                <form method="post" action="/account/parents/{{ p.id }}/remove#parents" class="confirm-body">
+                    {% if p.waiting %}<p>Withdraw {{ p.name }}'s invitation? The one-time password stops working at once. The username {{ p.username }} stays taken.</p>{% else %}<p>Remove {{ p.name }}? {{ p.name }} is signed out everywhere and can't sign in again; what they did keeps their name. Only the server's reset-2fa brings the account back.</p>{% endif %}
+                    <input type="text" autocomplete="username" value="{{ username }}" hidden>
+                    <label class="field-label" for="remove_password_{{ p.id }}">Your password</label>
+                    <input type="password" id="remove_password_{{ p.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.remove_error(p.id) %} aria-invalid="true" aria-describedby="remove-error-{{ p.id }}" autofocus>
+                    <p class="field-error" id="remove-error-{{ p.id }}">{{ why }}</p>{% else %}>{% endif %}
+                    <button type="submit" class="button-destructive">{% if p.waiting %}Withdraw Invitation{% else %}Remove {{ p.name }}{% endif %}</button>
                 </form>
             </details>
             {%- endif %}

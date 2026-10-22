@@ -702,19 +702,30 @@ impl AccountTemplate {
             .map(|(_, why)| why.as_str())
     }
 
-    fn withdraw_error(&self, id: &i64) -> Option<&str> {
-        self.error_for(&withdraw_field(*id))
+    fn remove_error(&self, id: &i64) -> Option<&str> {
+        self.error_for(&remove_field(*id))
+    }
+
+    fn parent_reset_error(&self, id: &i64) -> Option<&str> {
+        self.error_for(&reset_field(*id))
     }
 }
 
-/// The field name of a row's Withdraw password, for [AccountAnswer::field_error].
-pub(crate) fn withdraw_field(id: i64) -> String {
-    format!("withdraw-{id}")
+/// The field name of a row's Remove/Withdraw password, for [AccountAnswer::field_error].
+pub(crate) fn remove_field(id: i64) -> String {
+    format!("remove-{id}")
 }
 
-/// Add Parent's answer (design 62 §3): the one-time password, in blocks of 4 for reading (the
+/// The field name of a row's Reset password, for [AccountAnswer::field_error].
+pub(crate) fn reset_field(id: i64) -> String {
+    format!("reset-{id}")
+}
+
+/// Add Parent's and Reset's answer (design 62 §3): the one-time password, in blocks of 4 for reading (the
 /// blocks are spans, so a copy has no spaces), and its end.
 pub(crate) struct OtpShown {
+    /// "One-time password", "New one-time password".
+    pub title: &'static str,
     pub name: String,
     pub username: String,
     pub chunks: Vec<String>,

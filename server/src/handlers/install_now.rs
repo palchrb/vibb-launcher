@@ -119,7 +119,15 @@ pub(crate) async fn install_row(
     let answer = newest
         .as_ref()
         .filter(|c| install_now::answer_fresh(c, now.naive_utc()))
-        .map(|c| crate::handlers::locate::command_row(c, zone, now, true));
+        .map(|c| {
+            crate::handlers::locate::command_row(
+                c,
+                &crate::parents::Names::default(),
+                zone,
+                now,
+                true,
+            )
+        });
     Ok(InstallRow {
         value: offer.value().map(str::to_string),
         sub: offer.sub().unwrap_or_default(),
@@ -194,7 +202,7 @@ pub async fn install(
     if device.enrolled_at.is_none() {
         return back(app_id, "not_set_up", Some(&device));
     }
-    match queue_install(&state, &app, device_id, &admin.username).await {
+    match queue_install(&state, &app, device_id, &admin).await {
         Ok(Queued::Sent(tag)) => {
             security::record_security_event(
                 &state.db,
@@ -235,7 +243,7 @@ async fn queue_install(
     state: &AppState,
     app: &TrackedApp,
     device_id: i64,
-    admin: &str,
+    admin: &crate::models::AdminUser,
 ) -> Result<Queued, sqlx::Error> {
     let mut tx = state.db.begin().await?;
     let replaced = sqlx::query(
@@ -281,18 +289,22 @@ async fn queue_install(
             return Ok(Queued::Refused(word.unwrap_or("no_release")));
         }
     };
-    sqlx::query("INSERT INTO device_commands (device_id, command, payload) VALUES (?, ?, ?)")
-        .bind(device_id)
-        .bind(install_now::COMMAND)
-        .bind(&tag)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "INSERT INTO device_commands (device_id, command, payload, requested_by) \
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind(device_id)
+    .bind(install_now::COMMAND)
+    .bind(&tag)
+    .bind(admin.id)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     if replaced > 0 {
         security::record_security_event(
             &state.db,
             "device_command_replaced",
-            Some(admin),
+            Some(&admin.username),
             None,
             Some(&format!(
                 "{replaced} waiting install_update replaced by a new install_update, device {device_id}"

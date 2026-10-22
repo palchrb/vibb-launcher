@@ -74,6 +74,7 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "login_expired" => "Sign-in after the invitation expired",
         "parent_added" => "Parent added",
         "parent_removed" => "Parent removed",
+        "parent_reset" => "Parent reset: new one-time password",
         "parent_restored" => "Parent restored on the server",
         "parent_change_refused" => "Parent change refused: wrong password",
         "display_name_changed" => "Name changed",
@@ -185,14 +186,23 @@ fn words_of(kind: &str) -> String {
     }
 }
 
-fn event_row(event: SecurityEvent, zone: &Zone, now: DateTime<Utc>) -> EventRow {
+fn event_row(
+    event: SecurityEvent,
+    names: &crate::parents::Names,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> EventRow {
     let at = parse_db_utc(&event.created_at);
-    let who = [event.username.as_deref(), event.ip_address.as_deref()]
-        .into_iter()
-        .flatten()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" · ");
+    // "Mamma (mamma) · 10.0.0.3" (design 62 §6); a name that is no account's stays as stored.
+    let who = [
+        event.username.as_deref().map(|u| names.logged(u)),
+        event.ip_address.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" · ");
     EventRow {
         label: event_label(&event.event_type),
         kind: event.event_type,
@@ -250,6 +260,10 @@ pub async fn security_log(
         Err(err) => return server_error(err),
     };
 
+    let names = match crate::parents::Names::load(&state.db).await {
+        Ok(names) => names,
+        Err(err) => return server_error(err),
+    };
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
     let bans: Vec<BanRow> = bans
@@ -272,7 +286,7 @@ pub async fn security_log(
         title: "Security Log".to_string(),
         events: events
             .into_iter()
-            .map(|event| event_row(event, &zone, now))
+            .map(|event| event_row(event, &names, &zone, now))
             .collect(),
         bans,
         unbanned,
