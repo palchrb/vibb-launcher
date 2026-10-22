@@ -354,6 +354,15 @@ Launcher only, no contract change. Every new rule is gated on the face (`Android
     close is check 9). The screen-on frame of Android's face is the lock wallpaper under the not-yet-drawn glance: the
     glance is already started at the screen-off (LOCK alone, or NONE on top) and can't draw while dark (no
     turn-screen-on, design 32 §7) - step 3 makes that frame the night ground with the mark (check 10).
+- **The code QA's fix round** (`docs/review/qa-59b-code.md`, "Fixed in"; 59d steps A and D built here):
+  - B-1: as the face with Android locked the glance roots lock task itself (`lockTaskEntry(.., androidLocked)`), and
+    Home after a policy edge and the time-rule screen wait for the unlock (`KeyguardCover.afterAndroidUnlock`,
+    `HomeFront.bringAfterUnlock`, `LockActivity.start`), run when our lock leaves LOCKED (`runAfterUnlock`).
+  - B-2: the face's "sos" yield without the narrowed lock task (59d D); no edge count (AOSP intercepts the gesture's
+    presses after the second, so it would miss a real SOS).
+  - B-3: a cancelled ask stays ours for the ask's 2 min; the face re-fronts only on a fresh pause or stop.
+  - B-4: the pad's success leaves as in front (`leaveFromAsk`). B-5: Android open with no `USER_PRESENT` waits once
+    (`AndroidWait`), then own mode's backstop. B-6: no digit under the pad; `noteOwnStart`'s stamp pinned.
 - **What the emulator run should look at hardest**: checks 1 (both kiosk settings, no `the lock left`), 2 (exactly two
   `re-front` lines - a kiosk-on glance without lock task spends one on Home's root start, which can't resume under the
   keyguard; the re-front then lets the 1 s fallback root it), 5/5b (one `VoipActivityV2` start per dark ring, the

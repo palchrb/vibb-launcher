@@ -229,8 +229,8 @@ object PlayRuntime {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't cancel the install-mode notification", e)
         }
-        // A typed HOME start (design 16, QA #1).
-        com.kidslauncher.mdm.lock.HomeFront.bring(app, "install mode ended")
+        // A typed HOME start (design 16, QA #1) - as Android's face after its unlock (59d step A).
+        com.kidslauncher.mdm.lock.HomeFront.bringAfterUnlock(app, "install mode ended")
     }
 
     private fun showNotification(context: Context, untilMs: Long) {

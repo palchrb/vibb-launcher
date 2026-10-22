@@ -236,6 +236,14 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
     parent's lock-photo opt-in wins), drawn by `WallpaperRender`; no organisation name. Under Android's PIN pad the
     glance page stays drawn over the keypad stage (`glancePageShown`, `GlancePanel.androidPad`), and the face leaves
     with a close fade. `AndroidLock: screen-on` logs the keyguard at every screen-on.
+  - *The code QA's fix round* (`qa-59b-code.md`; 59d steps A and D): as the face with Android locked the glance roots
+    lock task itself (`lockTaskEntry(.., androidLocked)`), and Home after a policy edge (`HomeFront.bringAfterUnlock`:
+    the relock, install mode's end, the update, a role change) and the time-rule screen (`LockActivity.start`) wait for
+    the unlock in `KeyguardCover.afterAndroidUnlock`'s queue, run when our lock leaves LOCKED (`runAfterUnlock`) - **a
+    new Home or non-showWhenLocked start of ours goes through it**. The face re-fronts only on a fresh pause or stop
+    (`androidFreshLoss`), a cancelled ask stays ours for 2 min, Android open with no `USER_PRESENT` waits once
+    (`AndroidWait`) before own mode's backstop, the pad's success leaves as in front (`leaveFromAsk`), the "sos" yield
+    narrows no lock task, and no digit is taken under Android's pad (`keypadEnabled`).
 - **The glance leaves only on Android's verdict** (`faceStep`, §3.3): the PIN pad's `onDismissSucceeded`, or a
   `USER_PRESENT` since our lock last went LOCKED (the mark is reset at every LOCKED edge, screen-off and remote lock).
   A not-locked read alone waits `ANDROID_ANSWER_WAIT_MS` (1 s; `ANDROID_UNLOCK_WAIT_MS` 3 s once Android read

@@ -426,7 +426,7 @@ class AndroidLockPlanTest {
         // The face's unlock() calls: only from actAsFace's LEAVE and the pad's success.
         val face = activity.substringAfter("fun closeAsk(").substringBefore("private val waitTicker")
         assertEquals(2, Regex("unlock\\(").findAll(face).count())
-        assertTrue(body(activity, "androidAnswered").contains("if (offs == PinLockRuntime.screenOffs && AndroidLock.step(this, FaceTrigger.PAD_SUCCEEDED) == FaceStep.LEAVE) unlock(offs) else glance?.back()"))
+        assertTrue(body(activity, "androidAnswered").contains("if (offs == PinLockRuntime.screenOffs && AndroidLock.step(this, FaceTrigger.PAD_SUCCEEDED) == FaceStep.LEAVE) {\n                leaveFromAsk = true\n                unlock(offs)\n            } else {\n                glance?.back()"))
         assertTrue(body(activity, "actAsFace").contains("FaceStep.LEAVE -> {"))
         assertTrue(body(activity, "resumeAsFace").contains("return actAsFace(AndroidLock.step(this, FaceTrigger.RESUME), \"the glance's resume\")"))
         assertTrue(body(activity, "tapAsFace").contains("val step = AndroidLock.step(this, FaceTrigger.UNLOCK_TAP)"))

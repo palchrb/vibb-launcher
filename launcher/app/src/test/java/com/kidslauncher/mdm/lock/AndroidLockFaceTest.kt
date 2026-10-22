@@ -24,14 +24,15 @@ class AndroidLockFaceTest {
         locked = true, lockResumed = false, interactive = true, ourCall = false, telecomInCall = false,
         emergencyFlow = false, alarmRinging = false,
     )
-    private val face = lostFront.copy(android = AndroidLoss.LOCKED)
+    /** A fresh loss (the glance's pause or stop scheduled the check) with Android locked under the face. */
+    private val face = lostFront.copy(android = AndroidLoss.LOCKED, androidFreshLoss = true)
 
     @Test
-    fun `the loss input - locked, or open with USER_PRESENT, else own mode's backstop`() {
+    fun `the loss input - locked, open with USER_PRESENT, or open waiting for it`() {
         assertEquals(AndroidLoss.LOCKED, androidLoss(face = true, deviceSecure = true, androidLocked = true, presentSinceLocked = false))
         assertEquals(AndroidLoss.LOCKED, androidLoss(true, true, androidLocked = true, presentSinceLocked = true))
         assertEquals(AndroidLoss.OPEN, androidLoss(true, true, androidLocked = false, presentSinceLocked = true))
-        assertNull("open, no mark: today's re-front (the RELOCK backstop)", androidLoss(true, true, androidLocked = false, presentSinceLocked = false))
+        assertEquals("open, no mark yet: wait for it (B-5)", AndroidLoss.WAIT, androidLoss(true, true, androidLocked = false, presentSinceLocked = false))
         assertNull("no credential: our keypad's rules", androidLoss(true, deviceSecure = false, androidLocked = true, presentSinceLocked = true))
         assertNull("own mode", androidLoss(face = false, deviceSecure = true, androidLocked = true, presentSinceLocked = true))
     }
@@ -52,6 +53,59 @@ class AndroidLockFaceTest {
         // Ours: the pad's ask, our own start, our own screen.
         assertEquals(RefrontAction.Stop, refrontAction(face.copy(androidOurs = true), 0))
         assertEquals("the exemption is named even when ours", RefrontAction.Yield("voip"), refrontAction(face.copy(androidOurs = true, voipCall = true), 0))
+        // B-3: only a fresh pause or stop re-fronts - a yield's recheck or a re-front's follow-up never covers what the
+        // platform has in front after it (Android's own Emergency dialer from the pad).
+        assertEquals(RefrontAction.Stop, refrontAction(face.copy(androidFreshLoss = false), 0))
+        assertEquals("the exemptions still yield on a recheck", RefrontAction.Yield("system_call"), refrontAction(face.copy(androidFreshLoss = false, telecomInCall = true), 0))
+    }
+
+    @Test
+    fun `B-5 - Android open with no USER_PRESENT waits once for it, then own mode's backstop - never a re-front at once`() {
+        val open = lostFront.copy(android = AndroidLoss.WAIT, androidFreshLoss = true)
+        assertEquals(RefrontAction.AndroidWait, refrontAction(open, 0))
+        assertEquals("before the exemptions too", RefrontAction.AndroidWait, refrontAction(open.copy(voipCall = true), 0))
+        assertEquals(RefrontAction.Stop, refrontAction(open.copy(interactive = false), 0))
+        // The wait is over: own mode's rows (the re-front whose resume WAITs and RELOCKs an open Android).
+        assertEquals(RefrontAction.Refront(2_000L), refrontAction(open.copy(androidWaited = true), 0))
+        assertEquals(RefrontAction.Yield("voip"), refrontAction(open.copy(androidWaited = true, voipCall = true), 0))
+        val runtime = code("$lock/PinLockRuntime.kt")
+        val check = runtime.substringAfter("private fun runRefrontCheck() {").substringBefore("\n    }\n")
+        val wait = check.substringAfter("RefrontAction.AndroidWait -> {").substringBefore("\n            }")
+        assertTrue(wait.contains("androidWaited = true") && wait.contains("handler.postDelayed(refrontCheck, ANDROID_ANSWER_WAIT_MS)"))
+        assertTrue(check.contains("androidWaited = androidWaited,"))
+        // A new loss, a resume, a screen-off and USER_PRESENT wait anew.
+        assertTrue(runtime.substringAfter("private fun markAndroidLoss() {").substringBefore("\n    }\n").contains("androidWaited = false"))
+        assertTrue(runtime.substringAfter("fun onLockResumed(").substringBefore("\n    }\n").contains("androidWaited = false"))
+        assertTrue(runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("dispatch(app, LockEvent.ScreenOff(").contains("androidWaited = false"))
+        assertTrue(runtime.substringAfter("private val userPresentReceiver").substringBefore("\n    }\n").contains("androidWaited = false"))
+    }
+
+    @Test
+    fun `B-3 - a fresh loss is marked only by the glance's pause and stop, and consumed by the check`() {
+        val runtime = code("$lock/PinLockRuntime.kt")
+        assertEquals("the pause and the stop", 2, Regex("markAndroidLoss\\(\\)\\n        handler.postDelayed\\(refrontCheck").findAll(runtime).count())
+        assertEquals(1, Regex("androidLossPending = true").findAll(runtime).count())
+        val check = runtime.substringAfter("private fun runRefrontCheck() {").substringBefore("\n    }\n")
+        assertTrue(check.contains("androidFreshLoss = androidLossPending,\n            androidWaited = androidWaited,\n        )\n        androidLossPending = false"))
+        assertTrue(runtime.substringAfter("fun onLockResumed(").substringBefore("\n    }\n").contains("androidLossPending = false"))
+        // A cancelled ask (the pad's Emergency button) stays ours for the ask's window, from the ask.
+        assertTrue(check.contains("androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, now)"))
+        val note = runtime.substringAfter("fun noteAndroidAsk(").substringBefore("\n    }\n")
+        assertTrue(note.contains("if (cancelled) androidCancelledAskAt = androidAskAt"))
+        assertTrue("a new ask clears it", note.contains("androidAskAt = now\n            androidCancelledAskAt = null"))
+        assertTrue(runtime.substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("dispatch(app, LockEvent.ScreenOff(").contains("androidCancelledAskAt = null"))
+        val activity = code("$lock/PinLockActivity.kt")
+        assertTrue(activity.substringAfter("private fun androidAnswered(").substringBefore("\n    }\n").contains("if (current) closeAsk(cancelled = result == \"cancelled\")"))
+        val now = 10_000_000L
+        assertTrue("the dialer a minute after the cancel", androidLossOurs(now - 60_000, null, null, false, now))
+        assertFalse(androidLossOurs(now - ANDROID_ASK_OPEN_MS, null, null, false, now))
+    }
+
+    @Test
+    fun `B-2 - as the face a probable SOS is an exemption only - lock task isn't narrowed for it`() {
+        assertEquals(RefrontAction.Yield("sos"), refrontAction(face.copy(sosFlow = true), 0))
+        val check = code("$lock/PinLockRuntime.kt").substringAfter("private fun runRefrontCheck() {").substringBefore("\n    }\n")
+        assertTrue(check.contains("narrowForSos(context, sos && inputs.android == null)"))
     }
 
     @Test
@@ -75,7 +129,6 @@ class AndroidLockFaceTest {
         val check = runtime.substringAfter("private fun runRefrontCheck() {").substringBefore("\n    }\n")
         assertTrue(check.contains("if (action.noUserAction) Log.i(ANDROID_LOCK_TAG, \"re-front #\${++androidRefronts} (\$androidLossWhy)\")"))
         assertTrue(check.contains("show(context, ask = LockAsk.BOOT, noUserAction = action.noUserAction)"))
-        assertTrue(check.contains("androidOurs = androidLossOurs(androidAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, now),"))
         assertTrue(check.contains("androidRefronts = androidRefronts,"))
     }
 
@@ -127,7 +180,7 @@ class AndroidLockFaceTest {
         // The glance publishes its ask; a screen-off ends it.
         val activity = code("$lock/PinLockActivity.kt")
         assertTrue(activity.substringAfter("private fun askAndroid() {").substringBefore("\n    }\n").contains("PinLockRuntime.noteAndroidAsk(open = true)"))
-        assertTrue(activity.substringAfter("private fun closeAsk() {").substringBefore("\n    }\n").contains("PinLockRuntime.noteAndroidAsk(open = false)"))
+        assertTrue(activity.substringAfter("private fun closeAsk(").substringBefore("\n    }\n").contains("PinLockRuntime.noteAndroidAsk(open = false, cancelled = cancelled)"))
         val screenOff = code("$lock/PinLockRuntime.kt").substringAfter("if (intent.action == Intent.ACTION_SCREEN_OFF) {").substringBefore("dispatch(app, LockEvent.ScreenOff(")
         assertTrue(screenOff.contains("androidAskAt = null"))
     }
@@ -136,7 +189,10 @@ class AndroidLockFaceTest {
      * Q59b-8 (N2): one stamping point. In lock/ every `startActivity(` goes through [PinLockRuntime.startOwn] - except the
      * glance's own start in `show()` and the files that never start over a LOCKED glance's loss (HomeFront: the leave,
      * the dark lock-up, Home rooting lock task; GlanceOpener: the leave; the boot cover: its own process, before the
-     * PIN). A call app's intent is stamped in `VoipCalls.send`; the time-rule screen (ui/) starts through `startOwn`.
+     * PIN). HomeFront's starts are the leave's, the dark lock-up's and the boot's; its starts after a policy edge go
+     * through `bringAfterUnlock` (they wait for Android's unlock as the face - qa-59b-code B-1) and Home never roots lock
+     * task over Android's locked keyguard (`lockTaskEntry(.., androidLocked)` -> START_SELF). A call app's intent is
+     * stamped in `VoipCalls.send`; the time-rule screen (ui/) starts through `startOwn`, after Android's unlock.
      */
     @Test
     fun `no start of ours in lock bypasses noteOwnStart`() {
@@ -160,6 +216,53 @@ class AndroidLockFaceTest {
         assertTrue(send.indexOf("PinLockRuntime.noteOwnStart(") in 0 until send.indexOf("intent.send("))
         assertTrue(code("main/java/com/kidslauncher/mdm/ui/LockActivity.kt").contains("PinLockRuntime.startOwn(context, intent, \"the time-rule screen\")"))
         assertEquals(1, Regex("ownStartAt = ").findAll(runtime).count())
+        // B-6 (M10b): the one stamping point writes its stamp.
+        assertTrue(runtime.substringAfter("fun noteOwnStart(why: String) {").substringBefore("\n    }\n").contains("ownStartAt = SystemClock.elapsedRealtime()"))
+    }
+
+    @Test
+    fun `B-1 - as the face with Android locked no Home roots lock task, and Home and the time-rule screen wait for the unlock`() {
+        assertEquals(LockTaskEntry.START_SELF, lockTaskEntry(false, true, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = true))
+        assertEquals("own mode's rows", LockTaskEntry.START_HOME, lockTaskEntry(false, true, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = false))
+        assertEquals(LockTaskEntry.NONE, lockTaskEntry(true, true, kioskOn = true, sinceHomeAskedMs = null, fallbackDue = false, androidLocked = true))
+        val activity = code("$lock/PinLockActivity.kt")
+        assertTrue(activity.contains("voipCall = voipHeldLockTask, androidLocked = androidLocked))"))
+        assertTrue(activity.contains("val androidLocked = AndroidLock.refrontHeld(this)"))
+        // The policy edges' Home starts go through the face's queue; the relock's time-rule screen too (LockActivity.start).
+        val main = "main/java/com/kidslauncher/mdm"
+        for ((path, call) in listOf(
+            "$main/play/PlayRuntime.kt" to "HomeFront.bringAfterUnlock(app, \"install mode ended\")",
+            "$main/server/SelfUpdate.kt" to "HomeFront.bringAfterUnlock(app, \"after \$why\")",
+            "$main/server/WindowRelock.kt" to "HomeFront.bringAfterUnlock(app, \"the window locked again\")",
+            "$main/server/AppEnforcer.kt" to "HomeFront.bringAfterUnlock(context, \"a role change\")",
+        )) {
+            val text = code(path)
+            assertTrue(path, text.contains(call))
+            assertFalse(path, text.contains("HomeFront.bring("))
+        }
+        assertTrue(code("$lock/HomeFront.kt").contains("KeyguardCover.afterAndroidUnlock(context, \"Home (\$why)\") { bring(it, why) }"))
+        val start = code("$main/ui/LockActivity.kt").substringAfter("fun start(context: Context) {").substringBefore("\n        }\n")
+        assertTrue(start.contains("KeyguardCover.afterAndroidUnlock(context, \"the time-rule screen\") { startNow(it) }"))
+        // The queue waits only while the face's Android is locked, and runs when our lock leaves LOCKED.
+        val cover = code("$lock/KeyguardCover.kt")
+        assertTrue(cover.substringAfter("fun afterAndroidUnlock(").substringBefore("\n    }\n").contains("if (!AndroidLock.refrontHeld(context)) {\n            send(context)\n            return"))
+        assertTrue(cover.substringAfter("fun runAfterUnlock(").substringBefore("\n    }\n").contains("if (waiting.isEmpty() || mustWait(context) || AndroidLock.refrontHeld(context)) return"))
+        val dispatch = code("$lock/PinLockRuntime.kt").substringAfter("private fun dispatch(").substringBefore("\n    }\n")
+        assertTrue(dispatch.contains("if (result.mode != LockMode.LOCKED) {\n                    val app = context.applicationContext\n                    handler.post { KeyguardCover.runAfterUnlock(app, \"our lock left LOCKED\") }"))
+    }
+
+    @Test
+    fun `B-6 (M7b) - under Android's pad our keys are hidden and take no digit`() {
+        val activity = code("$lock/PinLockActivity.kt")
+        val render = activity.substringAfter("private fun render() {").substringBefore("\n    }\n")
+        assertTrue(render.contains("val ours = if (keypadIsAndroids) View.INVISIBLE else View.VISIBLE"))
+        assertTrue(render.contains("binding.pinKeypad.visibility = ours"))
+        assertTrue(render.contains("binding.pinDots.visibility = ours"))
+        assertTrue(render.contains("binding.pinParentCode.visibility = if (keypadIsAndroids) View.GONE else View.VISIBLE"))
+        assertTrue(activity.contains("private fun keypadEnabled() = !keypadIsAndroids && !checking && waitMs <= 0L && PinLockRuntime.pinUsable"))
+        for (name in listOf("onDigit", "onDelete")) {
+            assertTrue(name, activity.substringAfter("private fun $name(").substringBefore("\n    }\n").contains("if (!keypadEnabled()) return"))
+        }
     }
 
     @Test

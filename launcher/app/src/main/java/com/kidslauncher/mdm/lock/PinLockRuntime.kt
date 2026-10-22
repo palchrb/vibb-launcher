@@ -204,6 +204,19 @@ object PinLockRuntime {
     private var androidAskAt: Long? = null
     private var androidAnsweredAt: Long? = null
 
+    /** qa-59b-code B-3: a *cancelled* ask's start (elapsed) - the pad's Emergency button may hide the bouncer with a
+     * cancel, and Android's Emergency dialer then stops the glance: still ours for [ANDROID_ASK_OPEN_MS] from the ask.
+     * Cleared by a new ask and the screen-off. Main thread. */
+    private var androidCancelledAskAt: Long? = null
+
+    /** qa-59b-code B-3: the pending re-front check was scheduled by a fresh pause or stop of the glance (consumed by the
+     * check). Main thread. */
+    private var androidLossPending = false
+
+    /** qa-59b-code B-5: the face already waited once for `USER_PRESENT` with Android open ([RefrontAction.AndroidWait]).
+     * Main thread. */
+    private var androidWaited = false
+
     /**
      * Design 59b §3 step 3 (Q59b-8): one of our own starts - an activity of ours ([startOwn]) or a call app's intent sent
      * from the lock (`VoipCalls.send`) - so the face's loss rule doesn't cover it. The one stamping point.
@@ -221,12 +234,17 @@ object PinLockRuntime {
     }
 
     /** `PinLockActivity`'s ask for Android's PIN pad opened ([open]) or closed (answered, recovered, dropped). Main thread. */
-    fun noteAndroidAsk(open: Boolean) {
+    fun noteAndroidAsk(open: Boolean, cancelled: Boolean = false) {
         val now = SystemClock.elapsedRealtime()
         if (open) {
             androidAskAt = now
+            androidCancelledAskAt = null
         } else {
-            if (androidAskAt != null) androidAnsweredAt = now
+            if (androidAskAt != null) {
+                androidAnsweredAt = now
+                // B-3: a cancel (the pad's Emergency button) stays ours for the ask's whole window.
+                if (cancelled) androidCancelledAskAt = androidAskAt
+            }
             androidAskAt = null
         }
     }
@@ -680,6 +698,12 @@ object PinLockRuntime {
                 // The camera gesture must not open a camera over the lock (background thread).
                 CameraLock.onLockChanged(context)
                 if (result.mode != LockMode.LOCKED && !LockTaskChrome.hasPlan) requestApply(context)
+                // Design 59d step A: what waited for Android's unlock (Home, the time-rule screen) goes now - posted, so
+                // the glance's own leave comes first.
+                if (result.mode != LockMode.LOCKED) {
+                    val app = context.applicationContext
+                    handler.post { KeyguardCover.runAfterUnlock(app, "our lock left LOCKED") }
+                }
             }
             modeListeners.toList().forEach { it() }
             // A ring that began unlocked rings once the phone locks; unlocking stops it (#5).
@@ -841,6 +865,8 @@ object PinLockRuntime {
                 // Design 59b §3: the face's re-front cap is per screen-on; an ask dies with the screen-off.
                 androidRefronts = 0
                 androidAskAt = null
+                androidCancelledAskAt = null
+                androidWaited = false
                 // The lock-up first ([lockUp]). This broadcast comes after the display is off, and the
                 // lock can't draw while dark: it is drawn only after the next screen-on (design 32).
                 rememberAlarm(app)
@@ -934,6 +960,7 @@ object PinLockRuntime {
             AndroidLock.userPresent()
             // Design 59b §3: Android open - the face's re-front count starts again.
             androidRefronts = 0
+            androidWaited = false
             AndroidLock.note(app, "USER_PRESENT")
             if (mode != LockMode.LOCKED) return
             if (AndroidLock.step(app, FaceTrigger.USER_PRESENT) != FaceStep.LEAVE) return
@@ -1571,6 +1598,8 @@ object PinLockRuntime {
         // Back after a call the system dialer showed: the camera policy follows (qa-25b-25f M1).
         updateCallForCamera(context, telecomInCall(context))
         handler.removeCallbacks(refrontCheck)
+        androidLossPending = false
+        androidWaited = false
         // During our call, the call screen goes back on top (qa-10-code #1).
         dispatch(context.applicationContext, LockEvent.LockResumed(ourCall(), VoipCalls.phase))
         // qa-16d-code #2: a desync that begins with the screen on (a quickstep restart, the lock back
@@ -1602,6 +1631,7 @@ object PinLockRuntime {
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
         // Just after a screen-on the stop that marks Emergency SOS may still come (bug 25b-H).
+        markAndroidLoss()
         handler.postDelayed(refrontCheck, pauseRefrontDelayMs(lastScreenOnElapsed, SystemClock.elapsedRealtime()))
     }
 
@@ -1624,7 +1654,14 @@ object PinLockRuntime {
         handler.removeCallbacks(refrontCheck)
         // As quick as the pause's check (bug 25b-A): whatever came over the lock - Recents, a
         // SystemUI restart, an app - is covered again within PAUSE_REFRONT_MS.
+        markAndroidLoss()
         handler.postDelayed(refrontCheck, PAUSE_REFRONT_MS)
+    }
+
+    /** qa-59b-code B-3/B-5: the check just scheduled is a fresh loss of the front; a new loss waits for USER_PRESENT anew. */
+    private fun markAndroidLoss() {
+        androidLossPending = true
+        androidWaited = false
     }
 
     /** PinLockActivity.onDestroy: the next screen-off starts the lock again (design 32). */
@@ -1693,15 +1730,20 @@ object PinLockRuntime {
             // Design 59b §3 (P59-3): the face's loss rule - Android locked under it, or open with USER_PRESENT (no binder
             // call without the face, or with the glance in front).
             android = if (chromeLocked && !lockResumed) AndroidLock.loss(context) else null,
-            androidOurs = androidLossOurs(androidAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, now),
+            androidOurs = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, now),
             androidRefronts = androidRefronts,
+            androidFreshLoss = androidLossPending,
+            androidWaited = androidWaited,
         )
+        androidLossPending = false
         val action = refrontAction(inputs, refrontAttempt)
         // qa-25b-25f H1: the mark ends on anything but its own yield; while it runs, only our
         // package, the helpers and the SOS app stay in lock task.
         val sos = sosMarkKept(action)
         if (!sos) sosFlowUntilElapsed = 0L
-        narrowForSos(context, sos)
+        // 59d D (qa-59b-code B-2): as the face SOS is an exemption only - Android's locked keyguard holds, so lock task
+        // isn't narrowed for it.
+        narrowForSos(context, sos && inputs.android == null)
         when (action) {
             RefrontAction.Stop -> yielding = null
             is RefrontAction.Yield -> {
@@ -1723,6 +1765,12 @@ object PinLockRuntime {
                 // Design 16e: the boot's first lock may still wait for the mark (its backstop ends it).
                 if (show(context, ask = LockAsk.BOOT, noUserAction = action.noUserAction)) Log.i(LOG_TAG, "Re-fronting the lock (#$refrontAttempt)")
                 handler.postDelayed(refrontCheck, action.nextCheckMs)
+            }
+            RefrontAction.AndroidWait -> {
+                // B-5: Android open with no USER_PRESENT yet - one wait for it, then own mode's backstop.
+                yielding = null
+                androidWaited = true
+                handler.postDelayed(refrontCheck, ANDROID_ANSWER_WAIT_MS)
             }
             RefrontAction.AndroidLeave -> {
                 // Design 59b §2 (Q59b-6): the kid unlocked Android - the glance's USER_PRESENT leave (no Home), or with no

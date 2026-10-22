@@ -724,7 +724,7 @@ object WindowRelock {
             val changedTo = reevaluateLockReasonFromCache(app)
             TimeRuleAlarm.schedule(app)
             val call = liveCall(app)
-            if (!windowReopened && !processStart && !call) com.kidslauncher.mdm.lock.HomeFront.bring(app, "the window locked again")
+            if (!windowReopened && !processStart && !call) com.kidslauncher.mdm.lock.HomeFront.bringAfterUnlock(app, "the window locked again")
             if (changedTo != null && changedTo != LockReason.NONE && !call) handler.post { LockActivity.start(app) }
             cancelNotifications(app, openWindows())
         }

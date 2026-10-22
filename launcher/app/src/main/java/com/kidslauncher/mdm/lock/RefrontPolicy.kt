@@ -31,14 +31,19 @@ data class RefrontInputs(
     val coverOn: Boolean = false,
     /** Design 32: the lock is the top task since its lock-up ([lockOnTopAfter], best effort). */
     val lockOnTop: Boolean = false,
-    /** Design 59b §3: the glance is Android's face and [androidLoss] applies (`null`: own mode's rows - also the face
-     * with Android open and no `USER_PRESENT`, the RELOCK backstop's re-front). */
+    /** Design 59b §3: the glance is Android's face and [androidLoss] applies (`null`: own mode's rows). */
     val android: AndroidLoss? = null,
     /** Design 59b §3 step 3: the loss is ours ([androidLossOurs]): the PIN pad's ask, one of our own starts, one of our
      * own screens resumed. */
     val androidOurs: Boolean = false,
     /** Design 59b §3 step 6: the face's re-fronts since the last screen-off or `USER_PRESENT` ([ANDROID_REFRONT_CAP]). */
     val androidRefronts: Int = 0,
+    /** qa-59b-code B-3: this check was scheduled by a fresh pause or stop of the glance - not a yield's recheck or a
+     * re-front's own follow-up. The face re-fronts only then. */
+    val androidFreshLoss: Boolean = false,
+    /** qa-59b-code B-5: Android read open with no `USER_PRESENT` once already ([AndroidLoss.WAIT]) - this check is the
+     * wait's end: own mode's rows, the RELOCK backstop. */
+    val androidWaited: Boolean = false,
 )
 
 /** Design 59b §3: what Android's keyguard is while the face lost the front. */
@@ -49,18 +54,22 @@ enum class AndroidLoss {
     /** Android is open with a `USER_PRESENT` since our lock last went LOCKED: the kid unlocked it - the leave without
      * Home (design 59b §2), never a re-front. */
     OPEN,
+
+    /** qa-59b-code B-5: Android is open and no `USER_PRESENT` came yet (a background broadcast, often late): one wait of
+     * [ANDROID_ANSWER_WAIT_MS] for it ([RefrontAction.AndroidWait]), then own mode's re-front - the RELOCK backstop. */
+    WAIT,
 }
 
 /**
- * Design 59b §3/§2 (Q59b-6): [androidLoss]'s input from the face's live reads - `null` without the face or a
- * credential, and with Android open and no `USER_PRESENT` (own mode's re-front then stays the backstop: the glance's
- * resume WAITs and RELOCKs an unexpectedly open Android).
+ * Design 59b §3/§2 (Q59b-6, qa-59b-code B-5): [androidLoss]'s input from the face's live reads - `null` without the
+ * face or a credential (own mode's rows); Android open with no `USER_PRESENT` waits once for it before own mode's
+ * re-front, the backstop that RELOCKs an unexpectedly open Android, runs.
  */
 fun androidLoss(face: Boolean, deviceSecure: Boolean, androidLocked: Boolean, presentSinceLocked: Boolean): AndroidLoss? = when {
     !face || !deviceSecure -> null
     androidLocked -> AndroidLoss.LOCKED
     presentSinceLocked -> AndroidLoss.OPEN
-    else -> null
+    else -> AndroidLoss.WAIT
 }
 
 /** Design 59b §3 step 6 (Q59b-3): at most this many re-fronts per screen-on - then SystemUI's face (with our ground)
@@ -111,6 +120,10 @@ sealed interface RefrontAction {
      * without Home (the glance's `USER_PRESENT` path), never a re-front. */
     data object AndroidLeave : RefrontAction
 
+    /** qa-59b-code B-5: as the face, Android open with no `USER_PRESENT` yet - look again in [ANDROID_ANSWER_WAIT_MS]
+     * (the broadcast leaves; else own mode's backstop), never a re-front at once (Q59b-1's narrow race). */
+    data object AndroidWait : RefrontAction
+
     /**
      * Design 32 step 2 (M5): while dark under the keyguard cover, with the lock not on top and nothing
      * exempt any more (a system-dialer call ended in the dark): the lock-up once (the lock alone, as every
@@ -134,7 +147,8 @@ fun refrontDelayMs(attempt: Int): Long = when {
  */
 fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     !inputs.locked || inputs.lockResumed -> RefrontAction.Stop
-    inputs.android != null -> androidLossStep(inputs, attempt)
+    // B-5: the face's one wait for USER_PRESENT is over - own mode's rows (the RELOCK backstop).
+    inputs.android != null && !(inputs.android == AndroidLoss.WAIT && inputs.androidWaited) -> androidLossStep(inputs, attempt)
     // The screen off: nothing - except under the keyguard cover with the lock not on top (design 32
     // step 2, M5): the exempt screens are still yielded to (the system_call yield keeps looking every
     // 2 s while dark), and once none is left the lock-up runs while dark ([RefrontAction.DarkLockUp]).
@@ -166,16 +180,21 @@ private fun exemptYield(inputs: RefrontInputs): RefrontAction.Yield? = when {
  *    here; own mode's dark cover row ([RefrontAction.DarkLockUp]) is unchanged.
  * 2. Android open with a `USER_PRESENT` since the LOCKED edge: the leave without Home, never a re-front (Q59b-6) - before
  *    the exemptions, so a pending yield's recheck never keeps our lock LOCKED over an Android the kid unlocked.
- * 3. The exemptions, as own mode's (a VoIP call ringing **or** live yields - no re-front over a call screen, Q59b-2).
- * 4. Ours (the PIN pad's ask, our own start, our own screen): nothing.
- * 5. The cap reached: nothing - SystemUI's face until the screen-off.
- * 6. Else the re-front, with no user-leave hint.
+ * 3. Android open with no `USER_PRESENT` yet: one wait for it (qa-59b-code B-5), then own mode's backstop.
+ * 4. The exemptions, as own mode's (a VoIP call ringing **or** live yields - no re-front over a call screen, Q59b-2;
+ *    a probable SOS too, without own mode's narrowed lock task - 59d D).
+ * 5. Ours (the PIN pad's ask, our own start, our own screen): nothing.
+ * 6. The cap reached, or a check no fresh pause or stop scheduled (a yield's recheck, a re-front's follow-up -
+ *    qa-59b-code B-3: what is in front after a yield is the platform's, e.g. Android's own Emergency dialer): nothing -
+ *    SystemUI's face until the screen-off.
+ * 7. Else the re-front, with no user-leave hint.
  */
 fun androidLossStep(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     !inputs.interactive -> RefrontAction.Stop
     inputs.android == AndroidLoss.OPEN -> RefrontAction.AndroidLeave
+    inputs.android == AndroidLoss.WAIT -> RefrontAction.AndroidWait
     else -> exemptYield(inputs) ?: when {
-        inputs.androidOurs || inputs.androidRefronts >= ANDROID_REFRONT_CAP -> RefrontAction.Stop
+        inputs.androidOurs || inputs.androidRefronts >= ANDROID_REFRONT_CAP || !inputs.androidFreshLoss -> RefrontAction.Stop
         else -> RefrontAction.Refront(refrontDelayMs(attempt + 1), noUserAction = true)
     }
 }

@@ -91,6 +91,8 @@ class LockTaskRootTest {
         assertTrue(leaveInFront(androidFace = false, resumed = true))
         assertTrue(leaveInFront(androidFace = true, resumed = true))
         assertFalse(leaveInFront(androidFace = true, resumed = false))
+        // qa-59b-code B-4: the pad's success is the glance's own ask - in front whatever the lifecycle reads.
+        assertTrue(leaveInFront(androidFace = true, resumed = false, fromAsk = true))
     }
 
     @Test
@@ -98,7 +100,11 @@ class LockTaskRootTest {
         val activity = listOf("src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt", "app/src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
             .map { java.io.File(it) }.first { it.exists() }.readText()
         val leave = activity.substringAfter("private fun leave() {").substringBefore("\n    }\n")
-        assertTrue(leave.contains("val inFront = leaveInFront(AndroidLock.faceOn, resumed)"))
+        assertTrue(leave.contains("val inFront = leaveInFront(AndroidLock.faceOn, resumed, fromAsk = leaveFromAsk)"))
+        // B-4: set only on the pad's success, right before its unlock.
+        assertEquals(1, Regex("leaveFromAsk = true").findAll(activity).count())
+        assertTrue(activity.substringAfter("private fun androidAnswered(").substringBefore("\n    }\n")
+            .contains("leaveFromAsk = true\n                unlock(offs)"))
         assertTrue(leave.contains("if (!inFront) pendingOpen = null"))
         assertTrue(leave.contains("PinLockRuntime.callLiveNow(this), glanceInFront = inFront))"))
         assertTrue("the root's retry stays", leave.contains("go(rootLeave)"))

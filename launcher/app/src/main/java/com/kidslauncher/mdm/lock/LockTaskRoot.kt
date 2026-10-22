@@ -46,9 +46,13 @@ fun lockTaskEntry(
     sinceHomeAskedMs: Long?,
     fallbackDue: Boolean,
     voipCall: Boolean = false,
+    /** Design 59d step A (qa-59b-code B-1): as Android's face with its secure keyguard locked - a Home start lands
+     * behind the keyguard (and un-occludes it), so the glance roots lock task itself; the leave re-roots through Home
+     * (`lockLeave`'s kiosk root, `startedLockTask`). */
+    androidLocked: Boolean = false,
 ): LockTaskEntry = when {
     running || !permitted || (voipCall && !kioskOn) -> LockTaskEntry.NONE
-    !kioskOn || fallbackDue -> LockTaskEntry.START_SELF
+    !kioskOn || fallbackDue || androidLocked -> LockTaskEntry.START_SELF
     sinceHomeAskedMs != null && sinceHomeAskedMs in 0 until HOME_ROOT_RETRY_MS -> LockTaskEntry.WAIT_FOR_HOME
     else -> LockTaskEntry.START_HOME
 }
@@ -87,8 +91,10 @@ fun lockLeave(kioskOn: Boolean, startedLockTask: Boolean, lockTaskRunning: Boole
  * Design 59b step 0: whether the leave counts the glance as in front - always in own mode (every own path is
  * unchanged); as Android's face ([androidFace]) only when it is resumed at the leave ("Lås opp", a row via the pad, a
  * fingerprint from dark that resumed it). Stopped under an app (`USER_PRESENT` after SystemUI's face or pad): not.
+ * qa-59b-code B-4: the pad's success ([fromAsk]) is always the glance's own ask - in front whatever the lifecycle reads
+ * while the bouncer or the keyguard's going-away covers it, so a row's target is kept.
  */
-fun leaveInFront(androidFace: Boolean, resumed: Boolean): Boolean = !androidFace || resumed
+fun leaveInFront(androidFace: Boolean, resumed: Boolean, fromAsk: Boolean = false): Boolean = !androidFace || resumed || fromAsk
 
 /** The finish was refused (`isFinishing` still false) with the kiosk on: the lock is the root. */
 val rootLeave = LockLeave(stopLockTaskFirst = true, homeFirst = true)

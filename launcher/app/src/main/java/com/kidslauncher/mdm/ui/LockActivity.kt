@@ -285,6 +285,12 @@ class LockActivity : UIObjectActivity() {
          * that is LOCKED it is brought back on top right away, so the kid sees the PIN first, then
          * this screen. */
         fun start(context: Context) {
+            // Design 59d step A (qa-59b-code B-1): not showWhenLocked - as Android's face with its keyguard locked it
+            // waits for the unlock (it would land behind the keyguard and un-occlude it); at once otherwise.
+            com.kidslauncher.mdm.lock.KeyguardCover.afterAndroidUnlock(context, "the time-rule screen") { startNow(it) }
+        }
+
+        private fun startNow(context: Context) {
             val intent = Intent(context, LockActivity::class.java)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             // Design 59b §3: one of our own starts - the face's loss rule doesn't cover it (the glance comes on top next).

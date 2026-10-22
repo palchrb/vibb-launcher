@@ -442,6 +442,34 @@ object KeyguardCover {
         waiting[key] = send
     }
 
+    /**
+     * Design 59d step A (qa-59b-code B-1): as Android's face with its secure keyguard locked ([AndroidLock.refrontHeld]),
+     * a start of a screen that isn't showWhenLocked - Home after a policy edge, the time-rule screen - would land behind
+     * the keyguard and un-occlude it (SystemUI's face over the glance). It waits in the same queue as the cover's
+     * ([whenUnlocked]) and runs when our lock leaves LOCKED ([runAfterUnlock]); at once otherwise - own mode unchanged.
+     * One per [key], the newest kept. Any thread.
+     */
+    fun afterAndroidUnlock(context: Context, key: String, send: (Context) -> Unit) {
+        if (!AndroidLock.refrontHeld(context)) {
+            send(context)
+            return
+        }
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            val app = context.applicationContext
+            handler.post { afterAndroidUnlock(app, key, send) }
+            return
+        }
+        Log.i(LOG_TAG, "$key waits for Android's unlock")
+        waiting.remove(key)
+        waiting[key] = send
+    }
+
+    /** Our lock left LOCKED (59d step A): what waited for the unlock goes, unless a keyguard still holds it. Main thread. */
+    fun runAfterUnlock(context: Context, why: String) {
+        if (waiting.isEmpty() || mustWait(context) || AndroidLock.refrontHeld(context)) return
+        runWaiting(context, why)
+    }
+
     private fun runWaiting(context: Context, why: String) {
         if (waiting.isEmpty()) return
         val app = context.applicationContext

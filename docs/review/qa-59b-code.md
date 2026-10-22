@@ -153,3 +153,28 @@ wiring). Own-mode rows are pinned: `refrontAction` without `android`, `step(Voip
 
 Design 59b §10 checks 1-10, plus B-1's kiosk-on case without lock task, check 2 within 3 s of a wake (B-2), the
 callback the pad's Emergency gives (B-3), and whether the glance is resumed at `onDismissSucceeded` (B-4).
+
+## Fixed in (branch `design-59b`, the fix round after this QA)
+
+- B-1: `lockTaskEntry(.., androidLocked)` -> START_SELF while the face's Android is locked (`PinLockActivity.ensureLockTask`
+  passes `AndroidLock.refrontHeld`); 59d step A's queue - `KeyguardCover.afterAndroidUnlock` (the cover's `waiting` map,
+  waits only while the face's Android is locked, at once otherwise) and `runAfterUnlock`, posted from `dispatch` when our
+  lock leaves LOCKED. Through it: `HomeFront.bringAfterUnlock` (WindowRelock, PlayRuntime, SelfUpdate, AppEnforcer) and
+  `LockActivity.start` (every caller). The allowlist comment says why HomeFront's remaining starts are no loss. The VoIP
+  reopen stays as it was (the cover's `whenUnlocked`, 59b's `IN_COMMUNICATION` gate): nothing can read whether the app's
+  call screen is showWhenLocked, and WhatsApp's is. `AndroidLockFaceTest` "B-1".
+- B-2: 59d step D - as the face the "sos" yield runs without `narrowForSos` (`narrowForSos(context, sos && inputs.android
+  == null)`). The suggested edge count (>= 3 screen edges) is **not** built: AOSP's `GestureLauncherService` intercepts
+  every press after the second quick one while interactive, so five presses from a dark screen show one screen edge and
+  from a lit one two - the rule would never mark a real SOS, and the re-front would cover the countdown. The look cost
+  (SystemUI's face for up to 15 s after a stop in the first 3 s of a wake) stays; check 2 within 3 s of a wake measures it.
+- B-3: a cancelled ask stays "ours" for `ANDROID_ASK_OPEN_MS` (2 min) from the ask (`androidCancelledAskAt`, cleared by a
+  new ask and the screen-off; `closeAsk(cancelled)` from `androidAnswered`). And as the face only a check a fresh pause or
+  stop scheduled re-fronts (`RefrontInputs.androidFreshLoss`, `markAndroidLoss`, consumed by the check): a yield's recheck
+  and a re-front's follow-up stop. Pinned.
+- B-4: `leaveInFront(face, resumed, fromAsk)` - `leaveFromAsk`, set only on the pad's success right before its unlock.
+- B-5: `androidLoss` gives `WAIT` for Android open with no `USER_PRESENT`; `androidLossStep` answers
+  `RefrontAction.AndroidWait` (one recheck after `ANDROID_ANSWER_WAIT_MS`, `androidWaited`), and the check after it takes
+  own mode's rows - the RELOCK backstop. A new loss, a resume, a screen-off and `USER_PRESENT` wait anew.
+- B-6: (a) `keypadEnabled()` is false while `keypadIsAndroids` (no digit under the pad), and `render()`'s keypad, dots and
+  "Foreldrekode" lines are pinned; (b) `noteOwnStart`'s body is pinned as `ownStartAt = SystemClock.elapsedRealtime()`.

@@ -109,10 +109,10 @@ measurement (step 4).
 
 | Step | Size | What |
 |---|---|---|
-| A | S | One face-mode "after the unlock" queue. `KeyguardCover.mustWait` is also true for the face while Android is locked. Through it go the time-rule screen (already via `whenUnlocked`), `WindowRelock`'s, Play's, `SelfUpdate`'s and `AppEnforcer`'s Home starts (a `HomeFront.bring` gate), and the VoIP reopen for a non-showWhenLocked app. The queue runs on LEAVE. `ensureLockTask` START_SELF in face mode |
+| A | S | **Done** (59b's code-QA fix round, qa-59b-code B-1; the VoIP reopen keeps the cover's `whenUnlocked` and 59b's `IN_COMMUNICATION` gate - no showWhenLocked read exists to queue it per app). One face-mode "after the unlock" queue. `KeyguardCover.mustWait` is also true for the face while Android is locked. Through it go the time-rule screen (already via `whenUnlocked`), `WindowRelock`'s, Play's, `SelfUpdate`'s and `AppEnforcer`'s Home starts (a `HomeFront.bring` gate), and the VoIP reopen for a non-showWhenLocked app. The queue runs on LEAVE. `ensureLockTask` START_SELF in face mode |
 | B | S | No KEYPAD stage in face mode: "Lås opp" and a row ask from the glance page (the target kept, `keypadIsAndroids` goes). On LEAVE the content goes INVISIBLE (black ground) before `go()`; Home `NO_ANIMATION`. Fixes R1 |
 | C | S | Screen events in face mode: `lockUpStarts` takes LOCK for the face whatever `kg` read (no HOME_THEN_LOCK). No ScreenOn backstop start (`PinLockState.kt:173`). Check with 59b step 4's capture (R2) |
-| D | S | SOS in face mode: the exemption only, no `narrowForSos`. Fold into 59b step 2 |
+| D | S | **Done** (59b's code-QA fix round, qa-59b-code B-2). SOS in face mode: the exemption only, no `narrowForSos`. Fold into 59b step 2 |
 | E | S | The notice wake ends without `lockNow` in face mode (the phone's own timeout), or keeps it. The user's choice |
 | F | M | BFU: Android's pad over the night cover (§5). After the F3 merge |
 | G | S | F2: hold the LOCKED-chrome feature write while an ask is open |

@@ -249,11 +249,15 @@ class PinLockActivity : AppCompatActivity() {
 
     private fun askAge(): Long? = askedAt?.let { SystemClock.elapsedRealtime() - it }
 
-    private fun closeAsk() {
+    private fun closeAsk(cancelled: Boolean = false) {
         askedAt = null
         handler.removeCallbacks(askCheck)
-        PinLockRuntime.noteAndroidAsk(open = false)
+        PinLockRuntime.noteAndroidAsk(open = false, cancelled = cancelled)
     }
+
+    /** qa-59b-code B-4: this leave is the pad's success - the glance's own ask, so it leaves as in front (a row's target
+     * opens over Home) whatever the lifecycle reads while the keyguard goes away. Set only in [androidAnswered]. */
+    private var leaveFromAsk = false
 
     /** The keypad stage is Android's PIN pad now: our keys, dots and "Foreldrekode" stay hidden under it (the
      * user's answer 2: no parent code on the lock as Android's face). */
@@ -320,11 +324,17 @@ class PinLockActivity : AppCompatActivity() {
      */
     private fun androidAnswered(id: Int, offs: Int, result: String) {
         val current = id == askId && askedAt != null
-        if (current) closeAsk()
+        // B-3: a cancel (the pad's Emergency button hides the bouncer) stays "ours" for the ask's window.
+        if (current) closeAsk(cancelled = result == "cancelled")
         AndroidLock.note(this, "Android's PIN pad: $result${if (current) "" else " (an earlier ask)"}")
         if (isFinishing || finishingAfterUnlock || PinLockRuntime.mode != LockMode.LOCKED) return
         if (result == "succeeded") {
-            if (offs == PinLockRuntime.screenOffs && AndroidLock.step(this, FaceTrigger.PAD_SUCCEEDED) == FaceStep.LEAVE) unlock(offs) else glance?.back()
+            if (offs == PinLockRuntime.screenOffs && AndroidLock.step(this, FaceTrigger.PAD_SUCCEEDED) == FaceStep.LEAVE) {
+                leaveFromAsk = true
+                unlock(offs)
+            } else {
+                glance?.back()
+            }
             return
         }
         if (!current) return
@@ -758,7 +768,8 @@ class PinLockActivity : AppCompatActivity() {
         // call rings or lives (not while merely pinned).
         voipHeldLockTask = VoipCalls.phase != VoipPhase.NONE
         waitingForPin = !running && !permitted
-        when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue, voipCall = voipHeldLockTask)) {
+        val androidLocked = AndroidLock.refrontHeld(this)
+        when (lockTaskEntry(running, permitted, LockTaskChrome.kioskOn, since, fallbackDue, voipCall = voipHeldLockTask, androidLocked = androidLocked)) {
             LockTaskEntry.NONE -> if (!running && !permitted) Log.w(LOG_TAG, "Lock task not permitted for the lock screen - re-front only")
             LockTaskEntry.START_SELF -> try {
                 startLockTask()
@@ -873,7 +884,8 @@ class PinLockActivity : AppCompatActivity() {
         render()
     }
 
-    private fun keypadEnabled() = !checking && waitMs <= 0L && PinLockRuntime.pinUsable
+    /** qa-59b-code B-6: never under Android's PIN pad (our keys are hidden there; a stray tap types nothing). */
+    private fun keypadEnabled() = !keypadIsAndroids && !checking && waitMs <= 0L && PinLockRuntime.pinUsable
 
     private fun check(pin: String) {
         checking = true
@@ -1047,7 +1059,7 @@ class PinLockActivity : AppCompatActivity() {
         val kioskOn = LockTaskChrome.kioskOn
         // Design 59b step 0: as Android's face, stopped under the app the kid unlocked into on SystemUI's face or pad -
         // the glance finishes under it: no Home, no row target (none exists without our ask).
-        val inFront = leaveInFront(AndroidLock.faceOn, resumed)
+        val inFront = leaveInFront(AndroidLock.faceOn, resumed, fromAsk = leaveFromAsk)
         if (!inFront) pendingOpen = null
         go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this), glanceInFront = inFront))
         if (!isFinishing && kioskOn) {
