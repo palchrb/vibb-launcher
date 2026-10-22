@@ -109,7 +109,8 @@ class LockUpTest {
         assertEquals(null, alarmAfterResume(remembered = 1_000L, yieldedTo = refrontAction(inputs.copy(alarmRinging = true), 0).let { (it as RefrontAction.Yield).reason }))
         assertEquals(RefrontAction.Stop, refrontAction(inputs.copy(lockResumed = true), 0))
         assertTrue(refrontAction(inputs.copy(sosFlow = false), 0) is RefrontAction.Refront)
-        // Only a stop marks it: Recents (the Overview button right after waking) only pauses the lock.
+        // In own mode only a stop marks it: Recents (the Overview button right after waking) only pauses the lock (the
+        // face marks at the pause too - the rc.2 run's R1, AndroidLockFaceTest).
         assertEquals(SOS_PAUSE_GRACE_MS, pauseRefrontDelayMs(10_000L, 10_500L))
         assertEquals(PAUSE_REFRONT_MS, pauseRefrontDelayMs(10_000L, 10_001L + SOS_GESTURE_WINDOW_MS))
         assertEquals(PAUSE_REFRONT_MS, pauseRefrontDelayMs(null, 10_500L))
@@ -120,7 +121,7 @@ class LockUpTest {
         assertFalse(sosFlowNow(70_000L, 70_000L, false))
         val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
         val stopped = body(runtime, "onLockStopped")
-        assertTrue(stopped.indexOf("noteProbableSos()") in 0 until stopped.indexOf("handler.postDelayed(refrontCheck"))
+        assertTrue(stopped.indexOf("noteProbableSos(SystemClock.elapsedRealtime())") in 0 until stopped.indexOf("handler.postDelayed(refrontCheck"))
         val paused = body(runtime, "onLockPaused")
         assertFalse(paused.contains("noteProbableSos()"))
         assertTrue(paused.contains("handler.postDelayed(refrontCheck, pauseRefrontDelayMs(lastScreenOnElapsed, SystemClock.elapsedRealtime()))"))

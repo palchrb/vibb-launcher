@@ -19,6 +19,8 @@ class AndroidLockFaceTest {
         .replace(Regex("/\\*.*?\\*/", RegexOption.DOT_MATCHES_ALL), "")
         .replace(Regex("//[^\\n]*"), "")
     private val lock = "main/java/com/kidslauncher/mdm/lock"
+    /** The queue's immediate branch (comments stripped): the rc.2 run's R4 drops a queued copy before the send. */
+    private val sentAtOnce = Regex("if \\(!AndroidLock\\.refrontHeld\\(context\\)\\) \\{\\s*dropWaiting\\(context, key\\)\\s*send\\(context\\)\\s*return")
 
     private val lostFront = RefrontInputs(
         locked = true, lockResumed = false, interactive = true, ourCall = false, telecomInCall = false,
@@ -245,7 +247,7 @@ class AndroidLockFaceTest {
         assertTrue(start.contains("KeyguardCover.afterAndroidUnlock(context, \"the time-rule screen\") { startNow(it) }"))
         // The queue waits only while the face's Android is locked, and runs when our lock leaves LOCKED.
         val cover = code("$lock/KeyguardCover.kt")
-        assertTrue(cover.substringAfter("fun afterAndroidUnlock(").substringBefore("\n    }\n").contains("if (!AndroidLock.refrontHeld(context)) {\n            send(context)\n            return"))
+        assertTrue(cover.substringAfter("fun afterAndroidUnlock(").substringBefore("\n    }\n").contains(sentAtOnce))
         assertTrue(cover.substringAfter("fun runAfterUnlock(").substringBefore("\n    }\n").contains("if (waiting.isEmpty() || mustWait(context) || AndroidLock.refrontHeld(context)) return"))
         val dispatch = code("$lock/PinLockRuntime.kt").substringAfter("private fun dispatch(").substringBefore("\n    }\n")
         assertTrue(dispatch.contains("if (result.mode != LockMode.LOCKED) {\n                    val app = context.applicationContext\n                    handler.post { KeyguardCover.runAfterUnlock(app, \"our lock left LOCKED\") }"))
@@ -278,5 +280,38 @@ class AndroidLockFaceTest {
         // The face leaves as a plain fade; own mode's leave is unchanged.
         assertTrue(activity.substringAfter("private fun go(plan: LockLeave) {").substringBefore("\n    }\n")
             .contains("if (AndroidLock.faceOn) overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, android.R.anim.fade_out)"))
+    }
+
+    @Test
+    fun `R1 - as the face a pause in the SOS window is the mark, so a cold SOS screen is never re-fronted over`() {
+        // The rc.2 run: the SOS screen drew 0.9-1.2 s after the glance's pause, past the pause's 700 ms check.
+        assertTrue(sosMarkAtPause(androidFace = true, ours = false, lastScreenOnAtMs = 10_000L, pausedAtMs = 10_900L, sosAppPresent = true))
+        assertFalse("own mode keeps its stop-only mark (Recents only pauses it)", sosMarkAtPause(false, false, 10_000L, 10_900L, true))
+        assertFalse("the pad's ask or our own start", sosMarkAtPause(true, ours = true, lastScreenOnAtMs = 10_000L, pausedAtMs = 10_900L, sosAppPresent = true))
+        assertFalse("outside the window", sosMarkAtPause(true, false, 10_000L, 10_001L + SOS_GESTURE_WINDOW_MS, true))
+        assertFalse("no SOS app", sosMarkAtPause(true, false, 10_000L, 10_900L, false))
+        assertFalse("no screen-on yet", sosMarkAtPause(true, false, null, 10_900L, true))
+        // The marked loss yields "sos" at the pause's check, before the face's re-front.
+        assertEquals(RefrontAction.Yield("sos"), refrontAction(face.copy(sosFlow = true), 0))
+        // The glue: the pause marks before its check is scheduled; the stop's mark is own mode's, unchanged.
+        val runtime = code("$lock/PinLockRuntime.kt")
+        val paused = runtime.substringAfter("fun onLockPaused(").substringBefore("\n    }\n")
+        val mark = paused.indexOf("if (sosMarkAtPause(AndroidLock.faceOn, ours, lastScreenOnElapsed, pausedNow, sosPackage != null)) noteProbableSos(pausedNow)")
+        assertTrue(mark > paused.indexOf("if (!pauseStartsRefront(chromeLocked, finishing)) return"))
+        assertTrue(mark < paused.indexOf("handler.postDelayed(refrontCheck"))
+        assertTrue(paused.contains("val ours = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, pausedNow)"))
+        assertTrue(runtime.substringAfter("fun onLockStopped(").substringBefore("\n    }\n").contains("noteProbableSos(SystemClock.elapsedRealtime())"))
+        assertTrue(runtime.substringAfter("private fun noteProbableSos(leftFrontAt: Long) {").substringBefore("\n    }\n")
+            .contains("if (!sosGestureLikely(lastScreenOnElapsed, leftFrontAt, sosAppPresent = sosPackage != null)) return"))
+    }
+
+    @Test
+    fun `R4 - a start sent at once drops its queued copy - one time-rule screen after the unlock`() {
+        val cover = code("$lock/KeyguardCover.kt")
+        val after = cover.substringAfter("fun afterAndroidUnlock(").substringBefore("\n    }\n")
+        assertTrue(after.contains(sentAtOnce))
+        val drop = cover.substringAfter("private fun dropWaiting(context: Context, key: String) {").substringBefore("\n    }\n")
+        assertTrue(drop.contains("if (waiting.remove(key) != null)"))
+        assertTrue("the queue is the main thread's", drop.contains("handler.post { dropWaiting(app, key) }"))
     }
 }

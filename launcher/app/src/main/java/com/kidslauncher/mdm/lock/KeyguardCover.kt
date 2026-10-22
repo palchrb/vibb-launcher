@@ -451,6 +451,9 @@ object KeyguardCover {
      */
     fun afterAndroidUnlock(context: Context, key: String, send: (Context) -> Unit) {
         if (!AndroidLock.refrontHeld(context)) {
+            // The rc.2 run's R4: sent now, so a queued copy of the same start (it would run when the queue goes, a few
+            // ms later - two stacked time-rule screens) is dropped: one path only.
+            dropWaiting(context, key)
             send(context)
             return
         }
@@ -462,6 +465,16 @@ object KeyguardCover {
         Log.i(LOG_TAG, "$key waits for Android's unlock")
         waiting.remove(key)
         waiting[key] = send
+    }
+
+    /** [key]'s queued start goes (it is being sent now) - on the main thread, which owns the queue. */
+    private fun dropWaiting(context: Context, key: String) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            if (waiting.remove(key) != null) Log.i(LOG_TAG, "$key: sent now - the queued one dropped")
+        } else {
+            val app = context.applicationContext
+            handler.post { dropWaiting(app, key) }
+        }
     }
 
     /** Our lock left LOCKED (59d step A): what waited for the unlock goes, unless a keyguard still holds it. Main thread. */

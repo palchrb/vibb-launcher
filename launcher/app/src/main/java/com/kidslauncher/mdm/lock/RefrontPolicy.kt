@@ -320,6 +320,17 @@ const val SOS_PAUSE_GRACE_MS = 700L
 fun pauseRefrontDelayMs(lastScreenOnAtMs: Long?, pausedAtMs: Long): Long =
     if (sosGestureLikely(lastScreenOnAtMs, pausedAtMs, sosAppPresent = true)) SOS_PAUSE_GRACE_MS else PAUSE_REFRONT_MS
 
+/**
+ * The rc.2 run's R1 (Medium): the SOS gesture's activity pauses the glance at its start, and a cold SOS app draws -
+ * stopping the glance - 0.9-1.2 s later (the emulator), past [SOS_PAUSE_GRACE_MS]: the pause's check re-fronted over the
+ * countdown. As Android's face ([androidFace]) a pause inside the gesture's window is the mark itself: Android's locked
+ * keyguard refuses Recents (P59-1), so nothing a pause-only cover could hide needs the fast re-front there. Never for a
+ * pause of ours ([ours]: the pad's ask, our own start). Own mode keeps its stop-only mark (Recents only pauses it and
+ * must be covered again, bug 25b-A).
+ */
+fun sosMarkAtPause(androidFace: Boolean, ours: Boolean, lastScreenOnAtMs: Long?, pausedAtMs: Long, sosAppPresent: Boolean): Boolean =
+    androidFace && !ours && sosGestureLikely(lastScreenOnAtMs, pausedAtMs, sosAppPresent)
+
 /** A probable SOS is left alone until [untilMs] - never while one of our own screens is in front. */
 fun sosFlowNow(untilMs: Long, nowMs: Long, ownScreenInFront: Boolean): Boolean = nowMs < untilMs && !ownScreenInFront
 

@@ -244,6 +244,10 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
     (`androidFreshLoss`), a cancelled ask stays ours for 2 min, Android open with no `USER_PRESENT` waits once
     (`AndroidWait`) before own mode's backstop, the pad's success leaves as in front (`leaveFromAsk`), the "sos" yield
     narrows no lock task, and no digit is taken under Android's pad (`keypadEnabled`).
+  - *The rc.2 run's fix round* (`docs/testing/2026-10-22-rc2-run.md`): as the face a pause of the glance in the SOS
+    window, not ours, is the probable-SOS mark (`sosMarkAtPause`; R1 - own mode keeps its pause re-front for Recents),
+    and a queued start sent at once drops its queued copy (`KeyguardCover.dropWaiting`; R4: one time-rule screen).
+    R2 (an unlock into a lock-task helper, kiosk off) waits for a decision; R3 is a label only.
 - **The glance leaves only on Android's verdict** (`faceStep`, §3.3): the PIN pad's `onDismissSucceeded`, or a
   `USER_PRESENT` since our lock last went LOCKED (the mark is reset at every LOCKED edge, screen-off and remote lock).
   A not-locked read alone waits `ANDROID_ANSWER_WAIT_MS` (1 s; `ANDROID_UNLOCK_WAIT_MS` 3 s once Android read

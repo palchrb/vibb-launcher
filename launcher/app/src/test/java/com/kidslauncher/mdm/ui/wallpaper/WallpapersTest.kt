@@ -87,6 +87,11 @@ class WallpapersTest {
             .map { java.io.File(it) }.first { it.exists() }.readText()
         assertTrue(applier.contains("return wallpaperKey(home, w, h, com.kidslauncher.mdm.lock.AndroidLock.faceOn)"))
         assertTrue(applier.contains("val lock = lockScreenFill(home, com.kidslauncher.mdm.lock.AndroidLock.faceOn)"))
+        // The rc.2 run's R3: one fill on both is one set with both flags (the rollback) - SystemUI's ThemeOverlayController
+        // labels such a set "home" (color_both 1); the face's lock-first, home-last pair keeps the palette on home's colours.
+        val setBoth = applier.substringAfter("private fun setBoth(").substringBefore("\n    }\n")
+        assertTrue(setBoth.contains("if (lock == home.fill) {\n                systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)"))
+        assertTrue(setBoth.indexOf("WallpaperManager.FLAG_LOCK) != 0") < setBoth.indexOf("WallpaperManager.FLAG_SYSTEM)\n"))
     }
 
     @Test
