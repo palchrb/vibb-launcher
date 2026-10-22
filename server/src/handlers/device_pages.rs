@@ -776,10 +776,13 @@ struct LockTemplate {
     keyguard_android: bool,
     /// "Send the Child PIN again" ([crate::kid_lock::offers_send_again]).
     send_again: bool,
-    /// What "Show Child PIN…" answered on this page (design 59 §2.2); `None` on a GET.
-    reveal: Option<RevealView>,
-    /// The reveal's password form: before a reveal and after a wrong password.
-    reveal_form: bool,
+    /// What "Show Child PIN…" showed on this page (design 59 §2.2): the PIN or why there is
+    /// none; `None` on a GET and after a wrong password, when the form shows (with the error).
+    reveal_shown: Option<RevealView>,
+    reveal_error: Option<String>,
+    /// The page answers Show Child PIN: `static/reveal.js` turns its history entry into a GET
+    /// (a reload never posts the password again) and hides the PIN when the page is left.
+    reveal_answer: bool,
     /// Parent PIN: set, easy, its flash, the phone's reports ("Recent use").
     parent: crate::handlers::parent_pin::ParentPinCard,
     /// A refused (or easy) Parent PIN opens its form again.
@@ -924,9 +927,10 @@ pub async fn lock_action(
         )
             .into_response();
     }
-    if let Err(answer) = load_device(&state, id).await {
-        return answer.into_response();
-    }
+    let device = match load_device(&state, id).await {
+        Ok(device) => device,
+        Err(answer) => return answer.into_response(),
+    };
     let password = form.get("password").map(String::as_str).unwrap_or_default();
     let log = |event: &'static str| {
         let (db, username) = (state.db.clone(), admin.username.clone());
@@ -963,7 +967,12 @@ pub async fn lock_action(
             let lock_state = crate::kid_lock::parse_lock_state(
                 latest.as_ref().and_then(|s| s.lock_state_json.as_deref()),
             );
-            let phone = phone_lock(latest.as_ref(), lock_state.as_ref(), false);
+            // What the phone has, from this install's reports only (S2P-4).
+            let phone = phone_lock(
+                since_enrolment(device.enrolled_at.as_deref(), latest.as_ref()),
+                lock_state.as_ref(),
+                false,
+            );
             let shown = crate::kid_lock::shown_pin(state.kid_pin_key.as_deref(), &kept, id, &phone);
             log("kid_pin_shown").await;
             Reveal::Shown(shown)
@@ -985,6 +994,15 @@ fn phone_lock<'a>(
         android_capable: has_capability(latest, crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
         pin_waiting,
     }
+}
+
+/// The last report when it came from this enrollment (`reported_at >= devices.enrolled_at`, the
+/// text comparison `models::ENROLLED_AT` makes in SQL), else `None`: an earlier install's.
+fn since_enrolment<'a>(
+    enrolled_at: Option<&str>,
+    latest: Option<&'a DeviceStatus>,
+) -> Option<&'a DeviceStatus> {
+    latest.filter(|s| s.reported_at.as_str() >= enrolled_at.unwrap_or(""))
 }
 
 /// The newest `set_kid_pin` of this enrollment, as the Child PIN group shows it.
@@ -1052,7 +1070,17 @@ async fn render_lock(
         pin_send == Some(crate::kid_lock::PinSend::Waiting),
     );
     let child = crate::kid_lock::lock_card(&policy, &phone, now.timestamp_millis());
-    let send_again = crate::kid_lock::offers_send_again(&policy, &phone, pin_send.as_ref());
+    // "Send again" reads only this install's reports, as the queue rule does (qa-59-step2-code
+    // S2P-4, step 1's S59-3): before a re-enrolled phone's first report, no button.
+    let send_again = crate::kid_lock::offers_send_again(
+        &policy,
+        &phone_lock(
+            since_enrolment(device.enrolled_at.as_deref(), latest.as_ref()),
+            lock_state.as_ref(),
+            phone.pin_waiting,
+        ),
+        pin_send.as_ref(),
+    );
     // The report's time on "On the phone", so an old report never reads as now (qa-31-s4-code L3).
     let reported = latest
         .as_ref()
@@ -1099,7 +1127,11 @@ async fn render_lock(
     let screen_timeout_seconds =
         crate::models::screen_timeout_seconds(policy.screen_timeout_seconds);
     let child_flash = notice.and_then(crate::kid_lock::flash_text);
-    let status = if matches!(reveal, Some(Reveal::Wrong { .. })) {
+    let reveal_answer = reveal.is_some();
+    let mut reveal_view = reveal.map(RevealView::of);
+    let reveal_error = reveal_view.as_mut().and_then(|r| r.error.take());
+    let reveal_shown = reveal_view.filter(|r| r.pin.is_some() || r.message.is_some());
+    let status = if reveal_error.is_some() {
         StatusCode::BAD_REQUEST
     } else {
         StatusCode::OK
@@ -1115,8 +1147,9 @@ async fn render_lock(
             && notice != Some("pin_not_sent"),
         keyguard_android,
         send_again,
-        reveal_form: !matches!(reveal, Some(Reveal::Shown(_))),
-        reveal: reveal.map(RevealView::of),
+        reveal_answer,
+        reveal_error,
+        reveal_shown,
         parent_open: parent.notice.is_some_and(|(_, warning)| warning),
         no_parent_pin: crate::handlers::devices::managed_without_pin(&policy),
         offline_override_used: latest.as_ref().is_some_and(|s| s.offline_override_used),
@@ -1773,6 +1806,20 @@ pub(crate) fn escapes_card(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// S2P-4: an earlier install's report isn't this one's.
+    #[test]
+    fn only_a_report_since_the_enrolment_counts() {
+        let report = DeviceStatus {
+            reported_at: "2026-10-22 10:00:00".to_string(),
+            ..Default::default()
+        };
+        assert!(since_enrolment(Some("2026-10-22 09:59:59"), Some(&report)).is_some());
+        assert!(since_enrolment(Some("2026-10-22 10:00:00"), Some(&report)).is_some());
+        assert!(since_enrolment(Some("2026-10-22 10:00:01"), Some(&report)).is_none());
+        assert!(since_enrolment(None, Some(&report)).is_some());
+        assert!(since_enrolment(Some("2026-10-22 09:00:00"), None).is_none());
+    }
 
     #[test]
     fn versions_read_short() {

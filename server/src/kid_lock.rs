@@ -918,12 +918,14 @@ pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockC
         return card;
     };
     let runs_android = phone.runs_android();
-    // Android's own credential is own mode's warning only (§2.3): with Android's lock chosen it
-    // isn't advice to give, and a phone whose gate is Android's PIN reports it while a rollback
-    // waits for the token - "Switching back" says that (qa-59-revision N-C).
+    // Android's own credential is no warning while the phone runs Android's lock: its gate is
+    // Android's PIN, and it reports the credential while a rollback waits for the token -
+    // "Switching back" says that (qa-59-revision N-C). A phone still on Vibb One's lock with an
+    // Android PIN it didn't set keeps the warning and the alarm, whichever lock is chosen
+    // (qa-59-step2-code S2P-2): Vibb One's lock is off there.
     let credential = state.inactive.as_deref() == Some("android_credential");
     if let Some(off) = state.inactive.as_deref().and_then(Inactive::parse)
-        && !(credential && (android || runs_android))
+        && !(credential && runs_android)
     {
         card.notes.push(LockNote::Off(off));
     }
@@ -1752,11 +1754,15 @@ mod tests {
             [LockNote::Off(Inactive::AndroidCredential)]
         );
         assert!(lock_off(&own, &android_phone(&credential)));
-        // ...but not with Android's lock chosen (§2.3).
+        // ...and with Android's lock chosen, while the phone still runs Vibb One's (S2P-2).
         assert_eq!(
             lock_card(&p, &android_phone(&credential), 0).notes,
-            [LockNote::AndroidWaiting { sending: false }]
+            [
+                LockNote::Off(Inactive::AndroidCredential),
+                LockNote::AndroidWaiting { sending: false }
+            ]
         );
+        assert!(lock_off(&p, &android_phone(&credential)));
         // The words: warnings short, the commands nowhere; the rows' values.
         for note in [
             LockNote::AndroidNeedsUpdate,

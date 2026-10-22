@@ -661,11 +661,12 @@ async fn lock_forms_return_to_the_page() {
             &[("keyguard", "android")],
             (lock.clone(), Some("lock-keyguard")),
         ),
-        // "Show Child PIN…": answered with the page itself on its own path (no redirect).
+        // "Show Child PIN…": answered with the page itself on its own path (no redirect, the
+        // PIN in no address), the form at its own row's fragment (qa-59-step2-code S2P-3).
         (
-            "lock",
+            "lock#show-pin",
             &[("password", "correct horse battery staple")],
-            (lock.clone(), None),
+            (lock.clone(), Some("show-pin")),
         ),
         // Remove Child PIN… (its hidden `clear_kid_pin`).
         (
@@ -725,7 +726,7 @@ async fn lock_forms_return_to_the_page() {
         let res = app
             .request_form(Method::POST, action, Some(&cookie), &sent)
             .await;
-        if *action == lock {
+        if *action == format!("{lock}#show-pin") {
             assert_eq!(res.status, StatusCode::OK, "{action}");
             assert!(res.text().contains("data-shown=\"child-pin\""), "{action}");
             continue;

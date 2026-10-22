@@ -582,8 +582,10 @@ Server only (§2.2, §2.3); notes in `docs/notes/server/hardening-and-pins.md` (
   autofill). Browsers may still offer a saved password there; the field never holds the PIN, which is shown as text.
 - **The re-auth helper** (`admin_auth::reauth`, and `record_reauth` for the two forms whose check is
   `PasswordGate::change`) covers Account's password form (`update_account_password`) besides `change_password` and
-  `reset_totp`: four forms, one session counter. The third wrong in a row flushes the session, logs
-  `reauth_signed_out` and answers `/login`; a session that can't store the count is ended too.
+  `reset_totp`: four forms, one count. The third wrong in a row flushes the session, logs
+  `reauth_signed_out` and answers `/login`. Since the code QA's fix round the count is the account's
+  (`admin_users.reauth_wrong`, migration 0086, one `UPDATE` per answer) and the third moves the session epoch, which
+  ends every session of the account (S2P-1: a count in the session could be raced and revived).
 - **"Send the Child PIN again"** is offered whenever Android's lock is chosen, a copy is kept, the phone has the
   capability and doesn't run the current PIN (`keyguard: own`, `pin_rev` null or another), and nothing is waiting or in
   flight - not only after a refusal (§2.3): a success the phone's report didn't follow and an unconfirmed delivery
@@ -592,7 +594,9 @@ Server only (§2.2, §2.3); notes in `docs/notes/server/hardening-and-pins.md` (
   summary's Activity, which lists every command, names it "Child PIN to the phone" and words its answers with the same
   `kid_lock::PinAnswer` (§2.3 kept `LOCATE_KINDS` unchanged; Locate's list never shows it).
 - **The lock-off alarm** (`kid_lock::lock_off`) now reads `lock_card`'s notes, so the N-C pair (Android's PIN still the
-  gate while a rollback waits) raises no "Lock is off on the phone"; "Vibb One can't change Android's PIN" shows only
+  gate while a rollback waits) raises no "Lock is off on the phone". §2.3's "`Inactive::AndroidCredential`'s warning
+  only while own is requested" is narrowed by the fix round (S2P-2): no warning only while the phone runs Android's
+  lock; a phone on Vibb One's lock with an Android PIN keeps the warning and the alarm whichever lock is chosen; "Vibb One can't change Android's PIN" shows only
   while Android's lock is chosen (on the way back it is "Android's PIN is still on").
 - **The summary's lock value** follows the parent's choice ("PIN on · Android's lock"), like its other values; the
   Devices list has no lock value. "On the phone" carries what the phone reports ("Locked · Android's lock · 10:59").
@@ -604,3 +608,13 @@ setup): the switch, Show Child PIN wrong and right, Send again and the switch ba
 again, whose row goes, the group's header) at the same screen position, except the switch back to Vibb One's lock at the
 top of the page, where the removed warning leaves nothing to scroll (the page can't scroll above 0). Every text node
 at or above WCAG AA in both schemes; no horizontal scroll; the third wrong password landed on `/login`.
+
+**Code QA fix round** (`docs/review/qa-59-step2-code.md`): S2P-1 above. S2P-3: the reveal posts to
+`/devices/{id}/lock#show-pin` (without JS the answer lands on its row; the fragment never reaches the server), and
+`check_forms` has no exception for it any more. S2P-4: Send again and the reveal's "the phone still has" read only a
+report since the enrolment. S2P-5: the shown PIN is in a plain cell (not a `<details>` whose reopening would restart
+it) and hides after a minute by CSS alone; `static/reveal.js` empties it on `pagehide` and when the page is hidden.
+S2P-6: post/redirect/get is out (the PIN in no address), so `reveal.js` turns the answer's history entry into a GET
+(`history.replaceState`): a reload or Back loads the page without the PIN and never posts the password again; without
+JS the browser asks before resubmitting, as for any form. Checked in Chromium: a reload after the reveal is one GET
+with no PIN, the digits' computed visibility is `hidden` at the animation's end, the reveal row kept its place.

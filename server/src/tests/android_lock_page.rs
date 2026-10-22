@@ -207,6 +207,9 @@ async fn show_child_pin_needs_the_password() {
     );
     let text = right.text();
     assert!(text.contains("<p class=\"pin-digits\" translate=\"no\">4826</p>"));
+    // S2P-5/6: hidden after a minute (CSS) and on leaving, the history entry made a GET (JS).
+    assert!(text.contains("Hidden after a minute."));
+    assert!(text.contains("<script src=\"/static/reveal.js?v=1\"></script>"));
     assert!(
         text.contains("<body data-post-answer"),
         "never reloaded in place"
@@ -255,6 +258,90 @@ async fn show_child_pin_needs_the_password() {
     assert_eq!(events(&app, "reauth_signed_out").await.len(), 1);
     let after = app.get_page(&format!("/devices/{id}/lock"), &cookie).await;
     assert_eq!(after.location(), Some("/login"), "signed out");
+}
+
+/// qa-59-step2-code S2P-1: wrong passwords sent at once each count (the count is the account's,
+/// one `UPDATE` each), so three in parallel end the session as three in a row do.
+#[tokio::test]
+async fn parallel_wrong_passwords_all_count() {
+    let (app, cookie, id, _) = setup().await;
+    let epoch = || async {
+        sqlx::query_scalar::<_, i64>("SELECT session_epoch FROM admin_users")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    let before = epoch().await;
+    let (a, b, c) = tokio::join!(
+        reveal(&app, &cookie, id, "not it"),
+        reveal(&app, &cookie, id, "not it 2"),
+        reveal(&app, &cookie, id, "not it 3"),
+    );
+    let signed_out = [&a, &b, &c]
+        .iter()
+        .filter(|res| res.location() == Some("/login"))
+        .count();
+    assert_eq!(signed_out, 1, "{:?}", [a.status, b.status, c.status]);
+    let after = app.get_page(&format!("/devices/{id}/lock"), &cookie).await;
+    assert_eq!(after.location(), Some("/login"));
+    assert_eq!(events(&app, "reauth_signed_out").await.len(), 1);
+    // Every session of the account ends (the epoch), and the count starts over.
+    assert_eq!(epoch().await, before + 1);
+    let wrong: i64 = sqlx::query_scalar("SELECT reauth_wrong FROM admin_users")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(wrong, 0);
+}
+
+/// S2P-1: a request that passed the session check before the third wrong password ended the
+/// session, and finishes afterwards, doesn't bring it back (the count is no longer in its copy of
+/// the session, and the third one moved the account's session epoch - pinned by
+/// [parallel_wrong_passwords_all_count]); its own wrong password still counts.
+#[tokio::test]
+async fn a_held_request_cant_bring_the_session_back() {
+    use tower::ServiceExt;
+    let (app, cookie, id, _) = setup().await;
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(1);
+    let mut held = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri(format!("/devices/{id}/lock"))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::COOKIE, &cookie)
+        .body(axum::body::Body::from_stream(
+            tokio_stream::wrappers::ReceiverStream::new(rx),
+        ))
+        .unwrap();
+    held.extensions_mut()
+        .insert(axum::extract::ConnectInfo(super::LOOPBACK_PEER));
+    let router = app.router.clone();
+    let task = tokio::spawn(async move { router.oneshot(held).await.unwrap() });
+    // Past the session check, waiting for its body.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    for _ in 0..2 {
+        assert_eq!(
+            reveal(&app, &cookie, id, "not it").await.status,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        reveal(&app, &cookie, id, "not it").await.location(),
+        Some("/login")
+    );
+    tx.send(Ok(axum::body::Bytes::from_static(
+        b"action=reveal_kid_pin&password=not+it",
+    )))
+    .await
+    .unwrap();
+    drop(tx);
+    let answer = task.await.unwrap();
+    assert_eq!(
+        answer.status(),
+        StatusCode::BAD_REQUEST,
+        "it counted, nothing more"
+    );
+    let after = app.get_page(&format!("/devices/{id}/lock"), &cookie).await;
+    assert_eq!(after.location(), Some("/login"), "still signed out");
 }
 
 /// Q59-11: one count for every form that asks for the password again - wrong at the password

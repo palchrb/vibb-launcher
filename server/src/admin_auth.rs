@@ -135,9 +135,7 @@ pub fn busy_response() -> Response {
         .into_response()
 }
 
-/// The session's count of wrong passwords in a row at the forms that ask for the password again.
-pub const REAUTH_WRONG_KEY: &str = "reauth_wrong";
-/// The wrong password in a row that ends the session.
+/// The wrong password in a row that ends the sessions.
 pub const REAUTH_MAX_WRONG: i64 = 3;
 
 /// A form that asks a signed-in parent for the password again ([reauth]).
@@ -145,10 +143,10 @@ pub const REAUTH_MAX_WRONG: i64 = 3;
 pub enum Reauth {
     /// The password; the count is reset.
     Right,
-    /// Wrong; `left` more wrong ones end the session.
+    /// Wrong; `left` more wrong ones end the sessions.
     Wrong { left: i64 },
-    /// The [REAUTH_MAX_WRONG]th wrong one in a row: the session is ended (sign in again, with
-    /// 2FA). Answer with [signed_out_response].
+    /// The [REAUTH_MAX_WRONG]th wrong one in a row: every session of the account is ended (sign in
+    /// again, with 2FA). Answer with [signed_out_response].
     SignedOut,
     /// Too many password checks at once (429, [busy_response]); nothing counted.
     Busy,
@@ -173,10 +171,13 @@ pub async fn reauth(
     }
 }
 
-/// Counts a re-auth's outcome in the session (for a form whose check is [PasswordGate::change]):
-/// a right password resets the count; the [REAUTH_MAX_WRONG]th wrong one in a row ends the
-/// session (logged `reauth_signed_out`). A session that can't store the count is ended too: the
-/// limit never lapses.
+/// Counts a re-auth's outcome (also for a form whose check is [PasswordGate::change]) in the
+/// account's row, `admin_users.reauth_wrong`, one statement each (qa-59-step2-code S2P-1: a count
+/// in the session was each request's own copy, so parallel requests, or an older request writing
+/// its copy back, could reset it). A right password sets it to 0. The [REAUTH_MAX_WRONG]th wrong
+/// one in a row sets it to 0 and moves the session epoch in the same `UPDATE`, which ends every
+/// session of the account - also one a request still in flight writes back later -, flushes this
+/// one and logs `reauth_signed_out`. A database error ends the session too: the limit never lapses.
 pub async fn record_reauth(
     db: &sqlx::SqlitePool,
     session: &tower_sessions::Session,
@@ -184,20 +185,42 @@ pub async fn record_reauth(
     right: bool,
 ) -> Reauth {
     if right {
-        session.remove::<i64>(REAUTH_WRONG_KEY).await.ok();
-        return Reauth::Right;
-    }
-    let wrong = session
-        .get::<i64>(REAUTH_WRONG_KEY)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(0)
-        .saturating_add(1);
-    if wrong < REAUTH_MAX_WRONG && session.insert(REAUTH_WRONG_KEY, wrong).await.is_ok() {
-        return Reauth::Wrong {
-            left: REAUTH_MAX_WRONG - wrong,
-        };
+        match sqlx::query("UPDATE admin_users SET reauth_wrong = 0 WHERE id = ?")
+            .bind(admin.id)
+            .execute(db)
+            .await
+        {
+            Ok(_) => return Reauth::Right,
+            Err(err) => {
+                tracing::error!(%err, "couldn't reset the wrong-password count; signing out");
+                bump_epoch(db, admin.id).await;
+            }
+        }
+    } else {
+        // The new count, or 0 when this one ended the sessions.
+        let counted: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
+            "UPDATE admin_users SET \
+             reauth_wrong = CASE WHEN reauth_wrong + 1 >= ?1 THEN 0 ELSE reauth_wrong + 1 END, \
+             session_epoch = CASE WHEN reauth_wrong + 1 >= ?1 THEN session_epoch + 1 \
+               ELSE session_epoch END \
+             WHERE id = ?2 RETURNING reauth_wrong",
+        )
+        .bind(REAUTH_MAX_WRONG)
+        .bind(admin.id)
+        .fetch_optional(db)
+        .await;
+        match counted {
+            Ok(Some(wrong)) if wrong > 0 => {
+                return Reauth::Wrong {
+                    left: REAUTH_MAX_WRONG - wrong,
+                };
+            }
+            Ok(Some(_)) => {}
+            _ => {
+                tracing::error!(?counted, "couldn't count a wrong password; signing out");
+                bump_epoch(db, admin.id).await;
+            }
+        }
     }
     session.flush().await.ok();
     crate::security::record_security_event(
@@ -205,12 +228,13 @@ pub async fn record_reauth(
         "reauth_signed_out",
         Some(&admin.username),
         None,
-        Some("3 wrong passwords in a row at a form that asks for it again"),
+        Some(
+            "3 wrong passwords in a row at a form that asks for it again: every session signed out",
+        ),
     )
     .await;
     Reauth::SignedOut
 }
-
 /// The answer after [Reauth::SignedOut]: the sign-in page.
 pub fn signed_out_response() -> Response {
     axum::response::Redirect::to("/login").into_response()
@@ -319,10 +343,11 @@ pub async fn take_totp_attempt(
     .await
 }
 
-/// After a complete login: counter, locks and lock count start over.
+/// After a complete login: counter, locks, lock count and the re-auth forms' wrong count start over.
 pub async fn reset_after_login(db: &sqlx::SqlitePool, admin_id: i64) {
     sqlx::query(
-        "UPDATE admin_users SET failed_login_attempts = 0, lock_count = 0, locked_until = NULL \
+        "UPDATE admin_users SET failed_login_attempts = 0, lock_count = 0, locked_until = NULL, \
+         reauth_wrong = 0 \
          WHERE id = ?",
     )
     .bind(admin_id)

@@ -1661,6 +1661,22 @@ details.edit[open] > summary .chev {
     font-variant-numeric: tabular-nums;
 }
 
+/* The shown PIN (and the one the phone still has) goes after a minute, with or without JS
+   (qa-59-step2-code S2P-5); static/reveal.js also removes it when the page is left. */
+.pin-digits,
+.pin-inline {
+    -webkit-animation: pin-hide 0s linear 60s forwards;
+    animation: pin-hide 0s linear 60s forwards;
+}
+
+@-webkit-keyframes pin-hide {
+    to { visibility: hidden; }
+}
+
+@keyframes pin-hide {
+    to { visibility: hidden; }
+}
+
 .pin-line,
 .edit-body > .pin-line:first-child {
     margin: 0 4px;
