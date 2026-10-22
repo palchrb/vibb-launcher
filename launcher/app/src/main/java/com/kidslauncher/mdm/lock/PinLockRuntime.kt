@@ -544,7 +544,7 @@ object PinLockRuntime {
             // Design 16b: a boot cover still enabled hands over first (so the typed HOME start
             // below resolves to HomeActivity only), and the shutdown receiver re-arms it.
             try {
-                BootCover.init(app, callLive = BootHome.callLive(app))
+                BootCover.init(app)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Boot cover init failed", e)
             }

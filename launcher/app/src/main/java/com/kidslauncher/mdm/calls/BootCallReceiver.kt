@@ -17,6 +17,12 @@ import android.util.Log
  */
 class BootCallReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // Design 59 F3 (f3-run B1): the locked-boot cover's retry alarm while a call was live - a manifest receiver,
+        // so a cached, frozen BFU process gets it (a runtime receiver's broadcast stays deferred).
+        if (intent.action == com.kidslauncher.mdm.lock.BootCover.ACTION_COVER_RETRY) {
+            com.kidslauncher.mdm.lock.BootCover.atLockedBoot(context)
+            return
+        }
         if (intent.action != Intent.ACTION_LOCKED_BOOT_COMPLETED) return
         CallPolicyStore.ensureLoaded(context)
         Log.i("BootCallReceiver", "Locked boot: call policy ${CallPolicyStore.describe()}")

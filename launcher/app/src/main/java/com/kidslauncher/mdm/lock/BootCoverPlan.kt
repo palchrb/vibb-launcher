@@ -176,7 +176,7 @@ fun coverHandOverDelayMs(unlocked: Boolean, shownForMs: Long): Long? =
 fun bootCoverAndroidMarker(wanted: Boolean, androidGate: Boolean): Boolean = wanted && androidGate
 
 /** After the unlock the cover waits this long for our main process to take over, then hands over by itself
- * and starts our Home (never stranded; the debug build's first CE start took 12.6 s in the RC run). */
+ * and starts our Home (never stranded; the debug build's first CE start took 12.6-31 s in the emulator runs). */
 const val COVER_LAUNCHER_WAIT_MS = 30_000L
 
 /** Taken over (disabled by our main process) but still in front this long: it finishes anyway (the boot's
@@ -184,51 +184,55 @@ const val COVER_LAUNCHER_WAIT_MS = 30_000L
 const val COVER_TAKEOVER_GRACE_MS = 5_000L
 
 /** Taken over but still in front this long: the cover starts our Home itself (typed HOME, now HomeActivity) - a
- * process death between the take-over and Home's start leaves nothing else to start it (F3C-2). */
-const val COVER_HOME_NUDGE_MS = 500L
+ * process death between the take-over and Home's start leaves nothing else to start it (F3C-2). 3 s, not 500 ms:
+ * the normal pass took up to ~1 s between the take-over and Home's start on the debug build (f3-run B4); the
+ * system finishing the cover first is covered by [coverDestroyStartsHome]. */
+const val COVER_HOME_NUDGE_MS = 3_000L
 
 /** Its own hand-over's disable that doesn't read back this many times: Home is started anyway (F3C-7). */
 const val COVER_DISABLE_TRIES = 4
 
+/** A locked-boot start held back by a live call is tried again this long later, by an alarm to our manifest
+ * receiver - delivered to a cached, frozen BFU process, unlike a runtime receiver's broadcast (f3-run B1). */
+const val COVER_LOCKED_BOOT_RETRY_MS = 5_000L
+
 /** What the locked boot does with the cover in android mode. */
 enum class LockedBootCover {
-    /** Nothing: not android mode, unlocked, guard tripped, our process took over, or the shutdown armed it. */
+    /** Nothing: not android mode, unlocked, guard tripped, our process took over, or the boot's HOME is the cover. */
     NONE,
 
-    /** Enable it and start it now (the screen is off, no call). */
+    /** Enable it and start it now. */
     START,
 
-    /** Wait for the next screen-off (re-checked then): the screen is on - an emergency dialer opened from the
-     * keyguard may be in front and must not go behind it - or a call is live (F3C-1). */
-    AT_SCREEN_OFF,
+    /** A call is live: try again in [COVER_LOCKED_BOOT_RETRY_MS] (an alarm, never a runtime receiver). */
+    RETRY,
 }
 
 /**
- * Android mode, at `LOCKED_BOOT_COMPLETED` (main process, before the PIN): start the cover as the typed HOME, so also
- * a boot without `ACTION_SHUTDOWN` (`adb reboot`, a crash or a hard reset) has it behind the keyguard. Never once
- * unlocked or after our process's take-over ([tookOver], F3C-6), never with a tripped guard, and not when the shutdown
- * already armed it ([alreadyArmed] - the boot's HOME is the cover then). Never over a call or with the screen on
- * ([AT_SCREEN_OFF]): the HOME start would move a call screen or the keyguard's emergency dialer behind the keyguard
- * (F3C-1); AOSP's EmergencyDialer finishes itself at the screen-off.
+ * Android mode, at `LOCKED_BOOT_COMPLETED` (main process, before the PIN) and at its retry alarm: start the cover as
+ * the typed HOME, so also a boot without the shutdown's arm (`adb reboot`, a crash or a hard reset, or a shutdown
+ * broadcast our cached process never got - f3-run B6) has it behind the keyguard. Decided at that moment (f3-run B1:
+ * a runtime receiver's later broadcast is deferred while the BFU process is frozen):
+ * - NONE once unlocked or after our process's take-over ([tookOver], F3C-6), with a tripped guard, or when the
+ *   boot's HOME already resolves to the cover ([armedAsHome]: the shutdown armed it; a HOME that resolves to the
+ *   chooser or the stock launcher is not armed - f3-run B2 - and gets the start).
+ * - RETRY while a call is live (F3C-1: a HOME start would move a BFU call screen behind the keyguard).
+ * - START otherwise. The screen state isn't read (B1's `isInteractive` race): `LOCKED_BOOT_COMPLETED` comes 1-5 s
+ *   after the boot completes, before the kid can type the PIN. A keyguard emergency dialer opened in those seconds
+ *   would go behind the keyguard - no public API tells an occluding activity apart; the kid opens it again.
  */
 fun coverAtLockedBoot(
     androidMarker: Boolean,
     unlocked: Boolean,
     guardTripped: Boolean,
     tookOver: Boolean,
-    alreadyArmed: Boolean,
+    armedAsHome: Boolean,
     callLive: Boolean,
-    interactive: Boolean,
 ): LockedBootCover = when {
-    !androidMarker || unlocked || guardTripped || tookOver || alreadyArmed -> LockedBootCover.NONE
-    callLive || interactive -> LockedBootCover.AT_SCREEN_OFF
+    !androidMarker || unlocked || guardTripped || tookOver || armedAsHome -> LockedBootCover.NONE
+    callLive -> LockedBootCover.RETRY
     else -> LockedBootCover.START
 }
-
-/** Our main process's take-over at its first start after the unlock (`BootCover.init`): own mode always (16b); in
- * android mode not while a call is live - the cover stays the HOME under the call, and `BootHome`'s retry at the
- * call's end takes over and starts Home in one pass, so the stock launcher never shows after the call (F3C-2). */
-fun coverTakeOverNow(androidMode: Boolean, callLive: Boolean): Boolean = !androidMode || !callLive
 
 enum class CoverStep {
     /** Stay up (BFU, or waiting for our main process). */
@@ -248,9 +252,11 @@ enum class CoverStep {
  * The cover's step in android mode (F3), checked every [COVER_WAIT_POLL_MS] while it is in front and once when
  * it stops. [disabled]: its component reads disabled (our main process's take-over, or its own
  * [CoverStep.HAND_OVER]); [visible]: not stopped (stopped while disabled = our Home or a call is over it - the
- * finish then reveals nothing); [homeStarted]: it started our Home itself already. Never leaves before the unlock,
- * never leaves on a stop while still enabled (the keyguard coming back, a call), and never stays past
- * [COVER_LAUNCHER_WAIT_MS] + [COVER_TAKEOVER_GRACE_MS] in front after the unlock.
+ * finish then reveals nothing); [homeStarted]: it started our Home itself already; [callLive]: a call (Telecom's view,
+ * the cover's process can't see ours) - no Home start of its own then (f3-run B5). Never leaves before the unlock,
+ * never leaves on a stop while still enabled (the keyguard coming back, a call), never starts Home while stopped or in
+ * a call, and never stays past [COVER_LAUNCHER_WAIT_MS] + [COVER_TAKEOVER_GRACE_MS] in front after the unlock once no
+ * call is live.
  */
 fun coverWaitStep(
     unlocked: Boolean,
@@ -259,12 +265,13 @@ fun coverWaitStep(
     unlockedForMs: Long,
     disabledForMs: Long,
     homeStarted: Boolean,
+    callLive: Boolean,
 ): CoverStep = when {
     !unlocked -> CoverStep.STAY
     disabled && (!visible || disabledForMs >= COVER_TAKEOVER_GRACE_MS) -> CoverStep.FINISH
-    disabled && !homeStarted && disabledForMs >= COVER_HOME_NUDGE_MS -> CoverStep.START_HOME
+    disabled && !homeStarted && !callLive && disabledForMs >= COVER_HOME_NUDGE_MS -> CoverStep.START_HOME
     disabled -> CoverStep.STAY
-    unlockedForMs >= COVER_LAUNCHER_WAIT_MS -> CoverStep.HAND_OVER
+    visible && !callLive && unlockedForMs >= COVER_LAUNCHER_WAIT_MS -> CoverStep.HAND_OVER
     else -> CoverStep.STAY
 }
 
@@ -272,6 +279,22 @@ fun coverWaitStep(
  * tries (F3C-7: the PPA may still pick HomeActivity; "never stranded" mustn't hang on the read-back). */
 fun coverHandOverStartsHome(disabledReadBack: Boolean, failedTries: Int): Boolean =
     disabledReadBack || failedTries >= COVER_DISABLE_TRIES
+
+/**
+ * f3-run B2: the cover is destroyed - its own finish, or the system's (AMS finishes a disabled component's activities
+ * on `PACKAGE_CHANGED`). Unlocked, it always disables itself (idempotent; the one HOME PPA of ours that may resolve
+ * once unlocked is HomeActivity's). In android mode, destroyed by the system while still in front with no Home of
+ * its own started and no call, it starts the typed HOME on its way out, so the stock launcher a non-graceful boot left
+ * below never comes up (a death between our take-over and Home's start).
+ */
+fun coverDestroyStartsHome(
+    waitForLauncher: Boolean,
+    unlocked: Boolean,
+    ownFinish: Boolean,
+    visible: Boolean,
+    homeStarted: Boolean,
+    callLive: Boolean,
+): Boolean = waitForLauncher && unlocked && !ownFinish && visible && !homeStarted && !callLive
 
 /** How often the cover looks at [coverWaitStep] while in front. */
 const val COVER_WAIT_POLL_MS = 250L

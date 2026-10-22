@@ -101,11 +101,12 @@ class BootCoverManifestTest {
         assertTrue(activity.substringAfter("override fun onStop()").substringBefore("\n    }").contains("waitStep(visible = false)"))
         // BootCallReceiver: the call policy first, then the cover; atLockedBoot reads no CE preferences.
         val receiver = code("java/com/kidslauncher/mdm/calls/BootCallReceiver.kt")
-        assertTrue(receiver.indexOf("CallPolicyStore.ensureLoaded") in 0 until receiver.indexOf("BootCover.atLockedBoot(context)"))
+        val lockedBoot = receiver.substringAfter("ACTION_LOCKED_BOOT_COMPLETED) return")
+        assertTrue(lockedBoot.indexOf("CallPolicyStore.ensureLoaded") in 0 until lockedBoot.indexOf("BootCover.atLockedBoot(context)"))
         val cover = code("java/com/kidslauncher/mdm/lock/BootCover.kt")
         val atBoot = cover.substringAfter("fun atLockedBoot(").substringBefore("\n    }\n") +
             cover.substringAfter("private fun lockedBootStep(").substringBefore("\n    )\n") +
-            cover.substringAfter("private fun waitForScreenOff(").substringBefore("\n    }\n")
+            cover.substringAfter("private fun retryLater(").substringBefore("\n    }\n")
         for (banned in listOf("getSharedPreferences", "prefs(", "wanted(", "LauncherPreferences", "startLockTask")) assertFalse(banned, atBoot.contains(banned))
         val callLive = code("java/com/kidslauncher/mdm/lock/BootHome.kt").substringAfter("fun callLive(").substringBefore("\n\n")
         for (banned in listOf("getSharedPreferences", "LauncherPreferences", "currentPolicyDecision")) assertFalse(banned, callLive.contains(banned))
@@ -135,17 +136,30 @@ class BootCoverManifestTest {
         val start = atBoot.substringAfter("LockedBootCover.START ->")
         assertTrue(start.contains(".setPackage(app.packageName)"))
         assertTrue(start.indexOf("setEnabled(app, true") in 0 until start.indexOf("app.startActivity("))
-        assertTrue(atBoot.contains("LockedBootCover.AT_SCREEN_OFF -> waitForScreenOff(app)"))
+        assertTrue(atBoot.contains("LockedBootCover.RETRY -> retryLater(app)"))
         val step = cover.substringAfter("private fun lockedBootStep(").substringBefore("\n    )\n")
         for (needed in listOf(
             "androidMarker = BootCoverGuard.androidMode(app)", "isUserUnlocked", "coverGuardTripped(BootCoverGuard.read(app))",
-            "tookOver = tookOver", "alreadyArmed = isEnabled(app)", "callLive = BootHome.callLive(app)", "isInteractive",
+            "tookOver = tookOver", "armedAsHome = armedAsHome(app)", "callLive = BootHome.callLive(app)",
         )) assertTrue(needed, step.contains(needed))
-        assertTrue(cover.substringAfter("private fun waitForScreenOff(").contains("Intent.ACTION_SCREEN_OFF) atLockedBoot(context)"))
-        // F3C-6 and F3C-2: init marks the take-over, and takes over only per the rule.
-        val init = cover.substringAfter("fun init(context: Context, callLive: Boolean)").substringBefore("\n    }\n")
-        assertTrue(init.indexOf("tookOver = true") in 0 until init.indexOf("coverTakeOverNow("))
-        assertTrue(init.contains("coverTakeOverNow(BootCoverGuard.androidMode(app), callLive)"))
+        // f3-run B1: no runtime receiver waits for anything before the PIN (deferred while the process is frozen), and
+        // the screen isn't read; the retry is an alarm to the manifest receiver.
+        for (banned in listOf("registerReceiver(", "ACTION_SCREEN_OFF", "isInteractive")) {
+            assertFalse(banned, (atBoot + step + cover.substringAfter("private fun retryLater(").substringBefore("\n    }\n")).contains(banned))
+        }
+        val retryIntent = cover.substringAfter("private fun retryIntent(").substringBefore("\n    )\n")
+        assertTrue(retryIntent.contains("Intent(app, com.kidslauncher.mdm.calls.BootCallReceiver::class.java).setAction(ACTION_COVER_RETRY)"))
+        assertTrue(cover.substringAfter("private fun retryLater(").substringBefore("\n    }\n").contains("setExactAndAllowWhileIdle("))
+        val receiverCode = code("java/com/kidslauncher/mdm/calls/BootCallReceiver.kt")
+        assertTrue(receiverCode.substringAfter("BootCover.ACTION_COVER_RETRY)").substringBefore("return").contains("BootCover.atLockedBoot(context)"))
+        // B2: the boot's HOME is read, not assumed from the component's state.
+        val armed = cover.substringAfter("private fun armedAsHome(").substringBefore("\n    }\n")
+        assertTrue(armed.contains("home.name == BootCoverActivity::class.java.name"))
+        // f3-run B2: init marks the take-over and takes over at every CE start, whatever a call does.
+        val init = cover.substringAfter("fun init(context: Context)").substringBefore("\n    }\n")
+        assertTrue(init.indexOf("tookOver = true") in 0 until init.indexOf("takeOver(app)"))
+        assertFalse(init.contains("callLive"))
+        assertTrue("unconditional, at the function's top level", init.contains("\n        takeOver(app)"))
         // M10: the cover reads the marker.
         val activity = code("java/com/kidslauncher/mdm/lock/BootCoverActivity.kt")
         assertTrue(activity.substringAfter("override fun onCreate(").substringBefore("\n    }\n").contains("waitForLauncher = BootCoverGuard.androidMode(this)"))
@@ -159,10 +173,60 @@ class BootCoverManifestTest {
         val retry = home.substringAfter("fun callMayHaveEnded(").substringBefore("\n    }\n")
         assertTrue(retry.indexOf("BootCover.takeOver(app)") in 0 until retry.indexOf("startIfDue(app, lockActive"))
         val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
-        assertTrue(runtime.contains("BootCover.init(app, callLive = BootHome.callLive(app))"))
+        assertTrue(runtime.contains("BootCover.init(app)"))
         assertTrue(runtime.substringAfter("private val callsListener").substringBefore("\n    }\n").contains("BootHome.callMayHaveEnded(ctx)"))
         assertTrue(runtime.substringAfter("fun onVoipPhase(").substringBefore("\n    }\n").contains("BootHome.callMayHaveEnded(app)"))
         assertTrue(runtime.substringAfter("private val screenReceiver").substringBefore("\n    }\n").contains("BootHome.callMayHaveEnded(app)"))
+    }
+
+    /**
+     * f3-run B2 (the system's Home chooser after two graceful boots): exactly one HOME PPA of ours may resolve once
+     * unlocked - HomeActivity's. The cover is enabled only at the shutdown (its arm) and at the locked boot's START
+     * (before the unlock, [coverAtLockedBoot]); every unlocked start of our process disables it, and the cover disables
+     * itself on every way out once unlocked. A disabled cover's PPA is inert (ComputerEngine matches a PPA only against
+     * components in the query).
+     */
+    @Test
+    fun `exactly one HOME PPA of ours resolves once unlocked (f3-run B2)`() {
+        val cover = code("java/com/kidslauncher/mdm/lock/BootCover.kt")
+        // Every enable of the cover: the shutdown's arm and the locked boot's start, nowhere else.
+        val enables = Regex("setEnabled\\(app, (true|armed)").findAll(cover).map { m ->
+            val before = cover.substring(0, m.range.first)
+            before.substringAfterLast("fun ").substringBefore("(")
+        }.toList()
+        assertEquals(listOf("atLockedBoot", "coverAtShutdown"), enables.sorted())
+        assertEquals(LockedBootCover.NONE, coverAtLockedBoot(true, unlocked = true, guardTripped = false, tookOver = false, armedAsHome = false, callLive = false))
+        assertEquals(false, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted = true))
+        assertEquals(null, bootCoverEnabled(CoverEvent.POLICY, wanted = true))
+        // The cover's process: the setter is only the guard's disable.
+        val activity = code("java/com/kidslauncher/mdm/lock/BootCoverActivity.kt")
+        assertFalse(activity.contains("COMPONENT_ENABLED_STATE_ENABLED"))
+        val destroy = activity.substringAfter("override fun onDestroy()").substringBefore("\n    }\n")
+        assertTrue(destroy.contains("if (unlocked && !isChangingConfigurations)"))
+        assertTrue(destroy.contains("BootCoverGuard.disable(this, \"destroyed, unlocked\")"))
+        assertTrue(destroy.contains("coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted, telecomInCall())"))
+        // Every own finish is marked, so a system finish is told apart (N2's log line, the Home start on the way out).
+        assertEquals(Regex("\\bfinish\\(\\)").findAll(activity).count(), Regex("ownFinish = true\\s+finish\\(\\)").findAll(activity).count())
+        // f3-run B5: the cover's own Home starts read Telecom first.
+        val wait = activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n")
+        assertTrue(wait.contains("coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted, unlocked && telecomInCall())"))
+    }
+
+    /** f3-run B3: initRest's tail after the PIN lock's init is its own posted message (the boot pass and what the system
+     * queued run before it; one long message starved KidVpnService into a service ANR). */
+    @Test
+    fun `initRest posts its tail after the lock's init (f3-run B3)`() {
+        val app = code("java/com/kidslauncher/mdm/Application.kt")
+        val initRest = app.substringAfter("private fun initRest(").substringBefore("\n    }\n")
+        val posted = initRest.substringAfter("PinLockRuntime.init(this)")
+        val tail = posted.substringAfter("android.os.Handler(android.os.Looper.getMainLooper()).post {")
+        assertTrue(posted.contains("android.os.Handler(android.os.Looper.getMainLooper()).post {"))
+        for (piece in listOf("MusicMedia.init(this)", "Torch.init(this)", "GlanceStore.loadAtStart()", "CommandListenerService.start(this)", "KidVpnService.start(this)")) {
+            assertTrue(piece, tail.contains(piece))
+            assertFalse(piece, initRest.substringBefore("PinLockRuntime.init(this)").contains(piece))
+        }
+        assertTrue(tail.indexOf("MusicMedia.init(this)") < tail.indexOf("Torch.init(this)"))
+        assertTrue(tail.contains("CrashReports.record(app, e)"))
     }
 
     @Test

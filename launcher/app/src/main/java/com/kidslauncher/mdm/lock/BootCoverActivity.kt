@@ -63,6 +63,12 @@ class BootCoverActivity : Activity() {
 
     /** Its own hand-over's disables that didn't read back (F3C-7, [coverHandOverStartsHome]). */
     private var failedDisables = 0
+
+    /** f3-run B2: it finished itself (else the system did - AMS on `PACKAGE_CHANGED`). */
+    private var ownFinish = false
+
+    /** f3-run B2: the system finished it while it was in front (paused already finishing, not by its own finish). */
+    private var finishedInFront = false
     private val waitTick = Runnable { waitStep(visible = true) }
 
     private val loop = object : Animatable2.AnimationCallback() {
@@ -78,6 +84,7 @@ class BootCoverActivity : Activity() {
         super.onCreate(savedInstanceState)
         if (coverGuardTripped(BootCoverGuard.read(this))) {
             BootCoverGuard.disable(this, "crash guard")
+            ownFinish = true
             finish()
             return
         }
@@ -118,6 +125,7 @@ class BootCoverActivity : Activity() {
 
     override fun onPause() {
         resumed = false
+        if (isFinishing && !ownFinish) finishedInFront = true
         // Stop first: its end callback would post the next breath (qa-16b-code #4).
         logo?.stop()
         handler.removeCallbacksAndMessages(null)
@@ -130,6 +138,7 @@ class BootCoverActivity : Activity() {
         BootCoverGuard.disable(this, "unlocked")
         if (BootCoverGuard.isDisabled(this)) {
             BootCoverGuard.markHandedOver(this)
+            ownFinish = true
             finish()
         } else {
             handler.postDelayed(handOver, HAND_OVER_RETRY_MS)
@@ -137,6 +146,21 @@ class BootCoverActivity : Activity() {
     }
 
     override fun onDestroy() {
+        // f3-run B2: on every way out, once unlocked, the cover is disabled (idempotent) - the one HOME PPA of ours
+        // that may resolve once unlocked is HomeActivity's. Not on a configuration change (it comes back).
+        val unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked == true
+        if (unlocked && !isChangingConfigurations) {
+            if (!BootCoverGuard.isDisabled(this)) BootCoverGuard.disable(this, "destroyed, unlocked")
+            if (waitForLauncher && !ownFinish) {
+                // N2: the system finished it - the recipe's number for that boot.
+                val unlockedFor = if (unlockedAtElapsed < 0) -1L else SystemClock.elapsedRealtime() - unlockedAtElapsed
+                Log.i(LOG_TAG, "Boot cover finished by the system (${if (finishedInFront) "in front" else "behind"}): $unlockedFor ms after the unlock")
+            }
+            if (coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted, telecomInCall())) {
+                homeStarted = true
+                startHome()
+            }
+        }
         unlockReceiver?.let { runCatching { unregisterReceiver(it) } }
         logo?.unregisterAnimationCallback(loop)
         handler.removeCallbacksAndMessages(null)
@@ -167,11 +191,12 @@ class BootCoverActivity : Activity() {
         if (disabled && disabledAtElapsed < 0) disabledAtElapsed = now
         val unlockedFor = if (unlockedAtElapsed < 0) 0L else now - unlockedAtElapsed
         val disabledFor = if (disabledAtElapsed < 0) 0L else now - disabledAtElapsed
-        when (coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted)) {
+        when (coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted, unlocked && telecomInCall())) {
             CoverStep.STAY -> Unit
             CoverStep.FINISH -> {
                 Log.i(LOG_TAG, "Boot cover leaves (${if (visible) "taken over, grace over" else "taken over, Home over it"}): $unlockedFor ms after the unlock")
                 handler.removeCallbacksAndMessages(null)
+                ownFinish = true
                 finish()
                 return
             }
@@ -197,6 +222,24 @@ class BootCoverActivity : Activity() {
             handler.removeCallbacks(waitTick)
             handler.postDelayed(waitTick, COVER_WAIT_POLL_MS)
         }
+    }
+
+    /** Telecom's view of a call (the cover's process can't see our in-call service): `isInManagedCall` (the lock's
+     * rule, VoipCallGuardTest), else the audio mode,
+     * else no call - an unreadable answer must not strand the cover (f3-run B5). Never throws. */
+    private fun telecomInCall(): Boolean = try {
+        getSystemService(android.telecom.TelecomManager::class.java)?.isInManagedCall == true
+    } catch (e: SecurityException) {
+        try {
+            getSystemService(android.media.AudioManager::class.java)?.mode.let {
+                it == android.media.AudioManager.MODE_IN_CALL || it == android.media.AudioManager.MODE_IN_COMMUNICATION ||
+                    it == android.media.AudioManager.MODE_RINGTONE
+            }
+        } catch (e2: Exception) {
+            false
+        }
+    } catch (e: Exception) {
+        false
     }
 
     /** F3's fallback: the typed HOME start (unlocked, the cover disabled: HomeActivity, which starts our main

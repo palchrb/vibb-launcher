@@ -398,36 +398,49 @@ class Application : android.app.Application() {
         // screen on/off/unlock receiver for the whole process (QA 10 #4) - screen time, time
         // rules and the Play window use it too.
         com.kidslauncher.mdm.lock.PinLockRuntime.init(this)
-        // Vibb music (design 21 step 4): the volume cap, and the player's "in front" ends at screen-off.
-        com.kidslauncher.mdm.music.MusicMedia.init(this)
-        // The flashlight (design 41): its camera, the platform's torch callback, the call-edge rule.
-        com.kidslauncher.mdm.torch.Torch.init(this)
-        // The lock's glance page (design 25): the parent's choice from the cached policy (off the
-        // main thread), and our missed-call notification known again if it is still on screen.
-        com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()
-        com.kidslauncher.mdm.calls.MissedCallNotifier.refreshAtStart(this)
+        // Design 59 F3 (f3-run B3): the rest is its own main-thread message, posted after this one - behind the boot
+        // pass PinLockRuntime.init just posted (the cover's take-over and Home's start) and behind what the system
+        // queued meanwhile (the always-on VPN's service create, the listener's bind). One long message starved
+        // KidVpnService into a service ANR on a slow first start (the process killed, the PIN typed twice). Nothing
+        // here is read before Home's launch, which the system delivers after this message: Home's first render reads
+        // the torch, the music card and the glance as before. Caught like initRest is.
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            try {
+                // Vibb music (design 21 step 4): the volume cap, and the player's "in front" ends at screen-off.
+                com.kidslauncher.mdm.music.MusicMedia.init(this)
+                // The flashlight (design 41): its camera, the platform's torch callback, the call-edge rule.
+                com.kidslauncher.mdm.torch.Torch.init(this)
+                // The lock's glance page (design 25): the parent's choice from the cached policy (off the
+                // main thread), and our missed-call notification known again if it is still on screen.
+                com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()
+                com.kidslauncher.mdm.calls.MissedCallNotifier.refreshAtStart(this)
 
-        // The anchor service: every background sync and the SSE stream (the only nudge since
-        // design 19); it arms the backstop alarm and syncs once at start - see its doc comment.
-        CommandListenerService.start(this)
-        // Design 35 §2.5: a report at once on Android's battery-low/okay edges (everything caught).
-        com.kidslauncher.mdm.server.BatteryStatus.watch(this)
-        // Design 38 §4.2: the shutdown's client built in advance (off the main thread), and again
-        // whenever the tsnet proxy comes up. Everything caught.
-        com.kidslauncher.mdm.server.PowerEvents.init(this)
-        // Design 19: what the FCM era left (push_state with the Firebase installation ID, the
-        // SDK's files and jobs) is deleted once, in the background.
-        com.kidslauncher.mdm.push.FirebaseCleanup.runOnceInBackground(this)
+                // The anchor service: every background sync and the SSE stream (the only nudge since
+                // design 19); it arms the backstop alarm and syncs once at start - see its doc comment.
+                CommandListenerService.start(this)
+                // Design 35 §2.5: a report at once on Android's battery-low/okay edges (everything caught).
+                com.kidslauncher.mdm.server.BatteryStatus.watch(this)
+                // Design 38 §4.2: the shutdown's client built in advance (off the main thread), and again
+                // whenever the tsnet proxy comes up. Everything caught.
+                com.kidslauncher.mdm.server.PowerEvents.init(this)
+                // Design 19: what the FCM era left (push_state with the Firebase installation ID, the
+                // SDK's files and jobs) is deleted once, in the background.
+                com.kidslauncher.mdm.push.FirebaseCleanup.runOnceInBackground(this)
 
-        // The on-device DNS filter is the device's baseline network path now, not an
-        // admin-configurable feature - see CLAUDE.md's on-device-filtering migration writeup.
-        // Fails soft if not ready yet (no VPN consent granted) and gets retried via Android's own
-        // always-on-VPN management once AppEnforcer.apply grants consent - see KidVpnService's own
-        // doc comment. Gated on the cached vpnFilterEnabled preference (PolicyResponse.vpnFilterEnabled,
-        // see AppEnforcer.applyVpnRestrictions) so a device a parent has turned filtering off for
-        // doesn't flash it back on for a moment on every launch before the first sync corrects it.
-        if (LauncherPreferences.mdm().vpnFilterEnabled()) {
-            KidVpnService.start(this)
+                // The on-device DNS filter is the device's baseline network path now, not an
+                // admin-configurable feature - see CLAUDE.md's on-device-filtering migration writeup.
+                // Fails soft if not ready yet (no VPN consent granted) and gets retried via Android's own
+                // always-on-VPN management once AppEnforcer.apply grants consent - see KidVpnService's own
+                // doc comment. Gated on the cached vpnFilterEnabled preference (PolicyResponse.vpnFilterEnabled,
+                // see AppEnforcer.applyVpnRestrictions) so a device a parent has turned filtering off for
+                // doesn't flash it back on for a moment on every launch before the first sync corrects it.
+                if (LauncherPreferences.mdm().vpnFilterEnabled()) {
+                    KidVpnService.start(this)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("Application", "Setup (after the lock) failed, continuing", e)
+                com.kidslauncher.mdm.crash.CrashReports.record(app, e)
+            }
         }
         // The embedded tailnet connection deliberately does NOT kick off here - TsnetClient.connect
         // runs tsnet's native Go/cgo runtime, a real crash surface (see that class's own doc

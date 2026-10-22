@@ -26,7 +26,8 @@ private const val LOG_TAG = "BootCover"
  * A crash reboot sends no shutdown: the cover stays off and the boot falls back to A+B. Neither
  * does `adb reboot` (init's `sys.powerctl`, not ShutdownThread): test with the power menu or
  * `adb shell svc power reboot`. In android mode (design 59 F3) the locked boot arms it as well
- * ([atLockedBoot]) and the cover waits for this process's hand-over ([coverWaitStep]).
+ * ([atLockedBoot], also the fallback for a shutdown broadcast this cached process never got) and
+ * the cover waits for this process's hand-over ([coverWaitStep]).
  * [report] is the status report's `boot_cover`.
  */
 object BootCover {
@@ -44,9 +45,6 @@ object BootCover {
     @Volatile
     var tookOver = false
         private set
-
-    /** F3C-1: the locked boot's wait for a screen-off (main thread). */
-    private var screenOffReceiver: BroadcastReceiver? = null
 
     /** `ACTION_SHUTDOWN` arrived: no more Home starts (qa-16b-code #3) - with the cover armed a
      * typed HOME start could resolve to it. */
@@ -99,14 +97,14 @@ object BootCover {
         setEnabled(app, bootCoverEnabled(CoverEvent.POLICY, wanted), "policy")
     }
 
-    /** From `PinLockRuntime.init` (main thread, unlocked): the shutdown receiver, and the hand-over
-     * of a cover that is still enabled (before the boot's Home start). In android mode not while a call is live
-     * ([coverTakeOverNow], F3C-2): the cover stays the HOME under the call, and `BootHome`'s retry at the call's end
-     * takes over ([takeOver]) and starts Home in one pass. */
-    fun init(context: Context, callLive: Boolean) {
+    /** From `PinLockRuntime.init` (main thread, unlocked): the shutdown receiver, and the hand-over of a cover that is
+     * still enabled (before the boot's Home start) - at every CE start, in every mode, whatever a call does (f3-run B2:
+     * the cover left enabled while unlocked is the suspected path to the system's Home chooser; one HOME PPA of ours
+     * may resolve once unlocked, HomeActivity's). A call keeps only `BootHome`'s Home start back, never the take-over. */
+    fun init(context: Context) {
         val app = context.applicationContext
         tookOver = true
-        stopScreenOffWait(app)
+        cancelRetry(app)
         if (!receiverRegistered) {
             receiverRegistered = true
             try {
@@ -115,15 +113,11 @@ object BootCover {
                 Log.w(LOG_TAG, "Couldn't register for shutdown", e)
             }
         }
-        if (coverTakeOverNow(BootCoverGuard.androidMode(app), callLive)) {
-            takeOver(app)
-        } else if (isEnabled(app)) {
-            Log.i(LOG_TAG, "Boot cover stays under the call - taken over at its end")
-        }
+        takeOver(app)
     }
 
-    /** Disables a cover still enabled (the hand-over; our typed Home start then resolves to HomeActivity only). Main
-     * thread, right before a boot Home start ([init], `BootHome.retryAfterCall`). */
+    /** Disables a cover still enabled (the hand-over; our typed Home start then resolves to HomeActivity only).
+     * Idempotent. Main thread, right before a boot Home start ([init], `BootHome.callMayHaveEnded`). */
     fun takeOver(context: Context) {
         val app = context.applicationContext
         if (isEnabled(app)) {
@@ -132,25 +126,31 @@ object BootCover {
         }
     }
 
+    /** The locked boot's retry ([LockedBootCover.RETRY]): `BootCallReceiver`'s explicit action. */
+    const val ACTION_COVER_RETRY = "me.vibb.launcher.action.BOOT_COVER_RETRY"
+
+    private const val RETRY_REQUEST_CODE = 59
+
     /**
-     * Design 59 F3: `LOCKED_BOOT_COMPLETED` (main process, before the PIN, from `BootCallReceiver`; device-protected
-     * storage only - nothing here may read CE). In android mode ([BootCoverGuard.androidMode]) the cover is enabled
-     * and started as the typed HOME - before the first unlock only direct-boot-aware HOMEs resolve, so within our
-     * package that is the cover alone - so a boot without `ACTION_SHUTDOWN` (`adb reboot`, a crash, a hard reset) has
-     * it behind Android's keyguard too, and the PIN's dismissal reveals it, not the stock launcher. The cover is never
-     * showWhenLocked: Android's lock screen (the restart line, the pad) stays the face before the PIN. A start after a
-     * graceful shutdown's arm made it the boot's HOME already (nothing to do). Nothing once unlocked or after our
-     * process's take-over ([tookOver]), or with a tripped crash guard. Never over a call or with the screen on: then it
-     * waits for the next screen-off and decides again ([coverAtLockedBoot], F3C-1). Main thread. Never throws.
+     * Design 59 F3: `LOCKED_BOOT_COMPLETED` and its retry alarm (main process, before the PIN, from `BootCallReceiver`;
+     * device-protected storage only - nothing here may read CE). In android mode ([BootCoverGuard.androidMode]) the
+     * cover is enabled and started as the typed HOME - before the first unlock only direct-boot-aware HOMEs resolve, so
+     * within our package that is the cover alone - so a boot without the shutdown's arm (`adb reboot`, a crash, a hard
+     * reset, a shutdown broadcast our cached process never got) has it behind Android's keyguard too, and the PIN's
+     * dismissal reveals it, not the stock launcher. The cover is never showWhenLocked: Android's lock screen (the
+     * restart line, the pad) stays the face before the PIN. Decided now ([coverAtLockedBoot], f3-run B1): nothing once
+     * unlocked, after our take-over ([tookOver]), with a tripped crash guard or when the boot's HOME is the cover; a
+     * live call is retried by an alarm (delivered to a frozen process, unlike a runtime receiver). Main thread. Never
+     * throws.
      */
     fun atLockedBoot(context: Context) {
         try {
             val app = context.applicationContext
             when (lockedBootStep(app)) {
-                LockedBootCover.NONE -> stopScreenOffWait(app)
-                LockedBootCover.AT_SCREEN_OFF -> waitForScreenOff(app)
+                LockedBootCover.NONE -> cancelRetry(app)
+                LockedBootCover.RETRY -> retryLater(app)
                 LockedBootCover.START -> {
-                    stopScreenOffWait(app)
+                    cancelRetry(app)
                     setEnabled(app, true, "locked boot (android mode)")
                     app.startActivity(
                         Intent(Intent.ACTION_MAIN)
@@ -172,32 +172,52 @@ object BootCover {
         unlocked = app.getSystemService(android.os.UserManager::class.java)?.isUserUnlocked == true,
         guardTripped = coverGuardTripped(BootCoverGuard.read(app)),
         tookOver = tookOver,
-        alreadyArmed = isEnabled(app),
+        armedAsHome = armedAsHome(app),
         callLive = BootHome.callLive(app),
-        interactive = app.getSystemService(android.os.PowerManager::class.java)?.isInteractive != false,
     )
 
-    private fun waitForScreenOff(app: Context) {
-        if (screenOffReceiver != null) return
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                if (intent.action == Intent.ACTION_SCREEN_OFF) atLockedBoot(context)
-            }
-        }
+    /** The boot's HOME resolves to the cover (logged, f3-run B2: the chooser or the stock launcher is not armed, and
+     * the start then puts the cover in front of it). Unreadable: the component's enabled state. */
+    private fun armedAsHome(app: Context): Boolean = try {
+        val home = app.packageManager.resolveActivity(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+            PackageManager.MATCH_DEFAULT_ONLY,
+        )?.activityInfo
+        Log.i(LOG_TAG, "Locked boot: HOME resolves to ${home?.packageName}/${home?.name}")
+        home != null && home.packageName == app.packageName && home.name == BootCoverActivity::class.java.name
+    } catch (e: Exception) {
+        isEnabled(app)
+    }
+
+    private fun retryIntent(app: Context): android.app.PendingIntent = android.app.PendingIntent.getBroadcast(
+        app,
+        RETRY_REQUEST_CODE,
+        Intent(app, com.kidslauncher.mdm.calls.BootCallReceiver::class.java).setAction(ACTION_COVER_RETRY),
+        android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    /** f3-run B1: an alarm to our manifest receiver, never a runtime receiver - a cached, frozen BFU process gets it. */
+    private fun retryLater(app: Context) {
         try {
-            // SCREEN_OFF comes from system_server: a NOT_EXPORTED receiver hears it.
-            app.registerReceiver(receiver, IntentFilter(Intent.ACTION_SCREEN_OFF), Context.RECEIVER_NOT_EXPORTED)
-            screenOffReceiver = receiver
-            Log.i(LOG_TAG, "Boot cover waits for a screen-off (screen on or a call)")
+            val alarms = app.getSystemService(android.app.AlarmManager::class.java) ?: return
+            val at = android.os.SystemClock.elapsedRealtime() + COVER_LOCKED_BOOT_RETRY_MS
+            try {
+                alarms.setExactAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, retryIntent(app))
+            } catch (e: SecurityException) {
+                alarms.setAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, retryIntent(app))
+            }
+            Log.i(LOG_TAG, "Boot cover waits: a call is live - again in ${COVER_LOCKED_BOOT_RETRY_MS} ms")
         } catch (e: Exception) {
-            Log.w(LOG_TAG, "Boot cover couldn't wait for a screen-off: ${e.javaClass.simpleName}")
+            Log.w(LOG_TAG, "Boot cover couldn't arm its retry: ${e.javaClass.simpleName}")
         }
     }
 
-    private fun stopScreenOffWait(app: Context) {
-        val receiver = screenOffReceiver ?: return
-        screenOffReceiver = null
-        runCatching { app.unregisterReceiver(receiver) }
+    private fun cancelRetry(app: Context) {
+        try {
+            app.getSystemService(android.app.AlarmManager::class.java)?.cancel(retryIntent(app))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover couldn't cancel its retry: ${e.javaClass.simpleName}")
+        }
     }
 
     /**
