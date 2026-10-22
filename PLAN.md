@@ -598,6 +598,9 @@ findings, merge to `main`, full suite once.
   login instead of a stored password - needs a browser login to capture it (fragile, Storytel's web internals), and a
   check that vibb's endpoints (bookshelf, asset mint, bookmarks) take the Firebase ID token. Small, any time: take the
   JWT's lifetime from its own exp-iat instead of a fixed hour.
+  **Status 2026-10-22:** steps 1 and 4 merged (ec39a8b6) and released alone as `server-v0.35.0` for the measurement
+  (§2.7: the user saves the Storytel login, then reads two `storytel: logged in` lines an hour apart; that decides
+  Q-A before step 2). No launcher/music tag yet. Design 57's held prep release would now be server 0.36.0.
 - **The server's exposure (the user, 2026-10-21):** a public HTTPS endpoint for the phones, the PWA over the tailnet
   only. So the phone-intake budgets (server L1/L3/L4) and launcher S-M1 (refuse a non-https server URL) matter.
 - **Stuck in Recents after an unlock** (the user's emulator, 2026-10-21 ~16:55, not reproduced, no lock log kept): the
