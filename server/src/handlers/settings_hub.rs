@@ -1,6 +1,6 @@
 //! The Settings tab (`/settings`, design 31 §3.6): a grouped list of navigation rows - Time Rules,
 //! Web Filter, Blocked Activity, Wallpapers, Phone Setup, Backups, Software Updates, Account &
-//! Password, Security Log, About - and Sign Out.
+//! Parents, Security Log, About - and Sign Out.
 //!
 //! Every value on a row comes from the database, the backup directory or the compiled-in version,
 //! never from the network (M3): the hub must open at once on a Pi without internet, so Software

@@ -39,6 +39,61 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
+/// A parent's username (design 62 §2): 1-32 of `a-z 0-9 . _ -`. Add Parent lowercases what was
+/// typed before it asks; the first account's `ADMIN_USERNAME` is only trimmed, since sign-in is
+/// an exact match ([bootstrap_username]).
+pub fn valid_username(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
+}
+
+/// A display name as typed (design 62 §2): trimmed, empty is `None` (the username shows), else
+/// 1-32 characters with no control, line-break or Unicode format character (bidi overrides,
+/// zero-width), so a "by Mamma" line can't be spoofed.
+pub fn display_name(raw: &str) -> Result<Option<String>, &'static str> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if name.chars().count() > 32 {
+        return Err("Use at most 32 characters.");
+    }
+    if name.chars().any(|c| c.is_control() || is_format_char(c)) {
+        return Err("Use letters, digits, spaces and punctuation only.");
+    }
+    Ok(Some(name.to_string()))
+}
+
+/// Unicode's format characters (category Cf, Unicode 15.1) and the line and paragraph separators.
+fn is_format_char(c: char) -> bool {
+    matches!(c as u32,
+        0x00AD | 0x0600..=0x0605 | 0x061C | 0x06DD | 0x070F | 0x0890..=0x0891 | 0x08E2 | 0x180E
+        | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF
+        | 0xFFF9..=0xFFFB | 0x110BD | 0x110CD | 0x13430..=0x1343F | 0x1BCA0..=0x1BCA3
+        | 0x1D173..=0x1D17A | 0xE0001 | 0xE0020..=0xE007F)
+}
+
+/// The first account's name from `ADMIN_USERNAME` (unset or blank: "admin"), trimmed and never
+/// lowercased (sign-in is an exact match); one that isn't [valid_username] is refused with the
+/// reason, and the server doesn't start. It is read only while `admin_users` is empty, so an
+/// existing install keeps its name whatever it is.
+pub fn bootstrap_username(configured: Option<&str>) -> Result<String, String> {
+    let name = configured
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("admin");
+    if valid_username(name) {
+        Ok(name.to_string())
+    } else {
+        Err(format!(
+            "ADMIN_USERNAME {name:?} isn't a valid username: use 1-32 lowercase letters, digits, \
+             '.', '_' or '-'"
+        ))
+    }
+}
+
 /// A schedule time as the forms send it: exactly `HH:MM`, 00:00-23:59 (security review H1). The
 /// value goes into files a root-run script reads, so nothing else may ever reach them.
 pub fn valid_clock_time(value: &str) -> bool {
@@ -141,7 +196,9 @@ pub async fn check_and_ban_ip_if_needed(db: &sqlx::SqlitePool, ip: &str) {
 
 /// Builds a TOTP object for a given admin from a stored (or freshly
 /// generated) base32 secret. All accounts share the same algorithm/digits/
-/// step, so the secret alone is enough to reconstruct it.
+/// step, so the secret alone is enough to reconstruct it. The username is only the
+/// authenticator's label, where totp-rs refuses a `:` (design 62 §2: it panicked the 2FA setup of
+/// such a name); a code comes from the secret alone, so the `_` changes no existing entry.
 pub fn totp_for_secret(secret_base32: &str, username: &str) -> TOTP {
     let secret = Secret::Encoded(secret_base32.to_string());
     TOTP::new(
@@ -153,7 +210,7 @@ pub fn totp_for_secret(secret_base32: &str, username: &str) -> TOTP {
             .to_bytes()
             .expect("stored secret should be valid base32"),
         Some("Kids Device MDM".to_string()),
-        username.to_string(),
+        username.replace(':', "_"),
     )
     .expect("fixed TOTP parameters should always be valid")
 }
@@ -278,10 +335,13 @@ pub async fn bootstrap_admin(db: &sqlx::SqlitePool, data_dir: &std::path::Path) 
         return;
     }
 
-    let username = std::env::var("ADMIN_USERNAME")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "admin".to_string());
+    let username = match bootstrap_username(std::env::var("ADMIN_USERNAME").ok().as_deref()) {
+        Ok(name) => name,
+        Err(err) => {
+            tracing::error!("{err}");
+            std::process::exit(1);
+        }
+    };
     let configured = std::env::var("ADMIN_PASSWORD")
         .ok()
         .filter(|v| !v.is_empty());
@@ -336,7 +396,9 @@ pub async fn bootstrap_admin(db: &sqlx::SqlitePool, data_dir: &std::path::Path) 
 pub struct CurrentAdmin(pub AdminUser);
 
 /// The signed-in admin, if the session's epoch is still the account's (a password change, a 2FA
-/// reset or "Sign out everywhere" moved it on - design 22 QA a).
+/// reset or "Sign out everywhere" moved it on - design 22 QA a), the account isn't removed and a
+/// one-time password's onboarding hasn't run out (design 62 §2; the removal is read here too, not
+/// only through its epoch bump - qa-62-revision-check N1).
 async fn load_active_admin(state: &AppState, session: &Session) -> Option<AdminUser> {
     let admin_id: i64 = session.get("admin_id").await.ok().flatten()?;
     let epoch: i64 = session
@@ -344,13 +406,16 @@ async fn load_active_admin(state: &AppState, session: &Session) -> Option<AdminU
         .await
         .ok()
         .flatten()?;
-    sqlx::query_as::<_, AdminUser>("SELECT * FROM admin_users WHERE id = ?")
-        .bind(admin_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .filter(|admin| admin.session_epoch == epoch)
+    sqlx::query_as::<_, AdminUser>(
+        "SELECT * FROM admin_users WHERE id = ? AND removed_at IS NULL \
+         AND (invite_expires_at IS NULL OR invite_expires_at > datetime('now'))",
+    )
+    .bind(admin_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .filter(|admin| admin.session_epoch == epoch)
 }
 
 /// The admin session cookie (design 22 §3.2.2): `__Host-handy` (Secure, `Path=/`, no `Domain`,

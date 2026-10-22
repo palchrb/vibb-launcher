@@ -12,6 +12,27 @@ pub struct AdminUser {
     pub locked_until: Option<String>,
     /// Bumped by a password change, a 2FA reset and "Sign out everywhere" (design 22 §3.2.2).
     pub session_epoch: i64,
+    /// "Mamma" (design 62, migration 0087); `None` reads as the username ([AdminUser::name]).
+    pub display_name: Option<String>,
+    /// The account that added this one; `None` for the first account (its generated password is
+    /// `data/initial-admin-password`).
+    pub invited_by: Option<i64>,
+    /// A one-time password's onboarding ends by then (SQLite `datetime` text, UTC); `None` once
+    /// the account is ready. Removed accounts never load (`removed_at` is read in SQL only).
+    pub invite_expires_at: Option<String>,
+}
+
+impl AdminUser {
+    /// The display name, else the username.
+    pub fn name(&self) -> &str {
+        self.display_name.as_deref().unwrap_or(&self.username)
+    }
+
+    /// Ready (design 62 §1): signed in with its own password and two-factor login. Removed
+    /// accounts are filtered in SQL before they get here.
+    pub fn ready(&self) -> bool {
+        !self.must_change_password && self.totp_enabled
+    }
 }
 
 #[derive(sqlx::FromRow, Clone)]

@@ -260,4 +260,4 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   (the contract and its copy, H1's sequence - held, dropped, restarted -, the hold running out, the release before the
   "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
   the claim; since the code QA's fix round a report ending "Off since", a superseded held push, the level range in
-  the route's own test), `music_spotify::migrations_73_to_86_in_order`.
+  the route's own test), `music_spotify::migrations_73_to_87_in_order`.

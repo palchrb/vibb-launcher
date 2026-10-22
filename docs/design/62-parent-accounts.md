@@ -346,3 +346,38 @@ families (design 63); settings saves in the security log (backlog).
   sign-in.
 - Q62-16: "Copy it before you leave this page", browser step 2, and `.secret-once`'s CSS hide.
 - Trimmed: §12 dropped, §8 keeps only what §4 doesn't say, the anchors once, §9 as test names, §7 in three lines.
+
+## Steps 1-2 as built (2026-10-22, branch `design-62-step12`)
+
+Notes for steps 3-5 and the code QA; `docs/notes/server/connectivity.md`, "Parent accounts", has the whole of it.
+
+- **0087** as §1. `AdminUser` gained `display_name`, `invited_by`, `invite_expires_at`, `name()` and `ready()`;
+  `removed_at` is read in SQL only, and `DeviceCommand.requested_by` waits for step 4 (a field nothing reads would be a
+  new dead-code warning).
+- **Step 1** as §2, plus the revision check's N1 (`load_active_admin` reads `removed_at IS NULL`), N2 (Add's `INSERT`
+  refuses a `lower(username)` that is taken), N5 ("This invitation has expired - ask for a new one.", logged
+  `login_expired`) and N6 (`setup_2fa_form`'s write is `totp_secret = COALESCE(totp_secret, ?)` under the actor
+  condition, returning the stored secret: one statement for "write only onto none" and "read what is there").
+  `startup::new_password()` is split out; `startup::reset_password_file(id)` names `reset-2fa`'s file.
+  `bootstrap_username` refuses an invalid `ADMIN_USERNAME` and the start stops. The forced change is
+  `admin_auth::change_first_password` (epoch, not removed, the verified hash).
+- **Step 2** as §3-§4.2 for Add and Withdraw. The statements are `parents::add_parent` and `parents::remove_parent`
+  (the full §4.2 statement and its push-subscription delete in one `BEGIN IMMEDIATE` transaction; N3: why nothing
+  happened is read afterwards - signed out, already gone, or the last ready account). Step 2 shows "Withdraw…" only
+  on a not-ready row; the route takes any target, so **step 3 adds the "Remove…" label on ready rows, Reset, its
+  route and the self-removal entry point, `spotify.forget_pending`, the restore confirm's line and the race tests**
+  (`remove_each_other_leaves_one`, `reset_vs_remove_one_wins`, `held_request_of_a_removed_actor_changes_nothing`).
+  The self-removal refusal ("You are the only parent who can sign in - add another parent first.") is said in the
+  Parents group's flash, since your own row has no form. Both GET routes of §3 exist.
+- **Layout:** Account's groups are Name, Password, Two-Factor Login, Sessions, Parents. A Parents row is the name
+  with "username · state" under it. The one-time password is shown in 6 blocks of 4 (spans, so a copy has no
+  spaces), "One-time password for Pappa · sign in as pappa", Copy (hidden without JS), and "Copy it before you leave
+  this page - it's shown only once. It works until Sun 20:51; Pappa sets a new password and two-factor login at the
+  first sign-in." The Add form's name is optional (empty reads as the username).
+- **"· <name>"**: step 2 has no "by" line; the Parents list always shows names (it is the list of parents), so the
+  one-account rule starts with step 4.
+- **Browser check** (headless Chromium 1140 only - this machine has no WebKit or Firefox build, so Safari and
+  Firefox are not checked; the reload relies on `replaceState`, as design 59's Show Child PIN): light and dark at
+  390x844, every answer at its group, 0 text nodes below AA, the reload a `GET /account/parents` without the OTP,
+  Back after leaving without it, Copy equals the OTP, three wrong passwords sign out, the invitee's first sign-in in a
+  second browser, Withdraw.

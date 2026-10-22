@@ -316,10 +316,17 @@ async fn reset_2fa_from_the_command_line_clears_the_lock_and_the_totp() {
         .await
         .unwrap();
     assert!(message.contains("reset"));
-    let new_password = std::fs::read_to_string(data.path().join("initial-admin-password"))
-        .unwrap()
-        .trim()
-        .to_string();
+    let id: i64 = sqlx::query_scalar("SELECT id FROM admin_users WHERE username = ?")
+        .bind(USER)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    // Its own file (design 62 §2), never the first account's shared one.
+    let new_password =
+        std::fs::read_to_string(data.path().join(format!("initial-admin-password-{id}")))
+            .unwrap()
+            .trim()
+            .to_string();
     assert_eq!(new_password.len(), 24);
     assert_eq!(counters(&app).await, (0, 0, false));
     let (enabled, secret): (bool, Option<String>) =
