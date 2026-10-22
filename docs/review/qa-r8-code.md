@@ -129,3 +129,19 @@ branch compares the order's set with the queue's.
 | M14 | `postScrollTake` takes fling leftovers | caught (DragDownTest) |
 
 9 of 14 caught. Of the 5 survivors, the 4 with an effect are R8C-3's four lines; M10 is a no-op.
+
+## Fixes
+
+- R8C-1: fixed in d4fc841c. On the same-scope stale path, `playEntry` sets `hearted = false`, so the new queue is the
+  whole entry, as `restartIfStale`'s is. Guard in `FavouritesTest`.
+- R8C-2: fixed in d4fc841c. The finding's premise didn't hold: `s` in `MusicRoot` is `MusicViewModel.snapshot`, which
+  is `forRenderer(onRoom)` (pinned in GuardsTest), so on a room `entryUi` already reads the room's view. A
+  `UiModelTest` case now pins the scenario: b3 on the phone, b1 on a room, the tile and the tap the same. `entryUi`'s
+  KDoc says so. I didn't add a `forRenderer` inside `entryUi`: with `net` null it would turn a room's view back into
+  the phone's.
+- R8C-3: fixed in d4fc841c. The four `contains` lines are in `FavouritesTest`'s service case.
+- R8C-4: fixed in d4fc841c. The empty-plan message fires only when `scope != null`. "Alle" is silent, as before r8.
+- R8C-5: fixed in d4fc841c. The spring runs in the modifier's own scope, and the nested-scroll connection cancels
+  its `Job` before it takes a finger's delta.
+- R8C-6: fixed in d4fc841c. `scoped` is dropped from `comeHome`, `toRoom`'s Storytel branch and `adoptedQueue`.
+  `activeFor`'s KDoc now says it is the one guard. `playItem` keeps its `scoped`.
