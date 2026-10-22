@@ -649,11 +649,24 @@ async fn lock_forms_return_to_the_page() {
     let lock = device_page(id, Section::Lock);
     // (route, the fields a parent sends, the expected Location: path and fragment).
     type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
-    let table: [Row; 7] = [
+    let table: [Row; 9] = [
         (
             "kid-lock#child-pin",
             &[("new_kid_pin", "7391")],
             (format!("{lock}?notice=saved"), Some("child-pin")),
+        ),
+        // Design 59: the lock switch, back to its row.
+        (
+            "kid-lock/keyguard#lock-keyguard",
+            &[("keyguard", "android")],
+            (lock.clone(), Some("lock-keyguard")),
+        ),
+        // "Show Child PIN…": answered with the page itself on its own path (no redirect, the
+        // PIN in no address), the form at its own row's fragment (qa-59-step2-code S2P-3).
+        (
+            "lock#show-pin",
+            &[("password", "correct horse battery staple")],
+            (lock.clone(), Some("show-pin")),
         ),
         // Remove Child PIN… (its hidden `clear_kid_pin`).
         (
@@ -713,6 +726,11 @@ async fn lock_forms_return_to_the_page() {
         let res = app
             .request_form(Method::POST, action, Some(&cookie), &sent)
             .await;
+        if *action == format!("{lock}#show-pin") {
+            assert_eq!(res.status, StatusCode::OK, "{action}");
+            assert!(res.text().contains("data-shown=\"child-pin\""), "{action}");
+            continue;
+        }
         assert_redirect(&res, path, *fragment);
         app.assert_lands(&res, &cookie).await;
     }

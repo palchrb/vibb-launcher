@@ -48,6 +48,8 @@ pub enum Kind {
     UnseenRestarts,
     IncomingCallsNotBlocked,
     ChildLockOff,
+    /// Design 59 §2.3: Android's lock on the phone opens with a PIN that isn't the Child PIN.
+    ChildPinChanged,
     /// How many apps the phone keeps hidden.
     BlockedApps(usize),
     RestartOnce,
@@ -134,6 +136,7 @@ impl AttentionItem {
             Kind::UnseenRestarts => "unseen-restarts",
             Kind::IncomingCallsNotBlocked => "incoming-calls",
             Kind::ChildLockOff => "child-lock-off",
+            Kind::ChildPinChanged => "child-pin-changed",
             Kind::BlockedApps(_) => "blocked-apps",
             Kind::RestartOnce => "restart-once",
             Kind::PlayInstallMode => "play-install-mode",
@@ -177,6 +180,8 @@ pub struct Facts {
     pub unseen_restarts: bool,
     pub incoming_calls_not_blocked: bool,
     pub child_lock_off: bool,
+    /// Design 59: the phone's Android PIN was changed on the phone (`kid_lock::pin_changed_on_phone`).
+    pub child_pin_changed: bool,
     pub blocked_apps: usize,
     pub restart_once: bool,
     /// Advanced's Play and update-fence warnings that let other screens reach the child (design 31
@@ -222,6 +227,7 @@ pub fn items(device_id: i64, facts: &Facts) -> Vec<AttentionItem> {
         Kind::IncomingCallsNotBlocked,
     );
     add(facts.child_lock_off, Kind::ChildLockOff);
+    add(facts.child_pin_changed, Kind::ChildPinChanged);
     add(
         facts.blocked_apps > 0,
         Kind::BlockedApps(facts.blocked_apps),
@@ -280,6 +286,7 @@ fn level(kind: Kind) -> Level {
         | Kind::IncomingCallsNotBlocked
         | Kind::ChildLockOff => Level::Alarm,
         Kind::BlockedApps(_)
+        | Kind::ChildPinChanged
         | Kind::RestartOnce
         | Kind::PlayInstallMode
         | Kind::PlayStoreOpenable
@@ -316,6 +323,7 @@ fn title(kind: Kind) -> String {
         Kind::UnseenRestarts => "Phone started without Vibb One",
         Kind::IncomingCallsNotBlocked => "Incoming calls aren't blocked",
         Kind::ChildLockOff => "Lock is off on the phone",
+        Kind::ChildPinChanged => "Phone's PIN isn't the Child PIN",
         Kind::BlockedApps(1) => "1 blocked app waits",
         Kind::BlockedApps(n) => return format!("{n} blocked apps wait"),
         Kind::RestartOnce => "Restart the phone once",
@@ -361,7 +369,7 @@ fn target(kind: Kind, id: i64) -> String {
         }
         Kind::NotHomeApp | Kind::BootCoverNotShown => ("/advanced", "updates"),
         Kind::NoParentPin | Kind::EasyParentPin => ("/lock", "parent-pin"),
-        Kind::ChildLockOff => ("/lock", "child-pin"),
+        Kind::ChildLockOff | Kind::ChildPinChanged => ("/lock", "child-pin"),
         Kind::NoNotificationAccess => ("/home", "layout"),
         Kind::IncomingCallsNotBlocked | Kind::Calls(_) => {
             return format!("/devices/{id}/calls");
@@ -526,6 +534,13 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
     };
     let lock_state =
         crate::kid_lock::parse_lock_state(latest.and_then(|st| st.lock_state_json.as_deref()));
+    let lock_phone = crate::kid_lock::PhoneLock {
+        state: lock_state.as_ref(),
+        reported: latest.is_some(),
+        capable: capability(crate::kid_lock::PIN_LOCK_CAPABILITY),
+        android_capable: capability(crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
+        pin_waiting: false,
+    };
     let play =
         crate::handlers::device_pages::play_notes(latest, policy.block_activity_start, now_ms);
     let escapes = crate::handlers::device_pages::escapes_card(policy, latest, now_ms).notes;
@@ -562,12 +577,9 @@ pub fn facts_of(s: &Sources, now_ms: i64) -> Facts {
             .is_some()
         }),
         incoming_calls_not_blocked: s.incoming_calls_not_blocked,
-        child_lock_off: crate::kid_lock::lock_off(
-            policy,
-            lock_state.as_ref(),
-            capability(crate::kid_lock::PIN_LOCK_CAPABILITY),
-            latest.is_some(),
-        ),
+        // Lock Screen & PINs' own notes, so the rows and the page agree.
+        child_lock_off: crate::kid_lock::lock_off(policy, &lock_phone),
+        child_pin_changed: crate::kid_lock::pin_changed_on_phone(policy, &lock_phone),
         blocked_apps: s.relock.blocks.waiting,
         restart_once: !crate::models::admin_policy_effects(
             latest.and_then(|st| st.admin_policies_pending_json.as_deref()),
@@ -627,6 +639,7 @@ mod tests {
             unseen_restarts: true,
             incoming_calls_not_blocked: true,
             child_lock_off: true,
+            child_pin_changed: true,
             blocked_apps: 2,
             restart_once: true,
             play_install_mode: true,
@@ -724,6 +737,7 @@ mod tests {
                 "Phone started without Vibb One",
                 "Incoming calls aren't blocked",
                 "Lock is off on the phone",
+                "Phone's PIN isn't the Child PIN",
                 "2 blocked apps wait",
                 "Restart the phone once",
                 "Play Store open (install mode)",

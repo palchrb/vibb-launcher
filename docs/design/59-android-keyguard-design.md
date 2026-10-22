@@ -569,6 +569,58 @@ Server 0.37.0 (migration `0085_kid_keyguard.sql`) and the launcher's DTOs, in on
   S59-3); a row used up by a later pop is not in flight (N-2); a first PIN without the key flashes
   `saved_safe_boot_not_kept` (N-1).
 
+## Step 2 as built (2026-10-22, `design-59-step2`)
+
+Server only (§2.2, §2.3); notes in `docs/notes/server/hardening-and-pins.md` ("Android's lock screen", step 2) and
+`pwa.md` ("Lock Screen & PINs", "The rest of Settings"). No contract change: the policy, the command, the status and
+`power_report.json` are step 1's. Deviations and choices:
+
+- **The switch** is the Child PIN group's "Lock" row (not "Lock screen": the page's next group has that name), options
+  "Vibb One's lock" / "Android's lock", the sub-line "Test phase: Android's lock will replace Vibb One's" (the user,
+  2026-10-22: Android's lock is the destination). It returns to its row, `#lock-keyguard`, not `#child-pin`: the
+  warnings that come in above the group with Android's lock (e.g. "Phone's PIN isn't the Child PIN") moved the row 87 px
+  with the group anchor; with the row's own anchor `scroll-restore.js` keeps it at 0 px (browser check).
+- **The reveal's password field** is `autocomplete="off"`, not §2.2's `current-password` (the step's brief: no
+  autofill). Browsers may still offer a saved password there; the field never holds the PIN, which is shown as text.
+- **The re-auth helper** (`admin_auth::reauth`, and `record_reauth` for the two forms whose check is
+  `PasswordGate::change`) covers Account's password form (`update_account_password`) besides `change_password` and
+  `reset_totp`: four forms, one count. The third wrong in a row flushes the session, logs
+  `reauth_signed_out` and answers `/login`. Since the code QA's fix round the count is the account's
+  (`admin_users.reauth_wrong`, migration 0086, one `UPDATE` per answer) and the third moves the session epoch, which
+  ends every session of the account (S2P-1: a count in the session could be raced and revived).
+- **"Send the Child PIN again"** is offered whenever Android's lock is chosen, a copy is kept, the phone has the
+  capability and doesn't run the current PIN (`keyguard: own`, `pin_rev` null or another), and nothing is waiting or in
+  flight - not only after a refusal (§2.3): a success the phone's report didn't follow and an unconfirmed delivery
+  retry the same way, and the intake's "any answer" rule (step 1, D1) leaves exactly those to this button.
+- **The command row** shows only while Android's lock is chosen (a cancelled or expired row says nothing). The
+  summary's Activity, which lists every command, names it "Child PIN to the phone" and words its answers with the same
+  `kid_lock::PinAnswer` (§2.3 kept `LOCATE_KINDS` unchanged; Locate's list never shows it).
+- **The lock-off alarm** (`kid_lock::lock_off`) now reads `lock_card`'s notes, so the N-C pair (Android's PIN still the
+  gate while a rollback waits) raises no "Lock is off on the phone". §2.3's "`Inactive::AndroidCredential`'s warning
+  only while own is requested" is narrowed by the fix round (S2P-2): no warning only while the phone runs Android's
+  lock; a phone on Vibb One's lock with an Android PIN keeps the warning and the alarm whichever lock is chosen; "Vibb One can't change Android's PIN" shows only
+  while Android's lock is chosen (on the way back it is "Android's PIN is still on").
+- **The summary's lock value** follows the parent's choice ("PIN on · Android's lock"), like its other values; the
+  Devices list has no lock value. "On the phone" carries what the phone reports ("Locked · Android's lock · 10:59").
+- **Power**: "· unlocked 07:15" is added to a restart's start as well as a turn-on (both sit at "type the PIN to start").
+- **Locate**'s ⓘ says "Erase" (the page's word for wipe).
+
+Browser check (Playwright, 390x844, light and dark, JS on and off; `docs/testing/2026-10-22-pwa-identity-pass.md`'s
+setup): the switch, Show Child PIN wrong and right, Send again and the switch back each kept the control (or, for Send
+again, whose row goes, the group's header) at the same screen position, except the switch back to Vibb One's lock at the
+top of the page, where the removed warning leaves nothing to scroll (the page can't scroll above 0). Every text node
+at or above WCAG AA in both schemes; no horizontal scroll; the third wrong password landed on `/login`.
+
+**Code QA fix round** (`docs/review/qa-59-step2-code.md`): S2P-1 above. S2P-3: the reveal posts to
+`/devices/{id}/lock#show-pin` (without JS the answer lands on its row; the fragment never reaches the server), and
+`check_forms` has no exception for it any more. S2P-4: Send again and the reveal's "the phone still has" read only a
+report since the enrolment. S2P-5: the shown PIN is in a plain cell (not a `<details>` whose reopening would restart
+it) and hides after a minute by CSS alone; `static/reveal.js` empties it on `pagehide` and when the page is hidden.
+S2P-6: post/redirect/get is out (the PIN in no address), so `reveal.js` turns the answer's history entry into a GET
+(`history.replaceState`): a reload or Back loads the page without the PIN and never posts the password again; without
+JS the browser asks before resubmitting, as for any form. Checked in Chromium: a reload after the reveal is one GET
+with no PIN, the digits' computed visibility is `hidden` at the animation's end, the reveal row kept its place.
+
 ## Step 3 as built (2026-10-22, `design-59-step3`)
 
 Launcher only. `Hybrid59`/`HybridPlan.kt` became `lock/AndroidLock.kt`/`lock/AndroidLockPlan.kt` (`AndroidLockPlanTest`),

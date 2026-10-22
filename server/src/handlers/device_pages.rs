@@ -772,6 +772,17 @@ struct LockTemplate {
     /// The flash after a Child PIN save, `(text, refused)`; a refusal opens the form again.
     child_flash: Option<(&'static str, bool)>,
     child_open: bool,
+    /// Design 59 §2.3: Android's lock is chosen (the switch, the ⓘ's words).
+    keyguard_android: bool,
+    /// "Send the Child PIN again" ([crate::kid_lock::offers_send_again]).
+    send_again: bool,
+    /// What "Show Child PIN…" showed on this page (design 59 §2.2): the PIN or why there is
+    /// none; `None` on a GET and after a wrong password, when the form shows (with the error).
+    reveal_shown: Option<RevealView>,
+    reveal_error: Option<String>,
+    /// The page answers Show Child PIN: `static/reveal.js` turns its history entry into a GET
+    /// (a reload never posts the password again) and hides the PIN when the page is left.
+    reveal_answer: bool,
     /// Parent PIN: set, easy, its flash, the phone's reports ("Recent use").
     parent: crate::handlers::parent_pin::ParentPinCard,
     /// A refused (or easy) Parent PIN opens its form again.
@@ -795,42 +806,280 @@ struct LockTemplate {
     lock_screen_warnings: Vec<Note>,
 }
 
+/// "Show Child PIN…"'s answer (design 59 §2.2): rendered into the page the POST came from, never
+/// a redirect, so the PIN is in no address, session or log.
+pub(crate) enum Reveal {
+    /// A wrong password; `left` more before the session ends.
+    Wrong {
+        left: i64,
+    },
+    Shown(crate::kid_lock::ShownPin),
+}
+
+/// [Reveal] in the page's words.
+struct RevealView {
+    /// The PIN's digits, shown.
+    pin: Option<String>,
+    /// "Child PIN" or "New Child PIN".
+    label: &'static str,
+    /// The sentence under the PIN, and the PIN the phone still has (its digits, after it).
+    line: Option<&'static str>,
+    prev: Option<String>,
+    /// Why nothing can be shown (no copy here, no key).
+    message: Option<&'static str>,
+    /// A wrong password: the error under the field.
+    error: Option<String>,
+}
+
+impl RevealView {
+    fn of(reveal: Reveal) -> RevealView {
+        use crate::kid_lock::{PhoneHas, ShownPin};
+        let mut view = RevealView {
+            pin: None,
+            label: "Child PIN",
+            line: None,
+            prev: None,
+            message: None,
+            error: None,
+        };
+        match reveal {
+            Reveal::Wrong { left } => {
+                view.error = Some(match left {
+                    1 => "Wrong password. One more wrong one signs you out.".to_string(),
+                    _ => "Wrong password.".to_string(),
+                });
+            }
+            Reveal::Shown(ShownPin::Pin { pin, phone }) => {
+                view.pin = Some(pin.as_str().to_string());
+                match phone {
+                    PhoneHas::This => {}
+                    PhoneHas::Earlier(Some(prev)) => {
+                        view.label = "New Child PIN";
+                        view.line = Some("Until the phone gets it, its PIN is still");
+                        view.prev = Some(prev.as_str().to_string());
+                    }
+                    PhoneHas::Earlier(None) => {
+                        view.label = "New Child PIN";
+                        view.line =
+                            Some("The phone still has an earlier PIN until it gets this one.");
+                    }
+                    PhoneHas::Changed => {
+                        view.line =
+                            Some("The phone's PIN was changed on the phone: it isn't this one.");
+                    }
+                }
+            }
+            Reveal::Shown(ShownPin::NotStored) => {
+                view.message =
+                    Some("Not stored on this server. Set the Child PIN again to see it here.");
+            }
+            Reveal::Shown(ShownPin::Unreadable) => {
+                view.message = Some(
+                    "Not readable on this server: it was kept with another server's key. Set the \
+                     Child PIN again to see it here.",
+                );
+            }
+            Reveal::Shown(ShownPin::NoKey) => {
+                view.message = Some(
+                    "This server can't read its key file, so it keeps no Child PIN to show. The \
+                     server log says why.",
+                );
+            }
+        }
+        view
+    }
+}
+
 /// GET `/devices/{id}/lock`: Lock Screen & PINs (design 31 §3.2, step 4). The Child PIN
-/// (`/kid-lock`: set in a `<details>`, remove behind a confirm), the Parent PIN (`/parent-pin`,
-/// with what the phone reported), the screen timeout and the lock's background (inline selects),
-/// one select per app - Off, Name only, Full text (`/lock-screen/apps`). The
-/// forms keep their POST routes; they return here. A phone not set up yet has the page too: its
+/// (`/kid-lock`: set in a `<details>`, remove behind a confirm; design 59: the lock switch
+/// `/kid-lock/keyguard`, "Show Child PIN…" posting here, "Send the Child PIN again"
+/// `/kid-pin/send`), the Parent PIN (`/parent-pin`, with what the phone reported), the screen
+/// timeout and the lock's background (inline selects), one select per app - Off, Name only, Full
+/// text (`/lock-screen/apps`). The forms return here. A phone not set up yet has the page too: its
 /// PINs can be set before setup.
 pub async fn view_lock(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
+    let notice = query.get("notice").map(String::as_str);
+    render_lock(&state, id, notice, None).await
+}
+
+/// POST `/devices/{id}/lock`, `action=reveal_kid_pin` (design 59 §2.2, qa-59-design Q59-11): the
+/// parent's password through [crate::admin_auth::reauth] (three wrong in a row end the session),
+/// then the page itself with the Child PIN in its group - posted to the page's own path, so
+/// `scroll-restore.js` keeps the place. No redirect: the PIN is in no address. `no_store_path`
+/// covers the answer, and the security log names the phone only.
+pub async fn lock_action(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    session: tower_sessions::Session,
+    axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
+        crate::security::CurrentAdmin,
+    >,
+    axum::Form(form): axum::Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    if form.get("action").map(String::as_str) != Some("reveal_kid_pin") {
+        return (
+            StatusCode::BAD_REQUEST,
+            "This page is out of date - reload it.",
+        )
+            .into_response();
+    }
     let device = match load_device(&state, id).await {
         Ok(device) => device,
         Err(answer) => return answer.into_response(),
     };
-    let policy = match load_policy(&state, id).await {
+    let password = form.get("password").map(String::as_str).unwrap_or_default();
+    let log = |event: &'static str| {
+        let (db, username) = (state.db.clone(), admin.username.clone());
+        async move {
+            crate::security::record_security_event(
+                &db,
+                event,
+                Some(&username),
+                None,
+                Some(&format!("device {id}")),
+            )
+            .await;
+        }
+    };
+    let reveal = match crate::admin_auth::reauth(&state, &session, &admin, password).await {
+        crate::admin_auth::Reauth::Busy => return crate::admin_auth::busy_response(),
+        crate::admin_auth::Reauth::SignedOut => {
+            log("kid_pin_reveal_refused").await;
+            return crate::admin_auth::signed_out_response();
+        }
+        crate::admin_auth::Reauth::Wrong { left } => {
+            log("kid_pin_reveal_refused").await;
+            Reveal::Wrong { left }
+        }
+        crate::admin_auth::Reauth::Right => {
+            let latest = match load_latest(&state, id).await {
+                Ok(latest) => latest,
+                Err(err) => return read_failed(id, "the last report", err),
+            };
+            let kept = match crate::kid_lock::KeptPin::load(&state.db, id).await {
+                Ok(kept) => kept,
+                Err(err) => return read_failed(id, "the Child PIN", err),
+            };
+            let lock_state = crate::kid_lock::parse_lock_state(
+                latest.as_ref().and_then(|s| s.lock_state_json.as_deref()),
+            );
+            // What the phone has, from this install's reports only (S2P-4).
+            let phone = phone_lock(
+                since_enrolment(device.enrolled_at.as_deref(), latest.as_ref()),
+                lock_state.as_ref(),
+                false,
+            );
+            let shown = crate::kid_lock::shown_pin(state.kid_pin_key.as_deref(), &kept, id, &phone);
+            log("kid_pin_shown").await;
+            Reveal::Shown(shown)
+        }
+    };
+    render_lock(&state, id, None, Some(reveal)).await
+}
+
+/// What the last report says about the lock ([crate::kid_lock::PhoneLock]).
+fn phone_lock<'a>(
+    latest: Option<&DeviceStatus>,
+    state: Option<&'a crate::kid_lock::LockState>,
+    pin_waiting: bool,
+) -> crate::kid_lock::PhoneLock<'a> {
+    crate::kid_lock::PhoneLock {
+        state,
+        reported: latest.is_some(),
+        capable: has_capability(latest, crate::kid_lock::PIN_LOCK_CAPABILITY),
+        android_capable: has_capability(latest, crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY),
+        pin_waiting,
+    }
+}
+
+/// The last report when it came from this enrollment (`reported_at >= devices.enrolled_at`, the
+/// text comparison `models::ENROLLED_AT` makes in SQL), else `None`: an earlier install's.
+fn since_enrolment<'a>(
+    enrolled_at: Option<&str>,
+    latest: Option<&'a DeviceStatus>,
+) -> Option<&'a DeviceStatus> {
+    latest.filter(|s| s.reported_at.as_str() >= enrolled_at.unwrap_or(""))
+}
+
+/// The newest `set_kid_pin` of this enrollment, as the Child PIN group shows it.
+async fn newest_pin_send(
+    state: &AppState,
+    id: i64,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Result<Option<crate::kid_lock::PinSend>, sqlx::Error> {
+    let newest: Option<crate::models::DeviceCommand> = sqlx::query_as(&format!(
+        "SELECT * FROM device_commands WHERE device_id = ?1 AND command = ?2 \
+         AND requested_at >= {} ORDER BY id DESC LIMIT 1",
+        crate::models::ENROLLED_AT
+    ))
+    .bind(id)
+    .bind(crate::kid_lock::SET_KID_PIN)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(newest) = newest else {
+        return Ok(None);
+    };
+    let receipts = crate::handlers::device_api::sends_command_receipts(&state.db, id).await?;
+    Ok(crate::kid_lock::pin_send(&newest, receipts, zone, now))
+}
+
+/// Lock Screen & PINs, with `notice`'s flash and, after "Show Child PIN…", its answer (a wrong
+/// password is a 400).
+async fn render_lock(
+    state: &AppState,
+    id: i64,
+    notice: Option<&str>,
+    reveal: Option<Reveal>,
+) -> Response {
+    let device = match load_device(state, id).await {
+        Ok(device) => device,
+        Err(answer) => return answer.into_response(),
+    };
+    let policy = match load_policy(state, id).await {
         Ok(policy) => policy,
         Err(answer) => return answer.into_response(),
     };
-    let latest = match load_latest(&state, id).await {
+    let latest = match load_latest(state, id).await {
         Ok(latest) => latest,
         Err(err) => return read_failed(id, "the last report", err),
     };
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
-    let notice = query.get("notice").map(String::as_str);
 
     let lock_state = crate::kid_lock::parse_lock_state(
         latest.as_ref().and_then(|s| s.lock_state_json.as_deref()),
     );
-    let child = crate::kid_lock::lock_card(
-        &policy,
+    let keyguard_android = crate::kid_lock::android_requested(&policy);
+    // Design 59: the newest set_kid_pin, shown while Android's lock is chosen.
+    let pin_send = if keyguard_android {
+        match newest_pin_send(state, id, &zone, now).await {
+            Ok(send) => send,
+            Err(err) => return read_failed(id, "the Child PIN's command", err),
+        }
+    } else {
+        None
+    };
+    let phone = phone_lock(
+        latest.as_ref(),
         lock_state.as_ref(),
-        has_capability(latest.as_ref(), crate::kid_lock::PIN_LOCK_CAPABILITY),
-        latest.is_some(),
-        now.timestamp_millis(),
+        pin_send == Some(crate::kid_lock::PinSend::Waiting),
+    );
+    let child = crate::kid_lock::lock_card(&policy, &phone, now.timestamp_millis());
+    // "Send again" reads only this install's reports, as the queue rule does (qa-59-step2-code
+    // S2P-4, step 1's S59-3): before a re-enrolled phone's first report, no button.
+    let send_again = crate::kid_lock::offers_send_again(
+        &policy,
+        &phone_lock(
+            since_enrolment(device.enrolled_at.as_deref(), latest.as_ref()),
+            lock_state.as_ref(),
+            phone.pin_waiting,
+        ),
+        pin_send.as_ref(),
     );
     // The report's time on "On the phone", so an old report never reads as now (qa-31-s4-code L3).
     let reported = latest
@@ -842,11 +1091,14 @@ pub async fn view_lock(
         .iter()
         .map(|n| n.note(reported.as_deref()))
         .partition(|n| n.warning);
+    if let Some(send) = pin_send.filter(|_| child.pin_set) {
+        child_rows.push(crate::kid_lock::LockNote::PinSent(send).note(None));
+    }
     let parent =
         crate::handlers::parent_pin::card(&state.db, &policy, latest.as_ref(), notice, &zone, now)
             .await;
 
-    let backgrounds: Vec<_> = crate::handlers::wallpapers::device_choices(&state, id)
+    let backgrounds: Vec<_> = crate::handlers::wallpapers::device_choices(state, id)
         .await
         .unwrap_or_else(|err| {
             tracing::error!(device_id = id, %err, "couldn't load the lock screen's backgrounds");
@@ -855,13 +1107,12 @@ pub async fn view_lock(
         .into_iter()
         .filter(|w| w.checked)
         .collect();
-    let rows = match crate::handlers::devices::app_rows(&state, id, &policy, latest.as_ref()).await
-    {
+    let rows = match crate::handlers::devices::app_rows(state, id, &policy, latest.as_ref()).await {
         Ok(rows) => rows,
         Err(err) => return read_failed(id, "the phone's apps", err),
     };
     let lock_screen =
-        crate::handlers::devices::lock_screen_card(&state, &policy, latest.as_ref(), &rows).await;
+        crate::handlers::devices::lock_screen_card(state, &policy, latest.as_ref(), &rows).await;
     // Design r7 §1.1.3: which apps rang over the lock, named as the Apps page names them.
     let labels: std::collections::HashMap<String, String> = rows
         .apps
@@ -876,39 +1127,51 @@ pub async fn view_lock(
     let screen_timeout_seconds =
         crate::models::screen_timeout_seconds(policy.screen_timeout_seconds);
     let child_flash = notice.and_then(crate::kid_lock::flash_text);
+    let reveal_answer = reveal.is_some();
+    let mut reveal_view = reveal.map(RevealView::of);
+    let reveal_error = reveal_view.as_mut().and_then(|r| r.error.take());
+    let reveal_shown = reveal_view.filter(|r| r.pin.is_some() || r.message.is_some());
+    let status = if reveal_error.is_some() {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::OK
+    };
 
-    Html(
-        LockTemplate {
-            title: format!("Lock Screen & PINs · {}", device.name),
-            child_warnings,
-            child_rows,
-            child_flash,
-            child_open: child_flash.is_some_and(|(_, refused)| refused),
-            parent_open: parent.notice.is_some_and(|(_, warning)| warning),
-            no_parent_pin: crate::handlers::devices::managed_without_pin(&policy),
-            offline_override_used: latest.as_ref().is_some_and(|s| s.offline_override_used),
-            screen_timeout_seconds,
-            screen_timeout_options: crate::models::SCREEN_TIMEOUTS.to_vec(),
-            // Only when the phone runs another value than the chosen one (it applies it at its
-            // next sync).
-            screen_timeout_applied: latest
-                .as_ref()
-                .and_then(|s| s.screen_timeout_seconds)
-                .filter(|applied| *applied != screen_timeout_seconds)
-                .map(crate::models::screen_timeout_label),
-            background_same_as_home: !backgrounds.iter().any(|w| w.lock),
-            backgrounds,
-            lock_wake: policy.lock_wake_on_notification,
-            lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note()).collect(),
-            lock_screen,
-            child,
-            parent,
-            device,
-        }
-        .render()
-        .unwrap(),
-    )
-    .into_response()
+    let page = LockTemplate {
+        title: format!("Lock Screen & PINs · {}", device.name),
+        child_warnings,
+        child_rows,
+        child_flash,
+        // A refusal opens the Child PIN's form again - not "Not sent", which it can't fix.
+        child_open: child_flash.is_some_and(|(_, refused)| refused)
+            && notice != Some("pin_not_sent"),
+        keyguard_android,
+        send_again,
+        reveal_answer,
+        reveal_error,
+        reveal_shown,
+        parent_open: parent.notice.is_some_and(|(_, warning)| warning),
+        no_parent_pin: crate::handlers::devices::managed_without_pin(&policy),
+        offline_override_used: latest.as_ref().is_some_and(|s| s.offline_override_used),
+        screen_timeout_seconds,
+        screen_timeout_options: crate::models::SCREEN_TIMEOUTS.to_vec(),
+        // Only when the phone runs another value than the chosen one (it applies it at its
+        // next sync).
+        screen_timeout_applied: latest
+            .as_ref()
+            .and_then(|s| s.screen_timeout_seconds)
+            .filter(|applied| *applied != screen_timeout_seconds)
+            .map(crate::models::screen_timeout_label),
+        background_same_as_home: !backgrounds.iter().any(|w| w.lock),
+        backgrounds,
+        lock_wake: policy.lock_wake_on_notification,
+        lock_screen_warnings: lock_screen.notes.iter().map(|n| n.note()).collect(),
+        lock_screen,
+        child,
+        parent,
+        device,
+    };
+    (status, Html(page.render().unwrap())).into_response()
 }
 
 /// A read a sub-page can't do without: logged, and the page is a 500 - never an empty list that
@@ -1543,6 +1806,20 @@ pub(crate) fn escapes_card(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// S2P-4: an earlier install's report isn't this one's.
+    #[test]
+    fn only_a_report_since_the_enrolment_counts() {
+        let report = DeviceStatus {
+            reported_at: "2026-10-22 10:00:00".to_string(),
+            ..Default::default()
+        };
+        assert!(since_enrolment(Some("2026-10-22 09:59:59"), Some(&report)).is_some());
+        assert!(since_enrolment(Some("2026-10-22 10:00:00"), Some(&report)).is_some());
+        assert!(since_enrolment(Some("2026-10-22 10:00:01"), Some(&report)).is_none());
+        assert!(since_enrolment(None, Some(&report)).is_some());
+        assert!(since_enrolment(Some("2026-10-22 09:00:00"), None).is_none());
+    }
 
     #[test]
     fn versions_read_short() {

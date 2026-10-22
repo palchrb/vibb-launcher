@@ -84,11 +84,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   resetting it, the 404 for an unticked app -, refusals, the page and its notes), `device_pages`'s form table,
   `policy_json_keys_snapshot` (`lock_glance` non-null, a fresh phone's `{"apps": [{"package":
   "io.element.android.x", "show_text": false}]}`; the launcher's `PolicyResponseCompatTest` decodes the same literal),
-  `music_spotify::migrations_73_to_85_in_order`.
+  `music_spotify::migrations_73_to_86_in_order`.
 
 ## Android's lock screen (design 59, `docs/design/59-android-keyguard-design.md`, migration `0085_kid_keyguard.sql`)
 
-Step 1 (the contract and the storage; the switch, the reveal and the page's words are step 2):
+Step 1 (the contract and the storage; step 2, the PWA's side, below):
 
 - **Columns**: `device_policy.kid_keyguard` (`'own'` default, `'android'`), `kid_pin_sealed`, `kid_pin_prev_sealed`,
   `kid_pin_prev_rev`, `kid_pin_rev` (0). **Policy**: `kid_lock` always carries `keyguard` (`"own"` for anything
@@ -124,8 +124,55 @@ Step 1 (the contract and the storage; the switch, the reveal and the page's word
 - **`lock_state`** gains `keyguard` (the two words, else dropped), `pin_rev` (>= 0), `reset_token`,
   `keyguard_relocks` (0..=1000). While a rollback waits for the token the phone reports `keyguard: android` and
   `inactive: android_credential` - `keyguard` names the gate, `inactive` why Vibb One's lock is off (qa-59-revision
-  N-C); step 2 words that pair as "Switching back…". **Power** `on.unlocked_at_ms` is parsed (anything but a whole
+  N-C); step 2 words that pair as "Switching back…" (below). **Power** `on.unlocked_at_ms` is parsed (anything but a whole
   number = `None`); step 2 words it.
 - Tests: `kid_pin::tests`, `kid_lock::tests::the_keyguard_fields_are_kept_typed`, `src/tests/kid_keyguard.rs` (the
   legacy, B, C sequence, clear, no key, the queue rule per condition, delivery and the `pending_command` keys with and
   without `pin`, the intake), `power::a_launcher_report_raises_both` (`testdata/power_report.json`).
+
+Step 2 (Lock Screen & PINs; `docs/notes/server/pwa.md`, "Lock Screen & PINs", has the page's forms):
+
+- **The switch** (`devices::update_kid_keyguard`, `POST /devices/{id}/kid-lock/keyguard`, `keyguard` = `own` |
+  `android`, else 400): only with a Child PIN (`UPDATE ... WHERE kid_pin_hash IS NOT NULL`, else flash
+  `keyguard_no_pin`); to android the queue rule runs in the same transaction (a kept PIN migrates the phone at once),
+  to own a waiting `set_kid_pin` is cancelled (`keyguard_own`); a change logs `kid_keyguard_changed` ("device 3:
+  Android's lock"), every save nudges. Labelled for the test phase: Android's lock is the destination (PLAN).
+- **Show Child PIN** (`device_pages::lock_action`, `POST /devices/{id}/lock#show-pin` with `action=reveal_kid_pin` and
+  `password`; another action 400): `admin_auth::reauth` (the gated Argon2; three wrong in a row end every session of the
+  account, the count - `admin_users.reauth_wrong` - shared with the password and 2FA forms), then the page rendered with `kid_lock::shown_pin` over
+  `kid_lock::KeptPin` (the four columns in one read): the PIN; for a phone with the capability reporting another rev,
+  the confirmed PIN kept in `prev` when its rev is the phone's ("New Child PIN" + "Until the phone gets it, its PIN is
+  still 1357."), else "The phone still has an earlier PIN"; a reported `pin_rev: null` on Android's lock says the PIN
+  was changed on the phone; a launcher without the capability gets the newest alone. Nothing to show: "Not stored on
+  this server" (legacy, or saved without the key), "Not readable on this server" (another key), "can't read its key
+  file" (`kid_pin_key` none). Never a redirect or a URL: `no_store_path` has `["devices", _, "lock"]`; the security log
+  gets `kid_pin_shown` / `kid_pin_reveal_refused` with "device N" only. The password field is `autocomplete="off"`.
+  The PIN hides after a minute (CSS) and when the page is left (`static/reveal.js`, which also makes a reload a GET);
+  "the phone still has" reads only a report since the enrolment (pwa.md, "Lock Screen & PINs").
+- **Send the Child PIN again** (`devices::send_kid_pin`, `POST /devices/{id}/kid-pin/send`): the queue rule with no
+  report; `pin_not_kept` without a sealed copy, `pin_not_sent` when it made no row (own, no capability, one waiting),
+  else `pin_sent` + `kid_pin_sent` + a nudge. Offered (`kid_lock::offers_send_again`) while Android's lock is chosen,
+  a copy is kept, the phone (its last report since the enrolment, S2P-4) has the capability and doesn't run the current PIN (`keyguard: own`, `pin_rev` null or
+  another), nothing waits and the newest row isn't in flight (sent, or taken without an answer).
+- **The group's notes** (`kid_lock::lock_card(policy, &PhoneLock, now)`; `PhoneLock` = the report, its two
+  capabilities, a waiting row): Android's lock chosen and an older launcher - "Update Vibb One for Android's lock";
+  chosen and the phone on Vibb One's - row "Android's lock · Waiting" / "Sending the PIN"; on Android's lock with
+  `pin_rev: null` - "Phone's PIN isn't the Child PIN" (also an Attention action row, `Kind::ChildPinChanged`,
+  `kid_lock::pin_changed_on_phone`); without the token - "Vibb One can't change Android's PIN"; Vibb One's chosen
+  and the phone on Android's - row "Switching back…", or the warning "Android's PIN is still on" without the token or
+  with `inactive: android_credential` (qa-59-revision N-C: own mode's "remove Android's lock" - and the lock-off alarm - whenever the phone
+  runs Vibb One's lock, whichever lock is chosen: an Android PIN Vibb One didn't set leaves its lock off;
+  qa-59-step2-code S2P-2); `pin_rev` another than the current - row "Child PIN on the phone · An earlier
+  one"; relocks - "Locked again by Vibb One · N times"; "On the phone · Locked · Android's lock · 10:59". `lock_off`
+  (the Attention alarm) reads the same notes. The newest `set_kid_pin` of this enrollment (`kid_lock::pin_send`, while
+  Android's lock is chosen): "Child PIN to the phone · Waiting / Sent · 14:02 / Sent 14:02 · taken 14:03 / Set ·
+  14:03 / Refused · 14:03" with the reason behind ⓘ (`kid_lock::PinAnswer`, also `locate::reword`'s words in the
+  summary's Activity, where the command is "Child PIN to the phone").
+- **Locate**: "locked (android pin)" reads "Locked with the Child PIN (fingerprint off until it's typed)"; with
+  Android's lock chosen the ⓘ under the actions says Locate, Ring and Erase wait for the PIN after a restart.
+  **Power**: a start's `unlocked_at_ms` more than 2 minutes after it adds "· unlocked 07:15" to the "turned on" /
+  "restarted" event (`parent_events::UNLOCK_SAID_AFTER`).
+- Tests: `kid_lock::tests` (`the_card_words_android_lock_case_by_case`, `the_pin_command_reads_as_its_state`,
+  `send_again_is_offered_only_when_it_can_help`, `the_shown_pin_names_what_the_phone_has`),
+  `src/tests/android_lock_page.rs`, `device_pages::lock_forms_return_to_the_page`, `admin_auth::tests::no_store_paths`,
+  `parent_events::tests::the_power_words`, `locate::tests::the_phones_answers_are_reworded`.

@@ -850,6 +850,8 @@ pub fn command_label(command: &str) -> &'static str {
         "start_pause" => "Unlock for 2 h",
         "allow_blocked" => "Allow these apps",
         "install_update" => "Install Now",
+        // Design 59: the Child PIN for Android's lock (its answers: `kid_lock::PinAnswer`).
+        "set_kid_pin" => "Child PIN to the phone",
         _ => "Other request",
     }
 }

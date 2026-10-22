@@ -877,7 +877,11 @@ pub fn build_admin_router(
             get(handlers::device_pages::view_advanced),
         )
         // Step 4: Lock Screen & PINs.
-        .route("/devices/{id}/lock", get(handlers::device_pages::view_lock))
+        // Design 59 §2.2: "Show Child PIN…" posts to the page's own path (`action=reveal_kid_pin`).
+        .route(
+            "/devices/{id}/lock",
+            get(handlers::device_pages::view_lock).post(handlers::device_pages::lock_action),
+        )
         // Step 6: Device › Apps (its forms: `/apps/toggle`, `/app-updates`, `/apps/display`).
         .route("/devices/{id}/apps", get(handlers::device_pages::view_apps))
         // Step 5: Home Screen and Web Filter.
@@ -897,6 +901,14 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/kid-lock",
             post(handlers::devices::update_kid_lock),
+        )
+        .route(
+            "/devices/{id}/kid-lock/keyguard",
+            post(handlers::devices::update_kid_keyguard),
+        )
+        .route(
+            "/devices/{id}/kid-pin/send",
+            post(handlers::devices::send_kid_pin),
         )
         .route(
             "/devices/{id}/parent-pin",

@@ -1650,6 +1650,44 @@ details.edit[open] > summary .chev {
     margin-top: 0;
 }
 
+/* Show Child PIN (design 59 §2.2): the digits large, in the heading face; the line under them. */
+.pin-digits {
+    margin: 0 4px 12px;
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: 0.25em;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+}
+
+/* The shown PIN (and the one the phone still has) goes after a minute, with or without JS
+   (qa-59-step2-code S2P-5); static/reveal.js also removes it when the page is left. */
+.pin-digits,
+.pin-inline {
+    -webkit-animation: pin-hide 0s linear 60s forwards;
+    animation: pin-hide 0s linear 60s forwards;
+}
+
+@-webkit-keyframes pin-hide {
+    to { visibility: hidden; }
+}
+
+@keyframes pin-hide {
+    to { visibility: hidden; }
+}
+
+.pin-line,
+.edit-body > .pin-line:first-child {
+    margin: 0 4px;
+}
+
+.pin-inline {
+    font-weight: 700;
+    color: var(--label);
+    letter-spacing: 0.1em;
+}
+
 /* A warning's expert fix (an adb command): its ⓘ follows the sentence, the panel opens under it. */
 .attention-sub details.info {
     display: inline;
