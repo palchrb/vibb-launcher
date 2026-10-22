@@ -193,9 +193,20 @@ async fn the_app_is_called_vibb_phone_with_a_stable_identity() {
         );
     }
     let css = std::fs::read_to_string("static/style.css").unwrap();
-    assert!(css.contains("src: url(\"fonts/nunito-latin-wght.woff2\") format(\"woff2\");"));
+    // The one @font-face's file, and the head preloads exactly it (a rename of one alone would
+    // fetch a 404 or the font twice on every page; qa-pwa-identity-d-code PD-2).
+    let font = css
+        .split("@font-face")
+        .nth(1)
+        .and_then(|block| block.split("src: url(\"").nth(1))
+        .and_then(|rest| rest.split('"').next())
+        .expect("an @font-face with a src url");
+    assert_eq!(font, "fonts/nunito-latin-wght.woff2");
+    assert!(html.contains(&format!(
+        "<link rel=\"preload\" href=\"/static/{font}\" as=\"font\" type=\"font/woff2\" crossorigin>"
+    )));
     assert!(
-        std::fs::read("static/fonts/nunito-latin-wght.woff2")
+        std::fs::read(format!("static/{font}"))
             .unwrap()
             .starts_with(b"wOF2")
     );

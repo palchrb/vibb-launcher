@@ -3,7 +3,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { install, countText, readSpan, SPAN_KEY } = require("../static/locate.js");
+const { install, countText, readSpan, trailColour, SPAN_KEY } = require("../static/locate.js");
 
 /** A fake Leaflet that records what was drawn. */
 function fakeLeaflet() {
@@ -250,6 +250,16 @@ test("in the shell a Locations row scrolls <main> to put the map under its top p
     // The box was 840 px above the screen's top: it now sits 55 px down, at main's padding.
     assert.strictEqual(main.scrollTop, 900 - 840 - 55);
     assert.deepStrictEqual(page.scrolled, [], "no scrollIntoView");
+});
+
+test("the trail takes the page's --map-trail, else vibb's dark peach", () => {
+    const win = (value) => ({
+        document: { documentElement: {} },
+        getComputedStyle: () => ({ getPropertyValue: (name) => (name === "--map-trail" ? value : "") }),
+    });
+    assert.strictEqual(trailColour(win(" #123456")), "#123456");
+    assert.strictEqual(trailColour(win("")), "#A64B25");
+    assert.strictEqual(trailColour({ document: { documentElement: {} } }), "#A64B25");
 });
 
 test("no map box or no Leaflet: nothing happens", () => {

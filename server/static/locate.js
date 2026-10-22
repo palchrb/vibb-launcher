@@ -19,7 +19,8 @@
     var SPAN_KEY = "handy-locate-span";
     // Hours (0 = everything kept) and their words, as the server's locate::SPANS.
     var SPANS = { "12": "12 hours", "24": "24 hours", "168": "7 days", "0": "All kept" };
-    var TRAIL = "#0B66D6";
+    // The trail's colour when the page names none: vibb's dark peach.
+    var TRAIL = "#A64B25";
     var WAIT_EVERY_MS = 5000;
     var WAIT_TRIES = 12;
 
@@ -48,6 +49,16 @@
         if (span === "0") return count + " kept";
         if (count === 0) return "0 in the last " + SPANS[span] + " · newest " + newestAge;
         return count + " in the last " + SPANS[span];
+    }
+
+    // The trail in the page's accent, `--map-trail` (style.css): the tiles are light in both
+    // schemes, so it is the light scheme's peach in dark mode too.
+    function trailColour(win) {
+        try {
+            var value = win.getComputedStyle(win.document.documentElement).getPropertyValue("--map-trail");
+            if (value && value.trim()) return value.trim();
+        } catch (e) {}
+        return TRAIL;
     }
 
     function install(win, L) {
@@ -115,10 +126,11 @@
                 all.push(at);
                 if (!points[i].newest) trail.push(at);
             }
-            L.polyline(trail, { color: TRAIL }).addTo(layer);
+            var colour = trailColour(win);
+            L.polyline(trail, { color: colour }).addTo(layer);
             // A dot per fix, so fixes close together show at all; the newest has the marker.
             for (var j = 0; j < trail.length && j < points.length - 1; j++) {
-                L.circleMarker(trail[j], { radius: 3, color: TRAIL, weight: 1, fillColor: TRAIL, fillOpacity: 1 }).addTo(layer);
+                L.circleMarker(trail[j], { radius: 3, color: colour, weight: 1, fillColor: colour, fillOpacity: 1 }).addTo(layer);
             }
             var last = points[points.length - 1];
             // A DOM node with textContent: the phone's values are never HTML (review H2). The
@@ -255,7 +267,7 @@
         return { choose: choose, map: map };
     }
 
-    var api = { install: install, countText: countText, readSpan: readSpan, SPAN_KEY: SPAN_KEY, SPANS: SPANS };
+    var api = { install: install, countText: countText, readSpan: readSpan, trailColour: trailColour, SPAN_KEY: SPAN_KEY, SPANS: SPANS };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else if (root.document) {

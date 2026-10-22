@@ -728,10 +728,16 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Apps tab's letter tiles.
 - **Nunito is served from here** (no font service; `static/fonts/nunito-latin-wght.woff2`, preloaded by `head.html`,
   `font-display: swap`): google/fonts `ofl/nunito/Nunito[wght].ttf` at commit `8b0a1d0f`, cut with fonttools to
-  `wght=700:900` (`fonttools varLib.instancer`) and Latin + Latin Extended-A (`pyftsubset --flavor=woff2`, about 31 KB);
+  `wght=700:900` (`fonttools varLib.instancer --update-name-table`, so it names itself Nunito Bold, not ExtraLight) and Latin + Latin Extended-A (`pyftsubset --flavor=woff2`, about 31 KB);
   SIL OFL 1.1 in `static/fonts/OFL.txt` (no Reserved Font Name), a line in `NOTICE.md`. Body text stays the system
   font.
 - **Icons**: `icons/icon-192.png`, `icon-512.png` and `icon-180.png` (apple-touch-icon) are the vibb app's own
   (palchrb/vibb, `pi/web/`, branch `pipewire`); `icon-maskable-512.png` is its 512 scaled to 80 % on night, so the
   outer ring (195 px) is inside the 40 % safe zone (205 px). `theme-color` and the manifest follow the grounds
-  (`#F2F2F7`, dark `#0C0C14`). The shell test checks every icon's size and that the font is local.
+  (`#F2F2F7`, dark `#0C0C14`). The shell test checks every icon's size, that the font is local and that the head
+  preloads exactly the `@font-face` file. `deploy/generate-icons.ps1` (the old blue phone icons) is deleted: the icons
+  come from the vibb repo.
+- **The fix round** (`docs/review/qa-pwa-identity-d-code.md`): a checked plain checkbox in dark has a night tick on
+  the peach (9.9:1); the Locate map's trail is `--map-trail` (`#A64B25` in both schemes, read by `locate.js`, `?v=2`;
+  the OSM tiles are light in both), no longer the old blue; contact initials on Calls & Contacts stay peach, like the
+  phones'.
