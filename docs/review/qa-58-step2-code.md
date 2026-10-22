@@ -153,3 +153,17 @@ No High. 1 Medium, 3 Low, 2 test gaps (Low), 2 nits.
 | M10 | `storytelBackAt` after a 401 stop removed | caught - `StorytelDownloadTest` L4 |
 | M11 | the prompt retry's fit check removed | caught - 2 tests |
 | M12 | the prefetch's 240 s life guard removed | caught - QA N-6 test |
+
+## Fixed
+
+- S2-1: Fixed in 11b1751c - the fake's `/fake/jwt` ages its JWT and renews it below `min(900, ttl / 2)` left (selftest
+  part 7); `keep()` and the prefetch's "same back" compare only with an unexpired kept JWT (test "an expired JWT is
+  replaced by the same value with a later expiry").
+- S2-2: Fixed in 11b1751c - the outage come-back doubles 2, 4, 8, 16, 30 min over consecutive outage stops, reset by
+  any `ok` (test "the come-back after outages grows..."); recorded in design 58's Step 2 status.
+- S2-3: Fixed in 11b1751c - the prefetch launch catches every `Exception`, cancellation rethrown (`GuardsTest` pins it).
+- S2-4: Fixed in 11b1751c - `debugSwitchJwt` applies to both branches of the ask.
+- S2-5: Fixed in 11b1751c - test "an ask in flight across a parent's save" (M3, M9).
+- S2-6: Fixed in 11b1751c - `slept.isEmpty()` after the cancel (M4).
+- Nit 1: Fixed in 11b1751c - the consumable id is checked in `StorytelApi.assetUrl` only.
+- Nit 2: Fixed in 11b1751c - recorded in design 58's Step 2 status (accepted: the hold is the point).
