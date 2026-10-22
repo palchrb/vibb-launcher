@@ -158,8 +158,6 @@ async fn the_app_is_called_vibb_phone_with_a_stable_identity() {
         "<title>Devices · Vibb Phone</title>",
         "<meta name=\"apple-mobile-web-app-title\" content=\"Vibb Phone\">",
         "<meta name=\"color-scheme\" content=\"light dark\">",
-        "<meta name=\"theme-color\" content=\"#F2F2F7\" media=\"(prefers-color-scheme: light)\">",
-        "<meta name=\"theme-color\" content=\"#0C0C14\" media=\"(prefers-color-scheme: dark)\">",
         // The manifest URL stays: older Chrome keys a WebAPK to it.
         "<link rel=\"manifest\" href=\"/static/manifest.webmanifest\">",
         // Not deferred: a switch tapped while the page still loads saves too (qa-31-s1-code L1).
@@ -543,9 +541,39 @@ async fn the_tab_pages_open_on_their_large_title() {
             .unwrap_or_else(|| panic!("{page}: no large title"));
         let before = &main[..title_at];
         assert!(
-            before.trim().is_empty() || before.trim_start().starts_with("<div class=\"title-bar\""),
+            before.trim().is_empty() || before.trim_start().starts_with("<div class=\"title-bar"),
             "{page}: something before the title: {before}"
         );
+        // Devices' top is vibb's night (artboard E, 2026-10-22): its title bar is the night band
+        // and the status bar is night with it, in both schemes; every other tab keeps the grey top
+        // and the ground's theme-color per scheme.
+        let night = page == "/devices";
+        assert_eq!(
+            before
+                .trim_start()
+                .starts_with("<div class=\"title-bar title-bar-night\">"),
+            night,
+            "{page}: the night band"
+        );
+        assert_eq!(
+            html.matches("title-bar-night").count(),
+            usize::from(night),
+            "{page}"
+        );
+        let themes: Vec<&str> = html
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("<meta name=\"theme-color\""))
+            .collect();
+        let expected: &[&str] = if night {
+            &["<meta name=\"theme-color\" content=\"#0C0C14\">"]
+        } else {
+            &[
+                "<meta name=\"theme-color\" content=\"#F2F2F7\" media=\"(prefers-color-scheme: light)\">",
+                "<meta name=\"theme-color\" content=\"#0C0C14\" media=\"(prefers-color-scheme: dark)\">",
+            ]
+        };
+        assert_eq!(themes, expected, "{page}: theme-color");
         if let Some(href) = add {
             let bar = &before[before.find("title-bar").unwrap()..];
             assert!(
@@ -916,6 +944,13 @@ fn the_app_shell_scrolls_main_not_the_document() {
     assert!(
         brand.contains("height: 44px;") && brand.contains("margin: 0 auto 0 0;"),
         "{brand}"
+    );
+    // Devices' night band paints past the bar's box with border-image's outset alone (ink
+    // overflow: no room taken, no scrollable overflow), so the bar stays at y 8-52 and the title
+    // at 56 as on every other tab - nothing that moves a box goes on the band.
+    assert_eq!(
+        block(".title-bar-night"),
+        "border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 0;"
     );
     assert!(!css.contains("\n* {\n    touch-action") && !body.contains("touch-action"));
     // The auth pages keep the document scroll.

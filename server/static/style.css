@@ -62,25 +62,35 @@
     --switch-off-border: #8E8E93;
     --knob: #FFFFFF;
 
-    /* The floating tab bar: a card with the chosen tab as a pill. */
-    --bar: #FFFFFF;
-    /* The bar where the browser blurs what scrolls behind it (@supports below). */
-    --bar-glass: rgba(255, 255, 255, 0.9);
-    --bar-shadow: 0 2px 10px rgba(12, 12, 20, 0.08);
+    /* The floating tab bar: a layer of its own, with the chosen tab as a pill. Never the card's white
+       nor the ground's grey (2026-10-22: a white bar ran into a white group under it), a hairline
+       inside its edge (an inset shadow, so the bar's height stays --tab-bar-h) and a soft shadow, so
+       it reads apart over a white card and over the grey ground alike. */
+    --bar: #F4F2F0;
+    /* The bar where the browser blurs what scrolls behind it (@supports below): a warm grey at 72 %,
+       so the content behind reads dimmed and blurred (the Nextcloud app), sharp in the gaps. */
+    --bar-glass: rgba(238, 236, 234, 0.72);
+    --bar-shadow: inset 0 0 0 1px rgba(12, 12, 20, 0.08), 0 4px 18px rgba(12, 12, 20, 0.14);
     /* The floating bar's own height (.tab-bar: 8 px padding, a tab's 6 px padding, the 24 px icon
        and its 3 px, the label's line at 0.75rem x 1.2) and the room main leaves under its last row:
        the bar, the 14 px under it, 16 px clear above it; the home indicator's inset is added there. */
     --tab-bar-h: calc(55px + 0.9rem);
     --tab-bar-room: calc(var(--tab-bar-h) + 14px + 16px);
-    --tab-off: #6B6B70;
+    /* The labels stay AA over the see-through bar with text behind it (5.2:1 at worst, 2026-10-22). */
+    --tab-off: #5A5A5F;
     --tab-on: #0C0C14;
     --tab-pill: #FBE4DC;
 
-    /* vibb: Nunito for the headings (static/fonts/, never fetched elsewhere), the Pust mark's
-       night tile, the wordmark, a phone's initial on peach (#0C0C14 on #F0A884 9.9:1). */
+    /* vibb: Nunito for the headings (static/fonts/, never fetched elsewhere), a phone's initial on
+       peach (#0C0C14 on #F0A884 9.9:1). Devices' night band (artboard E) is night in both schemes,
+       and so is everything on it: the Pust mark's tile lifted to a night card so it shows on the
+       band, the wordmark white (19.0:1), + and the bell peach (9.9:1), their hover pale peach. */
     --font-display: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-    --brand-tile: #0C0C14;
-    --brand-word: #0C0C14;
+    --night: #0C0C14;
+    --brand-tile: #1B1B28;
+    --brand-word: #FFFFFF;
+    --night-action: #F0A884;
+    --night-action-hover: #F6C4AA;
     --avatar-bg: #F0A884;
     --avatar-text: #0C0C14;
     /* The Locate map's trail (static/locate.js): on OSM's light tiles in both schemes. */
@@ -148,14 +158,11 @@
         --knob: #FFFFFF;
 
         --bar: #1B1B28;
-        --bar-glass: rgba(27, 27, 40, 0.9);
-        --bar-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
-        --tab-off: #A89C96;
+        --bar-glass: rgba(27, 27, 40, 0.72);
+        --bar-shadow: inset 0 0 0 1px rgba(246, 231, 224, 0.08), 0 4px 18px rgba(0, 0, 0, 0.5);
+        --tab-off: #B4A8A2;
         --tab-on: #F0A884;
         --tab-pill: #2A2A3A;
-
-        --brand-tile: #1B1B28;
-        --brand-word: #F6E7E0;
     }
 }
 
@@ -1748,6 +1755,17 @@ details.edit[open] > summary .chev {
 .vibb-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; background: var(--brand-tile); }
 .vibb-mark svg { width: 26px; height: 26px; }
 .vibb-word { margin-left: 10px; color: var(--brand-word); font-family: var(--font-display); font-size: 1.5rem; font-weight: 900; letter-spacing: -0.6px; line-height: 1; }
+/* Devices' night band (artboard E, 2026-10-22; the home page alone): its title bar on vibb's night
+   from the screen's very top - main's 8 px and the status bar's inset - to flat right under the
+   bar, across main's whole width. border-image's outset paints it past the bar's box without taking
+   room or adding scrollable overflow (ink overflow, clipped at main's edges), so the bar, + and the
+   bell, and the large title under it sit exactly where every other tab has them. The band is main's
+   content like the bar, so it scrolls away with it; its 100vh above the top is what an iOS
+   pull-down bounce shows (night, not the grey ground). theme-color is night on this page too. */
+.title-bar-night { border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 0; }
+.title-bar-night .title-action { color: var(--night-action); }
+.title-bar-night .title-action:hover { color: var(--night-action-hover); }
+.title-bar-night .title-action:focus { outline-color: var(--night-action); }
 .title-action { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; color: var(--tint); font-size: 1.0625rem; text-decoration: none; }
 .tile-orange { background: #C2410C; }
 details.disclosure > summary { list-style: none; cursor: pointer; }
