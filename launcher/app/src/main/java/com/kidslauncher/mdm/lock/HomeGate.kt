@@ -19,6 +19,14 @@ package com.kidslauncher.mdm.lock
 fun homeShowsContent(lockMode: LockMode, pinActive: Boolean, known: Boolean): Boolean =
     if (known) lockMode != LockMode.LOCKED else !pinActive
 
+/** F3C-2: the boot's Home start was declined because of a call (the first start of a boot, no Home yet) - it is
+ * retried when the call ends ([CALL_END_HOME_RETRY_MS] later), so the stock launcher never shows after it. */
+fun bootHomeWaitsForCall(action: BootHomeAction, firstStartOfBoot: Boolean, inCall: Boolean): Boolean =
+    action == BootHomeAction.NONE && firstStartOfBoot && inCall
+
+/** After the call ends: our call screen's "Ended" shows 1.5 s - the boot's Home comes after it, not over it. */
+const val CALL_END_HOME_RETRY_MS = 2_000L
+
 /** What the first process start of a boot does about Home (design 16 A, 16c). */
 enum class BootHomeAction {
     /** Not the first start of this boot (or no boot count): nothing. */

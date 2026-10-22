@@ -14,6 +14,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.os.UserManager
+import android.util.Log
 import android.widget.FrameLayout
 import android.widget.ImageView
 import com.kidslauncher.mdm.R
@@ -35,6 +36,13 @@ import com.kidslauncher.mdm.R
  *   as soon as the disable reads back - like AOSP's FallbackHome - so the system resolves HOME again
  *   at once, to HomeActivity, HOME-typed (QA #8, qa-16b-code #1: AMS alone removes it only with the
  *   PACKAGE_CHANGED broadcast, deferred up to 10 s right after boot).
+ *
+ * Design 59 F3, android mode ([BootCoverGuard.androidMode]): behind Android's keyguard before the PIN (never
+ * showWhenLocked), it is what the PIN's dismissal reveals, and it waits for our main process instead of the 3 s:
+ * that process disables it right before the boot's typed Home start, and the cover leaves once our Home is over it
+ * (its stop) - never earlier, since below it may be the stock launcher a boot without `ACTION_SHUTDOWN` started.
+ * Never stranded: [COVER_TAKEOVER_GRACE_MS] after the take-over it leaves anyway, and with no take-over
+ * [COVER_LAUNCHER_WAIT_MS] after the unlock it hands over by itself and starts our Home ([coverWaitStep]).
  */
 class BootCoverActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
@@ -44,6 +52,18 @@ class BootCoverActivity : Activity() {
 
     private var resumed = false
     private var shownMarked = false
+
+    /** F3: android mode - wait for our main process ([coverWaitStep]). Read once at create. */
+    private var waitForLauncher = false
+    private var unlockedAtElapsed = -1L
+    private var disabledAtElapsed = -1L
+
+    /** It started our Home itself ([CoverStep.START_HOME] or its hand-over): once. */
+    private var homeStarted = false
+
+    /** Its own hand-over's disables that didn't read back (F3C-7, [coverHandOverStartsHome]). */
+    private var failedDisables = 0
+    private val waitTick = Runnable { waitStep(visible = true) }
 
     private val loop = object : Animatable2.AnimationCallback() {
         override fun onAnimationEnd(drawable: Drawable?) {
@@ -66,6 +86,7 @@ class BootCoverActivity : Activity() {
             scaleType = ImageView.ScaleType.CENTER
             importantForAccessibility = ImageView.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
+        waitForLauncher = BootCoverGuard.androidMode(this)
         logo = image.drawable as? AnimatedVectorDrawable
         logo?.registerAnimationCallback(loop)
         setContentView(FrameLayout(this).apply { addView(image, FrameLayout.LayoutParams(-1, -1)) })
@@ -87,6 +108,12 @@ class BootCoverActivity : Activity() {
         }
         logo?.start()
         scheduleHandOver()
+    }
+
+    /** F3: stopped while taken over = our Home (or a call) is over the cover - leaving reveals nothing. */
+    override fun onStop() {
+        if (waitForLauncher && !isFinishing) waitStep(visible = false)
+        super.onStop()
     }
 
     override fun onPause() {
@@ -116,8 +143,14 @@ class BootCoverActivity : Activity() {
         super.onDestroy()
     }
 
-    /** Unlocked: hand over to HomeActivity once shown long enough ([coverHandOverDelayMs]). */
+    /** Unlocked: hand over to HomeActivity once shown long enough ([coverHandOverDelayMs]); in android mode the
+     * wait for our main process ([waitStep]). */
     private fun scheduleHandOver() {
+        if (waitForLauncher) {
+            handler.removeCallbacks(waitTick)
+            if (resumed) handler.post(waitTick)
+            return
+        }
         val unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked == true
         val shownFor = if (shownAtElapsed < 0) -1L else SystemClock.elapsedRealtime() - shownAtElapsed
         val delay = coverHandOverDelayMs(unlocked, shownFor) ?: return
@@ -125,7 +158,66 @@ class BootCoverActivity : Activity() {
         handler.postDelayed(handOver, delay)
     }
 
+    /** F3 (android mode): one look at [coverWaitStep]; while in front, again every [COVER_WAIT_POLL_MS]. */
+    private fun waitStep(visible: Boolean) {
+        val now = SystemClock.elapsedRealtime()
+        val unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked == true
+        if (unlocked && unlockedAtElapsed < 0) unlockedAtElapsed = now
+        val disabled = unlocked && BootCoverGuard.isDisabled(this)
+        if (disabled && disabledAtElapsed < 0) disabledAtElapsed = now
+        val unlockedFor = if (unlockedAtElapsed < 0) 0L else now - unlockedAtElapsed
+        val disabledFor = if (disabledAtElapsed < 0) 0L else now - disabledAtElapsed
+        when (coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted)) {
+            CoverStep.STAY -> Unit
+            CoverStep.FINISH -> {
+                Log.i(LOG_TAG, "Boot cover leaves (${if (visible) "taken over, grace over" else "taken over, Home over it"}): $unlockedFor ms after the unlock")
+                handler.removeCallbacksAndMessages(null)
+                finish()
+                return
+            }
+            CoverStep.START_HOME -> {
+                // F3C-2: taken over, but no Home came over us (our process died between the take-over and its start).
+                Log.i(LOG_TAG, "Boot cover starts Home: taken over $disabledFor ms ago, still in front")
+                homeStarted = true
+                startHome()
+            }
+            CoverStep.HAND_OVER -> if (!homeStarted) {
+                BootCoverGuard.disable(this, "no take-over $unlockedFor ms after the unlock")
+                val readBack = BootCoverGuard.isDisabled(this)
+                if (coverHandOverStartsHome(readBack, failedDisables)) {
+                    BootCoverGuard.markHandedOver(this)
+                    homeStarted = true
+                    startHome()
+                } else {
+                    failedDisables++
+                }
+            }
+        }
+        if (resumed) {
+            handler.removeCallbacks(waitTick)
+            handler.postDelayed(waitTick, COVER_WAIT_POLL_MS)
+        }
+    }
+
+    /** F3's fallback: the typed HOME start (unlocked, the cover disabled: HomeActivity, which starts our main
+     * process). Marked as ours ([HomeFront.EXTRA_BROUGHT]: not the kid's Home press). Never throws. */
+    private fun startHome() {
+        try {
+            startActivity(
+                Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_HOME)
+                    .setPackage(packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(HomeFront.EXTRA_BROUGHT, true),
+            )
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover couldn't start Home: ${e.javaClass.simpleName}")
+        }
+    }
+
     companion object {
+        private const val LOG_TAG = "BootCover"
+
         /** A pause between breaths (the generated animation is one breath, < 1 s). */
         private const val BREATH_PAUSE_MS = 700L
 

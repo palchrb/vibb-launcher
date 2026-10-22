@@ -19,6 +19,7 @@ private const val LOG_TAG = "BootCover"
  */
 object BootCoverGuard {
     private const val FILE = "boot_cover_state"
+    private const val ANDROID_MARKER = "boot_cover_android"
 
     @Volatile
     private var installed = false
@@ -67,12 +68,36 @@ object BootCoverGuard {
         update(context) { it.copy(handedOverAtMs = System.currentTimeMillis()) }
     }
 
-    /** The switch is off: a trip and the old times go (main process; the cover isn't running). */
+    /** The switch is off, or [coverGuardClearDue] (an update, the switch's off -> on edge - F3C-3): a trip and the old
+     * times go (main process; the cover isn't running). */
     fun clear(context: Context) {
         try {
             file(context).delete()
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't clear the boot cover record", e)
+        }
+    }
+
+    /** Design 59 F3: the marker `boot_cover_android` (an empty device-protected file, written only by the main
+     * process at an apply - [bootCoverAndroidMarker]): the cover waits for our Home, and the locked boot starts
+     * it. Unreadable = absent (the 16b rules). */
+    private fun androidMarker(context: Context) = File(context.createDeviceProtectedStorageContext().filesDir, ANDROID_MARKER)
+
+    fun androidMode(context: Context): Boolean = try {
+        androidMarker(context).exists()
+    } catch (e: Exception) {
+        false
+    }
+
+    /** Main process, every apply (background thread). Never throws. */
+    fun setAndroidMode(context: Context, on: Boolean) {
+        try {
+            val marker = androidMarker(context)
+            if (on == marker.exists()) return
+            val done = if (on) marker.createNewFile() else marker.delete()
+            Log.i(LOG_TAG, "Boot cover android mode ${if (on) "on" else "off"}${if (done) "" else " (not written)"}")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't write the boot cover's android mode", e)
         }
     }
 
@@ -93,7 +118,7 @@ object BootCoverGuard {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                val next = coverCrashed(read(app), bootCount(app))
+                val next = coverCrashed(read(app), bootCount(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong())
                 write(app, next)
                 if (coverGuardTripped(next)) disable(app, "crash guard (${next.crashes} crashes this boot)")
             } catch (t: Throwable) {

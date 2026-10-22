@@ -83,6 +83,88 @@ class BootCoverManifestTest {
         for (source in listOf(activity, guard)) assertFalse(source.contains("getSharedPreferences"))
     }
 
+    /** Design 59 F3: the cover sits behind Android's keyguard, never over it - Android's lock screen (the restart
+     * line, the pad) stays the face before the PIN, and nothing of ours occludes or dismisses it. */
+    @Test
+    fun `the cover never shows over the keyguard, and the locked boot's start reads device-protected storage only`() {
+        for (attr in listOf("showWhenLocked", "turnScreenOn", "showForAllUsers")) assertEquals(attr, "", cover.getAttributeNS(ns, attr))
+        val activity = code("java/com/kidslauncher/mdm/lock/BootCoverActivity.kt")
+        for (banned in listOf("setShowWhenLocked", "setTurnScreenOn", "requestDismissKeyguard", "FLAG_SHOW_WHEN_LOCKED", "FLAG_DISMISS_KEYGUARD")) {
+            assertFalse(banned, activity.contains(banned))
+        }
+        // It leaves on the take-over only when stopped or the grace is over (the rule is coverWaitStep's), and its
+        // own hand-over disables itself before starting Home.
+        val wait = activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n")
+        assertTrue(wait.contains("coverWaitStep(unlocked, disabled, visible"))
+        val handOver = wait.substringAfter("CoverStep.HAND_OVER ->")
+        assertTrue(handOver.indexOf("BootCoverGuard.disable") in 0 until handOver.indexOf("startHome()"))
+        assertTrue(activity.substringAfter("override fun onStop()").substringBefore("\n    }").contains("waitStep(visible = false)"))
+        // BootCallReceiver: the call policy first, then the cover; atLockedBoot reads no CE preferences.
+        val receiver = code("java/com/kidslauncher/mdm/calls/BootCallReceiver.kt")
+        assertTrue(receiver.indexOf("CallPolicyStore.ensureLoaded") in 0 until receiver.indexOf("BootCover.atLockedBoot(context)"))
+        val cover = code("java/com/kidslauncher/mdm/lock/BootCover.kt")
+        val atBoot = cover.substringAfter("fun atLockedBoot(").substringBefore("\n    }\n") +
+            cover.substringAfter("private fun lockedBootStep(").substringBefore("\n    )\n") +
+            cover.substringAfter("private fun waitForScreenOff(").substringBefore("\n    }\n")
+        for (banned in listOf("getSharedPreferences", "prefs(", "wanted(", "LauncherPreferences", "startLockTask")) assertFalse(banned, atBoot.contains(banned))
+        val callLive = code("java/com/kidslauncher/mdm/lock/BootHome.kt").substringAfter("fun callLive(").substringBefore("\n\n")
+        for (banned in listOf("getSharedPreferences", "LauncherPreferences", "currentPolicyDecision")) assertFalse(banned, callLive.contains(banned))
+    }
+
+    /** F3C-5: the glue the pure rules hang on - each of the code QA's surviving mutations (M4b, M6, M7, M9, M10) and the
+     * fix round's new wiring fails here. */
+    @Test
+    fun `the android-mode glue is wired (F3C-5)`() {
+        val enforcer = code("java/com/kidslauncher/mdm/server/AppEnforcer.kt")
+        // M4b: the gate comes from AndroidLock, never a constant; the parent's choice decides whether it may change.
+        val call = enforcer.substringAfter("BootCover.applyPolicy(").substringBefore("\n            )")
+        assertTrue(call, call.contains("androidGate = com.kidslauncher.mdm.lock.AndroidLock.gateNow(context)"))
+        assertTrue(call, call.contains("parentChoice = parentChoice"))
+        val cover = code("java/com/kidslauncher/mdm/lock/BootCover.kt")
+        val apply = cover.substringAfter("fun applyPolicy(").substringBefore("\n    }\n")
+        assertTrue("F3C-4: a fallback changes nothing", apply.contains("if (!parentChoice) return"))
+        assertTrue(apply.contains("bootCoverWanted(switchOn, managed, deviceOwner = true, androidFace = androidGate)"))
+        // M6: the marker is written from the rule.
+        assertTrue(apply.contains("BootCoverGuard.setAndroidMode(app, bootCoverAndroidMarker(wanted, androidGate))"))
+        // M7: the cover's PPA has its own category, never replacing HomeActivity's.
+        assertTrue(apply.contains("addCategory(BOOT_COVER_CATEGORY)"))
+        // F3C-3: the guard's clear on an update or the switch's edge.
+        assertTrue(apply.contains("coverGuardClearDue(BootCoverGuard.read(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong(), switchWas, switchOn)"))
+        // M9: the locked boot's start stays inside our package (before the unlock: the cover alone).
+        val atBoot = cover.substringAfter("fun atLockedBoot(").substringBefore("\n    }\n")
+        val start = atBoot.substringAfter("LockedBootCover.START ->")
+        assertTrue(start.contains(".setPackage(app.packageName)"))
+        assertTrue(start.indexOf("setEnabled(app, true") in 0 until start.indexOf("app.startActivity("))
+        assertTrue(atBoot.contains("LockedBootCover.AT_SCREEN_OFF -> waitForScreenOff(app)"))
+        val step = cover.substringAfter("private fun lockedBootStep(").substringBefore("\n    )\n")
+        for (needed in listOf(
+            "androidMarker = BootCoverGuard.androidMode(app)", "isUserUnlocked", "coverGuardTripped(BootCoverGuard.read(app))",
+            "tookOver = tookOver", "alreadyArmed = isEnabled(app)", "callLive = BootHome.callLive(app)", "isInteractive",
+        )) assertTrue(needed, step.contains(needed))
+        assertTrue(cover.substringAfter("private fun waitForScreenOff(").contains("Intent.ACTION_SCREEN_OFF) atLockedBoot(context)"))
+        // F3C-6 and F3C-2: init marks the take-over, and takes over only per the rule.
+        val init = cover.substringAfter("fun init(context: Context, callLive: Boolean)").substringBefore("\n    }\n")
+        assertTrue(init.indexOf("tookOver = true") in 0 until init.indexOf("coverTakeOverNow("))
+        assertTrue(init.contains("coverTakeOverNow(BootCoverGuard.androidMode(app), callLive)"))
+        // M10: the cover reads the marker.
+        val activity = code("java/com/kidslauncher/mdm/lock/BootCoverActivity.kt")
+        assertTrue(activity.substringAfter("override fun onCreate(").substringBefore("\n    }\n").contains("waitForLauncher = BootCoverGuard.androidMode(this)"))
+        assertTrue(activity.substringAfter("private fun scheduleHandOver()").substringBefore("\n    }\n").contains("if (waitForLauncher)"))
+        val wait = activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n")
+        assertTrue(wait.substringAfter("CoverStep.START_HOME ->").substringBefore("CoverStep.HAND_OVER").contains("startHome()"))
+        assertTrue("F3C-7", wait.substringAfter("CoverStep.HAND_OVER ->").contains("coverHandOverStartsHome(readBack, failedDisables)"))
+        // F3C-2: the boot Home's retry - the take-over and the start in one pass, from every call end and screen-on.
+        val home = code("java/com/kidslauncher/mdm/lock/BootHome.kt")
+        assertTrue(home.contains("waitingForCall = if (bootHomeWaitsForCall(action, firstStart, inCall)) lockActive else null"))
+        val retry = home.substringAfter("fun callMayHaveEnded(").substringBefore("\n    }\n")
+        assertTrue(retry.indexOf("BootCover.takeOver(app)") in 0 until retry.indexOf("startIfDue(app, lockActive"))
+        val runtime = code("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+        assertTrue(runtime.contains("BootCover.init(app, callLive = BootHome.callLive(app))"))
+        assertTrue(runtime.substringAfter("private val callsListener").substringBefore("\n    }\n").contains("BootHome.callMayHaveEnded(ctx)"))
+        assertTrue(runtime.substringAfter("fun onVoipPhase(").substringBefore("\n    }\n").contains("BootHome.callMayHaveEnded(app)"))
+        assertTrue(runtime.substringAfter("private val screenReceiver").substringBefore("\n    }\n").contains("BootHome.callMayHaveEnded(app)"))
+    }
+
     @Test
     fun `Application onCreate does nothing in the cover's process (QA 10)`() {
         val app = code("java/com/kidslauncher/mdm/Application.kt")
