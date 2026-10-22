@@ -887,20 +887,36 @@ class PolicyResponseCompatTest {
                 active = true, inactive = null, locked = true, failures = 5, backoffUntilMs = 1L, exemptYields = 2,
                 voipFsiDenied = emptyList(),
                 voipRang = emptyList(),
+                keyguard = "own", pinRev = null, resetToken = false, keyguardRelocks = 0,
             ),
         )
         val json = ServerJson.parseToJsonElement(ServerJson.encodeToString(StatusReportRequest.serializer(), report)).jsonObject
         assertEquals(
-            setOf("active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields", "voip_fsi_denied", "voip_rang"),
+            setOf(
+                "active", "inactive", "locked", "failures", "backoff_until_ms", "exempt_yields", "voip_fsi_denied", "voip_rang",
+                "keyguard", "pin_rev", "reset_token", "keyguard_relocks",
+            ),
             json["lock_state"]!!.jsonObject.keys,
         )
         assertEquals("[]", json["lock_state"]!!.jsonObject["voip_fsi_denied"].toString())
         assertEquals("[]", json["lock_state"]!!.jsonObject["voip_rang"].toString())
+        // Design 59 §1: the gate is always sent, the own word and an unknown rev included (the server tells an older
+        // launcher by the capability, and queues the PIN for a phone reporting its own lock).
+        assertEquals("\"own\"", json["lock_state"]!!.jsonObject["keyguard"].toString())
+        assertEquals("null", json["lock_state"]!!.jsonObject["pin_rev"].toString())
         // Design r7 §1.1.3: an entry is the server's `{package, last_at_ms}`.
         val rang = com.kidslauncher.mdm.server.dto.LockStateReport(
             active = true, inactive = null, locked = true, failures = 0, backoffUntilMs = null, exemptYields = 0,
             voipFsiDenied = emptyList(),
             voipRang = listOf(com.kidslauncher.mdm.server.dto.VoipRang("org.thoughtcrime.securesms", 1_800_000_000_000L)),
+            keyguard = "android", pinRev = 7, resetToken = true, keyguardRelocks = 2,
+        )
+        assertEquals(
+            """{"keyguard":"android","pin_rev":7,"reset_token":true,"keyguard_relocks":2}""",
+            ServerJson.parseToJsonElement(ServerJson.encodeToString(com.kidslauncher.mdm.server.dto.LockStateReport.serializer(), rang))
+                .jsonObject.filterKeys { it in setOf("keyguard", "pin_rev", "reset_token", "keyguard_relocks") }.let {
+                    kotlinx.serialization.json.JsonObject(it).toString()
+                },
         )
         assertEquals(
             """[{"package":"org.thoughtcrime.securesms","last_at_ms":1800000000000}]""",

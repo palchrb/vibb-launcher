@@ -223,7 +223,102 @@ fun androidTokenStep(stored: Boolean, active: Boolean, deviceSecure: Boolean): T
 }
 
 /**
- * 59 §3.7: `onPasswordChanged` - our own reset (the one-shot "ours" flag, [expected]) keeps the rev Android's PIN
- * was set from; any other change (the kid in Settings) makes it unknown (`null`: the PWA warns).
+ * 59 §3.7: `onPasswordChanged` - our own reset ([expected], [OwnChange]) keeps the rev Android's PIN was set from, or
+ * takes the rev a reset was setting when its own commit never came ([settingRev]: the process died between the reset
+ * and the rev - S4-1); any other change (the kid in Settings) makes it unknown (`null`: the PWA warns).
  */
-fun androidPinRevAfterChange(expected: Boolean, rev: Long?): Long? = if (expected) rev else null
+fun androidPinRevAfterChange(expected: Boolean, rev: Long?, settingRev: Long? = null): Long? =
+    if (expected) settingRev ?: rev else null
+
+/** How long our own reset waits for its `onPasswordChanged` (a lost broadcast never consumes a later change). */
+const val OWN_CHANGE_MS = 60_000L
+
+/**
+ * 59 §3.7 (S4-1): our own credential changes still expected - [count] resets whose `onPasswordChanged` hasn't come,
+ * in boot [boot] until [untilElapsed] (elapsed realtime); [settingRev] the rev the newest one sets (`null`: a clear).
+ * Kept in CE `pin_lock_state` beside the owned flag, so a new process (the broadcast starts one after a death) still
+ * knows the change was ours, and two resets close together are two.
+ */
+data class OwnChange(val count: Int, val boot: Int, val untilElapsed: Long, val settingRev: Long?)
+
+/** [change] still counts: some left, this boot (known), inside its window. */
+fun ownChangeLive(change: OwnChange?, boot: Int, elapsed: Long): Boolean =
+    change != null && change.count > 0 && boot >= 0 && change.boot == boot && elapsed < change.untilElapsed
+
+/** Before our reset: one more expected, the window from now, the rev it sets. */
+fun ownChangeArmed(change: OwnChange?, boot: Int, elapsed: Long, settingRev: Long?): OwnChange =
+    OwnChange((change?.takeIf { ownChangeLive(it, boot, elapsed) }?.count ?: 0) + 1, boot, elapsed + OWN_CHANGE_MS, settingRev)
+
+/** One expected change done - its broadcast came, or its reset failed (then [failed]: its rev is no one's). `null`
+ * once none is left or it went stale. */
+fun ownChangeConsumed(change: OwnChange?, boot: Int, elapsed: Long, failed: Boolean = false): OwnChange? {
+    val live = change?.takeIf { ownChangeLive(it, boot, elapsed) && it.count > 1 } ?: return null
+    return live.copy(count = live.count - 1, settingRev = if (failed) null else live.settingRev)
+}
+
+/**
+ * S4-2: right after the command set Android's PIN and the apply turned the face on, while our lock is LOCKED and the
+ * screen dark (the phone in a pocket): Android is locked at once - its keyguard was off at the last screen-off, so the
+ * next wake would find it open and RELOCK under the kid's thumb. Not a relock (nothing was wrong).
+ */
+fun lockAfterPinSet(face: Boolean, locked: Boolean, interactive: Boolean): Boolean = face && locked && !interactive
+
+/** The status report's capability (59 §1, step 4): this launcher runs `set_kid_pin` and can hold Android's lock. */
+const val ANDROID_KEYGUARD_CAPABILITY = "android_keyguard_v1"
+
+/** The one-shot command that hands this phone the Child PIN for Android's lock (`pending_command.pin`, 59 §1). */
+const val SET_KID_PIN_COMMAND = "set_kid_pin"
+
+/** `set_kid_pin`'s answers (59 §1): the command result's `message` and its `success`. */
+enum class PinCommandAnswer(val message: String, val success: Boolean) {
+    PIN_SET("pin set", true),
+
+    /** The fresh policy doesn't ask for Android's lock: the hash in it is the gate (also with no Child PIN). */
+    OWN_LOCK("own lock", true),
+    NO_TOKEN("refused: no_token", false),
+    MISMATCH("refused: mismatch", false),
+    NO_PIN("refused: no_pin", false),
+    FAILED("refused: failed", false),
+}
+
+/**
+ * 59 §3.5: `set_kid_pin` against the **fresh** policy (the one its PIN came in): its keyguard isn't android -> own
+ * lock; no PIN -> no_pin; the PIN doesn't verify against that policy's hash ([verifies]: `verifyCommandPin`, no
+ * backoff, no failure counted - Q59-1) -> mismatch; no active reset token ([tokenActive], which sets one for the
+ * escrow when none is stored) -> no_token. `null` = set it now. [verifies] runs only with a PIN, [tokenActive] only
+ * for a PIN that verified.
+ */
+fun pinCommandStep(requested: Boolean, pin: String?, verifies: (String) -> Boolean, tokenActive: () -> Boolean): PinCommandAnswer? = when {
+    !requested -> PinCommandAnswer.OWN_LOCK
+    pin.isNullOrEmpty() -> PinCommandAnswer.NO_PIN
+    !verifies(pin) -> PinCommandAnswer.MISMATCH
+    !tokenActive() -> PinCommandAnswer.NO_TOKEN
+    else -> null
+}
+
+/** A PIN Android's pad and our keypad both take: exactly [length] digits (the policy's `pin_length`). */
+fun commandPinShape(pin: String, length: Int): Boolean = pin.length == length && pin.all { it in '0'..'9' }
+
+/**
+ * The rev written ahead of the command's reset (M-1: owned first): the rev of the PIN Android holds **now** - the one
+ * we set before ([owned], [storedRev]), else none. A rev is never claimed before its PIN is set: a death between the
+ * reset and the rev's commit reports the older rev (the server sends the PIN again), never a newer one.
+ */
+fun commandWriteAheadRev(owned: Boolean, storedRev: Long?): Long? = if (owned) storedRev else null
+
+/**
+ * Android's PIN is the gate (59 §1): our glance is its face ([face]), or we own Android's live credential ([owned] &&
+ * [deviceSecure]: a rollback waiting for the token, a fallback apply, an unmanaged phone).
+ */
+fun androidGate(face: Boolean, owned: Boolean, deviceSecure: Boolean): Boolean = face || (owned && deviceSecure)
+
+/** `lock_state.keyguard` and `pin_rev` (59 §1). */
+data class KeyguardReport(val keyguard: String, val pinRev: Long?)
+
+/**
+ * Which gate the phone runs, and the rev it enforces (59 §1): `"android"` while [androidGate] - with the rev Android's
+ * PIN was set from ([androidRev]; `null` = unknown, or a credential not ours) -, else `"own"` with the rev committed
+ * with the hash in use ([ownRev]; `null` = no Child PIN).
+ */
+fun keyguardReport(face: Boolean, owned: Boolean, deviceSecure: Boolean, androidRev: Long?, ownRev: Long?): KeyguardReport =
+    if (androidGate(face, owned, deviceSecure)) KeyguardReport("android", androidRev.takeIf { owned }) else KeyguardReport("own", ownRev)

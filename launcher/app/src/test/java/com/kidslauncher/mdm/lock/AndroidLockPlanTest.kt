@@ -155,12 +155,14 @@ class AndroidLockPlanTest {
         // M-1: the owned flag is set before the reset and cleared only once no credential is left.
         val android = code("$lock/AndroidLock.kt")
         val migrate = body(android, "migrateIfDue")
-        assertTrue(migrate.indexOf("PinLockStore.saveAndroid(app, owned = true, rev = null)") in 0 until migrate.indexOf("reset(app, pin)"))
-        assertTrue(migrate.indexOf("reset(app, pin)") < migrate.indexOf("PinLockStore.saveAndroid(app, owned = true, rev = pinRev)"))
+        assertTrue(migrate.indexOf("PinLockStore.saveAndroid(app, owned = true, rev = null)") in 0 until migrate.indexOf("reset(app, pin, settingRev = pinRev)"))
+        assertTrue(migrate.indexOf("reset(app, pin, settingRev = pinRev)") < migrate.indexOf("if (set) commitRev(app, pinRev)"))
         val configure = body(android, "configure")
         assertTrue(configure.contains("if (rollbackDue(owned, requested, parentChoice)) {"))
         assertTrue(configure.contains("if (owned && !secure) {"))
         assertEquals(1, Regex("owned = false").findAll(android).count())
+        // ... and step 4's command, its reset failed, gives back exactly what it wrote ahead (a credential not ours stays not ours).
+        assertTrue(body(android, "setFromCommand").contains("PinLockStore.saveAndroid(app, owned = owned, rev = before)"))
         // The policy's request is committed with the hash (saveConfig), the owned flag apart (saveAndroid).
         assertTrue(body(code("$lock/PinLockRuntime.kt"), "configure").contains("PinLockStore.saveConfig(app, newConfig, active, why, storedRequest)"))
     }
@@ -255,8 +257,45 @@ class AndroidLockPlanTest {
     fun `onPasswordChanged - ours keeps the rev, another change makes it unknown`() {
         assertEquals(4L, androidPinRevAfterChange(expected = true, rev = 4L))
         assertNull(androidPinRevAfterChange(expected = false, rev = 4L))
+        assertEquals("ours, its rev's commit lost to a death (S4-1)", 5L, androidPinRevAfterChange(expected = true, rev = 4L, settingRev = 5L))
+        assertNull("the kid's change, whatever was being set", androidPinRevAfterChange(expected = false, rev = 4L, settingRev = 5L))
         assertTrue(code("$server/MdmDeviceAdminReceiver.kt").contains("AndroidLock.onPasswordChanged(app)"))
-        assertTrue(body(code("$lock/AndroidLock.kt"), "reset").contains("expectOwnChangeUntil = SystemClock.elapsedRealtime() + OWN_CHANGE_MS"))
+        val reset = body(code("$lock/AndroidLock.kt"), "reset")
+        assertTrue(reset, reset.indexOf("ownChangeArmed(PinLockStore.ownChange(app), boot, SystemClock.elapsedRealtime(), settingRev)") in 0 until reset.indexOf("WindowRelock.resetCredential(app, pin)"))
+        assertTrue(reset.contains("ownChangeConsumed(PinLockStore.ownChange(app), boot, SystemClock.elapsedRealtime(), failed = true)"))
+    }
+
+    /** S4-1: our changes are counted in CE, so a new process and two resets close together still know them as ours. */
+    @Test
+    fun `our own credential changes - counted, kept across a process, bounded by the boot and the window`() {
+        val one = ownChangeArmed(null, boot = 7, elapsed = 1_000, settingRev = 5L)
+        assertEquals(OwnChange(1, 7, 1_000 + OWN_CHANGE_MS, 5L), one)
+        assertTrue(ownChangeLive(one, 7, 1_000 + OWN_CHANGE_MS - 1))
+        assertFalse("the window", ownChangeLive(one, 7, 1_000 + OWN_CHANGE_MS))
+        assertFalse("another boot", ownChangeLive(one, 8, 2_000))
+        assertFalse("an unknown boot", ownChangeLive(one, -1, 2_000))
+        // Two of ours close together: two broadcasts, both ours; the newest rev being set.
+        val two = ownChangeArmed(one, 7, 2_000, settingRev = 6L)
+        assertEquals(OwnChange(2, 7, 2_000 + OWN_CHANGE_MS, 6L), two)
+        val after1 = ownChangeConsumed(two, 7, 3_000)
+        assertEquals(OwnChange(1, 7, 2_000 + OWN_CHANGE_MS, 6L), after1)
+        assertTrue(ownChangeLive(after1, 7, 3_000))
+        assertNull(ownChangeConsumed(after1, 7, 3_500))
+        // A failed reset takes its mark back and its rev is no one's; a stale mark restarts the count.
+        assertEquals(OwnChange(1, 7, 2_000 + OWN_CHANGE_MS, null), ownChangeConsumed(two, 7, 3_000, failed = true))
+        assertEquals(OwnChange(1, 9, 50 + OWN_CHANGE_MS, null), ownChangeArmed(two, 9, 50, settingRev = null))
+        assertNull(ownChangeConsumed(one, 7, 1_000 + OWN_CHANGE_MS))
+        // onPasswordChanged reads the stored mark, consumes one and adopts its rev only when it is ours.
+        val changed = body(code("$lock/AndroidLock.kt"), "onPasswordChanged")
+        assertTrue(changed.contains("val expected = ownChangeLive(change, boot, now)"))
+        assertTrue(changed.contains("PinLockStore.saveOwnChange(app, ownChangeConsumed(change, boot, now))"))
+        assertTrue(changed.contains("androidPinRevAfterChange(expected, rev, change?.settingRev.takeIf { expected })"))
+        // Every own reset says what it sets: the command's and the migration's rev, a clear none.
+        val android = code("$lock/AndroidLock.kt")
+        assertTrue(android.contains("reset(app, null, settingRev = null)"))
+        assertTrue(android.contains("reset(app, pin, settingRev = pinRev)"))
+        assertTrue(android.contains("reset(app, pin, settingRev = rev)"))
+        assertFalse("no in-memory one-shot flag any more", android.contains("expectOwnChangeUntil"))
     }
 
     @Test
@@ -421,6 +460,190 @@ class AndroidLockPlanTest {
         assertTrue(body(android, "atBootStart").contains("if (!firstCeStartOfBoot) return"))
         assertTrue(body(android, "face").contains("if (was && !face) lockScreenInfo(dpm, admin, null)"))
         assertTrue(body(code("$lock/PinLockRuntime.kt"), "init").contains("AndroidLock.atBootStart(app)"))
+    }
+
+    // ---- step 4: set_kid_pin, lock_state, the remote lock, the capability ---------------------------------------
+
+    private fun kidLock(pin: String, rev: Long, salt: String = "0a1b2c3d4e5f60718293a4b5c6d7e8f9"): KidLock {
+        val hash = com.kidslauncher.mdm.server.PinHash.derive(pin, com.kidslauncher.mdm.server.PinHash.parseHex(salt)!!)
+            .joinToString("") { "%02x".format(it) }
+        return KidLock(pinHash = hash, pinSalt = salt, pinLength = pin.length, keyguard = "android", pinRev = rev)
+    }
+
+    @Test
+    fun `set_kid_pin - each answer, in the contract's words, the PIN and the token asked only when due (59 §3_5)`() {
+        // The words the server and the PWA read (§1).
+        assertEquals(
+            listOf("pin set", "own lock", "refused: no_token", "refused: mismatch", "refused: no_pin", "refused: failed"),
+            PinCommandAnswer.entries.map { it.message },
+        )
+        assertEquals(setOf(PinCommandAnswer.PIN_SET, PinCommandAnswer.OWN_LOCK), PinCommandAnswer.entries.filter { it.success }.toSet())
+        val never: (String) -> Boolean = { throw AssertionError("verified") }
+        val noToken: () -> Boolean = { throw AssertionError("token asked") }
+        assertEquals(PinCommandAnswer.OWN_LOCK, pinCommandStep(requested = false, pin = "2468", verifies = never, tokenActive = noToken))
+        assertEquals(PinCommandAnswer.NO_PIN, pinCommandStep(true, null, never, noToken))
+        assertEquals(PinCommandAnswer.NO_PIN, pinCommandStep(true, "", never, noToken))
+        assertEquals(PinCommandAnswer.MISMATCH, pinCommandStep(true, "2468", { false }, noToken))
+        assertEquals(PinCommandAnswer.NO_TOKEN, pinCommandStep(true, "2468", { true }, { false }))
+        assertNull("set it", pinCommandStep(true, "2468", { it == "2468" }, { true }))
+        // Not "android" in the fresh policy (own, missing, no kid_lock) is own lock (androidRequested, P59-5).
+        assertFalse(androidRequested(KidLock(keyguard = "own")))
+        assertFalse(androidRequested(null))
+    }
+
+    @Test
+    fun `the command's PIN is checked against the fresh policy's hash, not the applied one, and counts no try (Q59-1)`() {
+        val applied = kidLock("1357", rev = 3)
+        val fresh = kidLock("2468", rev = 4)
+        assertTrue("the new PIN against the fresh hash", commandPinVerifies(fresh, "2468"))
+        assertFalse("the new PIN against the applied (old) hash", commandPinVerifies(applied, "2468"))
+        assertFalse("a stale command's old PIN against the fresh hash", commandPinVerifies(fresh, "1357"))
+        assertFalse("another length", commandPinVerifies(fresh.copy(pinLength = 5), "2468"))
+        assertFalse("unusable hash", commandPinVerifies(fresh.copy(pinHash = "zz"), "2468"))
+        assertTrue(commandPinShape("024680", 6))
+        assertFalse(commandPinShape("24a8", 4))
+        assertFalse(commandPinShape("２４６８", 4))
+        val runtime = code("$lock/PinLockRuntime.kt")
+        assertTrue(body(runtime, "verifyCommandPin").contains("= commandPinVerifies(kidLock, pin)"))
+        val check = runtime.substringAfter("internal fun commandPinVerifies(").substringBefore("\n}\n")
+        assertFalse("no backoff, no failure counted", check.contains("ackoff") || check.contains("Attempt") || check.contains("config"))
+        assertTrue(check.contains("KidLockConfig(kidLock.pinHash, kidLock.pinSalt, kidPinLength(kidLock.pinLength), kidLock.pinRev)"))
+        // The glue checks the command's own fresh kid_lock - its hash and its keyguard (S4-4: never the applied
+        // `requested`, which would answer the first command after the switch `own lock') -, and the dispatch hands it
+        // the same answer's.
+        val apply = body(code("$lock/AndroidLock.kt"), "applyPinCommand")
+        assertTrue(apply.contains("PinLockRuntime.verifyCommandPin(kidLock, it)"))
+        assertTrue(apply.contains("requested = androidRequested(kidLock),"))
+        assertFalse(apply.contains("this.requested") || Regex("requested = requested\\b").containsMatchIn(apply))
+        val sync = code("$server/MdmSyncWorker.kt")
+        assertTrue(sync.contains("dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand, freshPolicy.kidLock)"))
+        assertTrue(sync.contains("AndroidLock.applyPinCommand(context, kidLock, pending.pin)"))
+    }
+
+    @Test
+    fun `the command's set - owned first with the rev Android holds now, the fresh rev only once it is set (M-1)`() {
+        assertEquals(3L, commandWriteAheadRev(owned = true, storedRev = 3L))
+        assertNull("not ours yet: no rev", commandWriteAheadRev(owned = false, storedRev = 3L))
+        assertNull(commandWriteAheadRev(owned = true, storedRev = null))
+        val android = code("$lock/AndroidLock.kt")
+        val set = body(android, "setFromCommand")
+        val ahead = set.indexOf("val before = commandWriteAheadRev(owned, PinLockStore.androidPinRev(app))")
+        val written = set.indexOf("PinLockStore.saveAndroid(app, owned = true, rev = before)")
+        val reset = set.indexOf("if (!reset(app, pin, settingRev = rev))")
+        val after = set.indexOf("commitRev(app, rev)")
+        assertTrue(set, ahead in 0 until written && written < reset && reset < after)
+        // N1: the final rev is written once more if its commit fails, then logged - never a claim the disk lacks.
+        val commit = body(android, "commitRev")
+        assertTrue(commit.contains("PinLockStore.saveAndroid(app, owned = true, rev = rev) || PinLockStore.saveAndroid(app, owned = true, rev = rev)"))
+        assertTrue(commit.contains("Log.w("))
+        // Under the monitor the rollback, the migration and onPasswordChanged share; our change marked through reset().
+        assertTrue(body(android, "applyPinCommand").contains("synchronized(this)"))
+    }
+
+    /** S4-2: Android locked at once after `pin set` under our lock in the dark - no RELOCK, no count, at the next wake. */
+    @Test
+    fun `after pin set under our lock in the dark, Android is locked at once and not counted`() {
+        assertTrue(lockAfterPinSet(face = true, locked = true, interactive = false))
+        assertFalse("the kid is looking", lockAfterPinSet(face = true, locked = true, interactive = true))
+        assertFalse("our lock is open", lockAfterPinSet(face = true, locked = false, interactive = false))
+        assertFalse("no face: Android isn't the gate yet", lockAfterPinSet(face = false, locked = true, interactive = false))
+        val android = code("$lock/AndroidLock.kt")
+        assertTrue(body(android, "applyPinCommand").contains("if (answer == PinCommandAnswer.PIN_SET) lockAfterSet = true"))
+        val after = body(android, "afterKeyguard")
+        assertTrue(after.contains("lockAfterSet = false"))
+        assertTrue(after.contains("if (lockAfterPinSet(faceOn, PinLockRuntime.mode == LockMode.LOCKED, interactive(app))) {"))
+        assertTrue("not a relock", after.contains("lockNow(app)") && !after.contains("relock("))
+        // afterKeyguard runs after the keyguard write in every apply.
+        assertTrue(body(code("$lock/PinLockRuntime.kt"), "configure").contains("AndroidLock.afterKeyguard(app)"))
+    }
+
+    /**
+     * Each log call's whole argument list (to its closing parenthesis, across lines), with string literals' contents
+     * kept: a template, a `.pin` or a concatenation never names the PIN or the whole command (S4-3).
+     */
+    private fun logCalls(source: String): List<String> {
+        val calls = mutableListOf<String>()
+        for (m in Regex("""\bLog\.[a-z]+\(|\blog\(""").findAll(source)) {
+            var depth = 0
+            var i = m.range.last
+            var inString = false
+            while (i < source.length) {
+                val c = source[i]
+                if (c == '"' && source[i - 1] != '\\') inString = !inString
+                if (!inString) {
+                    if (c == '(') depth++
+                    if (c == ')' && --depth == 0) break
+                }
+                i++
+            }
+            calls += source.substring(m.range.first, minOf(i + 1, source.length))
+        }
+        return calls
+    }
+
+    private val pinInLog = Regex("\\$\\{?pin\\b|\\.pin\\b|\\+\\s*pin\\b|\\bpin\\s*\\+|\\\$pending\\b(?![.?])|\\$\\{pending\\}|[(,]\\s*pin\\s*[,)]")
+
+    @Test
+    fun `the PIN goes no further than its command - never logged, the dispatch returns it stripped`() {
+        val sync = code("$server/MdmSyncWorker.kt")
+        assertTrue(sync.contains("return if (pending.pin != null) pending.copy(pin = null) else pending"))
+        // Every file the PIN passes through, to its last hop (WindowRelock.resetCredential) and the hash (PinHash).
+        val files = listOf("$server/MdmSyncWorker.kt", "$lock/AndroidLock.kt", "$lock/PinLockRuntime.kt", "$server/WindowRelock.kt", "$server/PinHash.kt")
+        var seen = 0
+        for (path in files) {
+            // The file as written (stripping `//` would cut a string with a URL and lose its closing quote).
+            for (call in logCalls(file(path).readText())) {
+                seen++
+                assertTrue("$path: a log call that never closes", call.length < 1_000)
+                assertFalse("$path: $call", pinInLog.containsMatchIn(call))
+            }
+        }
+        assertTrue(seen > 50)
+        // The scanner itself: a multi-line call, a concatenation and a template are all caught (M11, M16).
+        for (bad in listOf("Log.i(\n            TAG,\n            \"set \$pin\",\n        )", "Log.i(LOG_TAG, \"reset to \" + pin)", "Log.w(TAG, \"x\", pin)", "Log.d(TAG, \"\${pending}\")")) {
+            assertTrue(bad, logCalls(bad).any { pinInLog.containsMatchIn(it) })
+        }
+        assertFalse(logCalls("Log.i(TAG, \"PIN command: \${answer.message} (rev \${kidLock?.pinRev})\")").any { pinInLog.containsMatchIn(it) })
+    }
+
+    @Test
+    fun `lock_state's gate - android while it is the face or our credential holds, its rev, the relocks taken`() {
+        assertEquals(KeyguardReport("android", 5L), keyguardReport(face = true, owned = true, deviceSecure = true, androidRev = 5L, ownRev = 6L))
+        assertEquals("changed on the phone", KeyguardReport("android", null), keyguardReport(true, true, true, null, 6L))
+        assertEquals("a credential not ours", KeyguardReport("android", null), keyguardReport(true, owned = false, deviceSecure = true, androidRev = 5L, ownRev = 6L))
+        assertEquals("a rollback waiting for the token", KeyguardReport("android", 5L), keyguardReport(false, true, true, 5L, 6L))
+        assertEquals("waiting for the migration", KeyguardReport("own", 6L), keyguardReport(false, false, false, null, 6L))
+        assertEquals("owned but gone", KeyguardReport("own", 6L), keyguardReport(false, true, false, 5L, 6L))
+        assertEquals("no Child PIN", KeyguardReport("own", null), keyguardReport(false, false, false, null, null))
+        val android = code("$lock/AndroidLock.kt")
+        // N2: read by the report, subtracted only once the report landed - a failed POST keeps them.
+        assertTrue(body(android, "report").contains("relocks.get())"))
+        assertFalse(body(android, "report").contains("getAndSet"))
+        assertTrue(body(android, "relocksReported").contains("relocks.updateAndGet { (it - reported).coerceAtLeast(0) }"))
+        assertTrue(code("$server/MdmSyncWorker.kt").contains("if (sent.isSuccessful) com.kidslauncher.mdm.lock.AndroidLock.relocksReported(lockState.keyguardRelocks)"))
+        assertTrue(body(android, "relock").contains("relocks.updateAndGet { (it + 1).coerceAtMost(1_000) }"))
+        val report = body(code("$lock/PinLockRuntime.kt"), "report")
+        assertTrue(report.contains("AndroidLock.report(app, ownRev = (config ?: runCatching { PinLockStore.config(app) }.getOrNull())?.pinRev)"))
+        for (field in listOf("keyguard = android.keyguard", "pinRev = android.pinRev", "resetToken = android.resetToken", "keyguardRelocks = android.relocks")) {
+            assertTrue(field, report.contains(field))
+        }
+    }
+
+    @Test
+    fun `the remote lock under Android's PIN answers android pin, and the capability comes with the handler (Q59-13)`() {
+        assertEquals("locked (android pin)", com.kidslauncher.mdm.server.lockAnswer(ok = true, ours = true, androidGate = true))
+        assertEquals("a rollback waiting for the token", "locked (android pin)", com.kidslauncher.mdm.server.lockAnswer(true, false, true))
+        assertEquals("locked (handy lock)", com.kidslauncher.mdm.server.lockAnswer(true, true, false))
+        assertEquals("locked (Android)", com.kidslauncher.mdm.server.lockAnswer(true, false, false))
+        assertEquals("failed to lock", com.kidslauncher.mdm.server.lockAnswer(false, true, true))
+        assertTrue(androidGate(face = true, owned = false, deviceSecure = true))
+        assertTrue(androidGate(face = false, owned = true, deviceSecure = true))
+        assertFalse(androidGate(face = false, owned = true, deviceSecure = false))
+        assertTrue(code("$server/MdmSyncWorker.kt").contains("lockAnswer(ok, ours, com.kidslauncher.mdm.lock.AndroidLock.gateNow(context))"))
+        assertTrue(ANDROID_KEYGUARD_CAPABILITY in com.kidslauncher.mdm.server.STATUS_CAPABILITIES)
+        assertEquals("android_keyguard_v1", ANDROID_KEYGUARD_CAPABILITY)
+        assertTrue(code("$server/MdmSyncWorker.kt").contains("com.kidslauncher.mdm.lock.SET_KID_PIN_COMMAND -> {"))
+        assertEquals("set_kid_pin", SET_KID_PIN_COMMAND)
     }
 
     @Test

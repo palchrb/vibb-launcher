@@ -10,12 +10,15 @@ import android.os.SystemClock
 import android.util.Log
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.server.AppEnforcer
+import com.kidslauncher.mdm.server.BootClock
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.WindowRelock
 import com.kidslauncher.mdm.server.currentPolicyDecision
+import com.kidslauncher.mdm.server.dto.KidLock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Design 59 (docs/design/59-android-keyguard-design.md §3): Android's secure keyguard as the gate, our glance
@@ -24,12 +27,13 @@ import kotlinx.coroutines.launch
  * (`faceOn && ...`) short-circuits - today's own lock.
  *
  * - Requested, no Android credential: today's own lock; the next correct Child PIN on our keypad becomes
- *   Android's PIN through our reset token ([migrateIfDue]).
+ *   Android's PIN through our reset token ([migrateIfDue]) - or, at once, the server's `set_kid_pin`
+ *   ([applyPinCommand]), which also carries every later Child PIN.
  * - Requested with a credential ([faceOn]): Android's keyguard is the gate (written by [KeyguardCover], ANDROID);
  *   our glance (`PinLockActivity`, showWhenLocked) its face; it leaves only on Android's verdict ([faceStep]).
  * - Not requested while we own the credential (CE `keyguard_android`): the rollback ([configure]).
  *
- * Never logs or stores the PIN; the reset token is `WindowRelockStore`'s only.
+ * Never logs or stores the PIN; the reset token is `WindowRelockStore`'s only. [report] gives `lock_state` the gate.
  */
 object AndroidLock {
 
@@ -48,10 +52,11 @@ object AndroidLock {
     var firstCeStartOfBoot = false
         private set
 
-    /** `keyguard_relocks` (59 §3.3): [relock]s since the last report - step 4 reports and resets it. */
-    @Volatile
-    var relocks = 0
-        private set
+    /**
+     * `keyguard_relocks` (59 §3.3): [relock]s not yet in a report that landed, at most 1000. [report] reads them, and
+     * only a status report the server took subtracts them ([relocksReported], qa-59-step4-code N2).
+     */
+    private val relocks = AtomicInteger(0)
 
     /**
      * A `USER_PRESENT` since our lock last went LOCKED (59 §3.3; reset at every LOCKED edge, screen-off and remote
@@ -60,16 +65,13 @@ object AndroidLock {
     var presentSinceLocked = false
         private set
 
-    /** 59 §3.7: the one-shot "this credential change is ours" flag, valid until this elapsed time (0 = none). */
-    @Volatile
-    private var expectOwnChangeUntil = 0L
-
     /** The camera guard the camera lock last heard of ([afterKeyguard]). */
     @Volatile
     private var cameraGuardWas = false
 
-    /** How long our own reset waits for its `onPasswordChanged` (a lost broadcast never consumes a later change). */
-    private const val OWN_CHANGE_MS = 60_000L
+    /** S4-2: the command just set Android's PIN - the apply that follows locks Android when our lock is up and dark. */
+    @Volatile
+    private var lockAfterSet = false
 
     // ---- the process start, the apply -------------------------------------------------------------------------
 
@@ -114,7 +116,7 @@ object AndroidLock {
         if (rollbackDue(owned, requested, parentChoice)) {
             when (androidRollback(secure, token)) {
                 AndroidRollback.CLEAR -> {
-                    val ok = reset(app, null)
+                    val ok = reset(app, null, settingRev = null)
                     secure = deviceSecure(app)
                     Log.i(ANDROID_LOCK_TAG, "rollback: Android's PIN cleared: $ok (secure now=$secure)")
                 }
@@ -149,12 +151,24 @@ object AndroidLock {
         return face
     }
 
-    /** After the keyguard write: the camera lock stands down only on the secure-camera bit really written (P59-4). */
+    /**
+     * After the keyguard write: the camera lock stands down only on the secure-camera bit really written (P59-4). After
+     * the command set Android's PIN (S4-2), the first such apply locks Android at once while our lock is LOCKED and the
+     * screen dark ([lockAfterPinSet]) - the keyguard was off at the last screen-off. Not a relock: not counted.
+     */
     fun afterKeyguard(context: Context) {
+        val app = context.applicationContext
         val guarded = cameraGuarded()
         if (guarded != cameraGuardWas) {
             cameraGuardWas = guarded
-            CameraLock.onLockChanged(context.applicationContext)
+            CameraLock.onLockChanged(app)
+        }
+        if (lockAfterSet) {
+            lockAfterSet = false
+            if (lockAfterPinSet(faceOn, PinLockRuntime.mode == LockMode.LOCKED, interactive(app))) {
+                Log.i(ANDROID_LOCK_TAG, "Android's PIN set under our lock in the dark - Android locked now")
+                lockNow(app)
+            }
         }
     }
 
@@ -184,33 +198,137 @@ object AndroidLock {
                 Log.w(ANDROID_LOCK_TAG, "migration: the owned flag couldn't be stored - not now")
                 return
             }
-            reset(app, pin).also { set ->
-                if (set) PinLockStore.saveAndroid(app, owned = true, rev = pinRev)
+            reset(app, pin, settingRev = pinRev).also { set ->
+                if (set) commitRev(app, pinRev)
                 Log.i(ANDROID_LOCK_TAG, "migration: the Child PIN set as Android's PIN: $set (rev $pinRev, secure now=${deviceSecure(app)})")
             }
         }
         if (ok) applySoon(app)
     }
 
-    /** Every own `resetPasswordWithToken` (migration, rollback; step 4's command): the "ours" flag first (§3.7). */
-    private fun reset(app: Context, pin: String?): Boolean {
-        expectOwnChangeUntil = SystemClock.elapsedRealtime() + OWN_CHANGE_MS
+    /**
+     * 59 §3.5, `set_kid_pin` (the sync's dispatch, background thread, before this sync's apply): [pin] - the command's,
+     * held only for this call - checked against the **fresh** policy's [kidLock] ([pinCommandStep]), then set as
+     * Android's PIN: `keyguard_android` committed first (write-ahead, M-1, with the rev Android holds now -
+     * [commandWriteAheadRev]), the reset with our change marked ([reset], carrying the fresh rev for a death before its
+     * commit - S4-1), then the fresh rev. A failed reset gives back what was written ahead. Works with Android's
+     * keyguard up (AFU); the sync's apply that follows turns the face on - and locks Android when our lock is up in the
+     * dark (S4-2, [afterKeyguard]). Never stores, caches or logs [pin]; the answer names only its words and the rev.
+     */
+    fun applyPinCommand(context: Context, kidLock: KidLock?, pin: String?): PinCommandAnswer {
+        val app = context.applicationContext
+        val answer = try {
+            synchronized(this) {
+                pinCommandStep(
+                    requested = androidRequested(kidLock),
+                    pin = pin,
+                    verifies = { kidLock != null && PinLockRuntime.verifyCommandPin(kidLock, it) },
+                    tokenActive = { WindowRelock.ensureAndroidResetToken(app) },
+                ) ?: setFromCommand(app, pin!!, kidLock!!.pinRev)
+            }
+        } catch (e: Exception) {
+            Log.w(ANDROID_LOCK_TAG, "PIN command failed: ${e.javaClass.simpleName}")
+            PinCommandAnswer.FAILED
+        }
+        if (answer == PinCommandAnswer.PIN_SET) lockAfterSet = true
+        Log.i(ANDROID_LOCK_TAG, "PIN command: ${answer.message} (rev ${kidLock?.pinRev}, secure now=${deviceSecure(app)})")
+        return answer
+    }
+
+    /** [applyPinCommand]'s set, under the monitor (the rollback, the migration and `onPasswordChanged` share it). */
+    private fun setFromCommand(app: Context, pin: String, rev: Long): PinCommandAnswer {
+        val owned = PinLockStore.keyguardAndroid(app)
+        val before = commandWriteAheadRev(owned, PinLockStore.androidPinRev(app))
+        if (!PinLockStore.saveAndroid(app, owned = true, rev = before)) return PinCommandAnswer.FAILED
+        if (!reset(app, pin, settingRev = rev)) {
+            // Give back what was written ahead: a credential not ours stays not ours (own mode's is never touched).
+            PinLockStore.saveAndroid(app, owned = owned, rev = before)
+            return PinCommandAnswer.FAILED
+        }
+        commitRev(app, rev)
+        return PinCommandAnswer.PIN_SET
+    }
+
+    /**
+     * The rev of the PIN our reset just set, committed beside the owned flag - once more if the commit fails
+     * (qa-59-step4-code N1). Still failing, it is logged: memory holds the rev for this process's reports, and after a
+     * restart the older rev on disk makes the server send the PIN again (it never claims a PIN Android lacks).
+     */
+    private fun commitRev(app: Context, rev: Long) {
+        if (PinLockStore.saveAndroid(app, owned = true, rev = rev) || PinLockStore.saveAndroid(app, owned = true, rev = rev)) return
+        Log.w(ANDROID_LOCK_TAG, "Android's PIN is set, but its rev couldn't be stored - the server will send it again")
+    }
+
+    /**
+     * `lock_state`'s design-59 fields (the status report, the sync's thread): the gate and its rev ([keyguardReport];
+     * [ownRev] the rev committed with the hash in use), our reset token active, and the relocks not yet reported -
+     * only a report the server took subtracts them ([relocksReported]; a failed POST keeps them for the next).
+     */
+    fun report(context: Context, ownRev: Long?): AndroidLockReport {
+        val app = context.applicationContext
+        val owned = owned(app)
+        val androidRev = try {
+            PinLockStore.androidPinRev(app)
+        } catch (e: Exception) {
+            null
+        }
+        val gate = keyguardReport(faceOn, owned, deviceSecure(app), androidRev, ownRev)
+        return AndroidLockReport(gate.keyguard, gate.pinRev, WindowRelock.resetTokenActive(app), relocks.get())
+    }
+
+    /** The status report carrying [reported] relocks landed (2xx): those are told, newer ones stay counted. */
+    fun relocksReported(reported: Int) {
+        if (reported > 0) relocks.updateAndGet { (it - reported).coerceAtLeast(0) }
+    }
+
+    /** What [report] gives `lock_state`. */
+    data class AndroidLockReport(val keyguard: String, val pinRev: Long?, val resetToken: Boolean, val relocks: Int)
+
+    /** Android's PIN is the gate now ([androidGate], live): the remote lock's answer (59 §3.9). */
+    fun gateNow(context: Context): Boolean {
+        val app = context.applicationContext
+        return androidGate(faceOn, owned(app), deviceSecure(app))
+    }
+
+    /** CE `keyguard_android`; unreadable = not ours. */
+    private fun owned(app: Context): Boolean = try {
+        PinLockStore.keyguardAndroid(app)
+    } catch (e: Exception) {
+        false
+    }
+
+    /**
+     * Every own `resetPasswordWithToken` (migration, rollback, the command), under the monitor: our change is marked
+     * first (§3.7, S4-1: [ownChangeArmed] in CE - one more expected, and the rev it sets, [settingRev], `null` for a
+     * clear), so its `onPasswordChanged` is known as ours also in a new process and beside another of ours. A failed
+     * reset takes its mark back ([ownChangeConsumed]).
+     */
+    private fun reset(app: Context, pin: String?, settingRev: Long?): Boolean {
+        val boot = BootClock.bootCount()
+        PinLockStore.saveOwnChange(app, ownChangeArmed(PinLockStore.ownChange(app), boot, SystemClock.elapsedRealtime(), settingRev))
         val ok = WindowRelock.resetCredential(app, pin)
-        if (!ok) expectOwnChangeUntil = 0L
+        if (!ok) {
+            PinLockStore.saveOwnChange(app, ownChangeConsumed(PinLockStore.ownChange(app), boot, SystemClock.elapsedRealtime(), failed = true))
+        }
         return ok
     }
 
     /**
-     * 59 §3.7, `onPasswordChanged` (background thread, before its apply): our own change consumes the flag; any other
-     * makes the rev unknown ([androidPinRevAfterChange]) - the PWA then warns and offers the Child PIN again.
+     * 59 §3.7, `onPasswordChanged` (background thread, before its apply): our own change ([ownChangeLive]) consumes one
+     * mark and keeps the rev - or takes the rev its reset was setting when the commit never came (the process died
+     * between the two, S4-1); any other change makes the rev unknown ([androidPinRevAfterChange]) - the PWA then warns
+     * and offers the Child PIN again.
      */
     fun onPasswordChanged(context: Context) = synchronized(this) {
         val app = context.applicationContext
-        val expected = SystemClock.elapsedRealtime() < expectOwnChangeUntil
-        expectOwnChangeUntil = 0L
         try {
+            val boot = BootClock.bootCount()
+            val now = SystemClock.elapsedRealtime()
+            val change = PinLockStore.ownChange(app)
+            val expected = ownChangeLive(change, boot, now)
+            PinLockStore.saveOwnChange(app, ownChangeConsumed(change, boot, now))
             val rev = PinLockStore.androidPinRev(app)
-            val after = androidPinRevAfterChange(expected, rev)
+            val after = androidPinRevAfterChange(expected, rev, change?.settingRev.takeIf { expected })
             if (after != rev) {
                 PinLockStore.saveAndroid(app, PinLockStore.keyguardAndroid(app), after)
                 Log.i(ANDROID_LOCK_TAG, "Android's PIN was changed on the phone - not the Child PIN as far as we know")
@@ -271,7 +389,7 @@ object AndroidLock {
      * found it open) - `lockNow`: the screen goes off, Android's PIN is the gate, the fingerprint waits for the PIN.
      */
     fun relock(context: Context, why: String) {
-        relocks = (relocks + 1).coerceAtMost(1_000)
+        relocks.updateAndGet { (it + 1).coerceAtMost(1_000) }
         Log.w(ANDROID_LOCK_TAG, "Android's keyguard didn't lock under the glance - locked it ($why)")
         lockNow(context)
     }

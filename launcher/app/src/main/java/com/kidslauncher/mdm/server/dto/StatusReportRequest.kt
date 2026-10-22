@@ -246,7 +246,8 @@ data class NotificationCancelEntry(
  * "no_pin", "unmanaged", "android_credential", "keyguard_not_disabled", "crash_guard"; "bad_hash"
  * keeps it active - only the parent code opens it), [locked] now, wrong PINs in a row, the end of
  * the wait (wall clock), and how often it stepped aside for a call/the emergency dialer/an alarm
- * since the last report. Never unlock times or PIN material (privacy).
+ * since the last report; design 59's gate ([keyguard], [pinRev], [resetToken], [keyguardRelocks]). Never unlock
+ * times or PIN material (privacy).
  */
 @Serializable
 data class LockStateReport(
@@ -264,6 +265,17 @@ data class LockStateReport(
      * phone locked) in the last 7 days, newest first, at most 8. Package names and times only;
      * always sent (`[]`). */
     val voipRang: List<VoipRang>,
+    /** Design 59 §1: the gate - `"android"` while Android's PIN is it (our glance its face, or a rollback waiting
+     * for the token: then [inactive] is `android_credential`), else `"own"`. Always sent (no default: the server
+     * reads a missing one as an older launcher). */
+    val keyguard: String,
+    /** The server's `kid_lock.pin_rev` the gate enforces - own: committed with the hash in use; android: the one
+     * Android's PIN was set from. `null` = unknown (changed on the phone) or no Child PIN. Never PIN material. */
+    val pinRev: Long?,
+    /** Our reset token is active (Vibb One can change or clear Android's PIN). */
+    val resetToken: Boolean,
+    /** Times Vibb One locked Android's keyguard under its glance since the last report (59 §3.3). */
+    val keyguardRelocks: Int,
 )
 
 /** One `lock_state.voip_rang` entry: `{"package": ..., "last_at_ms": ...}` (the server's keys). */

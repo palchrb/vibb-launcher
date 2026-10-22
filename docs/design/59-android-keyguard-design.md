@@ -687,3 +687,76 @@ receiver, manifest entry and `CheckDebugHook` names) is gone and a test bans the
   - N1: `migrateIfDue`'s `managed = true` explained (our keypad runs only while the lock is active, which needs
     managed). N2: an unreadable `keyguard_requested`/`keyguard_android` skips 24b's removal in every mode - the
     safe side, documented on `RelockPlatform.androidKeyguardRequested`.
+
+## Step 4 as built (2026-10-22, `design-59-step4`)
+
+Launcher only; no server change (step 1's contract holds as written). Notes in `launcher/CLAUDE.md`, "Android's own
+lock screen as the gate".
+
+- **`set_kid_pin`** (§3.5): `dispatchPendingCommand` now takes the fresh answer's `kidLock` with its command, and the
+  branch calls `AndroidLock.applyPinCommand(context, kidLock, pending.pin)` (after the receipt, before this sync's
+  apply). The pure `pinCommandStep(requested, pin, verifies, tokenActive)` gives the answer in §1's order (`own lock`,
+  `refused: no_pin`, `refused: mismatch`, `refused: no_token`) or `null` = set it; `PinCommandAnswer` holds the six
+  words and their `success`. `verifies` is `PinLockRuntime.verifyCommandPin(kidLock, pin)` (Q59-1): the fresh hash,
+  no backoff, no failure, still in `PinLockRuntime.kt` (`ParentPinCallersTest`). `tokenActive` is
+  `WindowRelock.ensureAndroidResetToken` (it sets a token for the escrow when none is stored, §3.6) and runs only for
+  a PIN that verified. The set (`setFromCommand`, under `AndroidLock`'s monitor, which the rollback, the migration and
+  `onPasswordChanged` share): `keyguard_android` committed first, `reset()` (the "ours" flag, the one
+  `WindowRelock.resetCredential` call), then `android_pin_rev` = the fresh rev. Log: `PIN command: <answer> (rev N,
+  secure now=..)`, never the PIN.
+- **Replays and staleness**: a stale or replayed command's PIN is checked against the hash of the answer it came in -
+  the server hands the row out only at the rev it read (S59-1), so an older PIN can't verify against a newer hash; a
+  repeated id never runs (`CommandAnswers.begin`); the cache never holds the PIN, and dispatch runs only off a fresh
+  answer.
+- **Process death mid-dispatch**: the id is marked run before the receipt, so a delivery again is confirmed and not
+  run; the row has no answer, and the server's intake queues a new one after the re-delivery window for a phone that
+  still reports `own` or a stale rev (step 1). The write-ahead keeps that heal possible (below).
+- **`lock_state`** (`LockStateReport`): `keyguard`, `pin_rev`, `reset_token`, `keyguard_relocks`, **always sent** (no
+  defaults: `ServerJson` leaves defaults out, and the server's queue rule needs `keyguard: "own"` to see a phone that
+  needs the PIN). From `AndroidLock.report(context, ownRev)`: the pure `keyguardReport` over `androidGate(face, owned,
+  deviceSecure)` - `"android"` with `android_pin_rev` (only for a credential we own), else `"own"` with the rev
+  committed with the hash in use (`config`'s, else the stored one; `null` = no Child PIN); `reset_token` =
+  `WindowRelock.resetTokenActive` in every mode; the relocks an `AtomicInteger`, taken and reset by the report (as
+  `exempt_yields`). A rollback waiting for the token reports `android` with `inactive: android_credential` (N-C).
+- **Remote lock** (§3.9): `lockAnswer(ok, ours, androidGate)` - `locked (android pin)` whenever Android's PIN is the
+  gate (`AndroidLock.gateNow`), else today's words.
+- **`unlocked_at_ms`** (§3.9): `PowerEvents.recordUnlock(context, AndroidLock.firstCeStartOfBoot)`, called in
+  `Application.initUnlocked` right after `PinLockRuntime.decide` (whose boot-count test sets the flag) and before
+  `initRest` (so before the anchor's first sync can send the start); the pure `withUnlock` stamps this boot's start
+  once (DE record, `commit()`, new key `on_unlocked_at_ms`). `power_report.json` already carried it (step 1).
+- **Capability** `android_keyguard_v1` (`ANDROID_KEYGUARD_CAPABILITY`), last in `STATUS_CAPABILITIES`, beside the
+  handler (Q59-13).
+- **Deviations, each the safer or the more exact reading**:
+  - The write-ahead before the command's reset keeps the rev Android holds **now** (`commandWriteAheadRev`: ours ->
+    the stored rev, else none) instead of clearing it, so it never claims a rev whose PIN isn't set (the server would
+    then drop the `prev` PIN the phone really has). A death between the reset and the rev's commit: since the fix
+    round (S4-1) our change is marked in CE with the rev it sets, so the `onPasswordChanged` that starts a new process
+    takes that rev (the server sees the current one); if that broadcast is lost too, the older rev stays and the
+    server sends the PIN again. A failed reset gives back exactly what was written ahead (the command, unlike the
+    keypad migration, can meet a foreign credential: that stays not ours).
+  - `verifyCommandPin` also requires exactly the policy's `pin_length` in digits (`commandPinShape`): Android's pad
+    and our keypad then take the same PIN. Its body is the top-level `commandPinVerifies` in the same file, so the JVM
+    test runs the real PBKDF2 (the object's init needs a Looper).
+  - No extra apply after `pin set`: the sync's own apply follows the dispatch (`AppEnforcer.apply` right after), with
+    the fresh policy already cached.
+  - `keyguard: "android"` also for an unmanaged phone holding our PIN (Android's PIN is its gate); step 1's loop guard
+    holds either way.
+  - The dispatch returns the command without its PIN (`ranCommand` lives for the rest of the sync).
+- **Device checks this step leaves** (§8 step 8, 10, 12, 14): the command with the screen off, during Android's wait
+  and with two saves offline; `unlocked HH:MM` after a reboot; whether a reset to the same PIN keeps the fingerprint.
+- **Code QA fixes** (`qa-59-step4-code.md`):
+  - S4-1: §3.7's one-shot in-memory "ours" flag is now a CE mark (`OwnChange` in `pin_lock_state`: a count, the boot,
+    a 60 s elapsed window, the rev being set; pure `ownChangeArmed`/`ownChangeConsumed`/`ownChangeLive`). Every own
+    reset arms it first and takes it back when it fails; `onPasswordChanged` consumes one and, for a change of ours,
+    keeps the stored rev or takes the rev being set (`androidPinRevAfterChange(expected, rev, settingRev)`). A new
+    process after a death and two of our resets close together are both known as ours.
+  - S4-2: after `pin set`, the apply's `afterKeyguard` (after the ANDROID keyguard write) calls `lockNow` once while
+    the face is on, our lock LOCKED and the screen dark (`lockAfterPinSet`), not counted as a relock: the next wake
+    finds Android locked instead of RELOCKing under the kid's thumb. [device: §8 step 8, the screen off]
+  - S4-3: the no-PIN-in-logs scan reads every `Log.*(`/`log(` call to its closing parenthesis, across lines, in
+    `MdmSyncWorker`, `AndroidLock`, `PinLockRuntime`, `WindowRelock` and `PinHash`, and bans templates, `.pin`,
+    concatenation and `pin` as an argument; the scanner itself is tested on M11's and M16's shapes (both killed).
+  - S4-4: `requested = androidRequested(kidLock)` pinned in `applyPinCommand` (M13 killed).
+  - N1: the final rev's commit is tried twice (`commitRev`, also the keypad migration's), then logged.
+  - N2: `report` reads the relocks; only a status report the server took subtracts them (`relocksReported`), so a
+    failed POST keeps them.

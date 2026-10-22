@@ -25,6 +25,7 @@ import com.kidslauncher.mdm.server.ParentPin
 import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.ParentPinResult
 import com.kidslauncher.mdm.server.PinHash
+import com.kidslauncher.mdm.server.dto.KidLock
 import com.kidslauncher.mdm.server.dto.LockStateReport
 import com.kidslauncher.mdm.server.dto.VoipRang
 import com.kidslauncher.mdm.server.dto.PolicyResponse
@@ -41,6 +42,16 @@ private const val LOG_TAG = "PinLock"
 
 /** Status-report capability: this launcher has handy's own PIN lock and reads `kid_lock`. */
 const val PIN_LOCK_CAPABILITY = "pin_lock_v1"
+
+/**
+ * [PinLockRuntime.verifyCommandPin]'s check (design 59 §3.5, Q59-1), outside the object so the JVM test runs it: the
+ * PIN against [kidLock]'s own hash and salt - the fresh policy's -, exactly its length in digits. Reads and writes no
+ * backoff. This file stays the only `PinHash.verify(` caller for the kid's PIN (`ParentPinCallersTest`).
+ */
+internal fun commandPinVerifies(kidLock: KidLock, pin: String): Boolean {
+    val cfg = KidLockConfig(kidLock.pinHash, kidLock.pinSalt, kidPinLength(kidLock.pinLength), kidLock.pinRev)
+    return cfg.usable && commandPinShape(pin, cfg.length) && PinHash.verify(pin, cfg.hashHex, cfg.saltHex)
+}
 
 /**
  * Handy's own PIN lock (step 10): the glue around the pure [step] state machine. Holds the mode
@@ -1691,6 +1702,13 @@ object PinLockRuntime {
         }
     }
 
+    /**
+     * Design 59 §3.5 (Q59-1): `set_kid_pin`'s PIN against the **fresh** policy's [kidLock] - not the applied config,
+     * which still holds the old PIN until this sync's apply. No backoff, no failure counted: the command is no kid's
+     * try. Exactly the policy's length in digits ([commandPinShape]). Background thread (PBKDF2).
+     */
+    fun verifyCommandPin(kidLock: KidLock, pin: String): Boolean = commandPinVerifies(kidLock, pin)
+
     /** The parent code (the parent PIN, through its own gate and lockout - [ParentPin]): works
      * during the kid PIN's wait and offline; a match opens only this lock - no override - and
      * resets the kid's wait. Not nested: [ParentPin]'s lock is released before this one is taken.
@@ -1738,8 +1756,9 @@ object PinLockRuntime {
         return true
     }
 
-    /** `lock_state` for the status report: never unlock times or PIN material. Resets the count of
-     * exempt-screen yields. */
+    /** `lock_state` for the status report: never unlock times or PIN material - design 59's gate names its PIN by
+     * the server's rev only ([AndroidLock.report]). Resets the count of exempt-screen yields; the relocks go only once
+     * the report landed ([AndroidLock.relocksReported]). */
     fun report(context: Context): LockStateReport {
         val app = context.applicationContext
         val now = clocks()
@@ -1747,6 +1766,7 @@ object PinLockRuntime {
         val wait = backoffRemaining(refreshBackoff(backoff, now), now)
         val yields = exemptYields
         exemptYields = 0
+        val android = AndroidLock.report(app, ownRev = (config ?: runCatching { PinLockStore.config(app) }.getOrNull())?.pinRev)
         return LockStateReport(
             active = mode != LockMode.DISABLED,
             inactive = inactive?.wire,
@@ -1756,6 +1776,10 @@ object PinLockRuntime {
             exemptYields = yields,
             voipFsiDenied = VoipCalls.fsiDenied,
             voipRang = VoipCalls.rangReport(app).map { VoipRang(it.packageName, it.lastAtMs) },
+            keyguard = android.keyguard,
+            pinRev = android.pinRev,
+            resetToken = android.resetToken,
+            keyguardRelocks = android.relocks,
         )
     }
 
