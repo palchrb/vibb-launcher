@@ -87,9 +87,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (a taller body could still be panned by a fragment, `scrollIntoView` or the iOS keyboard). `main.container` is the
   scroller (`flex: 1 1 auto; min-height: 0; overflow-y: auto`, `scroll` on a fine pointer for a steady desktop
   column; `overscroll-behavior-y: contain`), full width, the 720 px column (480 px `.container-narrow`) from its side
-  padding `max(16px, inset, calc((100% - 720px) / 2 + 16px))` - the same 688 px of content as before. The tab bar is a
-  plain flex child (`flex: none; order: 1`, after `main` on screen, first in the source as before); no `position:
-  fixed` anywhere (`shell::the_app_shell_scrolls_main_not_the_document`). The bottom padding is 16 px under the bar (`.tab-bar ~ .container`), 16 px + the home indicator's inset on a page without it (`music_spotify_done`). The editor bar's `top: -8px` and `main`'s `padding-top: calc(8px + inset)` go together (the shell test pins both).
+  padding `max(16px, inset, calc((100% - 720px) / 2 + 16px))` - the same 688 px of content as before. The tab bar was a
+  plain flex child (`flex: none; order: 1`); since 2026-10-22 it floats over `main`'s bottom, absolute in the body
+  (below, "The vibb identity"); no `position: fixed` anywhere (`shell::the_app_shell_scrolls_main_not_the_document`).
+  The bottom padding under the bar is `--tab-bar-room` + the home indicator's inset (`.tab-bar ~ .container`), 16 px +
+  the inset on a page without it (`music_spotify_done`). The editor bar's `top: -8px` and `main`'s `padding-top: calc(8px + inset)` go together (the shell test pins both).
 - **The auth pages opt out**: `<body class="auth-page">` (login, 2FA, change password) keeps the document scroll
   (`height: auto; overflow: visible`), so a card taller than the screen with the keyboard up stays reachable.
 - **Double-tap zoom off, pinch kept**: `touch-action: manipulation` on `main` and `.tab-bar` - a scroller resets an
@@ -748,11 +750,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Dark mode is vibb's night**: ground `#0C0C14`, cards `#1B1B28`, text cream `#F6E7E0` / `#A89C96`, accent peach
   `#F0A884`, the bar a night card with a `#2A2A3A` pill and the peach label. The status colours kept their values
   (all 4.5:1 or more on the new grounds; the pass checks every text node).
-- **The tab bar** (`partials/tab_bar.html` unchanged, CSS only): still a plain flex child after `main` (design 43, no
-  fixed box), now a white rounded card (24 px) 12 px in from the sides (the notch's inset in landscape), 14 px + the
+- **The tab bar** (`partials/tab_bar.html` unchanged, CSS only): a white rounded card (24 px) 12 px in from the sides (the notch's inset in landscape), 14 px + the
   home indicator's inset above the bottom, at most 560 px wide on a desktop; the chosen tab a `#FBE4DC` pill
-  (`--tab-pill`), also the tapped tab while `reconnect.js` waits (`.tab.is-pending`). `main` ends above it, so it
-  covers nothing.
+  (`--tab-pill`), also the tapped tab while `reconnect.js` waits (`.tab.is-pending`). Since 2026-10-22 it floats
+  over `main` (next bullet).
 - **Devices' brand row**: the Pust mark (four rings, inline SVG) on its night tile and the "vibb" wordmark at the left
   of the page's `.title-bar` (`.vibb-brand`, the home page's alone - `shell::the_tab_pages_open_on_their_large_title`),
   + and the bell at the right; the large title is Nunito 800, 30 px on every tab page.
@@ -774,3 +775,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the peach (9.9:1); the Locate map's trail is `--map-trail` (`#A64B25` in both schemes, read by `locate.js`, `?v=2`;
   the OSM tiles are light in both), no longer the old blue; contact initials on Calls & Contacts stay peach, like the
   phones'.
+- **The see-through bar and the 44 px title bar** (2026-10-22, `docs/testing/2026-10-22-pwa-identity-pass.md`,
+  "Polish 2"): the tab bar is `position: absolute` in `body` (`position: relative`, exactly the screen, never
+  scrolling - the same place the flex child had, nothing against the viewport, so design 43's stale-viewport drift
+  can't come back); `main` runs to the screen's bottom edge, the content scrolls behind the bar and shows in the gaps
+  (12 px sides, 14 px + inset below), and `.tab-bar ~ .container` has `padding-bottom` and `scroll-padding-bottom`
+  of `--tab-bar-room` (the bar's `--tab-bar-h` = `55px + 0.9rem`, its 14 px, 16 px clear) + the inset, so the last
+  row and a focused field stop above it. Where `backdrop-filter` exists the bar is `--bar-glass` (white / night card
+  at 90 %) with `saturate(180%) blur(20px)`, else the solid `--bar`; the gaps are never blurred. `z-index: 10`; the
+  Locate map stays under it (`.map-box` is its own stacking context). Devices' `.vibb-brand` is exactly 44 px high
+  with no vertical margin (it was 54 px, pushing +, the bell and the title 10 px lower than on the other tabs), so
+  every tab page has the bar at y 8-52 and its `<h1>` at 56 (the shell test pins both rules).

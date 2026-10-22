@@ -69,3 +69,27 @@ the active tab (`#0C0C14` on `#FBE4DC`; peach on `#2A2A3A` in dark). Every tab p
 
 - The Locate tab's phone and span switchers in dark mode: the chosen segment (`--surface`) is darker than the track
   (`--grey-bg`). It was the same before, with iOS greys.
+
+## Polish 2: the 44 px title bar and the see-through tab bar (2026-10-22, branch `pwa-polish-2`)
+
+The same setup (`style.css?v=44`, port 3212, phones Anna, Ola and Test Phone), headless Chromium at 390x844, 1280x800
+and 320x640, light and dark. Pages: Devices, Apps, Locate, Music, Settings, Anna's summary, Lock Screen & PINs and
+Advanced. Screenshots at the top, mid-scroll and the end of `main` were looked at and are not committed.
+
+- **The top of Devices matches Apps exactly**, at every width and in both schemes: the title bar at y 8, 44 px high;
+  + and the bell at y 8; the `<h1>` at y 56 (Devices before: 54 px bar, the actions and the title 10 px lower). The
+  34 px tile sits at y 13-47, centred in the bar.
+- **The bar floats over `main`**: `main` runs from y 0 to the screen's bottom (844); the bar is at x 12-378, y
+  760.6-830 (69.4 px, as `--tab-bar-h` gives), 560 px wide and centred at 1280. Mid-scroll, the point left of the
+  bar, right of it and under it is `main`'s content on every page (seen in the screenshots: the rows pass behind the
+  bar and show in the gaps; through the bar only a faint blur). `backdrop-filter: saturate(1.8) blur(20px)` on the
+  bar, its ground `rgba(255,255,255,0.9)` / `rgba(27,27,40,0.9)`; the labels read as before.
+- **The last row clears the bar** by 35.5-36.3 px at the end of the scroll on every long page (16 px clear plus the
+  last group's own margin; the same clearance as before), more on the short ones. No horizontal scroll, the document
+  never scrolls, every tab page marks its tab, and Tab reaches the bar's links with the 2 px focus ring.
+- **Saves**: the 20 cases of the identity pass again. 19 kept the control at the same screen position (0 px). The
+  lowest switch on Advanced (Boot cover) moved 88 px: turning it on adds the "Update Vibb One for the boot cover" note
+  above its group; the page lands on `#updates` with the switch in view - content added, not a jump.
+- **Not checked here**: the iPhone itself (the real `backdrop-filter`, the home indicator's inset, resume after a long
+  background). The bar is absolute in the body, which is exactly the screen and never scrolls, so it sits where the
+  flex child sat and nothing is placed against the viewport - design 43's stale-viewport drift has nothing to act on.

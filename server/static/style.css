@@ -64,7 +64,14 @@
 
     /* The floating tab bar: a card with the chosen tab as a pill. */
     --bar: #FFFFFF;
+    /* The bar where the browser blurs what scrolls behind it (@supports below). */
+    --bar-glass: rgba(255, 255, 255, 0.9);
     --bar-shadow: 0 2px 10px rgba(12, 12, 20, 0.08);
+    /* The floating bar's own height (.tab-bar: 8 px padding, a tab's 6 px padding, the 24 px icon
+       and its 3 px, the label's line at 0.75rem x 1.2) and the room main leaves under its last row:
+       the bar, the 14 px under it, 16 px clear above it; the home indicator's inset is added there. */
+    --tab-bar-h: calc(55px + 0.9rem);
+    --tab-bar-room: calc(var(--tab-bar-h) + 14px + 16px);
     --tab-off: #6B6B70;
     --tab-on: #0C0C14;
     --tab-pill: #FBE4DC;
@@ -141,6 +148,7 @@
         --knob: #FFFFFF;
 
         --bar: #1B1B28;
+        --bar-glass: rgba(27, 27, 40, 0.9);
         --bar-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
         --tab-off: #A89C96;
         --tab-on: #F0A884;
@@ -175,8 +183,8 @@ html {
 
 /* The app shell (design 43): the document doesn't scroll. The body is exactly the visible
    height - never taller, or a fragment, scrollIntoView or the iOS keyboard could pan it and the bar
-   would sit off again - and <main class="container"> scrolls inside it, the tab bar a plain flex
-   child under it. Nothing is positioned against the viewport (an iOS standalone app keeps a stale
+   would sit off again - and <main class="container"> scrolls inside it, the tab bar floating over
+   its bottom (absolute in the body, 2026-10-22). Nothing is positioned against the viewport (an iOS standalone app keeps a stale
    one after a long background). The auth pages opt out (.auth-page). */
 body {
     margin: 0;
@@ -190,6 +198,8 @@ body {
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    /* The tab bar's box (it floats over main's bottom): the body, never the viewport. */
+    position: relative;
 }
 
 a {
@@ -239,7 +249,7 @@ input[type="radio"] {
 /* The scroller: the full width (the scrollbar at the window's edge, the wheel working over the
    margins, the same width on every page), the 720 px column (480 px narrow) from its padding.
    viewport-fit=cover (head.html): every edge takes its safe-area inset - the status bar or notch
-   above, the notch's sides in landscape; the tab bar under it clears the home indicator.
+   above, the notch's sides in landscape; the tab bar over its bottom clears the home indicator.
    touch-action here, not on body: a scroller resets an inherited one, so the rows inside would
    keep double-tap zoom; pinch zoom stays, and Leaflet's own rules win on the map. */
 .container {
@@ -256,9 +266,13 @@ input[type="radio"] {
     padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
 }
 
-/* Under it the bar clears the home indicator (the bar comes first in the source). */
+/* With the floating bar (it comes first in the source) main runs to the screen's bottom edge and
+   scrolls behind the bar - the content shows in the gaps around it - and leaves room under its last
+   row so that row scrolls clear of the bar; a focused field or a row scrolled into view stops above
+   it too (scroll-padding). */
 .tab-bar ~ .container {
-    padding-bottom: 16px;
+    padding-bottom: calc(var(--tab-bar-room) + env(safe-area-inset-bottom, 0px));
+    scroll-padding-bottom: calc(var(--tab-bar-room) + env(safe-area-inset-bottom, 0px));
 }
 
 .container-narrow {
@@ -300,22 +314,35 @@ input[type="radio"] {
     margin-right: 4px;
 }
 
-/* Under <main> (order: 1; it comes first in the page's source), never fixed: a card floating on
-   the page's ground, 12 px in from the sides (the notch's inset in landscape) and 14 px above the
-   home indicator, at most 560 px wide on a desktop. main ends above it, so it covers nothing. */
+/* A card floating over main's bottom (it comes first in the page's source), the content scrolling
+   behind it and showing in the gaps: 12 px in from the sides (the notch's inset in landscape) and
+   14 px above the home indicator, at most 560 px wide on a desktop. Absolute in the body - the body
+   is exactly the screen and never scrolls, so this is the same place a flex child had, and nothing
+   is positioned against the viewport (design 43: no fixed box, no stale-viewport drift). main's
+   bottom padding (.tab-bar ~ .container) keeps the last row clear of it. The Locate map's panes
+   stay under it (.map-box is its own stacking context). */
 .tab-bar {
-    flex: none;
-    order: 1;
+    position: absolute;
+    z-index: 10;
+    right: max(12px, env(safe-area-inset-right, 0px), calc((100% - 560px) / 2));
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    left: max(12px, env(safe-area-inset-left, 0px), calc((100% - 560px) / 2));
     touch-action: manipulation;
     display: flex;
-    margin: 0 12px 14px;
-    margin-right: max(12px, env(safe-area-inset-right, 0px), calc((100% - 560px) / 2));
-    margin-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-    margin-left: max(12px, env(safe-area-inset-left, 0px), calc((100% - 560px) / 2));
     padding: 8px 6px;
     border-radius: 24px;
     background: var(--bar);
     box-shadow: var(--bar-shadow);
+}
+
+/* See-through where the browser can blur what passes behind (iOS 26, the Nextcloud app): the bar
+   only, never the gaps around it. Without backdrop-filter it stays the solid card. */
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .tab-bar {
+        background: var(--bar-glass);
+        -webkit-backdrop-filter: saturate(180%) blur(20px);
+        backdrop-filter: saturate(180%) blur(20px);
+    }
 }
 
 .tab {
@@ -1712,10 +1739,12 @@ details.edit[open] > summary .chev {
 
 /* ---- A tab's title action ("Edit"), a row that discloses a form, a switch in a form (design 31 step 12) ---- */
 
-.title-bar { display: flex; justify-content: flex-end; min-height: 44px; }
+.title-bar { display: flex; justify-content: flex-end; align-items: center; min-height: 44px; }
 /* The Devices page's brand row (vibb, direction D): the Pust mark on its night tile and the
-   wordmark at the left of the title bar, its actions at the right. */
-.vibb-brand { display: flex; align-items: center; margin: 10px auto 10px 0; }
+   wordmark at the left of the title bar, its actions at the right. Exactly the bar's 44 px, never
+   taller (a larger text size only grows the word inside it), so + and the bell, and the large title
+   under them, sit at the same y as on every other tab (2026-10-22). */
+.vibb-brand { flex: none; display: flex; align-items: center; height: 44px; margin: 0 auto 0 0; }
 .vibb-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; background: var(--brand-tile); }
 .vibb-mark svg { width: 26px; height: 26px; }
 .vibb-word { margin-left: 10px; color: var(--brand-word); font-family: var(--font-display); font-size: 1.5rem; font-weight: 900; letter-spacing: -0.6px; line-height: 1; }
