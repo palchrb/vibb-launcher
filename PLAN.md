@@ -763,7 +763,9 @@ findings, merge to `main`, full suite once.
   `fix-f3-boot-cover`, design 59 "F3": android mode implies the boot cover, armed also at the locked boot, and it
   waits for our Home; code QA `qa-f3-boot-cover-code.md` fixed (F3C-1..7); the F3 emulator run
   `docs/testing/2026-10-22-f3-run.md` (graceful PASS, `adb reboot`/crash FAIL, B1-B6) fixed in fix round 2 - the
-  locked boot decides at once with an alarm retry, one HOME PPA of ours once unlocked, initRest's tail posted; the
+  locked boot decides at once with an alarm retry, one HOME PPA of ours once unlocked, initRest's tail posted; its
+  code QA `qa-f3-round2-code.md` fixed in fix round 3 (F3R-1..7: the cover in front starts Home in a call too, the
+  locked boot starts it after every boot, the chooser's cause still unknown - a device recipe in the design); the
   server's boot-cover note should gate on the reported `wanted` (F3C-3, a server brief); a second emulator run and the
   release-build timing on the Jelly Star still owed); F4 (design §8 step 15's `get-disabled` expectation is wrong: no Child PIN leaves
   Android's swipe lock, as always); F5 (PWA: "Set" and "Send again" shown together for ~2 s after a new PIN lands).

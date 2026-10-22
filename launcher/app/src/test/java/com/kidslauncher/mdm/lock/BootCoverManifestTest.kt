@@ -137,24 +137,40 @@ class BootCoverManifestTest {
         assertTrue(start.contains(".setPackage(app.packageName)"))
         assertTrue(start.indexOf("setEnabled(app, true") in 0 until start.indexOf("app.startActivity("))
         assertTrue(atBoot.contains("LockedBootCover.RETRY -> retryLater(app)"))
-        val step = cover.substringAfter("private fun lockedBootStep(").substringBefore("\n    )\n")
+        val step = cover.substringAfter("private fun lockedBootStep(").substringBefore("\n    }\n")
         for (needed in listOf(
             "androidMarker = BootCoverGuard.androidMode(app)", "isUserUnlocked", "coverGuardTripped(BootCoverGuard.read(app))",
-            "tookOver = tookOver", "armedAsHome = armedAsHome(app)", "callLive = BootHome.callLive(app)",
+            "tookOver = tookOver", "callLive = BootHome.callLive(app)",
         )) assertTrue(needed, step.contains(needed))
+        // F3R-2: what HOME resolves to is logged, never decided on - the start comes on an armed boot too.
+        assertTrue(step.indexOf("logHomeResolution(app)") in 0 until step.indexOf("coverAtLockedBoot("))
+        val decision = step.substringAfter("coverAtLockedBoot(")
+        for (banned in listOf("resolveActivity", "armed", "isEnabled(")) assertFalse(banned, decision.contains(banned))
+        val resolution = cover.substringAfter("private fun logHomeResolution(").substringBefore("\n    }\n")
+        assertTrue(resolution.contains("Log.i(LOG_TAG, \"Locked boot: HOME resolves to \${home?.packageName}/\${home?.name}\")"))
+        assertTrue("a log, no answer", cover.contains("private fun logHomeResolution(app: Context) {"))
         // f3-run B1: no runtime receiver waits for anything before the PIN (deferred while the process is frozen), and
-        // the screen isn't read; the retry is an alarm to the manifest receiver.
-        for (banned in listOf("registerReceiver(", "ACTION_SCREEN_OFF", "isInteractive")) {
+        // the screen isn't read for the decision (F3R-4: logged after the start only); the retry is an alarm to the
+        // manifest receiver.
+        for (banned in listOf("registerReceiver(", "ACTION_SCREEN_OFF")) {
             assertFalse(banned, (atBoot + step + cover.substringAfter("private fun retryLater(").substringBefore("\n    }\n")).contains(banned))
         }
+        assertFalse((atBoot.substringBefore("LockedBootCover.START ->") + step).contains("isInteractive"))
+        assertTrue("F3R-4", start.indexOf("isInteractive") > start.indexOf("app.startActivity("))
+        assertTrue(start.contains("\"Boot cover started at the locked boot (android mode, interactive \$interactive)\""))
         val retryIntent = cover.substringAfter("private fun retryIntent(").substringBefore("\n    )\n")
         assertTrue(retryIntent.contains("Intent(app, com.kidslauncher.mdm.calls.BootCallReceiver::class.java).setAction(ACTION_COVER_RETRY)"))
-        assertTrue(cover.substringAfter("private fun retryLater(").substringBefore("\n    }\n").contains("setExactAndAllowWhileIdle("))
+        // F3R-6: the cancel creates no PendingIntent; exact while it may, no dead SecurityException fallback.
+        assertTrue(retryIntent.contains("if (create) android.app.PendingIntent.FLAG_UPDATE_CURRENT else android.app.PendingIntent.FLAG_NO_CREATE"))
+        val retryLater = cover.substringAfter("private fun retryLater(").substringBefore("\n    }\n")
+        assertTrue(retryLater.contains("retryIntent(app, create = true)"))
+        assertTrue(retryLater.contains("if (alarms.canScheduleExactAlarms()) {"))
+        assertTrue(retryLater.substringAfter("if (alarms.canScheduleExactAlarms()) {").substringBefore("} else {").contains("setExactAndAllowWhileIdle("))
+        assertFalse(retryLater.contains("SecurityException"))
+        val cancel = cover.substringAfter("private fun cancelRetry(").substringBefore("\n    }\n")
+        assertTrue(cancel.contains("val intent = retryIntent(app, create = false) ?: return"))
         val receiverCode = code("java/com/kidslauncher/mdm/calls/BootCallReceiver.kt")
         assertTrue(receiverCode.substringAfter("BootCover.ACTION_COVER_RETRY)").substringBefore("return").contains("BootCover.atLockedBoot(context)"))
-        // B2: the boot's HOME is read, not assumed from the component's state.
-        val armed = cover.substringAfter("private fun armedAsHome(").substringBefore("\n    }\n")
-        assertTrue(armed.contains("home.name == BootCoverActivity::class.java.name"))
         // f3-run B2: init marks the take-over and takes over at every CE start, whatever a call does.
         val init = cover.substringAfter("fun init(context: Context)").substringBefore("\n    }\n")
         assertTrue(init.indexOf("tookOver = true") in 0 until init.indexOf("takeOver(app)"))
@@ -195,7 +211,7 @@ class BootCoverManifestTest {
             before.substringAfterLast("fun ").substringBefore("(")
         }.toList()
         assertEquals(listOf("atLockedBoot", "coverAtShutdown"), enables.sorted())
-        assertEquals(LockedBootCover.NONE, coverAtLockedBoot(true, unlocked = true, guardTripped = false, tookOver = false, armedAsHome = false, callLive = false))
+        assertEquals(LockedBootCover.NONE, coverAtLockedBoot(true, unlocked = true, guardTripped = false, tookOver = false, callLive = false))
         assertEquals(false, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted = true))
         assertEquals(null, bootCoverEnabled(CoverEvent.POLICY, wanted = true))
         // The cover's process: the setter is only the guard's disable.
@@ -204,12 +220,21 @@ class BootCoverManifestTest {
         val destroy = activity.substringAfter("override fun onDestroy()").substringBefore("\n    }\n")
         assertTrue(destroy.contains("if (unlocked && !isChangingConfigurations)"))
         assertTrue(destroy.contains("BootCoverGuard.disable(this, \"destroyed, unlocked\")"))
-        assertTrue(destroy.contains("coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted, telecomInCall())"))
+        // F3R-1: in front at the system's finish, it starts Home in a call too (no call screen was over it).
+        assertTrue(destroy.contains("coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted)) {"))
+        assertFalse(destroy.contains("telecomInCall"))
+        // F3R-7 (M12): the system's finish while in front is marked at the pause, before anything else of it.
+        val pause = activity.substringAfter("override fun onPause()").substringBefore("\n    }\n")
+        assertTrue(pause.contains("\n        if (isFinishing && !ownFinish) finishedInFront = true\n"))
         // Every own finish is marked, so a system finish is told apart (N2's log line, the Home start on the way out).
         assertEquals(Regex("\\bfinish\\(\\)").findAll(activity).count(), Regex("ownFinish = true\\s+finish\\(\\)").findAll(activity).count())
-        // f3-run B5: the cover's own Home starts read Telecom first.
+        // f3-run B5: the step reads Telecom (its hand-over waits for a call's end).
         val wait = activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n")
-        assertTrue(wait.contains("coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted, unlocked && telecomInCall())"))
+        assertTrue(wait.contains("val callLive = unlocked && telecomInCall()"))
+        assertTrue(wait.contains("coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted, callLive)"))
+        // F3R-7 (M11): Telecom's answer is the managed-call read, a call only when it says so.
+        val telecom = activity.substringAfter("private fun telecomInCall(): Boolean = try {").substringBefore("} catch (e: SecurityException)")
+        assertEquals("getSystemService(android.telecom.TelecomManager::class.java)?.isInManagedCall == true", telecom.trim())
     }
 
     /** f3-run B3: initRest's tail after the PIN lock's init is its own posted message (the boot pass and what the system
@@ -227,6 +252,9 @@ class BootCoverManifestTest {
         }
         assertTrue(tail.indexOf("MusicMedia.init(this)") < tail.indexOf("Torch.init(this)"))
         assertTrue(tail.contains("CrashReports.record(app, e)"))
+        // F3R-5: the tail's own time, next to the head's "Unlocked setup took".
+        assertTrue(tail.indexOf("val tailStart = android.os.SystemClock.elapsedRealtime()") in 0 until tail.indexOf("MusicMedia.init(this)"))
+        assertTrue(tail.substringAfter("CrashReports.record(app, e)").contains("\"Unlocked setup tail took \${android.os.SystemClock.elapsedRealtime() - tailStart} ms\""))
     }
 
     @Test

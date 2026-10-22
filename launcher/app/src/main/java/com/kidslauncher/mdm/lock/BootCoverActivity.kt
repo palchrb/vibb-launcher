@@ -41,7 +41,8 @@ import com.kidslauncher.mdm.R
  * showWhenLocked), it is what the PIN's dismissal reveals, and it waits for our main process instead of the 3 s:
  * that process disables it right before the boot's typed Home start, and the cover leaves once our Home is over it
  * (its stop) - never earlier, since below it may be the stock launcher a boot without `ACTION_SHUTDOWN` started.
- * Never stranded: [COVER_TAKEOVER_GRACE_MS] after the take-over it leaves anyway, and with no take-over
+ * Never stranded: taken over and still in front it starts our Home itself, then leaves [COVER_TAKEOVER_GRACE_MS] after
+ * the take-over, and with no take-over
  * [COVER_LAUNCHER_WAIT_MS] after the unlock it hands over by itself and starts our Home ([coverWaitStep]).
  */
 class BootCoverActivity : Activity() {
@@ -156,7 +157,7 @@ class BootCoverActivity : Activity() {
                 val unlockedFor = if (unlockedAtElapsed < 0) -1L else SystemClock.elapsedRealtime() - unlockedAtElapsed
                 Log.i(LOG_TAG, "Boot cover finished by the system (${if (finishedInFront) "in front" else "behind"}): $unlockedFor ms after the unlock")
             }
-            if (coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted, telecomInCall())) {
+            if (coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted)) {
                 homeStarted = true
                 startHome()
             }
@@ -191,18 +192,20 @@ class BootCoverActivity : Activity() {
         if (disabled && disabledAtElapsed < 0) disabledAtElapsed = now
         val unlockedFor = if (unlockedAtElapsed < 0) 0L else now - unlockedAtElapsed
         val disabledFor = if (disabledAtElapsed < 0) 0L else now - disabledAtElapsed
-        when (coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted, unlocked && telecomInCall())) {
+        val callLive = unlocked && telecomInCall()
+        when (coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted, callLive)) {
             CoverStep.STAY -> Unit
             CoverStep.FINISH -> {
-                Log.i(LOG_TAG, "Boot cover leaves (${if (visible) "taken over, grace over" else "taken over, Home over it"}): $unlockedFor ms after the unlock")
+                Log.i(LOG_TAG, "Boot cover leaves (${if (visible) "taken over, grace over after its Home start" else "taken over, Home over it"}): $unlockedFor ms after the unlock")
                 handler.removeCallbacksAndMessages(null)
                 ownFinish = true
                 finish()
                 return
             }
             CoverStep.START_HOME -> {
-                // F3C-2: taken over, but no Home came over us (our process died between the take-over and its start).
-                Log.i(LOG_TAG, "Boot cover starts Home: taken over $disabledFor ms ago, still in front")
+                // F3C-2: taken over, but no Home came over us (our process died between the take-over and its start,
+                // or BootHome waits for a call's end - F3R-1: in front, no call screen is over the cover).
+                Log.i(LOG_TAG, "Boot cover starts Home: taken over $disabledFor ms ago, still in front (call $callLive)")
                 homeStarted = true
                 startHome()
             }

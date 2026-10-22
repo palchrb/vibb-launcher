@@ -93,9 +93,8 @@ class BootCoverPlanTest {
         unlocked: Boolean = false,
         guardTripped: Boolean = false,
         tookOver: Boolean = false,
-        armedAsHome: Boolean = false,
         callLive: Boolean = false,
-    ) = coverAtLockedBoot(androidMarker, unlocked, guardTripped, tookOver, armedAsHome, callLive)
+    ) = coverAtLockedBoot(androidMarker, unlocked, guardTripped, tookOver, callLive)
 
     @Test
     fun `the locked boot starts the cover only in android mode, before the unlock, with the guard intact`() {
@@ -104,12 +103,13 @@ class BootCoverPlanTest {
         assertEquals("already unlocked: our process hands over", LockedBootCover.NONE, lockedBoot(unlocked = true))
         assertEquals("a tripped guard keeps it off", LockedBootCover.NONE, lockedBoot(guardTripped = true))
         assertEquals("F3C-6: never after our take-over", LockedBootCover.NONE, lockedBoot(tookOver = true))
-        assertEquals("the shutdown armed it: the boot's HOME is the cover", LockedBootCover.NONE, lockedBoot(armedAsHome = true))
-        assertEquals(
-            "f3-run B2/B6: HOME is the chooser or the stock launcher (no arm, or a shutdown broadcast never delivered): start",
-            LockedBootCover.START,
-            lockedBoot(armedAsHome = false),
-        )
+    }
+
+    @Test
+    fun `F3R-2 - the locked boot starts the cover whatever HOME resolves to, a boot the shutdown armed too`() {
+        // No input for the resolution: a graceful boot (armed) and B2's chooser or B6's lost arm all get the start,
+        // which brings the cover over whatever the boot started.
+        assertEquals(LockedBootCover.START, lockedBoot())
     }
 
     @Test
@@ -123,29 +123,39 @@ class BootCoverPlanTest {
     }
 
     @Test
-    fun `f3-run B2 - destroyed by the system while in front, it starts Home on its way out, never in a call`() {
-        assertTrue(coverDestroyStartsHome(waitForLauncher = true, unlocked = true, ownFinish = false, visible = true, homeStarted = false, callLive = false))
-        assertFalse("its own finish", coverDestroyStartsHome(true, true, ownFinish = true, visible = true, homeStarted = false, callLive = false))
-        assertFalse("Home or a call over it", coverDestroyStartsHome(true, true, false, visible = false, homeStarted = false, callLive = false))
-        assertFalse("started already", coverDestroyStartsHome(true, true, false, true, homeStarted = true, callLive = false))
-        assertFalse("f3-run B5: a call", coverDestroyStartsHome(true, true, false, true, false, callLive = true))
-        assertFalse("before the unlock", coverDestroyStartsHome(true, unlocked = false, ownFinish = false, visible = true, homeStarted = false, callLive = false))
-        assertFalse("own mode", coverDestroyStartsHome(waitForLauncher = false, unlocked = true, ownFinish = false, visible = true, homeStarted = false, callLive = false))
+    fun `f3-run B2 - destroyed by the system while in front, it starts Home on its way out, in a call too`() {
+        // F3R-1: in front when the finish came = no call screen over it; the call is no input.
+        assertTrue(coverDestroyStartsHome(waitForLauncher = true, unlocked = true, ownFinish = false, visible = true, homeStarted = false))
+        assertFalse("its own finish", coverDestroyStartsHome(true, true, ownFinish = true, visible = true, homeStarted = false))
+        assertFalse("Home or a call over it", coverDestroyStartsHome(true, true, false, visible = false, homeStarted = false))
+        assertFalse("started already", coverDestroyStartsHome(true, true, false, true, homeStarted = true))
+        assertFalse("before the unlock", coverDestroyStartsHome(true, unlocked = false, ownFinish = false, visible = true, homeStarted = false))
+        assertFalse("own mode", coverDestroyStartsHome(waitForLauncher = false, unlocked = true, ownFinish = false, visible = true, homeStarted = false))
     }
 
     @Test
-    fun `f3-run B4 and B5 - the nudge waits past the normal pass, and no Home start of its own in a call or while stopped`() {
+    fun `f3-run B4 and B5 - the nudge waits past the normal pass, and no hand-over's Home start in a call or while stopped`() {
         assertTrue("longer than the ~1 s normal pass (B4)", COVER_HOME_NUDGE_MS >= 2_000L)
         assertTrue(COVER_HOME_NUDGE_MS < COVER_TAKEOVER_GRACE_MS)
         assertEquals(CoverStep.STAY, coverWaitStep(true, disabled = true, visible = true, unlockedForMs = 13_000, disabledForMs = 1_000, homeStarted = false, callLive = false))
-        assertEquals(CoverStep.STAY, coverWaitStep(true, disabled = true, visible = true, unlockedForMs = 13_000, disabledForMs = COVER_HOME_NUDGE_MS, homeStarted = false, callLive = true))
         // B5: no hand-over's Home start in a call, nor while stopped (something over it).
         assertEquals(CoverStep.STAY, coverWaitStep(true, disabled = false, visible = true, unlockedForMs = COVER_LAUNCHER_WAIT_MS, disabledForMs = 0, homeStarted = false, callLive = true))
         assertEquals(CoverStep.STAY, coverWaitStep(true, disabled = false, visible = false, unlockedForMs = COVER_LAUNCHER_WAIT_MS, disabledForMs = 0, homeStarted = false, callLive = false))
         // The call over: the hand-over comes.
         assertEquals(CoverStep.HAND_OVER, coverWaitStep(true, disabled = false, visible = true, unlockedForMs = COVER_LAUNCHER_WAIT_MS * 3, disabledForMs = 0, homeStarted = false, callLive = false))
-        // The grace still ends a taken-over cover in a call (it starts nothing).
-        assertEquals(CoverStep.FINISH, coverWaitStep(true, disabled = true, visible = true, unlockedForMs = 20_000, disabledForMs = COVER_TAKEOVER_GRACE_MS, homeStarted = false, callLive = true))
+    }
+
+    @Test
+    fun `F3R-1 - taken over and in front, the cover starts Home in a call too, and the grace never leaves without it`() {
+        // In front (resumed) = no call screen over it: its Home start can't bury one, and BootHome waits for the call.
+        assertEquals(CoverStep.START_HOME, coverWaitStep(true, disabled = true, visible = true, unlockedForMs = 13_000, disabledForMs = COVER_HOME_NUDGE_MS, homeStarted = false, callLive = true))
+        // The grace with no Home started yet (a tick that came late): Home first, in a call or not ...
+        assertEquals(CoverStep.START_HOME, coverWaitStep(true, disabled = true, visible = true, unlockedForMs = 20_000, disabledForMs = COVER_TAKEOVER_GRACE_MS, homeStarted = false, callLive = true))
+        assertEquals(CoverStep.START_HOME, coverWaitStep(true, disabled = true, visible = true, unlockedForMs = 20_000, disabledForMs = COVER_TAKEOVER_GRACE_MS * 4, homeStarted = false, callLive = false))
+        // ... then it leaves.
+        assertEquals(CoverStep.FINISH, coverWaitStep(true, disabled = true, visible = true, unlockedForMs = 20_000, disabledForMs = COVER_TAKEOVER_GRACE_MS, homeStarted = true, callLive = true))
+        // Stopped (a call screen or Home over it): leaves, never starts Home.
+        assertEquals(CoverStep.FINISH, coverWaitStep(true, disabled = true, visible = false, unlockedForMs = 20_000, disabledForMs = COVER_TAKEOVER_GRACE_MS, homeStarted = false, callLive = true))
     }
 
     @Test
@@ -197,7 +207,6 @@ class BootCoverPlanTest {
         assertEquals(CoverStep.START_HOME, coverWaitStep(unlocked = true, disabled = true, visible = true, unlockedForMs = 13_000, disabledForMs = COVER_HOME_NUDGE_MS, homeStarted = false, callLive = false))
         assertEquals(CoverStep.STAY, coverWaitStep(unlocked = true, disabled = true, visible = true, unlockedForMs = 13_000, disabledForMs = COVER_TAKEOVER_GRACE_MS - 1, homeStarted = true, callLive = false))
         assertEquals(CoverStep.FINISH, coverWaitStep(unlocked = true, disabled = true, visible = true, unlockedForMs = 18_000, disabledForMs = COVER_TAKEOVER_GRACE_MS, homeStarted = true, callLive = false))
-        assertEquals(CoverStep.FINISH, coverWaitStep(unlocked = true, disabled = true, visible = true, unlockedForMs = 18_000, disabledForMs = COVER_TAKEOVER_GRACE_MS, homeStarted = false, callLive = false))
         assertTrue(COVER_HOME_NUDGE_MS < COVER_TAKEOVER_GRACE_MS)
         // No take-over: hands over by itself (disable + start our Home) at the wait's end.
         assertEquals(CoverStep.STAY, coverWaitStep(unlocked = true, disabled = false, visible = true, unlockedForMs = COVER_LAUNCHER_WAIT_MS - 1, disabledForMs = 0, homeStarted = false, callLive = false))

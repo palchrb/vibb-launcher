@@ -110,6 +110,9 @@ class TorchRulesTest {
         assertNull(torchCamera(listOf(TorchCamera("0", back = true, flash = false), TorchCamera("1", back = false, flash = true))))
         assertEquals("2", torchCamera(listOf(TorchCamera("1", back = false, flash = true), TorchCamera("2", back = true, flash = true))))
         assertFalse(torchLockButton(null, refusedOnLock = false))
+        // qa-f3-round2-code F3R-3: a Home that rendered before init (it runs in a posted message) hears of the tile.
+        val init = torch.substringAfter("fun init(context: Context) {").substringBefore("\n    }\n")
+        assertTrue(init.trimEnd().endsWith("changed()"))
     }
 
     @Test

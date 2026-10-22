@@ -401,10 +401,13 @@ class Application : android.app.Application() {
         // Design 59 F3 (f3-run B3): the rest is its own main-thread message, posted after this one - behind the boot
         // pass PinLockRuntime.init just posted (the cover's take-over and Home's start) and behind what the system
         // queued meanwhile (the always-on VPN's service create, the listener's bind). One long message starved
-        // KidVpnService into a service ANR on a slow first start (the process killed, the PIN typed twice). Nothing
-        // here is read before Home's launch, which the system delivers after this message: Home's first render reads
-        // the torch, the music card and the glance as before. Caught like initRest is.
+        // KidVpnService into a service ANR on a slow first start (the process killed, the PIN typed twice). Where an
+        // activity's launch started the process (the factory path), Home may render before this: its readers notify
+        // when they come (the torch's listeners, GlanceStore's policy, the music surfaces). The head before this post
+        // still runs inside a create the system queued and still counts on its ANR clock (F3R-5): `Unlocked setup
+        // took` is the head alone now, and the tail logs its own time. Caught like initRest is.
         android.os.Handler(android.os.Looper.getMainLooper()).post {
+            val tailStart = android.os.SystemClock.elapsedRealtime()
             try {
                 // Vibb music (design 21 step 4): the volume cap, and the player's "in front" ends at screen-off.
                 com.kidslauncher.mdm.music.MusicMedia.init(this)
@@ -441,6 +444,8 @@ class Application : android.app.Application() {
                 android.util.Log.e("Application", "Setup (after the lock) failed, continuing", e)
                 com.kidslauncher.mdm.crash.CrashReports.record(app, e)
             }
+            // Design 59 F3 (F3R-5): the tail's own share, next to "Unlocked setup took" (the head).
+            android.util.Log.i("Application", "Unlocked setup tail took ${android.os.SystemClock.elapsedRealtime() - tailStart} ms")
         }
         // The embedded tailnet connection deliberately does NOT kick off here - TsnetClient.connect
         // runs tsnet's native Go/cgo runtime, a real crash surface (see that class's own doc

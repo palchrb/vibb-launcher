@@ -98,9 +98,12 @@ object BootCover {
     }
 
     /** From `PinLockRuntime.init` (main thread, unlocked): the shutdown receiver, and the hand-over of a cover that is
-     * still enabled (before the boot's Home start) - at every CE start, in every mode, whatever a call does (f3-run B2:
-     * the cover left enabled while unlocked is the suspected path to the system's Home chooser; one HOME PPA of ours
-     * may resolve once unlocked, HomeActivity's). A call keeps only `BootHome`'s Home start back, never the take-over. */
+     * still enabled (before the boot's Home start) - at every CE start, in every mode, whatever a call does, so that
+     * once unlocked one HOME PPA of ours resolves, HomeActivity's (f3-run B2). Not the chooser's cause: AOSP's
+     * `findPersistentPreferredActivity` returns the first PPA whose component matches, so two of ours can't make it -
+     * the run's three-entry chooser means no PPA matched (qa-f3-round2-code F3R-1/F3R-2; the device recipe in design
+     * 59 "F3"). A call keeps only `BootHome`'s Home start back, never the take-over: a cover in front then starts our
+     * Home itself ([coverWaitStep]'s START_HOME, in a call too - nothing is over it while it is resumed). */
     fun init(context: Context) {
         val app = context.applicationContext
         tookOver = true
@@ -139,9 +142,11 @@ object BootCover {
      * reset, a shutdown broadcast our cached process never got) has it behind Android's keyguard too, and the PIN's
      * dismissal reveals it, not the stock launcher. The cover is never showWhenLocked: Android's lock screen (the
      * restart line, the pad) stays the face before the PIN. Decided now ([coverAtLockedBoot], f3-run B1): nothing once
-     * unlocked, after our take-over ([tookOver]), with a tripped crash guard or when the boot's HOME is the cover; a
-     * live call is retried by an alarm (delivered to a frozen process, unlike a runtime receiver). Main thread. Never
-     * throws.
+     * unlocked, after our take-over ([tookOver]) or with a tripped crash guard - a boot the shutdown armed included
+     * (F3R-2: the typed start brings the cover over whatever the boot started, the chooser too; already in front, it
+     * is a new intent to its singleTask); a live call is retried by an alarm (delivered to a frozen process, unlike a
+     * runtime receiver) - until the call ends, the unlock or our take-over, whichever comes first: no cap, the unlock
+     * bounds it, and the outcome while it waits is the old stock launcher. Main thread. Never throws.
      */
     fun atLockedBoot(context: Context) {
         try {
@@ -158,7 +163,13 @@ object BootCover {
                             .setPackage(app.packageName)
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     )
-                    Log.i(LOG_TAG, "Boot cover started at the locked boot (android mode)")
+                    // F3R-4: logged, never decided on (B1's race) - how often the start comes with the screen on.
+                    val interactive = try {
+                        app.getSystemService(android.os.PowerManager::class.java)?.isInteractive
+                    } catch (e: Exception) {
+                        null
+                    }
+                    Log.i(LOG_TAG, "Boot cover started at the locked boot (android mode, interactive $interactive)")
                 }
             }
         } catch (e: Exception) {
@@ -167,44 +178,51 @@ object BootCover {
     }
 
     /** [coverAtLockedBoot] with this moment's facts - device-protected storage, binder reads, memory only. */
-    private fun lockedBootStep(app: Context): LockedBootCover = coverAtLockedBoot(
-        androidMarker = BootCoverGuard.androidMode(app),
-        unlocked = app.getSystemService(android.os.UserManager::class.java)?.isUserUnlocked == true,
-        guardTripped = coverGuardTripped(BootCoverGuard.read(app)),
-        tookOver = tookOver,
-        armedAsHome = armedAsHome(app),
-        callLive = BootHome.callLive(app),
-    )
-
-    /** The boot's HOME resolves to the cover (logged, f3-run B2: the chooser or the stock launcher is not armed, and
-     * the start then puts the cover in front of it). Unreadable: the component's enabled state. */
-    private fun armedAsHome(app: Context): Boolean = try {
-        val home = app.packageManager.resolveActivity(
-            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
-            PackageManager.MATCH_DEFAULT_ONLY,
-        )?.activityInfo
-        Log.i(LOG_TAG, "Locked boot: HOME resolves to ${home?.packageName}/${home?.name}")
-        home != null && home.packageName == app.packageName && home.name == BootCoverActivity::class.java.name
-    } catch (e: Exception) {
-        isEnabled(app)
+    private fun lockedBootStep(app: Context): LockedBootCover {
+        logHomeResolution(app)
+        return coverAtLockedBoot(
+            androidMarker = BootCoverGuard.androidMode(app),
+            unlocked = app.getSystemService(android.os.UserManager::class.java)?.isUserUnlocked == true,
+            guardTripped = coverGuardTripped(BootCoverGuard.read(app)),
+            tookOver = tookOver,
+            callLive = BootHome.callLive(app),
+        )
     }
 
-    private fun retryIntent(app: Context): android.app.PendingIntent = android.app.PendingIntent.getBroadcast(
+    /** What the boot's HOME resolves to now - logged only (F3R-2: no decision on it; the device recipe for a chooser
+     * boot greps it, design 59 "F3"). */
+    private fun logHomeResolution(app: Context) {
+        try {
+            val home = app.packageManager.resolveActivity(
+                Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+                PackageManager.MATCH_DEFAULT_ONLY,
+            )?.activityInfo
+            Log.i(LOG_TAG, "Locked boot: HOME resolves to ${home?.packageName}/${home?.name}")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Locked boot: HOME unreadable: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** The retry's PendingIntent; with [create] false only an existing one (`FLAG_NO_CREATE`, F3R-6), else `null`. */
+    private fun retryIntent(app: Context, create: Boolean): android.app.PendingIntent? = android.app.PendingIntent.getBroadcast(
         app,
         RETRY_REQUEST_CODE,
         Intent(app, com.kidslauncher.mdm.calls.BootCallReceiver::class.java).setAction(ACTION_COVER_RETRY),
-        android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        android.app.PendingIntent.FLAG_IMMUTABLE or
+            if (create) android.app.PendingIntent.FLAG_UPDATE_CURRENT else android.app.PendingIntent.FLAG_NO_CREATE,
     )
 
-    /** f3-run B1: an alarm to our manifest receiver, never a runtime receiver - a cached, frozen BFU process gets it. */
+    /** f3-run B1: an alarm to our manifest receiver, never a runtime receiver - a cached, frozen BFU process gets it.
+     * Exact while it may (`USE_EXACT_ALARM`, the pattern of `TimeRuleAlarm`/`Torch`), else inexact. */
     private fun retryLater(app: Context) {
         try {
             val alarms = app.getSystemService(android.app.AlarmManager::class.java) ?: return
             val at = android.os.SystemClock.elapsedRealtime() + COVER_LOCKED_BOOT_RETRY_MS
-            try {
-                alarms.setExactAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, retryIntent(app))
-            } catch (e: SecurityException) {
-                alarms.setAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, retryIntent(app))
+            val intent = retryIntent(app, create = true) ?: return
+            if (alarms.canScheduleExactAlarms()) {
+                alarms.setExactAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, intent)
+            } else {
+                alarms.setAndAllowWhileIdle(android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP, at, intent)
             }
             Log.i(LOG_TAG, "Boot cover waits: a call is live - again in ${COVER_LOCKED_BOOT_RETRY_MS} ms")
         } catch (e: Exception) {
@@ -212,9 +230,12 @@ object BootCover {
         }
     }
 
+    /** Cancels a pending retry - creates no PendingIntent at every CE start (F3R-6). */
     private fun cancelRetry(app: Context) {
         try {
-            app.getSystemService(android.app.AlarmManager::class.java)?.cancel(retryIntent(app))
+            val intent = retryIntent(app, create = false) ?: return
+            app.getSystemService(android.app.AlarmManager::class.java)?.cancel(intent)
+            intent.cancel()
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Boot cover couldn't cancel its retry: ${e.javaClass.simpleName}")
         }
