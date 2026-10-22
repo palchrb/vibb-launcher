@@ -563,7 +563,7 @@ class GuardsTest {
         val account = code("src/main/java/me/vibb/music/storytel/StorytelAccount.kt")
         // The session's JWT, then the asset call (design 58 §5.1): a plain suspend; the HTTP send is the interruptible
         // part (StorytelApiTest's cancelled mint), the ask runs on in the session's scope (StorytelSessionTest).
-        assertTrue(account.contains("suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =\n        if (!StorytelApi.validCid(cid)) Mint.NoAudio(0) else session.mint(timeoutMs, deadlineMs) { jwt -> api.assetUrl(cid, jwt, timeoutMs, deadlineMs) }"))
+        assertTrue(account.contains("suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =\n        session.mint(timeoutMs, deadlineMs) { jwt -> api.assetUrl(cid, jwt, timeoutMs, deadlineMs) }"))
         // read whole: the Accept header's value holds a `/*` that would start a comment strip
         val api = moduleFile("src/main/java/me/vibb/music/storytel/StorytelApi.kt").readText()
         assertTrue(api.contains("val response = runInterruptible(Dispatchers.IO) {"))
@@ -583,7 +583,9 @@ class GuardsTest {
         assertTrue(Regex("""controller\.onPoll\(tick, fields\)\s+if \(showsPlaying\) prefetchStorytel\(\)""").containsMatchIn(renderer))
         assertTrue(renderer.contains("        if (playNow) prefetchStorytel()\n        controller.load(a.entry, a.items, startIndex, startMs)\n        if (playNow) controller.playTile()"))
         assertTrue(renderer.contains("    override fun play() {\n        prefetchStorytel()\n        controller.playTile()\n    }"))
-        assertTrue(renderer.contains("        if (queue()?.entry?.source != Source.STORYTEL) return\n        actorScope.launch { StorytelAccount.get(context).prefetchIfDue() }"))
+        assertTrue(renderer.contains("        if (queue()?.entry?.source != Source.STORYTEL) return\n        actorScope.launch {"))
+        // qa-58-step2-code S2-3: never an exception out of the launch (a scope without a handler)
+        assertTrue(Regex("""actorScope\.launch \{\s+try \{\s+StorytelAccount\.get\(context\)\.prefetchIfDue\(\)\s+\} catch \(e: CancellationException\) \{\s+throw e\s+\} catch \(_: Exception\) \{""").containsMatchIn(renderer))
         // ... which mints only inside the play's actor job (IO), between the two token checks (M6), 6 s / 10 s
         val play = sonos.substringAfter("private fun playIndex(").substringBefore("\n    }\n")
         val job = play.substringAfter("work.submit<PlayResult?>({").substringBefore("}) { r ->")

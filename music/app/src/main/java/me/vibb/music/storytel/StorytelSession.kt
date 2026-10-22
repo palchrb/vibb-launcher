@@ -28,7 +28,8 @@ import me.vibb.music.bridge.StorytelBridgeToken
  * - The waits (§5.1's table): `off` 2 min, `refused` and `busy` the server's wait, `key` 10 min, and
  *   after an `unreachable` a 30 s hold (QA 58-3): no ask inside any of them, the same Mint answered. One
  *   prompt retry 5 s after an `unreachable` inside the same mint when it still fits (QA 58-2), past the
- *   hold that answer set.
+ *   hold that answer set. The download worker's come-back after such an outage grows 2, 4, 8, 16, then 30
+ *   minutes over consecutive outages, reset by any JWT (qa-58-step2-code S2-2).
  * - Storytel's 401 (storytel-player's rule): the JWT is dropped and asked for once more with `stale`
  *   naming it; a different JWT is retried once, a declined force is its wait (QA N-1), the same JWT back
  *   is `Failed(401)` at once (a belt: the server never hands back the JWT a force names). A second 401
@@ -74,6 +75,9 @@ class StorytelSession(
     private var holdUntil = Long.MIN_VALUE
     private var prefetchFails = 0
     private var prefetchAt = Long.MIN_VALUE
+
+    /** Consecutive mints that ended on an outage since the last JWT: the come-back's backoff (S2-2). */
+    private var outages = 0
 
     /**
      * A mint with the server's JWT: [asset] is the asset call with the JWT's value (StorytelApi.assetUrl),
@@ -125,7 +129,7 @@ class StorytelSession(
         val (call, before) = synchronized(lock) {
             settle(g)
             if (!prefetchDue()) return
-            start(null, g) to kept?.value
+            start(null, g) to kept?.takeIf { elapsedMs() < it.expiresAtMs }?.value
         }
         val result = await(call, StorytelBridgeToken.TIMEOUT_MS * 2)
         synchronized(lock) {
@@ -155,7 +159,7 @@ class StorytelSession(
                 val now = elapsedMs()
                 kept?.takeIf { now < it.expiresAtMs && it.value != stale?.value }?.let { return Answer.Token(it) }
                 waiting(now, hold = !retried)?.let { return Answer.None(it) }
-                if (wait < MIN_WAIT_MS) return Answer.None(Mint.LoginFailed("deadline", wallMs() + COME_BACK_MS))
+                if (wait < MIN_WAIT_MS) return Answer.None(Mint.LoginFailed("deadline", comeBack()))
                 val running = running()
                 when {
                     running == null -> start(stale, g) to true
@@ -180,7 +184,7 @@ class StorytelSession(
             }
             // QA 58-2: one more ask 5 s later, when that still leaves a whole wait before the asset call's time
             if (retried || elapsedMs() + PROMPT_RETRY_MS + MIN_WAIT_MS + timeoutMs > deadlineMs) {
-                return Answer.None(Mint.LoginFailed("unreachable", wallMs() + COME_BACK_MS))
+                return Answer.None(Mint.LoginFailed("unreachable", synchronized(lock) { outages++; comeBack() }))
             }
             retried = true
             sleep(PROMPT_RETRY_MS)
@@ -204,9 +208,17 @@ class StorytelSession(
         now < refusedUntil -> Mint.Refused(wallMs() + (refusedUntil - now))
         now < keyUntil -> Mint.LoginFailed("key", wallMs() + (keyUntil - now))
         now < busyUntil -> Mint.LoginFailed("busy", wallMs() + (busyUntil - now))
-        hold && now < holdUntil -> Mint.LoginFailed("unreachable", wallMs() + COME_BACK_MS)
+        hold && now < holdUntil -> Mint.LoginFailed("unreachable", comeBack())
         else -> null
     }
+
+    /**
+     * When the download worker comes back after an outage (wall clock): [COME_BACK_MS] doubling with each
+     * consecutive outage stop, at most [COME_BACK_MAX_MS] (S2-2: an old launcher or a server away for a weekend
+     * costs a few jobs an hour, not 30). Under [lock] or with only a read of [outages].
+     */
+    private fun comeBack(): Long =
+        wallMs() + minOf(COME_BACK_MS shl (outages - 1).coerceIn(0, 4), COME_BACK_MAX_MS)
 
     /** A new generation drops the JWT, every wait and the prefetch's backoff (design 58 §5.2). Under [lock]. */
     private fun settle(g: Long) {
@@ -220,6 +232,7 @@ class StorytelSession(
         holdUntil = Long.MIN_VALUE
         prefetchFails = 0
         prefetchAt = Long.MIN_VALUE
+        outages = 0
     }
 
     /** The ask in flight for this generation; under [lock]. A finished one is none. */
@@ -250,10 +263,14 @@ class StorytelSession(
         if (ask.generation != seen) return
         val now = elapsedMs()
         when (result) {
-            is JwtResult.Ok -> if (result.jwt != ask.stale?.value && result.jwt != kept?.value) {
-                kept = Jwt(result.jwt, result.expiresAtMs, ask.generation, result.session, result.expiresAtMs - now)
-                prefetchFails = 0
-                prefetchAt = Long.MIN_VALUE
+            // the same value as an unexpired kept JWT is no new one (S2-1: an expired one is replaced by its renewal)
+            is JwtResult.Ok -> {
+                outages = 0 // the server answered: the next outage's come-back starts at 2 minutes again
+                if (result.jwt != ask.stale?.value && result.jwt != kept?.takeIf { now < it.expiresAtMs }?.value) {
+                    kept = Jwt(result.jwt, result.expiresAtMs, ask.generation, result.session, result.expiresAtMs - now)
+                    prefetchFails = 0
+                    prefetchAt = Long.MIN_VALUE
+                }
             }
             JwtResult.Off -> {
                 kept = null
@@ -288,8 +305,11 @@ class StorytelSession(
         /** After `key` (the server can't open the login), no ask for this long. */
         const val KEY_WAIT_MS = 10 * 60_000L
 
-        /** The download worker comes back this long after an outage, a deadline or a 401 stop (design 58 §5.3, QA N-1). */
+        /** The download worker comes back this long after an outage, a deadline or a 401 stop (design 58 §5.3, QA N-1)... */
         const val COME_BACK_MS = 2 * 60_000L
+
+        /** ...doubling over consecutive outages to at most this (qa-58-step2-code S2-2). */
+        const val COME_BACK_MAX_MS = 30 * 60_000L
 
         /** A room's prefetch asks at `min(this, life / 3)` left (QA 58-1). */
         const val PREFETCH_LEFT_MAX_MS = 10 * 60_000L

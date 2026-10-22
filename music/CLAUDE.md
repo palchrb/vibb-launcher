@@ -263,7 +263,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   (`storytel:book:<cid>`), never the minted URL, so a partial copy resumes with Range against a fresh token. A
   Storytel book's CDN request never follows a redirect (Media3 would write the target, a token, into `exo_redir`).
   `NotConfigured`, `Refused` and `LoginFailed` stop Storytel for the run with no item error, and the job comes back by
-  itself at `DownloadRun.storytelBackAt` (a refusal's end, `LoginFailed.backAtWallMs` - 2 min after an outage, `busy`'s
+  itself at `DownloadRun.storytelBackAt` (a refusal's end, `LoginFailed.backAtWallMs` - 2 min after an outage, doubling
+  to 30 over consecutive outages until a JWT comes, `busy`'s
   wait, 10 min for `key` -, 2 min after a 401 stop; design 58 §5.3); `NoAudio` is `no_audio`
   (a day); `Failed`/`Unreachable` are transient (`http_<n>`/`network`, 2 min doubling, at most 6 h). A failure after
   the partial grew by at least max(1 MiB, 1 %) since the last one counts as the first again (`grewEnough`,

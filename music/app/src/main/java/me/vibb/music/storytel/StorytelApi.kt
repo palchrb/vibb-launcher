@@ -70,7 +70,7 @@ class StorytelApi(
      * ends a blocked request at once and gets its CancellationException. Never throws otherwise.
      */
     suspend fun assetUrl(cid: String, jwt: String, timeoutMs: Long, deadlineMs: Long): Mint {
-        if (!validCid(cid)) return Mint.NoAudio(0) // a listing key never fails this; no request for one that would
+        if (!CID.matches(cid)) return Mint.NoAudio(0) // a listing key never fails this; no request for one that would
         val budget = minOf(timeoutMs, deadlineMs - elapsedMs())
         if (budget <= 0) return Mint.Unreachable("deadline")
         val url = endpoints.api.newBuilder().addPathSegments(ASSET_PATH).addPathSegment(cid).addPathSegment(ASSET_FORMAT).build()
@@ -125,8 +125,6 @@ class StorytelApi(
 
         /** A consumable id as the grammar and the listing keys spell it. */
         private val CID = Regex("[A-Za-z0-9_-]{1,64}")
-
-        fun validCid(cid: String): Boolean = CID.matches(cid)
 
         private val JSON = Json { ignoreUnknownKeys = true }
 

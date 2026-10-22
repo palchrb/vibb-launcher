@@ -1300,3 +1300,21 @@ with the update-order table's row 3 (an old launcher: the job every 2 minutes, t
 **Tests** (each suite run whole before the commit): music app 1191 unit tests and `assembleDebug` with
 `-PwarningsAsErrors=true`; `python3 -I scripts/fake-storytel.py --selftest` OK; server `cargo test` 1134 and
 `cargo fmt --check` (`fake_login_fixtures_match` without the music half).
+
+**Code QA fixes** (`docs/review/qa-58-step2-code.md`, all findings):
+- S2-1: the fake's `/fake/jwt` ages its JWT (`expires_in_s` is the life left) and, as the server's `PHONE_MIN_LEFT`,
+  answers a plain ask below `min(15 min, life / 2)` left with the next JWT (`jwt #n (renewed)`; selftest part 7). The
+  belt: `keep()` compares only with an unexpired kept JWT (and the prefetch's "same back" too), so the same value
+  with a later expiry replaces an expired one. §6i A's room-advance check now holds with `--jwt-ttl 300`.
+- S2-2: **the come-back after an outage backs off**: `LoginFailed("unreachable")`'s `backAtWallMs` is 2 minutes,
+  then 4, 8, 16 and 30 over consecutive outage stops (`COME_BACK_MAX_MS`), counted in the session's memory and reset by
+  any `ok` answer or a new generation; the hold and `deadline` answer the current step without growing it. A new
+  process starts at 2 minutes. So row 3 of §6 (an old launcher) and a server away for a weekend cost a few jobs an
+  hour, not 30. A 401 stop stays 2 minutes.
+- S2-3: the prefetch's launch in `SonosRenderer` catches every `Exception` (cancellation rethrown), as `mintFor`.
+- S2-4: `debugSwitchJwt` filters both branches of the ask, so "whichever way it came" is true.
+- S2-5, S2-6: tests for an ask in flight across a generation change, and for the cancelled waiter's `slept.isEmpty()`.
+- Nit 1: the consumable id is checked once, in `StorytelApi.assetUrl` (a malformed one, which a listing key never is,
+  costs an ask). Nit 2: a force that waits on a prefetch ending `unreachable` meets that answer's hold at once and gets
+  no prompt retry - accepted, the hold is the point.
+- After the fixes: music app 1194 unit tests and `assembleDebug` with `-PwarningsAsErrors=true`; the fake's selftest OK.

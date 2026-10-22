@@ -39,7 +39,7 @@ class StorytelAccount private constructor(
      * actor never cancels a job (qa-26b-merge-code Low 1).
      */
     suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =
-        if (!StorytelApi.validCid(cid)) Mint.NoAudio(0) else session.mint(timeoutMs, deadlineMs) { jwt -> api.assetUrl(cid, jwt, timeoutMs, deadlineMs) }
+        session.mint(timeoutMs, deadlineMs) { jwt -> api.assetUrl(cid, jwt, timeoutMs, deadlineMs) }
 
     /** The room's refresh ahead of an advance (design 58 §5.1): see StorytelSession.prefetchIfDue. Off main. */
     suspend fun prefetchIfDue() = session.prefetchIfDue()
@@ -80,13 +80,14 @@ class StorytelAccount private constructor(
             val session = StorytelSession(
                 generation = { Bridge.config(app).let { storytelGeneration(it.managed, it.storytelGeneration, fake != null) } },
                 ask = { stale ->
-                    if (fake != null && !Bridge.config(app).managed) {
-                        // the fake's route only for a run without a launcher (design 58 §5.6, Spotify's debugTokens())
+                    // the fake's route only for a run without a launcher (design 58 §5.6, Spotify's debugTokens())
+                    val answer = if (fake != null && !Bridge.config(app).managed) {
                         runInterruptible(Dispatchers.IO) { api.debugJwt(fake, stale) }
                     } else {
-                        val answer = StorytelBridgeToken.get(app, stale)
-                        if (fake == null) answer else debugSwitchJwt(answer)
+                        StorytelBridgeToken.get(app, stale)
                     }
+                    // with the switch set only a fake JWT goes on, whichever way it came (S2-4)
+                    if (fake == null) answer else debugSwitchJwt(answer)
                 },
                 elapsedMs = SystemClock::elapsedRealtime,
                 wallMs = System::currentTimeMillis,

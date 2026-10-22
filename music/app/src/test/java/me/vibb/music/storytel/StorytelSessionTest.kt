@@ -95,6 +95,7 @@ class StorytelSessionTest {
         yield()
         job.cancel()
         assertTrue(runCatching { job.await() }.exceptionOrNull() is CancellationException)
+        assertTrue("the caller's cancellation goes up: no prompt retry (qa-58-step2-code S2-6)", slept.isEmpty())
         gate2.complete(ok(2))
         yield()
         assertTrue(t.room() is Mint.Url)
@@ -424,6 +425,53 @@ class StorytelSessionTest {
         assertEquals(Mint.NotConfigured, off.room())
         off.prefetchIfDue()
         assertTrue(asks.isEmpty())
+    }
+
+    @Test
+    fun `an ask in flight across a parent's save - its answer is dropped and the waiter asks again (S2-5)`() = runBlocking {
+        val gate = CompletableDeferred<JwtResult>()
+        val s = session(this, { gate.await() }, { ok(2) })
+        val m = async { s.download() }
+        while (asks.isEmpty()) yield()
+        gen = 2
+        assertEquals("ok", s.state())
+        gate.complete(ok(1)) // the old login's JWT
+        assertTrue(m.await() is Mint.Url)
+        assertEquals("the new generation's JWT, never the old one", listOf("FAKE-JWT-2"), assets)
+        assertTrue(s.room() is Mint.Url)
+        assertEquals(listOf("FAKE-JWT-2", "FAKE-JWT-2"), assets)
+        assertEquals(listOf<String?>(null, null), asks)
+    }
+
+    @Test
+    fun `the come-back after outages grows 2, 4, 8, 16, then 30 minutes, and a JWT resets it (S2-2)`() = runBlocking {
+        var down = true
+        val s = session(this, { if (down) JwtResult.Unreachable("launcher") else ok(1, 5 * min) })
+        for (wait in listOf(2L, 4, 8, 16, 30, 30)) {
+            val m = s.download()
+            assertEquals("$wait", Mint.LoginFailed("unreachable", wall + wait * min), m)
+            assertEquals("inside the hold: the same come-back, no ask", Mint.LoginFailed("unreachable", wall + wait * min), s.room())
+            clock += StorytelSession.HOLD_MS
+        }
+        assertEquals(12, asks.size)
+        assertEquals(30 * min, StorytelSession.COME_BACK_MAX_MS)
+        down = false
+        assertTrue(s.download() is Mint.Url)
+        down = true
+        clock += 5 * min
+        val m = s.download()
+        assertEquals("reset by the JWT", Mint.LoginFailed("unreachable", wall + 2 * min), m)
+    }
+
+    @Test
+    fun `an expired JWT is replaced by the same value with a later expiry (S2-1's belt)`() = runBlocking {
+        val s = session(this, { ok(1, 5 * min) }, { JwtResult.Ok("FAKE-JWT-1", clock + 59 * min, session(1)) })
+        assertTrue(s.room() is Mint.Url)
+        clock += 5 * min
+        assertTrue(s.room() is Mint.Url)
+        assertEquals(2, asks.size)
+        assertTrue("kept now", s.room() is Mint.Url)
+        assertEquals(2, asks.size)
     }
 
     @Test

@@ -38,8 +38,9 @@ look like a real account.
                                                        --refuse (or another login): 403; --no-jwt: 200 without one;
                                                        --login-5xx: 503; after a revoke it issues FAKE-JWT-<n+1>
     GET /fake/jwt[?stale=<session>]                    the route's `ok` row: the current FAKE-JWT-<n>, expires_in_s
-                                                       --jwt-ttl (3540), session 1:<n in 16 hex>; a stale naming the
-                                                       current session issues FAKE-JWT-<n+1> (the server's force);
+                                                       its life left of --jwt-ttl (3540), session 1:<n in 16 hex>; as
+                                                       the server, a plain ask below min(900, ttl / 2) left and a
+                                                       stale naming the current session issue FAKE-JWT-<n+1>;
                                                        --refuse: `refused` 409, --off: `off` 404, --busy S: `busy`
                                                        429 with S, --jwt-down: `unreachable` 502
     POST /libraries/bookshelf                          the current JWT checked (401 otherwise); bookshelf.json
@@ -63,6 +64,7 @@ The log shows every request with its Range and token (fake values), so a resumed
 import argparse
 import http.client
 import json
+import math
 import os
 import re
 import sys
@@ -124,6 +126,7 @@ class Storytel:
         first = self.ok["body"]["accountInfo"]["jwt"]
         assert first == "FAKE-JWT-1", first
         self.jwt_n = 1            # the current JWT is FAKE-JWT-<jwt_n>
+        self.issued = time.monotonic()   # when it was issued: /fake/jwt answers its life left, as the server does
         self.revoked = False      # the current JWT answers 401 until a login issues the next
         self.revoke_after = getattr(args, "revoke_after", 0) or 0
         self.accepted = 0         # asset calls accepted with the current JWT so far
@@ -153,6 +156,13 @@ class Storytel:
     @property
     def jwt(self):
         return f"FAKE-JWT-{self.jwt_n}"
+
+    def next_jwt(self, why):
+        """Issue FAKE-JWT-<n+1>: a login after a revoke, a stale ask, or a renewal (under the lock)."""
+        self.jwt_n += 1
+        self.revoked, self.accepted = False, 0
+        self.issued = time.monotonic()
+        log(f"jwt #{self.jwt_n} ({why})")
 
     @property
     def session(self):
@@ -246,9 +256,7 @@ def handler_for(st):
                                  [("Content-Type", "application/json")])
             with st.lock:
                 if st.revoked:
-                    st.jwt_n += 1
-                    st.revoked, st.accepted = False, 0
-                    log(f"jwt #{st.jwt_n} (a login after the revoke)")
+                    st.next_jwt("a login after the revoke")
                 jwt = st.jwt
             body = json.loads(json.dumps(st.ok["body"]))
             body["accountInfo"]["jwt"] = jwt
@@ -274,14 +282,18 @@ def handler_for(st):
                 log("jwt: unreachable (--jwt-down)")
                 return answer("unreachable")
             with st.lock:
+                # the server's rules (design 58 §2.1): its JWT ages, and a plain ask below min(15 min, life / 2)
+                # left gets a new one (PHONE_MIN_LEFT; qa-58-step2-code S2-1); a force naming it gets the next
+                left = st.jwt_ttl - (time.monotonic() - st.issued)
                 if stale is not None and stale == st.session:
-                    st.jwt_n += 1
-                    st.revoked, st.accepted = False, 0
-                    log(f"jwt #{st.jwt_n} (stale {stale})")
+                    st.next_jwt(f"stale {stale}")
+                elif left < min(900, st.jwt_ttl / 2):
+                    st.next_jwt("renewed")
                 else:
-                    log(f"jwt #{st.jwt_n}{' (stale: an older session)' if stale else ''}, expires_in_s {st.jwt_ttl}")
+                    log(f"jwt #{st.jwt_n}{' (stale: an older session)' if stale else ''}, expires_in_s {math.ceil(left)}")
+                left = st.jwt_ttl - (time.monotonic() - st.issued)
                 jwt, session = st.jwt, st.session
-            answer("ok", jwt=jwt, expires_in_s=st.jwt_ttl, session=session)
+            answer("ok", jwt=jwt, expires_in_s=max(1, math.ceil(left)), session=session)
 
         def mint(self, cid):
             if not st.bearer_ok(self.headers.get("Authorization")):
@@ -573,8 +585,19 @@ def selftest():
             assert status == rows[name]["http"] and body == dict(rows[name]["body"], **extra), (over, status, body)
         finally:
             srv.shutdown()
+    st, srv = start(jwt_ttl=2)
+    try:
+        assert jwt(st)[1]["jwt"] == "FAKE-JWT-1"
+        time.sleep(0.5)
+        status, body = jwt(st)
+        assert body["jwt"] == "FAKE-JWT-1" and body["expires_in_s"] == 2, ("it ages", body)
+        time.sleep(0.6)
+        status, body = jwt(st)
+        assert body["jwt"] == "FAKE-JWT-2" and body["expires_in_s"] == 2, ("below half its life: renewed", body)
+    finally:
+        srv.shutdown()
     print("7. design 58: /fake/jwt answers the route's rows (--jwt-ttl, --refuse 409, --off 404, --busy 429, "
-          "--jwt-down 502), a stale ask after a revoke FAKE-JWT-2 OK")
+          "--jwt-down 502), a stale ask after a revoke FAKE-JWT-2, the JWT ages and renews below half its life OK")
     print("\nFAKE STORYTEL SELFTEST OK - answers built from the same fixtures the JVM tests read.")
 
 
@@ -593,7 +616,8 @@ def main():
     p.add_argument("--revoke-after", type=int, default=0, metavar="K",
                    help="after the K-th accepted asset call the JWT answers 401 until a login or a stale /fake/jwt "
                         "issues the next (design 58: K=1 is the second book)")
-    p.add_argument("--jwt-ttl", type=int, default=3540, help="/fake/jwt's expires_in_s (default %(default)s)")
+    p.add_argument("--jwt-ttl", type=int, default=3540,
+                   help="/fake/jwt's JWT life in seconds; it ages and renews below half of it (default %(default)s)")
     p.add_argument("--off", action="store_true", help="/fake/jwt answers `off` (404): Storytel off on the phone")
     p.add_argument("--busy", type=int, default=0, metavar="S", help="/fake/jwt answers `busy` (429) with retry_after_s S")
     p.add_argument("--jwt-down", action="store_true", help="/fake/jwt answers `unreachable` (502): the server's outage")

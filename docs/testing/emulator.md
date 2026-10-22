@@ -820,7 +820,8 @@ python3 -I scripts/fake-storytel.py                            # port 8730, book
 #   --token-ttl 30                a token is refused (403) 30 s after its mint
 #   --refuse                      the login refused (403) and /fake/jwt `refused` (409)
 #   --no-jwt | --login-5xx        the server's login: 200 without a jwt | 503 (design 58: an outage, not a refusal)
-#   --jwt-ttl 120                 /fake/jwt's expires_in_s (default 3540)
+#   --jwt-ttl 300                 /fake/jwt's JWT life (default 3540); it ages, and below half of it (at most 15 min)
+#                                 a plain ask gets the next JWT, as the server does
 #   --off | --busy 30 | --jwt-down   /fake/jwt answers `off` (404) | `busy` 30 s (429) | `unreachable` (502)
 #   --revoke-after 1              after the first accepted asset call the JWT answers 401 until a stale /fake/jwt
 #                                 (or the server's login) issues FAKE-JWT-2
@@ -862,7 +863,8 @@ design 58 §9):
   me.vibb.music.debug` shows it scheduled).
 - **An outage** (design 58 §9, QA 58-2): `--jwt-down` (after a force-stop): one `jwt: unreachable` line and a second
   5 s later (the prompt retry), the run stops with no item error and the report still says `ok`; restart the fake
-  without the flag: about 2 minutes later the job comes back by itself and downloads (one `jwt` line), with no sync
+  without the flag: about 2 minutes later the job comes back by itself and downloads (one `jwt` line; with the fake
+  still down it comes back after 4, 8, 16, then every 30 minutes - qa-58-step2-code S2-2), with no sync
   nudged. `--busy 30` is the same with the job back after 30 s; `--off` makes the report say `none`.
 - **A revoked JWT** (design 58 §9, QA N-1): `--revoke-after 1 --books 111:5,222:5`: book 111 downloads; book 222's
   `asset` line is a 401, then one `jwt #2 (stale 1:0000000000000001)` line and the same asset retried once with
@@ -927,8 +929,8 @@ adb shell run-as me.vibb.music.debug cat no_backup/renderer.json
   - **The advance on an expired JWT** (design 58 §9, QA 58-1): `--jwt-ttl 300 --books 111:16,222:16,333:16
     --no-download 111,222,333` (16 MB is about 6 minutes of the fake's WAV; design 58 §9's `--jwt-ttl 120` predates
     QA N-6's guard: a life of 240 s or less is never prefetched, the advance then asks as any mint does). Book 1 on
-    Stua from its start: a `jwt` line about every 200 s while it plays (the prefetch at a third of the life left); at
-    book 1's end the advance's `asset 222` line has **no** `jwt` line just before it, and book 2 plays.
+    Stua from its start: a `jwt #n (renewed)` line about every 200 s while it plays (the prefetch at a third of the
+    life left; the fake renews below half of it, as the server does); at book 1's end the advance's `asset 222` line has **no** `jwt` line just before it, and book 2 plays.
   - `renderer.json` holds `storytel:book:222` after the play and after the adopt - never a `token=`; logcat's
     `not-ours?` lines show scheme, host and path only; the no-secrets greps above still find nothing.
 - Real Storytel stays a device check (design 26b, "Device checks"): the real login, a 300 MB book over Wi-Fi that

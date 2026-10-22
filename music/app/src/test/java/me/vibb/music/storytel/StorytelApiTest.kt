@@ -97,8 +97,6 @@ class StorytelApiTest {
         assertEquals(Mint.NoAudio(0), rig.mint("../../libraries/bookshelf"))
         assertEquals(Mint.NoAudio(0), rig.mint(""))
         assertTrue(rig.requests.isEmpty())
-        assertFalse(StorytelApi.validCid("a/b"))
-        assertTrue(StorytelApi.validCid("160661"))
     }
 
     @Test

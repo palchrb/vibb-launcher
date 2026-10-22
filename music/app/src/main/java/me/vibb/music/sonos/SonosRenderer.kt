@@ -15,6 +15,7 @@ import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -302,7 +303,15 @@ internal class SonosRenderer(
      */
     private fun prefetchStorytel() {
         if (queue()?.entry?.source != Source.STORYTEL) return
-        actorScope.launch { StorytelAccount.get(context).prefetchIfDue() }
+        actorScope.launch {
+            // never another exception out of it, as mintFor (S2-3): this scope has no handler, the process would end
+            try {
+                StorytelAccount.get(context).prefetchIfDue()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
     }
 
     override fun reorder(keep: Int, after: List<MediaItem>) {
