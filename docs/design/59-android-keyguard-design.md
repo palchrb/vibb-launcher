@@ -506,3 +506,20 @@ the kid's phone, on the Jelly Star: its BFU call screening (A §2.3), and an ove
   and `pending_command`'s key pins named (§1, §7). N3: an older launcher told by the capability (§1, §2.2). N4: the
   one-shot "ours" flag (§3.7); clearing the Child PIN sets the switch back to own (§2.1, test 15).
 - Open questions: QA's recommendations taken as defaults (§10); the line per its recommendation 2, "none" in the gaps.
+
+## Prototype run on the emulator (2026-10-22, `docs/testing/2026-10-22-hybrid-prototype-run.md`)
+
+The prototype (46cf0fa5) on `handy36`: nothing got past the PIN and no app content showed while locked; Recents was
+refused in every way tried (kiosk on and off, Android's lock, BFU), while today's lock reproduced the leak. Two bugs
+the launcher steps must fix:
+- **`USER_PRESENT` never reaches us.** The screen receiver is registered not-exported (`PinLockRuntime.kt:455-464`),
+  and `USER_PRESENT` is sent by SystemUI, so it is dropped (the broadcast log shows it). §3's LEAVE on `USER_PRESENT`
+  depends on it: register that action exported (it is a protected broadcast, so no app can forge it - verify in AOSP's
+  `protected-broadcast` list), or use a `KeyguardManager` callback; pin it with a test, and the emulator list checks
+  it (an unlock through Android's own lock screen must leave the glance at once).
+- **"Lås opp" once opened an empty notification shade instead of the PIN pad** (in a parent pause, tapped ~5 s before
+  the pause reached the phone; no `requestDismissKeyguard` answer; then 30 s of dead taps, `PinLockActivity.kt:276`,
+  `HybridPlan.kt:85`). Nothing leaked. The step must make a missing answer recover quickly (a short timeout, then a
+  retry or our state re-read) and never leave dead taps for 30 s.
+Also seen: after the first unlock of a boot, the stock Pixel launcher shows ~3 s before our Home, then a 1.4 s glance
+flash; and `handy36`'s data partition is not wiped at boot (it kept an old device owner) - start it with `-wipe-data`.
