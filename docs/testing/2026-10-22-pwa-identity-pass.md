@@ -134,3 +134,73 @@ are not committed.
 - **Not checked here**: the iPhone itself - whether iOS colours the standalone status bar from `theme-color` with
   `status-bar-style` `default` (Android's Chrome does), and the pull-down bounce showing the band's night above it.
 
+
+## Night behind the status bar on every tab (2026-10-22, branch `pwa-status-night`)
+
+The user's iPhone (the installed app, server 0.38.0): Devices' night band stopped at the status bar, which stayed
+grey - iOS paints it itself with `status-bar-style` `default`, and `theme-color` did not recolour it. The user's
+decision: night behind the status bar on every tab ("natt bak statuslinja på alle faner"), the brand band still only
+on Devices. Now `status-bar-style` is `black-translucent` (the page runs under the status bar, its text white),
+`body::before` paints exactly the top inset `#0C0C14` on every page in both schemes (absolute in the body, which never
+scrolls, `z-index: 20`), and `theme-color` is one night `#0C0C14` on every page (the manifest's `theme_color` too;
+Devices' `night_top` is gone). `style.css?v=46`.
+
+The same setup (port 3214, a fresh database with Anna, Ola and Test Phone), headless Chromium at 390x844 with the
+inset simulated as 47 px (the CSS served with `env(safe-area-inset-top, 0px)` replaced) and without, light and dark,
+and 1280x800 light without; on Devices, Apps, Settings, Anna's page (`/devices/1`), the rule editor
+(`/schedules/rules/new`, its sticky editor bar) and the sign-in page (signed out). Each page at the top and with
+`main` scrolled 200 (a 1500 px spacer added, so every page scrolls). The night was read from the screenshots' pixels;
+the screenshots were looked at and are not committed.
+
+- **The strip is exactly the inset**: computed `47px`, `rgb(12, 12, 20)`, on all six pages in both schemes; in the
+  light screenshots the run of exact `#0C0C14` from y 0 is 47 px at five columns on Apps, Settings, Anna's page, the
+  rule editor and the sign-in page, the grey ground `#F2F2F7` right under it. With no inset (390 and 1280) it is 0 px
+  and nothing changed: no night pixel at the top of those pages, Devices' band 0-52 as before.
+- **Devices, no seam**: rows y 46, 46.5, 47, 47.5 and 48 are night across all 390 px (light and dark); the band runs
+  unbroken from y 0 to 99 (the bar's bottom) where nothing stands on it. In dark the strip joins the night ground
+  (Apps and Settings: rows 46-48 all night).
+- **It never scrolls**: with `main` at 200 the top 47 px stay night on every shell page (dark: not one other pixel
+  in 0-47), the rows go under it, Devices' band scrolled away under it (the bar at y -145); the document's scroll stays
+  0. The rule editor's sticky bar sits at y 47, right under the strip (0 without the inset), as before.
+- **The same y on every tab**: the title bar at 55-99 and the `<h1>` at 103 on Devices, Apps, Settings and the rule
+  editor with the inset (8-52 and 56 without); `main`'s padding-top 55 px. Anna's page's `<h1>` at 189 (142 without).
+  The sign-in page's card at y 270 with the inset (246.5 without): its padding still takes the inset.
+- No horizontal scroll (document or `main`) and no console errors on any load; `theme-color` `#0C0C14` and
+  `black-translucent` on every page.
+- **Not checked here** (the user's, on the iPhone): the status bar's text white on the night strip on every tab, that
+  iOS really lays the standalone page under the bar (`viewport-fit=cover` + `black-translucent`), the pull-down
+  bounce of `main` (the strip stays; Devices shows its band's night above, the other tabs the grey ground under the
+  strip), the sign-in page with the keyboard up (its document scrolls, so the strip scrolls with it there), and
+  whether the night `theme-color` reads well in Safari's own top bar and on Android.
+
+### The brand mark as the app icon, and the bottom fade (same branch)
+
+Two more asks from the user's iPhone screenshots: the mark's lifted tile read as a lighter square on the band and
+the hand-drawn rings were "not the right icon"; and on Settings "Sign Out" sat sharp in the gap under the floating
+bar ("like Nextcloud": the content should fade out towards the bottom). Devices' mark is now
+`<img class="vibb-mark" src="/static/icons/icon-192.png" width="34" height="34">` with no tile (`--brand-tile` and
+the inline SVG gone), and `partials/tab_bar.html` puts a `.tab-fade` before the bar. Checked at 390x844 with a
+simulated 47 px top and 34 px bottom inset and without, light and dark, and 1280x800 light, on Devices (the mark),
+Settings and Anna's page (`/devices/1`, the longest), each at the end of `main` and mid-scroll; the screenshots
+(a 2x crop of the mark, the pages) were looked at.
+
+- **The mark**: an `<img>`, loaded (192 px natural), 34x34 at x 16, y 13 (60 with the inset), no background; in the
+  crops the rings sit straight on the band with no visible square in either scheme. The icon's own ground is
+  `#0C0C14` with faint dither (at most 12 off per channel at its edge), not visible against the band.
+- **The fade**: absolute, `z-index` 9 (the bar 10), `pointer-events: none`, the whole width (0-390, 0-1280), from
+  24 px above the bar's top to the bottom edge: y 736.6-844 without insets (the bar 760.6-830), 702.6-844 with them
+  (the bar 726.6-796), `linear-gradient(rgba(242, 242, 247, 0), rgb(242, 242, 247))`, dark
+  `rgba(12, 12, 20, 0)` to `rgb(12, 12, 20)`. So the ground covers about 22 % at the bar's top and 87 % at its
+  bottom without insets (17 % and 66 % with the 34 px home indicator), all of it at the edge. Mid-scroll the rows
+  passing under the bar and in the gap below it are faded towards the ground (Settings' Sign Out, Anna's Advanced),
+  dimmed under the glass, and the side gaps above the fade's start stay sharp.
+- **The last row clears it**: at the end of `main` the last row's bottom is 20 px above the fade's start on both pages
+  at every size (Settings 716.5, 682.5 with the insets, 672.5 at 1280 against the fade at 736.6, 702.6, 692.6; main's room
+  plus the group's own margin);
+  the last focusable (Sign Out, Advanced) focused from the top scrolls to the same place.
+- **Through it**: `elementFromPoint` 10 px into the fade, and in the side gap beside the bar, is main's content; the
+  wheel over the fade below the bar scrolls `main` (160 to 0, 335 to 135). Headless Chromium has overlay scrollbars
+  here (`main`'s scrollbar 0 px wide), so the classic desktop scrollbar under the fade was not seen; it takes the
+  pointer since the fade takes none. No horizontal scroll, the document never scrolls, no console errors.
+- **Not checked here** (the user's, on the iPhone): how the fade and the bar's real 20 px blur read together, and the
+  fade over the home indicator area.
