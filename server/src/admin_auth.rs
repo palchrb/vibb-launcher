@@ -504,6 +504,12 @@ pub async fn reset_2fa(
         .execute(db)
         .await
         .map_err(|err| format!("couldn't remove the notification subscriptions: {err}"))?;
+    if removed {
+        // A restored parent starts with nothing unread, as an added one (design 62 §2, step 5).
+        crate::parent_events::read_everything(db, id)
+            .await
+            .map_err(|err| format!("couldn't mark the events read: {err}"))?;
+    }
     let (event, detail) = if removed {
         (
             "parent_restored",

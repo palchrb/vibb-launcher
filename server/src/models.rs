@@ -610,6 +610,9 @@ pub struct DeviceCommand {
     /// or by an enrollment into the row ([cancel_reason] "enrolled").
     pub cancelled_at: Option<String>,
     pub cancel_reason: Option<String>,
+    /// The parent who asked for it (`admin_users.id`, design 62 §6, migration 0087); `None` for
+    /// one the server queued itself and for history from before. Never in the policy JSON.
+    pub requested_by: Option<i64>,
 }
 
 /// Commands that expire when the phone doesn't fetch them within [COMMAND_EXPIRY_MINUTES] of the

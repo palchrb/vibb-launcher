@@ -87,7 +87,7 @@ pub async fn list_devices(
             ),
             live_warning: crate::handlers::auth::live_warning_row(&admin, &zone, now),
             warning_back: "/devices",
-            bell: crate::parent_events::Bell::load(&state.db).await,
+            bell: crate::parent_events::Bell::load(&state.db, admin.id).await,
             push_warning: crate::handlers::notifications::warning_row(&state, admin.id).await,
         }
         .render()
@@ -1132,10 +1132,11 @@ pub async fn update_kiosk_escapes(
 
 pub async fn view_device(
     State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    render_device(&state, id, &query).await
+    render_device(&state, admin.id, id, &query).await
 }
 
 /// The Apps list a phone's pages build on: one row per app the phone reports and per catalog app
@@ -1341,6 +1342,7 @@ pub(crate) async fn app_rows(
 /// read fails says "Couldn't read" (logged).
 async fn render_device(
     state: &AppState,
+    admin_id: i64,
     id: i64,
     query: &std::collections::HashMap<String, String>,
 ) -> Response {
@@ -1593,6 +1595,7 @@ async fn render_device(
     // Activity (design 48); a failed read is no page, never a history that isn't true.
     let activity = match crate::handlers::activity::rows(
         state,
+        admin_id,
         id,
         query.get("cancel").map(String::as_str),
         &zone,
@@ -2311,7 +2314,7 @@ pub async fn update_kid_lock(
             .rows_affected()
                 > 0;
             if saved {
-                crate::kid_lock::queue_pin_command(&mut *tx, id, None).await?;
+                crate::kid_lock::queue_pin_command(&mut *tx, id, None, Some(admin.id)).await?;
             }
             tx.commit().await?;
             Ok::<bool, sqlx::Error>(saved)
@@ -2419,7 +2422,7 @@ pub async fn update_kid_keyguard(
             > 0;
         if saved {
             if keyguard == crate::kid_lock::KEYGUARD_ANDROID {
-                crate::kid_lock::queue_pin_command(&mut *tx, id, None).await?;
+                crate::kid_lock::queue_pin_command(&mut *tx, id, None, Some(admin.id)).await?;
             } else {
                 crate::kid_lock::cancel_pin_command(&mut *tx, id, "keyguard_own").await?;
             }
@@ -2491,7 +2494,7 @@ pub async fn send_kid_pin(
         Some(false) => return back("pin_not_kept"),
         Some(true) => {}
     }
-    match crate::kid_lock::queue_pin_command(&state.db, id, None).await {
+    match crate::kid_lock::queue_pin_command(&state.db, id, None, Some(admin.id)).await {
         Ok(true) => {}
         Ok(false) => return back("pin_not_sent"),
         Err(err) => return failed(err),

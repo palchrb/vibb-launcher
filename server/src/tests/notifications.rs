@@ -380,7 +380,7 @@ async fn opening_the_inbox_reads_the_rows_it_shows() {
         let db = app.db.clone();
         async move {
             sqlx::query_scalar::<_, i64>(
-                "SELECT device_id FROM parent_events WHERE read_at IS NULL ORDER BY id",
+                "SELECT device_id FROM parent_events e WHERE NOT EXISTS (SELECT 1 FROM parent_event_reads r WHERE r.event_id = e.id) ORDER BY id",
             )
             .fetch_all(&db)
             .await
@@ -518,7 +518,7 @@ async fn the_inbox_rows_open_and_mark_all_as_read() {
         Some("inbox"),
     );
     let unread: Vec<i64> =
-        sqlx::query_scalar("SELECT device_id FROM parent_events WHERE read_at IS NULL")
+        sqlx::query_scalar("SELECT device_id FROM parent_events e WHERE NOT EXISTS (SELECT 1 FROM parent_event_reads r WHERE r.event_id = e.id)")
             .fetch_all(&app.db)
             .await
             .unwrap();
@@ -529,7 +529,7 @@ async fn the_inbox_rows_open_and_mark_all_as_read() {
     assert_redirect(&res, "/notifications?from=devices", Some("inbox"));
     app.assert_lands(&res, &cookie).await;
     // The routes need a session; a signed-out inbox marks nothing.
-    sqlx::query("UPDATE parent_events SET read_at = NULL")
+    sqlx::query("DELETE FROM parent_event_reads")
         .execute(&app.db)
         .await
         .unwrap();
@@ -545,7 +545,7 @@ async fn the_inbox_rows_open_and_mark_all_as_read() {
     let res = app.request(Method::GET, "/notifications", None, None).await;
     assert_eq!(res.location(), Some("/login"));
     let unread: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM parent_events WHERE read_at IS NULL")
+        sqlx::query_scalar("SELECT COUNT(*) FROM parent_events e WHERE NOT EXISTS (SELECT 1 FROM parent_event_reads r WHERE r.event_id = e.id)")
             .fetch_one(&app.db)
             .await
             .unwrap();
@@ -612,7 +612,7 @@ async fn the_settings_page_holds_the_three_groups() {
     }
     assert!(!html.contains("data-event="), "no inbox here");
     let unread: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM parent_events WHERE read_at IS NULL")
+        sqlx::query_scalar("SELECT COUNT(*) FROM parent_events e WHERE NOT EXISTS (SELECT 1 FROM parent_event_reads r WHERE r.event_id = e.id)")
             .fetch_one(&app.db)
             .await
             .unwrap();
@@ -668,7 +668,7 @@ async fn the_switches_are_saved_and_events_still_stored() {
     app.assert_lands(&res, &cookie).await;
     let stored: (bool, bool, bool, bool, bool) = sqlx::query_as(
         "SELECT push_pin_used, push_pin_lockout, push_foreign_access, push_unseen_boot, push_low_battery \
-         FROM notification_settings",
+         FROM notification_prefs",
     )
     .fetch_one(&app.db)
     .await

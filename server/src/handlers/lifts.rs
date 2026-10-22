@@ -380,6 +380,8 @@ async fn views(
             .await?
         }
     };
+    // Who made each lift, by display name (design 62 §6).
+    let names = crate::parents::Names::load(db).await?;
     // What the phone last said it runs, and when.
     let reported: Option<(DateTime<Utc>, Vec<i64>)> = latest.and_then(|s| {
         let at = parse_db_utc(&s.reported_at)?;
@@ -428,7 +430,11 @@ async fn views(
                 what,
                 when: created.map(|t| zone.when(t, now)).unwrap_or_default(),
                 exact: created.map(|t| zone.exact(t)).unwrap_or_default(),
-                by: lift.created_by.unwrap_or_default(),
+                by: lift
+                    .created_by
+                    .as_deref()
+                    .map(|by| names.of_username(by).to_string())
+                    .unwrap_or_default(),
                 status: state.text(expires, zone, now),
                 can_end: lift.target == "rule" && active,
             }

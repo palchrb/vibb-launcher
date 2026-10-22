@@ -86,11 +86,12 @@ pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
     db: E,
     device_id: i64,
     report: Option<&LockState>,
+    requested_by: Option<i64>,
 ) -> Result<bool, sqlx::Error> {
     // The last report's capabilities, as `device_api::last_capabilities` reads them.
     let sql = format!(
-        "INSERT INTO device_commands (device_id, command) \
-         SELECT device_id, ?2 FROM device_policy \
+        "INSERT INTO device_commands (device_id, command, requested_by) \
+         SELECT device_id, ?2, ?10 FROM device_policy \
          WHERE device_id = ?1 AND kid_keyguard = ?3 AND kid_pin_sealed IS NOT NULL \
            AND EXISTS (SELECT 1 FROM device_status s, json_each(CASE \
                WHEN json_valid(s.capabilities_json) THEN s.capabilities_json ELSE '[]' END) c \
@@ -120,6 +121,7 @@ pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
         ))
         .bind(ANDROID_KEYGUARD_CAPABILITY)
         .bind(crate::models::MAX_COMMAND_DELIVERIES)
+        .bind(requested_by)
         .execute(db)
         .await?;
     Ok(done.rows_affected() > 0)
@@ -169,7 +171,7 @@ pub async fn after_lock_report(
         .execute(db)
         .await?;
     }
-    queue_pin_command(db, device_id, Some(state)).await
+    queue_pin_command(db, device_id, Some(state), None).await
 }
 
 /// `pending_command.pin` for a popped [SET_KID_PIN] (design 59 §2.1): the PIN sealed in `policy`
@@ -1803,6 +1805,7 @@ mod tests {
             succeeded: result.map(|r| r == "pin set"),
             cancelled_at: None,
             cancel_reason: None,
+            requested_by: None,
         }
     }
 

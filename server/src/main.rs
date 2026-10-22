@@ -1385,7 +1385,7 @@ pub fn build_admin_router(
         )
         .route(
             "/account/parents/{id}/reset",
-            get(handlers::auth::account_page),
+            get(handlers::auth::account_page).post(handlers::parents::reset),
         )
         .route(
             "/account/parents/{id}/remove",

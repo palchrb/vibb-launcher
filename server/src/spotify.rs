@@ -1309,6 +1309,12 @@ impl Accounts {
         (now.saturating_duration_since(found.created) < PENDING_TTL).then_some(found)
     }
 
+    /// Drops every unfinished login `admin` started (design 62 §4.2: a removed parent's login in
+    /// progress can't finish).
+    pub fn forget_pending(&self, admin: &str) {
+        lock(&self.pending).retain(|p| p.admin != admin);
+    }
+
     /// How many logins are unfinished (the tests).
     #[cfg(test)]
     pub fn pending_count(&self) -> usize {

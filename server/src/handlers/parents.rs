@@ -5,8 +5,11 @@
 //!   this POST's own page (no redirect, no address, no file, never logged); its hash is made in
 //!   the same gated Argon2 job that checks your password (`PasswordGate::change`), then counted
 //!   by `record_reauth` - three wrong in a row sign you out.
-//! - `POST /account/parents/{id}/remove`: Withdraw (Remove's label on a not-ready row), behind
-//!   `admin_auth::reauth`; PRG to `/account?parents=removed#parents`.
+//! - `POST /account/parents/{id}/reset`: Reset another parent ("New One-Time Password…" on a
+//!   not-ready row), behind your password in the same gated job as the new one-time password's
+//!   hash; the answer is the page with it, as Add's (a reload lands on the GET of the same path).
+//! - `POST /account/parents/{id}/remove`: Remove ("Withdraw…" on a not-ready row), behind
+//!   `admin_auth::reauth`; PRG to `/account?parents=removed#parents`, or `/login` for yourself.
 //!
 //! A refusal renders Account (400) with its form open and the reason under the field; every form
 //! posts to its group's fragment, so no answer jumps to the top.
@@ -18,7 +21,8 @@ use axum::{Extension, Form};
 use serde::Deserialize;
 use tower_sessions::Session;
 
-use crate::handlers::auth::{AccountAnswer, OtpShown, render_account, withdraw_field};
+use crate::handlers::auth::{AccountAnswer, OtpShown, remove_field, render_account, reset_field};
+use crate::models::AdminUser;
 use crate::parents::{Added, Removed};
 use crate::security::{self, CurrentAdmin};
 use crate::{AppState, admin_auth};
@@ -202,29 +206,186 @@ pub async fn add(
         Some(&format!("{username} ({name})")),
     )
     .await;
-    let zone = crate::display_time::Zone::load(&state.db).await;
-    let chars: Vec<char> = otp.chars().collect();
+    let shown = otp_shown(
+        &state,
+        "One-time password",
+        name,
+        username,
+        &otp,
+        &expires_at,
+    )
+    .await;
     let answer = AccountAnswer {
-        otp: Some(OtpShown {
-            until: zone.until_db(&expires_at, chrono::Utc::now()),
-            chunks: chars.chunks(4).map(|c| c.iter().collect()).collect(),
-            name,
-            username,
-        }),
+        otp: Some(shown),
         ..AccountAnswer::default()
     };
     render_account(&state, &session, &actor, StatusCode::OK, answer).await
 }
 
-/// The Withdraw (and, from step 3, Remove) form: your password.
+/// A one-time password as the answer shows it: in blocks of 4, with its end.
+async fn otp_shown(
+    state: &AppState,
+    title: &'static str,
+    name: String,
+    username: String,
+    otp: &str,
+    expires_at: &str,
+) -> OtpShown {
+    let zone = crate::display_time::Zone::load(&state.db).await;
+    let chars: Vec<char> = otp.chars().collect();
+    OtpShown {
+        title,
+        until: zone.until_db(expires_at, chrono::Utc::now()),
+        chunks: chars.chunks(4).map(|c| c.iter().collect()).collect(),
+        name,
+        username,
+    }
+}
+
+/// The account a Reset or Remove names, while it isn't removed.
+async fn target_of(state: &AppState, id: i64) -> Result<Option<AdminUser>, Box<Response>> {
+    sqlx::query_as("SELECT * FROM admin_users WHERE id = ? AND removed_at IS NULL")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|err| {
+            tracing::error!(%err, "couldn't read the parent account");
+            Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        })
+}
+
+/// The Reset form: your password.
+#[derive(Deserialize)]
+pub struct ResetForm {
+    #[serde(default)]
+    current_password: String,
+}
+
+/// Reset another parent (design 62 §4.3): your password and the new one-time password's hash in one
+/// gated job, three wrong sign you out; then the guarded statement, which ends every session and
+/// push subscription of theirs. The answer shows the one-time password once, as Add's.
+pub async fn reset(
+    State(state): State<AppState>,
+    session: Session,
+    Extension(CurrentAdmin(actor)): Extension<CurrentAdmin>,
+    Path(id): Path<i64>,
+    Form(form): Form<ResetForm>,
+) -> Response {
+    let target = match target_of(&state, id).await {
+        Ok(target) => target,
+        Err(response) => return *response,
+    };
+    let target_username = target.as_ref().map_or("", |t| t.username.as_str());
+    // Ready before the Reset: its password is new; a waiting one gets another one-time password.
+    let was_ready = target.as_ref().is_some_and(AdminUser::ready);
+    let otp = crate::startup::new_password();
+    let changed = match state
+        .passwords
+        .change(&form.current_password, &actor.password_hash, &otp)
+        .await
+    {
+        Ok(changed) => changed,
+        Err(admin_auth::Busy) => return admin_auth::busy_response(),
+    };
+    if changed.is_none() {
+        security::record_security_event(
+            &state.db,
+            "parent_change_refused",
+            Some(&actor.username),
+            None,
+            Some(&format!("reset {target_username}")),
+        )
+        .await;
+    }
+    let reauth = admin_auth::record_reauth(&state.db, &session, &actor, changed.is_some()).await;
+    let otp_hash = match (reauth, changed) {
+        (admin_auth::Reauth::Right, Some(hash)) => hash,
+        (admin_auth::Reauth::Wrong { left }, _) => {
+            let answer = AccountAnswer {
+                field_error: Some((
+                    reset_field(id),
+                    wrong_password(left, "Nothing was changed."),
+                )),
+                ..AccountAnswer::default()
+            };
+            return render_account(&state, &session, &actor, StatusCode::BAD_REQUEST, answer).await;
+        }
+        _ => return admin_auth::signed_out_response(),
+    };
+    match crate::parents::reset_parent(&state.db, &actor, id, &otp_hash).await {
+        Ok(crate::parents::Reset::Done { expires_at }) => {
+            // Its name as it is now (the statement ran after the first read); a failed read is a
+            // 500, and the parent resets again for a password to hand over.
+            let target = match target_of(&state, id).await {
+                Ok(Some(target)) => target,
+                Ok(None) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                Err(response) => return *response,
+            };
+            security::record_security_event(
+                &state.db,
+                "parent_reset",
+                Some(&actor.username),
+                None,
+                Some(&target.username),
+            )
+            .await;
+            let title = if was_ready {
+                "New one-time password"
+            } else {
+                "One-time password"
+            };
+            let shown = otp_shown(
+                &state,
+                title,
+                target.name().to_string(),
+                target.username.clone(),
+                &otp,
+                &expires_at,
+            )
+            .await;
+            let answer = AccountAnswer {
+                otp: Some(shown),
+                ..AccountAnswer::default()
+            };
+            render_account(&state, &session, &actor, StatusCode::OK, answer).await
+        }
+        Ok(crate::parents::Reset::Gone) => {
+            Redirect::to("/account?parents=gone#parents").into_response()
+        }
+        Ok(crate::parents::Reset::Yourself) => {
+            let answer = AccountAnswer {
+                flash: Some(crate::handlers::settings::Flash::refused(
+                    "parents",
+                    "Your own account: change your password or reset your two-factor login above.",
+                )),
+                ..AccountAnswer::default()
+            };
+            render_account(&state, &session, &actor, StatusCode::BAD_REQUEST, answer).await
+        }
+        Ok(crate::parents::Reset::SignedOut) => {
+            session.flush().await.ok();
+            admin_auth::signed_out_response()
+        }
+        Err(err) => {
+            tracing::error!(%err, "couldn't reset the parent");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't reset the parent - nothing was changed. Check the server log.",
+            )
+                .into_response()
+        }
+    }
+}
+
+/// The Remove (Withdraw) form: your password.
 #[derive(Deserialize)]
 pub struct RemoveForm {
     #[serde(default)]
     current_password: String,
 }
 
-/// Withdraw an invitation (design 62 §4.2): the soft remove behind your password. Removing
-/// yourself signs you out.
+/// Remove a parent, or withdraw an invitation (design 62 §4.2): the soft remove behind your
+/// password; their Spotify login in progress is dropped too. Removing yourself signs you out.
 pub async fn remove(
     State(state): State<AppState>,
     session: Session,
@@ -232,26 +393,15 @@ pub async fn remove(
     Path(id): Path<i64>,
     Form(form): Form<RemoveForm>,
 ) -> Response {
-    let target: Option<(String, Option<String>)> = match sqlx::query_as(
-        "SELECT username, display_name FROM admin_users WHERE id = ? AND removed_at IS NULL",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    {
+    let target = match target_of(&state, id).await {
         Ok(target) => target,
-        Err(err) => {
-            tracing::error!(%err, "couldn't read the parent account");
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+        Err(response) => return *response,
     };
     let refuse = |why: String| AccountAnswer {
-        field_error: Some((withdraw_field(id), why)),
+        field_error: Some((remove_field(id), why)),
         ..AccountAnswer::default()
     };
-    let target_username = target
-        .as_ref()
-        .map_or("", |(username, _)| username.as_str());
+    let target_username = target.as_ref().map_or("", |t| t.username.as_str());
     match admin_auth::reauth(&state, &session, &actor, &form.current_password).await {
         admin_auth::Reauth::Right => {}
         admin_auth::Reauth::Busy => return admin_auth::busy_response(),
@@ -281,6 +431,7 @@ pub async fn remove(
                 Some(target_username),
             )
             .await;
+            state.spotify.forget_pending(target_username);
             if id == actor.id {
                 session.flush().await.ok();
                 return admin_auth::signed_out_response();
@@ -294,9 +445,7 @@ pub async fn remove(
             let why = if id == actor.id {
                 "You are the only parent who can sign in - add another parent first.".to_string()
             } else {
-                let name = target
-                    .as_ref()
-                    .map_or(target_username, |(u, n)| n.as_deref().unwrap_or(u));
+                let name = target.as_ref().map_or(target_username, AdminUser::name);
                 format!("{name} is the only parent who can sign in - add another parent first.")
             };
             let answer = AccountAnswer {

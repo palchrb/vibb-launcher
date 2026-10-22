@@ -4,7 +4,8 @@
 //! so a repeated report, a retried POST or two parallel ones give one row). The words are made here
 //! at raise from typed values, never from phone-supplied text, with local times, and stored: the
 //! inbox (`/notifications`) and, from step 2, the push say the same. Every kind is stored; the
-//! switches in `notification_settings` govern the push only.
+//! switches in `notification_prefs` (each parent's own, design 62 §5) govern the push only. The
+//! events are the family's; whether one is read is each parent's (`parent_event_reads`, [UNREAD]).
 //!
 //! The words and the battery rule are pure and unit-tested; `src/tests/notifications.rs` raises each
 //! kind from its real input.
@@ -98,7 +99,7 @@ impl Kind {
         if self.urgent() { "high" } else { "normal" }
     }
 
-    /// Its push switch: the `notification_settings` column and the label on Notify Me About.
+    /// Its push switch: the `notification_prefs` column and the label on Notify Me About.
     /// `None` for the emergency call, which is always pushed.
     pub fn switch(self) -> Option<(&'static str, &'static str)> {
         match self {
@@ -839,8 +840,58 @@ pub fn battery_line(
     Some(format!("Battery {level} %{charging}{age}"))
 }
 
-/// The bell on the tab pages and the Settings hub's row: the unread count (one partial-index
-/// `COUNT`; no cache).
+/// "Event `e` (`parent_events`' alias) is unread for the admin bound as `?1`" (design 62 §5): no
+/// `parent_event_reads (admin, event)` row.
+pub const UNREAD: &str =
+    "NOT EXISTS (SELECT 1 FROM parent_event_reads r WHERE r.admin_id = ?1 AND r.event_id = e.id)";
+
+/// The events `admin_id` hasn't read.
+pub async fn unread_count<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    admin_id: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM parent_events e WHERE {UNREAD}"
+    ))
+    .bind(admin_id)
+    .fetch_one(db)
+    .await
+}
+
+/// Marks the events in `ids` (a JSON array of ids) read for `admin_id`; ones already read stay.
+pub async fn mark_read<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    admin_id: i64,
+    ids: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO parent_event_reads (admin_id, event_id) \
+         SELECT ?1, e.id FROM parent_events e WHERE e.id IN (SELECT value FROM json_each(?2))",
+    )
+    .bind(admin_id)
+    .bind(ids)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// A new or restored parent starts with nothing unread (design 62 §4.1): every event so far is
+/// read for `admin_id`.
+pub async fn read_everything<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    admin_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO parent_event_reads (admin_id, event_id) SELECT ?, id FROM parent_events",
+    )
+    .bind(admin_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// The bell on the tab pages and the Settings hub's row: the signed-in parent's unread count (no
+/// cache).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bell {
     pub unread: i64,
@@ -848,14 +899,11 @@ pub struct Bell {
 
 impl Bell {
     /// A failed read shows no count (logged); the bell still leads to the inbox.
-    pub async fn load(db: &SqlitePool) -> Bell {
-        let unread = sqlx::query_scalar("SELECT COUNT(*) FROM parent_events WHERE read_at IS NULL")
-            .fetch_one(db)
-            .await
-            .unwrap_or_else(|err| {
-                tracing::error!(%err, "can't count the unread events");
-                0
-            });
+    pub async fn load(db: &SqlitePool, admin_id: i64) -> Bell {
+        let unread = unread_count(db, admin_id).await.unwrap_or_else(|err| {
+            tracing::error!(%err, "can't count the unread events");
+            0
+        });
         Bell { unread }
     }
 

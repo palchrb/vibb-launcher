@@ -1379,7 +1379,12 @@ struct AppsListTemplate {
 
 /// The Apps tab (design 31 §3.3): each phone with how many apps it allows, the catalog - every
 /// app the server keeps up to date, the launcher's own row included - and Add App.
-pub async fn list_apps(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn list_apps(
+    State(state): State<AppState>,
+    axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
+        crate::security::CurrentAdmin,
+    >,
+) -> impl IntoResponse {
     let tracked = sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps ORDER BY name")
         .fetch_all(&state.db)
         .await
@@ -1433,7 +1438,7 @@ pub async fn list_apps(State(state): State<AppState>) -> impl IntoResponse {
             title: "Apps".to_string(),
             phones,
             apps,
-            bell: crate::parent_events::Bell::load(&state.db).await,
+            bell: crate::parent_events::Bell::load(&state.db, admin.id).await,
         }
         .render()
         .unwrap(),

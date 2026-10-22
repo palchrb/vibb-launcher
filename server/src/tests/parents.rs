@@ -722,10 +722,13 @@ async fn invitee_onboards_with_the_otp() {
         row.contains("Pappa<span class=\"row-sub\">pappa · Signed in "),
         "{row}"
     );
+    // A ready row's actions read Reset… and Remove… (step 3), never Withdraw….
+    let actions = part(&rows, "data-parent=\"pappa\"", "</section>");
     assert!(
-        !rows.contains("id=\"withdraw-"),
-        "a ready row has no Withdraw"
+        actions.contains("Reset&hellip;</summary>") && actions.contains("Remove&hellip;</summary>"),
+        "{actions}"
     );
+    assert!(!actions.contains("Withdraw&hellip;"));
 }
 
 /// Reset's answer (step 3) reloads as a GET of its path: Account, never a 405.
@@ -763,13 +766,13 @@ async fn withdraw_keeps_the_name_taken() {
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
     assert!(html.contains(&format!(
-        "<details class=\"confirm cell\" id=\"withdraw-{}\" open>",
+        "<details class=\"confirm cell\" id=\"remove-{}\" open>",
         pappa.id
     )));
     assert!(
         part(
             &html,
-            &format!("id=\"withdraw_password_{}\"", pappa.id),
+            &format!("id=\"remove_password_{}\"", pappa.id),
             "</p>"
         )
         .contains("Nothing was changed.")
@@ -1116,5 +1119,513 @@ async fn held_reset_totp_cant_undo_a_reset() {
     assert_eq!(
         account(&app, "pappa").await.totp_secret.as_deref(),
         Some("KEEP")
+    );
+}
+
+// ---- Step 3: Reset and Remove (design 62 §4.2, §4.3) ----------------------------------------
+
+/// A push subscription of `username`'s, as the PWA leaves one.
+async fn a_subscription(app: &TestApp, username: &str, n: i64) {
+    sqlx::query(
+        "INSERT INTO push_subscriptions \
+         (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp, state) \
+         SELECT id, ?, x'00', x'00', 'https://pwa.example', 'Test', 'fp', 'active' \
+         FROM admin_users WHERE username = ?",
+    )
+    .bind(format!("https://push.example/{n}"))
+    .bind(username)
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+async fn subscriptions_of(app: &TestApp, username: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM push_subscriptions s JOIN admin_users a ON a.id = s.admin_id \
+         WHERE a.username = ?",
+    )
+    .bind(username)
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+async fn reset(app: &TestApp, cookie: &str, id: i64, pw: &str) -> TestResponse {
+    app.request_form(
+        Method::POST,
+        &format!("/account/parents/{id}/reset"),
+        Some(cookie),
+        &[("current_password", pw)],
+    )
+    .await
+}
+
+async fn remove(app: &TestApp, cookie: &str, id: i64, pw: &str) -> TestResponse {
+    app.request_form(
+        Method::POST,
+        &format!("/account/parents/{id}/remove"),
+        Some(cookie),
+        &[("current_password", pw)],
+    )
+    .await
+}
+
+/// Reset behind your password: a wrong one changes nothing (its confirm open, the reason under
+/// it); a right one shows a new one-time password once, ends the parent's sessions and pushes,
+/// and onboards them again. The answer reloads as the GET of its path.
+#[tokio::test]
+async fn reset_shows_a_new_otp_and_ends_the_sessions() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    let pappa_session = app.admin_cookie_as("pappa", "Pappa").await;
+    a_subscription(&app, "pappa", 1).await;
+    let pappa = account(&app, "pappa").await;
+    let page = app.get_page("/account", &mamma).await.text();
+    check_forms("/account", &page);
+    assert!(page.contains(&format!(
+        "action=\"/account/parents/{}/reset#parents\"",
+        pappa.id
+    )));
+
+    let res = reset(&app, &mamma, pappa.id, "wrong").await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let html = res.text();
+    assert!(html.contains(&format!(
+        "<details class=\"confirm cell\" id=\"reset-{}\" open>",
+        pappa.id
+    )));
+    assert!(
+        part(
+            &html,
+            &format!("id=\"reset_password_{}\"", pappa.id),
+            "</p>"
+        )
+        .contains("Nothing was changed.")
+    );
+    assert_eq!(
+        account(&app, "pappa").await.password_hash,
+        pappa.password_hash
+    );
+    assert_eq!(
+        events(&app, "parent_change_refused").await,
+        vec![Some("reset pappa".to_string())]
+    );
+
+    let res = reset(&app, &mamma, pappa.id, PASSWORD).await;
+    assert_eq!(res.status, StatusCode::OK);
+    let html = res.text();
+    let otp = otp_of(&html);
+    assert!(html.contains("New one-time password for Pappa"), "{html}");
+    assert_eq!(
+        events(&app, "parent_reset").await,
+        vec![Some("pappa".to_string())]
+    );
+    let logged: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE instr(COALESCE(detail, ''), ?) > 0",
+    )
+    .bind(&otp)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(logged, 0);
+    assert_eq!(
+        app.get_page("/devices", &pappa_session).await.location(),
+        Some("/login")
+    );
+    assert_eq!(subscriptions_of(&app, "pappa").await, 0);
+    let reset_row = account(&app, "pappa").await;
+    assert!(reset_row.must_change_password && !reset_row.totp_enabled);
+    assert!(reset_row.invite_expires_at.is_some());
+    // The reload of the answer: Account, without it; the row is waiting again.
+    let reload = app
+        .get_page(&format!("/account/parents/{}/reset", pappa.id), &mamma)
+        .await;
+    assert_eq!(reload.status, StatusCode::OK);
+    assert!(!reload.text().contains(&otp));
+    let row = part(&reload.text(), "data-parent=\"pappa\"", "</section>").to_string();
+    assert!(row.contains("Waiting · until ") && row.contains("New One-Time Password&hellip;"));
+    assert!(row.contains("Withdraw&hellip;"), "{row}");
+    // The old password is gone; the new one onboards.
+    assert!(
+        login(&app, "pappa", PASSWORD)
+            .await
+            .text()
+            .contains("Incorrect username or password.")
+    );
+    let again = onboarding_session(&app, "pappa", &otp).await;
+    assert_eq!(
+        app.get_page("/devices", &again).await.location(),
+        Some("/auth/change-password")
+    );
+    // Your own account isn't reset here.
+    let me = account(&app, "parent").await;
+    let res = reset(&app, &mamma, me.id, PASSWORD).await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    assert!(res.text().contains("Your own account"));
+}
+
+/// Q62-1: Withdraw on a reset parent is the same soft Remove - the row, its name and history stay.
+#[tokio::test]
+async fn withdraw_a_reset_parent_keeps_the_row() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    app.admin_cookie_as("pappa", "Pappa").await;
+    let pappa = account(&app, "pappa").await;
+    assert_eq!(
+        reset(&app, &mamma, pappa.id, PASSWORD).await.status,
+        StatusCode::OK
+    );
+    let res = remove(&app, &mamma, pappa.id, PASSWORD).await;
+    assert_redirect(&res, "/account?parents=removed", Some("parents"));
+    let row: (Option<String>, String) =
+        sqlx::query_as("SELECT removed_at, username FROM admin_users WHERE id = ?")
+            .bind(pappa.id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(row.0.is_some() && row.1 == "pappa");
+}
+
+/// Remove ends the parent's sessions, pushes, Notify Me About, read state and Spotify login in
+/// progress; what they did keeps their name ("· Pappa" on the phone's Activity).
+#[tokio::test]
+async fn remove_ends_sessions_and_push_keeps_history() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    let pappa_session = app.admin_cookie_as("pappa", "Pappa").await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/command/ring"),
+            Some(&pappa_session),
+            &[],
+        )
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.status);
+    a_subscription(&app, "pappa", 1).await;
+    let pappa = account(&app, "pappa").await;
+    sqlx::query("INSERT INTO notification_prefs (admin_id, push_low_battery) VALUES (?, 0)")
+        .bind(pappa.id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.state
+        .spotify
+        .start_login("pappa", "client", "https://x.example/cb");
+    app.state
+        .spotify
+        .start_login("parent", "client", "https://x.example/cb");
+
+    let res = remove(&app, &mamma, pappa.id, PASSWORD).await;
+    assert_redirect(&res, "/account?parents=removed", Some("parents"));
+    assert_eq!(
+        app.get_page("/devices", &pappa_session).await.location(),
+        Some("/login")
+    );
+    assert_eq!(subscriptions_of(&app, "pappa").await, 0);
+    let left: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM notification_prefs WHERE admin_id = ?1), \
+                (SELECT COUNT(*) FROM parent_event_reads WHERE admin_id = ?1)",
+    )
+    .bind(pappa.id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(left, (0, 0));
+    assert_eq!(
+        app.state.spotify.pending_count(),
+        1,
+        "only Mamma's login is left"
+    );
+    let summary = app.get_page(&format!("/devices/{id}"), &mamma).await.text();
+    let ring = part(&summary, "data-command=\"ring\"", "</div>");
+    assert!(ring.contains(" · Pappa · "), "{ring}");
+    assert_eq!(
+        events(&app, "parent_removed").await,
+        vec![Some("pappa".to_string())]
+    );
+}
+
+/// The two last ready parents remove each other at once: one wins, one ready parent is left.
+#[tokio::test]
+async fn remove_each_other_leaves_one() {
+    let app = TestApp::new().await;
+    app.admin_cookie().await;
+    app.admin_cookie_as("pappa", "Pappa").await;
+    let (mamma, pappa) = (account(&app, "parent").await, account(&app, "pappa").await);
+    let (a, b) = tokio::join!(
+        crate::parents::remove_parent(&app.db, &mamma, pappa.id),
+        crate::parents::remove_parent(&app.db, &pappa, mamma.id),
+    );
+    let done = [a.unwrap(), b.unwrap()]
+        .into_iter()
+        .filter(|r| *r == crate::parents::Removed::Done)
+        .count();
+    assert_eq!(done, 1);
+    let ready: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM admin_users WHERE removed_at IS NULL AND must_change_password = 0 \
+         AND totp_enabled = 1",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(ready, 1);
+}
+
+/// Mamma resets Pappa while Pappa removes Mamma: exactly one of them happens.
+#[tokio::test]
+async fn reset_vs_remove_one_wins() {
+    let app = TestApp::new().await;
+    app.admin_cookie().await;
+    app.admin_cookie_as("pappa", "Pappa").await;
+    let (mamma, pappa) = (account(&app, "parent").await, account(&app, "pappa").await);
+    let (reset, removed) = tokio::join!(
+        crate::parents::reset_parent(&app.db, &mamma, pappa.id, "otp-hash"),
+        crate::parents::remove_parent(&app.db, &pappa, mamma.id),
+    );
+    let reset_done = matches!(reset.unwrap(), crate::parents::Reset::Done { .. });
+    let removed_done = removed.unwrap() == crate::parents::Removed::Done;
+    assert!(reset_done != removed_done, "{reset_done} {removed_done}");
+    let (mamma_removed, pappa_hash): (bool, String) = sqlx::query_as(
+        "SELECT (SELECT removed_at IS NOT NULL FROM admin_users WHERE id = ?), \
+                (SELECT password_hash FROM admin_users WHERE id = ?)",
+    )
+    .bind(mamma.id)
+    .bind(pappa.id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(mamma_removed, removed_done);
+    assert_eq!(pappa_hash == "otp-hash", reset_done);
+}
+
+/// Mamma's Add, held past her removal by Pappa, adds no one.
+#[tokio::test]
+async fn held_request_of_a_removed_actor_changes_nothing() {
+    let app = TestApp::new().await;
+    let mamma_session = app.admin_cookie().await;
+    app.admin_cookie_as("pappa", "Pappa").await;
+    let (tx, task) = held(&app, "/account/parents", &mamma_session).await;
+    let (mamma, pappa) = (account(&app, "parent").await, account(&app, "pappa").await);
+    assert_eq!(
+        crate::parents::remove_parent(&app.db, &pappa, mamma.id)
+            .await
+            .unwrap(),
+        crate::parents::Removed::Done
+    );
+    let answer = release(
+        tx,
+        task,
+        "new_username=oma&name=Oma&current_password=correct+horse+battery+staple",
+    )
+    .await;
+    assert_eq!(location(&answer), Some("/login"));
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM admin_users")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 2);
+}
+
+// ---- Step 4: "by <name>" (design 62 §6) -------------------------------------------------------
+
+/// A command says who asked for it once the family has two accounts, on Locate's Requests and the
+/// summary's Activity; never with one, and never in the phone's policy.
+#[tokio::test]
+async fn command_by_shows_with_two_accounts() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let ring = format!("/devices/{id}/command/ring");
+    app.request_form(Method::POST, &ring, Some(&mamma), &[])
+        .await;
+    let locate = format!("/devices/locate?device={id}");
+    let row = |html: &str| part(html, "data-command=\"ring\"", "</div>").to_string();
+    let one = app.get_page(&locate, &mamma).await.text();
+    assert!(!row(&one).contains(" · parent"), "{}", row(&one));
+
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    app.request_form(Method::POST, &ring, Some(&pappa), &[])
+        .await;
+    let two = app.get_page(&locate, &mamma).await.text();
+    assert!(row(&two).contains(" · Pappa · "), "{}", row(&two));
+    let summary = app.get_page(&format!("/devices/{id}"), &mamma).await.text();
+    assert!(row(&summary).contains(" · Pappa · "), "{}", row(&summary));
+
+    // The phone's pending command is the same four keys as before: no requester.
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    let mut keys: Vec<&str> = policy["pending_command"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort();
+    assert_eq!(keys, ["command", "id", "requested_at"]);
+    assert!(!policy.to_string().contains("requested_by"));
+}
+
+/// The security log and a lift name a parent by display name: "Mamma (parent)", "· Mamma".
+#[tokio::test]
+async fn security_log_shows_display_names() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    app.request_form(
+        Method::POST,
+        "/account/name",
+        Some(&mamma),
+        &[("display_name", "Mamma")],
+    )
+    .await;
+    let log = app.get_page("/security", &mamma).await.text();
+    assert!(log.contains("Mamma (parent)"), "{log}");
+    let names = crate::parents::Names::load(&app.db).await.unwrap();
+    assert_eq!(names.of_username("parent"), "Mamma");
+    assert_eq!(names.of_username("nobody"), "nobody");
+    assert_eq!(names.requester(Some(1)), None, "one account: no \"by\"");
+}
+
+// ---- Step 5: Notify Me About and the inbox per parent (design 62 §5) --------------------------
+
+/// The bell and the inbox's read state are each parent's: Mamma reading the inbox leaves Pappa's
+/// count, and a parent added later starts at zero.
+#[tokio::test]
+async fn inbox_read_is_per_parent() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let anna = crate::parent_events::Phone::load(&app.db, id)
+        .await
+        .unwrap();
+    for count in [1, 2] {
+        crate::parent_events::raise_logged(&app.state, &anna.unseen_boot(count, None)).await;
+    }
+    let unread = |who: &'static str| {
+        let db = app.db.clone();
+        async move {
+            let id: i64 = sqlx::query_scalar("SELECT id FROM admin_users WHERE username = ?")
+                .bind(who)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+            crate::parent_events::unread_count(&db, id).await.unwrap()
+        }
+    };
+    let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM parent_events")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert!(events > 0);
+    assert_eq!(
+        (unread("parent").await, unread("pappa").await),
+        (events, events)
+    );
+    app.get_page("/notifications", &mamma).await;
+    assert_eq!((unread("parent").await, unread("pappa").await), (0, events));
+    let devices = app.get_page("/devices", &pappa).await.text();
+    assert!(
+        devices.contains(&format!(">{events}<")),
+        "Pappa's bell still counts"
+    );
+    // Mark All as Read is Pappa's alone, too.
+    app.request_form(Method::POST, "/notifications/read-all", Some(&pappa), &[])
+        .await;
+    assert_eq!(unread("pappa").await, 0);
+    // A parent added now has nothing unread.
+    let res = add(&app, &mamma, "oma", "Oma", PASSWORD).await;
+    assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(unread("oma").await, 0);
+}
+
+/// Notify Me About is each parent's own: Pappa's switch off leaves Mamma's on; a page reads its
+/// own; no row reads as every switch on.
+#[tokio::test]
+async fn notify_me_about_is_each_parents() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/notifications/settings",
+            Some(&pappa),
+            &[("push_pin_used", "on")],
+        )
+        .await;
+    assert_redirect(&res, "/notifications/settings?from=devices", Some("events"));
+    let mine = app.get_page("/notifications/settings", &pappa).await.text();
+    assert_eq!(
+        super::input_checked(&mine, "push_low_battery", "on"),
+        Some(false)
+    );
+    assert!(mine.contains("Just for you - each parent chooses their own."));
+    let hers = app.get_page("/notifications/settings", &mamma).await.text();
+    assert_eq!(
+        super::input_checked(&hers, "push_low_battery", "on"),
+        Some(true)
+    );
+}
+
+/// 0088 copies the family's switches and read state to every account that isn't removed, and
+/// drops the old table and column.
+#[tokio::test]
+async fn migration_0088_copies_to_active_accounts() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.path().join("m.db"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    for migration in crate::MIGRATOR.iter().filter(|m| m.version <= 87) {
+        sqlx::raw_sql(&migration.sql).execute(&db).await.unwrap();
+    }
+    sqlx::raw_sql(
+        "INSERT INTO admin_users (id, username, password_hash) VALUES (1, 'mamma', 'x'), \
+         (2, 'pappa', 'x'); \
+         INSERT INTO admin_users (id, username, password_hash, removed_at) \
+           VALUES (3, 'gone', '!removed', datetime('now')); \
+         UPDATE notification_settings SET push_low_battery = 0, push_phone_on = 0; \
+         INSERT INTO devices (id, name) VALUES (1, 'Anna'); \
+         INSERT INTO parent_events (id, device_id, kind, dedup_key, title, summary, target, \
+           happened_at, read_at) VALUES \
+           (1, 1, 'low_battery', 'a', 't', 's', '/', '2026-10-22T10:00:00.000Z', datetime('now')), \
+           (2, 1, 'low_battery', 'b', 't', 's', '/', '2026-10-22T11:00:00.000Z', NULL);",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let last = crate::MIGRATOR.iter().find(|m| m.version == 88).unwrap();
+    sqlx::raw_sql(&last.sql).execute(&db).await.unwrap();
+    let prefs: Vec<(i64, bool, bool, bool)> = sqlx::query_as(
+        "SELECT admin_id, push_low_battery, push_phone_on, push_pin_used FROM notification_prefs \
+         ORDER BY admin_id",
+    )
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    assert_eq!(prefs, [(1, false, false, true), (2, false, false, true)]);
+    let reads: Vec<(i64, i64)> =
+        sqlx::query_as("SELECT admin_id, event_id FROM parent_event_reads ORDER BY admin_id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(reads, [(1, 1), (2, 1)]);
+    let old: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE name = 'notification_settings'",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(old, 0);
+    assert!(
+        sqlx::query("SELECT read_at FROM parent_events")
+            .fetch_all(&db)
+            .await
+            .is_err()
     );
 }

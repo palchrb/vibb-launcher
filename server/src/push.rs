@@ -322,8 +322,9 @@ pub async fn forget_subscriptions(db: &sqlx::SqlitePool, admin_id: i64) {
     }
 }
 
-/// Queues `event`'s push to every active subscription when the kind's push is on (the emergency
-/// call always), on `raise`'s connection (§4.6). `not_before` holds it (design 38's `phone_off`):
+/// Queues `event`'s push to every active subscription of a parent who isn't removed and has the
+/// kind's push on - each parent's own switches, no row = on (design 62 §5); the emergency call to
+/// every such parent always -, on `raise`'s connection (§4.6). `not_before` holds it (design 38's `phone_off`):
 /// written to `next_try_at`, which [send_due] already waits for; the TTL still counts from
 /// `created_at`.
 pub async fn queue(
@@ -334,14 +335,15 @@ pub async fn queue(
 ) -> Result<(), sqlx::Error> {
     // The column name is compiled in (`Kind::switch`), never input.
     let on = match kind.switch() {
-        Some((column, _)) => {
-            format!("(SELECT {column} FROM notification_settings WHERE id = 1) = 1")
-        }
+        Some((column, _)) => format!("COALESCE(p.{column}, 1) = 1"),
         None => "1".to_string(),
     };
     sqlx::query(&format!(
         "INSERT INTO push_deliveries (subscription_id, event_id, kind, token_hash, next_try_at) \
-         SELECT id, ?, 'event', X'', ? FROM push_subscriptions WHERE state = 'active' AND {on}"
+         SELECT s.id, ?, 'event', X'', ? FROM push_subscriptions s \
+         JOIN admin_users a ON a.id = s.admin_id \
+         LEFT JOIN notification_prefs p ON p.admin_id = s.admin_id \
+         WHERE s.state = 'active' AND a.removed_at IS NULL AND {on}"
     ))
     .bind(event_id)
     .bind(not_before.map(db_time))
@@ -669,10 +671,14 @@ async fn send_one(
     ring::rand::SystemRandom::new()
         .fill(&mut token)
         .expect("the system's random source works");
-    let unread: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM parent_events WHERE read_at IS NULL")
-            .fetch_one(&state.db)
-            .await?;
+    // The badge: what the subscription's parent hasn't read (design 62 §5).
+    let unread: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM parent_events e WHERE NOT EXISTS (SELECT 1 FROM parent_event_reads r \
+         JOIN push_subscriptions s ON s.admin_id = r.admin_id WHERE s.id = ? AND r.event_id = e.id)",
+    )
+    .bind(delivery.subscription_id)
+    .fetch_one(&state.db)
+    .await?;
     let target = if crate::parent_events::local_target(&delivery.target) {
         delivery.target.as_str()
     } else {
@@ -882,7 +888,8 @@ pub async fn opened(
 }
 
 /// The writes of an opened push, from the marker or a `clicked` receipt: the delivery's
-/// `clicked_at` (the first one kept), the subscription's `last_opened_at`, the event's `read_at`.
+/// `clicked_at` (the first one kept), the subscription's `last_opened_at`, the event read for the
+/// subscription's parent (design 62 §5).
 async fn mark_opened(
     tx: &mut sqlx::SqliteConnection,
     delivery_id: i64,
@@ -901,8 +908,11 @@ async fn mark_opened(
         .await?;
     if let Some(event_id) = event_id {
         sqlx::query(
-            "UPDATE parent_events SET read_at = COALESCE(read_at, datetime('now')) WHERE id = ?",
+            "INSERT OR IGNORE INTO parent_event_reads (admin_id, event_id) \
+             SELECT s.admin_id, e.id FROM push_subscriptions s, parent_events e \
+             WHERE s.id = ? AND e.id = ?",
         )
+        .bind(subscription_id)
         .bind(event_id)
         .execute(&mut *tx)
         .await?;

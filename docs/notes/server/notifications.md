@@ -15,8 +15,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`handlers::window_relock::log_foreign_access`, now on `&AppState`: the set changed and isn't empty; key = previous
   report id + 16 hex of the stored set's SHA-256, both from the intake's one read of the previous report,
   `PreviousReport`, so parallel reports agree; `detail` = the apps by the phone's names), `unseen_boot` (where
-  `boot_witness::log_line` returns a line), `low_battery` (below). Every kind is stored; `notification_settings`'
-  switches govern the push only (step 2). The reserved kinds get a variant when something raises them.
+  `boot_witness::log_line` returns a line), `low_battery` (below). Every kind is stored; each parent's
+  `notification_prefs` switches govern the push only (step 2; per parent since design 62 step 5, below). The reserved kinds get a variant when something raises them.
 - **The battery** (§2.5): status `battery` `{level, charging, low}` (`models::BatteryReport`, read by
   `lenient_battery`: not an object with a level in 0..=100 drops the reading, never the report) ->
   `device_status.battery_level`/`battery_charging`; the pure `battery_edge(latched, &battery)` (armed + `low` → Raise,
@@ -158,12 +158,12 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   `/notifications/settings{query}…#group`; `open` and `read-all` to the inbox. Links: the bell to the inbox; the Settings
   hub's row and the Devices list's warning to the settings page; a Send a Test push's `navigate` to
   `/notifications/settings#devices`.
-- **Opening the inbox reads it** (§1.3): `page` reads the page, marks exactly the shown ids read (`UPDATE … WHERE id IN
-  (json_each) AND read_at IS NULL`), then counts; the rows keep their pre-mark `unread` for the existing dot and
+- **Opening the inbox reads it** (§1.3): `page` reads the page, marks exactly the shown ids read for this parent
+  (`parent_events::mark_read`, an `INSERT OR IGNORE` into `parent_event_reads`), then counts; the rows keep their pre-mark `unread` for the existing dot and
   "Unread:" text. The gear carries `data-unread` = every unread event left (not only the filter's: the bell's count), so
   `register-sw.js` (unchanged, `[data-unread]`) clears this device's app badge; other devices follow their next push's
   `app_badge` or page. An older page (`?before=`) reads its own rows when opened; a `?device=` filter leaves the other
-  phones' rows. Events are shared by every parent, so is their read state (as Mark All as Read). This GET writes on
+  phones' rows. Events are shared by every parent; their read state is each parent's (design 62 §5, below). This GET writes on
   purpose: the admin cookie is SameSite=Strict, so a cross-site GET carries no session (the module doc says so). Back
   to the inbox is a reload (no-store) and shows no dots - by design.
 - **The tap on a notification** (r5 §1): `push::send_one`'s `navigate` is `push::with_marker(target, delivery)` -
@@ -171,7 +171,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   `data.navigate` is the same string. `handlers::notifications::push_marker` is a `from_fn_with_state` layer on
   `admin_routes`, added before `.layer(require_full_auth)` so it runs inside it and sees `CurrentAdmin`; on a GET with a
   `push` key it calls `push::opened` (this admin's delivery only: `clicked_at` kept first, the subscription's
-  `last_opened_at`, the event's `read_at`; a summary or test has no event) and answers a 303 to the same path and query
+  `last_opened_at`, the event read for the subscription's parent; a summary or test has no event) and answers a 303 to the same path and query
   without `push` (garbage or a foreign id: the same 303, nothing marked; the fragment survives, as the browser keeps
   it). Signed out, `require_full_auth` sends `/login` without the URL: the marker is lost, which changes nothing. A
   `clicked` receipt runs the same writes (`push::mark_opened`). `delivery_line`'s 5th field is "opened" (`clicked_at
@@ -260,4 +260,26 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   (the contract and its copy, H1's sequence - held, dropped, restarted -, the hold running out, the release before the
   "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
   the claim; since the code QA's fix round a report ending "Off since", a superseded held push, the level range in
-  the route's own test), `music_spotify::migrations_73_to_87_in_order`.
+  the route's own test), `music_spotify::migrations_73_to_88_in_order`.
+
+## Per parent (design 62 step 5, `docs/design/62-parent-accounts.md` §5)
+
+- **Migration 0088** (`0088_parent_reads_and_prefs.sql`): `notification_prefs` (one row per account that saved its
+  switches, `admin_id` primary key, the seven `push_*` columns; no row = every switch on) and `parent_event_reads`
+  (`(admin_id, event_id)`, both `ON DELETE CASCADE`, so retention's delete of an event takes its reads). Both seeded for
+  every account that isn't removed, from the family's switches and the old `read_at`; `notification_settings`,
+  `parent_events.read_at` and `idx_parent_events_unread` are dropped (a missed reader fails loudly).
+- **Unread for me** = no `parent_event_reads (me, event)` row (`parent_events::UNREAD`, `unread_count`). The bell
+  (`Bell::load(db, admin_id)`: Devices, Apps, Locate, Music, the Settings hub), the inbox's rows and count after marking
+  (`notifications::row_from(n)`'s `LEFT JOIN`), a row's `open`, Mark All as Read, the phone summary's Activity and the
+  push marker/`clicked` receipt (`push::mark_opened`, for the subscription's parent) all read and write the signed-in
+  parent's own rows. A push's badge (`data.b`, `app_badge`) is the subscription's parent's count. Adding a parent and
+  `reset-2fa`'s restore mark every event so far read for them (`read_everything`); Remove deletes their prefs and reads.
+- **The push filter** (`push::queue`): active subscriptions of accounts that aren't removed, with
+  `COALESCE(p.<switch>, 1) = 1` from `notification_prefs`; the emergency call goes to every such parent. Notify Me About
+  reads and writes the signed-in parent's row (`INSERT … ON CONFLICT (admin_id) DO UPDATE`, only for an account not
+  removed); its footer says "Just for you - each parent chooses their own."
+- Tests: `tests::parents::inbox_read_is_per_parent`, `notify_me_about_is_each_parents`,
+  `migration_0088_copies_to_active_accounts`; `tests::web_push::push_follows_each_parents_switches`,
+  `push_tap_reads_for_that_parent_and_badges_their_count`; the older notification, web push, summary and power tests
+  read `parent_event_reads`/`notification_prefs`.

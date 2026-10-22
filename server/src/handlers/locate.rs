@@ -23,7 +23,8 @@ use std::collections::HashMap;
 use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
 use crate::models::{
-    CancelledBy, CommandStatus, Device, DeviceCommand, DeviceLocation, Unconfirmed, command_label,
+    AdminUser, CancelledBy, CommandStatus, Device, DeviceCommand, DeviceLocation, Unconfirmed,
+    command_label,
 };
 use crate::security::{self, CurrentAdmin};
 
@@ -152,6 +153,8 @@ pub(crate) struct CommandRow {
     pub(crate) detail_title: Option<String>,
     /// The row's id while it can still be cancelled ([DeviceCommand::cancellable]).
     pub(crate) cancel_id: Option<i64>,
+    /// Who asked for it, in a family of more than one parent (design 62 §6).
+    pub(crate) by: Option<String>,
 }
 
 /// A fix as the parent reads it (design 31 step 13, M5): its age from the server's clock and
@@ -399,6 +402,7 @@ fn status_words(
 
 pub(crate) fn command_row(
     command: &DeviceCommand,
+    names: &crate::parents::Names,
     zone: &Zone,
     now: DateTime<Utc>,
     receipts: bool,
@@ -428,6 +432,7 @@ pub(crate) fn command_row(
         detail,
         detail_title,
         cancel_id: command.cancellable(naive_now).then_some(command.id),
+        by: names.requester(command.requested_by),
     }
 }
 
@@ -485,6 +490,7 @@ pub(crate) async fn requests(
     let commands = query.fetch_all(&state.db).await?;
     let receipts =
         crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
+    let names = crate::parents::Names::load(&state.db).await?;
     let since = now - chrono::Duration::hours(REQUESTS_HOURS);
     let mut seen = std::collections::HashSet::new();
     let rows = commands
@@ -505,7 +511,7 @@ pub(crate) async fn requests(
             let lately = parse_db_utc(&command.requested_at).is_some_and(|t| t >= since);
             in_requests(&status, lately, newest)
         })
-        .map(|command| command_row(command, zone, now, receipts))
+        .map(|command| command_row(command, &names, zone, now, receipts))
         .collect();
     Ok(Recent {
         device_id,
@@ -660,6 +666,7 @@ struct Asked<'a> {
 /// empty Recent that isn't true).
 async fn render_locate_page(
     state: &AppState,
+    admin_id: i64,
     selected_id: Option<i64>,
     asked: Asked<'_>,
 ) -> Result<Html<String>, sqlx::Error> {
@@ -682,7 +689,7 @@ async fn render_locate_page(
             title: "Locate".to_string(),
             phones,
             selected,
-            bell: crate::parent_events::Bell::load(&state.db).await,
+            bell: crate::parent_events::Bell::load(&state.db, admin_id).await,
         }
         .render()
         .unwrap(),
@@ -859,6 +866,7 @@ async fn count_in_span(
 
 pub async fn show_locate(
     State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let selected_id = params.get("device").and_then(|s| s.parse::<i64>().ok());
@@ -867,6 +875,7 @@ pub async fn show_locate(
     let span = span_of(params.get("span"));
     match render_locate_page(
         &state,
+        admin.id,
         selected_id,
         Asked {
             erase_refused: false,
@@ -1161,7 +1170,7 @@ async fn queue_command(
     state: &AppState,
     device_id: i64,
     command: &str,
-    admin: &str,
+    admin: &AdminUser,
 ) -> Result<bool, sqlx::Error> {
     let mut tx = state.db.begin().await?;
     let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM devices WHERE id = ?")
@@ -1197,9 +1206,10 @@ async fn queue_command(
         }
         used_up.execute(&mut *tx).await?;
     }
-    sqlx::query("INSERT INTO device_commands (device_id, command) VALUES (?, ?)")
+    sqlx::query("INSERT INTO device_commands (device_id, command, requested_by) VALUES (?, ?, ?)")
         .bind(device_id)
         .bind(command)
+        .bind(admin.id)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -1207,7 +1217,7 @@ async fn queue_command(
         security::record_security_event(
             &state.db,
             "device_command_replaced",
-            Some(admin),
+            Some(&admin.username),
             None,
             Some(&format!(
                 "{replaced} waiting {} replaced by a new {command}, device {device_id}",
@@ -1225,15 +1235,21 @@ async fn queue_command(
 async fn send(
     state: &AppState,
     id: i64,
-    admin: &str,
+    admin: &AdminUser,
     command: &str,
     (event, detail): (&str, &str),
     back: String,
 ) -> Response {
     match queue_command(state, id, command, admin).await {
         Ok(true) => {
-            security::record_security_event(&state.db, event, Some(admin), None, Some(detail))
-                .await;
+            security::record_security_event(
+                &state.db,
+                event,
+                Some(&admin.username),
+                None,
+                Some(detail),
+            )
+            .await;
             Redirect::to(&back).into_response()
         }
         Ok(false) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
@@ -1260,15 +1276,7 @@ pub async fn ring(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let event = ("device_command_queued", "ring");
-    send(
-        &state,
-        id,
-        &admin.username,
-        "ring",
-        event,
-        back_to_actions(id),
-    )
-    .await
+    send(&state, id, &admin, "ring", event, back_to_actions(id)).await
 }
 
 pub async fn stop_ring(
@@ -1277,15 +1285,7 @@ pub async fn stop_ring(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let event = ("device_command_queued", "stop_ring");
-    send(
-        &state,
-        id,
-        &admin.username,
-        "stop_ring",
-        event,
-        back_to_actions(id),
-    )
-    .await
+    send(&state, id, &admin, "stop_ring", event, back_to_actions(id)).await
 }
 
 pub async fn lock(
@@ -1294,15 +1294,7 @@ pub async fn lock(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let event = ("device_command_queued", "lock");
-    send(
-        &state,
-        id,
-        &admin.username,
-        "lock",
-        event,
-        back_to_actions(id),
-    )
-    .await
+    send(&state, id, &admin, "lock", event, back_to_actions(id)).await
 }
 
 /// Update Location: queues `locate`, which makes the phone take a fresh fix (bypassing its own
@@ -1315,7 +1307,7 @@ pub async fn locate(
 ) -> Response {
     let back = format!("/devices/locate?device={id}&requested=1#location");
     let event = ("device_command_queued", "locate");
-    send(&state, id, &admin.username, "locate", event, back).await
+    send(&state, id, &admin, "locate", event, back).await
 }
 
 /// How long this phone's location history is kept (`POST /devices/{id}/location-retention`,
@@ -1460,6 +1452,7 @@ pub async fn wipe(
     if confirm != device.name {
         return match render_locate_page(
             &state,
+            admin.id,
             Some(id),
             Asked {
                 erase_refused: true,
@@ -1475,15 +1468,7 @@ pub async fn wipe(
         };
     }
     let event = ("device_wipe_queued", device.name.as_str());
-    send(
-        &state,
-        id,
-        &admin.username,
-        "wipe",
-        event,
-        back_to_actions(id),
-    )
-    .await
+    send(&state, id, &admin, "wipe", event, back_to_actions(id)).await
 }
 
 #[cfg(test)]

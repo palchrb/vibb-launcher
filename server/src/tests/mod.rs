@@ -419,6 +419,22 @@ impl TestApp {
         session_cookie(&verify).unwrap_or(cookie)
     }
 
+    /// An onboarded admin row ("parent", as [Self::admin_cookie] seeds it, without a session), for
+    /// a handler called directly with its `CurrentAdmin`.
+    pub async fn an_admin(&self) -> crate::models::AdminUser {
+        sqlx::query(
+            "INSERT OR IGNORE INTO admin_users \
+             (username, password_hash, must_change_password, totp_enabled) VALUES ('parent', 'x', 0, 1)",
+        )
+        .execute(&self.db)
+        .await
+        .expect("failed to seed the admin user");
+        sqlx::query_as("SELECT * FROM admin_users WHERE username = 'parent'")
+            .fetch_one(&self.db)
+            .await
+            .expect("no admin")
+    }
+
     /// A TOTP code the server accepts now: for the current step, or a later one when that step
     /// was already used (a code works once - design 22 §3.2.1), waiting for it if needed.
     pub async fn next_totp_code(&self, username: &str, secret: &str) -> String {

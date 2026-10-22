@@ -377,11 +377,13 @@ fn html(status: StatusCode, page: Result<impl Template, sqlx::Error>, what: &str
 /// `GET /music[?edit=1]`: the tab.
 pub async fn show(
     State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> Response {
     let edit = query.get("edit").is_some_and(|v| v == "1");
     render_music(
         &state,
+        admin.id,
         StatusCode::OK,
         edit,
         AddForm::default(),
@@ -392,17 +394,19 @@ pub async fn show(
 
 async fn render_music(
     state: &AppState,
+    admin_id: i64,
     status: StatusCode,
     edit: bool,
     add: AddForm,
     own: OwnForm,
 ) -> Response {
-    let page = music_page(state, edit, add, own).await;
+    let page = music_page(state, admin_id, edit, add, own).await;
     html(status, page, "couldn't load the music page")
 }
 
 async fn music_page(
     state: &AppState,
+    admin_id: i64,
     edit: bool,
     add: AddForm,
     own: OwnForm,
@@ -521,7 +525,7 @@ async fn music_page(
             "No login"
         },
         phones,
-        bell: crate::parent_events::Bell::load(&state.db).await,
+        bell: crate::parent_events::Bell::load(&state.db, admin_id).await,
     })
 }
 
@@ -896,9 +900,10 @@ pub(super) const NEXT_SORT: &str = "(SELECT COALESCE(MAX(sort), 0) + 10 FROM mus
 pub(super) const BELOW_ENTRY_LIMIT: &str = "WHERE (SELECT COUNT(*) FROM music_entries) < ?";
 
 /// A refused "Podcast or NRK link": the tab, the link kept, the reason in its open form.
-async fn refused_add(state: &AppState, form: AddForm) -> Response {
+async fn refused_add(state: &AppState, admin_id: i64, form: AddForm) -> Response {
     render_music(
         state,
+        admin_id,
         StatusCode::BAD_REQUEST,
         false,
         form,
@@ -908,9 +913,10 @@ async fn refused_add(state: &AppState, form: AddForm) -> Response {
 }
 
 /// A refused "Upload your own files": the tab, the name kept, the reason in its open form.
-async fn refused_own(state: &AppState, form: OwnForm) -> Response {
+async fn refused_own(state: &AppState, admin_id: i64, form: OwnForm) -> Response {
     render_music(
         state,
+        admin_id,
         StatusCode::BAD_REQUEST,
         false,
         AddForm::default(),
@@ -937,13 +943,13 @@ pub async fn add_link(
     let link = match music::parse_link(&link_text) {
         Ok(link) => link,
         Err(error) => {
-            return refused_add(&state, refuse(error.to_string())).await;
+            return refused_add(&state, admin.id, refuse(error.to_string())).await;
         }
     };
     match entry_count(&state.db).await {
         Ok(n) if n >= MAX_ENTRIES => {
             let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return refused_add(&state, refuse(error)).await;
+            return refused_add(&state, admin.id, refuse(error)).await;
         }
         Ok(_) => {}
         Err(err) => return server_error(err, "music entry count failed"),
@@ -960,19 +966,19 @@ pub async fn add_link(
         };
     if let Some(name) = exists {
         let error = format!("That link is already in the library (\"{name}\").");
-        return refused_add(&state, refuse(error)).await;
+        return refused_add(&state, admin.id, refuse(error)).await;
     }
     let category = match pick_category(&state.db, &picked, link.source()).await {
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
-            return refused_add(&state, refuse(error.to_string())).await;
+            return refused_add(&state, admin.id, refuse(error.to_string())).await;
         }
         Err(err) => return server_error(err, "music category lookup failed"),
     };
     let title = match music::check_link(state.music_fetch.as_ref(), &link).await {
         Ok(title) => title,
         Err(err) => {
-            return refused_add(&state, refuse(err.message())).await;
+            return refused_add(&state, admin.id, refuse(err.message())).await;
         }
     };
     // The limit is checked in the INSERT itself (qa-21-step1-code #6): two adds can't pass it.
@@ -993,12 +999,12 @@ pub async fn add_link(
         Ok(Some(id)) => id,
         Ok(None) => {
             let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return refused_add(&state, refuse(error)).await;
+            return refused_add(&state, admin.id, refuse(error)).await;
         }
         // Added by another request since the check above.
         Err(sqlx::Error::Database(err)) if err.is_unique_violation() => {
             let error = "That link is already in the library.".to_string();
-            return refused_add(&state, refuse(error)).await;
+            return refused_add(&state, admin.id, refuse(error)).await;
         }
         Err(err) => return server_error(err, "couldn't add a music entry"),
     };
@@ -1029,13 +1035,13 @@ pub async fn add_own(
     };
     let Some(name) = music::clean_name(&name_text, MAX_NAME_CHARS) else {
         let error = format!("Give it a name (at most {MAX_NAME_CHARS} characters).");
-        return refused_own(&state, refuse(error)).await;
+        return refused_own(&state, admin.id, refuse(error)).await;
     };
     // The 200-entry limit is the INSERT's own condition below.
     let category = match pick_category(&state.db, &picked, "own").await {
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
-            return refused_own(&state, refuse(error.to_string())).await;
+            return refused_own(&state, admin.id, refuse(error.to_string())).await;
         }
         Err(err) => return server_error(err, "music category lookup failed"),
     };
@@ -1056,7 +1062,7 @@ pub async fn add_own(
         Ok(Some(id)) => id,
         Ok(None) => {
             let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return refused_own(&state, refuse(error)).await;
+            return refused_own(&state, admin.id, refuse(error)).await;
         }
         Err(err) => return server_error(err, "couldn't add an own-files entry"),
     };

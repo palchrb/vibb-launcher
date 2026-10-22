@@ -200,9 +200,18 @@ pub(crate) type Row = (
     Option<String>,
 );
 
-/// [Row]'s columns, of `parent_events e JOIN devices d ON d.id = e.device_id`.
+/// [Row]'s columns, of [row_from]'s tables.
 pub(crate) const ROW_COLUMNS: &str = "e.id, e.device_id, e.title, e.summary, e.detail, \
-     e.happened_at, e.read_at IS NULL, d.name, d.enrolled_at";
+     e.happened_at, r.event_id IS NULL, d.name, d.enrolled_at";
+
+/// [ROW_COLUMNS]' tables, unread for the admin bound as `?{admin}` (design 62 §5: each parent
+/// reads for themselves).
+pub(crate) fn row_from(admin: usize) -> String {
+    format!(
+        "parent_events e JOIN devices d ON d.id = e.device_id \
+         LEFT JOIN parent_event_reads r ON r.event_id = e.id AND r.admin_id = ?{admin}"
+    )
+}
 
 /// One event as a row: the inbox's, and the phone summary's Activity (design 48 §1.2), which
 /// doesn't show the avatar. `words` says when it happened ("3 min ago" in the inbox, the clock
@@ -240,24 +249,20 @@ pub async fn page(
     let before = number(&params, "before");
     let now = chrono::Utc::now();
     let read = async {
-        let (phones, raw) = read_page(&state, device, before).await?;
+        let (phones, raw) = read_page(&state, admin.id, device, before).await?;
         let shown: Vec<i64> = raw
             .iter()
             .take(parent_events::PAGE as usize)
             .map(|r| r.0)
             .collect();
         let ids = serde_json::to_string(&shown).unwrap_or_default();
-        sqlx::query(
-            "UPDATE parent_events SET read_at = datetime('now') \
-             WHERE id IN (SELECT value FROM json_each(?)) AND read_at IS NULL",
-        )
-        .bind(&ids)
-        .execute(&state.db)
-        .await?;
-        let (unread_after, badge): (i64, i64) = sqlx::query_as(
-            "SELECT COALESCE(SUM(?1 IS NULL OR device_id = ?1), 0), COUNT(*) \
-             FROM parent_events WHERE read_at IS NULL",
-        )
+        parent_events::mark_read(&state.db, admin.id, &ids).await?;
+        let (unread_after, badge): (i64, i64) = sqlx::query_as(&format!(
+            "SELECT COALESCE(SUM(?2 IS NULL OR e.device_id = ?2), 0), COUNT(*) \
+             FROM parent_events e WHERE {}",
+            parent_events::UNREAD
+        ))
+        .bind(admin.id)
         .bind(device)
         .fetch_one(&state.db)
         .await?;
@@ -316,7 +321,7 @@ pub async fn settings_page(
     let device = number(&params, "device");
     let now = chrono::Utc::now();
     let read = async {
-        let settings = read_switches(&state.db).await?;
+        let settings = read_switches(&state.db, admin.id).await?;
         let subscriptions = push::subscriptions(&state.db, admin.id, now).await?;
         let known = push::active_endpoint_hashes(&state.db).await?;
         Ok::<_, sqlx::Error>((settings, subscriptions, known))
@@ -460,9 +465,11 @@ fn split_marker(query: &str) -> Option<(Option<i64>, String)> {
     marker.map(|id| (id, rest.join("&")))
 }
 
-/// The phones and a page of events (one more than shown, to know if there are older ones).
+/// The phones and a page of events (one more than shown, to know if there are older ones), unread
+/// for `admin_id`.
 async fn read_page(
     state: &AppState,
+    admin_id: i64,
     device: Option<i64>,
     before: Option<i64>,
 ) -> Result<(Vec<(i64, String)>, Vec<Row>), sqlx::Error> {
@@ -470,30 +477,37 @@ async fn read_page(
         .fetch_all(&state.db)
         .await?;
     let rows = sqlx::query_as(&format!(
-        "SELECT {ROW_COLUMNS} FROM parent_events e JOIN devices d ON d.id = e.device_id \
+        "SELECT {ROW_COLUMNS} FROM {} \
          WHERE (?1 IS NULL OR e.device_id = ?1) AND (?2 IS NULL OR e.id < ?2) \
-         ORDER BY e.id DESC LIMIT ?3"
+         ORDER BY e.id DESC LIMIT ?3",
+        row_from(4)
     ))
     .bind(device)
     .bind(before)
     .bind(parent_events::PAGE + 1)
+    .bind(admin_id)
     .fetch_all(&state.db)
     .await?;
     Ok((phones, rows))
 }
 
-/// The Notify Me About switches, in [Kind::ALL]'s order.
-async fn read_switches(db: &sqlx::SqlitePool) -> Result<Vec<bool>, sqlx::Error> {
+/// `admin_id`'s Notify Me About switches, in [Kind::ALL]'s order (design 62 §5: no row = every
+/// switch on).
+async fn read_switches(db: &sqlx::SqlitePool, admin_id: i64) -> Result<Vec<bool>, sqlx::Error> {
     let names = switch_names();
     let settings = sqlx::query(&format!(
-        "SELECT {} FROM notification_settings WHERE id = 1",
+        "SELECT {} FROM notification_prefs WHERE admin_id = ?",
         names.join(", ")
     ))
-    .fetch_one(db)
+    .bind(admin_id)
+    .fetch_optional(db)
     .await?;
-    (0..names.len())
-        .map(|i| settings.try_get::<bool, _>(i))
-        .collect()
+    match settings {
+        Some(settings) => (0..names.len())
+            .map(|i| settings.try_get::<bool, _>(i))
+            .collect(),
+        None => Ok(vec![true; names.len()]),
+    }
 }
 
 /// The switches' columns, in [Kind::ALL]'s order (compiled-in names, never input).
@@ -505,19 +519,22 @@ fn switch_names() -> Vec<&'static str> {
         .collect()
 }
 
-/// A row's tap: marks the event read and goes to its target (a local path; anything else, or an
-/// event pruned meanwhile, goes back to the inbox as it was shown - `from`, `device`).
+/// A row's tap: marks the event read for this parent and goes to its target (a local path;
+/// anything else, or an event pruned meanwhile, goes back to the inbox as it was shown - `from`,
+/// `device`).
 pub async fn open(
     State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let target: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
-        "UPDATE parent_events SET read_at = COALESCE(read_at, datetime('now')) WHERE id = ? \
-         RETURNING target",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
+    let target = async {
+        parent_events::mark_read(&state.db, admin.id, &format!("[{id}]")).await?;
+        sqlx::query_scalar::<_, String>("SELECT target FROM parent_events WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+    }
     .await;
     match target {
         Ok(Some(target)) if parent_events::local_target(&target) => {
@@ -530,16 +547,18 @@ pub async fn open(
     }
 }
 
-/// Mark All as Read: every unread event (of the chosen phone), back to the inbox.
+/// Mark All as Read: every event (of the chosen phone) read for this parent, back to the inbox.
 pub async fn read_all(
     State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let device = number(&form, "device");
     let done = sqlx::query(
-        "UPDATE parent_events SET read_at = datetime('now') \
-         WHERE read_at IS NULL AND (?1 IS NULL OR device_id = ?1)",
+        "INSERT OR IGNORE INTO parent_event_reads (admin_id, event_id) \
+         SELECT ?1, id FROM parent_events WHERE ?2 IS NULL OR device_id = ?2",
     )
+    .bind(admin.id)
     .bind(device)
     .execute(&state.db)
     .await;
@@ -551,24 +570,31 @@ pub async fn read_all(
     }
 }
 
-/// Notify Me About: the handler writes every switch (a missing one is off), back to `#events`.
+/// Notify Me About: the handler writes every switch of this parent's own (a missing one is off;
+/// design 62 §5), back to `#events`. A removed account's held request writes nothing.
 pub async fn save_settings(
     State(state): State<AppState>,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let names = switch_names();
     let sql = format!(
-        "UPDATE notification_settings SET {} WHERE id = 1",
+        "INSERT INTO notification_prefs (admin_id, {}) SELECT id, {} FROM admin_users \
+         WHERE id = ? AND removed_at IS NULL \
+         ON CONFLICT (admin_id) DO UPDATE SET {}",
+        names.join(", "),
+        vec!["?"; names.len()].join(", "),
         names
             .iter()
-            .map(|name| format!("{name} = ?"))
+            .map(|name| format!("{name} = excluded.{name}"))
             .collect::<Vec<_>>()
             .join(", ")
     );
     let mut update = sqlx::query(&sql);
-    for name in names {
-        update = update.bind(form.get(name).is_some_and(|v| v == "on"));
+    for name in &names {
+        update = update.bind(form.get(*name).is_some_and(|v| v == "on"));
     }
+    update = update.bind(admin.id);
     let done = update.execute(&state.db).await;
     match done {
         Ok(_) => Redirect::to(&format!(

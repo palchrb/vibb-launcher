@@ -706,10 +706,12 @@ async fn switches_the_emergency_call_and_a_burst() {
         .await
         .unwrap();
 
-    sqlx::query("UPDATE notification_settings SET push_unseen_boot = 0")
-        .execute(&app.db)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO notification_prefs (admin_id, push_unseen_boot) SELECT id, 0 FROM admin_users",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
     raise(&app, &anna.unseen_boot(1, None)).await;
     assert_eq!(
         scalar(&app, "SELECT COUNT(*) FROM push_deliveries").await,
@@ -845,7 +847,8 @@ async fn the_receipt() {
         .await,
         1
     );
-    let unread = format!("SELECT read_at IS NULL FROM parent_events WHERE id = {event}");
+    let unread =
+        format!("SELECT NOT EXISTS (SELECT 1 FROM parent_event_reads WHERE event_id = {event})");
     assert_eq!(scalar(&app, &unread).await, 1);
     assert_eq!(
         post_receipt(&app, &receipt_of(&request, "clicked"), "same-origin").await,
@@ -1300,7 +1303,7 @@ async fn an_http_origin_is_no_jwt_subject() {
 async fn opened_state(app: &TestApp, delivery: i64) -> (bool, bool, Option<bool>) {
     sqlx::query_as(
         "SELECT d.clicked_at IS NOT NULL, s.last_opened_at IS NOT NULL, \
-                (SELECT e.read_at IS NOT NULL FROM parent_events e WHERE e.id = d.event_id) \
+                (SELECT EXISTS (SELECT 1 FROM parent_event_reads r WHERE r.event_id = e.id) FROM parent_events e WHERE e.id = d.event_id) \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
          WHERE d.id = ?",
     )
@@ -1463,7 +1466,9 @@ async fn a_tap_on_a_notification_marks_it_opened() {
     assert_eq!(
         scalar(
             &app,
-            &format!("SELECT read_at IS NULL FROM parent_events WHERE id = {unread}")
+            &format!(
+                "SELECT NOT EXISTS (SELECT 1 FROM parent_event_reads WHERE event_id = {unread})"
+            )
         )
         .await,
         1
@@ -1570,4 +1575,118 @@ async fn the_device_rows_as_json() {
         .request(Method::GET, "/notifications/subscriptions.json", None, None)
         .await;
     assert_eq!(res.location(), Some("/login"));
+}
+
+// ---- Design 62 §5: each parent's switches, reads and badge -------------------------------------
+
+const PAPPAS_ENDPOINT: &str = "https://web.push.apple.com/QK1-pappas-fake-endpoint";
+
+/// Mamma's and Pappa's subscriptions; Pappa's switches with only the Parent PIN on.
+async fn two_parents(app: &TestApp) -> (String, String) {
+    let mamma = app.admin_cookie().await;
+    subscribe(app, &mamma, ENDPOINT).await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    subscribe(app, &pappa, PAPPAS_ENDPOINT).await;
+    app.request_form(
+        Method::POST,
+        "/notifications/settings",
+        Some(&pappa),
+        &[("push_pin_used", "on")],
+    )
+    .await;
+    (mamma, pappa)
+}
+
+/// Each parent's own switches decide their push; the emergency call goes to every parent; a
+/// removed parent gets nothing.
+#[tokio::test]
+async fn push_follows_each_parents_switches() {
+    let app = TestApp::new().await;
+    two_parents(&app).await;
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    let to = |app: &TestApp| {
+        let mut endpoints: Vec<String> =
+            app.pushes.take().into_iter().map(|r| r.endpoint).collect();
+        endpoints.sort();
+        endpoints
+    };
+    send(&app).await;
+    assert_eq!(to(&app), [ENDPOINT], "Pappa turned it off");
+    raise(&app, &anna.emergency_call(anna.now)).await;
+    send(&app).await;
+    assert_eq!(
+        to(&app),
+        [ENDPOINT, PAPPAS_ENDPOINT],
+        "the emergency call to both"
+    );
+    // Removed (by SQL; the subscription left on purpose): nothing for him, not even the call.
+    sqlx::query("UPDATE admin_users SET removed_at = datetime('now') WHERE username = 'pappa'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    raise(
+        &app,
+        &anna.emergency_call(anna.now - chrono::Duration::minutes(5)),
+    )
+    .await;
+    send(&app).await;
+    assert_eq!(to(&app), [ENDPOINT]);
+}
+
+/// A tapped push reads the event for that subscription's parent only, and each push's badge is
+/// its parent's unread count.
+#[tokio::test]
+async fn push_tap_reads_for_that_parent_and_badges_their_count() {
+    let app = TestApp::new().await;
+    let (mamma, _) = two_parents(&app).await;
+    let anna = phone(&app, "Anna").await;
+    // Mamma has read one older event; Pappa none.
+    let older = raise(&app, &anna.unseen_boot(1, None)).await;
+    app.pushes.take();
+    sqlx::query("DELETE FROM push_deliveries")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    app.get_page("/notifications", &mamma).await;
+    let call = raise(&app, &anna.emergency_call(anna.now)).await;
+    send(&app).await;
+    let mut badges: Vec<(String, i64)> = app
+        .pushes
+        .take()
+        .iter()
+        .map(|r| {
+            (
+                r.endpoint.clone(),
+                payload(r)["notification"]["data"]["b"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    badges.sort();
+    assert_eq!(
+        badges,
+        [(ENDPOINT.to_string(), 1), (PAPPAS_ENDPOINT.to_string(), 2)]
+    );
+    // Pappa taps his: read for him, still unread for Mamma.
+    let (pappa_id, delivery): (i64, i64) = sqlx::query_as(
+        "SELECT s.admin_id, d.id FROM push_deliveries d \
+         JOIN push_subscriptions s ON s.id = d.subscription_id WHERE s.endpoint = ?",
+    )
+    .bind(PAPPAS_ENDPOINT)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(
+        crate::push::opened(&app.db, pappa_id, delivery)
+            .await
+            .unwrap()
+    );
+    let read_by: Vec<i64> =
+        sqlx::query_scalar("SELECT admin_id FROM parent_event_reads WHERE event_id = ?")
+            .bind(call)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(read_by, [pappa_id]);
+    let _ = older;
 }

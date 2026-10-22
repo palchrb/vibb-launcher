@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
 use crate::handlers::locate::{CommandRow, cancel_flash, command_row};
-use crate::handlers::notifications::{InboxRow, ROW_COLUMNS, Row, inbox_row};
+use crate::handlers::notifications::{InboxRow, ROW_COLUMNS, Row, inbox_row, row_from};
 use crate::models::DeviceCommand;
 
 /// How far back Activity reads.
@@ -32,10 +32,13 @@ pub(crate) struct Activity {
     pub(crate) flash: Option<(&'static str, bool)>,
 }
 
-/// Activity for `device_id` at `now`, with the line after a Cancel (`cancel`, the page's
-/// `?cancel=`). Sorted by the row's own time: when a command was asked, when an event happened.
+/// Activity for `device_id` at `now` as `admin` reads it (unread is theirs; design 62 §5), with
+/// the line after a Cancel (`cancel`, the page's `?cancel=`). Sorted by the row's own time: when a
+/// command was asked, when an event happened. A command says who asked for it when the family has
+/// more than one parent (§6).
 pub(crate) async fn rows(
     state: &AppState,
+    admin_id: i64,
     device_id: i64,
     cancel: Option<&str>,
     zone: &Zone,
@@ -54,17 +57,20 @@ pub(crate) async fn rows(
     .await?;
     // `happened_at` is RFC 3339 in UTC with milliseconds (`parent_events::instant`).
     let events: Vec<Row> = sqlx::query_as(&format!(
-        "SELECT {ROW_COLUMNS} FROM parent_events e JOIN devices d ON d.id = e.device_id \
-         WHERE e.device_id = ? AND e.happened_at >= ? \
-         ORDER BY e.happened_at DESC, e.id DESC LIMIT ?"
+        "SELECT {ROW_COLUMNS} FROM {} \
+         WHERE e.device_id = ?1 AND e.happened_at >= ?2 \
+         ORDER BY e.happened_at DESC, e.id DESC LIMIT ?3",
+        row_from(4)
     ))
     .bind(device_id)
     .bind(since.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
     .bind(MAX_ROWS as i64)
+    .bind(admin_id)
     .fetch_all(&state.db)
     .await?;
     let receipts =
         crate::handlers::device_api::sends_command_receipts(&state.db, device_id).await?;
+    let names = crate::parents::Names::load(&state.db).await?;
 
     // (when, outside the cap, the row)
     let mut all: Vec<(Option<DateTime<Utc>>, bool, ActivityRow)> = Vec::new();
@@ -72,7 +78,7 @@ pub(crate) async fn rows(
         let at = parse_db_utc(&command.requested_at);
         let cancellable = command.cancellable(now.naive_utc());
         if cancellable || at.is_some_and(|t| t >= since) {
-            let row = command_row(command, zone, now, receipts);
+            let row = command_row(command, &names, zone, now, receipts);
             all.push((at, cancellable, ActivityRow::Command(row)));
         }
     }

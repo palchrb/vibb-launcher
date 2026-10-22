@@ -166,10 +166,22 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `parent_change_refused` "add"; the `INSERT` carries the actor condition, the cap of 8 and the taken check); the
   answer is the page itself (no-store, `data-post-answer`) with the password in `.secret-once` blocks, a Copy button
   and `static/reveal.js` (a reload is a GET of `/account/parents`, it is removed when the page is left, the CSS hides
-  it after 5 minutes and reveal.js removes it then too, so Copy ends with it - P62-4); `parent_added` "pappa (Pappa)". **Withdraw…** on a not-ready row is the soft Remove
+  it after 5 minutes and reveal.js removes it then too, so Copy ends with it - P62-4); `parent_added` "pappa (Pappa)".
+  **Reset…** ("New One-Time Password…" on a not-ready row; `POST /account/parents/{id}/reset`, step 3): your password
+  and the new one-time password's hash in one gated job, `parents::reset_parent` (§4.3's statement, never yourself, the
+  target's push subscriptions in the same transaction), `parent_reset`, the answer shown as Add's ("New one-time
+  password for Pappa"), its reload the GET of the same path. **Remove…** ("Withdraw…" on a not-ready row) is the soft Remove
   (`POST /account/parents/{id}/remove`, `admin_auth::reauth`, the guarded `UPDATE` + its push subscriptions in one
-  `BEGIN IMMEDIATE` transaction, `parent_removed`, PRG `/account?parents=removed#parents`); the only ready account
-  can't remove itself. `GET /account/parents/{id}/reset` serves Account for step 3's Reset answer. Every refusal
+  `BEGIN IMMEDIATE` transaction with its prefs and reads, `parent_removed`, its Spotify login in progress dropped
+  (`spotify::Accounts::forget_pending`), PRG `/account?parents=removed#parents`); the only ready account can't remove
+  itself, and your own row has no action (the route still answers yourself by the same guard, then `/login`). The
+  Backups restore confirm says "Parent accounts come back as they were in this backup."
+- **"By <name>"** (step 4): `device_commands.requested_by` (0087) is set by Locate's commands, Unlock/Lock again/Allow
+  these apps (`window_relock`), Install Now and the Child PIN's queue rule after a parent's save (`kid_lock::
+  queue_pin_command(.., Some(admin))`; a status report's queue passes `None`). Locate's Requests and the summary's
+  Activity add "· Pappa" (`parents::Names::requester`) once the family has more than one account (removed ones count,
+  their names stay); never in the policy (`pending_command` is still `{id, command, requested_at}`). Lifts show the
+  creator's display name (`Names::of_username`), the security log "Mamma (mamma) · 10.0.0.3" (`Names::logged`). `GET /account/parents/{id}/reset` serves Account for step 3's Reset answer. Every refusal
   renders Account (400) with its form open and the reason under the field, at `#parents`.
 - Tests: `src/tests/parents.rs`, `admin_auth::reset_2fa_from_the_command_line_clears_the_lock_and_the_totp`,
   `jstest/reveal.test.js`.
