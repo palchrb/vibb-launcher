@@ -136,3 +136,30 @@ graceful boot, with F3R-4's dialer cost. M11 is B5's call read. M12 is B4's proc
   `isKeyguardLocked` is always true BFU. But the window is not "1-5 s": see F3R-4.
 - **The stock launcher ≤2 s after a call (adb/crash boots)**: acceptable as written. But it covers only the call
   screen in front of the cover. With the cover in front during the call, it is the whole call: F3R-1.
+
+## Fixed in
+
+- F3R-1: fixed in `d90f5687`. `START_HOME` and `coverDestroyStartsHome` no longer read the call (a resumed cover has
+  no call screen over it), and the grace finishes only after the cover's own Home start; `HAND_OVER` keeps `visible`
+  and `!callLive`. The design's B2 text now states the AOSP fact (first matching PPA; the chooser means none matched)
+  and the residual covers only the call screen in front of the cover.
+- F3R-2: fixed in `d90f5687`. `coverAtLockedBoot` has no `armedAsHome` any more: START after every boot, the
+  shutdown's arm included (the dialer residual now applies to graceful boots too, written down). The resolution is
+  only logged. The design has a chooser-boot recipe (`dumpsys package preferred-activities`, `dumpsys device_policy`,
+  `dumpsys activity activities`, the HOME query and resolve, the boot log's lines) and the [device] check that the
+  chooser never comes back from under the cover.
+- F3R-3: fixed in `d90f5687`. `Torch.init` calls `changed()` at its end (pinned in `TorchRulesTest`); the design's
+  "Readers" bullet corrected.
+- F3R-4: fixed in `d90f5687`. "Usually 1-5 s on the emulator", with o2's 15 s, in the plan's KDoc, the design and
+  `launcher/CLAUDE.md`; `Boot cover started at the locked boot (android mode, interactive ...)` (logged only, pinned
+  after the start).
+- F3R-5: fixed in `d90f5687`. The posted tail logs `Unlocked setup tail took N ms` (`Unlocked setup took` is the head
+  alone); the design says the head still bounds the ANR clock, and emulator check 7 reads both.
+- F3R-6: fixed in `d90f5687`. `cancelRetry` looks the PendingIntent up with `FLAG_NO_CREATE` (and cancels it);
+  `retryLater` uses `canScheduleExactAlarms()`, no `SecurityException` fallback. No cap: the plan's KDoc and the
+  design say the unlock bounds it.
+- F3R-7: fixed in `d90f5687`. `BootCoverManifestTest` pins `telecomInCall`'s whole expression (`isInManagedCall ==
+  true`, M11) and `onPause`'s `if (isFinishing && !ownFinish) finishedInFront = true` (M12). M7 is moot:
+  `armedAsHome` is gone with F3R-2, and the test pins that the decision has no resolution input.
+- Run: `assembleDebug testDebugUnitTest -PwarningsAsErrors=true`: BUILD SUCCESSFUL, 160 suites, 1559 tests, 0
+  failures.
