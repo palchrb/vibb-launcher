@@ -20,7 +20,9 @@ in [`LICENSE`](LICENSE). The MIT notice above is preserved for the portion it co
 
 The bundled Nunito font (in the launcher and the music app) is licensed under the SIL Open Font License 1.1 - see
 [`launcher/app/src/main/assets/licenses/OFL.txt`](launcher/app/src/main/assets/licenses/OFL.txt) (the same text in
-`music/app/src/main/assets/licenses/OFL.txt`).
+`music/app/src/main/assets/licenses/OFL.txt`). The admin server's copy (`server/static/fonts/nunito-latin-wght.woff2`,
+Nunito's variable font from [google/fonts](https://github.com/google/fonts/tree/main/ofl/nunito) cut to weights
+700-900 and Latin) is under the same licence, in `server/static/fonts/OFL.txt`.
 
 The app icons and music category icons a parent can pick (`launcher/app/src/main/res/drawable/app_glyph_*.xml`,
 `server/static/app-icons/*.svg`, `server/static/music-icons/*.svg` and `music/app/src/main/res/drawable/music_glyph_*.xml`,

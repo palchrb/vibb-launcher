@@ -1,5 +1,6 @@
 /* Vibb Phone, the parent PWA (design 31). The look comes from the approved mockups
-   (docs/design/mockups/parent-pwa/), iOS Settings style. Browser floor (§5.7): Chrome/WebView 80+
+   (docs/design/mockups/parent-pwa/), iOS Settings style, in the vibb identity since 2026-10-22
+   (direction D: the peach accent, Nunito headings, the floating tab bar, the night palette in dark). Browser floor (§5.7): Chrome/WebView 80+
    and iOS Safari 14+ render the design; older ones get plain, working controls. Not used here:
    :has(), color-mix(), CSS nesting, @layer, container queries; dvh only after a vh fallback. Bump ?v= in
    templates/partials/head.html with every change. */
@@ -22,11 +23,12 @@
     /* A field's edge: 3:1 against the field and the card (WCAG 1.4.11). */
     --field-border: #86868B;
 
-    --tint: #0B66D6;
-    --tint-hover: #084C9E;
-    /* The filled button: #0B66D6 in both themes (white on it 5.4:1; §5.4, L3). */
-    --strong: #0B66D6;
-    --strong-hover: #0956B5;
+    /* vibb's dark peach: 5.2:1 on --bg, 5.8:1 on --surface, 4.7:1 on --tab-pill. */
+    --tint: #A64B25;
+    --tint-hover: #7E3517;
+    /* The filled button: #A64B25 in both themes (white on it 5.8:1; §5.4, L3). */
+    --strong: #A64B25;
+    --strong-hover: #7E3517;
     --destructive: #D70015;
     --destructive-hover: #B0001A;
 
@@ -60,12 +62,20 @@
     --switch-off-border: #8E8E93;
     --knob: #FFFFFF;
 
-    /* Tab bar: opaque by default, translucent where backdrop-filter works. */
-    --bar: #F9F9FA;
-    --bar-translucent: rgba(249, 249, 250, 0.94);
-    --bar-line: #C6C6C8;
+    /* The floating tab bar: a card with the chosen tab as a pill. */
+    --bar: #FFFFFF;
+    --bar-shadow: 0 2px 10px rgba(12, 12, 20, 0.08);
     --tab-off: #6B6B70;
-    --tab-on: #0B66D6;
+    --tab-on: #0C0C14;
+    --tab-pill: #FBE4DC;
+
+    /* vibb: Nunito for the headings (static/fonts/, never fetched elsewhere), the Pust mark's
+       night tile, the wordmark, a phone's initial on peach (#0C0C14 on #F0A884 9.9:1). */
+    --font-display: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    --brand-tile: #0C0C14;
+    --brand-word: #0C0C14;
+    --avatar-bg: #F0A884;
+    --avatar-text: #0C0C14;
 
     /* Old names, still used by inline styles on the pages not redesigned yet. */
     --color-bg: var(--field-bg);
@@ -82,22 +92,23 @@
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --bg: #000000;
-        --surface: #1C1C1E;
-        --label: #FFFFFF;
-        --label-2: #98989F;
-        --label-3: #D1D1D6;
-        --sep: #38383A;
-        --sep-light: #2C2C2E;
-        --chev: #5A5A5F;
-        --row-active: #2C2C2E;
-        --field-bg: #000000;
-        --field-border: #6E6E73;
+        /* vibb's night: cream text on night grounds (--label-2 6.4:1 on --surface). */
+        --bg: #0C0C14;
+        --surface: #1B1B28;
+        --label: #F6E7E0;
+        --label-2: #A89C96;
+        --label-3: #E0D3CC;
+        --sep: #3A3A50;
+        --sep-light: #2A2A3A;
+        --chev: #5E5E72;
+        --row-active: #2A2A3A;
+        --field-bg: #0C0C14;
+        --field-border: #7A7A90;
 
-        --tint: #4A9BFF;
-        --tint-hover: #7AB6FF;
-        --strong: #0B66D6;
-        --strong-hover: #0956B5;
+        --tint: #F0A884;
+        --tint-hover: #F6C4AA;
+        --strong: #A64B25;
+        --strong-hover: #7E3517;
         --destructive: #D70015;
         --destructive-hover: #E5172B;
 
@@ -111,7 +122,7 @@
         --green-text: #4CD964;
         --green-bg: #123019;
         --grey-text: #D1D1D6;
-        --grey-bg: #2C2C2E;
+        --grey-bg: #2A2A3A;
         --info-text: #CFE0F5;
         --info-bg: #1A2533;
         --lock-text: #C7C5FF;
@@ -121,21 +132,34 @@
         --dot-orange: #FF9F0A;
         --dot-red: #FF453A;
         --dot-grey: #8E8E93;
-        --track: #38383A;
+        --track: #34344A;
         --bar-fill: #30D158;
 
-        --switch-off: #39393D;
+        --switch-off: #34344A;
         --knob: #FFFFFF;
 
-        --bar: #161618;
-        --bar-translucent: rgba(22, 22, 24, 0.94);
-        --bar-line: #38383A;
-        --tab-off: #98989F;
-        --tab-on: #4A9BFF;
+        --bar: #1B1B28;
+        --bar-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+        --tab-off: #A89C96;
+        --tab-on: #F0A884;
+        --tab-pill: #2A2A3A;
+
+        --brand-tile: #1B1B28;
+        --brand-word: #F6E7E0;
     }
 }
 
 /* ---- Base -------------------------------------------------------------------------------- */
+
+/* Nunito (SIL OFL 1.1, static/fonts/OFL.txt): the variable font cut to weights 700-900 and Latin,
+   served from here - never from a font service. Until it loads the headings use the system font. */
+@font-face {
+    font-family: "Nunito";
+    font-style: normal;
+    font-weight: 700 900;
+    font-display: swap;
+    src: url("fonts/nunito-latin-wght.woff2") format("woff2");
+}
 
 * {
     box-sizing: border-box;
@@ -249,8 +273,9 @@ input[type="radio"] {
 }
 
 .page-title {
-    font-size: 2.125rem;
-    font-weight: 700;
+    font-family: var(--font-display);
+    font-size: 1.875rem;
+    font-weight: 800;
     line-height: 1.15;
     margin: 4px 0 20px;
     word-break: break-word;
@@ -273,27 +298,22 @@ input[type="radio"] {
     margin-right: 4px;
 }
 
-/* Under <main> (order: 1; it comes first in the page's source), never fixed. */
+/* Under <main> (order: 1; it comes first in the page's source), never fixed: a card floating on
+   the page's ground, 12 px in from the sides (the notch's inset in landscape) and 14 px above the
+   home indicator, at most 560 px wide on a desktop. main ends above it, so it covers nothing. */
 .tab-bar {
     flex: none;
     order: 1;
     touch-action: manipulation;
     display: flex;
+    margin: 0 12px 14px;
+    margin-right: max(12px, env(safe-area-inset-right, 0px), calc((100% - 560px) / 2));
+    margin-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    margin-left: max(12px, env(safe-area-inset-left, 0px), calc((100% - 560px) / 2));
+    padding: 8px 6px;
+    border-radius: 24px;
     background: var(--bar);
-    border-top: 1px solid var(--bar-line);
-    padding: 4px 4px 4px;
-    padding-right: max(4px, env(safe-area-inset-right, 0px));
-    /* Clear of the home indicator, with a little room above it. */
-    padding-bottom: max(4px, calc(env(safe-area-inset-bottom, 0px) + 6px));
-    padding-left: max(4px, env(safe-area-inset-left, 0px));
-}
-
-@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    .tab-bar {
-        background: var(--bar-translucent);
-        -webkit-backdrop-filter: saturate(180%) blur(20px);
-        backdrop-filter: saturate(180%) blur(20px);
-    }
+    box-shadow: var(--bar-shadow);
 }
 
 .tab {
@@ -304,7 +324,8 @@ input[type="radio"] {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 2px;
+    padding: 6px 2px;
+    border-radius: 16px;
     color: var(--tab-off);
     text-decoration: none;
     font-size: 0.75rem;
@@ -318,20 +339,22 @@ input[type="radio"] {
 
 .tab[aria-current="page"],
 .tab[aria-current="page"]:hover {
+    background: var(--tab-pill);
     color: var(--tab-on);
+    font-weight: 600;
 }
 
 .tab-icon {
-    width: 26px;
-    height: 26px;
-    margin-bottom: 2px;
+    width: 24px;
+    height: 24px;
+    margin-bottom: 3px;
 }
 
 /* ---- Grouped list (§3.0) ------------------------------------------------------------------- */
 
 .group {
     background: var(--surface);
-    border-radius: 12px;
+    border-radius: 16px;
     overflow: hidden;
     margin: 0 0 20px;
 }
@@ -427,8 +450,8 @@ summary.row:active {
 .group-avatars > .row ~ .cell::before,
 .group-avatars > .cell ~ .row::before,
 .group-avatars > .cell ~ .cell::before {
-    left: 72px;
-    left: var(--avatar-inset, 72px);
+    left: 74px;
+    left: var(--avatar-inset, 74px);
 }
 
 @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
@@ -438,10 +461,6 @@ summary.row:active {
     .group > .cell ~ .cell::before {
         border-top-width: 0.5px;
         border-top-color: var(--sep);
-    }
-
-    .tab-bar {
-        border-top-width: 0.5px;
     }
 }
 
@@ -1139,31 +1158,33 @@ th {
     height: 22px;
 }
 
-/* The phone's initial; decorative (aria-hidden), the name is beside it. White text is 4.5:1 or
-   more on every colour. */
+/* The phone's initial on vibb's peach; decorative (aria-hidden), the name is beside it. A phone
+   not set up is grey (.avatar-grey). */
 .avatar {
     flex: none;
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 44px;
-    height: 44px;
+    width: 46px;
+    height: 46px;
     border-radius: 50%;
-    background: #636366;
-    color: #FFFFFF;
+    background: var(--avatar-bg);
+    color: var(--avatar-text);
+    font-family: var(--font-display);
     font-size: 1.1875rem;
-    font-weight: 600;
+    font-weight: 900;
     line-height: 1;
 }
 
+/* The app tiles' colours (white text 4.5:1 or more on each); the grey is also a phone's not set up. */
 .avatar-indigo { background: #5E5CE6; }
 .avatar-orange { background: #C2410C; }
 .avatar-teal { background: #0E7C91; }
 .avatar-green { background: #2E8540; }
 .avatar-pink { background: #C2306B; }
 .avatar-purple { background: #8944AB; }
-.avatar-grey { background: #636366; }
+.avatar-grey { background: #636366; color: #FFFFFF; }
 
 /* The connection dot on the avatar; the state is also the word in the status line. */
 .avatar-dot {
@@ -1652,6 +1673,12 @@ details.edit[open] > summary .chev {
 /* ---- A tab's title action ("Edit"), a row that discloses a form, a switch in a form (design 31 step 12) ---- */
 
 .title-bar { display: flex; justify-content: flex-end; min-height: 44px; }
+/* The Devices page's brand row (vibb, direction D): the Pust mark on its night tile and the
+   wordmark at the left of the title bar, its actions at the right. */
+.vibb-brand { display: flex; align-items: center; margin: 10px auto 10px 0; }
+.vibb-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; background: var(--brand-tile); }
+.vibb-mark svg { width: 26px; height: 26px; }
+.vibb-word { margin-left: 10px; color: var(--brand-word); font-family: var(--font-display); font-size: 1.5rem; font-weight: 900; letter-spacing: -0.6px; line-height: 1; }
 .title-action { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; color: var(--tint); font-size: 1.0625rem; text-decoration: none; }
 .tile-orange { background: #C2410C; }
 details.disclosure > summary { list-style: none; cursor: pointer; }
@@ -1973,7 +2000,7 @@ input.row-num { width: 6.5em; text-align: right; }
 .summary-head { display: flex; flex-direction: column; align-items: center; margin: 4px 0 20px; text-align: center; }
 .avatar-large { width: 76px; height: 76px; font-size: 2.125rem; }
 .avatar-large .avatar-dot { width: 16px; height: 16px; border-width: 3px; right: 1px; bottom: 1px; border-color: var(--bg); }
-.summary-name { margin: 10px 0 0; font-size: 1.75rem; font-weight: 700; line-height: 1.2; word-break: break-word; overflow-wrap: anywhere; }
+.summary-name { margin: 10px 0 0; font-family: var(--font-display); font-size: 1.75rem; font-weight: 800; line-height: 1.2; word-break: break-word; overflow-wrap: anywhere; }
 .summary-state { margin: 3px 0 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.35; }
 .summary-link { display: inline-block; margin-top: 4px; padding: 10px 8px; font-size: 0.9375rem; text-decoration: none; }
 .summary-lock { margin-top: 10px; }
@@ -2011,7 +2038,7 @@ a.act, a.act:hover { text-decoration: none; }
 /* The sign-in pages: one column, the app's name, the title, then the form's group. */
 .auth-card { width: 100%; max-width: 400px; }
 .auth-brand { margin: 0 4px 4px; font-size: 0.9375rem; font-weight: 600; color: var(--label-2); }
-.auth-title { margin: 0 4px 8px; font-size: 2.125rem; font-weight: 700; line-height: 1.15; }
+.auth-title { margin: 0 4px 8px; font-family: var(--font-display); font-size: 1.875rem; font-weight: 800; line-height: 1.15; }
 .auth-sub { margin: 0 4px 20px; font-size: 1rem; line-height: 1.35; color: var(--label-2); }
 .auth-error { margin: 0 0 20px; border-radius: 12px; }
 
@@ -2137,9 +2164,9 @@ details.app-display[open] > summary .section-chev {
 .row-value-keep { flex: none; min-width: auto; white-space: nowrap; word-break: normal; overflow-wrap: normal; }
 
 /* ---- Connecting (static/reconnect.js, 2026-10-21): a tap is never "nothing" after being away ---- */
-/* The tapped link at once: the tab in its "on" colour, a row pressed, any other link dimmed. */
+/* The tapped link at once: the tab in its "on" pill, a row pressed, any other link dimmed. */
 .is-pending { opacity: 0.6; }
-.tab.is-pending { color: var(--tab-on); opacity: 1; }
+.tab.is-pending { background: var(--tab-pill); color: var(--tab-on); opacity: 1; }
 .row.is-pending { background: var(--row-active); opacity: 1; }
 /* A thin bar along the top while the page comes; it never takes a tap. Both are absolute, never
    fixed (design 43: the shell's document doesn't scroll, so its top is the screen's, and an iOS

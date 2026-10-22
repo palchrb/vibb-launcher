@@ -240,6 +240,6 @@ Area notes, moved verbatim from this file on 2026-10-19; read only the ones your
 - `docs/notes/server/music.md` - Vibb music library; Vibb music: the server sweep; Vibb music: Storytel on the server; Vibb music: Spotify on the server; Vibb music: episode art
 - `docs/notes/server/notifications.md` - Phone off and on (design 38); Notifications to the parent, step 1: events and the inbox; Notifications to the parent, step 2: Web Push
 - `docs/notes/server/connectivity.md` - Connectivity and exposure
-- `docs/notes/server/pwa.md` - Fix round 2026-10-06; Fix round 1; The PWA's times, connection state and Attention; About This Phone and Advanced; Lock Screen & PINs; Home Screen and Web Filter; Device › Apps; Device › Music; The phone's summary; The Apps tab; The Music tab; The Locate tab; The rest of Settings; Add Phone, sign-in, the tab pages; Connecting (reconnect.js, `/ping`)
+- `docs/notes/server/pwa.md` - Fix round 2026-10-06; Fix round 1; The PWA's times, connection state and Attention; About This Phone and Advanced; Lock Screen & PINs; Home Screen and Web Filter; Device › Apps; Device › Music; The phone's summary; The Apps tab; The Music tab; The Locate tab; The rest of Settings; Add Phone, sign-in, the tab pages; Connecting (reconnect.js, `/ping`); The vibb identity (direction D: tokens, the floating tab bar, Nunito, icons)
 - `docs/notes/server/retention-and-crashes.md` - Retention; Crash reports; Removed monitoring
 - `docs/notes/server/status.md` - Architecture change in progress; Current status

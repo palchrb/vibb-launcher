@@ -704,3 +704,34 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `shell::a_posts_own_page_is_marked_so_it_is_never_reloaded`; the QA's findings each have a jstest (M1, L2-L5, L9). A headless Chromium check against a never-answering
   page showed the bar at once, the chip at 3 s, "Try again" at 20 s and a restart about every 15 s while the server
   answered. Owed: the iPhone (and Android) PWA after being away.
+
+## The vibb identity, direction D (2026-10-22, `docs/testing/2026-10-22-pwa-identity-pass.md`)
+
+- **The approved mockup** (artboard "D · B + flytende fanelinje", https://claude.ai/artifact/PKc1u9Qo3wdxKUk1Gkh6iX):
+  the iOS grey ground and white cards stay (cards 16 px radius), the accent is vibb's dark peach `#A64B25` (hover
+  `#7E3517`; links, + and the bell, filled buttons in both themes - white on it 5.8:1), headings in Nunito, the tab bar
+  floats. Tokens only, in `style.css`'s `:root` (`--tint`, `--strong`, `--bar`, `--bar-shadow`, `--tab-on`,
+  `--tab-off`, `--tab-pill`, `--font-display`, `--brand-tile`, `--brand-word`, `--avatar-bg`, `--avatar-text`).
+- **Dark mode is vibb's night**: ground `#0C0C14`, cards `#1B1B28`, text cream `#F6E7E0` / `#A89C96`, accent peach
+  `#F0A884`, the bar a night card with a `#2A2A3A` pill and the peach label. The status colours kept their values
+  (all 4.5:1 or more on the new grounds; the pass checks every text node).
+- **The tab bar** (`partials/tab_bar.html` unchanged, CSS only): still a plain flex child after `main` (design 43, no
+  fixed box), now a white rounded card (24 px) 12 px in from the sides (the notch's inset in landscape), 14 px + the
+  home indicator's inset above the bottom, at most 560 px wide on a desktop; the chosen tab a `#FBE4DC` pill
+  (`--tab-pill`), also the tapped tab while `reconnect.js` waits (`.tab.is-pending`). `main` ends above it, so it
+  covers nothing.
+- **Devices' brand row**: the Pust mark (four rings, inline SVG) on its night tile and the "vibb" wordmark at the left
+  of the page's `.title-bar` (`.vibb-brand`, the home page's alone - `shell::the_tab_pages_open_on_their_large_title`),
+  + and the bell at the right; the large title is Nunito 800, 30 px on every tab page.
+- **Avatars**: every set-up phone's initial is `#0C0C14` on peach `#F0A884` (Nunito 900, 46 px), a phone not set up
+  stays grey (`devices::avatar_class_of(enrolled)`: `""` or `avatar-grey`); `AVATAR_COLOURS` now colour only the
+  Apps tab's letter tiles.
+- **Nunito is served from here** (no font service; `static/fonts/nunito-latin-wght.woff2`, preloaded by `head.html`,
+  `font-display: swap`): google/fonts `ofl/nunito/Nunito[wght].ttf` at commit `8b0a1d0f`, cut with fonttools to
+  `wght=700:900` (`fonttools varLib.instancer`) and Latin + Latin Extended-A (`pyftsubset --flavor=woff2`, about 31 KB);
+  SIL OFL 1.1 in `static/fonts/OFL.txt` (no Reserved Font Name), a line in `NOTICE.md`. Body text stays the system
+  font.
+- **Icons**: `icons/icon-192.png`, `icon-512.png` and `icon-180.png` (apple-touch-icon) are the vibb app's own
+  (palchrb/vibb, `pi/web/`, branch `pipewire`); `icon-maskable-512.png` is its 512 scaled to 80 % on night, so the
+  outer ring (195 px) is inside the 40 % safe zone (205 px). `theme-color` and the manifest follow the grounds
+  (`#F2F2F7`, dark `#0C0C14`). The shell test checks every icon's size and that the font is local.
