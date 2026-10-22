@@ -79,6 +79,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   below.
 - New devices start with Kid Settings (Quick Controls) Wi-Fi, Bluetooth, brightness and (design 18) sound on
   (`devices::DEFAULT_QUICK_CONTROLS`, mask 15, set in `insert_device_with_policy`); existing devices keep theirs.
+- **Touch sounds and vibration** (launcher round 9 §4, `docs/design/r9-launcher-glance-small-items.md`):
+  `QUICK_CONTROL_TOUCH` = 16, the fifth switch of Home Screen's Quick controls (`quick_control_touch`, the same
+  `data-autosave` form, back to `#quick-controls`), **not** in `DEFAULT_QUICK_CONTROLS`: the kid's two switches
+  write Android's settings only with the "Modify system settings" app-op the clock format uses, so the parent turns
+  it on after granting it (the group's ⓘ says so). Policy shape unchanged (one integer). Tests:
+  `sound_mode::the_touch_bit_saves_reaches_the_phone_and_starts_off`, `device_pages::home_screen_holds_the_moved_forms`.
 - **Sound mode** (design 18, `src/sound_mode.rs`, migration `0047_sound_mode.sql`): `QUICK_CONTROL_SOUND` = 8, a switch in the
   Quick controls group of Home Screen (it only shows the kid's Sound / Silent (vibrate) row; the volume keys still work). Status
   `ringer_mode` / `interruption_filter` (`#[serde(default)] Option<String>`, only known values stored, else NULL) ->

@@ -1,5 +1,6 @@
 //! Sound mode (design 18): the kid's sound row is bit 8 of `quick_controls_mask`, and the phone's
-//! ringer mode and Do Not Disturb filter from every status report show on About This Phone.
+//! ringer mode and Do Not Disturb filter from every status report show on About This Phone. Touch
+//! sounds and vibration (design r9 §4) are bit 16 of the same mask.
 
 use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
@@ -81,6 +82,59 @@ async fn the_sound_bit_saves_and_reaches_the_phone() {
     let html = app.get_page(&home, &cookie).await.text();
     assert_eq!(
         super::input_checked(&html, "quick_control_sound", "on"),
+        Some(false)
+    );
+}
+
+/// Home Screen's "Touch sounds and vibration" (design r9 §4): bit 16, saved in place with the quick
+/// controls, off on a new phone (the switches need the "Modify system settings" app-op first, and
+/// the ⓘ says so); the policy's shape stays the same.
+#[tokio::test]
+async fn the_touch_bit_saves_reaches_the_phone_and_starts_off() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let home = device_page(id, Section::Home);
+    assert_eq!(crate::handlers::devices::QUICK_CONTROL_TOUCH, 16);
+    assert_eq!(crate::handlers::devices::DEFAULT_QUICK_CONTROLS & 16, 0);
+    let save = |touch: bool| {
+        let mut fields = vec![("section", "quick"), ("quick_control_wifi", "on")];
+        if touch {
+            fields.push(("quick_control_touch", "on"));
+        }
+        let (app, cookie) = (&app, cookie.clone());
+        async move {
+            app.request_form(
+                Method::POST,
+                &format!("/devices/{id}/policy"),
+                Some(&cookie),
+                &fields,
+            )
+            .await
+        }
+    };
+
+    let res = save(true).await;
+    super::assert_redirect(&res, &home, Some("quick-controls"));
+    assert_eq!(
+        policy(&app, &token).await["quick_controls_mask"],
+        json!(1 | 16)
+    );
+    let html = app.get_page(&home, &cookie).await.text();
+    assert_eq!(
+        super::input_checked(&html, "quick_control_touch", "on"),
+        Some(true)
+    );
+    assert!(html.contains("<span class=\"row-label\">Touch sounds and vibration</span>"));
+    assert!(html.contains(
+        "the \"Modify system settings\" permission the clock format uses - grant it first"
+    ));
+
+    save(false).await;
+    assert_eq!(policy(&app, &token).await["quick_controls_mask"], json!(1));
+    let html = app.get_page(&home, &cookie).await.text();
+    assert_eq!(
+        super::input_checked(&html, "quick_control_touch", "on"),
         Some(false)
     );
 }

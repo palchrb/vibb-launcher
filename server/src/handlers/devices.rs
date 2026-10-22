@@ -712,7 +712,11 @@ pub(crate) const QUICK_CONTROL_BRIGHTNESS: i64 = 4;
 /// The sound row (design 18): Sound / Silent (vibrate). It only shows the row - the volume keys
 /// still change the sound. A launcher before design 18 ignores the bit.
 pub(crate) const QUICK_CONTROL_SOUND: i64 = 8;
-/// A new device's `quick_controls_mask`: every switch on (`insert_device_with_policy`).
+/// Touch sounds and vibration (design r9 §4): Android's two switches for taps. They need the
+/// "Modify system settings" app-op the clock format uses, so the bit is **not** in the default: the
+/// parent turns it on after granting it. A launcher before r9 ignores the bit.
+pub(crate) const QUICK_CONTROL_TOUCH: i64 = 16;
+/// A new device's `quick_controls_mask`: every switch on but touch (`insert_device_with_policy`).
 pub(crate) const DEFAULT_QUICK_CONTROLS: i64 =
     QUICK_CONTROL_WIFI | QUICK_CONTROL_BLUETOOTH | QUICK_CONTROL_BRIGHTNESS | QUICK_CONTROL_SOUND;
 
@@ -2136,6 +2140,9 @@ pub async fn update_policy(
     }
     if fields.contains_key("quick_control_sound") {
         quick_controls_mask |= QUICK_CONTROL_SOUND;
+    }
+    if fields.contains_key("quick_control_touch") {
+        quick_controls_mask |= QUICK_CONTROL_TOUCH;
     }
 
     let vpn_filter_enabled = fields.contains_key("vpn_filter_enabled");

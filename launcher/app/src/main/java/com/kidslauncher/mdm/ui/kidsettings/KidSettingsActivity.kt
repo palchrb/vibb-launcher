@@ -28,6 +28,7 @@ import android.widget.RadioButton
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ActivityKidSettingsBinding
 import com.kidslauncher.mdm.preferences.LauncherPreferences
@@ -37,6 +38,7 @@ import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.SoundChoice
 import com.kidslauncher.mdm.server.SoundNote
 import com.kidslauncher.mdm.server.SoundRowState
+import com.kidslauncher.mdm.server.TouchRowState
 import com.kidslauncher.mdm.server.cachedPolicy
 import com.kidslauncher.mdm.server.describeSoundRow
 import com.kidslauncher.mdm.ui.LockActivity
@@ -51,6 +53,7 @@ import com.kidslauncher.mdm.ui.wallpaper.WallpaperFill
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperGround
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperRender
 import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
+import kotlinx.coroutines.launch
 
 /**
  * The kid's own Settings (design 08-ui-polish.md §2, mockup KidSettings.dc.html), opened by the
@@ -63,7 +66,8 @@ import com.kidslauncher.mdm.ui.wallpaper.WallpaperStore
  *
  * The screen re-renders when a sync stores a new policy (the mask can change while it is open).
  * The sound row (design 18) re-reads the phone on every ringer-mode or Do Not Disturb change
- * while the screen is shown - the volume keys change it underneath.
+ * while the screen is shown - the volume keys change it underneath. The touch row (design r9 §4) is
+ * read again on every resume and after a tap's write.
  */
 class KidSettingsActivity : UIObjectActivity() {
     private lateinit var binding: ActivityKidSettingsBinding
@@ -71,6 +75,11 @@ class KidSettingsActivity : UIObjectActivity() {
     private lateinit var admin: ComponentName
     private var lastLogged: String? = null
     private var lastSoundLogged: String? = null
+    private var lastTouchLogged: TouchRowState? = null
+
+    /** Touch writes still running (main thread): the switches keep what was tapped until the last one
+     * ends and the row is read again (qa-r9-revision-check N2). */
+    private var touchWrites = 0
     private var section: ControlsSection? = null
     private var ink: InkChoice? = null
 
@@ -107,6 +116,14 @@ class KidSettingsActivity : UIObjectActivity() {
     private val bluetoothListener = CompoundButton.OnCheckedChangeListener { _, checked ->
         QuickControls.setBluetoothEnabled(this, dpm, admin, checked)
         setManageEnabled(binding.kidSettingsBluetoothManage, checked)
+    }
+
+    private val touchSoundsListener = CompoundButton.OnCheckedChangeListener { _, on ->
+        writeTouch { QuickControls.setTouchSounds(this, on) }
+    }
+
+    private val touchVibrationListener = CompoundButton.OnCheckedChangeListener { _, on ->
+        writeTouch { QuickControls.setTouchVibration(this, on) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -209,9 +226,10 @@ class KidSettingsActivity : UIObjectActivity() {
         }
         val rows = section as? ControlsSection.Rows
         val soundShown = renderSound(rows?.sound == true)
+        val touchShown = renderTouch(rows?.touch == true)
         // Mask 0 (or only the sound bit on a phone without a vibrator): no card and no heading -
         // there is simply nothing to show.
-        val anyRow = rows != null && (rows.wifi || rows.bluetooth || rows.brightness || soundShown)
+        val anyRow = rows != null && (rows.wifi || rows.bluetooth || rows.brightness || soundShown || touchShown)
         binding.kidSettingsControlsHeading.visibility =
             if (section == ControlsSection.NoneEnabled || (rows != null && !anyRow)) View.GONE else View.VISIBLE
         binding.kidSettingsControlsMessage.visibility = if (message != null) View.VISIBLE else View.GONE
@@ -279,6 +297,54 @@ class KidSettingsActivity : UIObjectActivity() {
         return true
     }
 
+    /**
+     * The touch row (design r9 §4) when the parent's bit is on: the phone's two switches; without the
+     * "Modify system settings" app-op both read-only at 50 % with the "can't be changed" line; no
+     * vibration switch without a vibrator. While a tap's write runs they keep what was tapped. Returns
+     * whether the row shows.
+     */
+    private fun renderTouch(wanted: Boolean): Boolean {
+        binding.kidSettingsTouchRow.visibility = if (wanted) View.VISIBLE else View.GONE
+        if (!wanted || touchWrites > 0) return wanted
+        val state = QuickControls.touchState(this)
+        if (state != lastTouchLogged) {
+            Log.i(TAG, "Touch row: $state")
+            lastTouchLogged = state
+        }
+        val sounds = binding.kidSettingsTouchSounds
+        val vibration = binding.kidSettingsTouchVibration
+        showChecked(sounds, state.sounds, touchSoundsListener)
+        vibration.visibility = if (state.vibration != null) View.VISIBLE else View.GONE
+        state.vibration?.let { showChecked(vibration, it, touchVibrationListener) }
+        for (switch in listOf(sounds, vibration)) {
+            switch.isEnabled = state.writable
+            switch.alpha = if (state.writable) 1.0f else 0.5f
+        }
+        binding.kidSettingsTouchReadOnly.visibility = if (state.writable) View.GONE else View.VISIBLE
+        return true
+    }
+
+    /** Showing the phone's state must not write it. */
+    private fun showChecked(switch: CompoundButton, checked: Boolean, listener: CompoundButton.OnCheckedChangeListener) {
+        switch.setOnCheckedChangeListener(null)
+        switch.isChecked = checked
+        switch.setOnCheckedChangeListener(listener)
+    }
+
+    /** A touch switch's tap: the write off the main thread (the sound switch's `loadSoundEffects()` can
+     * take seconds), then - after the last write - the row read again, so a refused write flips back. */
+    private fun writeTouch(write: suspend () -> Boolean) {
+        touchWrites++
+        lifecycleScope.launch {
+            try {
+                write()
+            } finally {
+                touchWrites--
+            }
+            if (touchWrites == 0) section?.let { renderControls(it) }
+        }
+    }
+
     private fun soundButtons(): List<Pair<RadioButton, SoundChoice>> = listOf(
         binding.kidSettingsSoundOn to SoundChoice.SOUND,
         binding.kidSettingsSoundVibrate to SoundChoice.SILENT_VIBRATE,
@@ -289,7 +355,8 @@ class KidSettingsActivity : UIObjectActivity() {
             binding.kidSettingsHeader.kidHeaderTitle, binding.kidSettingsWallpaperHeading, binding.kidSettingsWallpaperCaption,
             binding.kidSettingsControlsHeading, binding.kidSettingsControlsMessage, binding.kidSettingsWifiSwitch,
             binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel, binding.kidSettingsSoundLabel,
-            binding.kidSettingsSoundNote,
+            binding.kidSettingsSoundNote, binding.kidSettingsTouchSounds, binding.kidSettingsTouchVibration,
+            binding.kidSettingsTouchReadOnly, binding.kidSettingsTouchKeyboard,
             // The card's links in the ink too: peach on the card over a light or mid-tone ground
             // was ~2:1 (qa-34-s10-code M1). Bold, as before.
             binding.kidSettingsWifiManage, binding.kidSettingsBluetoothManage,

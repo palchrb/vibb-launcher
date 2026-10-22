@@ -312,6 +312,24 @@ class KidPaletteTest {
     }
 
     @Test
+    fun `the lock's music player - plain glyphs and its texts read on the tile (r9 §3)`() {
+        val android = "http://schemas.android.com/apk/res/android"
+        val all = parse("layout/view_lock_glance.xml").getElementsByTagName("*")
+        val views = (0 until all.length).map { all.item(it) as Element }.associateBy { it.getAttributeNS(android, "id").removePrefix("@+id/") }
+        val tile = (parse("drawable/bg_music_tile.xml").getElementsByTagName("solid").item(0) as Element).getAttributeNS(android, "color")
+        assertEquals("@color/kid_music_tile", tile)
+        // No discs any more: the glyph itself is the control, so it must read as text does.
+        for (id in listOf("lock_media_previous", "lock_media_play", "lock_media_next")) {
+            val glyph = views.getValue(id).getAttributeNS(android, "tint")
+            assertTrue("$id: $glyph on $tile", contrast(glyph, tile) >= 4.5)
+        }
+        for (id in listOf("lock_media_item", "lock_media_entry", "lock_media_elapsed", "lock_media_remaining")) {
+            val ink = views.getValue(id).getAttributeNS(android, "textColor")
+            assertTrue("$id: $ink on $tile", contrast(ink, tile) >= 4.5)
+        }
+    }
+
+    @Test
     fun `the lock's tonal emergency pills carry their label and glyph`() {
         // Design 34 P7: what the keypad (activity_pin_lock.xml) and the VoIP ring card
         // (view_voip_ring.xml, qa-34-s8-code L2) really use, from the shared resources.

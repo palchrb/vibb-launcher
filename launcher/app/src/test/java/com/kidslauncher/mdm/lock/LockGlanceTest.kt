@@ -62,91 +62,94 @@ class LockGlanceTest {
         assertFalse(glanceTicks(tileShown = true, pageShown = false, session = playing))
     }
 
-    /** §1.2's model at 320x569 dp (LockGlanceLayoutTest pins it from the XML; the full tile with r6 §2's
-     * time line, the compact one without). */
+    /** The fit's model at 320x569 dp (LockGlanceLayoutTest pins it from the XML; the full tile is r9 §3's compact
+     * player, the compact tile without a time line). */
     private val model = GlanceHeights(
-        fixed = 116f, clockBig = 78.4f, clockSmall = 56f, date = 25.6f, tileFull = 233.8f, tileCompact = 90f, clockFull = 114f,
+        fixed = 116f, clockBig = 78.4f, clockSmall = 56f, date = 25.6f, tileFull = 174.8f, tileCompact = 90f, clockFull = 114f,
         rowsTop = 14f, rowsTopNoTile = 22f, row = 56f, rowGap = 8f, more = 24f,
     )
-    // The page's paddings: 8 dp top, 8 dp bottom (16 until the bottom row's air, 2026-10-21).
+    // The page's paddings: 8 dp top, 8 dp bottom; a 48 dp status bar (the Jelly Star's) and 48 dp (3-button) or
+    // 24 dp (gesture) navigation: 473 and 497 dp, less the paddings.
     private val bothBars = 569f - 48f - 48f - 16f
     private val gestureBar = 569f - 48f - 24f - 16f
 
     @Test
-    fun `the fit's candidates in order`() {
+    fun `the fit's candidates in order - every row counted, or one with the rest scrolling (r9 §2)`() {
         // 1: everything big.
-        assertEquals(GlanceFit(1, true, true, GlanceTileSize.FULL, 0, 0, 443.8f), glanceFit(1000f, model, tile = true, rowCount = 0).copy(height = 443.8f))
+        val big = glanceFit(1000f, model, tile = true, rowCount = 0)
+        assertEquals(GlanceFit(1, true, true, GlanceTileSize.FULL, 0, 0, 0, 394.8f), big.copy(height = 394.8f))
+        assertEquals(394.8f, big.height, 0.01f)
         assertEquals(1, glanceFit(bothBars, model, tile = true, rowCount = 0).candidate)
-        // Music + 1 row: the compact tile (3), with 24 dp navigation too.
-        assertEquals(3, glanceFit(bothBars, model, tile = true, rowCount = 1).candidate)
-        assertEquals(3, glanceFit(gestureBar, model, tile = true, rowCount = 1).candidate)
-        // A taller screen keeps the full tile with a small clock (2).
-        assertEquals(2, glanceFit(gestureBar + 30f, model, tile = true, rowCount = 1).let { assertFalse(it.bigClock); it.candidate })
-        // Music + 2 rows (mockup A): 3.
+        // Music + 1 row (the user's case): the full tile with the small clock (2); the big one with gesture navigation.
+        assertEquals(2, glanceFit(bothBars, model, tile = true, rowCount = 1).candidate)
+        assertEquals(1, glanceFit(gestureBar, model, tile = true, rowCount = 1).candidate)
+        // Music + 2 rows (the mockup): the full tile stays, one row visible, the second below it in the scroll (3).
         val two = glanceFit(bothBars, model, tile = true, rowCount = 2)
-        assertEquals(listOf(3, 2, 0), listOf(two.candidate, two.rows, two.more))
-        assertEquals(3, glanceFit(gestureBar, model, tile = true, rowCount = 2).candidate)
-        // Music + 3 rows: 5 with two rows and the "more" line.
-        val three = glanceFit(bothBars, model, tile = true, rowCount = 3)
-        assertEquals(listOf(5, 2, 1), listOf(three.candidate, three.rows, three.more))
-        assertEquals(GlanceTileSize.COMPACT, three.tile)
-        // No music, 4 rows: 3 rows and "+ 1".
+        assertEquals(listOf(3, 2, 1, 0), listOf(two.candidate, two.rows, two.visibleRows, two.more))
+        assertEquals(GlanceTileSize.FULL, two.tile)
+        assertEquals(442.4f, two.height, 0.01f)
+        // Music + 5 rows: three bound, the "more" line counts two - it sits in the scroll, not counted on screen.
+        val five = glanceFit(bothBars, model, tile = true, rowCount = 5)
+        assertEquals(listOf(3, 3, 1, 2), listOf(five.candidate, five.rows, five.visibleRows, five.more))
+        assertEquals(two.height, five.height, 0.01f)
+        // No music, 4 rows: every row, 3 rows and "+ 1".
         val four = glanceFit(bothBars, model, tile = false, rowCount = 4)
-        assertEquals(listOf(1, 3, 1), listOf(four.candidate, four.rows, four.more))
+        assertEquals(listOf(1, 3, 3, 1), listOf(four.candidate, four.rows, four.visibleRows, four.more))
         assertEquals(GlanceTileSize.NONE, four.tile)
         // At most three rows; the rest is counted.
         assertEquals(listOf(3, 7), glanceFit(10_000f, model, tile = false, rowCount = 10).let { listOf(it.rows, it.more) })
     }
 
     @Test
-    fun `less room - rows go one by one, then the date, then every row`() {
-        // 5 with one row: 116 + 56 + 25.6 + 90 + 14 + 56 + 24 = 381.6; 6 (no date): 356; 7 (no row): 300.
-        val fifth = glanceFit(390f, model, tile = true, rowCount = 3)
-        assertEquals(listOf(5, 1, 2), listOf(fifth.candidate, fifth.rows, fifth.more))
-        assertTrue(fifth.date)
-        val small = 310f
-        val fit = glanceFit(small, model, tile = true, rowCount = 3)
-        assertTrue(fit.height <= small)
-        assertEquals(7, fit.candidate)
-        val tiny = glanceFit(250f, model, tile = true, rowCount = 3)
-        assertEquals(listOf(7, 0, 3), listOf(tiny.candidate, tiny.rows, tiny.more))
-        assertFalse(tiny.date)
-        val sixth = glanceFit(360f, model, tile = true, rowCount = 3)
-        assertEquals(listOf(6, 1, 2), listOf(sixth.candidate, sixth.rows, sixth.more))
-        assertFalse(sixth.date)
-        // Nothing fits at all: the last candidate (never a scroll).
-        assertEquals(7, glanceFit(10f, model, tile = true, rowCount = 3).candidate)
-        // Without a tile the clock is the only step before the rows.
-        val noTile = glanceFit(300f, model, tile = false, rowCount = 3)
-        assertFalse(noTile.bigClock)
-        assertEquals(GlanceTileSize.NONE, noTile.tile)
-        // Without rows 1-2 always fit (nothing is counted).
+    fun `less room - one row visible, then the compact tile, then no date, then only the more line`() {
+        // Music + 3 rows: 1 592.8, 2 570.4, 3 442.4, 4 485.6, 5 357.6, 6 332, 7 300.
+        fun at(room: Float) = glanceFit(room, model, tile = true, rowCount = 3)
+        assertEquals(listOf(3, 1), at(450f).let { listOf(it.candidate, it.visibleRows) })
+        assertEquals(GlanceTileSize.FULL, at(450f).tile)
+        assertEquals(listOf(5, 1), at(420f).let { listOf(it.candidate, it.visibleRows) })
+        assertTrue(at(420f).date)
+        assertEquals(GlanceTileSize.COMPACT, at(420f).tile)
+        at(340f).let { assertEquals(6, it.candidate); assertFalse(it.date) }
+        // Only the "more" line, counting all three (design 25's candidate 7, never a faded sliver of a row).
+        assertEquals(listOf(7, 0, 0, 3), at(310f).let { listOf(it.candidate, it.rows, it.visibleRows, it.more) })
+        assertEquals(300f, at(310f).height, 0.01f)
+        // Nothing fits at all: the last candidate.
+        assertEquals(7, at(10f).candidate)
+        // A row is never folded into the "more" line to make room: every candidate but 7 binds min(n, 3).
+        for (room in listOf(1000f, 450f, 420f, 340f)) assertEquals(listOf(3, 0), at(room).let { listOf(it.rows, it.more) })
+        // Without a tile 4 and 5 are 2 and 3 again: the small clock, every row, then one.
+        assertEquals(listOf(2, 3), glanceFit(410f, model, tile = false, rowCount = 3).let { listOf(it.candidate, it.visibleRows) })
+        assertEquals(listOf(3, 1), glanceFit(300f, model, tile = false, rowCount = 3).let { listOf(it.candidate, it.visibleRows) })
+        // Without rows nothing is counted below the tiles.
         val alone = glanceFit(bothBars, model, tile = false, rowCount = 0)
-        assertEquals(listOf(1, 0, 0), listOf(alone.candidate, alone.rows, alone.more))
+        assertEquals(listOf(1, 0, 0, 0), listOf(alone.candidate, alone.rows, alone.visibleRows, alone.more))
+        assertEquals(116f + 78.4f + 25.6f, alone.height, 0.01f)
     }
 
     @Test
-    fun `a running timer - both tiles, then the music tile compact, then the rows fold, then the timer goes (design 42 §1_6)`() {
-        // Room for everything: both full tiles and the rows.
+    fun `a running timer - its seven candidates first, so it outlives the date (design 42 §1_6 as changed by r9 §2)`() {
+        // Room for everything: both full tiles and every row.
         glanceFit(1000f, model, tile = true, rowCount = 2, clock = true).let {
-            assertEquals(listOf(1, 2), listOf(it.candidate, it.rows)); assertTrue(it.clock); assertEquals(GlanceTileSize.FULL, it.tile)
+            assertEquals(listOf(1, 2), listOf(it.candidate, it.visibleRows)); assertTrue(it.clock); assertEquals(GlanceTileSize.FULL, it.tile)
         }
-        // 600: the full music tile and the timer do not fit with two rows (701.8 / 679.4); compact does (558).
-        glanceFit(600f, model, tile = true, rowCount = 2, clock = true).let {
-            assertEquals(listOf(3, 2), listOf(it.candidate, it.rows)); assertTrue(it.clock); assertEquals(GlanceTileSize.COMPACT, it.tile)
-        }
-        // At 473 dp (both bars): the timer stays, the rows fold to the "more" line (5, 0 rows, 2 more: 439.6).
-        glanceFit(bothBars, model, tile = true, rowCount = 2, clock = true).let {
-            assertEquals(listOf(5, 0, 2), listOf(it.candidate, it.rows, it.more)); assertTrue(it.clock)
+        // 497 dp: the timer and the compact music tile with one row visible, the date kept (5: 471.6).
+        glanceFit(gestureBar, model, tile = true, rowCount = 2, clock = true).let {
+            assertEquals(listOf(5, 1), listOf(it.candidate, it.visibleRows)); assertTrue(it.clock); assertTrue(it.date)
             assertEquals(GlanceTileSize.COMPACT, it.tile)
         }
-        // Too little for the timer with the compact music tile: it goes, then today's order.
-        glanceFit(400f, model, tile = true, rowCount = 2, clock = true).let { assertFalse(it.clock) }
-        // The timer alone (no music): the rows fold before it goes.
-        glanceFit(bothBars, model, tile = false, rowCount = 3, clock = true).let {
-            assertTrue(it.clock); assertEquals(GlanceTileSize.NONE, it.tile); assertEquals(1, it.rows)
+        // 473 dp: the date goes before the timer (6: 446) - design 42 kept the date in every timer candidate.
+        glanceFit(bothBars, model, tile = true, rowCount = 2, clock = true).let {
+            assertEquals(listOf(6, 1), listOf(it.candidate, it.visibleRows)); assertTrue(it.clock); assertFalse(it.date)
         }
-        // No timer: today's fit, unchanged.
+        // Too little for the timer even with only the "more" line (7: 414): it goes, then the seven without it.
+        glanceFit(400f, model, tile = true, rowCount = 2, clock = true).let {
+            assertFalse(it.clock); assertEquals(listOf(5, 1), listOf(it.candidate, it.visibleRows)); assertTrue(it.date)
+        }
+        // The timer alone (no music): one row visible before it goes (3: 381.6).
+        glanceFit(bothBars, model, tile = false, rowCount = 3, clock = true).let {
+            assertTrue(it.clock); assertEquals(GlanceTileSize.NONE, it.tile); assertEquals(listOf(3, 3, 1), listOf(it.candidate, it.rows, it.visibleRows))
+        }
+        // No timer: the fit without it, unchanged.
         assertEquals(glanceFit(bothBars, model, tile = true, rowCount = 2), glanceFit(bothBars, model, tile = true, rowCount = 2, clock = false))
     }
 
@@ -165,10 +168,25 @@ class LockGlanceTest {
     }
 
     @Test
-    fun `the time line - position and length, the position alone without one (r6 §2)`() {
-        assertEquals("4:48 · 25:36", glanceTimeLine(288_000, 1_536_000))
-        assertEquals("1:02:03 · 2:00:00", glanceTimeLine(3_723_000, 7_200_000))
-        assertEquals("a live stream or an unknown length", "12:00", glanceTimeLine(720_000, 0))
+    fun `the progress row's times - elapsed and the time left, the elapsed time alone without a duration (r9 §3)`() {
+        assertEquals(GlanceTimes("1:26", "−2:38"), glanceTimes(86_000, 244_000))
+        // Whole seconds both, so they add up to the duration: 1:26.9 of 4:04.5 is 1:26 and 2:38.
+        assertEquals(GlanceTimes("1:26", "−2:38"), glanceTimes(86_900, 244_500))
+        assertEquals("past the end (a stale duration)", GlanceTimes("4:10", "−0:00"), glanceTimes(250_000, 244_000))
+        assertEquals("over an hour", GlanceTimes("1:02:13", "−4:10:05"), glanceTimes(3_733_000, 18_738_000))
+        assertEquals("a live stream or an unknown length", GlanceTimes("12:00", null), glanceTimes(720_000, 0))
+        assertEquals("−", GLANCE_MINUS)
+    }
+
+    @Test
+    fun `the times' widest text - the duration's shape, or the position's past a stale one (r9 §3, N6)`() {
+        assertEquals("0:00", glanceTimeWidest(244_000))
+        assertEquals("00:00", glanceTimeWidest(1_536_000))
+        assertEquals("0:00:00", glanceTimeWidest(18_738_000))
+        assertEquals("00:00:00", glanceTimeWidest(36_000_000))
+        assertEquals("no duration: up to 9:59:59", "0:00:00", glanceTimeWidest(0, 720_000))
+        assertEquals("a position past a stale 9:59", "00:00", glanceTimeWidest(599_000, 600_000))
+        assertEquals("the position inside the duration's shape", "0:00", glanceTimeWidest(244_000, 250_000))
     }
 
     @Test
@@ -414,9 +432,10 @@ class LockMediaGuardTest {
 }
 
 /**
- * The glance page from its XML (§1.2): the fit's expected candidates at 320x569 dp with both bars
- * at 48 dp (473 dp) and with gesture navigation (497 dp), in the 1.4 x text model (Nunito's line is
- * about 1.36 em); nothing squeezed at 320, 360 and 411 dp; round controls of fixed equal size.
+ * The glance page from its XML (design 25 §1.2, r9): the fit's expected candidates at 320x569 dp with a 48 dp
+ * status bar and 3-button navigation (473 dp) or gesture navigation (497 dp), in the 1.4 x text model (Nunito's
+ * line is about 1.36 em); the bottom block outside the top block that clips; nothing squeezed at 320, 360 and
+ * 411 dp; round controls of fixed equal size.
  */
 class LockGlanceLayoutTest {
     private val ns = "http://schemas.android.com/apk/res/android"
@@ -454,7 +473,7 @@ class LockGlanceLayoutTest {
 
     private fun withMargins(id: String): Float = root.byId(id).let { it.dim("layout_marginTop") + it.dim("layout_marginBottom") + height(it) }
 
-    /** §1.2's parts as the panel measures them. */
+    /** The fit's parts as the panel measures them. */
     private val heights by lazy {
         val clock = root.byId("lock_glance_clock")
         GlanceHeights(
@@ -465,7 +484,7 @@ class LockGlanceLayoutTest {
             tileFull = withMargins("lock_media_tile"),
             tileCompact = withMargins("lock_media_compact"),
             clockFull = withMargins("lock_timer_tile"),
-            rowsTop = root.byId("lock_glance_list").dim("layout_marginTop"),
+            rowsTop = root.byId("lock_glance_scroll").dim("layout_marginTop"),
             rowsTopNoTile = 22f,
             row = height(row),
             rowGap = 8f,
@@ -481,9 +500,9 @@ class LockGlanceLayoutTest {
         assertEquals("rows of at least 56 dp, 8 dp vertical padding (QA Low 4)", 56f, height(row))
         assertEquals(8f, row.dim("paddingTop"))
         assertEquals(8f, row.dim("paddingBottom"))
-        // r6 §2: the full tile grows by the time line and its margin (211 + 6 + 16.8); the compact tile
-        // has no line (the user, 2026-10-20), its 52 dp art row stays its height.
-        assertEquals(233.8f, heights.tileFull, 0.01f)
+        // r9 §3: 12 + the 48 dp cover + 10 + the times' line (12 sp) + 2 + the 56 dp play + 12, and its 18 dp margin
+        // (r6's tile was 233.8); the compact tile keeps its 52 dp art row.
+        assertEquals(174.8f, heights.tileFull, 0.01f)
         assertEquals(90f, heights.tileCompact, 0.01f)
         // Lås opp 56 + the bottom row 48 + its 12 dp of air (the user, 2026-10-21; it was 2 dp).
         assertEquals(116f, heights.fixed, 0.01f)
@@ -530,55 +549,100 @@ class LockGlanceLayoutTest {
     }
 
     @Test
-    fun `the time line sits under the full tile's bar, one line of tabular figures - the compact tile has none (r6 §2)`() {
-        assertTrue("the user, 2026-10-20", root.all().none { it.id() == "lock_media_compact_time" })
-        for ((bar, line) in listOf("lock_media_progress" to "lock_media_time")) {
-            val barView = root.byId(bar)
-            val siblings = (barView.parentNode as Element).kids()
-            assertEquals("$line right under $bar", line, siblings[siblings.indexOf(barView) + 1].id())
-            assertEquals("vertical", (barView.parentNode as Element).getAttributeNS(ns, "orientation"))
-            val text = root.byId(line)
-            // A width the parent fixes and one line: a tick swaps the text without asking for a layout.
-            assertEquals("match_parent", text.getAttributeNS(ns, "layout_width"))
-            assertEquals("1", text.getAttributeNS(ns, "maxLines"))
-            assertEquals("tnum", text.getAttributeNS(ns, "fontFeatureSettings"))
-            assertEquals("@color/kid_core_dim", text.getAttributeNS(ns, "textColor"))
-            assertEquals("the bar says it to TalkBack", "no", text.getAttributeNS(ns, "importantForAccessibility"))
+    fun `the full tile's progress row - elapsed, the weighted bar, the time left, one line each of a fixed width (r9 §3)`() {
+        val bar = root.byId("lock_media_progress")
+        val progressRow = bar.parentNode as Element
+        assertEquals("horizontal", progressRow.getAttributeNS(ns, "orientation"))
+        assertEquals(listOf("lock_media_elapsed", "lock_media_progress", "lock_media_remaining"), progressRow.kids().map { it.id() })
+        assertEquals("lock_media_tile", (progressRow.parentNode as Element).id())
+        // The bar takes what the times leave: 4 dp, 0dp + weight 1.
+        assertEquals(listOf("0dp", "1", "4dp"), listOf("layout_width", "layout_weight", "layout_height").map { bar.getAttributeNS(ns, it) })
+        for (id in listOf("lock_media_elapsed", "lock_media_remaining")) {
+            val time = root.byId(id)
+            // A width the panel sets (an initial 40 dp, never wrap_content) and one line, never ellipsized: a pixel short
+            // must never show "1:2…"; a tick swaps the text without asking for a layout.
+            assertEquals(id, "40dp", time.getAttributeNS(ns, "layout_width"))
+            assertEquals(id, "1", time.getAttributeNS(ns, "maxLines"))
+            assertEquals(id, "", time.getAttributeNS(ns, "ellipsize"))
+            assertEquals(id, "", time.getAttributeNS(ns, "singleLine"))
+            assertEquals(id, 12f, time.dim("textSize"))
+            assertEquals(id, "@color/kid_core_dim", time.getAttributeNS(ns, "textColor"))
+            assertEquals("$id: the bar says it to TalkBack", "no", time.getAttributeNS(ns, "importantForAccessibility"))
         }
+        assertEquals("start", root.byId("lock_media_elapsed").getAttributeNS(ns, "gravity"))
+        assertEquals("end", root.byId("lock_media_remaining").getAttributeNS(ns, "gravity"))
+        // The item and the entry one line each; r6's time line and the large art's drawable are gone.
+        for (id in listOf("lock_media_item", "lock_media_entry")) assertEquals(id, "1", root.byId(id).getAttributeNS(ns, "maxLines"))
+        assertTrue(root.all().none { it.id() == "lock_media_time" || it.id() == "lock_media_compact_time" })
+        assertTrue(listOf("src/main/res/drawable", "app/src/main/res/drawable").none { File(it, "bg_music_art_large.xml").exists() })
+        // The panel sets the widths from the shape's widest text at the view's paint, plus 1 dp, only when the px differ.
+        val panel = file("java/com/kidslauncher/mdm/music/MusicLockPanel.kt").readText()
+        assertTrue(panel.contains("Layout.getDesiredWidth(widest, view.paint)"))
+        assertTrue(panel.contains("if (params.width != px)"))
+        assertTrue(panel.contains("fixWidth(elapsed, glanceTimeWidest(s.durationMs, position))"))
+        assertTrue(panel.contains("fixWidth(remaining, GLANCE_MINUS + glanceTimeWidest(s.durationMs))"))
     }
 
     @Test
-    fun `the clock is the lighter 700 weight (design 34 P7)`() {
-        // It was Nunito 800 (extra-bold), the heaviest thing on the calm lock; the size and fit stay.
-        val clock = root.byId("lock_glance_clock")
-        assertEquals("@font/nunito_bold", clock.getAttributeNS(ns, "fontFamily"))
-        assertTrue(file("res/font/nunito.xml").readText().contains(Regex("""fontWeight="700"[^/]*@font/nunito_bold""")))
-        // Nothing sets the clock's typeface in code, so the XML is what shows.
-        assertFalse(file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText().contains(Regex("""lockGlanceClock\.(typeface|setTypeface)""")))
+    fun `the full tile's controls - plain glyphs in the ink, 48 56 48 dp targets 28 dp apart, an oval ripple (r9 §3)`() {
+        val controls = root.byId("lock_media_play").parentNode as Element
+        assertEquals(listOf("lock_media_previous", "lock_media_play", "lock_media_next"), controls.kids().map { it.id() })
+        assertEquals(listOf(48f, 56f, 48f), controls.kids().map { it.dim("layout_width") })
+        val play = root.byId("lock_media_play")
+        assertEquals(listOf(28f, 28f), listOf(play.dim("layout_marginStart"), play.dim("layout_marginEnd")))
+        for (button in controls.kids()) {
+            assertEquals(button.id(), "?android:attr/selectableItemBackgroundBorderless", button.getAttributeNS(ns, "background"))
+            assertEquals(button.id(), "@color/kid_ink", button.getAttributeNS(ns, "tint"))
+            // ~26 dp glyphs in the 48 dp targets, ~34 dp in play's 56.
+            assertEquals(button.id(), 11f, button.dim("padding"))
+        }
+        // The 48 dp cover and its 24 dp note glyph.
+        assertEquals(48f, (root.byId("lock_media_art").parentNode as Element).dim("layout_width"))
+        assertEquals(24f, root.byId("lock_media_glyph").dim("layout_width"))
     }
 
     @Test
-    fun `the expected fits at 473 and 497 dp (§1_2)`() {
-        val bars = available(48f)
-        fun fit(tile: Boolean, rows: Int, avail: Float = bars) = glanceFit(avail, heights, tile, rows)
+    fun `the fit keys on the available height - the listener and fitNow both read it (r9 §1)`() {
+        val panel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
+        val listener = panel.substringAfter("glance.root.addOnLayoutChangeListener").substringBefore("\n        }")
+        assertTrue(listener, listener.contains("available(bottom - top) != fitFor"))
+        assertFalse("the bare height no longer decides", listener.contains("bottom - top != fitFor"))
+        val fitNow = panel.substringAfter("private fun fitNow()").substringBefore("val clock = ")
+        assertTrue(fitNow, fitNow.contains("val room = available(root.height)"))
+        assertTrue(fitNow, fitNow.contains("fitFor = room"))
+        assertTrue(panel.contains("private fun available(height: Int): Int = glance.root.let { height - it.paddingTop - it.paddingBottom }"))
+        // The log line comes with a new fit or a new available height.
+        assertTrue(panel.contains("if (next != fit || room != loggedFor)"))
+        // Every lock-up starts the rows at the top (r9 §2).
+        assertTrue(panel.substringAfter("if (lockStageDue(").substringBefore("renderNow()").contains("glance.lockGlanceScroll.scrollTo(0, 0)"))
+    }
+
+    @Test
+    fun `the expected fits at 473 and 497 dp (r9 §2)`() {
+        fun fit(tile: Boolean, rows: Int, avail: Float) = glanceFit(avail, heights, tile, rows)
         fun total(f: GlanceFit) = f.height + root.dim("paddingTop") + root.dim("paddingBottom")
-        // Re-derived with r6 §2's time line on the full tile (tileFull 233.8, tileCompact 90); again on
-        // 2026-10-21 with the bottom row's 12 dp of air and the page's 8 dp bottom padding: every total
-        // grows by 2 dp against 8 dp more room (the full tile alone keeps 3.2 dp of slack at 473 dp, qa-lfix 1), so every candidate below is the same as before.
-        // Full tile alone -> 1 (469.8).
-        fit(true, 0).let { assertEquals(1, it.candidate); assertEquals(469.8f, total(it), 0.5f) }
-        // 3 rows + more, no music -> 1 (466).
-        fit(false, 4).let { assertEquals(listOf(1, 3, 1), listOf(it.candidate, it.rows, it.more)); assertEquals(466f, total(it), 0.5f) }
-        // Music + 1 row -> 3 (396).
-        fit(true, 1).let { assertEquals(3, it.candidate); assertEquals(396f, total(it), 0.5f) }
-        // Music + 2 rows -> 3 (460, mockup A).
-        fit(true, 2).let { assertEquals(listOf(3, 2), listOf(it.candidate, it.rows)); assertEquals(460f, total(it), 0.5f) }
-        // Music + 3 rows -> 5 with 2 rows + more (461.6).
-        fit(true, 3).let { assertEquals(listOf(5, 2, 1), listOf(it.candidate, it.rows, it.more)); assertEquals(461.6f, total(it), 0.5f) }
-        // 24 dp navigation: music + 1 row stays the compact tile (3, 396) - the full tile's line makes the
-        // full one 517.4, over 497; music + 2 rows mockup A (3, 460).
-        fit(true, 1, available(24f)).let { assertEquals(3, it.candidate); assertEquals(GlanceTileSize.COMPACT, it.tile); assertEquals(396f, total(it), 0.5f) }
-        fit(true, 2, available(24f)).let { assertEquals(listOf(3, 2), listOf(it.candidate, it.rows)); assertEquals(460f, total(it), 0.5f) }
+        // The scroll's height under a one-row candidate 3: what the clock, date and full tile leave, less its margin.
+        fun scroll(avail: Float) = avail - (heights.fixed + heights.clockSmall + heights.date + heights.tileFull) - heights.rowsTop
+        for ((avail, music1, music1Total) in listOf(Triple(available(48f), 2, 458.4f), Triple(available(24f), 1, 480.8f))) {
+            // Full tile alone -> 1 (410.8).
+            fit(true, 0, avail).let { assertEquals(1, it.candidate); assertEquals(410.8f, total(it), 0.5f) }
+            // No music, 4 rows -> 1 with 3 rows + more (466).
+            fit(false, 4, avail).let {
+                assertEquals(listOf(1, 3, 3, 1), listOf(it.candidate, it.rows, it.visibleRows, it.more)); assertEquals(466f, total(it), 0.5f)
+            }
+            // Music + 1 row (the user's case): the small clock at 473, the big one at 497.
+            fit(true, 1, avail).let { assertEquals(music1, it.candidate); assertEquals(music1Total, total(it), 0.5f) }
+            // Music + 2 rows (the mockup) and music + 3 rows: the full tile, one row visible, the rest scrolls.
+            for (rows in listOf(2, 3)) fit(true, rows, avail).let {
+                assertEquals(listOf(3, rows, 1), listOf(it.candidate, it.rows, it.visibleRows))
+                assertEquals(GlanceTileSize.FULL, it.tile)
+                assertEquals(458.4f, total(it), 0.5f)
+            }
+            // The one counted row's content stays clear of the 16 dp fade at the scroll's bottom (70.6 / 94.6 dp).
+            assertTrue(scroll(avail) - 16f >= heights.row - row.dim("paddingBottom"))
+        }
+        assertEquals(70.6f, scroll(available(48f)), 0.5f)
+        assertEquals(94.6f, scroll(available(24f)), 0.5f)
     }
 
     @Test
@@ -588,8 +652,10 @@ class LockGlanceLayoutTest {
         val withAlarm = heights.copy(date = heights.date + alarm)
         // 473 dp: with a morning alarm set, no music and 4 rows take the small clock (470.2 > 457) ...
         glanceFit(available(48f), withAlarm, false, 4).let { assertEquals(listOf(2, 3, 1), listOf(it.candidate, it.rows, it.more)) }
-        // ... and the full music tile alone too (474 > 457).
-        assertEquals(2, glanceFit(available(48f), withAlarm, true, 0).candidate)
+        // ... the full music tile alone keeps the big clock (415); music + 1 row takes the compact tile (the full one
+        // with the small clock is 462.6 > 457, and one row is every row).
+        assertEquals(1, glanceFit(available(48f), withAlarm, true, 0).candidate)
+        assertEquals(4, glanceFit(available(48f), withAlarm, true, 1).candidate)
         // 497 dp: both keep the big clock.
         assertEquals(1, glanceFit(available(24f), withAlarm, false, 4).candidate)
         assertEquals(1, glanceFit(available(24f), withAlarm, true, 0).candidate)
@@ -608,13 +674,19 @@ class LockGlanceLayoutTest {
     fun `nothing is squeezed at 320, 360 and 411 dp`() {
         val tile = root.byId("lock_media_tile")
         val controls = root.byId("lock_media_play").parentNode as Element
-        assertEquals("the tile's controls", 204f, fixedWidth(controls))
+        assertEquals("the tile's controls", 208f, fixedWidth(controls))
         val compact = root.byId("lock_media_compact")
         assertEquals("the compact tile's fixed parts", 144f, fixedWidth(compact))
         assertEquals("a row's fixed parts with the widest time", 144f, fixedWidth(row, text = 60f))
+        val bar = root.byId("lock_media_progress")
         for (screen in listOf(320f, 360f, 411f)) {
             val content = screen - root.dim("paddingStart") - root.dim("paddingEnd")
             assertTrue("$screen: tile controls", fixedWidth(controls) <= content - 2 * tile.dim("padding"))
+            // A book over an hour at font scale 2.0: "0:00:00" and "−0:00:00" at 12 sp, 0.6 em a figure, still leave
+            // a bar (32 dp at 320).
+            val times = (7 + 8) * 12f * 2f * 0.6f
+            val barMargins = bar.dim("layout_marginStart") + bar.dim("layout_marginEnd")
+            assertTrue("$screen: the progress row at 2.0", content - 2 * tile.dim("padding") - barMargins - times >= 24f)
             assertTrue("$screen: compact tile", content - fixedWidth(compact) >= 120f)
             // Design 42: the timer's "8:88:88" at 24 sp and font scale 2.0 in the tile's full width.
             val timer = root.byId("lock_timer_tile")
@@ -650,19 +722,41 @@ class LockGlanceLayoutTest {
     }
 
     @Test
-    fun `the order - clock, date, tiles, rows, more, Lås opp, the bottom row last`() {
+    fun `the order - the top block with the rows' scroll last, then the bottom block (r9 §2)`() {
         val ids = root.all().map { it.id() }.filter { it.isNotEmpty() }
         val order = listOf(
-            "lock_glance_clock", "lock_glance_date", "lock_glance_alarm", "lock_media_tile", "lock_media_compact", "lock_timer_tile",
-            "lock_glance_rows", "lock_glance_more", "lock_glance_unlock", "lock_glance_bottom", "lock_glance_emergency", "lock_glance_torch",
+            "lock_glance_top", "lock_glance_clock", "lock_glance_date", "lock_glance_alarm", "lock_media_tile", "lock_media_compact",
+            "lock_timer_tile", "lock_glance_scroll", "lock_glance_list", "lock_glance_rows", "lock_glance_more", "lock_glance_unlock",
+            "lock_glance_bottom", "lock_glance_emergency", "lock_glance_torch",
         )
         assertEquals(order, ids.filter { it in order })
-        assertEquals(listOf("lock_glance_unlock", "lock_glance_bottom"), root.kids().takeLast(2).map { it.id() })
+        // The root holds the top block and the bottom block, measured whole: nothing else, no Space.
+        assertEquals(listOf("lock_glance_top", "lock_glance_unlock", "lock_glance_bottom"), root.kids().map { it.id() })
+        assertTrue(root.all().none { it.tagName == "Space" })
+        // The top block and the rows' scroll take what is left (0dp + weight 1); the scroll is the top block's last
+        // child and holds the list.
+        val top = root.byId("lock_glance_top")
+        val scroll = root.byId("lock_glance_scroll")
+        for (e in listOf(top, scroll)) {
+            assertEquals(e.id(), listOf("0dp", "1"), listOf(e.getAttributeNS(ns, "layout_height"), e.getAttributeNS(ns, "layout_weight")))
+        }
+        assertEquals("vertical", top.getAttributeNS(ns, "orientation"))
+        assertEquals("lock_glance_scroll", top.kids().last().id())
+        assertEquals("ScrollView", scroll.tagName)
+        assertEquals(listOf("lock_glance_list"), scroll.kids().map { it.id() })
+        // The fade only while there is more to scroll to: the contacts row's 16 dp (CONTACTS_FADE_DP).
+        assertEquals("vertical", scroll.getAttributeNS(ns, "requiresFadingEdge"))
+        assertEquals("16dp", scroll.getAttributeNS(ns, "fadingEdgeLength"))
+        assertEquals(com.kidslauncher.mdm.ui.home.CONTACTS_FADE_DP, scroll.dim("fadingEdgeLength"))
         // A row: icon, title, subtitle, time; one line each, ellipsized.
         for (id in listOf("glance_row_title", "glance_row_subtitle")) {
             val text = row.all().single { it.id() == id }
             assertEquals("1", text.getAttributeNS(ns, "maxLines"))
             assertEquals("end", text.getAttributeNS(ns, "ellipsize"))
         }
+        // The panel's margin and gone logic is the scroll's: gone only without any row (N1).
+        val panel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
+        assertTrue(panel.contains("scroll.visibility = if (fit.rows == 0 && fit.more == 0) View.GONE else View.VISIBLE"))
+        assertFalse(panel.contains("lockGlanceList"))
     }
 }

@@ -131,9 +131,12 @@ class GlancePanel(
     /** A fit changed the page in this traversal: its frame is skipped (the next one is fitted). */
     private var refitPending = false
 
-    /** The root height the current fit was made for (0 = a new fit is due). */
+    /** The available height ([available]) the current fit was made for (0 = a new fit is due). */
     private var fitFor = 0
     private var fit: GlanceFit? = null
+
+    /** The available height the last log line named (it is written when this or the fit changes). */
+    private var loggedFor = 0
 
     /** The shown tiles' heights (px, with their margins) the current fit was made with (null: none). */
     private var fitTilePx: Int? = null
@@ -167,10 +170,11 @@ class GlancePanel(
         openAction(glance.lockTimerTile)
         // The clock app's text, like a row's: only accessibility tools read it.
         sensitive(glance.lockTimerTile)
-        // The fit needs the page's height: never before the first layout, again after every change
-        // (gesture <-> 3-button navigation, QA Low 4).
+        // The fit needs the page's room: never before the first layout, again after every change of the
+        // height or of the system bars' padding (r9 §1: edge-to-edge, the bars arrive as padding at the
+        // same height - at the screen-on of a lock started dark, a gesture <-> 3-button switch, QA Low 4).
         glance.root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
-            if (bottom - top > 0 && bottom - top != fitFor) guarded("fit") { fitNow() }
+            if (bottom - top > 0 && available(bottom - top) != fitFor) guarded("fit") { fitNow() }
         }
         // Bug 25b-B/C: a fit that changed the page skips the frame it was made in - the first frame
         // drawn is the fitted page, never the big clock and tile settling a moment later.
@@ -219,6 +223,8 @@ class GlancePanel(
         if (lockStageDue(interactive, decidedAt, offs)) {
             decidedAt = offs
             tileUp = false
+            // Every lock-up starts the rows at the top (r9 §2).
+            glance.lockGlanceScroll.scrollTo(0, 0)
             state = glanceStageStep(state, GlanceStageEvent.LockUp)
             dropTargetIfGone()
             onStage()
@@ -630,14 +636,17 @@ class GlancePanel(
 
     // ---- the fit (§1.2) ---------------------------------------------------------------------------
 
+    /** The page's room for its parts at [height]: the root less its paddings, which carry the visible
+     * system bars (`KidInsets`). */
+    private fun available(height: Int): Int = glance.root.let { height - it.paddingTop - it.paddingBottom }
+
     /** Measures every part at the page's width once, picks the first candidate that fits and shows it.
      * Only once the page is laid out; a re-render starts again from candidate 1. */
     private fun fitNow() {
         val root = glance.root
         val width = pageWidth() ?: return
-        val height = root.height
-        fitFor = height
-        val available = (height - root.paddingTop - root.paddingBottom).toFloat()
+        val room = available(root.height)
+        fitFor = room
         val clock = glance.lockGlanceClock
         clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_BIG_SP)
         val clockBig = measured(clock, width)
@@ -662,11 +671,16 @@ class GlancePanel(
             rowGap = dp(8f).toFloat(),
             more = measured(more, width),
         )
-        val next = glanceFit(available, heights, tileUp, rows.size, clockUp)
-        if (next != fit) {
-            Log.i(LOG_TAG, "Glance fit: candidate ${next.candidate}, ${next.rows} rows, ${next.more} more")
-            refitPending = true
+        val next = glanceFit(room.toFloat(), heights, tileUp, rows.size, clockUp)
+        if (next != fit || room != loggedFor) {
+            // Counts and dp only (LockGlanceGuardTest): the room and the paddings say which bars it saw.
+            val roomDp = px2dp(room)
+            val padTop = px2dp(root.paddingTop)
+            val padBottom = px2dp(root.paddingBottom)
+            Log.i(LOG_TAG, "Glance fit: candidate ${next.candidate}, ${next.rows} rows, ${next.more} more, ${next.visibleRows} visible, available $roomDp dp (pad $padTop/$padBottom)")
+            loggedFor = room
         }
+        if (next != fit) refitPending = true
         fit = next
         fitTilePx = when (next.tile) {
             GlanceTileSize.FULL -> heights.tileFull
@@ -683,11 +697,13 @@ class GlancePanel(
         glance.lockGlanceAlarm.visibility = if (fit.date && !glance.lockGlanceAlarm.text.isNullOrEmpty()) View.VISIBLE else View.GONE
         music.show(fit.tile, page = true)
         clock.show(fit.clock, page = true)
-        val list = glance.lockGlanceList
-        list.visibility = if (fit.rows == 0 && fit.more == 0) View.GONE else View.VISIBLE
+        // The rows' scroll: gone only without any row (n = 0) - candidate 7 binds none but shows the
+        // "more" line in it (qa-r9-revision-check N1).
+        val scroll = glance.lockGlanceScroll
+        scroll.visibility = if (fit.rows == 0 && fit.more == 0) View.GONE else View.VISIBLE
         val top = dp(if (fit.tile == GlanceTileSize.NONE && !fit.clock) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)
-        (list.layoutParams as ViewGroup.MarginLayoutParams).let {
-            if (it.topMargin != top) list.layoutParams = it.apply { topMargin = top }
+        (scroll.layoutParams as ViewGroup.MarginLayoutParams).let {
+            if (it.topMargin != top) scroll.layoutParams = it.apply { topMargin = top }
         }
         shownRows.forEachIndexed { i, view -> view.root.visibility = if (i < fit.rows) View.VISIBLE else View.GONE }
         val more = glance.lockGlanceMore
@@ -710,6 +726,8 @@ class GlancePanel(
     }
 
     private fun dp(value: Float): Int = KidAvatars.dp(activity, value)
+
+    private fun px2dp(px: Int): Int = (px / activity.resources.displayMetrics.density).roundToInt()
 
     /** Every entry point: a glance fault is logged by its class and never reaches the crash guard. */
     private inline fun guarded(what: String, work: () -> Unit) {

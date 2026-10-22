@@ -184,7 +184,9 @@ class LockGlanceGuardTest {
      * name, text, key or shortcut id. */
     private val allowedInterpolations = setOf(
         "\$source", "\${e.javaClass.simpleName}", "\${next.apps.size}", "\$withText",
-        "\$what", "\$pkg", "\${next.candidate}", "\${next.rows}", "\${next.more}",
+        "\$what", "\$pkg", "\${next.candidate}", "\${next.rows}", "\${next.more}", "\${next.visibleRows}",
+        // The fit's room and the root's paddings, in dp (r9 §1).
+        "\$roomDp", "\$padTop", "\$padBottom",
     )
 
     @Test

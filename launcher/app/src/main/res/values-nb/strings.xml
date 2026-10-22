@@ -101,6 +101,11 @@
     <string name="kid_settings_sound_dnd">Ikke forstyrr er på.</string>
     <string name="kid_settings_sound_fully_silent">Telefonen er helt lydløs nå, uten vibrering.</string>
     <string name="kid_settings_sound_volume_keys">Lyden kan ikke endres her akkurat nå. Volumknappene virker.</string>
+    <!-- Touch sounds and vibration (design r9 §4). -->
+    <string name="kid_settings_touch_sounds">Lyd ved trykk</string>
+    <string name="kid_settings_touch_vibration">Vibrasjon ved trykk</string>
+    <string name="kid_settings_touch_keyboard">Tastaturet har egen lyd og vibrasjon i sine innstillinger.</string>
+    <string name="kid_settings_touch_read_only">Kan ikke endres på denne telefonen ennå.</string>
     <string name="wallpaper_navy">Mørk blå</string>
     <string name="wallpaper_vibb_night">Natt</string>
     <string name="wallpaper_forest">Skog</string>

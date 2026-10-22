@@ -81,7 +81,7 @@
 
     <section id="quick-controls" aria-labelledby="quick-controls-title">
         <h2 class="group-header" id="quick-controls-title">Quick controls</h2>
-        {#- One form for the four: `section=quick` writes only these (§5.6, H1), not the web filter. -#}
+        {#- One form for the five: `section=quick` writes only these (§5.6, H1), not the web filter. -#}
         <form method="post" action="/devices/{{ device.id }}/policy#quick-controls" class="group">
             <input type="hidden" name="section" value="quick">
             <label class="row">
@@ -100,6 +100,10 @@
                 <span class="row-label">Sound or silent</span>
                 <input type="checkbox" role="switch" class="sw" name="quick_control_sound" value="on"{% if quick_sound %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
+            <label class="row">
+                <span class="row-label">Touch sounds and vibration</span>
+                <input type="checkbox" role="switch" class="sw" name="quick_control_touch" value="on"{% if quick_touch %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
             <noscript><button type="submit" class="row row-button">Save</button></noscript>
         </form>
         <div class="group-footer">Shown when your child swipes left on the home screen.
@@ -108,6 +112,7 @@
                 <div class="info-panel">
                     <p>Your child gets these instead of Android's quick settings, which can't be locked down: an app can add its own tile there.</p>
                     <p>Sound or silent: the volume buttons work either way. Do Not Disturb isn't offered, and while it is on your child can't change the sound there.</p>
+                    <p>Touch sounds and vibration: Android's switches for taps; the keyboard has its own. They need the "Modify system settings" permission the clock format uses - grant it first, or your child sees them but can't change them.</p>
                 </div>
             </details>
         </div>
