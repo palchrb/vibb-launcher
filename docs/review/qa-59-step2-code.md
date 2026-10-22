@@ -155,3 +155,22 @@ This is inherent to answering on the POST, which is the design's choice. Note it
 
 Not mutated, by reasoning: logging the PIN through `tracing` can't be caught by a test. The diff was checked by grep
 instead (see Checks that held).
+
+## Fixes
+
+- S2P-1: Fixed in c613dba2 - the count is `admin_users.reauth_wrong` (migration 0086), one `UPDATE` per answer, reset
+  by a right password and a complete sign-in; the third wrong one sets it to 0 and bumps `session_epoch` in the same
+  statement (every session of the account ends; `reauth_signed_out` says so); a database error signs out too. Tests
+  `android_lock_page::parallel_wrong_passwords_all_count` (the `join!` of three, the epoch moved) and
+  `a_held_request_cant_bring_the_session_back` (the held body).
+- S2P-2: Fixed in c613dba2 - the credential's warning (and the alarm) is left out only while the phone runs Android's
+  lock; `the_card_words_android_lock_case_by_case` pins the chosen-but-not-running case with the warning and the alarm.
+- S2P-3: Fixed in c613dba2 - the reveal posts to `/devices/{id}/lock#show-pin`; `check_forms`' `action == page`
+  exception is gone; the redirect table has the row with `Some("show-pin")`.
+- S2P-4: Fixed in c613dba2 - Send again and the reveal's "the phone still has" read the last report only when it is
+  since `devices.enrolled_at` (`device_pages::since_enrolment`, unit-tested).
+- S2P-5: Fixed in c613dba2 - the shown PIN sits in a plain cell, hides after 60 s by a CSS animation (no JS needed) and
+  is emptied on `pagehide`/hidden by `static/reveal.js` (`jstest/reveal.test.js`).
+- S2P-6: Fixed in c613dba2 - `reveal.js` replaces the answer's history entry with a GET of the same address, so a
+  reload or Back loads the page without the PIN; without JS the browser asks before resubmitting. Noted in pwa.md
+  ("Lock Screen & PINs") and the design's "Step 2 as built".
