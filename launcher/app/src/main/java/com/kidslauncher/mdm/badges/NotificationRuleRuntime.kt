@@ -98,6 +98,9 @@ object NotificationRuleRuntime {
         listener = service
     }
 
+    /** The connected listener (design 59c prototype, debug only: its `cancel` variant). */
+    internal fun connectedListener(): BadgeListenerService? = listener
+
     fun detach(service: BadgeListenerService) {
         if (listener === service) listener = null
     }

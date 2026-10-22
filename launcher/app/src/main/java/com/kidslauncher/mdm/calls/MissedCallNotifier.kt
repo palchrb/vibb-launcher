@@ -315,6 +315,8 @@ object MissedCallNotifier {
             // A boot re-send or an update after a call: shown again without a sound (the platform
             // builder has no setSilent; compat puts it in a group that doesn't alert).
             .setSilent(!alert)
+            // Design 59c prototype (debug only; release: always false): the lock shows the curated row instead.
+            .apply { if (com.kidslauncher.mdm.lock.PlainLockDebug.enabled(context)) setVisibility(NotificationCompat.VISIBILITY_SECRET) }
             .build()
         return try {
             createMissedCallChannel(context)

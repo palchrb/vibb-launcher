@@ -37,6 +37,10 @@ object KeyguardCover {
     var switchOn = false
         private set
 
+    /** Design 59c prototype: the plain Android lock's switch at the last apply (release: never true). */
+    @Volatile
+    private var plainOn = false
+
     /** COVER is in force: the features, T and `setKeyguardDisabled(false)` all held. */
     @Volatile
     var coverOn = false
@@ -149,6 +153,12 @@ object KeyguardCover {
         } catch (e: Exception) {
             false
         }
+        // Design 59c prototype (debug only; release: always false): the plain Android lock's features.
+        plainOn = try {
+            PlainLockDebug.enabled(app)
+        } catch (e: Exception) {
+            false
+        }
         inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped, androidRequested, androidHeld)
         val (wanted, forManaged) = wantedNow()
         return write(app, dpm, admin, "apply", wanted, forManaged).lockMayRun
@@ -197,6 +207,7 @@ object KeyguardCover {
             DpmKeyguard(dpm, admin), wanted, managed, coverAdded(app), { ScreenTimeout.effectiveMs(app) },
             storeCoverAdded = { storeCoverAdded(app, it) },
             storeWritten = { storeWritten(app, it) },
+            plain = plainOn,
         )
         coverOn = written.mode == KeyguardMode.COVER
         androidOn = written.mode == KeyguardMode.ANDROID

@@ -406,6 +406,8 @@ class Application : android.app.Application() {
         // main thread), and our missed-call notification known again if it is still on screen.
         com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()
         com.kidslauncher.mdm.calls.MissedCallNotifier.refreshAtStart(this)
+        // Design 59c prototype (debug only; release: nothing): the plain Android lock's curated rows.
+        com.kidslauncher.mdm.lock.PlainLockDebug.start(this)
 
         // The anchor service: every background sync and the SSE stream (the only nudge since
         // design 19); it arms the backstop alarm and syncs once at start - see its doc comment.

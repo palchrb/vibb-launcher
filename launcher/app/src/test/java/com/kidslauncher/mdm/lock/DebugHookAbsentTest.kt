@@ -33,7 +33,7 @@ class DebugHookAbsentTest {
         assertTrue(outside.size > 100)
         for (f in outside) {
             // Raw text, comments included: a KDoc naming a hook fails too (design 28 QA L3).
-            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "LockUpDebugReceiver", "KeyguardCoverDebugReceiver", "keyguard_cover_debug")) {
+            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "LockUpDebugReceiver", "KeyguardCoverDebugReceiver", "keyguard_cover_debug", "PlainLockDebugReceiver", "plain_lock_debug")) {
                 assertFalse("${f.path} names $banned", f.readText().contains(banned))
             }
         }
@@ -43,7 +43,7 @@ class DebugHookAbsentTest {
     fun `only the debug manifest declares the receivers, guarded by DUMP`() {
         val main = dir("main/AndroidManifest.xml").readText()
         val debug = code(dir("debug/AndroidManifest.xml"))
-        for ((pkg, name) in listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "lock" to "LockUpDebugReceiver", "lock" to "KeyguardCoverDebugReceiver")) {
+        for ((pkg, name) in listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "lock" to "LockUpDebugReceiver", "lock" to "KeyguardCoverDebugReceiver", "lock" to "PlainLockDebugReceiver")) {
             assertFalse(name, main.contains(name))
             val receiver = debug.substringAfter("android:name=\"com.kidslauncher.mdm.$pkg.$name\"", "").substringBefore("/>")
             assertTrue(name, receiver.contains("android:exported=\"true\""))
@@ -110,5 +110,30 @@ class DebugHookAbsentTest {
         assertTrue(receiver.contains("KeyguardCoverDebug.store(app, it)"))
         assertTrue(receiver.contains("AppEnforcer.apply(app, currentPolicyDecision().policy)"))
         assertTrue(code(dir("debug/java/com/kidslauncher/mdm/lock/KeyguardCoverDebug.kt")).contains("private const val PREFS = \"keyguard_cover_debug\""))
+    }
+
+    @Test
+    fun `release PlainLockDebug is always off and starts nothing, and only its five callers read it`() {
+        // Design 59c prototype: the plain Android lock exists only in the debug build.
+        val release = code(dir("release/java/com/kidslauncher/mdm/lock/PlainLockDebug.kt"))
+        assertEquals(2, Regex("\\bfun ").findAll(release).count())
+        assertTrue(release, release.contains("fun enabled(context: Context): Boolean = false\n"))
+        assertTrue(release, release.contains("fun start(context: Context) = Unit\n"))
+        assertFalse(release.contains("var ") || release.contains("val "))
+        val callers = sources("main").filter { code(it).contains("PlainLockDebug") }.map { it.name }.sorted()
+        assertEquals(listOf("Application.kt", "KeyguardCover.kt", "MissedCallNotifier.kt", "PinLockRuntime.kt"), callers)
+        // The plain features keep everything Android's lock writes but SECURE_NOTIFICATIONS and SHORTCUTS_ALL, plus UNREDACTED.
+        assertEquals((ANDROID_KEYGUARD_FEATURES and (0x4 or 0x200).inv()) or 0x8, PLAIN_KEYGUARD_FEATURES)
+        assertEquals(ANDROID_KEYGUARD_FEATURES, androidKeyguardFeatures(plain = false))
+        // Hybrid -> plain -> hybrid: the switch back takes out exactly what plain added.
+        val (hybrid, addedH) = keyguardDisabledFeatures(0, managed = true, cover = false, coverAdded = 0, android = true)
+        val (plain, addedP) = keyguardDisabledFeatures(hybrid, managed = true, cover = false, coverAdded = addedH, android = true, plain = true)
+        assertEquals(PLAIN_KEYGUARD_FEATURES or KEYGUARD_SECURE_CAMERA, plain)
+        assertEquals(hybrid, keyguardDisabledFeatures(plain, managed = true, cover = false, coverAdded = addedP, android = true).first)
+        // The receiver stores its own prefs file and runs a full apply.
+        val receiver = code(dir("debug/java/com/kidslauncher/mdm/lock/PlainLockDebugReceiver.kt"))
+        assertTrue(receiver.contains("PlainLockDebug.store(app, it)"))
+        assertTrue(receiver.contains("AppEnforcer.apply(app, currentPolicyDecision())"))
+        assertTrue(code(dir("debug/java/com/kidslauncher/mdm/lock/PlainLockDebug.kt")).contains("private const val PREFS = \"plain_lock_debug\""))
     }
 }

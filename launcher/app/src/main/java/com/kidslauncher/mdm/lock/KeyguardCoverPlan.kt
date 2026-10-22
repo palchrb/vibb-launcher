@@ -70,10 +70,11 @@ const val KEYGUARD_FEATURES_ALL = 0x7fffffff
  * added before taken out, then [ANDROID_KEYGUARD_FEATURES] and B2's bit in; `coverAdded` = Android mode's bits that
  * weren't set without it - so the switch back takes out exactly those, a parent's own bits stay.
  */
-fun keyguardDisabledFeatures(current: Int, managed: Boolean, cover: Boolean, coverAdded: Int, android: Boolean = false): Pair<Int, Int> {
+fun keyguardDisabledFeatures(current: Int, managed: Boolean, cover: Boolean, coverAdded: Int, android: Boolean = false, plain: Boolean = false): Pair<Int, Int> {
     if (cover) return KEYGUARD_FEATURES_ALL to (coverAdded or (KEYGUARD_FEATURES_ALL and current.inv()))
     val base = current and coverAdded.inv()
-    if (android) return secureCameraRule(base or ANDROID_KEYGUARD_FEATURES, managed) to (ANDROID_KEYGUARD_FEATURES and base.inv())
+    val bits = androidKeyguardFeatures(plain)
+    if (android) return secureCameraRule(base or bits, managed) to (bits and base.inv())
     return secureCameraRule(base, managed) to 0
 }
 
@@ -145,6 +146,7 @@ fun writeKeyguard(
     timeoutMs: () -> Long?,
     storeCoverAdded: (Int) -> Boolean,
     storeWritten: (Boolean) -> Boolean = { true },
+    plain: Boolean = false,
 ): KeyguardWritten {
     var added = coverAdded
     fun store(value: Int): Boolean {
@@ -153,7 +155,7 @@ fun writeKeyguard(
         added = value
         return true
     }
-    if (wanted == KeyguardMode.ANDROID) return androidWrite(policy, managed, added, ::store, timeoutMs)
+    if (wanted == KeyguardMode.ANDROID) return androidWrite(policy, managed, added, ::store, timeoutMs, plain)
     if (wanted == KeyguardMode.COVER) {
         var step = "features"
         try {
@@ -192,7 +194,7 @@ fun writeKeyguard(
  * logged, never a fallback: the Android PIN is the gate whatever these write. `lockMayRun`: the glance is
  * the face. A failed features step leaves `features` null, so the camera lock stays engaged ([secureCameraHeld]).
  */
-private fun androidWrite(policy: KeyguardPolicy, managed: Boolean, coverAdded: Int, store: (Int) -> Boolean, timeoutMs: () -> Long?): KeyguardWritten {
+private fun androidWrite(policy: KeyguardPolicy, managed: Boolean, coverAdded: Int, store: (Int) -> Boolean, timeoutMs: () -> Long?, plain: Boolean = false): KeyguardWritten {
     val errors = mutableListOf<Pair<String, Exception>>()
     var failed: String? = null
     val disabled = try {
@@ -205,13 +207,13 @@ private fun androidWrite(policy: KeyguardPolicy, managed: Boolean, coverAdded: I
     }
     val features = try {
         val current = policy.readFeatures()
-        val (value, newAdded) = keyguardDisabledFeatures(current, managed, cover = false, coverAdded = coverAdded, android = true)
+        val (value, newAdded) = keyguardDisabledFeatures(current, managed, cover = false, coverAdded = coverAdded, android = true, plain = plain)
         // M6's order: what is added is kept before it is written.
         if (!store(newAdded)) throw IllegalStateException("coverAdded not stored")
         if (value != current) policy.writeFeatures(value)
         val read = policy.readFeatures()
         // P59-4: B2's SECURE_CAMERA too while managed - the camera lock stands down only on what is read back here.
-        val want = ANDROID_KEYGUARD_FEATURES or (if (managed) KEYGUARD_SECURE_CAMERA else 0)
+        val want = androidKeyguardFeatures(plain) or (if (managed) KEYGUARD_SECURE_CAMERA else 0)
         if ((read and want) != want) throw IllegalStateException("features read back wrong")
         read
     } catch (e: Exception) {

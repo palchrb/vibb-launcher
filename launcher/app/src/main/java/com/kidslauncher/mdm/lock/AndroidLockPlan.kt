@@ -23,6 +23,17 @@ const val ANDROID_LOCK_TAG = "AndroidLock"
  */
 const val ANDROID_KEYGUARD_FEATURES = 0x1 or 0x4 or 0x10 or 0x80 or 0x100 or 0x200
 
+/**
+ * Design 59c prototype (debug only, `PlainLockDebug`): the plain Android lock - no glance face. Android's lock screen
+ * shows notifications, so SECURE_NOTIFICATIONS (0x4) goes and UNREDACTED_NOTIFICATIONS (0x8) comes in (other apps'
+ * rows read "content hidden", ours show their public version); SHORTCUTS_ALL (0x200) goes too, so the user's lock-screen
+ * shortcuts (the torch) can show. Release: never used ([androidKeyguardFeatures]' plain is always false there).
+ */
+const val PLAIN_KEYGUARD_FEATURES = (ANDROID_KEYGUARD_FEATURES and (0x4 or 0x200).inv()) or 0x8
+
+/** The features Android's lock adds: [ANDROID_KEYGUARD_FEATURES], or the prototype's [PLAIN_KEYGUARD_FEATURES]. */
+fun androidKeyguardFeatures(plain: Boolean): Int = if (plain) PLAIN_KEYGUARD_FEATURES else ANDROID_KEYGUARD_FEATURES
+
 /** `DevicePolicyManager.KEYGUARD_DISABLE_SECURE_CAMERA` (B2's bit; the camera lock's premise as the face). */
 const val KEYGUARD_SECURE_CAMERA = 0x2
 

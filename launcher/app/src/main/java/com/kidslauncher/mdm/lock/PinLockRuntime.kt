@@ -1397,6 +1397,12 @@ object PinLockRuntime {
             lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.START, sameLockUp = sameLockUp)
         }
         if (bootMarkHolds(context, if (wake != null) LockAsk.AT_ONCE else ask)) return false
+        // Design 59c prototype (debug only; release: always false): the plain Android lock - no glance as Android's
+        // face, its keyguard is what the kid sees. LOCKED is still recorded; USER_PRESENT unlocks.
+        if (AndroidLock.faceOn && PlainLockDebug.enabled(context)) {
+            AndroidLock.note(context, "plain lock: no glance started")
+            return false
+        }
         var started = false
         try {
             context.startActivity(
