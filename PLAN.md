@@ -757,6 +757,15 @@ findings, merge to `main`, full suite once.
   measured whole, the top block clips, the rows scroll (glanceFit: every row or one visible, never folded; candidate 7
   the "more" line; the timer now outlives the date); (3)+(4) the compact player (174.8 dp, was 233.8). Device checks:
   the note's §5 checks 1-3.
+- **Music: search Spotify tracks** (the user, 2026-10-22: "kunne musikk-appen også søke på sanger i spotify-listene
+  den har tilgang til?" - to consider): `logic/LibraryView.kt` `search` already matches every entry's item titles, so
+  a Spotify entry with a listed track list may already be searchable by track title - check that first on the
+  emulator (fake Spotify). Gaps: artist names aren't matched (only `PlayItem.title`), and a context-mode entry lists no
+  tracks (Spotify picks), so its songs can't be found without fetching the list. A hit must play as the entry's own
+  pick does (26c's rules). Not started.
+- **Lock glance: the compact music tile could be a little lower** (the user, 2026-10-22, after r9: "fin - jeg tror du
+  kunne latt den være enda litt lavere, men er greit"): trim its vertical padding/gaps (174.8 dp now) on the next
+  glance round; `LockGlanceLayoutTest`'s pins move with it. Small, not urgent.
 - **Music: what a heart means** (the user, 2026-10-21): the heart is per track/episode, but "Favoritter" only filters
   the carousel to entries holding a heart and a cover tap plays the whole entry - so in practice it marks the tile.
   Options put to the user: (A) the heart on the tile/entry instead of per track; (C) keep per-track hearts, and under
