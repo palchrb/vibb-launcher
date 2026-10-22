@@ -544,7 +544,7 @@ object PinLockRuntime {
             // Design 16b: a boot cover still enabled hands over first (so the typed HOME start
             // below resolves to HomeActivity only), and the shutdown receiver re-arms it.
             try {
-                BootCover.init(app)
+                BootCover.init(app, callLive = BootHome.callLive(app))
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Boot cover init failed", e)
             }
@@ -829,6 +829,8 @@ object PinLockRuntime {
                 // Design 19: a command stream that is down or went silent while the phone slept
                 // reconnects now - a lift or a lock matters most while the phone is in use.
                 com.kidslauncher.mdm.server.CommandListenerService.checkStream("screen")
+                // F3C-2: Telecom's own calls have no listener - a boot Home waiting for a call looks again.
+                BootHome.callMayHaveEnded(app)
                 // May start the time-rule screen - the PIN lock then goes above it. A parent-PIN
                 // window that ended in the phone's sleep locks again now (design 24b).
                 TimeRulesRuntime.recheck(app, com.kidslauncher.mdm.server.RelockTrigger.SCREEN_ON)
@@ -931,6 +933,8 @@ object PinLockRuntime {
         if (ctx != null && !callsSeen && any) endBootMark(ctx, "a call")
         if (ctx != null && callsSeen && !any) dispatch(ctx, LockEvent.CallsEnded(interactive(ctx)))
         callsSeen = any
+        // F3C-2: a boot Home start declined for a call comes at its end.
+        if (ctx != null && !any) BootHome.callMayHaveEnded(ctx)
     }
 
     /**
@@ -955,6 +959,7 @@ object PinLockRuntime {
         }
         if (after == VoipPhase.NONE && before != VoipPhase.NONE) {
             dispatch(app, LockEvent.VoipEnded(interactive(app), ours, !ours && telecom, emergency, alarm))
+            BootHome.callMayHaveEnded(app)
         }
     }
 

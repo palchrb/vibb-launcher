@@ -459,11 +459,12 @@ object AppEnforcer {
         com.kidslauncher.mdm.lock.PinLockRuntime.configure(context, dpm, admin, policy, managed, parentChoice)
         // The boot cover (design 16b, switch off by default): its PPA next to HomeActivity's while
         // wanted, the component off when not - enabled only at shutdown (and, with Android's lock as the
-        // face, at the locked boot: design 59 F3 - the face as configure above just decided it).
+        // gate, at the locked boot: design 59 F3 - the gate as configure above just left it; F3C-4).
         try {
             com.kidslauncher.mdm.lock.BootCover.applyPolicy(
                 context, dpm, admin, policy?.bootCover == true, managed,
-                androidFace = com.kidslauncher.mdm.lock.AndroidLock.faceOn,
+                androidGate = com.kidslauncher.mdm.lock.AndroidLock.gateNow(context),
+                parentChoice = parentChoice,
             )
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Boot cover policy failed", e)

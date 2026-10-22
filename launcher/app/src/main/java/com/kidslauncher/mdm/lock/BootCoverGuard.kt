@@ -68,7 +68,8 @@ object BootCoverGuard {
         update(context) { it.copy(handedOverAtMs = System.currentTimeMillis()) }
     }
 
-    /** The switch is off: a trip and the old times go (main process; the cover isn't running). */
+    /** The switch is off, or [coverGuardClearDue] (an update, the switch's off -> on edge - F3C-3): a trip and the old
+     * times go (main process; the cover isn't running). */
     fun clear(context: Context) {
         try {
             file(context).delete()
@@ -117,7 +118,7 @@ object BootCoverGuard {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                val next = coverCrashed(read(app), bootCount(app))
+                val next = coverCrashed(read(app), bootCount(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong())
                 write(app, next)
                 if (coverGuardTripped(next)) disable(app, "crash guard (${next.crashes} crashes this boot)")
             } catch (t: Throwable) {

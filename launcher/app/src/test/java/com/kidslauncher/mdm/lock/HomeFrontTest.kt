@@ -70,7 +70,7 @@ class HomeFrontTest {
         assertEquals("false", cover.getAttributeNS(ns, "enabled"))
         val runtime = code(file("java/com/kidslauncher/mdm/lock/PinLockRuntime.kt"))
         val init = runtime.substringAfter("handler.post {")
-        assertTrue(init.indexOf("BootCover.init(app)") in 0 until init.indexOf("BootHome.startIfDue"))
+        assertTrue(init.indexOf("BootCover.init(app") in 0 until init.indexOf("BootHome.startIfDue"))
     }
 
     @Test

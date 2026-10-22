@@ -57,6 +57,12 @@ class BootCoverActivity : Activity() {
     private var waitForLauncher = false
     private var unlockedAtElapsed = -1L
     private var disabledAtElapsed = -1L
+
+    /** It started our Home itself ([CoverStep.START_HOME] or its hand-over): once. */
+    private var homeStarted = false
+
+    /** Its own hand-over's disables that didn't read back (F3C-7, [coverHandOverStartsHome]). */
+    private var failedDisables = 0
     private val waitTick = Runnable { waitStep(visible = true) }
 
     private val loop = object : Animatable2.AnimationCallback() {
@@ -161,7 +167,7 @@ class BootCoverActivity : Activity() {
         if (disabled && disabledAtElapsed < 0) disabledAtElapsed = now
         val unlockedFor = if (unlockedAtElapsed < 0) 0L else now - unlockedAtElapsed
         val disabledFor = if (disabledAtElapsed < 0) 0L else now - disabledAtElapsed
-        when (coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor)) {
+        when (coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted)) {
             CoverStep.STAY -> Unit
             CoverStep.FINISH -> {
                 Log.i(LOG_TAG, "Boot cover leaves (${if (visible) "taken over, grace over" else "taken over, Home over it"}): $unlockedFor ms after the unlock")
@@ -169,11 +175,21 @@ class BootCoverActivity : Activity() {
                 finish()
                 return
             }
-            CoverStep.HAND_OVER -> {
+            CoverStep.START_HOME -> {
+                // F3C-2: taken over, but no Home came over us (our process died between the take-over and its start).
+                Log.i(LOG_TAG, "Boot cover starts Home: taken over $disabledFor ms ago, still in front")
+                homeStarted = true
+                startHome()
+            }
+            CoverStep.HAND_OVER -> if (!homeStarted) {
                 BootCoverGuard.disable(this, "no take-over $unlockedFor ms after the unlock")
-                if (BootCoverGuard.isDisabled(this)) {
+                val readBack = BootCoverGuard.isDisabled(this)
+                if (coverHandOverStartsHome(readBack, failedDisables)) {
                     BootCoverGuard.markHandedOver(this)
+                    homeStarted = true
                     startHome()
+                } else {
+                    failedDisables++
                 }
             }
         }
@@ -184,14 +200,15 @@ class BootCoverActivity : Activity() {
     }
 
     /** F3's fallback: the typed HOME start (unlocked, the cover disabled: HomeActivity, which starts our main
-     * process). Never throws. */
+     * process). Marked as ours ([HomeFront.EXTRA_BROUGHT]: not the kid's Home press). Never throws. */
     private fun startHome() {
         try {
             startActivity(
                 Intent(Intent.ACTION_MAIN)
                     .addCategory(Intent.CATEGORY_HOME)
                     .setPackage(packageName)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(HomeFront.EXTRA_BROUGHT, true),
             )
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Boot cover couldn't start Home: ${e.javaClass.simpleName}")

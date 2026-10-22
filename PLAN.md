@@ -761,7 +761,9 @@ findings, merge to `main`, full suite once.
   Back - goes away with Android's lock); F2 (ending a pause while the PIN pad is open closes the pad; tap "Lås opp"
   again); F3 (after a reboot the stock Pixel launcher shows ~10 s before our Home on the debug build - fix on branch
   `fix-f3-boot-cover`, design 59 "F3": android mode implies the boot cover, armed also at the locked boot, and it
-  waits for our Home; emulator run and the release-build timing on the Jelly Star still owed); F4 (design §8 step 15's `get-disabled` expectation is wrong: no Child PIN leaves
+  waits for our Home; code QA `qa-f3-boot-cover-code.md` fixed (F3C-1..7); the server's boot-cover note should gate
+  on the reported `wanted` (F3C-3, a server brief); emulator run and the release-build timing on the Jelly Star still
+  owed); F4 (design §8 step 15's `get-disabled` expectation is wrong: no Child PIN leaves
   Android's swipe lock, as always); F5 (PWA: "Set" and "Send again" shown together for ~2 s after a new PIN lands).
   The "Lås opp" missing-answer recovery (~2 s) could not be provoked on the emulator - a device check.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other

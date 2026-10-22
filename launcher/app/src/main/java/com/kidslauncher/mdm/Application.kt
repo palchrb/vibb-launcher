@@ -239,6 +239,12 @@ class Application : android.app.Application() {
     }
 
     private var unlockedInitDone = false
+
+    /** Design 59 F3: when the unlocked setup began (elapsed realtime) - the unlock reaching this process; `BootHome`
+     * logs its Home start against it. */
+    @Volatile
+    var unlockedAtElapsed: Long? = null
+        private set
     private var unlockReceiver: BroadcastReceiver? = null
 
     /**
@@ -250,6 +256,7 @@ class Application : android.app.Application() {
     private fun initUnlocked() {
         if (unlockedInitDone) return
         unlockedInitDone = true
+        unlockedAtElapsed = android.os.SystemClock.elapsedRealtime()
         unlockReceiver?.let { runCatching { unregisterReceiver(it) } }
         unlockReceiver = null
         // First, on its own (design 16c): the PIN lock's mode for this process, before anything
