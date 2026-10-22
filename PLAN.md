@@ -601,6 +601,9 @@ findings, merge to `main`, full suite once.
   **Status 2026-10-22:** steps 1 and 4 merged (ec39a8b6) and released alone as `server-v0.35.0` for the measurement
   (§2.7: the user saves the Storytel login, then reads two `storytel: logged in` lines an hour apart; that decides
   Q-A before step 2). No launcher/music tag yet. Design 57's held prep release would now be server 0.36.0.
+  **Measured 2026-10-22** (the user's server, two logins two minutes apart): `life_s=86400, left_at_login_s=86400,
+  claims=yes, payload_has_email=no` - a fresh 24-hour JWT per login, no e-mail inside. **Q-A = branch (a)**: steps 2
+  and 3 go on as written; with a 24 h life the server logs in about once a day while books are fetched.
 - **The server's exposure (the user, 2026-10-21):** a public HTTPS endpoint for the phones, the PWA over the tailnet
   only. So the phone-intake budgets (server L1/L3/L4) and launcher S-M1 (refuse a non-https server URL) matter.
 - **Stuck in Recents after an unlock** (the user's emulator, 2026-10-21 ~16:55, not reproduced, no lock log kept): the
