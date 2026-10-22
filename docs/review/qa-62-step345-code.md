@@ -118,3 +118,17 @@ never reaches the device API. Fix P62b-1 before the release (one `AND`). The res
 | M12 | `mark_opened` reads for every parent | killed: `push_tap_reads_for_that_parent_and_badges_their_count` |
 | M13 | Reset keeps the push subscriptions | killed: `parents::reset_shows_a_new_otp_and_ends_the_sessions` |
 | M14 | 0088 seeds reads for removed accounts | killed: `parents::migration_0088_copies_to_active_accounts` |
+
+## Fixes
+
+- P62b-1: fixed in 8936828c - `delivery_lines(db, admin_id, ..)` with `AND s.admin_id = ?`; the probe is
+  `tests::web_push::inbox_delivery_line_is_each_parents` (Pappa's row names nothing, Mamma's names hers);
+  `a_tap_on_a_notification_marks_it_opened` now expects this parent's "Opened on …", never "Pushed to 2 devices".
+- P62b-2: fixed in 8936828c - `Reset::Done { expires_at, username, name }` from the statement's `RETURNING`;
+  `parent_reset` is logged before the answer renders; no second read, no bare 500.
+- P62b-3: fixed in 8936828c - Reset calls `spotify.forget_pending` for the target
+  (`reset_shows_a_new_otp_and_ends_the_sessions` checks `pending_count`).
+- P62b-4: fixed in 8936828c - `open_is_each_parents`, `read_all_is_each_parents`,
+  `stale_actor_reset_writes_nothing`, `remove_drops_reads`; `remove_each_other_leaves_one` and
+  `reset_vs_remove_one_wins` run their join in both polling orders, and `the_pairs_in_both_orders` runs each pair
+  sequentially in both orders.
