@@ -35,7 +35,8 @@ root's paddings) is called by both the layout listener and `fitNow`; `fitFor` ho
 when it differs (`setPadding` from the insets listener requests a layout, so the listener runs). The log line is
 written when the fit **or the available height** changes, with the available height and both paddings in dp ("Glance
 fit: candidate 2, 1 rows, 0 more, 1 visible, available 457 dp (pad 56/56)" - counts and dp only,
-`LockGlanceGuardTest`). §2 then keeps the bottom block on screen whatever a fit says. Test: `LockGlanceLayoutTest`
+`LockGlanceGuardTest`; the example is the 473 dp case below: 8 dp of the page's own padding plus a 48 dp status bar at
+the top and 3-button navigation's 48 dp at the bottom). §2 then keeps the bottom block on screen whatever a fit says. Test: `LockGlanceLayoutTest`
 pins by source that the listener and `fitNow` both call `available(` and the listener no longer compares the bare
 height.
 
@@ -82,8 +83,10 @@ fits wins:
 Without a music tile 4 = 2 and 5 = 3 (harmless duplicates). With a running timer the seven with the timer come first,
 then the seven without it - **a change to design 42 §1.6**: the timer now also outlives the date (it kept the date in
 every timer candidate). Old candidate 3 (big clock + compact tile) goes. `GlancePanel.apply`: `i < fit.rows` stays
-(it hides the rows only in 7), the scroll `GONE` with no rows; `resumeNow`'s lock-up branch adds
-`lockGlanceScroll.scrollTo(0, 0)`. Nothing else in the panel changes.
+(it hides the rows only in 7); the top-margin and `GONE` logic moves from `lock_glance_list` to `lock_glance_scroll`,
+which is `GONE` only with no row at all (n = 0, `rows == 0 && more == 0` as today - candidate 7 binds none but shows
+the "more" line in the scroll); `resumeNow`'s lock-up branch adds `lockGlanceScroll.scrollTo(0, 0)`. Nothing else in
+the panel changes.
 
 **Edge cases.** Three rows and the "more" line scroll. Font scale 2.0 at 320x569: the compact tile and candidate 6/7,
 the bottom block whole. TalkBack: the ScrollView is a node with scroll actions and focus moving onto a row below
@@ -94,14 +97,15 @@ visible, then no date, then only the "more" line - never a row folded below thre
 before the timer) rewritten. `LockGlanceLayoutTest`: `rowsTop` from `lock_glance_scroll`; the order test pins the
 bottom block as the root's last two children, `lock_glance_top`/`lock_glance_scroll` as `0dp` + weight 1, the scroll
 last in the top block with `lock_glance_list` in it, the 16 dp fade; and the fits (tileFull 174.8, tileCompact 90,
-fixed 116; model available 457/481; totals = counted height + 16 dp paddings):
+fixed 116; model available 457/481; totals = counted height + 16 dp paddings; 473 dp = 569 less a 48 dp status bar - the
+Jelly Star's, with its cutout - and 3-button navigation's 48 dp, 497 dp the same with gesture navigation's 24 dp):
 
 | case | 473 dp | 497 dp |
 |---|---|---|
 | full tile alone | 1 (410.8) | 1 |
 | no music, 4 rows | 1, 3 rows + 1 more (466) | 1 |
 | music + 1 row (the user's case) | 2 (458.4) | 1 (480.8) |
-| music + 2 rows (mockup) | 3, 1 visible (458.4), scroll 70.6 dp | 3, scroll 94.6 dp |
+| music + 2 rows (mockup) | 3, 1 visible (466.4 with the fade, qa-r9-code R9C-1), scroll 70.6 dp | 3, scroll 94.6 dp |
 | music + 3 rows | 3, 1 visible, scroll 70.6 dp | 3 |
 
 ## 3. The compact music player (items 3 and 4)
@@ -135,6 +139,9 @@ doesn't fit even without rows; the compact one (~125 dp) does.
 - `MusicLockPanel.render()`: each time view's width = `Layout.getDesiredWidth(widest, paint)` (`"−" + widest` for the
   remaining; kerning counts) + 1 dp, set through `layoutParams` only when the px differ (a new track, a duration that
   became known, a font-scale change via `refit` -> `show` -> `render`); the remaining view `GONE` without a duration.
+  The elapsed time's shape is the larger of the duration's and the position's (`glanceTimeWidest(duration, position)`,
+  checked at each tick, which then asks for one layout): a position past a stale shorter duration ("10:00" against
+  "9:59") never clips (qa-r9-revision-check N6).
   `tick()` sets only the two texts and the bar - a fixed width never asks for a layout (round 6's rule). The bar's
   content description stays "1:26 av 4:04"; `glanceRefitDue` already refits when the header grows with the font.
 
@@ -172,7 +179,9 @@ the bit going off leaves the setting as it is.
   `lifecycleScope` as the Bluetooth page's calls are (`loadSoundEffects()` waits for SoundPool and can take seconds):
   `putInt` in a `try` (`SecurityException`, `IllegalArgumentException` -> false), for sounds then
   `AudioManager.loadSoundEffects()`/`unloadSoundEffects()` as Android's Settings does; the re-read and render come
-  after, so a refused write flips the switch back.
+  after, so a refused write flips the switch back. One `Mutex` serialises the two setters, so a second tap while
+  `loadSoundEffects()` still runs waits and the writes finish in tap order; the activity counts the writes in flight,
+  keeps the tapped state while any runs and reads the row again after the last (qa-r9-revision-check N2).
 - Pure `server/TouchFeedback.kt` (`TouchFeedbackTest`): `touchRowState(sounds: Int?, haptic: Int?, hasVibrator,
   canWrite): TouchRowState(sounds, vibration: Boolean?, writable)`.
 - `KidSettingsModel.kt`: `ControlsSection.Rows.touch`, `describe()`, mask 16 alone is a card; `KidSettingsActivity`:
@@ -197,7 +206,7 @@ both `suspend` and on IO), `KidSettingsModelTest` (bit 16, 16 alone a card); ser
 
 **Residuals.** Android 13+'s own Touch feedback toggle also writes the hidden `HAPTIC_FEEDBACK_INTENSITY`, which an
 app can't write; on a phone where it was turned off in Android's Settings before enrolment, our "on" shows on while
-haptics stay off - accepted (setup runbook: leave Touch feedback on). Under design 59 the keyguard's PIN pad follows
+haptics stay off - accepted (setup runbook `docs/setup/android-settings.md`: leave Touch feedback on). Under design 59 the keyguard's PIN pad follows
 the same switches [unverified].
 
 ## 5. Emulator check list (for the user)
@@ -252,3 +261,34 @@ the same switches [unverified].
 - R9-11: §3 behaviour - `selectableItemBackgroundBorderless`, no new drawable.
 - R9-12: header - the published mockup linked, not committed.
 - R9-13: header - the Nødsamtale tie noted for design 59.
+
+## Implementation status (7ddc80a6, branch `r9-glance`, 2026-10-22)
+
+Built as above, with `qa-r9-revision-check.md`'s N1-N6 folded into §1-§4. Launcher 1511 tests and server 1134 green
+(`cargo fmt --check`, clippy's 13 known warnings). Deviations:
+
+- **`glanceFit` is one list of seven, twice with a timer** (`flatMap` over with/without): the candidates as §2 lists
+  them, no special cases; without a tile 4 and 5 are 2 and 3 again (the harmless duplicates).
+- **The elapsed width is set at each tick** (N6): `glanceTimeWidest(duration, position)` takes the position's shape
+  once it passes the duration's, so the tick sets the width too - through the same "only when the px differ" guard, so
+  it asks for a layout only when the shape grows. The time left's width and the `GONE` are set there as well (no-ops
+  unless they change).
+- **`HAPTIC_FEEDBACK_ENABLED` is deprecated since API 33** (warnings are errors in CI): read once through a
+  `@Suppress("DEPRECATION")` constant in `QuickControls`. Still the public key Android's Touch feedback writes.
+- **The touch row's log** names the state only ("Touch row: TouchRowState(sounds=true, vibration=true,
+  writable=false)"), as the sound row's does, so a read-only row can be told apart on a device.
+- **The alarm case at 473 dp** (`LockGlanceLayoutTest`): with an alarm under the date, music + 1 row now takes the
+  compact tile (the full one with the small clock is 462.6 dp > 457, and with one row "one visible" is every row).
+
+Code QA (`docs/review/qa-r9-code.md`) fix round:
+
+- **R9C-1**: a one-visible candidate also counts the scroll's fade below the row's own padding (`GlanceHeights.fade`,
+  measured: 16 - 8 = 8 dp), so the only visible row is never under the fade; candidate 3 now needs 450.4 dp (music + 2
+  rows at 473 dp: 466.4 total, still candidate 3).
+- **R9C-3**: with a morning alarm, music + 1 row at 473 dp takes the compact player (deviation 4 above) - for the user to
+  decide (a candidate that drops the alarm line before the compact tile would keep the full player).
+- **R9C-4**: accepted - a tap still waiting for a running sound write is dropped when Kid Settings is destroyed; the
+  next visit shows the phone's real state.
+
+Not device-tested: §5's four checks (the emulator at `wm density 240`, both navigation modes, font scale 1.0-2.0,
+TalkBack; the touch row with and without the app-op).

@@ -939,16 +939,20 @@ async fn home_screen_holds_the_moved_forms() {
         form_action_of(&html, "wallpaper"),
         Some(format!("/devices/{id}/wallpapers#wallpapers").as_str())
     );
-    // The four quick controls are one form with its section marker (H1); a new phone has all on.
+    // The five quick controls are one form with its section marker (H1); a new phone has all on but
+    // touch sounds (design r9 §4: they need the app-op first).
     let policy = format!("/devices/{id}/policy#quick-controls");
-    for name in [
-        "quick_control_wifi",
-        "quick_control_bluetooth",
-        "quick_control_brightness",
-        "quick_control_sound",
+    for (name, on) in [
+        ("quick_control_wifi", true),
+        ("quick_control_bluetooth", true),
+        ("quick_control_brightness", true),
+        ("quick_control_sound", true),
+        ("quick_control_touch", false),
     ] {
         assert_eq!(form_action_of(&html, name), Some(policy.as_str()), "{name}");
-        assert_eq!(input_checked(&html, name, "on"), Some(true), "{name}");
+        assert_eq!(input_checked(&html, name, "on"), Some(on), "{name}");
+        // Each saves in place (data-autosave), never a plain submit that jumps to the top (qa-r9-code R9C-2).
+        assert!(autosaves(&html, name), "{name}");
     }
     let quick = &html[html.find("<section id=\"quick-controls\"").unwrap()..];
     assert!(quick.contains("<input type=\"hidden\" name=\"section\" value=\"quick\">"));

@@ -126,6 +126,11 @@
     <string name="kid_settings_sound_dnd">Do Not Disturb is on.</string>
     <string name="kid_settings_sound_fully_silent">The phone is fully silent now, without vibration.</string>
     <string name="kid_settings_sound_volume_keys">The sound can\'t be changed here right now. The volume buttons work.</string>
+    <!-- Touch sounds and vibration (design r9 §4). -->
+    <string name="kid_settings_touch_sounds">Touch sounds</string>
+    <string name="kid_settings_touch_vibration">Vibrate on touch</string>
+    <string name="kid_settings_touch_keyboard">The keyboard has its own sound and vibration in its settings.</string>
+    <string name="kid_settings_touch_read_only">Can\'t be changed on this phone yet.</string>
     <string name="wallpaper_navy">Dark blue</string>
     <string name="wallpaper_vibb_night">Night</string>
     <string name="wallpaper_forest">Forest</string>

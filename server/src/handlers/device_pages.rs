@@ -994,6 +994,7 @@ struct HomeTemplate {
     quick_bluetooth: bool,
     quick_brightness: bool,
     quick_sound: bool,
+    quick_touch: bool,
 }
 
 /// GET `/devices/{id}/home`: Home Screen (design 31 §3.2, step 5). Language and apps per row (one
@@ -1003,7 +1004,8 @@ struct HomeTemplate {
 /// settings.
 pub async fn view_home(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
     use crate::handlers::devices::{
-        QUICK_CONTROL_BLUETOOTH, QUICK_CONTROL_BRIGHTNESS, QUICK_CONTROL_SOUND, QUICK_CONTROL_WIFI,
+        QUICK_CONTROL_BLUETOOTH, QUICK_CONTROL_BRIGHTNESS, QUICK_CONTROL_SOUND,
+        QUICK_CONTROL_TOUCH, QUICK_CONTROL_WIFI,
     };
     let device = match load_device(&state, id).await {
         Ok(device) => device,
@@ -1036,6 +1038,7 @@ pub async fn view_home(State(state): State<AppState>, Path(id): Path<i64>) -> Re
             quick_bluetooth: mask & QUICK_CONTROL_BLUETOOTH != 0,
             quick_brightness: mask & QUICK_CONTROL_BRIGHTNESS != 0,
             quick_sound: mask & QUICK_CONTROL_SOUND != 0,
+            quick_touch: mask & QUICK_CONTROL_TOUCH != 0,
             device,
         }
         .render()

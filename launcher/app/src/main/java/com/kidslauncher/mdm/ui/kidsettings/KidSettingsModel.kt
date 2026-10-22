@@ -27,8 +27,10 @@ sealed interface ControlsSection {
     data object NoneEnabled : ControlsSection
 
     /** [sound]: the parent's bit for the sound row (design 18); whether the row really shows is
-     * also up to the phone ([com.kidslauncher.mdm.server.soundRowState]: no vibrator, no row). */
-    data class Rows(val wifi: Boolean, val bluetooth: Boolean, val brightness: Boolean, val sound: Boolean) : ControlsSection
+     * also up to the phone ([com.kidslauncher.mdm.server.soundRowState]: no vibrator, no row).
+     * [touch]: touch sounds and vibration (design r9 §4) - always shown with its bit, read-only
+     * without the app-op. */
+    data class Rows(val wifi: Boolean, val bluetooth: Boolean, val brightness: Boolean, val sound: Boolean, val touch: Boolean) : ControlsSection
 }
 
 /** For the log: which case the kid is looking at, and the mask when there is one. */
@@ -37,7 +39,7 @@ fun ControlsSection.describe(): String = when (this) {
     ControlsSection.NoPolicyYet -> "no accepted policy cached"
     ControlsSection.Unreadable -> "cached policy unreadable"
     ControlsSection.NoneEnabled -> "quick_controls_mask 0"
-    is ControlsSection.Rows -> "wifi=$wifi bluetooth=$bluetooth brightness=$brightness sound=$sound"
+    is ControlsSection.Rows -> "wifi=$wifi bluetooth=$bluetooth brightness=$brightness sound=$sound touch=$touch"
 }
 
 /**
@@ -57,8 +59,9 @@ fun controlsSection(isDeviceOwner: Boolean, cached: CachedPolicy): ControlsSecti
         bluetooth = mask and QuickControlFeature.BLUETOOTH != 0L,
         brightness = mask and QuickControlFeature.BRIGHTNESS != 0L,
         sound = mask and QuickControlFeature.SOUND != 0L,
+        touch = mask and QuickControlFeature.TOUCH != 0L,
     )
-    return if (rows.wifi || rows.bluetooth || rows.brightness || rows.sound) rows else ControlsSection.NoneEnabled
+    return if (rows.wifi || rows.bluetooth || rows.brightness || rows.sound || rows.touch) rows else ControlsSection.NoneEnabled
 }
 
 /** One wallpaper in the picker. */

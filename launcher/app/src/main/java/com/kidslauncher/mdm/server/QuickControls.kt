@@ -17,6 +17,8 @@ import android.os.VibratorManager
 import android.provider.Settings
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private const val LOG_TAG = "QuickControls"
@@ -35,6 +37,10 @@ object QuickControlFeature {
     /** The sound row (design 18): Sound / Silent (vibrate). Only shows the row - the volume keys
      * and the volume panel still change the ringer, so this is no lock (QA #4). */
     const val SOUND: Long = 8
+
+    /** Touch sounds and vibration (design r9 §4): Android's two switches for taps. Off on a new phone
+     * (the parent grants "Modify system settings" first). */
+    const val TOUCH: Long = 16
 }
 
 /**
@@ -269,6 +275,76 @@ object QuickControls {
             Log.w(LOG_TAG, "Failed to set the ringer mode to $mode", e)
             false
         }
+    }
+
+    /** One touch write at a time, in the order of the taps (qa-r9-revision-check N2): the sound
+     * switch's `loadSoundEffects()` can take seconds, and two writes must never finish out of order. */
+    private val touchWrites = Mutex()
+
+    /** Deprecated since API 33 (an app should follow the user's choice through `VibrationAttributes`), but still
+     * the public key Android's own Touch feedback toggle writes and an app with the app-op may write. */
+    @Suppress("DEPRECATION")
+    private val HAPTIC_FEEDBACK_KEY = Settings.System.HAPTIC_FEEDBACK_ENABLED
+
+    /**
+     * The kid's touch row as the phone is now ([touchRowState], design r9 §4): both keys (missing =
+     * on, as Android reads them), whether the phone vibrates and whether the "Modify system
+     * settings" app-op is granted - the one way to write them (`Settings.System.canWrite`).
+     */
+    fun touchState(context: Context): TouchRowState {
+        val app = context.applicationContext
+        fun read(key: String): Int? = try {
+            Settings.System.getInt(app.contentResolver, key)
+        } catch (e: Exception) {
+            null
+        }
+        val hasVibrator = try {
+            app.getSystemService(VibratorManager::class.java)?.defaultVibrator?.hasVibrator() == true
+        } catch (e: Exception) {
+            false
+        }
+        val canWrite = try {
+            Settings.System.canWrite(app)
+        } catch (e: Exception) {
+            false
+        }
+        return touchRowState(
+            read(Settings.System.SOUND_EFFECTS_ENABLED), read(HAPTIC_FEEDBACK_KEY), hasVibrator, canWrite,
+        )
+    }
+
+    /** "Lyd ved trykk": the setting, then the click samples loaded or freed as Android's Settings does
+     * (AudioService gates every view's click sound on the setting). Whether the setting was written. */
+    suspend fun setTouchSounds(context: Context, on: Boolean): Boolean = withContext(Dispatchers.IO) {
+        touchWrites.withLock {
+            val written = putTouch(context, Settings.System.SOUND_EFFECTS_ENABLED, on)
+            if (written) {
+                try {
+                    val audio = context.applicationContext.getSystemService(AudioManager::class.java)
+                    if (on) audio?.loadSoundEffects() else audio?.unloadSoundEffects()
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Failed to load or free the touch sounds", e)
+                }
+            }
+            written
+        }
+    }
+
+    /** "Vibrasjon ved trykk": `HAPTIC_FEEDBACK_ENABLED`. Whether it was written. */
+    suspend fun setTouchVibration(context: Context, on: Boolean): Boolean = withContext(Dispatchers.IO) {
+        touchWrites.withLock { putTouch(context, HAPTIC_FEEDBACK_KEY, on) }
+    }
+
+    /** Both public keys; without the app-op Android refuses (SecurityException, or IllegalArgumentException
+     * for a key it doesn't let an app write) - the caller's re-read then flips the switch back. */
+    private fun putTouch(context: Context, key: String, on: Boolean): Boolean = try {
+        Settings.System.putInt(context.applicationContext.contentResolver, key, if (on) 1 else 0)
+    } catch (e: SecurityException) {
+        Log.w(LOG_TAG, "Writing $key was refused", e)
+        false
+    } catch (e: IllegalArgumentException) {
+        Log.w(LOG_TAG, "Writing $key was refused", e)
+        false
     }
 
     private fun wifiManager(context: Context): WifiManager =

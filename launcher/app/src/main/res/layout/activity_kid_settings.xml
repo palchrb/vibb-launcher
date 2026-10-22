@@ -218,6 +218,60 @@
                 <View style="@style/KidDivider" />
             </LinearLayout>
 
+            <!-- Touch sounds and vibration (design r9 §4): Android's two switches for taps, while the parent's
+                 bit is on. Without the "Modify system settings" app-op both show the phone's state at 50 % with
+                 the "can't be changed" line; no vibration switch on a phone without a vibrator. The keyboard's
+                 line says its sound and vibration are its own; nothing opens. -->
+            <LinearLayout
+                android:id="@+id/kid_settings_touch_row"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/kid_settings_touch_sounds"
+                    style="@style/KidSwitchRow"
+                    android:text="@string/kid_settings_touch_sounds" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/kid_settings_touch_vibration"
+                    style="@style/KidSwitchRow"
+                    android:text="@string/kid_settings_touch_vibration" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="12dp">
+
+                    <TextView
+                        android:id="@+id/kid_settings_touch_read_only"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:fontFamily="@font/nunito_bold"
+                        android:text="@string/kid_settings_touch_read_only"
+                        android:textColor="@color/kid_ink"
+                        android:textSize="13sp"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/kid_settings_touch_keyboard"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:fontFamily="@font/nunito_bold"
+                        android:text="@string/kid_settings_touch_keyboard"
+                        android:textColor="@color/kid_ink"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <View style="@style/KidDivider" />
+            </LinearLayout>
+
             <LinearLayout
                 android:id="@+id/kid_settings_brightness_row"
                 android:layout_width="match_parent"

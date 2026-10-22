@@ -5,12 +5,17 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.text.Layout
 import android.view.View
+import android.widget.TextView
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.databinding.ViewLockGlanceBinding
+import com.kidslauncher.mdm.lock.GLANCE_MINUS
 import com.kidslauncher.mdm.lock.GlanceTileSize
 import com.kidslauncher.mdm.lock.glanceTicks
-import com.kidslauncher.mdm.lock.glanceTimeLine
+import com.kidslauncher.mdm.lock.glanceTimeWidest
+import com.kidslauncher.mdm.lock.glanceTimes
+import kotlin.math.ceil
 
 /**
  * Vibb music on the PIN lock (design 21 step 4, design 25): the glance page's full and compact
@@ -19,11 +24,11 @@ import com.kidslauncher.mdm.lock.glanceTimeLine
  * snapshot, which has no controls without opening the player) (the keypad stage has no music since
  * 25b-G, user decision 2026-10-12: it stays plain). No stage logic - the glance
  * panel (lock/GlancePanel) decides whether a tile shows and which ([show], from its fit); this binds
- * the session's art, item, entry, progress, time line and play/pause into them, watches the session
- * between the lock's onStart and onStop and tells the panel when it changed ([onChange]; the panel
- * coalesces the callbacks of a frame, looks the session up and renders the tile alone - r6 §2). The
- * once-a-second tick moves only the bars and the full tile's time line ([tick]): no text that changes the
- * tile's height, no layout.
+ * the session's art, item, entry, progress, the full tile's times and play/pause into them, watches
+ * the session between the lock's onStart and onStop and tells the panel when it changed ([onChange];
+ * the panel coalesces the callbacks of a frame, looks the session up and renders the tile alone - r6
+ * §2). The once-a-second tick moves only the bars and the full tile's times ([tick]): no text that
+ * changes the tile's height, and no layout while the times keep their shape.
  *
  * It weakens nothing (LockMediaGuardTest): the session's play/pause, previous and next are all it
  * does - it never opens the music app, its session activity, a setting or a notification.
@@ -140,7 +145,7 @@ class MusicLockPanel(
         tick()
     }
 
-    /** The bars and the full tile's time line at the position now; again in a second while the tile ticks. */
+    /** The bars and the full tile's times at the position now; again in a second while the tile ticks. */
     private fun tick() {
         handler.removeCallbacks(ticker)
         val s = session ?: return
@@ -155,8 +160,33 @@ class MusicLockPanel(
             bar.progress = progress
             bar.contentDescription = progressText
         }
-        // The full tile's time line only (the user, 2026-10-20); the compact one has its bar's description.
-        glance.lockMediaTime.text = glanceTimeLine(position, s.durationMs)
+        // The full tile's times only (r9 §3); the compact one has its bar's description. The time left goes
+        // without a duration (a live stream: the elapsed time alone, the bar to the edge).
+        val times = glanceTimes(position, s.durationMs)
+        val elapsed = glance.lockMediaElapsed
+        fixWidth(elapsed, glanceTimeWidest(s.durationMs, position))
+        elapsed.text = times.elapsed
+        val remaining = glance.lockMediaRemaining
+        remaining.visibility = if (times.remaining != null) View.VISIBLE else View.GONE
+        if (times.remaining != null) {
+            fixWidth(remaining, GLANCE_MINUS + glanceTimeWidest(s.durationMs))
+            remaining.text = times.remaining
+        }
         if (glanceTicks(tile != GlanceTileSize.NONE, pageShown, s)) handler.postDelayed(ticker, 1_000)
+    }
+
+    /**
+     * A time's fixed width (r9 §3): the widest text of its shape at the view's own paint (the font scale
+     * and Nunito's kerning count) plus 1 dp, so it is never cut and no tick changes it - set through the
+     * layout params only when the px differ (a new track, a duration that became known, a font-scale
+     * change via the panel's refit, a position passing a stale duration's shape - qa-r9-revision-check N6).
+     */
+    private fun fixWidth(view: TextView, widest: String) {
+        val px = ceil(Layout.getDesiredWidth(widest, view.paint)).toInt() + ceil(activity.resources.displayMetrics.density).toInt()
+        val params = view.layoutParams
+        if (params.width != px) {
+            params.width = px
+            view.layoutParams = params
+        }
     }
 }

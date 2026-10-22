@@ -266,7 +266,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Home Screen** (`GET /devices/{id}/home`, `device_pages::view_home`, `device_home.html`; row "Home Screen · 3 per
   row"): Language, Apps per row and Clock (`/launcher`, one form, three inline selects; design 34 P12 added Clock -
   a post without it keeps the stored format), the Wallpapers grid (`/wallpapers`, one
-  form) and the four Quick controls (`/policy` with `section=quick`). "Notification access off" sits above the first
+  form) and the five Quick controls (`/policy` with `section=quick`; the fifth, "Touch sounds and vibration", launcher round
+  9 §4). "Notification access off" sits above the first
   group (`device_pages::notification_access_note`, the adb command behind its ⓘ; the Attention row's fact and target
   `/home#layout`). "Clock format not applied" (design 34 P12, `device_pages::clock_format_note`) sits there too, only
   while 24 h or 12 h is chosen and the last report says `clock_format_applied` false. A failed wallpaper read is a

@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The PIN lock's glance page (design 25, mockup LockGlance.dc.html A and B; lock.GlancePanel, pure
-     lock.LockGlance): the clock, the date, the music tile while something plays (full, or compact when
-     rows compete for the height - lock.glanceFit), up to three notification rows and the "more" line,
-     "Lås opp" to the keypad and the bottom row: the lock's emergency call and the flashlight (design
-     41). The page never scrolls. Part of the lock:
-     nothing here opens an app, a setting or a notification - a row only leads to the keypad. The root
-     only blocks touches to the keypad below - no node for TalkBack (qa-21-step4-code L7). The fit and
-     the widths at 320/360/411 dp are pinned by LockGlanceLayoutTest. -->
+<!-- The PIN lock's glance page (design 25, mockup LockGlance.dc.html A and B; design r9; lock.GlancePanel, pure
+     lock.LockGlance): the top block - the clock, the date, the music tile while something plays (full, or compact
+     when there is too little room - lock.glanceFit), the timer tile, then up to three notification rows and the
+     "more" line in their own scroll - and the bottom block, "Lås opp" to the keypad and the bottom row: the lock's
+     emergency call and the flashlight (design 41). The bottom block is measured whole and stays at the bottom; the
+     top block takes what is left and clips its own overflow, so a fit made for more room never pushes the bottom row
+     off (r9 §1-2). Only the rows scroll. Part of the lock: nothing here opens an app, a setting or a notification -
+     a row only leads to the keypad. The root only blocks touches to the keypad below - no node for TalkBack
+     (qa-21-step4-code L7). The fit and the widths at 320/360/411 dp are pinned by LockGlanceLayoutTest. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/lock_glance_root"
     android:layout_width="match_parent"
@@ -23,77 +24,243 @@
     android:paddingBottom="8dp"
     android:visibility="gone">
 
-    <TextClock
-        android:id="@+id/lock_glance_clock"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:fontFamily="@font/nunito_bold"
-        android:format12Hour="h:mm"
-        android:format24Hour="HH:mm"
-        android:includeFontPadding="false"
-        android:textColor="@color/kid_ink"
-        android:textSize="56sp" />
-
-    <!-- Centred also when it wraps (font scale 2.0: "Wednesday, / October 14", emulator round N8). -->
-    <TextClock
-        android:id="@+id/lock_glance_date"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:gravity="center_horizontal"
-        android:layout_marginTop="6dp"
-        android:fontFamily="@font/nunito_bold"
-        android:textColor="@color/kid_core_dim"
-        android:textSize="14sp" />
-
-    <!-- The next alarm (design 42 §1.3): "Alarm 07:00", "Alarm tor 07:00" more than 24 h away - only
-         the system clock app's or the pinned clock app's (PinLockRuntime.clockPackages). No tap. Part
-         of the date in the fit: it goes with the date. -->
-    <TextView
-        android:id="@+id/lock_glance_alarm"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:fontFamily="@font/nunito_bold"
-        android:gravity="center_horizontal"
-        android:textColor="@color/kid_core_dim"
-        android:textSize="13sp"
-        android:visibility="gone" />
-
-    <!-- The full tile: step 4's (72 dp art, item, entry, 5 dp progress, previous / play / next), with
-         the time line under the bar (r6 §2). -->
     <LinearLayout
-        android:id="@+id/lock_media_tile"
+        android:id="@+id/lock_glance_top"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="18dp"
-        android:background="@drawable/bg_music_tile"
-        android:orientation="vertical"
-        android:padding="14dp"
-        android:visibility="gone">
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center_horizontal"
+        android:orientation="vertical">
 
+        <TextClock
+            android:id="@+id/lock_glance_clock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/nunito_bold"
+            android:format12Hour="h:mm"
+            android:format24Hour="HH:mm"
+            android:includeFontPadding="false"
+            android:textColor="@color/kid_ink"
+            android:textSize="56sp" />
+
+        <!-- Centred also when it wraps (font scale 2.0: "Wednesday, / October 14", emulator round N8). -->
+        <TextClock
+            android:id="@+id/lock_glance_date"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_horizontal"
+            android:layout_marginTop="6dp"
+            android:fontFamily="@font/nunito_bold"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="14sp" />
+
+        <!-- The next alarm (design 42 §1.3): "Alarm 07:00", "Alarm tor 07:00" more than 24 h away - only
+             the system clock app's or the pinned clock app's (PinLockRuntime.clockPackages). No tap. Part
+             of the date in the fit: it goes with the date. -->
+        <TextView
+            android:id="@+id/lock_glance_alarm"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:fontFamily="@font/nunito_bold"
+            android:gravity="center_horizontal"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <!-- The full tile (r9 §3, the iPhone 16's lock player): a 48 dp cover, the item and the entry on one line
+             each, one progress row - elapsed, the 4 dp bar, the time left with a minus - and previous / play / next
+             as plain glyphs in the ink (48 / 56 / 48 dp targets 28 dp apart, an oval ripple, no discs). The times
+             are one line in a fixed width the panel sets from the widest text of their shape (never wrap_content,
+             no ellipsize: a tick swaps the text without a layout and never shows "1:2…"); the bar's content
+             description says the time to TalkBack. -->
         <LinearLayout
+            android:id="@+id/lock_media_tile"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:background="@drawable/bg_music_tile"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:layout_width="48dp"
+                    android:layout_height="48dp">
+
+                    <ImageView
+                        android:id="@+id/lock_media_art"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="@drawable/bg_music_art"
+                        android:clipToOutline="true"
+                        android:importantForAccessibility="no"
+                        android:scaleType="centerCrop" />
+
+                    <ImageView
+                        android:id="@+id/lock_media_glyph"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_gravity="center"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/app_glyph_music_note"
+                        android:tint="@color/kid_core" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/lock_media_item"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:fontFamily="@font/nunito_extrabold"
+                        android:maxLines="1"
+                        android:textColor="@color/kid_ink"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        android:id="@+id/lock_media_entry"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:fontFamily="@font/nunito_bold"
+                        android:maxLines="1"
+                        android:textColor="@color/kid_core_dim"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/lock_media_elapsed"
+                    android:layout_width="40dp"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/nunito_bold"
+                    android:fontFeatureSettings="tnum"
+                    android:gravity="start"
+                    android:importantForAccessibility="no"
+                    android:maxLines="1"
+                    android:textColor="@color/kid_core_dim"
+                    android:textSize="12sp" />
+
+                <ProgressBar
+                    android:id="@+id/lock_media_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="0dp"
+                    android:layout_height="4dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:indeterminate="false"
+                    android:max="1000"
+                    android:progressDrawable="@drawable/bg_music_progress" />
+
+                <TextView
+                    android:id="@+id/lock_media_remaining"
+                    android:layout_width="40dp"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/nunito_bold"
+                    android:fontFeatureSettings="tnum"
+                    android:gravity="end"
+                    android:importantForAccessibility="no"
+                    android:maxLines="1"
+                    android:textColor="@color/kid_core_dim"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/lock_media_previous"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/music_previous"
+                    android:padding="11dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_music_previous"
+                    android:tint="@color/kid_ink" />
+
+                <ImageButton
+                    android:id="@+id/lock_media_play"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:layout_marginStart="28dp"
+                    android:layout_marginEnd="28dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:padding="11dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_music_pause"
+                    android:tint="@color/kid_ink" />
+
+                <ImageButton
+                    android:id="@+id/lock_media_next"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/music_next"
+                    android:padding="11dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ic_music_next"
+                    android:tint="@color/kid_ink" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- The compact tile (mockup A): one row - 52 dp art, item, entry, a 3 dp progress bar under them,
+             a 48 dp peach play/pause. No time line (the user, 2026-10-20: the full tile's is enough - the
+             compact form exists to make room for the rows); the bar's content description says the time.
+             Since r9 the fit's last resort (font scale 2.0 on 320 dp: the full tile doesn't fit). -->
+        <LinearLayout
+            android:id="@+id/lock_media_compact"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:background="@drawable/bg_glance_compact_tile"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:padding="10dp"
+            android:visibility="gone">
 
             <FrameLayout
-                android:layout_width="72dp"
-                android:layout_height="72dp">
+                android:layout_width="52dp"
+                android:layout_height="52dp">
 
                 <ImageView
-                    android:id="@+id/lock_media_art"
+                    android:id="@+id/lock_media_compact_art"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:background="@drawable/bg_music_art_large"
+                    android:background="@drawable/bg_music_art"
                     android:clipToOutline="true"
                     android:importantForAccessibility="no"
                     android:scaleType="centerCrop" />
 
                 <ImageView
-                    android:id="@+id/lock_media_glyph"
-                    android:layout_width="38dp"
-                    android:layout_height="38dp"
+                    android:id="@+id/lock_media_compact_glyph"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
                     android:layout_gravity="center"
                     android:importantForAccessibility="no"
                     android:src="@drawable/app_glyph_music_note"
@@ -108,17 +275,17 @@
                 android:orientation="vertical">
 
                 <TextView
-                    android:id="@+id/lock_media_item"
+                    android:id="@+id/lock_media_compact_item"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:fontFamily="@font/nunito_extrabold"
-                    android:maxLines="2"
+                    android:maxLines="1"
                     android:textColor="@color/kid_ink"
-                    android:textSize="16sp" />
+                    android:textSize="15sp" />
 
                 <TextView
-                    android:id="@+id/lock_media_entry"
+                    android:id="@+id/lock_media_compact_entry"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
@@ -126,286 +293,159 @@
                     android:maxLines="1"
                     android:textColor="@color/kid_core_dim"
                     android:textSize="13sp" />
+
+                <ProgressBar
+                    android:id="@+id/lock_media_compact_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="3dp"
+                    android:layout_marginTop="6dp"
+                    android:indeterminate="false"
+                    android:max="1000"
+                    android:progressDrawable="@drawable/bg_music_progress" />
             </LinearLayout>
-        </LinearLayout>
-
-        <ProgressBar
-            android:id="@+id/lock_media_progress"
-            style="?android:attr/progressBarStyleHorizontal"
-            android:layout_width="match_parent"
-            android:layout_height="5dp"
-            android:layout_marginTop="12dp"
-            android:indeterminate="false"
-            android:max="1000"
-            android:progressDrawable="@drawable/bg_music_progress" />
-
-        <!-- "4:48 · 25:36" (r6 §2), ticking with the bar. Tabular figures in a width its parent fixes
-             (match_parent) and one line: a tick swaps the text without a layout. The bar's content
-             description says it to TalkBack. -->
-        <TextView
-            android:id="@+id/lock_media_time"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:ellipsize="end"
-            android:fontFamily="@font/nunito_bold"
-            android:fontFeatureSettings="tnum"
-            android:importantForAccessibility="no"
-            android:maxLines="1"
-            android:textColor="@color/kid_core_dim"
-            android:textSize="12sp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:gravity="center"
-            android:orientation="horizontal">
 
             <ImageButton
-                android:id="@+id/lock_media_previous"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
-                android:background="@drawable/bg_music_control"
-                android:contentDescription="@string/music_previous"
-                android:padding="15dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_music_previous"
-                android:tint="@color/kid_core" />
-
-            <ImageButton
-                android:id="@+id/lock_media_play"
-                android:layout_width="64dp"
-                android:layout_height="64dp"
-                android:layout_marginStart="18dp"
-                android:layout_marginEnd="18dp"
+                android:id="@+id/lock_media_compact_play"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="12dp"
                 android:background="@drawable/bg_music_play"
-                android:padding="19dp"
+                android:padding="13dp"
                 android:scaleType="fitCenter"
                 android:src="@drawable/ic_music_pause"
                 android:tint="@color/kid_ground" />
-
-            <ImageButton
-                android:id="@+id/lock_media_next"
-                android:layout_width="52dp"
-                android:layout_height="52dp"
-                android:background="@drawable/bg_music_control"
-                android:contentDescription="@string/music_next"
-                android:padding="15dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_music_next"
-                android:tint="@color/kid_core" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <!-- The compact tile (mockup A): one row - 52 dp art, item, entry, a 3 dp progress bar under them,
-         a 48 dp peach play/pause. No time line (the user, 2026-10-20: the full tile's is enough - the
-         compact form exists to make room for the rows); the bar's content description says the time. -->
-    <LinearLayout
-        android:id="@+id/lock_media_compact"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="18dp"
-        android:background="@drawable/bg_glance_compact_tile"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="10dp"
-        android:visibility="gone">
-
-        <FrameLayout
-            android:layout_width="52dp"
-            android:layout_height="52dp">
-
-            <ImageView
-                android:id="@+id/lock_media_compact_art"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="@drawable/bg_music_art"
-                android:clipToOutline="true"
-                android:importantForAccessibility="no"
-                android:scaleType="centerCrop" />
-
-            <ImageView
-                android:id="@+id/lock_media_compact_glyph"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_gravity="center"
-                android:importantForAccessibility="no"
-                android:src="@drawable/app_glyph_music_note"
-                android:tint="@color/kid_core" />
-        </FrameLayout>
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/lock_media_compact_item"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:fontFamily="@font/nunito_extrabold"
-                android:maxLines="1"
-                android:textColor="@color/kid_ink"
-                android:textSize="15sp" />
-
-            <TextView
-                android:id="@+id/lock_media_compact_entry"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:fontFamily="@font/nunito_bold"
-                android:maxLines="1"
-                android:textColor="@color/kid_core_dim"
-                android:textSize="13sp" />
-
-            <ProgressBar
-                android:id="@+id/lock_media_compact_progress"
-                style="?android:attr/progressBarStyleHorizontal"
-                android:layout_width="match_parent"
-                android:layout_height="3dp"
-                android:layout_marginTop="6dp"
-                android:indeterminate="false"
-                android:max="1000"
-                android:progressDrawable="@drawable/bg_music_progress" />
         </LinearLayout>
 
-        <ImageButton
-            android:id="@+id/lock_media_compact_play"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="12dp"
-            android:background="@drawable/bg_music_play"
-            android:padding="13dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/ic_music_pause"
-            android:tint="@color/kid_ground" />
-    </LinearLayout>
-
-    <!-- The timer tile (design 42 §1.4), in the music tile's style: the timer glyph and our own label
-         ("Timer", or "Stoppeklokke" for the stopwatch), the time large (moved locally between the clock
-         app's updates - down for a timer, up for the stopwatch; one line in a width its parent fixes,
-         tabular figures - a tick swaps the text without a layout) and the app's text, cleaned. A timer
-         that ended shows its text ("Tiden er ute") in the time's place and one round button, "Stopp",
-         that fires the notification's broadcast (lock/ClockActions) - nothing else. The tile's own tap
-         is the keypad first, then the clock app. -->
-    <LinearLayout
-        android:id="@+id/lock_timer_tile"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="18dp"
-        android:background="@drawable/bg_music_tile"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:padding="12dp"
-        android:visibility="gone">
-
+        <!-- The timer tile (design 42 §1.4), in the music tile's style: the timer glyph and our own label
+             ("Timer", or "Stoppeklokke" for the stopwatch), the time large (moved locally between the clock
+             app's updates - down for a timer, up for the stopwatch; one line in a width its parent fixes,
+             tabular figures - a tick swaps the text without a layout) and the app's text, cleaned. A timer
+             that ended shows its text ("Tiden er ute") in the time's place and one round button, "Stopp",
+             that fires the notification's broadcast (lock/ClockActions) - nothing else. The tile's own tap
+             is the keypad first, then the clock app. -->
         <LinearLayout
-            android:layout_width="0dp"
+            android:id="@+id/lock_timer_tile"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
+            android:layout_marginTop="18dp"
+            android:background="@drawable/bg_music_tile"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="12dp"
+            android:visibility="gone">
 
             <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-                <ImageView
-                    android:layout_width="18dp"
-                    android:layout_height="18dp"
-                    android:importantForAccessibility="no"
-                    android:src="@drawable/clock_glyph_timer"
-                    android:tint="@color/kid_accent" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/clock_glyph_timer"
+                        android:tint="@color/kid_accent" />
+
+                    <TextView
+                        android:id="@+id/lock_timer_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:fontFamily="@font/nunito_bold"
+                        android:importantForAccessibility="no"
+                        android:text="@string/lock_timer"
+                        android:textColor="@color/kid_core_dim"
+                        android:textSize="13sp" />
+                </LinearLayout>
 
                 <TextView
-                    android:id="@+id/lock_timer_label"
-                    android:layout_width="wrap_content"
+                    android:id="@+id/lock_timer_time"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
+                    android:layout_marginTop="2dp"
+                    android:ellipsize="end"
+                    android:fontFamily="@font/nunito_bold"
+                    android:fontFeatureSettings="tnum"
+                    android:importantForAccessibility="no"
+                    android:maxLines="1"
+                    android:textColor="@color/kid_ink"
+                    android:textSize="24sp" />
+
+                <TextView
+                    android:id="@+id/lock_timer_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
                     android:fontFamily="@font/nunito_bold"
                     android:importantForAccessibility="no"
-                    android:text="@string/lock_timer"
+                    android:maxLines="1"
                     android:textColor="@color/kid_core_dim"
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/lock_timer_time"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:ellipsize="end"
-                android:fontFamily="@font/nunito_bold"
-                android:fontFeatureSettings="tnum"
-                android:importantForAccessibility="no"
-                android:maxLines="1"
-                android:textColor="@color/kid_ink"
-                android:textSize="24sp" />
-
-            <TextView
-                android:id="@+id/lock_timer_text"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:fontFamily="@font/nunito_bold"
-                android:importantForAccessibility="no"
-                android:maxLines="1"
-                android:textColor="@color/kid_core_dim"
-                android:textSize="13sp" />
+            <ImageButton
+                android:id="@+id/lock_timer_stop"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="12dp"
+                android:background="@drawable/bg_music_play"
+                android:contentDescription="@string/lock_timer_stop"
+                android:padding="12dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/clock_glyph_stop"
+                android:tint="@color/kid_ground"
+                android:visibility="gone" />
         </LinearLayout>
 
-        <ImageButton
-            android:id="@+id/lock_timer_stop"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="12dp"
-            android:background="@drawable/bg_music_play"
-            android:contentDescription="@string/lock_timer_stop"
-            android:padding="12dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/clock_glyph_stop"
-            android:tint="@color/kid_ground"
-            android:visibility="gone" />
-    </LinearLayout>
-
-    <!-- The rows (view_lock_glance_row.xml, added by the panel, 8 dp apart) and the "more" line right
-         under them; 14 dp below the tile, 22 dp below the date without one (set by the panel). -->
-    <LinearLayout
-        android:id="@+id/lock_glance_list"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="14dp"
-        android:orientation="vertical">
-
-        <LinearLayout
-            android:id="@+id/lock_glance_rows"
+        <!-- The rows (view_lock_glance_row.xml, added by the panel, 8 dp apart) and the "more" line right
+             under them, in what the top block leaves (r9 §2): a drag scrolls them, a tap still leads to the
+             keypad (the scroll's slop keeps a drag from being a tap). 14 dp below the tile, 22 dp below the
+             date without one (set by the panel); gone only without any row. The fade (the contacts row's
+             16 dp) shows only while there is more to scroll to. -->
+        <ScrollView
+            android:id="@+id/lock_glance_scroll"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical" />
+            android:layout_height="0dp"
+            android:layout_marginTop="14dp"
+            android:layout_weight="1"
+            android:fadingEdgeLength="16dp"
+            android:requiresFadingEdge="vertical">
 
-        <TextView
-            android:id="@+id/lock_glance_more"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="@font/nunito_bold"
-            android:gravity="center"
-            android:minHeight="24dp"
-            android:textColor="@color/kid_core_dim"
-            android:textSize="13sp"
-            android:visibility="gone" />
+            <LinearLayout
+                android:id="@+id/lock_glance_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:id="@+id/lock_glance_rows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:id="@+id/lock_glance_more"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/nunito_bold"
+                    android:gravity="center"
+                    android:minHeight="24dp"
+                    android:textColor="@color/kid_core_dim"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </ScrollView>
     </LinearLayout>
-
-    <Space
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
 
     <LinearLayout
         android:id="@+id/lock_glance_unlock"
@@ -440,9 +480,8 @@
          side, so a long label at a large font wraps before it reaches the button; the button is no
          taller than it. 12 dp of air under "Lås opp" (the user, 2026-10-21: the row sat 2 dp under it,
          "litt for tett"), so the row with its margin (the fit's fixed part) is 60 dp; 8 of the 10 new dp came
-         from the page's bottom padding (16 -> 8 dp), so every fit LockGlanceLayoutTest pins at 473/497
-         dp holds. The flashlight is gone without a flash unit or when the torch is refused while
-         LOCKED (§1.5). -->
+         from the page's bottom padding (16 -> 8 dp). The flashlight is gone without a flash unit or when the
+         torch is refused while LOCKED (§1.5). -->
     <FrameLayout
         android:id="@+id/lock_glance_bottom"
         android:layout_width="match_parent"

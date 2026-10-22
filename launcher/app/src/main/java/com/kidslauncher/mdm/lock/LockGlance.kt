@@ -115,10 +115,29 @@ fun glanceTile(session: MusicSession?): Boolean = session != null
 fun glanceTicks(tileShown: Boolean, pageShown: Boolean, session: MusicSession?): Boolean =
     tileShown && pageShown && session?.playing == true
 
-/** The line under the full tile's bar (r6 §2; the compact tile has none - the user, 2026-10-20): "4:48 · 25:36"; a live stream or an unknown duration
- * shows the position alone. The bar's content description keeps "4:48 av 25:36". */
-fun glanceTimeLine(positionMs: Long, durationMs: Long): String =
-    if (durationMs > 0) "${clockText(positionMs)} · ${clockText(durationMs)}" else clockText(positionMs)
+/** The minus of the time left (U+2212, as wide as a digit in Nunito). */
+const val GLANCE_MINUS = "−"
+
+/** The full tile's progress row (design r9 §3; the compact tile has none - the user, 2026-10-20): [elapsed] left of
+ * the bar, [remaining] right of it ("1:26 ━━━━── −2:38"); `null` for a live stream or an unknown duration, which
+ * show the elapsed time alone. The bar's content description keeps "1:26 av 4:04". */
+data class GlanceTimes(val elapsed: String, val remaining: String?)
+
+/** Both from whole seconds, so the two add up to the duration; past the end the time left is "−0:00". */
+fun glanceTimes(positionMs: Long, durationMs: Long): GlanceTimes {
+    if (durationMs <= 0) return GlanceTimes(clockText(positionMs), null)
+    val left = (durationMs / 1000 - positionMs.coerceAtLeast(0) / 1000).coerceAtLeast(0)
+    return GlanceTimes(clockText(positionMs), GLANCE_MINUS + clockText(left * 1000))
+}
+
+/**
+ * The widest text of a time's shape, every digit "0" ("0:00", "00:00", "0:00:00"), for the times' fixed width (r9
+ * §3): the duration's - or the position's once it passes a stale shorter duration (qa-r9-revision-check N6: "10:00"
+ * against "9:59"); "0:00:00" without a duration (a live position past 10 h clips - accepted). The time left never
+ * outgrows the duration's shape.
+ */
+fun glanceTimeWidest(durationMs: Long, positionMs: Long = 0): String =
+    if (durationMs <= 0) "0:00:00" else clockText(maxOf(durationMs, positionMs)).replace(Regex("[0-9]"), "0")
 
 /**
  * The refit rule (r6 §2, qa-r6 r6-4): a session callback renders the tile alone and refits the page
@@ -182,9 +201,11 @@ const val GLANCE_MAX_ROWS = 3
 /**
  * Each part's height as measured (any unit, the same for all and for the available height):
  * [fixed] = "Lås opp" and the bottom row ("Nødsamtale" and the flashlight, design 41) with their
- * margins; [date] with its margin; the tiles with their top margin (and the time line under the bar,
- * r6 §2); [clockFull] the timer tile with its margin (design 42); [rowsTop] the list's margin below a tile, [rowsTopNoTile] below the date;
- * [row] one row (the tallest); [rowGap] between rows; [more] the "more" line (nothing above it).
+ * margins; [date] with its margin; the tiles with their top margin (the full one with its progress
+ * row, r9 §3); [clockFull] the timer tile with its margin (design 42); [rowsTop] the rows' scroll's
+ * margin below a tile, [rowsTopNoTile] below the date; [row] one row (the tallest); [rowGap] between
+ * rows; [more] the "more" line (nothing above it); [fade] what the scroll's bottom fade covers past a row's own
+ * bottom padding, kept clear under the one visible row while more scrolls below it (qa-r9-code R9C-1).
  */
 data class GlanceHeights(
     val fixed: Float,
@@ -199,11 +220,14 @@ data class GlanceHeights(
     val row: Float,
     val rowGap: Float,
     val more: Float,
+    val fade: Float,
 )
 
 enum class GlanceTileSize { NONE, FULL, COMPACT }
 
-/** What the page shows: [candidate] is §1.2's number (1-7), for the logs and tests; [clock]: the
+/** What the page shows: [candidate] is the fit's number (1-7), for the logs and tests; [rows] the rows
+ * bound (min(n, 3) - none only in candidate 7), [visibleRows] those the fit counted on screen (all of
+ * them, or one with the rest below it in the scroll), [more] the "more" line's count; [clock]: the
  * timer tile (design 42). */
 data class GlanceFit(
     val candidate: Int,
@@ -211,67 +235,71 @@ data class GlanceFit(
     val date: Boolean,
     val tile: GlanceTileSize,
     val rows: Int,
+    val visibleRows: Int,
     val more: Int,
     val height: Float,
     val clock: Boolean = false,
 )
 
+/** The rows' scroll shows whenever there is a row at all - in candidate 7 with the "more" line alone
+ * (qa-r9-revision-check N1). */
+val GlanceFit.scrollShown: Boolean get() = rows > 0 || more > 0
+
 /**
- * The fit (§1.2): the page never scrolls. The first candidate whose height fits [available] wins:
- * 1. big clock, full tile, min(n, 3) rows (+ the "more" line when n > 3);
- * 2. small clock, full tile, the same rows;
- * 3. big clock, compact tile; 4. small clock, compact tile;
- * 5. small clock, compact tile, one row less each time down to 1 (the "more" line counts the rest);
- * 6. as 5 with one row and no date; 7. the same with no row (only the "more" line).
- * Without a tile, 2-4 are only the clock step. Nothing fits: the last candidate.
+ * The fit (design 25 §1.2, r9 §2): the clock's, date's and tiles' sizes; the bottom block always
+ * stays whole (the layout keeps it), and the rows scroll in what is left. A candidate counts every
+ * row (with the "more" line when n > 3) or one row (the rest, and the line, below it in the scroll);
+ * rows are never folded into "+ N varsler til" to make room. The first whose height fits [available]
+ * wins:
+ * 1. big clock, date, full tile, every row; 2. small clock, the same;
+ * 3. small clock, date, full tile, one row visible;
+ * 4. small clock, date, compact tile, every row; 5. the same, one row visible;
+ * 6. small clock, no date, compact tile, one row visible;
+ * 7. small clock, no date, compact tile, no row - only the "more" line, counting all n (the last
+ *    resort is a line, never a faded sliver of a row).
+ * Without a tile 4 = 2 and 5 = 3. Nothing fits: the last candidate.
  *
- * With a running timer ([clock], design 42 §1.6) the timer tile is tried first in every one of
- * them, in this order: both tiles and every row (1-2), the music tile compact (3-4), the rows folded
- * into "+ N varsler" one by one down to none (5); only then the timer tile goes and the order above
- * runs for the music tile alone. A running timer outlives the music tile's full size and the rows.
+ * With a running timer ([clock], design 42 §1.6 as changed by r9 §2) the seven with the timer tile
+ * come first, then the seven without it: a running timer outlives the music tile's full size, a
+ * second visible row and the date.
  */
 fun glanceFit(available: Float, heights: GlanceHeights, tile: Boolean, rowCount: Int, clock: Boolean = false): GlanceFit {
     val n = rowCount.coerceAtLeast(0)
     val most = minOf(n, GLANCE_MAX_ROWS)
+    val one = minOf(most, 1)
     val full = if (tile) GlanceTileSize.FULL else GlanceTileSize.NONE
     val compact = if (tile) GlanceTileSize.COMPACT else GlanceTileSize.NONE
-    fun fit(candidate: Int, big: Boolean, date: Boolean, size: GlanceTileSize, rows: Int, withClock: Boolean = false): GlanceFit {
+    fun fit(candidate: Int, big: Boolean, date: Boolean, size: GlanceTileSize, rows: Int, visible: Int, withClock: Boolean): GlanceFit {
         val more = n - rows
         val tileHeight = when (size) {
             GlanceTileSize.NONE -> 0f
             GlanceTileSize.FULL -> heights.tileFull
             GlanceTileSize.COMPACT -> heights.tileCompact
         }
-        val list = if (rows == 0 && more == 0) {
+        // The "more" line sits after row 3: on screen only when every bound row is. With more below the
+        // visible row, the scroll's fade is counted so that row stays clear of it.
+        val list = if (n == 0) {
             0f
         } else {
             (if (size == GlanceTileSize.NONE && !withClock) heights.rowsTopNoTile else heights.rowsTop) +
-                rows * heights.row + (rows - 1).coerceAtLeast(0) * heights.rowGap +
-                (if (more > 0) heights.more else 0f)
+                visible * heights.row + (visible - 1).coerceAtLeast(0) * heights.rowGap +
+                (if (visible == rows && more > 0) heights.more else 0f) +
+                (if (visible < rows) heights.fade else 0f)
         }
         val height = heights.fixed + (if (big) heights.clockBig else heights.clockSmall) +
             (if (date) heights.date else 0f) + tileHeight + (if (withClock) heights.clockFull else 0f) + list
-        return GlanceFit(candidate, big, date, size, rows, more, height, withClock)
+        return GlanceFit(candidate, big, date, size, rows, visible, more, height, withClock)
     }
-    val candidates = buildList {
-        if (clock) {
-            add(fit(1, big = true, date = true, size = full, rows = most, withClock = true))
-            add(fit(2, big = false, date = true, size = full, rows = most, withClock = true))
-            if (tile) {
-                add(fit(3, big = true, date = true, size = compact, rows = most, withClock = true))
-                add(fit(4, big = false, date = true, size = compact, rows = most, withClock = true))
-            }
-            for (rows in most - 1 downTo 0) add(fit(5, big = false, date = true, size = compact, rows = rows, withClock = true))
-        }
-        add(fit(1, big = true, date = true, size = full, rows = most))
-        add(fit(2, big = false, date = true, size = full, rows = most))
-        if (tile) {
-            add(fit(3, big = true, date = true, size = compact, rows = most))
-            add(fit(4, big = false, date = true, size = compact, rows = most))
-        }
-        for (rows in most - 1 downTo 1) add(fit(5, big = false, date = true, size = compact, rows = rows))
-        add(fit(6, big = false, date = false, size = compact, rows = minOf(most, 1)))
-        add(fit(7, big = false, date = false, size = compact, rows = 0))
+    val candidates = (if (clock) listOf(true, false) else listOf(false)).flatMap { withClock ->
+        listOf(
+            fit(1, big = true, date = true, size = full, rows = most, visible = most, withClock = withClock),
+            fit(2, big = false, date = true, size = full, rows = most, visible = most, withClock = withClock),
+            fit(3, big = false, date = true, size = full, rows = most, visible = one, withClock = withClock),
+            fit(4, big = false, date = true, size = compact, rows = most, visible = most, withClock = withClock),
+            fit(5, big = false, date = true, size = compact, rows = most, visible = one, withClock = withClock),
+            fit(6, big = false, date = false, size = compact, rows = most, visible = one, withClock = withClock),
+            fit(7, big = false, date = false, size = compact, rows = 0, visible = 0, withClock = withClock),
+        )
     }
     return candidates.firstOrNull { it.height <= available } ?: candidates.last()
 }
