@@ -65,6 +65,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.dismiss
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.semantics
@@ -379,7 +380,10 @@ fun VolumeSlider(value: Int, fill: Color, label: String, modifier: Modifier = Mo
     }
 }
 
-/** A bottom sheet over a scrim (the mockup's "Sov om" and "Spill av på"); a tap on the scrim closes it. */
+/**
+ * A bottom sheet over a scrim (the mockup's "Sov om" and "Spill av på"): a tap on the scrim, Back, a drag down
+ * (design r8 §2, [dragDownToClose]) and TalkBack's "dismiss" action close it.
+ */
 @Composable
 fun Sheet(title: String, onDismiss: () -> Unit, gap: Dp, content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize()) {
@@ -389,6 +393,13 @@ fun Sheet(title: String, onDismiss: () -> Unit, gap: Dp, content: @Composable ()
         )
         Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .dragDownToClose(onDismiss)
+                .semantics {
+                    dismiss {
+                        onDismiss()
+                        true
+                    }
+                }
                 .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)).background(Palette.card)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 20.dp),

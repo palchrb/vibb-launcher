@@ -119,7 +119,8 @@ class MainActivity : ComponentActivity() {
         command(Commands.RESTORE, bundleOf(Commands.ARG_THEN to then, Commands.ARG_POSITION to positionMs))
 
     private val actions = object : Actions {
-        override fun playEntry(entryId: Long) = command(Commands.PLAY_ENTRY, bundleOf(Commands.ARG_ENTRY to entryId))
+        override fun playEntry(entryId: Long, favourites: Boolean) =
+            command(Commands.PLAY_ENTRY, bundleOf(Commands.ARG_ENTRY to entryId, Commands.ARG_FAVOURITES to favourites))
         override fun playItem(entryId: Long, key: String) = command(Commands.PLAY_ITEM, bundleOf(Commands.ARG_ENTRY to entryId, Commands.ARG_KEY to key))
         override fun togglePlay() {
             val hub = PlayerHub.state.value
@@ -167,7 +168,8 @@ class MainActivity : ComponentActivity() {
 
 /** What the screens ask of the player. */
 interface Actions {
-    fun playEntry(entryId: Long)
+    /** A cover tap; [favourites]: under "Favoritter", only the entry's hearted items (design r8 §1.1). */
+    fun playEntry(entryId: Long, favourites: Boolean)
     fun playItem(entryId: Long, key: String)
     fun togglePlay()
     fun next()

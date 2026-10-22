@@ -156,7 +156,12 @@ data class NowPlayingRow(
     val durationMs: Long?,
     val shuffled: Boolean,
     val updatedAt: Long,
-)
+    /** A "Favoritter" queue's scope (design r8 §1.3, Room 7): its keys joined by '\n'; null = the whole entry. */
+    val favourites: String? = null,
+) {
+    /** [favourites] as the scope (`Active.favourites`): null for the whole entry. */
+    fun scope(): Set<String>? = favourites?.split('\n')?.filter { it.isNotEmpty() }?.toSet()
+}
 
 @Dao
 interface MusicDao {
@@ -327,6 +332,10 @@ interface MusicDao {
     @Query("DELETE FROM positions WHERE entryKey = :entryKey AND done = 0")
     suspend fun clearPartialPositions(entryKey: String)
 
+    /** The same for a "Favoritter" queue (design r8 §1.3): only the items it held, so a half-heard one outside keeps its place. */
+    @Query("DELETE FROM positions WHERE entryKey = :entryKey AND done = 0 AND itemKey IN (:itemKeys)")
+    suspend fun clearPartialPositionsOf(entryKey: String, itemKeys: List<String>)
+
     @Query("SELECT * FROM bookmarks")
     suspend fun bookmarks(): List<BookmarkRow>
 
@@ -480,7 +489,7 @@ const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
         DownloadRow::class, ItemErrorRow::class, ShuffleRow::class, NowPlayingRow::class, KnownEntryRow::class,
         NewsBaselineRow::class, FlipRow::class, RepeatRow::class, FavouriteRow::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = MusicDb.ReapplyListings::class),
@@ -494,6 +503,8 @@ const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
         AutoMigration(from = 4, to = 5),
         // Designs 49 and 50 (one round): repeat and favourites, new tables only. Empty: nothing repeats, no favourite.
         AutoMigration(from = 5, to = 6),
+        // Design r8: now_playing.favourites, nullable. Null on the stored row: the whole entry, as before.
+        AutoMigration(from = 6, to = 7),
     ],
 )
 abstract class MusicDb : RoomDatabase() {

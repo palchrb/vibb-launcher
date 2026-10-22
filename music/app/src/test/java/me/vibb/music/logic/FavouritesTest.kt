@@ -78,4 +78,71 @@ class FavouritesTest {
         assertTrue(root.contains("s.favourites[n.entry.key].orEmpty().takeIf { !isSpotifyContext(n.entry) }"))
         assertTrue(root.contains("favourite = { item -> if (canFavourite(n.entry, item.key)) s.favourite(n.entry, item.key) else null }"))
     }
+
+    // design r8 §1: option C - under "Favoritter" a cover tap plays only the entry's hearted items
+
+    @Test
+    fun `r8 - the scope is the hearts the listing still names, the same in both views`() {
+        val s = snapshot(library(entries), items(1, listOf("x", "y", "z"), gone = setOf("z")))
+            .copy(favourites = mapOf(a.key to setOf("z", "x", "dropped")))
+        assertEquals("in the listing's order; a withdrawn item stays, a dropped one waits for the prune", listOf("x", "z"), s.heartsListed(a).toList())
+        assertEquals(s.heartsListed(a), s.forRenderer(true).heartsListed(a))
+        assertEquals(emptySet<String>(), s.heartsListed(b))
+    }
+
+    @Test
+    fun `r8 - favouritesScope keeps the scope in the given order and starts at the bookmark in it, else the first at its place`() {
+        val flipped = listOf("e5", "e4", "e3", "e2", "e1")
+        val scope = setOf("e2", "e4", "gone")
+        val pos = { k: String -> if (k == "e4") ItemPosition(90_000, false) else null }
+        assertEquals("a flipped order stays flipped; a key the order lacks drops", listOf("e4", "e2"), favouritesScope(flipped, scope, null, true, pos).keys)
+        assertEquals("the bookmark when it is in the scope", Bookmark("e2", 30_000), favouritesScope(flipped, scope, Bookmark("e2", 30_000), true, pos).bookmark)
+        assertEquals("else the first item at its own place", Bookmark("e4", 90_000), favouritesScope(flipped, scope, Bookmark("e3", 30_000), true, pos).bookmark)
+        assertEquals("a done first item from 0", Bookmark("e4", 0), favouritesScope(flipped, scope, null, true) { ItemPosition(600_000, true) }.bookmark)
+        assertNull("resume off: no bookmark, the top", favouritesScope(flipped, scope, Bookmark("e3", 30_000), false, pos).bookmark)
+        assertEquals("nothing of the scope in the order", FavouritesScope(emptyList(), null), favouritesScope(flipped, setOf("x"), Bookmark("e3", 1), true, pos))
+        // through the unchanged coverTapPlan: the hearted run, at e4's place
+        val from = favouritesScope(flipped, scope, Bookmark("e3", 30_000), true, pos)
+        assertEquals(QueuePlan(listOf("e4", "e2"), 0, 90_000), coverTapPlan(from.keys, true, from.bookmark, shuffle = false))
+        // no scope: the whole entry, the bookmark as it is
+        assertEquals(FavouritesScope(flipped, Bookmark("e3", 30_000)), coverTapScope(flipped, null, Bookmark("e3", 30_000), true, pos))
+    }
+
+    @Test
+    fun `r8 - the Storytel wait - a bookmark on a hearted book not on the phone waits, on an unhearted one it doesn't`() {
+        val series = entry(7, Source.STORYTEL, target = "storytel:series:26175", cache = -1)
+        val mark = Bookmark("b3", 120_000)
+        val onPhone = listOf("b1")
+        val listed = listOf("b1", "b2", "b3")
+        assertTrue(coverTapAwaitsBook(series, bookmarkIn(mark, setOf("b1", "b3")), onPhone, listed))
+        assertFalse("its tap plays the hearted b1", coverTapAwaitsBook(series, bookmarkIn(mark, setOf("b1")), onPhone, listed))
+        assertTrue("Alle: the whole entry waits, as before", coverTapAwaitsBook(series, bookmarkIn(mark, null), onPhone, listed))
+    }
+
+    @Test
+    fun `r8 - the service keeps the scope - the same-tile rule, both row writers, restore and the queue's end`() {
+        val service = moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt").readText()
+        fun body(start: String) = service.substringAfter(start).substringBefore("\n    }\n")
+        val tap = body("private suspend fun playEntry(entryId: Long, favourites: Boolean) {")
+        assertTrue("a tap with the loaded queue's scope unpauses", tap.contains("if ((current.favourites != null) == favourites) {"))
+        assertTrue("the other scope: the place lands before the plan", tap.indexOf("renderer.saveNow(force = true)") in 0 until tap.indexOf("loadForRenderer()"))
+        assertTrue(service.contains("Commands.PLAY_ENTRY -> playEntry(args.getLong(Commands.ARG_ENTRY), args.getBoolean(Commands.ARG_FAVOURITES))"))
+        assertTrue(body("private fun saveBookmark(").contains("a.shuffled, now, a.storedScope())"))
+        assertTrue(moduleFile("src/main/java/me/vibb/music/playback/LocalRenderer.kt").readText().contains("a.shuffled, now, a.storedScope())"))
+        assertTrue(body("private fun queueEnded() {").contains("if (held == null) store.db.clearPartialPositions(entryKey) else store.db.clearPartialPositionsOf(entryKey, held)"))
+        assertTrue(body("private fun publish() {").contains("favourites = a?.favourites,"))
+        // activeFor is the one guard (R8C-6): every queue's keys and order go through the scope
+        assertTrue(body("private suspend fun activeFor(").contains("val order = scoped(snap.order(entry), favourites)"))
+        // qa-r8-code R8C-3: the carries no behaviour test sees - adopt after a restart, "Spill av på" from a stored
+        // queue, the end's own items, the list pick's rule in the service
+        assertTrue(body("private suspend fun adoptedQueue(").contains("val favourites = row?.scope()"))
+        assertTrue(body("private suspend fun toRoom(").contains("Triple(entry, it, row.scope())"))
+        assertTrue(body("private fun queueEnded() {").contains("val held = a.favourites?.let { a.items.map { it.key } }"))
+        assertTrue(body("private suspend fun playItem(").contains("val scope = queueScope?.takeIf { key in it }"))
+        // R8C-1: a stale Spotify play (RESUME, the same scope) starts the whole entry, as restartIfStale does
+        assertTrue(tap.substringAfter("spotifyLog(\"web player: the entry's mode changed").substringBefore("}").contains("hearted = false"))
+        assertTrue(tap.contains("val scopeOf = { e: Entry -> snap.heartsListed(e).takeIf { hearted } }"))
+        // R8C-4: an empty plan says why only under "Favoritter"; the whole entry stays silent, as before r8
+        assertTrue(tap.contains("if (scope != null) PlayerHub.mutableMessages.tryEmit("))
+    }
 }

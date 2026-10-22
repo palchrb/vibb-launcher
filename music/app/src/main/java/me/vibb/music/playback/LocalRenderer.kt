@@ -292,7 +292,7 @@ internal fun persistPlace(
 ) {
     val item = a.items.getOrNull(index) ?: return
     val now = System.currentTimeMillis()
-    val stored = if (!withQueue) null else NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, posMs, shownDurationMs, a.shuffled, now)
+    val stored = if (!withQueue) null else NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, posMs, shownDurationMs, a.shuffled, now, a.storedScope())
     val place = place(a.entry.key, item.key, posMs, durationMs, now, stored)
     a.positions[item.key] = place.record
     val write: suspend () -> Unit = { writePlace(context, store, place) }

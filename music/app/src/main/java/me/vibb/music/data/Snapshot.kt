@@ -115,6 +115,15 @@ data class Snapshot(
     /** Does item [itemKey] of [entry] carry the kid's heart? */
     fun favourite(entry: Entry, itemKey: String): Boolean = itemKey in favourites[entry.key].orEmpty()
 
+    /**
+     * A "Favoritter" queue's scope (design r8 §1.2): [entry]'s hearts that its listing still names, in the listing's
+     * order - the same in both renderers' views (a heart on an item the listing dropped waits for `Sync`'s prune).
+     */
+    fun heartsListed(entry: Entry): Set<String> {
+        val hearts = favourites[entry.key].orEmpty()
+        return listed[entry.id].orEmpty().map { it.key }.filter { it in hearts }.toSet()
+    }
+
     /** [entry]'s repeat: off where it has none to offer ([canRepeat]). */
     fun repeatOf(entry: Entry): Repeat = if (canRepeat(entry)) repeat[entry.key] ?: Repeat.OFF else Repeat.OFF
 

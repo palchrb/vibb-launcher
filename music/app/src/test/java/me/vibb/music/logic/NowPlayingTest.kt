@@ -142,7 +142,7 @@ class NowPlayingTest {
         fun body(signature: String) = service.substringAfter(signature).substringBefore("\n    }\n")
         assertTrue(body("private fun start(a: Active, plan: QueuePlan, play: Boolean = true, newChoice: Boolean = false) {").contains("if (newChoice) endSleepAtEnd(SleepEvent.NEW_QUEUE)"))
         assertEquals("the cover tap's and the list pick's start only", 2, Regex("start\\([^\\n]*newChoice = true\\)").findAll(service).count())
-        assertTrue("a cover tap", body("private suspend fun playEntry(entryId: Long) {").contains("start(a, p, newChoice = true)"))
+        assertTrue("a cover tap", body("private suspend fun playEntry(entryId: Long, favourites: Boolean) {").contains("start(a, p, newChoice = true)"))
         assertTrue("a list pick", body("private suspend fun playItem(entryId: Long, key: String) {").contains("start(a, p, newChoice = true)"))
         for ((path, signature) in listOf(
             "the stored queue's first play" to "private suspend fun resumeLast() {",

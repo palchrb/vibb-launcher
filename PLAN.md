@@ -765,14 +765,20 @@ findings, merge to `main`, full suite once.
   from a share link on a room, the Web Playback SDK on the phone - a single track can be a share link, but every
   switch between it and a URL item replaces the transport) and own files (phone-only: "the phone never serves", 26a
   drops them on a room). So (B) is buildable as a per-item dispatcher; the cost is a multi-source advance that vibb
-  doesn't have.
+  doesn't have. **(C) done 2026-10-22 (branch `r8-music`, 1e17fcf9; design r8 §1)**: the scope is the hearts at the
+  tap, kept with the queue (Room 7 `now_playing.favourites`); a pick inside it stays in it; the tile describes the
+  hearted run. Emulator checks: design r8 §4.1-§4.7. (B) stays open.
 - **Music: the output and sleep sheets don't swipe down** (the user, 2026-10-21): `ui/Widgets.kt` `Sheet` is our own
   sheet - a scrim tap and Back close it, the handle is only drawn. Add a drag down on the handle/sheet (past a
-  threshold or a fling) that closes it, as Android's sheets do; keep the scrim tap and Back.
+  threshold or a fling) that closes it, as Android's sheets do; keep the scrim tap and Back. **Done 2026-10-22
+  (branch `r8-music`, 1e17fcf9; design r8 §2)**: `Modifier.dragDownToClose` (`ui/DragDown.kt`), plus TalkBack's
+  dismiss; emulator checks r8 §4.8-§4.9.
   Same round (the user, 2026-10-21, "swipe tilbake"): Android's back gesture already works in the app
   (`MusicRoot.kt:97` `BackHandler`: sheet -> closed, list -> player, player -> library, search -> library); add the
   music-app standard on top - a drag down on the player screen returns to the library, as Spotify's and Apple
   Music's do. Check on the Jelly Star (gesture navigation) that the edge swipe isn't eaten by a horizontal pager.
+  **Done 2026-10-22 (branch `r8-music`, 1e17fcf9; design r8 §3)**: the same modifier on the player's root; nothing
+  removed, no `systemGestureExclusion`. The Jelly Star check is r8 §4.10-§4.11 (owed by the user).
 
 - **Touch sounds and vibration on Kid Settings** (the user, 2026-10-16): a row on the child's Settings
   (swipe left) to turn key/touch sounds on and off, and vibration on touch. Android's switches are
