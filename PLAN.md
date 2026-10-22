@@ -767,6 +767,13 @@ findings, merge to `main`, full suite once.
   measured whole, the top block clips, the rows scroll (glanceFit: every row or one visible, never folded; candidate 7
   the "more" line; the timer now outlives the date); (3)+(4) the compact player (174.8 dp, was 233.8). Device checks:
   the note's §5 checks 1-3.
+- **"Modify system settings" without adb** (the user, 2026-10-22: no adb grants beyond what the QR setup does): the
+  touch row (r9) and the clock format (design 34 P12) need the WRITE_SETTINGS app-op, which a device owner can't grant
+  itself; `docs/setup/android-settings.md` names only adb. Add a row to the launcher's "Pause all restrictions"
+  screen that opens Android's "Modify system settings" page for Vibb One (`Settings.ACTION_MANAGE_WRITE_SETTINGS`
+  with our package), as "Bakgrunnstilkobling" does for the battery, plus the PWA warning while it's missing; the docs
+  lead with that path. Audit the other setup docs for adb-only steps (the power-button gestures in
+  `google-account.md` already have an on-phone path). Launcher (+ PWA text). Small; next launcher round.
 - **Music: search Spotify tracks** (the user, 2026-10-22): title search works on the emulator (the user). A list-mode
   item's title is already `"<name> — <artist>, <artist>"` (server listing, `docs/notes/server/music.md` list mode),
   so an artist name should match too - the user checks. A context-mode entry has no items on the phone (Spotify picks;
