@@ -318,7 +318,7 @@ async fn the_bell_counts_on_every_tab_page() {
         "/settings",
     ] {
         let html = app.get_page(page, &cookie).await.text();
-        let bar = &html[html.find("class=\"title-bar\"").unwrap()..];
+        let bar = &html[html.find("class=\"title-bar").unwrap()..];
         let bar = &bar[..bar.find("</div>").unwrap()];
         assert!(
             bar.contains("data-unread=\"3\" aria-label=\"Notifications, 3 unread\"")

@@ -750,7 +750,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Dark mode is vibb's night**: ground `#0C0C14`, cards `#1B1B28`, text cream `#F6E7E0` / `#A89C96`, accent peach
   `#F0A884`, the bar a night card with a `#2A2A3A` pill and the peach label. The status colours kept their values
   (all 4.5:1 or more on the new grounds; the pass checks every text node).
-- **The tab bar** (`partials/tab_bar.html` unchanged, CSS only): a white rounded card (24 px) 12 px in from the sides (the notch's inset in landscape), 14 px + the
+- **The tab bar** (`partials/tab_bar.html` unchanged, CSS only): a rounded card (24 px; off-white with a hairline since the night band's round, below) 12 px in from the sides (the notch's inset in landscape), 14 px + the
   home indicator's inset above the bottom, at most 560 px wide on a desktop; the chosen tab a `#FBE4DC` pill
   (`--tab-pill`), also the tapped tab while `reconnect.js` waits (`.tab.is-pending`). Since 2026-10-22 it floats
   over `main` (next bullet).
@@ -768,7 +768,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Icons**: `icons/icon-192.png`, `icon-512.png` and `icon-180.png` (apple-touch-icon) are the vibb app's own
   (palchrb/vibb, `pi/web/`, branch `pipewire`); `icon-maskable-512.png` is its 512 scaled to 80 % on night, so the
   outer ring (195 px) is inside the 40 % safe zone (205 px). `theme-color` and the manifest follow the grounds
-  (`#F2F2F7`, dark `#0C0C14`). The shell test checks every icon's size, that the font is local and that the head
+  (`#F2F2F7`, dark `#0C0C14`; on Devices night in both, below). The shell test checks every icon's size, that the font is local and that the head
   preloads exactly the `@font-face` file. `deploy/generate-icons.ps1` (the old blue phone icons) is deleted: the icons
   come from the vibb repo.
 - **The fix round** (`docs/review/qa-pwa-identity-d-code.md`): a checked plain checkbox in dark has a night tick on
@@ -786,3 +786,28 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Locate map stays under it (`.map-box` is its own stacking context). Devices' `.vibb-brand` is exactly 44 px high
   with no vertical margin (it was 54 px, pushing +, the bell and the title 10 px lower than on the other tabs), so
   every tab page has the bar at y 8-52 and its `<h1>` at 56 (the shell test pins both rules).
+- **Devices' night band** (artboard E, 2026-10-22, `docs/testing/2026-10-22-pwa-identity-pass.md`, "Night band"):
+  the home page alone ("it should feel more like a front page") has its title bar on vibb's night `#0C0C14`, from the
+  screen's very top - main's 8 px and the status bar's inset - to flat right under the 44 px bar, across main's whole
+  width; every other tab keeps the grey top. `.title-bar-night` paints it with `border-image`'s outset alone (`fill 0 / 0
+  / 100vh 100vw 0`): ink overflow, so it takes no room and adds no scrollable overflow (clipped at main's edges), and
+  the bar (y 8-52 plus the inset), + and the bell, and the `<h1>` (56) stay where Apps has them; the shell test pins
+  the rule to exactly that one declaration. The band is main's content like the bar, so it scrolls away with it (design
+  43 keeps the title bar in the scroller); the 100vh above the top is what an iOS pull-down bounce shows. On it, in both
+  schemes (tokens, the same in dark): the tile `--brand-tile` `#1B1B28` (the night card, as D's dark tile; it reads
+  by its peach rings), the wordmark `--brand-word` white (19.5:1), + and the bell `--night-action` peach (9.9:1),
+  hover `#F6C4AA` (12.4:1), the focus ring peach. In dark the band is the ground's own night, so it simply joins it. On
+  a desktop the band runs the full window width (an app's top bar, its content in the 720 px column), not the column
+  (a block that read as a card without corners). `theme-color`: `head.html` gives one night `#0C0C14` when the page set
+  `{% let night_top = true %}` before including it (Devices; askama's `is defined`), else the two per scheme
+  (`shell::the_tab_pages_open_on_their_large_title`). The installed iPhone app keeps `status-bar-style` `default`.
+- **The tab bar as its own layer, the content behind it** (2026-10-22, the user's iPhone: a white bar over a white
+  group ran into it; "like Nextcloud"): the bar is never the card's white nor the ground's grey, and what scrolls under
+  it reads as behind - dimmed and blurred through the bar, sharp and undimmed in the gaps around it (the gaps show that
+  it scrolls behind; no fade on main's bottom edge, which would dim the gaps too). Where `backdrop-filter` exists
+  `--bar-glass` is a warm grey `rgba(238, 236, 234, 0.72)` (dark the night card `rgba(27, 27, 40, 0.72)`) with
+  `saturate(180%) blur(20px)`; without it the solid `--bar` `#F4F2F0` (dark `#1B1B28`). A hairline inside the edge (an
+  inset shadow, so `--tab-bar-h` holds; `rgba(12, 12, 20, 0.08)`, dark `rgba(246, 231, 224, 0.08)`) and a soft shadow
+  `0 4px 18px rgba(12, 12, 20, 0.14)` (dark `rgba(0, 0, 0, 0.5)`). The lower opacity let text behind the bar pull the
+  inactive labels under AA (3.98:1 measured), so `--tab-off` moved to `#5A5A5F` (dark `#B4A8A2`): 5.16:1 and 4.77:1 at
+  worst against the rendered backdrop.
