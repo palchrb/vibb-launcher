@@ -740,6 +740,16 @@ findings, merge to `main`, full suite once.
   server-kept kid PIN, the PIN command, the migration release (the user's Jelly Star first); 58 steps 3 and 5 in
   parallel. D - the deletion round one release after the last phone migrated; design 57 is not merged (the VoIP small
   fixes that still apply go here); then design 60. The security-review items fill free slots.
+- **Android's lock is the destination (the user, 2026-10-22):** "our lock and Android's lock" exist side by side only
+  for the test phase. Once the RC proves Android's lock works as intended, every phone moves to it ("steam roll
+  everything over"), and the own-lock option is removed from the PWA and everywhere else - the per-phone switch is
+  temporary; phase D deletes the switch, today's lock code and its texts, not only the lock code.
+- **PWA identity, direction D chosen (the user, 2026-10-22; mockup https://claude.ai/artifact/PKc1u9Qo3wdxKUk1Gkh6iX,
+  artboard "D"):** B's palette and look (the small rings logo tile + "vibb" wordmark at the top of Devices, peach-dark
+  accent #A64B25, B's peach initial avatar, Nunito headings) without B's black welcome card, plus C's floating rounded
+  tab bar with the peach pill on every page. Scope (agreed): colour tokens (light and dark), bundled Nunito, the tab
+  bar partial, the Devices header, the PWA icons/manifest as the vibb rings; then a small round for an uploaded avatar
+  per phone (reuse `photos.rs`: resize, EXIF stripped). No big redesign. After the Android-lock RC.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
