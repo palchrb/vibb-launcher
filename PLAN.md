@@ -766,6 +766,14 @@ findings, merge to `main`, full suite once.
   owed); F4 (design §8 step 15's `get-disabled` expectation is wrong: no Child PIN leaves
   Android's swipe lock, as always); F5 (PWA: "Set" and "Send again" shown together for ~2 s after a new PIN lands).
   The "Lås opp" missing-answer recovery (~2 s) could not be provoked on the emulator - a device check.
+- **PWA: the night band on Devices only (the user, 2026-10-22, mockup artboard "E"):** the home tab's top - from the
+  very top of the phone screen (status bar area, `theme-color` night on that page) through the 44 px title bar - is
+  the night ground `#0C0C14` with the brand tile lifted to `#1B1B28`, "vibb" in white, + and bell in peach; the
+  heading "Devices" and everything below stay as D. Only Devices ("den skal føles mer som forside"); the other tabs
+  keep the grey top. Server only, small; next server round.
+- **Several parent accounts (the user, 2026-10-22: "enkelt opprette multi-admins, mor og far, med egen konto"):** build
+  design 62 (`docs/design/62-parent-accounts-assessment.md`) in its simple form. Multi-family (design 63) is parked:
+  "vi dropper mer tanker om multifamilie".
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
