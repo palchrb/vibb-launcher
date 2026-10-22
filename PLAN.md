@@ -717,7 +717,16 @@ findings, merge to `main`, full suite once.
   on the lock for now: the parent types the kid's PIN, then the parent code in Kid Settings as today ("åpen for
   begge" - (a) can come later). (4) Android's PIN pad is fine; fingerprint allowed (the parent enrolls in a window).
   (5) not decided yet - before the hybrid reaches a kid's phone; `ClockReader` is tied to Fossify, so another clock
-  means adapting it. (3) being clarified.
+  means adapting it. (3) (2026-10-22) the new PIN goes to the phone as a one-shot command now, deleted on the receipt;
+  no wait for design 60. (5) keep Fossify for now; decide before phase C reaches a kid's phone.
+  **Phasing (agreed 2026-10-22):** A - the small fixes, two rounds in parallel: the music app (favourites C, sheets
+  swipe-down, drag-down player -> music-v0.5.0) and the launcher (the lock glance items, touch sounds ->
+  launcher-v0.35.0 with the PIN digit fix); meanwhile the user's Storytel measurement, the Jelly Star clock check and
+  the BFU blocked-call check. B - the hybrid prototype behind a debug switch on the emulator (59 §9 step ii) and the
+  Keystore wrap (+ design 58 step 2 once Q-A is in). C - design 59 written up with QA, the per-phone switch, the
+  server-kept kid PIN, the PIN command, the migration release (the user's Jelly Star first); 58 steps 3 and 5 in
+  parallel. D - the deletion round one release after the last phone migrated; design 57 is not merged (the VoIP small
+  fixes that still apply go here); then design 60. The security-review items fill free slots.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
