@@ -15,8 +15,11 @@ import me.vibb.music.logic.ControlSlots
 import me.vibb.music.logic.controlSlots
 import me.vibb.music.logic.contextResumes
 import me.vibb.music.logic.countedOrder
+import me.vibb.music.logic.bookmarkIn
 import me.vibb.music.logic.coverTapAwaitsBook
+import me.vibb.music.logic.coverTapScope
 import me.vibb.music.logic.coverTapStart
+import me.vibb.music.logic.scoped
 import me.vibb.music.logic.hint
 import me.vibb.music.logic.isNew
 import me.vibb.music.logic.isSpotify
@@ -84,6 +87,9 @@ fun unplayableNow(entry: Entry, items: List<PlayItem>, onPhone: Set<String>, net
 /**
  * A cover of [entry]: its kind, hint, progress and NY - and for a Spotify entry the line that replaces the hint
  * ([spotifyTileState]: [loadedId]'s renderer [loadedState] from `PlayerHub.State`, the stored [spotifyOutcome]).
+ * Under "Favoritter" ([favourites], design r8 §1.1) it describes what its tap plays: the hint and the progress line from
+ * the scope's start (found in the play order as the tap finds it, numbered in the entry's count), dimmed only when no
+ * hearted item can play now.
  */
 fun entryUi(
     snap: Snapshot,
@@ -93,10 +99,19 @@ fun entryUi(
     spotifyOutcome: String? = null,
     /** The network now (design 50 §1.4); null: nothing is dimmed by it. */
     net: NetNow? = null,
+    /** The entry's hearts under "Favoritter" (`Snapshot.heartsListed`); null: the whole entry. */
+    favourites: Set<String>? = null,
 ): EntryUi {
     val visible = snap.order(entry).map { it.key }
-    val order = countedOrder(entry, visible, snap.listed[entry.id].orEmpty().map { it.key })
-    val bookmark = snap.bookmarks[entry.key]
+    val listed = snap.listed[entry.id].orEmpty().map { it.key }
+    val order = countedOrder(entry, visible, listed)
+    val raw = snap.bookmarks[entry.key]
+    // a tap that waits for the bookmark's book (design 26b §5.6) leaves the place on it
+    val bookmark = if (coverTapAwaitsBook(entry, bookmarkIn(raw, favourites), visible, listed)) {
+        raw
+    } else {
+        coverTapScope(visible, favourites, raw, entry.resume) { snap.positions[entry.key]?.get(it) }.bookmark
+    }
     // a Spotify context (design 26c §5.9) has no list to show progress through: Spotify picks the tracks
     val showProgress = entry.resume && started(order, bookmark) && !isSpotifyContext(entry)
     val duration = bookmark?.let { b -> snap.item(entry.id, b.itemKey)?.durationMs }
@@ -104,7 +119,7 @@ fun entryUi(
     // design 50 §1.4: dimmed by the network, or by an account line of its own ("Spør en voksen": no play either);
     // never on a room. One line: the account line wins over "Trenger Wi-Fi".
     val onRoom = net?.onRoom == true
-    val refused = net != null && !onRoom && unplayableNow(entry, snap.visible(entry), snap.onPhone[entry.id].orEmpty(), net)
+    val refused = net != null && !onRoom && unplayableNow(entry, scoped(snap.visible(entry), favourites), snap.onPhone[entry.id].orEmpty(), net)
     val dimmed = !onRoom && (refused || state == RendererState.SPOTIFY_ASK_ADULT)
     return EntryUi(
         entry,
@@ -149,6 +164,8 @@ data class NowView(
     val itemKnown: Boolean = true,
     /** The entry's repeat (design 49 §1.2): the player's while live, else Room's. */
     val repeat: Repeat = Repeat.OFF,
+    /** A "Favoritter" queue's scope (design r8 §1.2): the player's while live, else the stored row's; null: the whole entry. */
+    val favourites: Set<String>? = null,
 ) {
     val item: PlayItem get() = queue[index]
     val canShuffle: Boolean get() = canShuffle(entry)
@@ -184,13 +201,23 @@ data class Switch(val request: PlayRequest, val view: NowView)
  * service's queue for that renderer holds. Until step 4b the speaker filter drops every Storytel book (no url), so a
  * Storytel tap on a room is no switch, as the service's "Kan ikke spilles på Sonos"; 4b's filter lets them through
  * and the view then counts the whole series, as the room's queue does.
+ * [favourites]: a cover tap under "Favoritter" (design r8 §1.1) - only the entry's hearted items; a pick inside
+ * [current]'s scope stays in it, as the service's `playItem` does.
  */
-fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView?, atMs: Long, onRoom: Boolean = false): Switch? {
+fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView?, atMs: Long, onRoom: Boolean = false, favourites: Boolean = false): Switch? {
     val shown = snap.forRenderer(onRoom)
     val entry = shown.entries.firstOrNull { it.id == entryId } ?: return null
-    val all = shown.order(entry)
+    val scope = if (itemKey == null) {
+        shown.heartsListed(entry).takeIf { favourites }
+    } else {
+        current?.favourites?.takeIf { current.entry.id == entryId && itemKey in it }
+    }
+    val play = shown.order(entry)
+    val visible = play.map { it.key }
+    val bookmark = snap.bookmarks[entry.key]
     // the phone waits for the bookmark's book (design 26b §5.6, qa-26b-step4b-code M1): the service starts nothing
-    if (itemKey == null && coverTapAwaitsBook(entry, snap.bookmarks[entry.key], all.map { it.key }, shown.listed[entry.id].orEmpty().map { it.key })) return null
+    if (itemKey == null && coverTapAwaitsBook(entry, bookmarkIn(bookmark, scope), visible, shown.listed[entry.id].orEmpty().map { it.key })) return null
+    val all = scoped(play, scope)
     val order = if (onRoom) all.filter { PlayBodies.speakerPlayable(entry, it) } else all
     if (order.isEmpty()) return null
     val keys = order.map { it.key }
@@ -200,7 +227,8 @@ fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView
         val plan = pickPlan(allKeys, itemKey, entry.resume, snap.positions[entry.key]?.get(itemKey), null) ?: return null
         itemKey to plan.startPosMs
     } else {
-        coverTapStart(all.map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return null
+        val from = coverTapScope(visible, scope, bookmark, entry.resume) { snap.positions[entry.key]?.get(it) }
+        coverTapStart(from.keys, entry.resume, from.bookmark, shuffle) ?: return null
     }
     if (key != null && key !in keys) {
         // On a room: the next item after it (in play order, wrapping) a speaker can play, from 0.
@@ -216,7 +244,7 @@ fun playSwitch(snap: Snapshot, entryId: Long, itemKey: String?, current: NowView
     val view = NowView(
         entry, category(snap, entry), queue, index, live = false, playing = true, storedPosMs = pos,
         durationMs = if (key == null) null else queue[index].durationMs, shuffled = shuffle, itemKnown = key != null,
-        repeat = snap.repeatOf(entry),
+        repeat = snap.repeatOf(entry), favourites = scope,
     )
     return Switch(PlayRequest(entryId, itemKey?.let { key }, current?.ref, atMs), view)
 }
@@ -264,7 +292,10 @@ fun nowView(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): NowView?
         val queue = hub.keys.mapNotNull { snap.item(entry.id, it) }
         val index = queue.indexOfFirst { it.key == hub.keys.getOrNull(hub.index) }
         if (index < 0) return null
-        return NowView(entry, category(snap, entry), queue, index, true, hub.playing, 0, hub.durationMs ?: queue[index].durationMs, hub.shuffled, repeat = hub.repeat)
+        return NowView(
+            entry, category(snap, entry), queue, index, true, hub.playing, 0, hub.durationMs ?: queue[index].durationMs, hub.shuffled,
+            repeat = hub.repeat, favourites = hub.favourites,
+        )
     }
     row ?: return null
     val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return null
@@ -275,7 +306,10 @@ fun nowView(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): NowView?
     if (index < 0) return null
     // an artist context's stored place is shown as 0: its play starts where Spotify starts it (L2)
     val pos = if (contextResumes(entry)) row.posMs else 0
-    return NowView(entry, category(snap, entry), queue, index, false, false, pos, row.durationMs ?: queue[index].durationMs, row.shuffled, repeat = snap.repeatOf(entry))
+    return NowView(
+        entry, category(snap, entry), queue, index, false, false, pos, row.durationMs ?: queue[index].durationMs, row.shuffled,
+        repeat = snap.repeatOf(entry), favourites = row.scope(),
+    )
 }
 
 private fun category(snap: Snapshot, entry: Entry) = snap.library?.categories?.firstOrNull { it.id == entry.category }

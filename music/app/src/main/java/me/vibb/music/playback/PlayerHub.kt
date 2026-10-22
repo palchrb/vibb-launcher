@@ -68,6 +68,9 @@ object Commands {
     const val ARG_NEWEST_FIRST = "newest_first"
 
     const val ARG_ENTRY = "entry"
+
+    /** [PLAY_ENTRY] under "Favoritter" (design r8 §1.1): only the entry's hearted items, read from the service's own snapshot. */
+    const val ARG_FAVOURITES = "favourites"
     const val ARG_KEY = "key"
     const val ARG_MINUTES = "minutes"
 
@@ -142,6 +145,8 @@ object PlayerHub {
         val shuffled: Boolean = false,
         /** The loaded entry's repeat (design 49 §1.2). */
         val repeat: Repeat = Repeat.OFF,
+        /** The loaded queue's "Favoritter" scope (design r8 §1.2, `Active.favourites`); null: the whole entry. */
+        val favourites: Set<String>? = null,
         /** The intent: "playing" shows at once on a tap. */
         val playing: Boolean = false,
         val durationMs: Long? = null,

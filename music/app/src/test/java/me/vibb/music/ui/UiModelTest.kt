@@ -190,6 +190,78 @@ class UiModelTest {
         assertEquals(0.6f, UNPLAYABLE_ALPHA, 0f)
     }
 
+    // design r8 §1: under "Favoritter" a cover tap plays, and its tile describes, only the entry's hearted items
+
+    private val pod = entry(3, order = "oldest_first")
+    private val episodes = listOf("e1", "e2", "e3", "e4", "e5")
+
+    /** Hearts on e2 and e4 (e4 withdrawn, its copy on the phone: a speaker can't play it); the bookmark on e3. */
+    private val hearted = snapshot(
+        library(listOf(pod)),
+        items(3, episodes, gone = setOf("e4")),
+        downloads = listOf(me.vibb.music.Fixtures.done(3, "e4")),
+        positions = mapOf(pod.key to mapOf("e2" to me.vibb.music.logic.ItemPosition(90_000, false))),
+        bookmarks = mapOf(pod.key to ("e3" to 30_000L)),
+    ).copy(favourites = mapOf(pod.key to setOf("e2", "e4")))
+
+    @Test
+    fun `r8 - a Favoritter cover tap shows only the hearted items - on a room only those a speaker plays`() {
+        val fav = playSwitch(hearted, 3, null, null, 1_000, favourites = true)!!
+        assertEquals(listOf("e2", "e4"), fav.view.queue.map { it.key })
+        assertEquals("the bookmark isn't hearted: the first hearted item at its own place", "e2", fav.view.item.key)
+        assertEquals(90_000L, fav.view.storedPosMs)
+        assertEquals(setOf("e2", "e4"), fav.view.favourites)
+        val all = playSwitch(hearted, 3, null, null, 1_000)!!
+        assertEquals("Alle: the whole entry at its bookmark", episodes to "e3", all.view.queue.map { it.key } to all.view.item.key)
+        assertNull(all.view.favourites)
+        assertEquals(listOf("e2"), playSwitch(hearted, 3, null, null, 1_000, onRoom = true, favourites = true)!!.view.queue.map { it.key })
+        // an entry of only hearted own files: nothing a speaker plays, no switch (the service says Kan ikke spilles på Sonos)
+        val own = entry(4, Source.OWN)
+        val files = snapshot(library(listOf(own), files = listOf(me.vibb.music.Fixtures.file(40, 4))), ownCopies = setOf(40L))
+        val ownHearted = files.copy(favourites = mapOf(own.key to files.order(own).map { it.key }.toSet()))
+        assertTrue(playSwitch(ownHearted, 4, null, null, 1_000, favourites = true) != null)
+        assertNull(playSwitch(ownHearted, 4, null, null, 1_000, onRoom = true, favourites = true))
+    }
+
+    @Test
+    fun `r8 - a pick inside the loaded queue's scope stays in it, any other pick plays the whole entry`() {
+        // the queue was made when e2 and e4 were hearted; e5 is hearted since
+        val now = hearted.copy(favourites = mapOf(pod.key to setOf("e2", "e4", "e5")))
+        val loaded = nowView(now, PlayerHub.State(live = true, entryId = 3, keys = listOf("e2", "e4"), index = 0, favourites = setOf("e2", "e4")), null)!!
+        assertEquals(setOf("e2", "e4"), loaded.favourites)
+        val inside = playSwitch(now, 3, "e4", loaded, 1_000)!!
+        assertEquals(listOf("e2", "e4"), inside.view.queue.map { it.key })
+        assertEquals("e4", inside.view.item.key)
+        assertEquals("unhearted", episodes, playSwitch(now, 3, "e3", loaded, 1_000)!!.view.queue.map { it.key })
+        assertEquals("hearted since the tap: not in the queue's scope", episodes, playSwitch(now, 3, "e5", loaded, 1_000)!!.view.queue.map { it.key })
+        // the stored queue (after a restart) carries its scope the same way
+        val row = me.vibb.music.data.NowPlayingRow(0, 3, "e2\ne4", 1, 5_000, null, false, 0, favourites = "e2\ne4")
+        assertEquals(setOf("e2", "e4"), nowView(now, PlayerHub.State(), row)!!.favourites)
+        assertNull(nowView(now, PlayerHub.State(), row.copy(favourites = null))!!.favourites)
+    }
+
+    @Test
+    fun `r8 - a Favoritter tile describes the hearted run - its start found in the play order, numbered in the entry's count`() {
+        assertEquals("Alle: the bookmark's episode", Hint.Started(Kind.PODCAST, 3, 5), entryUi(hearted, pod).hint)
+        val tile = entryUi(hearted, pod, favourites = setOf("e2", "e4"))
+        assertEquals("the scope's start, the entry's numbering", Hint.Started(Kind.PODCAST, 2, 5), tile.hint)
+        assertEquals((1 + 90_000f / 600_000) / 5, tile.progress!!, 1e-6f)
+        // dimmed only when no hearted item can play now: offline, e4 has its copy
+        assertFalse(entryUi(hearted, pod, net = net(offline), favourites = setOf("e2", "e4")).unplayableNow)
+        assertTrue(entryUi(hearted, pod, net = net(offline), favourites = setOf("e2")).unplayableNow)
+        // N2: a Storytel series counts in its reading order, but the tap starts the first hearted book in the play order
+        val books = listOf("b1", "b2", "b3")
+        val series = entry(7, Source.STORYTEL, target = "storytel:series:26175", order = "newest_first", cache = -1)
+        val s = snapshot(
+            library(listOf(series)),
+            items(7, books, gone = books.toSet()),
+            downloads = books.map { me.vibb.music.Fixtures.done(7, it, url = "storytel:book:$it") },
+        ).copy(favourites = mapOf(series.key to setOf("b1", "b3")))
+        assertEquals(listOf("b3", "b2", "b1"), s.order(series).map { it.key })
+        assertEquals("b3", playSwitch(s, 7, null, null, 1_000, favourites = true)!!.view.item.key)
+        assertEquals("del 3 av 3, where the tap starts", Hint.Started(Kind.AUDIOBOOK, 3, 3), entryUi(s, series, favourites = setOf("b1", "b3")).hint)
+    }
+
     @Test
     fun `d46 - the play arrow on every tile, never on a dimmed one`() {
         val fresh = entryUi(snap, other)

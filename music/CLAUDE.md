@@ -701,8 +701,27 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
     a parsed listing (own files: the parsed library) no longer names the item, a gone entry's when every entry was
     read (`favouritesToPrune`, `favouriteEntriesGone`, `Sync`). "Favoritter" is the category tile first after "Alle"
     while an entry holds a heart, the sentinel `FAVOURITES_CATEGORY` (-1) that `shownEntries`/`effectiveCategory`
-    (and so `backToLibrary`) take with the entry keys; the tile only filters (no category tile starts sound); a cover
-    tap there plays the entry as usual. Phone-only: never synced, reported or in the PWA.
+    (and so `backToLibrary`) take with the entry keys; the tile only filters (no category tile starts sound).
+    Phone-only: never synced, reported or in the PWA.
+  - **A cover tap under "Favoritter" plays only that entry's hearted items** (design r8 §1, option C, the user's pick
+    of 2026-10-21): `PLAY_ENTRY` with `ARG_FAVOURITES`; the scope is the hearts at the tap that the listing names
+    (`Snapshot.heartsListed`, the same in both views), fixed with the queue (`Active.favourites`, Room 7's nullable
+    `now_playing.favourites`, `PlayerHub.State`/`NowView.favourites`) and kept on every rebuild - restore, adopt,
+    phone -> room (a room gets every hearted Storytel book), room -> phone, shuffle, the flip (`Active.order` is
+    kept to it). It starts at the bookmark when hearted, else the first hearted item in play order at its own place
+    (`favouritesScope`/`coverTapScope` in `logic/Favourites.kt`, then the unchanged `coverTapPlan`); a Storytel wait
+    looks only at a hearted bookmark (`bookmarkIn`). The same-tile rule holds per scope: the other scope is a new
+    queue, the place saved with force first. A list/Nytt/search pick of a row inside the loaded (else the stored)
+    queue's scope stays in it; any other pick plays the whole entry (`playItem`, `playSwitch`). Its end drops the
+    bookmark and only its own items' partial positions (`clearPartialPositionsOf`). The tile's hint, progress and
+    dimming describe the hearted run (`entryUi`'s `favourites`; numbered in the entry's count). Nothing hearted
+    playable: "Ikke lastet ned" (a room: "Kan ikke spilles på Sonos"), the current queue stays.
+  - **A drag down closes** (design r8 §2-§3, `ui/DragDown.kt`, `DragDownTest`): `Modifier.dragDownToClose` on
+    `Sheet` (the output and sleep sheets; plus TalkBack's `dismiss`) and on the player's root (= `backToLibrary`).
+    Past a quarter of the height (>= 56 dp) or a downward fling > 400 dp/s closes, an upward fling never; else it
+    springs back (snaps with animations off). A scrolling list inside scrolls first (nested scroll: a finger's
+    leftover at the top moves the sheet, a fling's never). Horizontal drags (the sliders, the seek bar, the
+    carousel) stay theirs; the back button, Back and the edge gesture stay.
   - **The play arrow means "tap to play"** (design 46 §1.4): on every tile (`showsPlayMark`), not only a started one;
     never on a dimmed tile. The progress line alone says "started". 46's queue view (§1.1-§1.3) is parked (§0b).
 - A new entry is news (design 29, not vibb): a key the phone never knew, once a play has been stored, puts one item

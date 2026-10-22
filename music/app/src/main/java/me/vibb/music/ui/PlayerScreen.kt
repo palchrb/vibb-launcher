@@ -129,8 +129,10 @@ fun PlayerScreen(
             PlayerHub.playerShown.value = false
         }
     }
+    // design r8 §3: a drag down anywhere is the way back too (the back button, Back and the edge gesture stay); the seek
+    // bar and the carousel keep their horizontal drags
     Column(
-        Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
+        Modifier.fillMaxSize().dragDownToClose(onBack).padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {

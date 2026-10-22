@@ -80,8 +80,11 @@ import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.canRepeat
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.moveOnIndex
+import me.vibb.music.logic.bookmarkIn
 import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapPlan
+import me.vibb.music.logic.coverTapScope
+import me.vibb.music.logic.scoped
 import me.vibb.music.logic.finished
 import me.vibb.music.logic.isSpotify
 import me.vibb.music.logic.isSpotifyContext
@@ -153,7 +156,10 @@ import java.util.concurrent.atomic.AtomicInteger
 /** The queue the player holds, in play order (or shuffled); the service's, read by [LocalRenderer.saveNow]. */
 internal class Active(
     val entry: Entry,
-    /** The entry's playable items in the shown order (for shuffle off and the list); a flip reverses it (design 39 §3.3). */
+    /**
+     * The entry's playable items in the shown order (for shuffle off and the list), kept to [favourites]; a flip
+     * reverses it (design 39 §3.3).
+     */
     var order: List<PlayItem>,
     var items: List<PlayItem>,
     val positions: MutableMap<String, ItemPosition>,
@@ -177,7 +183,15 @@ internal class Active(
      * new queue is a new [Active]: none.
      */
     var failRunFrom: Int? = null,
-)
+    /**
+     * A "Favoritter" queue's scope (design r8 §1.2): the hearts at the tap the listing named, fixed with the queue and
+     * kept on every rebuild (restore, a room and back, a pick inside it); [order] holds only these. Null: the whole entry.
+     */
+    val favourites: Set<String>? = null,
+) {
+    /** [favourites] as `NowPlayingRow.favourites` stores it. */
+    fun storedScope(): String? = favourites?.joinToString("\n")
+}
 
 /**
  * The one player (design 21 §4.6): Media3 ExoPlayer behind a [MediaSession] in a
@@ -519,7 +533,8 @@ class PlaybackService : MediaSessionService() {
         if (renderer.itemCount() == 0 || !loadedPlayStale(a.entry, spotifyEntriesNow[a.entry.id])) return false
         scope.launch {
             rendererReady.await()
-            switching.withLock { playEntry(a.entry.id) }
+            // the whole entry: a context has no hearts to keep to (design r8 §1.3)
+            switching.withLock { playEntry(a.entry.id, favourites = false) }
         }
         return true
     }
@@ -562,7 +577,7 @@ class PlaybackService : MediaSessionService() {
                     // a room still recorded after an unanswered look: one more look before the phone plays (M1)
                     if (customCommand.customAction in Commands.PLAYS) lookAgainBeforePlaying()
                     when (customCommand.customAction) {
-                        Commands.PLAY_ENTRY -> playEntry(args.getLong(Commands.ARG_ENTRY))
+                        Commands.PLAY_ENTRY -> playEntry(args.getLong(Commands.ARG_ENTRY), args.getBoolean(Commands.ARG_FAVOURITES))
                         Commands.PLAY_ITEM -> playItem(args.getLong(Commands.ARG_ENTRY), args.getString(Commands.ARG_KEY).orEmpty())
                         Commands.RESUME -> resumeLast()
                         Commands.RESTORE -> restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION), args)
@@ -668,9 +683,21 @@ class PlaybackService : MediaSessionService() {
      * On the phone (design 30 §1.6, L4) the item at [start] of [keys] and its next are claimed as held
      * before the rows are read again - a sync can no longer delete them under the new queue - and an
      * NRK/RSS item whose cached bytes are stale (`staleThrough`) plays uncached, its row gone.
+     *
+     * [favourites]: a "Favoritter" queue's scope (design r8 §1.2), null for the whole entry - its order (shuffle, the
+     * flip, a room's reorder) holds only those items.
      */
-    private suspend fun activeFor(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, keys: List<String>, shuffled: Boolean, kind: RendererKind, start: Int = 0): Active? {
-        val order = snap.order(entry)
+    private suspend fun activeFor(
+        snap: Snapshot,
+        rows: List<DownloadRow>,
+        entry: Entry,
+        keys: List<String>,
+        shuffled: Boolean,
+        kind: RendererKind,
+        favourites: Set<String>?,
+        start: Int = 0,
+    ): Active? {
+        val order = scoped(snap.order(entry), favourites)
         val byKey = order.associateBy { it.key }
         val items = keys.mapNotNull { byKey[it] }.filter { kind.onPhone || PlayBodies.speakerPlayable(entry, it) }
         if (items.isEmpty()) return null
@@ -707,6 +734,7 @@ class PlaybackService : MediaSessionService() {
                 uncached = stale.toMutableSet(),
                 shownNewestFirst = snap.shownNewestFirst(entry),
                 repeat = snap.repeatOf(entry),
+                favourites = favourites,
             )
         } catch (e: Throwable) {
             // A queue that never loads ends its claims (qa-30-s3b-code L6): a claimed progressive item would
@@ -721,7 +749,15 @@ class PlaybackService : MediaSessionService() {
      * plan's start moved with them (§4.2); nothing left is "Kan ikke spilles på Sonos" and nothing
      * changes (vibb's `nothing-remote-playable`: the renderer stays).
      */
-    private suspend fun queueFor(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, plan: QueuePlan, shuffled: Boolean, kind: RendererKind): Pair<Active, QueuePlan>? {
+    private suspend fun queueFor(
+        snap: Snapshot,
+        rows: List<DownloadRow>,
+        entry: Entry,
+        plan: QueuePlan,
+        shuffled: Boolean,
+        kind: RendererKind,
+        favourites: Set<String>?,
+    ): Pair<Active, QueuePlan>? {
         val p = if (!kind.onPhone) {
             val byKey = snap.order(entry).associateBy { it.key }
             val dropped = plan.keys.mapNotNull { k -> byKey[k]?.let { PlayBodies.speakerDropReason(entry, it) } }
@@ -733,47 +769,75 @@ class PlaybackService : MediaSessionService() {
         } else {
             plan
         }
-        val a = activeFor(snap, rows, entry, p.keys, shuffled, kind, p.startIndex) ?: return null
+        val a = activeFor(snap, rows, entry, p.keys, shuffled, kind, favourites, p.startIndex) ?: return null
         return a to p
     }
 
-    private suspend fun playEntry(entryId: Long) {
+    /**
+     * A cover tap; [favourites]: under "Favoritter", only the entry's hearted items (design r8 §1.1, the hearts read from
+     * the service's own snapshot). On the loaded entry with the same scope it unpauses; the other scope is a new choice.
+     */
+    private suspend fun playEntry(entryId: Long, favourites: Boolean) {
         val current = active
         if (current != null && current.entry.id == entryId && renderer.itemCount() > 0) {
-            // a Spotify entry the library now lists another way (list <-> context, N5) starts its new queue instead
-            val now = if (isSpotify(current.entry)) withContext(Dispatchers.IO) { store.library()?.entries?.firstOrNull { it.id == entryId } } else null
-            if (!loadedPlayStale(current.entry, now)) {
-                renderer.play() // a tile press on the loaded entry unpauses it and never restarts it (vibb)
-                return
+            if ((current.favourites != null) == favourites) {
+                // a Spotify entry the library now lists another way (list <-> context, N5) starts its new queue instead
+                val now = if (isSpotify(current.entry)) withContext(Dispatchers.IO) { store.library()?.entries?.firstOrNull { it.id == entryId } } else null
+                if (!loadedPlayStale(current.entry, now)) {
+                    renderer.play() // a tile press on the loaded entry unpauses it and never restarts it (vibb)
+                    return
+                }
+                spotifyLog("web player: the entry's mode changed under its play - its new queue starts")
             }
-            spotifyLog("web player: the entry's mode changed under its play - its new queue starts")
+            // a new queue of the loaded entry: its place lands before the plan reads it (design r8 §1.1, R8-6)
             renderer.saveNow(force = true)
         }
         val (snap, rows) = loadForRenderer()
-        if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, snap.bookmarks[entry.key], shown, listed) }) return
+        val scopeOf = { e: Entry -> snap.heartsListed(e).takeIf { favourites } }
+        if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, bookmarkIn(snap.bookmarks[entry.key], scopeOf(entry)), shown, listed) }) return
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
-        val plan = coverTapPlan(snap.order(entry).map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return
-        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry)) ?: return
+        val scope = scopeOf(entry)
+        val from = coverTapScope(snap.order(entry).map { it.key }, scope, snap.bookmarks[entry.key], entry.resume) { snap.positions[entry.key]?.get(it) }
+        val plan = coverTapPlan(from.keys, entry.resume, from.bookmark, shuffle) ?: run {
+            // nothing hearted plays in this renderer's view (design r8 §1.2): nothing starts, the current queue stays
+            PlayerHub.mutableMessages.tryEmit(if (renderer.kind.onPhone) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY_ON_SONOS)
+            return
+        }
+        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), scope) ?: return
         start(a, p, newChoice = true)
     }
 
+    /**
+     * A pick from the list, Nytt or search. A row inside the loaded queue's scope (a "Favoritter" queue, design r8 §1.1;
+     * with nothing loaded the stored queue's, which the player shows) stays in that scope; any other pick plays the whole
+     * entry from that row. The screens' `playSwitch` reads the same scope (`NowView.favourites`).
+     */
     private suspend fun playItem(entryId: Long, key: String) {
         renderer.saveNow()
         val (snap, rows) = loadForRenderer()
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
+        val loaded = active?.takeIf { renderer.itemCount() > 0 }
+        val queueScope = if (loaded != null) {
+            loaded.favourites.takeIf { loaded.entry.id == entryId }
+        } else {
+            withContext(Dispatchers.IO) { store.db.nowPlaying() }?.takeIf { it.entryId == entryId }?.scope()
+        }
+        val scope = queueScope?.takeIf { key in it }
         val current = active?.takeIf { it.entry.id == entryId && it.shuffled }?.items?.map { it.key }
-        val plan = pickPlan(snap.order(entry).map { it.key }, key, entry.resume, snap.positions[entry.key]?.get(key), if (shuffle) current else null) ?: return
-        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry)) ?: return
+        val order = scoped(snap.order(entry), scope).map { it.key }
+        val plan = pickPlan(order, key, entry.resume, snap.positions[entry.key]?.get(key), if (shuffle) current else null) ?: return
+        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), scope) ?: return
         start(a, p, newChoice = true)
     }
 
     private suspend fun resumeLast() {
         val current = active
         if (current != null && renderer.itemCount() > 0) {
-            // RESUME (Home's card) of a Spotify entry the library now lists another way: its new queue (N1 of the QA)
-            if (isSpotify(current.entry)) return playEntry(current.entry.id)
+            // RESUME (Home's card) of a Spotify entry the library now lists another way: its new queue (N1 of the QA),
+            // in the loaded queue's scope (design r8 §1.3)
+            if (isSpotify(current.entry)) return playEntry(current.entry.id, current.favourites != null)
             renderer.play()
             return
         }
@@ -816,7 +880,7 @@ class PlaybackService : MediaSessionService() {
      * The stored queue (21 §4.4: back after a restart, paused until a tap). Its current item a Storytel
      * book that isn't on the phone (heard on a room): nothing starts and "Ikke lastet ned" - never the
      * next book there, never a moved bookmark (design 26b §5.6, qa-26b-step4b-code M1) - for RESUME,
-     * `restoreThen` and a headset's play alike.
+     * `restoreThen` and a headset's play alike. A "Favoritter" queue comes back with its scope (design r8 §1.1).
      */
     private suspend fun restore(): Restored {
         val row = withContext(Dispatchers.IO) { store.db.nowPlaying() } ?: return Restored.Empty
@@ -825,7 +889,7 @@ class PlaybackService : MediaSessionService() {
         if (awaitsBook(snap, row.entryId) { entry, shown, listed -> storedRowAwaitsBook(entry, stored, row.index, shown, listed) }) return Restored.NotOnPhone
         val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return Restored.Empty
         val plan = storedPlan(stored, row.index, row.posMs, snap.order(entry).map { it.key }.toSet()) { startPos(entry, snap.positions[entry.key]?.get(it)) } ?: return Restored.Empty
-        val (a, p) = queueFor(snap, rows, entry, plan, row.shuffled, queueKind(renderer.kind, entry)) ?: return Restored.Empty
+        val (a, p) = queueFor(snap, rows, entry, plan, row.shuffled, queueKind(renderer.kind, entry), row.scope()) ?: return Restored.Empty
         return Restored.Queue(a, p.startIndex, p.startPosMs)
     }
 
@@ -1657,7 +1721,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     /** The queue played to its end (vibb `clear_state`): the last item is done, the bookmark and the
-     * partial positions go, the done marks stay. */
+     * partial positions go, the done marks stay. A "Favoritter" queue clears only its own items' partial
+     * positions (design r8 §1.1): a half-heard episode outside it keeps its place. */
     private fun queueEnded() {
         endSleepAtEnd(SleepEvent.QUEUE_ENDED)
         val a = active ?: return
@@ -1668,9 +1733,10 @@ class PlaybackService : MediaSessionService() {
         Resumable.set(this, false)
         val entryKey = a.entry.key
         val context = isSpotifyContext(a.entry)
+        val held = a.favourites?.let { a.items.map { it.key } }
         scope.launch(writer) {
             store.db.deleteBookmark(entryKey)
-            store.db.clearPartialPositions(entryKey)
+            if (held == null) store.db.clearPartialPositions(entryKey) else store.db.clearPartialPositionsOf(entryKey, held)
             store.db.clearNowPlaying()
             if (context) store.recordSpotifyContext(entryKey, null)
         }
@@ -1711,7 +1777,7 @@ class PlaybackService : MediaSessionService() {
         val item = a.items.getOrNull(index) ?: return
         val now = System.currentTimeMillis()
         val mark = BookmarkRow(a.entry.key, item.key, 0, now)
-        val queue = NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, 0, a.durations[item.key] ?: item.durationMs, a.shuffled, now)
+        val queue = NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, 0, a.durations[item.key] ?: item.durationMs, a.shuffled, now, a.storedScope())
         Resumable.set(this, true)
         scope.launch(writer) {
             store.db.upsertBookmark(mark)
@@ -1784,6 +1850,7 @@ class PlaybackService : MediaSessionService() {
             index = renderer.currentIndex(),
             shuffled = a?.shuffled ?: false,
             repeat = a?.repeat ?: Repeat.OFF,
+            favourites = a?.favourites,
             playing = renderer.showsPlaying,
             durationMs = renderer.durationMs() ?: a?.items?.getOrNull(renderer.currentIndex())?.durationMs,
             sleepEndsAt = sleepEndsAt,
@@ -2086,8 +2153,9 @@ class PlaybackService : MediaSessionService() {
     private suspend fun adoptedQueue(snap: Snapshot, rows: List<DownloadRow>, entry: Entry, uri: String): Pair<Active, Int>? {
         val row = withContext(Dispatchers.IO) { store.db.nowPlaying() }?.takeIf { it.entryId == entry.id }
         val stored = row?.keys?.split('\n')?.filter { it.isNotEmpty() }
-        val plan = adoptPlan(entry, snap.order(entry), stored, row?.shuffled == true, uri) ?: return null
-        val a = activeFor(snap, rows, entry, plan.keys, plan.shuffled, RendererKind.SONOS) ?: return null
+        val favourites = row?.scope()
+        val plan = adoptPlan(entry, scoped(snap.order(entry), favourites), stored, row?.shuffled == true, uri) ?: return null
+        val a = activeFor(snap, rows, entry, plan.keys, plan.shuffled, RendererKind.SONOS, favourites) ?: return null
         if (a.items.map { it.key } != plan.keys) return null
         return a to plan.index
     }
@@ -2143,7 +2211,8 @@ class PlaybackService : MediaSessionService() {
      * position flushed; the old room's live bookmark and its Stop), the speaker-playable queue (nothing
      * left: "Kan ikke spilles på Sonos", nothing changes), renderer.json before the first SOAP, the
      * session on the speaker, then the start at the saved place. With no queue the stored one comes
-     * back first, as RESUME does (QA ambiguity 4). The room we're on is the same-tile rule.
+     * back first, as RESUME does (QA ambiguity 4). The room we're on is the same-tile rule. A "Favoritter"
+     * queue keeps its scope (design r8 §1.2): a room gets every hearted book of a Storytel series.
      */
     private suspend fun toRoom(uid: String) {
         val old = renderer
@@ -2172,20 +2241,21 @@ class PlaybackService : MediaSessionService() {
             if (a0.entry.source == Source.STORYTEL) {
                 // the phone's queue holds only the downloaded books: the room re-plans over the series' remote
                 // order at the current book and place (design 26b §5.6), or it would skip the others and end early
-                a0.entry to homePlan(snap.order(a0.entry).map { it.key }, item.key, resumeFrom(a0.positions[item.key]))
+                val order = scoped(snap.order(a0.entry), a0.favourites).map { it.key }
+                Triple(a0.entry, homePlan(order, item.key, resumeFrom(a0.positions[item.key])), a0.favourites)
             } else {
                 // by key: refreshArt may have replaced the items with copies meanwhile (a late picture,
                 // `withItemArt`), and an object lookup would start item 0 (qa-26a-merge27-code L1)
-                a0.entry to QueuePlan(a0.items.map { it.key }, a0.items.indexOfFirst { it.key == item.key }, resumeFrom(a0.positions[item.key]))
+                Triple(a0.entry, QueuePlan(a0.items.map { it.key }, a0.items.indexOfFirst { it.key == item.key }, resumeFrom(a0.positions[item.key])), a0.favourites)
             }
         } else {
             withContext(Dispatchers.IO) { store.db.nowPlaying() }?.let { row ->
                 val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return@let null
                 val stored = row.keys.split('\n').filter { it.isNotEmpty() }
-                storedPlan(stored, row.index, row.posMs, snap.order(entry).map { it.key }.toSet()) { 0 }?.let { entry to it }
+                storedPlan(stored, row.index, row.posMs, snap.order(entry).map { it.key }.toSet()) { 0 }?.let { Triple(entry, it, row.scope()) }
             }
         }
-        val queue = place?.let { (entry, plan) -> queueFor(snap, rows, entry, plan, shuffled = false, RendererKind.SONOS)?.let { entry to it } }
+        val queue = place?.let { (entry, plan, favourites) -> queueFor(snap, rows, entry, plan, shuffled = false, RendererKind.SONOS, favourites)?.let { entry to it } }
         if (place != null && queue == null) {
             // nothing a speaker can play: the phone stays (an old room is already stopped: back home, paused)
             if (old is SonosRenderer) comeHome(old, play = false)
@@ -2255,7 +2325,8 @@ class PlaybackService : MediaSessionService() {
         // the phone's view (design 26b §5.6): it is the phone
         val (snap, rows) = load(remote = false)
         if (renderer !== local) return
-        val order = snap.order(a0.entry).map { it.key }
+        // a "Favoritter" queue comes home in its scope (design r8 §1.2)
+        val order = scoped(snap.order(a0.entry), a0.favourites).map { it.key }
         if (a0.entry.source == Source.STORYTEL && item.key !in order) {
             if (!quiet) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
             publish()
@@ -2264,7 +2335,7 @@ class PlaybackService : MediaSessionService() {
         val plan = homePlan(order, item.key, resumeFrom(a0.positions[item.key]))
         // the phone's renderer for the entry (design 26c §5.10): start attaches it - a Spotify entry never reaches a
         // room (toRoom keeps the phone playing), so this is the phone's own player in practice
-        val a = activeFor(snap, rows, a0.entry, plan.keys, shuffled = false, phoneRendererFor(a0.entry), plan.startIndex)
+        val a = activeFor(snap, rows, a0.entry, plan.keys, shuffled = false, phoneRendererFor(a0.entry), a0.favourites, plan.startIndex)
         if (a == null) {
             publish()
             return
