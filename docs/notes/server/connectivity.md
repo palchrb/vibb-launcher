@@ -148,11 +148,15 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **The five self-service writes** (the forced change, `update_account_password`, `reset_totp`, `setup_2fa_form`,
   `setup_2fa_verify`) carry `AND session_epoch = ? AND removed_at IS NULL`; no row = signed out. The forced change
   (`admin_auth::change_first_password`) also compares the hash it verified, so of two sessions on one one-time
-  password the first wins; `setup_2fa_form` writes a secret only onto an account without one (`COALESCE`), and
-  `setup_2fa_verify` clears `invite_expires_at`. A request held past a Reset or a removal writes nothing.
+  password the first wins; `setup_2fa_form` writes a secret only onto an account without one (`COALESCE`). The
+  2FA setup (GET and POST) sends an account that must still change its password to `/auth/change-password` first,
+  and `invite_expires_at` is cleared only by the write that makes the account ready (`setup_2fa_verify` when the
+  password is changed, `change_first_password` when 2FA is on; qa-62-step12-code P62-1). A request held past a
+  Reset or a removal writes nothing.
 - **Files:** `reset-2fa <user>` writes `data/initial-admin-password-<id>`, clears `invite_expires_at` and restores a
-  removed account (`parent_restored`); the forced change deletes its own `-<id>` file, and `initial-admin-password`
-  only for the first account (`invited_by IS NULL`).
+  removed account (`parent_restored`) - also past Add's cap of 8, which its line then says (P62-3: the shell must stay
+  the way back); the forced change deletes its own `-<id>` file, and `initial-admin-password` only for the first
+  account (`invited_by IS NULL`).
 - **Account's Name and Parents groups** (`handlers::parents`, the statements in `src/parents.rs`): your display name
   (`POST /account/name`, PRG `#name`, `display_name_changed`); the Parents rows (every account not removed: "You",
   "Signed in 14:02 · from …", "Waiting · until Sun 20:51" plus the one-time password's sign-in, "One-time password
@@ -162,7 +166,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `parent_change_refused` "add"; the `INSERT` carries the actor condition, the cap of 8 and the taken check); the
   answer is the page itself (no-store, `data-post-answer`) with the password in `.secret-once` blocks, a Copy button
   and `static/reveal.js` (a reload is a GET of `/account/parents`, it is removed when the page is left, the CSS hides
-  it after 5 minutes); `parent_added` "pappa (Pappa)". **Withdraw…** on a not-ready row is the soft Remove
+  it after 5 minutes and reveal.js removes it then too, so Copy ends with it - P62-4); `parent_added` "pappa (Pappa)". **Withdraw…** on a not-ready row is the soft Remove
   (`POST /account/parents/{id}/remove`, `admin_auth::reauth`, the guarded `UPDATE` + its push subscriptions in one
   `BEGIN IMMEDIATE` transaction, `parent_removed`, PRG `/account?parents=removed#parents`); the only ready account
   can't remove itself. `GET /account/parents/{id}/reset` serves Account for step 3's Reset answer. Every refusal

@@ -381,3 +381,16 @@ Notes for steps 3-5 and the code QA; `docs/notes/server/connectivity.md`, "Paren
   390x844, every answer at its group, 0 text nodes below AA, the reload a `GET /account/parents` without the OTP,
   Back after leaving without it, Copy equals the OTP, three wrong passwords sign out, the invitee's first sign-in in a
   second browser, Withdraw.
+
+**The code QA's fix round** (`docs/review/qa-62-step12-code.md`):
+- P62-1: the 2FA setup redirects to `/auth/change-password` while `must_change_password` (the order §4.1 assumes),
+  and the expiry is cleared only by the write that makes the account ready, in both writes (`setup_2fa_verify`:
+  `CASE WHEN must_change_password = 0`; `change_first_password`: `CASE WHEN totp_enabled = 1`). Test
+  `otp_session_sets_the_password_before_2fa`.
+- P62-2: the guard tests `removed_session_without_epoch_bump_is_out`, `removed_actor_session_post_writes_nothing`,
+  `stale_actor_statements_write_nothing`, `remove_deletes_push_subscriptions`, `held_reset_totp_cant_undo_a_reset`.
+- P62-3: `reset-2fa` still restores past the cap of 8 (the shell is the way back for a removed parent, and a full
+  family must not lock that out); its line says "The family now has 9 parents …", and Add refuses until enough are
+  removed (`cap_of_eight`).
+- P62-4: `reveal.js` removes the shown secret after 5 minutes, when the CSS hides it, so Copy ends with it
+  (`reveal.js?v=3`; `jstest/reveal.test.js`).

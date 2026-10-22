@@ -545,6 +545,11 @@ pub async fn setup_2fa_form(
     if admin.totp_enabled {
         return Redirect::to("/").into_response();
     }
+    // The password first (design 62 §4.1, qa-62-step12-code P62-1): an account still on its
+    // one-time password can't set up 2FA past it.
+    if admin.must_change_password {
+        return Redirect::to("/auth/change-password").into_response();
+    }
 
     let stored: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE admin_users SET totp_secret = COALESCE(totp_secret, ?) \
@@ -589,14 +594,17 @@ pub struct Setup2faForm {
 }
 
 /// Turns two-factor login on with a right code. The write is for this session's epoch and an
-/// account not removed (design 62 §2), and it ends a one-time password's expiry: the account is
-/// ready now (§4.1, qa-62-design Q62-8).
+/// account not removed (design 62 §2), and it ends a one-time password's expiry once the account
+/// is ready (§4.1, qa-62-design Q62-8; the password change comes first - P62-1).
 pub async fn setup_2fa_verify(
     State(state): State<AppState>,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<Setup2faForm>,
 ) -> axum::response::Response {
+    if admin.must_change_password {
+        return Redirect::to("/auth/change-password").into_response();
+    }
     let Some(secret) = admin.totp_secret.clone() else {
         return Redirect::to("/auth/setup-2fa").into_response();
     };
@@ -631,7 +639,8 @@ pub async fn setup_2fa_verify(
     }
 
     let enabled = sqlx::query(
-        "UPDATE admin_users SET totp_enabled = 1, invite_expires_at = NULL \
+        "UPDATE admin_users SET totp_enabled = 1, \
+         invite_expires_at = CASE WHEN must_change_password = 0 THEN NULL ELSE invite_expires_at END \
          WHERE id = ? AND session_epoch = ? AND removed_at IS NULL",
     )
     .bind(admin.id)

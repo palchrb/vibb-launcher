@@ -209,7 +209,7 @@ async fn show_child_pin_needs_the_password() {
     assert!(text.contains("<p class=\"pin-digits\" translate=\"no\">4826</p>"));
     // S2P-5/6: hidden after a minute (CSS) and on leaving, the history entry made a GET (JS).
     assert!(text.contains("Hidden after a minute."));
-    assert!(text.contains("<script src=\"/static/reveal.js?v=2\"></script>"));
+    assert!(text.contains("<script src=\"/static/reveal.js?v=3\"></script>"));
     assert!(
         text.contains("<body data-post-answer"),
         "never reloaded in place"

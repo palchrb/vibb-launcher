@@ -17,6 +17,7 @@ function fakeWindow() {
         addEventListener: (type, fn) => clicks.push(fn),
     };
     const replaced = [];
+    const timers = [];
     const doc = {
         visibilityState: "visible",
         addEventListener: on,
@@ -33,10 +34,11 @@ function fakeWindow() {
         location: { href: "http://pi/devices/1/lock#show-pin" },
         history: { replaceState: (state, title, url) => replaced.push(url) },
         addEventListener: on,
+        setTimeout: (fn, ms) => timers.push({ fn, ms }),
     };
     const fire = (type) => (listeners[type] || []).forEach((fn) => fn({ type }));
     const click = () => clicks.forEach((fn) => fn({ type: "click" }));
-    return { win, doc, digits, secret, copy, click, replaced, fire };
+    return { win, doc, digits, secret, copy, click, replaced, fire, timers };
 }
 
 test("the answer's history entry becomes a GET of the same address", () => {
@@ -101,4 +103,14 @@ test("Copy after the page was hidden copies nothing", () => {
     click();
     assert.deepStrictEqual(written, []);
     assert.strictEqual(copy.textContent, "Select and copy it");
+});
+
+test("after 5 minutes the one-time password is gone for Copy too", () => {
+    const { win, secret, copy, timers } = fakeWindow();
+    install(win);
+    assert.deepStrictEqual(timers.map((t) => t.ms), [300000]);
+    assert.strictEqual(secret.textContent, "Kp3x9mQaR7tuWv2yZ4bcDeFg");
+    timers[0].fn();
+    assert.strictEqual(secret.textContent, "");
+    assert.strictEqual(copy.hidden, true);
 });

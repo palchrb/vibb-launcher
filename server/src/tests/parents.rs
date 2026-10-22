@@ -600,7 +600,7 @@ async fn the_otp_is_shown_once_and_never_stored() {
     assert_eq!(res.headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
     let html = res.text();
     assert!(html.contains("<body data-post-answer"));
-    assert!(html.contains("<script src=\"/static/reveal.js?v=2\"></script>"));
+    assert!(html.contains("<script src=\"/static/reveal.js?v=3\"></script>"));
     let otp = otp_of(&html);
     assert_eq!(otp.len(), 24, "{otp}");
     let block = part(&html, "id=\"parent-otp\"", "</section>");
@@ -890,6 +890,11 @@ async fn cap_of_eight() {
         add(&app, &mamma, "ninth", "", PASSWORD).await.status,
         StatusCode::OK
     );
+    // The shell's restore isn't held to the cap (P62-3), and says so.
+    let message = crate::admin_auth::reset_2fa(&app.db, "parent8", app.state.data_dir.as_path())
+        .await
+        .unwrap();
+    assert!(message.contains("now has 9 parents"), "{message}");
 }
 
 /// Your name: saved with post/redirect/get at #name and logged; a refused one under its field
@@ -944,4 +949,172 @@ async fn display_name_saves_at_its_group() {
     )
     .await;
     assert_eq!(account(&app, "parent").await.name(), "parent");
+}
+
+// ---- The code QA's guards (qa-62-step12-code P62-1, P62-2) ----------------------------------
+
+/// P62-1: a session on the one-time password can't set up 2FA before its password change, so the
+/// expiry can't be cleared while the one-time password still works.
+#[tokio::test]
+async fn otp_session_sets_the_password_before_2fa() {
+    let app = TestApp::new().await;
+    let (_, otp) = mamma_adds_pappa(&app).await;
+    let pappa = onboarding_session(&app, "pappa", &otp).await;
+    assert_eq!(
+        app.get_page("/auth/setup-2fa", &pappa).await.location(),
+        Some("/auth/change-password")
+    );
+    // A secret from an older page, and a right code for it: still the password first.
+    sqlx::query("UPDATE admin_users SET totp_secret = ? WHERE username = 'pappa'")
+        .bind(SECRET)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let code = app.next_totp_code("pappa", SECRET).await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/auth/setup-2fa",
+            Some(&pappa),
+            &[("code", &code)],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/auth/change-password"));
+    let row = account(&app, "pappa").await;
+    assert!(row.must_change_password && !row.totp_enabled);
+    assert!(row.invite_expires_at.is_some());
+}
+
+/// N1: a removed account's session ends even without the epoch moving (a restore, a bug).
+#[tokio::test]
+async fn removed_session_without_epoch_bump_is_out() {
+    let app = TestApp::new().await;
+    app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    sqlx::query("UPDATE admin_users SET removed_at = datetime('now') WHERE username = 'pappa'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.get_page("/devices", &pappa).await.location(),
+        Some("/login")
+    );
+}
+
+/// A removed actor's open session adds and renames nothing.
+#[tokio::test]
+async fn removed_actor_session_post_writes_nothing() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    app.admin_cookie_as("pappa", "Pappa").await;
+    let me = account(&app, "parent").await;
+    let pappa = account(&app, "pappa").await;
+    assert_eq!(
+        crate::parents::remove_parent(&app.db, &pappa, me.id)
+            .await
+            .unwrap(),
+        crate::parents::Removed::Done
+    );
+    assert_eq!(
+        add(&app, &mamma, "third", "", PASSWORD).await.location(),
+        Some("/login")
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/name",
+            Some(&mamma),
+            &[("display_name", "X")],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/login"));
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM admin_users")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 2);
+    assert_eq!(account(&app, "parent").await.display_name, None);
+}
+
+/// The actor condition in Add's and Remove's statements: a stale epoch writes nothing.
+#[tokio::test]
+async fn stale_actor_statements_write_nothing() {
+    let app = TestApp::new().await;
+    mamma_adds_pappa(&app).await;
+    let mut mamma = account(&app, "parent").await;
+    let pappa = account(&app, "pappa").await;
+    mamma.session_epoch -= 1;
+    assert_eq!(
+        crate::parents::add_parent(&app.db, &mamma, "third", None, "x")
+            .await
+            .unwrap(),
+        crate::parents::Added::SignedOut
+    );
+    assert_eq!(
+        crate::parents::remove_parent(&app.db, &mamma, pappa.id)
+            .await
+            .unwrap(),
+        crate::parents::Removed::SignedOut
+    );
+    let removed: Option<String> =
+        sqlx::query_scalar("SELECT removed_at FROM admin_users WHERE username = 'pappa'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(removed.is_none());
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM admin_users")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 2);
+}
+
+/// Remove deletes the removed account's push subscriptions, and only those.
+#[tokio::test]
+async fn remove_deletes_push_subscriptions() {
+    let app = TestApp::new().await;
+    mamma_adds_pappa(&app).await;
+    let mamma = account(&app, "parent").await;
+    let pappa = account(&app, "pappa").await;
+    for (who, n) in [(pappa.id, 1), (mamma.id, 2)] {
+        sqlx::query(
+            "INSERT INTO push_subscriptions \
+             (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp, state) \
+             VALUES (?, ?, x'00', x'00', 'https://pwa.example', 'Test', 'fp', 'active')",
+        )
+        .bind(who)
+        .bind(format!("https://push.example/{n}"))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    crate::parents::remove_parent(&app.db, &mamma, pappa.id)
+        .await
+        .unwrap();
+    let left: Vec<i64> = sqlx::query_scalar("SELECT admin_id FROM push_subscriptions")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, vec![mamma.id]);
+}
+
+/// Q62-2 for the 2FA reset: held past another parent's Reset, it writes nothing.
+#[tokio::test]
+async fn held_reset_totp_cant_undo_a_reset() {
+    let app = TestApp::new().await;
+    app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    let (tx, task) = held(&app, "/account/reset-2fa", &pappa).await;
+    reset_by_sql(&app, "pappa").await;
+    // A secret on the row to see whether the held request clears it.
+    sqlx::query("UPDATE admin_users SET totp_secret = 'KEEP' WHERE username = 'pappa'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let answer = release(tx, task, "current_password=correct+horse+battery+staple").await;
+    assert_eq!(location(&answer), Some("/login"));
+    assert_eq!(
+        account(&app, "pappa").await.totp_secret.as_deref(),
+        Some("KEEP")
+    );
 }

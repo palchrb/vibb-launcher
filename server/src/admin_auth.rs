@@ -404,7 +404,9 @@ pub async fn login_warning(db: &sqlx::SqlitePool, username: &str, failures: i64)
 /// The forced first password change's write (design 62 §2, qa-62-design Q62-2): the new hash and
 /// the next epoch, only while the session's epoch is still the account's, the account isn't
 /// removed and its hash is still the one the request verified (a compare-and-swap: of two sessions
-/// on one one-time password the first wins). `None`: nothing written - sign this session out.
+/// on one one-time password the first wins). It ends a one-time password's expiry only when 2FA
+/// is already on (the account is ready then; qa-62-step12-code P62-1). `None`: nothing written -
+/// sign this session out.
 pub async fn change_first_password(
     db: &sqlx::SqlitePool,
     admin_id: i64,
@@ -414,6 +416,7 @@ pub async fn change_first_password(
 ) -> Result<Option<i64>, sqlx::Error> {
     sqlx::query_scalar(
         "UPDATE admin_users SET password_hash = ?, must_change_password = 0, \
+         invite_expires_at = CASE WHEN totp_enabled = 1 THEN NULL ELSE invite_expires_at END, \
          session_epoch = session_epoch + 1 \
          WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND password_hash = ? \
          RETURNING session_epoch",
@@ -514,15 +517,29 @@ pub async fn reset_2fa(
         )
     };
     crate::security::record_security_event(db, event, Some(username), None, Some(detail)).await;
+    // The restore doesn't refuse past Add's cap (qa-62-step12-code P62-3): the shell is the way back
+    // for a parent the other one removed, and a full family must not lock it out. It says so.
+    let mut restored = String::new();
+    if removed {
+        restored = format!("{username} was removed and is restored. ");
+        let active: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM admin_users WHERE removed_at IS NULL")
+                .fetch_one(db)
+                .await
+                .unwrap_or(0);
+        if active > crate::parents::MAX_PARENTS {
+            restored.push_str(&format!(
+                "The family now has {active} parents, more than the {} Add Parent allows: \
+                 Add refuses until enough are removed. ",
+                crate::parents::MAX_PARENTS
+            ));
+        }
+    }
     Ok(format!(
         "{}Two-factor login for {username} is reset, every session is signed out, notifications are \
          turned off on every device, and the password is replaced: the new one is in {} (readable by the server's user only). Sign in with it, \
          then set a new password and a new authenticator - the file is deleted then.",
-        if removed {
-            format!("{username} was removed and is restored. ")
-        } else {
-            String::new()
-        },
+        restored,
         path.display()
     ))
 }

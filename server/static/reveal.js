@@ -7,12 +7,14 @@
 // - the secret is removed when the page is left (pagehide; also when it is hidden), so the
 //   back-forward cache keeps none. Without JS the CSS hides it anyway (style.css: .pin-digits
 //   after a minute, .secret-once after 5 minutes);
-// - a Copy button ([data-copy-secret], hidden without JS) copies the one-time password.
+// - a Copy button ([data-copy-secret], hidden without JS) copies the one-time password, until the
+//   5 minutes are up: then the secret is removed from the page as it is hidden.
 // ES5, no framework. Tested with node (jstest/reveal.test.js).
 (function (root) {
     "use strict";
 
     var SHOWN = ".pin-digits, .pin-inline, .secret-once";
+    var HIDE_MS = 5 * 60 * 1000;
 
     function forget(doc) {
         var shown = doc.querySelectorAll(SHOWN);
@@ -59,6 +61,9 @@
             }
         } catch (e) {}
         win.addEventListener("pagehide", function () { forget(doc); });
+        // When the CSS hides it (style.css, .secret-once at 5 minutes), it is gone for Copy too
+        // (qa-62-step12-code P62-4).
+        win.setTimeout(function () { forget(doc); }, HIDE_MS);
         doc.addEventListener("visibilitychange", function () {
             if (doc.visibilityState === "hidden") forget(doc);
         });
