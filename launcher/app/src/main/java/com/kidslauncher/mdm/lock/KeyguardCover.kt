@@ -42,12 +42,27 @@ object KeyguardCover {
     var coverOn = false
         private set
 
+    /** Design 59's ANDROID is in force (`kid_lock.keyguard` "android" with a credential, [AndroidLock]): the Android
+     * PIN is the gate, T follows the screen timeout. No dismissal here - "Lås opp" asks Android. */
+    @Volatile
+    var androidOn = false
+        private set
+
+    /** P59-4: ANDROID's last write read B2's SECURE_CAMERA back on a managed phone ([secureCameraHeld]) - only then
+     * may the camera lock stand down ([AndroidLock.cameraGuarded]). */
+    @Volatile
+    var androidCameraGuard = false
+        private set
+
+    /** T (`setMaximumTimeToLock`) follows the screen timeout: under the cover (H1) or Android's lock (59 §3.2). */
+    val timeToLockFollows: Boolean get() = coverOn || androidOn
+
     /** The debug receiver's dismissal knob ([DismissTest]); nothing else sets it. */
     @Volatile
     var dismissTest = DismissTest.NONE
 
-    /** [configure]'s last inputs (`null` before the first apply in this process). */
-    private data class Inputs(val managed: Boolean, val hasKidPin: Boolean, val deviceSecure: Boolean, val guardTripped: Boolean)
+    /** [configure]'s last inputs (`null` before the first apply in this process). [androidRequested]: design 59's switch. */
+    private data class Inputs(val managed: Boolean, val hasKidPin: Boolean, val deviceSecure: Boolean, val guardTripped: Boolean, val androidRequested: Boolean = false)
 
     @Volatile
     private var inputs: Inputs? = null
@@ -125,6 +140,7 @@ object KeyguardCover {
         hasKidPin: Boolean,
         deviceSecure: Boolean,
         guardTripped: Boolean,
+        androidRequested: Boolean = false,
     ): Boolean {
         val app = context.applicationContext
         switchOn = try {
@@ -132,7 +148,7 @@ object KeyguardCover {
         } catch (e: Exception) {
             false
         }
-        inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped)
+        inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped, androidRequested)
         val (wanted, forManaged) = wantedNow()
         return write(app, dpm, admin, "apply", wanted, forManaged).lockMayRun
     }
@@ -165,6 +181,8 @@ object KeyguardCover {
             coverWanted = !off && switchOn && armed,
             voip = if (off) VoipPhase.NONE else voipSeen,
             guardTripped = i.guardTripped,
+            // Design 59: not the cover's - a shutdown or a failed T never takes Android mode's features out.
+            androidRequested = i.androidRequested,
         )
         return wanted to i.managed
     }
@@ -172,21 +190,33 @@ object KeyguardCover {
     /** Caller holds the monitor. */
     private fun write(app: Context, dpm: DevicePolicyManager, admin: ComponentName, why: String, wanted: KeyguardMode, managed: Boolean): KeyguardWritten {
         val wasOn = coverOn
+        val wasAndroid = androidOn
         val written = writeKeyguard(
             DpmKeyguard(dpm, admin), wanted, managed, coverAdded(app), { ScreenTimeout.effectiveMs(app) },
             storeCoverAdded = { storeCoverAdded(app, it) },
             storeWritten = { storeWritten(app, it) },
         )
         coverOn = written.mode == KeyguardMode.COVER
+        androidOn = written.mode == KeyguardMode.ANDROID
+        androidCameraGuard = androidOn && secureCameraHeld(managed, written.features)
         last = written
         // Release (the switch never on) logs nothing new - except what threw (qa-32-s2-code nit 2).
         for ((what, e) in written.errors) Log.w(LOG_TAG, what, e)
+        if (androidOn != wasAndroid || androidOn) {
+            Log.i(ANDROID_LOCK_TAG, "keyguard: mode=${written.mode} features=${written.features?.let { "0x" + Integer.toHexString(it) }} " +
+                "maxTimeToLock=${written.maxTimeToLockMs} disabled=${written.disabled}${written.coverFailed?.let { " failed=$it" } ?: ""} ($why)")
+        }
         if (switchOn || wasOn || coverOn) {
             Log.i(LOG_TAG, "mode=${written.mode} features=${written.features?.let { "0x" + Integer.toHexString(it) }} " +
                 "maxTimeToLock=${written.maxTimeToLockMs} disabled=${written.disabled} ($why${if (switchOn && !armed) ", held off until a lock resume with the screen on" else ""})")
         }
         written.coverFailed?.let {
-            Log.w(LOG_TAG, "The cover couldn't be set ($it) - the keyguard stays disabled, the PIN lock active")
+            if (androidOn) {
+                // P59 nit: ANDROID never falls back - the keyguard stays on with Android's PIN as the gate.
+                Log.w(ANDROID_LOCK_TAG, "Android's keyguard: a step failed ($it) - Android's PIN stays the gate, the camera lock ${if (androidCameraGuard) "off" else "on"}")
+            } else {
+                Log.w(LOG_TAG, "The cover couldn't be set ($it) - the keyguard stays disabled, the PIN lock active")
+            }
         }
         if (wasOn && !coverOn) handler.post { runWaiting(app, "the cover is off") }
         return written
@@ -239,7 +269,7 @@ object KeyguardCover {
      */
     fun followTimeout(context: Context, dpm: DevicePolicyManager, admin: ComponentName, oldMs: Long?, newMs: Long, writeSetting: () -> Boolean): Boolean =
         synchronized(this) {
-            if (!coverOn) return@synchronized writeSetting()
+            if (!timeToLockFollows) return@synchronized writeSetting()
             val app = context.applicationContext
             if (timeoutWriteOrder(oldMs, newMs) == TimeoutWriteOrder.T_FIRST) setT(app, dpm, admin, newMs, "the timeout shrinks")
             val ok = writeSetting()
@@ -255,7 +285,7 @@ object KeyguardCover {
 
     /** T = [ms] under the cover, read back; a failure falls back as in [writeKeyguard] (H1, H2). Monitor held. */
     private fun setT(app: Context, dpm: DevicePolicyManager, admin: ComponentName, ms: Long?, why: String) {
-        if (!coverOn) return
+        if (!timeToLockFollows) return
         val t = maxTimeToLock(coverOn = true, effectiveTimeoutMs = ms)
         val ok = t > 0L && try {
             if (dpm.getMaximumTimeToLock(admin) != t) dpm.setMaximumTimeToLock(admin, t)
@@ -264,7 +294,10 @@ object KeyguardCover {
             false
         }
         if (ok) {
-            Log.i(LOG_TAG, "maxTimeToLock=$t ($why)")
+            Log.i(if (androidOn) ANDROID_LOCK_TAG else LOG_TAG, "maxTimeToLock=$t ($why)")
+        } else if (androidOn) {
+            // Design 59: no fallback - the Android PIN is the gate; Android's own lock delay applies until the next write.
+            Log.w(ANDROID_LOCK_TAG, "maxTimeToLock=$t couldn't be set ($why) - Android's own lock delay applies")
         } else {
             Log.w(LOG_TAG, "maxTimeToLock=$t couldn't be set ($why) - the cover falls back")
             val (wanted, forManaged) = wantedNow(forceOff = true)

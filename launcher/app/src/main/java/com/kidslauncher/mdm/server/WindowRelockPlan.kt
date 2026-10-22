@@ -115,9 +115,11 @@ enum class CredentialAction {
     LEFT,
 }
 
-/** [secureAtStart] `null` = unknown (an adopted window): never removed. */
-fun credentialAction(secureAtStart: Boolean?, secureNow: Boolean, tokenUsable: Boolean): CredentialAction = when {
-    !secureNow || secureAtStart != false -> CredentialAction.NONE
+/** [secureAtStart] `null` = unknown (an adopted window): never removed. [androidRequested] (design 59 §3.7): while the
+ * policy asks for Android's lock the step is skipped - a window opened before the migration must not remove the
+ * migrated Child PIN (a kid's own PIN set in a window is the PWA's warning instead). */
+fun credentialAction(secureAtStart: Boolean?, secureNow: Boolean, tokenUsable: Boolean, androidRequested: Boolean = false): CredentialAction = when {
+    !secureNow || secureAtStart != false || androidRequested -> CredentialAction.NONE
     tokenUsable -> CredentialAction.REMOVE
     else -> CredentialAction.LEFT
 }

@@ -316,6 +316,13 @@ androidComponents {
     }
 }
 
+// Design 59 (P59-7): the text pins read src/release and src/debug from disk (DebugHookAbsentTest, the cover's and
+// Android's lock's pins) - inputs of every unit test task, so an edit there never leaves a test run UP-TO-DATE.
+tasks.withType<Test>().configureEach {
+    inputs.dir("src/release").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir("src/debug").withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 dependencies {
     // Built by CI (see .github/workflows/android.yml's "Build tsnet.aar with
     // gomobile" step, and mobile/go.mod) - not checked in, since it's a

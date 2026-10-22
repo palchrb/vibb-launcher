@@ -566,3 +566,55 @@ Server 0.37.0 (migration `0085_kid_keyguard.sql`) and the launcher's DTOs, in on
   to heal); the queue rule and `last_capabilities` count only rows and reports since `devices.enrolled_at` (S59-2,
   S59-3); a row used up by a later pop is not in flight (N-2); a first PIN without the key flashes
   `saved_safe_boot_not_kept` (N-1).
+
+## Step 3 as built (2026-10-22, `design-59-step3`)
+
+Launcher only. `Hybrid59`/`HybridPlan.kt` became `lock/AndroidLock.kt`/`lock/AndroidLockPlan.kt` (`AndroidLockPlanTest`),
+`KeyguardMode.HYBRID` `ANDROID`, the log tag `AndroidLock`; the debug switch (`HybridDebug` in both source sets, its
+receiver, manifest entry and `CheckDebugHook` names) is gone and a test bans the names. Notes in `launcher/CLAUDE.md`,
+"Android's own lock screen as the gate".
+
+- **The switch** is `androidRequested(kid_lock)` - exactly `"android"`; P59-5's test pins what it returns (`"own"`,
+  missing, junk, no `kid_lock`) and `configure`'s derivation of the face and the keyguard from it.
+- **M-1**: `keyguard_requested` (with `pin_rev`, committed by `saveConfig` beside the hash) and `keyguard_android`
+  (owned: written ahead of the migration's reset, cleared only when `isDeviceSecure` reads false) in CE
+  `pin_lock_state`, plus `android_pin_rev` and `android_boot_count`. The rollback edge = owned && !requested.
+- **L-1**: `PolicyToApply.carriesParentChoice` (`Apply` with a policy); `AppEnforcer.apply(context, decision)` passes it
+  to `PinLockRuntime.configure(..., parentChoice)`, and every `apply(.., currentPolicyDecision().policy)` caller now
+  passes the decision (a test bans the old form). A bare policy never carries it (the debug cover receiver's apply).
+- **L-3**: `WindowRelock.ensureAndroidResetToken` (`androidTokenStep`) at every apply while requested or owned.
+  **L-4**: `PinLockStore.swapAndroidBoot` in `decide`, every CE start, every mode.
+- **Bug 1**: `USER_PRESENT` has its own receiver, `RECEIVER_EXPORTED`, filter = that action alone (it is a
+  `<protected-broadcast>` in frameworks/base `core/res/AndroidManifest.xml`, checked); it acts only as the face, so
+  own mode is unchanged (the not-exported filter keeps the action, and returns for it as the face).
+- **Bug 2**: an ask is retried by a tap once it is `ANDROID_ASK_RETRY_MS` (1 s) old, and recovered - the state read
+  with RESUME's rule - when no answer came within `ANDROID_ASK_TIMEOUT_MS` (2 s) while our window has the focus, or
+  when the focus comes back later (the empty shade collapsed). Per-ask callbacks: an older ask's cancel or error is
+  moot; any ask's success leaves, but never after a screen-off since that ask.
+- **P59-1/2**: `noteLockTask` logs mode, features and the keyguard state, no verdict. **P59-3**: `androidRefrontHeld`
+  needs a credential. **P59-4/8**: the ANDROID write reads back `ANDROID_KEYGUARD_FEATURES | 0x2` (managed);
+  `KeyguardCover.androidCameraGuard` = that read; the camera lock follows `AndroidLock.cameraGuarded()` and re-syncs on
+  the face's edges and the guard's (`afterKeyguard`, after the keyguard write - `refreshTargets` runs before it).
+  `step()` reads `deviceSecure` live for every trigger. **P59-6**: the resume is `faceStep(RESUME)`. **P59-7**: every
+  `Test` task has `src/release` and `src/debug` as inputs. The nit: an ANDROID step failure logs "Android's PIN stays
+  the gate", not the cover's "stays disabled".
+- **Deviations, each the safer reading**:
+  - The `USER_PRESENT` mark is reset at every LOCKED edge **and** every screen-off and remote lock while LOCKED (a
+    screen-off while already LOCKED is no edge; a mark kept across it could open a later wake whose keyguard didn't
+    lock).
+  - `SLEEP_CHECK` never leaves, mark or not (dark: RELOCK); a missing credential beats the pad's success
+    (`OWN_KEYPAD` first - a success with no credential is no PIN); `AFTER_WAIT` reads again, so a keyguard that locked
+    during the wait stays rather than relocks.
+  - The restart line is cleared at the boot's first CE start (every mode) and when the face goes (a rollback) - not
+    at every own-mode apply, so a release phone reads nothing new per apply.
+  - The "ours" flag holds 60 s; a lost `onPasswordChanged` can't consume a later change of the kid's.
+  - `keyguard_relocks` is counted in memory (`AndroidLock.relocks`, capped at 1000); step 4 reports and resets it.
+  - A `Fallback` apply (no `kid_lock`) turns the face off and writes UNTOUCHED: Android's PIN stays the gate with
+    SystemUI's face, no rollback (Q59-4).
+- **Not here** (step 4): `set_kid_pin`, `verifyCommandPin`, remote lock's answer, `lock_state`'s fields,
+  `unlocked_at_ms` (`AndroidLock.firstCeStartOfBoot` is there for it), `android_keyguard_v1`. Without the capability
+  the server sends no PIN, so a phone switched to Android's lock migrates at its next Child PIN on our keypad.
+- **Device checks this step leaves** (§8, §9): the ask's recovery on a real empty shade (focus semantics of
+  SystemUI's bouncer and shade over a showWhenLocked activity), the sleep check's reads 1 s after a power press and a
+  timeout, `USER_PRESENT` now arriving (an unlock through SystemUI's own face leaves the glance at once), the first
+  boot unlock without a glance flash.

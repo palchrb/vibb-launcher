@@ -41,6 +41,9 @@ sealed interface LockEvent {
         val systemCall: Boolean = false,
         val homeFirst: Boolean = false,
         val voip: VoipPhase = VoipPhase.NONE,
+        /** Design 59 §3.1: the boot's first CE start with Android's lock as the gate ([processStartUnlocked]) -
+         * CE unlocked means the Child PIN was typed: UNLOCKED, no glance and no second PIN. */
+        val androidBoot: Boolean = false,
     ) : LockEvent
 
     /**
@@ -146,6 +149,8 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
     is LockEvent.ProcessStart ->
         if (!event.active) {
             LockStep(LockMode.DISABLED)
+        } else if (event.androidBoot) {
+            LockStep(LockMode.UNLOCKED)
         } else {
             // Fail closed: nothing says the kid had unlocked. With the screen on (a crash while
             // the kid was in an app) the lock is shown at once (QA 10 #4) - or, when Home was
@@ -256,6 +261,8 @@ fun wantKeyguardDisabled(managed: Boolean, hasKidPin: Boolean, deviceSecure: Boo
  * Design §3: active only if managed, the policy has a kid PIN, no Android credential, and
  * `setKeyguardDisabled(true)` worked ([keyguardDisabled]); the crash guard switches it off until
  * it re-arms. An unreadable hash keeps the lock on - only the parent code opens it then.
+ * [androidGate]: design 59's face ([androidFace], `kid_lock.keyguard` "android" with a credential) - Android's
+ * credential is the gate and our lock its face, so the credential and the keyguard that isn't disabled keep it active.
  */
 fun lockActivation(
     managed: Boolean,
@@ -264,11 +271,12 @@ fun lockActivation(
     keyguardDisabled: Boolean,
     hashUsable: Boolean,
     guardTripped: Boolean,
+    androidGate: Boolean = false,
 ): Pair<Boolean, LockInactive?> = when {
     !hasKidPin -> false to LockInactive.NO_PIN
     !managed -> false to LockInactive.UNMANAGED
-    deviceSecure -> false to LockInactive.ANDROID_CREDENTIAL
-    !keyguardDisabled -> false to LockInactive.KEYGUARD_NOT_DISABLED
+    deviceSecure && !androidGate -> false to LockInactive.ANDROID_CREDENTIAL
+    !keyguardDisabled && !androidGate -> false to LockInactive.KEYGUARD_NOT_DISABLED
     guardTripped -> false to LockInactive.CRASH_GUARD
     !hashUsable -> true to LockInactive.BAD_HASH
     else -> true to null

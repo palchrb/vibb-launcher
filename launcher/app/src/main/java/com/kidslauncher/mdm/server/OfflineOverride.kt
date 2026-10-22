@@ -70,7 +70,7 @@ object OfflineOverride {
         val appContext = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                AppEnforcer.apply(appContext, currentPolicyDecision().policy)
+                AppEnforcer.apply(appContext, currentPolicyDecision())
                 reevaluateLockReasonFromCache(appContext)
                 // The rules come back when the override ends: that's the next boundary now.
                 com.kidslauncher.mdm.timerules.TimeRuleAlarm.schedule(appContext)

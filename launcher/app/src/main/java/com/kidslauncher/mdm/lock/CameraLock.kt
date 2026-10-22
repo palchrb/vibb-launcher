@@ -84,7 +84,9 @@ object CameraLock {
     fun onLockChanged(context: Context) {
         val app = context.applicationContext
         executor.execute {
-            val locked = PinLockRuntime.chromeLocked
+            // Design 59 (P59-4): as Android's face with KEYGUARD_DISABLE_SECURE_CAMERA read back, Android's secure
+            // keyguard refuses the gesture instead - nothing suspended, the camera not disabled by policy.
+            val locked = cameraLockEngaged(PinLockRuntime.chromeLocked, AndroidLock.cameraGuarded())
             try {
                 sync(app, locked)
             } catch (e: Exception) {
@@ -238,7 +240,7 @@ object CameraLock {
     private fun requestApply(app: Context) {
         applyScope.launch {
             try {
-                AppEnforcer.apply(app, currentPolicyDecision().policy)
+                AppEnforcer.apply(app, currentPolicyDecision())
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Apply after the camera release failed", e)
             }

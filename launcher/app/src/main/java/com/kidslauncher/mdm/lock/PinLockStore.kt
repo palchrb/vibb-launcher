@@ -11,7 +11,8 @@ import java.security.MessageDigest
  * write is a synchronous `commit()`: a wrong PIN counted just before a kill or reboot must stay
  * counted (QA 10 #3).
  *
- * No unlock time and no "unlocked" flag is ever stored: a new process starts LOCKED.
+ * No unlock time and no "unlocked" flag is ever stored: a new process starts LOCKED - except, with Android's lock as
+ * the gate (design 59 §3.1), the boot's first CE start, which only the typed Child PIN can bring.
  */
 object PinLockStore {
     private const val PREFS = "pin_lock_state"
@@ -31,6 +32,14 @@ object PinLockStore {
     private const val GUARD_TRIPPED = "guard_tripped_at"
     private const val MARK_BOOT = "boot_mark_boot_count"
 
+    // Design 59 (M-1): what the policy asks and what we own are two flags, so an android -> own apply never
+    // erases the rollback's edge.
+    private const val PIN_REV = "pin_rev"
+    private const val KEYGUARD_REQUESTED = "keyguard_requested"
+    private const val KEYGUARD_ANDROID = "keyguard_android"
+    private const val ANDROID_PIN_REV = "android_pin_rev"
+    private const val ANDROID_BOOT = "android_boot_count"
+
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -38,23 +47,56 @@ object PinLockStore {
     fun config(context: Context): KidLockConfig? {
         val p = prefs(context)
         val hash = p.getString(PIN_HASH, null) ?: return null
-        return KidLockConfig(hash, p.getString(PIN_SALT, null).orEmpty(), kidPinLength(p.getInt(PIN_LENGTH, 4)))
+        return KidLockConfig(hash, p.getString(PIN_SALT, null).orEmpty(), kidPinLength(p.getInt(PIN_LENGTH, 4)), p.getLong(PIN_REV, 0L))
     }
 
     fun active(context: Context): Boolean = prefs(context).getBoolean(ACTIVE, false)
 
     fun inactive(context: Context): String? = prefs(context).getString(INACTIVE, null)
 
-    fun saveConfig(context: Context, config: KidLockConfig?, active: Boolean, inactive: LockInactive?) {
+    /** Design 59: the policy asks for Android's lock (`kid_lock.keyguard`, committed with the hash by [saveConfig]). */
+    fun keyguardRequested(context: Context): Boolean = prefs(context).getBoolean(KEYGUARD_REQUESTED, false)
+
+    /** The hash, its `pin_rev`, `active` and - design 59 - [requested] in one commit (Q59-5: every rev names the hash
+     * it came with). [requested] `null` keeps the stored value (the crash guard's save). */
+    fun saveConfig(context: Context, config: KidLockConfig?, active: Boolean, inactive: LockInactive?, requested: Boolean? = null) {
         val editor = prefs(context).edit()
             .putBoolean(ACTIVE, active)
             .putString(INACTIVE, inactive?.wire)
+        if (requested != null) editor.putBoolean(KEYGUARD_REQUESTED, requested)
         if (config == null) {
-            editor.remove(PIN_HASH).remove(PIN_SALT).remove(PIN_LENGTH)
+            editor.remove(PIN_HASH).remove(PIN_SALT).remove(PIN_LENGTH).remove(PIN_REV)
         } else {
             editor.putString(PIN_HASH, config.hashHex).putString(PIN_SALT, config.saltHex).putInt(PIN_LENGTH, config.length)
+                .putLong(PIN_REV, config.pinRev)
         }
         editor.commit()
+    }
+
+    /** Design 59 (M-1): we own Android's credential - set before a reset, cleared only once no credential is left. */
+    fun keyguardAndroid(context: Context): Boolean = prefs(context).getBoolean(KEYGUARD_ANDROID, false)
+
+    /** The rev Android's PIN was set from (`null` = unknown or none). */
+    fun androidPinRev(context: Context): Long? =
+        prefs(context).let { if (it.contains(ANDROID_PIN_REV)) it.getLong(ANDROID_PIN_REV, 0L) else null }
+
+    /** One commit of the owned flag and the rev (`null` removes it). */
+    fun saveAndroid(context: Context, owned: Boolean, rev: Long?): Boolean {
+        val editor = prefs(context).edit().putBoolean(KEYGUARD_ANDROID, owned)
+        if (rev == null) editor.remove(ANDROID_PIN_REV) else editor.putLong(ANDROID_PIN_REV, rev)
+        return editor.commit()
+    }
+
+    /**
+     * Design 59 (L-4): the boot count the last CE process start saw, [boot] stored in its place - at **every** CE
+     * process start in every mode ([PinLockRuntime.decide]), so a migration later in a boot never makes a crash
+     * restart its "first". Not [MARK_BOOT] (the boot mark's, written only when it is due).
+     */
+    fun swapAndroidBoot(context: Context, boot: Int): Int? {
+        val p = prefs(context)
+        val stored = p.getInt(ANDROID_BOOT, -1).takeIf { it >= 0 }
+        if (boot >= 0 && boot != stored) p.edit().putInt(ANDROID_BOOT, boot).commit()
+        return stored
     }
 
     fun backoff(context: Context): BackoffState {
@@ -110,7 +152,7 @@ object PinLockStore {
 }
 
 /** `PolicyResponse.kidLock` as the lock uses it. */
-data class KidLockConfig(val hashHex: String, val saltHex: String, val length: Int) {
+data class KidLockConfig(val hashHex: String, val saltHex: String, val length: Int, val pinRev: Long = 0) {
     val usable: Boolean get() = com.kidslauncher.mdm.server.PinHash.usable(hashHex, saltHex)
 
     /** Identifies this PIN for the backoff reset without keeping a second copy of the hash. */

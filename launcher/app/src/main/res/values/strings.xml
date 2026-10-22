@@ -319,6 +319,8 @@
     <string name="play_link_blocked_text">Ask a parent if you want a new app.</string>
     <!-- Handy's own PIN lock and the call screens (step 10, design 10-lock-and-call-ui.md). -->
     <string name="pin_lock_prompt">Enter your code</string>
+    <!-- Design 59 §3.2: Android's lock screen after a restart (written at the shutdown, cleared at the first unlock). -->
+    <string name="android_lock_restart_line">Type your PIN to start the phone</string>
     <!-- Design 25: after a glance row was tapped (%1$s = the app's name, at most 20 characters). -->
     <string name="pin_lock_prompt_open">Enter your code to open %1$s</string>
     <string name="pin_lock_prompt_missed">Enter your code to see missed calls</string>

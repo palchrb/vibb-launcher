@@ -239,6 +239,186 @@ class PinLockActivity : AppCompatActivity() {
         handler.removeCallbacks(keyguardCheck)
     }
 
+    // ---- design 59: the glance as Android's face ([AndroidLock], 59 §3.3) -----------------------------------------
+
+    /** The open ask for Android's PIN pad: when (elapsed; `null` = none), the screen-offs then, and its id (a newer
+     * ask makes an older one's cancel or error moot). */
+    private var askedAt: Long? = null
+    private var askedOffs = 0
+    private var askId = 0
+
+    private fun askAge(): Long? = askedAt?.let { SystemClock.elapsedRealtime() - it }
+
+    private fun closeAsk() {
+        askedAt = null
+        handler.removeCallbacks(askCheck)
+    }
+
+    /** The keypad stage is Android's PIN pad now: our keys, dots and "Foreldrekode" stay hidden under it (the
+     * user's answer 2: no parent code on the lock as Android's face). */
+    private var keypadIsAndroids = false
+
+    /** The glance's stage changed: as Android's face, the keypad stage is Android's PIN pad instead; rendered. */
+    private fun onStage() {
+        keypadIsAndroids = false
+        if (glance?.state?.stage == LockStage.KEYPAD && AndroidLock.faceOn) tapAsFace() else closeAsk()
+        render()
+    }
+
+    /**
+     * "Lås opp" or a row as Android's face ([FaceTrigger.UNLOCK_TAP], live reads - P59-8): Android's PIN pad while it
+     * is locked; a tap on an ask older than [ANDROID_ASK_RETRY_MS] asks again (the run's bug 2: never dead taps); no
+     * credential now - our own keypad.
+     */
+    private fun tapAsFace() {
+        val step = AndroidLock.step(this, FaceTrigger.UNLOCK_TAP)
+        if (step == FaceStep.OWN_KEYPAD) {
+            Log.i(ANDROID_LOCK_TAG, "Lås opp: no Android PIN now - our own keypad")
+            return
+        }
+        keypadIsAndroids = true
+        if (step == FaceStep.ASK_ANDROID) {
+            if (askAgain(askAge())) askAndroid()
+        } else {
+            actAsFace(step, "Lås opp")
+        }
+    }
+
+    /** `requestDismissKeyguard` - Android's PIN pad over the glance; its answer within [ANDROID_ASK_TIMEOUT_MS] or the
+     * state is read again once nothing covers us ([askCheck]). */
+    private fun askAndroid() {
+        val id = ++askId
+        val offs = PinLockRuntime.screenOffs
+        askedAt = SystemClock.elapsedRealtime()
+        askedOffs = offs
+        AndroidLock.note(this, "Lås opp: requestDismissKeyguard (Android's PIN pad)")
+        try {
+            getSystemService(KeyguardManager::class.java)?.requestDismissKeyguard(this, askCallback(id, offs))
+        } catch (e: Exception) {
+            closeAsk()
+            Log.w(ANDROID_LOCK_TAG, "requestDismissKeyguard failed: ${e.javaClass.simpleName}")
+            glance?.back()
+            return
+        }
+        handler.removeCallbacks(askCheck)
+        handler.postDelayed(askCheck, ANDROID_ASK_TIMEOUT_MS)
+    }
+
+    private fun askCallback(id: Int, offs: Int) = object : KeyguardManager.KeyguardDismissCallback() {
+        override fun onDismissSucceeded() = androidAnswered(id, offs, "succeeded")
+        override fun onDismissCancelled() = androidAnswered(id, offs, "cancelled")
+        override fun onDismissError() = androidAnswered(id, offs, "error")
+    }
+
+    /**
+     * Android's answer. Succeeded ([FaceTrigger.PAD_SUCCEEDED]): the glance leaves (a row's target opens) - any ask's
+     * success is Android's verdict, but never after a screen-off since that ask (design 24 QA #4) and never without
+     * a credential now. Cancelled: back to the glance. An error: the state read again ([recoverAsk]).
+     */
+    private fun androidAnswered(id: Int, offs: Int, result: String) {
+        val current = id == askId && askedAt != null
+        if (current) closeAsk()
+        AndroidLock.note(this, "Android's PIN pad: $result${if (current) "" else " (an earlier ask)"}")
+        if (isFinishing || finishingAfterUnlock || PinLockRuntime.mode != LockMode.LOCKED) return
+        if (result == "succeeded") {
+            if (offs == PinLockRuntime.screenOffs && AndroidLock.step(this, FaceTrigger.PAD_SUCCEEDED) == FaceStep.LEAVE) unlock(offs) else glance?.back()
+            return
+        }
+        if (!current) return
+        if (result == "cancelled") glance?.back() else recoverAsk()
+    }
+
+    /** The run's bug 2: an ask with no answer for [ANDROID_ASK_TIMEOUT_MS] while our window has the focus - no pad and
+     * no shade over us - died: the state is read again. Covered: checked again when the focus comes back. */
+    private val askCheck = Runnable {
+        if (askRecoveryDue(askAge(), hasWindowFocus())) {
+            Log.w(ANDROID_LOCK_TAG, "Lås opp: no answer from Android's PIN pad - reading the state again")
+            recoverAsk()
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && askedAt != null) {
+            handler.removeCallbacks(askCheck)
+            val wait = ANDROID_ASK_TIMEOUT_MS - (askAge() ?: 0L)
+            handler.postDelayed(askCheck, wait.coerceAtLeast(0L))
+        }
+    }
+
+    /** A dead ask, or an error: [FaceTrigger.RESUME]'s rule now - Android locked: the glance (a new tap asks again). */
+    private fun recoverAsk() {
+        closeAsk()
+        val step = AndroidLock.step(this, FaceTrigger.RESUME)
+        if (step != FaceStep.LEAVE) glance?.back()
+        actAsFace(step, "the ask's recovery")
+    }
+
+    /** One [faceStep] verdict carried out. Returns whether the glance left. */
+    private fun actAsFace(step: FaceStep, why: String): Boolean {
+        when (step) {
+            FaceStep.LEAVE -> {
+                closeAsk()
+                Log.i(ANDROID_LOCK_TAG, "$why: Android's lock is open (its PIN pad or USER_PRESENT) - the glance leaves")
+                unlock(PinLockRuntime.screenOffs)
+                return true
+            }
+            FaceStep.WAIT -> {
+                waitOffs = PinLockRuntime.screenOffs
+                handler.removeCallbacks(faceWait)
+                handler.postDelayed(faceWait, ANDROID_ANSWER_WAIT_MS)
+            }
+            FaceStep.RELOCK -> {
+                glance?.back()
+                AndroidLock.relock(this, why)
+            }
+            FaceStep.STAY -> if (keypadIsAndroids && askedAt == null && glance?.state?.stage == LockStage.KEYPAD) glance?.back()
+            FaceStep.ASK_ANDROID, FaceStep.OWN_KEYPAD -> Unit
+        }
+        return false
+    }
+
+    /** The screen-offs when the wait began: a screen-off since makes the sleep check the judge. */
+    private var waitOffs = 0
+
+    /** [ANDROID_ANSWER_WAIT_MS] after a not-locked read with no `USER_PRESENT` ([FaceStep.WAIT]): [FaceTrigger.AFTER_WAIT]
+     * - still open and none came: RELOCK (P59-6, Q59-3: a read alone never opens the phone). */
+    private val faceWait = Runnable {
+        if (isFinishing || finishingAfterUnlock || PinLockRuntime.mode != LockMode.LOCKED || waitOffs != PinLockRuntime.screenOffs) return@Runnable
+        actAsFace(AndroidLock.step(this, FaceTrigger.AFTER_WAIT), "the glance's wait")
+    }
+
+    /** `USER_PRESENT` with Android open ([PinLockRuntime.androidUnlockHook]): an open ask's answer goes first (it
+     * carries a row's target), else the glance leaves now. */
+    private val androidUnlockHook: () -> Unit = {
+        handler.removeCallbacks(faceWait)
+        handler.removeCallbacks(presentLeave)
+        if (askedAt != null) handler.postDelayed(presentLeave, ANDROID_ANSWER_WAIT_MS) else presentLeave.run()
+    }
+
+    private val presentLeave = Runnable {
+        if (!isFinishing && !finishingAfterUnlock && PinLockRuntime.mode == LockMode.LOCKED) {
+            val step = AndroidLock.step(this, FaceTrigger.USER_PRESENT)
+            if (step == FaceStep.LEAVE) actAsFace(step, "USER_PRESENT")
+        }
+    }
+
+    /**
+     * At the resume (face mode, [FaceTrigger.RESUME]): logged; with the screen on, Android open - LEAVE only with a
+     * `USER_PRESENT` since our lock went LOCKED, else the wait and then RELOCK. An ask from before a screen-off died
+     * with it. Returns whether the glance left. Without the face: nothing, false.
+     */
+    private fun resumeAsFace(): Boolean {
+        if (!AndroidLock.faceOn) return false
+        AndroidLock.note(this, "the glance resumed")
+        AndroidLock.noteLockTask(this)
+        if (askedAt != null && askedOffs != PinLockRuntime.screenOffs) closeAsk()
+        if (askedAt != null || !interactiveNow()) return false
+        return actAsFace(AndroidLock.step(this, FaceTrigger.RESUME), "the glance's resume")
+    }
+
+    private fun interactiveNow(): Boolean = getSystemService(android.os.PowerManager::class.java)?.isInteractive == true
+
     private val waitTicker: Runnable = object : Runnable {
         override fun run() {
             val ticker = this
@@ -284,7 +464,7 @@ class PinLockActivity : AppCompatActivity() {
         // The glance page (design 25) between the keypad and the ring screen. Built defensively: a
         // fault here leaves the plain keypad, never a crash that trips the guard.
         glance = try {
-            GlancePanel(this, frame, binding.root, ::render) { binding.pinEmergency.performClick() }
+            GlancePanel(this, frame, binding.root, ::onStage) { binding.pinEmergency.performClick() }
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "The glance page couldn't be built: ${e.javaClass.simpleName}")
             null
@@ -325,6 +505,8 @@ class PinLockActivity : AppCompatActivity() {
         PinLockRuntime.addModeListener(modeListener)
         PinLockRuntime.addChromeListener(chromeListener)
         VoipCalls.addListener(voipListener)
+        // Design 59: USER_PRESENT after Android's keyguard went comes here first.
+        PinLockRuntime.androidUnlockHook = androidUnlockHook
         render()
         // Design 25, "Lock background": Home's wallpaper (or the parent's lock picture) behind
         // both stages once the store has worked it out; the plain ground until then.
@@ -407,6 +589,8 @@ class PinLockActivity : AppCompatActivity() {
             )
             voipRing.voipRingError.visibility = View.GONE
         }
+        // Design 59: no "Foreldrekode" on the lock as Android's face (the user's answer 2).
+        voipRing.voipRingParentCode.visibility = if (AndroidLock.faceOn) View.GONE else View.VISIBLE
         voipRing.root.visibility = View.VISIBLE
     }
 
@@ -480,6 +664,8 @@ class PinLockActivity : AppCompatActivity() {
             return
         }
         PinLockRuntime.onLockResumed(this)
+        // Design 59: the glance as Android's face (§3.3) - it may leave here, on Android's verdict.
+        if (resumeAsFace()) return
         // Digits typed before a screen-off go with it.
         val kept = enteredAfterScreenOffs(entered, enteredAt, PinLockRuntime.screenOffs)
         if (kept != entered) {
@@ -532,6 +718,7 @@ class PinLockActivity : AppCompatActivity() {
         PinLockRuntime.removeModeListener(modeListener)
         PinLockRuntime.removeChromeListener(chromeListener)
         VoipCalls.removeListener(voipListener)
+        if (PinLockRuntime.androidUnlockHook === androidUnlockHook) PinLockRuntime.androidUnlockHook = null
         handler.removeCallbacksAndMessages(null)
         // Its dialogs go with it (a leaked window fires no dismiss listener).
         openDialogs.clear()
@@ -680,11 +867,18 @@ class PinLockActivity : AppCompatActivity() {
         render()
         val checkedAt = PinLockRuntime.screenOffs
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.Default) { PinLockRuntime.checkPin(this@PinLockActivity, pin) }
+            val result = withContext(Dispatchers.Default) {
+                PinLockRuntime.checkPin(this@PinLockActivity, pin).also {
+                    // Design 59 §3.4: while Android's lock is asked for and has no PIN yet, the right Child PIN
+                    // becomes Android's, with the rev of the hash it was checked against (returns at once otherwise)
+                    // - before the unlock, so the next screen-off is Android's.
+                    if (it is PinLockRuntime.PinResult.Ok) AndroidLock.migrateIfDue(this@PinLockActivity, pin, it.pinRev)
+                }
+            }
             checking = false
             entered = ""
             when (result) {
-                PinLockRuntime.PinResult.Ok -> {
+                is PinLockRuntime.PinResult.Ok -> {
                     // A screen-off during the check: the lock stays (design 24 QA #4) - type again.
                     if (PinLockRuntime.screenOffs == checkedAt) {
                         unlock(checkedAt)
@@ -742,6 +936,11 @@ class PinLockActivity : AppCompatActivity() {
         val enabled = keypadEnabled()
         binding.pinKeypad.alpha = if (enabled) 1f else 0.4f
         keys.forEach { it.isEnabled = enabled }
+        // Design 59: under Android's PIN pad none of our keypad shows.
+        val ours = if (keypadIsAndroids) View.INVISIBLE else View.VISIBLE
+        binding.pinKeypad.visibility = ours
+        binding.pinDots.visibility = ours
+        binding.pinParentCode.visibility = if (keypadIsAndroids) View.GONE else View.VISIBLE
     }
 
     // ---- parent code ------------------------------------------------------------------------

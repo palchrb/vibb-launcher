@@ -216,6 +216,9 @@ interface RelockPlatform {
     /** `resetPasswordWithToken(null)`: true when the credential is gone. */
     fun removeCredential(): Boolean
 
+    /** Design 59 §3.7: the policy asks for Android's lock (CE `keyguard_requested`) - step 1 is skipped then. */
+    fun androidKeyguardRequested(): Boolean = false
+
     fun installedPackages(): List<InstalledPackage>
 
     /** The enforced policy's allowlist (`null` = apps unmanaged). */
@@ -227,7 +230,7 @@ interface RelockPlatform {
     /** The Play Store and our own package. */
     fun trustedInstallers(): Set<String>
 
-    /** `AppEnforcer.apply(currentPolicyDecision().policy)`. */
+    /** `AppEnforcer.apply(currentPolicyDecision())`. */
     fun apply()
 
     /** The last apply() set its permitted accessibility and keyboard lists. */
@@ -289,7 +292,7 @@ fun runRelock(store: WindowRelockStore, platform: RelockPlatform, trigger: Reloc
 
     // 1. The credential first (QA #9).
     step(RelockFailure.CREDENTIAL) {
-        if (credentialAction(secureAtStart, platform.secureNow(), platform.tokenUsable()) == CredentialAction.REMOVE) {
+        if (credentialAction(secureAtStart, platform.secureNow(), platform.tokenUsable(), platform.androidKeyguardRequested()) == CredentialAction.REMOVE) {
             report = withResets(report, 0, 0, platform.removeCredential(), emptyList())
         }
     }

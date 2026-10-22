@@ -258,9 +258,73 @@ object WindowRelock {
             false
         }
         if (!resetTokenNeeded(active, store.token() != null, deviceSecure(app))) return
+        setNewToken(app, dpm, admin, store)
+    }
+
+    /**
+     * Design 59 §3.6 (L-3): in android mode the token is kept active, at every apply - [androidTokenStep] instead
+     * of 24b's rule: none stored (r10's unreadable counts as none) -> a new one (without a credential it activates
+     * at once; with one it is escrowed until the kid's next unlock); stored, not active and no credential -> set
+     * again; stored, not active, a credential -> wait for the escrow. The token is read only through
+     * `WindowRelockStore.token()`, never copied elsewhere. Returns whether it is active now. Background thread.
+     */
+    internal fun ensureAndroidResetToken(context: Context): Boolean {
+        val app = context.applicationContext
+        val dpm = dpm(app) ?: return false
+        if (!dpm.isDeviceOwnerApp(app.packageName)) return false
+        val admin = admin(app)
+        val store = store(app)
+        return try {
+            val stored = store.token() != null
+            val step = com.kidslauncher.mdm.lock.androidTokenStep(stored, dpm.isResetPasswordTokenActive(admin), deviceSecure(app))
+            if (step == com.kidslauncher.mdm.lock.TokenStep.SET) setNewToken(app, dpm, admin, store)
+            store.token() != null && dpm.isResetPasswordTokenActive(admin)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "The reset token (Android's lock) failed: ${e.javaClass.simpleName}")
+            false
+        }
+    }
+
+    /** 32 random bytes, stored first, then `setResetPasswordToken`; the local copy zeroed. */
+    private fun setNewToken(app: Context, dpm: DevicePolicyManager, admin: android.content.ComponentName, store: WindowRelockStore) {
         val token = ByteArray(32).also { SecureRandom().nextBytes(it) }
-        if (!store.saveToken(token.toHex())) return
-        if (!dpm.setResetPasswordToken(admin, token)) Log.w(LOG_TAG, "setResetPasswordToken refused")
+        try {
+            if (!store.saveToken(token.toHex())) return
+            if (!dpm.setResetPasswordToken(admin, token)) Log.w(LOG_TAG, "setResetPasswordToken refused")
+        } finally {
+            token.fill(0)
+        }
+    }
+
+    /** Our reset token is stored and active (design 59: the migration, the rollback). */
+    internal fun resetTokenActive(context: Context): Boolean {
+        val app = context.applicationContext
+        val dpm = dpm(app) ?: return false
+        return try {
+            dpm.isDeviceOwnerApp(app.packageName) && store(app).token() != null && dpm.isResetPasswordTokenActive(admin(app))
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Design 59 ([com.kidslauncher.mdm.lock.AndroidLock], the only caller): Android's credential through our reset
+     * token - [pin] (the Child PIN just checked, a numeric PIN) set, or `null` cleared. The same stored token as the
+     * relock's step 1; no second copy, the local bytes zeroed. False without an active token. Never logs [pin].
+     */
+    internal fun resetCredential(context: Context, pin: String?): Boolean {
+        val app = context.applicationContext
+        val dpm = dpm(app) ?: return false
+        if (!resetTokenActive(app)) return false
+        val token = store(app).token()?.fromHex() ?: return false
+        return try {
+            dpm.resetPasswordWithToken(admin(app), pin, token, 0)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "resetPasswordWithToken failed: ${e.javaClass.simpleName}")
+            false
+        } finally {
+            token.fill(0)
+        }
     }
 
     // ---- relocking ------------------------------------------------------------------------------
@@ -556,6 +620,13 @@ object WindowRelock {
             return ok && !deviceSecure(app)
         }
 
+        override fun androidKeyguardRequested(): Boolean = try {
+            com.kidslauncher.mdm.lock.PinLockStore.keyguardRequested(app)
+        } catch (e: Exception) {
+            // Unreadable: never remove a credential that may be the Child PIN's.
+            true
+        }
+
         override fun installedPackages() = installedPackages(app, withInstaller = true)
 
         override fun allowlist(): List<String>? = currentPolicyDecision().policy?.allowlist
@@ -564,7 +635,7 @@ object WindowRelock {
 
         override fun trustedInstallers() = setOf(PLAY_STORE, app.packageName)
 
-        override fun apply() = AppEnforcer.apply(app, currentPolicyDecision().policy)
+        override fun apply() = AppEnforcer.apply(app, currentPolicyDecision())
 
         override fun permittedListsOk() = AppEnforcer.permittedListsOk
 

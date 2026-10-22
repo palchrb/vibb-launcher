@@ -176,7 +176,7 @@ object PlayRuntime {
         scope.launch {
             // Never let an exception reach the crash handler (it would end the call path too).
             try {
-                AppEnforcer.apply(app, currentPolicyDecision().policy)
+                AppEnforcer.apply(app, currentPolicyDecision())
                 TimeRuleAlarm.schedule(app)
                 val launch = app.packageManager.getLaunchIntentForPackage(PLAY_STORE)
                 if (launch != null) app.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -194,7 +194,7 @@ object PlayRuntime {
         prefs(app).edit().clear().commit()
         scope.launch {
             try {
-                AppEnforcer.apply(app, currentPolicyDecision().policy)
+                AppEnforcer.apply(app, currentPolicyDecision())
                 onInstallModeEnded(app)
                 TimeRuleAlarm.schedule(app)
                 SyncRunner.request(app, "install_mode_end")

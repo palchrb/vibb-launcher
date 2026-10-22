@@ -124,7 +124,7 @@ object RestrictionsPause {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 // apply() releases everything itself while the pause is active.
-                AppEnforcer.apply(app, currentPolicyDecision().policy)
+                AppEnforcer.apply(app, currentPolicyDecision())
                 reevaluateLockReasonFromCache(app)
                 com.kidslauncher.mdm.timerules.TimeRuleAlarm.schedule(app)
             } catch (e: Exception) {

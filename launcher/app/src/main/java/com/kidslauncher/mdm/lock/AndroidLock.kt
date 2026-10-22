@@ -1,0 +1,349 @@
+package com.kidslauncher.mdm.lock
+
+import android.app.ActivityManager
+import android.app.KeyguardManager
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
+import android.os.PowerManager
+import android.os.SystemClock
+import android.util.Log
+import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.server.AppEnforcer
+import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
+import com.kidslauncher.mdm.server.WindowRelock
+import com.kidslauncher.mdm.server.currentPolicyDecision
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
+/**
+ * Design 59 (docs/design/59-android-keyguard-design.md §3): Android's secure keyguard as the gate, our glance
+ * its face - the glue around the pure AndroidLockPlan.kt. Driven by the per-phone policy switch
+ * `kid_lock.keyguard` ([androidRequested]); without it nothing here writes anything and every caller's gate
+ * (`faceOn && ...`) short-circuits - today's own lock.
+ *
+ * - Requested, no Android credential: today's own lock; the next correct Child PIN on our keypad becomes
+ *   Android's PIN through our reset token ([migrateIfDue]).
+ * - Requested with a credential ([faceOn]): Android's keyguard is the gate (written by [KeyguardCover], ANDROID);
+ *   our glance (`PinLockActivity`, showWhenLocked) its face; it leaves only on Android's verdict ([faceStep]).
+ * - Not requested while we own the credential (CE `keyguard_android`): the rollback ([configure]).
+ *
+ * Never logs or stores the PIN; the reset token is `WindowRelockStore`'s only.
+ */
+object AndroidLock {
+
+    /** The policy asks for Android's lock, as the last apply (or the process start, from CE) saw it. */
+    @Volatile
+    var requested = false
+        private set
+
+    /** [androidFace] as the last apply (or the process start) decided: the glance is Android's face. */
+    @Volatile
+    var faceOn = false
+        private set
+
+    /** This process is the boot's first CE start ([firstCeStart]) - step 4's `unlocked_at_ms` reads it. */
+    @Volatile
+    var firstCeStartOfBoot = false
+        private set
+
+    /** `keyguard_relocks` (59 §3.3): [relock]s since the last report - step 4 reports and resets it. */
+    @Volatile
+    var relocks = 0
+        private set
+
+    /**
+     * A `USER_PRESENT` since our lock last went LOCKED (59 §3.3; reset at every LOCKED edge, screen-off and remote
+     * lock - [lockedAgain]). Main thread.
+     */
+    var presentSinceLocked = false
+        private set
+
+    /** 59 §3.7: the one-shot "this credential change is ours" flag, valid until this elapsed time (0 = none). */
+    @Volatile
+    private var expectOwnChangeUntil = 0L
+
+    /** The camera guard the camera lock last heard of ([afterKeyguard]). */
+    @Volatile
+    private var cameraGuardWas = false
+
+    /** How long our own reset waits for its `onPasswordChanged` (a lost broadcast never consumes a later change). */
+    private const val OWN_CHANGE_MS = 60_000L
+
+    // ---- the process start, the apply -------------------------------------------------------------------------
+
+    /** From [PinLockRuntime.decide] (main thread, before any activity): the stored request, the face from it and a
+     * live credential, and whether this is the boot's first CE start. */
+    fun atProcessStart(requested: Boolean, face: Boolean, firstCeStart: Boolean) {
+        this.requested = requested
+        faceOn = face
+        firstCeStartOfBoot = firstCeStart
+    }
+
+    /**
+     * The boot's first CE start (off the main thread, [PinLockRuntime.init]): the restart line goes - it showed on
+     * Android's face before the first unlock (59 §3.2, open question 2). Every mode.
+     */
+    fun atBootStart(context: Context) {
+        if (!firstCeStartOfBoot) return
+        owner(context.applicationContext)?.let { (dpm, admin) -> lockScreenInfo(dpm, admin, null) }
+    }
+
+    /**
+     * [PinLockRuntime.configure] (every apply, background thread), before the keyguard is written: the token, the
+     * rollback and the owned flag, so the keyguard below is written for the credential this leaves.
+     * - Requested or owned: the reset token kept active ([WindowRelock.ensureAndroidResetToken], §3.6).
+     * - The rollback ([rollbackDue], §3.8): owned, not requested, and the policy carries the parent's choice
+     *   ([parentChoice]; never a `Fallback` or `Apply(null)`): the credential cleared with the token; without one
+     *   Android's PIN stays the gate and the token keeps running (escrow).
+     * - Owned with no credential left (a verified clear, or removed on the phone): owned goes, and its rev.
+     */
+    fun configure(context: Context, requested: Boolean, parentChoice: Boolean) = synchronized(this) {
+        val app = context.applicationContext
+        this.requested = requested
+        val owned = try {
+            PinLockStore.keyguardAndroid(app)
+        } catch (e: Exception) {
+            false
+        }
+        val token = if (requested || owned) WindowRelock.ensureAndroidResetToken(app) else false
+        var secure = deviceSecure(app)
+        if (rollbackDue(owned, requested, parentChoice)) {
+            when (androidRollback(secure, token)) {
+                AndroidRollback.CLEAR -> {
+                    val ok = reset(app, null)
+                    secure = deviceSecure(app)
+                    Log.i(ANDROID_LOCK_TAG, "rollback: Android's PIN cleared: $ok (secure now=$secure)")
+                }
+                AndroidRollback.NO_TOKEN -> Log.w(ANDROID_LOCK_TAG, "rollback: Android's PIN and no active reset token - it stays the gate until the token is active (escrow: the kid's next unlock)")
+                AndroidRollback.NOTHING -> Unit
+            }
+        }
+        if (owned && !secure) {
+            val ok = PinLockStore.saveAndroid(app, owned = false, rev = null)
+            Log.i(ANDROID_LOCK_TAG, "Android's PIN is gone - ours no more (stored: $ok)")
+        }
+    }
+
+    /**
+     * The face for this apply ([androidFace], P59-5's derivation), from [PinLockRuntime.configure] after [configure].
+     * The camera lock re-syncs on both edges (P59-8); leaving the face (a rollback) clears the restart line - own mode
+     * never reads it otherwise.
+     */
+    fun face(context: Context, dpm: DevicePolicyManager, admin: ComponentName, requested: Boolean, managed: Boolean, hasKidPin: Boolean, deviceSecure: Boolean): Boolean {
+        val app = context.applicationContext
+        val face = androidFace(requested, managed, hasKidPin, deviceSecure)
+        val was = faceOn
+        faceOn = face
+        if (face != was) CameraLock.onLockChanged(app)
+        if (was && !face) lockScreenInfo(dpm, admin, null)
+        if (requested || was) {
+            Log.i(ANDROID_LOCK_TAG, "apply: requested=$requested managed=$managed kidPin=$hasKidPin secure=$deviceSecure face=$face" +
+                "${if (face != was) " (changed)" else ""}${if (migrationDue(requested, managed, deviceSecure) && hasKidPin) " - the next correct Child PIN becomes Android's" else ""}")
+        }
+        return face
+    }
+
+    /** After the keyguard write: the camera lock stands down only on the secure-camera bit really written (P59-4). */
+    fun afterKeyguard(context: Context) {
+        val guarded = cameraGuarded()
+        if (guarded != cameraGuardWas) {
+            cameraGuardWas = guarded
+            CameraLock.onLockChanged(context.applicationContext)
+        }
+    }
+
+    /** The camera lock's input: the face, and ANDROID's write read SECURE_CAMERA back ([cameraLockEngaged]). */
+    fun cameraGuarded(): Boolean = faceOn && KeyguardCover.androidCameraGuard
+
+    // ---- the credential -------------------------------------------------------------------------------------------
+
+    /**
+     * 59 §3.4, the keypad migration (background thread): the Child PIN just checked right on our keypad - against
+     * the config with [pinRev] - becomes Android's PIN while requested with no credential yet. `keyguard_android`
+     * is committed **first** (write-ahead, M-1), then the reset, then the rev. The PIN is never stored or logged.
+     * The phone stays unlocked; the apply after it makes the next screen-off Android's.
+     */
+    fun migrateIfDue(context: Context, pin: String, pinRev: Long) {
+        if (!requested) return
+        val app = context.applicationContext
+        val ok = synchronized(this) {
+            if (!migrationDue(requested, managed = true, deviceSecure = deviceSecure(app))) return
+            if (!WindowRelock.ensureAndroidResetToken(app)) {
+                Log.w(ANDROID_LOCK_TAG, "migration: no active reset token yet - our keypad stays the gate")
+                return
+            }
+            if (!PinLockStore.saveAndroid(app, owned = true, rev = null)) {
+                Log.w(ANDROID_LOCK_TAG, "migration: the owned flag couldn't be stored - not now")
+                return
+            }
+            reset(app, pin).also { set ->
+                if (set) PinLockStore.saveAndroid(app, owned = true, rev = pinRev)
+                Log.i(ANDROID_LOCK_TAG, "migration: the Child PIN set as Android's PIN: $set (rev $pinRev, secure now=${deviceSecure(app)})")
+            }
+        }
+        if (ok) applySoon(app)
+    }
+
+    /** Every own `resetPasswordWithToken` (migration, rollback; step 4's command): the "ours" flag first (§3.7). */
+    private fun reset(app: Context, pin: String?): Boolean {
+        expectOwnChangeUntil = SystemClock.elapsedRealtime() + OWN_CHANGE_MS
+        val ok = WindowRelock.resetCredential(app, pin)
+        if (!ok) expectOwnChangeUntil = 0L
+        return ok
+    }
+
+    /**
+     * 59 §3.7, `onPasswordChanged` (background thread, before its apply): our own change consumes the flag; any other
+     * makes the rev unknown ([androidPinRevAfterChange]) - the PWA then warns and offers the Child PIN again.
+     */
+    fun onPasswordChanged(context: Context) = synchronized(this) {
+        val app = context.applicationContext
+        val expected = SystemClock.elapsedRealtime() < expectOwnChangeUntil
+        expectOwnChangeUntil = 0L
+        try {
+            val rev = PinLockStore.androidPinRev(app)
+            val after = androidPinRevAfterChange(expected, rev)
+            if (after != rev) {
+                PinLockStore.saveAndroid(app, PinLockStore.keyguardAndroid(app), after)
+                Log.i(ANDROID_LOCK_TAG, "Android's PIN was changed on the phone - not the Child PIN as far as we know")
+            }
+        } catch (e: Exception) {
+            Log.w(ANDROID_LOCK_TAG, "onPasswordChanged: the rev couldn't be updated (${e.javaClass.simpleName})")
+        }
+    }
+
+    // ---- the face's decisions (main thread is fine: short binder reads) -------------------------------------------
+
+    /** An Android credential now; unreadable = none - so the gate falls back to our keypad, never past it. */
+    fun deviceSecure(context: Context): Boolean = try {
+        context.getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true
+    } catch (e: Exception) {
+        false
+    }
+
+    /** Android's keyguard asks for the PIN now: `isDeviceLocked || isKeyguardLocked`; unreadable = locked. */
+    fun androidLocked(context: Context): Boolean = try {
+        val km = context.getSystemService(KeyguardManager::class.java)
+        km == null || km.isDeviceLocked || km.isKeyguardLocked
+    } catch (e: Exception) {
+        true
+    }
+
+    /** [faceStep] with the live reads (P59-8: a credential gone since the last apply means our keypad). */
+    fun step(context: Context, trigger: FaceTrigger): FaceStep =
+        faceStep(trigger, deviceSecure(context), androidLocked(context), presentSinceLocked)
+
+    /** No re-front now ([androidRefrontHeld], P59-3); no binder call without [faceOn]. */
+    fun refrontHeld(context: Context): Boolean = faceOn && androidRefrontHeld(true, deviceSecure(context), androidLocked(context))
+
+    /** `USER_PRESENT` (the runtime's exported receiver). Main thread. */
+    fun userPresent() {
+        presentSinceLocked = true
+    }
+
+    /** Our lock went LOCKED (an edge, a screen-off, a remote lock): the mark goes. Main thread. */
+    fun lockedAgain() {
+        presentSinceLocked = false
+    }
+
+    /**
+     * RELOCK (59 §3.3): Android didn't lock under the glance (T didn't take, a wake raced the sleep, a crash restart
+     * found it open) - `lockNow`: the screen goes off, Android's PIN is the gate, the fingerprint waits for the PIN.
+     */
+    fun relock(context: Context, why: String) {
+        relocks = (relocks + 1).coerceAtMost(1_000)
+        Log.w(ANDROID_LOCK_TAG, "Android's keyguard didn't lock under the glance - locked it ($why)")
+        lockNow(context)
+    }
+
+    /** The crash guard tripped in android mode (Q59-2): Android's PIN is the gate with SystemUI's face - never open. */
+    fun crashGuardTripped(context: Context) {
+        if (!faceOn) return
+        Log.w(ANDROID_LOCK_TAG, "The crash guard tripped - Android's lock now")
+        lockNow(context)
+    }
+
+    private fun lockNow(context: Context) {
+        try {
+            context.applicationContext.getSystemService(DevicePolicyManager::class.java)?.lockNow()
+        } catch (e: Exception) {
+            Log.w(ANDROID_LOCK_TAG, "lockNow failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    // ---- the restart line (59 §3.2) -----------------------------------------------------------------------------------
+
+    /** `ACTION_SHUTDOWN` (BootCover's receiver, after the cover's writes, its own try): the restart words on Android's
+     * face before the first unlock - only in android mode. */
+    fun onShutdown(context: Context) {
+        if (!faceOn) return
+        val app = context.applicationContext
+        owner(app)?.let { (dpm, admin) -> lockScreenInfo(dpm, admin, app.getString(R.string.android_lock_restart_line)) }
+    }
+
+    /** `setDeviceOwnerLockScreenInfo`, only when it differs. */
+    private fun lockScreenInfo(dpm: DevicePolicyManager, admin: ComponentName, text: String?) {
+        try {
+            if (dpm.deviceOwnerLockScreenInfo?.toString() == text) return
+            dpm.setDeviceOwnerLockScreenInfo(admin, text)
+            Log.i(ANDROID_LOCK_TAG, "lock-screen line: ${if (text == null) "cleared" else "set"}")
+        } catch (e: Exception) {
+            Log.w(ANDROID_LOCK_TAG, "lock-screen line failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    // ---- the device checks' log lines --------------------------------------------------------------------------------
+
+    /** One line of state for [event] (face mode only). */
+    fun note(context: Context, event: String) {
+        if (!faceOn) return
+        val km = try {
+            context.getSystemService(KeyguardManager::class.java)
+        } catch (e: Exception) {
+            null
+        }
+        val state = try {
+            "keyguardLocked=${km?.isKeyguardLocked} deviceLocked=${km?.isDeviceLocked} secure=${km?.isDeviceSecure} interactive=${interactive(context)} present=$presentSinceLocked"
+        } catch (e: Exception) {
+            "state unreadable (${e.javaClass.simpleName})"
+        }
+        Log.i(ANDROID_LOCK_TAG, "$event: $state")
+    }
+
+    /**
+     * At the glance's resume (face mode): lock task's mode and features with Android's keyguard state - no verdict
+     * (P59-1: lock task's missing OVERVIEW doesn't hold Recents; Android's locked keyguard does).
+     */
+    fun noteLockTask(context: Context) {
+        if (!faceOn) return
+        val app = context.applicationContext
+        try {
+            val mode = app.getSystemService(ActivityManager::class.java)?.lockTaskModeState
+            val features = owner(app)?.let { (dpm, admin) -> dpm.getLockTaskFeatures(admin) }
+            note(app, "lock task: mode=$mode features=${features?.let { "0x" + Integer.toHexString(it) }}")
+        } catch (e: Exception) {
+            Log.w(ANDROID_LOCK_TAG, "lock task unreadable: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun interactive(context: Context): Boolean =
+        context.getSystemService(PowerManager::class.java)?.isInteractive == true
+
+    private fun applySoon(app: Context) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                AppEnforcer.apply(app, currentPolicyDecision())
+            } catch (e: Exception) {
+                Log.w(ANDROID_LOCK_TAG, "apply after the migration failed: ${e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    private fun owner(app: Context): Pair<DevicePolicyManager, ComponentName>? {
+        val dpm = app.getSystemService(DevicePolicyManager::class.java) ?: return null
+        if (!dpm.isDeviceOwnerApp(app.packageName)) return null
+        return dpm to ComponentName(app, MdmDeviceAdminReceiver::class.java)
+    }
+}
