@@ -131,7 +131,18 @@ class FavouritesTest {
         assertTrue(moduleFile("src/main/java/me/vibb/music/playback/LocalRenderer.kt").readText().contains("a.shuffled, now, a.storedScope())"))
         assertTrue(body("private fun queueEnded() {").contains("if (held == null) store.db.clearPartialPositions(entryKey) else store.db.clearPartialPositionsOf(entryKey, held)"))
         assertTrue(body("private fun publish() {").contains("favourites = a?.favourites,"))
-        assertTrue(body("private suspend fun adoptedQueue(").contains("adoptPlan(entry, scoped(snap.order(entry), favourites), stored, row?.shuffled == true, uri)"))
+        // activeFor is the one guard (R8C-6): every queue's keys and order go through the scope
         assertTrue(body("private suspend fun activeFor(").contains("val order = scoped(snap.order(entry), favourites)"))
+        // qa-r8-code R8C-3: the carries no behaviour test sees - adopt after a restart, "Spill av på" from a stored
+        // queue, the end's own items, the list pick's rule in the service
+        assertTrue(body("private suspend fun adoptedQueue(").contains("val favourites = row?.scope()"))
+        assertTrue(body("private suspend fun toRoom(").contains("Triple(entry, it, row.scope())"))
+        assertTrue(body("private fun queueEnded() {").contains("val held = a.favourites?.let { a.items.map { it.key } }"))
+        assertTrue(body("private suspend fun playItem(").contains("val scope = queueScope?.takeIf { key in it }"))
+        // R8C-1: a stale Spotify play (RESUME, the same scope) starts the whole entry, as restartIfStale does
+        assertTrue(tap.substringAfter("spotifyLog(\"web player: the entry's mode changed").substringBefore("}").contains("hearted = false"))
+        assertTrue(tap.contains("val scopeOf = { e: Entry -> snap.heartsListed(e).takeIf { hearted } }"))
+        // R8C-4: an empty plan says why only under "Favoritter"; the whole entry stays silent, as before r8
+        assertTrue(tap.contains("if (scope != null) PlayerHub.mutableMessages.tryEmit("))
     }
 }

@@ -9,7 +9,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -21,6 +23,8 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Velocity
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /*
  * A drag down that closes (design r8 §2, §3; ours, the user's ask of 2026-10-21, as Android's sheets do): the output
@@ -70,32 +74,39 @@ fun Modifier.dragDownToClose(onClose: () -> Unit): Modifier {
     var offset by remember { mutableFloatStateOf(0f) }
     var extent by remember { mutableIntStateOf(0) }
     val drag = rememberDraggableState { delta -> offset = dragOffset(offset, delta) }
-    val settle: suspend (Float) -> Unit = remember(drag) {
+    val scope = rememberCoroutineScope()
+    var spring by remember { mutableStateOf<Job?>(null) }
+    val settle: (Float) -> Unit = remember(drag) {
         { velocity ->
             if (dragCloses(offset, velocity, extent.toFloat(), density)) {
                 close()
                 offset = 0f
             } else {
-                // a new drag (UserInput) cancels the spring
-                drag.drag(MutatePriority.Default) {
-                    if (animationsOn()) animate(offset, 0f, velocity) { value, _ -> dragBy(value - offset) } else dragBy(-offset)
+                // a new drag on the surface (UserInput) cancels the spring through the state's mutex; one in a list
+                // inside cancels it below (qa-r8-code R8C-5)
+                spring = scope.launch {
+                    drag.drag(MutatePriority.Default) {
+                        if (animationsOn()) animate(offset, 0f, velocity) { value, _ -> dragBy(value - offset) } else dragBy(-offset)
+                    }
                 }
             }
         }
     }
     val connection = remember(drag) {
         object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                val take = preScrollTake(offset, available.y)
-                if (take != 0f) drag.dispatchRawDelta(take)
-                return Offset(0f, take)
+            /** A finger's [delta] taken by the surface from a list inside: the finger wins over a running spring. */
+            fun take(delta: Float): Offset {
+                if (delta != 0f) {
+                    spring?.cancel()
+                    drag.dispatchRawDelta(delta)
+                }
+                return Offset(0f, delta)
             }
 
-            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                val take = postScrollTake(available.y, source)
-                if (take != 0f) drag.dispatchRawDelta(take)
-                return Offset(0f, take)
-            }
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset = take(preScrollTake(offset, available.y))
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
+                take(postScrollTake(available.y, source))
 
             // a release with the surface moved settles it; the list doesn't fling
             override suspend fun onPreFling(available: Velocity): Velocity {

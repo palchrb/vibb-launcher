@@ -89,7 +89,8 @@ fun unplayableNow(entry: Entry, items: List<PlayItem>, onPhone: Set<String>, net
  * ([spotifyTileState]: [loadedId]'s renderer [loadedState] from `PlayerHub.State`, the stored [spotifyOutcome]).
  * Under "Favoritter" ([favourites], design r8 §1.1) it describes what its tap plays: the hint and the progress line from
  * the scope's start (found in the play order as the tap finds it, numbered in the entry's count), dimmed only when no
- * hearted item can play now.
+ * hearted item can play now. [snap] is the screens' snapshot, the shown renderer's view (`MusicViewModel.snapshot`:
+ * `forRenderer(onRoom)`), so on a room the start is found in the room's order, as the room's tap finds it (qa-r8-code R8C-2).
  */
 fun entryUi(
     snap: Snapshot,

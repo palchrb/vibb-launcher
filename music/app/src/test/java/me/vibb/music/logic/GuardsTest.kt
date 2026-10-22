@@ -622,9 +622,8 @@ class GuardsTest {
         // phone -> room re-plans a Storytel series over the room's order at the current book; other entries keep a0.items
         val toRoom = body("private suspend fun toRoom(")
         assertTrue(toRoom.contains("if (a0.entry.source == Source.STORYTEL) {\n"))
-        // ... kept to a "Favoritter" queue's scope, so the room gets every hearted book (design r8 §1.2)
-        assertTrue(toRoom.contains("val order = scoped(snap.order(a0.entry), a0.favourites).map { it.key }"))
-        assertTrue(toRoom.contains("Triple(a0.entry, homePlan(order, item.key, resumeFrom(a0.positions[item.key])), a0.favourites)"))
+        // ... kept to a "Favoritter" queue's scope (activeFor's), so the room gets every hearted book (design r8 §1.2)
+        assertTrue(toRoom.contains("Triple(a0.entry, homePlan(snap.order(a0.entry).map { it.key }, item.key, resumeFrom(a0.positions[item.key])), a0.favourites)"))
         // room -> phone with a book not on the phone: nothing starts, "Ikke lastet ned"
         val home = body("private suspend fun comeHome(")
         val absent = home.substringAfter("if (a0.entry.source == Source.STORYTEL && item.key !in order) {").substringBefore("}")

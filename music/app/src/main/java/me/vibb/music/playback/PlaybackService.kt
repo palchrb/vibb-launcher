@@ -684,8 +684,9 @@ class PlaybackService : MediaSessionService() {
      * before the rows are read again - a sync can no longer delete them under the new queue - and an
      * NRK/RSS item whose cached bytes are stale (`staleThrough`) plays uncached, its row gone.
      *
-     * [favourites]: a "Favoritter" queue's scope (design r8 §1.2), null for the whole entry - its order (shuffle, the
-     * flip, a room's reorder) holds only those items.
+     * [favourites]: a "Favoritter" queue's scope (design r8 §1.2), null for the whole entry - the one guard: [keys]
+     * outside it drop (the re-plans over the whole order - adopt, phone <-> room - start at index 0, the current item,
+     * which is in it), and its order (shuffle, the flip, a room's reorder) holds only those items.
      */
     private suspend fun activeFor(
         snap: Snapshot,
@@ -779,6 +780,7 @@ class PlaybackService : MediaSessionService() {
      */
     private suspend fun playEntry(entryId: Long, favourites: Boolean) {
         val current = active
+        var hearted = favourites
         if (current != null && current.entry.id == entryId && renderer.itemCount() > 0) {
             if ((current.favourites != null) == favourites) {
                 // a Spotify entry the library now lists another way (list <-> context, N5) starts its new queue instead
@@ -788,20 +790,23 @@ class PlaybackService : MediaSessionService() {
                     return
                 }
                 spotifyLog("web player: the entry's mode changed under its play - its new queue starts")
+                // the hearts were the old listing's: the whole entry, as restartIfStale starts it (qa-r8-code R8C-1)
+                hearted = false
             }
             // a new queue of the loaded entry: its place lands before the plan reads it (design r8 §1.1, R8-6)
             renderer.saveNow(force = true)
         }
         val (snap, rows) = loadForRenderer()
-        val scopeOf = { e: Entry -> snap.heartsListed(e).takeIf { favourites } }
+        val scopeOf = { e: Entry -> snap.heartsListed(e).takeIf { hearted } }
         if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, bookmarkIn(snap.bookmarks[entry.key], scopeOf(entry)), shown, listed) }) return
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
         val scope = scopeOf(entry)
         val from = coverTapScope(snap.order(entry).map { it.key }, scope, snap.bookmarks[entry.key], entry.resume) { snap.positions[entry.key]?.get(it) }
         val plan = coverTapPlan(from.keys, entry.resume, from.bookmark, shuffle) ?: run {
-            // nothing hearted plays in this renderer's view (design r8 §1.2): nothing starts, the current queue stays
-            PlayerHub.mutableMessages.tryEmit(if (renderer.kind.onPhone) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY_ON_SONOS)
+            // nothing hearted plays in this renderer's view (design r8 §1.2): nothing starts, the current queue stays;
+            // the whole entry with nothing to plan stays silent, as before (R8C-4)
+            if (scope != null) PlayerHub.mutableMessages.tryEmit(if (renderer.kind.onPhone) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY_ON_SONOS)
             return
         }
         val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), scope) ?: return
@@ -2154,7 +2159,7 @@ class PlaybackService : MediaSessionService() {
         val row = withContext(Dispatchers.IO) { store.db.nowPlaying() }?.takeIf { it.entryId == entry.id }
         val stored = row?.keys?.split('\n')?.filter { it.isNotEmpty() }
         val favourites = row?.scope()
-        val plan = adoptPlan(entry, scoped(snap.order(entry), favourites), stored, row?.shuffled == true, uri) ?: return null
+        val plan = adoptPlan(entry, snap.order(entry), stored, row?.shuffled == true, uri) ?: return null
         val a = activeFor(snap, rows, entry, plan.keys, plan.shuffled, RendererKind.SONOS, favourites) ?: return null
         if (a.items.map { it.key } != plan.keys) return null
         return a to plan.index
@@ -2241,8 +2246,7 @@ class PlaybackService : MediaSessionService() {
             if (a0.entry.source == Source.STORYTEL) {
                 // the phone's queue holds only the downloaded books: the room re-plans over the series' remote
                 // order at the current book and place (design 26b §5.6), or it would skip the others and end early
-                val order = scoped(snap.order(a0.entry), a0.favourites).map { it.key }
-                Triple(a0.entry, homePlan(order, item.key, resumeFrom(a0.positions[item.key])), a0.favourites)
+                Triple(a0.entry, homePlan(snap.order(a0.entry).map { it.key }, item.key, resumeFrom(a0.positions[item.key])), a0.favourites)
             } else {
                 // by key: refreshArt may have replaced the items with copies meanwhile (a late picture,
                 // `withItemArt`), and an object lookup would start item 0 (qa-26a-merge27-code L1)
@@ -2325,8 +2329,7 @@ class PlaybackService : MediaSessionService() {
         // the phone's view (design 26b §5.6): it is the phone
         val (snap, rows) = load(remote = false)
         if (renderer !== local) return
-        // a "Favoritter" queue comes home in its scope (design r8 §1.2)
-        val order = scoped(snap.order(a0.entry), a0.favourites).map { it.key }
+        val order = snap.order(a0.entry).map { it.key }
         if (a0.entry.source == Source.STORYTEL && item.key !in order) {
             if (!quiet) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
             publish()

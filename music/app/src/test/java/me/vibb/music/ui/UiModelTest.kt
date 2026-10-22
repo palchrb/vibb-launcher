@@ -260,6 +260,22 @@ class UiModelTest {
         assertEquals(listOf("b3", "b2", "b1"), s.order(series).map { it.key })
         assertEquals("b3", playSwitch(s, 7, null, null, 1_000, favourites = true)!!.view.item.key)
         assertEquals("del 3 av 3, where the tap starts", Hint.Started(Kind.AUDIOBOOK, 3, 3), entryUi(s, series, favourites = setOf("b1", "b3")).hint)
+        // R8C-2: on a room the tile reads the room's view (the screens' snapshot is forRenderer(onRoom)) and names the
+        // book the room's tap starts: only b3 on the phone, the bookmark on the unhearted b2
+        val oldest = series.copy(order = "oldest_first")
+        val one = snapshot(
+            library(listOf(oldest)),
+            items(7, books, gone = books.toSet()),
+            downloads = listOf(me.vibb.music.Fixtures.done(7, "b3", url = "storytel:book:b3")),
+            positions = mapOf(oldest.key to mapOf("b1" to me.vibb.music.logic.ItemPosition(60_000, false))),
+            bookmarks = mapOf(oldest.key to ("b2" to 30_000L)),
+        ).copy(favourites = mapOf(oldest.key to setOf("b1", "b3")))
+        val hearts = one.heartsListed(oldest)
+        assertEquals("b3", playSwitch(one, 7, null, null, 1_000, favourites = true)!!.view.item.key)
+        assertEquals(Hint.Started(Kind.AUDIOBOOK, 3, 3), entryUi(one, oldest, favourites = hearts).hint)
+        val room = one.forRenderer(true)
+        assertEquals("b1", playSwitch(one, 7, null, null, 1_000, onRoom = true, favourites = true)!!.view.item.key)
+        assertEquals(Hint.Started(Kind.AUDIOBOOK, 1, 3), entryUi(room, oldest, net = net(wifi, room = true), favourites = hearts).hint)
     }
 
     @Test
