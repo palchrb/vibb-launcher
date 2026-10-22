@@ -139,3 +139,19 @@ a relock.**
 Held, as specified: the cache strip runs before `storeAcceptedPolicy` writes. The command never runs from the cache.
 The token is set for escrow only through `ensureAndroidResetToken`. 24b's step 1 is skipped as soon as the write-ahead
 lands. `gateNow` and `report` read CE defensively (unreadable = not ours).
+
+## Fixed in 3a748408
+
+- S4-1: Fixed in 3a748408 - the in-memory one-shot flag became a CE mark (`OwnChange` in `pin_lock_state`: a count,
+  the boot, a 60 s elapsed window, the rev being set; pure `ownChangeArmed`/`ownChangeConsumed`/`ownChangeLive`).
+  Every own reset arms it first and takes it back on a failure; `onPasswordChanged` consumes one and, for ours, keeps
+  the rev or takes the rev being set (`androidPinRevAfterChange(expected, rev, settingRev)`). Deviation 1's text in
+  "Step 4 as built" corrected.
+- S4-2: Fixed in 3a748408 - `applyPinCommand` marks `pin set`; the apply's `afterKeyguard` (after the ANDROID write)
+  calls `lockNow` once while the face is on, our lock LOCKED and the screen dark (`lockAfterPinSet`), not counted.
+- S4-3: Fixed in 3a748408 - the scan reads every `Log.*(`/`log(` call to its closing parenthesis across lines, in
+  `MdmSyncWorker`, `AndroidLock`, `PinLockRuntime`, `WindowRelock` and `PinHash`, and bans templates, `.pin`,
+  concatenation and `pin` as an argument; M11 and M16 re-run: killed.
+- S4-4: Fixed in 3a748408 - `requested = androidRequested(kidLock),` pinned in `applyPinCommand`; M13 re-run: killed.
+- N1: Fixed in 3a748408 - `commitRev` tries the final rev twice (the migration too), then logs.
+- N2: Fixed in 3a748408 - `report` reads the relocks; `relocksReported` subtracts them only after a 2xx status report.
