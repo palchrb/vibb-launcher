@@ -31,6 +31,8 @@ data class RefrontInputs(
     val coverOn: Boolean = false,
     /** Design 32: the lock is the top task since its lock-up ([lockOnTopAfter], best effort). */
     val lockOnTop: Boolean = false,
+    /** Design 59's prototype: the glance is Android's face and Android's keyguard is locked ([hybridRefrontHeld]). */
+    val androidGate: Boolean = false,
 )
 
 /** How long after "Emergency call" the lock stays out of the way even without a call. */
@@ -73,6 +75,9 @@ fun refrontDelayMs(attempt: Int): Long = when {
  */
 fun refrontAction(inputs: RefrontInputs, attempt: Int): RefrontAction = when {
     !inputs.locked || inputs.lockResumed -> RefrontAction.Stop
+    // Design 59 §4.2: nothing that isn't showWhenLocked can show over Android's locked keyguard - no fight with
+    // its PIN pad; the glance comes back at the next screen-off and after our call.
+    inputs.androidGate -> RefrontAction.Stop
     // The screen off: nothing - except under the keyguard cover with the lock not on top (design 32
     // step 2, M5): the exempt screens are still yielded to (the system_call yield keeps looking every
     // 2 s while dark), and once none is left the lock-up runs while dark ([RefrontAction.DarkLockUp]).

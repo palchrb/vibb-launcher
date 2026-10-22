@@ -95,7 +95,7 @@ object ScreenTimeout {
         }
         // Design 32 step 2 (H1): under the cover T follows the setting in Release too - the observer
         // runs whenever the cover is on, and T is re-checked against the value in force now.
-        if (KeyguardCover.coverOn) {
+        if (KeyguardCover.timeToLockFollows) {
             ensureObserver(context.applicationContext)
             KeyguardCover.timeoutChanged(context, dpm, admin)
         }
@@ -159,7 +159,7 @@ object ScreenTimeout {
             override fun onChange(selfChange: Boolean) {
                 val target = targetMs
                 // Released: only the keyguard cover's T follows the phone's own value (design 32 step 2).
-                if (target == null && !KeyguardCover.coverOn) return
+                if (target == null && !KeyguardCover.timeToLockFollows) return
                 worker.execute {
                     try {
                         val dpm = context.getSystemService(DevicePolicyManager::class.java) ?: return@execute

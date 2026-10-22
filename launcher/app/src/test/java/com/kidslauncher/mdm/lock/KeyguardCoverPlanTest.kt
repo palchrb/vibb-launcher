@@ -321,7 +321,7 @@ class KeyguardCoverPlanTest {
         assertEquals("the keyguard not locked: step 1's Home (L4)", LockUpStart.HOME_THEN_LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, coverLocked = false))
         // L2: the input is the cover and its keyguard locked at this screen-off - never a constant.
         val atScreenOff = body(code("$lock/PinLockRuntime.kt"), "lockUpAtScreenOff")
-        assertTrue(atScreenOff.contains("val cover = KeyguardCover.coverOn\n"))
+        assertTrue(atScreenOff.contains("val cover = KeyguardCover.coverOn || Hybrid59.faceOn\n"))
         assertTrue(atScreenOff.contains("val kg = cover && KeyguardCover.keyguardLockedNow(context)\n"))
         assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg)"))
     }
@@ -377,7 +377,7 @@ class KeyguardCoverPlanTest {
         assertTrue(body(code("$lock/PinLockRuntime.kt"), "guardTripped").contains("KeyguardCover.guardTripped(app)"))
         // configure's keyguard is the writer's, after the guard re-arm.
         val configure = body(code("$lock/PinLockRuntime.kt"), "configure")
-        assertTrue(configure.contains("val keyguardDisabled = KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null)"))
+        assertTrue(configure.contains("val keyguardDisabled = KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null, hybrid)"))
         assertTrue(configure.indexOf("guardRearm(") < configure.indexOf("KeyguardCover.configure("))
         assertTrue(configure.contains("keyguardDisabled = keyguardDisabled"))
         // AppEnforcer no longer writes the features itself.
@@ -389,9 +389,9 @@ class KeyguardCoverPlanTest {
         val timeout = code("java/com/kidslauncher/mdm/server/ScreenTimeout.kt")
         assertEquals(1, Regex("""setSystemSetting\(admin, Settings\.System\.SCREEN_OFF_TIMEOUT""").findAll(timeout).count())
         assertTrue(body(timeout, "write").contains("KeyguardCover.followTimeout(context, dpm, admin, currentMs(context), millis)"))
-        assertTrue(timeout.contains("if (KeyguardCover.coverOn) {\n            ensureObserver(context.applicationContext)"))
+        assertTrue(timeout.contains("if (KeyguardCover.timeToLockFollows) {\n            ensureObserver(context.applicationContext)"))
         val follow = body(code("$lock/KeyguardCover.kt"), "followTimeout")
-        assertTrue(follow.contains("if (!coverOn) return@synchronized writeSetting()"))
+        assertTrue(follow.contains("if (!timeToLockFollows) return@synchronized writeSetting()"))
         assertTrue(follow.indexOf("TimeoutWriteOrder.T_FIRST) setT(") in 0 until follow.indexOf("val ok = writeSetting()"))
         assertTrue(follow.indexOf("val ok = writeSetting()") < follow.indexOf("setT(app, dpm, admin, ScreenTimeout.effectiveMs(app)"))
     }
@@ -403,8 +403,10 @@ class KeyguardCoverPlanTest {
         val callers = mainSources.filter { code(it).contains("requestDismissKeyguard(") }.map { it.name }.sorted()
         assertEquals(listOf("PinLockActivity.kt"), callers)
         val lockActivity = code("$lock/PinLockActivity.kt")
-        assertEquals(1, Regex("requestDismissKeyguard\\(").findAll(lockActivity).count())
+        // The cover's, and design 59's prototype's "Lås opp" (Android's PIN pad, only as its face).
+        assertEquals(2, Regex("requestDismissKeyguard\\(").findAll(lockActivity).count())
         assertTrue(body(lockActivity, "requestDismiss").contains("if (KeyguardCover.dismissRequested())"))
+        assertTrue(body(lockActivity, "askAndroid").contains("requestDismissKeyguard(this, androidUnlockCallback)"))
         // After the first frame since the resume, never from the resume itself.
         assertTrue(body(lockActivity, "onResume").contains("watchFirstFrame()"))
         assertTrue(body(lockActivity, "onPause").contains("stopKeyguardWatch()"))

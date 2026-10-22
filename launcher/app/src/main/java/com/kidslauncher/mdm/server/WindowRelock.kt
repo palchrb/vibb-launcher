@@ -246,8 +246,9 @@ object WindowRelock {
     }
 
     /** §1.5: 32 random bytes, stored first (CE prefs), set only while it isn't active and the phone
-     * has no credential - that activates it at once (QA #9). */
-    private fun ensureResetToken(app: Context) {
+     * has no credential - that activates it at once (QA #9). Also design 59's prototype ([com.kidslauncher.mdm.lock.Hybrid59],
+     * debug switch only): before the kid PIN becomes Android's. */
+    internal fun ensureResetToken(app: Context) {
         val dpm = dpm(app) ?: return
         if (!dpm.isDeviceOwnerApp(app.packageName)) return
         val admin = admin(app)
@@ -261,6 +262,37 @@ object WindowRelock {
         val token = ByteArray(32).also { SecureRandom().nextBytes(it) }
         if (!store.saveToken(token.toHex())) return
         if (!dpm.setResetPasswordToken(admin, token)) Log.w(LOG_TAG, "setResetPasswordToken refused")
+    }
+
+    /** Our reset token is stored and active (design 59's prototype reports it). */
+    internal fun resetTokenActive(context: Context): Boolean {
+        val app = context.applicationContext
+        val dpm = dpm(app) ?: return false
+        return try {
+            dpm.isDeviceOwnerApp(app.packageName) && store(app).token() != null && dpm.isResetPasswordTokenActive(admin(app))
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Design 59's prototype (its debug switch only, [com.kidslauncher.mdm.lock.Hybrid59]): Android's credential
+     * through our reset token - [pin] (the kid PIN just checked, a numeric PIN) set, or `null` cleared. The same
+     * stored token as the relock's step 1; no second copy. False without an active token. Never logs [pin].
+     */
+    internal fun resetCredential(context: Context, pin: String?): Boolean {
+        val app = context.applicationContext
+        val dpm = dpm(app) ?: return false
+        if (!resetTokenActive(app)) return false
+        val token = store(app).token()?.fromHex() ?: return false
+        return try {
+            dpm.resetPasswordWithToken(admin(app), pin, token, 0)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "resetPasswordWithToken failed: ${e.javaClass.simpleName}")
+            false
+        } finally {
+            token.fill(0)
+        }
     }
 
     // ---- relocking ------------------------------------------------------------------------------

@@ -42,12 +42,21 @@ object KeyguardCover {
     var coverOn = false
         private set
 
+    /** Design 59's HYBRID is in force (its debug switch, [Hybrid59]): the Android PIN is the gate, T follows the
+     * screen timeout. No dismissal here - "Lås opp" asks Android. */
+    @Volatile
+    var hybridOn = false
+        private set
+
+    /** T (`setMaximumTimeToLock`) follows the screen timeout: under the cover (H1) or the hybrid (59 §4.3). */
+    val timeToLockFollows: Boolean get() = coverOn || hybridOn
+
     /** The debug receiver's dismissal knob ([DismissTest]); nothing else sets it. */
     @Volatile
     var dismissTest = DismissTest.NONE
 
-    /** [configure]'s last inputs (`null` before the first apply in this process). */
-    private data class Inputs(val managed: Boolean, val hasKidPin: Boolean, val deviceSecure: Boolean, val guardTripped: Boolean)
+    /** [configure]'s last inputs (`null` before the first apply in this process). [hybrid]: design 59's switch. */
+    private data class Inputs(val managed: Boolean, val hasKidPin: Boolean, val deviceSecure: Boolean, val guardTripped: Boolean, val hybrid: Boolean = false)
 
     @Volatile
     private var inputs: Inputs? = null
@@ -125,6 +134,7 @@ object KeyguardCover {
         hasKidPin: Boolean,
         deviceSecure: Boolean,
         guardTripped: Boolean,
+        hybrid: Boolean = false,
     ): Boolean {
         val app = context.applicationContext
         switchOn = try {
@@ -132,7 +142,7 @@ object KeyguardCover {
         } catch (e: Exception) {
             false
         }
-        inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped)
+        inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped, hybrid)
         val (wanted, forManaged) = wantedNow()
         return write(app, dpm, admin, "apply", wanted, forManaged).lockMayRun
     }
@@ -165,6 +175,8 @@ object KeyguardCover {
             coverWanted = !off && switchOn && armed,
             voip = if (off) VoipPhase.NONE else voipSeen,
             guardTripped = i.guardTripped,
+            // Design 59: not the cover's - a shutdown or a failed T never takes the hybrid's features out.
+            hybrid = i.hybrid,
         )
         return wanted to i.managed
     }
@@ -172,15 +184,21 @@ object KeyguardCover {
     /** Caller holds the monitor. */
     private fun write(app: Context, dpm: DevicePolicyManager, admin: ComponentName, why: String, wanted: KeyguardMode, managed: Boolean): KeyguardWritten {
         val wasOn = coverOn
+        val wasHybrid = hybridOn
         val written = writeKeyguard(
             DpmKeyguard(dpm, admin), wanted, managed, coverAdded(app), { ScreenTimeout.effectiveMs(app) },
             storeCoverAdded = { storeCoverAdded(app, it) },
             storeWritten = { storeWritten(app, it) },
         )
         coverOn = written.mode == KeyguardMode.COVER
+        hybridOn = written.mode == KeyguardMode.HYBRID
         last = written
         // Release (the switch never on) logs nothing new - except what threw (qa-32-s2-code nit 2).
         for ((what, e) in written.errors) Log.w(LOG_TAG, what, e)
+        if (hybridOn != wasHybrid || hybridOn) {
+            Log.i(HYBRID_TAG, "keyguard: mode=${written.mode} features=${written.features?.let { "0x" + Integer.toHexString(it) }} " +
+                "maxTimeToLock=${written.maxTimeToLockMs} disabled=${written.disabled}${written.coverFailed?.let { " failed=$it" } ?: ""} ($why)")
+        }
         if (switchOn || wasOn || coverOn) {
             Log.i(LOG_TAG, "mode=${written.mode} features=${written.features?.let { "0x" + Integer.toHexString(it) }} " +
                 "maxTimeToLock=${written.maxTimeToLockMs} disabled=${written.disabled} ($why${if (switchOn && !armed) ", held off until a lock resume with the screen on" else ""})")
@@ -239,7 +257,7 @@ object KeyguardCover {
      */
     fun followTimeout(context: Context, dpm: DevicePolicyManager, admin: ComponentName, oldMs: Long?, newMs: Long, writeSetting: () -> Boolean): Boolean =
         synchronized(this) {
-            if (!coverOn) return@synchronized writeSetting()
+            if (!timeToLockFollows) return@synchronized writeSetting()
             val app = context.applicationContext
             if (timeoutWriteOrder(oldMs, newMs) == TimeoutWriteOrder.T_FIRST) setT(app, dpm, admin, newMs, "the timeout shrinks")
             val ok = writeSetting()
@@ -255,7 +273,7 @@ object KeyguardCover {
 
     /** T = [ms] under the cover, read back; a failure falls back as in [writeKeyguard] (H1, H2). Monitor held. */
     private fun setT(app: Context, dpm: DevicePolicyManager, admin: ComponentName, ms: Long?, why: String) {
-        if (!coverOn) return
+        if (!timeToLockFollows) return
         val t = maxTimeToLock(coverOn = true, effectiveTimeoutMs = ms)
         val ok = t > 0L && try {
             if (dpm.getMaximumTimeToLock(admin) != t) dpm.setMaximumTimeToLock(admin, t)
@@ -264,7 +282,10 @@ object KeyguardCover {
             false
         }
         if (ok) {
-            Log.i(LOG_TAG, "maxTimeToLock=$t ($why)")
+            Log.i(if (hybridOn) HYBRID_TAG else LOG_TAG, "maxTimeToLock=$t ($why)")
+        } else if (hybridOn) {
+            // Design 59: no fallback - the Android PIN is the gate; Android's own lock delay applies until the next write.
+            Log.w(HYBRID_TAG, "maxTimeToLock=$t couldn't be set ($why) - Android's own lock delay applies")
         } else {
             Log.w(LOG_TAG, "maxTimeToLock=$t couldn't be set ($why) - the cover falls back")
             val (wanted, forManaged) = wantedNow(forceOff = true)

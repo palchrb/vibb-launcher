@@ -24,6 +24,10 @@ enum class KeyguardMode {
     /** Not ours to switch off: not managed, no kid PIN, or an Android credential - `setKeyguardDisabled(false)`
      * and the phone's own keyguard, as before design 32. */
     UNTOUCHED,
+
+    /** Design 59's hybrid (debug switch only, [hybridFace]): the Android PIN is the gate - `setKeyguardDisabled(false)`,
+     * [HYBRID_KEYGUARD_FEATURES] added, T = the screen timeout ([hybridWrite]). */
+    HYBRID,
 }
 
 /**
@@ -34,6 +38,8 @@ enum class KeyguardMode {
  * - UNTOUCHED wherever today's code doesn't disable the keyguard ([wantKeyguardDisabled]);
  * - COVER only with the switch, managed, a kid PIN, no credential, no VoIP call or ring, the guard not tripped;
  * - DISABLED otherwise - today's behaviour.
+ * [hybrid]: design 59's debug switch - HYBRID once the phone has the Android PIN ([hybridFace]); never the
+ * cover while it is on.
  */
 fun keyguardMode(
     managed: Boolean,
@@ -42,9 +48,11 @@ fun keyguardMode(
     coverWanted: Boolean,
     voip: VoipPhase,
     guardTripped: Boolean,
+    hybrid: Boolean = false,
 ): KeyguardMode = when {
+    hybridFace(hybrid, managed, hasKidPin, deviceSecure) -> KeyguardMode.HYBRID
     !wantKeyguardDisabled(managed, hasKidPin, deviceSecure) -> KeyguardMode.UNTOUCHED
-    coverWanted && voip == VoipPhase.NONE && !guardTripped -> KeyguardMode.COVER
+    coverWanted && !hybrid && voip == VoipPhase.NONE && !guardTripped -> KeyguardMode.COVER
     else -> KeyguardMode.DISABLED
 }
 
@@ -55,11 +63,15 @@ const val KEYGUARD_FEATURES_ALL = 0x7fffffff
  * The keyguard-disabled features to write, and the new `coverAdded` (M6) - the bits the cover set that
  * weren't set before it (kept in CE prefs `keyguard_cover`). [cover]: ALL, adding to `coverAdded` what
  * [current] lacks. Off: exactly `coverAdded` taken out, a parent's or another tool's bits kept, plus
- * B2's SECURE_CAMERA while [managed] (minus it unmanaged), `coverAdded` 0.
+ * B2's SECURE_CAMERA while [managed] (minus it unmanaged), `coverAdded` 0. [hybrid] (design 59): what was
+ * added before taken out, then [HYBRID_KEYGUARD_FEATURES] and B2's bit in; `coverAdded` = the hybrid's bits that
+ * weren't set without it - so the switch back takes out exactly those, a parent's own bits stay.
  */
-fun keyguardDisabledFeatures(current: Int, managed: Boolean, cover: Boolean, coverAdded: Int): Pair<Int, Int> {
+fun keyguardDisabledFeatures(current: Int, managed: Boolean, cover: Boolean, coverAdded: Int, hybrid: Boolean = false): Pair<Int, Int> {
     if (cover) return KEYGUARD_FEATURES_ALL to (coverAdded or (KEYGUARD_FEATURES_ALL and current.inv()))
-    return secureCameraRule(current and coverAdded.inv(), managed) to 0
+    val base = current and coverAdded.inv()
+    if (hybrid) return secureCameraRule(base or HYBRID_KEYGUARD_FEATURES, managed) to (HYBRID_KEYGUARD_FEATURES and base.inv())
+    return secureCameraRule(base, managed) to 0
 }
 
 /**
@@ -91,7 +103,8 @@ interface KeyguardPolicy {
 
 /** What [writeKeyguard] left in force. */
 data class KeyguardWritten(
-    /** COVER only when every step of it held; a failed cover is DISABLED with [coverFailed]. */
+    /** COVER only when every step of it held; a failed cover is DISABLED with [coverFailed]. HYBRID stays HYBRID,
+     * [coverFailed] naming a failed step (the Android PIN is the gate whatever these write). */
     val mode: KeyguardMode,
     /** `lockActivation`'s keyguard input: the cover is set, or `setKeyguardDisabled(true)` worked. */
     val lockMayRun: Boolean,
@@ -119,6 +132,7 @@ data class KeyguardWritten(
  * [storeWritten] commits whether the device policy may hold the cover (qa-32-s2-code M2): true before
  * `setKeyguardDisabled(false)` (not stored = no cover), false after a `true` that worked, or after
  * UNTOUCHED took the cover's bits and T out. A new process reads it ([processStartWrite]).
+ * - HYBRID (design 59): [hybridWrite].
  */
 fun writeKeyguard(
     policy: KeyguardPolicy,
@@ -136,6 +150,7 @@ fun writeKeyguard(
         added = value
         return true
     }
+    if (wanted == KeyguardMode.HYBRID) return hybridWrite(policy, managed, added, ::store, timeoutMs)
     if (wanted == KeyguardMode.COVER) {
         var step = "features"
         try {
@@ -164,6 +179,54 @@ fun writeKeyguard(
         }
     }
     return off(policy, wanted, managed, added, ::store, storeWritten, coverFailed = null)
+}
+
+/**
+ * Design 59's HYBRID ([writeKeyguard]): `setKeyguardDisabled(false)` (with a credential the keyguard is on
+ * anyway), the features with [HYBRID_KEYGUARD_FEATURES] - the new `coverAdded` stored first, so the switch
+ * back takes out exactly them - read back, then T = the screen timeout (lock delay 0, 59 §4.3), read back.
+ * Never `cover_written` (that is the cover's bare keyguard). A failed step is reported in `coverFailed` and
+ * logged, never a fallback: the Android PIN is the gate whatever these write. `lockMayRun`: the glance is
+ * the face.
+ */
+private fun hybridWrite(policy: KeyguardPolicy, managed: Boolean, coverAdded: Int, store: (Int) -> Boolean, timeoutMs: () -> Long?): KeyguardWritten {
+    val errors = mutableListOf<Pair<String, Exception>>()
+    var failed: String? = null
+    val disabled = try {
+        if (!policy.writeDisabled(false)) throw IllegalStateException("setKeyguardDisabled(false) refused")
+        false
+    } catch (e: Exception) {
+        errors += "Hybrid: setKeyguardDisabled(false) failed" to e
+        failed = "disabled"
+        null
+    }
+    val features = try {
+        val current = policy.readFeatures()
+        val (value, newAdded) = keyguardDisabledFeatures(current, managed, cover = false, coverAdded = coverAdded, hybrid = true)
+        // M6's order: what is added is kept before it is written.
+        if (!store(newAdded)) throw IllegalStateException("coverAdded not stored")
+        if (value != current) policy.writeFeatures(value)
+        val read = policy.readFeatures()
+        if ((read and HYBRID_KEYGUARD_FEATURES) != HYBRID_KEYGUARD_FEATURES) throw IllegalStateException("features read back wrong")
+        read
+    } catch (e: Exception) {
+        errors += "Hybrid: the keyguard features failed" to e
+        failed = failed ?: "features"
+        null
+    }
+    val t = try {
+        val want = maxTimeToLock(coverOn = true, effectiveTimeoutMs = timeoutMs())
+        if (want <= 0L) throw IllegalStateException("no screen timeout")
+        if (policy.readMaxTimeToLock() != want) policy.writeMaxTimeToLock(want)
+        val read = policy.readMaxTimeToLock()
+        if (read != want) throw IllegalStateException("max time to lock read back wrong")
+        read
+    } catch (e: Exception) {
+        errors += "Hybrid: the max time to lock failed" to e
+        failed = failed ?: "max_time_to_lock"
+        null
+    }
+    return KeyguardWritten(KeyguardMode.HYBRID, lockMayRun = true, coverFailed = failed, features = features, maxTimeToLockMs = t, disabled = disabled, errors = errors)
 }
 
 /** DISABLED or UNTOUCHED ([writeKeyguard]): the keyguard first, then the cover's bits and T out. */

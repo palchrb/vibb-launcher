@@ -725,8 +725,9 @@ findings, merge to `main`, full suite once.
   **Phasing (agreed 2026-10-22):** A - the small fixes, two rounds in parallel: the music app (favourites C, sheets
   swipe-down, drag-down player -> music-v0.5.0) and the launcher (the lock glance items, touch sounds ->
   launcher-v0.35.0 with the PIN digit fix); meanwhile the user's Storytel measurement, the Jelly Star clock check and
-  the BFU blocked-call check. B - the hybrid prototype behind a debug switch on the emulator (59 §9 step ii) and the
-  Keystore wrap (+ design 58 step 2 once Q-A is in). C - design 59 written up with QA, the per-phone switch, the
+  the BFU blocked-call check. B - the hybrid prototype behind a debug switch on the emulator (59 §9 step ii; built
+  2026-10-22 on branch `proto-59-hybrid`, `docs/design/59-prototype.md` with the user's emulator script, not run
+  yet) and the Keystore wrap (+ design 58 step 2 once Q-A is in). C - design 59 written up with QA, the per-phone switch, the
   server-kept kid PIN, the PIN command, the migration release (the user's Jelly Star first); 58 steps 3 and 5 in
   parallel. D - the deletion round one release after the last phone migrated; design 57 is not merged (the VoIP small
   fixes that still apply go here); then design 60. The security-review items fill free slots.

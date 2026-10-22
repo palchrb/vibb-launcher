@@ -239,6 +239,110 @@ class PinLockActivity : AppCompatActivity() {
         handler.removeCallbacks(keyguardCheck)
     }
 
+    // ---- design 59's hybrid prototype (debug switch only, [Hybrid59]) ----------------------------------------
+
+    /** When the open ask for Android's PIN pad was made (elapsed; `null` = none open) and the screen-offs then. */
+    private var androidAskedAt: Long? = null
+    private var androidAskedOffs = 0
+
+    private fun androidAskOpen(): Boolean =
+        androidAskedAt?.let { SystemClock.elapsedRealtime() - it < ANDROID_ASK_OPEN_MS } == true
+
+    /** The keypad stage is Android's PIN pad now: our keys, dots and "Foreldrekode" stay hidden under it (the
+     * user's answer 2: no parent code on the lock in the hybrid). */
+    private var keypadIsAndroids = false
+
+    /** The glance's stage changed: as Android's face, the keypad stage is Android's PIN pad instead; rendered. */
+    private fun onStage() {
+        keypadIsAndroids = false
+        if (glance?.state?.stage == LockStage.KEYPAD && Hybrid59.faceOn) askAndroid()
+        render()
+    }
+
+    /**
+     * "Lås opp" or a row (59 §4, [androidUnlockStep]): Android's PIN pad over the glance; Android's keyguard
+     * not locked - the kid unlocked it already - the glance leaves; no credential now - our own keypad, as today.
+     */
+    private fun askAndroid() {
+        when (Hybrid59.unlockStep(this)) {
+            AndroidUnlock.OWN_KEYPAD -> Log.i(HYBRID_TAG, "Lås opp: no Android PIN now - our own keypad")
+            AndroidUnlock.UNLOCK_NOW -> {
+                keypadIsAndroids = true
+                Hybrid59.note(this, "Lås opp: Android's keyguard isn't locked - the glance leaves")
+                unlock(PinLockRuntime.screenOffs)
+            }
+            AndroidUnlock.ASK_ANDROID -> {
+                keypadIsAndroids = true
+                if (androidAskOpen()) return
+                androidAskedAt = SystemClock.elapsedRealtime()
+                androidAskedOffs = PinLockRuntime.screenOffs
+                Hybrid59.note(this, "Lås opp: requestDismissKeyguard (Android's PIN pad)")
+                try {
+                    getSystemService(KeyguardManager::class.java)?.requestDismissKeyguard(this, androidUnlockCallback)
+                } catch (e: Exception) {
+                    androidAskedAt = null
+                    Log.w(HYBRID_TAG, "requestDismissKeyguard failed: ${e.javaClass.simpleName}")
+                    glance?.back()
+                }
+            }
+        }
+    }
+
+    /** Android's answer: the PIN pad passed - the glance leaves (a row's target opens); cancelled - back to the
+     * glance; an error - leaves only if Android's keyguard is gone after all. */
+    private val androidUnlockCallback = object : KeyguardManager.KeyguardDismissCallback() {
+        override fun onDismissSucceeded() = androidAnswered("succeeded")
+        override fun onDismissCancelled() = androidAnswered("cancelled")
+        override fun onDismissError() = androidAnswered("error")
+    }
+
+    private fun androidAnswered(result: String) {
+        val offs = androidAskedOffs
+        androidAskedAt = null
+        Hybrid59.note(this, "Android's PIN pad: $result")
+        if (isFinishing || finishingAfterUnlock) return
+        val gone = result == "succeeded" || (result == "error" && Hybrid59.unlockStep(this) == AndroidUnlock.UNLOCK_NOW)
+        // As the keypad's check (design 24 QA #4): an answer that comes back after a screen-off opens nothing.
+        if (gone && PinLockRuntime.mode == LockMode.LOCKED && PinLockRuntime.screenOffs == offs) unlock(offs) else glance?.back()
+    }
+
+    /** `USER_PRESENT` while LOCKED and Android's keyguard is gone ([PinLockRuntime.androidUnlockHook]): the open
+     * ask's answer goes first (it carries a row's target), else the glance leaves now. */
+    private val androidUnlockHook: () -> Unit = {
+        if (androidAskOpen()) {
+            handler.removeCallbacks(androidUnlockFallback)
+            handler.postDelayed(androidUnlockFallback, ANDROID_ANSWER_WAIT_MS)
+        } else {
+            androidUnlockFallback.run()
+        }
+    }
+
+    private val androidUnlockFallback = Runnable {
+        if (!isFinishing && !finishingAfterUnlock && Hybrid59.unlockedUs(this, PinLockRuntime.mode == LockMode.LOCKED)) {
+            androidAskedAt = null
+            Log.i(HYBRID_TAG, "Android's keyguard is gone (USER_PRESENT) - the glance leaves")
+            unlock(PinLockRuntime.screenOffs)
+        }
+    }
+
+    /** At the resume with the screen on (face mode): logged; Android's keyguard already gone (the first unlock
+     * after a boot, a crash restart) - the glance leaves (true); a PIN-pad stage left without an open ask - the
+     * glance. Without the face: nothing, false. */
+    private fun resumeAsFace(): Boolean {
+        if (!Hybrid59.faceOn) return false
+        Hybrid59.note(this, "the glance resumed")
+        Hybrid59.noteRecentsGuard(this)
+        if (androidAskOpen()) return false
+        if (Hybrid59.unlockedUs(this, PinLockRuntime.mode == LockMode.LOCKED)) {
+            Log.i(HYBRID_TAG, "Android's keyguard isn't locked at the glance's resume - the glance leaves")
+            unlock(PinLockRuntime.screenOffs)
+            return true
+        }
+        // A PIN-pad stage left without an open ask (its answer died with a sleep): the glance again.
+        if (keypadIsAndroids && glance?.state?.stage == LockStage.KEYPAD) glance?.back()
+        return false
+    }
+
     private val waitTicker: Runnable = object : Runnable {
         override fun run() {
             val ticker = this
@@ -284,7 +388,7 @@ class PinLockActivity : AppCompatActivity() {
         // The glance page (design 25) between the keypad and the ring screen. Built defensively: a
         // fault here leaves the plain keypad, never a crash that trips the guard.
         glance = try {
-            GlancePanel(this, frame, binding.root, ::render) { binding.pinEmergency.performClick() }
+            GlancePanel(this, frame, binding.root, ::onStage) { binding.pinEmergency.performClick() }
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "The glance page couldn't be built: ${e.javaClass.simpleName}")
             null
@@ -325,6 +429,8 @@ class PinLockActivity : AppCompatActivity() {
         PinLockRuntime.addModeListener(modeListener)
         PinLockRuntime.addChromeListener(chromeListener)
         VoipCalls.addListener(voipListener)
+        // Design 59's prototype: USER_PRESENT after Android's keyguard went comes here first.
+        PinLockRuntime.androidUnlockHook = androidUnlockHook
         render()
         // Design 25, "Lock background": Home's wallpaper (or the parent's lock picture) behind
         // both stages once the store has worked it out; the plain ground until then.
@@ -407,6 +513,8 @@ class PinLockActivity : AppCompatActivity() {
             )
             voipRing.voipRingError.visibility = View.GONE
         }
+        // Design 59's prototype: no "Foreldrekode" on the lock as Android's face (the user's answer 2).
+        voipRing.voipRingParentCode.visibility = if (Hybrid59.faceOn) View.GONE else View.VISIBLE
         voipRing.root.visibility = View.VISIBLE
     }
 
@@ -480,6 +588,8 @@ class PinLockActivity : AppCompatActivity() {
             return
         }
         PinLockRuntime.onLockResumed(this)
+        // Design 59's prototype (debug switch only): the glance as Android's face.
+        if (resumeAsFace()) return
         // Digits typed before a screen-off go with it.
         val kept = enteredAfterScreenOffs(entered, enteredAt, PinLockRuntime.screenOffs)
         if (kept != entered) {
@@ -532,6 +642,7 @@ class PinLockActivity : AppCompatActivity() {
         PinLockRuntime.removeModeListener(modeListener)
         PinLockRuntime.removeChromeListener(chromeListener)
         VoipCalls.removeListener(voipListener)
+        if (PinLockRuntime.androidUnlockHook === androidUnlockHook) PinLockRuntime.androidUnlockHook = null
         handler.removeCallbacksAndMessages(null)
         // Its dialogs go with it (a leaked window fires no dismiss listener).
         openDialogs.clear()
@@ -680,7 +791,13 @@ class PinLockActivity : AppCompatActivity() {
         render()
         val checkedAt = PinLockRuntime.screenOffs
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.Default) { PinLockRuntime.checkPin(this@PinLockActivity, pin) }
+            val result = withContext(Dispatchers.Default) {
+                PinLockRuntime.checkPin(this@PinLockActivity, pin).also {
+                    // Design 59's prototype (debug switch only; release: returns at once): the right kid PIN
+                    // becomes Android's PIN (59 §9 step 2) - before the unlock, so the next screen-off is the hybrid's.
+                    if (it == PinLockRuntime.PinResult.Ok) Hybrid59.migrateIfDue(this@PinLockActivity, pin)
+                }
+            }
             checking = false
             entered = ""
             when (result) {
@@ -742,6 +859,11 @@ class PinLockActivity : AppCompatActivity() {
         val enabled = keypadEnabled()
         binding.pinKeypad.alpha = if (enabled) 1f else 0.4f
         keys.forEach { it.isEnabled = enabled }
+        // Design 59's prototype: under Android's PIN pad none of our keypad shows.
+        val ours = if (keypadIsAndroids) View.INVISIBLE else View.VISIBLE
+        binding.pinKeypad.visibility = ours
+        binding.pinDots.visibility = ours
+        binding.pinParentCode.visibility = if (keypadIsAndroids) View.GONE else View.VISIBLE
     }
 
     // ---- parent code ------------------------------------------------------------------------

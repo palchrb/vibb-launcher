@@ -84,7 +84,9 @@ object CameraLock {
     fun onLockChanged(context: Context) {
         val app = context.applicationContext
         executor.execute {
-            val locked = PinLockRuntime.chromeLocked
+            // Design 59's prototype (debug switch only): as Android's face, KEYGUARD_DISABLE_SECURE_CAMERA guards the
+            // gesture instead (59 §4.9) - nothing suspended, the camera not disabled by policy.
+            val locked = cameraLockEngaged(PinLockRuntime.chromeLocked, Hybrid59.faceOn)
             try {
                 sync(app, locked)
             } catch (e: Exception) {

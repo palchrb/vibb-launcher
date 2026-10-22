@@ -33,7 +33,7 @@ class DebugHookAbsentTest {
         assertTrue(outside.size > 100)
         for (f in outside) {
             // Raw text, comments included: a KDoc naming a hook fails too (design 28 QA L3).
-            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "LockUpDebugReceiver", "KeyguardCoverDebugReceiver", "keyguard_cover_debug")) {
+            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "LockUpDebugReceiver", "KeyguardCoverDebugReceiver", "keyguard_cover_debug", "HybridDebugReceiver", "hybrid59_debug")) {
                 assertFalse("${f.path} names $banned", f.readText().contains(banned))
             }
         }
@@ -43,7 +43,7 @@ class DebugHookAbsentTest {
     fun `only the debug manifest declares the receivers, guarded by DUMP`() {
         val main = dir("main/AndroidManifest.xml").readText()
         val debug = code(dir("debug/AndroidManifest.xml"))
-        for ((pkg, name) in listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "lock" to "LockUpDebugReceiver", "lock" to "KeyguardCoverDebugReceiver")) {
+        for ((pkg, name) in listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "lock" to "LockUpDebugReceiver", "lock" to "KeyguardCoverDebugReceiver", "lock" to "HybridDebugReceiver")) {
             assertFalse(name, main.contains(name))
             val receiver = debug.substringAfter("android:name=\"com.kidslauncher.mdm.$pkg.$name\"", "").substringBefore("/>")
             assertTrue(name, receiver.contains("android:exported=\"true\""))
@@ -85,6 +85,33 @@ class DebugHookAbsentTest {
         // The debug version only turns a skipped lock on top back into the lock's start.
         val debug = code(dir("debug/java/com/kidslauncher/mdm/lock/LockUpDebug.kt"))
         assertTrue(debug.contains("if (!skipRestart && showLock && start == LockUpStart.NONE) LockUpStart.LOCK else start"))
+    }
+
+    @Test
+    fun `release HybridDebug is always off, and only Hybrid59's refresh reads it`() {
+        // Design 59's prototype: exactly one fun, `= false`; in a release build the switch can't be on.
+        val release = code(dir("release/java/com/kidslauncher/mdm/lock/HybridDebug.kt"))
+        assertEquals(1, Regex("\\bfun ").findAll(release).count())
+        assertTrue(release, release.contains("fun enabled(context: Context): Boolean = false\n"))
+        assertFalse(release.contains("var ") || release.contains("val "))
+        val callers = sources("main").filter { code(it).contains("HybridDebug") }.map { it.name }
+        assertEquals(listOf("Hybrid59.kt"), callers)
+        val hybrid = code(dir("main/java/com/kidslauncher/mdm/lock/Hybrid59.kt"))
+        assertEquals(1, Regex("HybridDebug\\.enabled\\(").findAll(hybrid).count())
+        assertTrue(hybrid.substringAfter("fun refresh(").substringBefore("\n    }\n").contains("HybridDebug.enabled("))
+        // switchOn is set only by refresh; faceOn only from it (hybridFace needs switchOn).
+        assertEquals(1, Regex("(?<!var )switchOn = ").findAll(hybrid).count())
+        assertTrue(hybrid.contains("@Volatile\n    var switchOn = false\n        private set"))
+        assertTrue(hybrid.contains("@Volatile\n    var faceOn = false\n        private set"))
+        for (set in Regex("(?<!var )faceOn = (.*)").findAll(hybrid).map { it.groupValues[1] }) {
+            assertTrue(set, set == "face" || set.startsWith("hybridFace(switchOn,"))
+        }
+        // The migration starts with the switch.
+        assertTrue(hybrid.substringAfter("fun migrateIfDue(").substringBefore("\n    }\n").contains("{\n        if (!switchOn) return\n"))
+        // The debug switch stores its own prefs file; "own" rolls back before its apply.
+        val receiver = code(dir("debug/java/com/kidslauncher/mdm/lock/HybridDebugReceiver.kt"))
+        assertTrue(receiver.indexOf("if (wanted == \"own\") Hybrid59.rollback(app)") in 0 until receiver.indexOf("AppEnforcer.apply(app, currentPolicyDecision().policy)"))
+        assertTrue(code(dir("debug/java/com/kidslauncher/mdm/lock/HybridDebug.kt")).contains("private const val PREFS = \"hybrid59_debug\""))
     }
 
     @Test

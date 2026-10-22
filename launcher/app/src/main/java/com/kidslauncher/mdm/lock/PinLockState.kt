@@ -256,6 +256,8 @@ fun wantKeyguardDisabled(managed: Boolean, hasKidPin: Boolean, deviceSecure: Boo
  * Design §3: active only if managed, the policy has a kid PIN, no Android credential, and
  * `setKeyguardDisabled(true)` worked ([keyguardDisabled]); the crash guard switches it off until
  * it re-arms. An unreadable hash keeps the lock on - only the parent code opens it then.
+ * [androidGate]: design 59's hybrid prototype ([hybridFace], debug switch only) - the Android credential is the
+ * gate and our lock its face, so the credential and the keyguard that isn't disabled keep it active.
  */
 fun lockActivation(
     managed: Boolean,
@@ -264,11 +266,12 @@ fun lockActivation(
     keyguardDisabled: Boolean,
     hashUsable: Boolean,
     guardTripped: Boolean,
+    androidGate: Boolean = false,
 ): Pair<Boolean, LockInactive?> = when {
     !hasKidPin -> false to LockInactive.NO_PIN
     !managed -> false to LockInactive.UNMANAGED
-    deviceSecure -> false to LockInactive.ANDROID_CREDENTIAL
-    !keyguardDisabled -> false to LockInactive.KEYGUARD_NOT_DISABLED
+    deviceSecure && !androidGate -> false to LockInactive.ANDROID_CREDENTIAL
+    !keyguardDisabled && !androidGate -> false to LockInactive.KEYGUARD_NOT_DISABLED
     guardTripped -> false to LockInactive.CRASH_GUARD
     !hashUsable -> true to LockInactive.BAD_HASH
     else -> true to null
