@@ -162,7 +162,69 @@ class AndroidLockPlanTest {
         assertTrue(configure.contains("if (owned && !secure) {"))
         assertEquals(1, Regex("owned = false").findAll(android).count())
         // The policy's request is committed with the hash (saveConfig), the owned flag apart (saveAndroid).
-        assertTrue(body(code("$lock/PinLockRuntime.kt"), "configure").contains("PinLockStore.saveConfig(app, newConfig, active, why, requested)"))
+        assertTrue(body(code("$lock/PinLockRuntime.kt"), "configure").contains("PinLockStore.saveConfig(app, newConfig, active, why, storedRequest)"))
+    }
+
+    @Test
+    fun `a fallback apply keeps Android's keyguard and the stored request while we own the credential (S3-1)`() {
+        assertTrue(androidKeyguardHeld(owned = true, deviceSecure = true, parentChoice = false))
+        assertFalse("the parent's choice decides", androidKeyguardHeld(true, true, parentChoice = true))
+        assertFalse("not ours", androidKeyguardHeld(false, true, false))
+        assertFalse("no credential left", androidKeyguardHeld(true, false, false))
+        // The last-enforced plan has no kid_lock: no PIN, not requested - still ANDROID while held, UNTOUCHED without.
+        assertEquals(KeyguardMode.ANDROID, keyguardMode(true, hasKidPin = false, deviceSecure = true, coverWanted = false, voip = VoipPhase.NONE, guardTripped = false, androidRequested = false, androidHeld = true))
+        assertEquals(KeyguardMode.UNTOUCHED, keyguardMode(true, hasKidPin = false, deviceSecure = true, coverWanted = false, voip = VoipPhase.NONE, guardTripped = false, androidRequested = false, androidHeld = false))
+        // The request is stored only off the parent's choice.
+        assertNull(requestToStore(false, parentChoice = false))
+        assertNull(requestToStore(true, parentChoice = false))
+        assertEquals(false, requestToStore(false, parentChoice = true))
+        assertEquals(true, requestToStore(true, parentChoice = true))
+        val configure = body(code("$lock/PinLockRuntime.kt"), "configure")
+        assertTrue(configure.contains("val owned = AndroidLock.configure(app, requested, parentChoice)"))
+        assertTrue(configure.contains("val androidHeld = androidKeyguardHeld(owned, deviceSecure, parentChoice)"))
+        assertTrue(configure.contains("guard.trippedAtMs != null, requested, androidHeld)"))
+        assertTrue(configure.contains("val storedRequest = requestToStore(requested, parentChoice)"))
+        assertTrue(configure.contains("PinLockStore.saveConfig(app, newConfig, active, why, storedRequest)"))
+        assertTrue(body(code("$lock/AndroidLock.kt"), "configure").contains("if (parentChoice) this.requested = requested"))
+        assertTrue(code("$lock/KeyguardCover.kt").contains("androidHeld = i.androidHeld,"))
+        // 24b's step 1 is skipped while asked for or ours.
+        assertTrue(code("$server/WindowRelock.kt").contains("PinLockStore.keyguardRequested(app) || com.kidslauncher.mdm.lock.PinLockStore.keyguardAndroid(app)"))
+    }
+
+    @Test
+    fun `the glue of the leave rule - the mark, the waits, the resume, the boot count (S3-2, S3-3, S3-4)`() {
+        val runtime = code("$lock/PinLockRuntime.kt")
+        // M3: the mark goes at every LOCKED edge, screen-off and remote lock.
+        assertTrue(body(runtime, "dispatch").contains(
+            "if (result.mode == LockMode.LOCKED && (lockedEdge || event is LockEvent.ScreenOff || event is LockEvent.RemoteLock)) {\n            AndroidLock.lockedAgain()"))
+        // S3-2: never marked while dark.
+        val receiver = runtime.substringAfter("private val userPresentReceiver").substringBefore("\n    }\n")
+        assertTrue(receiver.indexOf("if (!interactive(app)) return") in 0 until receiver.indexOf("AndroidLock.userPresent()"))
+        // S3-3: the longer wait only after Android read locked since this screen-off; still no leave without the broadcast.
+        assertEquals(ANDROID_ANSWER_WAIT_MS, faceWaitMs(false))
+        assertEquals(ANDROID_UNLOCK_WAIT_MS, faceWaitMs(true))
+        assertTrue(ANDROID_UNLOCK_WAIT_MS > ANDROID_ANSWER_WAIT_MS)
+        assertTrue(body(runtime, "lockUpAtScreenOff").contains("if (kg && AndroidLock.faceOn) AndroidLock.sawLocked(screenOffs)"))
+        assertTrue(runtime.substringAfter("private val androidSleepCheck").substringBefore("\n    }\n").contains("FaceStep.STAY -> AndroidLock.sawLocked(screenOffs)"))
+        val android = code("$lock/AndroidLock.kt")
+        assertTrue(android.contains("fun waitMs(offs: Int): Long = faceWaitMs(lockedSeenAtOffs == offs)"))
+        val activity = code("$lock/PinLockActivity.kt")
+        assertTrue(body(activity, "actAsFace").contains("handler.postDelayed(faceWait, AndroidLock.waitMs(PinLockRuntime.screenOffs))"))
+        // M4: USER_PRESENT leaves only on faceStep's LEAVE.
+        val present = activity.substringAfter("private val presentLeave = Runnable {").substringBefore("\n    }\n")
+        assertTrue(present.contains("val step = AndroidLock.step(this, FaceTrigger.USER_PRESENT)"))
+        assertTrue(present.contains("if (step == FaceStep.LEAVE) actAsFace(step, \"USER_PRESENT\")"))
+        // M5: the wait's end reads AFTER_WAIT (it relocks), never RESUME (which waits again).
+        assertTrue(activity.substringAfter("private val faceWait = Runnable {").substringBefore("\n    }\n")
+            .contains("actAsFace(AndroidLock.step(this, FaceTrigger.AFTER_WAIT), \"the glance's wait\")"))
+        // M14: the resume acts only with the screen on and no ask open.
+        assertTrue(body(activity, "resumeAsFace").contains("if (askedAt != null || !interactiveNow()) return false"))
+        // M10: the boot count is committed at every CE start when new.
+        assertEquals(7, bootSwap(stored = 6, boot = 7))
+        assertEquals(7, bootSwap(stored = null, boot = 7))
+        assertNull(bootSwap(stored = 7, boot = 7))
+        assertNull("unknown", bootSwap(stored = 6, boot = -1))
+        assertTrue(body(code("$lock/PinLockStore.kt"), "swapAndroidBoot").contains("bootSwap(stored, boot)?.let { p.edit().putInt(ANDROID_BOOT, it).commit() }"))
     }
 
     @Test
@@ -315,7 +377,7 @@ class AndroidLockPlanTest {
         assertTrue(body(runtime, "dispatch").contains("AndroidLock.lockedAgain()"))
         // The sleep check: dark and open - Android locked now.
         assertTrue(runtime.substringAfter("private val androidSleepCheck").substringBefore("\n    }\n")
-            .contains("if (AndroidLock.step(app, FaceTrigger.SLEEP_CHECK) == FaceStep.RELOCK) AndroidLock.relock(app, \"the sleep check\")"))
+            .contains("when (AndroidLock.step(app, FaceTrigger.SLEEP_CHECK)) {\n            FaceStep.RELOCK -> AndroidLock.relock(app, \"the sleep check\")"))
     }
 
     @Test

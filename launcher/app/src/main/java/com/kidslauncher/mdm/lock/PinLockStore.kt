@@ -95,7 +95,7 @@ object PinLockStore {
     fun swapAndroidBoot(context: Context, boot: Int): Int? {
         val p = prefs(context)
         val stored = p.getInt(ANDROID_BOOT, -1).takeIf { it >= 0 }
-        if (boot >= 0 && boot != stored) p.edit().putInt(ANDROID_BOOT, boot).commit()
+        bootSwap(stored, boot)?.let { p.edit().putInt(ANDROID_BOOT, it).commit() }
         return stored
     }
 

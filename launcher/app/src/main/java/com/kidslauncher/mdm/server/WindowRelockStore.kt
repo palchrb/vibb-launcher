@@ -216,7 +216,8 @@ interface RelockPlatform {
     /** `resetPasswordWithToken(null)`: true when the credential is gone. */
     fun removeCredential(): Boolean
 
-    /** Design 59 §3.7: the policy asks for Android's lock (CE `keyguard_requested`) - step 1 is skipped then. */
+    /** Design 59 §3.7: the policy asks for Android's lock (CE `keyguard_requested`) or we own its credential
+     * (`keyguard_android`) - step 1 is skipped then. Unreadable counts as true (the safe side). */
     fun androidKeyguardRequested(): Boolean = false
 
     fun installedPackages(): List<InstalledPackage>

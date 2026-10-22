@@ -62,7 +62,7 @@ object KeyguardCover {
     var dismissTest = DismissTest.NONE
 
     /** [configure]'s last inputs (`null` before the first apply in this process). [androidRequested]: design 59's switch. */
-    private data class Inputs(val managed: Boolean, val hasKidPin: Boolean, val deviceSecure: Boolean, val guardTripped: Boolean, val androidRequested: Boolean = false)
+    private data class Inputs(val managed: Boolean, val hasKidPin: Boolean, val deviceSecure: Boolean, val guardTripped: Boolean, val androidRequested: Boolean = false, val androidHeld: Boolean = false)
 
     @Volatile
     private var inputs: Inputs? = null
@@ -141,6 +141,7 @@ object KeyguardCover {
         deviceSecure: Boolean,
         guardTripped: Boolean,
         androidRequested: Boolean = false,
+        androidHeld: Boolean = false,
     ): Boolean {
         val app = context.applicationContext
         switchOn = try {
@@ -148,7 +149,7 @@ object KeyguardCover {
         } catch (e: Exception) {
             false
         }
-        inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped, androidRequested)
+        inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped, androidRequested, androidHeld)
         val (wanted, forManaged) = wantedNow()
         return write(app, dpm, admin, "apply", wanted, forManaged).lockMayRun
     }
@@ -183,6 +184,7 @@ object KeyguardCover {
             guardTripped = i.guardTripped,
             // Design 59: not the cover's - a shutdown or a failed T never takes Android mode's features out.
             androidRequested = i.androidRequested,
+            androidHeld = i.androidHeld,
         )
         return wanted to i.managed
     }

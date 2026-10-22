@@ -452,8 +452,10 @@ shot() { adb emu screenrecord screenshot "$PWD/$1.png"; }   # the glance is FLAG
 11. **Fingerprint.** Pause from the PWA; Settings › Security › Fingerprint (the PIN), `adb emu finger touch 1` until
     enrolled; "Lås igjen" on Home. `locksettings get-disabled` stays `false`. Then: screen off + touch -> Home; screen
     off and a touch within 1 s of it -> Home, no screen-off, no `didn't lock`; glance up + touch -> nothing or an unlock
-    (say which); on the pad + touch -> unlock; after Locate › Lock + touch on the pad -> refused. **Send** each result
-    and the Lock answer on the Locate page.
+    (say which); on the pad + touch -> unlock; after Locate › Lock + touch on the pad -> refused. **The delay** (S3-3):
+    for five touches from dark, the time from `the glance resumed` to `USER_PRESENT` in the `AndroidLock` lines (expect
+    well under 3 s, `ANDROID_UNLOCK_WAIT_MS`; a `didn't lock` after a fingerprint means it came later). **Send** each
+    result, the five delays and the Lock answer on the Locate page.
 12. **The kid changes the PIN.** In a pause, Settings › Screen lock -> PIN `9999`, then "Lås igjen". Expect the PWA's
     warning "isn't the Child PIN" after the next report; "Send the Child PIN again" -> the phone's PIN is the Child PIN.
     **Send** the warning, the log's `MdmDeviceAdminReceiver` lines and whether `9999` still opens it afterwards.
@@ -609,8 +611,8 @@ receiver, manifest entry and `CheckDebugHook` names) is gone and a test bans the
     at every own-mode apply, so a release phone reads nothing new per apply.
   - The "ours" flag holds 60 s; a lost `onPasswordChanged` can't consume a later change of the kid's.
   - `keyguard_relocks` is counted in memory (`AndroidLock.relocks`, capped at 1000); step 4 reports and resets it.
-  - A `Fallback` apply (no `kid_lock`) turns the face off and writes UNTOUCHED: Android's PIN stays the gate with
-    SystemUI's face, no rollback (Q59-4).
+  - A `Fallback` apply (no `kid_lock`) turns the face off but, while we own the live credential, keeps the ANDROID
+    keyguard write and the stored request (S3-1 below): Android's PIN stays the gate with SystemUI's face, no rollback.
 - **Not here** (step 4): `set_kid_pin`, `verifyCommandPin`, remote lock's answer, `lock_state`'s fields,
   `unlocked_at_ms` (`AndroidLock.firstCeStartOfBoot` is there for it), `android_keyguard_v1`. Without the capability
   the server sends no PIN, so a phone switched to Android's lock migrates at its next Child PIN on our keypad.
@@ -618,3 +620,18 @@ receiver, manifest entry and `CheckDebugHook` names) is gone and a test bans the
   SystemUI's bouncer and shade over a showWhenLocked activity), the sleep check's reads 1 s after a power press and a
   timeout, `USER_PRESENT` now arriving (an unlock through SystemUI's own face leaves the glance at once), the first
   boot unlock without a glance flash.
+- **Code QA fixes** (`qa-59-step3-code.md`):
+  - S3-1: `androidKeyguardHeld(owned, deviceSecure, parentChoice)` keeps `keyguardMode` ANDROID (features, T, 0x2)
+    on an apply without the parent's choice while we own the live credential; `keyguard_requested` is stored only
+    from such an apply (`requestToStore`), `AndroidLock.requested` likewise; 24b's step 1 is skipped while requested
+    **or** owned.
+  - S3-2: `USER_PRESENT` with the screen off is ignored (the background queue may deliver it after a screen-off).
+  - S3-3: the safer of the two options - not a new leave signal, a longer wait: when Android read locked since this
+    screen-off (the lock-up's read, the sleep check's STAY), a not-locked read waits `ANDROID_UNLOCK_WAIT_MS` (3 s)
+    for `USER_PRESENT` instead of 1 s, then relocks as before. The leave rule is unchanged (no LEAVE without the
+    broadcast or the pad); a quick wake that never saw Android locked keeps the 1 s. §8 step 11 measures the delay.
+  - S3-4: pins for the mark reset's condition, `presentLeave` and `faceWait`'s steps and triggers, the resume's
+    screen check; the pure `bootSwap` (tested) behind `swapAndroidBoot`'s commit.
+  - N1: `migrateIfDue`'s `managed = true` explained (our keypad runs only while the lock is active, which needs
+    managed). N2: an unreadable `keyguard_requested`/`keyguard_android` skips 24b's removal in every mode - the
+    safe side, documented on `RelockPlatform.androidKeyguardRequested`.

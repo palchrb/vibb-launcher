@@ -366,7 +366,7 @@ class PinLockActivity : AppCompatActivity() {
             FaceStep.WAIT -> {
                 waitOffs = PinLockRuntime.screenOffs
                 handler.removeCallbacks(faceWait)
-                handler.postDelayed(faceWait, ANDROID_ANSWER_WAIT_MS)
+                handler.postDelayed(faceWait, AndroidLock.waitMs(PinLockRuntime.screenOffs))
             }
             FaceStep.RELOCK -> {
                 glance?.back()
@@ -381,7 +381,7 @@ class PinLockActivity : AppCompatActivity() {
     /** The screen-offs when the wait began: a screen-off since makes the sleep check the judge. */
     private var waitOffs = 0
 
-    /** [ANDROID_ANSWER_WAIT_MS] after a not-locked read with no `USER_PRESENT` ([FaceStep.WAIT]): [FaceTrigger.AFTER_WAIT]
+    /** [faceWaitMs] after a not-locked read with no `USER_PRESENT` ([FaceStep.WAIT]): [FaceTrigger.AFTER_WAIT]
      * - still open and none came: RELOCK (P59-6, Q59-3: a read alone never opens the phone). */
     private val faceWait = Runnable {
         if (isFinishing || finishingAfterUnlock || PinLockRuntime.mode != LockMode.LOCKED || waitOffs != PinLockRuntime.screenOffs) return@Runnable

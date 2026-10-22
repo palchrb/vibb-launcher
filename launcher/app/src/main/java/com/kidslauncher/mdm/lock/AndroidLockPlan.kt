@@ -104,6 +104,17 @@ fun faceStep(trigger: FaceTrigger, deviceSecure: Boolean, androidLocked: Boolean
  * ask's answer (it carries a row's target) come first. */
 const val ANDROID_ANSWER_WAIT_MS = 1_000L
 
+/**
+ * S3-3: the wait when Android read **locked** since this screen-off (the lock-up's read, the sleep check) and now reads
+ * open: a locked secure keyguard with no trust agents and no face opens only on the credential or the fingerprint, so
+ * this is an unlock whose `USER_PRESENT` (a background broadcast) may be slow - it gets longer to arrive. Still no
+ * LEAVE without it: [FaceTrigger.AFTER_WAIT] relocks.
+ */
+const val ANDROID_UNLOCK_WAIT_MS = 3_000L
+
+/** How long a [FaceStep.WAIT] waits ([lockedSeenThisSleep]: Android read locked since this screen-off). */
+fun faceWaitMs(lockedSeenThisSleep: Boolean): Long = if (lockedSeenThisSleep) ANDROID_UNLOCK_WAIT_MS else ANDROID_ANSWER_WAIT_MS
+
 /** The screen-off's check that Android locked under the glance ([FaceTrigger.SLEEP_CHECK]). */
 const val ANDROID_SLEEP_CHECK_MS = 1_000L
 
@@ -156,6 +167,23 @@ fun secureCameraHeld(managed: Boolean, features: Int?): Boolean =
  * a fresh one or the `Ok` cache - never a `Fallback`, which has no `kid_lock`, nor `Apply(null)`).
  */
 fun rollbackDue(owned: Boolean, requested: Boolean, parentChoice: Boolean): Boolean = owned && !requested && parentChoice
+
+/**
+ * S3-1 (qa-59-step3-code): an apply without the parent's choice (the last-enforced plan, a corrupt cache - no
+ * `kid_lock`) keeps Android mode's keyguard write (features and T) while we own Android's live credential: no
+ * notification content, face unlock, trust agents or lock delay come back from a fallback. The face may be off.
+ */
+fun androidKeyguardHeld(owned: Boolean, deviceSecure: Boolean, parentChoice: Boolean): Boolean =
+    owned && deviceSecure && !parentChoice
+
+/** S3-1: `keyguard_requested` is written only from an apply with the parent's choice; `null` keeps the stored one. */
+fun requestToStore(requested: Boolean, parentChoice: Boolean): Boolean? = if (parentChoice) requested else null
+
+/**
+ * L-4 (S3-4): the boot count to commit as `android_boot_count` at this CE start - [boot] when known and new, else
+ * `null` (nothing to write).
+ */
+fun bootSwap(stored: Int?, boot: Int): Int? = if (boot >= 0 && boot != stored) boot else null
 
 /** The rollback's step once due. */
 enum class AndroidRollback {

@@ -98,10 +98,12 @@ object AndroidLock {
      *   ([parentChoice]; never a `Fallback` or `Apply(null)`): the credential cleared with the token; without one
      *   Android's PIN stays the gate and the token keeps running (escrow).
      * - Owned with no credential left (a verified clear, or removed on the phone): owned goes, and its rev.
+     * Returns whether we still own Android's credential. An apply without the parent's choice (S3-1: the last-enforced
+     * plan has no `kid_lock`) leaves [requested] as it was.
      */
-    fun configure(context: Context, requested: Boolean, parentChoice: Boolean) = synchronized(this) {
+    fun configure(context: Context, requested: Boolean, parentChoice: Boolean): Boolean = synchronized(this) {
         val app = context.applicationContext
-        this.requested = requested
+        if (parentChoice) this.requested = requested
         val owned = try {
             PinLockStore.keyguardAndroid(app)
         } catch (e: Exception) {
@@ -123,7 +125,9 @@ object AndroidLock {
         if (owned && !secure) {
             val ok = PinLockStore.saveAndroid(app, owned = false, rev = null)
             Log.i(ANDROID_LOCK_TAG, "Android's PIN is gone - ours no more (stored: $ok)")
+            return@synchronized false
         }
+        owned
     }
 
     /**
@@ -169,6 +173,8 @@ object AndroidLock {
         if (!requested) return
         val app = context.applicationContext
         val ok = synchronized(this) {
+            // N1: managed = true - our keypad checks a Child PIN only while our lock is active, and lockActivation
+            // makes it active only on a managed phone (an unmanaged one has no lock, so no keypad, no call here).
             if (!migrationDue(requested, managed = true, deviceSecure = deviceSecure(app))) return
             if (!WindowRelock.ensureAndroidResetToken(app)) {
                 Log.w(ANDROID_LOCK_TAG, "migration: no active reset token yet - our keypad stays the gate")
@@ -238,7 +244,19 @@ object AndroidLock {
     /** No re-front now ([androidRefrontHeld], P59-3); no binder call without [faceOn]. */
     fun refrontHeld(context: Context): Boolean = faceOn && androidRefrontHeld(true, deviceSecure(context), androidLocked(context))
 
-    /** `USER_PRESENT` (the runtime's exported receiver). Main thread. */
+    /** The screen-off count when Android last read locked ([sawLocked]; -1 = never in this process). */
+    @Volatile
+    private var lockedSeenAtOffs = -1
+
+    /** Android read locked after the screen-off [offs] (the lock-up's read, the sleep check). S3-3. */
+    fun sawLocked(offs: Int) {
+        lockedSeenAtOffs = offs
+    }
+
+    /** A [FaceStep.WAIT]'s length now ([faceWaitMs]): longer once Android read locked since this screen-off ([offs]). */
+    fun waitMs(offs: Int): Long = faceWaitMs(lockedSeenAtOffs == offs)
+
+    /** `USER_PRESENT` (the runtime's exported receiver, the screen on). Main thread. */
     fun userPresent() {
         presentSinceLocked = true
     }

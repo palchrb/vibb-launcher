@@ -673,6 +673,9 @@ object PinLockRuntime {
         // Design 59 likewise: as Android's face, its locked keyguard hides Home anyway.
         val cover = KeyguardCover.coverOn || AndroidLock.faceOn
         val kg = cover && KeyguardCover.keyguardLockedNow(context)
+        // S3-3: Android read locked since this screen-off - an open read at the next resume is then an unlock, so
+        // the wait for USER_PRESENT is the longer one (a fingerprint from dark).
+        if (kg && AndroidLock.faceOn) AndroidLock.sawLocked(screenOffs)
         val start = LockUpDebug.adjust(lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg), result.showLock)
         lockUp(context, start, lockAsk(event))
         AndroidLock.note(context, "screen-off, lock-up $start")
@@ -840,7 +843,11 @@ object PinLockRuntime {
     private val androidSleepCheck = Runnable {
         val app = appContext ?: return@Runnable
         if (!AndroidLock.faceOn || mode != LockMode.LOCKED || interactive(app)) return@Runnable
-        if (AndroidLock.step(app, FaceTrigger.SLEEP_CHECK) == FaceStep.RELOCK) AndroidLock.relock(app, "the sleep check")
+        when (AndroidLock.step(app, FaceTrigger.SLEEP_CHECK)) {
+            FaceStep.RELOCK -> AndroidLock.relock(app, "the sleep check")
+            FaceStep.STAY -> AndroidLock.sawLocked(screenOffs)
+            else -> Unit
+        }
     }
 
     /**
@@ -853,6 +860,9 @@ object PinLockRuntime {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != Intent.ACTION_USER_PRESENT || !AndroidLock.faceOn) return
             val app = context.applicationContext
+            // S3-2: Android's keyguard is done only with the screen on - a late broadcast after a screen-off (it
+            // rides the background queue) never marks the next wake.
+            if (!interactive(app)) return
             AndroidLock.userPresent()
             AndroidLock.note(app, "USER_PRESENT")
             if (mode != LockMode.LOCKED) return
@@ -1258,7 +1268,7 @@ object PinLockRuntime {
         val requested = androidRequested(kidLock)
         // Design 59 first: the token, the rollback and the owned flag - the keyguard below is written for the
         // credential this leaves (a rollback's clear, then DISABLED).
-        AndroidLock.configure(app, requested, parentChoice)
+        val owned = AndroidLock.configure(app, requested, parentChoice)
         val deviceSecure = try {
             app.getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true
         } catch (e: Exception) {
@@ -1275,7 +1285,10 @@ object PinLockRuntime {
         // Design 59: requested with a credential, the keyguard is ANDROID and the lock stays active as its face
         // (androidGate); the camera lock follows what the write read back.
         val androidGate = AndroidLock.face(app, dpm, admin, requested, managed, newConfig != null, deviceSecure)
-        val keyguardDisabled = KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null, requested)
+        // S3-1: an apply without the parent's choice (the last-enforced plan has no kid_lock) keeps Android's
+        // keyguard write while we own its live credential - no notification content, face or trust agents back.
+        val androidHeld = androidKeyguardHeld(owned, deviceSecure, parentChoice)
+        val keyguardDisabled = KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null, requested, androidHeld)
         AndroidLock.afterKeyguard(app)
         val (active, why) = lockActivation(
             managed = managed,
@@ -1292,8 +1305,12 @@ object PinLockRuntime {
             val forHash = backoffForHash(backoff, newConfig?.fingerprint)
             if (forHash != backoff) PinLockStore.saveBackoff(app, forHash)
         }
-        if (newConfig != config || active != PinLockStore.active(app) || why != inactive || requested != PinLockStore.keyguardRequested(app)) {
-            PinLockStore.saveConfig(app, newConfig, active, why, requested)
+        // S3-1: the request is stored only from a policy with the parent's choice - never from a fallback's missing kid_lock.
+        val storedRequest = requestToStore(requested, parentChoice)
+        if (newConfig != config || active != PinLockStore.active(app) || why != inactive ||
+            (storedRequest != null && storedRequest != PinLockStore.keyguardRequested(app))
+        ) {
+            PinLockStore.saveConfig(app, newConfig, active, why, storedRequest)
         }
         config = newConfig
         inactive = why

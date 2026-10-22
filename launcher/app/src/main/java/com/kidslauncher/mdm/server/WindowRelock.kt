@@ -621,9 +621,11 @@ object WindowRelock {
         }
 
         override fun androidKeyguardRequested(): Boolean = try {
-            com.kidslauncher.mdm.lock.PinLockStore.keyguardRequested(app)
+            // S3-1: also while we own Android's credential (a rollback waiting, a fallback apply in between).
+            com.kidslauncher.mdm.lock.PinLockStore.keyguardRequested(app) || com.kidslauncher.mdm.lock.PinLockStore.keyguardAndroid(app)
         } catch (e: Exception) {
-            // Unreadable: never remove a credential that may be the Child PIN's.
+            // N2: unreadable counts as asked for - step 1 is skipped (own mode too): never remove a credential that
+            // may be the Child PIN's. The safe side; a credential left in a window is then reported, not removed.
             true
         }
 

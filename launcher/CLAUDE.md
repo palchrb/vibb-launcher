@@ -193,12 +193,13 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   and keypad hide "Foreldrekode".
 - **The glance leaves only on Android's verdict** (`faceStep`, §3.3): the PIN pad's `onDismissSucceeded`, or a
   `USER_PRESENT` since our lock last went LOCKED (the mark is reset at every LOCKED edge, screen-off and remote lock).
-  A not-locked read alone waits `ANDROID_ANSWER_WAIT_MS` (1 s) for the broadcast, then RELOCKs (`dpm.lockNow()`,
+  A not-locked read alone waits `ANDROID_ANSWER_WAIT_MS` (1 s; `ANDROID_UNLOCK_WAIT_MS` 3 s once Android read
+  locked since this screen-off - a fingerprint from dark, S3-3) for the broadcast, then RELOCKs (`dpm.lockNow()`,
   counted in `AndroidLock.relocks` for step 4's report); 1 s after each screen-off while LOCKED and dark the sleep
   check RELOCKs an open Android. No credential at any trigger: our keypad and hash. **`USER_PRESENT`** has its own
   receiver registered **EXPORTED** for that action alone (SystemUI sends it from its own uid, which a NOT_EXPORTED
   receiver never hears - the run's bug 1; it is a `<protected-broadcast>` in frameworks/base's core manifest);
-  as the face only - own mode ignores it, as before.
+  as the face only and with the screen on (S3-2) - own mode ignores it, as before.
 - **"Lås opp"/a row** -> `requestDismissKeyguard` (Android's PIN pad); a tap on an ask older than
   `ANDROID_ASK_RETRY_MS` (1 s) asks again, and an ask with no answer after `ANDROID_ASK_TIMEOUT_MS` (2 s) while our
   window has the focus (nothing of SystemUI over us) - or when the focus comes back later - is recovered by reading
@@ -216,8 +217,10 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   `AppEnforcer.apply(context, decision: PolicyToApply)` passes `carriesParentChoice` (a fresh or `Ok` cached policy;
   never a `Fallback` or `Apply(null)`) to `PinLockRuntime.configure`; every caller passes the decision, not its policy.
   The credential is cleared with the token before the keyguard is written (then DISABLED); no active token: Android's
-  PIN stays the gate (UNTOUCHED) until the escrow activates. 24b's relock step 1 is skipped while requested
-  (`credentialAction(..., androidRequested)`).
+  PIN stays the gate (UNTOUCHED) until the escrow activates. An apply **without** the parent's choice never touches
+  Android mode: while we own the live credential the keyguard stays ANDROID (`androidKeyguardHeld`) and
+  `keyguard_requested` is stored only off a parent-choice apply (`requestToStore`) - qa-59-step3-code S3-1. 24b's
+  relock step 1 is skipped while requested or owned (`credentialAction(..., androidRequested)`; unreadable = skipped).
 - **`onPasswordChanged`**: our own reset sets a one-shot "ours" flag (60 s); any other change makes `android_pin_rev`
   unknown. **The restart line** ("Skriv koden for å starte telefonen", `android_lock_restart_line`): written at
   `ACTION_SHUTDOWN` as the face (BootCover's one receiver, its own try, between the cover and PowerEvents), cleared at

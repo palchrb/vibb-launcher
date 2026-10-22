@@ -377,7 +377,7 @@ class KeyguardCoverPlanTest {
         assertTrue(body(code("$lock/PinLockRuntime.kt"), "guardTripped").contains("KeyguardCover.guardTripped(app)"))
         // configure's keyguard is the writer's, after the guard re-arm.
         val configure = body(code("$lock/PinLockRuntime.kt"), "configure")
-        assertTrue(configure.contains("val keyguardDisabled = KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null, requested)"))
+        assertTrue(configure.contains("val keyguardDisabled = KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null, requested, androidHeld)"))
         assertTrue(configure.indexOf("guardRearm(") < configure.indexOf("KeyguardCover.configure("))
         assertTrue(configure.contains("keyguardDisabled = keyguardDisabled"))
         // AppEnforcer no longer writes the features itself.

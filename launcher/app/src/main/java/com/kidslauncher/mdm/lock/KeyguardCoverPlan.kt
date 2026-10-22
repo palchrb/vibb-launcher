@@ -41,6 +41,7 @@ enum class KeyguardMode {
  * - DISABLED otherwise - today's behaviour.
  * [androidRequested]: design 59's switch (`kid_lock.keyguard` "android") - ANDROID once the phone has the Android
  * PIN ([androidFace]), whatever the VoIP phase or the crash guard; never the cover while it is asked for.
+ * [androidHeld] ([androidKeyguardHeld], S3-1): ANDROID also off a fallback apply while we own the live credential.
  */
 fun keyguardMode(
     managed: Boolean,
@@ -50,8 +51,9 @@ fun keyguardMode(
     voip: VoipPhase,
     guardTripped: Boolean,
     androidRequested: Boolean = false,
+    androidHeld: Boolean = false,
 ): KeyguardMode = when {
-    androidFace(androidRequested, managed, hasKidPin, deviceSecure) -> KeyguardMode.ANDROID
+    androidFace(androidRequested, managed, hasKidPin, deviceSecure) || androidHeld -> KeyguardMode.ANDROID
     !wantKeyguardDisabled(managed, hasKidPin, deviceSecure) -> KeyguardMode.UNTOUCHED
     coverWanted && !androidRequested && voip == VoipPhase.NONE && !guardTripped -> KeyguardMode.COVER
     else -> KeyguardMode.DISABLED
