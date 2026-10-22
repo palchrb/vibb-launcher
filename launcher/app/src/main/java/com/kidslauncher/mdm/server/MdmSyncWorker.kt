@@ -210,7 +210,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     try {
         // The current blocks and how many in all (design 24b fix, QA of cmd-expiry Low 2).
         val blocks = WindowRelock.reportBlocks(context)
-        api.sendStatus(
+        val lockState = com.kidslauncher.mdm.lock.PinLockRuntime.report(context)
+        val sent = api.sendStatus(
             StatusReportRequest(
                 lockReason = reason.name,
                 kioskEngaged = mdm.kioskEnabled(),
@@ -228,7 +229,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 installMode = PlayRuntime.installModeReport(context),
                 playWindowActive = decision.policy?.allowlist != null && PlayRuntime.updateWindowActive(context),
                 playStoreSuspendable = PlayRuntime.storeSuspendable(context),
-                lockState = com.kidslauncher.mdm.lock.PinLockRuntime.report(context),
+                lockState = lockState,
                 screenTimeoutSeconds = ScreenTimeout.currentSeconds(context),
                 backupServiceEnabled = BackupService.reportedState(context),
                 ringerMode = ringerModeName(QuickControls.ringerMode(context)),
@@ -267,6 +268,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 battery = BatteryStatus.report(context),
             )
         )
+        // Design 59 (qa-59-step4-code N2): the relocks are told only by a report the server took.
+        if (sent.isSuccessful) com.kidslauncher.mdm.lock.AndroidLock.relocksReported(lockState.keyguardRelocks)
         // The report just landed, so this doesn't need to stay pending - if it was never used,
         // this is a harmless false->false write.
         mdm.offlineOverrideUsedPendingReport(false)

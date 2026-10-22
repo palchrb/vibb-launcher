@@ -223,10 +223,45 @@ fun androidTokenStep(stored: Boolean, active: Boolean, deviceSecure: Boolean): T
 }
 
 /**
- * 59 §3.7: `onPasswordChanged` - our own reset (the one-shot "ours" flag, [expected]) keeps the rev Android's PIN
- * was set from; any other change (the kid in Settings) makes it unknown (`null`: the PWA warns).
+ * 59 §3.7: `onPasswordChanged` - our own reset ([expected], [OwnChange]) keeps the rev Android's PIN was set from, or
+ * takes the rev a reset was setting when its own commit never came ([settingRev]: the process died between the reset
+ * and the rev - S4-1); any other change (the kid in Settings) makes it unknown (`null`: the PWA warns).
  */
-fun androidPinRevAfterChange(expected: Boolean, rev: Long?): Long? = if (expected) rev else null
+fun androidPinRevAfterChange(expected: Boolean, rev: Long?, settingRev: Long? = null): Long? =
+    if (expected) settingRev ?: rev else null
+
+/** How long our own reset waits for its `onPasswordChanged` (a lost broadcast never consumes a later change). */
+const val OWN_CHANGE_MS = 60_000L
+
+/**
+ * 59 §3.7 (S4-1): our own credential changes still expected - [count] resets whose `onPasswordChanged` hasn't come,
+ * in boot [boot] until [untilElapsed] (elapsed realtime); [settingRev] the rev the newest one sets (`null`: a clear).
+ * Kept in CE `pin_lock_state` beside the owned flag, so a new process (the broadcast starts one after a death) still
+ * knows the change was ours, and two resets close together are two.
+ */
+data class OwnChange(val count: Int, val boot: Int, val untilElapsed: Long, val settingRev: Long?)
+
+/** [change] still counts: some left, this boot (known), inside its window. */
+fun ownChangeLive(change: OwnChange?, boot: Int, elapsed: Long): Boolean =
+    change != null && change.count > 0 && boot >= 0 && change.boot == boot && elapsed < change.untilElapsed
+
+/** Before our reset: one more expected, the window from now, the rev it sets. */
+fun ownChangeArmed(change: OwnChange?, boot: Int, elapsed: Long, settingRev: Long?): OwnChange =
+    OwnChange((change?.takeIf { ownChangeLive(it, boot, elapsed) }?.count ?: 0) + 1, boot, elapsed + OWN_CHANGE_MS, settingRev)
+
+/** One expected change done - its broadcast came, or its reset failed (then [failed]: its rev is no one's). `null`
+ * once none is left or it went stale. */
+fun ownChangeConsumed(change: OwnChange?, boot: Int, elapsed: Long, failed: Boolean = false): OwnChange? {
+    val live = change?.takeIf { ownChangeLive(it, boot, elapsed) && it.count > 1 } ?: return null
+    return live.copy(count = live.count - 1, settingRev = if (failed) null else live.settingRev)
+}
+
+/**
+ * S4-2: right after the command set Android's PIN and the apply turned the face on, while our lock is LOCKED and the
+ * screen dark (the phone in a pocket): Android is locked at once - its keyguard was off at the last screen-off, so the
+ * next wake would find it open and RELOCK under the kid's thumb. Not a relock (nothing was wrong).
+ */
+fun lockAfterPinSet(face: Boolean, locked: Boolean, interactive: Boolean): Boolean = face && locked && !interactive
 
 /** The status report's capability (59 §1, step 4): this launcher runs `set_kid_pin` and can hold Android's lock. */
 const val ANDROID_KEYGUARD_CAPABILITY = "android_keyguard_v1"

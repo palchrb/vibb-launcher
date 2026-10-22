@@ -186,14 +186,16 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   `refused: mismatch` (`PinLockRuntime.verifyCommandPin` = the top-level `commandPinVerifies`: no backoff, no failure,
   exactly `pin_length` digits; Q59-1), no active token `refused: no_token` (`ensureAndroidResetToken` sets one for the
   escrow) -, else under `AndroidLock`'s monitor `keyguard_android` first with the rev Android holds now
-  (`commandWriteAheadRev`), `reset()` (the "ours" flag), then the fresh rev: `pin set` (a failed reset `refused:
-  failed`, and the owned flag given back when the credential wasn't ours). The answers are `PinCommandAnswer`'s words.
-  The PIN is a parameter only: never stored, cached (`cacheablePolicy`), logged (a source scan over the three files) or
-  answered; the dispatch returns the command without it. The sync's own apply that follows turns the face on.
+  (`commandWriteAheadRev`), `reset()` (our change marked with the rev it sets), then the fresh rev (`commitRev`, tried
+  twice): `pin set` (a failed reset `refused: failed`, and what was written ahead given back). The answers are
+  `PinCommandAnswer`'s words. The PIN is a parameter only: never stored, cached (`cacheablePolicy`), logged (a scan of
+  every log call, multi-line, in the five files it passes through) or answered; the dispatch returns the command
+  without it. The sync's own apply that follows turns the face on and, with our lock LOCKED in the dark, locks Android
+  at once (`lockAfterPinSet` in `afterKeyguard`, not a relock).
 - **Reports** (step 4): `lock_state.keyguard`/`pin_rev`/`reset_token`/`keyguard_relocks`, always sent
   (`AndroidLock.report`, pure `keyguardReport`/`androidGate`: `"android"` while the face is on or we own the live
   credential, with `android_pin_rev` only for ours; else `"own"` with the applied hash's rev); `reset_token` in every
-  mode; the relocks taken by each report. The remote `lock` answers `locked (android pin)` while `AndroidLock.gateNow`
+  mode; the relocks subtracted only by a report the server took (`relocksReported`). The remote `lock` answers `locked (android pin)` while `AndroidLock.gateNow`
   (`lockAnswer`). `power.on.unlocked_at_ms`: `PowerEvents.recordUnlock(this, AndroidLock.firstCeStartOfBoot)` in
   `Application.initUnlocked` right after `decide` (pure `withUnlock`, DE key `on_unlocked_at_ms`, once a boot).
 - **Stored** (CE `pin_lock_state`, M-1): `keyguard_requested` and `pin_rev` committed with the hash by `saveConfig`;
@@ -238,8 +240,10 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   Android mode: while we own the live credential the keyguard stays ANDROID (`androidKeyguardHeld`) and
   `keyguard_requested` is stored only off a parent-choice apply (`requestToStore`) - qa-59-step3-code S3-1. 24b's
   relock step 1 is skipped while requested or owned (`credentialAction(..., androidRequested)`; unreadable = skipped).
-- **`onPasswordChanged`**: our own reset sets a one-shot "ours" flag (60 s); any other change makes `android_pin_rev`
-  unknown. **The restart line** ("Skriv koden for å starte telefonen", `android_lock_restart_line`): written at
+- **`onPasswordChanged`**: every own reset first marks the change in CE (`OwnChange`: a count, the boot, 60 s, the rev
+  it sets - qa-59-step4-code S4-1), so a new process after a death and two resets close together still know it as
+  ours; ours keeps the rev (or takes the rev being set, when its commit never came), any other change makes
+  `android_pin_rev` unknown. **The restart line** ("Skriv koden for å starte telefonen", `android_lock_restart_line`): written at
   `ACTION_SHUTDOWN` as the face (BootCover's one receiver, its own try, between the cover and PowerEvents), cleared at
   the boot's first CE start and when the face goes. The notice wake keeps its `lockNow` after 15 s.
 - Not device-tested: design 59 §8.

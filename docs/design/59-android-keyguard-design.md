@@ -676,10 +676,12 @@ lock screen as the gate".
   handler (Q59-13).
 - **Deviations, each the safer or the more exact reading**:
   - The write-ahead before the command's reset keeps the rev Android holds **now** (`commandWriteAheadRev`: ours ->
-    the stored rev, else none) instead of clearing it: a death between the reset and the rev's commit reports the
-    older rev, which the server heals by sending the PIN again; it never claims a rev whose PIN isn't set (the server
-    would then drop the `prev` PIN the phone really has). A failed reset on a credential we didn't own gives the
-    owned flag back (the command, unlike the keypad migration, can meet a foreign credential).
+    the stored rev, else none) instead of clearing it, so it never claims a rev whose PIN isn't set (the server would
+    then drop the `prev` PIN the phone really has). A death between the reset and the rev's commit: since the fix
+    round (S4-1) our change is marked in CE with the rev it sets, so the `onPasswordChanged` that starts a new process
+    takes that rev (the server sees the current one); if that broadcast is lost too, the older rev stays and the
+    server sends the PIN again. A failed reset gives back exactly what was written ahead (the command, unlike the
+    keypad migration, can meet a foreign credential: that stays not ours).
   - `verifyCommandPin` also requires exactly the policy's `pin_length` in digits (`commandPinShape`): Android's pad
     and our keypad then take the same PIN. Its body is the top-level `commandPinVerifies` in the same file, so the JVM
     test runs the real PBKDF2 (the object's init needs a Looper).
@@ -690,3 +692,19 @@ lock screen as the gate".
   - The dispatch returns the command without its PIN (`ranCommand` lives for the rest of the sync).
 - **Device checks this step leaves** (§8 step 8, 10, 12, 14): the command with the screen off, during Android's wait
   and with two saves offline; `unlocked HH:MM` after a reboot; whether a reset to the same PIN keeps the fingerprint.
+- **Code QA fixes** (`qa-59-step4-code.md`):
+  - S4-1: §3.7's one-shot in-memory "ours" flag is now a CE mark (`OwnChange` in `pin_lock_state`: a count, the boot,
+    a 60 s elapsed window, the rev being set; pure `ownChangeArmed`/`ownChangeConsumed`/`ownChangeLive`). Every own
+    reset arms it first and takes it back when it fails; `onPasswordChanged` consumes one and, for a change of ours,
+    keeps the stored rev or takes the rev being set (`androidPinRevAfterChange(expected, rev, settingRev)`). A new
+    process after a death and two of our resets close together are both known as ours.
+  - S4-2: after `pin set`, the apply's `afterKeyguard` (after the ANDROID keyguard write) calls `lockNow` once while
+    the face is on, our lock LOCKED and the screen dark (`lockAfterPinSet`), not counted as a relock: the next wake
+    finds Android locked instead of RELOCKing under the kid's thumb. [device: §8 step 8, the screen off]
+  - S4-3: the no-PIN-in-logs scan reads every `Log.*(`/`log(` call to its closing parenthesis, across lines, in
+    `MdmSyncWorker`, `AndroidLock`, `PinLockRuntime`, `WindowRelock` and `PinHash`, and bans templates, `.pin`,
+    concatenation and `pin` as an argument; the scanner itself is tested on M11's and M16's shapes (both killed).
+  - S4-4: `requested = androidRequested(kidLock)` pinned in `applyPinCommand` (M13 killed).
+  - N1: the final rev's commit is tried twice (`commitRev`, also the keypad migration's), then logged.
+  - N2: `report` reads the relocks; only a status report the server took subtracts them (`relocksReported`), so a
+    failed POST keeps them.

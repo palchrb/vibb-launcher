@@ -1757,7 +1757,8 @@ object PinLockRuntime {
     }
 
     /** `lock_state` for the status report: never unlock times or PIN material - design 59's gate names its PIN by
-     * the server's rev only ([AndroidLock.report]). Resets the count of exempt-screen yields and of relocks. */
+     * the server's rev only ([AndroidLock.report]). Resets the count of exempt-screen yields; the relocks go only once
+     * the report landed ([AndroidLock.relocksReported]). */
     fun report(context: Context): LockStateReport {
         val app = context.applicationContext
         val now = clocks()
