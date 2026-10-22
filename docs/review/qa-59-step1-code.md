@@ -138,3 +138,16 @@ say that losing it means setting each Child PIN again. This could go with step 2
 | M12 | launcher: `cacheablePolicy` returns the policy unchanged | same | killed |
 
 Every mutation was reverted with `git checkout`. The probe for S59-1 was reverted too.
+
+## Fixes
+
+- S59-1: Fixed in 3d735272 - the QA's option (a): `device_api::pop_command` hands a `set_kid_pin` out only while the
+  stored `kid_pin_rev` is the one the answer read; test `kid_keyguard::a_save_racing_a_poll_never_loses_the_new_pin`.
+- S59-2: Fixed in 3d735272 - the intake's newest-row test counts only rows requested since `devices.enrolled_at`
+  (`models::ENROLLED_AT`); test `kid_keyguard::a_re_enrolled_phone_counts_only_its_own_reports_and_rows`.
+- S59-3: Fixed in 3d735272 - `last_capabilities` (delivery, receipts) and the queue rule read only reports since
+  `devices.enrolled_at`; same test.
+- N-1: Fixed in 3d735272 - a first PIN without the key flashes `saved_safe_boot_not_kept` (both notices).
+- N-2: Fixed in 3d735272 - a row with `deliveries >= MAX_COMMAND_DELIVERIES` is not in flight; the intake test covers it.
+- N-3: Fixed in 3d735272 - the receipt check runs past the re-delivery gap (`delivered_at` backdated 3 minutes).
+- N-4: Fixed in 3d735272 - `server/DEPLOY.md` names `kid-pin.key` and what losing it means.
