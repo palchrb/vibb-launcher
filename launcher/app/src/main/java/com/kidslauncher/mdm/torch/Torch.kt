@@ -102,6 +102,9 @@ object Torch {
                 changed()
             }
         }
+        // Design 59 F3 (qa-f3-round2-code F3R-3): init runs in a posted message since fix round 2, so Home may have
+        // rendered without the tile already; the callback's first answer ("off") is no change and notifies nothing.
+        changed()
     }
 
     /** A tap on the tile or the lock's button: on when off, off when on. */
