@@ -2,23 +2,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>{{ title }} · Vibb Phone</title>
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/static/style.css?v=45">
+<link rel="stylesheet" href="/static/style.css?v=46">
 <!-- The headings' Nunito, from this server only (style.css's @font-face). -->
 <link rel="preload" href="/static/fonts/nunito-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
 
 <link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" href="/static/icons/icon-192.png">
 <link rel="apple-touch-icon" href="/static/icons/icon-180.png">
-{#- The status bar takes the top's colour: Devices' night band in both schemes (its `night_top`), else the ground. -#}
-{% if night_top is defined %}
+{#- Night behind the status bar on every page, in both schemes (the user, 2026-10-22): theme-color for the
+    browsers and Android, black-translucent for the installed iPhone app - its page runs under the status bar,
+    where style.css's body::before paints the top inset night, and iOS draws the bar's text white. #}
 <meta name="theme-color" content="#0C0C14">
-{% else %}
-<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0C0C14" media="(prefers-color-scheme: dark)">
-{% endif %}
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Vibb Phone">
 <script src="/static/register-sw.js?v=3" defer></script>
 <!-- No POST may make the page jump to the top (server/CLAUDE.md): static/scroll-restore.js. Not

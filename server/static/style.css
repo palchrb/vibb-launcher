@@ -73,9 +73,14 @@
     --bar-shadow: inset 0 0 0 1px rgba(12, 12, 20, 0.08), 0 4px 18px rgba(12, 12, 20, 0.14);
     /* The floating bar's own height (.tab-bar: 8 px padding, a tab's 6 px padding, the 24 px icon
        and its 3 px, the label's line at 0.75rem x 1.2) and the room main leaves under its last row:
-       the bar, the 14 px under it, 16 px clear above it; the home indicator's inset is added there. */
+       the bar, the 14 px under it, and above it the bottom fade's 24 px (.tab-fade), so the last row
+       scrolls fully clear of the fade; the home indicator's inset is added there. */
     --tab-bar-h: calc(55px + 0.9rem);
-    --tab-bar-room: calc(var(--tab-bar-h) + 14px + 16px);
+    --tab-fade-above: 24px;
+    --tab-bar-room: calc(var(--tab-bar-h) + 14px + var(--tab-fade-above));
+    /* The ground at 0 % (the fade's start): a transparent of the ground's own colour, never
+       `transparent` (older browsers blend through black). */
+    --bg-clear: rgba(242, 242, 247, 0);
     /* The labels stay AA over the see-through bar with text behind it (5.2:1 at worst, 2026-10-22). */
     --tab-off: #5A5A5F;
     --tab-on: #0C0C14;
@@ -83,11 +88,11 @@
 
     /* vibb: Nunito for the headings (static/fonts/, never fetched elsewhere), a phone's initial on
        peach (#0C0C14 on #F0A884 9.9:1). Devices' night band (artboard E) is night in both schemes,
-       and so is everything on it: the Pust mark's tile lifted to a night card so it shows on the
-       band, the wordmark white (19.0:1), + and the bell peach (9.9:1), their hover pale peach. */
+       and so is everything on it: the Pust mark is the app icon itself (its night ground blends
+       into the band, no tile), the wordmark white (19.0:1), + and the bell peach (9.9:1), their
+       hover pale peach. */
     --font-display: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     --night: #0C0C14;
-    --brand-tile: #1B1B28;
     --brand-word: #FFFFFF;
     --night-action: #F0A884;
     --night-action-hover: #F6C4AA;
@@ -113,6 +118,7 @@
     :root {
         /* vibb's night: cream text on night grounds (--label-2 6.4:1 on --surface). */
         --bg: #0C0C14;
+        --bg-clear: rgba(12, 12, 20, 0);
         --surface: #1B1B28;
         --label: #F6E7E0;
         --label-2: #A89C96;
@@ -207,6 +213,26 @@ body {
     flex-direction: column;
     /* The tab bar's box (it floats over main's bottom): the body, never the viewport. */
     position: relative;
+}
+
+/* Night behind the status bar on every page (the user, 2026-10-22): the installed iPhone app's
+   status bar is black-translucent (head.html) - the page runs under it and iOS draws white text on
+   whatever is there - so the top inset is vibb's night in both schemes. Absolute in the body, which
+   is the screen and never scrolls (design 43), so main scrolls under it and the strip never moves;
+   exactly the inset's height, so with no inset (a desktop, Android's Chrome) it is nothing. On
+   Devices the night band runs on through it. Over main's sticky editor bar (z-index 5), under the
+   Connecting bar and chip, which start below it. The auth pages scroll the document, so there it
+   is the document's top. */
+body::before {
+    content: "";
+    position: absolute;
+    z-index: 20;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: env(safe-area-inset-top, 0px);
+    background: var(--night);
+    pointer-events: none;
 }
 
 a {
@@ -340,6 +366,23 @@ input[type="radio"] {
     border-radius: 24px;
     background: var(--bar);
     box-shadow: var(--bar-shadow);
+}
+
+/* The bottom fade (the user's iPhone, 2026-10-22, "like Nextcloud"): the content fades into the
+   ground towards the screen's bottom edge - from 24 px above the bar's top, under the bar and
+   through the gap and the home indicator's inset below it - so nothing sits sharp right under the
+   floating bar. The whole width, absolute in the body like the bar (never scrolling), under the bar
+   (z-index 10; its glass blurs the faded content) and over main; it never takes a tap, so main's
+   rows, its scrollbar and the map work through it. Above its start the side gaps stay sharp. */
+.tab-fade {
+    position: absolute;
+    z-index: 9;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: calc(var(--tab-bar-h) + 14px + var(--tab-fade-above) + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(var(--bg-clear), var(--bg));
+    pointer-events: none;
 }
 
 /* See-through where the browser can blur what passes behind (iOS 26, the Nextcloud app): the bar
@@ -1747,21 +1790,22 @@ details.edit[open] > summary .chev {
 /* ---- A tab's title action ("Edit"), a row that discloses a form, a switch in a form (design 31 step 12) ---- */
 
 .title-bar { display: flex; justify-content: flex-end; align-items: center; min-height: 44px; }
-/* The Devices page's brand row (vibb, direction D): the Pust mark on its night tile and the
+/* The Devices page's brand row (vibb, direction D): the Pust mark - the app icon's own artwork
+   (icons/icon-192.png, rings on plain night), straight on the night band with no tile - and the
    wordmark at the left of the title bar, its actions at the right. Exactly the bar's 44 px, never
    taller (a larger text size only grows the word inside it), so + and the bell, and the large title
    under them, sit at the same y as on every other tab (2026-10-22). */
 .vibb-brand { flex: none; display: flex; align-items: center; height: 44px; margin: 0 auto 0 0; }
-.vibb-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; background: var(--brand-tile); }
-.vibb-mark svg { width: 26px; height: 26px; }
+.vibb-mark { flex: none; display: block; width: 34px; height: 34px; }
 .vibb-word { margin-left: 10px; color: var(--brand-word); font-family: var(--font-display); font-size: 1.5rem; font-weight: 900; letter-spacing: -0.6px; line-height: 1; }
 /* Devices' night band (artboard E, 2026-10-22; the home page alone): its title bar on vibb's night
    from the screen's very top - main's 8 px and the status bar's inset - to flat right under the
    bar, across main's whole width. border-image's outset paints it past the bar's box without taking
    room or adding scrollable overflow (ink overflow, clipped at main's edges), so the bar, + and the
    bell, and the large title under it sit exactly where every other tab has them. The band is main's
-   content like the bar, so it scrolls away with it; its 100vh above the top is what an iOS
-   pull-down bounce shows (night, not the grey ground). theme-color is night on this page too. */
+   content like the bar, so it scrolls away with it, under the status bar's night strip
+   (body::before), which it meets without a seam; its 100vh above the top is what an iOS pull-down
+   bounce shows (night, not the grey ground). */
 .title-bar-night { border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 0; }
 .title-bar-night .title-action { color: var(--night-action); }
 .title-bar-night .title-action:hover { color: var(--night-action-hover); }

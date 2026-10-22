@@ -533,6 +533,16 @@ async fn the_tab_pages_open_on_their_large_title() {
             page == "/devices",
             "{page}"
         );
+        // Its mark is the app icon itself (the user, 2026-10-22: the hand-drawn rings were "not the
+        // right icon"), its night ground straight on the band - no tile, no inline approximation.
+        assert_eq!(
+            html.contains(
+                "<img class=\"vibb-mark\" src=\"/static/icons/icon-192.png\" width=\"34\" height=\"34\" alt=\"\" decoding=\"async\">"
+            ),
+            page == "/devices",
+            "{page}: the brand mark"
+        );
+        assert!(!html.contains("viewBox=\"-28 -28 56 56\""), "{page}");
         assert!(!html.contains("class=\"nav-back\""), "{page}");
         let main = &html[html.find("<main class=\"container").unwrap()..];
         let main = &main[main.find('>').unwrap() + 1..];
@@ -544,9 +554,10 @@ async fn the_tab_pages_open_on_their_large_title() {
             before.trim().is_empty() || before.trim_start().starts_with("<div class=\"title-bar"),
             "{page}: something before the title: {before}"
         );
-        // Devices' top is vibb's night (artboard E, 2026-10-22): its title bar is the night band
-        // and the status bar is night with it, in both schemes; every other tab keeps the grey top
-        // and the ground's theme-color per scheme.
+        // Devices' top is vibb's night (artboard E, 2026-10-22): its title bar is the night band;
+        // every other tab keeps the grey title bar. The status bar is night on every page, in both
+        // schemes (the user, 2026-10-22): one theme-color, and the installed iPhone app's page runs
+        // under a black-translucent status bar onto style.css's night strip (body::before).
         let night = page == "/devices";
         assert_eq!(
             before
@@ -565,15 +576,17 @@ async fn the_tab_pages_open_on_their_large_title() {
             .map(str::trim)
             .filter(|line| line.starts_with("<meta name=\"theme-color\""))
             .collect();
-        let expected: &[&str] = if night {
-            &["<meta name=\"theme-color\" content=\"#0C0C14\">"]
-        } else {
-            &[
-                "<meta name=\"theme-color\" content=\"#F2F2F7\" media=\"(prefers-color-scheme: light)\">",
-                "<meta name=\"theme-color\" content=\"#0C0C14\" media=\"(prefers-color-scheme: dark)\">",
-            ]
-        };
-        assert_eq!(themes, expected, "{page}: theme-color");
+        assert_eq!(
+            themes,
+            ["<meta name=\"theme-color\" content=\"#0C0C14\">"],
+            "{page}: theme-color"
+        );
+        assert!(
+            html.contains(
+                "<meta name=\"apple-mobile-web-app-status-bar-style\" content=\"black-translucent\">"
+            ),
+            "{page}: the status bar"
+        );
         if let Some(href) = add {
             let bar = &before[before.find("title-bar").unwrap()..];
             assert!(
@@ -933,9 +946,28 @@ fn the_app_shell_scrolls_main_not_the_document() {
         "{under}"
     );
     let root = block(":root");
+    // The bottom fade (2026-10-22, "like Nextcloud"): from 24 px above the bar's top to the ground
+    // at the screen's edge, the whole width, absolute in the body between main and the bar, never
+    // taking a tap; main leaves exactly that room under its last row, so the row clears the fade.
     assert!(
-        root.contains("--tab-bar-room: calc(var(--tab-bar-h) + 14px + 16px);"),
+        root.contains("--tab-fade-above: 24px;")
+            && root
+                .contains("--tab-bar-room: calc(var(--tab-bar-h) + 14px + var(--tab-fade-above));"),
         "{root}"
+    );
+    assert_eq!(
+        block(".tab-fade"),
+        "position: absolute; z-index: 9; right: 0; bottom: 0; left: 0; \
+         height: calc(var(--tab-bar-h) + 14px + var(--tab-fade-above) + env(safe-area-inset-bottom, 0px)); \
+         background: linear-gradient(var(--bg-clear), var(--bg)); pointer-events: none;"
+    );
+    assert!(bar.contains("z-index: 10;"), "{bar}");
+    let partial = std::fs::read_to_string("templates/partials/tab_bar.html").unwrap();
+    assert!(
+        partial.starts_with(
+            "<div class=\"tab-fade\" aria-hidden=\"true\"></div>\n<nav class=\"tab-bar\""
+        ),
+        "the fade comes with the bar"
     );
     // Devices' brand row is exactly the title bar's 44 px, so its actions and its large title
     // sit where every other tab has them.
@@ -945,12 +977,33 @@ fn the_app_shell_scrolls_main_not_the_document() {
         brand.contains("height: 44px;") && brand.contains("margin: 0 auto 0 0;"),
         "{brand}"
     );
+    // The mark (the app icon) sits on the band with no tile behind it.
+    assert_eq!(
+        block(".vibb-mark"),
+        "flex: none; display: block; width: 34px; height: 34px;"
+    );
+    assert!(!css.contains("--brand-tile"));
     // Devices' night band paints past the bar's box with border-image's outset alone (ink
     // overflow: no room taken, no scrollable overflow), so the bar stays at y 8-52 and the title
     // at 56 as on every other tab - nothing that moves a box goes on the band.
     assert_eq!(
         block(".title-bar-night"),
         "border-image: linear-gradient(var(--night), var(--night)) fill 0 / 0 / 100vh 100vw 0;"
+    );
+    // Night behind the status bar on every page (the user, 2026-10-22; head.html's black-translucent
+    // status bar): a strip of exactly the top inset - nothing without one - absolute in the body,
+    // which never scrolls, so main scrolls under it; over the editor bar's z-index 5.
+    assert_eq!(
+        block("body::before"),
+        "content: \"\"; position: absolute; z-index: 20; top: 0; left: 0; right: 0; \
+         height: env(safe-area-inset-top, 0px); background: var(--night); pointer-events: none;"
+    );
+    assert!(editor.contains("z-index: 5;"), "{editor}");
+    assert!(root.contains("--night: #0C0C14;"), "{root}");
+    let manifest = std::fs::read_to_string("static/manifest.webmanifest").unwrap();
+    assert!(
+        manifest.contains("\"theme_color\": \"#0C0C14\""),
+        "{manifest}"
     );
     assert!(!css.contains("\n* {\n    touch-action") && !body.contains("touch-action"));
     // The auth pages keep the document scroll.
