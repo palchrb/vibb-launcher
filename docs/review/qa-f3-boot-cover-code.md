@@ -157,3 +157,27 @@ and the tree is clean.
 | M8b | `atLockedBoot` before the call policy | killed (ManifestTest F3) |
 | M9 | `atLockedBoot` without `setPackage` | **survived** (F3C-5) |
 | M10 | the cover never reads the marker (`waitForLauncher = false`) | **survived** (F3C-5) |
+
+## Fixes
+
+- F3C-1: Fixed in f7d27657. `coverAtLockedBoot` waits for a screen-off (`AT_SCREEN_OFF`) while a call is live
+  (`BootHome.callLive`) or the screen is on, and decides again at the screen-off (AOSP's `EmergencyDialer` finishes
+  itself there; an OEM dialer is a device check). Emulator check 4 in design 59 "F3".
+- F3C-2: Fixed in f7d27657. In android mode no take-over while a call is live (`coverTakeOverNow`). `BootHome`
+  remembers a start declined for a call (`bootHomeWaitsForCall`); `callMayHaveEnded` (our calls, the VoIP phase,
+  every screen-on) runs `BootCover.takeOver` + the Home start 2 s after the call (own mode too). The cover, taken over
+  and still in front 500 ms later, starts the typed HOME once (`START_HOME`, a process death between the two).
+- F3C-3: Fixed in f7d27657 (launcher side). A trip records the build (`trip_version`); `coverGuardClearDue` clears it
+  after an update or the switch's off -> on edge, in every mode. The server's note still returns early while the
+  switch is off: gate `boot_cover_notes` on the reported `wanted` - written into design 59 "F3" for a server brief.
+- F3C-4: Fixed in f7d27657. The marker and `wanted` follow `AndroidLock.gateNow` (face, or our credential on a secure
+  phone - the escrow too); `applyPolicy` changes nothing without the parent's choice.
+- F3C-5: Fixed in f7d27657. `BootCoverManifestTest` "the android-mode glue is wired (F3C-5)": M4b, M6, M7, M9, M10
+  killed (re-run 2026-10-22, each restored), and the fix round's wiring (F3C-1's `callLive`, F3C-2's `takeOver`)
+  killed too.
+- F3C-6: Fixed in f7d27657. `BootCover.tookOver` (set first in `init`) makes a late locked-boot broadcast a no-op; a
+  broadcast after `RUNNING_UNLOCKED` is skipped, and that boot looks like the old F3 (residual, design 59 "F3").
+- F3C-7: Fixed in f7d27657. `coverHandOverStartsHome`: Home is started after 4 failed disables (~1 s).
+- Timing: `BootHome` logs `Boot Home started N ms after the unlock reached this process`. Nothing in `initRest` was
+  moved: a post behind the boot pass still runs before Home's launch transaction, and deferring past Home's first
+  frame changes the readers (Torch tile, music card, glance, first sync, shutdown client). Reasons in design 59 "F3".
