@@ -707,6 +707,14 @@ findings, merge to `main`, full suite once.
   Its code QA (`docs/review/qa-57-prep-code.md`, on that branch, `a8750fb6`): 0 High / 0 Medium / 3 Low / 5 Nit,
   mutations 21/25 - the Lows (Android 14's unfixable Attention row, the Settings row can't revoke, three untested
   paths) wait for the fix round if the branch is ever merged.
+  The user's answers (2026-10-22): (1) no Locate/ring/wipe before the first unlock is accepted; make the "type the PIN
+  to start the phone" state clear (Android's own restart prompt, plus a device-owner lock-screen line via
+  `setDeviceOwnerLockScreenInfo` if it shows BFU [device]). (2) (b): the server keeps the kid's PIN reversibly
+  (encrypted, key outside the database; the PWA shows it after re-entering the parent password), so no "Foreldrekode"
+  on the lock for now: the parent types the kid's PIN, then the parent code in Kid Settings as today ("åpen for
+  begge" - (a) can come later). (4) Android's PIN pad is fine; fingerprint allowed (the parent enrolls in a window).
+  (5) not decided yet - before the hybrid reaches a kid's phone; `ClockReader` is tied to Fossify, so another clock
+  means adapting it. (3) being clarified.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
