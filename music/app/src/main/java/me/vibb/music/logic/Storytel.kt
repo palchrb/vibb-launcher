@@ -1,5 +1,6 @@
 package me.vibb.music.logic
 
+import me.vibb.music.bridge.JwtResult
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
@@ -110,7 +111,7 @@ fun mintItemError(mint: Mint): String? = when (mint) {
 /**
  * Does [mint] stop every Storytel book of the run (vibb `sync` stops on a login failure)? The login
  * failures (no item error then), and a 401 that a fresh JWT got too (qa-26b-step1-code L4: that book
- * gets `http_401`, the rest wait for the next run - not one login per book).
+ * gets `http_401`, the rest wait - the worker comes back in 2 minutes, design 58 §5.3 - not one ask per book).
  */
 fun mintStopsRun(mint: Mint): Boolean =
     mint is Mint.NotConfigured || mint is Mint.Refused || mint is Mint.LoginFailed || (mint is Mint.Failed && mint.status == 401)
@@ -161,8 +162,8 @@ fun storytelRoom(freeBytes: Long): Boolean = freeBytes >= STORYTEL_FREE_FLOOR
 
 /**
  * What a Storytel entry with books still wanted waits for (design 26b §4.5, QA M4): `login` while the
- * account isn't `ok` (no login, or refused and waiting out the cooldown), `storage` below the floor,
- * else [shared] (the rule every entry gets; an unreachable login is a network matter and reads so).
+ * account isn't `ok` (Storytel off, or the server's cooldown after a refused login), `storage` below the
+ * floor, else [shared] (the rule every entry gets; an unreachable session is a network matter and reads so).
  */
 fun storytelWaiting(account: String, freeBytes: Long, shared: Waiting?): Waiting? = when {
     account != "ok" -> Waiting.LOGIN
@@ -231,3 +232,31 @@ fun durationByConsumableId(entry: Entry, uri: String?, queue: List<PlayItem>): L
     // Only a real length: a listed 0 lets the carry fill the bar (vibb `if known:`, daemon.py 4663).
     return queue.firstOrNull { it.key == want }?.durationMs?.takeIf { it > 0 }
 }
+
+// --- the server's session (design 58 §5.2, §5.6) ------------------------------------------------------
+
+/** The generation an unmanaged debug run with the fake (`/fake/jwt`) asks under: Storytel on. */
+const val DEBUG_GENERATION = 1L
+
+/**
+ * The login generation the phone's session follows (design 58 §5.2): the managed config's
+ * `storytel_generation` (0 = Storytel off on this phone); an unmanaged app has none - but with the debug
+ * switch ([debugSwitch]), which asks the fake under [DEBUG_GENERATION] (§5.6).
+ */
+fun storytelGeneration(managed: Boolean, configured: Long, debugSwitch: Boolean): Long = when {
+    managed -> configured
+    debugSwitch -> DEBUG_GENERATION
+    else -> 0
+}
+
+/** Every fake JWT's shape (design 58 §8: `FAKE-JWT-<n>`, never a real JWT's `eyJ`). */
+const val FAKE_JWT_PREFIX = "FAKE-JWT-"
+
+/**
+ * A session while the debug switch is set (design 58 §5.6, Spotify's [debugSwitchToken]): the asset call then
+ * goes to the debug base over plain http, so only a fake JWT may go with it - a real one (the server's, on a
+ * managed phone with a `config.json` left behind) is `Unreachable("launcher")` and never sent. Every other answer
+ * passes.
+ */
+fun debugSwitchJwt(r: JwtResult): JwtResult =
+    if (r is JwtResult.Ok && !r.jwt.startsWith(FAKE_JWT_PREFIX)) JwtResult.Unreachable("launcher") else r

@@ -9,7 +9,6 @@ import android.util.Log
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import me.vibb.music.bridge.StorytelLogin
 import me.vibb.music.model.JSON
 import me.vibb.music.storytel.StorytelEndpoints
 import java.io.File
@@ -19,8 +18,8 @@ import java.io.File
  * SourceScanTest). The fake Storytel for the emulator (design 26b §4.6, docs/testing/emulator.md §6i):
  * the one debug switch `StorytelEndpoints.debugBase` is assigned here and nowhere else, from the
  * debug feed's config.json - by the receiver, and at every process start by [DebugStartup] (the
- * download worker often runs in a fresh process, which must not reach the real Storytel with the
- * fake's login).
+ * download worker often runs in a fresh process, which must ask the fake too, never the real
+ * Storytel).
  */
 object DebugStorytel {
     private const val TAG = "VibbMusicDebugFeed"
@@ -37,26 +36,12 @@ object DebugStorytel {
     }
 
     /**
-     * A login for a run without a launcher: `{"email", "password"}`, fake values only, stored as the next
-     * generation, then the file deleted (QA L13). The email is never logged; a malformed file is one fixed
-     * line, and the rest of the feed still applies.
+     * `storytel.json`, a fake login from before design 58: the phone no longer takes a login (an unmanaged run asks
+     * the fake's `/fake/jwt`, design 58 §5.6), so it is deleted unread - it sits on shared storage - with one fixed line.
      */
-    fun seedLogin(context: Context, f: File) {
-        try {
-            // Never the parser's message: it quotes the input, the password included (qa-26b-step3-code L1).
-            val o = runCatching { JSON.parseToJsonElement(f.readText()) as? JsonObject }.getOrNull()
-            val email = runCatching { o?.get("email")?.jsonPrimitive?.contentOrNull }.getOrNull()
-            val password = runCatching { o?.get("password")?.jsonPrimitive?.contentOrNull }.getOrNull()
-            if (email == null || password == null) {
-                Log.w(TAG, "storytel.json: not a JSON object with an email and a password - ignored")
-                return
-            }
-            val generation = StorytelLogin.generation(context) + 1
-            StorytelLogin.store(context, generation, email, password)
-            Log.i(TAG, "storytel: a login seeded (generation $generation)")
-        } finally {
-            f.delete()
-        }
+    fun dropLogin(f: File) {
+        f.delete()
+        Log.w(TAG, "storytel.json: the phone takes no login since design 58 - deleted unread")
     }
 }
 

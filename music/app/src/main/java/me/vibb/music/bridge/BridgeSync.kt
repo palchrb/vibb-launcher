@@ -4,10 +4,7 @@ import android.content.Context
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.util.Log
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeoutOrNull
 import me.vibb.bridge.IMusicBridge
-import me.vibb.bridge.IStorytelCallback
 import me.vibb.music.data.Store
 import me.vibb.music.logic.WantedArt
 import me.vibb.music.logic.heldOwnFiles
@@ -24,8 +21,9 @@ private const val LOG_TAG = "BridgeSync"
 /**
  * The bridge part of the sync (design 21 §2/§4.5, 21b §5-§6): the managed config (language, mobile
  * data), then from the launcher the library, the listings whose version changed, covers, own files
- * (copied, checked, then released so the launcher deletes its copy) and the Storytel login. The
- * report goes back at the end of the sync ([push]). Everything lands through [Inbox]'s checks.
+ * (copied, checked, then released so the launcher deletes its copy). Storytel's session is asked when a
+ * mint needs it, never here (design 58 §5.2: `storytel/StorytelSession`). The report goes back at the
+ * end of the sync ([push]). Everything lands through [Inbox]'s checks.
  */
 object BridgeSync {
     /** Before the sync's own work. */
@@ -38,7 +36,6 @@ object BridgeSync {
             pullListings(store, bridge)
             pullCovers(context, store, bridge)
             pullFiles(store, bridge)
-            pullStorytel(context, bridge, config)
         }
     }
 
@@ -91,21 +88,6 @@ object BridgeSync {
             val ok = ParcelFileDescriptor.AutoCloseInputStream(pfd).use { Inbox.putOwnFile(store, file, it) }
             if (ok) bridge.releaseFile(file.id, file.sha256) else Log.w(LOG_TAG, "Own file ${file.id} didn't match its size or SHA-256")
         }
-    }
-
-    /** The Storytel login when the launcher's generation isn't ours (`!=`, QA #7). */
-    private suspend fun pullStorytel(context: Context, bridge: IMusicBridge, config: BridgeConfig) {
-        val have = StorytelLogin.generation(context)
-        if (config.storytelGeneration == have) return
-        val answer = CompletableDeferred<Triple<Long, String?, String?>>()
-        bridge.getStorytelLogin(have, object : IStorytelCallback.Stub() {
-            override fun onLogin(generation: Long, email: String?, password: String?) {
-                answer.complete(Triple(generation, email, password))
-            }
-        })
-        val (generation, email, password) = withTimeoutOrNull(20_000) { answer.await() } ?: return
-        runCatching { StorytelLogin.store(context, generation, email, password) }
-            .onFailure { Log.w(LOG_TAG, "Couldn't store the Storytel login (${it.javaClass.simpleName})") }
     }
 
     /** Is [file]'s held copy the library's file (its record, written by hashing it once when there is none)? */

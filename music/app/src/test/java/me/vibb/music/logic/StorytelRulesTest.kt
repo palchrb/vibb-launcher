@@ -5,6 +5,7 @@ import me.vibb.music.Fixtures.entry
 import me.vibb.music.Fixtures.items
 import me.vibb.music.Fixtures.library
 import me.vibb.music.Fixtures.snapshot
+import me.vibb.music.bridge.JwtResult
 import me.vibb.music.model.LibraryParser
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
@@ -211,16 +212,39 @@ class StorytelRulesTest {
         assertEquals("http_503", mintItemError(Mint.Failed(503)))
         assertEquals("http_401", mintItemError(Mint.Failed(401)))
         assertEquals("network", mintItemError(Mint.Unreachable("deadline")))
-        for (m in listOf(Mint.Url("https://cdn.example.invalid/x"), Mint.NotConfigured, Mint.Refused(1), Mint.LoginFailed("no jwt"))) {
+        for (m in listOf(Mint.Url("https://cdn.example.invalid/x"), Mint.NotConfigured, Mint.Refused(1), Mint.LoginFailed("unreachable", 1))) {
             assertNull("$m", mintItemError(m))
         }
         assertTrue(mintStopsRun(Mint.NotConfigured))
         assertTrue(mintStopsRun(Mint.Refused(1)))
         assertTrue("L4: a 401 a fresh JWT got too: one login per run, not per book", mintStopsRun(Mint.Failed(401)))
         assertEquals("that book still gets its error", "http_401", mintItemError(Mint.Failed(401)))
-        assertTrue("no JWT or no login server: one login per run, not per book", mintStopsRun(Mint.LoginFailed("no jwt")))
+        assertTrue("no JWT from the server: one ask per run, not per book", mintStopsRun(Mint.LoginFailed("unreachable", 1)))
         for (m in listOf(Mint.NoAudio(404), Mint.Failed(500), Mint.Unreachable("unreachable"), Mint.Url("https://cdn.example.invalid/x"))) {
             assertFalse("$m", mintStopsRun(m))
+        }
+    }
+
+    // design 58 §5.2, §5.6: the server's session
+
+    @Test
+    fun `the generation is the managed config's - unmanaged, Storytel is off but for the debug switch's fake`() {
+        assertEquals(7L, storytelGeneration(managed = true, configured = 7, debugSwitch = false))
+        assertEquals("a managed phone follows its config, the switch or not", 0L, storytelGeneration(managed = true, configured = 0, debugSwitch = true))
+        assertEquals(0L, storytelGeneration(managed = false, configured = 7, debugSwitch = false))
+        assertEquals(DEBUG_GENERATION, storytelGeneration(managed = false, configured = 0, debugSwitch = true))
+        assertEquals(1L, DEBUG_GENERATION)
+    }
+
+    @Test
+    fun `with the debug switch only a fake JWT goes on - a real one is the launcher's failure (design 58 §5_6)`() {
+        val fake = JwtResult.Ok("FAKE-JWT-3", 1_000, "1:0000000000000003")
+        assertEquals(fake, debugSwitchJwt(fake))
+        val real = JwtResult.Ok("NOT-A-FAKE-" + "x".repeat(40), 1_000, "1:0000000000000003")
+        assertEquals(JwtResult.Unreachable("launcher"), debugSwitchJwt(real))
+        assertEquals("not a prefix elsewhere", JwtResult.Unreachable("launcher"), debugSwitchJwt(fake.copy(jwt = "xFAKE-JWT-3")))
+        for (r in listOf(JwtResult.Off, JwtResult.Refused(1), JwtResult.Busy(5_000), JwtResult.Unreachable("key"))) {
+            assertEquals(r, debugSwitchJwt(r))
         }
     }
 
@@ -318,7 +342,7 @@ class StorytelRulesTest {
         assertEquals("network", sonosMintCode(Mint.Unreachable("timeout")))
         assertEquals("storytel_off", sonosMintCode(Mint.NotConfigured))
         assertEquals("login_refused", sonosMintCode(Mint.Refused(0)))
-        assertEquals("login_failed", sonosMintCode(Mint.LoginFailed("no jwt")))
+        assertEquals("login_failed", sonosMintCode(Mint.LoginFailed("busy", 1)))
     }
 
     /** Books 1 and 3 of five on the phone; the bookmark on book 2, heard on a room (design 26b §5.6, QA H2). */

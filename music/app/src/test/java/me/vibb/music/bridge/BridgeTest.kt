@@ -6,15 +6,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Test
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import java.io.File
-import javax.crypto.AEADBadTagException
-import javax.crypto.KeyGenerator
 
 /**
  * The music app's side of the bridge (design 21 §2): the AIDL byte-identical with the launcher's,
@@ -242,21 +239,5 @@ class BridgeTest {
         val fixture = me.vibb.music.model.JSON.parseToJsonElement(repo("server/testdata/music_state.json").readText()).jsonObject
         val report = me.vibb.music.logic.stateReport(1, "0123456789abcdef", 0, 0, 0, emptyList(), emptyList(), emptyList(), "ok")
         assertEquals(fixture.keys - setOf("package", "bridge"), report.keys)
-    }
-
-    @Test
-    fun `the Storytel login is sealed, and opens only with its key`() {
-        val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
-        val login = StorytelLogin.Login(4, "ella@example.org", "hemmelig: æøå")
-        val sealed = StorytelLogin.seal(key, login)
-        assertFalse("no plaintext at rest", String(sealed, Charsets.ISO_8859_1).contains("hemmelig"))
-        assertEquals(login, StorytelLogin.open(key, sealed))
-        val other = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
-        try {
-            StorytelLogin.open(other, sealed)
-            fail("opened with another key")
-        } catch (e: AEADBadTagException) {
-            // expected
-        }
     }
 }

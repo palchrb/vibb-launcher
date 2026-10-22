@@ -11,8 +11,7 @@ import me.vibb.bridge.IStorytelTokenCallback
  * The server's Storytel session through the launcher (design 58 §5.4; SpotifyBridgeToken copied):
  * the bridge's `getStorytelToken`, answered through `IStorytelTokenCallback` within
  * [StorytelBridgeToken.TIMEOUT_MS]. The launcher asks the server each time and keeps nothing; the
- * music app keeps the JWT in memory only (design 58 step 2). Step 1 brings the call and its
- * result; nothing mints with it yet.
+ * music app keeps the JWT in memory only (`storytel/StorytelSession`, design 58 §5.1).
  */
 
 /** What a session ask gave (design 58 §5.4). */

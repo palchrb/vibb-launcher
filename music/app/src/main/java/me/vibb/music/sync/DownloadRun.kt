@@ -10,6 +10,7 @@ import me.vibb.music.logic.sourceId
 import me.vibb.music.logic.storytelRoom
 import me.vibb.music.model.Source
 import me.vibb.music.storytel.Mint
+import me.vibb.music.storytel.StorytelSession
 
 /*
  * One download run's decisions (design 21 §4.5, 21b §6; design 26b §4.3 for Storytel), the Storytel
@@ -81,8 +82,12 @@ class DownloadRun(private val io: DownloadIo) {
     var storytelStopped: StorytelStop? = null
         private set
 
-    /** When a refused login's cooldown ends (wall clock), so the worker can come back then. */
-    var storytelRefusedUntil: Long? = null
+    /**
+     * When the worker comes back for Storytel (wall clock, design 58 §5.3, QA 58-2, N-1): a refusal's end,
+     * a failed session's `backAtWallMs` (2 minutes after an outage, `busy`'s wait, 10 minutes for `key`), 2
+     * minutes after a 401 stop. Null: nothing to come back for (Storytel off waits for a new generation).
+     */
+    var storytelBackAt: Long? = null
         private set
 
     /** Where one attempt's URL came from. */
@@ -136,7 +141,11 @@ class DownloadRun(private val io: DownloadIo) {
         if (w.entry.source != Source.STORYTEL) return w.item.url?.let { From.Url(it) } ?: From.Failed("network")
         val mint = io.mint(w.item.key)
         if (mint is Mint.Url) return From.Url(mint.url)
-        if (mint is Mint.Refused) storytelRefusedUntil = mint.untilWallMs
+        when {
+            mint is Mint.Refused -> storytelBackAt = mint.untilWallMs
+            mint is Mint.LoginFailed -> storytelBackAt = mint.backAtWallMs
+            mint is Mint.Failed && mint.status == 401 -> storytelBackAt = io.nowMs() + StorytelSession.COME_BACK_MS
+        }
         val code = mintItemError(mint)
         return if (mintStopsRun(mint) || code == null) From.Stop(code) else From.Failed(code)
     }

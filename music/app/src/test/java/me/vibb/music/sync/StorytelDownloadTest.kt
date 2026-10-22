@@ -17,16 +17,14 @@ import me.vibb.music.logic.reportWaiting
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
-import me.vibb.music.storytel.FileCooldownStore
 import me.vibb.music.storytel.Mint
+import me.vibb.music.storytel.StorytelSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
 import java.io.IOException
-import java.nio.file.Files
 
 /**
  * Storytel downloads (design 26b §3.3, §4.3, §4.5): the plan and [DownloadRun]'s decisions with a fake
@@ -176,8 +174,15 @@ class StorytelDownloadTest {
     }
 
     @Test
-    fun `a login failure stops every Storytel book of the run with no item error - the other entries go on`() {
-        for (failure in listOf(Mint.NotConfigured, Mint.Refused(now + 3_600_000), Mint.LoginFailed("no jwt"), Mint.LoginFailed("unreachable"))) {
+    fun `a session failure stops every Storytel book of the run with no item error - the other entries go on`() {
+        val back = mapOf<Mint, Long?>(
+            Mint.NotConfigured to null,
+            Mint.Refused(now + 2_400_000) to now + 2_400_000,
+            Mint.LoginFailed("unreachable", now + 120_000) to now + 120_000,
+            Mint.LoginFailed("busy", now + 30_000) to now + 30_000,
+            Mint.LoginFailed("key", now + 600_000) to now + 600_000,
+        )
+        for ((failure, comesBack) in back) {
             val io = Io(mints = mutableMapOf("111" to ArrayDeque(listOf(failure))))
             val rss = entry(1)
             val episode = PlayItem(1, "k1", "Episode", "https://cdn.example.org/k1.mp3", false, 600_000)
@@ -188,7 +193,9 @@ class StorytelDownloadTest {
             assertTrue("$failure: no row either", io.rows.keys.none { it.first == 7L })
             assertEquals("the RSS episode still downloads", listOf("k1" to "https://cdn.example.org/k1.mp3"), io.fetched)
             assertEquals("https://cdn.example.org/k1.mp3", io.rows.getValue(1L to "k1").url)
-            assertEquals(if (failure is Mint.Refused) now + 3_600_000 else null, run.storytelRefusedUntil)
+            // design 58 §5.3 (QA 58-2): the worker comes back at the session's time, not at the 6 h backstop; Storytel
+            // off waits for a new generation (a sync)
+            assertEquals("$failure", comesBack, run.storytelBackAt)
         }
     }
 
@@ -200,6 +207,10 @@ class StorytelDownloadTest {
         assertEquals("http_401", io.errors[7L to "111"])
         assertEquals(StorytelStop.LOGIN, run.storytelStopped)
         assertTrue(io.fetched.isEmpty())
+        assertEquals("design 58 §5.3 (QA N-1): a 401 stop comes back in 2 minutes", now + StorytelSession.COME_BACK_MS, run.storytelBackAt)
+        assertEquals(120_000L, StorytelSession.COME_BACK_MS)
+        val other = Io(mints = mutableMapOf("111" to ArrayDeque(listOf(Mint.Failed(503)))))
+        assertNull("another failure is the item's own retry", other.run(wanted()).storytelBackAt)
     }
 
     @Test
@@ -404,29 +415,5 @@ class StorytelDownloadTest {
         assertEquals(listOf(Waiting.LOGIN, null, null), reportWaiting(states, storytel, null, "refused", 10 * gb).map { it.waiting })
         assertEquals("between 0.5 and 1.5 GB", listOf(Waiting.STORAGE, null, null), reportWaiting(states, storytel, null, "ok", gb).map { it.waiting })
         assertEquals("an unreachable login reads as the shared rule says", listOf(Waiting.WIFI, Waiting.WIFI, null), reportWaiting(states, storytel, Waiting.WIFI, "ok", 10 * gb).map { it.waiting })
-    }
-
-    // The cooldown on disk (§4.2, §7 10b)
-
-    @Test
-    fun `the cooldown file - one record per login generation, unreadable is none`() {
-        val dir = Files.createTempDirectory("storytel").toFile()
-        try {
-            val file = File(dir, "storytel_refused.json")
-            val store = FileCooldownStore(file)
-            assertNull(store.refusedAt(1))
-            store.setRefused(1, now)
-            assertEquals(now, store.refusedAt(1))
-            assertNull("a new login generation: no cooldown", store.refusedAt(2))
-            store.setRefused(2, now + 5)
-            assertEquals(now + 5, store.refusedAt(2))
-            assertNull("one record", store.refusedAt(1))
-            assertFalse("written tmp + rename", File(dir, "storytel_refused.json.tmp").exists())
-            assertFalse("no secret in it", file.readText().contains("@"))
-            file.writeText("{not json")
-            assertNull(store.refusedAt(2))
-        } finally {
-            dir.deleteRecursively()
-        }
     }
 }

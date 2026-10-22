@@ -555,14 +555,20 @@ class GuardsTest {
         assertEquals("assetUrl is called by the account only", setOf("StorytelApi.kt", "StorytelAccount.kt"), callers("assetUrl("))
         assertEquals(
             "a mint is the download run's and a room's play job's (design 26b §5.1)",
-            setOf("StorytelAccount.kt", "DownloadRun.kt", "Downloads.kt", "SonosController.kt", "SonosRenderer.kt"),
+            setOf("StorytelAccount.kt", "StorytelSession.kt", "DownloadRun.kt", "Downloads.kt", "SonosController.kt", "SonosRenderer.kt"),
             callers(".mint(") + callers("fun mint("),
         )
         assertEquals("one StorytelApi for the process", setOf("StorytelApi.kt", "StorytelAccount.kt"), callers("StorytelApi("))
         assertEquals(setOf("Downloads.kt", "Sync.kt", "SonosRenderer.kt"), callers("StorytelAccount.get("))
         val account = code("src/main/java/me/vibb/music/storytel/StorytelAccount.kt")
-        // On IO and interruptible (the main session's review of step 3, Low 2; StorytelApiTest's cancelled mints).
-        assertTrue(account.contains("suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =\n        runInterruptible(Dispatchers.IO) { api.assetUrl(cid, timeoutMs, deadlineMs) }"))
+        // The session's JWT, then the asset call (design 58 §5.1): a plain suspend; the HTTP send is the interruptible
+        // part (StorytelApiTest's cancelled mint), the ask runs on in the session's scope (StorytelSessionTest).
+        assertTrue(account.contains("suspend fun mint(cid: String, timeoutMs: Long, deadlineMs: Long): Mint =\n        if (!StorytelApi.validCid(cid)) Mint.NoAudio(0) else session.mint(timeoutMs, deadlineMs) { jwt -> api.assetUrl(cid, jwt, timeoutMs, deadlineMs) }"))
+        // read whole: the Accept header's value holds a `/*` that would start a comment strip
+        val api = moduleFile("src/main/java/me/vibb/music/storytel/StorytelApi.kt").readText()
+        assertTrue(api.contains("val response = runInterruptible(Dispatchers.IO) {"))
+        assertEquals("one session for the process, beside its one API", 1, Regex("StorytelSession\\(").findAll(account).count())
+        assertTrue("a debug rebuild ends the old session's asks", account.contains("instance?.scope?.cancel()"))
         assertEquals("built in one place, kept while the switch says the same", 1, Regex("StorytelApi\\(").findAll(account).count())
         assertTrue(account.contains("instance?.takeIf { builtFor == key } ?: build("))
         val downloads = code("src/main/java/me/vibb/music/sync/Downloads.kt")
@@ -572,6 +578,12 @@ class GuardsTest {
         // A room (design 26b §5.1): the renderer hands the controller the account's one signature ...
         val renderer = code("src/main/java/me/vibb/music/sonos/SonosRenderer.kt")
         assertTrue(renderer.contains("minter = { cid, timeoutMs, deadlineMs -> StorytelAccount.get(context).mint(cid, timeoutMs, deadlineMs) },"))
+        // ... and asks for the server's session ahead (design 58 §5.1, QA 58-1): at a start, before the play's job is
+        // queued, and at every poll while a book plays - off main and off the actor
+        assertTrue(Regex("""controller\.onPoll\(tick, fields\)\s+if \(showsPlaying\) prefetchStorytel\(\)""").containsMatchIn(renderer))
+        assertTrue(renderer.contains("        if (playNow) prefetchStorytel()\n        controller.load(a.entry, a.items, startIndex, startMs)\n        if (playNow) controller.playTile()"))
+        assertTrue(renderer.contains("    override fun play() {\n        prefetchStorytel()\n        controller.playTile()\n    }"))
+        assertTrue(renderer.contains("        if (queue()?.entry?.source != Source.STORYTEL) return\n        actorScope.launch { StorytelAccount.get(context).prefetchIfDue() }"))
         // ... which mints only inside the play's actor job (IO), between the two token checks (M6), 6 s / 10 s
         val play = sonos.substringAfter("private fun playIndex(").substringBefore("\n    }\n")
         val job = play.substringAfter("work.submit<PlayResult?>({").substringBefore("}) { r ->")
@@ -693,7 +705,7 @@ class GuardsTest {
         assertTrue(sync.contains("val states = reportWaiting(plan.states, storytelEntries, waiting, storytel, Downloads.freeBytes(context))"))
         assertTrue(sync.contains("val storytel = StorytelAccount.get(context).state()"))
         val downloads = code("src/main/java/me/vibb/music/sync/Downloads.kt")
-        assertTrue("a refused login's job comes back at the cooldown's end", downloads.contains("val back = listOfNotNull(nextRetryAt, run.storytelRefusedUntil).minOrNull()"))
+        assertTrue("design 58 §5.3: the job comes back at the session's time", downloads.contains("val back = listOfNotNull(nextRetryAt, run.storytelBackAt).minOrNull()"))
         val work = downloads.substringAfter("override suspend fun doWork(): Result").substringBefore("private class WorkerIo")
         val reports = Regex("""Sync\.writeReport\(applicationContext\)""").findAll(work).count()
         assertEquals(2, reports)
@@ -1009,7 +1021,7 @@ class GuardsTest {
         val inbox = code("src/main/java/me/vibb/music/sync/Inbox.kt")
         assertTrue("G", inbox.contains("{ size, sha -> size == file.size && sha == file.sha256 }\n            .also { if (it) store.recordOwnSha(file.id, file.sha256) }"))
         val bridge = code("src/main/java/me/vibb/music/bridge/BridgeSync.kt")
-        val pull = bridge.substringAfter("private fun pullFiles(").substringBefore("private suspend fun pullStorytel(")
+        val pull = bridge.substringAfter("private fun pullFiles(").substringBefore("private fun keptCopy(")
         assertTrue("F", pull.contains("val plan = ownFetchPlan(lib.files, store.ownCopies()) { keptCopy(store, it) }"))
         assertTrue(pull.contains("for (id in plan.refetch) {"))
         assertTrue(pull.contains("store.deleteOwnCopy(id)"))

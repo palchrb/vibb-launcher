@@ -1340,7 +1340,7 @@ class SonosControllerTest {
             Mint.Failed(503) to "http_503",
             Mint.NoAudio(403) to "no_audio",
             Mint.Refused(0) to "login_refused",
-            Mint.LoginFailed("no jwt") to "login_failed",
+            Mint.LoginFailed("unreachable", 1) to "login_failed",
             Mint.NotConfigured to "storytel_off",
         )
         for ((mint, code) in cases) {
