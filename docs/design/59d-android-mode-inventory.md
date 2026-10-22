@@ -117,6 +117,7 @@ measurement (step 4).
 | F | M | BFU: Android's pad over the night cover (§5). After the F3 merge |
 | G | S | F2: hold the LOCKED-chrome feature write while an ask is open |
 | H | S | Q1's answer: if "back to the last app", `lockLeave` never starts Home in face mode except as the kiosk root |
+| I | - | Not built: SystemUI's face during the power-press fade-out (§6b). Mitigated by 59b step 3's night lock wallpaper |
 
 **Order**: 59b step 0, then 59b step 1, then A, B, C, then 59b step 2 with D, then 59b steps 3 and 4. F follows the
 F3 merge. E and H wait for the user's answers. G is any time.
@@ -203,6 +204,67 @@ screen-on, so the kid sees Android's pad at once and no glance content.
 - **When it makes sense**: a parent who wants the PIN always, and an older kid who doesn't use the glance.
 - **Recommendation**: don't build it now. The user's preference is the hybrid with the glance. If a parent asks, it is
   an S on the phone plus a contract field, after steps A-C.
+
+## 6b. Step I: SystemUI's face in the fade-out after a power press inside an app
+
+**What the user sees**: power pressed inside an app sometimes shows a bit of SystemUI's clock face while the screen
+fades out.
+
+**Why**:
+1. With "Power button instantly locks" on (Android's default), the keyguard is shown when sleep *starts*: at the press,
+   before the screen-off fade.
+2. The app is the top activity, so the keyguard is un-occluded and SystemUI's face is drawn during the fade, about
+   0.3-0.4 s.
+3. `ACTION_SCREEN_OFF` comes only after the display is off, so our glance's start (`PinLockRuntime.kt:799`, the lock-up)
+   is always later.
+4. No app hears the power key or the start of sleep. There is no public going-to-sleep callback, and
+   `DisplayListener` changes state at the fade's end too. So nothing of ours can come first.
+
+**The proposal "our glance first, Android's lock second"**:
+- The keyguard would not lock at the press.
+- The glance is started at `SCREEN_OFF`, as today.
+- We call `lockNow()` once the glance is there, so the keyguard locks behind an already occluding face.
+- The system's own timeout is the safety net when our process is dead.
+
+**Can we set the two settings?** No.
+- `power_button_instantly_locks` is not a `Settings` key. It lives in LockSettings' storage
+  (`lockscreen.power_button_instantly_locks`, written by `LockPatternUtils.setPowerButtonInstantlyLocks`, which needs
+  `ACCESS_KEYGUARD_SECURE_STORAGE`). No DPM API writes it.
+- `Settings.Secure.LOCK_SCREEN_LOCK_AFTER_TIMEOUT` is not on `setSecureSetting`'s allowlist. That list is the default
+  input method, `SKIP_FIRST_USE_HINTS`, `INSTALL_NON_MARKET_APPS`, plus a device owner's `LOCATION_MODE`.
+- `setMaximumTimeToLock` only caps the delay. Design 59 sets it to the screen timeout, which makes the delay 0. A delay
+  would also mean raising that cap above the screen timeout.
+- So the parent would set both once in Settings › Security › Screen lock (the gear) during a window, and nothing
+  could check or keep them. Settings' shortest "Lock after" is 5 s.
+
+**Judgement**: the proposal is a regression.
+- **The fingerprint**: our `lockNow` sets `STRONG_AUTH_REQUIRED_AFTER_DPM_LOCK_NOW`. The next unlock then needs the
+  PIN (RC step 6: refused after Locate › Lock). Doing that at **every** screen-off ends fingerprint unlock for good. Step
+  E removes the one `lockNow` of that kind we have now.
+- **The open window**:
+  - From the press to our `lockNow`: the fade (~0.35 s), then the broadcast and the glance's creation while dark,
+    which is not resumed under sleep. So about 0.5-1 s, and the full "Lock after" (5 s or more) whenever our process
+    is slow or dead.
+  - A wake in that window finds Android open. `faceStep` then waits and RELOCKs (`lockNow` again), so there is still no
+    path past the PIN.
+  - But a dead process leaves the platform's 5 s no-PIN grace, which design 59 closed deliberately with T = the screen
+    timeout.
+- **What it doesn't need**: the screen-on is already right, because the glance occludes before the wake (the
+  prototype's recording: app, fade, black, glance). Only the fade-out is affected.
+
+**Alternatives looked at**:
+- `KeyguardManager` has no public "lock now" without strong auth. `KeyguardLock.reenableKeyguard` is deprecated and
+  doesn't apply to a secure keyguard.
+- The screen-off animation can't be turned off by a device owner: `config_animateScreenLights`, and the animator scale
+  is not on `setGlobalSetting`'s allowlist.
+- No app can sit over the app the kid is using.
+
+**Recommendation**: don't build it, and accept the fade-out frame.
+- 59b step 3 makes that frame the night ground with the vibb mark (plus SystemUI's clock), fading to black, rather than
+  the default lock wallpaper.
+- 59b step 4's capture (`screen_toggled`, `wm_set_keyguard_shown`) measures how often and how long it shows on the
+  Jelly Star: the emulator has no AOD/doze fade and may differ.
+- Revisit only if Android ever offers a delayed lock without strong auth.
 
 ## 7. Questions for the user
 
