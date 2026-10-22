@@ -4,7 +4,9 @@ import kotlinx.serialization.Serializable
 
 /** The oldest undelivered remote command for this device, if any - see
  * [PolicyResponse.pendingCommand]. [command] is one of "ring" | "stop_ring" | "lock" | "wipe" |
- * "locate" | "end_windows" | "allow_blocked" | "start_pause" (design 24b) | "install_update" (design 37). */
+ * "locate" | "end_windows" | "allow_blocked" | "start_pause" (design 24b) | "install_update" (design 37) |
+ * "set_kid_pin" (design 59). [toString] never shows [pin]; the cached policy never holds it
+ * ([com.kidslauncher.mdm.server.cacheablePolicy]). */
 @Serializable
 data class PendingCommand(
     val id: Long,
@@ -21,7 +23,15 @@ data class PendingCommand(
      * (`tag@asset_id`). The phone installs the newest release the list advertises when it acts;
      * this one is kept in the record for the log. `null` for every other command. */
     val releaseTag: String? = null,
-)
+    /** `set_kid_pin` only (design 59 §1): the Child PIN's digits, for Android's own lock. Never
+     * stored, cached, logged or put in an answer. `null` for every other command, and when the
+     * server holds no PIN it can send. */
+    val pin: String? = null,
+) {
+    override fun toString(): String =
+        "PendingCommand(id=$id, command=$command, requestedAt=$requestedAt, allow=$allow, releaseTag=$releaseTag, " +
+            "pin=${if (pin == null) "null" else "<redacted>"})"
+}
 
 /** One app of [PendingCommand.allow]: [signer] the key shown (SHA-256, lower-case hex), `null` =
  * the phone couldn't read it then. */

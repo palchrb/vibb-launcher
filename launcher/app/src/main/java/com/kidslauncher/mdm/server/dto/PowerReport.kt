@@ -25,6 +25,7 @@ data class PowerOff(
 )
 
 /** The boot this process's first start saw: its instant (wall clock minus elapsed realtime), its
- * `BOOT_COUNT` and the battery at the start. */
+ * `BOOT_COUNT`, the battery at the start, and (design 59 §1) when the storage first unlocked in
+ * this boot - the Child PIN typed in android mode; `null` = not known. */
 @Serializable
-data class PowerOn(val atMs: Long, val bootCount: Int, val battery: BatteryReport? = null)
+data class PowerOn(val atMs: Long, val bootCount: Int, val battery: BatteryReport? = null, val unlockedAtMs: Long? = null)

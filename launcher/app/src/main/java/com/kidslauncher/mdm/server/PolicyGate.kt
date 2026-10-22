@@ -39,6 +39,11 @@ fun decodeCached(json: String?): CachedPolicy {
     }
 }
 
+/** The policy as `storeAcceptedPolicy` caches it: without `set_kid_pin`'s Child PIN (design 59 §1) -
+ * the PIN lives only in the one fresh answer it came in. */
+fun cacheablePolicy(policy: PolicyResponse): PolicyResponse =
+    policy.pendingCommand?.takeIf { it.pin != null }?.let { policy.copy(pendingCommand = it.copy(pin = null)) } ?: policy
+
 /** The outcome of decoding a 2xx `GET /api/devices/policy` body. */
 sealed interface FreshDecode {
     data class Ok(val policy: PolicyResponse) : FreshDecode

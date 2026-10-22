@@ -267,7 +267,7 @@ LAUNCHER_SIGNATURE_CHECKSUM=...
 out: `docker compose cp handy:/app/data/initial-admin-password . && cat initial-admin-password && rm
 initial-admin-password`. Sign in as `admin` and change it - the server deletes its copy then.
 
-- **Volumes**: `/app/data` holds the database, backups and caches; `/app/data/keys` (the Storytel and Web Push keys) is its own
+- **Volumes**: `/app/data` holds the database, backups and caches; `/app/data/keys` (the Storytel, Web Push and Child PIN keys - `kid-pin.key`: lose it and each Child PIN has to be set again before it can be sent or shown) is its own
   volume, so copies of the data volume don't carry it. Use named volumes: a bind-mounted directory isn't seeded from
   the image and must belong to uid 65532 (`chown -R 65532:65532 dir`), or the server stops with "data/ is not
   writable by uid 65532".

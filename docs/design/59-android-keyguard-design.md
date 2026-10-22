@@ -30,8 +30,9 @@ command; no wait for design 60. (4) Android's PIN pad; fingerprint allowed (enro
 ## 1. The contract (one commit, both directories - step 1)
 
 - **Policy** `kid_lock` (still `null` = no lock) gains `keyguard: "own" | "android"` and `pin_rev: i64` - always sent
-  with `kid_lock`. Pinned by `tests/step10.rs`'s `kid_lock` key list (the inner keys; `policy_json_keys_snapshot` pins
-  only the top level) and `PolicyResponseCompatTest`. Launcher `KidLock.keyguard: String? = null` (anything but
+  with `kid_lock`. Pinned by `server/src/tests/step10.rs`'s `kid_lock` key list (the inner keys;
+  `policy_json_keys_snapshot` pins only the top level) and `PolicyResponseCompatTest`. Launcher
+  `KidLock.keyguard: String? = null` (anything but
   `"android"` = own), `pinRev: Long = 0`. `pin_rev` is a counter the server bumps on every Child PIN save or clear: the
   phone names "which PIN" by it, so no PIN material ever goes back (lock_state's rule).
 - **Command** `set_kid_pin`: `pending_command.pin` (the PIN's digits) **only** on that command, left out otherwise
@@ -46,7 +47,11 @@ command; no wait for design 60. (4) Android's PIN pad; fingerprint allowed (enro
   `pin_rev >= 0`, relocks capped at 1000. Under `#[serde(default)]` a missing `pin_rev` and `null` read the same, so the
   server tells an older launcher by the capability, never by the field. In android mode the phone reports `active:
   true, inactive: null` - **not** `android_credential`, which stays own mode's "remove Android's lock" warning (A §9.5
-  asked for it as the normal state; re-using the word would make an older page give the wrong advice).
+  asked for it as the normal state; re-using the word would make an older page give the wrong advice). While a
+  rollback waits for the token (§3.8) the phone reports `keyguard: "android"` **and** `inactive: "android_credential"`:
+  `keyguard` names the gate (Android's PIN still is), `inactive` why Vibb One's lock is off; step 2 words the pair as
+  "Switching back…" with the no-token warning instead of own mode's advice, and an older page's "remove Android's lock"
+  is the right runbook for it anyway (qa-59-revision N-C).
 - **Power** `on.unlocked_at_ms` (optional): when CE first unlocked in this boot. `server/testdata/power_report.json`
   and its launcher copy change together (root `CLAUDE.md`).
 - **Capability** `android_keyguard_v1` (launcher `STATUS_CAPABILITIES`, added in **step 4**, with the command handler -
@@ -56,7 +61,7 @@ command; no wait for design 60. (4) Android's PIN pad; fingerprint allowed (enro
 
 | | Result |
 |---|---|
-| Old launcher + new server | `keyguard`/`pin_rev` are unknown keys (`ignoreUnknownKeys`); `set_kid_pin` is queued and its `pin` filled only for a phone whose last report has `android_keyguard_v1`, so it never arrives. The PWA's switch says "needs a Vibb One update". Today's lock. |
+| Old launcher + new server | `keyguard`/`pin_rev` are unknown keys (`ignoreUnknownKeys`); no `set_kid_pin` is queued (the queue rule needs `android_keyguard_v1` in the last report), and a row's `pin` is filled only for such a phone, so no PIN ever reaches it. The PWA's switch says "needs a Vibb One update". Today's lock. |
 | New launcher + old server | No `keyguard` = own: today's lock, byte for byte (§3 keeps every own-mode path). |
 | Server rolled back after android mode | A fresh policy without `keyguard` = own: the phone rolls back (§3.8) - Android's PIN cleared with the token, today's lock. |
 
@@ -76,13 +81,16 @@ command; no wait for design 60. (4) Android's PIN pad; fingerprint allowed (enro
 - **Sealed form**: one text `v1:<key fingerprint>:<nonce b64>:<ciphertext b64>`, AAD `kid-pin-v1:<fingerprint>:<device
   id>`, so a value can't be moved to another phone's row. A newtype `KidPin(String)` with a redacted `Debug` and a
   transparent `Serialize` carries the digits through the code; no `tracing` field ever takes it.
-- **Save** (`update_kid_lock`, unchanged refusals): the same `UPDATE` sets `kid_pin_prev_sealed =
-  COALESCE(kid_pin_prev_sealed, kid_pin_sealed)` and `kid_pin_prev_rev = COALESCE(kid_pin_prev_rev, kid_pin_rev)` -
-  the PIN the phone last confirmed survives any number of saves -, the new `kid_pin_sealed` (NULL when the key is off:
-  flash "saved; this server can't keep it to show later"), `kid_pin_rev = kid_pin_rev + 1`. **Clear** NULLs the sealed
-  and prev columns, bumps the rev and sets `kid_keyguard = 'own'` (there is no PIN for Android to hold; setting a new
-  PIN starts in own mode). Status intake NULLs `prev_sealed`/`prev_rev` once the phone reports `pin_rev` = the current
-  rev.
+- **Save** (`update_kid_lock`, unchanged refusals; one transaction with the queue rule): the same `UPDATE` sets
+  `kid_pin_prev_sealed = CASE WHEN kid_pin_prev_rev IS NULL THEN kid_pin_sealed ELSE kid_pin_prev_sealed END` and
+  `kid_pin_prev_rev = CASE WHEN kid_pin_prev_rev IS NULL THEN kid_pin_rev ELSE kid_pin_prev_rev END` - both keyed on
+  the rev, so the PIN the phone last confirmed survives any number of saves and a legacy PIN (no sealed copy) stays "an
+  earlier PIN" (prev_rev 0, prev_sealed NULL) instead of the first new one (qa-59-revision M-2) -, the new
+  `kid_pin_sealed` (NULL when the key is off: flash `saved_not_kept`), `kid_pin_rev = kid_pin_rev + 1`. **Clear** NULLs
+  the sealed and prev columns, bumps the rev, sets `kid_keyguard = 'own'` (there is no PIN for Android to hold; setting
+  a new PIN starts in own mode) and cancels a waiting `set_kid_pin` (`cancel_reason` `kid_pin_cleared`), one
+  transaction. Status intake NULLs `prev_sealed`/`prev_rev` once the phone (with the capability) reports `pin_rev` = the
+  current rev.
 - **"Waiting"** is one SQL fragment shared with the pop: a `set_kid_pin` row with `delivered_at IS NULL AND cancelled_at
   IS NULL`. A row that went out is never "waiting": a save after a delivery queues a new row (a new id), and the pop
   retires the older unconfirmed one when the new one goes out (`device_api.rs:385-397`). So no save is lost to a row
@@ -90,14 +98,20 @@ command; no wait for design 60. (4) Android's PIN pad; fingerprint allowed (enro
 - **Queue rule** (one helper, `kid_lock::queue_pin_command`): insert a `set_kid_pin` row (no payload) when the keyguard
   is `android`, a sealed PIN exists, the last report has `android_keyguard_v1` and none is waiting. Run after a Child
   PIN save, after the switch goes to `android` (a stored PIN migrates the phone at once), from "Send the Child PIN
-  again", and **at status intake** when such a phone in android mode reports a `pin_rev` that is a number other than
-  the current one - unless the newest `set_kid_pin`'s answer was a refusal (no loop on `no_token`; the parent's button
-  retries). `pin_rev: null` (a PIN changed on the phone) is not auto-healed by default (open question 4). The switch
-  going to `own` cancels a waiting row (`cancel_reason` `keyguard_own`). It never expires (like `lock`).
+  again", and **at status intake** when such a phone (reporting the capability) needs the PIN: it reports `keyguard:
+  own` (a phone updated after the switch was set, qa-59-revision L-2) or a `pin_rev` that is a number other than the
+  current one - unless the newest `set_kid_pin` is in flight (delivered within `REDELIVER_WINDOW_MINUTES`, no answer:
+  a report sent before the phone ran it queues no duplicate, L-2) or **answered at all** (a refusal: no loop on
+  `no_token`; a success the report didn't follow, e.g. an unmanaged phone that keeps reporting its own lock: no loop
+  either; the parent's button retries). `pin_rev: null` (a PIN changed on the phone) is not auto-healed by default
+  (open question 4). The switch going to `own` cancels a waiting row (`cancel_reason` `keyguard_own`). It never
+  expires (like `lock`).
 - **Delivery**: `build_policy` reads `device_policy` first and pops last; for `set_kid_pin` it opens `kid_pin_sealed`
   from that same `SELECT *` (consistent with the `kid_lock` hash and `pin_rev` in the same answer) and fills `pin` only
-  when the phone's last report has the capability (a re-enrolled row with an old launcher gets none). Unreadable or no
-  capability -> `pin` left out (the phone answers `refused: no_pin`). The answer carries `Cache-Control: no-store` then.
+  when the phone's last report has the capability (a re-enrolled row with an old launcher gets none) and the keyguard
+  is still android (a delivered row offered again after the switch to own carries none; the phone answers `own lock`).
+  Unreadable or no capability -> `pin` left out (the phone answers `refused: no_pin`). The answer is `no-store`, as
+  every device answer without its own `Cache-Control` already is (`limits`).
 - **"Deleted on the receipt"**: the row never holds the PIN, so the receipt has nothing to delete; L12 stops a received
   command from being served again, and at most 3 deliveries in 15 minutes go out without one. The PIN exists in
   plaintext only inside that one response. (A literal delete would also lose the PWA's "taken" row.)
@@ -523,3 +537,32 @@ the launcher steps must fix:
   retry or our state re-read) and never leave dead taps for 30 s.
 Also seen: after the first unlock of a boot, the stock Pixel launcher shows ~3 s before our Home, then a 1.4 s glance
 flash; and `handy36`'s data partition is not wiped at boot (it kept an old device owner) - start it with `-wipe-data`.
+
+## Step 1 as built (2026-10-22, `design-59-step1`)
+
+Server 0.37.0 (migration `0085_kid_keyguard.sql`) and the launcher's DTOs, in one commit; notes in
+`docs/notes/server/hardening-and-pins.md`, "Android's lock screen". From the revision check (`qa-59-revision-check.md`):
+
+- **M-2**: both prev columns keyed on `kid_pin_prev_rev IS NULL` (§2.1);
+  `kid_keyguard::saves_seal_the_pin_and_keep_the_one_the_phone_confirmed` runs legacy, B, C (prev stays rev 0 with no
+  sealed copy) and then two saves from a confirmed sealed PIN (prev kept).
+- **L-2**: the intake queues for a phone reporting `keyguard: own` while the server says android, and never while the
+  newest row is in flight. **Deviation**: it also never queues once the newest row has *any* answer, not only a
+  refusal - with L-2's own-reported case, a success the report doesn't follow (an unmanaged phone in android mode
+  reports its own lock after `pin set`: §3.1's face needs `managed`) would otherwise queue a row at every report.
+- **N-B**: §1's table reworded (no row without the capability); clearing the Child PIN cancels a waiting row.
+- **N-C**: the pair `keyguard: android` + `inactive: android_credential` during a token-less rollback (§1); step 1
+  keeps both fields typed, step 2's `lock_card` words the pair.
+- **M-1**: the contract names no launcher flag; step 3 takes `keyguard_requested`/`keyguard_android` from the revision
+  check. The reveal (with its new POST route on `/devices/{id}/lock`) is step 2.
+- **Also**: the policy handler sets no `Cache-Control` of its own - every device answer without one is `no-store`
+  already (`limits`); the test pins it on the answer with the PIN. A popped `set_kid_pin` carries the PIN only while
+  the keyguard is still android. The launcher strips the PIN for the cache (`cacheablePolicy`, in the pure
+  `PolicyGate.kt`) and from the policy applied after the command's dispatch, so no policy held in memory keeps it past
+  the dispatch. The launcher's `LockStateReport` fields and the stamping of `PowerOn.unlockedAtMs` stay step 4 (the
+  DTO field exists; nothing sets it yet).
+- **Code QA fixes** (`qa-59-step1-code.md`): the pop hands a `set_kid_pin` out only while the stored `kid_pin_rev` is
+  the one its answer read (S59-1: a save racing a poll left the older PIN going out, answered, and the intake unable
+  to heal); the queue rule and `last_capabilities` count only rows and reports since `devices.enrolled_at` (S59-2,
+  S59-3); a row used up by a later pop is not in flight (N-2); a first PIN without the key flashes
+  `saved_safe_boot_not_kept` (N-1).

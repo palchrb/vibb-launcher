@@ -84,6 +84,15 @@ pub struct DevicePolicy {
     pub kid_pin_salt: Option<String>,
     /// 4-6; the keypad submits at the last digit.
     pub kid_pin_length: Option<i64>,
+    /// Design 59 (migrations/0085): "own" (Vibb One's lock) or "android" (Android's PIN is the
+    /// Child PIN), sent as `kid_lock.keyguard` ([crate::kid_lock::policy_kid_lock]).
+    pub kid_keyguard: String,
+    /// The Child PIN sealed (`kid_pin`), `None` for a PIN saved before 0085 or without the key.
+    /// (`kid_pin_prev_sealed`/`kid_pin_prev_rev`, the PIN the phone last confirmed, are written by
+    /// the save and the status intake and read by the reveal, not through this struct.)
+    pub kid_pin_sealed: Option<String>,
+    /// Bumped at every Child PIN save or clear; sent as `kid_lock.pin_rev`.
+    pub kid_pin_rev: i64,
     /// Screen timeout in seconds (migrations/0032), one of [SCREEN_TIMEOUTS]; see
     /// [screen_timeout_seconds].
     pub screen_timeout_seconds: i64,
@@ -629,6 +638,17 @@ pub const REDELIVER_AFTER_MINUTES: i64 = 2;
 /// what the parent asked for. After the window the page says "never confirmed - send it again".
 pub const REDELIVER_WINDOW_MINUTES: i64 = 15;
 
+/// A command neither confirmed, answered nor cancelled - the pop's own condition
+/// (`device_api::build_policy`). With `delivered_at IS NULL` it is "waiting" (design 59 §2.1): the
+/// pop still hands it out for the first time. One fragment, so the two can't drift.
+pub const COMMAND_OPEN: &str =
+    "received_at IS NULL AND acknowledged_at IS NULL AND cancelled_at IS NULL";
+
+/// When the device bound as `?1` was enrolled (`''` before any): a status report or a command row
+/// older than it belongs to an earlier install (design 59 S59-2, S59-3).
+pub const ENROLLED_AT: &str =
+    "COALESCE((SELECT enrolled_at FROM devices WHERE devices.id = ?1), '')";
+
 /// Status-report capability of a launcher that confirms each command before running it
 /// (`POST /api/devices/command-receipt`, security review L12).
 pub const COMMAND_RECEIPT_CAPABILITY: &str = "command_receipt_v1";
@@ -974,6 +994,10 @@ pub struct KidLock {
     pub pin_hash: String,
     pub pin_salt: String,
     pub pin_length: i64,
+    /// Design 59 §1: "own" | "android" - always sent; an older launcher ignores it (own).
+    pub keyguard: &'static str,
+    /// The rev of this hash ([DevicePolicy::kid_pin_rev]): the phone names "which PIN" by it.
+    pub pin_rev: i64,
 }
 
 /// `PolicyResponse.call_policy`. With `managed = false` the launcher leaves calls alone (and
@@ -1030,6 +1054,12 @@ pub struct PendingCommand {
     /// every other command.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub release_tag: Option<String>,
+    /// `set_kid_pin` only (design 59 §2.1): the Child PIN's digits, opened from the same policy
+    /// row as `kid_lock`'s hash, for a phone in android mode whose last report has
+    /// [crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY]. The only place the PIN leaves the server in
+    /// plaintext (the answer is `no-store` then). Left out for every other command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pin: Option<crate::kid_pin::KidPin>,
 }
 
 #[derive(Deserialize)]
@@ -1227,6 +1257,16 @@ pub struct PowerOn {
     pub boot_count: i64,
     #[serde(default, deserialize_with = "lenient_battery")]
     pub battery: Option<BatteryReport>,
+    /// Design 59 §1: when the phone's storage first unlocked in this boot (the Child PIN typed in
+    /// android mode); anything but a whole number is `None`, never a refused body.
+    #[serde(default, deserialize_with = "lenient_ms")]
+    pub unlocked_at_ms: Option<i64>,
+}
+
+/// A whole number, else `None`.
+fn lenient_ms<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| v.as_i64()))
 }
 
 /// A string, else `None` (a number or an object is no text, never a refused body).

@@ -23,6 +23,7 @@ mod enrollment;
 mod hardening;
 mod install_now;
 mod intake_limits;
+mod kid_keyguard;
 mod launcher_ui;
 mod listeners;
 mod locate_page;
@@ -183,6 +184,11 @@ impl TestApp {
             music_art_dir: std::sync::Arc::new(dir.path().join("music_art")),
             music_key: Some(std::sync::Arc::new(
                 crate::music_secret::MusicKey::from_bytes(&[42; 32]),
+            )),
+            // Made in the temp dir, as the server makes its own (never a fixture).
+            kid_pin_key: Some(std::sync::Arc::new(
+                crate::kid_pin::load(&dir.path().join("data").join("keys").join("kid-pin.key"))
+                    .expect("the Child PIN's key in the temp dir"),
             )),
             // The real gate (one request at a time), without the 200 ms spacing.
             music_fetch: std::sync::Arc::new(crate::music_net::Gated::new(

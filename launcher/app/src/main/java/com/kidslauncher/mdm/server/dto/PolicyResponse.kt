@@ -130,12 +130,18 @@ data class PolicyResponse(
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see
- * [com.kidslauncher.mdm.server.PinHash]); [pinLength] 4-6, the keypad submits at the last digit. */
+ * [com.kidslauncher.mdm.server.PinHash]); [pinLength] 4-6, the keypad submits at the last digit.
+ * Design 59 §1: [keyguard] `"android"` = Android's own lock screen holds the Child PIN; anything
+ * else, missing (an older server) included, is Vibb One's own lock. [pinRev] the server's counter
+ * of Child PIN saves, sent with this hash: the phone reports the rev its gate enforces, never PIN
+ * material (0 from an older server). */
 @Serializable
 data class KidLock(
     val pinHash: String = "",
     val pinSalt: String = "",
     val pinLength: Int = 4,
+    val keyguard: String? = null,
+    val pinRev: Long = 0,
 )
 
 /** `PolicyResponse.locationPolicy`: [mode] "off", "on_request" or "interval" (every

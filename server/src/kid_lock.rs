@@ -1,17 +1,32 @@
 //! Handy's own PIN lock (handy step 10, design `docs/design/10-lock-and-call-ui.md` in the handy
 //! workspace, with `qa-10-design.md` on top): the kid's PIN rules, the cross-check with the
 //! override PIN, and what Lock Screen & PINs says about the phone's `lock_state`. Pure apart from
-//! the PBKDF2 calls in [decide_kid_pin]/[override_conflicts]; unit-tested here, end to end in
-//! `src/tests/step10.rs`.
+//! the PBKDF2 calls in [decide_kid_pin]/[override_conflicts] and design 59's command queue
+//! ([queue_pin_command], [cancel_pin_command], [after_lock_report]); unit-tested here, end to end
+//! in `src/tests/step10.rs` and `src/tests/kid_keyguard.rs`.
 
 use serde::{Deserialize, Serialize};
 
 use crate::handlers::device_pages::Note;
+use crate::kid_pin::KidPin;
 use crate::models::{DevicePolicy, KidLock};
+use crate::music_secret::MusicKey;
 use crate::security;
 
 /// The launcher capability that understands `kid_lock`.
 pub const PIN_LOCK_CAPABILITY: &str = "pin_lock_v1";
+/// Design 59: the launcher capability that runs [SET_KID_PIN] and can hold Android's lock.
+pub const ANDROID_KEYGUARD_CAPABILITY: &str = "android_keyguard_v1";
+/// Design 59 §2.1: the one-shot command that hands the phone the Child PIN for Android's lock.
+/// It never expires (like `lock`) and its row holds no PIN (`pending_command.pin` is filled at
+/// delivery).
+pub const SET_KID_PIN: &str = "set_kid_pin";
+/// `device_policy.kid_keyguard` and `kid_lock.keyguard`: Android's own lock screen.
+pub const KEYGUARD_ANDROID: &str = "android";
+/// Vibb One's own lock (today's); anything stored but [KEYGUARD_ANDROID] is sent as this.
+pub const KEYGUARD_OWN: &str = "own";
+/// The highest `lock_state.keyguard_relocks` kept.
+const MAX_RELOCKS: i64 = 1000;
 /// Kid PINs are 4-6 digits; the parent chooses (default 4, decision after QA review).
 pub const KID_PIN_MIN: usize = 4;
 pub const KID_PIN_MAX: usize = 6;
@@ -35,7 +50,155 @@ pub fn policy_kid_lock(policy: &DevicePolicy) -> Option<KidLock> {
         pin_hash: hash.clone(),
         pin_salt: salt.clone(),
         pin_length: len,
+        keyguard: if policy.kid_keyguard == KEYGUARD_ANDROID {
+            KEYGUARD_ANDROID
+        } else {
+            KEYGUARD_OWN
+        },
+        pin_rev: policy.kid_pin_rev,
     })
+}
+
+/// "Waiting" (design 59 §2.1): a [SET_KID_PIN] row the pop will still hand out for the first time.
+/// One that went out is never waiting: a save after a delivery queues a new row (a new id).
+fn waiting_pin_row() -> String {
+    format!(
+        "device_id = ?1 AND command = ?2 AND delivered_at IS NULL AND {}",
+        crate::models::COMMAND_OPEN
+    )
+}
+
+/// Design 59 §2.1's queue rule, the one place a [SET_KID_PIN] row is made: the keyguard is
+/// android, a sealed PIN is stored, the phone's last report has [ANDROID_KEYGUARD_CAPABILITY]
+/// (no row for an older launcher at all) and none is waiting. After a Child PIN save, the switch
+/// to android and "Send the Child PIN again" (`report: None`), and at a status report (`report`,
+/// [after_lock_report]): then only when the phone needs the PIN - it reports Vibb One's lock (a
+/// phone updated after the switch), or a rev that is a number other than the current one (never
+/// `null`, a PIN changed on the phone: open question 4) - and while the newest row of this
+/// enrollment is neither in flight (delivered within the re-delivery window and not used up, no
+/// answer yet: no duplicate) nor answered (a refusal, or an answer that didn't change the report,
+/// e.g. an unmanaged phone keeps reporting its own lock: never a loop; the parent's "Send again"
+/// retries). An answered row carried the PIN of the rev stored when it went out: the pop hands a
+/// row out only at the rev it read (S59-1). Reports and rows from before the enrollment are an
+/// earlier install's (S59-2, S59-3). One statement, so a save can run it in its own transaction.
+/// Returns whether a row was made.
+pub async fn queue_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    device_id: i64,
+    report: Option<&LockState>,
+) -> Result<bool, sqlx::Error> {
+    // The last report's capabilities, as `device_api::last_capabilities` reads them.
+    let sql = format!(
+        "INSERT INTO device_commands (device_id, command) \
+         SELECT device_id, ?2 FROM device_policy \
+         WHERE device_id = ?1 AND kid_keyguard = ?3 AND kid_pin_sealed IS NOT NULL \
+           AND EXISTS (SELECT 1 FROM device_status s, json_each(CASE \
+               WHEN json_valid(s.capabilities_json) THEN s.capabilities_json ELSE '[]' END) c \
+             WHERE s.id = (SELECT id FROM device_status WHERE device_id = ?1 \
+               AND reported_at >= {enrolled} ORDER BY reported_at DESC, id DESC LIMIT 1) \
+               AND c.value = ?8) \
+           AND NOT EXISTS (SELECT 1 FROM device_commands WHERE {waiting}) \
+           AND (NOT ?4 OR ((?5 OR (?6 IS NOT NULL AND ?6 != kid_pin_rev)) \
+             AND NOT EXISTS (SELECT 1 FROM device_commands WHERE id = \
+               (SELECT MAX(id) FROM device_commands WHERE device_id = ?1 AND command = ?2 \
+                 AND requested_at >= {enrolled}) \
+               AND (acknowledged_at IS NOT NULL OR (cancelled_at IS NULL AND deliveries < ?9 \
+                    AND first_delivered_at > datetime('now', ?7))))))",
+        waiting = waiting_pin_row(),
+        enrolled = crate::models::ENROLLED_AT
+    );
+    let done = sqlx::query(&sql)
+        .bind(device_id)
+        .bind(SET_KID_PIN)
+        .bind(KEYGUARD_ANDROID)
+        .bind(report.is_some())
+        .bind(report.is_some_and(|r| r.keyguard.as_deref() == Some(KEYGUARD_OWN)))
+        .bind(report.and_then(|r| r.pin_rev))
+        .bind(format!(
+            "-{} minutes",
+            crate::models::REDELIVER_WINDOW_MINUTES
+        ))
+        .bind(ANDROID_KEYGUARD_CAPABILITY)
+        .bind(crate::models::MAX_COMMAND_DELIVERIES)
+        .execute(db)
+        .await?;
+    Ok(done.rows_affected() > 0)
+}
+
+/// A waiting [SET_KID_PIN] row is cancelled (`reason`: `kid_pin_cleared`, `keyguard_own`): no PIN
+/// to hand over, or Vibb One's lock again.
+pub async fn cancel_pin_command<'e, E: sqlx::SqliteExecutor<'e>>(
+    db: E,
+    device_id: i64,
+    reason: &str,
+) -> Result<u64, sqlx::Error> {
+    let sql = format!(
+        "UPDATE device_commands SET cancelled_at = datetime('now'), cancel_reason = ?3 \
+         WHERE {}",
+        waiting_pin_row()
+    );
+    Ok(sqlx::query(&sql)
+        .bind(device_id)
+        .bind(SET_KID_PIN)
+        .bind(reason)
+        .execute(db)
+        .await?
+        .rows_affected())
+}
+
+/// A status report's `lock_state` (design 59 §2.1), from a launcher with
+/// [ANDROID_KEYGUARD_CAPABILITY] (`capable`, its own report): the PIN the phone last confirmed is
+/// forgotten once it reports the current rev, and [queue_pin_command] runs with the report.
+/// Returns whether a command was queued (the caller nudges the phone).
+pub async fn after_lock_report(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    state: &LockState,
+    capable: bool,
+) -> Result<bool, sqlx::Error> {
+    if !capable {
+        return Ok(false);
+    }
+    if let Some(rev) = state.pin_rev {
+        sqlx::query(
+            "UPDATE device_policy SET kid_pin_prev_sealed = NULL, kid_pin_prev_rev = NULL \
+             WHERE device_id = ? AND kid_pin_rev = ? AND kid_pin_prev_rev IS NOT NULL",
+        )
+        .bind(device_id)
+        .bind(rev)
+        .execute(db)
+        .await?;
+    }
+    queue_pin_command(db, device_id, Some(state)).await
+}
+
+/// `pending_command.pin` for a popped [SET_KID_PIN] (design 59 §2.1): the PIN sealed in `policy`
+/// (the row the answer's `kid_lock` comes from), only in android mode and for a launcher whose
+/// last report has [ANDROID_KEYGUARD_CAPABILITY]. `None` otherwise, or when this server can't
+/// open it (no key, another key, a legacy PIN) - the phone then answers `refused: no_pin`.
+pub fn deliverable_pin(
+    key: Option<&MusicKey>,
+    policy: &DevicePolicy,
+    device_id: i64,
+    capabilities: &[String],
+) -> Option<KidPin> {
+    if policy.kid_keyguard != KEYGUARD_ANDROID
+        || !capabilities
+            .iter()
+            .any(|c| c == ANDROID_KEYGUARD_CAPABILITY)
+    {
+        return None;
+    }
+    let pin = key
+        .zip(policy.kid_pin_sealed.as_deref())
+        .and_then(|(key, sealed)| crate::kid_pin::open(key, device_id, sealed));
+    if pin.is_none() {
+        tracing::warn!(
+            device_id,
+            "set_kid_pin goes without the Child PIN: this server holds none it can open"
+        );
+    }
+    pin
 }
 
 /// Why a kid PIN save was refused - shown on the device page; nothing is written.
@@ -113,6 +276,19 @@ pub struct LockState {
     /// `{package, last_at_ms}` is dropped, never the whole `lock_state`; a missing field is empty.
     #[serde(deserialize_with = "lenient_voip_rang")]
     pub voip_rang: Vec<VoipRang>,
+    /// Design 59 §1: the gate the phone runs - [KEYGUARD_ANDROID] while Android's PIN is the gate
+    /// (also while a rollback waits for the token: then `inactive` is `android_credential`, why
+    /// Vibb One's lock is off), else [KEYGUARD_OWN]; any other word is dropped. `None` from a
+    /// launcher before design 59 - told apart by [ANDROID_KEYGUARD_CAPABILITY], never by this.
+    pub keyguard: Option<String>,
+    /// The `kid_lock.pin_rev` the gate enforces; `None` = unknown (a PIN changed on the phone) or
+    /// an older launcher. Negative values are dropped.
+    pub pin_rev: Option<i64>,
+    /// The launcher's reset token is active (it can change or clear Android's PIN).
+    pub reset_token: bool,
+    /// Times Vibb One locked Android's keyguard under its glance since the last report (§3.3),
+    /// 0..=1000.
+    pub keyguard_relocks: i64,
 }
 
 /// One `lock_state.voip_rang` entry: a package name and the wall time (ms) of its last ring over
@@ -155,6 +331,11 @@ pub fn sanitize_lock_state(value: &serde_json::Value, now_ms: i64) -> Option<Str
     }
     let mut state: LockState = serde_json::from_value(value.clone()).ok()?;
     state.inactive = state.inactive.map(|i| i.chars().take(64).collect());
+    state.keyguard = state
+        .keyguard
+        .filter(|k| k == KEYGUARD_ANDROID || k == KEYGUARD_OWN);
+    state.pin_rev = state.pin_rev.filter(|&rev| rev >= 0);
+    state.keyguard_relocks = state.keyguard_relocks.clamp(0, MAX_RELOCKS);
     // Only real package names: they end up in a copy-paste adb command on the device page, and
     // Askama escapes HTML, not the shell (qa-16-17-code #9).
     state.voip_fsi_denied = state
@@ -494,6 +675,18 @@ pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
         ),
         "saved_safe_boot" => (
             "Child PIN saved, and Block safe mode is now on: safe mode would skip the lock.",
+            false,
+        ),
+        // Design 59 §2.1: the key file couldn't be read at the start (the server log says why).
+        "saved_not_kept" => (
+            "Child PIN saved. This server can't keep a copy to show later or send for Android's \
+             lock: its key file couldn't be read.",
+            false,
+        ),
+        "saved_safe_boot_not_kept" => (
+            "Child PIN saved, and Block safe mode is now on: safe mode would skip the lock. This \
+             server can't keep a copy to show later or send for Android's lock: its key file \
+             couldn't be read.",
             false,
         ),
         "cleared" => (
@@ -863,6 +1056,37 @@ mod tests {
         let state: LockState = serde_json::from_str(&stored).unwrap();
         assert!(state.locked);
         assert!(state.voip_rang.is_empty());
+    }
+
+    /// Design 59 §1: the keyguard's two words, a rev that isn't negative, relocks capped; an older
+    /// launcher's report reads as unknown, not as "own".
+    #[test]
+    fn the_keyguard_fields_are_kept_typed() {
+        let stored = |value: serde_json::Value| {
+            serde_json::from_str::<LockState>(&sanitize_lock_state(&value, 0).unwrap()).unwrap()
+        };
+        let state = stored(serde_json::json!({ "active": true, "keyguard": "android",
+            "pin_rev": 7, "reset_token": true, "keyguard_relocks": 5_000 }));
+        assert_eq!(
+            (
+                state.keyguard.as_deref(),
+                state.pin_rev,
+                state.reset_token,
+                state.keyguard_relocks
+            ),
+            (Some("android"), Some(7), true, 1000)
+        );
+        let odd = stored(serde_json::json!({ "keyguard": "<b>x</b>", "pin_rev": -1,
+            "keyguard_relocks": -3 }));
+        assert_eq!(
+            (odd.keyguard, odd.pin_rev, odd.keyguard_relocks),
+            (None, None, 0)
+        );
+        let older = stored(serde_json::json!({ "active": true }));
+        assert_eq!(
+            (older.keyguard, older.pin_rev, older.reset_token),
+            (None, None, false)
+        );
     }
 
     #[test]

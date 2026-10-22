@@ -84,4 +84,48 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   resetting it, the 404 for an unticked app -, refusals, the page and its notes), `device_pages`'s form table,
   `policy_json_keys_snapshot` (`lock_glance` non-null, a fresh phone's `{"apps": [{"package":
   "io.element.android.x", "show_text": false}]}`; the launcher's `PolicyResponseCompatTest` decodes the same literal),
-  `music_spotify::migrations_73_to_84_in_order`.
+  `music_spotify::migrations_73_to_85_in_order`.
+
+## Android's lock screen (design 59, `docs/design/59-android-keyguard-design.md`, migration `0085_kid_keyguard.sql`)
+
+Step 1 (the contract and the storage; the switch, the reveal and the page's words are step 2):
+
+- **Columns**: `device_policy.kid_keyguard` (`'own'` default, `'android'`), `kid_pin_sealed`, `kid_pin_prev_sealed`,
+  `kid_pin_prev_rev`, `kid_pin_rev` (0). **Policy**: `kid_lock` always carries `keyguard` (`"own"` for anything
+  stored but `"android"`) and `pin_rev` (`kid_lock::policy_kid_lock`; inner keys pinned by
+  `step10::kid_pin_saved_sent_and_safe_boot_blocked`, the launcher's `PolicyResponseCompatTest`).
+- **The key**: `data/keys/kid-pin.key` (`kid_pin::load`: `keys::load_or_create` + `MusicKey::from_bytes`, the music
+  key's file format, its own file), `AppState.kid_pin_key`; unreadable = logged once in Child-PIN words, the PIN is
+  then saved without a copy (`kid_pin_sealed` NULL, flash `saved_not_kept`), never the lock. No backup holds it. Tests
+  make it in their temp dir. **Sealed**: `v1:<fingerprint>:<nonce b64>:<ciphertext b64>`, AAD
+  `kid-pin-v1:<fingerprint>:<device id>` (`kid_pin::seal`/`open`; `open` returns only a valid Child PIN). The digits
+  travel as `kid_pin::KidPin` (redacted `Debug`, transparent `Serialize`); no log line takes one.
+- **Save** (`update_kid_lock`, one transaction): the new sealed copy, `kid_pin_rev + 1`, and the PIN the phone last
+  confirmed kept in `prev` - both prev columns keyed on `kid_pin_prev_rev IS NULL` (qa-59-revision M-2: a legacy PIN
+  saved before 0085 stays `prev_rev` 0 with no sealed copy, "an earlier PIN", over any number of saves), then the
+  queue rule. **Clear**: hash, sealed and prev NULL, rev + 1, `kid_keyguard = 'own'`, a waiting `set_kid_pin`
+  cancelled (`kid_pin_cleared`), one transaction. **Status intake** (`kid_lock::after_lock_report`, a launcher with
+  `android_keyguard_v1` only): prev NULLed once the phone reports `lock_state.pin_rev` = the current rev.
+- **`set_kid_pin`** (`kid_lock::queue_pin_command`, one `INSERT ... SELECT`): android, a sealed PIN, the last report's
+  capabilities have `android_keyguard_v1` (no row at all for an older launcher) and no row waiting (never delivered and
+  `models::COMMAND_OPEN`, the pop's own fragment). At the intake also only when the phone needs it - it reports
+  `keyguard: own` (a phone updated after the switch) or a `pin_rev` number other than the current (never `null`, open
+  question 4) - and the newest row is neither in flight (delivered within `REDELIVER_WINDOW_MINUTES`, no answer:
+  qa-59-revision L-2) nor answered (any answer: a refusal, or a success the phone's report didn't follow, e.g. an
+  unmanaged phone reporting its own lock - no loop; step 2's "Send again" retries). In flight excludes a row used up
+  by a later pop. Only reports and rows since `devices.enrolled_at` (`models::ENROLLED_AT`) count, in
+  `device_api::last_capabilities` too - a phone enrolled into the row anew isn't the install that reported before
+  (qa-59-step1 S59-2/S59-3). The pop (`device_api::pop_command`) hands a `set_kid_pin` out only while the stored
+  `kid_pin_rev` is the one the answer read: a save racing a poll leaves the row waiting for the next poll, so an
+  answered row always carried its rev's PIN (S59-1). Never expires. **Delivery**
+  (`build_policy`, `kid_lock::deliverable_pin`): `pending_command.pin` opened from the same `device_policy` row as the
+  answer's `kid_lock`, only in android mode and with the capability in the last report; otherwise left out (the phone
+  answers `refused: no_pin`), logged. Every device answer is `no-store` already (`limits`).
+- **`lock_state`** gains `keyguard` (the two words, else dropped), `pin_rev` (>= 0), `reset_token`,
+  `keyguard_relocks` (0..=1000). While a rollback waits for the token the phone reports `keyguard: android` and
+  `inactive: android_credential` - `keyguard` names the gate, `inactive` why Vibb One's lock is off (qa-59-revision
+  N-C); step 2 words that pair as "Switching back…". **Power** `on.unlocked_at_ms` is parsed (anything but a whole
+  number = `None`); step 2 words it.
+- Tests: `kid_pin::tests`, `kid_lock::tests::the_keyguard_fields_are_kept_typed`, `src/tests/kid_keyguard.rs` (the
+  legacy, B, C sequence, clear, no key, the queue rule per condition, delivery and the `pending_command` keys with and
+  without `pin`, the intake), `power::a_launcher_report_raises_both` (`testdata/power_report.json`).

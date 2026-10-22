@@ -149,6 +149,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // been delivered and consumed server-side, and replaying it from cache while offline would
         // re-run an old command (harmless for ring, not for lock/wipe).
         ranCommand = dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand)
+        // Design 59 §1: `set_kid_pin`'s Child PIN goes no further than its command - the policy
+        // applied and held in memory from here on has none, like the cached one.
+        freshPolicy = cacheablePolicy(freshPolicy)
         // Same "only off a genuinely fresh fetch" reasoning as the pending-command dispatch above -
         // the server clears an entry once a status report confirms the package is gone, so acting
         // on a stale cached list while offline would just be redundant, not actively harmful, but
@@ -999,7 +1002,7 @@ private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
 private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit = synchronized(POLICY_CACHE_LOCK) {
     val keys = LauncherPreferences.mdm().keys()
     val editor = PreferenceManager.getDefaultSharedPreferences(context).edit()
-        .putString(keys.kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), policy))
+        .putString(keys.kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), cacheablePolicy(policy)))
         .putBoolean(keys.policyEverApplied(), true)
         .putString(keys.lastEnforcedPlan(), LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
     if (policy.timePolicy != null) editor.putBoolean(keys.timePolicySeen(), true)

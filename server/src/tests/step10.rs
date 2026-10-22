@@ -153,7 +153,14 @@ async fn kid_pin_saved_sent_and_safe_boot_blocked() {
     assert_eq!(policy.to_string().matches(salt).count(), 1);
     let mut keys: Vec<&String> = kid_lock.as_object().unwrap().keys().collect();
     keys.sort();
-    assert_eq!(keys, ["pin_hash", "pin_length", "pin_salt"]);
+    // The inner keys (policy_json_keys_snapshot pins the top level only); design 59 §1 added the
+    // keyguard and the rev, always sent - the launcher's PolicyResponseCompatTest reads them.
+    assert_eq!(
+        keys,
+        ["keyguard", "pin_hash", "pin_length", "pin_rev", "pin_salt"]
+    );
+    assert_eq!(kid_lock["keyguard"], "own");
+    assert_eq!(kid_lock["pin_rev"], 1);
 
     // The parent switches safe-boot blocking off; changing the PIN later leaves it off.
     let res = app
