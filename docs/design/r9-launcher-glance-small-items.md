@@ -261,3 +261,24 @@ the same switches [unverified].
 - R9-11: §3 behaviour - `selectableItemBackgroundBorderless`, no new drawable.
 - R9-12: header - the published mockup linked, not committed.
 - R9-13: header - the Nødsamtale tie noted for design 59.
+
+## Implementation status (7ddc80a6, branch `r9-glance`, 2026-10-22)
+
+Built as above, with `qa-r9-revision-check.md`'s N1-N6 folded into §1-§4. Launcher 1511 tests and server 1134 green
+(`cargo fmt --check`, clippy's 13 known warnings). Deviations:
+
+- **`glanceFit` is one list of seven, twice with a timer** (`flatMap` over with/without): the candidates as §2 lists
+  them, no special cases; without a tile 4 and 5 are 2 and 3 again (the harmless duplicates).
+- **The elapsed width is set at each tick** (N6): `glanceTimeWidest(duration, position)` takes the position's shape
+  once it passes the duration's, so the tick sets the width too - through the same "only when the px differ" guard, so
+  it asks for a layout only when the shape grows. The time left's width and the `GONE` are set there as well (no-ops
+  unless they change).
+- **`HAPTIC_FEEDBACK_ENABLED` is deprecated since API 33** (warnings are errors in CI): read once through a
+  `@Suppress("DEPRECATION")` constant in `QuickControls`. Still the public key Android's Touch feedback writes.
+- **The touch row's log** names the state only ("Touch row: TouchRowState(sounds=true, vibration=true,
+  writable=false)"), as the sound row's does, so a read-only row can be told apart on a device.
+- **The alarm case at 473 dp** (`LockGlanceLayoutTest`): with an alarm under the date, music + 1 row now takes the
+  compact tile (the full one with the small clock is 462.6 dp > 457, and with one row "one visible" is every row).
+
+Not device-tested: §5's four checks (the emulator at `wm density 240`, both navigation modes, font scale 1.0-2.0,
+TalkBack; the touch row with and without the app-op).

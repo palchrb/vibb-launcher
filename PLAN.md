@@ -752,7 +752,11 @@ findings, merge to `main`, full suite once.
   wrap); one progress row "elapsed - bar - remaining" (`1:13 ━━━━── −1:50`, replacing (3)'s separate line); the
   controls as plain glyphs on one row without the big discs (each still a >= 48 dp target, play a little larger).
   Saves roughly a third of the tile's height, which also helps (1)-(2). No output/AirPlay button (the lock opens
-  nothing). Mockup first.
+  nothing). Mockup first. **Done 2026-10-22 (7ddc80a6, branch `r9-glance`; design r9 §1-3, not merged yet)**: (1) the
+  fit is keyed on the available height (the bars arrive as padding at the same height); (2) the bottom block is
+  measured whole, the top block clips, the rows scroll (glanceFit: every row or one visible, never folded; candidate 7
+  the "more" line; the timer now outlives the date); (3)+(4) the compact player (174.8 dp, was 233.8). Device checks:
+  the note's §5 checks 1-3.
 - **Music: what a heart means** (the user, 2026-10-21): the heart is per track/episode, but "Favoritter" only filters
   the carousel to entries holding a heart and a cover tap plays the whole entry - so in practice it marks the tile.
   Options put to the user: (A) the heart on the tile/entry instead of per track; (C) keep per-track hearts, and under
@@ -783,7 +787,10 @@ findings, merge to `main`, full suite once.
   say so, or open nothing. Our own
   keys (the PIN lock, the phone book) follow the system switches. A Quick controls bit like design 18's
   sound row (the parent decides whether the row shows); never on the PIN lock. Launcher + the server's
-  switch. Approved 2026-10-16; the user asked for it again 2026-10-21 ("tastelyd" on Kid Settings).
+  switch. Approved 2026-10-16; the user asked for it again 2026-10-21 ("tastelyd" on Kid Settings). **Done
+  2026-10-22 (7ddc80a6, branch `r9-glance`; design r9 §4, not merged yet)**: bit 16, off on a new phone (the parent
+  grants the app-op first), sounds + vibration only (`DTMF_TONE_WHEN_DIALING` left alone), read-only without the
+  app-op; Touch feedback stays on in Android's Settings (`docs/setup/android-settings.md`). Device check: §5 check 4.
 
 - **Notifications to the parent, phase 1: Web Push and an inbox in the PWA** (the user, 2026-10-16: "la oss
   begynne med web push", and "the PWA needs a clear place where we see notifications"):
