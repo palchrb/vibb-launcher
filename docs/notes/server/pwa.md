@@ -606,7 +606,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 - **Sub-pages of Settings** (the sub-page header: "‹ Settings" and the large title, `partials/tab_bar.html` alone):
   Web Filter (`/dns`), Blocked Activity (`/dns/log`), Wallpapers, Phone Setup (`/settings/provisioning`), Account &
-  Password (`/account`), Security Log (`/security`), Backups, Software Updates (`/updates`). No POST route changed.
+  Parents (`/account`; design 62 added its Name and Parents groups - `connectivity.md`, "Parent accounts"), Security Log (`/security`), Backups, Software Updates (`/updates`). No POST route changed.
 - **Notifications (design 45, server round 5)**: the hub's Notifications row leads to Notification Settings
   (`/notifications/settings`: This Device, Getting Notifications, Notify Me About), while the bell on the tab pages leads
   to the inbox (`/notifications`), which reads the rows it shows (`docs/notes/server/notifications.md`, step 2).
@@ -631,7 +631,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Testable without the working directory or the network**: `AppState::data_dir` (`data/`, a temp dir in tests)
   holds the backups, the schedules and the root helper's request file; `ForkConfig::github_api` is a closed local port
   in tests, so Software Updates renders at once.
-- **Confirms** (§5.6): Sign Out Everywhere…, Reset Two-Factor Login…, a photo's Delete Photo…, a backup's Restore… and
+- **Confirms** (§5.6): Sign Out Everywhere…, Reset Two-Factor Login…, a waiting parent's Withdraw…, a photo's Delete Photo…, a backup's Restore… and
   Delete…, Format…, Update Now…, Restart Server…, Install Updates…, Restart Pi…. Unban, a domain's Remove, Check for
   Updates and Update Tailscale stay one tap.
 - **Robust**: every page read is a 500 on a DB error, never an empty page (Web Filter, Blocked Activity, Phone Setup,
@@ -641,7 +641,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   stored; Sign Out Everywhere answers 500 and keeps this session when the epoch can't move.
 - **Three wrong passwords end the session** (design 59 step 2, qa-59-design Q59-11): every form that asks a signed-in
   parent for the password again - Account's password change, the first-sign-in change (`/auth/change-password`),
-  Reset Two-Factor Login and Lock Screen & PINs' Show Child PIN - counts through one helper (`admin_auth::reauth`,
+  Reset Two-Factor Login, Lock Screen & PINs' Show Child PIN, and Account's Add Parent and Withdraw (design 62) -
+  counts through one helper (`admin_auth::reauth`,
   or `record_reauth` after `PasswordGate::change`): the account's `admin_users.reauth_wrong` (migration 0086), one
   `UPDATE` per answer, reset by a right password and by a complete sign-in, shared by the four - never the session,
   whose copy each request loads and writes back (qa-59-step2-code S2P-1: parallel wrong passwords counted from the same

@@ -33,6 +33,7 @@ mod music_sweep;
 mod net;
 mod parent_events;
 mod parent_pin;
+mod parents;
 mod phone;
 mod photos;
 mod play;
@@ -1374,6 +1375,21 @@ pub fn build_admin_router(
         .route(
             "/account/dismiss-warning",
             post(handlers::auth::dismiss_login_warning),
+        )
+        // Design 62: your name, and the family's parents. The GETs serve Account, where a reload
+        // of their POST's answer lands (static/reveal.js turns it into a GET of the same path).
+        .route("/account/name", post(handlers::parents::set_name))
+        .route(
+            "/account/parents",
+            get(handlers::auth::account_page).post(handlers::parents::add),
+        )
+        .route(
+            "/account/parents/{id}/reset",
+            get(handlers::auth::account_page),
+        )
+        .route(
+            "/account/parents/{id}/remove",
+            post(handlers::parents::remove),
         )
         // A tapped notification's `?push=<delivery>` (server round 5 §1). Added before
         // `require_full_auth` so it runs inside it (a later layer runs earlier) and sees

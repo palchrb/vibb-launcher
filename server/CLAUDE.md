@@ -92,7 +92,7 @@ No prior programming experience - build features directly rather than explaining
 
 ## Tests
 
-`cargo test` runs in-process tests in `src/tests/` (and in CI): `build_admin_router` (split out of `main()` for this; `TestApp::device_router()` for the phone listener) is driven directly with `tower::ServiceExt::oneshot`, against a fresh migrated SQLite file in a temp dir per test - no network, no background tasks. `TestApp` (`src/tests/mod.rs`) has helpers to create and enroll a device and send JSON requests with or without a bearer token; handlers extracting `ConnectInfo` get a fixed loopback address. A test that documents a known bug is marked `#[ignore = "..."]` until the fix lands - run `cargo test -- --ignored` to see them fail. Admin handlers can be called directly with `TestApp::state` (skipping the session/2FA middleware), or through the real middleware: `TestApp::admin_cookie()` seeds an onboarded admin with a fixed TOTP secret, logs in via `/login` + `/auth/verify-2fa` (with a TOTP step not used yet - a code works once) and returns the session cookie for `request_form` (urlencoded POSTs) and `get_page`. Requests come from `LOOPBACK_PEER`; `send_via(router, peer, request)` sends from any peer to the admin router or `device_router()` (the phone listener), `with_env(&[...])` builds the app with other listener settings. `policy_json_keys_snapshot` is the contract with the launcher's `PolicyResponse` DTO - update both sides together.
+`cargo test` runs in-process tests in `src/tests/` (and in CI): `build_admin_router` (split out of `main()` for this; `TestApp::device_router()` for the phone listener) is driven directly with `tower::ServiceExt::oneshot`, against a fresh migrated SQLite file in a temp dir per test - no network, no background tasks. `TestApp` (`src/tests/mod.rs`) has helpers to create and enroll a device and send JSON requests with or without a bearer token; handlers extracting `ConnectInfo` get a fixed loopback address. A test that documents a known bug is marked `#[ignore = "..."]` until the fix lands - run `cargo test -- --ignored` to see them fail. Admin handlers can be called directly with `TestApp::state` (skipping the session/2FA middleware), or through the real middleware: `TestApp::admin_cookie()` seeds an onboarded admin with a fixed TOTP secret, logs in via `/login` + `/auth/verify-2fa` (with a TOTP step not used yet - a code works once) and returns the session cookie for `request_form` (urlencoded POSTs) and `get_page`; `admin_cookie_as(username, name)` does the same for another ready account of the family (design 62). Requests come from `LOOPBACK_PEER`; `send_via(router, peer, request)` sends from any peer to the admin router or `device_router()` (the phone listener), `with_env(&[...])` builds the app with other listener settings. `policy_json_keys_snapshot` is the contract with the launcher's `PolicyResponse` DTO - update both sides together.
 
 ## Non-obvious gotchas hit so far
 
@@ -173,21 +173,23 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_86_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
+(`migrations_73_to_87_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
 `0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
 out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both).
 `0080_phone_power.sql` (design 38, the two power switches) follows 0079, and
 `0081_music_art_more.sql` (2026-10-19, episode pictures ASAP: `music_listings.art_more`) follows 0080
-(`migrations_73_to_86_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
+(`migrations_73_to_87_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
 the listings with untried episode pictures, `push_subscriptions.last_opened_at`) follows 0081, and
 `0083_lock_glance_text_per_app.sql` (design 51: `device_lock_glance_apps.show_text`, backfilled from
 `device_policy.lock_glance_text`, which nothing reads after it) follows 0082, and
 `0084_lock_wake_on_notification.sql` (launcher round 7 §3: `device_policy.lock_wake_on_notification`, default 0)
 follows 0083, and `0085_kid_keyguard.sql` (design 59 step 1: `device_policy.kid_keyguard`, the sealed Child PIN and
 its rev) follows 0084, and `0086_reauth_wrong.sql` (design 59 step 2's fix round: `admin_users.reauth_wrong`, the
-re-auth forms' wrong passwords in a row) follows 0085 (`migrations_73_to_86_in_order`). The next free number is 0087.
+re-auth forms' wrong passwords in a row) follows 0085, and `0087_parent_accounts.sql` (design 62 step 1: `admin_users`'
+`display_name`/`invited_by`/`invite_expires_at`/`removed_at`, `device_commands.requested_by`) follows 0086
+(`migrations_73_to_87_in_order`). The next free number is 0088.
 
-- `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms)
+- `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts")
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
 - `device_policy` - one row per device: `lock_wake_on_notification` (launcher round 7 §3, 0084: Lock Screen & PINs' "Wake the screen for a notification", sent as `launcher_ui.lock_wake_on_notification`), allowlist JSON, `custom_schedule_enabled` (own time rules + `daily_budget_json` instead of the global ones), `location_mode`/`location_interval_minutes`, the frozen pre-step-6 schedule columns, `kiosk_desired` (always `1` now), `lock_task_features` (bitmask), `override_pin_hash`/`override_pin_salt`, `kid_pin_hash`/`kid_pin_salt`/`kid_pin_length` (step 10), `kid_keyguard`/`kid_pin_sealed`/`kid_pin_prev_sealed`/`kid_pin_prev_rev`/`kid_pin_rev` (design 59, 0085; `docs/notes/server/hardening-and-pins.md`, "Android's lock screen")
 - `global_schedule` - singleton (`id = 1`): the global `daily_budget_json` and the frozen pre-step-6 schedule; `time_rules` (device_id NULL = global) and `time_lifts` - see "Time rules" above

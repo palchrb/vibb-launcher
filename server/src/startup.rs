@@ -317,18 +317,21 @@ pub fn initial_admin_password(data_dir: &Path) -> Result<(String, PathBuf), Stri
     {
         return Ok((existing.trim().to_string(), path));
     }
-    new_password_file(data_dir)
+    new_password_file(data_dir, INITIAL_PASSWORD_FILE)
 }
 
-/// A fresh random password (24 letters and digits) in `data_dir/initial-admin-password` (0600),
-/// replacing any there: the first admin's, and `reset-2fa`'s (QA 22 M4).
-pub fn new_password_file(data_dir: &Path) -> Result<(String, PathBuf), String> {
-    use argon2::password_hash::rand_core::{OsRng, RngCore};
-    use std::os::unix::fs::OpenOptionsExt;
+/// `reset-2fa`'s file for account `id` (design 62 §2): `initial-admin-password-<id>`, so a reset
+/// of one parent never overwrites another's waiting password.
+pub fn reset_password_file(id: i64) -> String {
+    format!("{INITIAL_PASSWORD_FILE}-{id}")
+}
 
-    let path = data_dir.join(INITIAL_PASSWORD_FILE);
+/// A fresh random password: 24 of 57 letters and digits (about 140 bits; no I, O, l, 0, 1) -
+/// the first admin's, `reset-2fa`'s and Add Parent's one-time password (design 62 §4.1).
+pub fn new_password() -> String {
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
     const CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-    let password: String = (0..24)
+    (0..24)
         .map(|_| {
             let limit = u32::MAX - u32::MAX % CHARS.len() as u32;
             loop {
@@ -338,7 +341,16 @@ pub fn new_password_file(data_dir: &Path) -> Result<(String, PathBuf), String> {
                 }
             }
         })
-        .collect();
+        .collect()
+}
+
+/// A [new_password] in `data_dir/<name>` (0600), replacing any there: the first admin's
+/// ([INITIAL_PASSWORD_FILE]) and `reset-2fa`'s ([reset_password_file], QA 22 M4).
+pub fn new_password_file(data_dir: &Path, name: &str) -> Result<(String, PathBuf), String> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let path = data_dir.join(name);
+    let password = new_password();
     let _ = std::fs::remove_file(&path);
     let mut file = std::fs::OpenOptions::new()
         .write(true)

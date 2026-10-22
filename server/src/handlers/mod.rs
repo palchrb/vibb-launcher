@@ -17,6 +17,7 @@ pub mod music_import;
 pub mod music_spotify;
 pub mod notifications;
 pub mod parent_pin;
+pub mod parents;
 pub mod provisioning;
 pub mod schedules;
 pub mod settings;

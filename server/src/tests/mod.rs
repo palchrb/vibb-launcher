@@ -37,6 +37,7 @@ mod music_storytel;
 mod music_sweep;
 mod notifications;
 mod parent_pin;
+mod parents;
 mod play;
 mod power;
 mod provisioning;
@@ -363,15 +364,26 @@ impl TestApp {
     /// (`name=value`) for `request_form`/`get_page`, so admin routes run behind the real
     /// session/2FA middleware.
     pub async fn admin_cookie(&self) -> String {
-        const USERNAME: &str = "parent";
+        self.signed_in_as("parent", None).await
+    }
+
+    /// [Self::admin_cookie] for another ready account in the same family (design 62): `username`
+    /// with the display name `name`, the same password and TOTP secret as "parent".
+    pub async fn admin_cookie_as(&self, username: &str, name: &str) -> String {
+        self.signed_in_as(username, Some(name)).await
+    }
+
+    async fn signed_in_as(&self, username: &str, name: Option<&str>) -> String {
         const PASSWORD: &str = "correct horse battery staple";
         const TOTP_SECRET: &str = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
         sqlx::query(
             "INSERT OR IGNORE INTO admin_users \
-             (username, password_hash, must_change_password, totp_secret, totp_enabled) \
-             VALUES (?, ?, 0, ?, 1)",
+             (username, display_name, password_hash, must_change_password, totp_secret, \
+              totp_enabled) \
+             VALUES (?, ?, ?, 0, ?, 1)",
         )
-        .bind(USERNAME)
+        .bind(username)
+        .bind(name)
         .bind(security::hash_password(PASSWORD))
         .bind(TOTP_SECRET)
         .execute(&self.db)
@@ -383,7 +395,7 @@ impl TestApp {
                 Method::POST,
                 "/login",
                 None,
-                &[("username", USERNAME), ("password", PASSWORD)],
+                &[("username", username), ("password", PASSWORD)],
             )
             .await;
         assert_eq!(
@@ -394,7 +406,7 @@ impl TestApp {
         );
         let cookie = session_cookie(&login).expect("login set no session cookie");
 
-        let code = self.next_totp_code(USERNAME, TOTP_SECRET).await;
+        let code = self.next_totp_code(username, TOTP_SECRET).await;
         let verify = self
             .request_form(
                 Method::POST,

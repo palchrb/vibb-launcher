@@ -9,7 +9,7 @@
 {% import "partials/group_flash.html" as group_flash %}
 <main class="container container-narrow">
     <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
-    <h1 class="page-title">Account &amp; Password</h1>
+    <h1 class="page-title">Account &amp; Parents</h1>
 
     {% if let Some(warning) = live_warning %}
     <div class="attention attention-alarm" id="live-warning">
@@ -30,6 +30,22 @@
 
     {#- Each form renders its answer in the POST's response at its own group (a password never goes
         into a URL). -#}
+    <section id="name" aria-labelledby="name-title">
+        <h2 class="group-header" id="name-title">Name</h2>
+        <div class="group">
+            <form method="post" action="/account/name#name" class="cell form-group">
+                <div class="field">
+                    <label class="field-label" for="display_name">Your name</label>
+                    <input type="text" id="display_name" name="display_name" value="{{ name_value }}" placeholder="{{ username }}" maxlength="64" autocomplete="nickname"{% if let Some(why) = self.error_for("display_name") %} aria-invalid="true" aria-describedby="display_name-error" autofocus>
+                    <p class="field-error" id="display_name-error">{{ why }}</p>{% else %} aria-describedby="display_name-hint">
+                    <p class="field-hint" id="display_name-hint">What the other parents see, like "Mamma". Empty: {{ username }}.</p>{% endif %}
+                </div>
+                <button type="submit" class="button-wide">Save Name</button>
+            </form>
+            {% call group_flash::show(flash, "name") %}{% endcall %}
+        </div>
+    </section>
+
     <section id="password" aria-labelledby="password-title">
         <h2 class="group-header" id="password-title">Password</h2>
         <div class="group">
@@ -86,7 +102,7 @@
                 <div class="info-panel">
                     <p>On the server, run:</p>
                     <pre><code>kid_phone_server reset-2fa {{ username }}</code></pre>
-                    <p>It also replaces the password with a new one in data/initial-admin-password. DEPLOY.md, "Signing in and recovery", has the steps.</p>
+                    <p>It also replaces the password with a new one in data/initial-admin-password-{{ admin_id }}. DEPLOY.md, "Signing in and recovery", has the steps.</p>
                 </div>
             </details>
         </div>
@@ -105,6 +121,70 @@
         </div>
         <p class="group-footer">For a lost phone or computer that is still signed in.</p>
     </section>
+
+    <section id="parents" aria-labelledby="parents-title">
+        <h2 class="group-header" id="parents-title">Parents</h2>
+        <div class="group">
+            {%- if let Some(o) = otp %}
+            {#- Add Parent's answer (design 62 §3): the one-time password only in this POST's page,
+                never in an address or a file. static/reveal.js makes a reload a plain GET and
+                removes it when the page is left; without JS the CSS hides it after 5 minutes. -#}
+            <div class="cell" id="parent-otp" data-reveal>
+                <div class="edit-body" role="status">
+                    <p class="field-label">One-time password for {{ o.name }} &middot; sign in as {{ o.username }}</p>
+                    <p class="secret-once" translate="no">{% for chunk in o.chunks %}<span>{{ chunk }}</span>{% endfor %}</p>
+                    <button type="button" class="button-small button-secondary copy-secret" data-copy-secret hidden>Copy</button>
+                    <p class="field-hint pin-line">Copy it before you leave this page - it's shown only once. It works until {{ o.until }}; {{ o.name }} sets a new password and two-factor login at the first sign-in.</p>
+                </div>
+            </div>
+            {%- endif %}
+            {% for p in parents %}
+            <div class="row" data-parent="{{ p.username }}">
+                <span class="row-label">{{ p.name }}<span class="row-sub">{{ p.sub }}</span></span>
+            </div>
+            {%- if p.waiting %}
+            <details class="confirm cell" id="withdraw-{{ p.id }}"{% if self.withdraw_error(p.id).is_some() %} open{% endif %}>
+                <summary class="row">Withdraw&hellip;</summary>
+                <form method="post" action="/account/parents/{{ p.id }}/remove#parents" class="confirm-body">
+                    <p>Withdraw {{ p.name }}'s invitation? The one-time password stops working at once. The username {{ p.username }} stays taken.</p>
+                    <input type="text" autocomplete="username" value="{{ username }}" hidden>
+                    <label class="field-label" for="withdraw_password_{{ p.id }}">Your password</label>
+                    <input type="password" id="withdraw_password_{{ p.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.withdraw_error(p.id) %} aria-invalid="true" aria-describedby="withdraw-error-{{ p.id }}" autofocus>
+                    <p class="field-error" id="withdraw-error-{{ p.id }}">{{ why }}</p>{% else %}>{% endif %}
+                    <button type="submit" class="button-destructive">Withdraw Invitation</button>
+                </form>
+            </details>
+            {%- endif %}
+            {% endfor %}
+            <details class="edit cell" id="add-parent"{% if add_open %} open{% endif %}>
+                <summary class="row">
+                    <span class="row-label">Add Parent&hellip;</span>
+                    <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </summary>
+                <form method="post" action="/account/parents#parents" class="edit-body">
+                    <label class="field-label" for="new_username">Their username</label>
+                    <input type="text" id="new_username" name="new_username" value="{{ add_typed.0 }}" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="64" required{% if let Some(why) = self.error_for("new_username") %} aria-invalid="true" aria-describedby="new_username-error" autofocus>
+                    <p class="field-error" id="new_username-error">{{ why }}</p>{% else %} aria-describedby="new_username-hint">
+                    <p class="field-hint" id="new_username-hint">For signing in, like "pappa": lowercase letters, digits, . _ or -.</p>{% endif %}
+                    <label class="field-label" for="parent_name">Their name</label>
+                    <input type="text" id="parent_name" name="name" value="{{ add_typed.1 }}" autocomplete="off" maxlength="64"{% if let Some(why) = self.error_for("parent_name") %} aria-invalid="true" aria-describedby="parent_name-error" autofocus>
+                    <p class="field-error" id="parent_name-error">{{ why }}</p>{% else %} aria-describedby="parent_name-hint">
+                    <p class="field-hint" id="parent_name-hint">What you all see, like "Pappa". They can change it.</p>{% endif %}
+                    {#- Your own username for the password manager, so it never pairs the new one with your
+                        password (qa-62-design Q62-10); it isn't sent. -#}
+                    <input type="text" autocomplete="username" value="{{ username }}" hidden>
+                    <label class="field-label" for="add_password">Your password</label>
+                    <input type="password" id="add_password" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.error_for("add_password") %} aria-invalid="true" aria-describedby="add_password-error" autofocus>
+                    <p class="field-error" id="add_password-error">{{ why }}</p>{% else %} aria-describedby="add_password-hint">
+                    <p class="field-hint" id="add_password-hint">The one you sign in here with. You get a one-time password to give them; three wrong passwords sign you out.</p>{% endif %}
+                    <button type="submit" class="button-wide">Add Parent</button>
+                </form>
+            </details>
+            {% call group_flash::show(flash, "parents") %}{% endcall %}
+        </div>
+        <p class="group-footer">Every parent signs in with their own password and two-factor login, and manages every phone. Up to 8.</p>
+    </section>
 </main>
+{% if otp.is_some() %}<script src="/static/reveal.js?v=3"></script>{% endif %}
 </body>
 </html>

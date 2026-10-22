@@ -71,6 +71,12 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "totp_reset_refused" => "Two-factor reset refused",
         "password_changed" => "Password changed",
         "signed_out_everywhere" => "Signed out everywhere",
+        "login_expired" => "Sign-in after the invitation expired",
+        "parent_added" => "Parent added",
+        "parent_removed" => "Parent removed",
+        "parent_restored" => "Parent restored on the server",
+        "parent_change_refused" => "Parent change refused: wrong password",
+        "display_name_changed" => "Name changed",
         "ip_banned" => "Address blocked",
         "admin_refused" => "Request from outside refused",
         "csrf_refused" => "Request from another site refused",
@@ -328,7 +334,7 @@ mod tests {
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes,
     /// root-helper actions and command names.
-    const NOT_EVENTS: [&str; 38] = [
+    const NOT_EVENTS: [&str; 39] = [
         // Design 59: the Child PIN group's notices and the reveal's form action.
         "keyguard_no_pin",
         "pin_not_kept",
@@ -349,6 +355,8 @@ mod tests {
         "music_note",
         "new_kid_pin",
         "new_pin",
+        // Add Parent's refused field (design 62).
+        "new_username",
         // Install Now's answers next to its queue (design 37: `?install=<word>`).
         "no_release",
         "not_set_up",

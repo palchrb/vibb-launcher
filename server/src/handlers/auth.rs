@@ -17,6 +17,10 @@ const MAX_LOGGED_USERNAME: usize = 64;
 const BANNED_MESSAGE: &str =
     "Too many failed attempts from your network. Try again in about an hour.";
 
+/// A right password past the one-time password's 72 hours (design 62 §4.1; it names no one, and
+/// fits an invitee who already set their own password - qa-62-revision-check N5).
+pub(crate) const INVITE_EXPIRED: &str = "This invitation has expired - ask for a new one.";
+
 #[derive(Template)]
 #[template(path = "login.html")]
 struct LoginTemplate {
@@ -82,12 +86,15 @@ pub async fn login(
             .into_response();
     }
 
-    let admin = sqlx::query_as::<_, AdminUser>("SELECT * FROM admin_users WHERE username = ?")
-        .bind(&form.username)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
+    // A removed account reads as an unknown name: the dummy hash, the same message (design 62 §8).
+    let admin = sqlx::query_as::<_, AdminUser>(
+        "SELECT * FROM admin_users WHERE username = ? AND removed_at IS NULL",
+    )
+    .bind(&form.username)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
 
     // The attempt is recorded before argon2 runs and taken back only when the password is right:
     // a client that hangs up mid-verify still counts toward the ban (QA 22 M1).
@@ -131,6 +138,18 @@ pub async fn login(
     };
 
     take_back().await;
+    // Only someone who knows the password learns that it ran out (design 62 §4.1).
+    if admin_auth::invite_expired(&state.db, admin.id).await {
+        security::record_security_event(
+            &state.db,
+            "login_expired",
+            Some(&admin.username),
+            Some(&ip),
+            Some("correct password after the one-time password's 72 hours"),
+        )
+        .await;
+        return render_login(Some(INVITE_EXPIRED.to_string())).into_response();
+    }
     if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
         security::record_security_event(
             &state.db,
@@ -161,12 +180,13 @@ pub async fn login(
         // Not yet enrolled in 2FA - password alone is the full login so this
         // IS the success event; require_full_auth routes them through
         // mandatory setup next.
+        // The waiting row on Account shows this sign-in (design 62 §3, §8).
         security::record_security_event(
             &state.db,
             "login_success",
             Some(&admin.username),
             Some(&ip),
-            None,
+            admin.must_change_password.then_some("one-time password"),
         )
         .await;
         session.insert("admin_id", admin.id).await.ok();
@@ -252,12 +272,14 @@ pub async fn verify_2fa(
         return render_login(Some(PENDING_EXPIRED.to_string())).into_response();
     };
 
-    let admin = sqlx::query_as::<_, AdminUser>("SELECT * FROM admin_users WHERE id = ?")
-        .bind(admin_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
+    let admin = sqlx::query_as::<_, AdminUser>(
+        "SELECT * FROM admin_users WHERE id = ? AND removed_at IS NULL",
+    )
+    .bind(admin_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
 
     let Some(admin) = admin else {
         session.flush().await.ok();
@@ -440,27 +462,44 @@ pub async fn change_password(
     };
 
     // The new hash and the session epoch in one statement (qa-31-s14-code L2): every other session
-    // is signed out exactly when the change is stored; a failure changes nothing and says so.
-    let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
-        "UPDATE admin_users SET password_hash = ?, must_change_password = 0, \
-         session_epoch = session_epoch + 1 WHERE id = ? RETURNING session_epoch",
+    // is signed out exactly when the change is stored; a failure changes nothing and says so. It
+    // writes only onto the hash it verified, for this session's epoch (design 62 §2).
+    let epoch = admin_auth::change_first_password(
+        &state.db,
+        admin.id,
+        admin.session_epoch,
+        &admin.password_hash,
+        &new_hash,
     )
-    .bind(&new_hash)
-    .bind(admin.id)
-    .fetch_optional(&state.db)
     .await;
-    let Ok(Some(epoch)) = epoch else {
-        tracing::error!(?epoch, "couldn't save the first password");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't save the new password - nothing was changed. Check the server log.",
-        )
-            .into_response();
+    let epoch = match epoch {
+        Ok(Some(epoch)) => epoch,
+        Ok(None) => {
+            session.flush().await.ok();
+            return admin_auth::signed_out_response();
+        }
+        Err(err) => {
+            tracing::error!(%err, "couldn't save the first password");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't save the new password - nothing was changed. Check the server log.",
+            )
+                .into_response();
+        }
     };
     session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
-    // A generated first password (design 22 §6) is spent now.
-    let _ =
-        tokio::fs::remove_file(state.data_dir.join(crate::startup::INITIAL_PASSWORD_FILE)).await;
+    // A generated password is spent now: reset-2fa's for this account, and the first account's
+    // (design 22 §6) - an invited one never had a file (design 62 §2).
+    let _ = tokio::fs::remove_file(
+        state
+            .data_dir
+            .join(crate::startup::reset_password_file(admin.id)),
+    )
+    .await;
+    if admin.invited_by.is_none() {
+        let _ = tokio::fs::remove_file(state.data_dir.join(crate::startup::INITIAL_PASSWORD_FILE))
+            .await;
+    }
     security::record_security_event(
         &state.db,
         "password_changed",
@@ -495,25 +534,41 @@ impl Setup2faTemplate {
     }
 }
 
+/// The 2FA setup's QR. A new secret is written only onto an account without one, for this
+/// session's epoch and not removed (design 62 §2, qa-62-revision-check N6): two tabs of one
+/// onboarding show the same secret, and a request held past a Reset or a removal writes nothing.
 pub async fn setup_2fa_form(
     State(state): State<AppState>,
+    session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     if admin.totp_enabled {
         return Redirect::to("/").into_response();
     }
+    // The password first (design 62 §4.1, qa-62-step12-code P62-1): an account still on its
+    // one-time password can't set up 2FA past it.
+    if admin.must_change_password {
+        return Redirect::to("/auth/change-password").into_response();
+    }
 
-    let secret = match admin.totp_secret.clone() {
-        Some(s) => s,
-        None => {
-            let s = security::generate_totp_secret_base32();
-            sqlx::query("UPDATE admin_users SET totp_secret = ? WHERE id = ?")
-                .bind(&s)
-                .bind(admin.id)
-                .execute(&state.db)
-                .await
-                .ok();
-            s
+    let stored: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
+        "UPDATE admin_users SET totp_secret = COALESCE(totp_secret, ?) \
+         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL RETURNING totp_secret",
+    )
+    .bind(security::generate_totp_secret_base32())
+    .bind(admin.id)
+    .bind(admin.session_epoch)
+    .fetch_optional(&state.db)
+    .await;
+    let secret = match stored {
+        Ok(Some(secret)) => secret,
+        Ok(None) => {
+            session.flush().await.ok();
+            return admin_auth::signed_out_response();
+        }
+        Err(err) => {
+            tracing::error!(%err, "couldn't store the 2FA secret");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
 
@@ -538,11 +593,18 @@ pub struct Setup2faForm {
     code: String,
 }
 
+/// Turns two-factor login on with a right code. The write is for this session's epoch and an
+/// account not removed (design 62 §2), and it ends a one-time password's expiry once the account
+/// is ready (§4.1, qa-62-design Q62-8; the password change comes first - P62-1).
 pub async fn setup_2fa_verify(
     State(state): State<AppState>,
+    session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<Setup2faForm>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    if admin.must_change_password {
+        return Redirect::to("/auth/change-password").into_response();
+    }
     let Some(secret) = admin.totp_secret.clone() else {
         return Redirect::to("/auth/setup-2fa").into_response();
     };
@@ -576,13 +638,26 @@ pub async fn setup_2fa_verify(
         .into_response();
     }
 
-    sqlx::query("UPDATE admin_users SET totp_enabled = 1 WHERE id = ?")
-        .bind(admin.id)
-        .execute(&state.db)
-        .await
-        .ok();
-
-    Redirect::to("/").into_response()
+    let enabled = sqlx::query(
+        "UPDATE admin_users SET totp_enabled = 1, \
+         invite_expires_at = CASE WHEN must_change_password = 0 THEN NULL ELSE invite_expires_at END \
+         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL",
+    )
+    .bind(admin.id)
+    .bind(admin.session_epoch)
+    .execute(&state.db)
+    .await;
+    match enabled {
+        Ok(done) if done.rows_affected() == 1 => Redirect::to("/").into_response(),
+        Ok(_) => {
+            session.flush().await.ok();
+            admin_auth::signed_out_response()
+        }
+        Err(err) => {
+            tracing::error!(%err, "couldn't turn two-factor login on");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 /// Voluntary account settings, reachable any time from Settings (unlike
@@ -597,9 +672,10 @@ pub async fn setup_2fa_verify(
 #[template(path = "account.html")]
 struct AccountTemplate {
     title: String,
+    admin_id: i64,
     username: String,
     totp_enabled: bool,
-    /// The password form's result: done (green) or why it was refused.
+    /// A form's result in its group (`Flash::at`): done (green) or why it was refused.
     flash: Option<crate::handlers::settings::Flash>,
     /// The field a refused password change names ("current_password", ...).
     password_field: &'static str,
@@ -607,17 +683,58 @@ struct AccountTemplate {
     reset_error: Option<&'static str>,
     login_warning: Option<String>,
     live_warning: Option<String>,
+    /// The Name field: the stored display name, or what a refused save sent.
+    name_value: String,
+    parents: Vec<crate::parents::ParentRow>,
+    /// The field a refused Name, Add Parent or Withdraw names, and why.
+    field_error: Option<(String, String)>,
+    add_open: bool,
+    /// What a refused Add Parent sent: (username, name).
+    add_typed: (String, String),
+    otp: Option<OtpShown>,
+}
+
+impl AccountTemplate {
+    fn error_for(&self, field: &str) -> Option<&str> {
+        self.field_error
+            .as_ref()
+            .filter(|(f, _)| f == field)
+            .map(|(_, why)| why.as_str())
+    }
+
+    fn withdraw_error(&self, id: &i64) -> Option<&str> {
+        self.error_for(&withdraw_field(*id))
+    }
+}
+
+/// The field name of a row's Withdraw password, for [AccountAnswer::field_error].
+pub(crate) fn withdraw_field(id: i64) -> String {
+    format!("withdraw-{id}")
+}
+
+/// Add Parent's answer (design 62 §3): the one-time password, in blocks of 4 for reading (the
+/// blocks are spans, so a copy has no spaces), and its end.
+pub(crate) struct OtpShown {
+    pub name: String,
+    pub username: String,
+    pub chunks: Vec<String>,
+    pub until: String,
 }
 
 /// What a form on Account sent back, besides the page.
 #[derive(Default)]
-struct AccountAnswer {
-    flash: Option<crate::handlers::settings::Flash>,
-    password_field: &'static str,
-    reset_error: Option<&'static str>,
+pub(crate) struct AccountAnswer {
+    pub flash: Option<crate::handlers::settings::Flash>,
+    pub password_field: &'static str,
+    pub reset_error: Option<&'static str>,
+    pub name_typed: Option<String>,
+    pub field_error: Option<(String, String)>,
+    pub add_open: bool,
+    pub add_typed: (String, String),
+    pub otp: Option<OtpShown>,
 }
 
-async fn render_account(
+pub(crate) async fn render_account(
     state: &AppState,
     session: &Session,
     admin: &AdminUser,
@@ -625,15 +742,32 @@ async fn render_account(
     answer: AccountAnswer,
 ) -> axum::response::Response {
     let zone = crate::display_time::Zone::load(&state.db).await;
+    let now = chrono::Utc::now();
+    let parents = match crate::parents::rows(&state.db, admin, &zone, now).await {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(%err, "couldn't read the parent accounts");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     let page = AccountTemplate {
-        title: "Account & Password".to_string(),
+        title: "Account & Parents".to_string(),
+        admin_id: admin.id,
         username: admin.username.clone(),
         totp_enabled: admin.totp_enabled,
         flash: answer.flash,
         password_field: answer.password_field,
         reset_error: answer.reset_error,
         login_warning: login_warning_of(session).await,
-        live_warning: live_warning(admin, &zone, chrono::Utc::now()),
+        live_warning: live_warning(admin, &zone, now),
+        name_value: answer
+            .name_typed
+            .unwrap_or_else(|| admin.display_name.clone().unwrap_or_default()),
+        parents,
+        field_error: answer.field_error,
+        add_open: answer.add_open,
+        add_typed: answer.add_typed,
+        otp: answer.otp,
     };
     (status, Html(page.render().unwrap())).into_response()
 }
@@ -648,20 +782,34 @@ pub async fn login_warning_of(session: &Session) -> Option<String> {
 }
 
 /// The page; `?changed=password` (after a change, post/redirect/get - qa-31-s14-code M1) shows
-/// the result in the Password group.
+/// the result in the Password group, `?changed=name` in Name, `?parents=removed|gone` in Parents.
+/// Also `GET /account/parents` and `/account/parents/{id}/reset`, where a reload of their POST's
+/// answer lands (design 62 §3, `static/reveal.js`).
 pub async fn account_page(
     State(state): State<AppState>,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    use crate::handlers::settings::Flash;
+    let flash = match (
+        query.get("changed").map(String::as_str),
+        query.get("parents").map(String::as_str),
+    ) {
+        (Some("password"), _) => Some(Flash::done(
+            "password",
+            "Password changed. Every other browser and phone is signed out.",
+        )),
+        (Some("name"), _) => Some(Flash::done("name", "Name saved.")),
+        (_, Some("removed")) => Some(Flash::done(
+            "parents",
+            "Done - that account can't sign in any more.",
+        )),
+        (_, Some("gone")) => Some(Flash::done("parents", "That account was already removed.")),
+        _ => None,
+    };
     let answer = AccountAnswer {
-        flash: (query.get("changed").map(String::as_str) == Some("password")).then(|| {
-            crate::handlers::settings::Flash::done(
-                "password",
-                "Password changed. Every other browser and phone is signed out.",
-            )
-        }),
+        flash,
         ..AccountAnswer::default()
     };
     render_account(&state, &session, &admin, StatusCode::OK, answer).await
@@ -688,7 +836,7 @@ pub async fn update_account_password(
     let refuse = |field: &'static str, why: &'static str| AccountAnswer {
         flash: Some(Flash::refused("password", why)),
         password_field: field,
-        reset_error: None,
+        ..AccountAnswer::default()
     };
     let refused = if form.new_password.len() < security::MIN_PASSWORD_LEN {
         Some(refuse(
@@ -741,13 +889,20 @@ pub async fn update_account_password(
     // the parent can sign in elsewhere again.
     let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE admin_users SET password_hash = ?, failed_login_attempts = 0, lock_count = 0, \
-         locked_until = NULL, session_epoch = session_epoch + 1 WHERE id = ? \
-         RETURNING session_epoch",
+         locked_until = NULL, session_epoch = session_epoch + 1 \
+         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL RETURNING session_epoch",
     )
     .bind(&new_hash)
     .bind(admin.id)
+    .bind(admin.session_epoch)
     .fetch_optional(&state.db)
     .await;
+    // No row: a Reset, a removal or another session's change came first (design 62 §2) - this
+    // request can't undo it.
+    if let Ok(None) = epoch {
+        session.flush().await.ok();
+        return admin_auth::signed_out_response();
+    }
     let Ok(Some(epoch)) = epoch else {
         tracing::error!(?epoch, "couldn't save the new password");
         return (
@@ -831,11 +986,17 @@ pub async fn reset_totp(
     }
     let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
-         session_epoch = session_epoch + 1 WHERE id = ? RETURNING session_epoch",
+         session_epoch = session_epoch + 1 \
+         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL RETURNING session_epoch",
     )
     .bind(admin.id)
+    .bind(admin.session_epoch)
     .fetch_optional(&state.db)
     .await;
+    if let Ok(None) = epoch {
+        session.flush().await.ok();
+        return admin_auth::signed_out_response();
+    }
     let Ok(Some(epoch)) = epoch else {
         tracing::error!(?epoch, "couldn't reset two-factor login");
         return (

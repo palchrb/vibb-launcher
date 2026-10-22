@@ -773,7 +773,9 @@ findings, merge to `main`, full suite once.
   keep the grey top. Server only, small; next server round.
 - **Several parent accounts (the user, 2026-10-22: "enkelt opprette multi-admins, mor og far, med egen konto"):** build
   design 62 (`docs/design/62-parent-accounts-assessment.md`) in its simple form. Multi-family (design 63) is parked:
-  "vi dropper mer tanker om multifamilie".
+  "vi dropper mer tanker om multifamilie". Steps 1-2 (the latent bugs, 0087, the guarded self-service writes; Name,
+  Parents, Add with the one-time password, Withdraw) built on `design-62-step12`, awaiting code QA; steps 3-5 next,
+  all five in one `server-v*`.
 - Settings saves in the security log (design 62's old step 6, qa-62-design Q62-13): one admin middleware writing a coalesced `settings_saved` event (actor, matched route + ids, merged per page within 10 min) - first decide what counts as saved (a 200 can be a refusal) and keep `/music` in; S.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in

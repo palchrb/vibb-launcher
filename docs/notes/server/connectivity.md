@@ -78,7 +78,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   /account/sign-out-everywhere` (all) bump it (`load_active_admin` compares); cookie `__Host-handy` (Secure, Path=/,
   HttpOnly, Strict) or `handy` with `INSECURE_COOKIES` (`security::session_layer`); `SESSION_INACTIVITY_DAYS`
   (`NetConfig`, default 30). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
-  bumps the epoch and replaces the password with a new one in `data/initial-admin-password` (QA 22 M4). `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
+  bumps the epoch and replaces the password with a new one in `data/initial-admin-password-<id>` (QA 22 M4; one file per
+  account since design 62, which also restores a removed account and clears a one-time password's expiry). `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
   CSP phase 1 (`ADMIN_CSP`, inline JS still allowed until S7); HTML `private, no-cache`, `no_store_path` (locations
   JSON, backups, provision, the code page, provisioning settings, account, auth; since design 35 the inbox) `no-store`. `csrf_guard` (unsafe
   methods, not `/api/devices/`, not `/notifications/receipt` - the push receipt's token is its proof): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
@@ -96,7 +97,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `<db dir>/backups/pre-migrate-<from>-<to>.db` (`VACUUM INTO`, 3 kept, a failure stops the start) when migrations
   are pending on an existing DB (`MIGRATOR` static); `bootstrap_admin` takes `ADMIN_PASSWORD`, else
   `ADMIN_PASSWORD_FILE`, else generates `data/initial-admin-password` (0600; the log names the file; deleted by the
-  forced password change). Logging defaults to `info` without `RUST_LOG` (tracing-subscriber's own default was
+  first account's forced password change); `ADMIN_USERNAME` (only read while `admin_users` is empty) is trimmed and must
+  be `security::valid_username`, else the start stops with the reason (design 62 §2). Logging defaults to `info` without `RUST_LOG` (tracing-subscriber's own default was
   errors only, so the startup lines never reached the journal). Subcommands (`main::run_command`): `healthcheck`
   (`/healthz` on `BIND_ADDR`, 0.0.0.0 -> 127.0.0.1, :: -> ::1, 3 s), `selftest-tls` (api.github.com through
   reqwest/rustls, any status passes), `reset-2fa <user>`. In docker: the root-helper routes (`/update/*`,
@@ -127,3 +129,47 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   sets no cookie and answers every route it reads from `device_routes.rs`; `ADMIN_DEVICE_API=off`; the gate matrix
   and its throttled event; `/healthz` past every guard; shutdown ends streams on both listeners), `net::tests`,
   `gate::tests`, `streams::tests`.
+
+## Parent accounts (design 62 steps 1-2, `docs/design/62-parent-accounts.md`)
+
+- **Several equal accounts in one family** (migration `0087_parent_accounts.sql`): `admin_users.display_name` (NULL
+  reads as the username, `AdminUser::name`), `invited_by`, `invite_expires_at` (a one-time password's onboarding ends
+  then; written in SQL, `datetime('now', '+72 hours')`), `removed_at` (a soft remove: the row and its username stay,
+  `password_hash = '!removed'`, no 2FA). **Ready** = not removed, own password set, 2FA on (`AdminUser::ready`).
+- **Usernames** `security::valid_username` (`[a-z0-9._-]{1,32}`): Add lowercases and trims; `ADMIN_USERNAME` is only
+  trimmed (sign-in is an exact match) and refused at the first start when invalid (`bootstrap_username`); existing
+  installs are untouched. Add refuses a name whose `lower(username)` is taken, removed ones included. **Display
+  names** `security::display_name`: trimmed, 1-32 characters, no control, line-break or Unicode format (Cf)
+  character, so a "by" line can't be spoofed. The TOTP label replaces `:` with `_` (it panicked the setup before).
+- **Sessions:** `load_active_admin` reads only rows with `removed_at IS NULL` and an unexpired `invite_expires_at`;
+  `login` and `verify_2fa` read `removed_at IS NULL` (a removed name takes the dummy hash, the same message). A right
+  password past the expiry says "This invitation has expired - ask for a new one." (`login_expired`); a password-only
+  sign-in of an account that must change its password logs `login_success` with "one-time password".
+- **The five self-service writes** (the forced change, `update_account_password`, `reset_totp`, `setup_2fa_form`,
+  `setup_2fa_verify`) carry `AND session_epoch = ? AND removed_at IS NULL`; no row = signed out. The forced change
+  (`admin_auth::change_first_password`) also compares the hash it verified, so of two sessions on one one-time
+  password the first wins; `setup_2fa_form` writes a secret only onto an account without one (`COALESCE`). The
+  2FA setup (GET and POST) sends an account that must still change its password to `/auth/change-password` first,
+  and `invite_expires_at` is cleared only by the write that makes the account ready (`setup_2fa_verify` when the
+  password is changed, `change_first_password` when 2FA is on; qa-62-step12-code P62-1). A request held past a
+  Reset or a removal writes nothing.
+- **Files:** `reset-2fa <user>` writes `data/initial-admin-password-<id>`, clears `invite_expires_at` and restores a
+  removed account (`parent_restored`) - also past Add's cap of 8, which its line then says (P62-3: the shell must stay
+  the way back); the forced change deletes its own `-<id>` file, and `initial-admin-password` only for the first
+  account (`invited_by IS NULL`).
+- **Account's Name and Parents groups** (`handlers::parents`, the statements in `src/parents.rs`): your display name
+  (`POST /account/name`, PRG `#name`, `display_name_changed`); the Parents rows (every account not removed: "You",
+  "Signed in 14:02 · from …", "Waiting · until Sun 20:51" plus the one-time password's sign-in, "One-time password
+  expired", "Waiting for sign-in"); **Add Parent…** (`POST /account/parents`: `new_username` with
+  `autocomplete="off"`, the name, a hidden own-username field and your password; the one-time password's hash comes
+  from the same gated `PasswordGate::change` job as the password check, then `record_reauth`; a wrong one logs
+  `parent_change_refused` "add"; the `INSERT` carries the actor condition, the cap of 8 and the taken check); the
+  answer is the page itself (no-store, `data-post-answer`) with the password in `.secret-once` blocks, a Copy button
+  and `static/reveal.js` (a reload is a GET of `/account/parents`, it is removed when the page is left, the CSS hides
+  it after 5 minutes and reveal.js removes it then too, so Copy ends with it - P62-4); `parent_added` "pappa (Pappa)". **Withdraw…** on a not-ready row is the soft Remove
+  (`POST /account/parents/{id}/remove`, `admin_auth::reauth`, the guarded `UPDATE` + its push subscriptions in one
+  `BEGIN IMMEDIATE` transaction, `parent_removed`, PRG `/account?parents=removed#parents`); the only ready account
+  can't remove itself. `GET /account/parents/{id}/reset` serves Account for step 3's Reset answer. Every refusal
+  renders Account (400) with its form open and the reason under the field, at `#parents`.
+- Tests: `src/tests/parents.rs`, `admin_auth::reset_2fa_from_the_command_line_clears_the_lock_and_the_totp`,
+  `jstest/reveal.test.js`.

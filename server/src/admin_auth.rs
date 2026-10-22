@@ -401,6 +401,49 @@ pub async fn login_warning(db: &sqlx::SqlitePool, username: &str, failures: i64)
     ))
 }
 
+/// The forced first password change's write (design 62 §2, qa-62-design Q62-2): the new hash and
+/// the next epoch, only while the session's epoch is still the account's, the account isn't
+/// removed and its hash is still the one the request verified (a compare-and-swap: of two sessions
+/// on one one-time password the first wins). It ends a one-time password's expiry only when 2FA
+/// is already on (the account is ready then; qa-62-step12-code P62-1). `None`: nothing written -
+/// sign this session out.
+pub async fn change_first_password(
+    db: &sqlx::SqlitePool,
+    admin_id: i64,
+    epoch: i64,
+    verified_hash: &str,
+    new_hash: &str,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "UPDATE admin_users SET password_hash = ?, must_change_password = 0, \
+         invite_expires_at = CASE WHEN totp_enabled = 1 THEN NULL ELSE invite_expires_at END, \
+         session_epoch = session_epoch + 1 \
+         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL AND password_hash = ? \
+         RETURNING session_epoch",
+    )
+    .bind(new_hash)
+    .bind(admin_id)
+    .bind(epoch)
+    .bind(verified_hash)
+    .fetch_optional(db)
+    .await
+}
+
+/// Whether the account's one-time password ran out (`invite_expires_at` passed; design 62
+/// §4.1), compared in SQL against `datetime('now')`.
+pub async fn invite_expired(db: &sqlx::SqlitePool, admin_id: i64) -> bool {
+    sqlx::query_scalar::<_, Option<bool>>(
+        "SELECT invite_expires_at <= datetime('now') FROM admin_users WHERE id = ?",
+    )
+    .bind(admin_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+    .unwrap_or(false)
+}
+
 /// Bumps the account's session epoch: every session that stored the old one is signed out at its
 /// next request. Returns the new epoch (for the session that made the change), `None` on error.
 pub async fn bump_epoch(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i64> {
@@ -418,61 +461,85 @@ pub async fn bump_epoch(db: &sqlx::SqlitePool, admin_id: i64) -> Option<i64> {
 /// `kid_phone_server reset-2fa <user>` (§3.2.3): clears the TOTP (the next sign-in sets it up
 /// again), the lock and its counter, signs out every session, removes every device's
 /// notifications (design 35 §7) - and replaces the password with a
-/// new one in `data_dir/initial-admin-password` (0600, to be changed at the next sign-in). The CLI
+/// new one in `data_dir/initial-admin-password-<id>` (0600, to be changed at the next sign-in;
+/// one file per account, design 62 §2). The CLI
 /// exists for someone who knows the password keeping the account locked; keeping the password
 /// would hand the account to whoever signs in first and sets up an authenticator (QA 22 M4).
+/// It also clears a one-time password's expiry, and restores a removed account (logged
+/// `parent_restored`): the shell is the way back for a parent the other one removed.
 /// Returns a line for the terminal.
 pub async fn reset_2fa(
     db: &sqlx::SqlitePool,
     username: &str,
     data_dir: &std::path::Path,
 ) -> Result<String, String> {
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM admin_users WHERE username = ?)")
+    let account: Option<(i64, bool)> =
+        sqlx::query_as("SELECT id, removed_at IS NOT NULL FROM admin_users WHERE username = ?")
             .bind(username)
-            .fetch_one(db)
+            .fetch_optional(db)
             .await
             .map_err(|err| format!("couldn't read the account: {err}"))?;
-    if !exists {
+    let Some((id, removed)) = account else {
         return Err(format!("there is no admin named {username:?}"));
-    }
-    let (password, path) = crate::startup::new_password_file(data_dir)?;
+    };
+    let (password, path) =
+        crate::startup::new_password_file(data_dir, &crate::startup::reset_password_file(id))?;
     let hash = crate::security::hash_password(&password);
+    // The shell is the root of trust (design 62 §2): a removed parent comes back with its
+    // username, and no one-time password's expiry stays on the account.
     sqlx::query(
         "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
          failed_login_attempts = 0, locked_until = NULL, lock_count = 0, \
-         password_hash = ?, must_change_password = 1, \
-         session_epoch = session_epoch + 1 WHERE username = ?",
+         password_hash = ?, must_change_password = 1, invite_expires_at = NULL, \
+         removed_at = NULL, session_epoch = session_epoch + 1 WHERE id = ?",
     )
     .bind(&hash)
-    .bind(username)
+    .bind(id)
     .execute(db)
     .await
     .map_err(|err| format!("couldn't reset: {err}"))?;
     // A lost authenticator may be a lost device: it stops getting notifications (design 35 §7).
-    sqlx::query(
-        "DELETE FROM push_subscriptions \
-         WHERE admin_id = (SELECT id FROM admin_users WHERE username = ?)",
-    )
-    .bind(username)
-    .execute(db)
-    .await
-    .map_err(|err| format!("couldn't remove the notification subscriptions: {err}"))?;
-    crate::security::record_security_event(
-        db,
-        "totp_reset",
-        Some(username),
-        None,
-        Some(
+    sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
+        .bind(id)
+        .execute(db)
+        .await
+        .map_err(|err| format!("couldn't remove the notification subscriptions: {err}"))?;
+    let (event, detail) = if removed {
+        (
+            "parent_restored",
+            "from the command line (reset-2fa): the removed account is back with a new password",
+        )
+    } else {
+        (
+            "totp_reset",
             "from the command line (reset-2fa): new password, 2FA cleared, every session \
              signed out, notifications removed from every device",
-        ),
-    )
-    .await;
+        )
+    };
+    crate::security::record_security_event(db, event, Some(username), None, Some(detail)).await;
+    // The restore doesn't refuse past Add's cap (qa-62-step12-code P62-3): the shell is the way back
+    // for a parent the other one removed, and a full family must not lock it out. It says so.
+    let mut restored = String::new();
+    if removed {
+        restored = format!("{username} was removed and is restored. ");
+        let active: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM admin_users WHERE removed_at IS NULL")
+                .fetch_one(db)
+                .await
+                .unwrap_or(0);
+        if active > crate::parents::MAX_PARENTS {
+            restored.push_str(&format!(
+                "The family now has {active} parents, more than the {} Add Parent allows: \
+                 Add refuses until enough are removed. ",
+                crate::parents::MAX_PARENTS
+            ));
+        }
+    }
     Ok(format!(
-        "Two-factor login for {username} is reset, every session is signed out, notifications are \
+        "{}Two-factor login for {username} is reset, every session is signed out, notifications are \
          turned off on every device, and the password is replaced: the new one is in {} (readable by the server's user only). Sign in with it, \
          then set a new password and a new authenticator - the file is deleted then.",
+        restored,
         path.display()
     ))
 }

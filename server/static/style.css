@@ -1765,6 +1765,35 @@ details.edit[open] > summary .chev {
     letter-spacing: 0.1em;
 }
 
+/* Add Parent's one-time password (design 62 §3): 24 letters in blocks of 4 (spans, so a copy has
+   no spaces), wrapping between blocks. Gone after 5 minutes with or without JS; static/reveal.js
+   also removes it when the page is left. */
+.secret-once {
+    margin: 0 4px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.5;
+    color: var(--label);
+    -webkit-animation: pin-hide 0s linear 300s forwards;
+    animation: pin-hide 0s linear 300s forwards;
+}
+
+.secret-once > span {
+    display: inline-block;
+    margin-right: 0.5em;
+}
+
+.copy-secret {
+    margin: 0 4px 12px;
+}
+
+/* Without JS the button can't copy: hidden until reveal.js shows it (.button-small's display
+   and .edit-body > .button-small's display would beat the attribute). */
+.edit-body > .copy-secret[hidden] {
+    display: none;
+}
+
 /* A warning's expert fix (an adb command): its ⓘ follows the sentence, the panel opens under it. */
 .attention-sub details.info {
     display: inline;

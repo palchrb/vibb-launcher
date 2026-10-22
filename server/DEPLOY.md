@@ -215,15 +215,22 @@ Funnel), and finally the DNS record. Keep the CAA record as long as you own the 
   the address that sent them, for an hour after 15); wrong 2FA codes do: 5 lock it for 15 minutes, every further lock
   doubles, up to 24 hours. After a sign-in that followed wrong codes, the Devices page says how many and from where:
   whoever typed them knew the password - change it.
-- Changing the password or resetting 2FA signs out every other session; Settings › Account & Password › "Sign Out
+- Changing the password or resetting 2FA signs out every other session; Settings › Account & Parents › "Sign Out
   Everywhere…" signs out this one too.
+- **A second parent** (server >= the release with design 62): Settings › Account & Parents › Parents › "Add
+  Parent…" asks for your password and shows a one-time password once, valid 72 hours; the new parent signs in with
+  it and sets their own password and 2FA. "Withdraw…" takes back an invitation not used yet. Every parent can do
+  everything, also remove another. On a server that sets `ADMIN_TAILSCALE_USERS`, add the new parent's Tailscale
+  login there too, or the admin pages stay closed to them.
 - **Lost the authenticator and signed out?** On the Pi:
   `cd /opt/kid-phone-server && sudo -u kidphone ./kid_phone_server reset-2fa admin` (in Docker:
-  `docker compose exec handy /app/kid_phone_server reset-2fa admin`). It removes the 2FA setup, the lock and its
-  count, signs out every session, and **replaces the password**: the new one is in `data/initial-admin-password`
-  (on the Pi `sudo cat /opt/kid-phone-server/data/initial-admin-password`; in Docker copy it out as for the first
-  start). Sign in with it, set a new password, then a new authenticator. Replacing the password matters: the lock
-  you are recovering from means someone else knows the old one.
+  `docker compose exec handy /app/kid_phone_server reset-2fa admin`; use your own username). It removes the 2FA
+  setup, the lock and its count, signs out every session, and **replaces the password**: the new one is in
+  `data/initial-admin-password-<id>` - the command prints the exact file (on the Pi `sudo cat` it under
+  `/opt/kid-phone-server/data/`; in Docker copy it out as for the first start). Sign in with it, set a new password,
+  then a new authenticator. Replacing the password matters: the lock you are recovering from means someone else
+  knows the old one. It also brings back an account another parent removed, with its username, and clears an
+  expired one-time password.
 - Updating to 0.23.0 signs everyone out once (the session cookie is now `__Host-handy`; reopen the installed PWA on an
   iPhone and sign in again), and enrollment codes that were open stop working: make a new one (the phone's Advanced › New Setup Code).
 
