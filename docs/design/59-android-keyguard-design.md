@@ -242,7 +242,10 @@ protected broadcast Android sends when its keyguard is done) since our last LOCK
   PIN (`STRONG_AUTH_REQUIRED_AFTER_DPM_LOCK_NOW`) - accepted on these paths. A not-locked read alone never opens the
   phone (the prototype left on it: P59-6).
 - LEAVE is the prototype's `unlock(offs)` (a row's target opens; Home below). Our mode goes UNLOCKED in android mode
-  only through LEAVE or the boot's first CE start.
+  only through LEAVE or the boot's first CE start. **Amended by design 59b §2 (step 0):** "Home below" holds only
+  for a glance resumed at the leave; a LEAVE while it was stopped under an app (an unlock on SystemUI's own face or
+  pad) finishes it under that app with no Home and no row target (`lockLeave(.., glanceInFront)`), the kiosk-root
+  case excepted.
 - The log line at each resume: lock-task flags, `isKeyguardLocked`, `isDeviceLocked`, `deviceSecure` - no verdict.
 
 ### 3.4 Migration (the first Android PIN)

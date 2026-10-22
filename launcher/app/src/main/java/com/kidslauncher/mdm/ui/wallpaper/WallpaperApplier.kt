@@ -68,7 +68,7 @@ object WallpaperApplier {
 
     fun keyFor(context: Context, home: Wallpaper): String {
         val (w, h) = screen(context)
-        return wallpaperKey(home, w, h)
+        return wallpaperKey(home, w, h, com.kidslauncher.mdm.lock.AndroidLock.faceOn)
     }
 
     private fun systemId(context: Context): Int = try {
@@ -169,7 +169,8 @@ object WallpaperApplier {
      */
     private fun setBoth(context: Context, home: Wallpaper): ApplyOutcome {
         val wm = WallpaperManager.getInstance(context)
-        val lock = lockScreenFill(home)
+        // Design 59b §5: as Android's face, the night ground with the mark behind SystemUI's face and pad.
+        val lock = lockScreenFill(home, com.kidslauncher.mdm.lock.AndroidLock.faceOn)
         val (w, h) = screen(context)
         var lockOk = false
         var systemId = 0
@@ -179,8 +180,8 @@ object WallpaperApplier {
                 systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
                 lockOk = systemId != 0
             } else {
-                // Set the lock screen explicitly, or it would mirror the photo.
-                val lockBitmap = render(context, lock, null, w / 2, h / 2)
+                // Set the lock screen explicitly, or it would mirror the photo. The mark at the screen size (sharp).
+                val lockBitmap = if (lock == WallpaperFill.NightMark) render(context, lock, null, w, h) else render(context, lock, null, w / 2, h / 2)
                 lockOk = wm.setBitmap(lockBitmap, null, true, WallpaperManager.FLAG_LOCK) != 0
                 lockBitmap.recycle()
                 if (lockOk) systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM)
@@ -197,6 +198,8 @@ object WallpaperApplier {
         // A colour scales without loss; a gradient at half size is smooth enough.
         is WallpaperFill.Solid -> render(context, fill, null, 64, 64)
         is WallpaperFill.Gradient -> render(context, fill, null, w / 2, h / 2)
+        // Never Home's (only [lockScreenFill] gives it); drawn whole if it ever were.
+        WallpaperFill.NightMark -> render(context, fill, null, w, h)
         is WallpaperFill.Image -> {
             val file = File(WallpaperStore.dir(context), "${fill.hash}.jpg")
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

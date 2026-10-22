@@ -300,7 +300,7 @@ class BootMarkPlanTest {
         // A held ask starts nothing; the re-front loop asks as the boot and keeps going.
         val show = body(runtime, "show")
         assertTrue(show.indexOf("return false") in 0 until show.indexOf("startActivity"))
-        assertTrue(body(runtime, "runRefrontCheck").contains("if (show(context, ask = LockAsk.BOOT))"))
+        assertTrue(body(runtime, "runRefrontCheck").contains("if (show(context, ask = LockAsk.BOOT, noUserAction = action.noUserAction))"))
     }
 
     @Test

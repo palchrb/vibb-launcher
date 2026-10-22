@@ -208,8 +208,34 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   FACE, IRIS, shortcuts - fingerprint stays -, T = the screen timeout, read back incl. B2's 0x2; never
   `setKeyguardDisabled(true)`, never the cover's dismissal), `lockActivation(androidGate)` keeps our lock active as the
   face, the camera lock stands down only while the write read SECURE_CAMERA back (`KeyguardCover.androidCameraGuard`,
-  re-synced on both edges, P59-4/8), no re-front while Android's **secure** keyguard is locked (P59-3), the ring card
-  and keypad hide "Foreldrekode".
+  re-synced on both edges, P59-4/8), the face's own re-front rule while Android's **secure** keyguard is locked
+  (P59-3; design 59b below), the ring card and keypad hide "Foreldrekode".
+- **Design 59b** (`docs/design/59b-android-lock-face.md`, "As built"; every rule face-only, own mode pinned unchanged):
+  - *The leave without Home* (step 0): `lockLeave(.., glanceInFront)` with `leaveInFront(faceOn, resumed)` - an unlock
+    on SystemUI's own face or pad (the glance stopped under the app) finishes the glance under that app, no Home, no
+    row target; kiosk on with the glance the lock-task root still goes through Home. Amends design 59 §3.3's "Home
+    below". `presentLeave` re-reads a non-LEAVE once.
+  - *The face's loss rule* (`androidLossStep` in `RefrontPolicy.kt`, replacing the blanket stop): `RefrontInputs.android`
+    (`androidLoss`: Android LOCKED under the face, or OPEN with `USER_PRESENT` -> `RefrontAction.AndroidLeave` through
+    the glance's `USER_PRESENT` path; neither -> own mode's rows, the RELOCK backstop). Dark -> nothing; the exemptions
+    as own mode's (a VoIP call ringing or live yields); ours (`androidLossOurs`: the pad's ask - `noteAndroidAsk` -, our
+    own start < 2 s, our screens) -> nothing; at most `ANDROID_REFRONT_CAP` (2) re-fronts per screen-on
+    (`androidRefronts`, zeroed only at the screen-off and `USER_PRESENT`); else a re-front with
+    `FLAG_ACTIVITY_NO_USER_ACTION` (`show(noUserAction)`, only from this rule). Log `AndroidLock: re-front #n (..)`.
+  - *One stamping point*: `PinLockRuntime.noteOwnStart`, via `startOwn` (the call screen, the wakes, the time-rule
+    screen's `LockActivity.start`) and `VoipCalls.send`. **A new `startActivity` in `lock/` goes through `startOwn`**
+    unless it is in `HomeFront`, `GlanceOpener` or `BootCover*`, or the glance's own start in `show()`
+    (`AndroidLockFaceTest`).
+  - *The platform's ring* (step 1): as the face with Android locked a ring with its full-screen intent is SystemUI's
+    (`voipPlatformRing` -> `VoipRinging.platformRing`: no lock-up, no wake; `voipFsiDue(.., platformRing)` false); the
+    timer `voipGrace` runs `voipRingStep` 3 s from the ring's first sight: the one heads-up send (glance resumed and not
+    paused since, screen on), else `VoipFsiTry(sent = false)` (the card), dark -> the wake and the card. The reopen of a
+    VoIP call screen needs `IN_COMMUNICATION` as the face (`voipReopenDue`). §4.4 (a re-posted ring continues) is not
+    built.
+  - *Look*: the lock wallpaper as the face is `WallpaperFill.NightMark` (`lockScreenFill(home, androidFace)`, the
+    parent's lock-photo opt-in wins), drawn by `WallpaperRender`; no organisation name. Under Android's PIN pad the
+    glance page stays drawn over the keypad stage (`glancePageShown`, `GlancePanel.androidPad`), and the face leaves
+    with a close fade. `AndroidLock: screen-on` logs the keyguard at every screen-on.
 - **The glance leaves only on Android's verdict** (`faceStep`, §3.3): the PIN pad's `onDismissSucceeded`, or a
   `USER_PRESENT` since our lock last went LOCKED (the mark is reset at every LOCKED edge, screen-off and remote lock).
   A not-locked read alone waits `ANDROID_ANSWER_WAIT_MS` (1 s; `ANDROID_UNLOCK_WAIT_MS` 3 s once Android read

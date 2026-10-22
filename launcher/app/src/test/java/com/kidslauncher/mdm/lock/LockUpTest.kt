@@ -133,7 +133,7 @@ class LockUpTest {
         assertFalse(note.contains("emergencySosPackage("))
         assertTrue(note.contains("sosFlowUntilElapsed = now + SOS_FLOW_MS"))
         assertTrue(runtime.contains("lastScreenOnElapsed = SystemClock.elapsedRealtime()"))
-        assertTrue(body(runtime, "runRefrontCheck").contains("sosFlow = sosFlowNow(sosFlowUntilElapsed, SystemClock.elapsedRealtime(), ownOthersResumed > 0),"))
+        assertTrue(body(runtime, "runRefrontCheck").contains("sosFlow = sosFlowNow(sosFlowUntilElapsed, now, ownOthersResumed > 0),"))
     }
 
     @Test

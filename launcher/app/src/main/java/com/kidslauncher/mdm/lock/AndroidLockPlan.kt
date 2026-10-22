@@ -129,6 +129,10 @@ const val ANDROID_ASK_RETRY_MS = 1_000L
  * is read again ([askRecoveryDue]). */
 const val ANDROID_ASK_TIMEOUT_MS = 2_000L
 
+/** Design 59b §3 step 3: an ask's answer this fresh still counts as ours for the face's loss rule ([androidLossOurs]) -
+ * the pad going away (or its Emergency dialer coming up) may stop the glance just after it. */
+const val ANDROID_ASK_SETTLE_MS = 1_000L
+
 /** A tap while an ask is open ([askAgeMs] `null` = none): ask (again) unless it is a double tap. */
 fun askAgain(askAgeMs: Long?): Boolean = askAgeMs == null || askAgeMs >= ANDROID_ASK_RETRY_MS
 
@@ -147,7 +151,8 @@ fun processStartUnlocked(face: Boolean, bootCount: Int, storedBootCount: Int?): 
 /** The boot's first CE start (any mode): the restart line goes ([processStartUnlocked]'s boot test). */
 fun firstCeStart(bootCount: Int, storedBootCount: Int?): Boolean = bootCount >= 0 && storedBootCount != bootCount
 
-/** No re-front while Android's secure keyguard is locked under the face (59 §3.9, P59-3: a credential too). */
+/** Android's secure keyguard is locked under the face (59 §3.9, P59-3: a credential too) - since design 59b no longer
+ * "no re-front" but the face's loss rule ([androidLoss], [androidLossStep]) and the platform's ring ([voipPlatformRing]). */
 fun androidRefrontHeld(face: Boolean, deviceSecure: Boolean, androidLocked: Boolean): Boolean =
     face && deviceSecure && androidLocked
 

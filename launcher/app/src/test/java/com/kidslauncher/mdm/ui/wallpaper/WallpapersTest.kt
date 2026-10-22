@@ -72,6 +72,24 @@ class WallpapersTest {
     }
 
     @Test
+    fun `59b - as Android's face the lock wallpaper is the night ground with the mark, the photo opt-in kept`() {
+        assertEquals(WallpaperFill.NightMark, lockScreenFill(hytta, androidFace = true))
+        assertEquals(WallpaperFill.NightMark, lockScreenFill(sky, androidFace = true))
+        assertEquals(WallpaperFill.NightMark, lockScreenFill(NAVY, androidFace = true))
+        assertEquals("the parent's lock-photo opt-in wins", sjo.fill, lockScreenFill(sjo, androidFace = true))
+        // Not the face: design 08's rule (the default).
+        for (w in listOf(hytta, sjo, sky, NAVY)) assertEquals(lockScreenFill(w), lockScreenFill(w, androidFace = false))
+        // The key carries the lock fill: the face's edges and a rollback re-apply by themselves.
+        assertEquals("night_mark", WallpaperFill.NightMark.describe())
+        assertTrue(wallpaperKey(sky, 720, 1600, androidFace = true) != wallpaperKey(sky, 720, 1600))
+        assertEquals(wallpaperKey(sjo, 720, 1600), wallpaperKey(sjo, 720, 1600, androidFace = true))
+        val applier = listOf("src/main/java/com/kidslauncher/mdm/ui/wallpaper/WallpaperApplier.kt", "app/src/main/java/com/kidslauncher/mdm/ui/wallpaper/WallpaperApplier.kt")
+            .map { java.io.File(it) }.first { it.exists() }.readText()
+        assertTrue(applier.contains("return wallpaperKey(home, w, h, com.kidslauncher.mdm.lock.AndroidLock.faceOn)"))
+        assertTrue(applier.contains("val lock = lockScreenFill(home, com.kidslauncher.mdm.lock.AndroidLock.faceOn)"))
+    }
+
+    @Test
     fun `cache keeps only allowed photos`() {
         val files = setOf("$photo.jpg", "$other.jpg", "${"ef".repeat(32)}.jpg", ".x.tmp")
         val plan = wallpaperCachePlan(listOf(navy, hytta), files, emptySet())

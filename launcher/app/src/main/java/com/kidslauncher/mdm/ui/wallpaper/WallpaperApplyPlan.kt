@@ -36,9 +36,10 @@ sealed interface ApplyDecision {
     data class Skip(val reason: String) : ApplyDecision
 }
 
-/** What the system wallpaper should be: the home fill, the lock-screen fill and the size. */
-fun wallpaperKey(home: Wallpaper, widthPx: Int, heightPx: Int): String =
-    "home=${home.fill.describe()}|lock=${lockScreenFill(home).describe()}|${widthPx}x$heightPx"
+/** What the system wallpaper should be: the home fill, the lock-screen fill and the size. [androidFace] (design 59b
+ * §5) changes the lock fill, so the face's edges and a rollback re-apply by themselves. */
+fun wallpaperKey(home: Wallpaper, widthPx: Int, heightPx: Int, androidFace: Boolean = false): String =
+    "home=${home.fill.describe()}|lock=${lockScreenFill(home, androidFace).describe()}|${widthPx}x$heightPx"
 
 /** The photo hashes a [wallpaperKey] puts on the system or lock wallpaper. */
 fun imagesInKey(key: String?): Set<String> =

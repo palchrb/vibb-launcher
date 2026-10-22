@@ -341,7 +341,7 @@ class GlancePanel(
         musicDirty = false
         clockDirty = false
         if (!started) return@guarded
-        val page = state.stage == LockStage.GLANCE
+        val page = glancePageShown(state.stage, androidPad)
         var refit = false
         if (musicChanged) {
             val wasUp = tileUp
@@ -427,8 +427,18 @@ class GlancePanel(
         button.stateDescription = activity.getString(if (lit) R.string.lock_torch_on else R.string.lock_torch_off)
     }
 
+    /** Design 59b: the keypad stage is Android's PIN pad now (the activity's `keypadIsAndroids`) - the page stays up. */
+    private var androidPad = false
+
+    /** The activity's render: the keypad stage is (or no longer is) Android's PIN pad ([glancePageShown]). */
+    fun androidPad(on: Boolean) = guarded("android pad") {
+        if (androidPad == on) return@guarded
+        androidPad = on
+        renderNow()
+    }
+
     private fun renderNow() {
-        val shown = state.stage == LockStage.GLANCE
+        val shown = glancePageShown(state.stage, androidPad)
         glance.root.visibility = if (shown) View.VISIBLE else View.GONE
         keypad.importantForAccessibility =
             if (shown) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO

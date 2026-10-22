@@ -193,6 +193,8 @@ object WallpaperStore {
             is WallpaperFill.Image -> lockBitmap?.let { lockScrimForImage(imageStatsOf(f.hash, it)) } ?: LOCK_MAX_SCRIM
             is WallpaperFill.Solid -> lockScrimForColours(listOf(f.argb))
             is WallpaperFill.Gradient -> lockScrimForColours(listOf(f.from, f.to))
+            // Only Android's lock wallpaper is ever the mark (design 59b §5), never the glance's ground.
+            WallpaperFill.NightMark -> lockScrimForColours(listOf(WallpaperRender.NIGHT_ARGB))
         }
         val showsOurs = try {
             WallpaperApplier.systemShows(context, current)

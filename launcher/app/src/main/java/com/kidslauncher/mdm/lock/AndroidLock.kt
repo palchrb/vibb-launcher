@@ -359,8 +359,13 @@ object AndroidLock {
     fun step(context: Context, trigger: FaceTrigger): FaceStep =
         faceStep(trigger, deviceSecure(context), androidLocked(context), presentSinceLocked)
 
-    /** No re-front now ([androidRefrontHeld], P59-3); no binder call without [faceOn]. */
+    /** Android's secure keyguard is locked under the face now ([androidRefrontHeld], P59-3); no binder call without
+     * [faceOn]. Design 59b: the platform shows a ring's full-screen intent itself then ([voipPlatformRing]). */
     fun refrontHeld(context: Context): Boolean = faceOn && androidRefrontHeld(true, deviceSecure(context), androidLocked(context))
+
+    /** Design 59b §3: the face's loss rule's input now ([androidLoss], live reads); no binder call without [faceOn]. */
+    fun loss(context: Context): AndroidLoss? =
+        if (!faceOn) null else androidLoss(face = true, deviceSecure(context), androidLocked(context), presentSinceLocked)
 
     /** The screen-off count when Android last read locked ([sawLocked]; -1 = never in this process). */
     @Volatile

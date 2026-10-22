@@ -287,7 +287,8 @@ class LockActivity : UIObjectActivity() {
         fun start(context: Context) {
             val intent = Intent(context, LockActivity::class.java)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(intent)
+            // Design 59b §3: one of our own starts - the face's loss rule doesn't cover it (the glance comes on top next).
+            PinLockRuntime.startOwn(context, intent, "the time-rule screen")
             PinLockRuntime.afterTimeRuleShown(context)
         }
     }

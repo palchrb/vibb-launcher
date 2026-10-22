@@ -70,13 +70,25 @@ data class LockLeave(
  * - Kiosk off: as in step 10, any running lock task is the lock's own and is stopped first. Then
  *   through Home (design 32 decision 2) unless [callLive] - our call, Telecom's or a VoIP call: the
  *   call's screen stays in front, and Element hangs up when its PiP goes (QA L2).
+ * - Design 59b step 0 (Q59b-1): [glanceInFront] false - an unlock on Android's own face or pad while the glance
+ *   was stopped under the app the kid unlocked into ([leaveInFront]) - no Home: the glance finishes under that app,
+ *   which Home would only hide. The lock task is stopped first exactly as in the rows above (so `stopOwnLockTask`
+ *   still agrees). Kept: kiosk on with the glance the lock-task root - stopping its lock task drops the kiosk, and
+ *   Home re-roots it.
  */
-fun lockLeave(kioskOn: Boolean, startedLockTask: Boolean, lockTaskRunning: Boolean, callLive: Boolean): LockLeave =
+fun lockLeave(kioskOn: Boolean, startedLockTask: Boolean, lockTaskRunning: Boolean, callLive: Boolean, glanceInFront: Boolean = true): LockLeave =
     if (kioskOn) {
-        LockLeave(stopLockTaskFirst = startedLockTask, homeFirst = true)
+        LockLeave(stopLockTaskFirst = startedLockTask, homeFirst = glanceInFront || startedLockTask)
     } else {
-        LockLeave(stopLockTaskFirst = startedLockTask || lockTaskRunning, homeFirst = !callLive)
+        LockLeave(stopLockTaskFirst = startedLockTask || lockTaskRunning, homeFirst = glanceInFront && !callLive)
     }
+
+/**
+ * Design 59b step 0: whether the leave counts the glance as in front - always in own mode (every own path is
+ * unchanged); as Android's face ([androidFace]) only when it is resumed at the leave ("Lås opp", a row via the pad, a
+ * fingerprint from dark that resumed it). Stopped under an app (`USER_PRESENT` after SystemUI's face or pad): not.
+ */
+fun leaveInFront(androidFace: Boolean, resumed: Boolean): Boolean = !androidFace || resumed
 
 /** The finish was refused (`isFinishing` still false) with the kiosk on: the lock is the root. */
 val rootLeave = LockLeave(stopLockTaskFirst = true, homeFirst = true)
