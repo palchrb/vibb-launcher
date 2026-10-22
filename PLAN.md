@@ -748,7 +748,7 @@ findings, merge to `main`, full suite once.
   artboard "D"):** B's palette and look (the small rings logo tile + "vibb" wordmark at the top of Devices, peach-dark
   accent #A64B25, B's peach initial avatar, Nunito headings) without B's black welcome card, plus C's floating rounded
   tab bar with the peach pill on every page. Scope (agreed): colour tokens (light and dark), bundled Nunito, the tab
-  bar partial, the Devices header, the PWA icons/manifest as the vibb rings; then a small round for an uploaded avatar
+  bar partial, the Devices header, the PWA icons/manifest as the vibb rings; then a small round for an uploaded avatar (the user, 2026-10-22: change it by tapping the big avatar on the phone's page - a picker opens (photo library/camera on a phone), saved at once, plus "remove picture"; works without JS via a plain form; the avatar keeps its status dot)
   per phone (reuse `photos.rs`: resize, EXIF stripped). No big redesign. After the Android-lock RC.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
