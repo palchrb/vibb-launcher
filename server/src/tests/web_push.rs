@@ -1403,11 +1403,10 @@ async fn a_tap_on_a_notification_marks_it_opened() {
     assert_eq!(res.location(), Some(path.split('?').next().unwrap()));
     assert_eq!(opened_state(&app, delivery).await, (true, true, Some(true)));
     let inbox = app.get_page("/notifications", &cookie).await.text();
-    // The other parent's delivery of the same event counts as a device of the line.
-    assert!(
-        inbox.contains("Pushed to 2 devices · opened on 1"),
-        "{inbox}"
-    );
+    // The line is this parent's devices only: the other parent's delivery of the same event isn't
+    // one of them (design 62 §5, qa-62-step345-code P62b-1).
+    assert!(inbox.contains("Opened on "), "{inbox}");
+    assert!(!inbox.contains("Pushed to 2 devices"), "{inbox}");
     // A POST is never redirected by it.
     let res = app
         .request_form(
@@ -1689,4 +1688,29 @@ async fn push_tap_reads_for_that_parent_and_badges_their_count() {
             .unwrap();
     assert_eq!(read_by, [pappa_id]);
     let _ = older;
+}
+
+/// P62b-1: the inbox's delivery line is the parent's own devices. Pappa turned the kind off and got
+/// no push: his row names none; Mamma's names hers.
+#[tokio::test]
+async fn inbox_delivery_line_is_each_parents() {
+    let app = TestApp::new().await;
+    let (mamma, pappa) = two_parents(&app).await;
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    let to: Vec<String> = app.pushes.take().into_iter().map(|r| r.endpoint).collect();
+    assert_eq!(to, [ENDPOINT], "only Mamma's went");
+    let lines = |html: String| -> Vec<String> {
+        html.lines()
+            .filter(|l| {
+                l.contains("Pushed to") || l.contains("Delivered to") || l.contains("Shown on")
+            })
+            .map(str::to_string)
+            .collect()
+    };
+    let pappas = lines(app.get_page("/notifications", &pappa).await.text());
+    assert!(pappas.is_empty(), "{pappas:?}");
+    let mammas = lines(app.get_page("/notifications", &mamma).await.text());
+    assert_eq!(mammas.len(), 1, "{mammas:?}");
 }

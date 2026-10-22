@@ -1211,8 +1211,13 @@ async fn reset_shows_a_new_otp_and_ends_the_sessions() {
         vec![Some("reset pappa".to_string())]
     );
 
+    // A Spotify login Pappa's browser started can't finish after the Reset (P62b-3).
+    app.state
+        .spotify
+        .start_login("pappa", "client", "https://x.example/cb");
     let res = reset(&app, &mamma, pappa.id, PASSWORD).await;
     assert_eq!(res.status, StatusCode::OK);
+    assert_eq!(app.state.spotify.pending_count(), 0);
     let html = res.text();
     let otp = otp_of(&html);
     assert!(html.contains("New one-time password for Pappa"), "{html}");
@@ -1347,57 +1352,115 @@ async fn remove_ends_sessions_and_push_keeps_history() {
     );
 }
 
-/// The two last ready parents remove each other at once: one wins, one ready parent is left.
+/// The two last ready parents remove each other at once: one wins, one ready parent is left - in
+/// both orders (the guard is the statement; qa-62-step345-code P62b-4).
 #[tokio::test]
 async fn remove_each_other_leaves_one() {
-    let app = TestApp::new().await;
-    app.admin_cookie().await;
-    app.admin_cookie_as("pappa", "Pappa").await;
-    let (mamma, pappa) = (account(&app, "parent").await, account(&app, "pappa").await);
-    let (a, b) = tokio::join!(
-        crate::parents::remove_parent(&app.db, &mamma, pappa.id),
-        crate::parents::remove_parent(&app.db, &pappa, mamma.id),
-    );
-    let done = [a.unwrap(), b.unwrap()]
-        .into_iter()
-        .filter(|r| *r == crate::parents::Removed::Done)
-        .count();
-    assert_eq!(done, 1);
-    let ready: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM admin_users WHERE removed_at IS NULL AND must_change_password = 0 \
-         AND totp_enabled = 1",
-    )
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(ready, 1);
+    for mamma_first in [true, false] {
+        let app = TestApp::new().await;
+        app.admin_cookie().await;
+        app.admin_cookie_as("pappa", "Pappa").await;
+        let (mamma, pappa) = (account(&app, "parent").await, account(&app, "pappa").await);
+        let mammas = crate::parents::remove_parent(&app.db, &mamma, pappa.id);
+        let pappas = crate::parents::remove_parent(&app.db, &pappa, mamma.id);
+        let (a, b) = if mamma_first {
+            tokio::join!(mammas, pappas)
+        } else {
+            let (b, a) = tokio::join!(pappas, mammas);
+            (a, b)
+        };
+        let done = [a.unwrap(), b.unwrap()]
+            .into_iter()
+            .filter(|r| *r == crate::parents::Removed::Done)
+            .count();
+        assert_eq!(done, 1, "mamma first: {mamma_first}");
+        let ready: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM admin_users WHERE removed_at IS NULL \
+             AND must_change_password = 0 AND totp_enabled = 1",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(ready, 1, "mamma first: {mamma_first}");
+    }
 }
 
-/// Mamma resets Pappa while Pappa removes Mamma: exactly one of them happens.
+/// Mamma resets Pappa while Pappa removes Mamma: exactly one of them happens, in both orders.
 #[tokio::test]
 async fn reset_vs_remove_one_wins() {
-    let app = TestApp::new().await;
-    app.admin_cookie().await;
-    app.admin_cookie_as("pappa", "Pappa").await;
-    let (mamma, pappa) = (account(&app, "parent").await, account(&app, "pappa").await);
-    let (reset, removed) = tokio::join!(
-        crate::parents::reset_parent(&app.db, &mamma, pappa.id, "otp-hash"),
-        crate::parents::remove_parent(&app.db, &pappa, mamma.id),
-    );
-    let reset_done = matches!(reset.unwrap(), crate::parents::Reset::Done { .. });
-    let removed_done = removed.unwrap() == crate::parents::Removed::Done;
-    assert!(reset_done != removed_done, "{reset_done} {removed_done}");
-    let (mamma_removed, pappa_hash): (bool, String) = sqlx::query_as(
-        "SELECT (SELECT removed_at IS NOT NULL FROM admin_users WHERE id = ?), \
-                (SELECT password_hash FROM admin_users WHERE id = ?)",
-    )
-    .bind(mamma.id)
-    .bind(pappa.id)
-    .fetch_one(&app.db)
-    .await
-    .unwrap();
-    assert_eq!(mamma_removed, removed_done);
-    assert_eq!(pappa_hash == "otp-hash", reset_done);
+    for reset_first in [true, false] {
+        let app = TestApp::new().await;
+        app.admin_cookie().await;
+        app.admin_cookie_as("pappa", "Pappa").await;
+        let (mamma, pappa) = (account(&app, "parent").await, account(&app, "pappa").await);
+        let reset = crate::parents::reset_parent(&app.db, &mamma, pappa.id, "otp-hash");
+        let remove = crate::parents::remove_parent(&app.db, &pappa, mamma.id);
+        let (reset, removed) = if reset_first {
+            tokio::join!(reset, remove)
+        } else {
+            let (removed, reset) = tokio::join!(remove, reset);
+            (reset, removed)
+        };
+        let reset_done = matches!(reset.unwrap(), crate::parents::Reset::Done { .. });
+        let removed_done = removed.unwrap() == crate::parents::Removed::Done;
+        assert!(
+            reset_done != removed_done,
+            "reset first {reset_first}: {reset_done} {removed_done}"
+        );
+        let (mamma_removed, pappa_hash): (bool, String) = sqlx::query_as(
+            "SELECT (SELECT removed_at IS NOT NULL FROM admin_users WHERE id = ?), \
+                    (SELECT password_hash FROM admin_users WHERE id = ?)",
+        )
+        .bind(mamma.id)
+        .bind(pappa.id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(mamma_removed, removed_done);
+        assert_eq!(pappa_hash == "otp-hash", reset_done);
+    }
+}
+
+/// The same pairs one after the other, in both orders: whichever commits first wins, the other
+/// writes nothing (qa-62-step345-code P62b-4; the joins above may interleave either way).
+#[tokio::test]
+async fn the_pairs_in_both_orders() {
+    for reset_first in [true, false] {
+        let app = TestApp::new().await;
+        app.admin_cookie().await;
+        app.admin_cookie_as("pappa", "Pappa").await;
+        let (mamma, pappa) = (account(&app, "parent").await, account(&app, "pappa").await);
+        if reset_first {
+            let reset = crate::parents::reset_parent(&app.db, &mamma, pappa.id, "otp-hash");
+            assert!(matches!(
+                reset.await.unwrap(),
+                crate::parents::Reset::Done { .. }
+            ));
+            let removed = crate::parents::remove_parent(&app.db, &pappa, mamma.id).await;
+            assert_eq!(removed.unwrap(), crate::parents::Removed::SignedOut);
+        } else {
+            let removed = crate::parents::remove_parent(&app.db, &pappa, mamma.id).await;
+            assert_eq!(removed.unwrap(), crate::parents::Removed::Done);
+            let reset = crate::parents::reset_parent(&app.db, &mamma, pappa.id, "otp-hash");
+            assert_eq!(reset.await.unwrap(), crate::parents::Reset::SignedOut);
+            assert_ne!(account(&app, "pappa").await.password_hash, "otp-hash");
+        }
+    }
+    for mamma_first in [true, false] {
+        let app = TestApp::new().await;
+        app.admin_cookie().await;
+        app.admin_cookie_as("pappa", "Pappa").await;
+        let (mamma, pappa) = (account(&app, "parent").await, account(&app, "pappa").await);
+        let (first, second) = if mamma_first {
+            ((&mamma, pappa.id), (&pappa, mamma.id))
+        } else {
+            ((&pappa, mamma.id), (&mamma, pappa.id))
+        };
+        let a = crate::parents::remove_parent(&app.db, first.0, first.1).await;
+        assert_eq!(a.unwrap(), crate::parents::Removed::Done);
+        let b = crate::parents::remove_parent(&app.db, second.0, second.1).await;
+        assert_eq!(b.unwrap(), crate::parents::Removed::SignedOut);
+    }
 }
 
 /// Mamma's Add, held past her removal by Pappa, adds no one.
@@ -1628,4 +1691,107 @@ async fn migration_0088_copies_to_active_accounts() {
             .await
             .is_err()
     );
+}
+
+// ---- The code QA's guards (qa-62-step345-code P62b-4) ------------------------------------------
+
+async fn unread_of(app: &TestApp, who: &str) -> i64 {
+    let id = account(app, who).await.id;
+    crate::parent_events::unread_count(&app.db, id)
+        .await
+        .unwrap()
+}
+
+/// Mamma, Pappa and two events neither has read: (Mamma's cookie, Pappa's, the newer event).
+async fn two_with_events(app: &TestApp) -> (String, String, i64) {
+    let mamma = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let anna = crate::parent_events::Phone::load(&app.db, id)
+        .await
+        .unwrap();
+    for count in [1, 2] {
+        crate::parent_events::raise_logged(&app.state, &anna.unseen_boot(count, None)).await;
+    }
+    let event: i64 = sqlx::query_scalar("SELECT MAX(id) FROM parent_events")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    (mamma, pappa, event)
+}
+
+/// A row's tap reads it for the parent who tapped, nobody else.
+#[tokio::test]
+async fn open_is_each_parents() {
+    let app = TestApp::new().await;
+    let (mamma, _, event) = two_with_events(&app).await;
+    let before = unread_of(&app, "pappa").await;
+    assert!(before > 0);
+    app.request_form(
+        Method::POST,
+        &format!("/notifications/{event}/open"),
+        Some(&mamma),
+        &[],
+    )
+    .await;
+    assert_eq!(unread_of(&app, "parent").await, before - 1);
+    assert_eq!(unread_of(&app, "pappa").await, before);
+}
+
+/// Mark All as Read is the parent's own.
+#[tokio::test]
+async fn read_all_is_each_parents() {
+    let app = TestApp::new().await;
+    let (mamma, _, _) = two_with_events(&app).await;
+    let before = unread_of(&app, "pappa").await;
+    assert!(before > 0);
+    app.request_form(Method::POST, "/notifications/read-all", Some(&mamma), &[])
+        .await;
+    assert_eq!(unread_of(&app, "parent").await, 0);
+    assert_eq!(unread_of(&app, "pappa").await, before);
+}
+
+/// A Reset by a stale actor (held past its own Reset, removal or sign-out) writes nothing.
+#[tokio::test]
+async fn stale_actor_reset_writes_nothing() {
+    let app = TestApp::new().await;
+    app.admin_cookie().await;
+    app.admin_cookie_as("pappa", "Pappa").await;
+    let mut mamma = account(&app, "parent").await;
+    let pappa = account(&app, "pappa").await;
+    mamma.session_epoch -= 1;
+    assert_eq!(
+        crate::parents::reset_parent(&app.db, &mamma, pappa.id, "otp-hash")
+            .await
+            .unwrap(),
+        crate::parents::Reset::SignedOut
+    );
+    assert_eq!(
+        account(&app, "pappa").await.password_hash,
+        pappa.password_hash
+    );
+}
+
+/// Remove drops the parent's read state.
+#[tokio::test]
+async fn remove_drops_reads() {
+    let app = TestApp::new().await;
+    let (_, pappa, _) = two_with_events(&app).await;
+    app.get_page("/notifications", &pappa).await;
+    let (mamma, pappa) = (account(&app, "parent").await, account(&app, "pappa").await);
+    let reads = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM parent_event_reads WHERE admin_id = ?")
+            .bind(pappa.id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    assert!(reads().await > 0);
+    assert_eq!(
+        crate::parents::remove_parent(&app.db, &mamma, pappa.id)
+            .await
+            .unwrap(),
+        crate::parents::Removed::Done
+    );
+    assert_eq!(reads().await, 0);
 }

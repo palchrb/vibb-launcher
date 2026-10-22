@@ -418,3 +418,14 @@ Notes for steps 3-5 and the code QA; `docs/notes/server/connectivity.md`, "Paren
   event). Every reader in §5's table moved; `send_one`'s badge counts through the delivery's subscription in SQL
   rather than carrying `admin_id` in `Due` (its row tuple is at sqlx's 16-column limit). `read_everything` seeds Add and
   the CLI restore. The five `Bell::load` callers and the music/locate page renderers take the admin.
+
+**The code QA's fix round** (`docs/review/qa-62-step345-code.md`):
+- P62b-1: §5's table gains a row - the inbox's delivery line (`notifications::delivery_lines`) reads only the
+  signed-in parent's subscriptions (`AND s.admin_id = ?`); `inbox_delivery_line_is_each_parents`.
+- P62b-2: `reset_parent` returns `username` and `display_name` with `invite_expires_at` (`Reset::Done { expires_at,
+  username, name }`); the handler logs `parent_reset` first and renders from that, with no second read.
+- P62b-3: Reset drops the target's Spotify login in progress too (`forget_pending`), as Remove does.
+- P62b-4: the QA's four probes are tests (`open_is_each_parents`, `read_all_is_each_parents`,
+  `stale_actor_reset_writes_nothing`, `remove_drops_reads`); both race tests run their join in both polling orders,
+  and `the_pairs_in_both_orders` runs each pair one after the other in both orders (the first commit wins, the
+  second answers "signed out").

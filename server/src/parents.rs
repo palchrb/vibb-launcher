@@ -169,8 +169,13 @@ pub async fn remove_parent(
 /// What [reset_parent] did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Reset {
-    /// When the new one-time password stops working (SQLite text, UTC).
-    Done { expires_at: String },
+    /// When the new one-time password stops working (SQLite text, UTC), and the account as the
+    /// statement left it (no second read: qa-62-step345-code P62b-2).
+    Done {
+        expires_at: String,
+        username: String,
+        name: String,
+    },
     /// No such account, or it was removed.
     Gone,
     /// Your own account: change your password or reset your 2FA instead.
@@ -192,14 +197,14 @@ pub async fn reset_parent(
         return Ok(Reset::Yourself);
     }
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let expires: Option<String> = sqlx::query_scalar(concat!(
+    let done: Option<(String, String, Option<String>)> = sqlx::query_as(concat!(
         "UPDATE admin_users SET password_hash = ?1, must_change_password = 1, totp_secret = NULL, \
          totp_enabled = 0, totp_last_step = NULL, failed_login_attempts = 0, locked_until = NULL, \
          lock_count = 0, reauth_wrong = 0, invite_expires_at = datetime('now', '+72 hours'), \
          session_epoch = session_epoch + 1 \
          WHERE id = ?2 AND id != ?3 AND removed_at IS NULL AND ",
         actor_ok!("3", "4"),
-        " RETURNING invite_expires_at"
+        " RETURNING invite_expires_at, username, display_name"
     ))
     .bind(otp_hash)
     .bind(target)
@@ -207,13 +212,17 @@ pub async fn reset_parent(
     .bind(actor.session_epoch)
     .fetch_optional(&mut *tx)
     .await?;
-    if let Some(expires_at) = expires {
+    if let Some((expires_at, username, display_name)) = done {
         sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
             .bind(target)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        return Ok(Reset::Done { expires_at });
+        return Ok(Reset::Done {
+            expires_at,
+            name: display_name.unwrap_or_else(|| username.clone()),
+            username,
+        });
     }
     tx.rollback().await?;
     if !actor_still_ok(db, actor).await? {

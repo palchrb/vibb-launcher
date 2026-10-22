@@ -313,36 +313,28 @@ pub async fn reset(
         _ => return admin_auth::signed_out_response(),
     };
     match crate::parents::reset_parent(&state.db, &actor, id, &otp_hash).await {
-        Ok(crate::parents::Reset::Done { expires_at }) => {
-            // Its name as it is now (the statement ran after the first read); a failed read is a
-            // 500, and the parent resets again for a password to hand over.
-            let target = match target_of(&state, id).await {
-                Ok(Some(target)) => target,
-                Ok(None) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                Err(response) => return *response,
-            };
+        Ok(crate::parents::Reset::Done {
+            expires_at,
+            username,
+            name,
+        }) => {
+            // Logged first, from what the statement returned (qa-62-step345-code P62b-2), and the
+            // browser that may hold their Spotify login in progress can't finish it (P62b-3).
             security::record_security_event(
                 &state.db,
                 "parent_reset",
                 Some(&actor.username),
                 None,
-                Some(&target.username),
+                Some(&username),
             )
             .await;
+            state.spotify.forget_pending(&username);
             let title = if was_ready {
                 "New one-time password"
             } else {
                 "One-time password"
             };
-            let shown = otp_shown(
-                &state,
-                title,
-                target.name().to_string(),
-                target.username.clone(),
-                &otp,
-                &expires_at,
-            )
-            .await;
+            let shown = otp_shown(&state, title, name, username, &otp, &expires_at).await;
             let answer = AccountAnswer {
                 otp: Some(shown),
                 ..AccountAnswer::default()

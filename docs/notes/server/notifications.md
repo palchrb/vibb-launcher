@@ -273,7 +273,8 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   (`Bell::load(db, admin_id)`: Devices, Apps, Locate, Music, the Settings hub), the inbox's rows and count after marking
   (`notifications::row_from(n)`'s `LEFT JOIN`), a row's `open`, Mark All as Read, the phone summary's Activity and the
   push marker/`clicked` receipt (`push::mark_opened`, for the subscription's parent) all read and write the signed-in
-  parent's own rows. A push's badge (`data.b`, `app_badge`) is the subscription's parent's count. Adding a parent and
+  parent's own rows; an inbox row's delivery line ("Delivered to …", "Opened on …", "Not sent") names only the
+  signed-in parent's devices (`delivery_lines(db, admin_id, ..)`, qa-62-step345-code P62b-1). A push's badge (`data.b`, `app_badge`) is the subscription's parent's count. Adding a parent and
   `reset-2fa`'s restore mark every event so far read for them (`read_everything`); Remove deletes their prefs and reads.
 - **The push filter** (`push::queue`): active subscriptions of accounts that aren't removed, with
   `COALESCE(p.<switch>, 1) = 1` from `notification_prefs`; the emergency call goes to every such parent. Notify Me About

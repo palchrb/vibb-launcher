@@ -266,7 +266,8 @@ pub async fn page(
         .bind(device)
         .fetch_one(&state.db)
         .await?;
-        let lines = delivery_lines(&state.db, &shown).await?;
+        // This parent's own devices only (design 62 §5, qa-62-step345-code P62b-1).
+        let lines = delivery_lines(&state.db, admin.id, &shown).await?;
         let subscriptions = push::subscriptions(&state.db, admin.id, now).await?;
         Ok::<_, sqlx::Error>((phones, raw, unread_after, badge, lines, subscriptions))
     };
@@ -693,6 +694,7 @@ type DeliveryState = (String, Option<String>, bool, String, bool);
 /// The page's events' deliveries, by event (one query).
 async fn delivery_lines(
     db: &sqlx::SqlitePool,
+    admin_id: i64,
     event_ids: &[i64],
 ) -> Result<HashMap<i64, Vec<DeliveryState>>, sqlx::Error> {
     // A folded delivery takes its summary's status (the subscription's next summary after it),
@@ -705,9 +707,10 @@ async fn delivery_lines(
                 ELSE d.status END, \
                 d.reason, d.receipt_at IS NOT NULL, s.label, d.clicked_at IS NOT NULL \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
-         WHERE d.event_id IN (SELECT value FROM json_each(?)) ORDER BY d.id",
+         WHERE d.event_id IN (SELECT value FROM json_each(?)) AND s.admin_id = ? ORDER BY d.id",
     )
     .bind(serde_json::to_string(event_ids).unwrap_or_default())
+    .bind(admin_id)
     .fetch_all(db)
     .await?;
     let mut lines: HashMap<i64, Vec<DeliveryState>> = HashMap::new();

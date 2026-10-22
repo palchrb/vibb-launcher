@@ -169,7 +169,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   it after 5 minutes and reveal.js removes it then too, so Copy ends with it - P62-4); `parent_added` "pappa (Pappa)".
   **Reset…** ("New One-Time Password…" on a not-ready row; `POST /account/parents/{id}/reset`, step 3): your password
   and the new one-time password's hash in one gated job, `parents::reset_parent` (§4.3's statement, never yourself, the
-  target's push subscriptions in the same transaction), `parent_reset`, the answer shown as Add's ("New one-time
+  target's push subscriptions in the same transaction, the name from its `RETURNING`), `parent_reset` (logged
+  before the answer renders), the target's Spotify login in progress dropped, the answer shown as Add's ("New one-time
   password for Pappa"), its reload the GET of the same path. **Remove…** ("Withdraw…" on a not-ready row) is the soft Remove
   (`POST /account/parents/{id}/remove`, `admin_auth::reauth`, the guarded `UPDATE` + its push subscriptions in one
   `BEGIN IMMEDIATE` transaction with its prefs and reads, `parent_removed`, its Spotify login in progress dropped
