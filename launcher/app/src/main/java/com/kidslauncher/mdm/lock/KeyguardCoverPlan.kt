@@ -24,6 +24,11 @@ enum class KeyguardMode {
     /** Not ours to switch off: not managed, no kid PIN, or an Android credential - `setKeyguardDisabled(false)`
      * and the phone's own keyguard, as before design 32. */
     UNTOUCHED,
+
+    /** Design 59 ([androidFace], `kid_lock.keyguard` "android" with a credential): Android's PIN is the gate -
+     * `setKeyguardDisabled(false)`, [ANDROID_KEYGUARD_FEATURES] added, T = the screen timeout ([androidWrite]). Never
+     * `setKeyguardDisabled(true)`, never the cover's dismissal. */
+    ANDROID,
 }
 
 /**
@@ -34,6 +39,9 @@ enum class KeyguardMode {
  * - UNTOUCHED wherever today's code doesn't disable the keyguard ([wantKeyguardDisabled]);
  * - COVER only with the switch, managed, a kid PIN, no credential, no VoIP call or ring, the guard not tripped;
  * - DISABLED otherwise - today's behaviour.
+ * [androidRequested]: design 59's switch (`kid_lock.keyguard` "android") - ANDROID once the phone has the Android
+ * PIN ([androidFace]), whatever the VoIP phase or the crash guard; never the cover while it is asked for.
+ * [androidHeld] ([androidKeyguardHeld], S3-1): ANDROID also off a fallback apply while we own the live credential.
  */
 fun keyguardMode(
     managed: Boolean,
@@ -42,9 +50,12 @@ fun keyguardMode(
     coverWanted: Boolean,
     voip: VoipPhase,
     guardTripped: Boolean,
+    androidRequested: Boolean = false,
+    androidHeld: Boolean = false,
 ): KeyguardMode = when {
+    androidFace(androidRequested, managed, hasKidPin, deviceSecure) || androidHeld -> KeyguardMode.ANDROID
     !wantKeyguardDisabled(managed, hasKidPin, deviceSecure) -> KeyguardMode.UNTOUCHED
-    coverWanted && voip == VoipPhase.NONE && !guardTripped -> KeyguardMode.COVER
+    coverWanted && !androidRequested && voip == VoipPhase.NONE && !guardTripped -> KeyguardMode.COVER
     else -> KeyguardMode.DISABLED
 }
 
@@ -55,11 +66,15 @@ const val KEYGUARD_FEATURES_ALL = 0x7fffffff
  * The keyguard-disabled features to write, and the new `coverAdded` (M6) - the bits the cover set that
  * weren't set before it (kept in CE prefs `keyguard_cover`). [cover]: ALL, adding to `coverAdded` what
  * [current] lacks. Off: exactly `coverAdded` taken out, a parent's or another tool's bits kept, plus
- * B2's SECURE_CAMERA while [managed] (minus it unmanaged), `coverAdded` 0.
+ * B2's SECURE_CAMERA while [managed] (minus it unmanaged), `coverAdded` 0. [android] (design 59): what was
+ * added before taken out, then [ANDROID_KEYGUARD_FEATURES] and B2's bit in; `coverAdded` = Android mode's bits that
+ * weren't set without it - so the switch back takes out exactly those, a parent's own bits stay.
  */
-fun keyguardDisabledFeatures(current: Int, managed: Boolean, cover: Boolean, coverAdded: Int): Pair<Int, Int> {
+fun keyguardDisabledFeatures(current: Int, managed: Boolean, cover: Boolean, coverAdded: Int, android: Boolean = false): Pair<Int, Int> {
     if (cover) return KEYGUARD_FEATURES_ALL to (coverAdded or (KEYGUARD_FEATURES_ALL and current.inv()))
-    return secureCameraRule(current and coverAdded.inv(), managed) to 0
+    val base = current and coverAdded.inv()
+    if (android) return secureCameraRule(base or ANDROID_KEYGUARD_FEATURES, managed) to (ANDROID_KEYGUARD_FEATURES and base.inv())
+    return secureCameraRule(base, managed) to 0
 }
 
 /**
@@ -91,7 +106,8 @@ interface KeyguardPolicy {
 
 /** What [writeKeyguard] left in force. */
 data class KeyguardWritten(
-    /** COVER only when every step of it held; a failed cover is DISABLED with [coverFailed]. */
+    /** COVER only when every step of it held; a failed cover is DISABLED with [coverFailed]. ANDROID stays ANDROID,
+     * [coverFailed] naming a failed step (the Android PIN is the gate whatever these write). */
     val mode: KeyguardMode,
     /** `lockActivation`'s keyguard input: the cover is set, or `setKeyguardDisabled(true)` worked. */
     val lockMayRun: Boolean,
@@ -119,6 +135,7 @@ data class KeyguardWritten(
  * [storeWritten] commits whether the device policy may hold the cover (qa-32-s2-code M2): true before
  * `setKeyguardDisabled(false)` (not stored = no cover), false after a `true` that worked, or after
  * UNTOUCHED took the cover's bits and T out. A new process reads it ([processStartWrite]).
+ * - ANDROID (design 59): [androidWrite].
  */
 fun writeKeyguard(
     policy: KeyguardPolicy,
@@ -136,6 +153,7 @@ fun writeKeyguard(
         added = value
         return true
     }
+    if (wanted == KeyguardMode.ANDROID) return androidWrite(policy, managed, added, ::store, timeoutMs)
     if (wanted == KeyguardMode.COVER) {
         var step = "features"
         try {
@@ -164,6 +182,56 @@ fun writeKeyguard(
         }
     }
     return off(policy, wanted, managed, added, ::store, storeWritten, coverFailed = null)
+}
+
+/**
+ * Design 59's ANDROID ([writeKeyguard]): `setKeyguardDisabled(false)` (with a credential the keyguard is on
+ * anyway), the features with [ANDROID_KEYGUARD_FEATURES] - the new `coverAdded` stored first, so the switch
+ * back takes out exactly them - read back, then T = the screen timeout (lock delay 0, 59 §4.3), read back.
+ * Never `cover_written` (that is the cover's bare keyguard). A failed step is reported in `coverFailed` and
+ * logged, never a fallback: the Android PIN is the gate whatever these write. `lockMayRun`: the glance is
+ * the face. A failed features step leaves `features` null, so the camera lock stays engaged ([secureCameraHeld]).
+ */
+private fun androidWrite(policy: KeyguardPolicy, managed: Boolean, coverAdded: Int, store: (Int) -> Boolean, timeoutMs: () -> Long?): KeyguardWritten {
+    val errors = mutableListOf<Pair<String, Exception>>()
+    var failed: String? = null
+    val disabled = try {
+        if (!policy.writeDisabled(false)) throw IllegalStateException("setKeyguardDisabled(false) refused")
+        false
+    } catch (e: Exception) {
+        errors += "Android lock: setKeyguardDisabled(false) failed" to e
+        failed = "disabled"
+        null
+    }
+    val features = try {
+        val current = policy.readFeatures()
+        val (value, newAdded) = keyguardDisabledFeatures(current, managed, cover = false, coverAdded = coverAdded, android = true)
+        // M6's order: what is added is kept before it is written.
+        if (!store(newAdded)) throw IllegalStateException("coverAdded not stored")
+        if (value != current) policy.writeFeatures(value)
+        val read = policy.readFeatures()
+        // P59-4: B2's SECURE_CAMERA too while managed - the camera lock stands down only on what is read back here.
+        val want = ANDROID_KEYGUARD_FEATURES or (if (managed) KEYGUARD_SECURE_CAMERA else 0)
+        if ((read and want) != want) throw IllegalStateException("features read back wrong")
+        read
+    } catch (e: Exception) {
+        errors += "Android lock: the keyguard features failed" to e
+        failed = failed ?: "features"
+        null
+    }
+    val t = try {
+        val want = maxTimeToLock(coverOn = true, effectiveTimeoutMs = timeoutMs())
+        if (want <= 0L) throw IllegalStateException("no screen timeout")
+        if (policy.readMaxTimeToLock() != want) policy.writeMaxTimeToLock(want)
+        val read = policy.readMaxTimeToLock()
+        if (read != want) throw IllegalStateException("max time to lock read back wrong")
+        read
+    } catch (e: Exception) {
+        errors += "Android lock: the max time to lock failed" to e
+        failed = failed ?: "max_time_to_lock"
+        null
+    }
+    return KeyguardWritten(KeyguardMode.ANDROID, lockMayRun = true, coverFailed = failed, features = features, maxTimeToLockMs = t, disabled = disabled, errors = errors)
 }
 
 /** DISABLED or UNTOUCHED ([writeKeyguard]): the keyguard first, then the cover's bits and T out. */

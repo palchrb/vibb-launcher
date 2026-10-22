@@ -358,7 +358,7 @@ object UpdateFence {
         if (outcome.leftToApply.isNotEmpty() && !inApply) {
             scope.launch {
                 try {
-                    AppEnforcer.apply(app, currentPolicyDecision().policy)
+                    AppEnforcer.apply(app, currentPolicyDecision())
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Apply after the release failed", e)
                 }

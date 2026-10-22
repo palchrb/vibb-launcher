@@ -86,7 +86,8 @@ object BootCover {
 
     /**
      * The process's one `ACTION_SHUTDOWN` receiver (design 38 §4.2, QA M3): the cover's synchronous
-     * writes first, exactly as before, then the phone's shutdown for the parent
+     * writes first, exactly as before, then design 59's restart line ([AndroidLock.onShutdown]), then the
+     * phone's shutdown for the parent
      * ([com.kidslauncher.mdm.server.PowerEvents.onShutdown]: its record committed, then `goAsync`
      * for the POST). Each part in its own `try`, so a throw in one never skips the other (QA N5).
      */
@@ -98,6 +99,12 @@ object BootCover {
                 coverAtShutdown(app)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Boot cover shutdown writes failed", e)
+            }
+            try {
+                // Design 59 §3.2: as Android's face, the restart line for Android's lock screen before the first unlock.
+                AndroidLock.onShutdown(app)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "The restart line failed: ${e.javaClass.simpleName}")
             }
             try {
                 com.kidslauncher.mdm.server.PowerEvents.onShutdown(app, intent, this)

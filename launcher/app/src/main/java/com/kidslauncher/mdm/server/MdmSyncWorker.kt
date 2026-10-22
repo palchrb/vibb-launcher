@@ -170,7 +170,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     mdm.lockReason(reason)
     mdm.lockKey(lock.key())
     // Derives the same lock from the same policy and suspends apps while it's on.
-    AppEnforcer.apply(context, decision.policy, fromSync = true)
+    AppEnforcer.apply(context, decision, fromSync = true)
     // Design 24b: a parent-PIN window that ended (this sync ends an override) locks again now,
     // before the status report, so the report carries the relock.
     try {
@@ -1099,13 +1099,13 @@ fun reevaluateLockReasonFromCache(context: Context): LockReason? {
     val appContext = context.applicationContext
     scheduleScope.launch {
         try {
-            AppEnforcer.apply(appContext, currentPolicyDecision().policy)
+            AppEnforcer.apply(appContext, currentPolicyDecision())
             // The Play state may have moved while that apply ran (screen on right after screen
             // off in the update window): apply again until what's enforced is what's current,
             // so the window really ends at once on screen-on.
             var tries = 0
             while (tries++ < 3 && AppEnforcer.lastEnforcedPlayState?.key() != PlayRuntime.state(appContext).key()) {
-                AppEnforcer.apply(appContext, currentPolicyDecision().policy)
+                AppEnforcer.apply(appContext, currentPolicyDecision())
             }
             if (installModeEnded) PlayRuntime.onInstallModeEnded(appContext)
         } catch (e: Exception) {

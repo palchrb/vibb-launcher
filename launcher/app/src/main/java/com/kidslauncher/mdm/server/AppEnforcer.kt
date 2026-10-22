@@ -271,7 +271,13 @@ object AppEnforcer {
      * main thread (it can wait for a running pass, and starting the VPN reads files).
      */
     @Synchronized
-    fun apply(context: Context, policy: PolicyResponse?, fromSync: Boolean = false) {
+    fun apply(context: Context, decision: PolicyToApply, fromSync: Boolean = false) =
+        apply(context, decision.policy, fromSync, parentChoice = decision.carriesParentChoice)
+
+    /** [parentChoice] (design 59 §3.8, L-1): [policy] is a fresh or `Ok` cached one ([PolicyToApply.carriesParentChoice]) -
+     * only then may Android's lock be rolled back. A bare policy is never one. */
+    @Synchronized
+    fun apply(context: Context, policy: PolicyResponse?, fromSync: Boolean = false, parentChoice: Boolean = false) {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         if (!dpm.isDeviceOwnerApp(context.packageName)) {
             return
@@ -450,7 +456,7 @@ object AppEnforcer {
         // Handy's PIN lock (step 10) first - whether it is LOCKED changes the lock-task setting
         // below (featuresWhileLocked / lockTaskWhileLocked), so a sync can't undo the lock.
         val managed = policy?.allowlist != null || callState.managed
-        com.kidslauncher.mdm.lock.PinLockRuntime.configure(context, dpm, admin, policy, managed)
+        com.kidslauncher.mdm.lock.PinLockRuntime.configure(context, dpm, admin, policy, managed, parentChoice)
         // The boot cover (design 16b, switch off by default): its PPA next to HomeActivity's while
         // wanted, the component off when not - enabled only at shutdown.
         try {
@@ -1153,7 +1159,7 @@ object AppEnforcer {
         if (!dpm.isDeviceOwnerApp(context.packageName)) return false
         // The Play Store (re)installed or updated: the full plan decides its suspension.
         if (packageName == PLAY_STORE) {
-            apply(context, currentPolicyDecision().policy)
+            apply(context, currentPolicyDecision())
             return false
         }
 

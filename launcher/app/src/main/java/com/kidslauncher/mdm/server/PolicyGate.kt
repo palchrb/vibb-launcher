@@ -189,6 +189,11 @@ data class LastEnforcedPlan(
 sealed interface PolicyToApply {
     val policy: PolicyResponse?
 
+    /** Design 59 §3.8 (L-1): the policy carries the parent's choices - a fresh one or the `Ok` cache. Never a
+     * [Fallback] (the last-enforced plan has no `kid_lock`) nor `Apply(null)`: a rollback of Android's PIN runs
+     * only on this. */
+    val carriesParentChoice: Boolean get() = this is Apply && policy != null
+
     /** A real policy (fresh or cached), or `null` on a phone that has never had one. */
     data class Apply(override val policy: PolicyResponse?) : PolicyToApply
 

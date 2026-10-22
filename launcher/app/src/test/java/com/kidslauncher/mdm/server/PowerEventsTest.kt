@@ -183,9 +183,13 @@ class PowerEventsTest {
         val cover = receiver.indexOf("coverAtShutdown(app)")
         val power = receiver.indexOf("PowerEvents.onShutdown(app, intent, this)")
         assertTrue(cover in 0 until power)
+        // Design 59 §3.2: Android's restart line between the two, in a try of its own.
+        val line = receiver.indexOf("AndroidLock.onShutdown(app)")
+        assertTrue(line in cover until power)
         // Each in its own try/catch.
-        assertEquals(2, Regex("""try \{""").findAll(receiver).count())
-        assertTrue(receiver.substring(cover, power).contains("} catch (e: Exception)"))
+        assertEquals(3, Regex("""try \{""").findAll(receiver).count())
+        assertTrue(receiver.substring(cover, line).contains("} catch (e: Exception)"))
+        assertTrue(receiver.substring(line, power).contains("} catch (e: Exception)"))
         assertTrue(receiver.substring(power).contains("} catch (e: Exception)"))
         // The record committed before goAsync; finish() in a finally, also when the executor refuses.
         val shutdown = body(code("PowerEvents.kt"), "fun onShutdown(")

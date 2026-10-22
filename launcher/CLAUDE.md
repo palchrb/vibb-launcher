@@ -160,7 +160,7 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
 
 ## Handy's own PIN lock and call screens (handy step 10, design `docs/design/10-lock-and-call-ui.md`, at the monorepo root)
 
-- **No Android screen lock any more**: `PinLockRuntime.configure` (from `apply()`) switches the keyguard off (`setKeyguardDisabled(true)`, screen lock "None") only when managed, the policy has `kid_lock` and the phone has **no** Android credential; with one our lock stays off (`lock_state.inactive = android_credential`, no double lock) until it is removed (runbook: 04 doc step 4, `docs/testing/emulator.md` §6c; `onPasswordChanged` with `<watch-login/>` re-checks at once). Without a credential CE unlocks by itself at boot, so the BFU state is gone; `LOCK_TASK_FEATURE_KEYGUARD` stays forced and all direct-boot code stays (unmigrated phones, boot window). `PinLockActivity` is **not** direct-boot-aware.
+- **No Android screen lock any more** (own mode; with `kid_lock.keyguard` "android" Android's PIN is the gate instead - design 59 below): `PinLockRuntime.configure` (from `apply()`) switches the keyguard off (`setKeyguardDisabled(true)`, screen lock "None") only when managed, the policy has `kid_lock` and the phone has **no** Android credential; with one our lock stays off (`lock_state.inactive = android_credential`, no double lock) until it is removed (runbook: 04 doc step 4, `docs/testing/emulator.md` §6c; `onPasswordChanged` with `<watch-login/>` re-checks at once). Without a credential CE unlocks by itself at boot, so the BFU state is gone; `LOCK_TASK_FEATURE_KEYGUARD` stays forced and all direct-boot code stays (unmigrated phones, boot window). `PinLockActivity` is **not** direct-boot-aware.
 - **Pure parts** (`lock/`): `PinLockState.kt` (`step`: DISABLED/LOCKED/UNLOCKED; process start = LOCKED and shown with the screen on; every screen-off locks; calls ending while LOCKED or with the screen off show the lock; `lockActivation`), `PinBackoff.kt` (4 free tries, then 30 s/1/2/5/15 min; a wait only ever extends - new boot = full wait from now, either clock keeps it going; the failure is committed **before** PBKDF2 and undone on success; a new hash resets), `RefrontPolicy.kt` (re-front 0.5 s → 2 s → every 5 s, never giving up; exempt: our call, `TelecomManager.isInCall`, 2 min after "Emergency call", the system clock app's alarm; crash guard 3 recorded crashes / 2 min, re-armed by a sync after 10 min). Tests `PinLockStateTest`, `PinBackoffTest` (also pins `timedWindowActive`'s opposite polarity), `RefrontPolicyTest`, `PinLockTaskTest`, `PinHashTest` (vector shared with the server), `PinLockManifestTest`.
 - **Always in lock task while LOCKED** (QA 10 #1): `lockTaskWhileLocked` - kiosk on: the kiosk list is never touched (removing a package clears its task) except that the recents provider leaves it while LOCKED (16d, qa-16d-code #1), features minus NOTIFICATIONS/HOME/OVERVIEW; kiosk off: our package + `pinLockHelpers` (emergency dialer, Telecom, system dialer, system clock app) with KEYGUARD|GLOBAL_ACTIONS|SYSTEM_INFO, and `PinLockActivity` starts/stops lock task itself (only when `isLockTaskPermitted`). Plus `setStatusBarDisabled(true)` (backstop) and `DISALLOW_CREATE_WINDOWS` while locked. **`lock/LockTaskChrome` is now the only place that sets lock-task packages/features, the status bar and `DISALLOW_CREATE_WINDOWS`** - `apply()` hands it the plan (`applyPlan`), the runtime calls `refresh` on LOCKED changes; never set them anywhere else. `HomeActivity` never `stopLockTask`s while LOCKED. Stopping a root lock task clears the other locked tasks (AOSP `clearLockedTask`), so after an unlock with the kiosk off the time-rule screen is started again (`afterUnlock`).
 - **Lock background** (design 25, 25f): `PinLockActivity` draws `WallpaperStore.state.lock` (pure `lockWallpaper`: the parent's `launcher_ui.lock_wallpaper` when allowed and usable, else Home's `current` - photos included) under a black scrim (`lockScrim*`: every ink in `LOCK_INKS` - white, the dim date, "Foreldrekode" at 75 %, the red emergency link - >= 4.5:1, at least `MIN_IMAGE_SCRIM` for photos, cap 0.8) on the keypad root and the glance root (`GlancePanel.ground`), once `lockReady`, again on every store change between onStart and onStop. The window stays opaque (no `windowShowWallpaper`); the layout roots keep `kid_ground` until the store is ready. Since design 32 the stand-in before the first frame (window background, splash, bars, task description) is black, not `kid_ground`.
@@ -171,6 +171,62 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
 - **Calls and the lock (fix round qa-10-code)**: Back on the call screen does nothing while a call exists; whenever the lock resumes during **our** call it starts the call screen again (`LockResumed` → `showCall`), so a ringing call stays answerable and an active one controllable. Every in-call SCREEN_OFF locks (a proximity blank sends none), a call ending with the screen off locks, and LOCKED during our call starts the lock (the call screen comes over it, inside the lock task). A call only the system dialer shows (`systemCall`: emergency, or our dialer role not held) is never covered; the re-front loop waits for it to end. Kiosk off pins the system dialer only while our dialer role isn't held (`pinLockHelpers(ourDialerHeld)`); with calls unmanaged its "Add call" may reach the dialer's full UI during a call (10 doc). The alarm exemption needs the **system** clock app (since design 42 also Fossify Clock with its pinned signer, `clockPackages()`) as `setAlarmClock` creator, lasts 3 min and ends when the lock is back in front. The crash guard counts only crashes the uncaught-exception handler records while `PinLockActivity.instances > 0` (no recreations, no kills). The lock is started before the chrome change; kiosk-off helpers are resolved at init.
 - Toasts don't show over the lock (`DISALLOW_CREATE_WINDOWS`): the lock and its dialog show their own texts. Screen time: `screenTimeCounts(..., pinLocked)` and `PinLockActivity` is a free screen.
 - **Not device-tested**: the checklists in the 10 doc ("Implementation status") - lock before any frame at screen-on, Recents/Assistant/camera/power menu escapes in both kiosk modes, full-screen intents with the shade disabled, alarms, PBKDF2 time, safe mode, migration timing.
+
+## Android's own lock screen as the gate, the glance its face (design 59 step 3, `docs/design/59-android-keyguard-design.md`, at the monorepo root)
+
+- **The switch**: the policy's `kid_lock.keyguard` - exactly `"android"` is Android's lock (pure `androidRequested`),
+  anything else (missing, `"own"`, junk, an older server) is the own lock above, every path unchanged. Glue
+  `lock/AndroidLock`, pure `lock/AndroidLockPlan.kt` (`AndroidLockPlanTest`), log tag `AndroidLock`. The prototype's
+  debug switch (`HybridDebug`, its receiver) is gone. No capability and no `set_kid_pin` handler yet (step 4), so the
+  server never sends this phone the PIN: the switch takes effect through the keypad migration.
+- **Stored** (CE `pin_lock_state`, M-1): `keyguard_requested` and `pin_rev` committed with the hash by `saveConfig`;
+  `keyguard_android` = we own Android's credential - committed **before** a reset (write-ahead) and cleared only when
+  no credential is left (a verified clear, or removed on the phone); `android_pin_rev` = the rev Android's PIN was set
+  from (`null` after a change on the phone, §3.7); `android_boot_count`, written at **every** CE process start
+  (`decide`, L-4).
+- **Face** = requested, managed, a kid PIN and an Android credential (`androidFace`). Then `KeyguardCover` writes
+  ANDROID (`setKeyguardDisabled(false)`, `ANDROID_KEYGUARD_FEATURES` = widgets, secure notifications, trust agents,
+  FACE, IRIS, shortcuts - fingerprint stays -, T = the screen timeout, read back incl. B2's 0x2; never
+  `setKeyguardDisabled(true)`, never the cover's dismissal), `lockActivation(androidGate)` keeps our lock active as the
+  face, the camera lock stands down only while the write read SECURE_CAMERA back (`KeyguardCover.androidCameraGuard`,
+  re-synced on both edges, P59-4/8), no re-front while Android's **secure** keyguard is locked (P59-3), the ring card
+  and keypad hide "Foreldrekode".
+- **The glance leaves only on Android's verdict** (`faceStep`, §3.3): the PIN pad's `onDismissSucceeded`, or a
+  `USER_PRESENT` since our lock last went LOCKED (the mark is reset at every LOCKED edge, screen-off and remote lock).
+  A not-locked read alone waits `ANDROID_ANSWER_WAIT_MS` (1 s; `ANDROID_UNLOCK_WAIT_MS` 3 s once Android read
+  locked since this screen-off - a fingerprint from dark, S3-3) for the broadcast, then RELOCKs (`dpm.lockNow()`,
+  counted in `AndroidLock.relocks` for step 4's report); 1 s after each screen-off while LOCKED and dark the sleep
+  check RELOCKs an open Android. No credential at any trigger: our keypad and hash. **`USER_PRESENT`** has its own
+  receiver registered **EXPORTED** for that action alone (SystemUI sends it from its own uid, which a NOT_EXPORTED
+  receiver never hears - the run's bug 1; it is a `<protected-broadcast>` in frameworks/base's core manifest);
+  as the face only and with the screen on (S3-2) - own mode ignores it, as before.
+- **"Lås opp"/a row** -> `requestDismissKeyguard` (Android's PIN pad); a tap on an ask older than
+  `ANDROID_ASK_RETRY_MS` (1 s) asks again, and an ask with no answer after `ANDROID_ASK_TIMEOUT_MS` (2 s) while our
+  window has the focus (nothing of SystemUI over us) - or when the focus comes back later - is recovered by reading
+  the state again (the run's bug 2: never 30 s of dead taps). Any ask's success leaves (Android's verdict), never
+  after a screen-off since that ask.
+- **Process start**: the boot's first CE start with the face is UNLOCKED (`processStartUnlocked`, `ProcessStart.androidBoot`
+  - the PIN was typed to unlock CE); every later start LOCKED, and the resume's rule decides. The crash guard in
+  android mode calls `lockNow()` (`AndroidLock.crashGuardTripped`).
+- **Migration** (§3.4): the next correct Child PIN on our keypad while requested with no credential becomes Android's
+  PIN through `WindowRelock.resetCredential` (the one `resetPasswordWithToken` caller besides 24b's relock), with the
+  rev of the hash it was checked against (`PinResult.Ok(pinRev)`, Q59-5). The token: `ensureAndroidResetToken` at every
+  apply while requested or owned (`androidTokenStep`: none -> set, inactive without a credential -> set, inactive with
+  one -> wait for the escrow; L-3).
+- **Rollback** (§3.8, L-1): owned, not requested, and the apply's policy carries the parent's choice -
+  `AppEnforcer.apply(context, decision: PolicyToApply)` passes `carriesParentChoice` (a fresh or `Ok` cached policy;
+  never a `Fallback` or `Apply(null)`) to `PinLockRuntime.configure`; every caller passes the decision, not its policy.
+  The credential is cleared with the token before the keyguard is written (then DISABLED); no active token: Android's
+  PIN stays the gate (UNTOUCHED) until the escrow activates. An apply **without** the parent's choice never touches
+  Android mode: while we own the live credential the keyguard stays ANDROID (`androidKeyguardHeld`) and
+  `keyguard_requested` is stored only off a parent-choice apply (`requestToStore`) - qa-59-step3-code S3-1. 24b's
+  relock step 1 is skipped while requested or owned (`credentialAction(..., androidRequested)`; unreadable = skipped).
+- **`onPasswordChanged`**: our own reset sets a one-shot "ours" flag (60 s); any other change makes `android_pin_rev`
+  unknown. **The restart line** ("Skriv koden for å starte telefonen", `android_lock_restart_line`): written at
+  `ACTION_SHUTDOWN` as the face (BootCover's one receiver, its own try, between the cover and PowerEvents), cleared at
+  the boot's first CE start and when the face goes. The notice wake keeps its `lockNow` after 15 s.
+- **Not yet** (step 4): the `set_kid_pin` command, remote lock's `locked (android pin)`, `lock_state`'s new fields,
+  `unlocked_at_ms`, the capability. Not device-tested: design 59 §8.
 
 ## Fix round 2026-10-06 (emulator run, `docs/testing/2026-10-06-emulator-run.md`, at the monorepo root)
 
