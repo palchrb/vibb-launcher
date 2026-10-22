@@ -782,6 +782,14 @@ findings, merge to `main`, full suite once.
   Me About and inbox reads, migration 0088) built on `design-62-step345`, awaiting code QA; all five ship in one
   `server-v*`.
 - Settings saves in the security log (design 62's old step 6, qa-62-design Q62-13): one admin middleware writing a coalesced `settings_saved` event (actor, matched route + ids, merged per page within 10 min) - first decide what counts as saved (a 200 can be a refusal) and keep `/music` in; S.
+- **Android mode, kiosk off: the glance's own lock task vs a helper app (rc.2 run R2):** an unlock on SystemUI's pad
+  into a lock-task helper (DeskClock) finishes it, because `lockLeave` stops lock task from the root and no API ends
+  the glance's lock task without clearing the helper's task. Decision 2026-10-22: as the face with the kiosk off and
+  Android locked, the glance takes no lock task of its own (Android's locked keyguard refuses app starts and Recents;
+  the shade is the keyguard's locked shade). Launcher, S; next 59b round, with an emulator check of the shade/QS over
+  the glance in that mode.
+- **Own mode: a cold Emergency SOS start can still be covered** (rc.2 run R1, 1 of 3; pre-existing 25b-A trade-off with
+  the 700 ms pause re-front for Recents). Not fixed on purpose: own mode goes away in phase D.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
