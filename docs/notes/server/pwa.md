@@ -241,10 +241,24 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   that what the lock then shows is seen by anyone near the phone. Tests: `lock_glance::the_wake_switch_saves_logs_nudges_and_reaches_the_policy`,
   the redirect table in `device_pages`, `policy_json_keys_snapshot`.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
-  `/lock?notice=…#child-pin`, `parent-pin` → `/lock?notice=…#parent-pin` (the flash in the group); `screen-timeout`
+  `/lock?notice=…#child-pin`, `kid-pin/send` → `/lock?notice=…#child-pin`, `kid-lock/keyguard` → its row
+  `#lock-keyguard` (design 59; a warning coming in above the group then moves nothing), Show Child PIN → the page
+  itself on its own path, `parent-pin` → `/lock?notice=…#parent-pin` (the flash in the group); `screen-timeout`
   → `#screen`, `lock-wallpaper`, `lock-wake`, `lock-screen`, `lock-screen/apps` → their rows (`#lock-wallpaper`, `#lock-wake`,
-  `#lock-screen-text`, `#lock-screen-app-<package>`; scroll-restore keeps the exact place). Attention: no/easy Parent PIN → `/lock#parent-pin`, Child PIN set but lock off →
-  `/lock#child-pin`; the summary's foreign-app step and Today's Parent PIN rows point there too.
+  `#lock-screen-text`, `#lock-screen-app-<package>`; scroll-restore keeps the exact place). Attention: no/easy Parent PIN → `/lock#parent-pin`, Child PIN set but lock off
+  and (design 59) "Phone's PIN isn't the Child PIN" → `/lock#child-pin`; the summary's foreign-app step and Today's Parent PIN rows point there too.
+- **Android's lock in the Child PIN group** (design 59 step 2; `docs/notes/server/hardening-and-pins.md`, "Android's
+  lock screen"): under the Child PIN row, the **Lock** select ("Vibb One's lock" / "Android's lock", sub-line "Test
+  phase: Android's lock will replace Vibb One's", disabled without a Child PIN; `POST /devices/{id}/kid-lock/keyguard`
+  back to its row `#lock-keyguard`), **Show Child PIN…** (a `<details>` with the password; it posts to the page's own
+  path, `POST /devices/{id}/lock` `action=reveal_kid_pin`, and is answered with the page itself - no redirect, no
+  anchor; `scroll-restore.js`'s form record keeps the place on the same path; the GET page and the answer are
+  `no-store`, `admin_auth::no_store_path`), the state rows and warnings, **Send the Child PIN again** (`POST
+  /devices/{id}/kid-pin/send`, back to `?notice=pin_sent|pin_not_sent|pin_not_kept#child-pin`). The footer and its ⓘ
+  follow the parent's choice (Android's lock: the PIN encrypts the data, nothing before the first unlock after a
+  restart, Android's back-off, the Parent PIN doesn't open it, a fingerprint); the Parent PIN's ⓘ drops "the lock's
+  Parent code" with Android's lock. The summary's row reads "PIN on · Android's lock". `check_forms` lets a form post
+  to its own page's path without a fragment (only this one does).
 - **Typed (M5):** `kid_lock::LockNote` (+ `Inactive`) replaces the card's `lines`/`warnings` and `inactive_warning`;
   `lock_glance::Note` the notes' sentences; `parent_pin::event_row` the PWA's event lines (`event_line`, `until_text`'s
   same-day form) and `parent_pin::notices` takes the zone (deleted 2026-10-20 with the summary's Now). A sub-page warning (`device_pages::Note`) may carry a `fix`
@@ -616,6 +630,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the hash or TOTP and the session epoch in one UPDATE (the first-sign-in change too), so another session is signed
   out exactly when the change is
   stored; Sign Out Everywhere answers 500 and keeps this session when the epoch can't move.
+- **Three wrong passwords end the session** (design 59 step 2, qa-59-design Q59-11): every form that asks a signed-in
+  parent for the password again - Account's password change, the first-sign-in change (`/auth/change-password`),
+  Reset Two-Factor Login and Lock Screen & PINs' Show Child PIN - counts through one helper (`admin_auth::reauth`,
+  or `record_reauth` after `PasswordGate::change`): a wrong one in a session counter (`reauth_wrong`), reset by a right
+  one, shared by the four; the third in a row flushes the session (sign in again, with 2FA), logs `reauth_signed_out`
+  and answers with `/login`. The second wrong one says "One more wrong one signs you out". Tests:
+  `android_lock_page::the_password_forms_share_one_count`, `show_child_pin_needs_the_password`.
 - **Texts (M5)**: the security log's event ids are labels (`admin::event_label`; every id the server writes has one,
   pinned by `admin::tests::every_written_event_has_a_label`, which reads the writers in `src/` - a new event needs its
   label there; an unknown id reads as its words), the row

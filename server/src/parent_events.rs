@@ -392,7 +392,16 @@ impl Phone {
     /// battery 64 %", "Anna was turned on" / "07:02 · off since 21:14, battery was 3 %", or with no
     /// shutdown seen the newest report before the boot.
     pub fn phone_on(&self, on: &PowerOn, at: DateTime<Utc>, start: &Start) -> NewEvent {
-        let when = capitalized(&self.at(at));
+        let mut when = capitalized(&self.at(at));
+        // Design 59 §2.3: with Android's lock the phone waits at "type the PIN to start" after a
+        // restart; "· unlocked 07:15" once that took more than [UNLOCK_SAID_AFTER].
+        if let Some(unlocked) = on
+            .unlocked_at_ms
+            .and_then(DateTime::from_timestamp_millis)
+            .filter(|u| *u - at > UNLOCK_SAID_AFTER && *u <= self.now + POWER_FUTURE)
+        {
+            when.push_str(&format!(" · unlocked {}", self.at(unlocked)));
+        }
         let (title, summary) = match start {
             Start::Restart => (
                 self.named(TITLE_MAX, |name| format!("{name} restarted")),
@@ -463,6 +472,9 @@ pub const RESTART_GAP: chrono::Duration = chrono::Duration::minutes(3);
 pub const FLAT_LEVEL: i64 = 3;
 /// ...and in the last report before a start with no shutdown seen (qa-38-design M5).
 pub const LAST_REPORT_FLAT_LEVEL: i64 = 10;
+/// A start's `unlocked_at_ms` this long after it is told ("· unlocked 07:15", design 59 §2.3): the
+/// minutes the phone sat at "type the PIN to start".
+pub const UNLOCK_SAID_AFTER: chrono::Duration = chrono::Duration::minutes(2);
 /// A part's instant this far in the server's future is dropped (that part only).
 const POWER_FUTURE: chrono::Duration = chrono::Duration::minutes(5);
 /// A part (a shutdown or a start) older than this is dropped (qa-38-code nit 2: a start too).
@@ -1056,6 +1068,29 @@ mod tests {
             };
             assert_eq!((event.title.as_str(), event.push), (title, Push::Now));
             assert_eq!(event.dedup_key, "boot:2026-10-01 08:00:00:42");
+        }
+        // Design 59 §2.3: the minutes at "type the PIN to start", when there were more than 2;
+        // a time before the start or in the future says nothing.
+        for (unlocked, summary) in [
+            (
+                "2026-10-18 12:23:00",
+                "14:20 · unlocked 14:23 · off since 14:02",
+            ),
+            ("2026-10-18 12:22:00", "14:20 · off since 14:02"),
+            ("2026-10-18 12:00:00", "14:20 · off since 14:02"),
+            ("2026-10-18 13:30:00", "14:20 · off since 14:02"),
+        ] {
+            let mut on = on(None);
+            on.unlocked_at_ms = Some(utc(unlocked).timestamp_millis());
+            let how = Start::AfterOff {
+                off: off(None, None, None),
+                at,
+            };
+            assert_eq!(
+                phone.phone_on(&on, start, &how).summary,
+                summary,
+                "{unlocked}"
+            );
         }
         // The thresholds: flat at 3 not at 4 at the shutdown, at 10 not 11 in the last report.
         for (level, flat_level, words) in [

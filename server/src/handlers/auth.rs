@@ -412,7 +412,7 @@ pub async fn change_password(
     if form.new_password != form.confirm_password {
         return render_error("New passwords don't match.");
     }
-    let new_hash = match state
+    let changed = match state
         .passwords
         .change(
             &form.current_password,
@@ -421,9 +421,22 @@ pub async fn change_password(
         )
         .await
     {
-        Ok(Some(hash)) => hash,
-        Ok(None) => return render_error("Current password is incorrect."),
+        Ok(changed) => changed,
         Err(admin_auth::Busy) => return admin_auth::busy_response(),
+    };
+    // Three wrong in a row end the session (design 59 §2.2's one re-auth rule).
+    let reauth = admin_auth::record_reauth(&state.db, &session, &admin, changed.is_some()).await;
+    let new_hash = match (reauth, changed) {
+        (admin_auth::Reauth::Right, Some(hash)) => hash,
+        (admin_auth::Reauth::Wrong { left: 1 }, _) => {
+            return render_error(
+                "Current password is incorrect. One more wrong one signs you out.",
+            );
+        }
+        (admin_auth::Reauth::Wrong { .. }, _) => {
+            return render_error("Current password is incorrect.");
+        }
+        _ => return admin_auth::signed_out_response(),
     };
 
     // The new hash and the session epoch in one statement (qa-31-s14-code L2): every other session
@@ -693,7 +706,7 @@ pub async fn update_account_password(
     if let Some(answer) = refused {
         return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
     }
-    let new_hash = match state
+    let changed = match state
         .passwords
         .change(
             &form.current_password,
@@ -702,15 +715,26 @@ pub async fn update_account_password(
         )
         .await
     {
-        Ok(Some(hash)) => hash,
-        Ok(None) => {
+        Ok(changed) => changed,
+        Err(admin_auth::Busy) => return admin_auth::busy_response(),
+    };
+    // Three wrong in a row end the session (design 59 §2.2's one re-auth rule).
+    let reauth = admin_auth::record_reauth(&state.db, &session, &admin, changed.is_some()).await;
+    let new_hash = match (reauth, changed) {
+        (admin_auth::Reauth::Right, Some(hash)) => hash,
+        (admin_auth::Reauth::Wrong { left }, _) => {
             let answer = refuse(
                 "current_password",
-                "The current password is wrong. Nothing was changed.",
+                if left == 1 {
+                    "The current password is wrong. Nothing was changed. One more wrong one \
+                     signs you out."
+                } else {
+                    "The current password is wrong. Nothing was changed."
+                },
             );
             return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
         }
-        Err(admin_auth::Busy) => return admin_auth::busy_response(),
+        _ => return admin_auth::signed_out_response(),
     };
 
     // A new password makes the old one's wrong codes moot: the counter and the lock go too, so
@@ -775,28 +799,35 @@ pub async fn reset_totp(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<ResetTotpForm>,
 ) -> axum::response::Response {
-    match state
-        .passwords
-        .verify(&form.current_password, Some(&admin.password_hash))
-        .await
-    {
-        Ok(true) => {}
-        Ok(false) => {
-            security::record_security_event(
-                &state.db,
-                "totp_reset_refused",
-                Some(&admin.username),
-                None,
-                Some("wrong current password"),
-            )
-            .await;
-            let answer = AccountAnswer {
-                reset_error: Some("The current password is wrong. Two-factor login was not reset."),
-                ..AccountAnswer::default()
-            };
-            return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
-        }
-        Err(admin_auth::Busy) => return admin_auth::busy_response(),
+    // Three wrong in a row end the session (design 59 §2.2's one re-auth rule).
+    let reauth = admin_auth::reauth(&state, &session, &admin, &form.current_password).await;
+    if reauth == admin_auth::Reauth::Busy {
+        return admin_auth::busy_response();
+    }
+    if reauth != admin_auth::Reauth::Right {
+        security::record_security_event(
+            &state.db,
+            "totp_reset_refused",
+            Some(&admin.username),
+            None,
+            Some("wrong current password"),
+        )
+        .await;
+        let reset_error = match reauth {
+            admin_auth::Reauth::Wrong { left: 1 } => {
+                "The current password is wrong. Two-factor login was not reset. One more wrong \
+                 one signs you out."
+            }
+            admin_auth::Reauth::Wrong { .. } => {
+                "The current password is wrong. Two-factor login was not reset."
+            }
+            _ => return admin_auth::signed_out_response(),
+        };
+        let answer = AccountAnswer {
+            reset_error: Some(reset_error),
+            ..AccountAnswer::default()
+        };
+        return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
     }
     let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \

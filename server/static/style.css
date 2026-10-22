@@ -1650,6 +1650,28 @@ details.edit[open] > summary .chev {
     margin-top: 0;
 }
 
+/* Show Child PIN (design 59 §2.2): the digits large, in the heading face; the line under them. */
+.pin-digits {
+    margin: 0 4px 12px;
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: 0.25em;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+}
+
+.pin-line,
+.edit-body > .pin-line:first-child {
+    margin: 0 4px;
+}
+
+.pin-inline {
+    font-weight: 700;
+    color: var(--label);
+    letter-spacing: 0.1em;
+}
+
 /* A warning's expert fix (an adb command): its ⓘ follows the sentence, the panel opens under it. */
 .attention-sub details.info {
     display: inline;

@@ -86,6 +86,11 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "device_wipe_queued" => "Erase sent to phone",
         "kid_pin_changed" => "Child PIN changed",
         "kid_pin_cleared" => "Child PIN removed",
+        "kid_pin_shown" => "Child PIN shown",
+        "kid_pin_reveal_refused" => "Child PIN not shown: wrong password",
+        "kid_pin_sent" => "Child PIN sent to phone",
+        "kid_keyguard_changed" => "Lock screen changed",
+        "reauth_signed_out" => "Signed out: wrong passwords",
         "override_pin_changed" => "Parent PIN changed",
         "override_pin_cleared" => "Parent PIN removed",
         "parent_pin_used" => "Parent PIN used on phone",
@@ -323,7 +328,13 @@ mod tests {
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes,
     /// root-helper actions and command names.
-    const NOT_EVENTS: [&str; 33] = [
+    const NOT_EVENTS: [&str; 38] = [
+        // Design 59: the Child PIN group's notices and the reveal's form action.
+        "keyguard_no_pin",
+        "pin_not_kept",
+        "pin_not_sent",
+        "pin_sent",
+        "reveal_kid_pin",
         // A failed Spotify login's codes (`spotify_login_failed`'s details, design 26c §2.3).
         "access_denied",
         "admin_id",

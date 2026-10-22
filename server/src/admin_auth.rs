@@ -135,6 +135,87 @@ pub fn busy_response() -> Response {
         .into_response()
 }
 
+/// The session's count of wrong passwords in a row at the forms that ask for the password again.
+pub const REAUTH_WRONG_KEY: &str = "reauth_wrong";
+/// The wrong password in a row that ends the session.
+pub const REAUTH_MAX_WRONG: i64 = 3;
+
+/// A form that asks a signed-in parent for the password again ([reauth]).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Reauth {
+    /// The password; the count is reset.
+    Right,
+    /// Wrong; `left` more wrong ones end the session.
+    Wrong { left: i64 },
+    /// The [REAUTH_MAX_WRONG]th wrong one in a row: the session is ended (sign in again, with
+    /// 2FA). Answer with [signed_out_response].
+    SignedOut,
+    /// Too many password checks at once (429, [busy_response]); nothing counted.
+    Busy,
+}
+
+/// The one re-auth check (design 59 §2.2, qa-59-design Q59-11) for every form that asks a
+/// signed-in parent for the password again - Show Child PIN, the password change (both forms)
+/// and the 2FA reset: the gated Argon2, then [record_reauth].
+pub async fn reauth(
+    state: &AppState,
+    session: &tower_sessions::Session,
+    admin: &crate::models::AdminUser,
+    password: &str,
+) -> Reauth {
+    match state
+        .passwords
+        .verify(password, Some(&admin.password_hash))
+        .await
+    {
+        Ok(right) => record_reauth(&state.db, session, admin, right).await,
+        Err(Busy) => Reauth::Busy,
+    }
+}
+
+/// Counts a re-auth's outcome in the session (for a form whose check is [PasswordGate::change]):
+/// a right password resets the count; the [REAUTH_MAX_WRONG]th wrong one in a row ends the
+/// session (logged `reauth_signed_out`). A session that can't store the count is ended too: the
+/// limit never lapses.
+pub async fn record_reauth(
+    db: &sqlx::SqlitePool,
+    session: &tower_sessions::Session,
+    admin: &crate::models::AdminUser,
+    right: bool,
+) -> Reauth {
+    if right {
+        session.remove::<i64>(REAUTH_WRONG_KEY).await.ok();
+        return Reauth::Right;
+    }
+    let wrong = session
+        .get::<i64>(REAUTH_WRONG_KEY)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(0)
+        .saturating_add(1);
+    if wrong < REAUTH_MAX_WRONG && session.insert(REAUTH_WRONG_KEY, wrong).await.is_ok() {
+        return Reauth::Wrong {
+            left: REAUTH_MAX_WRONG - wrong,
+        };
+    }
+    session.flush().await.ok();
+    crate::security::record_security_event(
+        db,
+        "reauth_signed_out",
+        Some(&admin.username),
+        None,
+        Some("3 wrong passwords in a row at a form that asks for it again"),
+    )
+    .await;
+    Reauth::SignedOut
+}
+
+/// The answer after [Reauth::SignedOut]: the sign-in page.
+pub fn signed_out_response() -> Response {
+    axum::response::Redirect::to("/login").into_response()
+}
+
 /// The result of a TOTP check.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Totp {
@@ -466,7 +547,8 @@ pub const ADMIN_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inlin
 
 /// Admin pages that must never be stored: live locations and the Locations page (every kept fix,
 /// design 44), backups, the setup QR (an enrollment code), the provisioning settings, the account
-/// and 2FA pages; and the inbox (design 35,
+/// and 2FA pages, Lock Screen & PINs (design 59 §2.2: "Show Child PIN…" answers on its path with
+/// the PIN; its place comes back from `scroll-restore.js`'s record); and the inbox (design 35,
 /// qa-35-s1-code L4), so Back never shows a read event as unread from the back-forward cache. The
 /// tab pages with the bell keep their cache and scroll restore (the count may lag one navigation
 /// after Back - accepted).
@@ -477,6 +559,7 @@ pub fn no_store_path(path: &str) -> bool {
         ["devices", _, "locations.json"]
             | ["devices", _, "locations"]
             | ["devices", _, "locate-result.json"]
+            | ["devices", _, "lock"]
             | ["devices", _, "provision"]
             | ["devices", _, "regenerate-code"]
             | ["backups", ..]
@@ -691,6 +774,8 @@ mod tests {
             // Every kept fix (design 44 §1.4).
             "/devices/3/locations",
             "/devices/3/locate-result.json",
+            // Show Child PIN's answer (design 59 §2.2), and so the page it is rendered into.
+            "/devices/3/lock",
             "/devices/3/provision",
             "/devices/3/regenerate-code",
             "/backups",
@@ -707,6 +792,7 @@ mod tests {
         for path in [
             "/devices",
             "/devices/3",
+            "/devices/3/lock-wake",
             "/devices/locate",
             "/apps",
             "/settings",

@@ -111,6 +111,11 @@ pub(crate) fn check_forms(page: &str, html: &str) {
             assert!(!action.contains('#'), "{page}: {action} leaves the page");
             continue;
         }
+        // A form answered with its own page, not a redirect (design 59's "Show Child PIN…":
+        // the PIN in no address); scroll-restore.js's record keeps the place on the same path.
+        if action == page {
+            continue;
+        }
         // The Vibb import's upload answers with its preview, a group the form page doesn't have.
         if action == "/music/import#import-preview" {
             continue;

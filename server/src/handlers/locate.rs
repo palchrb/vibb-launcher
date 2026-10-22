@@ -90,6 +90,8 @@ struct Locate {
     location_off: bool,
     /// The phone's last report said it can't erase itself yet (QA of the launcher wave, Low 4).
     wipe_not_ready: bool,
+    /// Design 59 §2.3: Android's lock is chosen - after a restart the actions wait for the PIN.
+    android_lock: bool,
     /// The name typed into Erase Phone… didn't match: the confirm is open with the refusal.
     erase_refused: bool,
     location_mode: String,
@@ -205,6 +207,8 @@ fn reword(raw: &str) -> Option<String> {
         "stopped" => "Stopped ringing",
         "locked (handy lock)" => "Locked with the Child PIN",
         "locked (Android)" => "Screen off (no Child PIN set)",
+        // Design 59 §2.3: Android's lock; a fingerprint opens it again only after the PIN.
+        "locked (android pin)" => "Locked with the Child PIN (fingerprint off until it's typed)",
         "failed to lock" => "The phone couldn't lock",
         "paused for 2 hours" => "Unlocked for 2 hours",
         "nothing was open" => "Nothing was unlocked",
@@ -227,6 +231,10 @@ fn reword(raw: &str) -> Option<String> {
     };
     if !known.is_empty() {
         return Some(known.to_string());
+    }
+    // Design 59: `set_kid_pin`'s answers, in the summary's Activity (the Lock page words them too).
+    if let Some(answer) = crate::kid_lock::PinAnswer::parse(raw) {
+        return Some(answer.words().to_string());
     }
     if let Some(count) = raw
         .strip_prefix("allowed: ")
@@ -699,21 +707,27 @@ async fn locate_view(
 
     // A phone always has its policy row (`insert_device_with_policy`); a missing one reads as
     // the defaults a new phone gets.
-    let (location_mode, location_interval, location_retention): (String, i64, i64) =
-        sqlx::query_as(
-            "SELECT location_mode, location_interval_minutes, location_retention_days \
-             FROM device_policy WHERE device_id = ?",
+    let (location_mode, location_interval, location_retention, android_lock): (
+        String,
+        i64,
+        i64,
+        bool,
+    ) = sqlx::query_as(
+        "SELECT location_mode, location_interval_minutes, location_retention_days, \
+         kid_keyguard = ? AND kid_pin_hash IS NOT NULL FROM device_policy WHERE device_id = ?",
+    )
+    .bind(crate::kid_lock::KEYGUARD_ANDROID)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .unwrap_or_else(|| {
+        (
+            "on_request".to_string(),
+            30,
+            crate::retention::DEFAULT_LOCATION_RETENTION_DAYS,
+            false,
         )
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .unwrap_or_else(|| {
-            (
-                "on_request".to_string(),
-                30,
-                crate::retention::DEFAULT_LOCATION_RETENTION_DAYS,
-            )
-        });
+    });
 
     let (newest, map) = map_data(state, id, span, zone, now).await?;
     let fix = newest.as_ref().map(|l| {
@@ -760,6 +774,7 @@ async fn locate_view(
         waiting_for_fix,
         location_off: location_mode == "off",
         wipe_not_ready,
+        android_lock,
         erase_refused,
         location_mode,
         location_interval,
@@ -1508,6 +1523,16 @@ mod tests {
             ("stopped", "Stopped ringing"),
             ("locked (handy lock)", "Locked with the Child PIN"),
             ("locked (Android)", "Screen off (no Child PIN set)"),
+            // Design 59: Android's lock, and set_kid_pin's answers in Activity.
+            (
+                "locked (android pin)",
+                "Locked with the Child PIN (fingerprint off until it's typed)",
+            ),
+            ("pin set", "Child PIN set on the phone"),
+            (
+                "refused: no_token",
+                "Refused: Vibb One can't change Android's PIN yet",
+            ),
             ("failed to lock", "The phone couldn't lock"),
             ("paused for 2 hours", "Unlocked for 2 hours"),
             ("allowed: 1 apps", "1 app allowed"),

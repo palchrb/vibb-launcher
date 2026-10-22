@@ -422,8 +422,9 @@ pub enum LockNote {
     CallsCantRing(String),
     /// No report yet from a launcher that has the lock.
     Waiting,
-    /// The lock is on; whether the phone is locked right now.
-    On { locked: bool },
+    /// The lock is on; whether the phone is locked right now, and whether Android's lock is the
+    /// gate (design 59).
+    On { locked: bool, android: bool },
     /// Wrong Child PINs in a row.
     WrongPins(i64),
     /// Too many wrong PINs: the next try in about this many minutes.
@@ -435,6 +436,179 @@ pub enum LockNote {
     /// warning. `label` is the app's name on this server (else its package), `when` the time as
     /// the device page shows times.
     RangOverLock { label: String, when: String },
+    /// Design 59 §2.3: Android's lock is chosen, but the reporting launcher can't hold it.
+    AndroidNeedsUpdate,
+    /// Android's lock is chosen and the phone still runs Vibb One's: it starts the next time the
+    /// Child PIN is typed there, or when the PIN being sent (`sending`) arrives.
+    AndroidWaiting { sending: bool },
+    /// The phone runs Android's lock with a PIN that isn't the Child PIN (changed on the phone);
+    /// `stored`: this server keeps a copy it can send again.
+    PinNotChildPin { stored: bool },
+    /// The phone's lock still checks another Child PIN than the one saved here.
+    PinBehind,
+    /// Android's lock is on without Vibb One's reset token: the PIN can't be changed or cleared
+    /// until the child unlocks the phone once.
+    NoResetToken,
+    /// Vibb One's lock is chosen again and the phone still runs Android's; `stuck`: without the
+    /// token (qa-59-revision N-C: `keyguard: android` with `inactive: android_credential`).
+    SwitchingBack { stuck: bool },
+    /// Times Vibb One locked Android's lock under its own lock screen since the last report.
+    Relocked(i64),
+    /// The newest `set_kid_pin` ([pin_send]).
+    PinSent(PinSend),
+}
+
+/// Where the newest [SET_KID_PIN] stands (design 59 §2.3), the times as the page shows them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PinSend {
+    /// Not fetched yet.
+    Waiting,
+    /// Fetched, not confirmed yet (in flight).
+    Sent { at: String },
+    /// Fetched and never confirmed: it may not have reached the phone.
+    Unconfirmed { at: String },
+    /// The phone confirmed it, no answer yet (in flight).
+    Taken { sent: String, taken: String },
+    /// Confirmed long ago, never answered.
+    NoAnswer { taken: String },
+    /// The phone's answer.
+    Answered { answer: PinAnswer, at: String },
+    /// An answer this server doesn't know, as the phone sent it.
+    Other { raw: String, at: String },
+}
+
+/// The launcher's answers to [SET_KID_PIN] (design 59 §1), typed: worded here for the Lock page
+/// and the summary's Activity alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinAnswer {
+    /// `pin set`: Android's PIN is the Child PIN now.
+    Set,
+    /// `own lock`: Vibb One's lock was chosen again before the phone ran it.
+    OwnLock,
+    /// `refused: no_token`.
+    NoToken,
+    /// `refused: mismatch`: the PIN didn't verify against the policy's hash.
+    Mismatch,
+    /// `refused: no_pin`: the command came without the PIN.
+    NoPin,
+    /// `refused: failed`: Android refused it.
+    Failed,
+}
+
+impl PinAnswer {
+    pub fn parse(raw: &str) -> Option<PinAnswer> {
+        Some(match raw.trim() {
+            "pin set" => PinAnswer::Set,
+            "own lock" => PinAnswer::OwnLock,
+            "refused: no_token" => PinAnswer::NoToken,
+            "refused: mismatch" => PinAnswer::Mismatch,
+            "refused: no_pin" => PinAnswer::NoPin,
+            "refused: failed" => PinAnswer::Failed,
+            _ => return None,
+        })
+    }
+
+    /// The answer in a few words (Activity's line, `locate::reword`).
+    pub fn words(self) -> &'static str {
+        match self {
+            PinAnswer::Set => "Child PIN set on the phone",
+            PinAnswer::OwnLock => "Not needed: Vibb One's lock is on",
+            PinAnswer::NoToken => "Refused: Vibb One can't change Android's PIN yet",
+            PinAnswer::Mismatch => "Refused: not the phone's new Child PIN",
+            PinAnswer::NoPin => "Refused: the server sent no PIN",
+            PinAnswer::Failed => "Android refused the new PIN",
+        }
+    }
+
+    /// The Lock page's value word and the sentence behind the row's ⓘ.
+    fn row(self) -> (&'static str, Option<&'static str>) {
+        match self {
+            PinAnswer::Set => ("Set", None),
+            PinAnswer::OwnLock => (
+                "Not needed",
+                Some("Vibb One's lock was chosen again before the phone got it."),
+            ),
+            PinAnswer::NoToken => (
+                "Refused",
+                Some(
+                    "Vibb One can't change Android's PIN until the child unlocks the phone once. \
+                     Then send it again.",
+                ),
+            ),
+            PinAnswer::Mismatch => (
+                "Refused",
+                Some("It didn't match the Child PIN the phone had just been given. Send it again."),
+            ),
+            PinAnswer::NoPin => (
+                "Refused",
+                Some(
+                    "This server had no copy of the Child PIN it could send. Set the Child PIN \
+                     again.",
+                ),
+            ),
+            PinAnswer::Failed => (
+                "Failed",
+                Some("Android didn't take it. Send it again, or set another Child PIN."),
+            ),
+        }
+    }
+}
+
+/// The newest [SET_KID_PIN] of this enrollment as a [PinSend]; `None` for another command, or one
+/// cancelled or expired (nothing to say). `receipts`: the phone confirms commands.
+pub fn pin_send(
+    command: &crate::models::DeviceCommand,
+    receipts: bool,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<PinSend> {
+    use crate::models::{CommandStatus, Unconfirmed};
+    if command.command != SET_KID_PIN {
+        return None;
+    }
+    let at = |t: Option<chrono::DateTime<chrono::Utc>>| {
+        t.map_or_else(|| "time unknown".to_string(), |t| zone.at(t, now))
+    };
+    Some(match command.status(now.naive_utc(), receipts) {
+        CommandStatus::Done { at: answered } | CommandStatus::Failed { at: answered } => {
+            let raw = command.result.as_deref().unwrap_or_default();
+            match PinAnswer::parse(raw) {
+                Some(answer) => PinSend::Answered {
+                    answer,
+                    at: at(answered),
+                },
+                None => PinSend::Other {
+                    raw: raw.trim().chars().take(100).collect(),
+                    at: at(answered),
+                },
+            }
+        }
+        CommandStatus::Received {
+            at: taken,
+            overdue: false,
+        } => PinSend::Taken {
+            sent: at(command
+                .delivered_at
+                .as_deref()
+                .and_then(crate::display_time::parse_db_utc)),
+            taken: at(taken),
+        },
+        CommandStatus::Received {
+            at: taken,
+            overdue: true,
+        } => PinSend::NoAnswer { taken: at(taken) },
+        CommandStatus::Waiting { .. } => PinSend::Waiting,
+        CommandStatus::Sent {
+            at: sent,
+            unconfirmed: Unconfirmed::Lost,
+        } => PinSend::Unconfirmed { at: at(sent) },
+        CommandStatus::Sent { at: sent, .. } => PinSend::Sent { at: at(sent) },
+        CommandStatus::Cancelled { .. }
+        | CommandStatus::Expired
+        | CommandStatus::Erasing { .. } => {
+            return None;
+        }
+    })
 }
 
 impl LockNote {
@@ -516,8 +690,13 @@ impl LockNote {
                 )),
             ),
             LockNote::Waiting => row("On the phone", "Waiting for a report".to_string(), None),
-            LockNote::On { locked } => {
-                let state = if *locked { "Locked" } else { "Unlocked" };
+            LockNote::On { locked, android } => {
+                let state = match (*locked, *android) {
+                    (true, false) => "Locked",
+                    (false, false) => "Unlocked",
+                    (true, true) => "Locked · Android's lock",
+                    (false, true) => "Unlocked · Android's lock",
+                };
                 row(
                     "On the phone",
                     match reported {
@@ -550,6 +729,99 @@ impl LockNote {
                      without the Child PIN, for the call.",
                 ),
             ),
+            LockNote::AndroidNeedsUpdate => warning(
+                "Update Vibb One for Android's lock",
+                "Until Vibb One on this phone is updated, it keeps Vibb One's lock.".to_string(),
+                None,
+            ),
+            LockNote::AndroidWaiting { sending: false } => row(
+                "Android's lock",
+                "Waiting".to_string(),
+                Some("It starts the next time the Child PIN is typed on the phone."),
+            ),
+            LockNote::AndroidWaiting { sending: true } => row(
+                "Android's lock",
+                "Sending the PIN".to_string(),
+                Some("It starts when the phone gets the Child PIN."),
+            ),
+            LockNote::PinNotChildPin { stored } => warning(
+                "Phone's PIN isn't the Child PIN",
+                if *stored {
+                    "It was probably changed on the phone. Sending the Child PIN again puts it back."
+                } else {
+                    "It was probably changed on the phone. Set a new Child PIN above."
+                }
+                .to_string(),
+                None,
+            ),
+            LockNote::PinBehind => row(
+                "Child PIN on the phone",
+                "An earlier one".to_string(),
+                Some("The phone still uses an earlier Child PIN until it gets the new one."),
+            ),
+            LockNote::NoResetToken => warning(
+                "Vibb One can't change Android's PIN",
+                "Until the child unlocks the phone once, Vibb One can't change the PIN or switch \
+                 back to its own lock."
+                    .to_string(),
+                None,
+            ),
+            LockNote::SwitchingBack { stuck: false } => row(
+                "Android's lock",
+                "Switching back…".to_string(),
+                Some("Vibb One's lock takes over when the phone checks in."),
+            ),
+            LockNote::SwitchingBack { stuck: true } => warning(
+                "Android's PIN is still on",
+                "It goes after the child next unlocks the phone, or clear it in Settings › \
+                 Security while the phone is open (Parent PIN › pause)."
+                    .to_string(),
+                None,
+            ),
+            LockNote::Relocked(n) => row(
+                "Locked again by Vibb One",
+                if *n == 1 {
+                    "1 time".to_string()
+                } else {
+                    format!("{n} times")
+                },
+                Some(
+                    "Android's lock wasn't locked under Vibb One's lock screen, so Vibb One \
+                     locked it. Since the last report.",
+                ),
+            ),
+            LockNote::PinSent(send) => {
+                let (value, detail): (String, Option<&str>) = match send {
+                    PinSend::Waiting => (
+                        "Waiting".to_string(),
+                        Some("It goes out when the phone checks in."),
+                    ),
+                    PinSend::Sent { at } => (format!("Sent · {at}"), Some("Not confirmed yet.")),
+                    PinSend::Unconfirmed { at } => (
+                        format!("Sent · {at}"),
+                        Some("Never confirmed: it may not have reached the phone. Send it again."),
+                    ),
+                    PinSend::Taken { sent, taken } => (format!("Sent {sent} · taken {taken}"), None),
+                    PinSend::NoAnswer { taken } => (
+                        format!("Taken · {taken}"),
+                        Some("The phone got it but never answered. Send it again."),
+                    ),
+                    PinSend::Answered { answer, at } => {
+                        let (word, detail) = answer.row();
+                        (format!("{word} · {at}"), detail)
+                    }
+                    PinSend::Other { raw, at } => {
+                        return Note {
+                            warning: false,
+                            title: "Child PIN to the phone".to_string(),
+                            value: Some(format!("Answered · {at}")),
+                            detail: Some(format!("The phone said \"{raw}\".")),
+                            fix: None,
+                        };
+                    }
+                };
+                row("Child PIN to the phone", value, detail)
+            }
         }
     }
 }
@@ -587,16 +859,40 @@ pub fn rang_notes(
         .collect()
 }
 
-/// The Child PIN group from the policy and the phone's report (`state`, `None` = no report from a
-/// launcher that has the lock), whether the reporting launcher has the lock at all (`capable`),
-/// and the safe-boot switch (QA 10 #7: safe mode skips our lock). `now_ms` for the backoff.
-pub fn lock_card(
-    policy: &DevicePolicy,
-    state: Option<&LockState>,
-    capable: bool,
-    reported: bool,
-    now_ms: i64,
-) -> LockCard {
+/// Design 59 §2.3: the parent chose Android's lock for this phone.
+pub fn android_requested(policy: &DevicePolicy) -> bool {
+    policy.kid_keyguard == KEYGUARD_ANDROID
+}
+
+/// What the phone's last report says about its lock, for [lock_card].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PhoneLock<'a> {
+    /// The report's `lock_state` (`None`: none from a launcher that has the lock).
+    pub state: Option<&'a LockState>,
+    /// The phone has reported at all.
+    pub reported: bool,
+    /// The reporting launcher has the lock ([PIN_LOCK_CAPABILITY]).
+    pub capable: bool,
+    /// ... and Android's lock ([ANDROID_KEYGUARD_CAPABILITY]).
+    pub android_capable: bool,
+    /// A [SET_KID_PIN] waits to go out.
+    pub pin_waiting: bool,
+}
+
+impl PhoneLock<'_> {
+    /// The phone says Android's PIN is its gate (a launcher with Android's lock).
+    fn runs_android(&self) -> bool {
+        self.android_capable
+            && self
+                .state
+                .is_some_and(|s| s.keyguard.as_deref() == Some(KEYGUARD_ANDROID))
+    }
+}
+
+/// The Child PIN group from the policy and the phone's report, and the safe-boot switch (QA 10 #7:
+/// safe mode skips our lock). Design 59 §2.3 adds Android's lock: what the parent chose
+/// ([android_requested]) against what the phone runs. `now_ms` for the backoff.
+pub fn lock_card(policy: &DevicePolicy, phone: &PhoneLock, now_ms: i64) -> LockCard {
     let kid_lock = policy_kid_lock(policy);
     let mut card = LockCard {
         pin_set: kid_lock.is_some(),
@@ -609,15 +905,26 @@ pub fn lock_card(
     if !policy.hardening.disallow_safe_boot {
         card.notes.push(LockNote::SafeModeAllowed);
     }
-    if reported && !capable {
+    if phone.reported && !phone.capable {
         card.notes.push(LockNote::NeedsUpdate);
         return card;
     }
-    let Some(state) = state else {
+    let android = android_requested(policy);
+    if android && phone.reported && !phone.android_capable {
+        card.notes.push(LockNote::AndroidNeedsUpdate);
+    }
+    let Some(state) = phone.state else {
         card.notes.push(LockNote::Waiting);
         return card;
     };
-    if let Some(off) = state.inactive.as_deref().and_then(Inactive::parse) {
+    let runs_android = phone.runs_android();
+    // Android's own credential is own mode's warning only (§2.3): with Android's lock chosen it
+    // isn't advice to give, and a phone whose gate is Android's PIN reports it while a rollback
+    // waits for the token - "Switching back" says that (qa-59-revision N-C).
+    let credential = state.inactive.as_deref() == Some("android_credential");
+    if let Some(off) = state.inactive.as_deref().and_then(Inactive::parse)
+        && !(credential && (android || runs_android))
+    {
         card.notes.push(LockNote::Off(off));
     }
     card.notes.extend(
@@ -626,9 +933,36 @@ pub fn lock_card(
             .iter()
             .map(|package| LockNote::CallsCantRing(package.clone())),
     );
+    if phone.android_capable {
+        if android && !runs_android {
+            card.notes.push(LockNote::AndroidWaiting {
+                sending: phone.pin_waiting,
+            });
+        }
+        if android && runs_android && state.pin_rev.is_none() {
+            card.notes.push(LockNote::PinNotChildPin {
+                stored: policy.kid_pin_sealed.is_some(),
+            });
+        }
+        if android && runs_android && !state.reset_token {
+            card.notes.push(LockNote::NoResetToken);
+        }
+        if !android && runs_android {
+            card.notes.push(LockNote::SwitchingBack {
+                stuck: !state.reset_token || credential,
+            });
+        }
+        if state.pin_rev.is_some_and(|rev| rev != policy.kid_pin_rev) {
+            card.notes.push(LockNote::PinBehind);
+        }
+        if state.keyguard_relocks > 0 {
+            card.notes.push(LockNote::Relocked(state.keyguard_relocks));
+        }
+    }
     if state.active {
         card.notes.push(LockNote::On {
             locked: state.locked,
+            android: runs_android,
         });
     }
     if state.failures > 0 {
@@ -646,23 +980,133 @@ pub fn lock_card(
 }
 
 /// A Child PIN is set, but the phone's own lock is off (design 31 L2, an Attention alarm): the
-/// reporting launcher doesn't have the lock, or reports it inactive for a reason other than "no
-/// PIN yet" - [lock_card]'s warnings about the lock itself.
-pub fn lock_off(
+/// reporting launcher doesn't have the lock, or reports it inactive for a reason [lock_card] warns
+/// about - the same notes, so the row and the page agree.
+pub fn lock_off(policy: &DevicePolicy, phone: &PhoneLock) -> bool {
+    lock_card(policy, phone, 0)
+        .notes
+        .iter()
+        .any(|n| matches!(n, LockNote::NeedsUpdate | LockNote::Off(_)))
+}
+
+/// Design 59 §2.3: the phone runs Android's lock with a PIN that isn't the Child PIN - the Lock
+/// page's warning, and an Attention row.
+pub fn pin_changed_on_phone(policy: &DevicePolicy, phone: &PhoneLock) -> bool {
+    lock_card(policy, phone, 0)
+        .notes
+        .iter()
+        .any(|n| matches!(n, LockNote::PinNotChildPin { .. }))
+}
+
+/// "Send the Child PIN again" (design 59 §2.3): Android's lock is chosen, the phone can take the
+/// PIN, this server keeps a copy, the phone doesn't run the current one (it reports Vibb One's
+/// lock, a PIN changed on the phone or another rev) and no command is waiting or in flight - the
+/// newest was answered (a refusal, or a success the phone's report didn't follow), never
+/// confirmed, or there is none.
+pub fn offers_send_again(
     policy: &DevicePolicy,
-    state: Option<&LockState>,
-    capable: bool,
-    reported: bool,
+    phone: &PhoneLock,
+    newest: Option<&PinSend>,
 ) -> bool {
-    if policy_kid_lock(policy).is_none() {
+    let Some(state) = phone.state else {
         return false;
+    };
+    let in_flight = matches!(
+        newest,
+        Some(PinSend::Waiting | PinSend::Sent { .. } | PinSend::Taken { .. })
+    );
+    let current = state.keyguard.as_deref() == Some(KEYGUARD_ANDROID)
+        && state.pin_rev == Some(policy.kid_pin_rev);
+    android_requested(policy)
+        && policy_kid_lock(policy).is_some()
+        && policy.kid_pin_sealed.is_some()
+        && phone.android_capable
+        && !phone.pin_waiting
+        && !in_flight
+        && !current
+}
+
+/// The Child PIN as this server keeps it (design 59 §2.1), read in one statement for the reveal.
+#[derive(Debug, Default, sqlx::FromRow)]
+pub struct KeptPin {
+    pub kid_pin_sealed: Option<String>,
+    pub kid_pin_prev_sealed: Option<String>,
+    pub kid_pin_prev_rev: Option<i64>,
+    pub kid_pin_rev: i64,
+}
+
+impl KeptPin {
+    /// The phone's row; none (no row, no Child PIN) reads as nothing kept.
+    pub async fn load(db: &sqlx::SqlitePool, device_id: i64) -> Result<KeptPin, sqlx::Error> {
+        Ok(sqlx::query_as(
+            "SELECT kid_pin_sealed, kid_pin_prev_sealed, kid_pin_prev_rev, kid_pin_rev \
+             FROM device_policy WHERE device_id = ? AND kid_pin_hash IS NOT NULL",
+        )
+        .bind(device_id)
+        .fetch_optional(db)
+        .await?
+        .unwrap_or_default())
     }
-    if reported && !capable {
-        return true;
+}
+
+/// What "Show Child PIN" shows (design 59 §2.2).
+#[derive(Debug, PartialEq, Eq)]
+pub enum ShownPin {
+    /// The Child PIN, and what the phone has when it isn't this one.
+    Pin { pin: KidPin, phone: PhoneHas },
+    /// No copy here: no Child PIN, one saved before this version, or one saved while the key file
+    /// couldn't be read.
+    NotStored,
+    /// A copy this server can't open (sealed under another key: a restore elsewhere).
+    Unreadable,
+    /// This server couldn't read its key file at the start (the server log says why).
+    NoKey,
+}
+
+/// The PIN the phone runs, next to the one shown.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PhoneHas {
+    /// This one, or nothing known (a launcher without Android's lock reports no rev).
+    This,
+    /// An earlier Child PIN: the one it last confirmed, when this server still keeps it.
+    Earlier(Option<KidPin>),
+    /// Android's PIN was changed on the phone.
+    Changed,
+}
+
+/// Design 59 §2.2: the current Child PIN opened with `key`, and, for a phone with Android's lock
+/// that reports another rev, the one it still has: the confirmed PIN kept in `prev` when its rev
+/// is the phone's, else "an earlier PIN".
+pub fn shown_pin(
+    key: Option<&MusicKey>,
+    kept: &KeptPin,
+    device_id: i64,
+    phone: &PhoneLock,
+) -> ShownPin {
+    let Some(key) = key else {
+        return ShownPin::NoKey;
+    };
+    let Some(sealed) = kept.kid_pin_sealed.as_deref() else {
+        return ShownPin::NotStored;
+    };
+    let Some(pin) = crate::kid_pin::open(key, device_id, sealed) else {
+        return ShownPin::Unreadable;
+    };
+    let reported = phone.state.filter(|_| phone.android_capable);
+    let phone_has = match reported.map(|s| s.pin_rev) {
+        Some(Some(rev)) if rev != kept.kid_pin_rev => PhoneHas::Earlier(
+            kept.kid_pin_prev_sealed
+                .as_deref()
+                .filter(|_| kept.kid_pin_prev_rev == Some(rev))
+                .and_then(|prev| crate::kid_pin::open(key, device_id, prev)),
+        ),
+        Some(None) if phone.runs_android() => PhoneHas::Changed,
+        _ => PhoneHas::This,
+    };
+    ShownPin::Pin {
+        pin,
+        phone: phone_has,
     }
-    state
-        .and_then(|s| s.inactive.as_deref())
-        .is_some_and(|inactive| Inactive::parse(inactive).is_some())
 }
 
 /// The flash after a Child PIN save (`?notice=<code>`), inside the Child PIN group (design 31
@@ -693,6 +1137,21 @@ pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
             "Child PIN removed. The phone opens without a code once it checks in.",
             false,
         ),
+        // Design 59 §2.3: "Send the Child PIN again" and the lock switch.
+        "pin_sent" => (
+            "Sent. The phone takes the Child PIN as soon as it checks in.",
+            false,
+        ),
+        "pin_not_sent" => (
+            "Not sent: one is already on its way, or Vibb One on the phone can't take it yet.",
+            true,
+        ),
+        "pin_not_kept" => (
+            "Not sent: this server keeps no copy of the Child PIN. Set it again, then it goes \
+             out by itself.",
+            true,
+        ),
+        "keyguard_no_pin" => ("Set a Child PIN first: Android's lock needs one.", true),
         "invalid" => ("Not saved: a Child PIN is 4 to 6 digits.", true),
         "needs_override" => (
             "Not saved: set a Parent PIN first. It opens the lock if the Child PIN is forgotten.",
@@ -709,6 +1168,16 @@ pub fn flash_text(code: &str) -> Option<(&'static str, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A report from a launcher before design 59 (or none, `reported` false).
+    fn phone(state: Option<&LockState>, capable: bool, reported: bool) -> PhoneLock<'_> {
+        PhoneLock {
+            state,
+            reported,
+            capable,
+            ..Default::default()
+        }
+    }
 
     fn policy_with_pins(kid: Option<&str>, over: Option<&str>) -> DevicePolicy {
         let mut p = DevicePolicy::default();
@@ -737,20 +1206,19 @@ mod tests {
         // No Child PIN: nothing to be off.
         assert!(!lock_off(
             &without,
-            Some(&inactive(Some("crash_guard"))),
-            true,
-            true
+            &phone(Some(&inactive(Some("crash_guard"))), true, true)
         ));
         // An older launcher without the lock.
-        assert!(lock_off(&with_pin, None, false, true));
+        assert!(lock_off(&with_pin, &phone(None, false, true)));
         // Not reported yet.
-        assert!(!lock_off(&with_pin, None, false, false));
-        assert!(!lock_off(&with_pin, Some(&inactive(None)), true, true));
+        assert!(!lock_off(&with_pin, &phone(None, false, false)));
         assert!(!lock_off(
             &with_pin,
-            Some(&inactive(Some("no_pin"))),
-            true,
-            true
+            &phone(Some(&inactive(None)), true, true)
+        ));
+        assert!(!lock_off(
+            &with_pin,
+            &phone(Some(&inactive(Some("no_pin"))), true, true)
         ));
         for reason in [
             "unmanaged",
@@ -760,7 +1228,7 @@ mod tests {
             "odd",
         ] {
             assert!(
-                lock_off(&with_pin, Some(&inactive(Some(reason))), true, true),
+                lock_off(&with_pin, &phone(Some(&inactive(Some(reason))), true, true)),
                 "{reason}"
             );
         }
@@ -819,7 +1287,7 @@ mod tests {
     #[test]
     fn card_warns_about_safe_boot_capability_and_inactive_states() {
         let mut p = policy_with_pins(Some("1234"), Some("999999"));
-        let card = lock_card(&p, None, false, true, 0);
+        let card = lock_card(&p, &phone(None, false, true), 0);
         assert_eq!(
             card.notes,
             [LockNote::SafeModeAllowed, LockNote::NeedsUpdate]
@@ -838,7 +1306,7 @@ mod tests {
                 inactive: Some(inactive.to_string()),
                 ..Default::default()
             };
-            let card = lock_card(&p, Some(&state), true, true, 0);
+            let card = lock_card(&p, &phone(Some(&state), true, true), 0);
             assert_eq!(card.notes, [LockNote::Off(typed)], "{inactive}");
             assert!(card.notes[0].note(None).warning, "{inactive}");
         }
@@ -846,10 +1314,14 @@ mod tests {
             inactive: Some("no_pin".to_string()),
             ..Default::default()
         };
-        assert!(lock_card(&p, Some(&state), true, true, 0).notes.is_empty());
+        assert!(
+            lock_card(&p, &phone(Some(&state), true, true), 0)
+                .notes
+                .is_empty()
+        );
         // No report yet from a launcher with the lock.
         assert_eq!(
-            lock_card(&p, None, true, false, 0).notes,
+            lock_card(&p, &phone(None, true, false), 0).notes,
             [LockNote::Waiting]
         );
 
@@ -861,11 +1333,14 @@ mod tests {
             exempt_yields: 2,
             ..Default::default()
         };
-        let card = lock_card(&p, Some(&state), true, true, 0);
+        let card = lock_card(&p, &phone(Some(&state), true, true), 0);
         assert_eq!(
             card.notes,
             [
-                LockNote::On { locked: true },
+                LockNote::On {
+                    locked: true,
+                    android: false
+                },
                 LockNote::WrongPins(6),
                 LockNote::Backoff { minutes: 2 },
                 LockNote::SteppedAside(2),
@@ -937,12 +1412,15 @@ mod tests {
             voip_fsi_denied: vec!["io.element.android.x".to_string()],
             ..Default::default()
         };
-        let card = lock_card(&p, Some(&state), true, true, 0);
+        let card = lock_card(&p, &phone(Some(&state), true, true), 0);
         assert_eq!(
             card.notes,
             [
                 LockNote::CallsCantRing("io.element.android.x".to_string()),
-                LockNote::On { locked: false },
+                LockNote::On {
+                    locked: false,
+                    android: false
+                },
             ]
         );
         let fix = card.notes[0].note(None).fix.unwrap();
@@ -1119,7 +1597,7 @@ mod tests {
             "Signal".to_string(),
         )]);
         let p = policy_with_pins(Some("1234"), Some("999999"));
-        let card = lock_card(&p, Some(&state), true, true, 0);
+        let card = lock_card(&p, &phone(Some(&state), true, true), 0);
         // Not in lock_card's own notes (the page adds them with the names).
         assert!(
             !card
@@ -1149,14 +1627,352 @@ mod tests {
             ]
         );
         // No Child PIN: nothing.
-        let card = lock_card(&DevicePolicy::default(), Some(&state), true, true, 0);
+        let card = lock_card(
+            &DevicePolicy::default(),
+            &phone(Some(&state), true, true),
+            0,
+        );
         assert!(rang_notes(&card, Some(&state), &labels, &zone, now).is_empty());
     }
 
     #[test]
     fn no_pin_no_warnings() {
-        let card = lock_card(&DevicePolicy::default(), None, false, true, 0);
+        let card = lock_card(&DevicePolicy::default(), &phone(None, false, true), 0);
         assert!(!card.pin_set);
         assert!(card.notes.is_empty());
+    }
+
+    /// A launcher with Android's lock (design 59), reporting `state`.
+    fn android_phone(state: &LockState) -> PhoneLock<'_> {
+        PhoneLock {
+            state: Some(state),
+            reported: true,
+            capable: true,
+            android_capable: true,
+            pin_waiting: false,
+        }
+    }
+
+    fn reported(keyguard: &str, pin_rev: Option<i64>, reset_token: bool) -> LockState {
+        LockState {
+            active: true,
+            locked: true,
+            keyguard: Some(keyguard.to_string()),
+            pin_rev,
+            reset_token,
+            ..Default::default()
+        }
+    }
+
+    /// Design 59 §2.3, case by case: what the parent chose against what the phone runs.
+    #[test]
+    fn the_card_words_android_lock_case_by_case() {
+        let mut p = policy_with_pins(Some("1234"), Some("999999"));
+        p.hardening.disallow_safe_boot = true;
+        p.kid_pin_rev = 4;
+        p.kid_pin_sealed = Some("sealed".to_string());
+        let own = p.clone();
+        p.kid_keyguard = KEYGUARD_ANDROID.to_string();
+        let on = |android| LockNote::On {
+            locked: true,
+            android,
+        };
+
+        // Chosen, an older launcher: the update warning, its lock as before.
+        let old = LockState {
+            active: true,
+            locked: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            lock_card(&p, &phone(Some(&old), true, true), 0).notes,
+            [LockNote::AndroidNeedsUpdate, on(false)]
+        );
+        // Chosen, the phone still on Vibb One's: waiting for a PIN typed, or for the one sent.
+        let state = reported("own", Some(4), true);
+        let mut waiting = android_phone(&state);
+        assert_eq!(
+            lock_card(&p, &waiting, 0).notes,
+            [LockNote::AndroidWaiting { sending: false }, on(false)]
+        );
+        waiting.pin_waiting = true;
+        assert_eq!(
+            lock_card(&p, &waiting, 0).notes[0],
+            LockNote::AndroidWaiting { sending: true }
+        );
+        // Running it with the current PIN: just the state.
+        let state = reported("android", Some(4), true);
+        assert_eq!(lock_card(&p, &android_phone(&state), 0).notes, [on(true)]);
+        // A PIN changed on the phone: the warning, "send again" when a copy is kept.
+        let state = reported("android", None, true);
+        assert_eq!(
+            lock_card(&p, &android_phone(&state), 0).notes,
+            [LockNote::PinNotChildPin { stored: true }, on(true)]
+        );
+        assert!(pin_changed_on_phone(&p, &android_phone(&state)));
+        let mut unkept = p.clone();
+        unkept.kid_pin_sealed = None;
+        assert_eq!(
+            lock_card(&unkept, &android_phone(&state), 0).notes[0],
+            LockNote::PinNotChildPin { stored: false }
+        );
+        // Behind, without the token, locked again under the glance.
+        let mut state = reported("android", Some(3), false);
+        state.keyguard_relocks = 2;
+        assert_eq!(
+            lock_card(&p, &android_phone(&state), 0).notes,
+            [
+                LockNote::NoResetToken,
+                LockNote::PinBehind,
+                LockNote::Relocked(2),
+                on(true)
+            ]
+        );
+        // Vibb One's chosen again, the phone still on Android's: switching back, stuck without
+        // the token - also as the pair with `android_credential` (qa-59-revision N-C), which is
+        // never own mode's "remove Android's lock", nor the lock-off alarm.
+        let state = reported("android", Some(4), true);
+        assert_eq!(
+            lock_card(&own, &android_phone(&state), 0).notes,
+            [LockNote::SwitchingBack { stuck: false }, on(true)]
+        );
+        let mut pair = reported("android", Some(4), true);
+        pair.inactive = Some("android_credential".to_string());
+        assert_eq!(
+            lock_card(&own, &android_phone(&pair), 0).notes,
+            [LockNote::SwitchingBack { stuck: true }, on(true)]
+        );
+        assert!(!lock_off(&own, &android_phone(&pair)));
+        // Own mode with Android's credential on a phone running Vibb One's: the old warning.
+        let mut credential = reported("own", Some(4), true);
+        credential.inactive = Some("android_credential".to_string());
+        credential.active = false;
+        assert_eq!(
+            lock_card(&own, &android_phone(&credential), 0).notes,
+            [LockNote::Off(Inactive::AndroidCredential)]
+        );
+        assert!(lock_off(&own, &android_phone(&credential)));
+        // ...but not with Android's lock chosen (§2.3).
+        assert_eq!(
+            lock_card(&p, &android_phone(&credential), 0).notes,
+            [LockNote::AndroidWaiting { sending: false }]
+        );
+        // The words: warnings short, the commands nowhere; the rows' values.
+        for note in [
+            LockNote::AndroidNeedsUpdate,
+            LockNote::PinNotChildPin { stored: true },
+            LockNote::NoResetToken,
+            LockNote::SwitchingBack { stuck: true },
+        ] {
+            let words = note.note(None);
+            assert!(words.warning, "{note:?}");
+            assert!(words.title.split_whitespace().count() <= 6, "{note:?}");
+        }
+        assert_eq!(
+            on(true).note(Some("10:59")).value.as_deref(),
+            Some("Locked · Android's lock · 10:59")
+        );
+        assert_eq!(
+            LockNote::Relocked(1).note(None).value.as_deref(),
+            Some("1 time")
+        );
+    }
+
+    fn command(
+        result: Option<&str>,
+        delivered: bool,
+        received: bool,
+    ) -> crate::models::DeviceCommand {
+        crate::models::DeviceCommand {
+            id: 1,
+            device_id: 1,
+            command: SET_KID_PIN.to_string(),
+            requested_at: "2026-10-20 12:00:00".to_string(),
+            delivered_at: delivered.then(|| "2026-10-20 12:02:00".to_string()),
+            first_delivered_at: delivered.then(|| "2026-10-20 12:02:00".to_string()),
+            deliveries: i64::from(delivered),
+            received_at: received.then(|| "2026-10-20 12:03:00".to_string()),
+            acknowledged_at: result.map(|_| "2026-10-20 12:03:00".to_string()),
+            result: result.map(str::to_string),
+            succeeded: result.map(|r| r == "pin set"),
+            cancelled_at: None,
+            cancel_reason: None,
+        }
+    }
+
+    /// The command row (§2.3): waiting, sent, taken, answered in words; nothing for a cancelled
+    /// one; the answers typed for Activity too.
+    #[test]
+    fn the_pin_command_reads_as_its_state() {
+        let zone = crate::display_time::Zone::from_setting("Europe/Oslo");
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-20T12:04:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let value = |c: &crate::models::DeviceCommand| {
+            pin_send(c, true, &zone, now)
+                .map(|send| LockNote::PinSent(send).note(None))
+                .map(|n| (n.value.unwrap(), n.detail))
+        };
+        assert_eq!(value(&command(None, false, false)).unwrap().0, "Waiting");
+        assert_eq!(
+            value(&command(None, true, false)).unwrap().0,
+            "Sent · 14:02"
+        );
+        assert_eq!(
+            value(&command(None, true, true)).unwrap().0,
+            "Sent 14:02 · taken 14:03"
+        );
+        assert_eq!(
+            value(&command(Some("pin set"), true, true)),
+            Some(("Set · 14:03".to_string(), None))
+        );
+        let (word, detail) = value(&command(Some("refused: no_token"), true, true)).unwrap();
+        assert_eq!(word, "Refused · 14:03");
+        assert!(
+            detail
+                .unwrap()
+                .contains("until the child unlocks the phone once")
+        );
+        let (word, detail) = value(&command(Some("odd answer"), true, true)).unwrap();
+        assert_eq!(
+            (word.as_str(), detail.as_deref()),
+            ("Answered · 14:03", Some("The phone said \"odd answer\"."))
+        );
+        let mut cancelled = command(None, false, false);
+        cancelled.cancelled_at = Some("2026-10-20 12:01:00".to_string());
+        cancelled.cancel_reason = Some("keyguard_own".to_string());
+        assert_eq!(pin_send(&cancelled, true, &zone, now), None);
+        for (raw, answer) in [
+            ("pin set", PinAnswer::Set),
+            ("own lock", PinAnswer::OwnLock),
+            ("refused: no_token", PinAnswer::NoToken),
+            ("refused: mismatch", PinAnswer::Mismatch),
+            ("refused: no_pin", PinAnswer::NoPin),
+            ("refused: failed", PinAnswer::Failed),
+        ] {
+            assert_eq!(PinAnswer::parse(raw), Some(answer), "{raw}");
+        }
+        assert_eq!(PinAnswer::parse("pin"), None);
+    }
+
+    /// "Send the Child PIN again": only for a phone that can take it and doesn't run the current
+    /// PIN, with a copy kept and nothing on its way.
+    #[test]
+    fn send_again_is_offered_only_when_it_can_help() {
+        let mut p = policy_with_pins(Some("1234"), Some("999999"));
+        p.kid_keyguard = KEYGUARD_ANDROID.to_string();
+        p.kid_pin_rev = 4;
+        p.kid_pin_sealed = Some("sealed".to_string());
+        let changed = reported("android", None, true);
+        let refused = PinSend::Answered {
+            answer: PinAnswer::NoToken,
+            at: "14:03".to_string(),
+        };
+        assert!(offers_send_again(&p, &android_phone(&changed), None));
+        assert!(offers_send_again(
+            &p,
+            &android_phone(&changed),
+            Some(&refused)
+        ));
+        for in_flight in [
+            PinSend::Waiting,
+            PinSend::Sent {
+                at: "14:02".to_string(),
+            },
+            PinSend::Taken {
+                sent: "14:02".to_string(),
+                taken: "14:03".to_string(),
+            },
+        ] {
+            assert!(!offers_send_again(
+                &p,
+                &android_phone(&changed),
+                Some(&in_flight)
+            ));
+        }
+        let current = reported("android", Some(4), true);
+        assert!(!offers_send_again(&p, &android_phone(&current), None));
+        // Behind, or still on Vibb One's lock: yes.
+        assert!(offers_send_again(
+            &p,
+            &android_phone(&reported("android", Some(3), true)),
+            None
+        ));
+        assert!(offers_send_again(
+            &p,
+            &android_phone(&reported("own", Some(4), true)),
+            None
+        ));
+        // Vibb One's lock chosen, no copy, an older launcher: no.
+        let mut own = p.clone();
+        own.kid_keyguard = KEYGUARD_OWN.to_string();
+        assert!(!offers_send_again(&own, &android_phone(&changed), None));
+        let mut unkept = p.clone();
+        unkept.kid_pin_sealed = None;
+        assert!(!offers_send_again(&unkept, &android_phone(&changed), None));
+        assert!(!offers_send_again(
+            &p,
+            &phone(Some(&changed), true, true),
+            None
+        ));
+    }
+
+    /// Design 59 §2.2: the shown PIN, the one the phone still has, and why nothing shows.
+    #[test]
+    fn the_shown_pin_names_what_the_phone_has() {
+        let key = MusicKey::from_bytes(&[7; 32]);
+        let seal = |pin: &str| crate::kid_pin::seal(&key, 3, &KidPin::new(pin.to_string()));
+        let kept = KeptPin {
+            kid_pin_sealed: Some(seal("7391")),
+            kid_pin_prev_sealed: Some(seal("4826")),
+            kid_pin_prev_rev: Some(1),
+            kid_pin_rev: 2,
+        };
+        let pin = |digits: &str| KidPin::new(digits.to_string());
+        let shown = |state: &LockState, android: bool| {
+            let mut phone = android_phone(state);
+            phone.android_capable = android;
+            shown_pin(Some(&key), &kept, 3, &phone)
+        };
+        let this = ShownPin::Pin {
+            pin: pin("7391"),
+            phone: PhoneHas::This,
+        };
+        assert_eq!(shown(&reported("own", Some(2), true), true), this);
+        assert_eq!(
+            shown(&reported("own", Some(1), true), true),
+            ShownPin::Pin {
+                pin: pin("7391"),
+                phone: PhoneHas::Earlier(Some(pin("4826")))
+            }
+        );
+        assert_eq!(
+            shown(&reported("android", Some(0), true), true),
+            ShownPin::Pin {
+                pin: pin("7391"),
+                phone: PhoneHas::Earlier(None)
+            }
+        );
+        assert_eq!(
+            shown(&reported("android", None, true), true),
+            ShownPin::Pin {
+                pin: pin("7391"),
+                phone: PhoneHas::Changed
+            }
+        );
+        // A launcher without Android's lock: the newest alone.
+        assert_eq!(shown(&reported("own", Some(1), true), false), this);
+        // Another phone's row, no copy, no key.
+        let phone_state = reported("own", Some(2), true);
+        let phone = android_phone(&phone_state);
+        assert_eq!(
+            shown_pin(Some(&key), &kept, 4, &phone),
+            ShownPin::Unreadable
+        );
+        assert_eq!(
+            shown_pin(Some(&key), &KeptPin::default(), 3, &phone),
+            ShownPin::NotStored
+        );
+        assert_eq!(shown_pin(None, &kept, 3, &phone), ShownPin::NoKey);
     }
 }

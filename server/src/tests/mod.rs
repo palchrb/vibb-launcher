@@ -3,6 +3,7 @@
 //! requests sent straight to the router - no network, no background tasks.
 
 mod admin_auth;
+mod android_lock_page;
 mod app_display;
 mod attention;
 mod backup_secrets;
