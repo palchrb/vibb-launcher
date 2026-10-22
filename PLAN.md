@@ -752,6 +752,17 @@ findings, merge to `main`, full suite once.
   per phone (reuse `photos.rs`: resize, EXIF stripped). No big redesign. After the Android-lock RC.
   Implemented 2026-10-22 on branch `pwa-identity-d` (not merged; `docs/notes/server/pwa.md`, "The vibb identity",
   browser pass `docs/testing/2026-10-22-pwa-identity-pass.md`); the uploaded avatar round is still to do.
+- **Design 59 RC status (2026-10-22):** steps 1-4 merged (server 0.37.0: e8c9013b, f51d9901; launcher: 2a727685,
+  f4972ced), each with code QA and its fixes; the end-to-end emulator run `docs/testing/2026-10-22-d59-rc-run.md`
+  passed - nothing past the PIN, Recents refused on Android's lock in every way (the leak reproduced on today's lock
+  first). Tagged `server-v0.37.0` and `launcher-v0.36.0-rc.1` for the user's emulator; VoIP (Element X, WhatsApp) over
+  the lock, the notice wake and the Jelly Star checks (§9) are the user's. Small findings from the run, not blocking:
+  F1 (today's lock only: a Recents press leaves a stale BlockedAppActivity that blocks app starts in a later pause until
+  Back - goes away with Android's lock); F2 (ending a pause while the PIN pad is open closes the pad; tap "Lås opp"
+  again); F3 (after a reboot the stock Pixel launcher shows ~10 s before our Home on the debug build - time it on the
+  release build on the Jelly Star); F4 (design §8 step 15's `get-disabled` expectation is wrong: no Child PIN leaves
+  Android's swipe lock, as always); F5 (PWA: "Set" and "Send again" shown together for ~2 s after a new PIN lands).
+  The "Lås opp" missing-answer recovery (~2 s) could not be provoked on the emulator - a device check.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
