@@ -458,9 +458,13 @@ object AppEnforcer {
         val managed = policy?.allowlist != null || callState.managed
         com.kidslauncher.mdm.lock.PinLockRuntime.configure(context, dpm, admin, policy, managed, parentChoice)
         // The boot cover (design 16b, switch off by default): its PPA next to HomeActivity's while
-        // wanted, the component off when not - enabled only at shutdown.
+        // wanted, the component off when not - enabled only at shutdown (and, with Android's lock as the
+        // face, at the locked boot: design 59 F3 - the face as configure above just decided it).
         try {
-            com.kidslauncher.mdm.lock.BootCover.applyPolicy(context, dpm, admin, policy?.bootCover == true, managed)
+            com.kidslauncher.mdm.lock.BootCover.applyPolicy(
+                context, dpm, admin, policy?.bootCover == true, managed,
+                androidFace = com.kidslauncher.mdm.lock.AndroidLock.faceOn,
+            )
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Boot cover policy failed", e)
         }

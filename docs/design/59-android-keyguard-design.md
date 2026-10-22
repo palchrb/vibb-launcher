@@ -760,3 +760,104 @@ lock screen as the gate".
   - N1: the final rev's commit is tried twice (`commitRev`, also the keypad migration's), then logged.
   - N2: `report` reads the relocks; only a status report the server took subtracts them (`relocksReported`), so a
     failed POST keeps them.
+
+## F3: the first unlock after a reboot (2026-10-22, branch `fix-f3-boot-cover`)
+
+The RC run (`docs/testing/2026-10-22-d59-rc-run.md` §9, F3): after the PIN on SystemUI's pad the top was the stock
+`NexusLauncherActivity` from 1 to 10 s, our Home at 11 s; kiosk off in that window, hidden apps still hidden.
+
+**Why.**
+- Before design 59 the phone had no credential: CE unlocked at boot, and design 16's Home start (and 16b's cover, when
+  its switch was on) ran behind the boot animation. With Android's PIN the boot stays BFU until the kid types it. Only
+  direct-boot-aware HOMEs resolve then. On the emulator image that is the stock launcher; AOSP Launcher3's
+  `QuickstepLauncher` isn't DBA (`quickstep/AndroidManifest-launcher.xml`), so there it is Settings' `FallbackHome`. The
+  PIN's dismissal reveals whatever HOME is resumed behind the keyguard.
+- FallbackHome finishes by itself at the unlock once HOME resolves elsewhere (`FallbackHome.maybeFinish`,
+  `isUserUnlocked` + `resolveActivity`). The stock launcher never does: it stays until our process brings Home
+  (design 16's `BootHome`).
+- That start is the last step of our unlocked setup: `ACTION_USER_UNLOCKED` -> `ensureUnlockedInit` -> `decide`
+  ("Process start: UNLOCKED", 16:42:17.0) -> `initRest` on the main thread -> `PinLockRuntime.init`'s posted pass ->
+  `BootCover.init`, `BootHome` ("Home brought to the front: boot 4", 16:42:29.6). The 12.6 s between them is
+  `initRest` on the debug build's first CE start (the run's "Verification of ... took N ms" lines: ART verifying
+  classes at runtime). The prototype run's 3 s is the same path, warmer. `ensureAndroidResetToken` and the first apply
+  run on background threads; `swapAndroidBoot` is one small CE commit inside `decide`; lock task starts only in
+  Home's resume. None of them is in front of the Home start.
+- The boot cover (16b) is the piece for exactly this window, but it was off: the server switch `boot_cover` is off
+  by default, and it is armed only at `ACTION_SHUTDOWN`. `adb reboot`, a crash or a hard reset send none. Even when
+  armed, it handed over 3 s after its first frame. In BFU that time passes behind the keyguard, so at the PIN it left
+  at once, into a busy main thread.
+
+**The fix (launcher only, no server switch or contract change).**
+- **Android mode implies the cover**: `bootCoverWanted(switchOn || androidFace, managed, deviceOwner)`, the face as the
+  apply's `configure` decided it (`AndroidLock.faceOn`). The server switch keeps its meaning for own mode. Why not the
+  switch: in android mode the cover is what keeps the stock launcher off the screen, and it never shows before the PIN
+  (below), so the BFU-lockout risk the switch guarded is not there. The status report's `boot_cover.wanted` is then
+  true; the server's notes still show only with its switch on.
+- **A device-protected marker** `boot_cover_android` (an empty file next to the cover's record; written only by the
+  main process at each apply, `bootCoverAndroidMarker`). The cover and the locked boot read it, because CE can't be
+  read before the PIN.
+- **Armed at every boot**: besides the shutdown arm, `BootCallReceiver` (already DBA, `LOCKED_BOOT_COMPLETED`, the
+  call policy first) calls `BootCover.atLockedBoot`. In android mode (`coverAtLockedBoot`: marker, not yet unlocked,
+  guard not tripped) it enables the cover and starts the typed HOME restricted to our package. Before the unlock that
+  resolves to the cover alone, HOME-typed, in front of a stock launcher the boot already started. A device owner may
+  start it from the background (`BackgroundActivityStartController`: "callingUid is device owner",
+  android15-release :859-862). A graceful shutdown's arm makes the start a re-delivery.
+- **Never over the keyguard**: no `showWhenLocked`, no dismissal (`BootCoverManifestTest`). Before the PIN, Android's
+  lock screen stays the face: the wallpaper, "Skriv koden for å starte telefonen" and the pad, as design 59 §4.4 wants.
+  A showWhenLocked cover would hide the pad and the restart line, and it would need a dismiss path of its own. The
+  cover only becomes visible when the PIN's dismissal reveals it.
+- **It waits for our Home** (`coverWaitStep`, android mode only; own mode keeps 16b/16e's 3 s):
+  - It leaves once our main process has taken over and Home is over it. Our main process disables it in
+    `BootCover.init`, right before `BootHome`'s typed start in the same main-thread pass; then the cover's stop
+    finishes it.
+  - It never leaves earlier: below it may be the stock launcher a boot without `ACTION_SHUTDOWN` started, and a finish
+    would resume it.
+  - A stop while still enabled (the keyguard back, a call over it) never ends it.
+  - AMS also finishes a disabled component's activities on the delayed `PACKAGE_CHANGED` (1 s, 10 s just after the
+    system server starts: `PackageManagerService` :942-943, :4050; `cleanupDisabledPackageComponentsLocked`). By then
+    Home's start has already put Home's task on top.
+- **Never stranded**:
+  - Taken over but still in front 5 s later (`COVER_TAKEOVER_GRACE_MS`; the boot's Home start didn't come - a call,
+    or it was refused): it leaves anyway.
+  - No take-over 30 s after the unlock (`COVER_LAUNCHER_WAIT_MS`; the debug build needed 12.6 s): it disables itself,
+    starts the typed HOME (now HomeActivity, which starts our main process), and leaves as above.
+  - The crash guard (2 crashes in a boot) and the tripped guard's sticky "off" are unchanged. A tripped guard holds in
+    android mode until android mode or the switch goes off.
+- **Measured, not shaved**: `Application.initUnlocked` logs `Unlocked setup took N ms` (the main thread's share of
+  the gap). A cheap reorder doesn't help. Home's activity is created on the same main thread, so starting it earlier
+  only queues it behind `initRest`. A slimmer `initRest` is worth it only if the release build's number is large
+  (below).
+
+**Timing on a release build (the Jelly Star).** With the release build as device owner, android mode on, Child PIN
+set:
+1. `adb logcat -c`, then reboot: `adb shell svc power reboot` (graceful) and, as a second run, `adb reboot` (the
+   locked-boot arm).
+2. Once `adb wait-for-device` returns and `adb shell getprop sys.boot_completed` reads 1, start both:
+   - `adb logcat -v epoch -s BootCover BootCallReceiver HomeFront Application PinLock ActivityTaskManager:I > boot.log`
+   - `adb shell 'while true; do echo "$(date +%s.%N | cut -c1-14) $(dumpsys activity activities | grep -m1 topResumedActivity)"; sleep 0.2; done' > top.log`
+3. Before the PIN `boot.log` has `Boot cover started at the locked boot (android mode)`, or after a graceful
+   shutdown `Boot cover enabled (shutdown)` from the last boot. Type the PIN.
+4. Read:
+   - `top.log`: from the PIN to `HomeActivity` the top is `BootCoverActivity` only, never the stock launcher's
+     package. The PIN's moment is the first line whose top isn't the keyguard's.
+   - `boot.log`: `Unlocked setup took N ms`, `Home brought to the front: boot N`, then
+     `Boot cover leaves (taken over, Home over it): N ms after the unlock`. The last N is the gap the kid sees as the
+     breathing mark.
+   - `ActivityTaskManager: Displayed ...HomeActivity: +N ms` gives Home's own draw.
+   - Any `Boot cover leaves (taken over, grace over)` or `Boot cover disabled: no take-over` line is a finding.
+
+**The emulator run must check** (debug build, android mode):
+1. `svc power reboot`, then the PIN: the breathing mark from the dismissal to Home, no `NexusLauncherActivity` in
+   `topResumedActivity` at any sample. The mark (not the stock launcher) for the ~12 s of the debug start.
+2. The same with `adb reboot` (no `ACTION_SHUTDOWN`): `Boot cover started at the locked boot`, then the same result.
+3. BFU face unchanged: SystemUI's lock screen with "Type your PIN to start the phone" and the pad. The cover is not
+   seen before the PIN, and the emergency call works. `dumpsys activity activities` shows `BootCoverActivity` behind
+   the keyguard.
+4. A call (`gsm call` from an allowed number) right after the PIN, before Home: the call screen comes over the
+   cover; after the call our Home, no stock launcher.
+5. The fallback: `run-as` kill the main process right after the PIN, again whenever it comes back, for 30 s -
+   `Boot cover disabled: no take-over ...` after 30 s, then our Home. Killed only once, it comes back within the 30 s
+   and takes over as in 1.
+6. Own mode with the switch off: no cover, no marker (`run-as <pkg> ls /data/user_de/0/<pkg>/files`: no
+   `boot_cover_android`), as before. Own mode with the switch on: 16b/16e unchanged (the 3 s mark).
+7. Rollback to own mode: the marker goes at the next apply, and the next reboot has no locked-boot start.

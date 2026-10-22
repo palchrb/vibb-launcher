@@ -83,6 +83,30 @@ class BootCoverManifestTest {
         for (source in listOf(activity, guard)) assertFalse(source.contains("getSharedPreferences"))
     }
 
+    /** Design 59 F3: the cover sits behind Android's keyguard, never over it - Android's lock screen (the restart
+     * line, the pad) stays the face before the PIN, and nothing of ours occludes or dismisses it. */
+    @Test
+    fun `the cover never shows over the keyguard, and the locked boot's start reads device-protected storage only`() {
+        for (attr in listOf("showWhenLocked", "turnScreenOn", "showForAllUsers")) assertEquals(attr, "", cover.getAttributeNS(ns, attr))
+        val activity = code("java/com/kidslauncher/mdm/lock/BootCoverActivity.kt")
+        for (banned in listOf("setShowWhenLocked", "setTurnScreenOn", "requestDismissKeyguard", "FLAG_SHOW_WHEN_LOCKED", "FLAG_DISMISS_KEYGUARD")) {
+            assertFalse(banned, activity.contains(banned))
+        }
+        // It leaves on the take-over only when stopped or the grace is over (the rule is coverWaitStep's), and its
+        // own hand-over disables itself before starting Home.
+        val wait = activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n")
+        assertTrue(wait.contains("coverWaitStep(unlocked, disabled, visible"))
+        val handOver = wait.substringAfter("CoverStep.HAND_OVER ->")
+        assertTrue(handOver.indexOf("BootCoverGuard.disable") in 0 until handOver.indexOf("startHome()"))
+        assertTrue(activity.substringAfter("override fun onStop()").substringBefore("\n    }").contains("waitStep(visible = false)"))
+        // BootCallReceiver: the call policy first, then the cover; atLockedBoot reads no CE preferences.
+        val receiver = code("java/com/kidslauncher/mdm/calls/BootCallReceiver.kt")
+        assertTrue(receiver.indexOf("CallPolicyStore.ensureLoaded") in 0 until receiver.indexOf("BootCover.atLockedBoot(context)"))
+        val atBoot = code("java/com/kidslauncher/mdm/lock/BootCover.kt").substringAfter("fun atLockedBoot(").substringBefore("\n    }\n")
+        for (banned in listOf("getSharedPreferences", "prefs(", "wanted(", "LauncherPreferences", "startLockTask")) assertFalse(banned, atBoot.contains(banned))
+        assertTrue(atBoot.contains("coverAtLockedBoot(BootCoverGuard.androidMode(app), unlocked"))
+    }
+
     @Test
     fun `Application onCreate does nothing in the cover's process (QA 10)`() {
         val app = code("java/com/kidslauncher/mdm/Application.kt")

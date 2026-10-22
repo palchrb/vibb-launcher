@@ -78,6 +78,44 @@ class BootCoverPlanTest {
     }
 
     @Test
+    fun `Android's lock implies the cover on a managed phone we own (59 F3), and only then marks android mode`() {
+        assertTrue(bootCoverWanted(switchOn = false, managed = true, deviceOwner = true, androidFace = true))
+        assertFalse(bootCoverWanted(switchOn = false, managed = false, deviceOwner = true, androidFace = true))
+        assertFalse(bootCoverWanted(switchOn = false, managed = true, deviceOwner = false, androidFace = true))
+        assertTrue("own mode: the switch as before", bootCoverWanted(switchOn = true, managed = true, deviceOwner = true, androidFace = false))
+        assertTrue(bootCoverAndroidMarker(wanted = true, androidFace = true))
+        assertFalse("the switch alone keeps 16b's rules", bootCoverAndroidMarker(wanted = true, androidFace = false))
+        assertFalse(bootCoverAndroidMarker(wanted = false, androidFace = true))
+    }
+
+    @Test
+    fun `the locked boot starts the cover only in android mode, before the unlock, with the guard intact`() {
+        assertTrue(coverAtLockedBoot(androidMarker = true, unlocked = false, guardTripped = false))
+        assertFalse("own mode or the switch alone: 16b's shutdown arm only", coverAtLockedBoot(androidMarker = false, unlocked = false, guardTripped = false))
+        assertFalse("already unlocked: our process hands over", coverAtLockedBoot(androidMarker = true, unlocked = true, guardTripped = false))
+        assertFalse("a tripped guard keeps it off", coverAtLockedBoot(androidMarker = true, unlocked = false, guardTripped = true))
+    }
+
+    @Test
+    fun `android mode - the cover leaves only once taken over and covered, and is never stranded (59 F3)`() {
+        // BFU: stays, whatever else.
+        assertEquals(CoverStep.STAY, coverWaitStep(unlocked = false, disabled = true, visible = false, unlockedForMs = 0, disabledForMs = 60_000))
+        // Unlocked, our process not there yet: stays - also when stopped (the keyguard back, a call over it).
+        assertEquals(CoverStep.STAY, coverWaitStep(unlocked = true, disabled = false, visible = true, unlockedForMs = 12_600, disabledForMs = 0))
+        assertEquals(CoverStep.STAY, coverWaitStep(unlocked = true, disabled = false, visible = false, unlockedForMs = 12_600, disabledForMs = 0))
+        // Taken over (disabled by our main process before its Home start): leaves when Home is over it ...
+        assertEquals(CoverStep.FINISH, coverWaitStep(unlocked = true, disabled = true, visible = false, unlockedForMs = 13_000, disabledForMs = 300))
+        // ... and not while still in front (below it may be the stock launcher), until the grace is over.
+        assertEquals(CoverStep.STAY, coverWaitStep(unlocked = true, disabled = true, visible = true, unlockedForMs = 13_000, disabledForMs = COVER_TAKEOVER_GRACE_MS - 1))
+        assertEquals(CoverStep.FINISH, coverWaitStep(unlocked = true, disabled = true, visible = true, unlockedForMs = 18_000, disabledForMs = COVER_TAKEOVER_GRACE_MS))
+        // No take-over: hands over by itself (disable + start our Home) at the wait's end.
+        assertEquals(CoverStep.STAY, coverWaitStep(unlocked = true, disabled = false, visible = true, unlockedForMs = COVER_LAUNCHER_WAIT_MS - 1, disabledForMs = 0))
+        assertEquals(CoverStep.HAND_OVER, coverWaitStep(unlocked = true, disabled = false, visible = true, unlockedForMs = COVER_LAUNCHER_WAIT_MS, disabledForMs = 0))
+        assertEquals("longer than the debug build's 12.6 s in the RC run", true, COVER_LAUNCHER_WAIT_MS >= 20_000L)
+        assertTrue(COVER_WAIT_POLL_MS in 100L..500L)
+    }
+
+    @Test
     fun `the cover's process is recognised by its suffix only`() {
         assertTrue(isBootCoverProcess("me.vibb.launcher:bootcover"))
         assertTrue(isBootCoverProcess("me.vibb.launcher.debug:bootcover"))

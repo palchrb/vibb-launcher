@@ -263,6 +263,7 @@ class Application : android.app.Application() {
         // Design 59 §3.9: the boot's first CE start (decide's boot-count test) stamps this boot's start with the
         // unlock, before the anchor's first sync can send it. Never throws.
         com.kidslauncher.mdm.server.PowerEvents.recordUnlock(this, com.kidslauncher.mdm.lock.AndroidLock.firstCeStartOfBoot)
+        val setupStart = android.os.SystemClock.elapsedRealtime()
         try {
             LauncherPreferences.init(PreferenceManager.getDefaultSharedPreferences(this), this.resources)
             initRest()
@@ -270,6 +271,9 @@ class Application : android.app.Application() {
             android.util.Log.e("Application", "Setup failed, continuing", e)
             com.kidslauncher.mdm.crash.CrashReports.record(this, e)
         }
+        // Design 59 F3: the main thread's share of the gap between the unlock and our Home (the boot's Home start
+        // is posted behind this) - the timing recipe in the design reads this line.
+        android.util.Log.i("Application", "Unlocked setup took ${android.os.SystemClock.elapsedRealtime() - setupStart} ms")
     }
 
     /**

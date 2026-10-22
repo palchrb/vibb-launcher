@@ -19,6 +19,7 @@ private const val LOG_TAG = "BootCover"
  */
 object BootCoverGuard {
     private const val FILE = "boot_cover_state"
+    private const val ANDROID_MARKER = "boot_cover_android"
 
     @Volatile
     private var installed = false
@@ -73,6 +74,29 @@ object BootCoverGuard {
             file(context).delete()
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't clear the boot cover record", e)
+        }
+    }
+
+    /** Design 59 F3: the marker `boot_cover_android` (an empty device-protected file, written only by the main
+     * process at an apply - [bootCoverAndroidMarker]): the cover waits for our Home, and the locked boot starts
+     * it. Unreadable = absent (the 16b rules). */
+    private fun androidMarker(context: Context) = File(context.createDeviceProtectedStorageContext().filesDir, ANDROID_MARKER)
+
+    fun androidMode(context: Context): Boolean = try {
+        androidMarker(context).exists()
+    } catch (e: Exception) {
+        false
+    }
+
+    /** Main process, every apply (background thread). Never throws. */
+    fun setAndroidMode(context: Context, on: Boolean) {
+        try {
+            val marker = androidMarker(context)
+            if (on == marker.exists()) return
+            val done = if (on) marker.createNewFile() else marker.delete()
+            Log.i(LOG_TAG, "Boot cover android mode ${if (on) "on" else "off"}${if (done) "" else " (not written)"}")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't write the boot cover's android mode", e)
         }
     }
 

@@ -25,7 +25,9 @@ private const val LOG_TAG = "BootCover"
  *   typed HOME start resolves to HomeActivity only (the cover hands over by itself too).
  * A crash reboot sends no shutdown: the cover stays off and the boot falls back to A+B. Neither
  * does `adb reboot` (init's `sys.powerctl`, not ShutdownThread): test with the power menu or
- * `adb shell svc power reboot`. [report] is the status report's `boot_cover`.
+ * `adb shell svc power reboot`. In android mode (design 59 F3) the locked boot arms it as well
+ * ([atLockedBoot]) and the cover waits for this process's hand-over ([coverWaitStep]).
+ * [report] is the status report's `boot_cover`.
  */
 object BootCover {
     private const val PREFS = "boot_cover"
@@ -44,13 +46,16 @@ object BootCover {
 
     private fun component(context: Context) = BootCoverActivity.component(context)
 
-    /** From `AppEnforcer.apply` (background thread). */
-    fun applyPolicy(context: Context, dpm: DevicePolicyManager, admin: ComponentName, switchOn: Boolean, managed: Boolean) {
+    /** From `AppEnforcer.apply` (background thread), after the PIN lock's configure: [androidFace] is design 59's
+     * face as that apply decided it ([AndroidLock.faceOn]) - Android's lock implies the cover (F3). */
+    fun applyPolicy(context: Context, dpm: DevicePolicyManager, admin: ComponentName, switchOn: Boolean, managed: Boolean, androidFace: Boolean) {
         val app = context.applicationContext
-        val wanted = bootCoverWanted(switchOn, managed, deviceOwner = true)
+        val wanted = bootCoverWanted(switchOn, managed, deviceOwner = true, androidFace = androidFace)
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_WANTED, wanted).commit()
         // The switch off clears a tripped crash guard: on again = one more try (qa-16b-code #2).
         if (!wanted) BootCoverGuard.clear(app)
+        // F3: the device-protected marker the cover and the locked boot read (no CE before the PIN).
+        BootCoverGuard.setAndroidMode(app, bootCoverAndroidMarker(wanted, androidFace))
         if (wanted) {
             try {
                 val filter = IntentFilter(Intent.ACTION_MAIN).apply {
@@ -81,6 +86,35 @@ object BootCover {
         if (isEnabled(app)) {
             setEnabled(app, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app)), "main process after unlock")
             prefs(app).edit().putLong(KEY_LAUNCHER_HANDOVER_AT, System.currentTimeMillis()).apply()
+        }
+    }
+
+    /**
+     * Design 59 F3: `LOCKED_BOOT_COMPLETED` (main process, before the PIN, from `BootCallReceiver`; device-protected
+     * storage only - nothing here may read CE). In android mode ([BootCoverGuard.androidMode]) the cover is enabled
+     * and started as the typed HOME - before the first unlock only direct-boot-aware HOMEs resolve, so within our
+     * package that is the cover alone - so a boot without `ACTION_SHUTDOWN` (`adb reboot`, a crash, a hard reset) has
+     * it behind Android's keyguard too, and the PIN's dismissal reveals it, not the stock launcher. The cover is never
+     * showWhenLocked: Android's lock screen (the restart line, the pad) stays the face before the PIN. A start after a
+     * graceful shutdown's arm re-delivers to the cover already there. Nothing once unlocked (our process hands over
+     * itself) or with a tripped crash guard ([coverAtLockedBoot]). Never throws.
+     */
+    fun atLockedBoot(context: Context) {
+        try {
+            val app = context.applicationContext
+            val unlocked = app.getSystemService(android.os.UserManager::class.java)?.isUserUnlocked == true
+            val start = coverAtLockedBoot(BootCoverGuard.androidMode(app), unlocked, coverGuardTripped(BootCoverGuard.read(app)))
+            if (!start) return
+            setEnabled(app, true, "locked boot (android mode)")
+            app.startActivity(
+                Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_HOME)
+                    .setPackage(app.packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            Log.i(LOG_TAG, "Boot cover started at the locked boot (android mode)")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover at the locked boot failed: ${e.javaClass.simpleName}")
         }
     }
 

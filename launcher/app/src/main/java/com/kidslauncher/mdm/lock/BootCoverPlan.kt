@@ -32,8 +32,11 @@ const val COVER_MIN_SHOWN_MS = BOOT_MARK_MS
 const val COVER_MAX_CRASHES = 2
 
 /** Whether the cover may be used at all: the server switch on a managed phone of which we are
- * device owner (the switch is off by default - "test on this phone first"). */
-fun bootCoverWanted(switchOn: Boolean, managed: Boolean, deviceOwner: Boolean): Boolean = switchOn && managed && deviceOwner
+ * device owner (the switch is off by default - "test on this phone first"), or Android's lock as the
+ * face ([androidFace], design 59 F3): there the PIN's dismissal would show the stock launcher until
+ * our process is up, so android mode implies the cover - no server switch or contract change. */
+fun bootCoverWanted(switchOn: Boolean, managed: Boolean, deviceOwner: Boolean, androidFace: Boolean = false): Boolean =
+    (switchOn || androidFace) && managed && deviceOwner
 
 enum class CoverEvent {
     /** An apply with the current policy. */
@@ -142,3 +145,59 @@ fun decodeCoverRecord(text: String?): CoverRecord? {
  * whole minimum). */
 fun coverHandOverDelayMs(unlocked: Boolean, shownForMs: Long): Long? =
     if (!unlocked) null else if (shownForMs < 0) COVER_MIN_SHOWN_MS else (COVER_MIN_SHOWN_MS - shownForMs).coerceAtLeast(0L)
+
+/*
+ * Design 59 F3: the first unlock after a reboot with Android's lock. Before the PIN our main process can't
+ * run (CE locked), so the cover (behind Android's keyguard, never showWhenLocked) is what the PIN's dismissal
+ * reveals, and it stays until our main process has taken over - it disables the cover right before the boot's
+ * typed Home start (`BootCover.init`, then `BootHome`) - and our Home is over it. The main process writes the
+ * device-protected marker `boot_cover_android` while this holds ([bootCoverAndroidMarker]); the cover and the
+ * locked boot read it (no CE before the PIN).
+ */
+
+/** The marker's value at an apply: the cover is wanted because of, or together with, Android's lock. */
+fun bootCoverAndroidMarker(wanted: Boolean, androidFace: Boolean): Boolean = wanted && androidFace
+
+/** After the unlock the cover waits this long for our main process to take over, then hands over by itself
+ * and starts our Home (never stranded; the debug build's first CE start took 12.6 s in the RC run). */
+const val COVER_LAUNCHER_WAIT_MS = 30_000L
+
+/** Taken over (disabled by our main process) but still in front this long: it finishes anyway (the boot's
+ * Home start didn't come - a call, or it was refused). Normally Home comes over it first ([coverWaitStep]). */
+const val COVER_TAKEOVER_GRACE_MS = 5_000L
+
+/** Android mode, at `LOCKED_BOOT_COMPLETED` (main process, before the PIN): start the cover as the typed HOME,
+ * so also a boot without `ACTION_SHUTDOWN` (`adb reboot`, a crash or a hard reset) has it behind the keyguard.
+ * Never once unlocked (our process then hands over itself) or with a tripped guard. */
+fun coverAtLockedBoot(androidMarker: Boolean, unlocked: Boolean, guardTripped: Boolean): Boolean =
+    androidMarker && !unlocked && !guardTripped
+
+enum class CoverStep {
+    /** Stay up (BFU, or waiting for our main process). */
+    STAY,
+
+    /** Leave now: our main process took over, and our Home is over the cover (or the grace is over). */
+    FINISH,
+
+    /** Our main process didn't take over in time: disable itself and start our Home (typed HOME). */
+    HAND_OVER,
+}
+
+/**
+ * The cover's step in android mode (F3), checked every [COVER_WAIT_POLL_MS] while it is in front and once when
+ * it stops. [disabled]: its component reads disabled (our main process's `BootCover.init`, or its own
+ * [CoverStep.HAND_OVER]); [visible]: not stopped (stopped while disabled = our Home or a call is over it - the
+ * finish then reveals nothing). Never leaves before the unlock, never leaves on a stop while still enabled (the
+ * keyguard coming back, a call), and never stays past [COVER_LAUNCHER_WAIT_MS] + [COVER_TAKEOVER_GRACE_MS] in
+ * front after the unlock.
+ */
+fun coverWaitStep(unlocked: Boolean, disabled: Boolean, visible: Boolean, unlockedForMs: Long, disabledForMs: Long): CoverStep = when {
+    !unlocked -> CoverStep.STAY
+    disabled && (!visible || disabledForMs >= COVER_TAKEOVER_GRACE_MS) -> CoverStep.FINISH
+    disabled -> CoverStep.STAY
+    unlockedForMs >= COVER_LAUNCHER_WAIT_MS -> CoverStep.HAND_OVER
+    else -> CoverStep.STAY
+}
+
+/** How often the cover looks at [coverWaitStep] while in front. */
+const val COVER_WAIT_POLL_MS = 250L
