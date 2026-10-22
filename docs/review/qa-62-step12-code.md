@@ -124,3 +124,16 @@ this is cosmetic. Fix: say it in the CLI's line ("the family now has 9 parents")
 | M12 | `reset_totp` without its epoch condition | **survives**; probe `qa_held_reset_totp_cant_undo_a_reset` |
 | M13 | `setup_2fa_form` without `COALESCE` | killed: `held_setup_2fa_writes_nothing_on_a_removed_row` |
 | M14 | Remove without `actor_ok` | **survives**; probe `qa_stale_actor_statements_write_nothing` |
+
+## Fixes
+
+- P62-1: fixed in 6a21190f - the 2FA setup (GET and POST) redirects to `/auth/change-password` while
+  `must_change_password`, and the expiry is cleared only by the write that makes the account ready (both writes, a
+  `CASE`); the probe is `tests::parents::otp_session_sets_the_password_before_2fa`.
+- P62-2: fixed in 6a21190f - `removed_session_without_epoch_bump_is_out`, `removed_actor_session_post_writes_nothing`,
+  `stale_actor_statements_write_nothing`, `remove_deletes_push_subscriptions`, `held_reset_totp_cant_undo_a_reset`.
+- P62-3: fixed in 6a21190f by saying it, not refusing - `reset-2fa` still restores past the cap of 8 (the shell is the
+  way back for a removed parent; a full family must not lock it out), and its line says "The family now has 9
+  parents, more than the 8 Add Parent allows" (`cap_of_eight`).
+- P62-4: fixed in 6a21190f - `reveal.js` removes the secret (and hides Copy) after 5 minutes, when the CSS hides it
+  (`reveal.js?v=3`, `jstest/reveal.test.js`).
