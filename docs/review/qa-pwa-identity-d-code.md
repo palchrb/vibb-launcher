@@ -101,3 +101,21 @@ that name. Re-cut with `--update-name-table`, or leave it.
 | 7 | the preload `href` renamed | **survived** (PD-2) |
 | 8 | `vibb-brand` added to `/apps` | killed `shell.rs:522` |
 | 9 | `avatar_class_of` never grey | killed `devices_list.rs:127` |
+
+## Fix round
+
+All six were fixed in `a67e53e3`, on `pwa-identity-d`. Afterwards `cargo test` passed 1134 of 1134, which includes
+the jstests, and `cargo fmt --check` was clean.
+
+- PD-1: Fixed in a67e53e3. In dark mode a checked plain checkbox has a `#0C0C14` tick on the peach fill (9.9:1).
+  `style.css` is now `?v=41`.
+- PD-2: Fixed in a67e53e3. `the_app_is_called_vibb_phone_with_a_stable_identity` reads the `@font-face` file and
+  checks that the head preloads exactly `/static/` plus it, and that the file exists. Mutation 7 (the preload renamed)
+  is now killed.
+- PD-3: Fixed in a67e53e3. `server/deploy/generate-icons.ps1` is deleted. pwa.md says the icons come from the vibb
+  repo.
+- PD-4: Fixed in a67e53e3. The trail is `--map-trail` (`#A64B25`) in both schemes, because the OSM tiles are light in
+  both. `locate.js` reads it and falls back to the same peach (`?v=2`), with a jstest.
+- PD-5: Kept, on purpose. Contact initials are peach like the phones' (D's one avatar look). This is noted in pwa.md.
+- PD-6: Fixed in a67e53e3. The font was re-cut with `--update-name-table` (now "Nunito Bold"). The cmap and the 469
+  glyphs are unchanged.
