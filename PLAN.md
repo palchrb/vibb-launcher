@@ -613,6 +613,9 @@ findings, merge to `main`, full suite once.
   "stuck in Recents" below (quickstep's RecentsActivity, our Home not the recents provider). The design 59 hybrid
   should close it as a platform rule (nothing non-showWhenLocked is visible over a locked keyguard); its prototype
   script checks it. Today's lock gets a fix if the hybrid is more than a release away.
+  The user's repro (emulator, kiosk on, LOCKED, features 113): the square key and a swipe up both open quickstep's
+  Recents; a card tap flashes the app briefly, then our lock re-fronts (no PIN bypass seen). Investigation:
+  `docs/review/recents-over-lock-2026-10-22.md`.
 - **Stuck in Recents after an unlock** (the user's emulator, 2026-10-21 ~16:55, not reproduced, no lock log kept): the
   user had just unlocked to grant WhatsApp its call permissions; then "app not available", the lock, and after the
   unlock quickstep's empty RecentsActivity on top with lock task LOCKED, HOME resolving to ours but `am start -c HOME`
@@ -737,7 +740,7 @@ findings, merge to `main`, full suite once.
   server-kept kid PIN, the PIN command, the migration release (the user's Jelly Star first); 58 steps 3 and 5 in
   parallel. D - the deletion round one release after the last phone migrated; design 57 is not merged (the VoIP small
   fixes that still apply go here); then design 60. The security-review items fill free slots.
-- **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". (1) the device token (and the other
+- **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
   copied data directory (root, a backup) is useless - launcher fix round; (2) a **hardware-bound device token**: at
