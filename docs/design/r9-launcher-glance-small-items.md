@@ -1,10 +1,11 @@
-# Launcher round 9 - the lock's glance page and touch sounds (proposal)
+# Launcher round 9 - the lock's glance page and touch sounds (proposal, revised after `qa-r9-design.md`)
 
 Asked 2026-10-21/22 (PLAN "The lock's glance page, three things" and "Touch sounds and vibration on Kid Settings").
-Launcher, plus the server's quick-controls bit for §4. Mockup: `r9-glance-mockup.html` (scratchpad; suggested home
-`docs/design/mockups/r9-glance.html`) - today's page vs the proposal at 320x569 dp. Every part keeps working when design
-59 turns the glance into a `showWhenLocked` face over Android's keyguard: nothing here touches our keypad stage;
-"Lås opp" only changes what it opens.
+Launcher, plus the server's quick-controls bit for §4. Mockup (today's page vs the proposal at 320x569 dp):
+https://claude.ai/artifact/Kf86Nv4Rub2gDsguLKy2dr - not committed. Everything here carries over when design 59 makes
+the glance a `showWhenLocked` face over Android's keyguard: nothing depends on our keypad stage. The one tie left is
+"Nødsamtale", which clicks the keypad's button (`PinLockActivity.kt:287`, `binding.pinEmergency.performClick()`) -
+for design 59's list: under the hybrid it calls `EmergencyCall.confirm` directly.
 
 ## 1. Bug: the bottom row is cut off
 
@@ -13,62 +14,61 @@ below the screen's bottom edge.
 
 **Cause.** `targetSdk` is 36, so the lock's window is edge-to-edge: the glance root is always the full window height
 and the system bars arrive only as its padding (`KidInsets.apply`, `getInsets(systemBars | displayCutout)` - visible
-bars only). `GlancePanel` refits only when the root's **height** changes (`addOnLayoutChangeListener`: `bottom - top !=
-fitFor`), but `fitNow` uses `available = height - paddingTop - paddingBottom`. A padding change after a fit - a bar
-reported visible only after the fit, a gesture <-> 3-button switch - re-lays the page at the same height and never
-refits; the page keeps a fit made for up to 72 dp more room, and the weighted `Space` can't shrink below 0, so the
-bottom row is pushed past the padding (`clipToPadding` cuts it). The numbers say this is what happened: with both
-bars counted (24 + 48 dp: 481 dp available) the full tile + one row needs ~499 dp even with the small clock, so the fit
-can't choose it - the compact tile would show; with no bars counted (553 dp) candidate 1 (~521 dp) fits, and drawn in
-481 dp it overflows by ~40 dp, the bottom row. The likely moment is the lock-up: the lock is started while dark
-(design 32) and fitted at the screen-on, around which SystemUI reports the bars visible. QA Low 4's "again after
-gesture <-> 3-button navigation" never worked for the same reason (the height doesn't change under edge-to-edge).
+bars only). `GlancePanel` refits only when the root's **height** changes (`GlancePanel.kt:172-173`: `bottom - top !=
+fitFor`), but `fitNow` uses `available = height - paddingTop - paddingBottom` (`:640`). A padding change after a fit -
+a bar reported visible only after the fit, a gesture <-> 3-button switch - re-lays the page at the same height and
+never refits; the page keeps a fit made for up to 72 dp more room, the weighted `Space` can't go below 0, and the
+bottom row is pushed past the padding (`clipToPadding` cuts it). The numbers fit: in the pinned model the full tile +
+one row needs 501.4 dp with the small clock and 523.8 dp with the big one; with both bars counted (24 + 48 dp: 481 dp)
+the fit can't choose it, with no bars counted (553 dp) candidate 1 fits, and drawn in 481 dp it overflows by ~43 dp -
+the bottom row. The likely moment is the lock-up: the lock is started while dark (design 32) and fitted around the
+screen-on, when SystemUI reports the bars visible. QA Low 4's "again after gesture <-> 3-button navigation" never
+worked for the same reason.
 
 **The two suspects are not it.** `fixed` is measured from `lock_glance_unlock` + `lock_glance_bottom` with its 12 dp
 margin (pinned 116 dp), and the full tile's measured height includes its time line (pinned 233.8 dp); the panel
-measures the real views, the test's 1.4 em model is only an upper bound on Nunito's 1.364. Both changes did use up
-slack (the full tile alone keeps 3.2 dp at 473 dp in the model), which is why a stale inset now shows at once.
+measures the real views. Both changes used up slack (the full tile alone keeps 3.2 dp at 473 dp in the model), which
+is why a stale inset now shows at once.
 
-**Fix** (`GlancePanel`): the fit is keyed on the available height, not the root's. One pure helper
-`glanceAvailablePx(height, paddingTop, paddingBottom)` (in `LockGlance.kt`); `fitFor` holds its value; the layout
-listener refits when `glanceAvailablePx(bottom - top, v.paddingTop, v.paddingBottom)` differs (a `setPadding` from the
-insets listener requests a layout, so the listener runs). The fit's log line gains the available height and the two
-paddings in dp ("Glance fit: candidate 2, 1 rows, 0 more, 1 visible, available 457 dp (pad 56/56)") - counts and
-dp only (`LockGlanceGuardTest`). §2 then makes the bottom block safe whatever any fit says.
-
-Tests: `LockGlanceLayoutTest` pins by source that the listener and `fitNow` both go through `glanceAvailablePx` and
-that the listener no longer compares the bare height; `glanceAvailablePx` itself is one assertion.
+**Fix** (`GlancePanel`): the fit is keyed on the available height. A private `available(height)` (height minus the
+root's paddings) is called by both the layout listener and `fitNow`; `fitFor` holds its value; the listener refits
+when it differs (`setPadding` from the insets listener requests a layout, so the listener runs). The log line is
+written when the fit **or the available height** changes, with the available height and both paddings in dp ("Glance
+fit: candidate 2, 1 rows, 0 more, 1 visible, available 457 dp (pad 56/56)" - counts and dp only,
+`LockGlanceGuardTest`). §2 then keeps the bottom block on screen whatever a fit says. Test: `LockGlanceLayoutTest`
+pins by source that the listener and `fitNow` both call `available(` and the listener no longer compares the bare
+height.
 
 ## 2. The bottom block stays put; the rows scroll
 
 **Behaviour.** "Lås opp", "Nødsamtale" and the flashlight sit at the bottom whatever the content. Clock, date, alarm,
 the tiles and the rows share what is left; the rows scroll inside it when they don't fit. This changes design 25's
-"the page never scrolls" for the rows only: the clock, date and tiles are never scrolled - the fit still picks their
-sizes. A drag on the rows scrolls them; a tap on a row still leads to the keypad with its target (a drag past the
-touch slop is no tap, the ScrollView's own rule). At every lock-up the rows start at the top.
+"the page never scrolls" for the rows only - the fit still picks the clock's, date's and tiles' sizes. A drag scrolls
+the rows; a tap on a row still leads to the keypad with its target (the ScrollView's slop keeps a drag from being a
+tap; the lock has no gesture detector to compete with, and `onUserInteraction` still sees every DOWN). Every lock-up
+starts the rows at the top.
 
-**Layout** (`view_lock_glance.xml`): the root keeps its paddings and gets two children above the bottom block -
+**Layout** (`view_lock_glance.xml`):
 
 ```
 lock_glance_root (vertical, insets as padding)
   lock_glance_top   LinearLayout vertical, match_parent x 0dp weight 1, center_horizontal
     clock, date, alarm, lock_media_tile, lock_media_compact, lock_timer_tile   (as today)
     lock_glance_scroll  ScrollView match_parent x 0dp weight 1, marginTop 14dp (22 without a tile, set by the panel),
-                        requiresFadingEdge="vertical", fadingEdgeLength="24dp"
+                        requiresFadingEdge="vertical", fadingEdgeLength="16dp"  (the contacts row's CONTACTS_FADE_DP)
       lock_glance_list  (lock_glance_rows + lock_glance_more, as today)
   lock_glance_unlock  (56 dp, as today)
   lock_glance_bottom  (marginTop 12dp, as today)
 ```
 
-The `Space` goes (the scroll's weight takes its place, so rows still sit right under the tiles). The non-weighted
-bottom block is always measured whole; the top block gets the rest and clips its own overflow, so even a wrong fit
-can never push the bottom row off. The fading edge only shows while there is more to scroll - the calm cue that a row
-continues below (it works over a photo wallpaper: View's alpha fade).
+The `Space` goes (the scroll's weight takes its place, so rows still sit right under the tiles). The bottom block is
+measured whole; the top block gets what is left and clips its own overflow, so a wrong fit can't push the bottom row
+off. The fade shows only while there is more below - the calm cue that a row continues.
 
-**The fit** (`glanceFit`, pure; `GlanceFit` gains `visibleRows`). `rows` is now always `min(n, 3)` (every row is in the
-list) and `more` = `n - rows`; the rows are no longer folded into "+ N varsler til" to make room - the "more" line
-only counts past three, as today with room. What a candidate counts is `visibleRows` rows: all of them, one, or none.
-The candidates, first that fits wins:
+**The fit** (`glanceFit`, pure; `GlanceFit` gains `visibleRows`). `rows` is `min(n, 3)` in every candidate but 7, and
+`more` = `n - rows`: rows are no longer folded into "+ N varsler til" to make room. A candidate counts `visibleRows`
+rows - all of them (with the "more" line), or one (without it: the line sits in the scroll after row 3). First that
+fits wins:
 
 1. big clock, date, full tile, every row
 2. small clock, date, full tile, every row
@@ -76,172 +76,179 @@ The candidates, first that fits wins:
 4. small clock, date, compact tile, every row
 5. small clock, date, compact tile, one row visible
 6. small clock, no date, compact tile, one row visible
-7. small clock, no date, compact tile, no row counted (the list gets what is left; the last resort)
+7. small clock, no date, compact tile, no rows - only the "more" line counting all `n` (design 25's candidate 7, so
+   the last resort is a line, never a faded sliver)
 
-Without a music tile the tile steps are the same as their neighbours (4 = 2, 5 = 3: duplicates, harmless, first wins).
-With a running timer (design 42) the seven with the timer come first, then the seven without it - the timer still
-outlives the music tile's size and the rows (it now also outlives the date, one line of code less). Old candidate 3
-(big clock with the compact tile) goes. Candidate 3 keeps §3's new tile with the rows scrolling - the mockup's state;
-open question 1 is whether that order is right.
+Without a music tile 4 = 2 and 5 = 3 (harmless duplicates). With a running timer the seven with the timer come first,
+then the seven without it - **a change to design 42 §1.6**: the timer now also outlives the date (it kept the date in
+every timer candidate). Old candidate 3 (big clock + compact tile) goes. `GlancePanel.apply`: `i < fit.rows` stays
+(it hides the rows only in 7), the scroll `GONE` with no rows; `resumeNow`'s lock-up branch adds
+`lockGlanceScroll.scrollTo(0, 0)`. Nothing else in the panel changes.
 
-`GlancePanel.apply`: every shown row `VISIBLE` (no more hiding by `fit.rows`), the scroll `GONE` with no rows, its top
-margin as today's list margin. `resumeNow`'s lock-up branch adds `lockGlanceScroll.scrollTo(0, 0)`. Nothing else in
-the panel changes (`rowViews`, `bindRows`, the coalescer, `glanceRefitDue`).
+**Edge cases.** Three rows and the "more" line scroll. Font scale 2.0 at 320x569: the compact tile and candidate 6/7,
+the bottom block whole. TalkBack: the ScrollView is a node with scroll actions and focus moving onto a row below
+scrolls it into view; the root has no node, rows stay data-sensitive. The lock is portrait-only.
 
-**Edge cases.** Many rows: three plus the "more" line, scrollable. Font scale 2.0 on 320x569: the fit falls to 6/7,
-the rows' area may be under one row - still scrollable, the bottom block whole. No music: the full-width rows as
-today. TalkBack: the ScrollView is a node with scroll actions; moving the focus onto a row below the edge scrolls it
-into view (framework); the root still has no node, every row view stays data-sensitive. Landscape: the lock is
-portrait-only. Design 59: the page is the keyguard face; the scroll and the fixed block carry over unchanged.
-
-**Tests.** `LockGlanceTest`: its model's `tileFull` becomes §3's height; "the fit's candidates in order", "less room"
-(now: the rows scroll, then the date, then nothing counted - never a row folded below three) and the timer test
-rewritten to the list above. `LockGlanceLayoutTest`: `height()` learns `ScrollView` (its child's height), `rowsTop`
-from `lock_glance_scroll`; the order test (bottom block the root's last two children, the scroll the top block's last,
-`lock_glance_list` inside it); the scroll's fading edge and weight; and "the expected fits at 473 and 497 dp" against
-the new tile (tileFull 174.8, tileCompact 90, fixed 116; model available 457/481):
+**Tests.** `LockGlanceTest`: the model's `tileFull` becomes §3's height; the candidate order, "less room" (one row
+visible, then no date, then only the "more" line - never a row folded below three) and the timer test (the date goes
+before the timer) rewritten. `LockGlanceLayoutTest`: `rowsTop` from `lock_glance_scroll`; the order test pins the
+bottom block as the root's last two children, `lock_glance_top`/`lock_glance_scroll` as `0dp` + weight 1, the scroll
+last in the top block with `lock_glance_list` in it, the 16 dp fade; and the fits (tileFull 174.8, tileCompact 90,
+fixed 116; model available 457/481; totals = counted height + 16 dp paddings):
 
 | case | 473 dp | 497 dp |
 |---|---|---|
 | full tile alone | 1 (410.8) | 1 |
 | no music, 4 rows | 1, 3 rows + 1 more (466) | 1 |
 | music + 1 row (the user's case) | 2 (458.4) | 1 (480.8) |
-| music + 2 rows (mockup) | 3, 1 visible (458.4) | 3, 1 visible |
-| music + 3 rows | 3, 1 visible | 3, 1 visible |
-
-(Totals: the counted height + the 16 dp paddings.) The implementer re-derives them from the XML as round 6 did and
-writes them into the test.
+| music + 2 rows (mockup) | 3, 1 visible (458.4), scroll 70.6 dp | 3, scroll 94.6 dp |
+| music + 3 rows | 3, 1 visible, scroll 70.6 dp | 3 |
 
 ## 3. The compact music player (items 3 and 4)
 
-**Behaviour** (the iPhone 16's lock player; mockup right): one tile, in `bg_music_tile` as today -
+**Behaviour** (the iPhone 16's lock player; mockup right), one tile in `bg_music_tile`:
 
-- a 48 dp cover (`bg_music_art`, 12-14 dp corners; the note glyph 24 dp when there's no art), the title (15 sp
-  extrabold, `kid_ink`) and the artist/entry (13 sp, `kid_core_dim`) on one line each, ellipsized - no wrap;
-- one progress row: elapsed left, the bar (4 dp, the existing `bg_music_progress`), the time left right-aligned with a
-  minus (`1:26 ━━━━── −2:38`; U+2212). This replaces the time line under the bar and round 6's "1:26 · 4:04"; a live
-  stream or unknown duration shows the elapsed time alone and no minus side;
-- previous / play-pause / next as plain glyphs in `kid_ink` on one row, no discs: 48 dp targets with ~26 dp glyphs,
-  play 56 dp with a ~34 dp glyph, 28 dp apart, a press ripple masked to the target's circle (new `bg_glance_glyph`:
-  a `ripple` with an oval mask and no fill). No output/AirPlay button - the lock opens nothing.
+- a 48 dp cover (`bg_music_art`; the note glyph 24 dp without art), the title (15 sp extrabold, `kid_ink`) and the
+  artist/entry (13 sp, `kid_core_dim`) on one line each, ellipsized;
+- one progress row: elapsed left, the 4 dp bar (`bg_music_progress`), the time left right-aligned with a minus
+  (`1:26 ━━━━── −2:38`, U+2212), replacing the time line under the bar; a live stream or unknown duration shows the
+  elapsed time alone;
+- previous / play-pause / next as plain glyphs in `kid_ink`, no discs: 48 dp targets (~26 dp glyphs), play 56 dp
+  (~34 dp), 28 dp apart, background `?android:attr/selectableItemBackgroundBorderless` (an oval ripple, no fill). No
+  output button - the lock opens nothing.
 
-Model height: 12 + 48 + 10 + 16.8 + 2 + 56 + 12 = 156.8 + the 18 dp margin = **174.8 dp** (today 233.8: a quarter
-less). The one-row compact tile (52 dp art, play only) stays as the fit's fallback (open question 2), unchanged.
+Model height 12 + 48 + 10 + 16.8 + 2 + 56 + 12 + the 18 dp margin = **174.8 dp** (today 233.8). The one-row compact
+tile stays, unchanged, as the fit's last resort (open question 2): at font scale 2.0 on 320x569 the new tile (~222 dp)
+doesn't fit even without rows; the compact one (~125 dp) does.
 
 **Code.**
-- `view_lock_glance.xml` `lock_media_tile` rewritten with the same ids for what stays (`lock_media_art`, `_glyph`,
-  `_item` - `maxLines` 1 -, `_entry`, `_progress` - `0dp` weight 1 in the row -, `_previous`, `_play`, `_next`); new
-  `lock_media_elapsed` and `lock_media_remaining` (12 sp bold, `kid_core_dim`, `tnum`, one line,
-  `importantForAccessibility="no"`, an initial `40dp` width, never `wrap_content`); `lock_media_time` goes.
-  `bg_music_art_large` goes (no other user); `bg_music_control`/`bg_music_play` stay (the compact tile, the torch).
-- `LockGlance.kt`: `glanceTimeLine` is replaced by `glanceTimes(positionMs, durationMs): GlanceTimes(elapsed: String,
-  remaining: String?)` - remaining from whole seconds (`durationMs / 1000 - positionMs / 1000`, at least 0, through
-  `clockText`), so elapsed + remaining always add up to the duration; `null` without a duration - and
-  `glanceTimeWidest(durationMs): String`, the duration's shape with every digit "0" ("0:00", "00:00", "0:00:00";
-  "0:00:00" without a duration). With tabular figures every time of that shape is as wide.
-- `MusicLockPanel.render()`: each time view's width = `ceil(paint.measureText(widest))` (`"−" + widest` for the
-  remaining), set through `layoutParams` only when the px differ - a new track, a duration that became known, a font
-  scale change (`refit` -> `show` -> `render`); the remaining view `GONE` without a duration. `tick()` only sets the
-  two texts and the bar: with a fixed width a `setText` never asks for a layout (round 6's rule, kept). The bar's
-  content description stays "1:26 av 4:04" (`music_time_of`).
-- `glanceRefitDue` already refits when the tile's measured height changes (a font scale that grows the header).
+- `lock_media_tile` rewritten, keeping the ids that stay (`lock_media_art`, `_glyph`, `_item` - `maxLines` 1 -,
+  `_entry`, `_progress` - `0dp` weight 1 -, `_previous`, `_play`, `_next`); new `lock_media_elapsed` and
+  `lock_media_remaining` (12 sp bold, `kid_core_dim`, one line, **no `ellipsize`**, `importantForAccessibility="no"`,
+  an initial `40dp` width, never `wrap_content`); `lock_media_time` and `bg_music_art_large` (no other user) go.
+- `LockGlance.kt`: `glanceTimeLine` becomes `glanceTimes(positionMs, durationMs): GlanceTimes(elapsed, remaining:
+  String?)` - remaining from whole seconds (`durationMs / 1000 - positionMs / 1000`, at least 0, `clockText`), so the
+  two add up to the duration; `null` without a duration - and `glanceTimeWidest(durationMs)`: the duration's shape
+  with every digit "0" ("0:00", "00:00", "0:00:00"; "0:00:00" without a duration, so a live position past 10 h clips -
+  accepted). The bundled Nunito's default figures are already tabular (every digit 600/1000, U+2212 too; the font has
+  no `tnum` feature, so `tnum` is a harmless no-op).
+- `MusicLockPanel.render()`: each time view's width = `Layout.getDesiredWidth(widest, paint)` (`"−" + widest` for the
+  remaining; kerning counts) + 1 dp, set through `layoutParams` only when the px differ (a new track, a duration that
+  became known, a font-scale change via `refit` -> `show` -> `render`); the remaining view `GONE` without a duration.
+  `tick()` sets only the two texts and the bar - a fixed width never asks for a layout (round 6's rule). The bar's
+  content description stays "1:26 av 4:04"; `glanceRefitDue` already refits when the header grows with the font.
 
-**Edge cases.** Long titles: one line, "…"; TalkBack reads the full text. Paused: the play glyph, no tick. A Storytel
-book over 10 h at font scale 2.0 on 320 dp: two ~110 dp times leave the bar ~40 dp - still drawn, nothing ellipsized
-(accepted; no special rule). No music: no tile. TalkBack: the three buttons keep their descriptions ("Forrige",
-"Spill"/"Pause", "Neste"), the bar its time; the two time texts are not read twice. Home's card is untouched.
+**Edge cases.** Long titles "…" (TalkBack reads the full text). Paused: the play glyph, no tick. A book over 10 h at
+font scale 2.0 on 320 dp leaves the bar ~40 dp - accepted. TalkBack: the buttons keep "Forrige", "Spill"/"Pause",
+"Neste"; the times aren't read twice. Home's card is untouched.
 
-**Tests** (`LockGlanceTest`/`LockGlanceLayoutTest`): `glanceTimes` (a normal track, the seconds adding up, position
-past the end, no duration, over an hour) and `glanceTimeWidest`; the tile's height 174.8; the progress row is one
-horizontal row elapsed - bar - remaining, the two times one line of `tnum` with a fixed width and not important for
-accessibility, the bar weighted; the controls 48/56/48 dp with no disc background and `kid_ink` tints, and their width
-at 320/360/411 (208 dp); no `lock_media_time` left. `KidPaletteTest`: the glyphs' ink on `kid_music_tile`.
+**Tests:** `glanceTimes` (a track, the seconds adding up, position past the end, no duration, over an hour) and
+`glanceTimeWidest`; the tile's 174.8; the progress row elapsed - bar - remaining, the times one line, fixed width, no
+ellipsize, not important for accessibility, the bar weighted; controls 48/56/48 dp, the borderless background,
+`kid_ink` tints, 208 dp at 320/360/411; no `lock_media_time`. `KidPaletteTest`: the glyphs on `kid_music_tile`.
 
 ## 4. Touch sounds and vibration on Kid Settings
 
-**Behaviour.** A new card section under "Lyd på telefonen", only when the parent ticked it (a quick-controls bit like
-design 18's), never on the PIN lock or the time-rule screen (Kid Settings already redirects under a lock):
+**Behaviour.** A card section under "Lyd på telefonen", only when the parent ticked it (bit 16, **off by default**:
+the parent turns it on in the PWA, after granting the app-op below), never on the PIN lock or the time-rule screen:
 
-- "Lyd ved trykk" / "Touch sounds" - a switch on `Settings.System.SOUND_EFFECTS_ENABLED` (Android's "Touch sounds":
-  every view's click sound, Home's tiles, our PIN keys and phone book included - they already follow it);
-- "Vibrasjon ved trykk" / "Vibrate on touch" - a switch on `HAPTIC_FEEDBACK_ENABLED`; no row without a vibrator
-  (`hasVibrator`, as design 18);
-- one dim line: "Tastaturet har egen lyd og vibrasjon i sine innstillinger." / "The keyboard has its own sound and
-  vibration in its settings." - HeliBoard plays its key click with an explicit volume, which Android doesn't gate on
-  this setting; nothing is opened.
+- "Lyd ved trykk" / "Touch sounds" - `Settings.System.SOUND_EFFECTS_ENABLED` (every view's click sound; our PIN keys
+  and phone book already follow it);
+- "Vibrasjon ved trykk" / "Vibrate on touch" - `HAPTIC_FEEDBACK_ENABLED`; no switch without a vibrator (design 18);
+- a dim line: "Tastaturet har egen lyd og vibrasjon i sine innstillinger." / "The keyboard has its own sound and
+  vibration in its settings." (HeliBoard plays its click with an explicit volume, ungated by the setting); nothing
+  opens.
 
-**`DTMF_TONE_WHEN_DIALING` doesn't belong**: it is only a dial pad's local tones, and Vibb has no dial pad (the phone
-book calls a contact; the call screen has no keypad); the only one the kid reaches is the system emergency dialer.
-Left alone.
+**`DTMF_TONE_WHEN_DIALING` doesn't belong**: only a dial pad's local tones, and Vibb has no dial pad; left alone.
 
 **Writable only with the app-op** design 34 P12 already needs (`WRITE_SETTINGS`, `Settings.System.canWrite`; both
-keys are public, so an app may write them with it). Without it the switches show the phone's state, disabled at 50 %
-alpha, with "Kan ikke endres på denne telefonen ennå." / "Can't be changed on this phone yet." Not a restriction: the
-bit only shows the row, the override/pause change nothing, the parent's bit going off leaves the setting as it is.
+keys are public). Without it the switches show the phone's state, disabled at 50 % alpha, with "Kan ikke endres på
+denne telefonen ennå." / "Can't be changed on this phone yet." Not a restriction: the override/pause change nothing;
+the bit going off leaves the setting as it is.
 
 **Launcher code.**
-- `server/QuickControls.kt`: `QuickControlFeature.TOUCH = 16`; `touchState(context)` (reads both keys, missing =
-  on - Android's defaults), `setTouchSounds(context, on)` / `setTouchVibration(context, on)`: `putInt` in a
-  `try` (`SecurityException`, `IllegalArgumentException` -> false), and for sounds `AudioManager.loadSoundEffects()` /
-  `unloadSoundEffects()` as Android's own Settings does; the page re-reads after the tap, so a refused write flips
-  the switch back.
+- `server/QuickControls.kt`: `QuickControlFeature.TOUCH = 16`; `touchState(context)` (both keys, missing = on);
+  `suspend fun setTouchSounds(context, on)` / `setTouchVibration(context, on)` on `Dispatchers.IO`, called from
+  `lifecycleScope` as the Bluetooth page's calls are (`loadSoundEffects()` waits for SoundPool and can take seconds):
+  `putInt` in a `try` (`SecurityException`, `IllegalArgumentException` -> false), for sounds then
+  `AudioManager.loadSoundEffects()`/`unloadSoundEffects()` as Android's Settings does; the re-read and render come
+  after, so a refused write flips the switch back.
 - Pure `server/TouchFeedback.kt` (`TouchFeedbackTest`): `touchRowState(sounds: Int?, haptic: Int?, hasVibrator,
-  canWrite): TouchRowState(sounds: Boolean, vibration: Boolean?, writable: Boolean)`.
-- `KidSettingsModel.kt`: `ControlsSection.Rows.touch`, `describe()`, mask 16 alone is a card; `KidSettingsActivity`
-  `renderTouch` (re-read on resume and after a tap; no observer - the kid can't change them elsewhere while the page
-  shows), `activity_kid_settings.xml` `kid_settings_touch_row` after the sound row: two `SwitchCompat`s in
-  `KidSwitchRow`, the two notes in the sound note's style, `renderInk` covers them. Strings in both files.
-- TalkBack: the switches' own role and state; disabled reads "deaktivert", then the note.
+  canWrite): TouchRowState(sounds, vibration: Boolean?, writable)`.
+- `KidSettingsModel.kt`: `ControlsSection.Rows.touch`, `describe()`, mask 16 alone is a card; `KidSettingsActivity`:
+  `renderTouch` (re-read on resume and after a tap), `renderControls`' `anyRow` takes `touch`;
+  `activity_kid_settings.xml` `kid_settings_touch_row` after the sound row - two `SwitchCompat`s in `KidSwitchRow`,
+  the notes in the sound note's style, `renderInk` covers them. Strings in both files. TalkBack: the switches' role
+  and state, then the note.
 
-**Server code** (one commit with the launcher's, the standing rule; no JSON key changes, so `policy_json_keys_snapshot`
-and `PolicyResponseCompatTest` stay as they are): `handlers/devices.rs` `QUICK_CONTROL_TOUCH: i64 = 16`, in
-`DEFAULT_QUICK_CONTROLS` (a new phone gets every row, as design 18 did; existing phones keep their mask, no
-migration), the policy form's `quick_control_touch`; `device_pages.rs` `quick_touch`; `device_home.html` a fifth
-switch row "Touch sounds and vibration" in the same `data-autosave` form (it saves in place; its `#quick-controls`
-return keeps the place - never a jump to the top), and the ⓘ panel's line: "Touch sounds and vibration: Android's
-switches for taps. The keyboard has its own. They need the same "Modify system settings" permission as the clock
-format; without it your child sees them but can't change them." An older launcher ignores the bit.
+**Server code** (one commit with the launcher's; no JSON key changes, so `policy_json_keys_snapshot` and
+`PolicyResponseCompatTest` stay): `handlers/devices.rs` `QUICK_CONTROL_TOUCH: i64 = 16`, **not** in
+`DEFAULT_QUICK_CONTROLS` (`tests/device_api.rs` stays at 15), the policy form's `quick_control_touch`;
+`device_pages.rs` `quick_touch`; `device_home.html` a fifth switch "Touch sounds and vibration" in the same
+`data-autosave` form (saves in place, `#quick-controls` return - never a jump to the top; its "One form for the four"
+comment updated), and the ⓘ line: "Touch sounds and vibration: Android's switches for taps; the keyboard has its own.
+They need the "Modify system settings" permission the clock format uses - grant it first, or your child sees them but
+can't change them." An older launcher ignores the bit.
 
-**Tests.** `TouchFeedbackTest` (the state table; by source, `Settings.System.putInt` of these two keys only in
-`QuickControls.setTouch*`), `KidSettingsModelTest` (bit 16, 16 alone a card), server: the quick form with
-`quick_control_touch` stores 16 (beside the existing quick-section test), a new phone's mask is 31
-(`tests/device_api.rs`, was 15), the Home Screen page renders the row checked from the mask.
+**Tests.** `TouchFeedbackTest` (the state table; by source, `putInt` of these keys only in `QuickControls.setTouch*`,
+both `suspend` and on IO), `KidSettingsModelTest` (bit 16, 16 alone a card); server: the quick form with
+`quick_control_touch` stores 16, the Home Screen page renders it from the mask, and
+`tests/device_pages.rs:944-950`'s loop gains the fifth name in the form but unchecked on a new phone.
 
-**Carry-over and unverified.** Android 13+'s "Touch feedback" writes the hidden `HAPTIC_FEEDBACK_INTENSITY` too;
-`VibrationSettings` treats `HAPTIC_FEEDBACK_ENABLED = 0` as off [device check: on the emulator and the Jelly Star our
-off silences long-press haptics, our on brings them back]. Under design 59 the keyguard's PIN pad follows the same two
-system switches [unverified].
+**Residuals.** Android 13+'s own Touch feedback toggle also writes the hidden `HAPTIC_FEEDBACK_INTENSITY`, which an
+app can't write; on a phone where it was turned off in Android's Settings before enrolment, our "on" shows on while
+haptics stay off - accepted (setup runbook: leave Touch feedback on). Under design 59 the keyguard's PIN pad follows
+the same switches [unverified].
 
 ## 5. Emulator check list (for the user)
 
 1. **The bug**: 320x569 dp, 3-button navigation, music playing, one WhatsApp missed-call row; screen off/on five
-   times - the bottom row always whole; `adb logcat -s GlancePanel` shows a refit with the bars' padding after the
-   screen-on. Switch to gesture navigation with the lock up: the page refits.
+   times - the bottom row always whole; `adb logcat -s GlancePanel` shows a line with the new `available … (pad …)`
+   after each screen-on. Switch to gesture navigation with the lock up: a new line, the page refits.
 2. **Fixed bottom**: 0, 1, 2, 3 and 5 rows, with and without music, with a running timer; a drag scrolls the rows, a
-   tap opens the keypad with the right hint, a drag that ends on a row opens nothing; the next lock-up starts at the
-   top; the fade shows only with more below. Font scale 1.0/1.3/2.0 at 320 and 411 dp: "Lås opp", "Nødsamtale" and the
-   flashlight always whole.
-3. **Player**: a long title (one line), paused/playing, an NRK live stream (elapsed only), a Storytel book over an
-   hour ("1:02:13 … −4:10:05"), the times steady at each tick (no jitter, no jump of the bar); previous/play/next as
-   48/56 dp targets; TalkBack on the tile and down through the rows (they scroll into view).
-4. **Touch row**: tick "Touch sounds and vibration" in the PWA (the page stays where it was) - the section shows;
-   toggles change Home's tap sounds and the long-press vibration; `adb shell appops set me.vibb.launcher
-   WRITE_SETTINGS default` - read-only with the note; HeliBoard's key sound unaffected; untick - the section goes,
-   the phone keeps the setting.
+   tap opens the keypad with the right hint, a drag ending on a row opens nothing; the next lock-up starts at the top;
+   the fade only with more below and the one counted row clear. Font scale 1.0/1.3/2.0 at 320 and 411 dp: "Lås opp",
+   "Nødsamtale" and the flashlight always whole; at 2.0 the compact tile and, at worst, the "+ N varsler" line.
+3. **Player**: a long title, paused/playing, an NRK live stream (elapsed only), a Storytel book over an hour
+   ("1:02:13 … −4:10:05"), the times never cut ("1:2…") and steady at each tick; 48/56 dp targets; TalkBack through
+   the tile and the rows.
+4. **Touch row**: grant the app-op, tick "Touch sounds and vibration" in the PWA (the page stays put) - the section
+   shows; toggles change Home's tap sounds and the long-press vibration, a tap doesn't stall;
+   `adb shell appops set me.vibb.launcher WRITE_SETTINGS default` - read-only with the note; HeliBoard unaffected;
+   untick - the section goes, the setting stays. Then Touch feedback off in Android's Settings, ours on: the
+   residual above (expected: haptics stay off).
 
 ## 6. Not in scope
 
-- Every row in the scroll (more than three) - the "+ N varsler til" line stays (open question 3).
-- Key haptics on our own PIN keypad (`performHapticFeedback(KEYBOARD_TAP)`) - a new behaviour, not a switch.
-- A status field for whether the touch settings are writable (the clock format's `clock_format_applied` warns already).
-- The flashlight's disc, Home's music card and the compact tile's look.
+- Every conversation in the scroll (needs recycled row views; open question 3).
+- A newer conversation arriving while the kid has scrolled lands above the viewport (a `scrollTo(0, 0)` when
+  `bindRows` gains one would show it).
+- A status field `touch_writable`: with the bit off by default the parent turns the row on after granting the app-op,
+  and the ⓘ line says so (`clock_format_applied` doesn't warn - it is left out for "Follow the phone", the default).
+- Key haptics on our PIN keypad; the flashlight's disc, Home's music card, the compact tile's look.
 
-## 7. Open questions for the user
+## 7. Open questions for the user (the defaults are the QA's recommendations)
 
-1. **The order when music and rows compete**: the proposal keeps the new player and lets the rows scroll from one
-   visible row (the mockup) before it shrinks to the one-row compact tile. Or the other way round (design 25's order:
-   compact first, so every row shows)? Recommended: as proposed.
-2. **Keep the one-row compact tile** as the last resort (font scale 2.0, small screens - without it the rows can get no
-   room at all)? Recommended: keep it, unchanged.
-3. **More than three rows** now that they scroll: keep "at most three + '+ N varsler til'" (recommended for this
-   round), or list every conversation?
+1. **Music and rows compete** - default: the full player stays and the rows scroll from one visible row (the iPhone's
+   behaviour, the mockup). Flip: design 25's order, the compact tile first so every row shows.
+2. **The one-row compact tile** - default: kept, unchanged, as the last resort (at font scale 2.0 the full player
+   doesn't fit). Flip: drop it.
+3. **Rows** - default: at most three + "+ N varsler til". Flip: list every conversation (its own design).
+
+## QA fixes (`qa-r9-design.md`)
+
+- R9-1: §4 launcher code - the setters `suspend` on IO from `lifecycleScope`; §4 tests.
+- R9-2: §4 residuals and §5 check 4 - accepted residual, runbook note.
+- R9-3: §4 behaviour/server code - bit 16 off by default, `device_api.rs` stays 15; §6 justification corrected.
+- R9-4: §2 layout - 16 dp fade; candidate 7 is the "more" line; scroll heights in the fits table.
+- R9-5: §1 fix - log on an available-height change too; §5 check 1 reads the `available` part.
+- R9-6: §2 fit - the "more" line not counted with one row, `rows` = `min(n, 3)`, `i < fit.rows` stays; the design 42
+  §1.6 change listed and pinned in the timer test.
+- R9-7: §1 cause - 501.4/523.8 dp, ~43 dp overflow.
+- R9-8: §3 code - `Layout.getDesiredWidth` + 1 dp, no ellipsize, `tnum` a no-op, the 10 h clip accepted.
+- R9-9: §1 fix - a private `available()` in `GlancePanel`, pinned by source; no pure helper.
+- R9-10: §2 tests (no `height()` change, `0dp` + weight pinned), §4 tests (`device_pages.rs` loop, template comment),
+  §4 launcher code (`anyRow`).
+- R9-11: §3 behaviour - `selectableItemBackgroundBorderless`, no new drawable.
+- R9-12: header - the published mockup linked, not committed.
+- R9-13: header - the Nødsamtale tie noted for design 59.
