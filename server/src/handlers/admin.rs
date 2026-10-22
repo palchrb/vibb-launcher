@@ -323,7 +323,7 @@ mod tests {
 
     /// Literals near a security-event writer that are not event ids: form fields, notice codes,
     /// root-helper actions and command names.
-    const NOT_EVENTS: [&str; 31] = [
+    const NOT_EVENTS: [&str; 32] = [
         // A failed Spotify login's codes (`spotify_login_failed`'s details, design 26c §2.3).
         "access_denied",
         "admin_id",
@@ -353,6 +353,7 @@ mod tests {
         "parent_pin_saved_easy",
         "push_many",
         "push_on",
+        "saved_not_kept",
         "saved_safe_boot",
         "show_text",
         "stop_ring",

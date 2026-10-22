@@ -2218,25 +2218,39 @@ pub async fn update_kid_lock(
     };
 
     let (result, event, code) = if form.contains_key("clear_kid_pin") {
-        let result = sqlx::query(
-            "UPDATE device_policy SET kid_pin_hash = NULL, kid_pin_salt = NULL, \
-             kid_pin_length = NULL, updated_at = datetime('now') WHERE device_id = ?",
-        )
-        .bind(id)
-        .execute(&state.db)
+        // Design 59 §2.1: no PIN is left to keep, hand over or show - the sealed copies go, the rev
+        // moves on, Vibb One's lock is the switch again (a new PIN starts there), and a waiting
+        // set_kid_pin is cancelled.
+        let result = async {
+            let mut tx = state.db.begin().await?;
+            sqlx::query(
+                "UPDATE device_policy SET kid_pin_hash = NULL, kid_pin_salt = NULL, \
+                 kid_pin_length = NULL, kid_pin_sealed = NULL, kid_pin_prev_sealed = NULL, \
+                 kid_pin_prev_rev = NULL, kid_pin_rev = kid_pin_rev + 1, kid_keyguard = ?, \
+                 updated_at = datetime('now') WHERE device_id = ?",
+            )
+            .bind(crate::kid_lock::KEYGUARD_OWN)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+            crate::kid_lock::cancel_pin_command(&mut *tx, id, "kid_pin_cleared").await?;
+            tx.commit().await
+        }
         .await;
         (result, "kid_pin_cleared", "cleared")
     } else {
-        let new_pin = form
-            .get("new_kid_pin")
-            .map(|p| p.trim().to_string())
-            .unwrap_or_default();
+        let new_pin = crate::kid_pin::KidPin::new(
+            form.get("new_kid_pin")
+                .map(|p| p.trim().to_string())
+                .unwrap_or_default(),
+        );
+        let checked = new_pin.clone();
         let override_hash = current.override_pin_hash.clone();
         let override_salt = current.override_pin_salt.clone();
         // Two PBKDF2 runs: off the async workers.
         let decided = tokio::task::spawn_blocking(move || {
             crate::kid_lock::decide_kid_pin(
-                &new_pin,
+                checked.as_str(),
                 override_hash.as_deref(),
                 override_salt.as_deref(),
             )
@@ -2257,30 +2271,60 @@ pub async fn update_kid_lock(
         // The first kid PIN turns the safe-boot block on; later changes leave the switch alone.
         let first = current.kid_pin_hash.is_none();
         let block_safe_boot = first || current.hardening.disallow_safe_boot;
+        // Design 59 §2.1: sealed for this phone's row (none without the key: saved, not kept).
+        let sealed = state
+            .kid_pin_key
+            .as_deref()
+            .map(|key| crate::kid_pin::seal(key, id, &new_pin));
         // Only while the override PIN still exists: a parallel "remove unlock code" can't leave a
         // kid PIN without its parent code (qa-10-code #9); zero rows = refused. When the switch
-        // goes on is kept for the unseen-boots advice (QA 24b Low 12).
-        let result = sqlx::query(
-            "UPDATE device_policy SET kid_pin_hash = ?, kid_pin_salt = ?, kid_pin_length = ?, \
-             disallow_safe_boot_set_at_ms = CASE WHEN ? AND NOT disallow_safe_boot THEN ? \
-             ELSE disallow_safe_boot_set_at_ms END, \
-             disallow_safe_boot = ?, updated_at = datetime('now') \
-             WHERE device_id = ? AND override_pin_hash IS NOT NULL",
-        )
-        .bind(&hash)
-        .bind(&salt)
-        .bind(length)
-        .bind(block_safe_boot)
-        .bind(chrono::Utc::now().timestamp_millis())
-        .bind(block_safe_boot)
-        .bind(id)
-        .execute(&state.db)
-        .await;
-        if matches!(&result, Ok(done) if done.rows_affected() == 0) {
-            return back(crate::kid_lock::KidPinRefusal::NeedsOverride.code());
+        // goes on is kept for the unseen-boots advice (QA 24b Low 12). The PIN and rev the phone
+        // last confirmed are kept over any number of saves (`prev`, both keyed on prev_rev being
+        // unset, so a legacy PIN with no sealed copy stays "an earlier PIN" - qa-59-revision M-2;
+        // SET reads the row as it was), and a phone in android mode gets the new PIN as a
+        // command in the same transaction.
+        let result = async {
+            let mut tx = state.db.begin().await?;
+            let saved = sqlx::query(
+                "UPDATE device_policy SET kid_pin_hash = ?, kid_pin_salt = ?, kid_pin_length = ?, \
+                 kid_pin_prev_sealed = CASE WHEN kid_pin_prev_rev IS NULL THEN kid_pin_sealed \
+                 ELSE kid_pin_prev_sealed END, \
+                 kid_pin_prev_rev = CASE WHEN kid_pin_prev_rev IS NULL THEN kid_pin_rev \
+                 ELSE kid_pin_prev_rev END, \
+                 kid_pin_sealed = ?, kid_pin_rev = kid_pin_rev + 1, \
+                 disallow_safe_boot_set_at_ms = CASE WHEN ? AND NOT disallow_safe_boot THEN ? \
+                 ELSE disallow_safe_boot_set_at_ms END, \
+                 disallow_safe_boot = ?, updated_at = datetime('now') \
+                 WHERE device_id = ? AND override_pin_hash IS NOT NULL",
+            )
+            .bind(&hash)
+            .bind(&salt)
+            .bind(length)
+            .bind(&sealed)
+            .bind(block_safe_boot)
+            .bind(chrono::Utc::now().timestamp_millis())
+            .bind(block_safe_boot)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+                > 0;
+            if saved {
+                crate::kid_lock::queue_pin_command(&mut *tx, id, None).await?;
+            }
+            tx.commit().await?;
+            Ok::<bool, sqlx::Error>(saved)
         }
+        .await;
+        let result = match result {
+            Ok(false) => return back(crate::kid_lock::KidPinRefusal::NeedsOverride.code()),
+            Ok(true) => Ok(()),
+            Err(err) => Err(err),
+        };
         let code = if first && !current.hardening.disallow_safe_boot {
             "saved_safe_boot"
+        } else if sealed.is_none() {
+            "saved_not_kept"
         } else {
             "saved"
         };

@@ -18,6 +18,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * The cached policy blob and the server response must keep decoding across launcher and server
@@ -631,6 +632,49 @@ class PolicyResponseCompatTest {
         assertEquals(KidLock("ab", "cd", 6), kidLock)
         val withNull = serverResponse.replaceFirst("{", """{"kid_lock":null,""")
         assertNull((decodeCached(withNull) as CachedPolicy.Ok).policy.kidLock)
+    }
+
+    /**
+     * Design 59 §1: `kid_lock.keyguard`/`pin_rev` decode (an older server's missing keys are Vibb One's
+     * lock and rev 0), and `set_kid_pin`'s `pin` decodes but never reaches the cache, a `toString` or
+     * the policy applied after the dispatch.
+     */
+    @Test
+    fun `kid_lock's keyguard and pin_rev decode, and set_kid_pin's pin stays out of the cache (59)`() {
+        val withLock = serverResponse.replaceFirst(
+            "{",
+            """{"kid_lock":{"pin_hash":"ab","pin_salt":"cd","pin_length":4,"keyguard":"android","pin_rev":7},""",
+        )
+        assertEquals(
+            KidLock("ab", "cd", 4, keyguard = "android", pinRev = 7),
+            (decodeFresh(withLock) as FreshDecode.Ok).policy.kidLock,
+        )
+        val older = serverResponse.replaceFirst("{", """{"kid_lock":{"pin_hash":"ab","pin_salt":"cd","pin_length":4},""")
+        val olderLock = (decodeFresh(older) as FreshDecode.Ok).policy.kidLock!!
+        assertEquals(null to 0L, olderLock.keyguard to olderLock.pinRev)
+
+        val withPin = serverResponse.replace(
+            """"pending_command": {"id": 12, "command": "ring", "requested_at": "2026-10-11 18:00:00"}""",
+            """"pending_command": {"id": 13, "command": "set_kid_pin", "requested_at": "2026-10-22 14:02:00", "pin": "4821"}""",
+        )
+        val policy = (decodeFresh(withPin) as FreshDecode.Ok).policy
+        assertEquals("4821", policy.pendingCommand?.pin)
+        assertFalse(policy.toString(), "4821" in policy.toString())
+        assertTrue(policy.pendingCommand.toString().contains("pin=<redacted>"))
+        val cached = ServerJson.encodeToString(PolicyResponse.serializer(), cacheablePolicy(policy))
+        assertFalse(cached, "4821" in cached || "\"pin\"" in cached)
+        val back = (decodeCached(cached) as CachedPolicy.Ok).policy
+        assertEquals(policy.copy(pendingCommand = policy.pendingCommand?.copy(pin = null)), back)
+        // Without a PIN the policy is passed through as it is.
+        val plain = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
+        assertTrue(cacheablePolicy(plain) === plain)
+        // The sync caches through it, and applies the stripped policy once the command ran.
+        val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
+        val worker = File(src, "main/java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
+        val store = worker.substringAfter("private fun storeAcceptedPolicy(").substringBefore("\n}\n")
+        assertTrue(store, "ServerJson.encodeToString(PolicyResponse.serializer(), cacheablePolicy(policy))" in store)
+        val afterDispatch = worker.substringAfter("ranCommand = dispatchPendingCommand(").substringBefore("val decision = choosePolicy(")
+        assertTrue("freshPolicy = cacheablePolicy(freshPolicy)" in afterDispatch)
     }
 
     /**

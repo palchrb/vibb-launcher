@@ -210,6 +210,8 @@ pub async fn policy(
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
 ) -> impl IntoResponse {
     match build_policy(&state, device.id).await {
+        // `no-store`, as every device answer without its own (`limits`): also the one with the
+        // Child PIN in it (design 59 §2.1).
         Ok(policy) => Json(policy).into_response(),
         Err(err) => {
             tracing::error!(device_id = device.id, %err, "failed to build device policy");
@@ -344,40 +346,45 @@ pub(crate) async fn build_policy(
     // the parent cancelled is never handed out, nor - first or again - a pause, ring, stop or
     // location update past its hour (EXPIRING_COMMANDS, the user's decision 2026-10-12). See
     // migrations/0010_find_my_device.sql, 0065_command_receipts.sql, 0068 and handlers::locate.
-    let receipts = sends_command_receipts(&state.db, device_id).await?;
-    let popped = sqlx::query_as::<_, (i64, String, String, Option<String>)>(
+    let capabilities = last_capabilities(&state.db, device_id).await?;
+    let receipts = capabilities
+        .iter()
+        .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY);
+    let pop = format!(
         "UPDATE device_commands SET delivered_at = datetime('now'), deliveries = deliveries + 1, \
            first_delivered_at = COALESCE(first_delivered_at, datetime('now')) \
          WHERE id = (SELECT id FROM device_commands WHERE device_id = ? \
-           AND received_at IS NULL AND acknowledged_at IS NULL AND cancelled_at IS NULL \
+           AND {} \
            AND (command NOT IN (?, ?, ?, ?) OR requested_at > datetime('now', ?)) \
            AND (delivered_at IS NULL OR (? AND deliveries < ? \
                 AND delivered_at <= datetime('now', ?) \
                 AND first_delivered_at > datetime('now', ?))) \
           ORDER BY requested_at ASC, id ASC LIMIT 1) \
          RETURNING id, command, requested_at, payload",
-    )
-    .bind(device_id)
-    .bind(crate::models::EXPIRING_COMMANDS[0])
-    .bind(crate::models::EXPIRING_COMMANDS[1])
-    .bind(crate::models::EXPIRING_COMMANDS[2])
-    .bind(crate::models::EXPIRING_COMMANDS[3])
-    .bind(format!(
-        "-{} minutes",
-        crate::models::COMMAND_EXPIRY_MINUTES
-    ))
-    .bind(receipts)
-    .bind(crate::models::MAX_COMMAND_DELIVERIES)
-    .bind(format!(
-        "-{} minutes",
-        crate::models::REDELIVER_AFTER_MINUTES
-    ))
-    .bind(format!(
-        "-{} minutes",
-        crate::models::REDELIVER_WINDOW_MINUTES
-    ))
-    .fetch_optional(&state.db)
-    .await?;
+        crate::models::COMMAND_OPEN
+    );
+    let popped = sqlx::query_as::<_, (i64, String, String, Option<String>)>(&pop)
+        .bind(device_id)
+        .bind(crate::models::EXPIRING_COMMANDS[0])
+        .bind(crate::models::EXPIRING_COMMANDS[1])
+        .bind(crate::models::EXPIRING_COMMANDS[2])
+        .bind(crate::models::EXPIRING_COMMANDS[3])
+        .bind(format!(
+            "-{} minutes",
+            crate::models::COMMAND_EXPIRY_MINUTES
+        ))
+        .bind(receipts)
+        .bind(crate::models::MAX_COMMAND_DELIVERIES)
+        .bind(format!(
+            "-{} minutes",
+            crate::models::REDELIVER_AFTER_MINUTES
+        ))
+        .bind(format!(
+            "-{} minutes",
+            crate::models::REDELIVER_WINDOW_MINUTES
+        ))
+        .fetch_optional(&state.db)
+        .await?;
     if let Some((id, _, requested_at, _)) = &popped {
         // Commands run in the order they were asked for (QA Low 1): once this one is out, an older
         // one the phone didn't confirm is never offered again - a lost "pause" must not run after
@@ -402,12 +409,25 @@ pub(crate) async fn build_policy(
     // `allow_blocked` carries the apps the card listed (QA of cmd-expiry, Low 1); a row queued
     // before 0068 has none, and the phone then lets out every block, as it did. Install Now's
     // payload is the release tag the row showed (design 37 §3) - a plain tag, only for it.
+    // `set_kid_pin` (design 59 §2.1) carries the PIN opened from the row read above, so it is the
+    // PIN of this answer's `kid_lock` hash - only in android mode and for a launcher whose last
+    // report has the handler (an older one re-enrolled into the row gets the command without it).
     let pending_command = popped.map(|(id, command, requested_at, payload)| PendingCommand {
         allow: payload
             .as_deref()
             .filter(|_| command == crate::window_relock::ALLOW_BLOCKED)
             .and_then(|p| serde_json::from_str(p).ok()),
         release_tag: payload.filter(|_| command == crate::install_now::COMMAND),
+        pin: (command == crate::kid_lock::SET_KID_PIN)
+            .then(|| {
+                crate::kid_lock::deliverable_pin(
+                    state.kid_pin_key.as_deref(),
+                    &policy,
+                    device_id,
+                    &capabilities,
+                )
+            })
+            .flatten(),
         id,
         command,
         requested_at,
@@ -1180,6 +1200,23 @@ pub async fn status(
     .execute(&state.db)
     .await
     .ok();
+    // Design 59 §2.1: the PIN the phone last confirmed is forgotten at the current rev, and a phone
+    // in android mode that needs the Child PIN gets it as a command (nudged at once).
+    if let Some(lock_state) = crate::kid_lock::parse_lock_state(lock_state_json.as_deref()) {
+        let capable = report
+            .capabilities
+            .iter()
+            .any(|c| c == crate::kid_lock::ANDROID_KEYGUARD_CAPABILITY);
+        match crate::kid_lock::after_lock_report(&state.db, device.id, &lock_state, capable).await {
+            Ok(true) => {
+                let _ = state.command_notify.send(device.id);
+            }
+            Ok(false) => {}
+            Err(err) => {
+                tracing::error!(device_id = device.id, %err, "can't check the Child PIN's command")
+            }
+        }
+    }
     // Design 35 §2: the parent's events from this report, each raised once (its dedup key).
     let phone = crate::parent_events::Phone::load(&state.db, device.id).await;
     let previous_status_id = previous.as_ref().map_or(0, |p| p.id);
@@ -1576,6 +1613,17 @@ pub(crate) async fn sends_command_receipts(
     db: &sqlx::SqlitePool,
     device_id: i64,
 ) -> Result<bool, sqlx::Error> {
+    Ok(last_capabilities(db, device_id)
+        .await?
+        .iter()
+        .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY))
+}
+
+/// The capabilities of this device's latest status report (none without one, or unreadable).
+pub(crate) async fn last_capabilities(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<Vec<String>, sqlx::Error> {
     let capabilities: Option<Option<String>> = sqlx::query_scalar(
         "SELECT capabilities_json FROM device_status WHERE device_id = ? \
          ORDER BY reported_at DESC, id DESC LIMIT 1",
@@ -1585,11 +1633,8 @@ pub(crate) async fn sends_command_receipts(
     .await?;
     Ok(capabilities
         .flatten()
-        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
-        .is_some_and(|caps| {
-            caps.iter()
-                .any(|c| c == crate::models::COMMAND_RECEIPT_CAPABILITY)
-        }))
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default())
 }
 
 /// The phone got a command and is about to run it (security review L12) - sent before it runs,

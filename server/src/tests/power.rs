@@ -100,9 +100,24 @@ async fn a_launcher_report_raises_both() {
     let (app, id, token) = setup().await;
     let mut body: Value = serde_json::from_str(POWER_REPORT).unwrap();
     let gap = body["on"]["at_ms"].as_i64().unwrap() - body["off"]["at_ms"].as_i64().unwrap();
-    let on_at = Utc::now() - Duration::minutes(1);
+    // Design 59 §1: when the PIN was typed after the boot (step 2 words it).
+    let unlocked_after =
+        body["on"]["unlocked_at_ms"].as_i64().unwrap() - body["on"]["at_ms"].as_i64().unwrap();
+    let on_at = Utc::now() - Duration::minutes(20);
     body["on"]["at_ms"] = json!(ms(on_at));
+    body["on"]["unlocked_at_ms"] = json!(ms(on_at) + unlocked_after);
     body["off"]["at_ms"] = json!(ms(on_at) - gap);
+    let parsed: crate::models::PowerReport = serde_json::from_value(body.clone()).unwrap();
+    assert_eq!(
+        parsed.on.unwrap().unlocked_at_ms,
+        Some(ms(on_at) + unlocked_after)
+    );
+    // Anything but a whole number is unknown, never a refused body.
+    let odd: crate::models::PowerReport = serde_json::from_value(
+        json!({ "on": { "at_ms": 1, "boot_count": 1, "unlocked_at_ms": "soon" } }),
+    )
+    .unwrap();
+    assert_eq!(odd.on.unwrap().unlocked_at_ms, None);
     assert_eq!(
         post(&app, &token, body.clone()).await,
         StatusCode::NO_CONTENT

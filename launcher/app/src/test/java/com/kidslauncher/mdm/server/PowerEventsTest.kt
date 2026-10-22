@@ -32,7 +32,7 @@ class PowerEventsTest {
     fun `the encoding is exactly the contract`() {
         val report = PowerReport(
             off = PowerOff(1_760_900_040_000, 41, BatteryReport(3, charging = false, low = true), reboot = false, reason = "userrequested"),
-            on = PowerOn(1_760_936_520_000, 42, BatteryReport(11, charging = true, low = false)),
+            on = PowerOn(1_760_936_520_000, 42, BatteryReport(11, charging = true, low = false), unlockedAtMs = 1_760_937_300_000),
         )
         assertEquals(contract.trimEnd(), ServerJson.encodeToString(PowerReport.serializer(), report))
         // Unknowns are left out, never sent as null.

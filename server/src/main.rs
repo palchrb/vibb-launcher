@@ -18,6 +18,7 @@ mod handlers;
 mod install_now;
 mod keys;
 mod kid_lock;
+mod kid_pin;
 mod kiosk_escapes;
 mod limits;
 mod lock_glance;
@@ -114,6 +115,9 @@ pub struct AppState {
     pub music_art_dir: std::sync::Arc<std::path::PathBuf>,
     /// The key the Storytel login is sealed with (`music_secret`); `None` = Storytel is off.
     pub music_key: Option<std::sync::Arc<music_secret::MusicKey>>,
+    /// The key the Child PIN is sealed with (`kid_pin`, design 59 §2.1, `data/keys/kid-pin.key`);
+    /// `None` = PINs are saved without a copy to send or show. Never the lock itself.
+    pub kid_pin_key: Option<std::sync::Arc<music_secret::MusicKey>>,
     /// Every music source fetch - the add check, the sweep, source covers (design 21b §2.1/§2.7):
     /// `music_net::HttpSource` behind the one gate (`music_net::Gated`); canned in the tests.
     pub music_fetch: std::sync::Arc<dyn music_net::Source>,
@@ -366,6 +370,18 @@ async fn main() {
         }
     };
 
+    // The Child PIN's key (design 59 §2.1): its own file in data/keys/, made on the first start; a
+    // file that doesn't parse leaves the PINs without a sealed copy, never replaced.
+    let kid_pin_key = match kid_pin::load(std::path::Path::new(kid_pin::DEFAULT_KEY_FILE)) {
+        Ok(key) => Some(std::sync::Arc::new(key)),
+        Err(err) => {
+            tracing::error!(
+                "Child PINs can't be kept to send to a phone or show (Android's lock): {err}"
+            );
+            None
+        }
+    };
+
     // Web Push's key (design 35 §4.1): data/keys/vapid-p256.pk8, made on the first start; a file
     // that doesn't parse turns push off, never replaced.
     let push_key = match push::load_key(std::path::Path::new(push::DEFAULT_KEY_FILE)) {
@@ -430,6 +446,7 @@ async fn main() {
         music_cover_dir: std::sync::Arc::new(std::path::PathBuf::from(music::MUSIC_COVERS_DIR)),
         music_art_dir: std::sync::Arc::new(std::path::PathBuf::from(music::MUSIC_ART_DIR)),
         music_key,
+        kid_pin_key,
         music_fetch: std::sync::Arc::new(music_net::Gated::new(
             std::sync::Arc::new(music_net::HttpSource::new()),
             music_net::REQUEST_SPACING,

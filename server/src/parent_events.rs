@@ -928,6 +928,7 @@ mod tests {
             at_ms: utc("2026-10-18 12:20:00").timestamp_millis(),
             boot_count: 42,
             battery,
+            unlocked_at_ms: None,
         }
     }
 
@@ -1102,6 +1103,7 @@ mod tests {
             at_ms: ms(at),
             boot_count: boot,
             battery: None,
+            unlocked_at_ms: None,
         };
         let (off_kind, on_kind) = (Kind::PhoneOff, Kind::PhoneOn);
         // An off alone: held; with the restart flag never pushed. An on alone: no shutdown seen.

@@ -106,11 +106,24 @@ impl MusicKey {
     }
 }
 
-fn decode_key(text: &str) -> Option<[u8; 32]> {
+/// A key file's text: 32 bytes of base64 (surrounding whitespace ignored). Shared with the Child
+/// PIN's key (`kid_pin`, design 59 §2.1).
+pub(crate) fn decode_key(text: &str) -> Option<[u8; 32]> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(text.trim())
         .ok()?;
     bytes.try_into().ok()
+}
+
+/// A new key file's text: a random 32-byte key in base64, one line ([decode_key] reads it).
+pub(crate) fn fresh_key_file() -> Vec<u8> {
+    let mut key = [0u8; 32];
+    OsRng.fill_bytes(&mut key);
+    format!(
+        "{}\n",
+        base64::engine::general_purpose::STANDARD.encode(key)
+    )
+    .into_bytes()
 }
 
 /// The key from `env_value` (`MUSIC_SECRET_KEY`) when set, else from `file`, which is created
@@ -123,15 +136,7 @@ pub fn load(env_value: Option<&str>, file: &Path) -> Result<MusicKey, String> {
             .map(|key| MusicKey::from_bytes(&key))
             .ok_or_else(|| "MUSIC_SECRET_KEY is not 32 bytes of base64".to_string());
     }
-    let loaded = crate::keys::load_or_create(file, || {
-        let mut key = [0u8; 32];
-        OsRng.fill_bytes(&mut key);
-        format!(
-            "{}\n",
-            base64::engine::general_purpose::STANDARD.encode(key)
-        )
-        .into_bytes()
-    })?;
+    let loaded = crate::keys::load_or_create(file, fresh_key_file)?;
     if loaded.created {
         tracing::info!(
             "created the music key file {} (Storytel logins are sealed with it; no backup holds it)",
