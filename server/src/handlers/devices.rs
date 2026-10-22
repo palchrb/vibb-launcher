@@ -32,7 +32,8 @@ struct DeviceListRow {
     attention: usize,
 }
 
-/// The avatars' colours (white text 4.5:1 or more on each); a phone not set up is grey.
+/// The letter tiles' colours on the Apps tab (white text 4.5:1 or more on each). A phone's avatar
+/// is vibb's peach since the vibb identity (2026-10-22), grey until it is set up.
 pub(crate) const AVATAR_COLOURS: [&str; 6] = [
     "avatar-indigo",
     "avatar-orange",
@@ -154,18 +155,15 @@ async fn list_row(
     }
 }
 
-/// A phone's avatar colour (also on the Apps tab): grey until it is set up, else by its id.
+/// A phone's avatar class beside `avatar` (also on the Apps tab): grey until it is set up, else
+/// none - every set-up phone has `.avatar`'s peach.
 pub(crate) fn avatar_class(device: &Device) -> &'static str {
-    avatar_class_of(device.id, device.enrolled_at.is_some())
+    avatar_class_of(device.enrolled_at.is_some())
 }
 
-/// [avatar_class] from the phone's id and whether it is set up (the inbox's rows).
-pub(crate) fn avatar_class_of(id: i64, enrolled: bool) -> &'static str {
-    if enrolled {
-        AVATAR_COLOURS[id.rem_euclid(AVATAR_COLOURS.len() as i64) as usize]
-    } else {
-        "avatar-grey"
-    }
+/// [avatar_class] from whether the phone is set up (the inbox's rows).
+pub(crate) fn avatar_class_of(enrolled: bool) -> &'static str {
+    if enrolled { "" } else { "avatar-grey" }
 }
 
 /// The avatar's letter: the name's first letter or digit, upper-cased when that gives one

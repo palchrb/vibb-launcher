@@ -750,6 +750,8 @@ findings, merge to `main`, full suite once.
   tab bar with the peach pill on every page. Scope (agreed): colour tokens (light and dark), bundled Nunito, the tab
   bar partial, the Devices header, the PWA icons/manifest as the vibb rings; then a small round for an uploaded avatar (the user, 2026-10-22: change it by tapping the big avatar on the phone's page - a picker opens (photo library/camera on a phone), saved at once, plus "remove picture"; works without JS via a plain form; the avatar keeps its status dot)
   per phone (reuse `photos.rs`: resize, EXIF stripped). No big redesign. After the Android-lock RC.
+  Implemented 2026-10-22 on branch `pwa-identity-d` (not merged; `docs/notes/server/pwa.md`, "The vibb identity",
+  browser pass `docs/testing/2026-10-22-pwa-identity-pass.md`); the uploaded avatar round is still to do.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a

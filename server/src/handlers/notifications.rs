@@ -212,11 +212,11 @@ pub(crate) fn inbox_row(
     zone: &Zone,
     words: impl Fn(chrono::DateTime<chrono::Utc>) -> String,
 ) -> InboxRow {
-    let (id, device_id, title, summary, detail, happened_at, unread, name, enrolled) = raw;
+    let (id, _device, title, summary, detail, happened_at, unread, name, enrolled) = raw;
     let at = crate::display_time::parse_db_utc(&happened_at);
     InboxRow {
         id,
-        avatar: crate::handlers::devices::avatar_class_of(device_id, enrolled.is_some()),
+        avatar: crate::handlers::devices::avatar_class_of(enrolled.is_some()),
         initial: crate::handlers::devices::initial(&name),
         title,
         summary,

@@ -158,16 +158,64 @@ async fn the_app_is_called_vibb_phone_with_a_stable_identity() {
         "<title>Devices · Vibb Phone</title>",
         "<meta name=\"apple-mobile-web-app-title\" content=\"Vibb Phone\">",
         "<meta name=\"color-scheme\" content=\"light dark\">",
-        "<meta name=\"theme-color\" content=\"#F9F9FA\" media=\"(prefers-color-scheme: light)\">",
-        "<meta name=\"theme-color\" content=\"#161618\" media=\"(prefers-color-scheme: dark)\">",
+        "<meta name=\"theme-color\" content=\"#F2F2F7\" media=\"(prefers-color-scheme: light)\">",
+        "<meta name=\"theme-color\" content=\"#0C0C14\" media=\"(prefers-color-scheme: dark)\">",
         // The manifest URL stays: older Chrome keys a WebAPK to it.
         "<link rel=\"manifest\" href=\"/static/manifest.webmanifest\">",
         // Not deferred: a switch tapped while the page still loads saves too (qa-31-s1-code L1).
         "<script src=\"/static/autosave.js?v=2\"></script>",
         // Edge to edge on an iPhone, so the safe-area insets are real (style.css takes them).
         "content=\"width=device-width, initial-scale=1.0, viewport-fit=cover\"",
+        "<link rel=\"apple-touch-icon\" href=\"/static/icons/icon-180.png\">",
     ] {
         assert!(html.contains(needle), "{needle}");
+    }
+    // The vibb identity (2026-10-22): the icons the manifest and the head name are there at their
+    // sizes, and the headings' Nunito comes from this server, never from a font service.
+    let mut icons: Vec<(String, u32)> = manifest["icons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|icon| {
+            let sizes = icon["sizes"].as_str().unwrap();
+            let src = icon["src"].as_str().unwrap().to_string();
+            (src, sizes.split('x').next().unwrap().parse().unwrap())
+        })
+        .collect();
+    icons.push(("/static/icons/icon-180.png".to_string(), 180));
+    for (src, size) in icons {
+        let png = std::fs::read(src.trim_start_matches('/')).unwrap();
+        let side = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+        assert_eq!(
+            (&png[1..4], side(16), side(20)),
+            (&b"PNG"[..], size, size),
+            "{src}"
+        );
+    }
+    let css = std::fs::read_to_string("static/style.css").unwrap();
+    // The one @font-face's file, and the head preloads exactly it (a rename of one alone would
+    // fetch a 404 or the font twice on every page; qa-pwa-identity-d-code PD-2).
+    let font = css
+        .split("@font-face")
+        .nth(1)
+        .and_then(|block| block.split("src: url(\"").nth(1))
+        .and_then(|rest| rest.split('"').next())
+        .expect("an @font-face with a src url");
+    assert_eq!(font, "fonts/nunito-latin-wght.woff2");
+    assert!(html.contains(&format!(
+        "<link rel=\"preload\" href=\"/static/{font}\" as=\"font\" type=\"font/woff2\" crossorigin>"
+    )));
+    assert!(
+        std::fs::read(format!("static/{font}"))
+            .unwrap()
+            .starts_with(b"wOF2")
+    );
+    assert!(
+        std::fs::metadata("static/fonts/OFL.txt").is_ok(),
+        "the font's licence"
+    );
+    for text in [&css, &html] {
+        assert!(!text.contains("googleapis") && !text.contains("gstatic"));
     }
     // Round 1's relayout script is gone with the fixed bar (design 43); pinch zoom stays.
     assert!(!html.contains("tab-bar.js"));
@@ -481,6 +529,12 @@ async fn the_tab_pages_open_on_their_large_title() {
             "{page}: the brand bar"
         );
         assert!(!html.contains("class=\"brand\""), "{page}");
+        // vibb's brand row is the home page's alone (the vibb identity, direction D).
+        assert_eq!(
+            html.contains("class=\"vibb-brand\""),
+            page == "/devices",
+            "{page}"
+        );
         assert!(!html.contains("class=\"nav-back\""), "{page}");
         let main = &html[html.find("<main class=\"container").unwrap()..];
         let main = &main[main.find('>').unwrap() + 1..];
