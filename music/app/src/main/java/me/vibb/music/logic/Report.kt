@@ -96,7 +96,7 @@ fun stateReport(
     entryErrors: List<EntryError>,
     itemErrors: List<ItemError>,
     downloads: List<DownloadState>,
-    /** The Storytel login on the phone: `none`, `refused` or `ok` (design 26b §4.5); never the email, a JWT or a URL. */
+    /** The phone's Storytel session: `none`, `refused` or `ok` (design 26b §4.5, design 58 §5.2); never a JWT or a URL. */
     storytel: String? = null,
     /** The rooms the speaker cache knows ([reportedRooms]). */
     sonosRooms: List<ReportedRoom> = emptyList(),

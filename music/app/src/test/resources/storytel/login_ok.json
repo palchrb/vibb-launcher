@@ -1,4 +1,0 @@
-{
-  "status": 200,
-  "body": {"accountInfo": {"jwt": "FAKE-JWT-1", "displayName": "Fake Family"}}
-}

@@ -134,8 +134,8 @@ object Downloads {
  * wanted (a sync during the run adds items). A failure waits per item (logic/Offline.kt `mayRetry`)
  * and never holds the others back; no network means the job ends and a new one waits on its
  * constraints, not on a backoff (qa-21-step2-code M1, M4). Storytel books (design 26b §4.3) go one
- * at a time like everything else; a login failure or the 1.5 GB floor stops them for the run, and a
- * refused login brings a job back when its hour is over (the cooldown sends nothing before).
+ * at a time like everything else; a session failure or the 1.5 GB floor stops them for the run, and the
+ * job comes back at the session's time (design 58 §5.3: a refusal's end, 2 minutes after an outage).
  */
 class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
@@ -169,8 +169,8 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                 }
             }
         }
-        // A refused Storytel login: back when its cooldown is over (one login an hour at most).
-        val back = listOfNotNull(nextRetryAt, run.storytelRefusedUntil).minOrNull()
+        // Storytel stopped on its session (design 58 §5.3): back at its time, never only at the 6 h backstop.
+        val back = listOfNotNull(nextRetryAt, run.storytelBackAt).minOrNull()
         back?.let { Downloads.enqueue(applicationContext, store.downloadMobileData, (it - System.currentTimeMillis()).coerceAtLeast(0)) }
         // A new book counts in the Nytt notification once its copy is on the phone (design 26b §3.4):
         // after the download, not at the next sync (qa-26b-step3-code M1).
@@ -204,7 +204,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
 
         override fun cachedBytes(cacheKey: String, hls: Boolean): Long = MediaCache.cachedBytes(context, cacheKey, hls)
 
-        /** A download's mint: the asset call 15 s, the whole mint (the login and its lock included) within 60 s. */
+        /** A download's mint: the asset call 15 s, the whole mint (the wait for the server's JWT included) within 60 s. */
         override suspend fun mint(cid: String): Mint =
             StorytelAccount.get(context).mint(cid, MINT_TIMEOUT_MS, SystemClock.elapsedRealtime() + MINT_BUDGET_MS)
     }

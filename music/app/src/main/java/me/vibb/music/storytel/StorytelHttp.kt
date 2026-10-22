@@ -13,9 +13,9 @@ import java.util.concurrent.TimeUnit
  * the GPL-3.0 (or later) - see NOTICE.md. Design 26b §4.1. StorytelApiTest fakes [StorytelHttp];
  * StorytelHttpTest runs [OkHttpStorytelHttp] against loopback servers.
  *
- * Secrets (§0, QA L9): a request's URL can hold `pwd=` (the login) and its headers the bearer; a
- * response's body can hold the JWT and its Location the signed CDN URL. Every type here prints them
- * redacted, and nothing here logs.
+ * Secrets (design 58 §7.1, QA L9): a request's headers can hold the bearer (the server's JWT) and the fake's
+ * session route its `stale` session; a response's body can hold a JWT and its Location the signed CDN URL.
+ * Every type here prints them redacted, and nothing here logs.
  */
 
 /** The one HTTP seam (vibb `_request`): blocking, any status returned, an IOException = unreachable. */
@@ -32,14 +32,14 @@ data class StorytelRequest(
     val follow: Boolean,
     val timeoutMs: Long,
 ) {
-    /** The path only: the login's query holds the email and `pwd=`, a header the bearer. */
+    /** The path only: a query can hold a session, a header the bearer. */
     override fun toString(): String =
         "StorytelRequest($method ${url.scheme}://${url.host}${url.encodedPath}, ${headers.size} headers, follow=$follow, timeoutMs=$timeoutMs)"
 }
 
 /** One answer, whatever its status. [body] is capped at [BODY_MAX] bytes. */
 class StorytelResponse(val status: Int, val location: String?, val body: ByteArray) {
-    /** The status only: the login's body holds the JWT, a Location the signed URL. */
+    /** The status only: the fake's session body holds a JWT, a Location the signed URL. */
     override fun toString(): String =
         "StorytelResponse($status, location=${if (location == null) "none" else "<redacted>"}, ${body.size} bytes)"
 

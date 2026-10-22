@@ -289,11 +289,11 @@ class SourceScanTest {
     @Test
     fun `every type holding a Storytel secret prints it redacted`() {
         val holders = mapOf(
-            "src/main/java/me/vibb/music/bridge/StorytelLogin.kt" to listOf("data class Login("),
-            // design 58: the server's session through the bridge
+            // design 58: the server's session through the bridge, and in memory
             "src/main/java/me/vibb/music/bridge/StorytelBridgeToken.kt" to listOf("data class Ok("),
+            "src/main/java/me/vibb/music/storytel/StorytelSession.kt" to listOf("class Jwt("),
             "src/main/java/me/vibb/music/storytel/StorytelHttp.kt" to listOf("data class StorytelRequest(", "class StorytelResponse("),
-            "src/main/java/me/vibb/music/storytel/StorytelApi.kt" to listOf("class Url(", "private class Jwt("),
+            "src/main/java/me/vibb/music/storytel/StorytelApi.kt" to listOf("class Url("),
             // design 26b step 4b: a Storytel play's signed URL in memory - the body, the result, a snapshot, a hint
             "src/main/java/me/vibb/music/sonos/PlayBody.kt" to listOf("data class PlayBody("),
             "src/main/java/me/vibb/music/sonos/SonosTransport.kt" to listOf("data class PlayResult("),
@@ -338,20 +338,22 @@ class SourceScanTest {
     }
 
     @Test
-    fun `the debug base is assigned only in src-debug and read only by its four readers (M2)`() {
+    fun `the debug base is assigned only in src-debug and read only by its five readers (M2)`() {
         for (f in sources("src/main")) {
             // Storytel's switch and Spotify's (design 26c §9.3, the next test), each in its own endpoints file
             if (code(f).contains("debugBase")) assertTrue(f.path, f.name in setOf("StorytelEndpoints.kt", "SpotifyEndpoints.kt"))
         }
         val endpoints = code(moduleFile("src/main/java/me/vibb/music/storytel/StorytelEndpoints.kt"))
         assertTrue(endpoints.contains("var debugBase: String? = null"))
-        assertEquals("one declaration and four reads", 5, Regex("\\bdebugBase\\b").findAll(endpoints).count())
+        assertEquals("one declaration and five reads", 6, Regex("\\bdebugBase\\b").findAll(endpoints).count())
         assertFalse("main never assigns it", Regex("debugBase\\s*=[^=]").containsMatchIn(endpoints.replace("var debugBase: String? = null", "")))
         // (a) the endpoints and (b) the LAN client for the API: the account; (c) a Storytel download's
-        // public-only switch: the download; (d) the minted-URL check on the Sonos path (step 4b).
+        // public-only switch: the download; (d) the minted-URL check on the Sonos path (step 4b); (e) the fake's
+        // session route for an unmanaged run: the account (design 58 §5.6).
         val readers = mapOf(
             "endpoints" to setOf("StorytelAccount.kt"),
             "apiOverLan" to setOf("StorytelAccount.kt"),
+            "debugJwt" to setOf("StorytelAccount.kt"),
             "publicDownloads" to setOf("Downloads.kt"),
             "privateMintAllowed" to setOf("SonosController.kt"),
         )
@@ -617,15 +619,13 @@ class SourceScanTest {
     }
 
     @Test
-    fun `the debug feed's Storytel login is deleted once read, and its email never logged (L13)`() {
+    fun `the debug feed's storytel_json is deleted unread - the phone takes no login (design 58 §5_6)`() {
         val debug = code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugStorytel.kt"))
-        val seed = debug.substringAfter("fun seedLogin(").substringBefore("\n    }\n")
-        assertTrue(seed.contains("} finally {\n            f.delete()"))
-        for (line in debug.lines().filter { it.contains("Log.") }) {
-            assertFalse(line, Regex("\\$\\{?(email|password|o\\b)").containsMatchIn(line))
-        }
-        // qa-26b-step3-code L1: a malformed file never reaches the parser's message (it quotes the password)
-        assertTrue(seed.contains("val o = runCatching { JSON.parseToJsonElement(f.readText()) as? JsonObject }.getOrNull()"))
+        val drop = debug.substringAfter("fun dropLogin(").substringBefore("\n    }\n")
+        assertTrue(drop.contains("f.delete()"))
+        assertFalse("never read", drop.contains("readText") || drop.contains("readBytes"))
+        assertFalse("no login code in the debug feed", debug.contains("StorytelLogin") || debug.contains("seedLogin"))
+        assertTrue(code(moduleFile("src/debug/java/me/vibb/music/debugfeed/DebugFeedReceiver.kt")).contains("?.let { f -> DebugStorytel.dropLogin(f) }"))
         val manifest = code(moduleFile("src/debug/AndroidManifest.xml"))
         assertTrue(manifest.contains("android:name=\"me.vibb.music.debugfeed.DebugStartup\""))
         val provider = manifest.substringAfter("DebugStartup").substringBefore("/>")
@@ -879,5 +879,27 @@ class SourceScanTest {
         }
         assertEquals(nb["headset_no_contact_row"], nb["room_no_contact"])
         assertEquals(en["headset_no_contact_row"], en["room_no_contact"])
+    }
+
+    /**
+     * Design 58 §5.5 (QA 58-15): the old login's Keystore key and file are named only where they are deleted, and the
+     * purge runs from the sync's report only - never on a mint's path (`StorytelAccount`), so a room's 10 s mint never
+     * waits for the Keystore.
+     */
+    @Test
+    fun `the old Storytel login is named only by its purge, which only the sync's report calls`() {
+        for (f in sources("src/main") + sources("src/debug")) {
+            val text = code(f)
+            for (name in listOf("AndroidKeyStore", "storytel.bin", "vibb_storytel")) {
+                if (text.contains(name)) assertEquals("${f.path} names $name", "StorytelLegacy.kt", f.name)
+            }
+            if (text.contains("StorytelLegacy.purge(")) assertEquals(f.path, "Sync.kt", f.name)
+        }
+        val sync = code(moduleFile("src/main/java/me/vibb/music/sync/Sync.kt"))
+        val report = sync.substringAfter("suspend fun writeReport(context: Context)").substringBefore("val storytel = StorytelAccount.get(context).state()")
+        assertTrue("before the report's state", report.contains("StorytelLegacy.purge(context)"))
+        val legacy = code(moduleFile("src/main/java/me/vibb/music/bridge/StorytelLegacy.kt"))
+        assertTrue(legacy.contains("if (!flag.compareAndSet(false, true)) return false"))
+        assertTrue(legacy.contains("purgeOnce(done, context.noBackupFilesDir, ::deleteKey)"))
     }
 }

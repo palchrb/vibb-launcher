@@ -1225,3 +1225,96 @@ The fixes for `docs/review/qa-58-revision-check.md`.
 - `python3 -I scripts/fake-storytel.py --selftest` OK.
 
 Not built here: §8's retired-route, migration and PWA-row tests (step 3), the music tests of step 2.
+
+
+## Step 2 status (2026-10-22, branch `design-58-step2`)
+
+Built on Q-A's measurement, branch (a): `life_s=86400, left_at_login_s=86400, payload_has_email=no` - a fresh
+24-hour JWT per login, no e-mail inside.
+
+**Built:**
+- **§5.1** `M/storytel/StorytelSession.kt` (new, pure): the JWT in memory (`Jwt`, redacted), one ask in the session's
+  scope with the bridge's whole 10 s and a waiter's `min(10 s, deadline - now - timeoutMs)`, a late answer kept, the
+  waits of §5.1's table, the prompt retry, the 401 rule (`stale`, a declined force's wait, the same JWT back as
+  `Failed(401)`, a second 401 dropping the new JWT), `prefetchIfDue` (`min(10 min, life / 3)`, never for a life of
+  240 s or less, the 2-4-8 minute backoff reset by a new JWT). `StorytelApi` keeps only the asset call (its send in
+  `runInterruptible(Dispatchers.IO)`), the fake's `debugJwt` and `jwtAnswer`; the login, the AES, the cooldown store,
+  `JWT_TTL_MS`, `LOGIN_*` and `Endpoints.login` are gone. `StorytelAccount` holds one session and one API, reads the
+  generation live (`storytelGeneration`: the managed config's, `DEBUG_GENERATION` 1 unmanaged with the switch), cancels
+  the old scope on a debug rebuild. `SonosRenderer` prefetches at a start (`load` with `playNow`, `play()`) and at every
+  poll tick while a Storytel book shows playing, launched on the renderer's IO scope.
+- **§5.2** `BridgeSync.pullStorytel` goes; `state()` is `none`/`refused`/`ok` from the generation and the waits.
+- **§5.3** `Mint.LoginFailed(reason, backAtWallMs)`; `DownloadRun.storytelBackAt` (a refusal's end, the back time, a
+  401 stop + 2 min) and the worker re-enqueues at the earliest of it and `nextRetryAt`.
+- **§5.5** `M/bridge/StorytelLegacy.kt` replaces `StorytelLogin.kt`: the four files and the `vibb_storytel` key, once
+  per process (`AtomicBoolean`) from `Sync.writeReport`, before the report's `state()`.
+- **§5.6** `StorytelEndpoints.debugJwt()` (the fifth reader, `StorytelAccount.kt` only), `debugSwitchJwt` and
+  `FAKE_JWT_PREFIX` in `M/logic/Storytel.kt`, the bridge path filtered too; `DebugStorytel.seedLogin` goes and an old
+  `storytel.json` is deleted unread.
+- **The fake**: `/fake/jwt[?stale=]` from `storytel_token_answers.json`'s rows, `--jwt-ttl`, `--off`, `--busy S`,
+  `--jwt-down`, `--refuse` for it too, a stale naming the current session issuing the next JWT (the revoke's way out
+  for the phone alone); the selftest's part 7. `docs/testing/emulator.md` §6i A rewritten for the JWT (§9's checks),
+  §6i B's step-2 checks.
+- **The music app's login fixtures** (`login_request.json`, `login_ok.json`, `login_no_jwt.json`, `aes_vectors.json`)
+  are deleted with `StorytelApiTest`'s login tests and `BridgeTest`'s seal test; `fake_login_fixtures_match` no longer
+  compares them, and `server-ci.yml` no longer watches `music/app/src/test/resources/storytel/`; the root `CLAUDE.md`
+  says so.
+- **Tests**: `StorytelSessionTest` (new, §8's list), `StorytelLegacyTest` (new), `StorytelApiTest` (the asset call,
+  the cancelled request, the fake's route, the five readers), `StorytelHttpTest` (a mint end to end through the
+  session), `StorytelBridgeTokenTest` (`jwtAnswer` on every shared row), `StorytelDownloadTest` (`storytelBackAt` for
+  each stop, the 401 stop; the cooldown file test gone), `StorytelRulesTest` (`storytelGeneration`, `debugSwitchJwt`),
+  `SourceScanTest` (the redacted list, the five readers, `storytel.json` unread, the old login named only by its purge
+  and the purge called only from `Sync.kt`), `GuardsTest` (the mint's line, the renderer's prefetch wiring,
+  `storytelBackAt`).
+- `music/CLAUDE.md`'s Storytel lines (§10 step 5's music part).
+
+**Deviations from the note:**
+- The 401 rule lives in `StorytelSession.mint(timeoutMs, deadlineMs, asset)`, the asset call passed in, so it is pure
+  and tested; `StorytelAccount.mint` checks the consumable id (no ask for a malformed one) and delegates. Its signature
+  is unchanged, so `Downloads.kt` and `SonosRenderer.kt`'s minter are untouched.
+- `LoginFailed.backAtWallMs` is a `Long`, not `Long?`: every `LoginFailed` has a time to come back; `deadline` is 2
+  minutes, as an outage.
+- The 30 s hold is set by every `unreachable` answer itself (any word but `key`), and the prompt retry passes it. The
+  mint behaves as §5.1 says; besides, other mints during the 5 s, and an `unreachable` whose waiter had given up, ask
+  nothing for 30 s either.
+- A waiter whose time runs out before the answer counts as `unreachable` for the prompt retry and the mint
+  (`LoginFailed("unreachable")`) but sets no hold: the ask goes on and its answer is kept.
+- A force while a plain ask (a prefetch) is in flight waits for that answer first, then asks with `stale` unless it
+  brought another JWT: still one ask at a time. A waiter that shares a force answered with the named JWT gets
+  `Failed(401)` too.
+- The prefetch at a room start is in `SonosRenderer.load(playNow)`/`play()` (the renderer is the service's room path),
+  launched before `controller.load`/`playTile` queue the actor's job; `prefetchIfDue` reads the generation only when a
+  prefetch looks due, so the poll ticks cost a lock.
+- §9's room check uses `--jwt-ttl 300`, not 120: QA N-6's guard never prefetches a life of 240 s or less, so 120 s
+  would show the advance asking.
+- No log line for a real JWT under the debug switch (Spotify logs one): `storytel/` has no logger, and the answer is
+  `Unreachable("launcher")`. `StorytelLegacy`'s fixed debug line is written only when something was there.
+- `Endpoints` keeps one field, `api`.
+
+**For the code QA to look at hardest:** `StorytelSession.bearer`'s loop (the shared ask, the not-ours wait, the
+generation re-read after an answer, the retry and the hold, the deadline), the scope's cancellation path (`await`'s
+`ensureActive`, so a cancelled ask is never the caller's cancellation in the room's actor), `keep()`'s
+same-value and older-generation rules, the prefetch's backoff against the hold and the waits, and `storytelBackAt`
+with the update-order table's row 3 (an old launcher: the job every 2 minutes, two 10 s asks each).
+
+**Tests** (each suite run whole before the commit): music app 1191 unit tests and `assembleDebug` with
+`-PwarningsAsErrors=true`; `python3 -I scripts/fake-storytel.py --selftest` OK; server `cargo test` 1134 and
+`cargo fmt --check` (`fake_login_fixtures_match` without the music half).
+
+**Code QA fixes** (`docs/review/qa-58-step2-code.md`, all findings):
+- S2-1: the fake's `/fake/jwt` ages its JWT (`expires_in_s` is the life left) and, as the server's `PHONE_MIN_LEFT`,
+  answers a plain ask below `min(15 min, life / 2)` left with the next JWT (`jwt #n (renewed)`; selftest part 7). The
+  belt: `keep()` compares only with an unexpired kept JWT (and the prefetch's "same back" too), so the same value
+  with a later expiry replaces an expired one. §6i A's room-advance check now holds with `--jwt-ttl 300`.
+- S2-2: **the come-back after an outage backs off**: `LoginFailed("unreachable")`'s `backAtWallMs` is 2 minutes,
+  then 4, 8, 16 and 30 over consecutive outage stops (`COME_BACK_MAX_MS`), counted in the session's memory and reset by
+  any `ok` answer or a new generation; the hold and `deadline` answer the current step without growing it. A new
+  process starts at 2 minutes. So row 3 of §6 (an old launcher) and a server away for a weekend cost a few jobs an
+  hour, not 30. A 401 stop stays 2 minutes.
+- S2-3: the prefetch's launch in `SonosRenderer` catches every `Exception` (cancellation rethrown), as `mintFor`.
+- S2-4: `debugSwitchJwt` filters both branches of the ask, so "whichever way it came" is true.
+- S2-5, S2-6: tests for an ask in flight across a generation change, and for the cancelled waiter's `slept.isEmpty()`.
+- Nit 1: the consumable id is checked once, in `StorytelApi.assetUrl` (a malformed one, which a listing key never is,
+  costs an ask). Nit 2: a force that waits on a prefetch ending `unreachable` meets that answer's hold at once and gets
+  no prompt retry - accepted, the hold is the point.
+- After the fixes: music app 1194 unit tests and `assembleDebug` with `-PwarningsAsErrors=true`; the fake's selftest OK.

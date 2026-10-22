@@ -1138,8 +1138,8 @@ class SonosController(
 
     /**
      * The late mint (design 26b §5.1, vibb `_sonos_body`'s Storytel branch): one URL per play, the asset
-     * call within [MINT_TIMEOUT_MS] (vibb's `timeout=6`), the whole mint - the login and the wait for its
-     * lock included - within [MINT_BUDGET_MS]; a [Mint.Url] (already `StorytelApi.mintedUrl`'s canonical
+     * call within [MINT_TIMEOUT_MS] (vibb's `timeout=6`), the whole mint - the wait for the server's JWT
+     * included (design 58 §5.1: at most 4 s) - within [MINT_BUDGET_MS]; a [Mint.Url] (already `StorytelApi.mintedUrl`'s canonical
      * form) only through [PlayBodies.mintedDropReason]. Anything else is [StorytelUnavailable]: 1b's failed
      * play - nothing is sent and no volume touched (the cap and the hush are inside `transport.play`).
      * Never another exception (vibb `storytel_sonos.py` 4); the actor never cancels a job, so a
@@ -2376,7 +2376,7 @@ class SonosController(
         const val MINT_TIMEOUT_MS = 6_000L
 
         /**
-         * ... and the whole mint, the login and the wait for its lock included. Every job behind it in the
+         * ... and the whole mint, the wait for the server's JWT included. Every job behind it in the
          * room's actor - a poll, a pause, a volume key, a hand-off - waits up to this long (the actor is
          * serial and never cancels a job): accepted, as the hand-off's budget (`HANDOFF_MS`) and the
          * actor's drain (`SonosActor.DRAIN_MS`) cover it (design 26b §5.1, the merge's 4b list).

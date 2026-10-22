@@ -1,11 +1,11 @@
 package me.vibb.music.storytel
 
-import me.vibb.music.bridge.StorytelLogin
+import kotlinx.coroutines.runBlocking
+import me.vibb.music.bridge.JwtResult
 import me.vibb.music.sonos.TinyHttp
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -86,34 +86,34 @@ class StorytelHttpTest {
     }
 
     @Test
-    fun `a mint end to end - login, asset, the 302 captured, the CDN untouched`() {
+    fun `a mint end to end - the server's JWT, the asset call, the 302 captured, the CDN untouched`() = runBlocking {
         TinyHttp { TinyHttp.Response(200, "audio", "audio/mpeg") }.use { cdn ->
             val location = "http://127.0.0.1:${cdn.port}/mp3/111.mp3?consumableId=111&token=FAKE-SIG-1"
             TinyHttp { req ->
-                when {
-                    req.path.startsWith("/api/login.action") -> TinyHttp.Response(200, """{"accountInfo":{"jwt":"FAKE-JWT-1"}}""", "application/json")
-                    req.headers["authorization"] == "Bearer FAKE-JWT-1" -> TinyHttp.Response(302, "", "text/plain", mapOf("Location" to location))
-                    else -> TinyHttp.Response(401, "", "text/plain")
+                if (req.headers["authorization"] == "Bearer FAKE-JWT-1") {
+                    TinyHttp.Response(302, "", "text/plain", mapOf("Location" to location))
+                } else {
+                    TinyHttp.Response(401, "", "text/plain")
                 }
             }.use { storytel ->
                 val base = "http://127.0.0.1:${storytel.port}"
-                var elapsed = 0L
-                val api = StorytelApi(
-                    http, { StorytelLogin.Login(1, "k@example.invalid", "hemmelig") },
-                    object : CooldownStore {
-                        override fun refusedAt(generation: Long): Long? = null
-                        override fun setRefused(generation: Long, wallMs: Long) = fail("refused")
-                    },
-                    { elapsed }, { 0 }, Endpoints("$base/api/login.action".toHttpUrl(), base.toHttpUrl()),
+                val elapsed = 0L
+                var asks = 0
+                val api = StorytelApi(http, { elapsed }, Endpoints(base.toHttpUrl()))
+                val session = StorytelSession(
+                    generation = { 1 },
+                    ask = { asks++; JwtResult.Ok("FAKE-JWT-1", elapsed + 3_540_000, "1:00000000000000a1") },
+                    elapsedMs = { elapsed },
+                    wallMs = { 0 },
+                    scope = this,
                 )
-                val mint = api.assetUrl("111", 6_000, elapsed + 10_000)
+                val mint = session.mint(6_000, elapsed + 10_000) { jwt -> api.assetUrl("111", jwt, 6_000, elapsed + 10_000) }
                 assertEquals(location, (mint as Mint.Url).url)
-                assertEquals(listOf("/api/login.action?m=1&uid=k%40example.invalid&pwd=AC6C4AAACBF142D09469371FC6BB8BE6", "/assets/v2/consumables/111/abook"), storytel.requests.map { it.path })
-                assertFalse("no bearer on the login", storytel.requests[0].headers.containsKey("authorization"))
+                assertEquals(listOf("/assets/v2/consumables/111/abook"), storytel.requests.map { it.path })
                 assertTrue(cdn.requests.isEmpty())
-                elapsed += 1
-                assertTrue(api.assetUrl("111", 6_000, elapsed + 10_000) is Mint.Url)
-                assertEquals("the JWT is kept: no second login", 3, storytel.requests.size)
+                assertTrue(session.mint(6_000, elapsed + 10_000) { jwt -> api.assetUrl("111", jwt, 6_000, elapsed + 10_000) } is Mint.Url)
+                assertEquals("the JWT is kept: one ask for two mints", 1, asks)
+                assertEquals(2, storytel.requests.size)
             }
         }
     }

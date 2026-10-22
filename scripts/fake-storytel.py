@@ -6,7 +6,8 @@
 # (LICENSE). Modelled on palchrb/vibb's test fakes and its rule that both fakes answer from ONE source
 # of truth (tests/sonos_contract.py; MIT License, Copyright (c) 2026 palchrb; see NOTICE.md), and on
 # scripts/fake-sonos.py. Python 3, stdlib only; run it with `python3 -I`.
-"""A fake Storytel: the login, the bookshelf, the asset call's 302 and a CDN serving silent WAV books.
+"""A fake Storytel: the login, the bookshelf, the asset call's 302, a CDN serving silent WAV books, and the
+server's session route for the phone alone (/fake/jwt).
 
     python3 -I scripts/fake-storytel.py                          # port 8730, books 111:20,222:5,333:5 (MB)
     python3 -I scripts/fake-storytel.py --drop-at 40 --token-ttl 30
@@ -14,29 +15,39 @@
     python3 -I scripts/fake-storytel.py --refuse
     python3 -I scripts/fake-storytel.py --login-5xx              # design 58: a login outage (Q-B)
     python3 -I scripts/fake-storytel.py --revoke-after 1         # design 58: the JWT revoked after the first book
+    python3 -I scripts/fake-storytel.py --jwt-ttl 120            # design 58: /fake/jwt's life (the room's prefetch)
+    python3 -I scripts/fake-storytel.py --jwt-down | --off | --busy 30
     python3 -I scripts/fake-storytel.py --slow-mint 5 --no-download 222,333   # design 26b step 4b, with fake-sonos.py
     python3 -I scripts/fake-storytel.py --print-listing 5 > debug-feed/items/5.json
     python3 -I scripts/fake-storytel.py --selftest
 
-Every answer comes from fixtures the tests read. The login (design 58 step 1: the server's copies) is in
-server/testdata/storytel/ - fake_login_request.json, fake_login_answers.json, aes_vectors.json, read by the
-server's fake_login_fixtures_match - and the bookshelf is the server's bookshelf.json; the music app's
-originals in music/app/src/test/resources/storytel/ hold the same login values until design 58 step 2
-(StorytelApiTest), so the old music app on §6i and the server's chain on §6i B log in alike. The login is
-accepted only for fake_login_request.json's email and `pwd` hex (stdlib Python has no AES, so the hex is
-compared as the fixture spells it; aes_vectors.json pins it), answered with fake_login_answers.json's `ok`
-(or `no_jwt`) body, its jwt the current FAKE-JWT-<n>; the asset call answers asset_302.json's status with a
-Location shaped like the fixture's (`consumableId` and `token` in the query) and asset_locked.json's status
-for a locked book (both in the music app's resources). Every value is fake (FAKE-JWT-<n>, FAKE-SIG-<n>,
-k@example.invalid): nothing here may look like a real account.
+Every answer comes from fixtures the tests read. The login is in server/testdata/storytel/ -
+fake_login_request.json, fake_login_answers.json, aes_vectors.json, read by the server's
+fake_login_fixtures_match - and the bookshelf is the server's bookshelf.json: only the server's chain (§6i B)
+logs in, the phone never does (design 58). The login is accepted only for fake_login_request.json's email and
+`pwd` hex (stdlib Python has no AES, so the hex is compared as the fixture spells it; aes_vectors.json pins
+it), answered with fake_login_answers.json's `ok` (or `no_jwt`) body, its jwt the current FAKE-JWT-<n>.
+/fake/jwt answers the server route's bodies from server/testdata/storytel_token_answers.json (the launcher's
+and the music app's tests read the same rows): the phone alone on §6i A asks it instead of the launcher. The
+asset call answers asset_302.json's status with a Location shaped like the fixture's (`consumableId` and
+`token` in the query) and asset_locked.json's status for a locked book (both in the music app's resources).
+Every value is fake (FAKE-JWT-<n>, sessions 1:<16 hex>, FAKE-SIG-<n>, k@example.invalid): nothing here may
+look like a real account.
 
     GET /api/login.action?m=1&uid=<email>&pwd=<hex>   200 + {"accountInfo": {"jwt": "FAKE-JWT-<n>"}};
                                                        --refuse (or another login): 403; --no-jwt: 200 without one;
                                                        --login-5xx: 503; after a revoke it issues FAKE-JWT-<n+1>
+    GET /fake/jwt[?stale=<session>]                    the route's `ok` row: the current FAKE-JWT-<n>, expires_in_s
+                                                       its life left of --jwt-ttl (3540), session 1:<n in 16 hex>; as
+                                                       the server, a plain ask below min(900, ttl / 2) left and a
+                                                       stale naming the current session issue FAKE-JWT-<n+1>;
+                                                       --refuse: `refused` 409, --off: `off` 404, --busy S: `busy`
+                                                       429 with S, --jwt-down: `unreachable` 502
     POST /libraries/bookshelf                          the current JWT checked (401 otherwise); bookshelf.json
     GET /assets/v2/consumables/<cid>/abook            the current JWT checked (401 without it or another one;
                                                        --revoke-after K: after the K-th accepted call the JWT is
-                                                       revoked - 401 - until a login issues the next); 302 to
+                                                       revoked - 401 - until a login or a stale /fake/jwt issues
+                                                       the next); 302 to
                                                        http://<advertise>:<port>/cdn/<cid>.wav?consumableId=<cid>&token=FAKE-SIG-<n>
                                                        (--slow-mint S: after S seconds); a --locked cid: 403, no Location
     GET /cdn/<cid>.wav                                 a silent WAV of --books cid:MB; Range (206, 416 past the end);
@@ -47,12 +58,13 @@ k@example.invalid): nothing here may look like a real account.
                                                        the fake speaker never fetches; step 4b's checks)
 
 The log shows every request with its Range and token (fake values), so a resumed book reads as
-"Range bytes=N- token=FAKE-SIG-2" after "dropped at 40 %".
+"Range bytes=N- token=FAKE-SIG-2" after "dropped at 40 %"; every /fake/jwt ask is one line starting `jwt`.
 """
 
 import argparse
 import http.client
 import json
+import math
 import os
 import re
 import sys
@@ -66,6 +78,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(HERE, "..", "music", "app", "src", "test", "resources", "storytel")
 # The login's and the bookshelf's (design 58 step 1: the server reads them; fake_login_fixtures_match).
 SERVER_FIXTURES = os.path.join(HERE, "..", "server", "testdata", "storytel")
+# The session route's answers (design 58 §8: the server, the launcher and the music app read the same rows).
+TOKEN_ANSWERS = os.path.join(HERE, "..", "server", "testdata", "storytel_token_answers.json")
 T0 = time.monotonic()
 RATE = 22050          # Hz, 16-bit mono: 44 100 bytes a second of silence
 HEADER = 44
@@ -112,10 +126,16 @@ class Storytel:
         first = self.ok["body"]["accountInfo"]["jwt"]
         assert first == "FAKE-JWT-1", first
         self.jwt_n = 1            # the current JWT is FAKE-JWT-<jwt_n>
+        self.issued = time.monotonic()   # when it was issued: /fake/jwt answers its life left, as the server does
         self.revoked = False      # the current JWT answers 401 until a login issues the next
         self.revoke_after = getattr(args, "revoke_after", 0) or 0
         self.accepted = 0         # asset calls accepted with the current JWT so far
         self.login_5xx = getattr(args, "login_5xx", False)
+        with open(TOKEN_ANSWERS, encoding="utf-8") as f:
+            self.token_rows = {row["name"]: row for row in json.load(f)["answers"]}
+        self.jwt_ttl = getattr(args, "jwt_ttl", 3540)
+        self.off, self.busy = getattr(args, "off", False), getattr(args, "busy", 0)
+        self.jwt_down = getattr(args, "jwt_down", False)
         self.books = {}
         for part in filter(None, (args.books or "").split(",")):
             cid, _, mb = part.partition(":")
@@ -136,6 +156,18 @@ class Storytel:
     @property
     def jwt(self):
         return f"FAKE-JWT-{self.jwt_n}"
+
+    def next_jwt(self, why):
+        """Issue FAKE-JWT-<n+1>: a login after a revoke, a stale ask, or a renewal (under the lock)."""
+        self.jwt_n += 1
+        self.revoked, self.accepted = False, 0
+        self.issued = time.monotonic()
+        log(f"jwt #{self.jwt_n} ({why})")
+
+    @property
+    def session(self):
+        """The current JWT's session, as the server names one: the debug generation 1 and 16 hex."""
+        return f"1:{self.jwt_n:016x}"
 
     def bearer_ok(self, header):
         """The request's bearer is the current JWT and it isn't revoked."""
@@ -184,6 +216,8 @@ def handler_for(st):
                 return self.login(query)
             if url.path == "/libraries/bookshelf":
                 return self.send(405)
+            if url.path == "/fake/jwt":
+                return self.fake_jwt(query.get("stale", [None])[0])
             if m:
                 return self.mint(m.group(1))
             if c:
@@ -222,14 +256,44 @@ def handler_for(st):
                                  [("Content-Type", "application/json")])
             with st.lock:
                 if st.revoked:
-                    st.jwt_n += 1
-                    st.revoked, st.accepted = False, 0
-                    log(f"jwt #{st.jwt_n} (a login after the revoke)")
+                    st.next_jwt("a login after the revoke")
                 jwt = st.jwt
             body = json.loads(json.dumps(st.ok["body"]))
             body["accountInfo"]["jwt"] = jwt
             log(f"login #{st.logins}: {st.ok['status']} jwt #{st.jwt_n}")
             self.send(st.ok["status"], json.dumps(body).encode(), [("Content-Type", "application/json")])
+
+        def fake_jwt(self, stale):
+            """The server's session route for the phone alone (design 58 §5.6), from the shared answers' rows."""
+            def answer(name, **values):
+                row = st.token_rows[name]
+                body = dict(row["body"], **values)
+                self.send(row["http"], json.dumps(body).encode(), [("Content-Type", "application/json")])
+            if st.off:
+                log("jwt: off (--off)")
+                return answer("off")
+            if st.refuse:
+                log("jwt: refused (--refuse)")
+                return answer("refused")
+            if st.busy:
+                log(f"jwt: busy {st.busy} s (--busy)")
+                return answer("busy", retry_after_s=st.busy)
+            if st.jwt_down:
+                log("jwt: unreachable (--jwt-down)")
+                return answer("unreachable")
+            with st.lock:
+                # the server's rules (design 58 §2.1): its JWT ages, and a plain ask below min(15 min, life / 2)
+                # left gets a new one (PHONE_MIN_LEFT; qa-58-step2-code S2-1); a force naming it gets the next
+                left = st.jwt_ttl - (time.monotonic() - st.issued)
+                if stale is not None and stale == st.session:
+                    st.next_jwt(f"stale {stale}")
+                elif left < min(900, st.jwt_ttl / 2):
+                    st.next_jwt("renewed")
+                else:
+                    log(f"jwt #{st.jwt_n}{' (stale: an older session)' if stale else ''}, expires_in_s {math.ceil(left)}")
+                left = st.jwt_ttl - (time.monotonic() - st.issued)
+                jwt, session = st.jwt, st.session
+            answer("ok", jwt=jwt, expires_in_s=max(1, math.ceil(left)), session=session)
 
         def mint(self, cid):
             if not st.bearer_ok(self.headers.get("Authorization")):
@@ -330,9 +394,12 @@ def selftest():
     request, answers = server_fixture("fake_login_request.json"), server_fixture("fake_login_answers.json")
     ok, no_jwt = answers["ok"], answers["no_jwt"]
     asset, locked, vectors = fixture("asset_302.json"), fixture("asset_locked.json"), server_fixture("aes_vectors.json")
-    # Until design 58 step 2 the music app's originals (StorytelApiTest) hold the same login values.
-    assert fixture("login_request.json") == request and fixture("login_ok.json") == ok
-    assert fixture("login_no_jwt.json") == no_jwt and fixture("aes_vectors.json") == vectors
+    with open(TOKEN_ANSWERS, encoding="utf-8") as f:
+        rows = {row["name"]: row for row in json.load(f)["answers"]}
+    assert {"ok", "off", "refused", "busy", "unreachable"} <= set(rows), rows
+    assert rows["ok"]["body"]["jwt"].startswith("FAKE-JWT-") and rows["refused"]["http"] == 409, rows
+    # design 58 step 2: the phone logs in no more - no login fixture of its own is left
+    assert sorted(os.listdir(FIXTURES)) == ["asset_302.json", "asset_locked.json"], os.listdir(FIXTURES)
     shelf = server_fixture("bookshelf.json")
     assert isinstance(shelf.get("items"), dict) and shelf["items"], "the bookshelf has books"
     assert request["query"] == urllib.parse.urlencode({"m": "1", "uid": request["email"], "pwd": request["pwd"]}), request
@@ -342,7 +409,7 @@ def selftest():
     assert 300 <= asset["status"] < 400 and urllib.parse.parse_qs(urllib.parse.urlsplit(asset["location"]).query)["token"][0].startswith("FAKE-SIG-")
     assert locked["status"] == 403 and locked["location"] is None
     names = [os.path.join(FIXTURES, n) for n in os.listdir(FIXTURES)] + \
-        [os.path.join(SERVER_FIXTURES, n) for n in os.listdir(SERVER_FIXTURES)]
+        [os.path.join(SERVER_FIXTURES, n) for n in os.listdir(SERVER_FIXTURES)] + [TOKEN_ANSWERS]
     for path in names:
         text = open(path, encoding="utf-8").read()
         assert "eyJ" not in text and "@" not in text.replace("k@example.invalid", "").replace("%40", ""), path
@@ -351,7 +418,7 @@ def selftest():
     def start(**over):
         ns = argparse.Namespace(books="111:0.2,222:0.05,333:0.05", locked="", refuse=False, no_jwt=False, token_ttl=0.0,
                                 drop_at=0, slow_mint=0.0, advertise="127.0.0.1", port=0, no_download="",
-                                login_5xx=False, revoke_after=0)
+                                login_5xx=False, revoke_after=0, jwt_ttl=3540, off=False, busy=0, jwt_down=False)
         for k, v in over.items():
             setattr(ns, k, v)
         st = Storytel(ns)
@@ -489,6 +556,48 @@ def selftest():
     finally:
         srv.shutdown()
     print("6. design 58: the bookshelf behind the JWT, --login-5xx 503, --revoke-after 1 (401, then FAKE-JWT-2) OK")
+
+    # 7. design 58 step 2: /fake/jwt - the route's rows, --jwt-ttl, the waits, a stale ask after a revoke
+    def jwt(st, stale=None):
+        status, _, body = get(st, "/fake/jwt" + (f"?stale={stale}" if stale else ""))
+        return status, json.loads(body)
+
+    st, srv = start(revoke_after=1, jwt_ttl=120)
+    try:
+        status, body = jwt(st)
+        assert status == rows["ok"]["http"] and body.keys() == rows["ok"]["body"].keys(), (status, body)
+        assert body == {"status": "ok", "jwt": "FAKE-JWT-1", "expires_in_s": 120, "session": "1:0000000000000001"}, body
+        assert jwt(st)[1]["jwt"] == "FAKE-JWT-1", "a plain ask: the same JWT"
+        assert get(st, "/assets/v2/consumables/111/abook", bearer)[0] == asset["status"]
+        assert get(st, "/assets/v2/consumables/222/abook", bearer)[0] == 401, "revoked: the second book"
+        assert jwt(st)[1]["jwt"] == "FAKE-JWT-1", "a plain ask still gets the kept one"
+        assert jwt(st, "1:0000000000000009")[1]["jwt"] == "FAKE-JWT-1", "a stale naming another session"
+        status, body = jwt(st, "1:0000000000000001")
+        assert body == {"status": "ok", "jwt": "FAKE-JWT-2", "expires_in_s": 120, "session": "1:0000000000000002"}, body
+        assert get(st, "/assets/v2/consumables/222/abook", {"Authorization": "Bearer FAKE-JWT-2"})[0] == asset["status"]
+    finally:
+        srv.shutdown()
+    for over, name, extra in (({"refuse": True}, "refused", {}), ({"off": True}, "off", {}),
+                              ({"busy": 7}, "busy", {"retry_after_s": 7}), ({"jwt_down": True}, "unreachable", {})):
+        st, srv = start(**over)
+        try:
+            status, body = jwt(st)
+            assert status == rows[name]["http"] and body == dict(rows[name]["body"], **extra), (over, status, body)
+        finally:
+            srv.shutdown()
+    st, srv = start(jwt_ttl=2)
+    try:
+        assert jwt(st)[1]["jwt"] == "FAKE-JWT-1"
+        time.sleep(0.5)
+        status, body = jwt(st)
+        assert body["jwt"] == "FAKE-JWT-1" and body["expires_in_s"] == 2, ("it ages", body)
+        time.sleep(0.6)
+        status, body = jwt(st)
+        assert body["jwt"] == "FAKE-JWT-2" and body["expires_in_s"] == 2, ("below half its life: renewed", body)
+    finally:
+        srv.shutdown()
+    print("7. design 58: /fake/jwt answers the route's rows (--jwt-ttl, --refuse 409, --off 404, --busy 429, "
+          "--jwt-down 502), a stale ask after a revoke FAKE-JWT-2, the JWT ages and renews below half its life OK")
     print("\nFAKE STORYTEL SELFTEST OK - answers built from the same fixtures the JVM tests read.")
 
 
@@ -501,12 +610,17 @@ def main():
                    help="the host the CDN Locations name, as the emulator sees it (default %(default)s)")
     p.add_argument("--books", default="111:20,222:5,333:5", help="cid:MB,... the series' books in reading order (default %(default)s)")
     p.add_argument("--locked", default="", help="cids whose asset call answers 403 without a Location: 222,333")
-    p.add_argument("--refuse", action="store_true", help="refuse every login (403)")
+    p.add_argument("--refuse", action="store_true", help="refuse every login (403), and /fake/jwt answers `refused` (409)")
     p.add_argument("--no-jwt", action="store_true", help="answer the login 200 without a jwt")
     p.add_argument("--login-5xx", action="store_true", help="answer the login 503 (design 58: an outage, not a refusal)")
     p.add_argument("--revoke-after", type=int, default=0, metavar="K",
-                   help="after the K-th accepted asset call the JWT answers 401 until a login issues the next "
-                        "(design 58: K=1 is the second book)")
+                   help="after the K-th accepted asset call the JWT answers 401 until a login or a stale /fake/jwt "
+                        "issues the next (design 58: K=1 is the second book)")
+    p.add_argument("--jwt-ttl", type=int, default=3540,
+                   help="/fake/jwt's JWT life in seconds; it ages and renews below half of it (default %(default)s)")
+    p.add_argument("--off", action="store_true", help="/fake/jwt answers `off` (404): Storytel off on the phone")
+    p.add_argument("--busy", type=int, default=0, metavar="S", help="/fake/jwt answers `busy` (429) with retry_after_s S")
+    p.add_argument("--jwt-down", action="store_true", help="/fake/jwt answers `unreachable` (502): the server's outage")
     p.add_argument("--token-ttl", type=float, default=0.0, help="seconds a minted token is valid (default: forever)")
     p.add_argument("--drop-at", type=int, default=0, help="close each book's first transfer at this percent")
     p.add_argument("--slow-mint", type=float, default=0.0, help="seconds before every 302 (step 4b's mint in flight)")

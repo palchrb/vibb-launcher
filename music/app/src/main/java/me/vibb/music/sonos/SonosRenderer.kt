@@ -15,6 +15,7 @@ import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +33,7 @@ import me.vibb.music.logic.atEndNextLookMs
 import me.vibb.music.logic.itemRemaining
 import me.vibb.music.logic.playAllowed
 import me.vibb.music.logic.resumeFrom
+import me.vibb.music.model.Source
 import me.vibb.music.playback.Active
 import me.vibb.music.playback.Output
 import me.vibb.music.playback.OutputKind
@@ -220,8 +222,11 @@ internal class SonosRenderer(
     }
 
     init {
-        poller = SonosPoller(actorScope, actor, { transport.poll(home.probe) to session.snapshot }) { tick, fields -> controller.onPoll(tick, fields) }
-            .also { it.start() }
+        poller = SonosPoller(actorScope, actor, { transport.poll(home.probe) to session.snapshot }) { tick, fields ->
+            controller.onPoll(tick, fields)
+            // design 58 §5.1 (QA 58-1): while a book plays here, the server's session is renewed ahead of the advance
+            if (showsPlaying) prefetchStorytel()
+        }.also { it.start() }
         // any change of the Wi-Fi network closes the socket and opens it on the new one
         watches += scope.launch { home.wifiNetwork.collect { updateSocket() } }
         // the player coming on screen polls at once (the 1 s display poll starts now, not at the next cadence)
@@ -285,8 +290,28 @@ internal class SonosRenderer(
         val a = queue() ?: return
         mediaItems = items
         lastIndex = -1
+        if (playNow) prefetchStorytel()
         controller.load(a.entry, a.items, startIndex, startMs)
         if (playNow) controller.playTile()
+    }
+
+    /**
+     * Design 58 §5.1 (QA 58-1): a Storytel book on this room asks for the server's session ahead of its mint - at a
+     * start, before the play's job is queued (the mint then shares the ask in flight, and a late answer is kept), and
+     * at every poll while it plays, so the advance at a book's end finds the JWT in memory. Off main and off the actor;
+     * the session decides whether an ask is due (`StorytelSession.prefetchIfDue`).
+     */
+    private fun prefetchStorytel() {
+        if (queue()?.entry?.source != Source.STORYTEL) return
+        actorScope.launch {
+            // never another exception out of it, as mintFor (S2-3): this scope has no handler, the process would end
+            try {
+                StorytelAccount.get(context).prefetchIfDue()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
     }
 
     override fun reorder(keep: Int, after: List<MediaItem>) {
@@ -322,7 +347,10 @@ internal class SonosRenderer(
     }
 
     /** A tap on the loaded entry, RESUME, or the first play after [load] (the same-tile rule). */
-    override fun play() = controller.playTile()
+    override fun play() {
+        prefetchStorytel()
+        controller.playTile()
+    }
     override fun pause() = controller.pause()
     override fun prepare() = Unit
 

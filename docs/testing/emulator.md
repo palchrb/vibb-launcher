@@ -799,15 +799,18 @@ t+15 volume 60
 
 ## 6i. Vibb music with Storytel (design 26b): the fake Storytel
 
-No real account is used on the emulator: `scripts/fake-storytel.py` on the VM is the login, the bookshelf, the asset
-call (the 302 the app captures) and a CDN serving silent WAV books with Range. Its answers come from the fixtures the
-tests read (the login and the bookshelf from `server/testdata/storytel/` since design 58 step 1 - the music app's
-originals in `music/app/src/test/resources/storytel/` hold the same values until step 2 -, the asset call from the
-music app's; fake values only: `k@example.invalid` / `hemmelig`, `FAKE-JWT-<n>`, `FAKE-SIG-<n>`), and it logs every
-request with its Range and token. The app reaches it through the one debug switch
-(`storytel_base` in the debug feed's `config.json`, `src/debug` only; read again at every process start, so a
-download job in a fresh process still goes to the fake; only `10.0.2.2` or loopback is taken, anything else means the
-real hosts). Python 3, stdlib only.
+No real account is used on the emulator: `scripts/fake-storytel.py` on the VM is the login and the bookshelf (the
+server's, §6i B), the server's session route for the phone alone (`/fake/jwt`), the asset call (the 302 the app
+captures) and a CDN serving silent WAV books with Range. Its answers come from the fixtures the tests read (the login
+and the bookshelf from `server/testdata/storytel/`, `/fake/jwt` from `server/testdata/storytel_token_answers.json`, the
+asset call from the music app's; fake values only: `k@example.invalid` / `hemmelig`, `FAKE-JWT-<n>`, sessions
+`1:<16 hex>`, `FAKE-SIG-<n>`), and it logs every request with its Range and token. Since design 58 step 2 **the phone
+never logs in**: it uses the server's JWT, in memory only - through the launcher's bridge when managed (§6i B), and
+from the fake's `/fake/jwt` (generation 1) when the app runs alone on the debug feed (part A, here). The app reaches
+the fake through the one debug switch (`storytel_base` in the debug feed's `config.json`, `src/debug` only; read
+again at every process start, so a download job in a fresh process still goes to the fake; only `10.0.2.2` or
+loopback is taken, anything else means the real hosts; with it set only a `FAKE-JWT-` is ever sent). Python 3,
+stdlib only.
 
 ```
 python3 -I scripts/fake-storytel.py --selftest                 # fixtures, the fake against itself (no emulator)
@@ -815,30 +818,35 @@ python3 -I scripts/fake-storytel.py                            # port 8730, book
 #   --books 111:300,222:5,333:5   cid:MB in reading order    --locked 222        403 without Location for that book
 #   --drop-at 40                  each book's first transfer closed at 40 %
 #   --token-ttl 30                a token is refused (403) 30 s after its mint
-#   --refuse | --no-jwt           the login refused (403) | 200 without a jwt
-#   --login-5xx                   the login answers 503 (design 58: an outage, not a refusal)
-#   --revoke-after 1              after the first accepted asset call the JWT answers 401 until a login issues FAKE-JWT-2
+#   --refuse                      the login refused (403) and /fake/jwt `refused` (409)
+#   --no-jwt | --login-5xx        the server's login: 200 without a jwt | 503 (design 58: an outage, not a refusal)
+#   --jwt-ttl 300                 /fake/jwt's JWT life (default 3540); it ages, and below half of it (at most 15 min)
+#                                 a plain ask gets the next JWT, as the server does
+#   --off | --busy 30 | --jwt-down   /fake/jwt answers `off` (404) | `busy` 30 s (429) | `unreachable` (502)
+#   --revoke-after 1              after the first accepted asset call the JWT answers 401 until a stale /fake/jwt
+#                                 (or the server's login) issues FAKE-JWT-2
 #   --slow-mint 5                 every 302 after 5 s (step 4b)
 #   --no-download 222,444         those books mint but the CDN answers 503: never on the phone, a room plays them (step 4b)
 mkdir -p debug-feed/items
 cp server/testdata/music_library.json debug-feed/library.json     # entry 5 "Kokosbananas" is storytel:series:26175
 python3 -I scripts/fake-storytel.py --print-listing 5 > debug-feed/items/5.json
 echo '{"storytel_base": "http://10.0.2.2:8730"}' > debug-feed/config.json
-echo '{"email": "k@example.invalid", "password": "hemmelig"}' > debug-feed/storytel.json   # fake values only
 R=me.vibb.music.debug/me.vibb.music.debugfeed.DebugFeedReceiver
 adb push debug-feed /sdcard/Android/data/me.vibb.music.debug/files/
-adb shell am broadcast -n $R        # "storytel: http://10.0.2.2:8730", "storytel: a login seeded (generation N)"
-adb logcat -s VibbMusicDebugFeed WM-WorkerWrapper ExoPlayerImpl
+adb shell am broadcast -n $R        # "storytel: http://10.0.2.2:8730"
+adb logcat -s VibbMusicDebugFeed StorytelLegacy WM-WorkerWrapper ExoPlayerImpl
 adb shell run-as me.vibb.music.debug cat files/music/report.json     # "storytel", "downloads", "item_errors"
 ```
 
-`storytel.json` is deleted once read (it sits on shared storage) and stored as the next login generation, so pushing
-it again ends a refused login's hour like a new save on the server would. The library snapshot's other entries have no
-listings here and stay hidden. What to check (design 26b §8 step 3):
+A `storytel.json` left in the feed from before design 58 is deleted unread ("storytel.json: the phone takes no login
+since design 58 - deleted unread"). The session lives in the process's memory: `adb shell am force-stop
+me.vibb.music.debug` starts the next run with no JWT (one `jwt` line again), which ends a `refused` or `busy` wait
+too. The library snapshot's other entries have no listings here and stay hidden. What to check (design 26b §8 step 3,
+design 58 §9):
 
 - **Reading order**: the fake's log mints and fetches 111, 222, 333 in that order, one book at a time, one `asset`
-  line per book; the tile appears with the first book ("Lydbok · fortsetter der du slapp"), the report reaches
-  `have 3, want 3`.
+  line per book and **one `jwt` line per process**, not per book (no `login` line at all: the phone never logs in);
+  the tile appears with the first book ("Lydbok · fortsetter der du slapp"), the report reaches `have 3, want 3`.
 - **The bookmark's book first**: play book 3 a little (the bookmark is on 333), push a library without entry 5 and
   broadcast (the books are deleted: `cache_bytes` drops, the tile goes - the switch-off case), then the library with
   entry 5 again and its listing: the fake's log fetches 333 first, then 111 and 222; the tile reads "del 3 av 3".
@@ -848,9 +856,19 @@ listings here and stay hidden. What to check (design 26b §8 step 3):
   the new token - never a 200 from 0 - and the book completes (`have` counts it).
 - **A book Storytel refuses**: `--locked 222`: `item_errors` holds `no_audio` for 222, 111 and 333 download; the
   next try of 222 is a day later.
-- **A refused login**: `--refuse` (and a fresh login: push `storytel.json` again): the report says
-  `"storytel": "refused"` and the entry's `waiting` is `login`; the fake's log shows one login, and no further login
-  within the hour (a sync or a download job in that hour sends the fake nothing); after the hour one login again.
+- **A refused session** (design 58 §9): `--refuse` (force-stop the app first, so it holds no JWT): the report says
+  `"storytel": "refused"` and the entry's `waiting` is `login`; the fake's log shows one `jwt: refused` line and none
+  more in that process within the wait (`retry_after_s` 2400: a sync or a download job in it sends the fake nothing);
+  the download job comes back at the wait's end on its own (`adb shell dumpsys jobscheduler | grep -A3
+  me.vibb.music.debug` shows it scheduled).
+- **An outage** (design 58 §9, QA 58-2): `--jwt-down` (after a force-stop): one `jwt: unreachable` line and a second
+  5 s later (the prompt retry), the run stops with no item error and the report still says `ok`; restart the fake
+  without the flag: about 2 minutes later the job comes back by itself and downloads (one `jwt` line; with the fake
+  still down it comes back after 4, 8, 16, then every 30 minutes - qa-58-step2-code S2-2), with no sync
+  nudged. `--busy 30` is the same with the job back after 30 s; `--off` makes the report say `none`.
+- **A revoked JWT** (design 58 §9, QA N-1): `--revoke-after 1 --books 111:5,222:5`: book 111 downloads; book 222's
+  `asset` line is a 401, then one `jwt #2 (stale 1:0000000000000001)` line and the same asset retried once with
+  `FAKE-JWT-2` (`asset 222: 302`); the book completes.
 - **Offline**: airplane mode: the downloaded books play, the others are hidden (with books 1 and 3 only: the list
   shows those two), the tile and the player still say "del N av 3".
 - **The 10-minute job limit**: `--books 111:300,222:5,333:5`; while book 111's CDN line streams, stop the job as
@@ -860,9 +878,14 @@ listings here and stay hidden. What to check (design 26b §8 step 3):
 - **Copy only**: with the fake running, play a downloaded book, seek back and forth and skip to the other downloaded
   book: no new `asset` or `cdn` line appears in the fake's log while it plays. Then stop the fake (Ctrl+C): the books
   still play and seek.
+- **The old login goes** (design 58 §5.5, §9): install the previous debug music app (before design 58), seed its login
+  the old way (`echo '{"email": "k@example.invalid", "password": "hemmelig"}' > debug-feed/storytel.json`, pushed and
+  broadcast: "a login seeded"), let it download a book, then install this one and sync: `adb shell run-as
+  me.vibb.music.debug ls no_backup` names no `storytel.bin` or `storytel_refused.json`, and logcat has `StorytelLegacy`'s
+  "storytel: the old login deleted" once (not again at the next sync).
 - **No secrets** (none of these may match; the second is one recursive grep over the app's private data - Room's
   `music.db` and its `-wal`, Media3's `databases/exoplayer_internal.db` and its WAL, `shared_prefs`, `files/music/`
-  with the report, `no_backup/` with the cache and `renderer.json`; it must name no file - `storytel.bin` is sealed and
+  with the report, `no_backup/` with the cache and `renderer.json`; it must name no file - no JWT is ever written, and
   the WAV spans are zeros):
 
 ```
@@ -900,9 +923,14 @@ adb shell run-as me.vibb.music.debug cat no_backup/renderer.json
   - Stua -> phone on book 2: the phone paused, "Ikke lastet ned"; then the cover tap, Home's resume and a headset's
     play on the phone also say "Ikke lastet ned" and start nothing (the bookmark stays on book 2); a pick of book 1
     from the list plays it.
-  - **A failed mint on a room**: `--refuse` (push `storytel.json` again for a fresh login) or `--locked 222`, then
+  - **A failed mint on a room**: `--refuse` (force-stop the app first, so it holds no JWT) or `--locked 222`, then
     book 2 on Stua: no SOAP to the speaker, "Kan ikke spilles på Sonos", the phone paused; with `--locked 222` the
     report's `item_errors` holds `no_audio` for 222.
+  - **The advance on an expired JWT** (design 58 §9, QA 58-1): `--jwt-ttl 300 --books 111:16,222:16,333:16
+    --no-download 111,222,333` (16 MB is about 6 minutes of the fake's WAV; design 58 §9's `--jwt-ttl 120` predates
+    QA N-6's guard: a life of 240 s or less is never prefetched, the advance then asks as any mint does). Book 1 on
+    Stua from its start: a `jwt #n (renewed)` line about every 200 s while it plays (the prefetch at a third of the
+    life left; the fake renews below half of it, as the server does); at book 1's end the advance's `asset 222` line has **no** `jwt` line just before it, and book 2 plays.
   - `renderer.json` holds `storytel:book:222` after the play and after the adopt - never a `token=`; logcat's
     `not-ours?` lines show scheme, host and path only; the no-secrets greps above still find nothing.
 - Real Storytel stays a device check (design 26b, "Device checks"): the real login, a 300 MB book over Wi-Fi that
@@ -936,7 +964,7 @@ session comes with step 2):
 - **A force**: `-d '{"stale":"<that session>"}'` within 10 s of the login answers `429 busy` with the seconds left,
   never the JWT; after 10 s one `login` line, a new session (the same `FAKE-JWT-1` from this fake). A fourth force
   from the same phone within the hour answers `busy` with the wait to its first force's hour.
-- **A revoked JWT**: `--revoke-after 1` and the old music app downloading a book with the same fixture login (§6i):
+- **A revoked JWT**: `--revoke-after 1` and a book downloading with the server's JWT (the phone on the chain, below):
   after its first asset call the fake revokes the JWT; the server's next Check now on the series gets the bookshelf's
   401, logs in once (`jwt #2`) and lists the series.
 - **An outage** (`--login-5xx`, the fake restarted with it): a force after 10 s answers `502 unreachable`, the PWA's
@@ -947,8 +975,13 @@ session comes with step 2):
   is set: the stored login isn't a fake one, not sent", and the card says "Saved; STORYTEL_BASE is set, so Storytel
   wasn't asked." and "Storytel wasn't asked: STORYTEL_BASE is set and this login isn't a fake one."; every phone's ask
   answers `404 off` (never counted in the phone-login cap). Take the line out of `.env` (and restart) when done.
-- **Step 2** adds the phone's side: one `login` at the save and none per book, a declined force from the phone's own
-  401 coming back after the wait, the room's prefetch (design 58 §9 §6i A and B).
+- **The phone on the chain** (design 58 step 2; the debug launcher and the managed music app as §6l A1, the feed's
+  `config.json` with `storytel_base` for the API and the CDN): the fake logs logins only from the server - one at the
+  save, none per book; a second phone (or `pm clear` and a re-enrol) gets the same JWT with no new login.
+  `--revoke-after 1`: the phone's 401 on the second book is a force through the launcher; after `FORCE_MIN_AGE`'s 10 s
+  the server logs in once and the run goes on. **A declined force** (QA N-1): `--revoke-after 1` within 10 s of the
+  save's login - the phone's force gets `busy` with the few seconds left, never the old JWT; the download job comes
+  back after the wait by itself (no sync nudged), the force logs in, and the book completes.
 
 ## 6j. The music card's listening window; Play in the drawer during a window (design 28)
 

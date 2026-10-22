@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import me.vibb.music.Fixtures
+import me.vibb.music.storytel.StorytelApi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -43,15 +44,17 @@ class StorytelBridgeTokenTest {
     }
 
     @Test
-    fun `the shared answers file - each row as the launcher hands it on`() {
+    fun `the shared answers file - each row as the launcher hands it on, and as the debug switch reads the fake's`() {
         val answers = (Json.parseToJsonElement(Fixtures.resource("storytel_token_answers.json")) as JsonObject)["answers"] as JsonArray
         val read = answers.associate { row ->
             row as JsonObject
             val body = row["body"] as JsonObject
             fun text(key: String) = (body[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
             val seconds = (body["expires_in_s"] ?: body["retry_after_s"]) as? JsonPrimitive
-            (row["name"] as JsonPrimitive).content to
-                jwtResult(text("status"), text("jwt"), (seconds?.longOrNull ?: 0) * 1000, text("session"), now)
+            val bridged = jwtResult(text("status"), text("jwt"), (seconds?.longOrNull ?: 0) * 1000, text("session"), now)
+            // design 58 §5.6: the fake's `/fake/jwt` answers the route's bodies, read by the same rule
+            assertEquals(bridged, StorytelApi.jwtAnswer(body.toString(), now))
+            (row["name"] as JsonPrimitive).content to bridged
         }
         assertEquals(
             mapOf(

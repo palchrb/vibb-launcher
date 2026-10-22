@@ -2701,9 +2701,9 @@ async fn the_card_shows_the_sessions_facts() {
     assert_no_secret(&page, PASSWORD, "the card");
 }
 
-/// §8 (QA N-14): the fake Storytel's login fixtures, copied for the server and the fake: every
-/// AES vector holds, the request's `pwd` is its password's, the answers classify as the login
-/// reads them - and, until step 2 deletes them, the music app's originals hold the same values.
+/// §8 (QA N-14): the fake Storytel's login fixtures (the server's and the fake's; since design 58
+/// step 2 the phone has none): every AES vector holds, the request's `pwd` is its password's, the
+/// answers classify as the login reads them.
 #[test]
 fn fake_login_fixtures_match() {
     let json =
@@ -2738,16 +2738,5 @@ fn fake_login_fixtures_match() {
     assert_eq!(
         crate::storytel::classify_login(200, &body("no_jwt")).unwrap_err(),
         crate::storytel::StorytelError::NoJwt
-    );
-    let music = "../music/app/src/test/resources/storytel";
-    assert_eq!(
-        contract_file(&format!("{music}/aes_vectors.json")),
-        contract_file("testdata/storytel/aes_vectors.json")
-    );
-    assert_eq!(json(&format!("{music}/login_request.json")), request);
-    assert_eq!(json(&format!("{music}/login_ok.json")), answers["ok"]);
-    assert_eq!(
-        json(&format!("{music}/login_no_jwt.json")),
-        answers["no_jwt"]
     );
 }

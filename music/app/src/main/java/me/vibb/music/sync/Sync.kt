@@ -21,6 +21,7 @@ import kotlinx.serialization.Serializable
 import android.util.Log
 import me.vibb.music.BuildConfig
 import me.vibb.music.bridge.BridgeSync
+import me.vibb.music.bridge.StorytelLegacy
 import me.vibb.music.data.ItemErrorRow
 import me.vibb.music.data.ItemRow
 import me.vibb.music.data.ListingRow
@@ -299,7 +300,9 @@ object Sync {
         val plan = downloadPlan(snap, store.db.downloads(), System.currentTimeMillis(), PlayerHub.heldLocal)
         val storageLow = store.ownDir.parentFile!!.usableSpace < LOW_STORAGE_BYTES
         val waiting = downloadWaiting(netCaps(context), store.downloadMobileData, storageLow)
-        // The phone's Storytel login: none, refused (the cooldown runs) or ok (design 26b §4.5).
+        // The old Storytel login on disk goes, once per process (design 58 §5.5), never on a mint's path.
+        StorytelLegacy.purge(context)
+        // The phone's Storytel session: none (off), refused (the server's cooldown) or ok (design 58 §5.2).
         val storytel = StorytelAccount.get(context).state()
         val storytelEntries = snap.library?.entries.orEmpty().filter { it.source == Source.STORYTEL }.map { it.id }.toSet()
         val states = reportWaiting(plan.states, storytelEntries, waiting, storytel, Downloads.freeBytes(context))
