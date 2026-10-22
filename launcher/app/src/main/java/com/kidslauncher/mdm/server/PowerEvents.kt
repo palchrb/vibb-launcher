@@ -78,6 +78,16 @@ fun bootRecord(
     return PowerOn(atMs = nowMs - elapsedMs, bootCount = bootCount, battery = battery)
 }
 
+/**
+ * Design 59 §3.9: the boot's first CE start ([firstCeStart], `AndroidLock`'s boot-count test) stamps when the storage
+ * unlocked ([nowMs]; in android mode the Child PIN typed) on this boot's start ([bootCount]) - only when it has none.
+ */
+fun withUnlock(record: PowerRecord, firstCeStart: Boolean, bootCount: Int, nowMs: Long): PowerRecord {
+    val on = record.on ?: return record
+    if (!firstCeStart || on.bootCount != bootCount || on.unlockedAtMs != null) return record
+    return record.copy(on = on.copy(unlockedAtMs = nowMs))
+}
+
 /** A shutdown replaces the kept one, not yet sent. */
 fun withShutdown(record: PowerRecord, off: PowerOff): PowerRecord = record.copy(off = off, offSent = false)
 
@@ -166,6 +176,7 @@ internal object PowerKeys {
     const val ON_LEVEL = "on_level"
     const val ON_CHARGING = "on_charging"
     const val ON_LOW = "on_low"
+    const val ON_UNLOCKED = "on_unlocked_at_ms"
 }
 
 /** The record from the prefs' values ([values] as `SharedPreferences.getAll`); a part missing its
@@ -192,7 +203,12 @@ fun decodePowerRecord(values: Map<String, Any?>): PowerRecord {
     val on = run {
         val at = long(PowerKeys.ON_AT) ?: return@run null
         val boot = int(PowerKeys.ON_BOOT) ?: return@run null
-        PowerOn(atMs = at, bootCount = boot, battery = battery(PowerKeys.ON_LEVEL, PowerKeys.ON_CHARGING, PowerKeys.ON_LOW))
+        PowerOn(
+            atMs = at,
+            bootCount = boot,
+            battery = battery(PowerKeys.ON_LEVEL, PowerKeys.ON_CHARGING, PowerKeys.ON_LOW),
+            unlockedAtMs = long(PowerKeys.ON_UNLOCKED),
+        )
     }
     return PowerRecord(off = off, offSent = off != null && bool(PowerKeys.OFF_SENT) == true, on = on)
 }
@@ -219,6 +235,7 @@ fun encodePowerRecord(record: PowerRecord): Map<String, Any> = buildMap {
             put(PowerKeys.ON_CHARGING, it.charging)
             put(PowerKeys.ON_LOW, it.low)
         }
+        on.unlockedAtMs?.let { put(PowerKeys.ON_UNLOCKED, it) }
     }
 }
 
@@ -390,6 +407,22 @@ object PowerEvents {
             update(context) { withBoot(it, on) }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't record the boot: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * Right after `PinLockRuntime.decide` in `Application.initUnlocked` (main thread, before the anchor's first sync):
+     * the boot's first CE start ([firstCeStart]) stamps this boot's start with the unlock ([withUnlock], design 59
+     * §3.9) - "turned on 07:02 · unlocked 07:15". One `commit()` once a boot. Never throws.
+     */
+    fun recordUnlock(context: Context, firstCeStart: Boolean) {
+        if (!firstCeStart) return
+        try {
+            val now = System.currentTimeMillis()
+            val boot = BootClock.bootCount()
+            update(context) { withUnlock(it, firstCeStart, boot, now) }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't record the unlock: ${e.javaClass.simpleName}")
         }
     }
 

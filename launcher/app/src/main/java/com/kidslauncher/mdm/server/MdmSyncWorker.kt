@@ -18,6 +18,7 @@ import com.kidslauncher.mdm.notifyAppInstallResult
 import com.kidslauncher.mdm.notifyAppInstalling
 import com.kidslauncher.mdm.server.dto.InstallProgressReport
 import com.kidslauncher.mdm.server.dto.InstalledApp
+import com.kidslauncher.mdm.server.dto.KidLock
 import com.kidslauncher.mdm.server.dto.LocationReport
 import com.kidslauncher.mdm.server.dto.PendingCommand
 import com.kidslauncher.mdm.server.dto.PolicyResponse
@@ -148,7 +149,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // cached policy blob can still hold a `pendingCommand` from a past cycle that's already
         // been delivered and consumed server-side, and replaying it from cache while offline would
         // re-run an old command (harmless for ring, not for lock/wipe).
-        ranCommand = dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand)
+        ranCommand = dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand, freshPolicy.kidLock)
         // Design 59 §1: `set_kid_pin`'s Child PIN goes no further than its command - the policy
         // applied and held in memory from here on has none, like the cached one.
         freshPolicy = cacheablePolicy(freshPolicy)
@@ -351,7 +352,11 @@ private suspend fun reportBlockedDnsEvents(context: Context, api: MdmApi) {
  *
  * Security review L12: every command is confirmed (receipt) before it runs - a wipe's only answer
  * when it works -, and a command the server delivers again (our receipt didn't arrive) is
- * confirmed again but never run twice ([CommandAnswers.begin]). Returns the command it ran.
+ * confirmed again but never run twice ([CommandAnswers.begin]). Returns the command it ran, without
+ * `set_kid_pin`'s PIN.
+ *
+ * Design 59 §3.5: `set_kid_pin` is checked against [kidLock] - the same fresh answer's, whose hash the PIN must
+ * match (a replayed or stale command's PIN doesn't) - and runs before this sync's apply.
  */
 private suspend fun dispatchPendingCommand(
     context: Context,
@@ -359,6 +364,7 @@ private suspend fun dispatchPendingCommand(
     dpm: DevicePolicyManager,
     admin: ComponentName,
     pending: PendingCommand?,
+    kidLock: KidLock?,
 ): PendingCommand? {
     if (pending == null || !dpm.isDeviceOwnerApp(context.packageName)) return null
 
@@ -384,12 +390,13 @@ private suspend fun dispatchPendingCommand(
             // Handy's PIN lock when it's active (step 10): LOCKED and shown, then the screen off.
             val ours = com.kidslauncher.mdm.lock.PinLockRuntime.lockNow(context)
             val ok = LocateCommands.lock(dpm, admin)
-            val message = when {
-                !ok -> "failed to lock"
-                ours -> "locked (handy lock)"
-                else -> "locked (Android)"
-            }
-            reportCommandResult(context, api, pending, ok, message)
+            reportCommandResult(context, api, pending, ok, lockAnswer(ok, ours, com.kidslauncher.mdm.lock.AndroidLock.gateNow(context)))
+        }
+
+        // Design 59 §3.5: the Child PIN for Android's lock - never stored, cached or logged; the answer names no PIN.
+        com.kidslauncher.mdm.lock.SET_KID_PIN_COMMAND -> {
+            val answer = com.kidslauncher.mdm.lock.AndroidLock.applyPinCommand(context, kidLock, pending.pin)
+            reportCommandResult(context, api, pending, answer.success, answer.message)
         }
 
         // Only reached when the wipe didn't take the phone down at once: a refusal or a call that
@@ -444,7 +451,19 @@ private suspend fun dispatchPendingCommand(
             reportCommandResult(context, api, pending, success = false, message = "unknown command - update the launcher")
         }
     }
-    return pending
+    return if (pending.pin != null) pending.copy(pin = null) else pending
+}
+
+/**
+ * The remote `lock`'s answer (the server's `locate::reword` words): the screen didn't lock; Android's PIN is the gate
+ * (design 59 §3.9, [androidGate]: our LOCKED as its face, or our credential alone - `lockNow` asks for the Child PIN);
+ * our own lock; or Android's alone (no Child PIN).
+ */
+internal fun lockAnswer(ok: Boolean, ours: Boolean, androidGate: Boolean): String = when {
+    !ok -> "failed to lock"
+    androidGate -> "locked (android pin)"
+    ours -> "locked (handy lock)"
+    else -> "locked (Android)"
 }
 
 /**

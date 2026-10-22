@@ -260,6 +260,9 @@ class Application : android.app.Application() {
         } catch (e: Exception) {
             android.util.Log.e("Application", "PIN lock state unreadable - Home stays dark while a PIN may be set", e)
         }
+        // Design 59 §3.9: the boot's first CE start (decide's boot-count test) stamps this boot's start with the
+        // unlock, before the anchor's first sync can send it. Never throws.
+        com.kidslauncher.mdm.server.PowerEvents.recordUnlock(this, com.kidslauncher.mdm.lock.AndroidLock.firstCeStartOfBoot)
         try {
             LauncherPreferences.init(PreferenceManager.getDefaultSharedPreferences(this), this.resources)
             initRest()

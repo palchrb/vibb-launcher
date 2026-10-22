@@ -143,7 +143,7 @@ class PowerEventsTest {
         val full = PowerRecord(
             off = PowerOff(5, 41, BatteryReport(3, charging = false, low = true), reboot = false, reason = "battery"),
             offSent = true,
-            on = PowerOn(9, 42, BatteryReport(60, charging = true, low = false)),
+            on = PowerOn(9, 42, BatteryReport(60, charging = true, low = false), unlockedAtMs = 700_009),
         )
         for (record in listOf(full, PowerRecord(), PowerRecord(off = off()), PowerRecord(on = PowerOn(9, 42)))) {
             assertEquals(record, decodePowerRecord(encodePowerRecord(record)))
@@ -153,6 +153,25 @@ class PowerEventsTest {
         assertEquals(setOf(PowerKeys.OFF_AT, PowerKeys.OFF_BOOT, PowerKeys.OFF_SENT), keys)
         // A part without its instant is none; a sent mark without a shutdown is nothing.
         assertEquals(PowerRecord(), decodePowerRecord(mapOf(PowerKeys.OFF_BOOT to 41, PowerKeys.OFF_SENT to true)))
+    }
+
+    /** Design 59 §3.9: the boot's first CE start stamps this boot's start once - "turned on 07:02 · unlocked 07:15". */
+    @Test
+    fun `the first CE start of a boot stamps its start with the unlock, once`() {
+        val boot = PowerRecord(off = off(), offSent = true, on = on(boot = 42))
+        val stamped = withUnlock(boot, firstCeStart = true, bootCount = 42, nowMs = now)
+        assertEquals(boot.copy(on = on(boot = 42).copy(unlockedAtMs = now)), stamped)
+        assertEquals("the first stamp stays", stamped, withUnlock(stamped, true, 42, now + 60_000))
+        assertEquals("a later start of the boot (a crash, an update)", boot, withUnlock(boot, firstCeStart = false, bootCount = 42, nowMs = now))
+        assertEquals("another boot's start", boot, withUnlock(boot, true, 43, now))
+        assertEquals("no start recorded", PowerRecord(off = off()), withUnlock(PowerRecord(off = off()), true, 42, now))
+        // It travels with the start, its instant recomputed.
+        assertEquals(now, uploadBody(stamped, 42, now + 5, 5)!!.on!!.unlockedAtMs)
+        // Wired right after decide's boot-count test, before the rest of the unlocked setup (the anchor's sync).
+        val unlocked = code("Application.kt").substringAfter("private fun initUnlocked()").substringBefore("\n    }\n")
+        val call = "PowerEvents.recordUnlock(this, com.kidslauncher.mdm.lock.AndroidLock.firstCeStartOfBoot)"
+        assertTrue(unlocked.indexOf("PinLockRuntime.decide(this)") in 0 until unlocked.indexOf(call))
+        assertTrue(unlocked.indexOf(call) < unlocked.indexOf("initRest()"))
     }
 
     @Test

@@ -172,13 +172,30 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
 - Toasts don't show over the lock (`DISALLOW_CREATE_WINDOWS`): the lock and its dialog show their own texts. Screen time: `screenTimeCounts(..., pinLocked)` and `PinLockActivity` is a free screen.
 - **Not device-tested**: the checklists in the 10 doc ("Implementation status") - lock before any frame at screen-on, Recents/Assistant/camera/power menu escapes in both kiosk modes, full-screen intents with the shade disabled, alarms, PBKDF2 time, safe mode, migration timing.
 
-## Android's own lock screen as the gate, the glance its face (design 59 step 3, `docs/design/59-android-keyguard-design.md`, at the monorepo root)
+## Android's own lock screen as the gate, the glance its face (design 59 steps 3-4, `docs/design/59-android-keyguard-design.md`, at the monorepo root)
 
 - **The switch**: the policy's `kid_lock.keyguard` - exactly `"android"` is Android's lock (pure `androidRequested`),
   anything else (missing, `"own"`, junk, an older server) is the own lock above, every path unchanged. Glue
   `lock/AndroidLock`, pure `lock/AndroidLockPlan.kt` (`AndroidLockPlanTest`), log tag `AndroidLock`. The prototype's
-  debug switch (`HybridDebug`, its receiver) is gone. No capability and no `set_kid_pin` handler yet (step 4), so the
-  server never sends this phone the PIN: the switch takes effect through the keypad migration.
+  debug switch (`HybridDebug`, its receiver) is gone. Since step 4 the capability `android_keyguard_v1` is claimed
+  (with its handler), so the server sends the Child PIN by `set_kid_pin` (below); the keypad migration stays for a
+  server that holds no PIN.
+- **`set_kid_pin`** (step 4, §3.5): `dispatchPendingCommand(..., pending, freshPolicy.kidLock)` ->
+  `AndroidLock.applyPinCommand(context, kidLock, pending.pin)`: pure `pinCommandStep` - the fresh policy not asking
+  for Android's lock `own lock`, no PIN `refused: no_pin`, the PIN not verifying against the **fresh** hash
+  `refused: mismatch` (`PinLockRuntime.verifyCommandPin` = the top-level `commandPinVerifies`: no backoff, no failure,
+  exactly `pin_length` digits; Q59-1), no active token `refused: no_token` (`ensureAndroidResetToken` sets one for the
+  escrow) -, else under `AndroidLock`'s monitor `keyguard_android` first with the rev Android holds now
+  (`commandWriteAheadRev`), `reset()` (the "ours" flag), then the fresh rev: `pin set` (a failed reset `refused:
+  failed`, and the owned flag given back when the credential wasn't ours). The answers are `PinCommandAnswer`'s words.
+  The PIN is a parameter only: never stored, cached (`cacheablePolicy`), logged (a source scan over the three files) or
+  answered; the dispatch returns the command without it. The sync's own apply that follows turns the face on.
+- **Reports** (step 4): `lock_state.keyguard`/`pin_rev`/`reset_token`/`keyguard_relocks`, always sent
+  (`AndroidLock.report`, pure `keyguardReport`/`androidGate`: `"android"` while the face is on or we own the live
+  credential, with `android_pin_rev` only for ours; else `"own"` with the applied hash's rev); `reset_token` in every
+  mode; the relocks taken by each report. The remote `lock` answers `locked (android pin)` while `AndroidLock.gateNow`
+  (`lockAnswer`). `power.on.unlocked_at_ms`: `PowerEvents.recordUnlock(this, AndroidLock.firstCeStartOfBoot)` in
+  `Application.initUnlocked` right after `decide` (pure `withUnlock`, DE key `on_unlocked_at_ms`, once a boot).
 - **Stored** (CE `pin_lock_state`, M-1): `keyguard_requested` and `pin_rev` committed with the hash by `saveConfig`;
   `keyguard_android` = we own Android's credential - committed **before** a reset (write-ahead) and cleared only when
   no credential is left (a verified clear, or removed on the phone); `android_pin_rev` = the rev Android's PIN was set
@@ -195,7 +212,7 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   `USER_PRESENT` since our lock last went LOCKED (the mark is reset at every LOCKED edge, screen-off and remote lock).
   A not-locked read alone waits `ANDROID_ANSWER_WAIT_MS` (1 s; `ANDROID_UNLOCK_WAIT_MS` 3 s once Android read
   locked since this screen-off - a fingerprint from dark, S3-3) for the broadcast, then RELOCKs (`dpm.lockNow()`,
-  counted in `AndroidLock.relocks` for step 4's report); 1 s after each screen-off while LOCKED and dark the sleep
+  counted in `AndroidLock.relocks` for the report's `keyguard_relocks`); 1 s after each screen-off while LOCKED and dark the sleep
   check RELOCKs an open Android. No credential at any trigger: our keypad and hash. **`USER_PRESENT`** has its own
   receiver registered **EXPORTED** for that action alone (SystemUI sends it from its own uid, which a NOT_EXPORTED
   receiver never hears - the run's bug 1; it is a `<protected-broadcast>` in frameworks/base's core manifest);
@@ -225,8 +242,7 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   unknown. **The restart line** ("Skriv koden for å starte telefonen", `android_lock_restart_line`): written at
   `ACTION_SHUTDOWN` as the face (BootCover's one receiver, its own try, between the cover and PowerEvents), cleared at
   the boot's first CE start and when the face goes. The notice wake keeps its `lockNow` after 15 s.
-- **Not yet** (step 4): the `set_kid_pin` command, remote lock's `locked (android pin)`, `lock_state`'s new fields,
-  `unlocked_at_ms`, the capability. Not device-tested: design 59 §8.
+- Not device-tested: design 59 §8.
 
 ## Fix round 2026-10-06 (emulator run, `docs/testing/2026-10-06-emulator-run.md`, at the monorepo root)
 

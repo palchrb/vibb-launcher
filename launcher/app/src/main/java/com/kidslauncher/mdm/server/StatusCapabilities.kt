@@ -25,4 +25,6 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     INSTALL_NOW_CAPABILITY,
     POWER_CAPABILITY,
     com.kidslauncher.mdm.music.STORYTEL_JWT_CAPABILITY,
+    // Design 59 step 4: claimed only with `set_kid_pin`'s handler (Q59-13) - the server then sends this phone the PIN.
+    com.kidslauncher.mdm.lock.ANDROID_KEYGUARD_CAPABILITY,
 )

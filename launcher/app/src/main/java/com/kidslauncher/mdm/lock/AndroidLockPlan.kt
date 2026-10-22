@@ -227,3 +227,63 @@ fun androidTokenStep(stored: Boolean, active: Boolean, deviceSecure: Boolean): T
  * was set from; any other change (the kid in Settings) makes it unknown (`null`: the PWA warns).
  */
 fun androidPinRevAfterChange(expected: Boolean, rev: Long?): Long? = if (expected) rev else null
+
+/** The status report's capability (59 §1, step 4): this launcher runs `set_kid_pin` and can hold Android's lock. */
+const val ANDROID_KEYGUARD_CAPABILITY = "android_keyguard_v1"
+
+/** The one-shot command that hands this phone the Child PIN for Android's lock (`pending_command.pin`, 59 §1). */
+const val SET_KID_PIN_COMMAND = "set_kid_pin"
+
+/** `set_kid_pin`'s answers (59 §1): the command result's `message` and its `success`. */
+enum class PinCommandAnswer(val message: String, val success: Boolean) {
+    PIN_SET("pin set", true),
+
+    /** The fresh policy doesn't ask for Android's lock: the hash in it is the gate (also with no Child PIN). */
+    OWN_LOCK("own lock", true),
+    NO_TOKEN("refused: no_token", false),
+    MISMATCH("refused: mismatch", false),
+    NO_PIN("refused: no_pin", false),
+    FAILED("refused: failed", false),
+}
+
+/**
+ * 59 §3.5: `set_kid_pin` against the **fresh** policy (the one its PIN came in): its keyguard isn't android -> own
+ * lock; no PIN -> no_pin; the PIN doesn't verify against that policy's hash ([verifies]: `verifyCommandPin`, no
+ * backoff, no failure counted - Q59-1) -> mismatch; no active reset token ([tokenActive], which sets one for the
+ * escrow when none is stored) -> no_token. `null` = set it now. [verifies] runs only with a PIN, [tokenActive] only
+ * for a PIN that verified.
+ */
+fun pinCommandStep(requested: Boolean, pin: String?, verifies: (String) -> Boolean, tokenActive: () -> Boolean): PinCommandAnswer? = when {
+    !requested -> PinCommandAnswer.OWN_LOCK
+    pin.isNullOrEmpty() -> PinCommandAnswer.NO_PIN
+    !verifies(pin) -> PinCommandAnswer.MISMATCH
+    !tokenActive() -> PinCommandAnswer.NO_TOKEN
+    else -> null
+}
+
+/** A PIN Android's pad and our keypad both take: exactly [length] digits (the policy's `pin_length`). */
+fun commandPinShape(pin: String, length: Int): Boolean = pin.length == length && pin.all { it in '0'..'9' }
+
+/**
+ * The rev written ahead of the command's reset (M-1: owned first): the rev of the PIN Android holds **now** - the one
+ * we set before ([owned], [storedRev]), else none. A rev is never claimed before its PIN is set: a death between the
+ * reset and the rev's commit reports the older rev (the server sends the PIN again), never a newer one.
+ */
+fun commandWriteAheadRev(owned: Boolean, storedRev: Long?): Long? = if (owned) storedRev else null
+
+/**
+ * Android's PIN is the gate (59 §1): our glance is its face ([face]), or we own Android's live credential ([owned] &&
+ * [deviceSecure]: a rollback waiting for the token, a fallback apply, an unmanaged phone).
+ */
+fun androidGate(face: Boolean, owned: Boolean, deviceSecure: Boolean): Boolean = face || (owned && deviceSecure)
+
+/** `lock_state.keyguard` and `pin_rev` (59 §1). */
+data class KeyguardReport(val keyguard: String, val pinRev: Long?)
+
+/**
+ * Which gate the phone runs, and the rev it enforces (59 §1): `"android"` while [androidGate] - with the rev Android's
+ * PIN was set from ([androidRev]; `null` = unknown, or a credential not ours) -, else `"own"` with the rev committed
+ * with the hash in use ([ownRev]; `null` = no Child PIN).
+ */
+fun keyguardReport(face: Boolean, owned: Boolean, deviceSecure: Boolean, androidRev: Long?, ownRev: Long?): KeyguardReport =
+    if (androidGate(face, owned, deviceSecure)) KeyguardReport("android", androidRev.takeIf { owned }) else KeyguardReport("own", ownRev)
