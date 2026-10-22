@@ -124,3 +124,16 @@ tests are the `LockGlanceLayoutTest` class in the same file - and were caught wh
 
 Nothing ran on a device: the note's §5 checks 1-4 (the screen-on refit with 3-button navigation, font scale 2.0 at 320
 dp, TalkBack through the scroll, the touch row with and without the app-op) remain the user's emulator pass.
+
+## Fix round
+
+- R9C-1: Fixed in d42bd8fc - `GlanceHeights.fade` (the scroll's fade less the row's bottom padding, 8 dp) counted in
+  every one-visible candidate; a sweep test keeps the row clear across 250-600 dp, with and without the timer.
+- R9C-2: Fixed in d42bd8fc - `autosaves(&html, name)` for all five quick-control switches in
+  `home_screen_holds_the_moved_forms`.
+- R9C-3: no code change (for the user); noted in the design's implementation status in d42bd8fc.
+- R9C-4: accepted; noted in the design's implementation status in d42bd8fc.
+- R9C-5: Fixed in d42bd8fc for L4 (the scroll's shown rule is the pure `GlanceFit.scrollShown`, tested on candidate 7
+  and n = 0). Left as text pins: L1/L2 (`available()`, a private subtraction by R9-9's choice), L5/L12 (the panel's
+  wiring of the pure, tested `glanceTimeWidest`), L8 (`scrollTo` at the lock-up) and L10 (the log condition) - glue
+  with no cheap pure seam.
