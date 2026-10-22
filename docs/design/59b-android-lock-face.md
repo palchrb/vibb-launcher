@@ -1,6 +1,7 @@
 # 59b - Android's lock as the gate: keeping our face in front, the WhatsApp ring, the look of Android's pad
 
-Status: built 2026-10-22 on `design-59b` (steps 0-4; "As built" at the end), revised before that from its QA
+Status: built 2026-10-22 on `design-59b` (steps 0-4; "As built" at the end, with the code QA's fix round and the
+rc.2 run's, `docs/testing/2026-10-22-rc2-run.md` R1-R6), revised before that from its QA
 (`docs/review/qa-59b-design.md`, Q59b-1..12; one line per finding at the end) and the revision check
 (`qa-59b-revision-check.md`, N1-N7). §2 amends design 59 §3.3's "Home below" (N1: said there too). §4.4's re-posted-ring
 rule is **not built**: a notice dump at flip + 15 s (§7) must confirm the cause first. Base: design 59 (§3.3, "Step 3 as built"), assessment 59 §4.2, the RC run
@@ -262,7 +263,10 @@ To confirm the double start, make 10 dark video rings, then audio as the control
    and the PIN stay in DeskClock.
 3. "Lås opp": the pad stays up for 30 s; its Emergency dialer stays; Back returns to the glance. **N6:** "Lås opp" +
    PIN and a row + PIN land on Home with the row's target above it (the in-front leave is unchanged).
-4. SOS (five presses), an alarm and `gsm call` stay in front.
+4. SOS (five presses), an alarm and `gsm call` stay in front. **4b** (the rc.2 run's R1): five power presses from the
+   glance, **cold** (`adb shell am force-stop` the SOS app first - `safetyhub` on the AVD), at least four tries as the
+   face: the SOS countdown stays, `probably Emergency SOS` comes at the glance's pause, no `re-front` line; once in own
+   mode (its 700 ms pause re-front is unchanged - see "As built").
 5. Ten rings in a row, alternating video and audio, screen dark, plus five with the glance on screen:
    - no black screen;
    - one `VoipActivityV2` start per dark ring (none with our uid);
@@ -363,6 +367,38 @@ Launcher only, no contract change. Every new rule is gated on the face (`Android
   - B-3: a cancelled ask stays ours for the ask's 2 min; the face re-fronts only on a fresh pause or stop.
   - B-4: the pad's success leaves as in front (`leaveFromAsk`). B-5: Android open with no `USER_PRESENT` waits once
     (`AndroidWait`), then own mode's backstop. B-6: no digit under the pad; `noteOwnStart`'s stamp pinned.
+- **The rc.2 run's fix round** (`docs/testing/2026-10-22-rc2-run.md` R1-R6, "Fixed in" there):
+  - R1 (Medium): as the face, a pause of the glance inside the SOS gesture's window (3 s after a screen-on, an SOS app
+    on the phone, not ours - the pad's ask, our own start) is the probable-SOS mark itself (`sosMarkAtPause`, in
+    `onLockPaused` before its check is scheduled), so the pause's 700 ms check yields "sos" however slowly the SOS
+    screen starts. Safe as the face only: Android's locked keyguard refuses Recents (P59-1), so no pause-only cover
+    needs the fast re-front there. Own mode is unchanged - its pause re-front stays (Recents only pauses it, bug
+    25b-A), so a cold SOS start past 700 ms can still be re-fronted there (1 of 3 in the run; residual, pre-existing).
+    Check 4b.
+  - R2 (Low, **not changed - a decision for the user**): no lock-task call ends the glance's own lock task without
+    clearing the helper task in it. AOSP `LockTaskController.stopLockTask` from the root runs `clearLockedTasks`
+    (`clear-task-all`); leaving it running keeps the glance unfinishable (`activityBlockedFromFinish`: the root of a
+    lock task); taking our package out with `setLockTaskPackages` runs the same `clearLockedTask` on our (root) task.
+    The proposal: as the face with the kiosk off and Android locked, the glance takes **no** lock task of its own -
+    Android's locked keyguard already keeps non-showWhenLocked starts away, and a helper (DeskClock) unlocked into
+    then stays. Its cost to weigh: what lock task adds over the keyguard while the glance is in front (the status-bar
+    disable stays through `setStatusBarDisabled`; the power menu is the keyguard's). Not built.
+  - R3 (Low, label only): SystemUI's `ThemeOverlayController` (16, flag `newCustomizationPickerUi` off as on the AVD)
+    takes its colours from the wallpaper last set (`getDefaultWallpaperColorsSource`: the higher id), so `setBoth`'s
+    lock set (id n) then home set (id n+1) leaves `mCurrentColors` = Home's and the palette seeded from Home; the lock
+    set's event wrote `color_source: lock_wallpaper`, and the home-only event after it may not overwrite a
+    `lock_wallpaper` label (`preserveLockScreenColor`). The rollback's one set with both flags (one fill on both) is
+    what writes `home_wallpaper` back (`isDestinationBoth`), when its colour event comes; the run saw none, so the
+    label stayed. Nothing changed (setting home first would make the mark the palette's source); `WallpapersTest`
+    pins the lock-first pair and the rollback's single both-flags set. Device check 7 compares the system palette
+    (the overlay's seed, `dumpsys activity service SystemUIService ThemeOverlayController`), not the label.
+  - R4 (Low): `KeyguardCover.afterAndroidUnlock` sent at once now drops a queued copy of the same key first
+    (`dropWaiting`, on the main thread that owns the queue) - the unlock's own `afterUnlock` start and the queue's
+    no longer both start the time-rule screen.
+  - R5: no change (F3R-2's locked-boot start covered it, as the run says). R6: `MissedCallReceiver.onReceive` does no
+    work on the main thread beyond a log line and `goAsync`; the call-log work runs on `MissedCallNotifier`'s own
+    thread. The ANR's clock covers the broadcast waiting for our main thread (busy 11.8 s in the slow boot's unlocked
+    setup under host load) and the `goAsync` work behind it - nothing to move; watch for it on the Jelly Star.
 - **What the emulator run should look at hardest**: checks 1 (both kiosk settings, no `the lock left`), 2 (exactly two
   `re-front` lines - a kiosk-on glance without lock task spends one on Home's root start, which can't resume under the
   keyguard; the re-front then lets the 1 s fallback root it), 5/5b (one `VoipActivityV2` start per dark ring, the

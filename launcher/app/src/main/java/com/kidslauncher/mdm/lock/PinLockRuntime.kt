@@ -1628,6 +1628,11 @@ object PinLockRuntime {
         lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.PAUSE, interactive = interactiveOrUnknown())
         newIntentPauseHeld = !lockOnTop && newIntentPauseKept(wasOnTop, backstopOntoTopAt, SystemClock.elapsedRealtime())
         if (!pauseStartsRefront(chromeLocked, finishing)) return
+        // The rc.2 run's R1: as Android's face a pause just after a screen-on (the SOS gesture's activity starting; a cold
+        // one stops the glance only after ~1 s) is a probable SOS at once - never re-fronted over before its stop.
+        val pausedNow = SystemClock.elapsedRealtime()
+        val ours = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, pausedNow)
+        if (sosMarkAtPause(AndroidLock.faceOn, ours, lastScreenOnElapsed, pausedNow, sosPackage != null)) noteProbableSos(pausedNow)
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
         // Just after a screen-on the stop that marks Emergency SOS may still come (bug 25b-H).
@@ -1649,7 +1654,7 @@ object PinLockRuntime {
         backstopOntoTopAt = null
         lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.STOP, interactive = interactiveOrUnknown())
         if (!stopStartsRefront(chromeLocked, changingConfigurations, finishing)) return
-        noteProbableSos()
+        noteProbableSos(SystemClock.elapsedRealtime())
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
         // As quick as the pause's check (bug 25b-A): whatever came over the lock - Recents, a
@@ -1688,12 +1693,12 @@ object PinLockRuntime {
     private var sosNarrowed = false
 
     /** The lock left the front: probably the Emergency SOS gesture ([sosGestureLikely], bug 25b-H)? */
-    private fun noteProbableSos() {
+    private fun noteProbableSos(leftFrontAt: Long) {
         val app = appContext ?: return
         // A stop at the screen-off is no SOS (the gesture's presses keep the screen on).
         if (sosFlowUntilElapsed > 0L || !interactive(app)) return
         val now = SystemClock.elapsedRealtime()
-        if (!sosGestureLikely(lastScreenOnElapsed, now, sosAppPresent = sosPackage != null)) return
+        if (!sosGestureLikely(lastScreenOnElapsed, leftFrontAt, sosAppPresent = sosPackage != null)) return
         sosFlowUntilElapsed = now + SOS_FLOW_MS
         Log.i(LOG_TAG, "The lock left the front just after a screen-on: probably Emergency SOS")
     }
