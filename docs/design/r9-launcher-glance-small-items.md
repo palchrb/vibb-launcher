@@ -105,7 +105,7 @@ Jelly Star's, with its cutout - and 3-button navigation's 48 dp, 497 dp the same
 | full tile alone | 1 (410.8) | 1 |
 | no music, 4 rows | 1, 3 rows + 1 more (466) | 1 |
 | music + 1 row (the user's case) | 2 (458.4) | 1 (480.8) |
-| music + 2 rows (mockup) | 3, 1 visible (458.4), scroll 70.6 dp | 3, scroll 94.6 dp |
+| music + 2 rows (mockup) | 3, 1 visible (466.4 with the fade, qa-r9-code R9C-1), scroll 70.6 dp | 3, scroll 94.6 dp |
 | music + 3 rows | 3, 1 visible, scroll 70.6 dp | 3 |
 
 ## 3. The compact music player (items 3 and 4)
@@ -279,6 +279,16 @@ Built as above, with `qa-r9-revision-check.md`'s N1-N6 folded into §1-§4. Laun
   writable=false)"), as the sound row's does, so a read-only row can be told apart on a device.
 - **The alarm case at 473 dp** (`LockGlanceLayoutTest`): with an alarm under the date, music + 1 row now takes the
   compact tile (the full one with the small clock is 462.6 dp > 457, and with one row "one visible" is every row).
+
+Code QA (`docs/review/qa-r9-code.md`) fix round:
+
+- **R9C-1**: a one-visible candidate also counts the scroll's fade below the row's own padding (`GlanceHeights.fade`,
+  measured: 16 - 8 = 8 dp), so the only visible row is never under the fade; candidate 3 now needs 450.4 dp (music + 2
+  rows at 473 dp: 466.4 total, still candidate 3).
+- **R9C-3**: with a morning alarm, music + 1 row at 473 dp takes the compact player (deviation 4 above) - for the user to
+  decide (a candidate that drops the alarm line before the compact tile would keep the full player).
+- **R9C-4**: accepted - a tap still waiting for a running sound write is dropped when Kid Settings is destroyed; the
+  next visit shows the phone's real state.
 
 Not device-tested: §5's four checks (the emulator at `wm density 240`, both navigation modes, font scale 1.0-2.0,
 TalkBack; the touch row with and without the app-op).

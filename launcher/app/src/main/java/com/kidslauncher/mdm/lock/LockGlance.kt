@@ -204,7 +204,8 @@ const val GLANCE_MAX_ROWS = 3
  * margins; [date] with its margin; the tiles with their top margin (the full one with its progress
  * row, r9 §3); [clockFull] the timer tile with its margin (design 42); [rowsTop] the rows' scroll's
  * margin below a tile, [rowsTopNoTile] below the date; [row] one row (the tallest); [rowGap] between
- * rows; [more] the "more" line (nothing above it).
+ * rows; [more] the "more" line (nothing above it); [fade] what the scroll's bottom fade covers past a row's own
+ * bottom padding, kept clear under the one visible row while more scrolls below it (qa-r9-code R9C-1).
  */
 data class GlanceHeights(
     val fixed: Float,
@@ -219,6 +220,7 @@ data class GlanceHeights(
     val row: Float,
     val rowGap: Float,
     val more: Float,
+    val fade: Float,
 )
 
 enum class GlanceTileSize { NONE, FULL, COMPACT }
@@ -238,6 +240,10 @@ data class GlanceFit(
     val height: Float,
     val clock: Boolean = false,
 )
+
+/** The rows' scroll shows whenever there is a row at all - in candidate 7 with the "more" line alone
+ * (qa-r9-revision-check N1). */
+val GlanceFit.scrollShown: Boolean get() = rows > 0 || more > 0
 
 /**
  * The fit (design 25 §1.2, r9 §2): the clock's, date's and tiles' sizes; the bottom block always
@@ -270,13 +276,15 @@ fun glanceFit(available: Float, heights: GlanceHeights, tile: Boolean, rowCount:
             GlanceTileSize.FULL -> heights.tileFull
             GlanceTileSize.COMPACT -> heights.tileCompact
         }
-        // The "more" line sits after row 3: on screen only when every bound row is.
+        // The "more" line sits after row 3: on screen only when every bound row is. With more below the
+        // visible row, the scroll's fade is counted so that row stays clear of it.
         val list = if (n == 0) {
             0f
         } else {
             (if (size == GlanceTileSize.NONE && !withClock) heights.rowsTopNoTile else heights.rowsTop) +
                 visible * heights.row + (visible - 1).coerceAtLeast(0) * heights.rowGap +
-                (if (visible == rows && more > 0) heights.more else 0f)
+                (if (visible == rows && more > 0) heights.more else 0f) +
+                (if (visible < rows) heights.fade else 0f)
         }
         val height = heights.fixed + (if (big) heights.clockBig else heights.clockSmall) +
             (if (date) heights.date else 0f) + tileHeight + (if (withClock) heights.clockFull else 0f) + list

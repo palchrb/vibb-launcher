@@ -670,6 +670,8 @@ class GlancePanel(
             row = shownRows.maxOfOrNull { measured(it.root, width) } ?: 0f,
             rowGap = dp(8f).toFloat(),
             more = measured(more, width),
+            fade = (glance.lockGlanceScroll.verticalFadingEdgeLength - (shownRows.firstOrNull()?.root?.paddingBottom ?: 0))
+                .coerceAtLeast(0).toFloat(),
         )
         val next = glanceFit(room.toFloat(), heights, tileUp, rows.size, clockUp)
         if (next != fit || room != loggedFor) {
@@ -700,7 +702,7 @@ class GlancePanel(
         // The rows' scroll: gone only without any row (n = 0) - candidate 7 binds none but shows the
         // "more" line in it (qa-r9-revision-check N1).
         val scroll = glance.lockGlanceScroll
-        scroll.visibility = if (fit.rows == 0 && fit.more == 0) View.GONE else View.VISIBLE
+        scroll.visibility = if (fit.scrollShown) View.VISIBLE else View.GONE
         val top = dp(if (fit.tile == GlanceTileSize.NONE && !fit.clock) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)
         (scroll.layoutParams as ViewGroup.MarginLayoutParams).let {
             if (it.topMargin != top) scroll.layoutParams = it.apply { topMargin = top }

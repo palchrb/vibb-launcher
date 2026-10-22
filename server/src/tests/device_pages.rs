@@ -951,6 +951,8 @@ async fn home_screen_holds_the_moved_forms() {
     ] {
         assert_eq!(form_action_of(&html, name), Some(policy.as_str()), "{name}");
         assert_eq!(input_checked(&html, name, "on"), Some(on), "{name}");
+        // Each saves in place (data-autosave), never a plain submit that jumps to the top (qa-r9-code R9C-2).
+        assert!(autosaves(&html, name), "{name}");
     }
     let quick = &html[html.find("<section id=\"quick-controls\"").unwrap()..];
     assert!(quick.contains("<input type=\"hidden\" name=\"section\" value=\"quick\">"));
