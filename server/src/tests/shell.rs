@@ -882,10 +882,41 @@ fn the_app_shell_scrolls_main_not_the_document() {
     );
     let editor = block(".editor-bar");
     assert!(editor.contains("top: -8px;"), "{editor}");
+    // The bar floats over main's bottom (2026-10-22, the see-through bar): absolute in the body -
+    // which is exactly the screen and never scrolls - never against the viewport, and main runs
+    // under it with room below its last row for the bar, its 14 px and 16 px clear.
+    assert!(
+        body.contains("position: relative;"),
+        "the bar's box: {body}"
+    );
     let bar = block(".tab-bar");
-    for needle in ["flex: none;", "order: 1;", "touch-action: manipulation;"] {
+    for needle in [
+        "position: absolute;",
+        "bottom: calc(14px + env(safe-area-inset-bottom, 0px));",
+        "touch-action: manipulation;",
+    ] {
         assert!(bar.contains(needle), ".tab-bar: {needle} in {bar}");
     }
+    let under = block(".tab-bar ~ .container");
+    assert!(
+        under.contains(
+            "padding-bottom: calc(var(--tab-bar-room) + env(safe-area-inset-bottom, 0px));"
+        ),
+        "{under}"
+    );
+    let root = block(":root");
+    assert!(
+        root.contains("--tab-bar-room: calc(var(--tab-bar-h) + 14px + 16px);"),
+        "{root}"
+    );
+    // Devices' brand row is exactly the title bar's 44 px, so its actions and its large title
+    // sit where every other tab has them.
+    assert!(block(".title-bar").contains("min-height: 44px;"));
+    let brand = block(".vibb-brand");
+    assert!(
+        brand.contains("height: 44px;") && brand.contains("margin: 0 auto 0 0;"),
+        "{brand}"
+    );
     assert!(!css.contains("\n* {\n    touch-action") && !body.contains("touch-action"));
     // The auth pages keep the document scroll.
     let auth = block(".auth-page");
