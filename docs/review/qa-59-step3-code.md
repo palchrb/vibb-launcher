@@ -159,3 +159,16 @@ Held, as specified:
 | M12 | the receiver leaves without `faceStep(USER_PRESENT)` | killed (USER_PRESENT pin) |
 | M13 | `AndroidLock.configure`: `rollbackDue(.., true)` | killed (rollback test) |
 | M14 | `resumeAsFace` acts while dark | **survived** (S3-4) |
+
+## Fixed in 7feeaf41
+
+- S3-1 fixed in 7feeaf41: `androidKeyguardHeld` keeps ANDROID's keyguard write off a fallback apply while we own the
+  live credential; `keyguard_requested` stored only off the parent's choice (`requestToStore`); 24b's step 1 skipped
+  while requested or owned. Tested (`AndroidLockPlanTest`, the S3-1 test kills "commit `requested` from a Fallback").
+- S3-2 fixed in 7feeaf41: `userPresentReceiver` returns while the screen is off, before the mark.
+- S3-3 fixed in 7feeaf41: the longer wait - 3 s (`ANDROID_UNLOCK_WAIT_MS`) once Android read locked since this
+  screen-off (the lock-up's read, the sleep check's STAY), else 1 s; still no leave without `USER_PRESENT` or the pad.
+  §8 step 11 measures the resume-to-`USER_PRESENT` delay.
+- S3-4 fixed in 7feeaf41: M3, M4, M5, M14 pinned by text; M10 by the pure `bootSwap` (tested) and its commit pinned.
+- N1 fixed in 7feeaf41 (the comment on `managed = true`); N2 fixed in 7feeaf41 (documented on
+  `RelockPlatform.androidKeyguardRequested` and in the design's "Step 3 as built").
