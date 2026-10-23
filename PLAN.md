@@ -790,6 +790,13 @@ findings, merge to `main`, full suite once.
   the glance in that mode.
 - **Own mode: a cold Emergency SOS start can still be covered** (rc.2 run R1, 1 of 3; pre-existing 25b-A trade-off with
   the 700 ms pause re-front for Recents). Not fixed on purpose: own mode goes away in phase D.
+- **rc.2 re-check notes (2026-10-23, `docs/testing/2026-10-22-rc2-recheck.md`):** N1 (Low) the pause-based SOS mark
+  logs `probably Emergency SOS` at most android-mode wakes (a 2-5 ms pause/resume at screen-on; the resume clears it,
+  no wrong yield) - a misleading field-log line, make the mark log only when it holds past the resume; N2 (Low, look)
+  after a `svc power reboot` in android mode SystemUI didn't re-apply its wallpaper colour overlays
+  (`mNeedsOverlayCreation=true` 5+ min; the pad in Android's default palette) until a later reboot - cause unknown,
+  check on the Jelly Star; the scratch `pwa_setup.py`'s hardening regex misses (turns restrictions off) - fix before
+  the next run.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
