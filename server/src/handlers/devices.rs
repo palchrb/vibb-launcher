@@ -2530,7 +2530,8 @@ pub async fn update_hardening(
          disallow_factory_reset = ?, disallow_add_user = ?, \
          disallow_modify_accounts = ?, disallow_config_vpn = ?, disallow_usb_file_transfer = ?, \
          disallow_debugging_features = ?, disallow_safe_boot = ?, lock_location = ?, \
-         disallow_airplane_mode = ?, disallow_config_locale = ?, updated_at = datetime('now') \
+         disallow_airplane_mode = ?, disallow_config_locale = ?, \
+         disallow_screen_capture = ?, updated_at = datetime('now') \
          WHERE device_id = ?",
     )
     .bind(on("disallow_safe_boot"))
@@ -2545,6 +2546,7 @@ pub async fn update_hardening(
     .bind(on("lock_location"))
     .bind(on("disallow_airplane_mode"))
     .bind(on("disallow_config_locale"))
+    .bind(on("disallow_screen_capture"))
     .bind(id)
     .execute(&state.db)
     .await;

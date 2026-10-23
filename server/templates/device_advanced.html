@@ -10,7 +10,7 @@
     <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
     <h1 class="page-title">Advanced</h1>
 
-    {#- Restrictions: the 10 switches are one form (H1: a missing box is off), in groups so each
+    {#- Restrictions: the 11 switches are one form (H1: a missing box is off), in groups so each
         can have its footer. -#}
     <section id="restrictions" aria-labelledby="restrictions-title">
         <h2 class="group-header" id="restrictions-title">Restrictions</h2>
@@ -54,6 +54,10 @@
                 <label class="row">
                     <span class="row-label">Lock the phone's language</span>
                     <input type="checkbox" role="switch" class="sw" name="disallow_config_locale" value="on" {% if hardening.disallow_config_locale %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">Screenshots and screen recording off</span>
+                    <input type="checkbox" role="switch" class="sw" name="disallow_screen_capture" value="on" {% if hardening.disallow_screen_capture %}checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
             </div>
             <div class="group-footer">A pause or the Parent PIN doesn't lift these.

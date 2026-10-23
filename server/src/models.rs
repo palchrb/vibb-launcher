@@ -280,6 +280,9 @@ pub struct Hardening {
     /// `DISALLOW_CONFIG_LOCALE` (migrations/0034): the system language stays as set up. On by
     /// default; the launcher's own language (`launcher_ui.language`) is per app and unaffected.
     pub disallow_config_locale: bool,
+    /// `DevicePolicyManager.setScreenCaptureDisabled` (migrations/0089), not a user restriction:
+    /// no screenshots, screen recording or casting, and Recents cards go blank. Off by default.
+    pub disallow_screen_capture: bool,
 }
 
 impl Default for Hardening {
@@ -296,6 +299,7 @@ impl Default for Hardening {
             lock_location: true,
             disallow_airplane_mode: false,
             disallow_config_locale: true,
+            disallow_screen_capture: false,
         }
     }
 }

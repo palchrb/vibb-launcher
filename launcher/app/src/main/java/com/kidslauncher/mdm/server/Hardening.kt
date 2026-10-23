@@ -44,6 +44,13 @@ enum class HardeningRestriction(val defaultOn: Boolean) {
 data class HardeningPlan(
     /** Every [HardeningRestriction], set (`true`) or cleared (`false`). */
     val restrictions: Map<HardeningRestriction, Boolean>,
+    /**
+     * The screen capture switch (`hardening.disallow_screen_capture`, the user 2026-10-23):
+     * `DevicePolicyManager.setScreenCaptureDisabled` for the whole phone - no screenshots, screen
+     * recording or casting, Recents cards blank, `adb screencap` black. Not a `UserManager`
+     * restriction, so it sits beside [restrictions]; off by default, unlike most of them.
+     */
+    val screenCaptureDisabled: Boolean = false,
 ) {
     /** Turn location on before locking its setting. */
     val forceLocationOn: Boolean get() = restrictions[HardeningRestriction.CONFIG_LOCATION] == true
@@ -77,8 +84,14 @@ fun hardeningPlan(policy: HardeningPolicy?, managed: Boolean): HardeningPlan =
     HardeningPlan(
         HardeningRestriction.entries.associateWith { restriction ->
             managed && (policy.value(restriction) ?: restriction.defaultOn)
-        }
+        },
+        screenCaptureDisabled = managed && (policy?.disallowScreenCapture ?: false),
     )
+
+/** What to write with `setScreenCaptureDisabled` given what `getScreenCaptureDisabled` says now
+ * ([current]): `null` = nothing, it is already [wanted] (a write only on a change, like the
+ * camera policy). */
+fun screenCaptureWrite(current: Boolean, wanted: Boolean): Boolean? = wanted.takeIf { it != current }
 
 /** Managed for hardening = the enforced policy has an allowlist (fresh, cached or the fallback
  * plan - an override doesn't change which policy is enforced) or calls are managed. */
