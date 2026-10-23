@@ -55,8 +55,8 @@ private const val STATE_ENTERED = "entered"
  * giving up, except for our call screen, the system dialer/Telecom and the alarm).
  *
  * It always comes up on its glance page (design 25, [GlancePanel]): the clock, the music tile, the
- * newest missed calls and messages, "Lås opp" and Emergency call; "Lås opp" or a row leads to the
- * keypad stage - the keypad, Emergency call and the Parent code link. The PIN is checked off the
+ * newest missed calls and messages, the swipe hint and Emergency call; a swipe up (design 59d step J, the "Lås opp"
+ * button before it) or a row leads to the keypad stage - the keypad, Emergency call and the Parent code link. The PIN is checked off the
  * main thread (PBKDF2), the failure counted first ([PinLockRuntime.checkPin]). The window is
  * `FLAG_SECURE` on both stages: names, texts and the keys' ripples never reach a screenshot, a
  * recording or a cast. Not direct-boot-aware (it can't be: the kid PIN lives in CE storage).
@@ -276,7 +276,7 @@ class PinLockActivity : AppCompatActivity() {
     }
 
     /**
-     * "Lås opp" or a row as Android's face ([FaceTrigger.UNLOCK_TAP], live reads - P59-8): Android's PIN pad while it
+     * The swipe up ("Lås opp" before step J) or a row as Android's face ([FaceTrigger.UNLOCK_TAP], live reads - P59-8): Android's PIN pad while it
      * is locked; a tap on an ask older than [ANDROID_ASK_RETRY_MS] asks again (the run's bug 2: never dead taps); no
      * credential now - our own keypad.
      */
@@ -492,7 +492,7 @@ class PinLockActivity : AppCompatActivity() {
         // The glance page (design 25) between the keypad and the ring screen. Built defensively: a
         // fault here leaves the plain keypad, never a crash that trips the guard.
         glance = try {
-            // Design 59d step B: as the face (read at each tap) "Lås opp" and a row lead to the ASK stage.
+            // Design 59d step B: as the face (read at each tap) the swipe up (step J) and a row lead to the ASK stage.
             GlancePanel(this, frame, binding.root, ::onStage, face = { AndroidLock.faceOn }) { binding.pinEmergency.performClick() }
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "The glance page couldn't be built: ${e.javaClass.simpleName}")
@@ -710,6 +710,26 @@ class PinLockActivity : AppCompatActivity() {
         com.kidslauncher.mdm.server.UpdateFence.onFront(this)
         handler.removeCallbacks(waitTicker)
         handler.post(waitTicker)
+    }
+
+    /**
+     * Design 59d step J: the glance page's swipe up sees every touch first ([GlancePanel.swipe]); once it is recognised
+     * the views get a cancel (a row's tap, the rows' scroll) and the rest of the touch is the swipe's. A DOWN always
+     * reaches the views (and [onUserInteraction]). Not while the VoIP ring card covers the page.
+     */
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        val panel = glance ?: return super.dispatchTouchEvent(ev)
+        return when (panel.swipe(ev, covered = voipRing.root.visibility == View.VISIBLE)) {
+            GlancePanel.SwipeTouch.PASS -> super.dispatchTouchEvent(ev)
+            GlancePanel.SwipeTouch.CONSUME -> true
+            GlancePanel.SwipeTouch.CANCEL_VIEWS -> {
+                val cancel = android.view.MotionEvent.obtain(ev)
+                cancel.action = android.view.MotionEvent.ACTION_CANCEL
+                super.dispatchTouchEvent(cancel)
+                cancel.recycle()
+                true
+            }
+        }
     }
 
     /** Round 7 §3: a touch (or key) on the lock ends a notice wake's 15 s - the phone's own screen

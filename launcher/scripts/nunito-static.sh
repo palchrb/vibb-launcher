@@ -16,7 +16,9 @@ curl -sfL -o "$work/OFL.txt" "$BASE/OFL.txt"
 echo "$TTF_SHA256  $work/Nunito.ttf" | sha256sum -c -
 echo "$OFL_SHA256  $work/OFL.txt" | sha256sum -c -
 
-for pair in 600:semibold 700:bold 800:extrabold; do
+# 300 (light) is only for the glance's clock as Android's small clock (design 59d step L, JL-2); it is NOT in
+# res/font/nunito.xml's family: a normal (400) request there would pick 300 over 600.
+for pair in 300:light 600:semibold 700:bold 800:extrabold; do
     weight=${pair%%:*}
     name=${pair#*:}
     fonttools varLib.instancer "$work/Nunito.ttf" "wght=$weight" --static \

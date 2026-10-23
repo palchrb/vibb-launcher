@@ -56,7 +56,27 @@ enum class HealTrigger(val label: String, val flipMs: Long = STATUS_BAR_HEAL_FLI
      * restart, the lock back after a call, an alarm, a yield or a re-front - at most once a minute
      * ([lockResumedHealDue]). */
     LOCK_RESUMED("lock resumed"),
+
+    /** Design 59d §8.9 (a): the system started Home while LOCKED ([systemHomeHealDue]) - the home gesture got
+     * through, so SystemUI's copy of lock task's flags lacks the Home disable: heal at once. */
+    SYSTEM_HOME("the system's Home while locked"),
 }
+
+/** At most one [HealTrigger.SYSTEM_HOME] heal per this long (a swipe that gets through again within it waits). */
+const val SYSTEM_HOME_HEAL_MIN_GAP_MS = 5_000L
+
+/**
+ * Design 59d §8.9, decision (a) (`docs/testing/2026-10-23-edge-swipe-capture.md`): with lock task's flags in sync,
+ * Quickstep refuses the bottom-edge swipe over the lock (`home_disabled`: `TYPE_RESET_GESTURE`); only with the Home
+ * disable missing from SystemUI's copy (16d's desync) does it pick `DeviceLockedInputConsumer`, which starts Home - the
+ * user's recording: the glance slides up, SystemUI's face, a dark frame, the lock back from Home's locked resume. So a
+ * Home start that isn't ours ([broughtByUs]: `HomeFront.EXTRA_BROUGHT`) while our lock is [locked] and the screen is
+ * [interactive] is the desync's proof: heal now - at most every [SYSTEM_HOME_HEAL_MIN_GAP_MS] ([lastHealElapsedMs]) -
+ * so the next swipe is refused again. The first swipe's flash stays (an app can't see SystemUI's flags before it).
+ */
+fun systemHomeHealDue(locked: Boolean, interactive: Boolean, broughtByUs: Boolean, lastHealElapsedMs: Long?, nowElapsedMs: Long): Boolean =
+    locked && interactive && !broughtByUs &&
+        (lastHealElapsedMs == null || nowElapsedMs - lastHealElapsedMs !in 0 until SYSTEM_HOME_HEAL_MIN_GAP_MS)
 
 /**
  * Whether the lock's resume heals now: never before, or the last one [STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS]

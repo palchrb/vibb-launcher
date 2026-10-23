@@ -358,6 +358,8 @@
     <string name="music_pause">Pause</string>
     <string name="music_previous">Previous</string>
     <string name="music_next">Next</string>
+    <!-- The unlock's name: since design 59d step J/§8.13 the glance's handle's TalkBack description and click
+         action (the "Lås opp" button and the hint line went). -->
     <string name="lock_media_unlock">Unlock</string>
     <!-- The lock's flashlight button (design 41 §1.3): its name and its state for TalkBack. -->
     <string name="lock_torch">Flashlight</string>

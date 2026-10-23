@@ -3,13 +3,16 @@ package com.kidslauncher.mdm.lock
 import com.kidslauncher.mdm.badges.GlanceConversation
 import com.kidslauncher.mdm.music.MusicSession
 import com.kidslauncher.mdm.music.clockText
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /*
  * The lock's glance page (design 25, docs/design/25-lock-glance.md at the monorepo root, mockup
  * LockGlance.dc.html): pure, LockGlanceTest. Replaces step 4's media view (lock/LockMedia.kt): the
  * PIN lock always comes up on the glance page - clock, date, the music tile while something plays,
- * up to three notification rows, "Lås opp", "Nødsamtale" - and "Lås opp" or a row leads to the
- * keypad. lock/GlancePanel draws it inside PinLockActivity; lock/GlanceOpener opens a row's target
+ * up to three notification rows, "Nødsamtale" - and the swipe up (design 59d step J; the "Lås opp" button before it)
+ * or a row leads to the keypad. lock/GlancePanel draws it inside PinLockActivity; lock/GlanceOpener opens a row's target
  * after the right code.
  *
  * It weakens nothing: the page's only actions are the music's play/pause, previous and next, the
@@ -87,7 +90,7 @@ sealed interface GlanceStageEvent {
     /** The lock comes up with the screen on ([lockStageDue]): the first show, after a screen-off. */
     data object LockUp : GlanceStageEvent
 
-    /** "Lås opp". */
+    /** The swipe up, or TalkBack's "Lås opp" on the hint line (design 59d step J; the "Lås opp" button before it). */
     data object Unlock : GlanceStageEvent
 
     /** A row: its target, or `null` when none may be taken (a time rule leaves the app unusable). */
@@ -115,6 +118,76 @@ fun glanceStageStep(state: GlanceStageState, event: GlanceStageEvent, face: Bool
     is GlanceStageEvent.Row -> GlanceStageState(if (face) LockStage.ASK else LockStage.KEYPAD, event.target)
     GlanceStageEvent.Back -> if (state.stage != LockStage.GLANCE) GlanceStageState.GLANCE else state
     GlanceStageEvent.OwnKeypad -> if (state.stage == LockStage.ASK) state.copy(stage = LockStage.KEYPAD) else state
+}
+
+// ---- the swipe up (design 59d step J) ------------------------------------------------------------
+
+/** A fling counts from this many dp upwards (59d §8.7). */
+const val GLANCE_SWIPE_FLING_DP = 48f
+
+/** ... at this speed upwards at the lift, dp per second (a slow 48 dp drag is no fling). */
+const val GLANCE_SWIPE_FLING_DPS = 500f
+
+/** A drag counts once it passes this share of the page's height, lifted or not. */
+const val GLANCE_SWIPE_DRAG_SHARE = 1f / 3f
+
+/** What a touch on the glance page is to the swipe ([glanceSwipeStep]). */
+enum class GlanceSwipe {
+    /** Not (yet) a swipe: the touch goes on to the views. */
+    NONE,
+
+    /** The swipe up: "Lås opp" as the button was - the ASK stage as the face, our keypad in own mode. */
+    UNLOCK,
+}
+
+/**
+ * Whether a touch is never the glance's swipe: it started on a control that keeps the whole touch ([onControl]: the music
+ * tile's buttons, the timer's Stopp, the flashlight, Nødsamtale) or in the rows' scroll while it can scroll
+ * ([scrollTakes]: a drag there scrolls). Since design 59d §8.13 a swipe from the bottom edge - the handle, the gesture
+ * inset - is the page's too: when lock task refuses the system's Home gesture the touches reach our window, and when the
+ * system takes it (a desync, §8.9) its monitor pilfers the pointer and we get `ACTION_CANCEL`, which asks nothing.
+ */
+fun glanceSwipeBlocked(onControl: Boolean, scrollTakes: Boolean): Boolean = onControl || scrollTakes
+
+// ---- the handle (design 59d §8.13) ----------------------------------------------------------------
+
+/**
+ * Android's gesture handle drawn on our glance (59d §8.13, the user): lock task hides SystemUI's navigation bar while we
+ * are LOCKED, so there is only ever ours. A pill [widthDp] x [heightDp], fully rounded, white at [alpha], its bottom
+ * [bottomDp] above the window's bottom edge - in the gesture inset, where SystemUI draws its own.
+ */
+data class GlanceHandle(val widthDp: Float, val heightDp: Float, val bottomDp: Float, val alpha: Float)
+
+/**
+ * Android's defaults for a phone without a profile (§8.13): 108 x 4 dp, rounded, white at 80 %, its bottom 8 dp above
+ * the window's bottom - inside the bottom inset, as SystemUI's own (8 dp *above* the inset, read literally, would sit on
+ * Nødsamtale's row: the page's content ends 8 dp above the inset).
+ */
+val DEFAULT_GLANCE_HANDLE = GlanceHandle(widthDp = 108f, heightDp = 4f, bottomDp = 8f, alpha = 0.8f)
+
+/** The handle on this phone: its profile's (SystemUI's measured), else [DEFAULT_GLANCE_HANDLE]. */
+fun glanceHandle(profile: ClockGeometry?): GlanceHandle = profile?.handle ?: DEFAULT_GLANCE_HANDLE
+
+/**
+ * The handle's view (dp): the pill's width, and as tall as the pill with [GlanceHandle.bottomDp] above and below it - the
+ * view sits on the window's bottom edge with the pill centred in it, so TalkBack's node covers the inset and no more
+ * (never Nødsamtale's row above it).
+ */
+fun glanceHandleViewHeightDp(handle: GlanceHandle): Float = handle.heightDp + 2 * handle.bottomDp
+
+/**
+ * Design 59d step J (the user, rc.2: "la vår låseskjerm bli swipet oppover så den er identisk med android sin egen"):
+ * a vertical swipe up anywhere on the glance page asks as "Lås opp" did. [dy] is the travel upwards since the down
+ * (dp, up positive), [dx] sideways (dp), [vy] the speed upwards at the lift (dp/s), [page] the page's height (dp),
+ * [lifted] the finger is up. UNLOCK for a drag past a third of the page (also before the lift), or at the lift for a
+ * fling of at least [GLANCE_SWIPE_FLING_DP] at [GLANCE_SWIPE_FLING_DPS]; always mostly vertical; never for a touch that
+ * [startedOnTappable] ([glanceSwipeBlocked]). It only asks: what opens is still `faceStep`'s verdict (or our keypad).
+ */
+fun glanceSwipeStep(dy: Float, vy: Float, startedOnTappable: Boolean, dx: Float = 0f, page: Float, lifted: Boolean): GlanceSwipe {
+    if (startedOnTappable || dy <= kotlin.math.abs(dx)) return GlanceSwipe.NONE
+    val drag = dy >= page * GLANCE_SWIPE_DRAG_SHARE
+    val fling = lifted && dy >= GLANCE_SWIPE_FLING_DP && vy >= GLANCE_SWIPE_FLING_DPS
+    return if (drag || fling) GlanceSwipe.UNLOCK else GlanceSwipe.NONE
 }
 
 /**
@@ -193,6 +266,107 @@ class GlanceCoalescer(private val post: (() -> Unit) -> Unit, private val work: 
     }
 }
 
+// ---- the clock as Android's small clock (design 59d step L) -------------------------------------
+
+/**
+ * Where Android's small single-line keyguard clock sits on one kind of phone (59d §8.8, step L: the glance takes its
+ * geometry - the same left edge, baseline and size, a thin weight - with the short date in Android's date's place), in
+ * dp from the window's top left at [GLANCE_CLOCK_PROFILE_DENSITY]: the clock's first digit's ink starts at
+ * [clockInkStartDp] (Nunito's side bearings vary from 0.04 to 0.11 em by digit, so the box moves with the first digit -
+ * Android's ink sits within 2 px of this for every digit), its baseline at [clockBaselineDp], its size [clockDp] (dp:
+ * Android's small clock doesn't follow the font scale); the date's box at [dateStartDp] (a capital's bearing is a pixel
+ * or two), its baseline at [dateBaselineDp], [dateSp]. Measured from frames of SystemUI's face, so the ink's left edge,
+ * the baseline and the digits' height match - not the glyphs (Nunito is wider). The alarm line goes under the date.
+ */
+data class ClockGeometry(
+    val name: String,
+    val clockInkStartDp: Float,
+    val clockBaselineDp: Float,
+    val clockDp: Float,
+    val dateStartDp: Float,
+    val dateBaselineDp: Float,
+    val dateSp: Float,
+    /** Design 59d §8.13: SystemUI's gesture handle on that phone. */
+    val handle: GlanceHandle = DEFAULT_GLANCE_HANDLE,
+)
+
+/** The density the profiles were measured at (the Jelly Star's 240 dpi; the emulator at `wm density 240`). */
+const val GLANCE_CLOCK_PROFILE_DENSITY = 1.5f
+
+/** ... and the screen width in dp (480 px at 240 dpi): the two phones measured so far. */
+const val GLANCE_CLOCK_PROFILE_WIDTH_DP = 320
+
+/**
+ * The emulator's Pixel SystemUI (Android 16, `handy36` at `wm density 240`, 480x854 px), measured from SystemUI's face
+ * with the small clock (`docs/testing/screens/59d-jl/clock-twin.png`): the digits' ink 92 px high from y 180 to the
+ * baseline at 273 px (the last ink row 272), the first digit's ink at x 49 ("1") to 53 ("5") - 51 px, 34 dp, is within
+ * 2 px of both; the date's capitals 17 px high on a baseline at 329 px, its ink at x 50. In Nunito SemiBold (digits
+ * 0.712 em high, an "F" 0.082 em from the box's left edge): 86 dp; 16 sp, the box at 32 dp. Since the code QA's JL-2 the
+ * clock is Nunito Light (300; its digits are 0.712 em high too). The handle (§8.13): SystemUI's, measured on the same
+ * frames while it showed - 162 x 6 px (108 x 4 dp), rows 833-838 (its bottom 10 dp above the window's, centred in the
+ * 24 dp gesture inset), x 159-320, luma 235 on the night (white at about 92 %).
+ */
+val EMULATOR_PIXEL_CLOCK = ClockGeometry(
+    name = "emulator Pixel",
+    clockInkStartDp = 34f,
+    clockBaselineDp = 182f,
+    clockDp = 86f,
+    dateStartDp = 32f,
+    dateBaselineDp = 219f,
+    dateSp = 16f,
+    handle = GlanceHandle(widthDp = 108f, heightDp = 4f, bottomDp = 10f, alpha = 0.92f),
+)
+
+/**
+ * The Jelly Star (Unihertz, AOSP SystemUI). TODO(59d §8.8): measure a frame of its small clock (its own font and
+ * placement) and put its numbers here - until then the emulator's, which are at least the right kind of place.
+ */
+val JELLY_STAR_CLOCK = EMULATOR_PIXEL_CLOCK.copy(name = "Jelly Star")
+
+/**
+ * The clock profile for this phone ([model] and [manufacturer] as `Build` reports them, [density] the display's,
+ * [widthDp] the screen's width in dp): the emulator's Pixel image (`sdk_gphone*` by Google) or the Jelly Star, only at
+ * 240 dpi **and** 320 dp wide; anything else is `null`, and the glance keeps its own centred clock (56/40 sp, the long
+ * date). No PWA switch.
+ *
+ * Why both keys (the code QA's JL-6): SystemUI lays its clock out in dp, so the width in dp is what makes the numbers
+ * fit (34 dp plus Nunito's widest "00:00" at 86 dp); the density pins the place the frames were measured at, so a
+ * "Display size" change or another density falls back cleanly instead of guessing. Both known phones are 480 px at 240
+ * dpi = 320 dp; a second density joins once it is measured. The Jelly Star's model string isn't verified yet
+ * (`getprop ro.product.model` on the phone), so spaces, underscores and case are ignored ("Jelly Star", "JellyStar",
+ * "Jelly_Star"); a phone that matches nothing is logged once (`GlancePanel`).
+ */
+fun glanceClockProfile(model: String?, manufacturer: String?, density: Float, widthDp: Int): ClockGeometry? {
+    if (abs(density - GLANCE_CLOCK_PROFILE_DENSITY) > 0.01f || widthDp != GLANCE_CLOCK_PROFILE_WIDTH_DP) return null
+    val name = model.orEmpty().trim()
+    val bare = name.lowercase(Locale.ROOT).filter { it.isLetterOrDigit() }
+    val maker = manufacturer.orEmpty().trim()
+    return when {
+        maker.equals("Google", ignoreCase = true) && name.startsWith("sdk_gphone", ignoreCase = true) -> EMULATOR_PIXEL_CLOCK
+        maker.equals("Unihertz", ignoreCase = true) && "jellystar" in bare -> JELLY_STAR_CLOCK
+        else -> null
+    }
+}
+
+/** The date's skeleton: Android's short date as the profile's ("Fre. 23. okt.", "Fri, Oct 23"), else the long one. */
+fun glanceDateSkeleton(profile: Boolean): String = if (profile) "EEEdMMM" else "EEEEdMMMM"
+
+/** The date as Android's face writes it: the first letter capitalised ("fre. 23. okt." -> "Fre. 23. okt."). */
+fun glanceDateCapitalised(text: String, locale: Locale): String =
+    text.replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
+
+/**
+ * The top margin (px) that puts a view's baseline at [targetPx] from the window's top: with no margin the view would
+ * start at [topPx], its baseline [baselineInViewPx] below its own top; never below [floorPx] (the date never climbs above
+ * the clock's baseline - its floor is minus the clock's descent).
+ */
+fun baselineMarginPx(targetPx: Float, topPx: Float, baselineInViewPx: Float, floorPx: Float = 0f): Int =
+    maxOf(floorPx, targetPx - topPx - baselineInViewPx).roundToInt()
+
+/** The start margin (px) that puts a view's box at [targetPx] from the window's left when its parent's content starts at
+ * [contentStartPx]; never negative. */
+fun startMarginPx(targetPx: Float, contentStartPx: Float): Int = maxOf(0f, targetPx - contentStartPx).roundToInt()
+
 // ---- the flashlight button (design 41 §1.3) ------------------------------------------------------
 
 /**
@@ -227,8 +401,8 @@ const val GLANCE_MAX_ROWS = 3
 
 /**
  * Each part's height as measured (any unit, the same for all and for the available height):
- * [fixed] = "Lås opp" and the bottom row ("Nødsamtale" and the flashlight, design 41) with their
- * margins; [date] with its margin; the tiles with their top margin (the full one with its progress
+ * [fixed] = the swipe hint line (design 59d step J; "Lås opp" before it) and the bottom row ("Nødsamtale" and the
+ * flashlight, design 41) with their margins; [date] with its margin; the tiles with their top margin (the full one with its progress
  * row, r9 §3); [clockFull] the timer tile with its margin (design 42); [rowsTop] the rows' scroll's
  * margin below a tile, [rowsTopNoTile] below the date; [row] one row (the tallest); [rowGap] between
  * rows; [more] the "more" line (nothing above it); [fade] what the scroll's bottom fade covers past a row's own

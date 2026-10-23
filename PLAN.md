@@ -809,6 +809,17 @@ findings, merge to `main`, full suite once.
   lock wallpaper as the face = the glance's ground with its scrim). **G not built**: the mid-round capture
   (`docs/testing/2026-10-23-d59d-g-capture.md`) found no chrome-pass write cancelling the pad - RC F2 was most likely
   the relock's Home start, which step A queues now. Code QA (`qa-59d-round1-code.md`): merge after fixes; the fix round (R1-1..11) is on the branch - R1-1 decided by the user (the photo on Android's face as the glance's ground), R1-8 not built.
+  Steps J, L and §8.9's edge swipe (branch `d59d-jl`, 59d §8.11): J built - the swipe up anywhere on the glance asks
+  as "Lås opp" did (the button gone, the hint line "Sveip opp for å låse opp" in its place, TalkBack's action on it).
+  L built - the glance's clock takes Android's small clock's geometry on a phone with a profile (the emulator's Pixel,
+  measured on `handy36`; the Jelly Star's entry a TODO with the emulator's numbers - **measure a frame of its face**),
+  else today's centred clock. §8.9 decided (a) from the capture (`docs/testing/2026-10-23-edge-swipe-capture.md`): with
+  lock task's flags in sync Quickstep refuses the edge swipe; the user's swipes went through on desynced flags - the
+  system's Home while LOCKED now heals them at once (16d's heal, `HealTrigger.SYSTEM_HOME`). Code QA
+  (`qa-59d-jl-code.md`): merge after fixes; the fix round (JL-1..8) and §8.13 (Android's gesture handle on the glance
+  in the hint line's place, a swipe from it asks; Nunito Light for the profile clock) are on the branch - rc.3 next.
+  **On rc.3**: two edge swipes in a row (the second refused?) and the Jelly Star's `ro.product.model` and a frame of its
+  face for its clock profile.
 - **6-inch / Android 15 check (2026-10-23, `docs/testing/2026-10-23-six-inch-android15.md`, AVD six35 = pixel_7 411x914 dp,
   API 35):** every screen fits at font 1.0 and 1.3, nothing broken or oversized, just more empty space. Findings: **F1
   (High, M)** an UNARMED reboot (a crash, `adb reboot`) never finishes booting on an image whose stock launcher isn't
