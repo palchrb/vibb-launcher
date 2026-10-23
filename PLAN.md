@@ -758,7 +758,11 @@ findings, merge to `main`, full suite once.
   first). Tagged `server-v0.37.0` and `launcher-v0.36.0-rc.1` for the user's emulator; VoIP (Element X, WhatsApp) over
   the lock, the notice wake and the Jelly Star checks (§9) are the user's. Small findings from the run, not blocking:
   F1 (today's lock only: a Recents press leaves a stale BlockedAppActivity that blocks app starts in a later pause until
-  Back - goes away with Android's lock); F2 (ending a pause while the PIN pad is open closes the pad; tap "Lås opp"
+  Back - goes away with Android's lock; **seen again 2026-10-23 without any Child PIN**, screen-capture run and its code
+  QA `qa-screen-capture-code.md` tail: ~14 s after a PWA pause with kiosk on and Overview opened earlier, `wm_finish_activity
+  ... HomeActivity, clear-task-all`, then `BlockedAppActivity` "not available right now" over the stock launcher, lock task
+  `LOCKED` with `mLockTaskPackages u0:[]`, the task `type=home` not `type=recents`; one Back ends it. Open: why the pause's
+  kiosk-off pass finishes our Home, and the "goes away with Android's lock" claim); F2 (ending a pause while the PIN pad is open closes the pad; tap "Lås opp"
   again); F3 (after a reboot the stock Pixel launcher shows ~10 s before our Home on the debug build - fix on branch
   `fix-f3-boot-cover`, design 59 "F3": android mode implies the boot cover, armed also at the locked boot, and it
   waits for our Home; code QA `qa-f3-boot-cover-code.md` fixed (F3C-1..7); the F3 emulator run
