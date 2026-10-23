@@ -17,7 +17,7 @@ debugging was off, a Parent PIN was set and the kiosk was on (the default). The 
 | Recents | A card taken before the switch kept its picture ([`recents-old-card.png`](screens/screen-capture/recents-old-card.png)). After Clock was opened again and left, its card was blank ([`recents-new-card-blank.png`](screens/screen-capture/recents-new-card-blank.png)). Overview's Screenshot/Select actions were greyed out |
 | A pause does not lift it | The PWA's "Unlock for 2 h" (`start_pause`) ran (`mdm.restrictions_paused=true`). `screenCaptureDisabled` was still `true`, screencap was still black and `KEYCODE_SYSRQ` was still refused with the same line |
 | Switch off | `AppEnforcer: Screen capture enabled by policy`, `Screen capture disallowed users: []`. Screencap worked again (29 787 non-zero bytes). `KEYCODE_SYSRQ` saved `Screenshot_20261023-183258.png` (`Screenshot: Saved screenshot: Result{uri=content://0@media/external/images/media/20 ...`) |
-| The PWA row | [`pwa-restrictions-on.png`](screens/screen-capture/pwa-restrictions-on.png) (390 px): "Screenshots and screen recording off" is last in the first group, on. At this width the label wraps to two lines |
+| The PWA row | [`pwa-restrictions-on.png`](screens/screen-capture/pwa-restrictions-on.png) (390 px): "Screenshots and screen recording off" is last in the first group, on. At this width the label wraps to two lines; after the code QA it is "Block screenshots" |
 
 The emulator console's screenshot (`adb emu screenrecord screenshot`) still works with the switch on, because it
 reads the host's frame. The Recents images above were taken that way.

@@ -92,11 +92,20 @@ class HardeningTest {
         val setters = sources.filter { it.readText().contains("setScreenCaptureDisabled(") }
         assertEquals(listOf("AppEnforcer.kt"), setters.map { it.name })
         val enforcer = setters.single().readText()
-        val calls = Regex("""syncScreenCapture\(dpm, admin, (true|false)\)""").findAll(enforcer).map { m ->
-            enforcer.substring(enforcer.lastIndexOf('\n', m.range.first) + 1, m.range.first)
-        }.toList()
-        assertEquals(2, calls.size)
-        assertTrue(calls.toString(), calls.all { it.contains("plan.screenCaptureDisabled") })
+        // Exactly these two guards: any other term (a pause, the override) fails.
+        val calls = enforcer.lines().map { it.trim() }.filter { "syncScreenCapture(dpm, admin," in it }
+        assertEquals(
+            listOf(
+                "if (plan.screenCaptureDisabled) syncScreenCapture(dpm, admin, true)",
+                "if (!plan.screenCaptureDisabled) syncScreenCapture(dpm, admin, false)",
+            ),
+            calls,
+        )
+        // The one write reads the policy first, so an unchanged value is never written again.
+        val body = enforcer.substringAfter("private fun syncScreenCapture(").substringBefore("\n    }")
+        val read = body.indexOf("screenCaptureWrite(dpm.getScreenCaptureDisabled(admin), disabled) ?: return")
+        assertTrue(body, read >= 0 && read < body.indexOf("setScreenCaptureDisabled("))
+        assertEquals(1, Regex("""setScreenCaptureDisabled\(""").findAll(enforcer).count())
     }
 
     @Test

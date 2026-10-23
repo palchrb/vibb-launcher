@@ -72,8 +72,8 @@ Not in this step: `DISALLOW_USER_SWITCH`, a warning for allowlisted Android Sett
 
 ### Screen capture (2026-10-23, branch `screen-capture`)
 
-The user's decision (PLAN "Screen capture switch"): one more switch in Advanced › Restrictions, "Screenshots and screen
-recording off", policy key `hardening.disallow_screen_capture` (`device_policy` column, migration `0089`).
+The user's decision (PLAN "Screen capture switch"): one more switch in Advanced › Restrictions, "Block screenshots"
+(it covers screen recording and screen casting too; the ⓘ says so), policy key `hardening.disallow_screen_capture` (`device_policy` column, migration `0089`).
 
 - **Default off**, unlike most of the switches: the server's `Hardening::default()`, the column default 0, and the
   launcher's missing-key fallback (an older server) are all off.

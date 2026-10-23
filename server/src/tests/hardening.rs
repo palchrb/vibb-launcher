@@ -202,6 +202,7 @@ async fn advanced_shows_the_switches_as_one_form() {
     }
     assert_eq!(html.matches(&format!("action=\"{action}\"")).count(), 1);
     assert!(html.contains("Block safe mode") && html.contains("Block USB debugging"));
+    assert!(html.contains(">Block screenshots</span>"));
     // The device page no longer has the form; its Advanced row leads here.
     let summary = app
         .get_page(&device_page(id, Section::Summary), &cookie)
