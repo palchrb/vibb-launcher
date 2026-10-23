@@ -90,18 +90,27 @@ fun effectiveWallpaper(allowed: List<Wallpaper>, pickedId: Long?, cachedHashes: 
     return allowed.firstOrNull { usable(it, cachedHashes) } ?: NAVY
 }
 
+/** Design 59d step K: what the glance draws as its ground - its wallpaper ([lockWallpaper]'s choice) and its black
+ * scrim as ARGB (`WallpaperStore.State.lock`/`lockScrimArgb`). */
+data class GlanceGround(val wallpaper: Wallpaper, val scrimArgb: Int)
+
+/** Design 59d step K: the scrim baked into Android's lock wallpaper - the glance's own, as the face with a known ground;
+ * none otherwise (own mode, the night mark). */
+fun lockScreenScrim(androidFace: Boolean, glance: GlanceGround?): Int =
+    if (androidFace && glance != null) glance.scrimArgb else 0
+
 /**
  * The lock screen: a photo only when the parent ticked "also on the lock screen" (anyone holding
  * the locked phone sees it, QA 08 #1); otherwise navy. Colours go on both.
- * Design 59b §5 ([androidFace]: Android's own face and pad show this wallpaper): the night ground with the Vibb mark
- * (the user's decision). Design 59d step K: **always** as the face, before the parent's lock-photo opt-in - in android
- * mode Android's wallpaper is only ever seen in glimpses (SystemUI's face for a few frames at a wake, the fade-out), and
- * the user's rc.2 recording showed 2 frames of the blurred family photo, then 3 of the sharp one, before the glance at
- * every wake. Own mode unchanged: the opt-in decides there; the glance's own background ([lockWallpaper]) keeps the
- * opt-in in both modes.
+ * Design 59d step K (the user, 2026-10-23: "Jeg ville heller at VÅR bakgrunn er der på android sin klokkebakgrunn"):
+ * as Android's face ([androidFace]) it is **our glance's own ground** ([glance]: [lockWallpaper]'s choice - the parent's
+ * lock wallpaper when allowed and present, else Home's - with the glance's scrim baked in, [lockScreenScrim]), so the
+ * few frames of SystemUI's face at a wake look like our page. Before the opt-in: it is what the glance already shows to
+ * anyone holding the phone. The night ground with the Vibb mark (design 59b §5) only while no ground is known yet
+ * ([glance] null: the store not worked out). Own mode unchanged: design 08's rule, the opt-in deciding.
  */
-fun lockScreenFill(home: Wallpaper, androidFace: Boolean = false): WallpaperFill = when {
-    androidFace -> WallpaperFill.NightMark
+fun lockScreenFill(home: Wallpaper, androidFace: Boolean = false, glance: GlanceGround? = null): WallpaperFill = when {
+    androidFace -> glance?.wallpaper?.fill ?: WallpaperFill.NightMark
     home.fill is WallpaperFill.Image && home.lockScreen -> home.fill
     home.fill is WallpaperFill.Image -> NAVY.fill
     else -> home.fill

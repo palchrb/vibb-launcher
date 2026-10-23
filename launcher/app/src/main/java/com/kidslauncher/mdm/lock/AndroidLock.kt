@@ -143,7 +143,7 @@ object AndroidLock {
         val was = faceOn
         faceOn = face
         if (face != was) CameraLock.onLockChanged(app)
-        // Design 59d step K: Android's lock wallpaper is the night mark as the face - re-applied on both edges.
+        // Design 59d step K: Android's lock wallpaper is the glance's ground as the face - re-applied on both edges.
         if (face != was) com.kidslauncher.mdm.ui.wallpaper.WallpaperStore.faceChanged(app)
         if (was && !face) lockScreenInfo(dpm, admin, null)
         if (requested || was) {

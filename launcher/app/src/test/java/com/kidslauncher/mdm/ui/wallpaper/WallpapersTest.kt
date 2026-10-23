@@ -72,20 +72,38 @@ class WallpapersTest {
     }
 
     @Test
-    fun `59b, 59d K - as Android's face the lock wallpaper is always the night ground with the mark`() {
+    fun `59d K - as Android's face its lock wallpaper is the glance's own ground with its scrim`() {
+        val photoGround = GlanceGround(hytta, 0x66000000)
+        val skyGround = GlanceGround(sky, 0x1A000000)
+        // The glance's ground (lockWallpaper's choice), whatever the opt-in: Home's photo too.
+        assertEquals(hytta.fill, lockScreenFill(sky, androidFace = true, glance = photoGround))
+        assertEquals(sky.fill, lockScreenFill(sky, androidFace = true, glance = skyGround))
+        assertEquals(hytta.fill, lockScreenFill(sjo, androidFace = true, glance = photoGround))
+        assertEquals(0x66000000, lockScreenScrim(androidFace = true, glance = photoGround))
+        // The night mark only while no ground is known yet.
         assertEquals(WallpaperFill.NightMark, lockScreenFill(hytta, androidFace = true))
-        assertEquals(WallpaperFill.NightMark, lockScreenFill(sky, androidFace = true))
-        assertEquals(WallpaperFill.NightMark, lockScreenFill(NAVY, androidFace = true))
-        // 59d K: before the parent's lock-photo opt-in (the rc.2 recording's family photo at every wake).
-        assertEquals("the face wins over the opt-in", WallpaperFill.NightMark, lockScreenFill(sjo, androidFace = true))
-        // Own-mode rows unchanged: design 08's rule, the opt-in deciding (the default).
-        for (w in listOf(hytta, sjo, sky, NAVY)) assertEquals(lockScreenFill(w), lockScreenFill(w, androidFace = false))
-        assertEquals(sjo.fill, lockScreenFill(sjo))
-        // The key carries the lock fill: the face's edges and a rollback re-apply by themselves.
+        assertEquals(0, lockScreenScrim(androidFace = true, glance = null))
+        // Own-mode rows unchanged: design 08's rule, the opt-in deciding, no scrim - and the same keys.
+        for (w in listOf(hytta, sjo, sky, NAVY)) {
+            assertEquals(lockScreenFill(w), lockScreenFill(w, androidFace = false, glance = photoGround))
+            assertEquals(wallpaperKey(w, 720, 1600), wallpaperKey(w, 720, 1600, androidFace = false, glance = photoGround))
+        }
+        assertEquals(0, lockScreenScrim(androidFace = false, glance = photoGround))
         assertEquals("night_mark", WallpaperFill.NightMark.describe())
-        assertTrue(wallpaperKey(sky, 720, 1600, androidFace = true) != wallpaperKey(sky, 720, 1600))
-        assertTrue(wallpaperKey(sjo, 720, 1600, androidFace = true) != wallpaperKey(sjo, 720, 1600))
-        // ... and an apply comes at the face's edge itself, not only at the next wallpaper sync.
+    }
+
+    /** Design 59d step K: Android's lock wallpaper is re-applied whenever the glance's ground changes, not only a hash. */
+    @Test
+    fun `59d K - the key follows the glance's ground, its scrim and the face, and the edges apply at once`() {
+        val ground = GlanceGround(hytta, 0x66000000)
+        val face = wallpaperKey(sky, 720, 1600, androidFace = true, glance = ground)
+        assertTrue("the mode", face != wallpaperKey(sky, 720, 1600))
+        assertTrue("another ground (the parent's lock wallpaper, the opt-in)", face != wallpaperKey(sky, 720, 1600, androidFace = true, glance = GlanceGround(sjo, 0x66000000)))
+        assertTrue("another scrim", face != wallpaperKey(sky, 720, 1600, androidFace = true, glance = ground.copy(scrimArgb = 0x40000000)))
+        assertTrue(face.contains("|lockscrim=66000000|"))
+        // The photo on the lock still counts as ours for a revoked photo's reset.
+        assertEquals(setOf(photo), imagesInKey(face))
+        // The face's edges apply at once; every apply and the systemShows check pass the glance's ground.
         val androidLock = listOf("src/main/java/com/kidslauncher/mdm/lock/AndroidLock.kt", "app/src/main/java/com/kidslauncher/mdm/lock/AndroidLock.kt")
             .map { java.io.File(it) }.first { it.exists() }.readText()
         assertTrue(androidLock.substringAfter("fun face(").substringBefore("\n    }\n")
@@ -93,17 +111,21 @@ class WallpapersTest {
         val store = listOf("src/main/java/com/kidslauncher/mdm/ui/wallpaper/WallpaperStore.kt", "app/src/main/java/com/kidslauncher/mdm/ui/wallpaper/WallpaperStore.kt")
             .map { java.io.File(it) }.first { it.exists() }.readText()
         assertTrue(store.substringAfter("fun faceChanged(").substringBefore("\n    }\n").contains("applyAndRefresh(app)"))
-        // The glance's own background keeps the opt-in in both modes.
-        assertEquals(sjo, lockWallpaper(emptyList(), null, sjo, emptySet()))
+        assertTrue(store.contains("WallpaperApplier.applyIfNeeded(app, state.current, allowedImages, glanceGround(state))"))
+        assertTrue(store.contains("WallpaperApplier.systemShows(context, current, GlanceGround(lock, blackScrimArgb(lockScrimAlpha)))"))
+        assertTrue(store.contains("lockScrimArgb = blackScrimArgb(lockScrimAlpha),"))
         val applier = listOf("src/main/java/com/kidslauncher/mdm/ui/wallpaper/WallpaperApplier.kt", "app/src/main/java/com/kidslauncher/mdm/ui/wallpaper/WallpaperApplier.kt")
             .map { java.io.File(it) }.first { it.exists() }.readText()
-        assertTrue(applier.contains("return wallpaperKey(home, w, h, com.kidslauncher.mdm.lock.AndroidLock.faceOn)"))
-        assertTrue(applier.contains("val lock = lockScreenFill(home, com.kidslauncher.mdm.lock.AndroidLock.faceOn)"))
+        assertTrue(applier.contains("return wallpaperKey(home, w, h, com.kidslauncher.mdm.lock.AndroidLock.faceOn, glance)"))
+        val setBoth = applier.substringAfter("private fun setBoth(").substringBefore("\n    }\n")
+        assertTrue(setBoth.contains("val lock = lockScreenFill(home, face, glance)"))
+        assertTrue(setBoth.contains("if ((lockScrim ushr 24) != 0) Canvas(lockBitmap).drawColor(lockScrim)"))
         // The rc.2 run's R3: one fill on both is one set with both flags (the rollback) - SystemUI's ThemeOverlayController
         // labels such a set "home" (color_both 1); the face's lock-first, home-last pair keeps the palette on home's colours.
-        val setBoth = applier.substringAfter("private fun setBoth(").substringBefore("\n    }\n")
-        assertTrue(setBoth.contains("if (lock == home.fill) {\n                systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)"))
+        assertTrue(setBoth.contains("if (lock == home.fill && lockScrim == 0) {\n                systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)"))
         assertTrue(setBoth.indexOf("WallpaperManager.FLAG_LOCK) != 0") < setBoth.indexOf("WallpaperManager.FLAG_SYSTEM)\n"))
+        // The glance's own background keeps the opt-in in both modes.
+        assertEquals(sjo, lockWallpaper(emptyList(), null, sjo, emptySet()))
     }
 
     @Test
