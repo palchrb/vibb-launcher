@@ -440,7 +440,11 @@ needs a status field, both directories in one commit as always).
 dpi = the Jelly Star's 320x569 dp, Pixel SystemUI) the bouncer's keys are about 39 dp, in a block using less than half
 the screen. In the rc.3 run: screenshots of Android's pad at font scale 1.0 and 1.3, and at display size one notch up
 (`wm density 280` as the stand-in; note the glance's fit at that size too), so the user can choose on the real phone.
-The Jelly Star's own (AOSP-based) bouncer may lay out differently - a device check.
+The Jelly Star's own (AOSP-based) bouncer may lay out differently - so the rc.3 run also makes an AVD on the
+**`default` (pure AOSP, Launcher3 + AOSP SystemUI, no Google apps) image** at the Jelly Star's profile (480x854 at
+240 dpi), Android 16 if the image exists else 15, and shoots Android's pad, the small clock and the gesture handle
+there, next to the Pixel image's; step L's Jelly Star profile takes its numbers from that frame (replacing the TODO),
+marked "AOSP emulator, confirm on the phone". No Play on that image: the lock, pad and clock only.
 
 ### 8.5 Answers to the revision check's guess list (`qa-59d-revision-check.md`)
 
