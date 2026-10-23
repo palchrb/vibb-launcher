@@ -2,11 +2,12 @@
 <!-- The PIN lock's glance page (design 25, mockup LockGlance.dc.html A and B; design r9; lock.GlancePanel, pure
      lock.LockGlance): the top block - the clock, the date, the music tile while something plays (full, or compact
      when there is too little room - lock.glanceFit), the timer tile, then up to three notification rows and the
-     "more" line in their own scroll - and the bottom block, "Lås opp" to the keypad and the bottom row: the lock's
-     emergency call and the flashlight (design 41). The bottom block is measured whole and stays at the bottom; the
+     "more" line in their own scroll - and the bottom block, the bottom row: the lock's emergency call and the flashlight
+     (design 41). A swipe up anywhere asks for the unlock (design 59d step J); Android's gesture handle is drawn below the
+     page, in the bottom inset, by lock.GlancePanel (§8.13 - the hint line went). The bottom block is measured whole and stays at the bottom; the
      top block takes what is left and clips its own overflow, so a fit made for more room never pushes the bottom row
      off (r9 §1-2). Only the rows scroll. Part of the lock: nothing here opens an app, a setting or a notification -
-     a row only leads to the keypad. The root only blocks touches to the keypad below - no node for TalkBack
+     a row and the swipe only lead to the unlock. The root only blocks touches to the keypad below - no node for TalkBack
      (qa-21-step4-code L7). The fit and the widths at 320/360/411 dp are pinned by LockGlanceLayoutTest. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/lock_glance_root"
@@ -447,46 +448,18 @@
         </ScrollView>
     </LinearLayout>
 
-    <LinearLayout
-        android:id="@+id/lock_glance_unlock"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:background="@drawable/bg_lock_unlock"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center"
-        android:orientation="horizontal">
-
-        <ImageView
-            android:layout_width="22dp"
-            android:layout_height="22dp"
-            android:importantForAccessibility="no"
-            android:src="@drawable/ic_lock_unlock"
-            android:tint="@color/kid_ground" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:fontFamily="@font/nunito_extrabold"
-            android:text="@string/lock_media_unlock"
-            android:textColor="@color/kid_ground"
-            android:textSize="17sp" />
-    </LinearLayout>
-
     <!-- The bottom row (design 41 §1.3): "Nødsamtale" centred as before and the flashlight at the
          end, beside it without pushing it off centre. Nødsamtale keeps the 48 dp target of design 34
          P7 (qa-34-s8-code N5; the row's margin gave the 4 dp) and the room for a 48 dp button on each
          side, so a long label at a large font wraps before it reaches the button; the button is no
-         taller than it. 12 dp of air under "Lås opp" (the user, 2026-10-21: the row sat 2 dp under it,
-         "litt for tett"), so the row with its margin (the fit's fixed part) is 60 dp; 8 of the 10 new dp came
-         from the page's bottom padding (16 -> 8 dp). The flashlight is gone without a flash unit or when the
+         taller than it. 8 dp under the top block (design 59d §8.13: the hint line and before it "Lås opp" sat here), so
+         the row with its margin (the fit's fixed part) is 56 dp. The flashlight is gone without a flash unit or when the
          torch is refused while LOCKED (§1.5). -->
     <FrameLayout
         android:id="@+id/lock_glance_bottom"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp">
+        android:layout_marginTop="8dp">
 
         <TextView
             android:id="@+id/lock_glance_emergency"

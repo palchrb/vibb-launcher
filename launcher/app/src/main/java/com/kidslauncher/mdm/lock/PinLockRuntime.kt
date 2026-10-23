@@ -275,6 +275,9 @@ object PinLockRuntime {
     /** The last [HealTrigger.LOCK_RESUMED] heal (elapsed ms). Main thread. */
     private var lockResumedHealAt: Long? = null
 
+    /** The last [HealTrigger.SYSTEM_HOME] heal (elapsed ms). Main thread. */
+    private var systemHomeHealAt: Long? = null
+
     /** A screen-off heal ran since the lock last resumed (main thread, bug 25b-C). */
     private var screenOffHealed = false
 
@@ -840,6 +843,21 @@ object PinLockRuntime {
                 Log.w(LOG_TAG, "Status bar heal (${trigger.label}) failed", e)
             }
         }
+    }
+
+    /**
+     * Design 59d §8.9 (a): Home got an intent ([HomeActivity.onNewIntent]; [broughtByUs] = ours, `HomeFront.EXTRA_BROUGHT`).
+     * The system's Home while LOCKED with the screen on means the home gesture got through - lock task's flags are out of
+     * sync in SystemUI ([systemHomeHealDue]) - so the status bar is healed now, and the lock's resume that follows needn't
+     * heal again. Home's locked resume shows the lock as before. Main thread.
+     */
+    fun homeIntent(context: Context, broughtByUs: Boolean) {
+        val now = SystemClock.elapsedRealtime()
+        if (!systemHomeHealDue(mode == LockMode.LOCKED, interactive(context), broughtByUs, systemHomeHealAt, now)) return
+        systemHomeHealAt = now
+        lockResumedHealAt = now
+        Log.i(LOG_TAG, "The system's Home while LOCKED (a home gesture got through): lock task's flags healed")
+        healStatusBar(context, HealTrigger.SYSTEM_HOME)
     }
 
     private val bootCompletedReceiver = object : BroadcastReceiver() {

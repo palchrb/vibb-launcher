@@ -333,8 +333,10 @@ adb shell dumpsys device_policy | grep -iE "keyguard|lockTask"
 Screen off/on: `adb shell input keyevent 26` (power). Each screen-off locks; the next
 screen-on must show the PIN lock straight away, never a frame of the app underneath. Since design 25
 the lock comes up on its glance page (clock, date, the music tile, missed calls and messages):
-"Lås opp" (`<package>:id/lock_glance_unlock`) or a row leads to the keypad, which UI dumps don't show
-while the glance page covers it.
+a swipe up (design 59d step J, e.g. `input swipe 240 600 240 300 150` at `wm density 240`; the "Lås opp" button
+before it; since §8.13 also from the gesture handle `<package>:id/lock_glance_handle` at the bottom, e.g.
+`input swipe 240 838 240 300 150`) or a row leads to the keypad, which UI
+dumps don't show while the glance page covers it.
 
 1. **Lock appears**: in an allowed app, `input keyevent 26` twice -> PIN lock; the right PIN ->
    back in the same app with its state. Repeat 20x (kiosk on, then kiosk off: the phone's

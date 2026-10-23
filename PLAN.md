@@ -809,12 +809,52 @@ findings, merge to `main`, full suite once.
   lock wallpaper as the face = the glance's ground with its scrim). **G not built**: the mid-round capture
   (`docs/testing/2026-10-23-d59d-g-capture.md`) found no chrome-pass write cancelling the pad - RC F2 was most likely
   the relock's Home start, which step A queues now. Code QA (`qa-59d-round1-code.md`): merge after fixes; the fix round (R1-1..11) is on the branch - R1-1 decided by the user (the photo on Android's face as the glance's ground), R1-8 not built.
+  Steps J, L and §8.9's edge swipe (branch `d59d-jl`, 59d §8.11): J built - the swipe up anywhere on the glance asks
+  as "Lås opp" did (the button gone, the hint line "Sveip opp for å låse opp" in its place, TalkBack's action on it).
+  L built - the glance's clock takes Android's small clock's geometry on a phone with a profile (the emulator's Pixel,
+  measured on `handy36`; the Jelly Star's entry a TODO with the emulator's numbers - **measure a frame of its face**),
+  else today's centred clock. §8.9 decided (a) from the capture (`docs/testing/2026-10-23-edge-swipe-capture.md`): with
+  lock task's flags in sync Quickstep refuses the edge swipe; the user's swipes went through on desynced flags - the
+  system's Home while LOCKED now heals them at once (16d's heal, `HealTrigger.SYSTEM_HOME`). Code QA
+  (`qa-59d-jl-code.md`): merge after fixes; the fix round (JL-1..8) and §8.13 (Android's gesture handle on the glance
+  in the hint line's place, a swipe from it asks; Nunito Light for the profile clock) are on the branch - rc.3 next.
+  **On rc.3**: two edge swipes in a row (the second refused?) and the Jelly Star's `ro.product.model` and a frame of its
+  face for its clock profile.
+- **6-inch / Android 15 check (2026-10-23, `docs/testing/2026-10-23-six-inch-android15.md`, AVD six35 = pixel_7 411x914 dp,
+  API 35):** every screen fits at font 1.0 and 1.3, nothing broken or oversized, just more empty space. Findings: **F1
+  (High, M)** an UNARMED reboot (a crash, `adb reboot`) never finishes booting on an image whose stock launcher isn't
+  direct-boot-aware - no DBA home, Settings hidden, our cover enabled only by the shutdown arm, so `LOCKED_BOOT_COMPLETED`
+  never fires; SystemUI's lock is dead to input until an incoming call starts our call screen -> **59d step M** (the
+  cover always enabled in android mode, in progress); F2 (note) ~8 light-grey frames after the pad's success are
+  SystemUI's light pad fading, not ours; F3 (S) at font 1.3 Home's contact labels touch (`item_kid_contact.xml`,
+  `contact_name` has no horizontal padding); F4 (S) glance rows are one line even with 822 dp available - two lines on
+  tall screens; F5 (S, optional) the music library's cover cap of 180 dp (`music/.../ui/Fit.kt`) could grow on tall
+  screens; F6 (check) Android 15 logs it removed our pinned Home preference at every locked boot and at the cover's
+  hand-over - Home still came up; check on a phone (step M's run looks); F7 (note) 4-21 black frames at a wake on 15,
+  no leak. Not done there: the timer tile, the blocked/Play screens, QR provisioning.
+- **Screen capture switch (the user, 2026-10-23, approved for after rc.3):** one hardening switch on Advanced, "Screenshots
+  and screen recording off" = `setScreenCaptureDisabled` for the whole phone (also blanks every app's Recents card
+  from then on; `adb screencap` goes black). Server + launcher in one commit (the `hardening` policy keys are pinned
+  on both sides). **No global camera switch** ("en full kill switch for kamera gjør jo fort at videochat ikke
+  funker"): the Camera app is removed from the allowlist as today; a per-app "Camera: off" (the device owner denying
+  the CAMERA permission for one package, `setPermissionGrantState`) is on the long list ("legg på long list at vi kan vurdere en sånn per-app videobryter senere", 2026-10-23), not ordered. S. Same list, same code (the user, 2026-10-23, "legg de på lista"): a
+  **permissions row per catalog app in the PWA** - the ordinary runtime permissions (contacts, SMS, phone, media,
+  notifications) granted silently by the device owner before the first start; the sensor ones (camera, microphone,
+  background location, body sensors) can't be granted silently since Android 12 - shown as "approve on the phone",
+  and deniable per app from the same row. S-M.
+- **PWA tab switches feel slow at times (the user, 2026-10-23; the server is a Proxmox VM with plenty of power, so
+  the render isn't it):** the time is in the path or the browser - Tailscale on a relay instead of direct (mobile
+  data), the first request after iOS froze the installed app (the connection is rebuilt), or the page's assets
+  re-fetched after iOS dropped the cache. Measure on the client first: a small timing line per navigation (Navigation
+  Timing: connect, TTFB, render) shown behind a debug switch or logged to the server, and the user checks `tailscale
+  status` for relay vs direct. Then: prefetch the other tabs after a page settles (same session, no offline caching),
+  and/or keep the connection warm after a resume (`reconnect.js` already pings `/ping`). Server, S; after rc.3.
 - **Design 59d step M (2026-10-23, six-inch run F1/F6): an unarmed boot must never hang.** Built on `d59d-step-m`
   (59d §8.12): in android mode the boot cover stays enabled (a direct-boot-aware HOME at every boot, also after a crash
   or `adb reboot`), the take-over is a device-protected stamp, and `lock/HomePin` keeps HomeActivity the unlocked HOME
   (re-seats our PPAs when the per-boot order puts the cover first). Emulator run on Android 15
   (`docs/testing/2026-10-23-step-m-run.md`): F1 reproduced on `main`, gone with step M; no F6 removals, no chooser.
-  Waiting for code QA; owed: 59d §8.4 item 7 on Android 16 and the Jelly Star (is its stock launcher direct-boot
+  Waiting for code QA; owed: 59d §8.4 item 8 on Android 16 and the Jelly Star (is its stock launcher direct-boot
   aware?). Side findings for later: the cover's automatic pad asks are used up by boot-time relaunches (step F), and
   Android 15's policy engine appends duplicate PPAs at every boot (cleared by any re-seat).
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other

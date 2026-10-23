@@ -1052,7 +1052,7 @@ dismisses it). On a boot whose `top.log` shows `ResolverActivity` (BFU behind th
 6. \* B2: ten graceful reboots in a row, with a call held through the first unlock in some of them. Never
    `ResolverActivity` after the PIN. `cmd package query-activities -a android.intent.action.MAIN -c
    android.intent.category.HOME` once unlocked lists the cover as disabled (since 59d step M in android mode: lists
-   it enabled, and `resolve-activity` gives HomeActivity - 59d §8.4 item 7). † If the chooser comes in BFU, the cover
+   it enabled, and `resolve-activity` gives HomeActivity - 59d §8.4 item 8). † If the chooser comes in BFU, the cover
    is started in front of it whatever the resolution line says; run the chooser recipe above.
 7. \* B3: on a slow first start (the first boot after an install), no `am_anr` for `KidVpnService`, and no second PIN.
    `Unlocked setup took` is smaller than before (the tail is its own message). † Note it next to `Unlocked setup tail

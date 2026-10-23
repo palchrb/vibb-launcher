@@ -156,6 +156,19 @@ class StatusBarHealTest {
         assertTrue(lockResumedHealDue(5_000L, 500_000L, healedSinceScreenOff = false))
     }
 
+    /** Design 59d §8.9 (a): the system's Home while LOCKED is the desync's proof (the edge-swipe capture). */
+    @Test
+    fun `the system's Home while locked heals at once, at most every 5 s, never for our own Home or unlocked`() {
+        assertTrue(systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = null, nowElapsedMs = 5_000L))
+        assertFalse("our own HomeFront start", systemHomeHealDue(locked = true, interactive = true, broughtByUs = true, lastHealElapsedMs = null, nowElapsedMs = 5_000L))
+        assertFalse("the kid's Home press, unlocked", systemHomeHealDue(locked = false, interactive = true, broughtByUs = false, lastHealElapsedMs = null, nowElapsedMs = 5_000L))
+        assertFalse("dark (a lock-up)", systemHomeHealDue(locked = true, interactive = false, broughtByUs = false, lastHealElapsedMs = null, nowElapsedMs = 5_000L))
+        assertFalse(systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = 5_000L, nowElapsedMs = 9_999L))
+        assertTrue(systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = 5_000L, nowElapsedMs = 10_000L))
+        assertTrue("a clock that went back", systemHomeHealDue(locked = true, interactive = true, broughtByUs = false, lastHealElapsedMs = 9_000L, nowElapsedMs = 5_000L))
+        assertEquals("a visible blink like the lock's resume heal", STATUS_BAR_HEAL_FLIP_MS, HealTrigger.SYSTEM_HOME.flipMs)
+    }
+
     // ---- the glue --------------------------------------------------------------------------------
 
     private fun file(path: String) = listOf("src/main/$path", "app/src/main/$path").map(::File).first { it.exists() }
@@ -222,6 +235,18 @@ class StatusBarHealTest {
         assertTrue(resumed.contains("screenOffHealed = false"))
         assertTrue(screenOff.contains("screenOffHealed = true"))
         assertTrue(resumed.contains("healStatusBar(context, HealTrigger.LOCK_RESUMED)"))
+        // Design 59d §8.9 (a): Home's every new intent is offered; the runtime decides, stamps both gaps, heals.
+        val home = body(runtime, "homeIntent")
+        assertTrue(home.contains("if (!systemHomeHealDue(mode == LockMode.LOCKED, interactive(context), broughtByUs, systemHomeHealAt, now)) return"))
+        assertTrue(home.contains("lockResumedHealAt = now"))
+        assertTrue(home.contains("healStatusBar(context, HealTrigger.SYSTEM_HOME)"))
+        val newIntent = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt").substringAfter("override fun onNewIntent(").substringBefore("override fun onStop(")
+        assertTrue(newIntent.contains("val broughtByUs = intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false)"))
+        assertTrue(newIntent.indexOf("PinLockRuntime.homeIntent(this, broughtByUs)") in 0 until newIntent.indexOf("if (!toTop) return"))
+        // JL-7: a destroyed Home created by the system's start is offered too - not a recreation.
+        val create = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt").substringAfter("override fun onCreate(").substringBefore("gate()")
+        assertTrue(create, create.contains("if (savedInstanceState == null && intent?.hasCategory(Intent.CATEGORY_HOME) == true) {"))
+        assertTrue(create, create.contains("PinLockRuntime.homeIntent(this, intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false))"))
         // The LOCKED edge's pass stays on the main thread before the lock resumes (qa-16c-code #1):
         // the heal never replaces it.
         // (16e, qa-16e-code #3: before show while the boot's mark may hold the lock, after it otherwise.)

@@ -24,8 +24,9 @@ class FontLicenseTest {
     }
 
     @Test
-    fun `three static weights and no system font families left in the kid layouts`() {
-        for (w in listOf("semibold", "bold", "extrabold")) {
+    fun `four static weights and no system font families left in the kid layouts`() {
+        // Light (300) since design 59d's JL-2: the glance's profile clock only, outside nunito.xml's family.
+        for (w in listOf("light", "semibold", "bold", "extrabold")) {
             assertTrue(w, file("src/main/res/font/nunito_$w.ttf").length() > 50_000)
         }
         val layouts = file("src/main/res/layout").listFiles()!!.toList() + file("src/main/res/values/styles.xml")
