@@ -8,8 +8,8 @@ import com.kidslauncher.mdm.music.clockText
  * The lock's glance page (design 25, docs/design/25-lock-glance.md at the monorepo root, mockup
  * LockGlance.dc.html): pure, LockGlanceTest. Replaces step 4's media view (lock/LockMedia.kt): the
  * PIN lock always comes up on the glance page - clock, date, the music tile while something plays,
- * up to three notification rows, "Lås opp", "Nødsamtale" - and "Lås opp" or a row leads to the
- * keypad. lock/GlancePanel draws it inside PinLockActivity; lock/GlanceOpener opens a row's target
+ * up to three notification rows, "Nødsamtale" - and the swipe up (design 59d step J; the "Lås opp" button before it)
+ * or a row leads to the keypad. lock/GlancePanel draws it inside PinLockActivity; lock/GlanceOpener opens a row's target
  * after the right code.
  *
  * It weakens nothing: the page's only actions are the music's play/pause, previous and next, the
@@ -87,7 +87,7 @@ sealed interface GlanceStageEvent {
     /** The lock comes up with the screen on ([lockStageDue]): the first show, after a screen-off. */
     data object LockUp : GlanceStageEvent
 
-    /** "Lås opp". */
+    /** The swipe up, or TalkBack's "Lås opp" on the hint line (design 59d step J; the "Lås opp" button before it). */
     data object Unlock : GlanceStageEvent
 
     /** A row: its target, or `null` when none may be taken (a time rule leaves the app unusable). */
@@ -115,6 +115,50 @@ fun glanceStageStep(state: GlanceStageState, event: GlanceStageEvent, face: Bool
     is GlanceStageEvent.Row -> GlanceStageState(if (face) LockStage.ASK else LockStage.KEYPAD, event.target)
     GlanceStageEvent.Back -> if (state.stage != LockStage.GLANCE) GlanceStageState.GLANCE else state
     GlanceStageEvent.OwnKeypad -> if (state.stage == LockStage.ASK) state.copy(stage = LockStage.KEYPAD) else state
+}
+
+// ---- the swipe up (design 59d step J) ------------------------------------------------------------
+
+/** A fling counts from this many dp upwards (59d §8.7). */
+const val GLANCE_SWIPE_FLING_DP = 48f
+
+/** ... at this speed upwards at the lift, dp per second (a slow 48 dp drag is no fling). */
+const val GLANCE_SWIPE_FLING_DPS = 500f
+
+/** A drag counts once it passes this share of the page's height, lifted or not. */
+const val GLANCE_SWIPE_DRAG_SHARE = 1f / 3f
+
+/** What a touch on the glance page is to the swipe ([glanceSwipeStep]). */
+enum class GlanceSwipe {
+    /** Not (yet) a swipe: the touch goes on to the views. */
+    NONE,
+
+    /** The swipe up: "Lås opp" as the button was - the ASK stage as the face, our keypad in own mode. */
+    UNLOCK,
+}
+
+/**
+ * Whether a touch that starts at [downY] (px from the page's top) is never the glance's swipe: it started on a control
+ * that keeps the whole touch ([onControl]: the music tile's buttons, the timer's Stopp, the flashlight, Nødsamtale), in
+ * the rows' scroll while it can scroll ([scrollTakes]: a drag there scrolls), or within the bottom edge's system gesture
+ * inset ([edgeInset], px, of the page's [height]): the bottom-edge swipe stays the system's (59d §8.7, §8.9).
+ */
+fun glanceSwipeBlocked(onControl: Boolean, scrollTakes: Boolean, downY: Float, height: Float, edgeInset: Float): Boolean =
+    onControl || scrollTakes || downY >= height - edgeInset
+
+/**
+ * Design 59d step J (the user, rc.2: "la vår låseskjerm bli swipet oppover så den er identisk med android sin egen"):
+ * a vertical swipe up anywhere on the glance page asks as "Lås opp" did. [dy] is the travel upwards since the down
+ * (dp, up positive), [dx] sideways (dp), [vy] the speed upwards at the lift (dp/s), [page] the page's height (dp),
+ * [lifted] the finger is up. UNLOCK for a drag past a third of the page (also before the lift), or at the lift for a
+ * fling of at least [GLANCE_SWIPE_FLING_DP] at [GLANCE_SWIPE_FLING_DPS]; always mostly vertical; never for a touch that
+ * [startedOnTappable] ([glanceSwipeBlocked]). It only asks: what opens is still `faceStep`'s verdict (or our keypad).
+ */
+fun glanceSwipeStep(dy: Float, vy: Float, startedOnTappable: Boolean, dx: Float = 0f, page: Float, lifted: Boolean): GlanceSwipe {
+    if (startedOnTappable || dy <= kotlin.math.abs(dx)) return GlanceSwipe.NONE
+    val drag = dy >= page * GLANCE_SWIPE_DRAG_SHARE
+    val fling = lifted && dy >= GLANCE_SWIPE_FLING_DP && vy >= GLANCE_SWIPE_FLING_DPS
+    return if (drag || fling) GlanceSwipe.UNLOCK else GlanceSwipe.NONE
 }
 
 /**
@@ -227,8 +271,8 @@ const val GLANCE_MAX_ROWS = 3
 
 /**
  * Each part's height as measured (any unit, the same for all and for the available height):
- * [fixed] = "Lås opp" and the bottom row ("Nødsamtale" and the flashlight, design 41) with their
- * margins; [date] with its margin; the tiles with their top margin (the full one with its progress
+ * [fixed] = the swipe hint line (design 59d step J; "Lås opp" before it) and the bottom row ("Nødsamtale" and the
+ * flashlight, design 41) with their margins; [date] with its margin; the tiles with their top margin (the full one with its progress
  * row, r9 §3); [clockFull] the timer tile with its margin (design 42); [rowsTop] the rows' scroll's
  * margin below a tile, [rowsTopNoTile] below the date; [row] one row (the tallest); [rowGap] between
  * rows; [more] the "more" line (nothing above it); [fade] what the scroll's bottom fade covers past a row's own

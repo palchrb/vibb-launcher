@@ -79,6 +79,45 @@ class LockGlanceTest {
         assertTrue(glancePageShown(ask.stage))
     }
 
+    /** Design 59d step J: the swipe up anywhere on the page is "Lås opp" (the page 457 dp: a third is 152.3 dp). */
+    @Test
+    fun `a swipe up past a third of the page, or a fling of 48 dp, asks - also before the lift`() {
+        val page = 457f
+        assertEquals(GlanceSwipe.UNLOCK, glanceSwipeStep(dy = 153f, vy = 0f, startedOnTappable = false, page = page, lifted = false))
+        assertEquals(GlanceSwipe.UNLOCK, glanceSwipeStep(dy = 200f, vy = 100f, startedOnTappable = false, page = page, lifted = true))
+        assertEquals("short of a third, still moving", GlanceSwipe.NONE, glanceSwipeStep(dy = 150f, vy = 0f, startedOnTappable = false, page = page, lifted = false))
+        // The fling: 48 dp at 500 dp/s, only at the lift.
+        assertEquals(GlanceSwipe.UNLOCK, glanceSwipeStep(dy = 48f, vy = 500f, startedOnTappable = false, page = page, lifted = true))
+        assertEquals("a fast 47 dp is no fling", GlanceSwipe.NONE, glanceSwipeStep(dy = 47f, vy = 3000f, startedOnTappable = false, page = page, lifted = true))
+        assertEquals("a slow 100 dp is no fling", GlanceSwipe.NONE, glanceSwipeStep(dy = 100f, vy = 499f, startedOnTappable = false, page = page, lifted = true))
+        assertEquals("the speed counts at the lift only", GlanceSwipe.NONE, glanceSwipeStep(dy = 100f, vy = 3000f, startedOnTappable = false, page = page, lifted = false))
+        // The emulator's `input swipe 240 600 240 300 150` at 240 dpi: 200 dp in 0.15 s.
+        assertEquals(GlanceSwipe.UNLOCK, glanceSwipeStep(dy = 200f, vy = 1333f, startedOnTappable = false, page = page, lifted = true))
+    }
+
+    @Test
+    fun `only a mostly vertical swipe upwards, never one that started on a control`() {
+        val page = 457f
+        assertEquals("down", GlanceSwipe.NONE, glanceSwipeStep(dy = -300f, vy = -2000f, startedOnTappable = false, page = page, lifted = true))
+        assertEquals("sideways", GlanceSwipe.NONE, glanceSwipeStep(dy = 160f, vy = 2000f, startedOnTappable = false, dx = 170f, page = page, lifted = true))
+        assertEquals("diagonal but mostly up", GlanceSwipe.UNLOCK, glanceSwipeStep(dy = 160f, vy = 2000f, startedOnTappable = false, dx = 100f, page = page, lifted = true))
+        assertEquals("a tap", GlanceSwipe.NONE, glanceSwipeStep(dy = 0f, vy = 0f, startedOnTappable = false, page = page, lifted = true))
+        for (lifted in listOf(false, true)) {
+            assertEquals(GlanceSwipe.NONE, glanceSwipeStep(dy = 400f, vy = 4000f, startedOnTappable = true, page = page, lifted = lifted))
+        }
+    }
+
+    @Test
+    fun `the swipe never starts on a control, in a scroll that can scroll or in the bottom edge's gesture inset`() {
+        // A page 685 px high (457 dp at 1.5) with a 48 px gesture inset: the edge starts at 637 px.
+        assertFalse(glanceSwipeBlocked(onControl = false, scrollTakes = false, downY = 400f, height = 685f, edgeInset = 48f))
+        assertFalse(glanceSwipeBlocked(onControl = false, scrollTakes = false, downY = 636f, height = 685f, edgeInset = 48f))
+        assertTrue("the system's Home gesture", glanceSwipeBlocked(onControl = false, scrollTakes = false, downY = 637f, height = 685f, edgeInset = 48f))
+        assertTrue("the music's play, the torch, Nødsamtale", glanceSwipeBlocked(onControl = true, scrollTakes = false, downY = 400f, height = 685f, edgeInset = 48f))
+        assertTrue("the rows scroll", glanceSwipeBlocked(onControl = false, scrollTakes = true, downY = 400f, height = 685f, edgeInset = 48f))
+        assertFalse("no inset (3-button navigation reports its bar as padding)", glanceSwipeBlocked(onControl = false, scrollTakes = false, downY = 684f, height = 685f, edgeInset = 0f))
+    }
+
     @Test
     fun `the stage is decided when the lock comes up with the screen on, not when it comes back`() {
         assertTrue("first time, screen on", lockStageDue(interactive = true, decidedAtScreenOffs = null, screenOffs = 3))
@@ -458,7 +497,7 @@ class LockMediaGuardTest {
     }
 
     @Test
-    fun `the page's touchables are the tile controls, the rows, Lås opp and Nødsamtale - each wired`() {
+    fun `the page's touchables are the tile controls, the rows and Nødsamtale - each wired, the swipe and the hint's action ask`() {
         fun parse(name: String): Element = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
             .parse(file("res/layout/$name.xml")).documentElement
         fun all(e: Element): List<Element> = listOf(e) + (0 until e.childNodes.length).map { e.childNodes.item(it) }.filterIsInstance<Element>().flatMap(::all)
@@ -469,7 +508,7 @@ class LockMediaGuardTest {
         assertEquals(
             setOf(
                 "lock_glance_root", "lock_media_previous", "lock_media_play", "lock_media_next", "lock_media_compact_play",
-                "lock_glance_unlock", "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile", "lock_timer_stop",
+                "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile", "lock_timer_stop",
             ),
             touchable,
         )
@@ -484,14 +523,30 @@ class LockMediaGuardTest {
             assertTrue("${binding(id)} is wired", panel.contains("glance.${binding(id)}.setOnClickListener"))
         }
         val glance = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
-        for (id in listOf("lock_glance_unlock", "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile", "lock_timer_stop")) {
+        for (id in listOf("lock_glance_emergency", "lock_glance_torch", "lock_timer_tile", "lock_timer_stop")) {
             assertTrue("${binding(id)} is wired", glance.contains("glance.${binding(id)}.setOnClickListener"))
         }
         assertFalse(glance.contains("glance.root.setOnClickListener"))
+        // Design 59d step J: "Lås opp" went; the hint line is no button for touch, TalkBack's node for the unlock: its
+        // click action, named "Lås opp", asks as the swipe does.
+        assertTrue(all(root).none { it.getAttributeNS(ns, "id") == "@+id/lock_glance_unlock" })
+        val hint = all(root).single { it.getAttributeNS(ns, "id") == "@+id/lock_glance_hint" }
+        assertEquals("TextView", hint.tagName)
+        assertEquals("@string/lock_glance_swipe_hint", hint.getAttributeNS(ns, "text"))
+        assertTrue(glance.contains("hintAction(glance.lockGlanceHint)"))
+        val action = glance.substringAfter("private fun hintAction(").substringBefore("\n    /**")
+        assertTrue(action, action.contains("AccessibilityNodeInfo.ACTION_CLICK, activity.getString(R.string.lock_media_unlock)"))
+        assertTrue(action, action.contains("step(GlanceStageEvent.Unlock)"))
+        assertFalse(action, action.contains("setOnClickListener"))
+        // The swipe's only step is Unlock - the same ask as the button was; the activity feeds it every touch first.
+        val swipe = glance.substringAfter("private fun swipeNow(").substringBefore("private fun swipeReset(")
+        assertEquals(listOf("step(GlanceStageEvent.Unlock)"), Regex("""\bstep\([^)]*\)""").findAll(swipe).map { it.value }.toList())
+        assertTrue(activity().contains("panel.swipe(ev, covered = voipRing.root.visibility == View.VISIBLE)"))
         // The emergency button is the lock's own (its confirm dialog, PinLockRuntime.emergencyFlowStarted).
-        val activity = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
-        assertTrue(activity.contains("{ binding.pinEmergency.performClick() }"))
+        assertTrue(activity().contains("{ binding.pinEmergency.performClick() }"))
     }
+
+    private fun activity() = file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").readText()
 }
 
 /**
@@ -540,7 +595,7 @@ class LockGlanceLayoutTest {
     private val heights by lazy {
         val clock = root.byId("lock_glance_clock")
         GlanceHeights(
-            fixed = withMargins("lock_glance_unlock") + withMargins("lock_glance_bottom"),
+            fixed = withMargins("lock_glance_hint") + withMargins("lock_glance_bottom"),
             clockBig = clock.dim("textSize") * 1.4f,
             clockSmall = 40f * 1.4f,
             date = withMargins("lock_glance_date"),
@@ -568,8 +623,8 @@ class LockGlanceLayoutTest {
         // (r6's tile was 233.8); the compact tile keeps its 52 dp art row.
         assertEquals(174.8f, heights.tileFull, 0.01f)
         assertEquals(90f, heights.tileCompact, 0.01f)
-        // Lås opp 56 + the bottom row 48 + its 12 dp of air (the user, 2026-10-21; it was 2 dp).
-        assertEquals(116f, heights.fixed, 0.01f)
+        // Design 59d step J: the swipe hint (8 + 14 sp) + the bottom row 48 + its 4 dp (Lås opp 56 + 12 + 48 = 116 before).
+        assertEquals(79.6f, heights.fixed, 0.01f)
         // Design 42: the timer tile - 12 dp padding, the label row, the 24 sp time, the text - and its margin.
         assertEquals(114f, heights.clockFull, 0.01f)
         assertEquals(14f, heights.rowsTop)
@@ -588,9 +643,12 @@ class LockGlanceLayoutTest {
         val link = root.byId("lock_glance_emergency")
         assertTrue(link.dim("minHeight") >= 48f)
         assertEquals("@color/kid_emergency_text", link.getAttributeNS(ns, "textColor"))
-        // The row's margin gave the 4 dp; since 2026-10-21 Lås opp + the bottom row with their margins are
-        // 116 dp (12 dp of air), 8 of the 10 new dp taken from the page's bottom padding.
-        assertEquals(116f, withMargins("lock_glance_unlock") + withMargins("lock_glance_bottom"), 0.01f)
+        // The row's margin gave the 4 dp; since design 59d step J the swipe hint + the bottom row with their margins
+        // are 79.6 dp (Lås opp + the row were 116).
+        assertEquals(79.6f, withMargins("lock_glance_hint") + withMargins("lock_glance_bottom"), 0.01f)
+        val hint = root.byId("lock_glance_hint")
+        assertEquals(listOf(14f, 8f), listOf(hint.dim("textSize"), hint.dim("layout_marginTop")))
+        assertEquals("@color/kid_core_dim", hint.getAttributeNS(ns, "textColor"))
     }
 
     @Test
@@ -684,32 +742,35 @@ class LockGlanceLayoutTest {
     }
 
     @Test
-    fun `the expected fits at 473 and 497 dp (r9 §2)`() {
+    fun `the expected fits at 473 and 497 dp (r9 §2, design 59d step J's bottom block)`() {
         fun fit(tile: Boolean, rows: Int, avail: Float) = glanceFit(avail, heights, tile, rows)
         fun total(f: GlanceFit) = f.height + root.dim("paddingTop") + root.dim("paddingBottom")
         // The scroll's height under a one-row candidate 3: what the clock, date and full tile leave, less its margin.
         fun scroll(avail: Float) = avail - (heights.fixed + heights.clockSmall + heights.date + heights.tileFull) - heights.rowsTop
-        for ((avail, music1, music1Total) in listOf(Triple(available(48f), 2, 458.4f), Triple(available(24f), 1, 480.8f))) {
-            // Full tile alone -> 1 (410.8).
-            fit(true, 0, avail).let { assertEquals(1, it.candidate); assertEquals(410.8f, total(it), 0.5f) }
-            // No music, 4 rows -> 1 with 3 rows + more (466).
+        for (avail in listOf(available(48f), available(24f))) {
+            // Full tile alone -> 1 (374.4; 410.8 with Lås opp).
+            fit(true, 0, avail).let { assertEquals(1, it.candidate); assertEquals(374.4f, total(it), 0.5f) }
+            // No music, 4 rows -> 1 with 3 rows + more (429.6).
             fit(false, 4, avail).let {
-                assertEquals(listOf(1, 3, 3, 1), listOf(it.candidate, it.rows, it.visibleRows, it.more)); assertEquals(466f, total(it), 0.5f)
+                assertEquals(listOf(1, 3, 3, 1), listOf(it.candidate, it.rows, it.visibleRows, it.more)); assertEquals(429.6f, total(it), 0.5f)
             }
-            // Music + 1 row (the user's case): the small clock at 473, the big one at 497.
-            fit(true, 1, avail).let { assertEquals(music1, it.candidate); assertEquals(music1Total, total(it), 0.5f) }
-            // Music + 2 rows (the mockup) and music + 3 rows: the full tile, one row visible, the rest scrolls.
-            for (rows in listOf(2, 3)) fit(true, rows, avail).let {
-                assertEquals(listOf(3, rows, 1), listOf(it.candidate, it.rows, it.visibleRows))
+            // Music + 1 row (the user's case): the big clock at both now (444.4; the small one at 473 with Lås opp).
+            fit(true, 1, avail).let { assertEquals(1, it.candidate); assertEquals(444.4f, total(it), 0.5f) }
+            // Music + 3 rows: the full tile, one row visible, the rest scrolls - with the 8 dp of fade below the row's
+            // padding (qa-r9-code R9C-1).
+            fit(true, 3, avail).let {
+                assertEquals(listOf(3, 3, 1), listOf(it.candidate, it.rows, it.visibleRows))
                 assertEquals(GlanceTileSize.FULL, it.tile)
-                // The row and the 8 dp of fade below its padding (qa-r9-code R9C-1).
-                assertEquals(466.4f, total(it), 0.5f)
+                assertEquals(430f, total(it), 0.5f)
             }
-            // The one counted row's content stays clear of the 16 dp fade at the scroll's bottom (70.6 / 94.6 dp).
+            // The one counted row's content stays clear of the 16 dp fade at the scroll's bottom (107 / 131 dp).
             assertTrue(scroll(avail) - 16f >= heights.row - row.dim("paddingBottom"))
         }
-        assertEquals(70.6f, scroll(available(48f)), 0.5f)
-        assertEquals(94.6f, scroll(available(24f)), 0.5f)
+        // Music + 2 rows (the mockup): one row visible at 473, both with the small clock at 497.
+        fit(true, 2, available(48f)).let { assertEquals(listOf(3, 2, 1), listOf(it.candidate, it.rows, it.visibleRows)); assertEquals(430f, total(it), 0.5f) }
+        fit(true, 2, available(24f)).let { assertEquals(listOf(2, 2, 2), listOf(it.candidate, it.rows, it.visibleRows)); assertEquals(486f, total(it), 0.5f) }
+        assertEquals(107f, scroll(available(48f)), 0.5f)
+        assertEquals(131f, scroll(available(24f)), 0.5f)
     }
 
     @Test
@@ -717,15 +778,13 @@ class LockGlanceLayoutTest {
         val alarm = withMargins("lock_glance_alarm")
         assertEquals("2 dp + 13 sp x 1.4", 20.2f, alarm, 0.01f)
         val withAlarm = heights.copy(date = heights.date + alarm)
-        // 473 dp: with a morning alarm set, no music and 4 rows take the small clock (470.2 > 457) ...
-        glanceFit(available(48f), withAlarm, false, 4).let { assertEquals(listOf(2, 3, 1), listOf(it.candidate, it.rows, it.more)) }
-        // ... the full music tile alone keeps the big clock (415); music + 1 row takes the compact tile (the full one
-        // with the small clock is 462.6 > 457, and one row is every row).
-        assertEquals(1, glanceFit(available(48f), withAlarm, true, 0).candidate)
-        assertEquals(4, glanceFit(available(48f), withAlarm, true, 1).candidate)
-        // 497 dp: both keep the big clock.
-        assertEquals(1, glanceFit(available(24f), withAlarm, false, 4).candidate)
-        assertEquals(1, glanceFit(available(24f), withAlarm, true, 0).candidate)
+        // Music + 2 rows at 497 dp: both rows with the small clock (470 dp), but with a morning alarm set only one is
+        // counted (490.2 > 481; candidate 3 is 434.2).
+        assertEquals(2, glanceFit(available(24f), heights, true, 2).candidate)
+        glanceFit(available(24f), withAlarm, true, 2).let { assertEquals(listOf(3, 1), listOf(it.candidate, it.visibleRows)); assertEquals(434.2f, it.height, 0.01f) }
+        // Music + 1 row keeps the big clock with the alarm at both heights (448.6).
+        assertEquals(1, glanceFit(available(48f), withAlarm, true, 1).candidate)
+        assertEquals(448.6f, glanceFit(available(48f), withAlarm, true, 1).height, 0.01f)
     }
 
     /** The width of a horizontal row's fixed children with their margins (dp); [text] for a
@@ -793,12 +852,12 @@ class LockGlanceLayoutTest {
         val ids = root.all().map { it.id() }.filter { it.isNotEmpty() }
         val order = listOf(
             "lock_glance_top", "lock_glance_clock", "lock_glance_date", "lock_glance_alarm", "lock_media_tile", "lock_media_compact",
-            "lock_timer_tile", "lock_glance_scroll", "lock_glance_list", "lock_glance_rows", "lock_glance_more", "lock_glance_unlock",
+            "lock_timer_tile", "lock_glance_scroll", "lock_glance_list", "lock_glance_rows", "lock_glance_more", "lock_glance_hint",
             "lock_glance_bottom", "lock_glance_emergency", "lock_glance_torch",
         )
         assertEquals(order, ids.filter { it in order })
         // The root holds the top block and the bottom block, measured whole: nothing else, no Space.
-        assertEquals(listOf("lock_glance_top", "lock_glance_unlock", "lock_glance_bottom"), root.kids().map { it.id() })
+        assertEquals(listOf("lock_glance_top", "lock_glance_hint", "lock_glance_bottom"), root.kids().map { it.id() })
         assertTrue(root.all().none { it.tagName == "Space" })
         // The top block and the rows' scroll take what is left (0dp + weight 1); the scroll is the top block's last
         // child and holds the list.

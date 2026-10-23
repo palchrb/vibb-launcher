@@ -649,3 +649,28 @@ own mode's rows are pinned unchanged.
     alarm, the SOS gesture, the emergency flow, our call screen) - not a few lines, and a wrong start over an alarm or
     SOS is worse than the cosmetic stale mark it covers (Android holds either way).
   - R1-9..11: the wording above, in §8.1/§8.2, and in the code (`GlancePanel`, `LockGlance` KDoc, two test names).
+
+### 8.11 Steps J and L, and §8.9's edge swipe, as built (branch `d59d-jl`, 2026-10-23)
+
+Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named.
+- **J** (the swipe up): `view_lock_glance.xml` loses `lock_glance_unlock` (and `bg_lock_unlock`); in its place the hint
+  line `lock_glance_hint` ("Sveip opp for å låse opp" / "Swipe up to unlock", 14 sp `kid_core_dim`, 8 dp above; the
+  bottom row 4 dp under it - the fit's `fixed` is 79.6 dp in the model, 116 with the button). Pure
+  `glanceSwipeStep(dy, vy, startedOnTappable, dx, page, lifted)` (`LockGlance.kt`): a drag up past a third of the page
+  (also before the lift), or at the lift a fling of >= 48 dp at >= 500 dp/s (`GLANCE_SWIPE_FLING_DP/_DPS`), always
+  mostly vertical (`dy > |dx|`); `glanceSwipeBlocked(onControl, scrollTakes, downY, height, edgeInset)`: never from a
+  control that keeps the touch (the music tile's buttons, the timer's Stopp, the flashlight, Nødsamtale), never a drag
+  in the rows' scroll while it can scroll, never from the bottom edge's system-gesture inset (the larger of
+  `systemGestures` and `mandatorySystemGestures` bottom) - the edge swipe stays the system's. A row and the timer tile
+  are not controls here: a swipe from a row is the page's (as Home's swipe-up from a contact). Glue: `GlancePanel.swipe`
+  (every touch of the lock's window first, from `PinLockActivity.dispatchTouchEvent`; not under the VoIP ring card,
+  only on the GLANCE stage, never while leaving); a recognised swipe sends the views a cancel, keeps the rest of the
+  touch and posts `step(GlanceStageEvent.Unlock)` - the same event the button sent, so the face's ASK and own mode's
+  keypad are unchanged ("one behaviour, two gates"). The DOWN always reaches the views (`onUserInteraction`). No page
+  animation follows the finger (calm; the pad is the feedback). **Accessibility**: the hint line is the unlock's
+  TalkBack node - focusable for screen readers only, its click action labelled "Lås opp" (`lock_media_unlock`) runs the
+  same `step(Unlock)` (`GlancePanel.hintAction`); a sighted tap on it does nothing (Android's hint isn't a button
+  either). Tests: `LockGlanceTest` (the step's drag, fling, direction and block rows), `LockMediaGuardTest` (the
+  touchables without the button, the hint's action, the swipe's only step is Unlock, the activity's feed),
+  `LockGlanceGuardTest` (no row swipe/dismiss; the panel's only verdict is UNLOCK), `LockGlanceLayoutTest` (the fits at
+  473/497 dp with the new bottom block). `scripts/smoke-test.sh` swipes up from the hint line.

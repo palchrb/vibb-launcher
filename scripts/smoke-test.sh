@@ -14,7 +14,7 @@
 # our screening service: Telecom's FILTERING_COMPLETED or our log, after the step started); a
 # missed call from the contact (rings, the caller hangs up) posts our notification (id 1006) and no
 # Telecom TelecomMissedCalls notification (design 12), and shows as a row on the lock's glance page
-# (design 25; the PIN is typed after "Lås opp" there);
+# (design 25; the PIN is typed after a swipe up there, design 59d step J);
 # outgoing calls to an unknown number (cancelled - Telecom's "Canceled from Call Redirection
 # Service" or our log line) vs the contact typed in national form (redirected - our log line - and
 # dialled); one call at a time (our "second call" log line, during the answered incoming call); the
@@ -396,13 +396,25 @@ taskbar_unused() {
     if [ "$(taskbar_field mNavigationMode "$1")" = "-1" ]; then echo "TaskbarDelegate never initialised (mNavigationMode=-1)"; fi
 }
 
-# Design 25: the lock comes up on its glance page; "Lås opp" leads to the keypad, which UI dumps
-# don't show while the glance page covers it (no-hide-descendants).
-GLANCE_UNLOCK_NODE='resource-id="[^"]*:id/lock_glance_unlock"'
+# swipe_up_from_node <regex>: a swipe up from the node's centre to a third of its height (design 59d step J).
+swipe_up_from_node() {
+    local node coords
+    node="$(printf '%s' "$UI_XML" | grep -o '<node [^>]*>' | grep -E -m1 "$1")" || return 1
+    coords="$(printf '%s' "$node" | grep -o 'bounds="\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]"' | grep -o '[0-9]*' | tr '\n' ' ')"
+    # shellcheck disable=SC2086
+    set -- $coords
+    [ $# -eq 4 ] || return 1
+    sh_ input swipe $((($1 + $3) / 2)) $((($2 + $4) / 2)) $((($1 + $3) / 2)) $((($2 + $4) / 6)) 150 >/dev/null
+}
+
+# Design 25: the lock comes up on its glance page; since design 59d step J a swipe up (from the hint line, where
+# "Lås opp" was) leads to the keypad, which UI dumps don't show while the glance page covers it
+# (no-hide-descendants).
+GLANCE_HINT_NODE='resource-id="[^"]*:id/lock_glance_hint"'
 enter_pin() {
     local digit i
     ui_dump
-    if tap_node "$GLANCE_UNLOCK_NODE"; then
+    if swipe_up_from_node "$GLANCE_HINT_NODE"; then
         sleep 0.5
         ui_dump
     fi

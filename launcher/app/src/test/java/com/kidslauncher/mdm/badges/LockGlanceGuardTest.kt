@@ -250,10 +250,12 @@ class LockGlanceGuardTest {
             assertFalse("GlancePanel uses $forbidden", panel.contains(forbidden))
         }
         assertFalse("GlancePanel builds an Intent", Regex("""\bIntent\(""").containsMatchIn(panel))
-        // Rows can't be swiped, long-pressed or dismissed from the lock.
-        for (forbidden in listOf("setOnLongClickListener", "setOnTouchListener", "ItemTouchHelper", "Swipe")) {
+        // Rows can't be swiped, long-pressed or dismissed from the lock. The page's one swipe (design 59d step J) is
+        // the unlock's ask, read from the activity's touches - no listener on a row, nothing dismissed.
+        for (forbidden in listOf("setOnLongClickListener", "setOnTouchListener", "ItemTouchHelper", "SwipeDismiss", "onSwiped", "dismiss")) {
             assertFalse("GlancePanel uses $forbidden", panel.contains(forbidden))
         }
+        assertEquals(setOf("GlanceSwipe.UNLOCK"), Regex("""GlanceSwipe[.\w]*""").findAll(panel).map { it.value }.toSet())
     }
 
     @Test
