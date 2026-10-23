@@ -895,7 +895,11 @@ findings, merge to `main`, full suite once.
   (zones in the policy; `location_policy`), latency under a minute at little battery. M. The user, 2026-10-23: build
   both steps ("we should put on the list to implement this stuff!"); the fences do the watching (the system checks
   by distance and speed, cell/Wi-Fi before GPS), so the Regularly interval can be stretched once they are in;
-  fences re-registered at the first sync after a boot; the 100-fence cap is plenty.
+  fences re-registered at the first sync after a boot; the 100-fence cap is plenty. And piggyback our own locating
+  on it (the user, 2026-10-23): crossings take the fixes that matter; the Regularly timer becomes a long heartbeat
+  (30-60 min) for the trail and "last seen"; the passive provider's fixes (any other app's or the system's) feed the
+  trail free; the heartbeat's fix is skipped while the significant-motion sensor says the phone hasn't moved. Design
+  64 covers the battery model as its own section.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
