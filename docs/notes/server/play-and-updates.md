@@ -149,7 +149,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   both reading the shared `testdata/launcher_tag_codes.json`: since 2026-10-23 a tag from `launcher-v0.36.0-rc.4` on is
   `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number 1..8 or 9 for the release - every build its own code,
   `scripts/release-version.sh` -, an older tag the old rule's `X*1_000_000 + Y*1_000 + Z`, an RC one less, as the
-  phones on those builds report it), `release(tag, report)` -> `Standing` NotReported / NoRelease (no release, or the row is off)
+  phones on those builds report it; a report below 360004 - an old-rule build - gets every tag read by the old rule,
+  as its own parser does, `tag_code_as_read_by`, so rc.1/rc.2 phones are TooOld for rc.4 to rc.8, qa-versioncode-rc-code
+  Q-1), `release(tag, report)` -> `Standing` NotReported / NoRelease (no release, or the row is off)
   / UpToDate / Behind (`build_ahead`, the launcher's `launcherBuildAhead`: the tag's code above the report's
   `app_version_code`, or - legacy of the old rule, for builds tagged before `launcher-v0.36.0-rc.4` - the same code and
   the tag's name - `release_name`, "0.36.0-rc.2" - another, newer one than

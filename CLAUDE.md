@@ -85,9 +85,12 @@ byte-identical in `launcher/app/src/test/resources/`: the launcher's `DnsUpstrea
 server's `custom_dns::dns_upstream_status_contract` posts it, and both compare the copies. The policy's `dns_upstream`
 is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 The versionCode a launcher release tag was built with is `server/testdata/launcher_tag_codes.json` (tag -> code or null),
-byte-identical in `launcher/app/src/test/resources/`: the launcher's `SelfUpdatePlanTest` (`launcherTagVersionCode`)
-and the server's `install_now::tests` (`launcher_tag_version_code`) read every row and compare the copies, and
-`scripts/release-version.sh --selftest` checks its `launcher-v` rows against what the workflow builds.
+byte-identical in `launcher/app/src/test/resources/`: the launcher's `SelfUpdatePlanTest` (``a release tag's
+versionCode is the shared contract's``, ``the tag codes are identical to the server's copy``) and the server's
+`install_now::tests::launcher_tags_read_as_the_shared_contract` / `launcher_tag_codes_match_the_launchers_copy` read
+every `codes` row and compare the copies; the server's `device_pages::tests::music_versions_read_as_the_shared_contract`
+reads the `music_codes` rows (the music app's version from its code), and `scripts/release-version.sh --selftest`
+checks both lists' rows against what the workflows build.
 The launcher's `POST /api/devices/power` body (design 38 §2) is `server/testdata/power_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `PowerEventsTest` encodes exactly it, the server's
 `power::a_launcher_report_raises_both` posts it (its instants moved to the last hour), and both compare the copies.

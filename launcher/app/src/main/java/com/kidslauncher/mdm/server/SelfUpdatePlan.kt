@@ -95,7 +95,8 @@ private fun launcherVersionOrder(name: String): List<Long>? {
  * Whether a build of [code]/[name] is ahead of the running one ([runningCode]/[runningName]): a
  * higher versionCode, or the same code under another versionName that isn't older. Since
  * 2026-10-23 every release build has its own code ([launcherTagVersionCode]), so the code decides;
- * the name rule is the old rule's legacy, kept for builds before `launcher-v0.36.0-rc.4`: every RC
+ * the name rule is the old rule's legacy, kept for builds before `launcher-v0.36.0-rc.4` (an old
+ * build running this rule with its own parser takes rc.4 to rc.8 only by it): every RC
  * of one version shared a code, and an RC of X.Y.Z+1 had X.Y.Z's; Android installs a same-code APK
  * (no downgrade), so 0.36.0-rc.2 went over 0.36.0-rc.1 - never 0.36.0-rc.1 over -rc.2. Two names
  * that differ but can't be ordered count as ahead; an unknown name (null) never does - the same
@@ -411,7 +412,9 @@ const val INSTALL_NOW_CAPABILITY = "install_now_v1"
  * an older build decides by the code alone and would answer "already running" (qa-rc-to-rc-code
  * R2R-1, the server's `install_now::SAME_CODE_CAPABILITY`). Legacy of the old versionCode rule:
  * since `launcher-v0.36.0-rc.4` every build has its own code, so only builds tagged before it share
- * one; kept, harmless. */
+ * one. Still needed while any phone runs 0.36.0-rc.1 to rc.3: such a build reads rc.4 to rc.8 with
+ * its own (old) parser as its own code, so it takes them only by the name rule (rc.3, with this
+ * capability) or not at all (rc.1/rc.2) - never remove it before those phones are gone. */
 const val SAME_CODE_UPDATE_CAPABILITY = "same_code_update_v1"
 
 /** The command's kind (`pending_command.command`). */

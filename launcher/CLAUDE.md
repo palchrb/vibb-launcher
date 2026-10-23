@@ -391,7 +391,10 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   (`INSTALL_NOW_CAPABILITY`, `STATUS_CAPABILITIES`), and since the RC-to-RC fix `same_code_update_v1`
   (`SAME_CODE_UPDATE_CAPABILITY`): the server offers a same-code release under a newer name only to a launcher that
   claims it - an older build is shown "Install Now works from this update on" (qa-rc-to-rc-code R2R-1). Legacy since
-  `launcher-v0.36.0-rc.4` (every build its own code); kept for a phone on an old-rule build.
+  `launcher-v0.36.0-rc.4` (every build its own code), but still load-bearing while any phone runs 0.36.0-rc.1 to
+  rc.3: those builds read rc.4 to rc.8 with their own old parser as their own code (35999), so rc.3 takes them only
+  by the name rule and this capability, and rc.1/rc.2 not at all (the server shows them TooOld, reading the tag as
+  they do - `install_now::tag_code_as_read_by`); never remove either before those phones are gone.
 - Tests: `InstallNowPlanTest` (the gate, the settle's table, the answers against the server's words, the row, the
   waiting words, the alarm, the 6 h call, the skipped backoff and its glue line, the override's gate, the one `gate(`
   helper, the alarm/screen-on/call-end glue, the record's codec, the capability), `PolicyResponseCompatTest`

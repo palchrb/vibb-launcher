@@ -308,6 +308,7 @@ class SelfUpdatePlanTest {
         assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.1@5", 35_999, "0.36.0-rc.2"))
         assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0@5", 360_011, "0.36.1-rc.1"))
         assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.3@5", 360_004, "0.36.0-rc.4"))
+        assertEquals("an rc.4 phone under the 0.34.0 row", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v0.34.0@5", 360_004))
         assertEquals("no running name: by the code alone", LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.2@5", 35_999, null))
     }
 
@@ -325,6 +326,11 @@ class SelfUpdatePlanTest {
         assertEquals(PendingApkCheck.SAME_VERSION, same("0.36.0-rc.2", ownName = null))
         assertEquals("the signer still decides", PendingApkCheck.WRONG_SIGNER, same("0.36.0-rc.2", signers = setOf("bb")))
         assertEquals(PendingApkCheck.OK, same("0.36.0-rc.2", signers = setOf("aa")))
+        assertEquals(
+            "the first new-rule build over an old-rule rc",
+            PendingApkCheck.OK,
+            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "me.vibb.launcher", 360_004L, "me.vibb.launcher", 35_999L, archiveVersionName = "0.36.0-rc.4", ownVersionName = "0.36.0-rc.3"),
+        )
         assertEquals(
             PendingApkCheck.NOT_OURS,
             pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "org.example", 35_999L, "me.vibb.launcher", 35_999L, archiveVersionName = "0.36.0-rc.2", ownVersionName = "0.36.0-rc.1"),

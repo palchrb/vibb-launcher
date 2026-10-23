@@ -18,8 +18,10 @@ fun releaseSecret(env: String, prop: String): String? =
         ?.takeIf { it.isNotBlank() }
 val releaseStoreFile = releaseSecret("ANDROID_RELEASE_KEYSTORE_FILE", "handy.release.storeFile")
 
-// Release CI passes the version from the tag (music-vX.Y.Z -> X*1_000_000 + Y*1_000 + Z, an RC
-// minus 1; .github/workflows/music.yml). Local and debug builds use the literals below.
+// Release CI passes the version derived from the tag by scripts/release-version.sh
+// (music-vX.Y.Z[-rc.N] -> X*10_000_000 + Y*10_000 + Z*10 + N, N = the RC number 1..8 and 9 for the
+// release; from music-v0.5.0-rc.4 on, the tags before it were X*1_000_000 + Y*1_000 + Z with an RC one
+// less; .github/workflows/music.yml). Local and debug builds use the literals below.
 val versionCodeOverride = providers.gradleProperty("versionCode").orNull?.let {
     it.toIntOrNull() ?: throw GradleException("-PversionCode must be an integer, got '$it'")
 }

@@ -283,8 +283,10 @@ pub(crate) fn short_version(full: &str) -> &str {
     full.split(['-', '+']).next().unwrap_or(full).trim()
 }
 
-/// The music app's first versionCode under today's rule (`music-v0.5.0-rc.4`,
-/// `scripts/release-version.sh`); every code of the old rule is below it.
+/// The music app's first versionCode under today's rule (`music-v0.5.0-rc.4`: `MUSIC_FIRST` in
+/// `scripts/release-version.sh`); every code of the old rule is below it. The shared contract's
+/// `music_codes` rows (`testdata/launcher_tag_codes.json`, also checked by the script's
+/// `--selftest`) tie the two.
 const MUSIC_NEW_RULE_FROM: i64 = 50_004;
 
 /// The music app's version from its versionCode (the repo's release scheme, root CLAUDE.md). Today's
@@ -1869,6 +1871,25 @@ mod tests {
         assert_eq!(version_of_code(10_000_000), None);
         assert_eq!(version_of_code(0), None);
         assert_eq!(version_of_code(-5), None);
+    }
+
+    /// The shared contract's music rows: the version shown for each tag's code (the script's
+    /// `--selftest` checks that it builds those codes).
+    #[test]
+    fn music_versions_read_as_the_shared_contract() {
+        let contract: serde_json::Value =
+            serde_json::from_str(include_str!("../../testdata/launcher_tag_codes.json")).unwrap();
+        let rows = contract["music_codes"].as_array().unwrap();
+        assert!(rows.len() >= 10);
+        for row in rows {
+            let code = row["code"].as_i64().unwrap();
+            assert_eq!(
+                version_of_code(code).as_deref(),
+                row["version"].as_str(),
+                "{}",
+                row["music_tag"]
+            );
+        }
     }
 
     #[test]

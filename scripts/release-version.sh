@@ -13,17 +13,22 @@
 #
 # Before 2026-10-23 the rule was X*1_000_000 + Y*1_000 + Z, an RC one less (every RC of a version shared a code).
 # Every tag up to launcher-v0.36.0-rc.3 and music-v0.5.0-rc.3 was built that way, and every code of today's rule is
-# above every code of that one, so a phone on an old build updates to a new one by the code alone. A tag below the
-# first one under today's rule (launcher-v0.36.0-rc.4, music-v0.5.0-rc.4) is refused: its code would read
-# differently on the server and the launcher, which know the old rule for exactly those tags
-# (server/testdata/launcher_tag_codes.json, the launcher's `launcherTagVersionCode` and the server's
-# `install_now::launcher_tag_version_code`).
+# above every code of that one, so Android installs a new build over an old one. But an old launcher build decides
+# with its own parser, which reads every tag by the old rule (launcher-v0.36.0-rc.4 to rc.8 as 35999, its own code):
+# 0.36.0-rc.3 takes them only by the legacy name rule (`launcherBuildAhead`, capability same_code_update_v1), and
+# 0.36.0-rc.1/rc.2 (without it) only from 0.36.0 on (36000) or by hand - so the name rule and the capability stay
+# needed while any phone runs 0.36.0-rc.1 to rc.3. A tag below the first one under today's rule
+# (launcher-v0.36.0-rc.4, music-v0.5.0-rc.4) is refused: its code would read differently on the server and the
+# launcher, which know the old rule for exactly those tags (server/testdata/launcher_tag_codes.json, the launcher's
+# `launcherTagVersionCode`, the server's `install_now::launcher_tag_version_code` and, for the music app's code,
+# `version_of_code` in server/src/handlers/device_pages.rs, whose MUSIC_NEW_RULE_FROM is MUSIC_FIRST's code).
 #
 # On success prints the three lines name=, code=, prerelease= on stdout (for $GITHUB_OUTPUT); on failure the reason
 # on stderr and exit 1.
 set -euo pipefail
 
-# The first tag of each app under today's rule, as X Y Z N.
+# The first tag of each app under today's rule, as X Y Z N. The launcher's is also NEW_RULE_FROM in SelfUpdatePlan.kt
+# and install_now.rs, the music app's MUSIC_NEW_RULE_FROM (50004) in device_pages.rs; the contract's rows tie them.
 LAUNCHER_FIRST=(0 36 0 4)
 MUSIC_FIRST=(0 5 0 4)
 
@@ -111,16 +116,24 @@ selftest() {
     check server-v1.0.0 -
     check music-1.0.0 -
     check "" -
-    # The launcher's tags in the shared contract (server/testdata/launcher_tag_codes.json): a tag this script builds
-    # gets the code the server and the launcher read from it; a null row is refused; every row from the first tag
-    # under today's rule on is built. The parsers' other inputs (a release id after `@`, other names) are theirs.
+    # The tags in the shared contract (server/testdata/launcher_tag_codes.json): its launcher rows (`"tag"`, the
+    # parsers' cases) and music rows (`"music_tag"`, the server's version_of_code cases). A tag this script builds gets
+    # the row's code; a null row is refused; every row from the app's first tag under today's rule on is built, an
+    # older one refused. The parsers' other inputs (a release id after `@`, other names) are theirs.
     local contract
     contract="$(dirname "${BASH_SOURCE[0]}")/../server/testdata/launcher_tag_codes.json"
-    local rows=0 line code bad
-    local first_code=$(( LAUNCHER_FIRST[0] * 10000000 + LAUNCHER_FIRST[1] * 10000 + LAUNCHER_FIRST[2] * 10 + LAUNCHER_FIRST[3] ))
+    local launcher_rows=0 music_rows=0 line code bad first_code
+    local launcher_first=$(( LAUNCHER_FIRST[0] * 10000000 + LAUNCHER_FIRST[1] * 10000 + LAUNCHER_FIRST[2] * 10 + LAUNCHER_FIRST[3] ))
+    local music_first=$(( MUSIC_FIRST[0] * 10000000 + MUSIC_FIRST[1] * 10000 + MUSIC_FIRST[2] * 10 + MUSIC_FIRST[3] ))
     while IFS= read -r line; do
-        [[ "$line" =~ \"tag\":\ \"(launcher-v[^\"@]*)\",\ \"code\":\ (null|[0-9]+) ]] || continue
-        tag=${BASH_REMATCH[1]} code=${BASH_REMATCH[2]} rows=$((rows + 1))
+        if [[ "$line" =~ \"tag\":\ \"(launcher-v[^\"@]*)\",\ \"code\":\ (null|[0-9]+) ]]; then
+            first_code=$launcher_first launcher_rows=$((launcher_rows + 1))
+        elif [[ "$line" =~ \"music_tag\":\ \"(music-v[^\"@]*)\",\ \"code\":\ (null|[0-9]+) ]]; then
+            first_code=$music_first music_rows=$((music_rows + 1))
+        else
+            continue
+        fi
+        tag=${BASH_REMATCH[1]} code=${BASH_REMATCH[2]}
         if got=$(release_version "$tag" 2>/dev/null); then got=$(sed -n 's/^code=//p' <<<"$got"); else got=-; fi
         bad=false
         if [ "$code" = null ]; then
@@ -135,11 +148,11 @@ selftest() {
             failures=$((failures + 1))
         fi
     done <"$contract"
-    if (( rows < 10 )); then
-        echo "FAIL: only $rows launcher rows read from $contract"
+    if (( launcher_rows < 20 || music_rows < 10 )); then
+        echo "FAIL: only $launcher_rows launcher and $music_rows music rows read from $contract"
         failures=$((failures + 1))
     else
-        echo "contract: $rows launcher rows of server/testdata/launcher_tag_codes.json checked"
+        echo "contract: $launcher_rows launcher and $music_rows music rows of server/testdata/launcher_tag_codes.json checked"
     fi
     if (( failures > 0 )); then
         echo "$failures failed"
