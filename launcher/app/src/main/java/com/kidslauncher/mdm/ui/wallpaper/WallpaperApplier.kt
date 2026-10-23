@@ -66,9 +66,10 @@ object WallpaperApplier {
         return minOf(metrics.widthPixels, metrics.heightPixels) to maxOf(metrics.widthPixels, metrics.heightPixels)
     }
 
-    fun keyFor(context: Context, home: Wallpaper): String {
+    /** [glance]: the glance's ground (design 59d step K) - Android's lock wallpaper as the face. */
+    fun keyFor(context: Context, home: Wallpaper, glance: GlanceGround?): String {
         val (w, h) = screen(context)
-        return wallpaperKey(home, w, h, com.kidslauncher.mdm.lock.AndroidLock.faceOn)
+        return wallpaperKey(home, w, h, com.kidslauncher.mdm.lock.AndroidLock.faceOn, glance)
     }
 
     private fun systemId(context: Context): Int = try {
@@ -79,8 +80,8 @@ object WallpaperApplier {
 
     /** Whether Home can be transparent over the system wallpaper (it is ours and current).
      * A binder call: only on the store's thread ([WallpaperStore.State.systemShowsOurs]). */
-    fun systemShows(context: Context, home: Wallpaper): Boolean =
-        systemShowsOurs(record(context), keyFor(context, home), systemId(context))
+    fun systemShows(context: Context, home: Wallpaper, glance: GlanceGround?): Boolean =
+        systemShowsOurs(record(context), keyFor(context, home, glance), systemId(context))
 
     private fun managed(): Boolean =
         (cachedPolicy() as? CachedPolicy.Ok)?.policy?.allowlist != null ||
@@ -100,9 +101,9 @@ object WallpaperApplier {
      * is replaced on every call until that worked, and when the replacement fails, reset.
      */
     @Synchronized
-    fun applyIfNeeded(context: Context, home: Wallpaper, allowedImages: Set<String>) {
+    fun applyIfNeeded(context: Context, home: Wallpaper, allowedImages: Set<String>, glance: GlanceGround?) {
         val app = context.applicationContext
-        val key = keyFor(app, home)
+        val key = keyFor(app, home, glance)
         val record = record(app)
         val today = LocalDate.now().toEpochDay()
         val revoked = revokedImageShows(record, allowedImages)
@@ -110,7 +111,7 @@ object WallpaperApplier {
             is ApplyDecision.Skip -> Log.d(LOG_TAG, "Not applied: ${decision.reason}")
             ApplyDecision.Reset -> resetIfOurs(app)
             ApplyDecision.Apply -> {
-                val outcome = setBoth(app, home)
+                val outcome = setBoth(app, home, glance)
                 save(app, recordAttempt(record, key, outcome, today))
                 if (outcome.complete) {
                     Log.i(LOG_TAG, "System wallpaper set ($key, id ${outcome.systemId})")
@@ -167,21 +168,35 @@ object WallpaperApplier {
      * Sets the lock wallpaper first, then the home one (qa-08-code.md #2: whichever half goes
      * through is recorded, see [recordAttempt]). Never throws.
      */
-    private fun setBoth(context: Context, home: Wallpaper): ApplyOutcome {
+    private fun setBoth(context: Context, home: Wallpaper, glance: GlanceGround?): ApplyOutcome {
         val wm = WallpaperManager.getInstance(context)
-        // Design 59b §5: as Android's face, the night ground with the mark behind SystemUI's face and pad.
-        val lock = lockScreenFill(home, com.kidslauncher.mdm.lock.AndroidLock.faceOn)
+        // Design 59d step K: as Android's face, our glance's ground with its scrim behind SystemUI's face and pad (the
+        // night mark only while no ground is known).
+        val face = com.kidslauncher.mdm.lock.AndroidLock.faceOn
+        val lock = lockScreenFill(home, face, glance)
+        val lockScrim = lockScreenScrim(face, glance)
         val (w, h) = screen(context)
         var lockOk = false
         var systemId = 0
         try {
             val homeBitmap = homeBitmap(context, home.fill, w, h) ?: return ApplyOutcome(0, false)
-            if (lock == home.fill) {
+            if (lock == home.fill && lockScrim == 0) {
                 systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)
                 lockOk = systemId != 0
             } else {
-                // Set the lock screen explicitly, or it would mirror the photo. The mark at the screen size (sharp).
-                val lockBitmap = if (lock == WallpaperFill.NightMark) render(context, lock, null, w, h) else render(context, lock, null, w / 2, h / 2)
+                // Set the lock screen explicitly, or it would mirror the photo. The mark at the screen size (sharp); the
+                // glance's ground as Home's would be drawn, then its scrim over it (as `GroundDrawable` draws it).
+                val lockBitmap = when (lock) {
+                    WallpaperFill.NightMark -> render(context, lock, null, w, h)
+                    // Design 59d R1-6: a lock photo that can't be decoded never costs Home's half - the night mark
+                    // instead (the scrim below still applies), logged.
+                    is WallpaperFill.Image -> homeBitmap(context, lock, w, h) ?: run {
+                        Log.w(LOG_TAG, "The lock wallpaper's photo couldn't be decoded - the night mark on the lock instead")
+                        render(context, WallpaperFill.NightMark, null, w, h)
+                    }
+                    else -> render(context, lock, null, w / 2, h / 2)
+                }
+                if ((lockScrim ushr 24) != 0) Canvas(lockBitmap).drawColor(lockScrim)
                 lockOk = wm.setBitmap(lockBitmap, null, true, WallpaperManager.FLAG_LOCK) != 0
                 lockBitmap.recycle()
                 if (lockOk) systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM)

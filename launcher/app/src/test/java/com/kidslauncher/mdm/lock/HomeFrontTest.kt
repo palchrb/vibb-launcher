@@ -83,22 +83,53 @@ class HomeFrontTest {
         assertTrue("stop (as the root) before Home", go.indexOf("stopLockTaskQuietly") in 0 until home)
     }
 
+    /** Design 59d step B (the rc.2 recording's 3 black Home frames): Home after the face's leave draws its own ground. */
+    @Test
+    fun `Home after the face's leave draws its own ground until it stops`() {
+        assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.FULL, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = true, scrimAlpha = 0, ownGround = true))
+        assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.TRANSPARENT, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = true, scrimAlpha = 0))
+        assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.SCRIM, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = true, scrimAlpha = 40))
+        assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.FULL, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = false, scrimAlpha = 0))
+        val front = code(file("java/com/kidslauncher/mdm/lock/HomeFront.kt"))
+        val bring = front.substringAfter("fun bring(")
+        // R1-4: set only by a noAnimation start that went through, and it expires.
+        val set = bring.indexOf("if (noAnimation) ownGroundSetAt = android.os.SystemClock.elapsedRealtime()")
+        assertTrue("set after the start returned", set > bring.indexOf("context.startActivity(intent(context, animate, noAnimation))"))
+        assertEquals(1, Regex("ownGroundSetAt = android").findAll(front).count())
+        assertTrue(ownGroundDue(setAtMs = 10_000L, nowMs = 10_000L + OWN_GROUND_WINDOW_MS))
+        assertFalse("a later, unrelated resume", ownGroundDue(setAtMs = 10_000L, nowMs = 10_001L + OWN_GROUND_WINDOW_MS))
+        assertFalse("none set", ownGroundDue(setAtMs = null, nowMs = 10_000L))
+        assertEquals(3_000L, OWN_GROUND_WINDOW_MS)
+        // R1-3: the relock's queued Home after the unlock is unanimated as the face too.
+        assertTrue(front.contains("KeyguardCover.afterAndroidUnlock(context, \"Home (\$why)\") { bring(it, why, noAnimation = AndroidLock.faceOn) }"))
+        val home = code(file("java/com/kidslauncher/mdm/ui/HomeActivity.kt"))
+        assertTrue(home.substringAfter("override fun onResume() {").substringBefore("startWork()").contains("if (HomeFront.takeOwnGroundDue()) ownGround = true"))
+        assertTrue(home.substringAfter("override fun onStop() {").substringBefore("\n    }\n").contains("ownGround = false"))
+        assertTrue(home.contains("WallpaperGround.apply(this, binding.root, ownGround = ownGround)"))
+    }
+
     /** Design 32 (QA M2): the lock-up's Home start has no open animation and is still typed HOME. */
     @Test
     fun `HomeFront without an animation adds only NO_ANIMATION`() {
         val text = code(file("java/com/kidslauncher/mdm/lock/HomeFront.kt"))
         val intent = text.substringAfter("fun intent(").substringBefore("fun bring(")
-        assertTrue(intent, intent.startsWith("context: Context, animate: Boolean = true): Intent ="))
-        assertTrue(intent, intent.contains(".addFlags(if (animate) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)"))
+        assertTrue(intent, intent.startsWith("context: Context, animate: Boolean = true, noAnimation: Boolean = false): Intent ="))
+        assertTrue(intent, intent.contains(".addFlags(if (animate && !noAnimation) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)"))
         assertEquals("one category, no component", 1, Regex("addCategory\\(").findAll(intent).count())
-        assertTrue(text.contains("fun bring(context: Context, why: String, animate: Boolean = true): Boolean"))
+        assertTrue(text.contains("fun bring(context: Context, why: String, animate: Boolean = true, noAnimation: Boolean = false): Boolean"))
         val bring = text.substringAfter("fun bring(")
-        assertTrue(bring.indexOf("if (animate) PinLockRuntime.endDarkLockUp()") in 0 until bring.indexOf("context.startActivity(intent(context, animate))"))
+        assertTrue(bring.indexOf("if (animate) PinLockRuntime.endDarkLockUp()") in 0 until bring.indexOf("context.startActivity(intent(context, animate, noAnimation))"))
         // qa-32-s1-code L2: such a start from another thread runs on the main thread, where the
         // lock-up marks and starts in one pass - first thing, before the mark is ended.
         val hop = bring.indexOf("if (animate && Looper.myLooper() != Looper.getMainLooper()) {")
         assertTrue(bring, hop in 0 until bring.indexOf("PinLockRuntime.endDarkLockUp()"))
-        assertTrue(bring.substring(hop).substringBefore("return true").contains("main.post { bring(app, why) }"))
+        // Design 59d step B (Q59d-7): noAnimation keeps the hop and the dark mark's end (only `animate` skips them).
+        assertTrue(bring.substring(hop).substringBefore("return true").contains("main.post { bring(app, why, noAnimation = noAnimation) }"))
+        // The two callers: the lock-up's `animate = false` (below) and the face's leave's `noAnimation`.
+        val noAnim = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }
+            .filter { code(it).contains("noAnimation = ") && it.name != "HomeFront.kt" }.map { it.name }.toList()
+        assertEquals(listOf("PinLockActivity.kt"), noAnim)
+        assertTrue(code(file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")).contains("HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn)"))
         assertTrue(text.contains("private val main = Handler(Looper.getMainLooper())"))
         // Only the lock-up starts Home unanimated - every other start ends its dark mark.
         val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()

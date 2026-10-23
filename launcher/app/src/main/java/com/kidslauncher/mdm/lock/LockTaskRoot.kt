@@ -79,10 +79,22 @@ data class LockLeave(
  *   which Home would only hide. The lock task is stopped first exactly as in the rows above (so `stopOwnLockTask`
  *   still agrees). Kept: kiosk on with the glance the lock-task root - stopping its lock task drops the kiosk, and
  *   Home re-roots it.
+ * - Design 59d step H (the user's Q1, Q59d-4): as Android's face ([androidFace]) with the kiosk on, no Home over a live
+ *   call ([callLive] = `PinLockRuntime.callLiveNow`): the glance finishes and the call's UI (the app's own, or ours)
+ *   stays in front - with the kiosk on only locked tasks can come forward. Except as the kiosk root ([startedLockTask]):
+ *   stopping a root lock task clears every locked task, the call app's included, and only Home re-roots the kiosk.
+ *   Kiosk off already has the rule; own mode is unchanged.
  */
-fun lockLeave(kioskOn: Boolean, startedLockTask: Boolean, lockTaskRunning: Boolean, callLive: Boolean, glanceInFront: Boolean = true): LockLeave =
+fun lockLeave(
+    kioskOn: Boolean,
+    startedLockTask: Boolean,
+    lockTaskRunning: Boolean,
+    callLive: Boolean,
+    glanceInFront: Boolean = true,
+    androidFace: Boolean = false,
+): LockLeave =
     if (kioskOn) {
-        LockLeave(stopLockTaskFirst = startedLockTask, homeFirst = glanceInFront || startedLockTask)
+        LockLeave(stopLockTaskFirst = startedLockTask, homeFirst = startedLockTask || (glanceInFront && !(androidFace && callLive)))
     } else {
         LockLeave(stopLockTaskFirst = startedLockTask || lockTaskRunning, homeFirst = glanceInFront && !callLive)
     }

@@ -242,7 +242,7 @@ class AndroidLockFaceTest {
             assertTrue(path, text.contains(call))
             assertFalse(path, text.contains("HomeFront.bring("))
         }
-        assertTrue(code("$lock/HomeFront.kt").contains("KeyguardCover.afterAndroidUnlock(context, \"Home (\$why)\") { bring(it, why) }"))
+        assertTrue(code("$lock/HomeFront.kt").contains("KeyguardCover.afterAndroidUnlock(context, \"Home (\$why)\") { bring(it, why, noAnimation = AndroidLock.faceOn) }"))
         val start = code("$main/ui/LockActivity.kt").substringAfter("fun start(context: Context) {").substringBefore("\n        }\n")
         assertTrue(start.contains("KeyguardCover.afterAndroidUnlock(context, \"the time-rule screen\") { startNow(it) }"))
         // The queue waits only while the face's Android is locked, and runs when our lock leaves LOCKED.
@@ -254,32 +254,74 @@ class AndroidLockFaceTest {
     }
 
     @Test
-    fun `B-6 (M7b) - under Android's pad our keys are hidden and take no digit`() {
+    fun `B-6 (M7b), 59d B - in the ASK stage our keys are hidden and take no digit`() {
         val activity = code("$lock/PinLockActivity.kt")
+        assertTrue(activity.contains("private fun asking(): Boolean = glance?.state?.stage == LockStage.ASK"))
         val render = activity.substringAfter("private fun render() {").substringBefore("\n    }\n")
-        assertTrue(render.contains("val ours = if (keypadIsAndroids) View.INVISIBLE else View.VISIBLE"))
+        assertTrue(render.contains("val ours = if (asking) View.INVISIBLE else View.VISIBLE"))
         assertTrue(render.contains("binding.pinKeypad.visibility = ours"))
         assertTrue(render.contains("binding.pinDots.visibility = ours"))
-        assertTrue(render.contains("binding.pinParentCode.visibility = if (keypadIsAndroids) View.GONE else View.VISIBLE"))
-        assertTrue(activity.contains("private fun keypadEnabled() = !keypadIsAndroids && !checking && waitMs <= 0L && PinLockRuntime.pinUsable"))
+        assertTrue(render.contains("binding.pinParentCode.visibility = if (asking) View.GONE else View.VISIBLE"))
+        assertTrue(activity.contains("private fun keypadEnabled() = !asking() && !checking && waitMs <= 0L && PinLockRuntime.pinUsable"))
         for (name in listOf("onDigit", "onDelete")) {
             assertTrue(name, activity.substringAfter("private fun $name(").substringBefore("\n    }\n").contains("if (!keypadEnabled()) return"))
         }
+        assertFalse("keypadIsAndroids went", activity.contains("keypadIsAndroids"))
+    }
+
+    /** Design 59d step B (Q59d-6): the ASK stage asks from the glance page; only ASK asks, every other stage closes it. */
+    @Test
+    fun `59d B - the ASK stage asks for Android's pad, OWN_KEYPAD gives our keys, every return to GLANCE closes the ask`() {
+        val activity = code("$lock/PinLockActivity.kt")
+        val onStage = activity.substringAfter("private fun onStage() {").substringBefore("\n    }\n")
+        assertTrue(onStage, onStage.contains("!asking() -> closeAsk()"))
+        assertTrue(onStage, onStage.contains("!AndroidLock.faceOn -> glance?.ownKeypad()"))
+        assertTrue(onStage, onStage.contains("else -> tapAsFace()"))
+        val tap = activity.substringAfter("private fun tapAsFace() {").substringBefore("\n    }\n")
+        assertTrue(tap, tap.substringAfter("if (step == FaceStep.OWN_KEYPAD) {").substringBefore("return").contains("glance?.ownKeypad()"))
+        assertTrue(activity.contains("FaceStep.STAY -> if (askedAt == null && asking()) glance?.back()"))
+        assertTrue(activity.contains("GlancePanel(this, frame, binding.root, ::onStage, face = { AndroidLock.faceOn })"))
+        val panel = code("$lock/GlancePanel.kt")
+        assertTrue(panel.contains("state = glanceStageStep(state, event, face())"))
+        assertFalse("GlancePanel.androidPad went", panel.contains("androidPad"))
     }
 
     @Test
-    fun `under Android's PIN pad the glance page stays drawn - the pad's success never shows the keypad stage's left-overs`() {
-        assertTrue(glancePageShown(LockStage.GLANCE, androidPad = false))
-        assertTrue(glancePageShown(LockStage.KEYPAD, androidPad = true))
-        assertFalse("own mode's keypad", glancePageShown(LockStage.KEYPAD, androidPad = false))
+    fun `59d B - the page shows under the pad, only its ground at the leave`() {
+        assertTrue(glancePageShown(LockStage.GLANCE))
+        assertTrue("the page under Android's pad", glancePageShown(LockStage.ASK))
+        assertFalse("our keypad", glancePageShown(LockStage.KEYPAD))
+        assertTrue(glanceContentShown(leaving = false))
+        assertFalse("the leave hides it", glanceContentShown(leaving = true))
+        assertTrue(glanceLeaveHides(androidFace = true, inFront = true))
+        assertFalse("stopped under an app", glanceLeaveHides(androidFace = true, inFront = false))
+        assertFalse("own mode's leave unchanged", glanceLeaveHides(androidFace = false, inFront = true))
         val panel = code("$lock/GlancePanel.kt")
-        assertTrue(panel.substringAfter("private fun renderNow() {").contains("val shown = glancePageShown(state.stage, androidPad)"))
-        assertTrue(panel.contains("val page = glancePageShown(state.stage, androidPad)"))
+        // The root's children only - never the root (its ground), the decor view or the window (a row's PendingIntent).
+        val show = panel.substringAfter("private fun showContent() {").substringBefore("\n    }\n")
+        assertTrue(show, show.contains("val content = if (glanceContentShown(leaving)) View.VISIBLE else View.INVISIBLE"))
+        assertTrue(show, show.contains("for (i in 0 until root.childCount) root.getChildAt(i).visibility = content"))
+        assertFalse(panel.contains("decorView"))
+        val render = panel.substringAfter("private fun renderNow() {").substringBefore("\n    }\n")
+        assertTrue(render.contains("val shown = glancePageShown(state.stage)"))
+        assertTrue(render.indexOf("showContent()") > render.indexOf("glance.root.visibility = if (shown) View.VISIBLE else View.GONE"))
+        assertTrue(panel.contains("val page = glancePageShown(state.stage)"))
+        // The next resume shows a content still hidden by a leave that didn't finish.
+        assertTrue(panel.substringAfter("fun resume() = guarded(\"resume\") {").substringBefore("\n    }\n").contains("leaving = false"))
+    }
+
+    @Test
+    fun `59d B - the face's leave hides the content first, then Home and the finish with no animation`() {
         val activity = code("$lock/PinLockActivity.kt")
-        assertTrue(activity.substringAfter("private fun render() {").substringBefore("\n    }\n").contains("glance?.androidPad(keypadIsAndroids)"))
-        // The face leaves as a plain fade; own mode's leave is unchanged.
-        assertTrue(activity.substringAfter("private fun go(plan: LockLeave) {").substringBefore("\n    }\n")
-            .contains("if (AndroidLock.faceOn) overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, android.R.anim.fade_out)"))
+        val leave = activity.substringAfter("private fun leave() {").substringBefore("\n    }\n")
+        val hide = leave.indexOf("if (hides) glance?.leaving()")
+        assertTrue(leave, leave.contains("val hides = glanceLeaveHides(AndroidLock.faceOn, inFront)"))
+        assertTrue(leave, hide in 0 until leave.indexOf("go(lockLeave("))
+        assertTrue(leave, leave.indexOf("if (hides && !isFinishing) glance?.leaveRefused()") > leave.indexOf("go(rootLeave)"))
+        val go = activity.substringAfter("private fun go(plan: LockLeave) {").substringBefore("\n    }\n")
+        assertTrue(go, go.contains("if (plan.homeFirst) HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn)"))
+        assertTrue(go, go.contains("if (AndroidLock.faceOn) overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)"))
+        assertFalse("59b's close fade went", go.contains("fade_out"))
     }
 
     @Test
@@ -296,13 +338,32 @@ class AndroidLockFaceTest {
         // The glue: the pause marks before its check is scheduled; the stop's mark is own mode's, unchanged.
         val runtime = code("$lock/PinLockRuntime.kt")
         val paused = runtime.substringAfter("fun onLockPaused(").substringBefore("\n    }\n")
-        val mark = paused.indexOf("if (sosMarkAtPause(AndroidLock.faceOn, ours, lastScreenOnElapsed, pausedNow, sosPackage != null)) noteProbableSos(pausedNow)")
+        val mark = paused.indexOf("if (sosMarkAtPause(AndroidLock.faceOn, ours, lastScreenOnElapsed, pausedNow, sosPackage != null)) noteProbableSos(pausedNow, logNow = false)")
         assertTrue(mark > paused.indexOf("if (!pauseStartsRefront(chromeLocked, finishing)) return"))
         assertTrue(mark < paused.indexOf("handler.postDelayed(refrontCheck"))
         assertTrue(paused.contains("val ours = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, pausedNow)"))
         assertTrue(runtime.substringAfter("fun onLockStopped(").substringBefore("\n    }\n").contains("noteProbableSos(SystemClock.elapsedRealtime())"))
-        assertTrue(runtime.substringAfter("private fun noteProbableSos(leftFrontAt: Long) {").substringBefore("\n    }\n")
+        assertTrue(runtime.substringAfter("private fun noteProbableSos(leftFrontAt: Long, logNow: Boolean = true) {").substringBefore("\n    }\n")
             .contains("if (!sosGestureLikely(lastScreenOnElapsed, leftFrontAt, sosAppPresent = sosPackage != null)) return"))
+    }
+
+    @Test
+    fun `N1 - a pause's SOS mark is logged only when the pause's check still finds it`() {
+        assertTrue("the check finds the mark", sosPauseMarkLogDue(unlogged = true, markHeld = true))
+        assertFalse("the wake's pause/resume pair: the resume cleared it", sosPauseMarkLogDue(unlogged = true, markHeld = false))
+        assertFalse("a stop's mark logged at once already", sosPauseMarkLogDue(unlogged = false, markHeld = true))
+        val runtime = code("$lock/PinLockRuntime.kt")
+        val note = runtime.substringAfter("private fun noteProbableSos(leftFrontAt: Long, logNow: Boolean = true) {").substringBefore("\n    }\n")
+        assertTrue(note, note.contains("sosMarkUnlogged = !logNow"))
+        assertTrue(note, note.contains("if (logNow) Log.i(LOG_TAG, SOS_MARK_LINE)"))
+        assertEquals("one other log of the line", 2, Regex("Log\\.i\\(LOG_TAG, SOS_MARK_LINE\\)").findAll(runtime).count())
+        val check = runtime.substringAfter("private fun runRefrontCheck() {").substringBefore("\n    }\n")
+        val log = check.indexOf("if (sosPauseMarkLogDue(sosMarkUnlogged, sosFlowUntilElapsed > 0L)) Log.i(LOG_TAG, SOS_MARK_LINE)")
+        assertTrue(check, log in 0 until check.indexOf("if (!sos) sosFlowUntilElapsed = 0L"))
+        // The resume clears the mark and the unlogged flag together; the stop still logs at once (own mode's mark).
+        val resumed = runtime.substringAfter("fun onLockResumed(").substringBefore("\n    }\n")
+        assertTrue(resumed.indexOf("sosMarkUnlogged = false") > resumed.indexOf("sosFlowUntilElapsed = 0L"))
+        assertTrue(runtime.substringAfter("fun onLockStopped(").substringBefore("\n    }\n").contains("noteProbableSos(SystemClock.elapsedRealtime())\n"))
     }
 
     @Test

@@ -95,6 +95,10 @@ class GlancePanel(
     private val onStage: () -> Unit,
     /** The flashlight (design 41): the phone's `Torch` ([lockTorch]); `null` = no button. */
     private val torch: TorchPort? = lockTorch(activity),
+    /** Design 59d step B (§8.5): whether this glance is Android's face - "Lås opp" and a row lead to the ASK stage
+     * ([glanceStageStep]). Read at each stage step, not fixed at construction: the lock activity lives across
+     * screen-offs, and an apply may turn the face on or off under it. */
+    private val face: () -> Boolean = { false },
     private val onEmergency: () -> Unit,
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
@@ -210,7 +214,11 @@ class GlancePanel(
     /** onResume (and onStart): the glance page when the lock comes up with the screen on
      * ([lockStageDue]); otherwise the stage the kid is on (back from the emergency dialer, an alarm,
      * a call). */
-    fun resume() = guarded("resume") { resumeNow() }
+    fun resume() = guarded("resume") {
+        // Design 59d step B (§8.5): a leave that didn't finish within its resume shows the content again here.
+        leaving = false
+        resumeNow()
+    }
 
     private fun resumeNow() {
         if (!started) return
@@ -267,11 +275,38 @@ class GlancePanel(
         glance.root.requestLayout()
     }
 
-    /** The keypad's back arrow: the glance page again. */
+    /** The keypad's back arrow (as the face also the pad's cancel, an error, the recovery, STAY): the glance page again. */
     fun back() = step(GlanceStageEvent.Back)
 
+    /** Design 59d step B: as the face with no Android credential at the tap - our keys, the target kept. */
+    fun ownKeypad() = step(GlanceStageEvent.OwnKeypad)
+
+    /** Design 59d step B: the glance leaves as the face, in front - its content goes before Home ([glanceLeaveHides]);
+     * the root keeps its ground (the lock wallpaper under its scrim), and the window stays visible (a row's `PendingIntent` send needs it). */
+    fun leaving() = guarded("leaving") {
+        leaving = true
+        showContent()
+    }
+
+    /** The finish was refused after all (the root's retry too): the content shows again. Also at the next resume. */
+    fun leaveRefused() = guarded("leave refused") {
+        if (!leaving) return@guarded
+        leaving = false
+        showContent()
+    }
+
+    /** The glance is leaving ([leaving]) - set only by the leave, cleared by a refused finish or the next resume. */
+    private var leaving = false
+
+    /** The page's content (the root's children) per [glanceContentShown]; the root itself, with the ground, stays. */
+    private fun showContent() {
+        val content = if (glanceContentShown(leaving)) View.VISIBLE else View.INVISIBLE
+        val root = glance.root
+        for (i in 0 until root.childCount) root.getChildAt(i).visibility = content
+    }
+
     private fun step(event: GlanceStageEvent) = guarded("stage") {
-        state = glanceStageStep(state, event)
+        state = glanceStageStep(state, event, face())
         dropTargetIfGone()
         renderNow()
         onStage()
@@ -341,7 +376,7 @@ class GlancePanel(
         musicDirty = false
         clockDirty = false
         if (!started) return@guarded
-        val page = glancePageShown(state.stage, androidPad)
+        val page = glancePageShown(state.stage)
         var refit = false
         if (musicChanged) {
             val wasUp = tileUp
@@ -427,19 +462,11 @@ class GlancePanel(
         button.stateDescription = activity.getString(if (lit) R.string.lock_torch_on else R.string.lock_torch_off)
     }
 
-    /** Design 59b: the keypad stage is Android's PIN pad now (the activity's `keypadIsAndroids`) - the page stays up. */
-    private var androidPad = false
-
-    /** The activity's render: the keypad stage is (or no longer is) Android's PIN pad ([glancePageShown]). */
-    fun androidPad(on: Boolean) = guarded("android pad") {
-        if (androidPad == on) return@guarded
-        androidPad = on
-        renderNow()
-    }
-
     private fun renderNow() {
-        val shown = glancePageShown(state.stage, androidPad)
+        val shown = glancePageShown(state.stage)
         glance.root.visibility = if (shown) View.VISIBLE else View.GONE
+        // Design 59d step B: while the glance leaves, only the root's ground.
+        showContent()
         keypad.importantForAccessibility =
             if (shown) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
         tileUp = glanceTile(music.lookUp())

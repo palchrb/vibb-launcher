@@ -183,6 +183,10 @@ object PinLockRuntime {
     private var lastScreenOnElapsed: Long? = null
     private var sosFlowUntilElapsed = 0L
 
+    /** Design 59d N1: the mark was set at a pause and not logged yet - the pause's check logs it if it still holds
+     * ([sosPauseMarkLogDue]). Main thread. */
+    private var sosMarkUnlogged = false
+
     /** Our resumed activities other than the lock (bug 25b-H). Main thread. */
     private var ownOthersResumed = 0
 
@@ -761,7 +765,8 @@ object PinLockRuntime {
         // S3-3: Android read locked since this screen-off - an open read at the next resume is then an unlock, so
         // the wait for USER_PRESENT is the longer one (a fingerprint from dark).
         if (kg && AndroidLock.faceOn) AndroidLock.sawLocked(screenOffs)
-        val start = LockUpDebug.adjust(lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg), result.showLock)
+        // Design 59d step C: as the face the lock alone whatever kg read (kg still feeds sawLocked above).
+        val start = LockUpDebug.adjust(lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn), result.showLock)
         lockUp(context, start, lockAsk(event))
         AndroidLock.note(context, "screen-off, lock-up $start")
         if (result.mode == LockMode.LOCKED) Log.i(LOG_TAG, "Lock-up at screen-off: $start (call=$callLive, interactive=$interactive, cover=$cover, kg=$kg)")
@@ -915,7 +920,8 @@ object PinLockRuntime {
                 // May start the time-rule screen - the PIN lock then goes above it. A parent-PIN
                 // window that ended in the phone's sleep locks again now (design 24b).
                 TimeRulesRuntime.recheck(app, com.kidslauncher.mdm.server.RelockTrigger.SCREEN_ON)
-                dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app), VoipCalls.phase))
+                // Design 59d step C (§8.5): face and lockOnTop read here, not stored - a new process has lockOnTop false.
+                dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app), VoipCalls.phase, face = AndroidLock.faceOn, lockOnTop = lockOnTop))
                 // Design 16d decision 1: the boot's first screen-on heals the status bar once more.
                 if (intent.action == Intent.ACTION_SCREEN_ON && !screenOnHealed) {
                     screenOnHealed = true
@@ -1384,7 +1390,8 @@ object PinLockRuntime {
     }
 
     /** [NOTICE_WAKE_ON_MS] after a notice wake: still untouched on the lock - the screen goes off
-     * (`lockNow`, the device owner's; the screen-off locks as always). */
+     * (`lockNow`, the device owner's; the screen-off locks as always). Design 59d step E: never as Android's face - the
+     * phone's own screen timeout ends the wake ([noticeWakeOffDue]'s `face`). */
     private fun noticeWakeOffCheck() {
         val app = appContext ?: return
         val now = SystemClock.elapsedRealtime()
@@ -1399,6 +1406,7 @@ object PinLockRuntime {
             dialogOpen = lockDialogsOpen > 0,
             touchExploration = touchExploration(app),
             nowMs = now,
+            face = AndroidLock.faceOn,
         )
         endNoticeWake()
         if (!due) return
@@ -1594,6 +1602,7 @@ object PinLockRuntime {
         rememberedAlarmMs = alarmAfterResume(rememberedAlarmMs, yielding)
         yielding = null
         sosFlowUntilElapsed = 0L
+        sosMarkUnlogged = false
         narrowForSos(context, false)
         // Back after a call the system dialer showed: the camera policy follows (qa-25b-25f M1).
         updateCallForCamera(context, telecomInCall(context))
@@ -1632,7 +1641,7 @@ object PinLockRuntime {
         // one stops the glance only after ~1 s) is a probable SOS at once - never re-fronted over before its stop.
         val pausedNow = SystemClock.elapsedRealtime()
         val ours = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, pausedNow)
-        if (sosMarkAtPause(AndroidLock.faceOn, ours, lastScreenOnElapsed, pausedNow, sosPackage != null)) noteProbableSos(pausedNow)
+        if (sosMarkAtPause(AndroidLock.faceOn, ours, lastScreenOnElapsed, pausedNow, sosPackage != null)) noteProbableSos(pausedNow, logNow = false)
         refrontAttempt = 0
         handler.removeCallbacks(refrontCheck)
         // Just after a screen-on the stop that marks Emergency SOS may still come (bug 25b-H).
@@ -1692,15 +1701,17 @@ object PinLockRuntime {
     /** The "sos" yield narrows lock task ([LockTaskChrome.sosYield]) - set on the main thread. */
     private var sosNarrowed = false
 
-    /** The lock left the front: probably the Emergency SOS gesture ([sosGestureLikely], bug 25b-H)? */
-    private fun noteProbableSos(leftFrontAt: Long) {
+    /** The lock left the front: probably the Emergency SOS gesture ([sosGestureLikely], bug 25b-H)? [logNow] false (the
+     * face's pause, design 59d N1): the line waits for the pause's check, so the wake's own pause/resume pair logs nothing. */
+    private fun noteProbableSos(leftFrontAt: Long, logNow: Boolean = true) {
         val app = appContext ?: return
         // A stop at the screen-off is no SOS (the gesture's presses keep the screen on).
         if (sosFlowUntilElapsed > 0L || !interactive(app)) return
         val now = SystemClock.elapsedRealtime()
         if (!sosGestureLikely(lastScreenOnElapsed, leftFrontAt, sosAppPresent = sosPackage != null)) return
         sosFlowUntilElapsed = now + SOS_FLOW_MS
-        Log.i(LOG_TAG, "The lock left the front just after a screen-on: probably Emergency SOS")
+        sosMarkUnlogged = !logNow
+        if (logNow) Log.i(LOG_TAG, SOS_MARK_LINE)
     }
 
     /** The "sos" yield's narrowed lock task on or off (qa-25b-25f H1). Main thread. */
@@ -1741,6 +1752,9 @@ object PinLockRuntime {
             androidWaited = androidWaited,
         )
         androidLossPending = false
+        // Design 59d N1: a pause's mark is logged only when its check still finds it (no resume came in between).
+        if (sosPauseMarkLogDue(sosMarkUnlogged, sosFlowUntilElapsed > 0L)) Log.i(LOG_TAG, SOS_MARK_LINE)
+        sosMarkUnlogged = false
         val action = refrontAction(inputs, refrontAttempt)
         // qa-25b-25f H1: the mark ends on anything but its own yield; while it runs, only our
         // package, the helpers and the SOS app stay in lock task.

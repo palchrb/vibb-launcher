@@ -37,12 +37,22 @@ enum class LockUpStart {
  * window in which SystemUI's lockscreen shows un-occluded at a quick wake. Not locked (an app's
  * `KeyguardLock`, T briefly above the setting, a SystemUI restart): step 1's Home, the safe direction.
  */
-fun lockUpStarts(showLock: Boolean, lockOnTop: Boolean, callLive: Boolean, interactive: Boolean, coverLocked: Boolean = false): LockUpStart = when {
+fun lockUpStarts(
+    showLock: Boolean,
+    lockOnTop: Boolean,
+    callLive: Boolean,
+    interactive: Boolean,
+    coverLocked: Boolean = false,
+    /** Design 59d step C: our lock is Android's face - the lock alone whatever the keyguard read (no HOME_THEN_LOCK; the
+     * sleep check relocks an open Android 1 s later). Accepted cost: Android open at the screen-off and a wake inside that
+     * second shows the app's snapshot for a frame (design 32's flash, Q59d-12). */
+    face: Boolean = false,
+): LockUpStart = when {
     !showLock -> LockUpStart.NONE
     interactive -> LockUpStart.LOCK
     callLive -> LockUpStart.LOCK
     lockOnTop -> LockUpStart.NONE
-    coverLocked -> LockUpStart.LOCK
+    coverLocked || face -> LockUpStart.LOCK
     else -> LockUpStart.HOME_THEN_LOCK
 }
 
@@ -113,9 +123,14 @@ const val BACKSTOP_NEW_INTENT_MS = 1_000L
 fun newIntentPauseKept(wasOnTop: Boolean, backstopAtMs: Long?, nowMs: Long): Boolean =
     wasOnTop && backstopAtMs != null && nowMs - backstopAtMs in 0..BACKSTOP_NEW_INTENT_MS
 
-/** qa-32-s1-code M1: the screen-on [event] found the lock not resumed and [showLock] started nothing. */
+/**
+ * qa-32-s1-code M1: the screen-on [event] found the lock not resumed and [showLock] started nothing. Design 59d step C:
+ * the face's skip of a glance known to be on top ([LockEvent.ScreenOn.faceOnTop]) counts as shown - the mark stays -
+ * unless a call the backstop never covers (the system dialer's, VoIP) is what kept it from starting.
+ */
 fun screenOnUnshown(event: LockEvent, showLock: Boolean): Boolean =
-    event is LockEvent.ScreenOn && !event.lockShowing && !showLock
+    event is LockEvent.ScreenOn && !event.lockShowing && !showLock &&
+        !(event.faceOnTop && !event.systemCall && event.voip == VoipPhase.NONE)
 
 /**
  * Design 32 step 1 item 3 (QA M1): Home brought under the lock while dark only shows its night

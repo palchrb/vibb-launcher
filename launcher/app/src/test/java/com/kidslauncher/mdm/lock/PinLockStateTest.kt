@@ -104,6 +104,27 @@ class PinLockStateTest {
         assertEquals(LockStep(LockMode.DISABLED), step(LockMode.DISABLED, LockEvent.ScreenOn(false)))
     }
 
+    /** Design 59d step C (Q59d-1): the face's gated backstop. */
+    @Test
+    fun `as the face the screen-on backstop skips a glance on top and still starts after a new process`() {
+        assertEquals("on top since its lock-up: no start onto it", LockStep(LockMode.LOCKED),
+            step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false, face = true, lockOnTop = true)))
+        assertEquals("a new process or a lock-up whose start threw: the start", LockStep(LockMode.LOCKED, showLock = true),
+            step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false, face = true, lockOnTop = false)))
+        assertFalse(step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false, systemCall = true, face = true)).showLock)
+        assertFalse(step(LockMode.LOCKED, LockEvent.ScreenOn(lockShowing = false, voip = VoipPhase.IN_CALL, face = true)).showLock)
+    }
+
+    @Test
+    fun `own-mode screen-on rows unchanged - lockOnTop never skips the backstop`() {
+        for (mode in all) for (showing in listOf(false, true)) for (call in listOf(false, true)) for (system in listOf(false, true)) {
+            for (voip in VoipPhase.entries) {
+                val plain = step(mode, LockEvent.ScreenOn(showing, call, system, voip))
+                assertEquals(plain, step(mode, LockEvent.ScreenOn(showing, call, system, voip, face = false, lockOnTop = true)))
+            }
+        }
+    }
+
     @Test
     fun `unlock rechecks the time rules`() {
         assertEquals(LockStep(LockMode.UNLOCKED, recheckTimeRules = true), step(LockMode.LOCKED, LockEvent.Unlocked(0, 0)))

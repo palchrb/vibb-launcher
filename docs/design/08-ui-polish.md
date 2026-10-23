@@ -155,6 +155,12 @@ QA findings override this doc where they conflict. Binding:
 - Photo wallpapers go on the HOME screen only; the lock screen gets the chosen colour/gradient
   unless the parent opts in per wallpaper. When a wallpaper is unassigned/deleted or the phone is
   unmanaged, the system wallpaper is replaced at once.
+  **Amended 2026-10-23 (design 59d step K, the user's decision R1-1):** the opt-in governs own mode's
+  Android lock wallpaper only. In android mode (`kid_lock.keyguard` "android", Android's PIN the gate)
+  Android's face shows the glance's own ground - the parent's lock wallpaper, else Home's, a photo
+  included whether or not it is ticked - with the glance's scrim baked in. The glance already shows that
+  photo to anyone holding the phone; the only new audience is the same person on SystemUI's face before
+  the first unlock after a reboot.
 - Server wallpaper processing rotates first, then cover-fits/crops to the phone's aspect; same
   file lock, backup and recovery as contact photos.
 - Icon rendering off the main thread (in refreshApps); draw only one full-screen bitmap (use the

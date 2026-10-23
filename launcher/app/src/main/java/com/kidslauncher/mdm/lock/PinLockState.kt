@@ -58,7 +58,16 @@ sealed interface LockEvent {
         val ourCall: Boolean = false,
         val systemCall: Boolean = false,
         val voip: VoipPhase = VoipPhase.NONE,
-    ) : LockEvent
+        /** Design 59d step C (Q59d-1): our lock is Android's face (`AndroidLock.faceOn`, read where the event is built). */
+        val face: Boolean = false,
+        /** Design 59d step C: the glance is known to be the top task since its lock-up (`PinLockRuntime.lockOnTop`; a new
+         * process, or a lock-up whose start threw, has it false). */
+        val lockOnTop: Boolean = false,
+    ) : LockEvent {
+        /** As the face, the backstop skips a glance known to be on top: its start would only pause it for a new intent
+         * (the N1 pause/resume pair, Q59d-11). Own mode never skips. */
+        val faceOnTop: Boolean get() = face && lockOnTop
+    }
 
     /** The lock screen came to the front. */
     data class LockResumed(val ourCall: Boolean, val voip: VoipPhase = VoipPhase.NONE) : LockEvent
@@ -174,10 +183,12 @@ fun step(mode: LockMode, event: LockEvent): LockStep = when (event) {
         else -> LockStep(LockMode.LOCKED, showLock = !event.systemCall)
     }
 
+    // Design 59d step C (Q59d-1): as the face, not over a glance known to be on top - a new process and a lock-up whose
+    // start threw still get the start, so SystemUI's face never stays for a whole screen-on.
     is LockEvent.ScreenOn ->
         LockStep(
             mode,
-            showLock = mode == LockMode.LOCKED && !event.lockShowing && !event.systemCall && event.voip == VoipPhase.NONE,
+            showLock = mode == LockMode.LOCKED && !event.lockShowing && !event.faceOnTop && !event.systemCall && event.voip == VoipPhase.NONE,
         )
 
     is LockEvent.LockResumed -> LockStep(

@@ -133,6 +133,22 @@ object WallpaperStore {
         }
     }
 
+    /** Design 59d step K: the glance's ground once worked out ([State.lockReady]), else null (the night mark). */
+    private fun glanceGround(s: State): GlanceGround? = if (s.lockReady) GlanceGround(s.lock, s.lockScrimArgb) else null
+
+    /**
+     * Design 59d step K: Android's face went on or off (`AndroidLock.face`) - Android's lock wallpaper follows at once
+     * (`lockScreenFill`: the glance's own ground with its scrim as the face), not only at the next wallpaper sync. The
+     * apply key carries the lock fill and scrim, so this applies only when they really changed.
+     */
+    fun faceChanged(context: Context) {
+        val app = context.applicationContext
+        onWorker {
+            refreshNow(app)
+            applyAndRefresh(app)
+        }
+    }
+
     /** The kid picked [id] in Settings: remembered, shown, and put on the system wallpaper. */
     fun pick(context: Context, id: Long) {
         val app = context.applicationContext
@@ -145,7 +161,9 @@ object WallpaperStore {
 
     /** Puts the shown one on Android's wallpaper if needed, then refreshes [State.systemShowsOurs]. */
     private fun applyAndRefresh(app: Context) {
-        WallpaperApplier.applyIfNeeded(app, state.current, allowedImages)
+        // Design 59d step K: the glance's ground goes on Android's lock wallpaper as the face - its key carries it, so a
+        // new ground (a sync, the parent's lock wallpaper or opt-in, the mode) re-applies.
+        WallpaperApplier.applyIfNeeded(app, state.current, allowedImages, glanceGround(state))
         refreshNow(app)
     }
 
@@ -197,7 +215,7 @@ object WallpaperStore {
             WallpaperFill.NightMark -> lockScrimForColours(listOf(WallpaperRender.NIGHT_ARGB))
         }
         val showsOurs = try {
-            WallpaperApplier.systemShows(context, current)
+            WallpaperApplier.systemShows(context, current, GlanceGround(lock, blackScrimArgb(lockScrimAlpha)))
         } catch (e: Exception) {
             false
         }

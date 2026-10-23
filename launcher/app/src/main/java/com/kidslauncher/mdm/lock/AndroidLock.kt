@@ -143,6 +143,8 @@ object AndroidLock {
         val was = faceOn
         faceOn = face
         if (face != was) CameraLock.onLockChanged(app)
+        // Design 59d step K: Android's lock wallpaper is the glance's ground as the face - re-applied on both edges.
+        if (face != was) com.kidslauncher.mdm.ui.wallpaper.WallpaperStore.faceChanged(app)
         if (was && !face) lockScreenInfo(dpm, admin, null)
         if (requested || was) {
             Log.i(ANDROID_LOCK_TAG, "apply: requested=$requested managed=$managed kidPin=$hasKidPin secure=$deviceSecure face=$face" +

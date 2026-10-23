@@ -97,6 +97,11 @@ fun noticeWakeEndsAtScreenOn(wokeAtMs: Long?, nowMs: Long): Boolean =
  * off), none of the lock's own dialogs is open ([dialogOpen]: Foreldrekode, the emergency confirm - their touches
  * never reach the activity's onUserInteraction) and touch exploration is off ([touchExploration]: TalkBack's hovers
  * and clicks don't either) - qa-l7-b-code 2. A touch hands the screen back to the phone's own timeout.
+ *
+ * Design 59d step E (the user's Q2, Q59d-2): as Android's face ([face]) never - `lockNow` is the wake's only screen-off
+ * and it costs the fingerprint until the next PIN (`STRONG_AUTH_REQUIRED_AFTER_DPM_LOCK_NOW`). The glance stays lit until
+ * the phone's own screen timeout (the parent's `screen_timeout_seconds`); Android's keyguard is locked for the whole
+ * wake (`noticeWakeAllowed` needs LOCKED, the glance only occludes it). Own mode keeps its 15 s `lockNow`.
  */
 fun noticeWakeOffDue(
     wokeAtMs: Long?,
@@ -108,6 +113,7 @@ fun noticeWakeOffDue(
     dialogOpen: Boolean,
     touchExploration: Boolean,
     nowMs: Long,
+    face: Boolean = false,
 ): Boolean =
-    wokeAtMs != null && !touched && interactive && locked && lockResumed && !busy && !dialogOpen && !touchExploration &&
+    !face && wokeAtMs != null && !touched && interactive && locked && lockResumed && !busy && !dialogOpen && !touchExploration &&
         nowMs - wokeAtMs >= NOTICE_WAKE_ON_MS

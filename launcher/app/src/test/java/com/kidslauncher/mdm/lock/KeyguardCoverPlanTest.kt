@@ -323,7 +323,7 @@ class KeyguardCoverPlanTest {
         val atScreenOff = body(code("$lock/PinLockRuntime.kt"), "lockUpAtScreenOff")
         assertTrue(atScreenOff.contains("val cover = KeyguardCover.coverOn || AndroidLock.faceOn\n"))
         assertTrue(atScreenOff.contains("val kg = cover && KeyguardCover.keyguardLockedNow(context)\n"))
-        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg)"))
+        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn)"))
     }
 
     private val dark = RefrontInputs(locked = true, lockResumed = false, interactive = false, ourCall = false, telecomInCall = false, emergencyFlow = false, alarmRinging = false)

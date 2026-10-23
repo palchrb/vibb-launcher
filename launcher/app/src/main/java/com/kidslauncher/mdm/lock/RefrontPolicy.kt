@@ -331,6 +331,18 @@ fun pauseRefrontDelayMs(lastScreenOnAtMs: Long?, pausedAtMs: Long): Long =
 fun sosMarkAtPause(androidFace: Boolean, ours: Boolean, lastScreenOnAtMs: Long?, pausedAtMs: Long, sosAppPresent: Boolean): Boolean =
     androidFace && !ours && sosGestureLikely(lastScreenOnAtMs, pausedAtMs, sosAppPresent)
 
+/** The log line of a probable SOS (the field logs' evidence of a real one). */
+const val SOS_MARK_LINE = "The lock left the front just after a screen-on: probably Emergency SOS"
+
+/**
+ * Design 59d N1 (the rc.2 re-check's N1): the face's wake often has a 2-5 ms pause/resume pair (the backstop's new-intent
+ * delivery, mostly gone with step C), and [sosMarkAtPause] marked it at the pause - the resume cleared the mark, but the
+ * line was in the log at most wakes. A pause's mark ([unlogged]) is logged only by the pause's own check
+ * ([SOS_PAUSE_GRACE_MS]), and only when that check still finds it ([markHeld]: no resume came in between). A stop's mark
+ * logs at once, as before.
+ */
+fun sosPauseMarkLogDue(unlogged: Boolean, markHeld: Boolean): Boolean = unlogged && markHeld
+
 /** A probable SOS is left alone until [untilMs] - never while one of our own screens is in front. */
 fun sosFlowNow(untilMs: Long, nowMs: Long, ownScreenInFront: Boolean): Boolean = nowMs < untilMs && !ownScreenInFront
 

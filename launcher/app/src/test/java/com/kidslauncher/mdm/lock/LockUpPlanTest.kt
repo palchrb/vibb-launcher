@@ -61,6 +61,45 @@ class LockUpPlanTest {
         assertTrue(runtime.contains("private var lockOnTop = false"))
     }
 
+    /** Design 59d step C (Q59d-12): as the face the lock alone whatever the keyguard read, never Home under it. */
+    @Test
+    fun `as the face a dark lock-up is the lock alone even when Android read not locked`() {
+        assertEquals(LockUpStart.LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, coverLocked = false, face = true))
+        assertEquals(LockUpStart.NONE, lockUpStarts(showLock = true, lockOnTop = true, callLive = false, interactive = false, face = true))
+        assertEquals(LockUpStart.NONE, lockUpStarts(showLock = false, lockOnTop = false, callLive = false, interactive = false, face = true))
+        // The keyguard read stays: it feeds sawLocked (S3-3); only the plan ignores it as the face.
+        val lockUp = body(runtime, "lockUpAtScreenOff")
+        assertTrue(lockUp, lockUp.contains("val kg = cover && KeyguardCover.keyguardLockedNow(context)"))
+        assertTrue(lockUp, lockUp.contains("if (kg && AndroidLock.faceOn) AndroidLock.sawLocked(screenOffs)"))
+        assertTrue(lockUp, lockUp.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn)"))
+    }
+
+    @Test
+    fun `own-mode lock-up rows unchanged`() {
+        for (show in listOf(false, true)) for (onTop in listOf(false, true)) for (call in listOf(false, true)) {
+            for (interactive in listOf(false, true)) for (cover in listOf(false, true)) {
+                assertEquals(
+                    lockUpStarts(show, onTop, call, interactive, cover),
+                    lockUpStarts(show, onTop, call, interactive, cover, face = false),
+                )
+            }
+        }
+        assertEquals(LockUpStart.HOME_THEN_LOCK, lockUpStarts(showLock = true, lockOnTop = false, callLive = false, interactive = false, face = false))
+    }
+
+    /** Design 59d step C: the face's skip of a glance on top keeps the mark; a call's skip clears it as before. */
+    @Test
+    fun `the face's backstop skip keeps lockOnTop, the event built with the live reads`() {
+        val onTop = LockEvent.ScreenOn(lockShowing = false, face = true, lockOnTop = true)
+        assertFalse(screenOnUnshown(onTop, step(LockMode.LOCKED, onTop).showLock))
+        val call = LockEvent.ScreenOn(lockShowing = false, systemCall = true, face = true, lockOnTop = true)
+        assertTrue(screenOnUnshown(call, step(LockMode.LOCKED, call).showLock))
+        val voip = LockEvent.ScreenOn(lockShowing = false, voip = VoipPhase.IN_CALL, face = true, lockOnTop = true)
+        assertTrue(screenOnUnshown(voip, step(LockMode.LOCKED, voip).showLock))
+        assertTrue("own mode", screenOnUnshown(LockEvent.ScreenOn(lockShowing = false, systemCall = true, lockOnTop = true), false))
+        assertTrue(runtime.contains("LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app), VoipCalls.phase, face = AndroidLock.faceOn, lockOnTop = lockOnTop)"))
+    }
+
     // ---- lockOnTopAfter -------------------------------------------------------------------------
 
     @Test
@@ -163,7 +202,7 @@ class LockUpPlanTest {
         assertTrue(dispatch.contains("show(context, wake = WakeKind.VOIP.takeIf { result.wake }, ask = lockAsk(event), sameLockUp = event is LockEvent.ScreenOn)"))
         val atScreenOff = body(code, "lockUpAtScreenOff")
         assertTrue(atScreenOff.contains("val callLive = event.ourCall || event.systemCall || event.voip != VoipPhase.NONE"))
-        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg)"))
+        assertTrue(atScreenOff.contains("lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn)"))
         assertTrue(atScreenOff.indexOf("lockUp(context, start, lockAsk(event))") in 0 until atScreenOff.indexOf("Log.i("))
         assertTrue(atScreenOff.contains("\"Lock-up at screen-off: \$start (call=\$callLive, interactive=\$interactive, cover=\$cover, kg=\$kg)\""))
         val lockUp = body(code, "lockUp")
@@ -215,7 +254,7 @@ class LockUpPlanTest {
     @Test
     fun `the unlock never lands on Home over a live call - the wiring`() {
         val activity = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
-        assertTrue(body(activity, "leave").contains("go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this), glanceInFront = inFront))"))
+        assertTrue(body(activity, "leave").contains("go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this), glanceInFront = inFront, androidFace = AndroidLock.faceOn))"))
         assertEquals(1, Regex("lockLeave\\(").findAll(body(activity, "leave")).count())
         val live = body(runtime, "callLiveNow")
         assertTrue(live, live.contains("ourCall() || telecomInCall(context.applicationContext) || VoipCalls.phase != VoipPhase.NONE"))
