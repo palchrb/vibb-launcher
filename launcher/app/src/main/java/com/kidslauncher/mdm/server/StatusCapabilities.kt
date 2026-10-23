@@ -23,7 +23,8 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     DNS_CUSTOM_CAPABILITY,
     BATTERY_CAPABILITY,
     INSTALL_NOW_CAPABILITY,
-    // The RC-to-RC fix: a same-code release under a newer name installs (launcherBuildAhead).
+    // The RC-to-RC fix: a same-code release under a newer name installs (launcherBuildAhead). Legacy since
+    // launcher-v0.36.0-rc.4 (every build its own versionCode); kept for builds tagged before it.
     SAME_CODE_UPDATE_CAPABILITY,
     POWER_CAPABILITY,
     com.kidslauncher.mdm.music.STORYTEL_JWT_CAPABILITY,

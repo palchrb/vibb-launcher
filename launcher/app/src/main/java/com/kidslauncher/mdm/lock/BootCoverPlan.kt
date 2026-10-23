@@ -96,8 +96,9 @@ data class CoverRecord(
     val shownElapsedMs: Long? = null,
     /** F3C-3: the launcher's versionCode when the guard tripped (`null` = unknown, a trip from an older build). */
     val trippedVersion: Long? = null,
-    /** The versionName with [trippedVersion] (`null` = unknown, a trip from an older build): every RC of one version
-     * shares a code, so an RC that fixes a cover crash of the RC before it has the same code (qa-rc-to-rc-code R2R-6). */
+    /** The versionName with [trippedVersion] (`null` = unknown, a trip from an older build): under the old versionCode
+     * rule (tags before launcher-v0.36.0-rc.4) every RC of one version shared a code, so an RC that fixed a cover crash
+     * of the RC before it had the same code (qa-rc-to-rc-code R2R-6). Legacy since then: every build has its own code. */
     val trippedVersionName: String? = null,
 )
 

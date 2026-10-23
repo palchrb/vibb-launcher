@@ -20,13 +20,13 @@ async fn launcher(app: &TestApp) -> i64 {
     .unwrap()
 }
 
-/// A status report from a launcher running `code` (1.3.2 = 1003002), with Install Now when
-/// `capable`, and `extra` fields merged in.
+/// A status report from a launcher running release `code` (1.3.2 = 10030029,
+/// `scripts/release-version.sh`), with Install Now when `capable`, and `extra` fields merged in.
 async fn report(app: &TestApp, token: &str, code: i64, capable: bool, extra: Value) {
     let mut body = json!({
         "lock_reason": "none",
         "kiosk_engaged": true,
-        "app_version": format!("{}.{}.{}", code / 1_000_000, code / 1_000 % 1_000, code % 1_000),
+        "app_version": format!("{}.{}.{}", code / 10_000_000, code / 10_000 % 1_000, code / 10 % 1_000),
         "app_version_code": code,
         "capabilities": if capable {
             json!(["command_receipt_v1", "install_now_v1"])
@@ -46,7 +46,7 @@ async fn report(app: &TestApp, token: &str, code: i64, capable: bool, extra: Val
 /// A set-up phone on 1.3.2 that knows Install Now.
 async fn behind_phone(app: &TestApp, name: &str) -> (i64, String) {
     let (id, token) = app.enrolled_device(name).await;
-    report(app, &token, 1_003_002, true, json!({})).await;
+    report(app, &token, 10_030_029, true, json!({})).await;
     (id, token)
 }
 
@@ -264,9 +264,9 @@ async fn every_refusal_lands_on_an_element_the_page_renders() {
     let cookie = app.admin_cookie().await;
     let launcher = launcher(&app).await;
     let (current, token) = app.enrolled_device("Current").await;
-    report(&app, &token, 1_004_000, true, json!({})).await;
+    report(&app, &token, 10_040_009, true, json!({})).await;
     let (old, token) = app.enrolled_device("Old").await;
-    report(&app, &token, 1_003_002, false, json!({})).await;
+    report(&app, &token, 10_030_029, false, json!({})).await;
     let (silent, _) = app.enrolled_device("Silent").await;
     let (not_set_up, _) = app.create_device("New").await;
 
@@ -490,7 +490,7 @@ async fn a_server_start_keeps_it_and_a_confirmed_one_works_for_25_hours() {
     report(
         &app,
         &token,
-        1_003_002,
+        10_030_029,
         true,
         json!({
             "update_fence": { "enabled": false, "state": "none", "waiting_for": "install_now_download" },
@@ -600,7 +600,7 @@ async fn the_answer_shows_in_the_row() {
     let tap = post(&app, &cookie, &install_uri(launcher, phone)).await;
     assert!(tap.location().unwrap().contains("install=in_progress"));
     // The report with the new version: the row reads it.
-    report(&app, &token, 1_004_000, true, json!({})).await;
+    report(&app, &token, 10_040_009, true, json!({})).await;
     let page = app
         .get_page(&format!("/apps/tracked/{launcher}"), &cookie)
         .await

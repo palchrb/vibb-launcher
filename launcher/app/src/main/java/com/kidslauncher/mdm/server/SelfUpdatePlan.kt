@@ -45,25 +45,40 @@ enum class LauncherUpdateStep {
     ALREADY_RUNNING,
 }
 
-private val LAUNCHER_TAG = Regex("""^launcher-v(\d{1,4})\.(\d{1,3})\.(\d{1,3})(-rc\.\d+)?$""")
+private val LAUNCHER_TAG = Regex("""^launcher-v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})(?:-rc\.(0|[1-9][0-9]{0,8}))?$""")
+
+/** The first tag built under today's rule, `launcher-v0.36.0-rc.4`, as X, Y, Z, RC number. */
+private val NEW_RULE_FROM = listOf(0L, 36L, 0L, 4L)
 
 /**
- * The versionCode the release workflow builds for [releaseTag] (the part before `@` of the
- * server's `release_tag`): `launcher-vX.Y.Z` -> `X*1_000_000 + Y*1_000 + Z`, `launcher-vX.Y.Z-rc.N`
- * -> that minus 1 (.github/workflows/launcher.yml); null for any other tag.
+ * The versionCode the release workflow built for [releaseTag] (the part before `@` of the
+ * server's `release_tag`; `scripts/release-version.sh`): `launcher-vX.Y.Z` -> `X*10_000_000 +
+ * Y*10_000 + Z*10 + 9`, `launcher-vX.Y.Z-rc.N` -> the same with N (1..8) for the 9 - every build its
+ * own code; X <= 199, Y and Z <= 999. A tag below `launcher-v0.36.0-rc.4` was built under the old
+ * rule (`X*1_000_000 + Y*1_000 + Z`, an RC one less - every RC of a version shared a code) and reads
+ * so. null for any other tag. The cases are the shared `launcher_tag_codes.json` (the server's
+ * `install_now::launcher_tag_version_code` reads the same file).
  */
 fun launcherTagVersionCode(releaseTag: String): Long? {
     val m = LAUNCHER_TAG.matchEntire(releaseTag.substringBefore('@')) ?: return null
-    val (x, y, z) = m.destructured
-    val code = x.toLong() * 1_000_000 + y.toLong() * 1_000 + z.toLong() - if (m.groupValues[4].isEmpty()) 0 else 1
-    return code.takeIf { it >= 1 }
+    val x = m.groupValues[1].toLong()
+    val y = m.groupValues[2].toLong()
+    val z = m.groupValues[3].toLong()
+    val rc = m.groupValues[4].takeIf { it.isNotEmpty() }?.toLong()
+    if (y > 999 || z > 999) return null
+    val first = listOf(x, y, z, rc ?: Long.MAX_VALUE).zip(NEW_RULE_FROM).firstOrNull { (a, b) -> a != b }
+    if (first != null && first.first < first.second) {
+        return (x * 1_000_000 + y * 1_000 + z - if (rc == null) 0 else 1).takeIf { it >= 1 }
+    }
+    if (x > 199 || (rc != null && rc !in 1..8)) return null
+    return x * 10_000_000 + y * 10_000 + z * 10 + (rc ?: 9)
 }
 
 /** The versionName the release workflow builds for [releaseTag]: the tag minus `launcher-v`, before
  * `@` ("0.36.0-rc.2"); null for a tag [launcherTagVersionCode] doesn't read. */
 fun launcherTagVersionName(releaseTag: String): String? {
     val tag = releaseTag.substringBefore('@')
-    return if (LAUNCHER_TAG.matchEntire(tag) == null) null else tag.removePrefix("launcher-v")
+    return if (launcherTagVersionCode(tag) == null) null else tag.removePrefix("launcher-v")
 }
 
 private val LAUNCHER_VERSION_NAME = Regex("""^(\d{1,4})\.(\d{1,3})\.(\d{1,3})(?:-rc\.(\d{1,9}))?$""")
@@ -78,13 +93,14 @@ private fun launcherVersionOrder(name: String): List<Long>? {
 
 /**
  * Whether a build of [code]/[name] is ahead of the running one ([runningCode]/[runningName]): a
- * higher versionCode, or the same code under another versionName that isn't older. Every RC of one
- * version shares a code, and an RC of X.Y.Z+1 has X.Y.Z's (launcher.yml); Android installs a
- * same-code APK (no downgrade), so 0.36.0-rc.2 goes over 0.36.0-rc.1 and 0.36.1-rc.1 over 0.36.0 -
- * never 0.36.0-rc.1 over -rc.2, or 0.36.0 over 0.36.1-rc.1 (the prereleases turned off again).
- * Two names that differ but can't be ordered count as ahead; an unknown name (null) never does -
- * the same code is then the running build, as before. The server's `install_now::build_ahead` is
- * the same rule.
+ * higher versionCode, or the same code under another versionName that isn't older. Since
+ * 2026-10-23 every release build has its own code ([launcherTagVersionCode]), so the code decides;
+ * the name rule is the old rule's legacy, kept for builds before `launcher-v0.36.0-rc.4`: every RC
+ * of one version shared a code, and an RC of X.Y.Z+1 had X.Y.Z's; Android installs a same-code APK
+ * (no downgrade), so 0.36.0-rc.2 went over 0.36.0-rc.1 - never 0.36.0-rc.1 over -rc.2. Two names
+ * that differ but can't be ordered count as ahead; an unknown name (null) never does - the same
+ * code is then the running build, as before. The server's `install_now::build_ahead` is the same
+ * rule.
  */
 fun launcherBuildAhead(code: Long, name: String?, runningCode: Long, runningName: String?): Boolean {
     if (code != runningCode) return code > runningCode
@@ -393,7 +409,9 @@ const val INSTALL_NOW_CAPABILITY = "install_now_v1"
 /** Status-report capability of a launcher that installs a release of its own versionCode under a
  * newer name ([launcherBuildAhead]): the server offers such a release (Install Now) only with it -
  * an older build decides by the code alone and would answer "already running" (qa-rc-to-rc-code
- * R2R-1, the server's `install_now::SAME_CODE_CAPABILITY`). */
+ * R2R-1, the server's `install_now::SAME_CODE_CAPABILITY`). Legacy of the old versionCode rule:
+ * since `launcher-v0.36.0-rc.4` every build has its own code, so only builds tagged before it share
+ * one; kept, harmless. */
 const val SAME_CODE_UPDATE_CAPABILITY = "same_code_update_v1"
 
 /** The command's kind (`pending_command.command`). */
@@ -428,8 +446,9 @@ val PendingApkCheck.installNowAnswer: String
  * The parent's Install Now while it runs (DE prefs `install_now`, `InstallNow.kt`): the command
  * ([commandId] + [requestedAt] name it for the answer), the tag the row showed, and the running
  * versionCode and versionName at the receipt - "Done" is a running build ahead of it
- * ([launcherBuildAhead]: an RC over an RC of the same version keeps the code; a record without
- * [fromVersionName], written before it existed, counts by the code alone) - no wall clock across
+ * ([launcherBuildAhead]: under the old versionCode rule an RC over an RC of the same version kept
+ * the code; a record without [fromVersionName], written before it existed, counts by the code
+ * alone) - no wall clock across
  * the command, design 37 §1.10. [failure] is set by every failure and answered by the next sync's
  * settle; [callWaitSinceElapsed] is when the commit began waiting for a call (elapsed realtime).
  */
