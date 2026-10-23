@@ -50,6 +50,9 @@ In the PWA, **before** enrolling the phone:
 
 - Wipe data in Device Manager (no Google account may be on it), boot, skip setup.
 - Take an AVD snapshot now ("clean") so you can go back in seconds.
+- Never set a screen lock (PIN) on the AVD before provisioning: Android then disables escrow tokens for good on
+  that user, and design 59's Child PIN (the reset token) can't be set afterwards. Android's PIN is set by the
+  launcher through the PWA's Child PIN once the phone is enrolled (the android-mode switch).
 
 ## 3b. The Jelly Star's size, font scale, time zone, adb-installed apps (design 34 step 0)
 
@@ -1765,6 +1768,22 @@ since ..." while the phone holds it. For Play tests:
   `adb shell dumpsys package com.android.vending | grep -i suspended` (true while managed);
   `adb shell am start -a android.intent.action.VIEW -d market://details?id=org.example`
   shows "The Play Store is closed"; Settings -> "Install from Play" (PIN) opens Play for 15 min.
+
+## 6r. Release-candidate runs: how much (2026-10-23)
+
+The long combined run (the §8.4-style device list, 1-2 h on this VM) found one real blocker in four RC runs: the
+rc.3 run's RC3-1, a step that had only run on Android 15 before. The step runs find the bugs; an RC run mostly
+confirms that main hangs together. So:
+
+- **Default for an RC: the short run, about 20 minutes**, only what the user doesn't test on their own emulator
+  with the release build: `scripts/smoke-test.sh` (§5b), Emergency SOS (five power presses) over the lock,
+  three reboots (one of them unarmed, one with a call ringing), a parent pause and an override, the rollback to
+  our own lock. The implementer of a step proves that step once on the emulator; the code QA reads that
+  evidence and does not re-run it.
+- **The long run only** when an RC gathers steps that never ran together on the emulator before, when a step
+  first meets another Android version, or before a stable (non-RC) launcher tag.
+- The agent's run isn't the user's: it reads logcat and frame counts on a debug build with Pixel SystemUI; the
+  user sees the release build's transitions on their own AVD. Neither replaces the other.
 
 ## 7. Reporting back
 
