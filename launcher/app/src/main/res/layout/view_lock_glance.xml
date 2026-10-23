@@ -489,7 +489,7 @@
             android:contentDescription="@string/lock_torch"
             android:padding="12dp"
             android:scaleType="fitCenter"
-            android:src="@drawable/torch_glyph_off"
+            android:src="@drawable/torch_glyph_on"
             android:tint="@color/kid_core"
             android:visibility="gone" />
     </FrameLayout>

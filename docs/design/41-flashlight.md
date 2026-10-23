@@ -107,7 +107,7 @@ other round-6 changes), and the 320/360/411 dp width checks with the button in t
   `glanceTorchButton`: HIDDEN (no flash unit, or refused on the lock), OFF (`bg_music_control`, `kid_core` glyph) or
   LIT (the peach `bg_music_play` disc with the `kid_ground` glyph); no animation. TalkBack: "Lommelykt"/"Flashlight"
   with the state description "på"/"av" (`lock_torch*`, nb + en).
-- **Glyphs**: `torch_glyph_on`/`torch_glyph_off.xml`, Material Symbols `flashlight_on`/`flashlight_off` (Rounded,
+- **Glyphs** (since 2026-10-23 only `torch_glyph_on.xml` for both states - the user: "ta bort den skrå streken", the disc's colours say the state; `torch_glyph_off.xml` and its `flashlight_off` row in the script are gone): `torch_glyph_on`/`torch_glyph_off.xml`, Material Symbols `flashlight_on`/`flashlight_off` (Rounded,
   filled, the script's pinned commit, SHA-256 `6ea0d1a3...`/`a5de8d4a...`), converted exactly as
   `scripts/material-symbols.sh` writes `lock_glyph_*` - added by hand on this branch; the merge keeps one copy and
   the script's entry (implementer A's).

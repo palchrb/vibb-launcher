@@ -747,7 +747,7 @@ class GlancePanel(
         if (look == GlanceTorchButton.HIDDEN) return
         val lit = look == GlanceTorchButton.LIT
         button.setBackgroundResource(if (lit) R.drawable.bg_music_play else R.drawable.bg_music_control)
-        button.setImageResource(if (lit) R.drawable.torch_glyph_on else R.drawable.torch_glyph_off)
+        button.setImageResource(R.drawable.torch_glyph_on) // one glyph, no strike-through (the user, 2026-10-23): the state is the colours
         button.imageTintList = ColorStateList.valueOf(activity.getColor(if (lit) R.color.kid_ground else R.color.kid_core))
         button.stateDescription = activity.getString(if (lit) R.string.lock_torch_on else R.string.lock_torch_off)
     }

@@ -204,13 +204,13 @@ class HomeGridAdapter(
         when (val tile = tiles[position]) {
             GridTile.PhoneBook -> glyphTile(holder, R.color.kid_phone_book, R.drawable.ic_kid_phone_book, R.string.calls_phone_book)
             GridTile.Settings -> glyphTile(holder, R.color.kid_settings_tile, R.drawable.ic_kid_settings, R.string.kid_settings_title)
-            // Design 41: dark - the indigo tone, the struck-through glyph; lit - a filled peach disc with
-            // the night glyph. No yellow, no animation.
+            // Design 41: dark - the indigo tone; lit - a filled peach disc with the night glyph. One glyph
+            // for both (the user, 2026-10-23: no strike-through, the colours say the state). No yellow, no animation.
             is GridTile.Flashlight -> {
                 if (tile.lit) {
                     glyphTile(holder, R.color.kid_accent, R.drawable.torch_glyph_on, R.string.torch_title, glyphTint = R.color.kid_ground)
                 } else {
-                    glyphTile(holder, R.color.kid_torch_tile, R.drawable.torch_glyph_off, R.string.torch_title)
+                    glyphTile(holder, R.color.kid_torch_tile, R.drawable.torch_glyph_on, R.string.torch_title)
                 }
                 holder.itemView.stateDescription = context.getString(if (tile.lit) R.string.torch_state_on else R.string.torch_state_off)
             }
