@@ -831,12 +831,13 @@ findings, merge to `main`, full suite once.
   notifications) granted silently by the device owner before the first start; the sensor ones (camera, microphone,
   background location, body sensors) can't be granted silently since Android 12 - shown as "approve on the phone",
   and deniable per app from the same row. S-M.
-- **PWA tab switches feel slow at times (the user, 2026-10-23):** the PWA is server-rendered, so a tab is a round trip
-  plus the Pi's render. First find out where the time goes: a render-time log line per admin page (route, ms) and the
-  user checks `tailscale status` for relay vs direct. Then, if it is the round trip: prefetch the four other tabs after
-  a page settles (same session, `fetch` with low priority into the HTTP cache - no offline caching, the service worker
-  stays install-only); if it is the render: the slow page's queries. Server, S; after rc.3, with the avatar upload and
-  the screen-capture switch.
+- **PWA tab switches feel slow at times (the user, 2026-10-23; the server is a Proxmox VM with plenty of power, so
+  the render isn't it):** the time is in the path or the browser - Tailscale on a relay instead of direct (mobile
+  data), the first request after iOS froze the installed app (the connection is rebuilt), or the page's assets
+  re-fetched after iOS dropped the cache. Measure on the client first: a small timing line per navigation (Navigation
+  Timing: connect, TTFB, render) shown behind a debug switch or logged to the server, and the user checks `tailscale
+  status` for relay vs direct. Then: prefetch the other tabs after a page settles (same session, no offline caching),
+  and/or keep the connection warm after a resume (`reconnect.js` already pings `/ping`). Server, S; after rc.3.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
