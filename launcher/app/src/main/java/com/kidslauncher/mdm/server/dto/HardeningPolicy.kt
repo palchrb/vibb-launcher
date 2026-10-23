@@ -22,4 +22,7 @@ data class HardeningPolicy(
     val lockLocation: Boolean? = null,
     val disallowAirplaneMode: Boolean? = null,
     val disallowConfigLocale: Boolean? = null,
+    /** Not a user restriction: `setScreenCaptureDisabled` ([HardeningPlan.screenCaptureDisabled]).
+     * Missing means off, its default (2026-10-23). */
+    val disallowScreenCapture: Boolean? = null,
 )

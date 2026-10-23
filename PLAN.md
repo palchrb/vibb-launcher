@@ -862,8 +862,10 @@ findings, merge to `main`, full suite once.
   screens; F6 (check) Android 15 logs it removed our pinned Home preference at every locked boot and at the cover's
   hand-over - Home still came up; check on a phone (step M's run looks); F7 (note) 4-21 black frames at a wake on 15,
   no leak. Not done there: the timer tile, the blocked/Play screens, QR provisioning.
-- **Screen capture switch (the user, 2026-10-23, approved for after rc.3):** one hardening switch on Advanced, "Screenshots
-  and screen recording off" = `setScreenCaptureDisabled` for the whole phone (also blanks every app's Recents card
+- **Screen capture switch (the user, 2026-10-23, approved for after rc.3) - the switch DONE 2026-10-23, branch
+  `screen-capture` (policy key `hardening.disallow_screen_capture`, default off, migration 0089; emulator check
+  `docs/testing/2026-10-23-screen-capture.md`); the per-app camera and permissions rows below stay open:** one hardening switch on Advanced, "Screenshots
+  and screen recording off" (labelled "Block screenshots" after the code QA, 2026-10-23) = `setScreenCaptureDisabled` for the whole phone (also blanks every app's Recents card
   from then on; `adb screencap` goes black). Server + launcher in one commit (the `hardening` policy keys are pinned
   on both sides). **No global camera switch** ("en full kill switch for kamera gjør jo fort at videochat ikke
   funker"): the Camera app is removed from the allowlist as today; a per-app "Camera: off" (the device owner denying

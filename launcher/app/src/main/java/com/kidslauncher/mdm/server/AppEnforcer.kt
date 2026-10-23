@@ -592,7 +592,20 @@ object AppEnforcer {
         for ((restriction, set) in plan.restrictions) {
             if (set) setRestriction(dpm, admin, restriction.userManagerKey(), true)
         }
+        if (plan.screenCaptureDisabled) syncScreenCapture(dpm, admin, true)
         clearHardening(context, dpm, admin, plan)
+    }
+
+    /** `setScreenCaptureDisabled` only when it differs ([screenCaptureWrite]); a failure is logged
+     * and the next pass retries. */
+    private fun syncScreenCapture(dpm: DevicePolicyManager, admin: ComponentName, disabled: Boolean) {
+        try {
+            val write = screenCaptureWrite(dpm.getScreenCaptureDisabled(admin), disabled) ?: return
+            dpm.setScreenCaptureDisabled(admin, write)
+            Log.i(LOG_TAG, "Screen capture ${if (write) "disabled" else "enabled"} by policy")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't set the screen capture policy: ${e.javaClass.simpleName}")
+        }
     }
 
     /**
@@ -602,6 +615,7 @@ object AppEnforcer {
      * stays until a later pass manages the reset (qa-08-code.md #1, QA 08 #2).
      */
     private fun clearHardening(context: Context, dpm: DevicePolicyManager, admin: ComponentName, plan: HardeningPlan) {
+        if (!plan.screenCaptureDisabled) syncScreenCapture(dpm, admin, false)
         var wallpaperClean = true
         for (step in hardeningClearSteps(plan)) {
             try {

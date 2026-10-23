@@ -9,7 +9,7 @@ use super::{
     Section, TestApp, assert_redirect, autosaves, device_page, form_action_of, input_checked,
 };
 
-const SWITCHES: [&str; 10] = [
+const SWITCHES: [&str; 11] = [
     "disallow_add_user",
     "disallow_airplane_mode",
     "disallow_config_locale",
@@ -18,6 +18,7 @@ const SWITCHES: [&str; 10] = [
     "disallow_factory_reset",
     "disallow_modify_accounts",
     "disallow_safe_boot",
+    "disallow_screen_capture",
     "disallow_usb_file_transfer",
     "lock_location",
 ];
@@ -61,6 +62,8 @@ async fn new_device_gets_explicit_defaults() {
             "disallow_airplane_mode": false,
             // The system language stays as set up (fix round 2026-10-06).
             "disallow_config_locale": true,
+            // Screenshots stay allowed unless the parent turns them off (2026-10-23).
+            "disallow_screen_capture": false,
         })
     );
 }
@@ -179,7 +182,7 @@ async fn advanced_shows_the_switches_as_one_form() {
     assert_eq!(page.status, StatusCode::OK);
     let html = page.text();
     let action = format!("/devices/{id}/hardening#restrictions");
-    // All ten in one form (H1: a missing box is off), each a switch that saves itself.
+    // All eleven in one form (H1: a missing box is off), each a switch that saves itself.
     for (name, on) in [
         ("disallow_factory_reset", true),
         ("disallow_add_user", true),
@@ -189,6 +192,7 @@ async fn advanced_shows_the_switches_as_one_form() {
         ("lock_location", true),
         ("disallow_airplane_mode", false),
         ("disallow_config_locale", true),
+        ("disallow_screen_capture", false),
         ("disallow_debugging_features", true),
         ("disallow_safe_boot", false),
     ] {
@@ -198,6 +202,7 @@ async fn advanced_shows_the_switches_as_one_form() {
     }
     assert_eq!(html.matches(&format!("action=\"{action}\"")).count(), 1);
     assert!(html.contains("Block safe mode") && html.contains("Block USB debugging"));
+    assert!(html.contains(">Block screenshots</span>"));
     // The device page no longer has the form; its Advanced row leads here.
     let summary = app
         .get_page(&device_page(id, Section::Summary), &cookie)

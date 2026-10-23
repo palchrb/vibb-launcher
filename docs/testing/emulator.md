@@ -53,6 +53,9 @@ In the PWA, **before** enrolling the phone:
 - Never set a screen lock (PIN) on the AVD before provisioning: Android then disables escrow tokens for good on
   that user, and design 59's Child PIN (the reset token) can't be set afterwards. Android's PIN is set by the
   launcher through the PWA's Child PIN once the phone is enrolled (the android-mode switch).
+- Leave Advanced › Restrictions' "Block screenshots" off on a test AVD (it is off by default):
+  with it on `adb exec-out screencap` is black, the phone's own screenshot is refused and new Recents cards are blank
+  (2026-10-23). The emulator console's `adb emu screenrecord screenshot` still works (it reads the host's frame).
 
 ## 3b. The Jelly Star's size, font scale, time zone, adb-installed apps (design 34 step 0)
 

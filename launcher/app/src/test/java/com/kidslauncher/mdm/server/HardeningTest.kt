@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class HardeningTest {
 
@@ -19,6 +20,7 @@ class HardeningTest {
         lockLocation = true,
         disallowAirplaneMode = false,
         disallowConfigLocale = true,
+        disallowScreenCapture = false,
     )
 
     @Test
@@ -60,6 +62,50 @@ class HardeningTest {
         assertTrue(hardeningPlan(HardeningPolicy(), managed = true).isSet(HardeningRestriction.CONFIG_LOCALE))
         assertFalse(hardeningPlan(HardeningPolicy(disallowConfigLocale = false), managed = true).isSet(HardeningRestriction.CONFIG_LOCALE))
         assertFalse(hardeningPlan(null, managed = false).isSet(HardeningRestriction.CONFIG_LOCALE))
+    }
+
+    @Test
+    fun `screen capture is off by default, on only from the server and only while managed`() {
+        for (policy in listOf(null, HardeningPolicy(), serverDefaults)) {
+            assertFalse(hardeningPlan(policy, managed = true).screenCaptureDisabled)
+        }
+        val on = HardeningPolicy(disallowScreenCapture = true)
+        assertTrue(hardeningPlan(on, managed = true).screenCaptureDisabled)
+        assertFalse(hardeningPlan(on, managed = false).screenCaptureDisabled)
+        // Not a user restriction: the other switches are untouched by it.
+        assertEquals(hardeningPlan(null, managed = true).restrictions, hardeningPlan(on, managed = true).restrictions)
+    }
+
+    @Test
+    fun `screen capture is written only when it differs`() {
+        assertEquals(true, screenCaptureWrite(current = false, wanted = true))
+        assertEquals(false, screenCaptureWrite(current = true, wanted = false))
+        assertEquals(null, screenCaptureWrite(current = true, wanted = true))
+        assertEquals(null, screenCaptureWrite(current = false, wanted = false))
+    }
+
+    @Test
+    fun `screen capture follows the hardening plan alone, never the override or the pause`() {
+        // hardeningPlan has no override input; the one setter is fed only from the plan.
+        val main = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
+        val sources = File(main, "main/java").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        val setters = sources.filter { it.readText().contains("setScreenCaptureDisabled(") }
+        assertEquals(listOf("AppEnforcer.kt"), setters.map { it.name })
+        val enforcer = setters.single().readText()
+        // Exactly these two guards: any other term (a pause, the override) fails.
+        val calls = enforcer.lines().map { it.trim() }.filter { "syncScreenCapture(dpm, admin," in it }
+        assertEquals(
+            listOf(
+                "if (plan.screenCaptureDisabled) syncScreenCapture(dpm, admin, true)",
+                "if (!plan.screenCaptureDisabled) syncScreenCapture(dpm, admin, false)",
+            ),
+            calls,
+        )
+        // The one write reads the policy first, so an unchanged value is never written again.
+        val body = enforcer.substringAfter("private fun syncScreenCapture(").substringBefore("\n    }")
+        val read = body.indexOf("screenCaptureWrite(dpm.getScreenCaptureDisabled(admin), disabled) ?: return")
+        assertTrue(body, read >= 0 && read < body.indexOf("setScreenCaptureDisabled("))
+        assertEquals(1, Regex("""setScreenCaptureDisabled\(""").findAll(enforcer).count())
     }
 
     @Test
@@ -122,7 +168,8 @@ class HardeningTest {
               "disallow_factory_reset": true, "disallow_add_user": true, "disallow_modify_accounts": true,
               "disallow_config_vpn": true, "disallow_usb_file_transfer": true,
               "disallow_debugging_features": false, "disallow_safe_boot": false, "lock_location": true,
-              "disallow_airplane_mode": false, "disallow_config_locale": true}}
+              "disallow_airplane_mode": false, "disallow_config_locale": true,
+              "disallow_screen_capture": false}}
         """.trimIndent()
         val policy = (decodeFresh(json) as FreshDecode.Ok).policy
         assertEquals(serverDefaults.copy(disallowDebuggingFeatures = false), policy.hardening)

@@ -20,6 +20,9 @@ sent as `hardening` with explicit booleans (`build_policy`; the key snapshot tes
 | `lock_location` | `DISALLOW_CONFIG_LOCATION` + `setLocationEnabled(true)` (Find my device) | on |
 | `disallow_airplane_mode` | `DISALLOW_AIRPLANE_MODE` (step 5, migration `0024`, see 05) | **off** |
 
+Later switches: `disallow_config_locale` (`DISALLOW_CONFIG_LOCALE`, 0034, on) and `disallow_screen_capture` (0089,
+**off**; "Screen capture" below).
+
 Already set (unchanged): `CONFIG_DATE_TIME` + auto time, `CONFIG_PRIVATE_DNS`, `INSTALL_UNKNOWN_SOURCES(_GLOBALLY)`,
 `CONFIG_DEFAULT_APPS`, `OUTGOING_CALLS`, `SMS`.
 
@@ -66,6 +69,28 @@ its cache; app checkboxes can't be trusted) - QA #11 server half. Tests via `Tes
 the policy, form round trip, corrupt-allowlist warning).
 
 Not in this step: `DISALLOW_USER_SWITCH`, a warning for allowlisted Android Settings, CI notes #9/#10 (GitHub).
+
+### Screen capture (2026-10-23, branch `screen-capture`)
+
+The user's decision (PLAN "Screen capture switch"): one more switch in Advanced › Restrictions, "Block screenshots"
+(it covers screen recording and screen casting too; the ⓘ says so), policy key `hardening.disallow_screen_capture` (`device_policy` column, migration `0089`).
+
+- **Default off**, unlike most of the switches: the server's `Hardening::default()`, the column default 0, and the
+  launcher's missing-key fallback (an older server) are all off.
+- **What it does**: the launcher (device owner) calls `DevicePolicyManager.setScreenCaptureDisabled(admin, on)` for
+  the whole phone - no screenshots (the phone's own gesture is refused with Android's toast), no screen recording, no
+  casting (MediaProjection refused), every Recents card taken from then on blank (a card from before keeps its
+  picture until the app is used again), and `adb exec-out screencap` returns a black image. Not a `UserManager` restriction: a sibling flag in the pure plan
+  (`HardeningPlan.screenCaptureDisabled`), applied in `AppEnforcer` on the same pass and triggers as the user
+  restrictions - off is lifted at the start of `apply()` with the cleared restrictions (`clearHardening`), on is set at
+  the end with the set ones (`applyHardening`) - and written only when `getScreenCaptureDisabled` differs (pure
+  `screenCaptureWrite`, like the camera policy).
+- **Not lifted by a pause or the Parent PIN** (the group footer says so for all of them); only the server's switch or
+  unmanaging lifts it. No global camera switch (decided: it would break video chat).
+- **Side effects for us**: `adb screencap` goes black while it is on (`docs/testing/emulator.md` warns: leave it
+  off on test AVDs; the emulator console's screenshot still works). Our own screens already have their own guards (the lock's `FLAG_SECURE`, Settings' and Home's
+  Recents screenshots off), so the switch changes nothing in how they look.
+- Emulator check: `docs/testing/2026-10-23-screen-capture.md`.
 
 ## Runbook: deploy order and recovery (after QA step 4 #4/#5/#6)
 
