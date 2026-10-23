@@ -2324,6 +2324,9 @@ details.app-display[open] > summary .section-chev {
 .bell-count { position: absolute; top: 4px; left: 24px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--count-bg); color: #FFFFFF; font-size: 0.6875rem; font-weight: 700; line-height: 18px; text-align: center; }
 /* The inbox: a row is a form's button; unread is bold with a blue dot. */
 .inbox-row { cursor: pointer; }
+/* A hovered inbox row (a desktop pointer) is a row, not a filled button: the generic button:hover
+   would paint it --strong-hover with the grey .row-sub unreadable on it (the user, 2026-10-23). */
+.inbox-row:hover { background: var(--row-active); color: var(--label); }
 .inbox-unread .inbox-title { font-weight: 600; }
 .unread-dot { display: inline-block; width: 8px; height: 8px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--tint); vertical-align: middle; }
 /* Web Push (step 2): an inbox row's delivery line, the subscribed devices' badges, This Device's
