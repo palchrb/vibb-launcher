@@ -24,3 +24,14 @@ adb shell appops set me.vibb.launcher WRITE_SETTINGS allow
 Or on the phone, during a pause: Android Settings -> Apps -> Special app access -> Modify system settings -> Vibb One.
 Without it the kid's touch switches are read-only ("Kan ikke endres på denne telefonen ennå") and the PWA warns
 "Clock format not applied".
+
+## The lock screen's clock: single line (android mode)
+
+Android's own lock face (seen for a frame at a wake, and before the first unlock after a reboot) shows a large
+two-line clock by default, on AOSP and Pixel alike. Vibb One's glance copies Android's **one-line** clock (design 59d
+step L), so the frame before it matches only with the one-line clock on. Set it once per phone, by hand, during a
+pause: Settings › Display › Lock screen › "Double-line clock" off (the Secure setting
+`lockscreen_use_double_line_clock` = 0; a device owner can't write it). Measured 2026-10-23 on a pure AOSP Android 16
+emulator at the Jelly Star's profile (`docs/testing/2026-10-23-aosp-lock-look.md`): with it off the wake frame
+matches the glance's clock within 1 px; with it on, one frame of the stacked clock shows. Confirm the setting's
+place and default on the Jelly Star.
