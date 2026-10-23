@@ -436,6 +436,12 @@ ends with E.
 The release after the rounds is `launcher-v0.36.0-rc.3` on the same server (no API change expected; if anything
 needs a status field, both directories in one commit as always).
 
+**Android's pad size (the user, 2026-10-23, "den er bare snål liten")**: on the user's emulator (480x854 at 240
+dpi = the Jelly Star's 320x569 dp, Pixel SystemUI) the bouncer's keys are about 39 dp, in a block using less than half
+the screen. In the rc.3 run: screenshots of Android's pad at font scale 1.0 and 1.3, and at display size one notch up
+(`wm density 280` as the stand-in; note the glance's fit at that size too), so the user can choose on the real phone.
+The Jelly Star's own (AOSP-based) bouncer may lay out differently - a device check.
+
 ### 8.5 Answers to the revision check's guess list (`qa-59d-revision-check.md`)
 
 - **G**: `ANDROID_ASK_OPEN_MS` = 2 min because a kid's slowest PIN entry plus Android's first lockout step (30 s after
