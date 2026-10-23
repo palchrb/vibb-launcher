@@ -20,6 +20,9 @@ import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.WindowInsets
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
@@ -43,8 +46,8 @@ import com.kidslauncher.mdm.R
  *   at once, to HomeActivity, HOME-typed (QA #8, qa-16b-code #1: AMS alone removes it only with the
  *   PACKAGE_CHANGED broadcast, deferred up to 10 s right after boot).
  *
- * Design 59 F3, android mode ([BootCoverGuard.androidMode]): behind Android's keyguard before the PIN (never
- * showWhenLocked), it is what the PIN's dismissal reveals, and it waits for our main process instead of the 3 s:
+ * Design 59 F3, android mode ([BootCoverGuard.androidMode]): before the PIN the BFU face over the keyguard while the
+ * pad gate holds (59d step F, below), else behind it; it is what the PIN's dismissal reveals, and it waits for our main process instead of the 3 s:
  * that process disables it right before the boot's typed Home start, and the cover leaves once our Home is over it
  * (its stop) - never earlier, since below it may be the stock launcher a boot without `ACTION_SHUTDOWN` started.
  * Never stranded: taken over and still in front it starts our Home itself, then leaves [COVER_TAKEOVER_GRACE_MS] after
@@ -97,6 +100,14 @@ class BootCoverActivity : Activity() {
     private var tapLine: TextView? = null
     private val padRetry = Runnable { padStep(PadEvent.RETRY) }
 
+    /** F59d-6: the content root (the tap target, its TalkBack label) and the bottom system-bar inset for the line. */
+    private var root: FrameLayout? = null
+    private var insetBottom = 0
+
+    /** F59d-1: Back on the BFU face does nothing - the cover is HOME, not LAUNCHER, so the default Back finishes it and
+     * SystemUI's face shows until HOME resolves to a new cover. Registered only while the flag is on. */
+    private val backOnFace = OnBackInvokedCallback { Log.i(LOG_TAG, "Boot cover: Back on the BFU face, held") }
+
     private val loop = object : Animatable2.AnimationCallback() {
         override fun onAnimationEnd(drawable: Drawable?) {
             // Not while paused or under Home (qa-16b-code #4).
@@ -125,14 +136,29 @@ class BootCoverActivity : Activity() {
         logo?.registerAnimationCallback(loop)
         val line = tapLineView()
         tapLine = line
-        setContentView(
-            FrameLayout(this).apply {
-                addView(image, FrameLayout.LayoutParams(-1, -1))
-                addView(line, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER).apply { topMargin = dp(TAP_LINE_OFFSET_DP) })
-                // Step F: a tap reaching the cover means no pad is over it - ask (bootPadStep; nothing without the gate).
-                setOnClickListener { padStep(PadEvent.TAPPED) }
-            },
-        )
+        val content = FrameLayout(this).apply {
+            addView(image, FrameLayout.LayoutParams(-1, -1))
+            addView(
+                line,
+                FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                    leftMargin = dp(TAP_LINE_SIDE_DP)
+                    rightMargin = dp(TAP_LINE_SIDE_DP)
+                },
+            )
+            // Step F: a tap reaching the cover means no pad is over it - ask (bootPadStep; nothing without the gate).
+            setOnClickListener { padStep(PadEvent.TAPPED) }
+            setOnApplyWindowInsetsListener { _, insets ->
+                insetBottom = insets.getInsets(WindowInsets.Type.systemBars()).bottom
+                placeTapLine()
+                insets
+            }
+        }
+        val relayout = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> placeTapLine() }
+        content.addOnLayoutChangeListener(relayout)
+        line.addOnLayoutChangeListener(relayout)
+        root = content
+        setContentView(content)
+        faceViews(showsWhenLocked)
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 applyLockedFace()
@@ -290,10 +316,45 @@ class BootCoverActivity : Activity() {
      * never once the user is unlocked. Runtime only: the manifest has no flag (BootCoverManifestTest). */
     private fun applyLockedFace() {
         val show = padGate()
+        faceViews(show)
         if (show == showsWhenLocked) return
         showsWhenLocked = show
         setShowWhenLocked(show)
+        holdBack(show)
         Log.i(LOG_TAG, "Boot cover showWhenLocked $show")
+    }
+
+    /** F59d-1: Back is held while the cover is the BFU face, and the default (finish) again once it isn't. */
+    private fun holdBack(hold: Boolean) {
+        try {
+            if (hold) {
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, backOnFace)
+            } else {
+                onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backOnFace)
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover couldn't change its Back: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** F59d-3/6: without the gate the line is hidden and the root is no tap target or TalkBack node (own mode, F3's wait
+     * after the unlock); with it the root is the tap with the line's words as its label. */
+    private fun faceViews(face: Boolean) {
+        if (!face) tapLine?.visibility = View.GONE
+        root?.apply {
+            isClickable = face
+            contentDescription = if (face) getString(R.string.boot_cover_tap_to_unlock) else null
+            importantForAccessibility = if (face) View.IMPORTANT_FOR_ACCESSIBILITY_YES else View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+    }
+
+    /** F59d-6: the line under the mark, but above the navigation bar ([tapLineTopPx]). */
+    private fun placeTapLine() {
+        val content = root ?: return
+        val line = tapLine ?: return
+        if (content.height <= 0) return
+        val top = tapLineTopPx(content.height, line.height, insetBottom, dp(TAP_LINE_OFFSET_DP), dp(TAP_LINE_GAP_DP))
+        line.translationY = (top - line.top).toFloat()
     }
 
     /** Step F: one pass of [bootPadStep] with the gate, the screen and Telecom read now; the Activity only acts on it. */
@@ -397,9 +458,12 @@ class BootCoverActivity : Activity() {
 
         private const val HAND_OVER_RETRY_MS = 200L
 
-        /** Step F: the line's offset below the screen's centre (the 288 dp mark's half plus a gap) and its size. */
-        private const val TAP_LINE_OFFSET_DP = 168
+        /** Step F: the line's top below the screen's centre (under the 288 dp mark), its size, its side margins and
+         * its least gap above the navigation bar (F59d-6). */
+        private const val TAP_LINE_OFFSET_DP = 156
         private const val TAP_LINE_SP = 18f
+        private const val TAP_LINE_SIDE_DP = 24
+        private const val TAP_LINE_GAP_DP = 16
 
         /** Step F: automatic asks in this `:bootcover` process (§8.3: per process, in memory) - a new cover instance
          * in the same process carries the count on. Main thread only. */

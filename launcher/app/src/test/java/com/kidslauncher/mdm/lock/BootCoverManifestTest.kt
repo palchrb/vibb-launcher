@@ -125,6 +125,21 @@ class BootCoverManifestTest {
         assertTrue(body("padAnswer").contains("if (id != askId || isDestroyed) return"))
         assertTrue(activity.contains("private var pad = BootPad(autoAsks = autoAsksThisProcess)"))
         assertTrue(step.contains("autoAsksThisProcess = pad.autoAsks"))
+        // qa-59d-f-code: the line only with the gate (F59d-4, M12), a due retry posted again at the resume (M14), the
+        // face views following the gate in applyLockedFace (F59d-3/6), Back held exactly while the flag is on (F59d-1).
+        assertTrue(step.contains("tapLine?.visibility = if (gate && pad.line) View.VISIBLE else View.GONE"))
+        assertTrue(resume.contains("if (pad.retryDue) handler.postDelayed(padRetry, BOOT_PAD_RETRY_MS)"))
+        assertTrue(face.indexOf("faceViews(show)") in 0 until face.indexOf("if (show == showsWhenLocked) return"))
+        assertTrue(face.indexOf("setShowWhenLocked(show)") in 0 until face.indexOf("holdBack(show)"))
+        val back = body("holdBack")
+        assertTrue(back.contains("if (hold) {\n                onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, backOnFace)"))
+        assertTrue(back.contains("onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backOnFace)"))
+        assertEquals(1, Regex("holdBack\\(show\\)").findAll(activity).count())
+        assertFalse("no default Back override", activity.contains("onBackPressed"))
+        val views = body("faceViews")
+        for (needed in listOf("if (!face) tapLine?.visibility = View.GONE", "isClickable = face", "contentDescription = if (face) getString(R.string.boot_cover_tap_to_unlock) else null")) {
+            assertTrue(needed, views.contains(needed))
+        }
         // It leaves on the take-over only when stopped or the grace is over (the rule is coverWaitStep's), and its
         // own hand-over disables itself before starting Home.
         val wait = activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n")

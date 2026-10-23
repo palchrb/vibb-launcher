@@ -849,7 +849,9 @@ The RC run (`docs/testing/2026-10-22-d59-rc-run.md` §9, F3): after the PIN on S
   gate (`bootPadGate`: the `boot_cover_android` marker and `isUserUnlocked == false`) is read again at every resume and
   before every ask; an own-mode cover never occludes or asks. Once unlocked the flag drops at once (the unlock
   broadcast, every resume, the 250 ms wait poll) and the cover runs the wait below - never showWhenLocked once
-  `isUserUnlocked`. A cancelled pad leaves "Trykk for å låse opp" under the mark; a tap asks again. The restart line is
+  `isUserUnlocked`. A cancelled pad (or any state with no pad coming - qa-59d-f-code F59d-2) leaves "Trykk for å låse
+  opp" under the mark; a tap asks again; Back on the face is held (F59d-1: the cover is HOME, not LAUNCHER, so the
+  default Back would finish it). The restart line is
   still written: it is the face when the cover can't start (no marker, a tripped guard, a call at the locked boot).
   **If 59d §8.4 item 6's gate (a) fails** - a runtime-flagged HOME activity doesn't occlude the BFU keyguard - the cover
   is never resumed while locked, so it never asks, and the boot is this section's as built before step F: SystemUI's

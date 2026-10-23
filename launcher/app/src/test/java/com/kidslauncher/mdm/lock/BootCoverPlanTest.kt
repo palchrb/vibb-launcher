@@ -267,7 +267,7 @@ class BootCoverPlanTest {
     fun `no automatic ask in a call, the arm kept for the first resume after it - a tap still asks`() {
         val (inCall, actions) = pad(BootPad(), PadEvent.RESUMED, inCall = true)
         assertEquals(listOf(PadAction.NONE), actions)
-        assertEquals(BootPad(), inCall)
+        assertEquals("the arm kept, the hint shown (F59d-2 a)", BootPad(line = true), inCall)
         assertEquals(listOf(PadAction.ASK), pad(inCall, PadEvent.RESUMED).second)
         val (tapped, tap) = pad(inCall, PadEvent.TAPPED, inCall = true)
         assertEquals(listOf(PadAction.ASK), tap)
@@ -320,11 +320,42 @@ class BootCoverPlanTest {
         assertEquals(listOf(PadAction.ASK), pad(slept, PadEvent.RESUMED).second)
         // The stop first, the cancel after: the stop closes the ask uncounted, the late answer changes nothing.
         val (stopped, _) = pad(asked, PadEvent.STOPPED, PadEvent.CANCELLED, interactive = false)
-        assertEquals(BootPad(autoAsks = 0, armed = true, open = false, auto = true), stopped)
+        assertEquals(BootPad(autoAsks = 0, armed = true, open = false, auto = true, line = true), stopped)
         // A cancel with the screen on counts.
         assertEquals(1, pad(asked, PadEvent.CANCELLED).first.autoAsks)
-        // A success just closes the ask (CE's unlock does the rest); a late success changes nothing.
+        // A success closes the ask and hides the line (F59d-3; CE's unlock does the rest); a late success changes nothing.
         assertEquals(asked.copy(open = false), pad(asked, PadEvent.SUCCEEDED).first)
+        assertFalse(pad(asked.copy(line = true), PadEvent.SUCCEEDED).first.line)
         assertEquals(PadStep(BootPad(), PadAction.NONE), bootPadStep(BootPad(), PadEvent.SUCCEEDED, true, true, false))
+    }
+
+    @Test
+    fun `the face is never left bare with no pad coming (qa-59d-f-code F59d-2)`() {
+        // (a) a resume held back by a call, (c) a new instance after the cap: the hint.
+        assertTrue(pad(BootPad(), PadEvent.RESUMED, inCall = true).first.line)
+        assertTrue(pad(BootPad(autoAsks = BOOT_PAD_AUTO_ASKS), PadEvent.RESUMED).first.line)
+        // (b) a stop that closes an open ask with the screen on: its late cancel can't show the line any more.
+        val asked = pad(BootPad(), PadEvent.RESUMED).first
+        val (stopped, _) = pad(asked, PadEvent.STOPPED, PadEvent.CANCELLED)
+        assertTrue(stopped.line)
+        // Not while an ask is out, and not before a first resume that asks.
+        assertFalse(pad(BootPad(open = true), PadEvent.RESUMED).first.line)
+        assertFalse(asked.line)
+    }
+
+    @Test
+    fun `a tap asks over an ask still marked open, uncounted (F59d-4)`() {
+        val step = bootPadStep(BootPad(autoAsks = 1, armed = false, open = true, auto = true), PadEvent.TAPPED, gate = true, interactive = true, inCall = false)
+        assertEquals(PadAction.ASK, step.action)
+        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = false), step.pad)
+    }
+
+    @Test
+    fun `the hint line sits under the mark, but above the navigation bar (F59d-6)`() {
+        // 569 dp tall at 1 px/dp, 48 dp navigation, 16 dp gap, 156 dp under the centre.
+        assertEquals(284 + 156, tapLineTopPx(heightPx = 569, lineHeightPx = 25, insetBottomPx = 48, offsetPx = 156, gapPx = 16))
+        // Two lines at font scale 2.0 (~98 dp) move up to stay above the bar.
+        assertEquals(569 - 48 - 16 - 98, tapLineTopPx(569, 98, 48, 156, 16))
+        assertEquals(0, tapLineTopPx(100, 400, 48, 156, 16))
     }
 }

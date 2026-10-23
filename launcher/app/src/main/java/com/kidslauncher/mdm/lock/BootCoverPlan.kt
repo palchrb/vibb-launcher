@@ -164,7 +164,8 @@ fun coverHandOverDelayMs(unlocked: Boolean, shownForMs: Long): Long? =
 
 /*
  * Design 59 F3: the first unlock after a reboot with Android's lock. Before the PIN our main process can't
- * run (CE locked), so the cover (behind Android's keyguard, never showWhenLocked) is what the PIN's dismissal
+ * run (CE locked), so the cover (in android mode the BFU face over the keyguard while the pad gate holds - 59d step F,
+ * [bootPadGate] - else behind it) is what the PIN's dismissal
  * reveals, and it stays until our main process has taken over - it disables the cover right before the boot's
  * typed Home start (`BootCover.init`/`takeOver`, then `BootHome`) - and our Home is over it. The main process writes
  * the device-protected marker `boot_cover_android` while this holds ([bootCoverAndroidMarker]); the cover and the
@@ -370,7 +371,9 @@ data class PadStep(val pad: BootPad, val action: PadAction)
  * - **Resumed**: one automatic ask per resume after a stop (the arm), with the screen on ([interactive]), no ask open
  *   and fewer than [BOOT_PAD_AUTO_ASKS] counted - **never while [inCall]** (Telecom's `isInManagedCall`; the pad over a
  *   live call would hide its screen). A resume held back by a call keeps the arm, so the first resume after the call
- *   ended asks. No new automatic ask until a stop: a kid who keeps cancelling never gets a loop.
+ *   ended asks. No new automatic ask until a stop: a kid who keeps cancelling never gets a loop. A resume that doesn't
+ *   ask, with no ask open, shows the line (qa-59d-f-code F59d-2: a call that ends with the cover in front, the cap, a
+ *   new cover instance after it) - the face is bare only while its first ask is coming or an ask is out.
  * - **A tap** asks whatever the call or the cap say (the kid chose it), uncounted. A tap reaching the cover means no
  *   pad is over it, so an ask still marked open is given up (the activity drops its late answer by the ask's id).
  * - **Cancelled**: the line shows. A cancel with the screen off (power with the pad up, §5 rule 4: the bouncer goes at
@@ -379,8 +382,10 @@ data class PadStep(val pad: BootPad, val action: PadAction)
  *   same ask: the pair counts once. The retry needs the screen on and, for an automatic ask, no call; a second error,
  *   or a retry that can't go, ends the ask with the line.
  * - **Stopped**: arms the next resume; a retry still due is dropped; an ask still open is closed, uncounted when the
- *   screen is off (the power press) - its late answer is then no current ask's.
- * - **Succeeded**: the ask closes; CE's unlock does the rest (the gate goes false, F3's wait).
+ *   screen is off (the power press) - its late answer is then no current ask's - and the line shows (F59d-2: its late
+ *   cancel can't show it any more).
+ * - **Succeeded**: the ask closes and the line goes (F59d-3); CE's unlock does the rest (the gate goes false, F3's
+ *   wait).
  * An answer with no ask open (an earlier ask's) changes nothing.
  */
 fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boolean, inCall: Boolean): PadStep {
@@ -396,11 +401,14 @@ fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boole
                     PadAction.ASK,
                 )
             } else {
-                none
+                // F59d-2: a resume that doesn't ask (a call, the cap, the screen off, no stop since the last ask) shows
+                // the hint, so the face is never bare with no pad coming - unless an ask is out.
+                if (pad.open) none else PadStep(pad.copy(line = true), PadAction.NONE)
             }
         PadEvent.TAPPED -> PadStep(pad.copy(open = true, auto = false, retried = false, retryDue = false), PadAction.ASK)
-        PadEvent.STOPPED -> PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false), PadAction.NONE)
-        PadEvent.SUCCEEDED -> if (!pad.open) none else PadStep(pad.copy(open = false), PadAction.NONE)
+        PadEvent.STOPPED ->
+            PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, line = pad.line || pad.open), PadAction.NONE)
+        PadEvent.SUCCEEDED -> if (!pad.open) none else PadStep(pad.copy(open = false, line = false), PadAction.NONE)
         PadEvent.CANCELLED -> if (!pad.open) none else PadStep(pad.copy(autoAsks = closedCount, open = false, line = true), PadAction.NONE)
         PadEvent.ERROR -> when {
             !pad.open -> none
@@ -414,3 +422,11 @@ fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boole
         }
     }
 }
+
+/**
+ * F59d-6: the hint line's top in the cover, px: [offsetPx] below the screen's centre (under the 288 dp mark), but never
+ * lower than [gapPx] above the bottom inset ([insetBottomPx], the navigation bar - the window is edge-to-edge), so a
+ * line wrapped at a large font scale stays readable. Never above the top.
+ */
+fun tapLineTopPx(heightPx: Int, lineHeightPx: Int, insetBottomPx: Int, offsetPx: Int, gapPx: Int): Int =
+    minOf(heightPx / 2 + offsetPx, heightPx - insetBottomPx - gapPx - lineHeightPx).coerceAtLeast(0)
