@@ -308,3 +308,109 @@ fun coverDestroyStartsHome(
 
 /** How often the cover looks at [coverWaitStep] while in front. */
 const val COVER_WAIT_POLL_MS = 250L
+
+/*
+ * Design 59d step F (§5 as amended by §8.3): the cover as the BFU face. While the pad gate holds ([bootPadGate]) the
+ * cover is showWhenLocked (runtime only - the manifest has no flag, BootCoverManifestTest), so it occludes the BFU
+ * keyguard, and it only *asks* for Android's PIN pad (`requestDismissKeyguard`: the BFU bouncer) - it dismisses
+ * nothing itself. The PIN unlocks CE, the cover drops the flag and runs F3's wait ([coverWaitStep]). The ask rule is
+ * [bootPadStep]. If a runtime-flagged HOME doesn't occlude the BFU keyguard on a device (59d §8.4 item 6 (a)), the
+ * cover is never resumed while locked: no ask, F3's behaviour.
+ */
+
+/** Automatic asks per `:bootcover` process (in memory; a new process may ask this many again - the cover's crash
+ * guard bounds a loop). After them only taps ask. */
+const val BOOT_PAD_AUTO_ASKS = 3
+
+/** An ask answered with an error is asked again once, this long later - the same ask (the pair counts once). */
+const val BOOT_PAD_RETRY_MS = 1_000L
+
+/**
+ * The pad gate (Q59d-8): showWhenLocked and every ask only with Android's PIN as the gate ([androidMarker]: the
+ * `boot_cover_android` marker) and the user still locked; read again before every ask and at every resume. An
+ * own-mode cover (16b's `boot_cover` switch, an Android credential of its own) never gets it, and once [unlocked] it
+ * is false for good - never showWhenLocked once `isUserUnlocked`.
+ */
+fun bootPadGate(androidMarker: Boolean, unlocked: Boolean): Boolean = androidMarker && !unlocked
+
+/** What the cover's pad rule hears: its lifecycle, a tap, the ask's answer, the retry's time. */
+enum class PadEvent { RESUMED, STOPPED, TAPPED, SUCCEEDED, CANCELLED, ERROR, RETRY }
+
+enum class PadAction {
+    NONE,
+
+    /** `requestDismissKeyguard` now: the BFU bouncer over the cover. */
+    ASK,
+
+    /** Post [PadEvent.RETRY] [BOOT_PAD_RETRY_MS] from now. */
+    RETRY_LATER,
+}
+
+/**
+ * The cover's pad state. [autoAsks]: automatic asks counted in this process (the activity keeps it process-wide);
+ * [armed]: an automatic ask may come at the next resume (a new cover, and after every stop); [open]: an ask is out
+ * with no answer; [auto]: that ask is automatic (counted); [retried]: it used its one retry; [retryDue]: the retry is
+ * posted; [line]: "Trykk for å låse opp" shows under the mark (an ask ended without the PIN).
+ */
+data class BootPad(
+    val autoAsks: Int = 0,
+    val armed: Boolean = true,
+    val open: Boolean = false,
+    val auto: Boolean = false,
+    val retried: Boolean = false,
+    val retryDue: Boolean = false,
+    val line: Boolean = false,
+)
+
+data class PadStep(val pad: BootPad, val action: PadAction)
+
+/**
+ * The ask rule (§5 rules 2-4, §8.3, §8.5 "F"), pure:
+ * - Nothing without the gate ([bootPadGate]): no ask, no retry.
+ * - **Resumed**: one automatic ask per resume after a stop (the arm), with the screen on ([interactive]), no ask open
+ *   and fewer than [BOOT_PAD_AUTO_ASKS] counted - **never while [inCall]** (Telecom's `isInManagedCall`; the pad over a
+ *   live call would hide its screen). A resume held back by a call keeps the arm, so the first resume after the call
+ *   ended asks. No new automatic ask until a stop: a kid who keeps cancelling never gets a loop.
+ * - **A tap** asks whatever the call or the cap say (the kid chose it), uncounted. A tap reaching the cover means no
+ *   pad is over it, so an ask still marked open is given up (the activity drops its late answer by the ask's id).
+ * - **Cancelled**: the line shows. A cancel with the screen off (power with the pad up, §5 rule 4: the bouncer goes at
+ *   the sleep) isn't counted - the stop re-arms and the next screen-on's resume asks.
+ * - **Error**: asked again once [BOOT_PAD_RETRY_MS] later (the keyguard not ready right after the locked boot), the
+ *   same ask: the pair counts once. The retry needs the screen on and, for an automatic ask, no call; a second error,
+ *   or a retry that can't go, ends the ask with the line.
+ * - **Stopped**: arms the next resume; a retry still due is dropped; an ask still open is closed, uncounted when the
+ *   screen is off (the power press) - its late answer is then no current ask's.
+ * - **Succeeded**: the ask closes; CE's unlock does the rest (the gate goes false, F3's wait).
+ * An answer with no ask open (an earlier ask's) changes nothing.
+ */
+fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boolean, inCall: Boolean): PadStep {
+    if (!gate) return PadStep(pad.copy(open = false, retryDue = false), PadAction.NONE)
+    val none = PadStep(pad, PadAction.NONE)
+    // The open ask closes now: an automatic one with the screen off gives its count back.
+    val closedCount = if (pad.open && pad.auto && !interactive) (pad.autoAsks - 1).coerceAtLeast(0) else pad.autoAsks
+    return when (event) {
+        PadEvent.RESUMED ->
+            if (pad.armed && !pad.open && interactive && !inCall && pad.autoAsks < BOOT_PAD_AUTO_ASKS) {
+                PadStep(
+                    pad.copy(autoAsks = pad.autoAsks + 1, armed = false, open = true, auto = true, retried = false, retryDue = false),
+                    PadAction.ASK,
+                )
+            } else {
+                none
+            }
+        PadEvent.TAPPED -> PadStep(pad.copy(open = true, auto = false, retried = false, retryDue = false), PadAction.ASK)
+        PadEvent.STOPPED -> PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false), PadAction.NONE)
+        PadEvent.SUCCEEDED -> if (!pad.open) none else PadStep(pad.copy(open = false), PadAction.NONE)
+        PadEvent.CANCELLED -> if (!pad.open) none else PadStep(pad.copy(autoAsks = closedCount, open = false, line = true), PadAction.NONE)
+        PadEvent.ERROR -> when {
+            !pad.open -> none
+            !pad.retried -> PadStep(pad.copy(open = false, retried = true, retryDue = true), PadAction.RETRY_LATER)
+            else -> PadStep(pad.copy(open = false, line = true), PadAction.NONE)
+        }
+        PadEvent.RETRY -> when {
+            !pad.retryDue || pad.open -> none
+            interactive && !(pad.auto && inCall) -> PadStep(pad.copy(open = true, retryDue = false), PadAction.ASK)
+            else -> PadStep(pad.copy(retryDue = false, line = true), PadAction.NONE)
+        }
+    }
+}
