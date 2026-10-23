@@ -892,7 +892,10 @@ findings, merge to `main`, full suite once.
   consecutive fixes on the same side (no flapping on one bad fix); events "arrived at / left <zone>" in the inbox and
   pushed under each parent's Notify Me About; latency = the locate interval (10 min default -> up to 20 min). Step 2
   optional: the launcher registers the zones as Android proximity alerts and takes an immediate fix on a crossing
-  (zones in the policy; `location_policy`), latency under a minute at little battery. M.
+  (zones in the policy; `location_policy`), latency under a minute at little battery. M. The user, 2026-10-23: build
+  both steps ("we should put on the list to implement this stuff!"); the fences do the watching (the system checks
+  by distance and speed, cell/Wi-Fi before GPS), so the Regularly interval can be stretched once they are in;
+  fences re-registered at the first sync after a boot; the 100-fence cap is plenty.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
