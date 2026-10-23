@@ -1250,8 +1250,9 @@ object AppEnforcer {
      */
     /**
      * `market://` and `https://play.google.com/store/...` links open [PlayLinkBlockedActivity]
-     * (handy step 7, §4): persistent preferred activities, set on every [apply] and never cleared
-     * - clearing ours would drop the HOME pin too (QA #2). The activity declares the same filters
+     * (handy step 7, §4): persistent preferred activities, set on every [apply] and cleared only by `HomePin`'s
+     * re-seat, which adds every PPA of ours back in the same pass (design 59d step M, `PlayInvariantsTest`) - any
+     * other clear would drop the HOME pin too (QA #2). The activity declares the same filters
      * (AOSP ignores a preferred activity that doesn't match its own filters) and passes the link
      * on to Play whenever Play isn't suspended. Explicit intents bypass this; the Play Store's
      * suspension covers them.
@@ -1284,8 +1285,8 @@ object AppEnforcer {
      * `VIEW vnd.android.cursor.dir/calls` - the call log, which Telecom's own missed-call
      * notification and other apps open - goes to [PhoneBookActivity] (design 12): the system
      * dialer's call log is its full UI with a keypad, and a chooser would be just as bad. Set on
-     * every [apply] next to the Play link blocker and never cleared (that would drop the HOME pin,
-     * `PlayInvariantsTest`); the activity declares the same filter and passes the intent on to the
+     * every [apply] next to the Play link blocker and cleared only by `HomePin`'s re-seat, which adds every PPA of
+     * ours back in the same pass (design 59d step M, `PlayInvariantsTest`); the activity declares the same filter and passes the intent on to the
      * system dialer while calls are unmanaged. A privileged dialer whose call-log filter has a
      * priority above 0 still wins (PackageManager picks it before reading persistent preferred
      * activities) - device check on the Jelly Star.
@@ -1300,6 +1301,22 @@ object AppEnforcer {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to set the call-log pin", e)
         }
+    }
+
+    /**
+     * Design 59d step M, for `lock/HomePin` only (it holds its own lock and adds the boot cover's PPA last): our
+     * package's PPAs cleared and added back in order - HomeActivity's HOME first, then the Play link blocker and the
+     * call-log pin. Not `@Synchronized` (the take-over calls it on the main thread while an apply may run). Never throws.
+     */
+    internal fun reseatPreferredActivities(context: Context, dpm: DevicePolicyManager, admin: ComponentName) {
+        try {
+            dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to clear our persistent preferred activities", e)
+        }
+        enforceDefaultHome(dpm, admin, context)
+        enforcePlayLinkBlocker(dpm, admin, context)
+        enforceCallLogPin(dpm, admin, context)
     }
 
     private fun enforceDefaultHome(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {

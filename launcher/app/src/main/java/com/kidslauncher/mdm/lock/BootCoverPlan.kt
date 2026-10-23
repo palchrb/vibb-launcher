@@ -5,8 +5,10 @@ package com.kidslauncher.mdm.lock
  * server switch `boot_cover`, off by default). Before the first unlock only direct-boot-aware HOME
  * activities resolve, so a stock launcher like Pixel's was Home for the seconds until our Home
  * could run. The cover is our own direct-boot-aware HOME (`BootCoverActivity`, own process
- * `:bootcover`, the breathing Vibb mark) with its own persistent preferred activity, enabled only
- * from shutdown to the next unlock - two HOME PPAs while unlocked would make Home unstable (QA #8).
+ * `:bootcover`, the breathing Vibb mark) with its own persistent preferred activity. In own mode it is
+ * enabled only from shutdown to the next unlock; in android mode (design 59d step M) it stays enabled,
+ * so a boot the shutdown didn't arm still has a direct-boot-aware HOME, and the unlocked HOME is kept on
+ * HomeActivity by `HomePin` (two HOME PPAs of ours resolve in a per-boot order - QA #8).
  * Pure, tested in BootCoverPlanTest.
  */
 
@@ -45,7 +47,7 @@ enum class CoverEvent {
     /** `ACTION_SHUTDOWN` (also a reboot): the next boot's BFU window comes. */
     SHUTDOWN,
 
-    /** Unlocked: the cover has been shown long enough, or our main process runs (Home's turn). */
+    /** Unlocked: our main process takes over (own mode: Home's turn, the cover goes off; android mode: it stays on). */
     HANDED_OVER,
 
     /** The cover's [COVER_MAX_CRASHES]th crash in this boot. */
@@ -54,15 +56,24 @@ enum class CoverEvent {
 
 /**
  * The cover component's state after [event]: `true` enable, `false` disable, `null` leave it.
- * Off (switch, unmanaged, not device owner) = disabled at every event. On: enabled only at
- * shutdown - never while the phone runs unlocked (an apply leaves it), and disabled at the
- * hand-over and by the crash guard. A crash reboot sends no shutdown: the cover stays off and the
- * boot falls back to A+B (Home at boot, Home roots lock task).
+ * Off (switch, unmanaged, not device owner) = disabled at every event.
+ * - Own mode: enabled only at shutdown - never while the phone runs unlocked (an apply leaves it), and disabled at
+ *   the hand-over and by the crash guard. A crash reboot sends no shutdown: the cover stays off and the boot falls back
+ *   to A+B (Home at boot, Home roots lock task) - with no Android PIN the boot isn't BFU.
+ * - Android mode ([androidMode], the `boot_cover_android` marker - design 59d step M): enabled at every event, the
+ *   take-over included, **the crash guard too** (qa-59d-m-code M-1, option (a)). Before the first unlock only
+ *   direct-boot-aware HOMEs resolve, and on a phone whose stock launcher isn't one (with Settings' FallbackHome hidden)
+ *   a boot without a HOME never completes (six-inch F1), so the cover must already be enabled when a crash,
+ *   `adb reboot` or a flat battery comes - a tripped guard makes it inert instead ([coverInert]: no face, no ask,
+ *   SystemUI's lock is the face), never disabled. `HomePin` keeps the unlocked HOME on HomeActivity.
  */
-fun bootCoverEnabled(event: CoverEvent, wanted: Boolean, guardTripped: Boolean = false): Boolean? = when {
+fun bootCoverEnabled(event: CoverEvent, wanted: Boolean, guardTripped: Boolean = false, androidMode: Boolean = false): Boolean? = when {
     !wanted -> false
-    // A tripped guard holds until the switch goes off (which clears it) and on again
-    // (qa-16b-code #2): no more crashing starts at every boot.
+    // M-1: in android mode the cover is the boot's HOME whatever the guard says - a trip makes it inert, not off.
+    androidMode -> true
+    event == CoverEvent.CRASH_GUARD -> false
+    // A tripped guard holds until the switch goes off (which clears it) and on again, or an update
+    // (qa-16b-code #2, F3C-3): no more crashing starts at every boot.
     event == CoverEvent.SHUTDOWN -> !guardTripped
     event == CoverEvent.POLICY -> null
     else -> false
@@ -184,8 +195,9 @@ fun coverHandOverDelayMs(unlocked: Boolean, shownForMs: Long): Long? =
  * Design 59 F3: the first unlock after a reboot with Android's lock. Before the PIN our main process can't
  * run (CE locked), so the cover (in android mode the BFU face over the keyguard while the pad gate holds - 59d step F,
  * [bootPadGate] - else behind it) is what the PIN's dismissal
- * reveals, and it stays until our main process has taken over - it disables the cover right before the boot's
- * typed Home start (`BootCover.init`/`takeOver`, then `BootHome`) - and our Home is over it. The main process writes
+ * reveals, and it stays until our main process has taken over - right before the boot's typed Home start
+ * (`BootCover.init`/`takeOver`, then `BootHome`) it writes the device-protected take-over stamp (59d step M; the
+ * component stays enabled) - and our Home is over it. The main process writes
  * the device-protected marker `boot_cover_android` while this holds ([bootCoverAndroidMarker]); the cover and the
  * locked boot read it (no CE before the PIN).
  */
@@ -198,7 +210,7 @@ fun bootCoverAndroidMarker(wanted: Boolean, androidGate: Boolean): Boolean = wan
  * and starts our Home (never stranded; the debug build's first CE start took 12.6-31 s in the emulator runs). */
 const val COVER_LAUNCHER_WAIT_MS = 30_000L
 
-/** Taken over (disabled by our main process) but still in front this long: it finishes anyway (the boot's
+/** Taken over (our main process's stamp, step M) but still in front this long: it finishes anyway (the boot's
  * Home start didn't come, or it was refused). Normally Home comes over it first ([coverWaitStep]). */
 const val COVER_TAKEOVER_GRACE_MS = 5_000L
 
@@ -272,11 +284,14 @@ enum class CoverStep {
 
 /**
  * The cover's step in android mode (F3), checked every [COVER_WAIT_POLL_MS] while it is in front and once when
- * it stops. [disabled]: its component reads disabled (our main process's take-over, or its own
- * [CoverStep.HAND_OVER]); [visible]: not stopped (stopped while disabled = our Home or a call is over it - the
- * finish then reveals nothing); [homeStarted]: it started our Home itself already; [callLive]: a call (Telecom's view,
- * the cover's process can't see ours). Never leaves before the unlock, never leaves on a stop while still enabled (the
- * keyguard coming back, a call), never starts Home while stopped.
+ * it stops. [takenOver]: our main process took over in this boot (design 59d step M: its device-protected stamp,
+ * [coverTakenOver] - the component stays enabled in android mode) or the cover reads disabled (its own
+ * [CoverStep.HAND_OVER]); [takenOverForMs]: since the cover first saw it; [visible]: not stopped (stopped while taken
+ * over = our Home or a call is over it - the finish then reveals nothing); [homeStarted]: it started our Home itself
+ * already; [callLive]: a call (Telecom's view, the cover's process can't see ours); [lateStart]: this cover was created
+ * after the take-over (the system resolved HOME to it once unlocked - step M: it starts Home at once, not after the
+ * nudge). Never leaves before the unlock, never leaves on a stop before the take-over (the keyguard coming back, a
+ * call), never starts Home while stopped.
  *
  * Taken over and still in front, it starts our Home after [COVER_HOME_NUDGE_MS] **in a call too** (qa-f3-round2-code
  * F3R-1): this step runs only while the cover is resumed, so no call screen is over it, and its Home start can't bury
@@ -288,21 +303,56 @@ enum class CoverStep {
  */
 fun coverWaitStep(
     unlocked: Boolean,
-    disabled: Boolean,
+    takenOver: Boolean,
     visible: Boolean,
     unlockedForMs: Long,
-    disabledForMs: Long,
+    takenOverForMs: Long,
     homeStarted: Boolean,
     callLive: Boolean,
+    lateStart: Boolean = false,
 ): CoverStep = when {
     !unlocked -> CoverStep.STAY
-    disabled && !visible -> CoverStep.FINISH
-    disabled && !homeStarted && disabledForMs >= COVER_HOME_NUDGE_MS -> CoverStep.START_HOME
-    disabled && disabledForMs >= COVER_TAKEOVER_GRACE_MS -> CoverStep.FINISH
-    disabled -> CoverStep.STAY
+    takenOver && !visible -> CoverStep.FINISH
+    takenOver && !homeStarted && (lateStart || takenOverForMs >= COVER_HOME_NUDGE_MS) -> CoverStep.START_HOME
+    takenOver && takenOverForMs >= COVER_TAKEOVER_GRACE_MS -> CoverStep.FINISH
+    takenOver -> CoverStep.STAY
     visible && !callLive && unlockedForMs >= COVER_LAUNCHER_WAIT_MS -> CoverStep.HAND_OVER
     else -> CoverStep.STAY
 }
+
+/** Design 59d step M: the main process's take-over stamp ([stampBoot], the boot count it was written in; `null` = none)
+ * is this boot's ([bootNow]). An unreadable boot count (-1) is never a take-over - the cover then waits for its 30 s
+ * hand-over, which disables it and starts Home (never stranded). */
+fun coverTakenOver(stampBoot: Int?, bootNow: Int): Boolean = bootNow >= 0 && stampBoot == bootNow
+
+/** HomeActivity's class name, for the cover's process (which never loads our Home's class) - pinned to the class in
+ * BootCoverPlanTest. */
+const val HOME_ACTIVITY_CLASS = "com.kidslauncher.mdm.ui.HomeActivity"
+
+/**
+ * Design 59d step M: one of the cover's own Home starts ([CoverStep.START_HOME], the start on its way out). The typed
+ * HOME restricted to our package resolves to the first PPA of ours in the boot's order; with the cover enabled (android
+ * mode) that can be the cover itself. So it disables itself first unless the HOME resolves to HomeActivity now
+ * ([resolvesToHome]; `null` = unreadable: disable). The next apply or take-over enables it again.
+ */
+fun coverHomeStartDisablesFirst(resolvesToHome: Boolean?): Boolean = resolvesToHome != true
+
+/** f3-run B2 as amended by step M: once unlocked, a destroyed own-mode cover disables itself (its component is only
+ * armed from shutdown to the unlock); an android-mode cover ([waitForLauncher]) stays enabled for the next unarmed boot. */
+fun coverDisablesOnDestroy(waitForLauncher: Boolean, unlocked: Boolean): Boolean = unlocked && !waitForLauncher
+
+/** Re-seats of our PPAs per main process ([homePinReseatDue]): a HOME that still doesn't resolve to HomeActivity after
+ * these (something else holds it) isn't fought at every apply. */
+const val HOME_PIN_MAX_RESEATS = 3
+
+/**
+ * Design 59d step M (`HomePin`): our PPAs are cleared and added again in order - HomeActivity's HOME first, the cover's
+ * last - when the system's HOME, unlocked, doesn't resolve to HomeActivity ([resolvesToHome]: the per-boot PPA order
+ * put the cover first, or a PPA is missing - six-inch F6), at most [HOME_PIN_MAX_RESEATS] times per process
+ * ([reseats]). Never before the unlock: HomeActivity isn't direct-boot aware, so it can't resolve then.
+ */
+fun homePinReseatDue(unlocked: Boolean, resolvesToHome: Boolean, reseats: Int): Boolean =
+    unlocked && !resolvesToHome && reseats < HOME_PIN_MAX_RESEATS
 
 /** The cover's own hand-over starts Home once its disable reads back, or anyway after [COVER_DISABLE_TRIES] failed
  * tries (F3C-7: the PPA may still pick HomeActivity; "never stranded" mustn't hang on the read-back). */
@@ -311,8 +361,8 @@ fun coverHandOverStartsHome(disabledReadBack: Boolean, failedTries: Int): Boolea
 
 /**
  * f3-run B2: the cover is destroyed - its own finish, or the system's (AMS finishes a disabled component's activities
- * on `PACKAGE_CHANGED`). Unlocked, it always disables itself (idempotent; the one HOME PPA of ours that may resolve
- * once unlocked is HomeActivity's). In android mode, destroyed by the system while still in front ([visible]: it was
+ * on `PACKAGE_CHANGED`). Unlocked, an own-mode cover disables itself ([coverDisablesOnDestroy]). In android mode,
+ * destroyed by the system while still in front ([visible]: it was
  * resumed when the finish came, so no call screen was over it - F3R-1, in a call too) with no Home of its own started,
  * it starts the typed HOME on its way out, so the stock launcher a non-graceful boot left below never comes up (a death
  * between our take-over and Home's start).
@@ -350,10 +400,25 @@ const val BOOT_PAD_RETRY_MS = 1_000L
  * own-mode cover (16b's `boot_cover` switch, an Android credential of its own) never gets it, and once [unlocked] it
  * is false for good - never showWhenLocked once `isUserUnlocked`.
  */
-fun bootPadGate(androidMarker: Boolean, unlocked: Boolean): Boolean = androidMarker && !unlocked
+fun bootPadGate(androidMarker: Boolean, unlocked: Boolean, inert: Boolean = false): Boolean = androidMarker && !unlocked && !inert
+
+/**
+ * qa-59d-m-code M-1 (option (a)): an android-mode cover whose crash guard tripped stays enabled - the direct-boot-aware
+ * HOME every boot needs - but inert: a bare night window, never showWhenLocked, never an ask, no breathing mark
+ * ([bootPadGate]'s `inert`); SystemUI's own lock screen and pad are the face, and once unlocked it runs F3's wait and
+ * hands over to our Home. An own-mode cover with a tripped guard finishes and disables itself as before.
+ */
+fun coverInert(androidMarker: Boolean, guardTripped: Boolean): Boolean = androidMarker && guardTripped
 
 /** What the cover's pad rule hears: its lifecycle, a tap, the ask's answer, the retry's time. */
-enum class PadEvent { RESUMED, STOPPED, TAPPED, SUCCEEDED, CANCELLED, ERROR, RETRY }
+enum class PadEvent {
+    RESUMED, STOPPED, TAPPED, SUCCEEDED, CANCELLED, ERROR, RETRY,
+
+    /** qa-59d-m-code M-4: the first resume of a cover recreated for a configuration change (the theme overlays at boot)
+     * - no stop, no new automatic ask: an ask that was out is asked again uncounted (the old instance's callback is
+     * gone), else as [RESUMED]. */
+    RELAUNCHED,
+}
 
 enum class PadAction {
     NONE,
@@ -404,6 +469,8 @@ data class PadStep(val pad: BootPad, val action: PadAction)
  *   cancel can't show it any more).
  * - **Succeeded**: the ask closes and the line goes (F59d-3); CE's unlock does the rest (the gate goes false, F3's
  *   wait).
+ * - **Relaunched** (qa-59d-m-code M-4, the first resume of a cover recreated for a configuration change - the activity
+ *   carries the whole pad over and skips the stop): an ask still out is asked again uncounted; else as Resumed.
  * An answer with no ask open (an earlier ask's) changes nothing.
  */
 fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boolean, inCall: Boolean): PadStep {
@@ -424,6 +491,14 @@ fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boole
                 if (pad.open) none else PadStep(pad.copy(line = true), PadAction.NONE)
             }
         PadEvent.TAPPED -> PadStep(pad.copy(open = true, auto = false, retried = false, retryDue = false), PadAction.ASK)
+        // M-4: a configuration-change relaunch is no stop and no new automatic ask. The ask still out is asked again by
+        // the new instance, uncounted (the pad stays up; a second request only re-registers); with the screen off it
+        // closes as a stop would. Nothing out: the resume's rule.
+        PadEvent.RELAUNCHED -> when {
+            pad.open && interactive -> PadStep(pad.copy(retried = false, retryDue = false), PadAction.ASK)
+            pad.open -> PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, line = true), PadAction.NONE)
+            else -> bootPadStep(pad, PadEvent.RESUMED, gate, interactive, inCall)
+        }
         PadEvent.STOPPED ->
             PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, line = pad.line || pad.open), PadAction.NONE)
         PadEvent.SUCCEEDED -> if (!pad.open) none else PadStep(pad.copy(open = false, line = false), PadAction.NONE)

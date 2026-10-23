@@ -474,6 +474,9 @@ class HomeActivity : UIObjectActivity() {
         // wasteful; MdmSyncWorker's regular sync cycle is the retry-until-connected backstop
         // either way.
         CoroutineScope(Dispatchers.IO).launch { TsnetClient.connectFromPreferences(this@HomeActivity) }
+        // Design 59d step M (qa-59d-m-code M-6): a boot cover its own Home start disabled is enabled again now, not at
+        // the next apply - an unarmed reboot in between would find no direct-boot-aware HOME. Off the main thread.
+        CoroutineScope(Dispatchers.IO).launch { com.kidslauncher.mdm.lock.BootCover.afterHomeResumed(this@HomeActivity) }
         if (!gate()) {
             // Design 16c: locked (or not decided with a kid PIN) - the night ground, and the lock
             // in this same pass with nothing slow before it (no render, no policy decode; the

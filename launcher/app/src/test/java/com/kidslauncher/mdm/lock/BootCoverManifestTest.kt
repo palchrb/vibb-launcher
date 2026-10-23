@@ -96,7 +96,7 @@ class BootCoverManifestTest {
         fun body(name: String) = activity.substringAfter("private fun $name(").substringBefore("\n    }\n")
         // The gate: the marker (create's read and a fresh one) and the user still locked; unreadable = unlocked.
         val gate = body("padGate")
-        for (needed in listOf("bootPadGate(", "androidMarker = waitForLauncher && BootCoverGuard.androidMode(this)", "unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked != false")) {
+        for (needed in listOf("bootPadGate(", "androidMarker = waitForLauncher && BootCoverGuard.androidMode(this)", "unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked != false", "inert = inert")) {
             assertTrue(needed, gate.contains(needed))
         }
         // setShowWhenLocked once, set to the gate's value; requestDismissKeyguard once, behind the gate read first.
@@ -117,7 +117,21 @@ class BootCoverManifestTest {
         assertTrue(activity.substringAfter("override fun onCreate(").substringBefore("\n    }\n").contains("waitForLauncher = BootCoverGuard.androidMode(this)\n        applyLockedFace()"))
         val resume = activity.substringAfter("override fun onResume()").substringBefore("\n    }\n")
         assertTrue(resume.contains("applyLockedFace()"))
-        assertTrue(resume.contains("handler.post { if (resumed) padStep(PadEvent.RESUMED) }"))
+        // qa-59d-m-code M-4: the first resume after a configuration-change relaunch is RELAUNCHED (no new counted ask).
+        assertTrue(resume.contains("val event = if (relaunched) PadEvent.RELAUNCHED else PadEvent.RESUMED\n        relaunched = false\n        handler.post { if (resumed) padStep(event) }"))
+        val stop = activity.substringAfter("override fun onStop()").substringBefore("\n    }\n")
+        assertTrue(stop.indexOf("if (!isChangingConfigurations) {") in 0 until stop.indexOf("padStep(PadEvent.STOPPED)"))
+        assertTrue(stop.indexOf("if (!isChangingConfigurations) {") < stop.indexOf("waitStep(visible = false)"))
+        assertTrue(activity.substringAfter("override fun onDestroy()").substringBefore("\n    }\n").contains("if (isChangingConfigurations) carriedPad = pad"))
+        val create = activity.substringAfter("override fun onCreate(").substringBefore("\n    }\n")
+        assertTrue(create.contains("carriedPad?.let {\n            pad = it\n            relaunched = true\n        }\n        carriedPad = null"))
+        // M-1: the tripped android-mode cover stays (inert): no disable, no finish, no mark; own mode's goes as before.
+        assertTrue(create.contains("inert = coverInert(BootCoverGuard.androidMode(this), tripped)"))
+        assertTrue(create.indexOf("if (tripped && !inert) {") in 0 until create.indexOf("BootCoverGuard.disable(this, \"crash guard\")"))
+        assertTrue(create.contains("if (!inert) setImageResource(R.drawable.splash_vibb_breathe)"))
+        val install = code("java/com/kidslauncher/mdm/lock/BootCoverGuard.kt").substringAfter("fun install(").substringBefore("\n    }\n")
+        assertTrue(install.contains("bootCoverEnabled(CoverEvent.CRASH_GUARD, wanted = true, guardTripped = true, androidMode = androidMode(app))"))
+        assertTrue(install.contains("if (coverGuardTripped(next) && keep == false) disable("))
         assertTrue(activity.substringAfter("override fun onReceive(").substringBefore("\n            }\n").contains("applyLockedFace()"))
         assertTrue(activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n").contains("if (unlocked) applyLockedFace()"))
         assertTrue(activity.substringAfter("override fun onStop()").substringBefore("\n    }\n").contains("padStep(PadEvent.STOPPED)"))
@@ -143,7 +157,7 @@ class BootCoverManifestTest {
         // It leaves on the take-over only when stopped or the grace is over (the rule is coverWaitStep's), and its
         // own hand-over disables itself before starting Home.
         val wait = activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n")
-        assertTrue(wait.contains("coverWaitStep(unlocked, disabled, visible"))
+        assertTrue(wait.contains("coverWaitStep(unlocked, takenOver, visible"))
         val handOver = wait.substringAfter("CoverStep.HAND_OVER ->")
         assertTrue(handOver.indexOf("BootCoverGuard.disable") in 0 until handOver.indexOf("startHome()"))
         assertTrue(activity.substringAfter("override fun onStop()").substringBefore("\n    }").contains("waitStep(visible = false)"))
@@ -176,7 +190,7 @@ class BootCoverManifestTest {
         // M6: the marker is written from the rule.
         assertTrue(apply.contains("BootCoverGuard.setAndroidMode(app, bootCoverAndroidMarker(wanted, androidGate))"))
         // M7: the cover's PPA has its own category, never replacing HomeActivity's.
-        assertTrue(apply.contains("addCategory(BOOT_COVER_CATEGORY)"))
+        assertTrue(cover.substringAfter("private fun coverFilter()").substringBefore("\n    }\n").contains("addCategory(BOOT_COVER_CATEGORY)"))
         // F3C-3: the guard's clear on an update or the switch's edge.
         // R2R-6: and the versionName (an RC over an RC of one version keeps the code).
         assertTrue(apply.contains("coverGuardClearDue(BootCoverGuard.read(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong(), switchWas, switchOn, com.kidslauncher.mdm.BuildConfig.VERSION_NAME)"))
@@ -230,7 +244,7 @@ class BootCoverManifestTest {
         assertTrue(activity.substringAfter("override fun onCreate(").substringBefore("\n    }\n").contains("waitForLauncher = BootCoverGuard.androidMode(this)"))
         assertTrue(activity.substringAfter("private fun scheduleHandOver()").substringBefore("\n    }\n").contains("if (waitForLauncher)"))
         val wait = activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n")
-        assertTrue(wait.substringAfter("CoverStep.START_HOME ->").substringBefore("CoverStep.HAND_OVER").contains("startHome()"))
+        assertTrue(wait.substringAfter("CoverStep.START_HOME ->").substringBefore("CoverStep.HAND_OVER").contains("startOwnHome("))
         assertTrue("F3C-7", wait.substringAfter("CoverStep.HAND_OVER ->").contains("coverHandOverStartsHome(readBack, failedDisables)"))
         // F3C-2: the boot Home's retry - the take-over and the start in one pass, from every call end and screen-on.
         val home = code("java/com/kidslauncher/mdm/lock/BootHome.kt")
@@ -245,45 +259,97 @@ class BootCoverManifestTest {
     }
 
     /**
-     * f3-run B2 (the system's Home chooser after two graceful boots): exactly one HOME PPA of ours may resolve once
-     * unlocked - HomeActivity's. The cover is enabled only at the shutdown (its arm) and at the locked boot's START
-     * (before the unlock, [coverAtLockedBoot]); every unlocked start of our process disables it, and the cover disables
-     * itself on every way out once unlocked. A disabled cover's PPA is inert (ComputerEngine matches a PPA only against
-     * components in the query).
+     * Design 59d step M (six-inch F1, F6) - it replaced f3-run B2's "exactly one HOME PPA of ours once unlocked": in
+     * android mode the cover stays enabled, so a boot the shutdown didn't arm still has a direct-boot-aware HOME (else,
+     * on a phone whose stock launcher isn't one, the boot never completes), and our component state never changes
+     * before the unlock (a `PACKAGE_CHANGED` then makes the policy engine drop every PPA of ours that isn't
+     * direct-boot aware). The unlocked HOME stays HomeActivity through `HomePin`: checked at the take-over (before the
+     * boot's Home start) and after every apply, the PPAs re-seated with HomeActivity's first. Own mode keeps 16b's rule:
+     * enabled only from the shutdown to the unlock.
      */
     @Test
-    fun `exactly one HOME PPA of ours resolves once unlocked (f3-run B2)`() {
+    fun `android mode keeps the cover enabled and the unlocked HOME on HomeActivity (59d step M)`() {
         val cover = code("java/com/kidslauncher/mdm/lock/BootCover.kt")
-        // Every enable of the cover: the shutdown's arm and the locked boot's start, nowhere else.
-        val enables = Regex("setEnabled\\(app, (true|armed)").findAll(cover).map { m ->
-            val before = cover.substring(0, m.range.first)
-            before.substringAfterLast("fun ").substringBefore("(")
+        fun body(name: String) = cover.substringAfter("fun $name(").substringBefore("\n    }\n")
+        // Every enable: an apply's rule, the take-over's rule, the shutdown's arm and the locked boot's start.
+        val writers = Regex("setEnabled\\(app, ").findAll(cover).map { m ->
+            cover.substring(0, m.range.first).substringAfterLast("fun ").substringBefore("(")
         }.toList()
-        assertEquals(listOf("atLockedBoot", "coverAtShutdown"), enables.sorted())
-        assertEquals(LockedBootCover.NONE, coverAtLockedBoot(true, unlocked = true, guardTripped = false, tookOver = false, callLive = false))
+        assertEquals(listOf("afterHomeResumed", "applyPolicy", "atLockedBoot", "coverAtShutdown", "takeOver", "takeOver"), writers.sorted())
+        val apply = body("applyPolicy")
+        assertTrue(apply.contains("bootCoverEnabled(CoverEvent.POLICY, wanted, tripped, androidMode = bootCoverAndroidMarker(wanted, androidGate))"))
+        assertTrue(apply.indexOf("setEnabled(app, bootCoverEnabled(CoverEvent.POLICY") in 0 until apply.indexOf("HomePin.check(app, \"policy\")"))
+        // qa-59d-m-code M-5: enabled first, then its PPA (a purge for an earlier disable can't drop the PPA just added).
+        assertTrue(apply.indexOf("setEnabled(app, ") in 0 until apply.indexOf("HomePin.locked { addCoverPin(app, dpm, admin) }"))
+        assertTrue(body("coverAtShutdown").contains("androidMode = BootCoverGuard.androidMode(app)"))
+        // The take-over in android mode: never a disable, the PPA added again, HomePin before the stamp, then return.
+        val takeOver = body("takeOver")
+        val android = takeOver.substringAfter("if (BootCoverGuard.androidMode(app)) {").substringBefore("\n                return\n")
+        assertTrue(android.contains("bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app), coverGuardTripped(BootCoverGuard.read(app)), androidMode = true)"))
+        assertTrue(android.indexOf("setEnabled(app, enabled") in 0 until android.indexOf("addCoverPin(app, dpm, admin)"))
+        assertTrue(android.indexOf("addCoverPin(app, dpm, admin)") in 0 until android.indexOf("HomePin.check(app, \"take-over\", log = true)"))
+        // M-6: Home's resume enables a cover that disabled itself, the same way, off the main thread.
+        val again = body("afterHomeResumed")
+        assertTrue(again.contains("if (!BootCoverGuard.androidMode(app) || isEnabled(app)) return"))
+        assertTrue(again.indexOf("setEnabled(app, enabled") in 0 until again.indexOf("addCoverPin(app, dpm, admin)"))
+        assertTrue(again.indexOf("addCoverPin(app, dpm, admin)") < again.indexOf("HomePin.check("))
+        assertTrue(code("java/com/kidslauncher/mdm/ui/HomeActivity.kt").substringAfter("override fun onResume()").substringBefore("\n    }\n")
+            .contains("CoroutineScope(Dispatchers.IO).launch { com.kidslauncher.mdm.lock.BootCover.afterHomeResumed(this@HomeActivity) }"))
+        assertTrue(android.indexOf("HomePin.check(") in 0 until android.indexOf("BootCoverGuard.markTakenOver(app)"))
+        assertEquals(true, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted = true, androidMode = true))
+        assertEquals(true, bootCoverEnabled(CoverEvent.POLICY, wanted = true, androidMode = true))
+        // Own mode unchanged: the take-over disables, an apply leaves it.
+        assertTrue(takeOver.substringAfter("\n                return\n").contains("bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app))"))
         assertEquals(false, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted = true))
         assertEquals(null, bootCoverEnabled(CoverEvent.POLICY, wanted = true))
-        // The cover's process: the setter is only the guard's disable.
+        assertEquals(LockedBootCover.NONE, coverAtLockedBoot(true, unlocked = true, guardTripped = false, tookOver = false, callLive = false))
+        // The cover's process: the setter is only the guard's disable; it reads the stamp as the take-over.
         val activity = code("java/com/kidslauncher/mdm/lock/BootCoverActivity.kt")
         assertFalse(activity.contains("COMPONENT_ENABLED_STATE_ENABLED"))
         val destroy = activity.substringAfter("override fun onDestroy()").substringBefore("\n    }\n")
         assertTrue(destroy.contains("if (unlocked && !isChangingConfigurations)"))
-        assertTrue(destroy.contains("BootCoverGuard.disable(this, \"destroyed, unlocked\")"))
+        assertTrue(destroy.contains("if (coverDisablesOnDestroy(waitForLauncher, unlocked) && !BootCoverGuard.isDisabled(this)) {"))
         // F3R-1: in front at the system's finish, it starts Home in a call too (no call screen was over it).
         assertTrue(destroy.contains("coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted)) {"))
+        assertTrue(destroy.contains("startOwnHome(\"on its way out\")"))
         assertFalse(destroy.contains("telecomInCall"))
+        // Its own Home starts disable it first only when the typed HOME would be itself; the hand-over always does.
+        val own = activity.substringAfter("private fun startOwnHome(").substringBefore("\n    }\n")
+        assertTrue(own.indexOf("coverHomeStartDisablesFirst(typedHomeIsHomeActivity())") in 0 until own.indexOf("BootCoverGuard.disable("))
+        assertTrue(own.indexOf("BootCoverGuard.disable(") < own.indexOf("startHome()"))
+        val typed = activity.substringAfter("private fun typedHomeIsHomeActivity()").substringBefore("\n    }\n")
+        assertTrue(typed.contains(".setPackage(packageName)"))
+        assertTrue(typed.contains("?.activityInfo?.name == HOME_ACTIVITY_CLASS"))
+        assertFalse("the cover's process never loads Home's class", activity.contains("HomeActivity::class"))
+        assertTrue(activity.substringAfter("override fun onCreate(").substringBefore("\n    }\n").contains("BootCoverGuard.takenOverThisBoot(this)"))
         // F3R-7 (M12): the system's finish while in front is marked at the pause, before anything else of it.
         val pause = activity.substringAfter("override fun onPause()").substringBefore("\n    }\n")
         assertTrue(pause.contains("\n        if (isFinishing && !ownFinish) finishedInFront = true\n"))
         // Every own finish is marked, so a system finish is told apart (N2's log line, the Home start on the way out).
         assertEquals(Regex("\\bfinish\\(\\)").findAll(activity).count(), Regex("ownFinish = true\\s+finish\\(\\)").findAll(activity).count())
-        // f3-run B5: the step reads Telecom (its hand-over waits for a call's end).
+        // f3-run B5: the step reads Telecom (its hand-over waits for a call's end), and the stamp or its own disable.
         val wait = activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n")
         assertTrue(wait.contains("val callLive = unlocked && telecomInCall()"))
-        assertTrue(wait.contains("coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted, callLive)"))
+        assertTrue(wait.contains("val takenOver = unlocked && (BootCoverGuard.takenOverThisBoot(this) || BootCoverGuard.isDisabled(this))"))
+        assertTrue(wait.contains("coverWaitStep(unlocked, takenOver, visible, unlockedFor, takenOverFor, homeStarted, callLive, lateStart)"))
         // F3R-7 (M11): Telecom's answer is the managed-call read, a call only when it says so.
         val telecom = activity.substringAfter("private fun telecomInCall(): Boolean = try {").substringBefore("} catch (e: SecurityException)")
         assertEquals("getSystemService(android.telecom.TelecomManager::class.java)?.isInManagedCall == true", telecom.trim())
+        // HomePin: unlocked only, the system's resolution, the re-seat under its lock with the cover's PPA last.
+        val pin = code("java/com/kidslauncher/mdm/lock/HomePin.kt")
+        val check = pin.substringAfter("fun check(").substringBefore("\n    }\n")
+        assertTrue(check.indexOf("if (!unlocked) return") in 0 until check.indexOf("resolvedHome(app)"))
+        assertTrue(check.contains("if (!homePinReseatDue(unlocked, isHome, reseats)) return"))
+        assertTrue(pin.substringAfter("fun resolvedHome(").substringBefore("\n    }\n").contains("Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)"))
+        assertFalse("the system's view, not our package's", pin.substringAfter("fun resolvedHome(").substringBefore("\n    }\n").contains("setPackage"))
+        // The stamp: device-protected, the boot count.
+        val guard = code("java/com/kidslauncher/mdm/lock/BootCoverGuard.kt")
+        assertTrue(guard.substringAfter("private fun takenStamp(").substringBefore("\n").contains("createDeviceProtectedStorageContext()"))
+        assertTrue(guard.substringAfter("fun takenOverThisBoot(").substringBefore("\n").contains("coverTakenOver(readTakenStamp(context), bootCount(context))"))
+        // The emulator run: AtomicFile's read deletes the other process's in-flight `.new` - never read through it.
+        assertFalse(guard.contains("readFully("))
+        assertFalse("M-2: openRead deletes the writer's .new too", guard.contains("openRead("))
+        assertFalse(guard.substringAfter("fun markTakenOver(").substringBefore("\n    }\n").contains("AtomicFile("))
     }
 
     /** f3-run B3: initRest's tail after the PIN lock's init is its own posted message (the boot pass and what the system

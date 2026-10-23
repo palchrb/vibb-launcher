@@ -39,7 +39,7 @@ import com.kidslauncher.mdm.R
  * - a crash counter in device-protected storage ([BootCoverGuard], installed by the process's
  *   `Application.onCreate`): the [COVER_MAX_CRASHES]th crash in a boot disables the component and
  *   trips the guard for good, until the server switch goes off and on (qa-16b-code #2);
- * - it is enabled only from shutdown to the next unlock ([bootCoverEnabled], main process), and
+ * - own mode: it is enabled only from shutdown to the next unlock ([bootCoverEnabled], main process), and
  *   once unlocked and shown for [COVER_MIN_SHOWN_MS] (the boot mark's 3 s, design 16e - the main
  *   process's Home finishes them when it takes over earlier) it disables itself (DONT_KILL_APP) and finishes
  *   as soon as the disable reads back - like AOSP's FallbackHome - so the system resolves HOME again
@@ -48,8 +48,10 @@ import com.kidslauncher.mdm.R
  *
  * Design 59 F3, android mode ([BootCoverGuard.androidMode]): before the PIN the BFU face over the keyguard while the
  * pad gate holds (59d step F, below), else behind it; it is what the PIN's dismissal reveals, and it waits for our main process instead of the 3 s:
- * that process disables it right before the boot's typed Home start, and the cover leaves once our Home is over it
- * (its stop) - never earlier, since below it may be the stock launcher a boot without `ACTION_SHUTDOWN` started.
+ * that process writes its take-over stamp right before the boot's typed Home start (59d step M: the component stays
+ * enabled in android mode, for the next boot the shutdown doesn't arm), and the cover leaves once our Home is over it
+ * (its stop) - never earlier, since below it may be the stock launcher a boot without `ACTION_SHUTDOWN` started. Its
+ * own Home starts disable it first only when our typed HOME would resolve to itself ([coverHomeStartDisablesFirst]).
  * Never stranded: taken over and still in front it starts our Home itself, then leaves [COVER_TAKEOVER_GRACE_MS] after
  * the take-over, and with no take-over
  * [COVER_LAUNCHER_WAIT_MS] after the unlock it hands over by itself and starts our Home ([coverWaitStep]).
@@ -72,7 +74,11 @@ class BootCoverActivity : Activity() {
     /** F3: android mode - wait for our main process ([coverWaitStep]). Read once at create. */
     private var waitForLauncher = false
     private var unlockedAtElapsed = -1L
-    private var disabledAtElapsed = -1L
+    private var takenOverAtElapsed = -1L
+
+    /** Step M: created after our main process took over in this boot (the system resolved HOME to the cover once
+     * unlocked) - it starts Home at once ([coverWaitStep]'s `lateStart`). Read once at create. */
+    private var lateStart = false
 
     /** It started our Home itself ([CoverStep.START_HOME] or its hand-over): once. */
     private var homeStarted = false
@@ -89,6 +95,13 @@ class BootCoverActivity : Activity() {
 
     /** Step F: the pad rule's state ([bootPadStep]); its count lives in [autoAsksThisProcess]. */
     private var pad = BootPad(autoAsks = autoAsksThisProcess)
+
+    /** M-4: this instance replaces one destroyed for a configuration change ([carriedPad]); its first resume is
+     * [PadEvent.RELAUNCHED]. */
+    private var relaunched = false
+
+    /** M-1: android mode with a tripped crash guard - enabled as the boot's HOME, but no face, no ask, no mark. */
+    private var inert = false
 
     /** Step F: the current ask's id - an answer of an earlier one is dropped. */
     private var askId = 0
@@ -119,19 +132,31 @@ class BootCoverActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (coverGuardTripped(BootCoverGuard.read(this))) {
+        val tripped = coverGuardTripped(BootCoverGuard.read(this))
+        // M-1: own mode's tripped cover goes away; android mode's stays the boot's HOME, inert (coverInert).
+        inert = coverInert(BootCoverGuard.androidMode(this), tripped)
+        if (tripped && !inert) {
             BootCoverGuard.disable(this, "crash guard")
             ownFinish = true
             finish()
             return
         }
+        if (inert) Log.i(LOG_TAG, "Boot cover inert: the crash guard tripped (android mode) - SystemUI's lock is the face")
+        // M-4: a relaunch for a configuration change carries the pad over (no stop, no new automatic ask).
+        carriedPad?.let {
+            pad = it
+            relaunched = true
+        }
+        carriedPad = null
         val image = ImageView(this).apply {
-            setImageResource(R.drawable.splash_vibb_breathe)
+            if (!inert) setImageResource(R.drawable.splash_vibb_breathe)
             scaleType = ImageView.ScaleType.CENTER
             importantForAccessibility = ImageView.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         waitForLauncher = BootCoverGuard.androidMode(this)
         applyLockedFace()
+        lateStart = waitForLauncher && getSystemService(UserManager::class.java)?.isUserUnlocked == true &&
+            BootCoverGuard.takenOverThisBoot(this)
         logo = image.drawable as? AnimatedVectorDrawable
         logo?.registerAnimationCallback(loop)
         val line = tapLineView()
@@ -183,14 +208,19 @@ class BootCoverActivity : Activity() {
         // Step F: the gate read again at every resume (the flag drops once unlocked), then the resume's ask, posted
         // past the resume. A retry the pause dropped is posted again.
         applyLockedFace()
-        handler.post { if (resumed) padStep(PadEvent.RESUMED) }
+        val event = if (relaunched) PadEvent.RELAUNCHED else PadEvent.RESUMED
+        relaunched = false
+        handler.post { if (resumed) padStep(event) }
         if (pad.retryDue) handler.postDelayed(padRetry, BOOT_PAD_RETRY_MS)
     }
 
     /** F3: stopped while taken over = our Home (or a call) is over the cover - leaving reveals nothing. */
     override fun onStop() {
-        if (waitForLauncher && !isFinishing) waitStep(visible = false)
-        padStep(PadEvent.STOPPED)
+        // M-4: a configuration-change relaunch is no stop - neither F3's nor the pad's (onDestroy carries the pad over).
+        if (!isChangingConfigurations) {
+            if (waitForLauncher && !isFinishing) waitStep(visible = false)
+            padStep(PadEvent.STOPPED)
+        }
         super.onStop()
     }
 
@@ -217,11 +247,13 @@ class BootCoverActivity : Activity() {
     }
 
     override fun onDestroy() {
-        // f3-run B2: on every way out, once unlocked, the cover is disabled (idempotent) - the one HOME PPA of ours
-        // that may resolve once unlocked is HomeActivity's. Not on a configuration change (it comes back).
+        // f3-run B2 as amended by step M: on every way out, once unlocked, an own-mode cover is disabled (idempotent);
+        // an android-mode one stays enabled for the next unarmed boot. Not on a configuration change (it comes back).
         val unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked == true
         if (unlocked && !isChangingConfigurations) {
-            if (!BootCoverGuard.isDisabled(this)) BootCoverGuard.disable(this, "destroyed, unlocked")
+            if (coverDisablesOnDestroy(waitForLauncher, unlocked) && !BootCoverGuard.isDisabled(this)) {
+                BootCoverGuard.disable(this, "destroyed, unlocked")
+            }
             if (waitForLauncher && !ownFinish) {
                 // N2: the system finished it - the recipe's number for that boot.
                 val unlockedFor = if (unlockedAtElapsed < 0) -1L else SystemClock.elapsedRealtime() - unlockedAtElapsed
@@ -229,9 +261,10 @@ class BootCoverActivity : Activity() {
             }
             if (coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted)) {
                 homeStarted = true
-                startHome()
+                startOwnHome("on its way out")
             }
         }
+        if (isChangingConfigurations) carriedPad = pad
         unlockReceiver?.let { runCatching { unregisterReceiver(it) } }
         logo?.unregisterAnimationCallback(loop)
         handler.removeCallbacksAndMessages(null)
@@ -258,14 +291,15 @@ class BootCoverActivity : Activity() {
         val now = SystemClock.elapsedRealtime()
         val unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked == true
         if (unlocked && unlockedAtElapsed < 0) unlockedAtElapsed = now
-        val disabled = unlocked && BootCoverGuard.isDisabled(this)
-        if (disabled && disabledAtElapsed < 0) disabledAtElapsed = now
+        // Step M: the main process's stamp for this boot, or its own disable (the 30 s hand-over).
+        val takenOver = unlocked && (BootCoverGuard.takenOverThisBoot(this) || BootCoverGuard.isDisabled(this))
+        if (takenOver && takenOverAtElapsed < 0) takenOverAtElapsed = now
         val unlockedFor = if (unlockedAtElapsed < 0) 0L else now - unlockedAtElapsed
-        val disabledFor = if (disabledAtElapsed < 0) 0L else now - disabledAtElapsed
+        val takenOverFor = if (takenOverAtElapsed < 0) 0L else now - takenOverAtElapsed
         // Step F: never showWhenLocked once unlocked - this poll (every 250 ms in front) bounds the receiver's delay.
         if (unlocked) applyLockedFace()
         val callLive = unlocked && telecomInCall()
-        when (coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted, callLive)) {
+        when (coverWaitStep(unlocked, takenOver, visible, unlockedFor, takenOverFor, homeStarted, callLive, lateStart)) {
             CoverStep.STAY -> Unit
             CoverStep.FINISH -> {
                 Log.i(LOG_TAG, "Boot cover leaves (${if (visible) "taken over, grace over after its Home start" else "taken over, Home over it"}): $unlockedFor ms after the unlock")
@@ -277,9 +311,9 @@ class BootCoverActivity : Activity() {
             CoverStep.START_HOME -> {
                 // F3C-2: taken over, but no Home came over us (our process died between the take-over and its start,
                 // or BootHome waits for a call's end - F3R-1: in front, no call screen is over the cover).
-                Log.i(LOG_TAG, "Boot cover starts Home: taken over $disabledFor ms ago, still in front (call $callLive)")
+                Log.i(LOG_TAG, "Boot cover starts Home: taken over $takenOverFor ms ago, still in front (call $callLive, late start $lateStart)")
                 homeStarted = true
-                startHome()
+                startOwnHome("taken over, still in front")
             }
             CoverStep.HAND_OVER -> if (!homeStarted) {
                 BootCoverGuard.disable(this, "no take-over $unlockedFor ms after the unlock")
@@ -307,6 +341,7 @@ class BootCoverActivity : Activity() {
         bootPadGate(
             androidMarker = waitForLauncher && BootCoverGuard.androidMode(this),
             unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked != false,
+            inert = inert,
         )
     } catch (e: Exception) {
         false
@@ -434,8 +469,29 @@ class BootCoverActivity : Activity() {
         false
     }
 
-    /** F3's fallback: the typed HOME start (unlocked, the cover disabled: HomeActivity, which starts our main
-     * process). Marked as ours ([HomeFront.EXTRA_BROUGHT]: not the kid's Home press). Never throws. */
+    /** Step M: one of its own Home starts that isn't its hand-over (which disables it first anyway): our typed HOME
+     * resolves to the first PPA of ours in this boot's order, so it disables itself first unless that is HomeActivity
+     * ([coverHomeStartDisablesFirst]); the main process's next apply or take-over enables it again. */
+    private fun startOwnHome(why: String) {
+        if (waitForLauncher && coverHomeStartDisablesFirst(typedHomeIsHomeActivity())) {
+            BootCoverGuard.disable(this, "its own Home start ($why): HOME would resolve to the cover")
+        }
+        startHome()
+    }
+
+    /** Our package's typed HOME resolves to HomeActivity now (`null` = unreadable). The class by name: this process
+     * never loads HomeActivity. */
+    private fun typedHomeIsHomeActivity(): Boolean? = try {
+        packageManager.resolveActivity(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).setPackage(packageName),
+            android.content.pm.PackageManager.MATCH_DEFAULT_ONLY,
+        )?.activityInfo?.name == HOME_ACTIVITY_CLASS
+    } catch (e: Exception) {
+        null
+    }
+
+    /** F3's fallback: the typed HOME start (unlocked, our PPA order fixed or the cover disabled: HomeActivity, which
+     * starts our main process). Marked as ours ([HomeFront.EXTRA_BROUGHT]: not the kid's Home press). Never throws. */
     private fun startHome() {
         try {
             startActivity(
@@ -468,6 +524,9 @@ class BootCoverActivity : Activity() {
         /** Step F: automatic asks in this `:bootcover` process (§8.3: per process, in memory) - a new cover instance
          * in the same process carries the count on. Main thread only. */
         private var autoAsksThisProcess = 0
+
+        /** M-4: the pad of an instance destroyed for a configuration change, for its replacement. Main thread only. */
+        private var carriedPad: BootPad? = null
 
         fun component(context: Context) = ComponentName(context, BootCoverActivity::class.java)
     }

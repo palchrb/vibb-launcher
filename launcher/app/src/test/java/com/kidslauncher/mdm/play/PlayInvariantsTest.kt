@@ -1,28 +1,65 @@
 package com.kidslauncher.mdm.play
 
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
 /**
- * QA #2 (handy step 7): nothing may ever clear our persistent preferred activities - that would
+ * QA #2 (handy step 7): nothing may clear our persistent preferred activities and leave them cleared - that would
  * drop the HOME pin together with the Play link blocker, and install mode, its end or a crash in
- * between must leave both in place. Both are set on every apply() and never removed.
+ * between must leave both in place. Both are set on every apply(). The one clear is design 59d step M's re-seat
+ * (`AppEnforcer.reseatPreferredActivities`, from `lock/HomePin` only), which adds every PPA of ours back in the same
+ * call, HomeActivity's HOME first and the boot cover's last.
  */
 class PlayInvariantsTest {
     private val sources = listOf("src/main/java", "app/src/main/java").map(::File).first { it.isDirectory }
 
     @Test
-    fun `persistent preferred activities are never cleared`() {
+    fun `persistent preferred activities are cleared only by the re-seat, which adds them all back`() {
         val offenders = sources.walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .filter { file ->
-                val text = file.readText()
+                val text = code(file)
                 "clearPackagePersistentPreferredActivities" in text || "clearPersistentPreferredActivity" in text
             }
             .map { it.name }
             .toList()
-        assertTrue("Found in $offenders", offenders.isEmpty())
+        assertEquals(listOf("AppEnforcer.kt"), offenders)
+        val enforcer = code("AppEnforcer.kt")
+        assertEquals(1, Regex("clearPackagePersistentPreferredActivities\\(").findAll(enforcer).count())
+        assertFalse("clearPersistentPreferredActivity(" in enforcer)
+        val reseat = enforcer.substringAfter("internal fun reseatPreferredActivities(").substringBefore("\n    }\n")
+        // qa-59d-m-code M-2: the body exactly - the clear in its own try, then the three adds, nothing between or after
+        // (no condition, no return): the clear never stands without the adds.
+        val body = reseat.substringAfter("{\n").lines().map { it.trim() }.filter { it.isNotEmpty() }
+        assertEquals(
+            listOf(
+                "try {",
+                "dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)",
+                "} catch (e: Exception) {",
+                "Log.w(LOG_TAG, \"Failed to clear our persistent preferred activities\", e)",
+                "}",
+                "enforceDefaultHome(dpm, admin, context)",
+                "enforcePlayLinkBlocker(dpm, admin, context)",
+                "enforceCallLogPin(dpm, admin, context)",
+            ),
+            body,
+        )
+        assertTrue(reseat.startsWith("context: Context, dpm: DevicePolicyManager, admin: ComponentName) {"))
+        // Only HomePin calls it, and adds the cover's PPA after it, all under its lock.
+        val callers = sources.walkTopDown().filter { it.isFile && it.extension == "kt" && "reseatPreferredActivities(" in code(it) }
+            .map { it.name }.toSet()
+        assertEquals(setOf("AppEnforcer.kt", "HomePin.kt"), callers)
+        val pin = code("HomePin.kt")
+        val check = pin.substringAfter("fun check(").substringBefore("\n    }\n")
+        assertTrue(check.contains("synchronized(lock) {"))
+        assertTrue(check.indexOf("AppEnforcer.reseatPreferredActivities(app, dpm, admin)") in 0 until check.indexOf("BootCover.addCoverPin(app, dpm, admin)"))
+        // M-2: the lock the cover's adds take is a real one.
+        assertTrue(pin.contains("fun <T> locked(block: () -> T): T = synchronized(lock) { block() }"))
+        // M-7: only a re-seat that ran is counted.
+        assertTrue(check.indexOf("if (!ran) {") in 0 until check.indexOf("reseats++"))
     }
 
     @Test
@@ -44,9 +81,11 @@ class PlayInvariantsTest {
         assertTrue("BootCover.applyPolicy(" in enforcer)
         val cover = sources.walkTopDown().first { it.name == "BootCover.kt" }.readText()
         val apply = cover.substringAfter("fun applyPolicy(").substringBefore("\n    }\n")
-        for (needed in listOf("addCategory(BOOT_COVER_CATEGORY)", "Intent.CATEGORY_HOME", "addPersistentPreferredActivity(admin, filter, component(app))")) {
-            assertTrue(needed, needed in apply)
-        }
+        assertTrue("if (wanted) HomePin.locked { addCoverPin(app, dpm, admin) }" in apply)
+        val filter = cover.substringAfter("private fun coverFilter()").substringBefore("\n    }\n")
+        for (needed in listOf("addCategory(BOOT_COVER_CATEGORY)", "Intent.CATEGORY_HOME")) assertTrue(needed, needed in filter)
+        val add = cover.substringAfter("internal fun addCoverPin(").substringBefore("\n    }\n")
+        assertTrue("addPersistentPreferredActivity(admin, coverFilter(), component(app))" in add)
     }
 
     /** Design 12 (QA #6): the call log goes to the phone book, set next to the Play link blocker on
@@ -65,7 +104,10 @@ class PlayInvariantsTest {
 
     /** A source file's code without its comment lines, so a commented-out call doesn't pass a scan
      * (qa-28-s1-code L2). */
-    private fun code(name: String): String = sources.walkTopDown().first { it.name == name }.readText()
+    private fun code(name: String): String = code(sources.walkTopDown().first { it.name == name })
+
+    /** M-8: the file walked itself, not the first of its name. */
+    private fun code(file: File): String = file.readText()
         .lines()
         .filterNot { line -> line.trimStart().let { it.startsWith("//") || it.startsWith("*") || it.startsWith("/*") } }
         .joinToString("\n")
