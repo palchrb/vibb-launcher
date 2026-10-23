@@ -761,7 +761,8 @@ object PinLockRuntime {
         // S3-3: Android read locked since this screen-off - an open read at the next resume is then an unlock, so
         // the wait for USER_PRESENT is the longer one (a fingerprint from dark).
         if (kg && AndroidLock.faceOn) AndroidLock.sawLocked(screenOffs)
-        val start = LockUpDebug.adjust(lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg), result.showLock)
+        // Design 59d step C: as the face the lock alone whatever kg read (kg still feeds sawLocked above).
+        val start = LockUpDebug.adjust(lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn), result.showLock)
         lockUp(context, start, lockAsk(event))
         AndroidLock.note(context, "screen-off, lock-up $start")
         if (result.mode == LockMode.LOCKED) Log.i(LOG_TAG, "Lock-up at screen-off: $start (call=$callLive, interactive=$interactive, cover=$cover, kg=$kg)")
@@ -915,7 +916,8 @@ object PinLockRuntime {
                 // May start the time-rule screen - the PIN lock then goes above it. A parent-PIN
                 // window that ended in the phone's sleep locks again now (design 24b).
                 TimeRulesRuntime.recheck(app, com.kidslauncher.mdm.server.RelockTrigger.SCREEN_ON)
-                dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app), VoipCalls.phase))
+                // Design 59d step C (§8.5): face and lockOnTop read here, not stored - a new process has lockOnTop false.
+                dispatch(app, LockEvent.ScreenOn(lockResumed, ourCall(), systemCall(app), VoipCalls.phase, face = AndroidLock.faceOn, lockOnTop = lockOnTop))
                 // Design 16d decision 1: the boot's first screen-on heals the status bar once more.
                 if (intent.action == Intent.ACTION_SCREEN_ON && !screenOnHealed) {
                     screenOnHealed = true
