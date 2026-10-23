@@ -446,6 +446,15 @@ The Jelly Star's own (AOSP-based) bouncer may lay out differently - so the rc.3 
 there, next to the Pixel image's; step L's Jelly Star profile takes its numbers from that frame (replacing the TODO),
 marked "AOSP emulator, confirm on the phone". No Play on that image: the lock, pad and clock only.
 
+**Fingerprint (the user, 2026-10-23)**: in android mode the fingerprint is Android's own. AOSP's
+`KeyguardUpdateMonitor.shouldListenForFingerprint` listens while the device isn't interactive (a finger on the power
+key from screen-off = wake-and-unlock straight through: the keyguard goes, our glance gets USER_PRESENT, LEAVE, Home),
+and while the bouncer shows; but NOT while the keyguard is occluded by an app with a non-under-display sensor (the
+Jelly Star's is in the power key) - so a finger on the glance does nothing until a swipe up brings the pad. In the
+rc.3 run: enrol a fingerprint on the emulator (Settings, the Child PIN, `adb emu finger touch 1`), then (a) screen
+off + `finger touch 1` -> Home with no pad; (b) glance up + `finger touch 1` -> nothing; swipe up + `finger touch 1`
+-> unlocked; (c) after a reboot the finger is refused until the PIN. Confirm on the Jelly Star.
+
 ### 8.5 Answers to the revision check's guess list (`qa-59d-revision-check.md`)
 
 - **G**: `ANDROID_ASK_OPEN_MS` = 2 min because a kid's slowest PIN entry plus Android's first lockout step (30 s after
