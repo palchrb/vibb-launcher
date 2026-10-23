@@ -176,7 +176,12 @@ jobs:
       # standalone repo's vX.Y.Z tags, so codes keep rising across the move.
       # launcher-vMAJOR.MINOR.PATCH-rc.N -> the same code minus 1 and a prerelease: an RC installs over the
       # previous release (equal or higher code) and the final release installs over the RC. All
-      # RCs of one version share a code, which Android allows (same code is not a downgrade).
+      # RCs of one version share a code (and an RC of X.Y.Z+1 has X.Y.Z's), which Android allows
+      # (same code is not a downgrade). So the self-update, its pending-APK check and Install Now
+      # (launcher SelfUpdatePlan.kt launcherBuildAhead, server install_now::build_ahead) take a
+      # release as ahead of the running build when its code is higher, or the code is equal and
+      # its versionName (the tag minus launcher-v) is another, newer one: rc.2 over rc.1 and
+      # 0.36.1-rc.1 over 0.36.0, never rc.1 over rc.2; same code and same name is already running.
       run: |
         tag="$GITHUB_REF_NAME"
         if [[ "$tag" =~ ^launcher-v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then

@@ -43,6 +43,22 @@ class InstallNowPlanTest {
     }
 
     @Test
+    fun `an rc over an rc of the same version is installed, the same name is already running`() {
+        val rc1 = InstallNowRecord(9, "t9", "launcher-v0.36.0-rc.2@5", fromVersionCode = 35_999, fromVersionName = "0.36.0-rc.1")
+        assertEquals(InstallNowOutcome.Installed, installNowOutcome(rc1, 35_999, LauncherRow.RUNNING, "0.36.0-rc.2"))
+        assertEquals(InstallNowOutcome.Installed, installNowOutcome(rc1.copy(failure = "install failed: 1"), 35_999, LauncherRow.NO_LIST, "0.36.0-rc.2"))
+        assertEquals(InstallNowOutcome.AlreadyRunning, installNowOutcome(rc1, 35_999, LauncherRow.RUNNING, "0.36.0-rc.1"))
+        assertEquals(InstallNowOutcome.Keep, installNowOutcome(rc1, 35_999, LauncherRow.ON_ITS_WAY, "0.36.0-rc.1"))
+        // A record from before the name was kept counts by the code alone.
+        assertEquals(InstallNowOutcome.AlreadyRunning, installNowOutcome(rc1.copy(fromVersionName = null), 35_999, LauncherRow.RUNNING, "0.36.0-rc.2"))
+        assertEquals(rc1.copy(commandId = 10, requestedAt = "t10"), installNowOnReceipt(null, 10, "t10", rc1.tag, 35_999, "0.36.0-rc.1").store)
+        val worker = source("MdmSyncWorker.kt")
+        assertTrue("BuildConfig.VERSION_CODE.toLong(),\n        BuildConfig.VERSION_NAME,\n    )" in worker.substringAfter("private suspend fun startInstallNow("))
+        assertTrue("installNowOutcome(record, BuildConfig.VERSION_CODE.toLong(), row, BuildConfig.VERSION_NAME)" in worker)
+        assertTrue("runningVersionName = BuildConfig.VERSION_NAME," in worker.substringAfter("private fun handleLauncherUpdate("))
+    }
+
+    @Test
     fun `the answers are the words the server rewords`() {
         assertEquals(true to "installed: 1.4.0", InstallNowOutcome.Installed.answer("1.4.0"))
         assertEquals(true to "already running: 1.4.0", InstallNowOutcome.AlreadyRunning.answer("1.4.0"))
@@ -173,7 +189,7 @@ class InstallNowPlanTest {
 
     @Test
     fun `the record keeps its fields and reads an older shape`() {
-        val full = record.copy(failure = "no space", callWaitSinceElapsed = 42)
+        val full = record.copy(failure = "no space", callWaitSinceElapsed = 42, fromVersionName = "1.3.2")
         assertEquals(full, ServerJson.decodeFromString(InstallNowRecord.serializer(), ServerJson.encodeToString(InstallNowRecord.serializer(), full)))
         assertEquals(
             InstallNowRecord(3, null, null, 7),
@@ -239,7 +255,7 @@ class InstallNowPlanTest {
     fun `the forced path still runs every APK check`() {
         val commit = source("MdmSyncWorker.kt").substringAfter("private suspend fun commitPendingSelfUpdateIfDue(").substringBefore("\n}\n")
         val call = commit.substringAfter("    val check = pendingApkCheck(\n").substringBefore("\n    )\n")
-        for (arg in listOf("pending = pending,", "fileSize =", "fileSha256 =", "archivePackage = archive?.packageName", "archiveVersionCode = archive?.longVersionCode", "ownPackage = context.packageName", "ownVersionCode = BuildConfig.VERSION_CODE.toLong()", "ourSigners = SelfUpdate.ourSigners(context)", "archiveSigners = SelfUpdate.signers(archive?.signingInfo)")) {
+        for (arg in listOf("pending = pending,", "fileSize =", "fileSha256 =", "archivePackage = archive?.packageName", "archiveVersionCode = archive?.longVersionCode", "ownPackage = context.packageName", "ownVersionCode = BuildConfig.VERSION_CODE.toLong()", "ourSigners = SelfUpdate.ourSigners(context)", "archiveSigners = SelfUpdate.signers(archive?.signingInfo)", "archiveVersionName = archive?.versionName", "ownVersionName = BuildConfig.VERSION_NAME")) {
             assertTrue(arg, arg in call)
         }
         assertFalse("installNow" in call)

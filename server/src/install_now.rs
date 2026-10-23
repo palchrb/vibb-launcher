@@ -55,6 +55,57 @@ pub fn launcher_tag_version_code(tag: &str) -> Option<i64> {
     (code >= 1).then_some(code)
 }
 
+/// A release name's order ("0.36.0-rc.2" < "0.36.0-rc.10" < "0.36.0" < "0.36.1-rc.1"): X, Y, Z,
+/// then an RC before its release; `None` for another shape (a local build's name). The launcher's
+/// `launcherVersionOrder`.
+fn version_order(name: &str) -> Option<[i64; 4]> {
+    let (version, rc) = match name.split_once("-rc.") {
+        Some((version, n)) => (version, Some(n)),
+        None => (name, None),
+    };
+    let number = |s: &str, max: usize| -> Option<i64> {
+        (!s.is_empty() && s.len() <= max && s.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| s.parse().ok())
+            .flatten()
+    };
+    let parts: Vec<&str> = version.split('.').collect();
+    let [x, y, z] = parts.as_slice() else {
+        return None;
+    };
+    let rc = match rc {
+        Some(n) => number(n, 9)?,
+        None => i64::MAX,
+    };
+    Some([number(x, 4)?, number(y, 3)?, number(z, 3)?, rc])
+}
+
+/// Whether a build of `code`/`name` is ahead of the running one: a higher versionCode, or the same
+/// code under another versionName that isn't older. Every RC of one version shares a code, and an
+/// RC of X.Y.Z+1 has X.Y.Z's (`launcher.yml`); Android installs a same-code APK (no downgrade), so
+/// 0.36.0-rc.2 is ahead of 0.36.0-rc.1 and 0.36.1-rc.1 of 0.36.0 - never 0.36.0-rc.1 of -rc.2, or
+/// 0.36.0 of 0.36.1-rc.1. Two names that differ but can't be ordered count as ahead; an unknown
+/// name never does (the same code is then the running build). The launcher's `launcherBuildAhead`.
+pub fn build_ahead(
+    code: i64,
+    name: Option<&str>,
+    running_code: i64,
+    running_name: Option<&str>,
+) -> bool {
+    if code != running_code {
+        return code > running_code;
+    }
+    let (Some(name), Some(running_name)) = (name, running_name) else {
+        return false;
+    };
+    if name == running_name {
+        return false;
+    }
+    match (version_order(name), version_order(running_name)) {
+        (Some(ours), Some(running)) => ours > running,
+        _ => true,
+    }
+}
+
 /// What the phone's latest report says, as far as Install Now cares.
 #[derive(Clone, Debug, Default)]
 pub struct Report<'a> {
@@ -174,8 +225,10 @@ fn release_name(tag: &str) -> String {
 }
 
 /// What a tap would do now ([Standing]): `tag` is the launcher row's release, `None` when it has
-/// none or is off. A tag that doesn't parse (a manual upload) is behind unless the phone runs a
-/// build of that name - the phone may then answer "Already on X" (design 37 §2.2, accepted).
+/// none or is off. A parseable tag is behind when it is [build_ahead] of the reported build - a
+/// higher code, or the same code under a newer name (an RC over an RC of one version, which share
+/// a code). A tag that doesn't parse (a manual upload) is behind unless the phone runs a build of
+/// that name - the phone may then answer "Already on X" (design 37 §2.2, accepted).
 pub fn release(tag: Option<&str>, report: Option<&Report>) -> Standing {
     let Some(report) = report else {
         return Standing::NotReported;
@@ -187,7 +240,9 @@ pub fn release(tag: Option<&str>, report: Option<&Report>) -> Standing {
     let running = report.app_version.unwrap_or("Unknown version").to_string();
     let behind = report.pending_tag.is_some()
         || match launcher_tag_version_code(tag) {
-            Some(code) => report.app_version_code.is_none_or(|running| code > running),
+            Some(code) => report.app_version_code.is_none_or(|running| {
+                build_ahead(code, Some(waiting.as_str()), running, report.app_version)
+            }),
             None => report.app_version != Some(waiting.as_str()),
         };
     if !behind {
@@ -564,6 +619,125 @@ mod tests {
     }
 
     #[test]
+    fn a_build_is_ahead_by_a_higher_code_or_the_same_code_under_a_newer_name() {
+        // The launcher's SelfUpdatePlanTest cases.
+        assert!(build_ahead(
+            36_000,
+            Some("0.36.0"),
+            35_999,
+            Some("0.36.0-rc.2")
+        ));
+        assert!(!build_ahead(
+            35_999,
+            Some("0.36.0-rc.2"),
+            36_000,
+            Some("0.36.0")
+        ));
+        assert!(build_ahead(
+            35_999,
+            Some("0.36.0-rc.2"),
+            35_999,
+            Some("0.36.0-rc.1")
+        ));
+        assert!(build_ahead(
+            35_999,
+            Some("0.36.0-rc.10"),
+            35_999,
+            Some("0.36.0-rc.9")
+        ));
+        assert!(build_ahead(
+            36_000,
+            Some("0.36.1-rc.1"),
+            36_000,
+            Some("0.36.0")
+        ));
+        assert!(!build_ahead(
+            35_999,
+            Some("0.36.0-rc.1"),
+            35_999,
+            Some("0.36.0-rc.1")
+        ));
+        assert!(!build_ahead(
+            35_999,
+            Some("0.36.0-rc.1"),
+            35_999,
+            Some("0.36.0-rc.2")
+        ));
+        assert!(!build_ahead(
+            36_000,
+            Some("0.36.0"),
+            36_000,
+            Some("0.36.1-rc.1")
+        ));
+        assert!(build_ahead(5, Some("0.36.0-rc.2"), 5, Some("local")));
+        assert!(!build_ahead(35_999, None, 35_999, Some("0.36.0-rc.1")));
+        assert!(!build_ahead(35_999, Some("0.36.0-rc.2"), 35_999, None));
+    }
+
+    #[test]
+    fn an_rc_over_an_rc_of_the_same_version_is_behind() {
+        fn on(name: &str) -> Report<'_> {
+            Report {
+                app_version: Some(name),
+                app_version_code: Some(35_999),
+                ..report()
+            }
+        }
+        let rc2 = "launcher-v0.36.0-rc.2@5";
+        assert_eq!(
+            release(Some(rc2), Some(&on("0.36.0-rc.1"))),
+            Standing::Behind {
+                running: "0.36.0-rc.1".into(),
+                waiting: "0.36.0-rc.2".into(),
+                downloaded: false
+            }
+        );
+        assert_eq!(
+            refusal(
+                Some(rc2),
+                Some(&on("0.36.0-rc.1")),
+                None,
+                utc("2026-10-19 12:10:00").naive_utc()
+            ),
+            None
+        );
+        // The same build, or an older RC, is up to date.
+        for running in ["0.36.0-rc.2", "0.36.0-rc.3"] {
+            assert_eq!(
+                release(Some(rc2), Some(&on(running))),
+                Standing::UpToDate {
+                    running: running.into()
+                },
+                "{running}"
+            );
+        }
+        // The release over its RC (a higher code) is unchanged; a release under the next
+        // version's RC (the same code) isn't offered.
+        assert!(matches!(
+            release(Some("launcher-v0.36.0@6"), Some(&on("0.36.0-rc.2"))),
+            Standing::Behind { .. }
+        ));
+        let next_rc = Report {
+            app_version: Some("0.36.1-rc.1"),
+            app_version_code: Some(36_000),
+            ..report()
+        };
+        assert!(matches!(
+            release(Some("launcher-v0.36.0@6"), Some(&next_rc)),
+            Standing::UpToDate { .. }
+        ));
+        // A report without a name compares the codes alone.
+        let nameless = Report {
+            app_version: None,
+            ..on("x")
+        };
+        assert!(matches!(
+            release(Some(rc2), Some(&nameless)),
+            Standing::UpToDate { .. }
+        ));
+    }
+
+    #[test]
     fn the_offer_follows_the_newest_install_now() {
         let r = report();
         let zone = oslo();
@@ -636,7 +810,10 @@ mod tests {
             ..report()
         };
         assert_eq!(refusal(Some(TAG), Some(&old), None, now), Some("too_old"));
+        // The release's code and name (a report of its code under an older name would be behind:
+        // the same code under a newer name is an RC over an RC).
         let running = Report {
+            app_version: Some("1.4.0"),
             app_version_code: Some(1_004_000),
             ..report()
         };
