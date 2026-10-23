@@ -318,14 +318,38 @@ val EMULATOR_PIXEL_CLOCK = ClockGeometry(
 )
 
 /**
- * The Jelly Star (Unihertz, AOSP SystemUI). TODO(59d §8.8): measure a frame of its small clock (its own font and
- * placement) and put its numbers here - until then the emulator's, which are at least the right kind of place.
+ * AOSP emulator, confirm on the phone (`docs/testing/2026-10-23-aosp-lock-look.md`): pure AOSP SystemUI (Android 16,
+ * the `default` x86_64 image, AVD `aosp36` at 480x854 and 240 dpi), measured from its face over our ground with the
+ * single-line clock (`lockscreen_use_double_line_clock 0`; AOSP's default is the double-line clock, which this model
+ * can't express - see the doc): the digits' ink from y 104 to the last row 196 (93 rows, as Pixel's 180-272: 86 dp
+ * in Nunito), a baseline at 197 px, the first digit's ink at x 56 for a "1" (37.3 dp) - the box starts at 42 px (28
+ * dp), left-aligned, so the ink follows the digit's bearing as the Pixel's does. AOSP's face has no date line here;
+ * ours keeps the Pixel profile's 56 px from the clock's baseline to the date's (253 px) and its box 2 dp left of the
+ * clock's ink. The handle is SystemUI's, pixel for pixel the Pixel image's: 162 x 6 px, rows 833-838, x 159-320,
+ * luma 236. Not matched: AOSP's digits are wider and widely tracked ("12:17" 362 px against Nunito Light's ~280) and
+ * its stems 11 px (Nunito Light's 8).
  */
-val JELLY_STAR_CLOCK = EMULATOR_PIXEL_CLOCK.copy(name = "Jelly Star")
+val AOSP_EMULATOR_CLOCK = ClockGeometry(
+    name = "AOSP emulator",
+    clockInkStartDp = 37.3f,
+    clockBaselineDp = 131.3f,
+    clockDp = 86f,
+    dateStartDp = 35.3f,
+    dateBaselineDp = 168.7f,
+    dateSp = 16f,
+    handle = GlanceHandle(widthDp = 108f, heightDp = 4f, bottomDp = 10f, alpha = 0.92f),
+)
+
+/**
+ * The Jelly Star (Unihertz, AOSP SystemUI on Android 16): the AOSP emulator's numbers - AOSP emulator, confirm on the
+ * phone (a frame of its face with the single-line clock; Unihertz's build may move or restyle it).
+ */
+val JELLY_STAR_CLOCK = AOSP_EMULATOR_CLOCK.copy(name = "Jelly Star")
 
 /**
  * The clock profile for this phone ([model] and [manufacturer] as `Build` reports them, [density] the display's,
- * [widthDp] the screen's width in dp): the emulator's Pixel image (`sdk_gphone*` by Google) or the Jelly Star, only at
+ * [widthDp] the screen's width in dp): the emulator's Pixel image (`sdk_gphone*` by Google), the pure AOSP emulator
+ * image ("Android SDK built for ..." by "unknown") or the Jelly Star, only at
  * 240 dpi **and** 320 dp wide; anything else is `null`, and the glance keeps its own centred clock (56/40 sp, the long
  * date). No PWA switch.
  *
@@ -344,6 +368,8 @@ fun glanceClockProfile(model: String?, manufacturer: String?, density: Float, wi
     return when {
         maker.equals("Google", ignoreCase = true) && name.startsWith("sdk_gphone", ignoreCase = true) -> EMULATOR_PIXEL_CLOCK
         maker.equals("Unihertz", ignoreCase = true) && "jellystar" in bare -> JELLY_STAR_CLOCK
+        // The pure AOSP emulator image (`default`): "Android SDK built for x86_64" by "unknown".
+        maker.equals("unknown", ignoreCase = true) && name.startsWith("Android SDK built for", ignoreCase = true) -> AOSP_EMULATOR_CLOCK
         else -> null
     }
 }

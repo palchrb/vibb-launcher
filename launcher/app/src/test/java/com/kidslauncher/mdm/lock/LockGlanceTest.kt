@@ -129,7 +129,9 @@ class LockGlanceTest {
         assertEquals(GlanceHandle(108f, 4f, 8f, 0.8f), glanceHandle(null))
         assertEquals(DEFAULT_GLANCE_HANDLE, glanceHandle(null))
         assertEquals(GlanceHandle(108f, 4f, 10f, 0.92f), glanceHandle(EMULATOR_PIXEL_CLOCK))
-        assertEquals("the Jelly Star's TODO carries the emulator's", glanceHandle(EMULATOR_PIXEL_CLOCK), glanceHandle(JELLY_STAR_CLOCK))
+        // AOSP SystemUI's handle measured pixel for pixel the Pixel image's (the AOSP emulator, aosp-lock-look).
+        assertEquals(GlanceHandle(108f, 4f, 10f, 0.92f), glanceHandle(AOSP_EMULATOR_CLOCK))
+        assertEquals(glanceHandle(AOSP_EMULATOR_CLOCK), glanceHandle(JELLY_STAR_CLOCK))
         // The view: the pill centred in the bottom inset - 24 dp on the emulator (its gesture inset), 20 dp by default.
         assertEquals(24f, glanceHandleViewHeightDp(glanceHandle(EMULATOR_PIXEL_CLOCK)), 0.01f)
         assertEquals(20f, glanceHandleViewHeightDp(DEFAULT_GLANCE_HANDLE), 0.01f)
@@ -143,8 +145,20 @@ class LockGlanceTest {
         for (model in listOf("Jelly Star", "JellyStar", "Jelly_Star", "jelly star", "JELLY-STAR")) {
             assertEquals(model, "Jelly Star", glanceClockProfile(model, "Unihertz", 1.5f, 320)?.name)
         }
-        // The Jelly Star is a placeholder: the emulator's numbers until its frame is measured (TODO in LockGlance.kt).
-        assertEquals(EMULATOR_PIXEL_CLOCK.copy(name = "Jelly Star"), JELLY_STAR_CLOCK)
+        // The Jelly Star carries the AOSP emulator's numbers (AOSP SystemUI; confirm on the phone).
+        assertEquals(AOSP_EMULATOR_CLOCK.copy(name = "Jelly Star"), JELLY_STAR_CLOCK)
+        // The pure AOSP image (`default`, AVD aosp36): "Android SDK built for x86_64" by "unknown".
+        assertEquals(AOSP_EMULATOR_CLOCK, glanceClockProfile("Android SDK built for x86_64", "unknown", 1.5f, 320))
+        assertEquals(AOSP_EMULATOR_CLOCK, glanceClockProfile("Android SDK built for arm64", "unknown", 1.5f, 320))
+        assertNull("AOSP's model by another maker", glanceClockProfile("Android SDK built for x86_64", "Google", 1.5f, 320))
+        assertNull("the AOSP image at its own 160 dpi", glanceClockProfile("Android SDK built for x86_64", "unknown", 1f, 480))
+        // The AOSP emulator's numbers: the digits' ink rows 104-196 (93, as Pixel's 180-272) on a baseline at 197 px,
+        // the "1"'s ink at x 56; the date 56 px under the clock's baseline (AOSP's face shows none).
+        val a = AOSP_EMULATOR_CLOCK
+        assertEquals(listOf(37.3f, 131.3f, 86f, 35.3f, 168.7f, 16f), listOf(a.clockInkStartDp, a.clockBaselineDp, a.clockDp, a.dateStartDp, a.dateBaselineDp, a.dateSp))
+        assertEquals("the ink at x 56", 56f, a.clockInkStartDp * 1.5f, 0.1f)
+        assertEquals("the baseline at 197 px", 197f, a.clockBaselineDp * 1.5f, 0.1f)
+        assertEquals("the date's baseline 56 px under the clock's", 56f, (a.dateBaselineDp - a.clockBaselineDp) * 1.5f, 0.1f)
         assertNull("the AVD's own 320 dpi: not measured", glanceClockProfile("sdk_gphone64_x86_64", "Google", 2f, 240))
         // JL-6: keyed on the width in dp too - the six-inch AVD at 240 dpi (411 dp) or a "Display size" change.
         assertNull("411 dp at 240 dpi", glanceClockProfile("sdk_gphone64_x86_64", "Google", 1.5f, 411))
