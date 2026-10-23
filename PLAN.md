@@ -809,6 +809,14 @@ findings, merge to `main`, full suite once.
   lock wallpaper as the face = the glance's ground with its scrim). **G not built**: the mid-round capture
   (`docs/testing/2026-10-23-d59d-g-capture.md`) found no chrome-pass write cancelling the pad - RC F2 was most likely
   the relock's Home start, which step A queues now. Code QA (`qa-59d-round1-code.md`): merge after fixes; the fix round (R1-1..11) is on the branch - R1-1 decided by the user (the photo on Android's face as the glance's ground), R1-8 not built.
+- **Design 59d step M (2026-10-23, six-inch run F1/F6): an unarmed boot must never hang.** Built on `d59d-step-m`
+  (59d §8.12): in android mode the boot cover stays enabled (a direct-boot-aware HOME at every boot, also after a crash
+  or `adb reboot`), the take-over is a device-protected stamp, and `lock/HomePin` keeps HomeActivity the unlocked HOME
+  (re-seats our PPAs when the per-boot order puts the cover first). Emulator run on Android 15
+  (`docs/testing/2026-10-23-step-m-run.md`): F1 reproduced on `main`, gone with step M; no F6 removals, no chooser.
+  Waiting for code QA; owed: 59d §8.4 item 7 on Android 16 and the Jelly Star (is its stock launcher direct-boot
+  aware?). Side findings for later: the cover's automatic pad asks are used up by boot-time relaunches (step F), and
+  Android 15's policy engine appends duplicate PPAs at every boot (cleared by any re-seat).
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a

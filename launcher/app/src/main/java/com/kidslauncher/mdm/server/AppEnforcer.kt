@@ -1302,6 +1302,22 @@ object AppEnforcer {
         }
     }
 
+    /**
+     * Design 59d step M, for `lock/HomePin` only (it holds its own lock and adds the boot cover's PPA last): our
+     * package's PPAs cleared and added back in order - HomeActivity's HOME first, then the Play link blocker and the
+     * call-log pin. Not `@Synchronized` (the take-over calls it on the main thread while an apply may run). Never throws.
+     */
+    internal fun reseatPreferredActivities(context: Context, dpm: DevicePolicyManager, admin: ComponentName) {
+        try {
+            dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to clear our persistent preferred activities", e)
+        }
+        enforceDefaultHome(dpm, admin, context)
+        enforcePlayLinkBlocker(dpm, admin, context)
+        enforceCallLogPin(dpm, admin, context)
+    }
+
     private fun enforceDefaultHome(dpm: DevicePolicyManager, admin: ComponentName, context: Context) {
         val filter = IntentFilter(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)

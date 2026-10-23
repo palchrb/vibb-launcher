@@ -869,7 +869,8 @@ The RC run (`docs/testing/2026-10-22-d59-rc-run.md` §9, F3): after the PIN on S
     would resume it. A stop while still enabled (the keyguard back, a call over it) never ends it.
   - **The take-over happens at every CE start, in every mode, call or not** (f3-run B2; it replaced F3C-2's "no
     take-over under a call"). Two graceful boots after a boot in which the cover had stayed enabled while unlocked
-    showed the system's "Select a Home app" chooser after the PIN - an escape. **Its cause is still unknown**, and the
+    showed the system's "Select a Home app" chooser after the PIN - an escape. **Its cause was unknown** (step M below
+    found the likely one: the policy engine dropping our PPAs at a `PACKAGE_CHANGED`), and the
     cover enabled while unlocked doesn't explain it (F3R-1/F3R-2): AOSP's `ComputerEngine.findPersistentPreferredActivity`
     (android15-release :3540-3570) returns the **first** PPA whose component is in the query, so two enabled HOME PPAs
     of ours resolve to one of them, never to the chooser; a disabled cover's PPA is inert (its component isn't in the
@@ -881,6 +882,37 @@ The RC run (`docs/testing/2026-10-22-d59-rc-run.md` §9, F3): after the PIN on S
     idempotent), and the cover disables itself in `onDestroy` once unlocked (not on a configuration change).
     `BootCoverManifestTest` pins exactly these two enables. Its PPA can't be cleared alone: DPM clears only all of a
     package's PPAs, and that would drop HomeActivity's HOME pin, the Play link blocker and the call-log pin.
+    **Superseded in android mode by design 59d step M (§8.12, 2026-10-23)**, below.
+  - **Step M: the cover stays enabled in android mode** (six-inch run F1/F6, 59d §8.12). On a phone whose stock
+    launcher isn't direct-boot aware (the Android 15 image; AOSP Launcher3-based phones), with Settings hidden, a boot
+    the shutdown didn't arm (a crash, `adb reboot`, a hard reset, a flat battery) found no HOME and never completed,
+    so `LOCKED_BOOT_COMPLETED` (the start above) never came. Now:
+    - Every apply with the parent's choice enables the cover in android mode (`bootCoverEnabled(.., androidMode =
+      true)`: true at every event while the guard holds); the shutdown still arms it; the take-over never disables it
+      (its PPA is added again, and it is enabled again after its own fallback disable). Own mode is unchanged.
+    - The take-over is now a device-protected stamp, `boot_cover_taken` (this boot's count,
+      `BootCoverGuard.markTakenOver`), written right before the boot's Home start; the cover reads it (or its own
+      disable) as `coverWaitStep`'s `takenOver`. A cover the system starts after the take-over (`lateStart`) starts
+      Home at once.
+    - **The B2 chooser and F6**: AOSP 15's `DevicePolicyEngine.removePersistentPreferredActivityPoliciesForPackage`
+      drops, at every `PACKAGE_CHANGED` of our package, each of our PPAs whose activity `getActivityInfo(.., 0)` can't
+      see - before the unlock every non-DBA one (HomeActivity's HOME, the Play link blocker's two, the call log's: the
+      four lines 1 s after the locked boot's enable), after the take-over's disable the cover's. That is the most likely
+      cause of B2: no PPA left for the boot's HOME. With the cover's state unchanged before the unlock and at the
+      take-over, neither removal happens in android mode.
+    - **The unlocked HOME** (`lock/HomePin`): with both of our HOMEs enabled the first matching PPA wins, in an order
+      that is arbitrary per boot (PMS writes `package-restrictions.xml` from an `ArraySet` of identity-hashed PPA
+      objects; a filter priority isn't persisted). `HomePin.check` resolves HOME as the system does at the take-over
+      (main thread, before Home's start) and after every apply; when it isn't HomeActivity it clears our package's
+      PPAs and adds them back in order - HomeActivity's HOME, the Play link blocker, the call-log pin, the cover's last
+      (`AppEnforcer.reseatPreferredActivities`, the one clear left; at most 3 a process, `homePinReseatDue`; never
+      before the unlock). The cover's own Home starts disable it first only when our typed HOME would resolve to itself
+      (`coverHomeStartDisablesFirst`); its 30 s hand-over disables it as before; `onDestroy` disables only in own mode.
+    - Residuals: between the unlock and the take-over the boot's order holds (a Home press may land on the cover, which
+      is in front already or hands over); the re-seat leaves no PPA of ours for ~0.5 s (emulator; the engine flushes
+      at each write); the engine also re-adds every PPA at every boot (`reapplyAllPoliciesOnBootLocked`, PMS keeps the
+      duplicates until a clear - the F6 purge used to be that clear, now the re-seat is); a crash inside the
+      first apply that sets Android's PIN, before its `BootCover.applyPolicy`, still finds the cover disabled once.
   - **A call at the take-over** (F3C-2): `BootHome` declines its start while a call is live and remembers it
     (`bootHomeWaitsForCall`). At the call's end (our calls' listener, the VoIP phase, any screen-on for Telecom's
     own) it runs `CALL_END_HOME_RETRY_MS` (2 s, after the call screen's 1.5 s "Ended") later.
@@ -1019,7 +1051,8 @@ dismisses it). On a boot whose `top.log` shows `ResolverActivity` (BFU behind th
    call card - never `NexusLauncherActivity` in `top.log` during the call.
 6. \* B2: ten graceful reboots in a row, with a call held through the first unlock in some of them. Never
    `ResolverActivity` after the PIN. `cmd package query-activities -a android.intent.action.MAIN -c
-   android.intent.category.HOME` once unlocked lists the cover as disabled. † If the chooser comes in BFU, the cover
+   android.intent.category.HOME` once unlocked lists the cover as disabled (since 59d step M in android mode: lists
+   it enabled, and `resolve-activity` gives HomeActivity - 59d §8.4 item 7). † If the chooser comes in BFU, the cover
    is started in front of it whatever the resolution line says; run the chooser recipe above.
 7. \* B3: on a slow first start (the first boot after an install), no `am_anr` for `KidVpnService`, and no second PIN.
    `Unlocked setup took` is smaller than before (the tail is its own message). † Note it next to `Unlocked setup tail

@@ -20,15 +20,19 @@ private const val LOG_TAG = "BootCover"
 object BootCoverGuard {
     private const val FILE = "boot_cover_state"
     private const val ANDROID_MARKER = "boot_cover_android"
+    private const val TAKEN_STAMP = "boot_cover_taken"
 
     @Volatile
     private var installed = false
 
     private fun file(context: Context) = AtomicFile(File(context.createDeviceProtectedStorageContext().filesDir, FILE))
 
+    /** Read from the base file itself, never `AtomicFile.readFully`: its `openRead` deletes a `.new` file another
+     * process is writing (the cover's and the main process read each other's files - 59d step M's emulator run lost a
+     * take-over stamp that way). The base is only ever replaced by a rename, so it is whole. */
     fun read(context: Context): CoverRecord? = try {
-        val atomic = file(context)
-        if (!atomic.baseFile.exists()) null else decodeCoverRecord(String(atomic.readFully(), Charsets.UTF_8))
+        val base = file(context).baseFile
+        if (!base.exists()) null else decodeCoverRecord(String(base.readBytes(), Charsets.UTF_8))
     } catch (e: Exception) {
         // Exists but unreadable: fail safe, the cover stays off.
         CoverRecord(tripped = true)
@@ -99,6 +103,43 @@ object BootCoverGuard {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't write the boot cover's android mode", e)
         }
+    }
+
+    /** Design 59d step M: the main process's take-over stamp `boot_cover_taken` (device-protected, the boot count it was
+     * written in) - in android mode the cover stays enabled, so it reads the take-over here ([coverTakenOver]). */
+    private fun takenStamp(context: Context) = File(context.createDeviceProtectedStorageContext().filesDir, TAKEN_STAMP)
+
+    /** Main process, unlocked (the take-over). Returns whether this boot's stamp is new. Written to a temp file and
+     * renamed over the stamp, read back from the stamp itself - never through `AtomicFile`, whose read deletes the
+     * other process's in-flight `.new` (the cover polls this file every 250 ms). Never throws. */
+    fun markTakenOver(context: Context): Boolean {
+        val boot = bootCount(context)
+        if (coverTakenOver(readTakenStamp(context), boot)) return false
+        return try {
+            val stamp = takenStamp(context)
+            val temp = File(stamp.parentFile, "$TAKEN_STAMP.tmp")
+            java.io.FileOutputStream(temp).use { out ->
+                out.write(boot.toString().toByteArray(Charsets.UTF_8))
+                out.fd.sync()
+            }
+            if (!temp.renameTo(stamp)) throw java.io.IOException("rename")
+            val readBack = coverTakenOver(readTakenStamp(context), boot)
+            Log.i(LOG_TAG, "Boot cover taken over (android mode, boot $boot${if (readBack) "" else ", not read back"})")
+            readBack
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't write the boot cover's take-over stamp: ${e.javaClass.simpleName}")
+            false
+        }
+    }
+
+    /** The cover's process (and the main one): whether our main process took over in this boot. Unreadable = no. */
+    fun takenOverThisBoot(context: Context): Boolean = coverTakenOver(readTakenStamp(context), bootCount(context))
+
+    private fun readTakenStamp(context: Context): Int? = try {
+        val stamp = takenStamp(context)
+        if (!stamp.exists()) null else stamp.readText(Charsets.UTF_8).trim().toIntOrNull()
+    } catch (e: Exception) {
+        null
     }
 
     fun bootCount(context: Context): Int = try {

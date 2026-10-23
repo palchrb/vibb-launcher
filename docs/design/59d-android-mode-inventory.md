@@ -429,6 +429,18 @@ ends with E.
    own BFU face); and whether `onDismissCancelled` comes at all for the pre-unlock pad's Back (`Boot cover: Android's
    PIN pad cancelled`) - without it only the stop's line leaves a hint.
 
+7. Step M (§8.12; on Android 15 - the `six35` AVD, whose stock launcher isn't direct-boot aware - and on 16 -
+   `handy36`, Pixel launcher DBA -, and the Jelly Star): (a) `adb reboot` (no shutdown arm) boots to the cover and
+   Android's pad within 60 s - `sys.boot_completed` 1, no `No home screen found`, `Boot cover asks for Android's PIN
+   pad`; (b) the same after both our processes are killed hard (`am crash` / `kill -9`, then `adb reboot`); (c) `svc
+   power reboot` (armed) unchanged; (d) after the PIN our Home comes up, the cover doesn't come back (Home pressed from
+   an app, a screen-off and on), and `cmd package resolve-activity -c android.intent.category.HOME` gives HomeActivity
+   while `query-activities` lists the cover enabled; (e) no `Select a Home app` at any point, before or after the PIN;
+   (f) F6: no `DevicePolicyEngine: Persistent preferred activity in package ... not found` at the locked boot or the
+   take-over, and `dumpsys device_policy` still holds all five of our PPA policies after the unlock; the `HomePin:`
+   lines (`HOME resolves to ... (take-over)`, any `Re-seated ...`) noted per boot. On the Jelly Star also: `cmd package
+   query-activities -c android.intent.category.HOME` in BFU (is its stock launcher direct-boot aware?).
+
 The release after the rounds is `launcher-v0.36.0-rc.3` on the same server (no API change expected; if anything
 needs a status field, both directories in one commit as always).
 
@@ -649,3 +661,73 @@ own mode's rows are pinned unchanged.
     alarm, the SOS gesture, the emergency flow, our call screen) - not a few lines, and a wrong start over an alarm or
     SOS is worse than the cosmetic stale mark it covers (Android holds either way).
   - R1-9..11: the wording above, in §8.1/§8.2, and in the code (`GlancePanel`, `LockGlance` KDoc, two test names).
+
+### 8.12 Step M: a boot that wasn't armed at shutdown must never hang (2026-10-23)
+
+**The cause** (`docs/testing/2026-10-23-six-inch-android15.md` F1 and F6). Before the first unlock only
+direct-boot-aware HOME activities resolve. On the Android 15 image the stock launcher (NexusLauncher) has none, and
+the device owner hides Settings, whose `FallbackHome` is the usual one. Our `BootCoverActivity` was enabled only by
+the shutdown arm and the locked boot's start, and every unlocked start of our process disabled it again (F3's
+take-over). So after a crash, `adb reboot`, a hard reset or a flat battery no HOME resolves: WindowManager logs
+`No home screen found`, the boot never completes, input stays off, and `LOCKED_BOOT_COMPLETED` - the broadcast that
+would start the cover - never comes. This run reproduced it on `main` before the fix. F6 is the same mechanism's
+other half, read in AOSP 15 (`DevicePolicyEngine.removePersistentPreferredActivityPoliciesForPackage`): at every
+`PACKAGE_CHANGED` of our package, the policy engine drops each of our persistent preferred activities (PPAs) whose
+activity `getActivityInfo(.., 0)` can't see. Before the unlock that is every one that isn't direct-boot aware:
+HomeActivity's HOME pin, the Play link blocker's two and the call-log pin (the four lines 1 s after `Boot cover
+enabled (locked boot ...)`). After the take-over's disable it is the cover's own (the fifth line). Until the next
+apply re-adds them, the unlocked HOME has no PPA, and a stale role preference or the system's "Select a Home app"
+answers. That is the likely cause of the F3 run's B2 chooser too: there a delayed `PACKAGE_CHANGED` of the
+take-over's disable removed the cover's PPA after the apply had re-added it (DPE skips an unchanged value), so the
+next boot found no PPA naming the cover.
+
+**The options.** (1) Keep the cover enabled whenever android mode is on, so a DBA HOME exists at every boot. The
+catch is the unlocked HOME: with both of our HOME activities enabled, the system picks the first matching PPA whose
+component is in the query (`ComputerEngine.findPersistentPreferredActivity`). That order is the resolver's insertion
+order in memory, and after a reboot it is the order PMS read `package-restrictions.xml` in. That file is written from
+an `ArraySet` of PPA objects with identity hash codes (`Settings.writePersistentPreferredActivitiesLPr`), so the order
+is arbitrary per boot - 16b's QA #8 "unstable". A filter priority would sort PPAs, but `IntentFilter.writeToXml`
+doesn't persist it. A single PPA can't be removed or re-pointed either: DPM clears only all of a package's, and a new
+value for the same filter adds a second PMS entry behind the old one. (2) Arm the cover at every lock-up and process
+start, not only at shutdown: a toggle for every screen-off, `PACKAGE_CHANGED` storms, and still nothing before the
+first arm (right after provisioning, an update, a crash in BFU). It also keeps the take-over's disable, so F6's
+removal stays. (3) Leave Settings unhidden while `FallbackHome` would be the only DBA HOME: Settings launchable from
+any app's intent, a bigger kiosk hole than the one F1 closes.
+
+**The choice: (1), with the HOME pin re-seated in order.** In android mode the cover stays enabled. Every apply with
+the parent's choice enables it (`bootCoverEnabled(.., androidMode = true)`), and the shutdown arm still does. The
+take-over no longer disables it. Instead it re-enables it (after the cover's own fallback disable), re-adds its PPA
+and writes a device-protected take-over stamp for this boot (`boot_cover_taken`), and the cover reads that as the
+take-over in place of its disabled state. Own mode is unchanged: its phone has no BFU. Our package's component state
+then never changes before the unlock, so F6's BFU removals stop, and so does the take-over's removal of the cover's
+PPA. The unlocked HOME is made deterministic by `HomePin.check` (main process, at the take-over and after every
+apply): it resolves the HOME intent as the system does (we hold `QUERY_ALL_PACKAGES`). If that isn't HomeActivity
+(the cover won the per-boot order, or a PPA is missing), it clears our package's PPAs and adds them back in order:
+HomeActivity's HOME, the Play link blocker, the call-log pin, the cover's last. That is at most 3 times per process
+(pure `homePinReseatDue`) and never before the unlock. The cover's own Home starts (`START_HOME`, the start on its
+way out) disable it first only when the typed HOME would resolve to itself (`coverHomeStartDisablesFirst`; the next
+apply or take-over re-enables it). Its 30 s hand-over disables it as before. A cover the system starts after the
+take-over (a Home press while the order was still wrong) starts Home at once instead of after 3 s. The bar of step F
+holds: the gate, the mark/line face, no dismissal. **Risks**: between the unlock and our take-over the order is
+still the boot's, so a Home press there may land on the cover. That is harmless: it is already in front, or it hands
+over. The reseat's clear leaves our package without PPAs while it runs - the emulator run measured ~0.5 s for the
+clear and the five adds (the policy engine flushes package restrictions at each), on about every other boot (the
+per-boot order) and on the main thread at the take-over. A Home press exactly then would get the role's preference or
+the chooser. The run also found that Android 15's policy engine re-adds every PPA at every boot
+(`reapplyAllPoliciesOnBootLocked`; PMS doesn't dedupe), so `package-restrictions.xml` gains five duplicates a boot
+until a clear: before step M the F6 purge cleared them, now the re-seat does (and harmlessly - a duplicate names the
+same component). A crash between the first Android
+PIN's `configure` and the same apply's `BootCover.applyPolicy` (one apply, once) still finds the cover disabled. On a
+phone whose stock launcher is DBA (Android 16's Pixel launcher) the cover now wins every BFU boot through its PPA, not
+the ~10 s stock launcher of an unarmed boot. Device checks: §8.4 item 7 below.
+
+**As built and run** (branch `d59d-step-m`; `docs/testing/2026-10-23-step-m-run.md`, Android 15 `six35`): pure rules in
+`lock/BootCoverPlan.kt` (`bootCoverEnabled(.., androidMode)`, `coverTakenOver`, `coverWaitStep(.., takenOver, ..,
+lateStart)`, `coverHomeStartDisablesFirst`, `coverDisablesOnDestroy`, `homePinReseatDue`, `HOME_ACTIVITY_CLASS`),
+`lock/HomePin.kt`, `AppEnforcer.reseatPreferredActivities`, the stamp in `BootCoverGuard`; tests in
+`BootCoverPlanTest`, `BootCoverManifestTest` (the B2 pin replaced by step M's) and `PlayInvariantsTest` (the one clear).
+F1 reproduced on `main`; with step M `adb reboot` and a crash plus `adb reboot` boot to the cover and the pad in 35-39 s,
+`svc power reboot` unchanged, the PIN gives our Home, no policy-engine removals and no chooser in four boots, and one
+boot needed and got the re-seat (~475 ms). The run found one bug, fixed on the branch: `AtomicFile.readFully` in the
+cover's 250 ms poll deleted the main process's in-flight `.new` stamp, so the take-over never reached the cover - the
+stamp and the record are now read from their base files. Owed: item 7 on Android 16 and the Jelly Star.

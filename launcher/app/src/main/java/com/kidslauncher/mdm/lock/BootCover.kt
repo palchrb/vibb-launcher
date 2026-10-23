@@ -16,18 +16,22 @@ private const val LOG_TAG = "BootCover"
  * switch `boot_cover` on a managed phone - CE prefs `boot_cover`), its persistent preferred
  * activity, and its component state ([bootCoverEnabled]):
  * - every apply: switch off -> disabled; on -> its PPA is added next to HomeActivity's (a distinct
- *   filter with [BOOT_COVER_CATEGORY]; nothing is ever cleared - that would drop the HOME pin);
+ *   filter with [BOOT_COVER_CATEGORY]; nothing is ever cleared but by [HomePin]'s re-seat, which adds every PPA of ours
+ *   back) - and in android mode it is enabled (design 59d step M, below);
  * - `ACTION_SHUTDOWN` (only to runtime receivers - this process is alive through the anchor
  *   service): enabled when wanted and the cover's crash guard hasn't tripped ([BootCoverGuard];
  *   sticky until the switch goes off, which clears it), written synchronously; from then on
  *   [HomeFront] starts no Home ([shuttingDown]);
- * - this process's start after the unlock: disabled before Home is brought to the front, so the
- *   typed HOME start resolves to HomeActivity only (the cover hands over by itself too).
- * A crash reboot sends no shutdown: the cover stays off and the boot falls back to A+B. Neither
- * does `adb reboot` (init's `sys.powerctl`, not ShutdownThread): test with the power menu or
- * `adb shell svc power reboot`. In android mode (design 59 F3) the locked boot arms it as well
- * ([atLockedBoot], also the fallback for a shutdown broadcast this cached process never got) and
- * the cover waits for this process's hand-over ([coverWaitStep]).
+ * - this process's start after the unlock ([takeOver]): own mode - disabled before Home is brought to the front, so the
+ *   typed HOME start resolves to HomeActivity only (the cover hands over by itself too); android mode - kept enabled
+ *   and its take-over stamp written ([BootCoverGuard.markTakenOver]), with [HomePin] keeping HomeActivity the unlocked
+ *   HOME.
+ * Own mode: a crash reboot sends no shutdown, the cover stays off and the boot falls back to A+B (no Android PIN, so
+ * no BFU). Neither does `adb reboot` (init's `sys.powerctl`, not ShutdownThread): test with the power menu or
+ * `adb shell svc power reboot`. Android mode (design 59 F3, 59d step M): the cover stays enabled from the first apply
+ * on, so a crash, `adb reboot` or a flat battery still has a direct-boot-aware HOME - without one, on a phone whose
+ * stock launcher isn't direct-boot aware, the boot never completes (six-inch F1). The locked boot starts it as well
+ * ([atLockedBoot]) and the cover waits for this process's take-over ([coverWaitStep]).
  * [report] is the status report's `boot_cover`.
  */
 object BootCover {
@@ -83,28 +87,39 @@ object BootCover {
         }
         // F3: the device-protected marker the cover and the locked boot read (no CE before the PIN).
         BootCoverGuard.setAndroidMode(app, bootCoverAndroidMarker(wanted, androidGate))
-        if (wanted) {
-            try {
-                val filter = IntentFilter(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_HOME)
-                    addCategory(Intent.CATEGORY_DEFAULT)
-                    addCategory(BOOT_COVER_CATEGORY)
-                }
-                dpm.addPersistentPreferredActivity(admin, filter, component(app))
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "Failed to set the boot cover's persistent preferred activity", e)
-            }
-        }
-        setEnabled(app, bootCoverEnabled(CoverEvent.POLICY, wanted), "policy")
+        if (wanted) HomePin.locked { addCoverPin(app, dpm, admin) }
+        // Step M: android mode enables it at every apply (the guard aside); own mode leaves it (the shutdown arms it).
+        val tripped = coverGuardTripped(BootCoverGuard.read(app))
+        setEnabled(app, bootCoverEnabled(CoverEvent.POLICY, wanted, tripped, androidMode = bootCoverAndroidMarker(wanted, androidGate)), "policy")
+        HomePin.check(app, "policy")
     }
 
-    /** From `PinLockRuntime.init` (main thread, unlocked): the shutdown receiver, and the hand-over of a cover that is
-     * still enabled (before the boot's Home start) - at every CE start, in every mode, whatever a call does, so that
-     * once unlocked one HOME PPA of ours resolves, HomeActivity's (f3-run B2). Not the chooser's cause: AOSP's
-     * `findPersistentPreferredActivity` returns the first PPA whose component matches, so two of ours can't make it -
-     * the run's three-entry chooser means no PPA matched (qa-f3-round2-code F3R-1/F3R-2; the device recipe in design
-     * 59 "F3"). A call keeps only `BootHome`'s Home start back, never the take-over: a cover in front then starts our
-     * Home itself ([coverWaitStep]'s START_HOME, in a call too - nothing is over it while it is resumed). */
+    /** The cover's PPA filter: HOME + DEFAULT + [BOOT_COVER_CATEGORY] - its own key next to HomeActivity's (QA #7). */
+    private fun coverFilter() = IntentFilter(Intent.ACTION_MAIN).apply {
+        addCategory(Intent.CATEGORY_HOME)
+        addCategory(Intent.CATEGORY_DEFAULT)
+        addCategory(BOOT_COVER_CATEGORY)
+    }
+
+    /** Adds the cover's PPA (a no-op while it is there). Called inside [HomePin.locked], so a re-seat's clear and re-add
+     * can't interleave with it. Never throws. */
+    internal fun addCoverPin(app: Context, dpm: DevicePolicyManager, admin: ComponentName) {
+        try {
+            dpm.addPersistentPreferredActivity(admin, coverFilter(), component(app))
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Failed to set the boot cover's persistent preferred activity", e)
+        }
+    }
+
+    /** [HomePin]'s re-seat: the cover's PPA again, last, while it is wanted. */
+    internal fun pinWanted(context: Context): Boolean = wanted(context.applicationContext)
+
+    /** From `PinLockRuntime.init` (main thread, unlocked): the shutdown receiver, and the take-over (before the boot's Home
+     * start) - at every CE start, in every mode, whatever a call does. Own mode disables a cover still enabled, so
+     * once unlocked one HOME PPA of ours resolves, HomeActivity's (f3-run B2); android mode keeps it enabled (59d step M)
+     * and [HomePin] keeps HomeActivity's PPA the first. A call keeps only `BootHome`'s Home start back, never the
+     * take-over: a cover in front then starts our Home itself ([coverWaitStep]'s START_HOME, in a call too - nothing is
+     * over it while it is resumed). */
     fun init(context: Context) {
         val app = context.applicationContext
         tookOver = true
@@ -120,13 +135,34 @@ object BootCover {
         takeOver(app)
     }
 
-    /** Disables a cover still enabled (the hand-over; our typed Home start then resolves to HomeActivity only).
-     * Idempotent. Main thread, right before a boot Home start ([init], `BootHome.callMayHaveEnded`). */
+    /**
+     * The take-over. Main thread, right before a boot Home start ([init], `BootHome.callMayHaveEnded`). Idempotent.
+     * - Own mode: disables a cover still enabled (our typed Home start then resolves to HomeActivity only).
+     * - Android mode (design 59d step M): the cover stays enabled for the next boot the shutdown doesn't arm (its own
+     *   30 s hand-over, or a Home start of its own, may have disabled it - enabled again here, its PPA added again), and
+     *   [HomePin] puts HomeActivity's HOME PPA first before our Home is started; then the device-protected stamp tells
+     *   the cover that we took over ([BootCoverGuard.markTakenOver]).
+     * Never throws.
+     */
     fun takeOver(context: Context) {
         val app = context.applicationContext
-        if (isEnabled(app)) {
-            setEnabled(app, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app)), "main process after unlock")
-            prefs(app).edit().putLong(KEY_LAUNCHER_HANDOVER_AT, System.currentTimeMillis()).apply()
+        try {
+            if (BootCoverGuard.androidMode(app)) {
+                val enabled = bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app), coverGuardTripped(BootCoverGuard.read(app)), androidMode = true)
+                if (enabled == true) HomePin.asOwner(app) { dpm, admin -> HomePin.locked { addCoverPin(app, dpm, admin) } }
+                setEnabled(app, enabled, "take-over (android mode)")
+                HomePin.check(app, "take-over", log = true)
+                if (BootCoverGuard.markTakenOver(app)) {
+                    prefs(app).edit().putLong(KEY_LAUNCHER_HANDOVER_AT, System.currentTimeMillis()).apply()
+                }
+                return
+            }
+            if (isEnabled(app)) {
+                setEnabled(app, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app)), "main process after unlock")
+                prefs(app).edit().putLong(KEY_LAUNCHER_HANDOVER_AT, System.currentTimeMillis()).apply()
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover take-over failed: ${e.javaClass.simpleName}")
         }
     }
 
@@ -140,7 +176,10 @@ object BootCover {
      * device-protected storage only - nothing here may read CE). In android mode ([BootCoverGuard.androidMode]) the
      * cover is enabled and started as the typed HOME - before the first unlock only direct-boot-aware HOMEs resolve, so
      * within our package that is the cover alone - so a boot without the shutdown's arm (`adb reboot`, a crash, a hard
-     * reset, a shutdown broadcast our cached process never got) has it behind Android's keyguard too, and the PIN's
+     * reset, a shutdown broadcast our cached process never got) has it behind Android's keyguard too (since 59d step M
+     * the cover is enabled already - this broadcast comes only after the boot completed, which needs a HOME that
+     * resolves, and on a phone whose stock launcher isn't direct-boot aware that is the cover; the enable here is then a
+     * no-op, so no `PACKAGE_CHANGED` drops our other PPAs before the unlock - six-inch F6), and the PIN's
      * dismissal reveals it, not the stock launcher. In android mode the cover is the BFU face over the keyguard while
      * its pad gate holds (design 59d step F: showWhenLocked at runtime, it asks for Android's PIN pad), else behind it
      * (Android's lock screen with the restart line is the face). Decided now ([coverAtLockedBoot], f3-run B1): nothing once
@@ -284,7 +323,7 @@ object BootCover {
         }
         shuttingDown = true
         val tripped = coverGuardTripped(BootCoverGuard.read(app))
-        val armed = bootCoverEnabled(CoverEvent.SHUTDOWN, wanted(app) && deviceOwner, tripped)
+        val armed = bootCoverEnabled(CoverEvent.SHUTDOWN, wanted(app) && deviceOwner, tripped, androidMode = BootCoverGuard.androidMode(app))
         // SYNCHRONOUS: written before the receiver returns - an OEM shutdown path may not flush
         // pending package settings (qa-16b-code #3).
         setEnabled(app, armed, "shutdown", synchronous = true)
