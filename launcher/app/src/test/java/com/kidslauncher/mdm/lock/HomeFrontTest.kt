@@ -83,6 +83,23 @@ class HomeFrontTest {
         assertTrue("stop (as the root) before Home", go.indexOf("stopLockTaskQuietly") in 0 until home)
     }
 
+    /** Design 59d step B (the rc.2 recording's 3 black Home frames): Home after the face's leave draws its own ground. */
+    @Test
+    fun `Home after the face's leave draws its own ground until it stops`() {
+        assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.FULL, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = true, scrimAlpha = 0, ownGround = true))
+        assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.TRANSPARENT, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = true, scrimAlpha = 0))
+        assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.SCRIM, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = true, scrimAlpha = 40))
+        assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.FULL, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = false, scrimAlpha = 0))
+        val front = code(file("java/com/kidslauncher/mdm/lock/HomeFront.kt"))
+        val bring = front.substringAfter("fun bring(")
+        assertTrue("set only by the noAnimation start", bring.contains("if (noAnimation) ownGroundDue = true"))
+        assertEquals(1, Regex("ownGroundDue = true").findAll(front).count())
+        val home = code(file("java/com/kidslauncher/mdm/ui/HomeActivity.kt"))
+        assertTrue(home.substringAfter("override fun onResume() {").substringBefore("startWork()").contains("if (HomeFront.takeOwnGroundDue()) ownGround = true"))
+        assertTrue(home.substringAfter("override fun onStop() {").substringBefore("\n    }\n").contains("ownGround = false"))
+        assertTrue(home.contains("WallpaperGround.apply(this, binding.root, ownGround = ownGround)"))
+    }
+
     /** Design 32 (QA M2): the lock-up's Home start has no open animation and is still typed HOME. */
     @Test
     fun `HomeFront without an animation adds only NO_ANIMATION`() {

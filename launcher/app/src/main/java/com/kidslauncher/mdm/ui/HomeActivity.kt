@@ -456,6 +456,9 @@ class HomeActivity : UIObjectActivity() {
             showNight()
             return
         }
+        // Design 59d step B: brought by the face's unanimated leave - Home draws its own ground until it stops (Android's
+        // wallpaper window isn't shown yet while the keyguard goes away; the rc.2 recording's 3 black frames).
+        if (HomeFront.takeOwnGroundDue()) ownGround = true
         startWork()
         PinLockRuntime.onHomeResumed(interactive())
         // Deliberately triggered here, not from Application.onCreate() - see TsnetClient's own
@@ -628,6 +631,8 @@ class HomeActivity : UIObjectActivity() {
 
     override fun onStop() {
         contentUp = false
+        // Design 59d step B: the next start is transparent over Android's wallpaper again.
+        ownGround = false
         // Design 16e: something covers the mark - the boot's wait for it ends.
         PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home stopped")
         started = false
@@ -761,9 +766,12 @@ class HomeActivity : UIObjectActivity() {
      * is ours) and its ink on the labels and status-bar icons (design 08 §3). Cheap: the store
      * decoded everything in the background.
      */
+    /** Design 59d step B: since the face's leave brought Home ([HomeFront.takeOwnGroundDue]) and until Home stops. */
+    private var ownGround = false
+
     private fun renderWallpaper() {
         if (!contentShown) return
-        val state = WallpaperGround.apply(this, binding.root)
+        val state = WallpaperGround.apply(this, binding.root, ownGround = ownGround)
         if (state.ink != shownInk) {
             shownInk = state.ink
             renderCallParts()

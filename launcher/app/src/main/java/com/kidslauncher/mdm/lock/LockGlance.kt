@@ -30,13 +30,13 @@ enum class LockStage { GLANCE, KEYPAD, ASK }
 fun glancePageShown(stage: LockStage): Boolean = stage != LockStage.KEYPAD
 
 /**
- * Design 59d step B (the user's rc.2 recording: after the pad, the glance came to the front and slid away "the same as
- * the old keypad page did"): the page's content - everything but the root's ground and mark - shows only on
- * [LockStage.GLANCE] and never once the glance leaves ([leaving]). So the keyguard's going-away reveals only the night
- * ground, and Home follows unanimated. A dead ask shows the ground for the recovery's 2 s (accepted). It changes only
- * what is drawn: when the glance leaves is still `faceStep`'s LEAVE alone.
+ * Design 59d step B (the user's rc.2 recording: after the pad, the glance came to the front for ~330 ms and slid away
+ * "the same as the old keypad page did"): the page's content - everything but the root's ground and mark - goes once the
+ * glance leaves ([leaving]), so the keyguard's going-away reveals only the night ground and Home follows unanimated.
+ * Under Android's pad (ASK) the page stays as drawn: the user reads the pad as an overlay on our own lock. It changes
+ * only what is drawn: when the glance leaves is still `faceStep`'s LEAVE alone.
  */
-fun glanceContentShown(stage: LockStage, leaving: Boolean): Boolean = stage == LockStage.GLANCE && !leaving
+fun glanceContentShown(leaving: Boolean): Boolean = !leaving
 
 /** Design 59d step B: the leave hides the page's content first - only as Android's face and with the glance in front
  * (`leaveInFront`); own mode's leave is unchanged. */

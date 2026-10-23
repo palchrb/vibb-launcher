@@ -300,7 +300,7 @@ class GlancePanel(
 
     /** The page's content (the root's children) per [glanceContentShown]; the root itself, with the ground, stays. */
     private fun showContent() {
-        val content = if (glanceContentShown(state.stage, leaving)) View.VISIBLE else View.INVISIBLE
+        val content = if (glanceContentShown(leaving)) View.VISIBLE else View.INVISIBLE
         val root = glance.root
         for (i in 0 until root.childCount) root.getChildAt(i).visibility = content
     }
@@ -465,7 +465,7 @@ class GlancePanel(
     private fun renderNow() {
         val shown = glancePageShown(state.stage)
         glance.root.visibility = if (shown) View.VISIBLE else View.GONE
-        // Design 59d step B: under Android's pad (ASK) and while leaving, only the ground and the mark.
+        // Design 59d step B: while the glance leaves, only the ground and the mark.
         showContent()
         keypad.importantForAccessibility =
             if (shown) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO

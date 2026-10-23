@@ -35,6 +35,18 @@ object HomeFront {
      * the kid's Home press, never for these (the lock leaving, the boot, the lock-up, an update). */
     const val EXTRA_BROUGHT = "me.vibb.launcher.extra.HOME_BROUGHT"
 
+    /**
+     * Design 59d step B (the user's rc.2 recording: Home drawn on black for 3 frames after the pad, then its wallpaper):
+     * the face's unanimated leave brought Home while the keyguard goes away, and Android's wallpaper window isn't shown
+     * yet under Home's transparent window. So Home's next resume draws its own ground until it stops
+     * (`WallpaperGround`'s `ownGround`). Set only by a `noAnimation` start (the face's leave); taken by Home's resume.
+     */
+    @Volatile
+    private var ownGroundDue = false
+
+    /** Home's resume: whether the face's leave just brought it ([ownGroundDue]) - read once. */
+    fun takeOwnGroundDue(): Boolean = ownGroundDue.also { ownGroundDue = false }
+
     fun intent(context: Context, animate: Boolean = true, noAnimation: Boolean = false): Intent =
         Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
@@ -70,6 +82,7 @@ object HomeFront {
             false
         } else try {
             if (animate) PinLockRuntime.endDarkLockUp()
+            if (noAnimation) ownGroundDue = true
             context.startActivity(intent(context, animate, noAnimation))
             Log.i(LOG_TAG, "Home brought to the front: $why")
             true

@@ -69,13 +69,14 @@ class LockGlanceTest {
         }
     }
 
-    /** The coordinator's refinement (the user's rc.2 test): nothing of the page shows under the pad - only the ground. */
+    /** Design 59d step B (the user's rc.2 recording): the page stays under the pad, only the leave hides its content. */
     @Test
-    fun `ASK hides the page's content and GLANCE shows it`() {
-        assertFalse(glanceContentShown(LockStage.ASK, leaving = false))
-        assertTrue(glanceContentShown(LockStage.GLANCE, leaving = false))
-        val back = glanceStageStep(GlanceStageState(LockStage.ASK, conversation), GlanceStageEvent.Back, face = true)
-        assertTrue("every return to GLANCE shows it again", glanceContentShown(back.stage, leaving = false))
+    fun `LEAVE hides the page's content, ASK shows it`() {
+        val ask = glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Unlock, face = true)
+        assertEquals(LockStage.ASK, ask.stage)
+        assertTrue("the pad over our own lock", glancePageShown(ask.stage) && glanceContentShown(leaving = false))
+        assertFalse("the leave: only the ground and the mark", glanceContentShown(leaving = true))
+        assertTrue(glancePageShown(ask.stage))
     }
 
     @Test

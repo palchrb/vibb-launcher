@@ -287,20 +287,19 @@ class AndroidLockFaceTest {
     }
 
     @Test
-    fun `59d B - the page's content shows only on GLANCE, the ground stays under the pad and at the leave`() {
+    fun `59d B - the page shows under the pad, only the ground and the mark at the leave`() {
         assertTrue(glancePageShown(LockStage.GLANCE))
-        assertTrue("the ground and the mark under Android's pad", glancePageShown(LockStage.ASK))
+        assertTrue("the page under Android's pad", glancePageShown(LockStage.ASK))
         assertFalse("our keypad", glancePageShown(LockStage.KEYPAD))
-        assertTrue(glanceContentShown(LockStage.GLANCE, leaving = false))
-        assertFalse("ASK hides the content", glanceContentShown(LockStage.ASK, leaving = false))
-        assertFalse("the leave hides it", glanceContentShown(LockStage.GLANCE, leaving = true))
+        assertTrue(glanceContentShown(leaving = false))
+        assertFalse("the leave hides it", glanceContentShown(leaving = true))
         assertTrue(glanceLeaveHides(androidFace = true, inFront = true))
         assertFalse("stopped under an app", glanceLeaveHides(androidFace = true, inFront = false))
         assertFalse("own mode's leave unchanged", glanceLeaveHides(androidFace = false, inFront = true))
         val panel = code("$lock/GlancePanel.kt")
         // The root's children only - never the root (its ground), the decor view or the window (a row's PendingIntent).
         val show = panel.substringAfter("private fun showContent() {").substringBefore("\n    }\n")
-        assertTrue(show, show.contains("val content = if (glanceContentShown(state.stage, leaving)) View.VISIBLE else View.INVISIBLE"))
+        assertTrue(show, show.contains("val content = if (glanceContentShown(leaving)) View.VISIBLE else View.INVISIBLE"))
         assertTrue(show, show.contains("for (i in 0 until root.childCount) root.getChildAt(i).visibility = content"))
         assertFalse(panel.contains("decorView"))
         val render = panel.substringAfter("private fun renderNow() {").substringBefore("\n    }\n")
