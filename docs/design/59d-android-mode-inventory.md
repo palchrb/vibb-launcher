@@ -533,7 +533,12 @@ then 3 frames of the sharp wallpaper with only the status bar, then our glance -
 them; Android's clock shows only in the longer cases (after a call, Back from the pad). So step K (round 1) =
 `lockScreenFill(.., androidFace)` gives the glance's own ground (the parent's lock wallpaper when allowed, else
 Home's) with the glance's scrim baked into the bitmap, so the sharp frames read as our page; NightMark only where no
-wallpaper exists, and for the boot cover's own look; re-applied whenever the glance's ground changes. Step L, if
-rc.3's frame count still shows a seam: our clock in Android's small-clock place and size (top-left, the date under)
-for the longer cases - not pixel-identical (the system font varies per maker, Monet picks the colour, the lock dot is
-Android's); position and size carry most of it. Launcher, S-M. Decide after rc.3.
+wallpaper exists, and for the boot cover's own look; re-applied whenever the glance's ground changes. Step L (the user's second recording, 2026-10-23: Android's small
+single-line clock is up for exactly one frame at a wake, plus one cross-fade frame - thin, large, left-aligned high
+up, "Fre. 23. okt." under it, over the sharp photo; ours is bold, centred, smaller, with the long date and the alarm
+line): **build it with step J, before rc.3**. Our glance's clock takes Android's small clock's geometry - the same
+left edge, baseline, size and a thin weight - and the date line its place and short format; the alarm line moves
+under the date. Not pixel-identical (Pixel's Google Sans Flex isn't ours; the Jelly Star's AOSP SystemUI has another
+font and placement), so the geometry is a small per-device profile (`emulator Pixel`, `Jelly Star`, measured from a
+frame of each), not fixed numbers. Android's own clock font can't be changed by an app (Pixel's clock styles in
+"Wallpaper & style" are the parent's by hand, during a pause - try the closest one on the emulator). Launcher, S-M.
