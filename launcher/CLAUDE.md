@@ -283,7 +283,9 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   ours; ours keeps the rev (or takes the rev being set, when its commit never came), any other change makes
   `android_pin_rev` unknown. **The restart line** ("Skriv koden for å starte telefonen", `android_lock_restart_line`): written at
   `ACTION_SHUTDOWN` as the face (BootCover's one receiver, its own try, between the cover and PowerEvents), cleared at
-  the boot's first CE start and when the face goes. The notice wake keeps its `lockNow` after 15 s.
+  the boot's first CE start and when the face goes. As the face the notice wake has no 15 s end and no `lockNow`
+  (design 59d step E, the user's Q2: `noticeWakeOffDue(.., face)`): the glance stays lit, Android locked under it, until
+  the phone's own screen timeout, so the fingerprint keeps working; own mode keeps its `lockNow` after 15 s.
 - Not device-tested: design 59 §8.
 
 ## Fix round 2026-10-06 (emulator run, `docs/testing/2026-10-06-emulator-run.md`, at the monorepo root)

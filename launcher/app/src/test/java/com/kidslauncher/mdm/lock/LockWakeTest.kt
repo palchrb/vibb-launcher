@@ -105,6 +105,19 @@ class LockWakeTest {
         assertFalse("no wake on", noticeWakeEndsAtScreenOn(null, 99_999))
     }
 
+    /** Design 59d step E (the user's Q2): as Android's face no 15 s end - the phone's own timeout, the fingerprint kept. */
+    @Test
+    fun `as the face the notice wake has no 15 s end, own mode keeps its lockNow`() {
+        val due = 1_000 + NOTICE_WAKE_ON_MS
+        assertFalse(noticeWakeOffDue(1_000, false, true, true, true, false, false, false, due, face = true))
+        assertFalse(noticeWakeOffDue(1_000, false, true, true, true, false, false, false, due + 600_000, face = true))
+        assertTrue("own mode", noticeWakeOffDue(1_000, false, true, true, true, false, false, false, due, face = false))
+        val runtime = listOf("src/main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt", "app/src/main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt")
+            .map { File(it) }.first { it.exists() }.readText()
+        val off = runtime.substringAfter("private fun noticeWakeOffCheck() {").substringBefore("\n    }\n")
+        assertTrue(off, off.contains("face = AndroidLock.faceOn,"))
+    }
+
     @Test
     fun `a missed call wakes only for the alerting post - not a boot re-send, relearn or an update after a call`() {
         val one = MissedCallNotice(1, listOf(MissedContact("+4790000002", "Pappa", 1, 100)), "+4790000002", 100, 7)

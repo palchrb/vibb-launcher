@@ -306,7 +306,8 @@ the two locks; `kid_lock` null on a fresh policy opens it without a code, as tod
 ### 3.9 The rest under android mode
 
 - **Notice wake** (r7 §3): unchanged by default - `lockNow()` after its 15 s, which makes the next unlock need the PIN,
-  not the fingerprint (open question 3). Own mode unchanged.
+  not the fingerprint (open question 3). Own mode unchanged. **Closed 2026-10-23** (design 59d step E): as the face no
+  15 s end and no `lockNow` - the phone's own screen timeout.
 - **Remote lock**: our LOCKED + `dpm.lockNow()`, answer `locked (android pin)`.
 - **Re-front, camera lock, SOS guess**: off while Android is locked and secure (P, with P59-3/P59-4). Lock task while
   LOCKED is unchanged; **the keyguard holds Recents**, lock task's flags hold at most the shade over SystemUI's own face
@@ -494,6 +495,10 @@ the kid's phone, on the Jelly Star: its BFU call screening (A §2.3), and an ove
 3. **The notice wake** keeps today's 15 s and `lockNow`: the screen goes dark quickly, but the next unlock then needs
    the PIN, not the fingerprint. Alternative: no `lockNow` in android mode - the fingerprint keeps working, but the
    screen stays on for the phone's timeout (up to 10 min) - or `lockNow` only when that timeout is over 30 s.
+   **Closed (the user, 2026-10-23; design 59d §8.1 Q2, built in 59d step E):** the alternative - as the face no 15 s end
+   and no `lockNow`; the glance stays lit until the phone's own screen timeout (the parent's `screen_timeout_seconds`,
+   default 60 s), Android locked throughout, the fingerprint kept. The accepted cost: up to the full timeout of lit rows
+   in a pocket. Own mode keeps its `lockNow`.
 4. **A PIN the kid set on the phone** is healed by the parent's "Send the Child PIN again", not automatically.
    Alternative: the server re-sends the Child PIN on its own whenever the phone reports `pin_rev: null`.
 5. **Fossify Clock** stays for the RC; the Jelly Star's overnight-reboot alarm check (§9) decides before phase C.

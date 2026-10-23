@@ -1390,7 +1390,8 @@ object PinLockRuntime {
     }
 
     /** [NOTICE_WAKE_ON_MS] after a notice wake: still untouched on the lock - the screen goes off
-     * (`lockNow`, the device owner's; the screen-off locks as always). */
+     * (`lockNow`, the device owner's; the screen-off locks as always). Design 59d step E: never as Android's face - the
+     * phone's own screen timeout ends the wake ([noticeWakeOffDue]'s `face`). */
     private fun noticeWakeOffCheck() {
         val app = appContext ?: return
         val now = SystemClock.elapsedRealtime()
@@ -1405,6 +1406,7 @@ object PinLockRuntime {
             dialogOpen = lockDialogsOpen > 0,
             touchExploration = touchExploration(app),
             nowMs = now,
+            face = AndroidLock.faceOn,
         )
         endNoticeWake()
         if (!due) return
