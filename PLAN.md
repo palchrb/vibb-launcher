@@ -886,6 +886,13 @@ findings, merge to `main`, full suite once.
   the footer can't carry the one fact a parent needs (a consequence, a number, a "needs the phone online"), cut each
   panel to one or two short sentences, drop the ones that repeat the row's own label. Server, S-M (text only); the
   wording follows the PWA's register (plain, no jargon).
+- **Safe zones (the user, 2026-10-23, from Xplora): named circles on the Locate map ("Home", "School"), a parent event +
+  push when the phone leaves or enters one.** Design 64 (to write after rc.3). Step 1 server-only: zones per phone
+  (centre, radius, name) drawn/edited on the Leaflet map; evaluated on every stored fix; a transition counts after two
+  consecutive fixes on the same side (no flapping on one bad fix); events "arrived at / left <zone>" in the inbox and
+  pushed under each parent's Notify Me About; latency = the locate interval (10 min default -> up to 20 min). Step 2
+  optional: the launcher registers the zones as Android proximity alerts and takes an immediate fix on a crossing
+  (zones in the policy; `location_policy`), latency under a minute at little battery. M.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
