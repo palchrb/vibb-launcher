@@ -296,13 +296,32 @@ class AndroidLockFaceTest {
         // The glue: the pause marks before its check is scheduled; the stop's mark is own mode's, unchanged.
         val runtime = code("$lock/PinLockRuntime.kt")
         val paused = runtime.substringAfter("fun onLockPaused(").substringBefore("\n    }\n")
-        val mark = paused.indexOf("if (sosMarkAtPause(AndroidLock.faceOn, ours, lastScreenOnElapsed, pausedNow, sosPackage != null)) noteProbableSos(pausedNow)")
+        val mark = paused.indexOf("if (sosMarkAtPause(AndroidLock.faceOn, ours, lastScreenOnElapsed, pausedNow, sosPackage != null)) noteProbableSos(pausedNow, logNow = false)")
         assertTrue(mark > paused.indexOf("if (!pauseStartsRefront(chromeLocked, finishing)) return"))
         assertTrue(mark < paused.indexOf("handler.postDelayed(refrontCheck"))
         assertTrue(paused.contains("val ours = androidLossOurs(androidAskAt ?: androidCancelledAskAt, androidAnsweredAt, ownStartAt, ownOthersResumed > 0, pausedNow)"))
         assertTrue(runtime.substringAfter("fun onLockStopped(").substringBefore("\n    }\n").contains("noteProbableSos(SystemClock.elapsedRealtime())"))
-        assertTrue(runtime.substringAfter("private fun noteProbableSos(leftFrontAt: Long) {").substringBefore("\n    }\n")
+        assertTrue(runtime.substringAfter("private fun noteProbableSos(leftFrontAt: Long, logNow: Boolean = true) {").substringBefore("\n    }\n")
             .contains("if (!sosGestureLikely(lastScreenOnElapsed, leftFrontAt, sosAppPresent = sosPackage != null)) return"))
+    }
+
+    @Test
+    fun `N1 - a pause's SOS mark is logged only when the pause's check still finds it`() {
+        assertTrue("the check finds the mark", sosPauseMarkLogDue(unlogged = true, markHeld = true))
+        assertFalse("the wake's pause/resume pair: the resume cleared it", sosPauseMarkLogDue(unlogged = true, markHeld = false))
+        assertFalse("a stop's mark logged at once already", sosPauseMarkLogDue(unlogged = false, markHeld = true))
+        val runtime = code("$lock/PinLockRuntime.kt")
+        val note = runtime.substringAfter("private fun noteProbableSos(leftFrontAt: Long, logNow: Boolean = true) {").substringBefore("\n    }\n")
+        assertTrue(note, note.contains("sosMarkUnlogged = !logNow"))
+        assertTrue(note, note.contains("if (logNow) Log.i(LOG_TAG, SOS_MARK_LINE)"))
+        assertEquals("one other log of the line", 2, Regex("Log\\.i\\(LOG_TAG, SOS_MARK_LINE\\)").findAll(runtime).count())
+        val check = runtime.substringAfter("private fun runRefrontCheck() {").substringBefore("\n    }\n")
+        val log = check.indexOf("if (sosPauseMarkLogDue(sosMarkUnlogged, sosFlowUntilElapsed > 0L)) Log.i(LOG_TAG, SOS_MARK_LINE)")
+        assertTrue(check, log in 0 until check.indexOf("if (!sos) sosFlowUntilElapsed = 0L"))
+        // The resume clears the mark and the unlogged flag together; the stop still logs at once (own mode's mark).
+        val resumed = runtime.substringAfter("fun onLockResumed(").substringBefore("\n    }\n")
+        assertTrue(resumed.indexOf("sosMarkUnlogged = false") > resumed.indexOf("sosFlowUntilElapsed = 0L"))
+        assertTrue(runtime.substringAfter("fun onLockStopped(").substringBefore("\n    }\n").contains("noteProbableSos(SystemClock.elapsedRealtime())\n"))
     }
 
     @Test
