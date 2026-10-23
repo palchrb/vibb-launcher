@@ -849,6 +849,14 @@ findings, merge to `main`, full suite once.
   Timing: connect, TTFB, render) shown behind a debug switch or logged to the server, and the user checks `tailscale
   status` for relay vs direct. Then: prefetch the other tabs after a page settles (same session, no offline caching),
   and/or keep the connection warm after a resume (`reconnect.js` already pings `/ping`). Server, S; after rc.3.
+- **An x86_64 emulator build of the release launcher (2026-10-23):** the release APK carries tsnet for arm64 only
+  (`.github/actions/build-tsnet`, by design), so it installs on the Play/Google APIs x86_64 images only through their
+  ARM translation and NOT on a pure AOSP `default` x86_64 image (`INSTALL_FAILED_NO_MATCHING_ABIS` on the user's
+  `jellystar-aosp` AVD). Proposal: `gomobile bind -target=android/arm64,android/amd64`, ABI splits in the launcher's
+  release build, the release workflow uploading a second asset `kids-launcher-mdm-x86_64.apk` (same versionCode and
+  name, never "latest", never the QR's URL, ignored by the catalog's asset pick), for emulators only. CI, S-M; decide
+  before building (APK size, the self-update advertising the arm64 asset to an emulator phone - the launcher should
+  refuse an APK with no matching ABI cleanly, or the server should pick by the phone's ABI).
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
