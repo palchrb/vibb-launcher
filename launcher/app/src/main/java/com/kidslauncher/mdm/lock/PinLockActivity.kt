@@ -1061,7 +1061,8 @@ class PinLockActivity : AppCompatActivity() {
         // the glance finishes under it: no Home, no row target (none exists without our ask).
         val inFront = leaveInFront(AndroidLock.faceOn, resumed, fromAsk = leaveFromAsk)
         if (!inFront) pendingOpen = null
-        go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this), glanceInFront = inFront))
+        // Design 59d step H: as the face, no Home over a live call (kiosk on too), except as the kiosk root.
+        go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this), glanceInFront = inFront, androidFace = AndroidLock.faceOn))
         if (!isFinishing && kioskOn) {
             Log.w(LOG_TAG, "Finishing the lock was refused - it is the lock-task root; stopping it first")
             go(rootLeave)

@@ -254,7 +254,7 @@ class LockUpPlanTest {
     @Test
     fun `the unlock never lands on Home over a live call - the wiring`() {
         val activity = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
-        assertTrue(body(activity, "leave").contains("go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this), glanceInFront = inFront))"))
+        assertTrue(body(activity, "leave").contains("go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this), glanceInFront = inFront, androidFace = AndroidLock.faceOn))"))
         assertEquals(1, Regex("lockLeave\\(").findAll(body(activity, "leave")).count())
         val live = body(runtime, "callLiveNow")
         assertTrue(live, live.contains("ourCall() || telecomInCall(context.applicationContext) || VoipCalls.phase != VoipPhase.NONE"))
