@@ -8,6 +8,12 @@ import android.util.Log
 
 private const val LOG_TAG = "HomeFront"
 
+/** Design 59d R1-4: how long after the face's unanimated Home start its resume still draws its own ground. */
+const val OWN_GROUND_WINDOW_MS = 3_000L
+
+/** Design 59d R1-4: the mark set at [setAtMs] (elapsed; `null` = none) still counts at [nowMs]. */
+fun ownGroundDue(setAtMs: Long?, nowMs: Long): Boolean = setAtMs != null && nowMs - setAtMs in 0..OWN_GROUND_WINDOW_MS
+
 /**
  * Every "bring Home to the front" start (design 16, QA #1): the boot start, the lock leaving
  * through Home, the lock asking Home to root lock task, the update, a role change and the end of
@@ -42,10 +48,12 @@ object HomeFront {
      * (`WallpaperGround`'s `ownGround`). Set only by a `noAnimation` start (the face's leave); taken by Home's resume.
      */
     @Volatile
-    private var ownGroundDue = false
+    private var ownGroundSetAt: Long? = null
 
-    /** Home's resume: whether the face's leave just brought it ([ownGroundDue]) - read once. */
-    fun takeOwnGroundDue(): Boolean = ownGroundDue.also { ownGroundDue = false }
+    /** Home's resume: whether the face's leave just brought it - read once, and only within [OWN_GROUND_WINDOW_MS] of
+     * that start (R1-4: a resume that took the night path, or a start that never came, leaves no stale mark). */
+    fun takeOwnGroundDue(): Boolean =
+        ownGroundDue(ownGroundSetAt, android.os.SystemClock.elapsedRealtime()).also { ownGroundSetAt = null }
 
     fun intent(context: Context, animate: Boolean = true, noAnimation: Boolean = false): Intent =
         Intent(Intent.ACTION_MAIN)
@@ -58,7 +66,8 @@ object HomeFront {
      * a role change) - as Android's face with its keyguard locked it waits for the unlock
      * ([KeyguardCover.afterAndroidUnlock]); at once otherwise. */
     fun bringAfterUnlock(context: Context, why: String) =
-        KeyguardCover.afterAndroidUnlock(context, "Home ($why)") { bring(it, why) }
+        // Design 59d R1-3: as the face it runs right after the leave's unanimated Home - unanimated too, never a second slide.
+        KeyguardCover.afterAndroidUnlock(context, "Home ($why)") { bring(it, why, noAnimation = AndroidLock.faceOn) }
 
     /**
      * Starts our Home; `false` if the platform refused. [animate] false: no open transition - only
@@ -82,8 +91,9 @@ object HomeFront {
             false
         } else try {
             if (animate) PinLockRuntime.endDarkLockUp()
-            if (noAnimation) ownGroundDue = true
             context.startActivity(intent(context, animate, noAnimation))
+            // Design 59d R1-4: marked only once the start went through.
+            if (noAnimation) ownGroundSetAt = android.os.SystemClock.elapsedRealtime()
             Log.i(LOG_TAG, "Home brought to the front: $why")
             true
         } catch (e: Exception) {

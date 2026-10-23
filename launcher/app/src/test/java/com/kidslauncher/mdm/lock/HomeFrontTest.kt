@@ -92,8 +92,16 @@ class HomeFrontTest {
         assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.FULL, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = false, scrimAlpha = 0))
         val front = code(file("java/com/kidslauncher/mdm/lock/HomeFront.kt"))
         val bring = front.substringAfter("fun bring(")
-        assertTrue("set only by the noAnimation start", bring.contains("if (noAnimation) ownGroundDue = true"))
-        assertEquals(1, Regex("ownGroundDue = true").findAll(front).count())
+        // R1-4: set only by a noAnimation start that went through, and it expires.
+        val set = bring.indexOf("if (noAnimation) ownGroundSetAt = android.os.SystemClock.elapsedRealtime()")
+        assertTrue("set after the start returned", set > bring.indexOf("context.startActivity(intent(context, animate, noAnimation))"))
+        assertEquals(1, Regex("ownGroundSetAt = android").findAll(front).count())
+        assertTrue(ownGroundDue(setAtMs = 10_000L, nowMs = 10_000L + OWN_GROUND_WINDOW_MS))
+        assertFalse("a later, unrelated resume", ownGroundDue(setAtMs = 10_000L, nowMs = 10_001L + OWN_GROUND_WINDOW_MS))
+        assertFalse("none set", ownGroundDue(setAtMs = null, nowMs = 10_000L))
+        assertEquals(3_000L, OWN_GROUND_WINDOW_MS)
+        // R1-3: the relock's queued Home after the unlock is unanimated as the face too.
+        assertTrue(front.contains("KeyguardCover.afterAndroidUnlock(context, \"Home (\$why)\") { bring(it, why, noAnimation = AndroidLock.faceOn) }"))
         val home = code(file("java/com/kidslauncher/mdm/ui/HomeActivity.kt"))
         assertTrue(home.substringAfter("override fun onResume() {").substringBefore("startWork()").contains("if (HomeFront.takeOwnGroundDue()) ownGround = true"))
         assertTrue(home.substringAfter("override fun onStop() {").substringBefore("\n    }\n").contains("ownGround = false"))

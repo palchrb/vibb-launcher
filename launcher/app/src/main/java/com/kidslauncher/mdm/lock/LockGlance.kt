@@ -26,13 +26,13 @@ const val LOCK_GLANCE_CAPABILITY = "lock_glance_v1"
  */
 enum class LockStage { GLANCE, KEYPAD, ASK }
 
-/** Whether the glance page (its root, with the ground and the mark) is on screen: on the page and under Android's pad. */
+/** Whether the glance page (its root, with its ground) is on screen: on the page and under Android's pad. */
 fun glancePageShown(stage: LockStage): Boolean = stage != LockStage.KEYPAD
 
 /**
  * Design 59d step B (the user's rc.2 recording: after the pad, the glance came to the front for ~330 ms and slid away
- * "the same as the old keypad page did"): the page's content - everything but the root's ground and mark - goes once the
- * glance leaves ([leaving]), so the keyguard's going-away reveals only the night ground and Home follows unanimated.
+ * "the same as the old keypad page did"): the page's content - everything but the root's ground - goes once the
+ * glance leaves ([leaving]), so the keyguard's going-away reveals only the glance's ground and Home follows unanimated.
  * Under Android's pad (ASK) the page stays as drawn: the user reads the pad as an overlay on our own lock. It changes
  * only what is drawn: when the glance leaves is still `faceStep`'s LEAVE alone.
  */

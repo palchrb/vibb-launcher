@@ -120,6 +120,10 @@ class WallpapersTest {
         val setBoth = applier.substringAfter("private fun setBoth(").substringBefore("\n    }\n")
         assertTrue(setBoth.contains("val lock = lockScreenFill(home, face, glance)"))
         assertTrue(setBoth.contains("if ((lockScrim ushr 24) != 0) Canvas(lockBitmap).drawColor(lockScrim)"))
+        // R1-6: a lock photo that can't be decoded falls back to the night mark - Home's half is still set.
+        val image = setBoth.substringAfter("is WallpaperFill.Image -> homeBitmap(context, lock, w, h) ?: run {").substringBefore("}")
+        assertTrue(image, image.contains("render(context, WallpaperFill.NightMark, null, w, h)"))
+        assertFalse(image, image.contains("return"))
         // The rc.2 run's R3: one fill on both is one set with both flags (the rollback) - SystemUI's ThemeOverlayController
         // labels such a set "home" (color_both 1); the face's lock-first, home-last pair keeps the palette on home's colours.
         assertTrue(setBoth.contains("if (lock == home.fill && lockScrim == 0) {\n                systemId = wm.setBitmap(homeBitmap, null, true, WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK)"))

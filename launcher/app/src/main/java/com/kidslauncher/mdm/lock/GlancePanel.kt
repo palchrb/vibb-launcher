@@ -282,7 +282,7 @@ class GlancePanel(
     fun ownKeypad() = step(GlanceStageEvent.OwnKeypad)
 
     /** Design 59d step B: the glance leaves as the face, in front - its content goes before Home ([glanceLeaveHides]);
-     * the root keeps the ground and the mark, and the window stays visible (a row's `PendingIntent` send needs it). */
+     * the root keeps its ground (the lock wallpaper under its scrim), and the window stays visible (a row's `PendingIntent` send needs it). */
     fun leaving() = guarded("leaving") {
         leaving = true
         showContent()
@@ -465,7 +465,7 @@ class GlancePanel(
     private fun renderNow() {
         val shown = glancePageShown(state.stage)
         glance.root.visibility = if (shown) View.VISIBLE else View.GONE
-        // Design 59d step B: while the glance leaves, only the ground and the mark.
+        // Design 59d step B: while the glance leaves, only the root's ground.
         showContent()
         keypad.importantForAccessibility =
             if (shown) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_AUTO

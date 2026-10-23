@@ -75,7 +75,7 @@ class LockGlanceTest {
         val ask = glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Unlock, face = true)
         assertEquals(LockStage.ASK, ask.stage)
         assertTrue("the pad over our own lock", glancePageShown(ask.stage) && glanceContentShown(leaving = false))
-        assertFalse("the leave: only the ground and the mark", glanceContentShown(leaving = true))
+        assertFalse("the leave: only the ground", glanceContentShown(leaving = true))
         assertTrue(glancePageShown(ask.stage))
     }
 

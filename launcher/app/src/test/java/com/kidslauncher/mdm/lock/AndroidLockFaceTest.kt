@@ -242,7 +242,7 @@ class AndroidLockFaceTest {
             assertTrue(path, text.contains(call))
             assertFalse(path, text.contains("HomeFront.bring("))
         }
-        assertTrue(code("$lock/HomeFront.kt").contains("KeyguardCover.afterAndroidUnlock(context, \"Home (\$why)\") { bring(it, why) }"))
+        assertTrue(code("$lock/HomeFront.kt").contains("KeyguardCover.afterAndroidUnlock(context, \"Home (\$why)\") { bring(it, why, noAnimation = AndroidLock.faceOn) }"))
         val start = code("$main/ui/LockActivity.kt").substringAfter("fun start(context: Context) {").substringBefore("\n        }\n")
         assertTrue(start.contains("KeyguardCover.afterAndroidUnlock(context, \"the time-rule screen\") { startNow(it) }"))
         // The queue waits only while the face's Android is locked, and runs when our lock leaves LOCKED.
@@ -287,7 +287,7 @@ class AndroidLockFaceTest {
     }
 
     @Test
-    fun `59d B - the page shows under the pad, only the ground and the mark at the leave`() {
+    fun `59d B - the page shows under the pad, only its ground at the leave`() {
         assertTrue(glancePageShown(LockStage.GLANCE))
         assertTrue("the page under Android's pad", glancePageShown(LockStage.ASK))
         assertFalse("our keypad", glancePageShown(LockStage.KEYPAD))

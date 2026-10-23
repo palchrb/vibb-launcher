@@ -188,9 +188,11 @@ object WallpaperApplier {
                 // glance's ground as Home's would be drawn, then its scrim over it (as `GroundDrawable` draws it).
                 val lockBitmap = when (lock) {
                     WallpaperFill.NightMark -> render(context, lock, null, w, h)
+                    // Design 59d R1-6: a lock photo that can't be decoded never costs Home's half - the night mark
+                    // instead (the scrim below still applies), logged.
                     is WallpaperFill.Image -> homeBitmap(context, lock, w, h) ?: run {
-                        homeBitmap.recycle()
-                        return ApplyOutcome(0, false)
+                        Log.w(LOG_TAG, "The lock wallpaper's photo couldn't be decoded - the night mark on the lock instead")
+                        render(context, WallpaperFill.NightMark, null, w, h)
                     }
                     else -> render(context, lock, null, w / 2, h / 2)
                 }
