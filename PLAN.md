@@ -826,7 +826,11 @@ findings, merge to `main`, full suite once.
   from then on; `adb screencap` goes black). Server + launcher in one commit (the `hardening` policy keys are pinned
   on both sides). **No global camera switch** ("en full kill switch for kamera gjør jo fort at videochat ikke
   funker"): the Camera app is removed from the allowlist as today; a per-app "Camera: off" (the device owner denying
-  the CAMERA permission for one package, `setPermissionGrantState`) is on the long list ("legg på long list at vi kan vurdere en sånn per-app videobryter senere", 2026-10-23), not ordered. S.
+  the CAMERA permission for one package, `setPermissionGrantState`) is on the long list ("legg på long list at vi kan vurdere en sånn per-app videobryter senere", 2026-10-23), not ordered. S. Same list, same code (the user, 2026-10-23, "legg de på lista"): a
+  **permissions row per catalog app in the PWA** - the ordinary runtime permissions (contacts, SMS, phone, media,
+  notifications) granted silently by the device owner before the first start; the sensor ones (camera, microphone,
+  background location, body sensors) can't be granted silently since Android 12 - shown as "approve on the phone",
+  and deniable per app from the same row. S-M.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
