@@ -815,7 +815,11 @@ findings, merge to `main`, full suite once.
   measured on `handy36`; the Jelly Star's entry a TODO with the emulator's numbers - **measure a frame of its face**),
   else today's centred clock. §8.9 decided (a) from the capture (`docs/testing/2026-10-23-edge-swipe-capture.md`): with
   lock task's flags in sync Quickstep refuses the edge swipe; the user's swipes went through on desynced flags - the
-  system's Home while LOCKED now heals them at once (16d's heal, `HealTrigger.SYSTEM_HOME`). Code QA next, then rc.3.
+  system's Home while LOCKED now heals them at once (16d's heal, `HealTrigger.SYSTEM_HOME`). Code QA
+  (`qa-59d-jl-code.md`): merge after fixes; the fix round (JL-1..8) and §8.13 (Android's gesture handle on the glance
+  in the hint line's place, a swipe from it asks; Nunito Light for the profile clock) are on the branch - rc.3 next.
+  **On rc.3**: two edge swipes in a row (the second refused?) and the Jelly Star's `ro.product.model` and a frame of its
+  face for its clock profile.
 - **6-inch / Android 15 check (2026-10-23, `docs/testing/2026-10-23-six-inch-android15.md`, AVD six35 = pixel_7 411x914 dp,
   API 35):** every screen fits at font 1.0 and 1.3, nothing broken or oversized, just more empty space. Findings: **F1
   (High, M)** an UNARMED reboot (a crash, `adb reboot`) never finishes booting on an image whose stock launcher isn't

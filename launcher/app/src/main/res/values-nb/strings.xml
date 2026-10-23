@@ -298,9 +298,8 @@
     <string name="music_pause">Pause</string>
     <string name="music_previous">Forrige</string>
     <string name="music_next">Neste</string>
-    <!-- Design 59d step J: the glance page's hint line where "Lås opp" was (lock_media_unlock is now its TalkBack
-         action's label). -->
-    <string name="lock_glance_swipe_hint">Sveip opp for å låse opp</string>
+    <!-- The unlock's name: since design 59d step J/§8.13 the glance's handle's TalkBack description and click
+         action (the "Lås opp" button and the hint line went). -->
     <string name="lock_media_unlock">Lås opp</string>
     <!-- The lock's flashlight button (design 41 §1.3): its name and its state for TalkBack. -->
     <string name="lock_torch">Lommelykt</string>

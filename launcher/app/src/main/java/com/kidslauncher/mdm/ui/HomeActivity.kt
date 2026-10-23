@@ -244,6 +244,11 @@ class HomeActivity : UIObjectActivity() {
             override fun handleOnBackPressed() {}
         })
         apps.observeForever(appsObserver)
+        // Design 59d §8.9 (a), JL-7: the system's Home creating us while LOCKED (a destroyed Home) is the same proof as
+        // a new intent - a home gesture got through; heal lock task's flags. Not for a recreation.
+        if (savedInstanceState == null && intent?.hasCategory(Intent.CATEGORY_HOME) == true) {
+            PinLockRuntime.homeIntent(this, intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false))
+        }
         // Design 16c: the content only when the lock allows it - the night ground otherwise; the
         // lock's edges swap them.
         PinLockRuntime.addModeListener(modeListener)

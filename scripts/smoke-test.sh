@@ -396,7 +396,7 @@ taskbar_unused() {
     if [ "$(taskbar_field mNavigationMode "$1")" = "-1" ]; then echo "TaskbarDelegate never initialised (mNavigationMode=-1)"; fi
 }
 
-# swipe_up_from_node <regex>: a swipe up from the node's centre to a third of its height (design 59d step J).
+# swipe_up_from_node <regex>: a swipe up from the node's centre to a third of its height (design 59d step J, §8.13).
 swipe_up_from_node() {
     local node coords
     node="$(printf '%s' "$UI_XML" | grep -o '<node [^>]*>' | grep -E -m1 "$1")" || return 1
@@ -407,14 +407,14 @@ swipe_up_from_node() {
     sh_ input swipe $((($1 + $3) / 2)) $((($2 + $4) / 2)) $((($1 + $3) / 2)) $((($2 + $4) / 6)) 150 >/dev/null
 }
 
-# Design 25: the lock comes up on its glance page; since design 59d step J a swipe up (from the hint line, where
-# "Lås opp" was) leads to the keypad, which UI dumps don't show while the glance page covers it
+# Design 25: the lock comes up on its glance page; since design 59d step J a swipe up (§8.13: from the gesture handle
+# at the bottom, where "Lås opp" was) leads to the keypad, which UI dumps don't show while the glance page covers it
 # (no-hide-descendants).
-GLANCE_HINT_NODE='resource-id="[^"]*:id/lock_glance_hint"'
+GLANCE_HANDLE_NODE='resource-id="[^"]*:id/lock_glance_handle"'
 enter_pin() {
     local digit i
     ui_dump
-    if swipe_up_from_node "$GLANCE_HINT_NODE"; then
+    if swipe_up_from_node "$GLANCE_HANDLE_NODE"; then
         sleep 0.5
         ui_dump
     fi

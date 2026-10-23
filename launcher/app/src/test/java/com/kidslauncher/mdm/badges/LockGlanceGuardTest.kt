@@ -189,6 +189,8 @@ class LockGlanceGuardTest {
         "\$roomDp", "\$padTop", "\$padBottom",
         // Design 59d step L: the clock profile's own constant name ("emulator Pixel", "Jelly Star").
         "\${p.name}",
+        // JL-6: a phone with no clock profile, once - its model, maker, density and width (nothing personal).
+        "\${Build.MODEL}", "\${Build.MANUFACTURER}", "\$density", "\$widthDp",
     )
 
     @Test

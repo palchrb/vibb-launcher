@@ -428,6 +428,10 @@ ends with E.
    Overview gestures and the power menu over the occluded BFU keyguard (Overview stays unavailable, as on SystemUI's
    own BFU face); and whether `onDismissCancelled` comes at all for the pre-unlock pad's Back (`Boot cover: Android's
    PIN pad cancelled`) - without it only the stop's line leaves a hint.
+7. J/L/§8.9 (the code QA's JL-3 and JL-7, `qa-59d-jl-code.md`): on rc.3 the user records **two bottom-edge swipes in a
+   row** on the glance - if the second also goes through, §8.9's heal doesn't cure the case, and (b) or a dumpsys at that
+   moment is next; with the clock profile, music + 1 row shows the compact tile at 473 dp (the user's call: the clock
+   keeps Android's place, the tile goes compact first - he likes the compact tile).
 
 The release after the rounds is `launcher-v0.36.0-rc.3` on the same server (no API change expected; if anything
 needs a status field, both directories in one commit as always).
@@ -686,8 +690,9 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   at every text change) and its baseline at 182 dp; the date 16 sp, its box at 32 dp, its baseline at 219 dp. The first
   try put the box at a fixed 29 dp ("5" right, "1" 9 px off) - Nunito's bearings vary more than Google Sans Flex's. The user's frame's numbers (56 px, 40
   px, 180 px, 14 sp at 210 px) were the starting values; the emulator's own frames replaced them. The twin
-  (`docs/testing/screens/59d-jl/clock-twin.png`, Android's left, ours right, each 240 px wide, both "10:18") matches
-  the ink's left edge, baseline and height within 2 px; Nunito's "10:18" is wider (319 px of ink against 270). The clock in dp (Android's small clock doesn't follow the font scale), Nunito
+  (`docs/testing/screens/59d-jl/clock-twin.png`, Android's left, ours right, each 240 px wide; Android's "10:18",
+  ours "10:21") matched the ink's left edge, baseline and height within 2 px; Nunito SemiBold's ink was wider (319 px
+  against 270 for the same width of digits). The fix round's light clock replaced the twin (below). The clock in dp (Android's small clock doesn't follow the font scale), Nunito
   SemiBold (the lightest bundled; Android's is thinner - Google Sans Flex isn't ours), the date Android's short format
   capitalised on screen, the alarm line under the date at its start. `GlancePanel.placeProfile` at every fit sets the
   margins in window coordinates (`baselineMarginPx`, `startMarginPx`): the clock's box may reach above the page's content
@@ -726,6 +731,45 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   `USER_PRESENT` and the row's target was dropped - round 1's behaviour (`ANDROID_ASK_TIMEOUT_MS`), not J's; the retry
   with the PIN typed within 1.2 s opened it.
 
+- **Fix round** (`docs/review/qa-59d-jl-code.md`, JL-1..8, and §8.13 below, built together):
+  - JL-1: the swipe's DOWN is gated on `glancePageShown(stage)`, not GLANCE alone - in ASK (the page under the pad) a
+    swipe asks again after `ANDROID_ASK_RETRY_MS`, as the button's second tap did ("never dead taps").
+  - JL-2: Nunito Light (300) for the profile clock only: `scripts/nunito-static.sh` makes `nunito_light.ttf` from the
+    same pinned variable font (the three other weights left byte-identical - the regenerated ones differed only in
+    fonttools' output, so they were not re-committed); `R.font.nunito_light` in `profileLook`, **not** in `nunito.xml`'s
+    family (a normal 400 request would pick 300 over 600 and turn every body text light). NOTICE.md names the font,
+    not its files - unchanged. The new twin (`docs/testing/screens/59d-jl/clock-twin.png`, Android's "10:18" left, ours "11:17" right): ours the first digit's ink at x 51 (Android 49 for a "1", 53 for a "5"), the digits from y 181 to the last row 272 (Android 180-272), 92 px high; the stems 8 px against Android's 7-8 (SemiBold's were 13) - Light is thin enough, ExtraLight not needed; the date unchanged (ink at x 50, y 312-331, both). The profile's numbers didn't move.
+  - JL-3 (the user's call): no change to the fit's order - the clock keeps Android's place and the music tile goes
+    compact first; `LockGlanceLayoutTest` pins it (music + 1 row: compact at 473 dp, full at 497 now that the hint
+    line's 23.6 dp went), §8.4 item 7.
+  - JL-4: three pins - the swipe's controls are the layout's touchables less the page and the timer tile; the DOWN's
+    `leaving`/`covered`/page guard; the recognised swipe's `CANCEL_VIEWS` and the activity's cancel to the views.
+  - JL-5 with §8.13: the bottom inset is the page's (below).
+  - JL-6: `glanceClockProfile(model, manufacturer, density, widthDp)` - 240 dpi **and** 320 dp (the dp width makes the
+    numbers fit, the density is where they were measured; a comment says why); the Jelly Star's model matched ignoring
+    spaces, underscores and case (still unverified - read `ro.product.model` on the phone); no match logs once
+    (`Glance clock: no profile (model .., maker .., density .., width .. dp)`). The Jelly Star TODO stays.
+  - JL-7: `HomeActivity.onCreate` with the HOME intent while LOCKED (a destroyed Home), not a recreation, is offered to
+    `PinLockRuntime.homeIntent` as `onNewIntent` is; §8.4 item 7 asks for the two-swipe recording.
+  - JL-8: the twin's times, `launcher/CLAUDE.md`'s ask-again line (a swipe or a row's tap) and its stale bottom-row
+    sentence.
+  - **§8.13 as built**: the hint line is gone (strings and layout; the bottom row 8 dp under the top block, `fixed` 56
+    dp); Android's gesture handle is a view of the lock's frame on the window's bottom edge (`GlancePanel.handle`, id
+    `lock_glance_handle`, over the page and under the VoIP ring card, shown with the page's content only, never
+    clickable): pure `glanceHandle(profile)` - the profile's measured pill (`ClockGeometry.handle`; the emulator:
+    SystemUI's 108 x 4 dp, its bottom 10 dp above the window's - centred in the 24 dp gesture inset -, white at 92 %,
+    measured from the frames where SystemUI's handle showed) or `DEFAULT_GLANCE_HANDLE` (108 x 4 dp, rounded, white
+    80 %, its bottom 8 dp above the window's bottom: "8 dp above the inset" read literally would sit on Nødsamtale's
+    row, since the page's content ends 8 dp above the inset) - and `glanceHandleViewHeightDp` (the pill centred in a view
+    as tall as the inset it marks, so TalkBack's node never covers Nødsamtale). `glanceSwipeBlocked(onControl,
+    scrollTakes)` lost its edge clause: a swipe from the pill is the page's; the system taking it (a desync) arrives as
+    `ACTION_CANCEL`, which ends the touch with nothing asked. TalkBack's node is the handle (described and its click
+    action named "Lås opp"); own mode the same pill and swipe to our keypad. `scripts/smoke-test.sh` swipes from the
+    handle. Tests: `LockGlanceTest` (the handle, the block rule, the profile key), `LockMediaGuardTest` (the handle's
+    view and action, JL-4), `LockGlanceLayoutTest` (the fits for `fixed` 56, both layouts; the fonts), `FontLicenseTest`
+    (four weights), `StatusBarHealTest` (JL-7), `LockGlanceGuardTest` (the no-profile line).
+  - **Device checks** (`handy36`, `wm density 240`, kiosk on, android mode): a swipe from the pill (`input swipe 240 836 240 300 150`, in the gesture inset) asks for Android's pad - Quickstep's consumer `TYPE_RESET_GESTURE` (lock task refuses it), our `Glance swipe up: unlock asked`, the bouncer gets the focus; on the simulated desync (HOME in the LOCKED features) the same swipe is the system's (`DeviceLockedInputConsumer`), no ask of ours (the pilfer's cancel), and `The system's Home while LOCKED ... healed`; our pill sits pixel for pixel on SystemUI's (rows 833-838, x 159-320, luma 236 against 235); own mode (the Lock row back to Vibb One's) the pill's swipe opens our keypad; at font scale 1.3 with music and three missed-call rows the fit is candidate 5 - the compact tile, one row counted, the next under the fade (`docs/testing/screens/59d-jl/glance-music-3rows-1.3.png`). Not shown on the device: a swipe *in* ASK - SystemUI's pad is up within ~0.4 s on `handy36`, before a second `input swipe` lands, so the second goes to the pad; the page gate is pinned by `LockMediaGuardTest`.
+
 ### 8.13 Step J addendum (the user, 2026-10-23): the handle instead of the hint line
 
 The user, looking at the clock twin: our glance should show Android's gesture handle (the bright pill at the bottom of
@@ -737,4 +781,4 @@ counts as the page's swipe: when lock task refuses the system's Home gesture the
 the system takes the gesture (a desync, §8.9) we get `ACTION_CANCEL` and do nothing - so `glanceSwipeBlocked`'s
 bottom-edge rule goes; (3) the hint line "Sveip opp for å låse opp" goes; TalkBack's "Lås opp" click action moves to
 the pill (a focusable node with a content description); (4) own mode: the same pill, the same swipe, our keypad.
-Built in J's fix round.
+Built in J's fix round (§8.11, "Fix round").

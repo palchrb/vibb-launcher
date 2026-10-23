@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Design 59d §8.13: the glance's gesture handle, a view lock.GlancePanel adds to the lock's frame (UI dumps and the
+         smoke test find it by this id). -->
+    <item name="lock_glance_handle" type="id" />
+</resources>

@@ -21,7 +21,6 @@ import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowInsets
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -113,9 +112,42 @@ class GlancePanel(
 
     /** Design 59d step L: Android's small clock's geometry on this phone, else `null` (the centred clock). */
     private val profile: ClockGeometry? = try {
-        glanceClockProfile(Build.MODEL, Build.MANUFACTURER, activity.resources.displayMetrics.density)
+        val density = activity.resources.displayMetrics.density
+        val widthDp = activity.resources.configuration.screenWidthDp
+        glanceClockProfile(Build.MODEL, Build.MANUFACTURER, density, widthDp).also {
+            // JL-6: a phone with no profile says so once (nothing here is personal).
+            if (it == null) Log.i(LOG_TAG, "Glance clock: no profile (model ${Build.MODEL}, maker ${Build.MANUFACTURER}, density $density, width $widthDp dp) - the centred clock")
+        }
     } catch (e: Throwable) {
         null
+    }
+
+    /**
+     * Design 59d §8.13: Android's gesture handle, drawn by us where SystemUI's is (lock task hides SystemUI's while we are
+     * LOCKED). A view of its own in the lock's frame, over the page and under the VoIP ring card, on the window's bottom
+     * edge ([glanceHandle], [glanceHandleViewHeightDp]); not clickable, so every touch on it reaches the page and its swipe.
+     * TalkBack's node for the unlock ([handleAction]).
+     */
+    private val handle: View = View(activity).also { view ->
+        val pill = glanceHandle(profile)
+        val density = activity.resources.displayMetrics.density
+        val heightPx = (pill.heightDp * density).roundToInt()
+        val insetPx = (pill.bottomDp * density).roundToInt()
+        val shape = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = heightPx / 2f
+            setColor(android.graphics.Color.argb((pill.alpha * 255).roundToInt(), 255, 255, 255))
+        }
+        view.id = R.id.lock_glance_handle
+        view.background = android.graphics.drawable.InsetDrawable(shape, 0, insetPx, 0, insetPx)
+        view.visibility = View.GONE
+        frame.addView(
+            view,
+            FrameLayout.LayoutParams(
+                (pill.widthDp * density).roundToInt(),
+                (glanceHandleViewHeightDp(pill) * density).roundToInt(),
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+            ),
+        )
     }
 
     /** r6 §2: the session's and the timer's callbacks of one frame render once - each source's tile
@@ -182,7 +214,7 @@ class GlancePanel(
         glance.lockGlanceDate.format12Hour = datePattern
         glance.lockGlanceDate.format24Hour = datePattern
         profile?.let { profileLook(it, locale) }
-        hintAction(glance.lockGlanceHint)
+        handleAction(handle)
         glance.lockGlanceEmergency.setOnClickListener { onEmergency() }
         glance.lockGlanceTorch.setOnClickListener { torch?.toggle() }
         glance.lockTimerTile.setOnClickListener { tapClock() }
@@ -206,14 +238,15 @@ class GlancePanel(
     }
 
     /**
-     * Design 59d step L: the clock, the date and the alarm line left-aligned as Android's small clock - Nunito's lightest
-     * bundled weight (SemiBold) for the clock, the short date capitalised as Android's ("Fre. 23. okt."), the date's
+     * Design 59d step L: the clock, the date and the alarm line left-aligned as Android's small clock - Nunito Light for
+     * the clock (JL-2), the short date capitalised as Android's ("Fre. 23. okt."), the date's
      * size; where they sit is [placeProfile]'s, at every fit.
      */
     private fun profileLook(p: ClockGeometry, locale: Locale) {
         Log.i(LOG_TAG, "Glance clock: ${p.name} profile")
         val clock = glance.lockGlanceClock
-        ResourcesCompat.getFont(activity, R.font.nunito_semibold)?.let { clock.typeface = it }
+        // JL-2: Android's small clock is thin - Nunito Light (300), bundled for this clock only (not in nunito.xml's family).
+        ResourcesCompat.getFont(activity, R.font.nunito_light)?.let { clock.typeface = it }
         val date = glance.lockGlanceDate
         date.transformationMethod = FirstCapital(locale)
         date.setTextSize(TypedValue.COMPLEX_UNIT_SP, p.dateSp)
@@ -396,10 +429,12 @@ class GlancePanel(
 
     /**
      * Every touch of the lock's window, before its views ([PinLockActivity.dispatchTouchEvent]; [covered]: the VoIP
-     * ring card or a dialog is over the page): on the glance page a vertical swipe up anywhere - not on a control that
-     * keeps the touch, not a drag in the rows' scroll while it can scroll, never from the bottom edge's gesture inset
-     * ([glanceSwipeBlocked]) - is "Lås opp" ([glanceSwipeStep]: the ASK stage as the face, our keypad in own mode). It
-     * only asks; a row's tap and the tile's controls are unchanged. Never throws.
+     * ring card or a dialog is over the page): on the glance page - under Android's pad too (ASK: a second swipe asks
+     * again, as the button's second tap did, JL-1) - a vertical swipe up anywhere, the handle and the bottom inset
+     * included (§8.13), not on a control that keeps the touch and not a drag in the rows' scroll while it can scroll
+     * ([glanceSwipeBlocked]), is "Lås opp" ([glanceSwipeStep]: the ASK stage as the face, our keypad in own mode). The
+     * system taking the gesture sends ACTION_CANCEL, which ends it with nothing asked. It only asks; a row's tap and the
+     * tile's controls are unchanged. Never throws.
      */
     fun swipe(ev: MotionEvent, covered: Boolean): SwipeTouch = try {
         swipeNow(ev, covered)
@@ -414,15 +449,12 @@ class GlancePanel(
         if (action == MotionEvent.ACTION_DOWN) {
             swipeReset()
             val root = glance.root
-            if (covered || !started || leaving || state.stage != LockStage.GLANCE || root.visibility != View.VISIBLE || root.height <= 0) {
+            if (covered || !started || leaving || !glancePageShown(state.stage) || root.visibility != View.VISIBLE || root.height <= 0) {
                 return SwipeTouch.PASS
             }
-            val inset = root.rootWindowInsets?.let {
-                maxOf(it.getInsets(WindowInsets.Type.systemGestures()).bottom, it.getInsets(WindowInsets.Type.mandatorySystemGestures()).bottom)
-            } ?: 0
             val scroll = glance.lockGlanceScroll
             val scrollTakes = hit(scroll, ev) && (scroll.canScrollVertically(1) || scroll.canScrollVertically(-1))
-            swipeBlocked = glanceSwipeBlocked(swipeControls().any { hit(it, ev) }, scrollTakes, ev.rawY - screenTop(root), root.height.toFloat(), inset.toFloat())
+            swipeBlocked = glanceSwipeBlocked(swipeControls().any { hit(it, ev) }, scrollTakes)
             swipeDown = MotionEvent.obtain(ev)
             swipeVelocity = VelocityTracker.obtain().also { it.addMovement(ev) }
             return SwipeTouch.PASS
@@ -484,17 +516,16 @@ class GlancePanel(
         return ev.rawX >= at[0] && ev.rawX < at[0] + view.width && ev.rawY >= at[1] && ev.rawY < at[1] + view.height
     }
 
-    private fun screenTop(view: View): Float = IntArray(2).also { view.getLocationOnScreen(it) }[1].toFloat()
-
     /**
-     * Design 59d step J: the "Lås opp" button went, so TalkBack (whose touch exploration takes the swipe) reaches the
-     * unlock through the hint line - one node, its text, and the click action named "Lås opp", which asks as the swipe
-     * does. A sighted tap on the line does nothing (it is no button: Android's own hint isn't either).
+     * Design 59d step J, §8.13: TalkBack (whose touch exploration takes the swipe) reaches the unlock through the handle -
+     * one node, described "Lås opp", whose click action, named "Lås opp", asks as the swipe does. A sighted tap on it does
+     * nothing (it is no button: Android's own handle isn't either).
      */
-    private fun hintAction(hint: View) {
-        hint.isScreenReaderFocusable = true
-        hint.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
-        hint.accessibilityDelegate = object : View.AccessibilityDelegate() {
+    private fun handleAction(view: View) {
+        view.contentDescription = activity.getString(R.string.lock_media_unlock)
+        view.isScreenReaderFocusable = true
+        view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        view.accessibilityDelegate = object : View.AccessibilityDelegate() {
             override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfo) {
                 super.onInitializeAccessibilityNodeInfo(host, info)
                 info.addAction(AccessibilityNodeInfo.AccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, activity.getString(R.string.lock_media_unlock)))
@@ -531,11 +562,13 @@ class GlancePanel(
     /** The glance is leaving ([leaving]) - set only by the leave, cleared by a refused finish or the next resume. */
     private var leaving = false
 
-    /** The page's content (the root's children) per [glanceContentShown]; the root itself, with the ground, stays. */
+    /** The page's content (the root's children) per [glanceContentShown]; the root itself, with the ground, stays. The
+     * handle (§8.13) shows with the content, only while the page does. */
     private fun showContent() {
         val content = if (glanceContentShown(leaving)) View.VISIBLE else View.INVISIBLE
         val root = glance.root
         for (i in 0 until root.childCount) root.getChildAt(i).visibility = content
+        handle.visibility = if (root.visibility == View.VISIBLE && glanceContentShown(leaving)) View.VISIBLE else View.GONE
     }
 
     private fun step(event: GlanceStageEvent) = guarded("stage") {
@@ -937,7 +970,8 @@ class GlancePanel(
         val more = glance.lockGlanceMore
         more.text = activity.resources.getQuantityString(R.plurals.glance_more, 9, 9)
         val heights = GlanceHeights(
-            fixed = withMargins(glance.lockGlanceHint, width) + withMargins(glance.lockGlanceBottom, width),
+            // §8.13: the handle sits in the bottom inset (the root's padding), outside the fit.
+            fixed = withMargins(glance.lockGlanceBottom, width),
             clockBig = clockBig,
             clockSmall = clockSmall,
             // The alarm line goes with the date (design 42 §1.3).

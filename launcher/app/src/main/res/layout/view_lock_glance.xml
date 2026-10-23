@@ -2,8 +2,9 @@
 <!-- The PIN lock's glance page (design 25, mockup LockGlance.dc.html A and B; design r9; lock.GlancePanel, pure
      lock.LockGlance): the top block - the clock, the date, the music tile while something plays (full, or compact
      when there is too little room - lock.glanceFit), the timer tile, then up to three notification rows and the
-     "more" line in their own scroll - and the bottom block, the swipe hint (design 59d step J: a swipe up asks for the
-     unlock) and the bottom row: the lock's emergency call and the flashlight (design 41). The bottom block is measured whole and stays at the bottom; the
+     "more" line in their own scroll - and the bottom block, the bottom row: the lock's emergency call and the flashlight
+     (design 41). A swipe up anywhere asks for the unlock (design 59d step J); Android's gesture handle is drawn below the
+     page, in the bottom inset, by lock.GlancePanel (§8.13 - the hint line went). The bottom block is measured whole and stays at the bottom; the
      top block takes what is left and clips its own overflow, so a fit made for more room never pushes the bottom row
      off (r9 §1-2). Only the rows scroll. Part of the lock: nothing here opens an app, a setting or a notification -
      a row and the swipe only lead to the unlock. The root only blocks touches to the keypad below - no node for TalkBack
@@ -447,34 +448,18 @@
         </ScrollView>
     </LinearLayout>
 
-    <!-- Design 59d step J (the user, rc.2): the "Lås opp" button went - a swipe up anywhere on the page asks for the
-         unlock (Android's PIN pad as the face, our keypad in own mode; lock.glanceSwipeStep), as on Android's own lock
-         screen. This small grey line says so, in Android's style. Not a button for touch; for TalkBack it is the
-         unlock's node - its click action, "Lås opp", asks as the swipe does (GlancePanel.hintAction). -->
-    <TextView
-        android:id="@+id/lock_glance_hint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:fontFamily="@font/nunito"
-        android:gravity="center_horizontal"
-        android:text="@string/lock_glance_swipe_hint"
-        android:textColor="@color/kid_core_dim"
-        android:textSize="14sp" />
-
     <!-- The bottom row (design 41 §1.3): "Nødsamtale" centred as before and the flashlight at the
          end, beside it without pushing it off centre. Nødsamtale keeps the 48 dp target of design 34
          P7 (qa-34-s8-code N5; the row's margin gave the 4 dp) and the room for a 48 dp button on each
          side, so a long label at a large font wraps before it reaches the button; the button is no
-         taller than it. 4 dp under the swipe hint (design 59d step J; the "Lås opp" button had 12 dp of air, the user
-         2026-10-21: "litt for tett" at 2 dp - the hint is text, its Nødsamtale label still sits ~18 dp below it), so
-         the hint and the row with their margins (the fit's fixed part) are ~79 dp. The flashlight is gone without a flash unit or when the
+         taller than it. 8 dp under the top block (design 59d §8.13: the hint line and before it "Lås opp" sat here), so
+         the row with its margin (the fit's fixed part) is 56 dp. The flashlight is gone without a flash unit or when the
          torch is refused while LOCKED (§1.5). -->
     <FrameLayout
         android:id="@+id/lock_glance_bottom"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp">
+        android:layout_marginTop="8dp">
 
         <TextView
             android:id="@+id/lock_glance_emergency"

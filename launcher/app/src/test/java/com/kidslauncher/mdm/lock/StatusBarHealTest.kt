@@ -243,6 +243,10 @@ class StatusBarHealTest {
         val newIntent = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt").substringAfter("override fun onNewIntent(").substringBefore("override fun onStop(")
         assertTrue(newIntent.contains("val broughtByUs = intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false)"))
         assertTrue(newIntent.indexOf("PinLockRuntime.homeIntent(this, broughtByUs)") in 0 until newIntent.indexOf("if (!toTop) return"))
+        // JL-7: a destroyed Home created by the system's start is offered too - not a recreation.
+        val create = code("java/com/kidslauncher/mdm/ui/HomeActivity.kt").substringAfter("override fun onCreate(").substringBefore("gate()")
+        assertTrue(create, create.contains("if (savedInstanceState == null && intent?.hasCategory(Intent.CATEGORY_HOME) == true) {"))
+        assertTrue(create, create.contains("PinLockRuntime.homeIntent(this, intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false))"))
         // The LOCKED edge's pass stays on the main thread before the lock resumes (qa-16c-code #1):
         // the heal never replaces it.
         // (16e, qa-16e-code #3: before show while the boot's mark may hold the lock, after it otherwise.)
