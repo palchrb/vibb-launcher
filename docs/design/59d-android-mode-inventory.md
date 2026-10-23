@@ -523,3 +523,15 @@ on a tappable)`; tests. Launcher, S. **After round 1 merges** (it edits `GlanceP
 Also noted from the same test: Android's "Return to call" on the pad does nothing for a WhatsApp call (self-managed
 Telecom calls have no in-call screen for `showInCallScreen` to bring up - the pad closes onto SystemUI's face). Not
 ours; our own `InCallActivity` answers it for telephony. Check Element X on the emulator once (§8.4 item 2).
+
+### 8.8 Step L (the user, 2026-10-23, a thought): the glance as a twin of Android's face
+
+The idea: make the frame before ours (SystemUI's face) and ours look the same, so the glimpse isn't seen. Measured on
+the user's rc.2 recording (24 fps): the wake glimpse is 5 frames - 2 of the blurred lock wallpaper with the lock dot,
+3 of the sharp wallpaper - and no clock in any of them; the clock only shows in the longer cases (after a call, Back
+from the pad). So, in order: (1) step K (round 1): Android's lock wallpaper is always the night ground with the mark in
+android mode; (2) the glance's own ground in android mode = the same night ground (the family photo then lives on Home
+only - the user's call; the parent's "also on the lock screen" opt-in would apply to own mode only); (3) our clock in
+Android's small-clock place and size (top-left, the date under it) for the longer cases - not pixel-identical (the
+system font varies per maker, Monet picks the colour, the lock dot is Android's), position and size carry most of it.
+Decide after rc.3's frame count. Launcher, S for (2), S-M for (3).
