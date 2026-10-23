@@ -755,7 +755,7 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   (the face roots lock task while Android is locked). `DeviceLockedInputConsumer` comes only with the Home disable
   missing (HOME left in the LOCKED features through the debug override, standing in for 16d's desync of SystemUI's
   TaskbarDelegate): it **starts Home**, the keyguard un-occludes, Home's locked resume puts the lock back - the user's
-  frames exactly. So (b)'s premise ("always un-occludes while locked") is false and (b) isn't built; the user's swipes
+  frames exactly. So (b)'s premise ("always un-occludes while locked") is false and (b) isn't built (§8.16 built it as a safety net, 2026-10-23); the user's swipes
   went through on desynced flags. **Built**: the 16d heal gets a trigger - a Home start that isn't ours
   (`HomeFront.EXTRA_BROUGHT`) while our lock is LOCKED with the screen on is the desync's proof
   (`HomeActivity.onNewIntent` -> `PinLockRuntime.homeIntent` -> pure `systemHomeHealDue(locked, interactive,
@@ -1047,4 +1047,84 @@ Report: `docs/testing/2026-10-23-glance-topinset.md`.
   `jelly36` in any variant: a fresh provision, the slow swipe, an `input motionevent` swipe, after `adb reboot` through
   the boot cover's pad, after a SystemUI crash, after Back from the pad, and after an unlock and re-lock. In every run
   the consumer was `TYPE_RESET_GESTURE` with `home_disabled`, and the swipe asked for the pad. The report lists what the
-  user's `swipe-dump.txt` / `swipe-log.txt` must show to tell the cases apart. No fix is built yet.
+  user's `swipe-dump.txt` / `swipe-log.txt` must show to tell the cases apart. No fix is built yet (§8.16 has it).
+
+### 8.16 The edge swipe on the user's AVD: no navigation bar; the re-ask as the safety net (branch `edge-swipe-fix`, 2026-10-23)
+
+**The user's dumps** (`jellystar2`, the release 0.36.0-rc.3, android mode, kiosk on; three swipes from the handle at
+20:50:09, :12 and :15, and one at 18:42):
+- Quickstep, every time: `Current SystemUi state flags=keygrd_occluded|awake`, then `setInputConsumer:
+  TYPE_DEVICE_LOCKED:TYPE_NAV_HANDLE_LONG_PRESS` ("can start system gesture ... keyguard is showing occluded ... using
+  DeviceLockedInputConsumer"), then `TaskAnimationManager.startRecentsAnimation`.
+- Lock task: `mLockTaskModeState=LOCKED`, tasks Home #7 and the glance #8. `dumpsys statusbar`: `mDisabled1=0x7260000
+  mDisabled2=0x15` - DISABLE_HOME and DISABLE_RECENT set, exactly the lab's. There was **no `taskbar mDisabledFlags`
+  line**.
+- Ours: `lock task: mode=1 features=0x71` (113), and the §8.9 heal fired at each system Home start (`113 -> 112`).
+  The next swipe still went through.
+
+**The root cause.** The AVD was made without a device profile, so `hw.mainKeys = yes` (`qemu.hw.mainkeys=1`):
+hardware keys and no navigation bar. SystemUI then creates neither its `NavigationBar` nor its `TaskbarDelegate`.
+Those two are the only places that turn the status bar's disable flags into Quickstep's `home_disabled`,
+`overview_disabled` and `allow_gesture`. Quickstep still runs gesture navigation (`navigation_mode` 2, its own input
+monitor and handle), so it sees no disabled flags at all, takes every bottom-edge swipe and starts Home over the lock.
+Lock task's flags are right. The heal re-sends them to a SystemUI that has no one to pass them to.
+
+**The proof.** `jelly36` is the same Play image (`google/sdk_gphone64_x86_64/emu64xa:16/BE2A.250530.026.D1`, the
+user's fingerprint; NexusLauncherRelease `16`). With `hw.mainKeys = no` (§8.15's runs) the `taskbar` line is there,
+Quickstep's flags are `overview_disabled|home_disabled|keygrd_occluded|allow_gesture|awake`, the consumer is
+`TYPE_RESET_GESTURE`, and the swipe asks for the pad. That held in 13 swipes: fresh, slow, `motionevent`, after a reboot,
+after a SystemUI crash, and after an unlock and re-lock. The same AVD with its data kept and that one line flipped to
+`yes` reproduced the user's dump exactly: no navigation-bar inset, no `taskbar` line, flags `keygrd_occluded|awake`,
+`canStartSystemGesture=true`, `DeviceLockedInputConsumer` on every swipe, and the heal firing to no effect. Switching the
+navigation-mode overlay (three-button, then gestural) created no delegate. Nothing an app controls makes the flag land
+there.
+
+**Why a real Jelly Star is unaffected.** It has no hardware keys, so SystemUI hosts a navigation bar or taskbar
+delegate, as on `hw.mainKeys = no`. `emulator.md` §3 now requires `hw.mainKeys = no` for `jelly36` and tells a user
+AVD made without a profile to set it and cold boot.
+
+**Kept as the safety net: §8.9's option (b)** (for a desync on a phone, where the heal fixes only the next swipe).
+- **The trigger.** The system's Home start while LOCKED, with the screen on and not ours, is the same proof as the heal
+  (`HomeActivity.onNewIntent`/`onCreate` -> `PinLockRuntime.homeIntent`) - but only with the lock already up in this
+  process (`lockWasUp` = `PinLockActivity.instances > 0`; qa-edge-swipe-fix-code Q-1). At a process start - a boot, an
+  update's restart, a crash - the system starts Home itself with a plain HOME intent before any lock exists. That is no
+  gesture, and asking then would open an own-mode boot on our keypad, or pop the pad after an Install Now update.
+  The cheap reads come first (`mode == LockMode.LOCKED && !broughtByUs && gestureAskDue(..)`), so Telecom's binder
+  call runs only for a candidate (Q-9).
+- **The mark** (pure `gestureAskDue`, `StatusBarHealPlan.kt`; decided before the heal's 5 s gap can return):
+  - The lock that Home's locked resume brings back asks for the unlock at once.
+  - It never asks with a call live, or within 1 s of a notice (`noticeCame`) or a screen-on (`GESTURE_ASK_QUIET_MS`).
+  - It asks at most every 2 s (`GESTURE_ASK_MIN_GAP_MS`), so a swipe loop can't hammer SystemUI's pad. Swipes
+    2.5 s apart all ask.
+- **The ask.** `PinLockActivity.onResume` takes the mark once, within 3 s (`gestureAskTaken`, `GESTURE_ASK_WINDOW_MS`),
+  only in the screen-on it was marked in (`screenOffs` kept with the mark), with the screen on and no call live at the
+  take (Q-2: a lock resumed for a call's start never puts the pad over its call screen). A screen-off and any lock-state
+  change drop the mark. It skips an open ask and the VoIP ring card. Then `GlancePanel.askAfterGesture` sends the swipe's own
+  `GlanceStageEvent.Unlock`: Android's PIN pad as the face, our keypad in own mode.
+- **The re-ask.** SystemUI is still putting the keyguard back under the lock when the ask goes out, and that
+  re-occlusion cancels the pad: `PRIMARY_BOUNCER -> OCCLUDED`, `onDismissCancelled` 0.25-0.3 s after the ask on
+  `jelly36`. So a cancel of the gesture's ask within 1.5 s, with no screen-off since, asks once more after 0.7 s
+  (`gestureAskRetryDue`, `GESTURE_ASK_SETTLE_MS`, `GESTURE_ASK_RETRY_DELAY_MS`) - again only with the screen on and no
+  call live. It never asks a third time. A kid's own
+  Back that fast gets the pad once more.
+- **What the kid sees.** The swipe gets "a flash, then the pad" instead of "a flash, then the glance, and no pad ever".
+- **Verified on `jelly36` with `hw.mainKeys = yes`** (the real reproduction, not a simulated one), three swipes per
+  build. With the first ask alone, each was cancelled 0.25-0.3 s later by the re-occlusion. With the re-ask:
+  `The system's Home while LOCKED: the lock asks for the unlock when it is back`, `Glance: a home gesture got through -
+  unlock asked`, `cancelled`, `the gesture's ask was cancelled by the keyguard settling - asking once more`, and the
+  second ask's pad stayed up with the focus on `NotificationShade` until the next screen-off.
+- **Code QA's fix round** (`docs/review/qa-edge-swipe-fix-code.md`, Q-1..Q-9), device checks on `jelly36`:
+  - **The desync with the net** (Q-5 item 1): `hw.mainKeys = no`, with the 16d debug override keeping HOME in the
+    LOCKED features (117). A handle swipe went through as a desync does: Quickstep flags without `home_disabled`,
+    `DeviceLockedInputConsumer`. At the same Home start the heal flipped 117 -> 116 and the net asked. The first pad
+    was cancelled 0.34 s later, the re-ask came 0.7 s after that, and the pad stayed (focus `NotificationShade`). The
+    override was reset afterwards (`--ez reset true`).
+  - **A swipe with no heal** (Q-5 item 2): `hw.mainKeys = yes`, two swipes 2.6 s apart. The second fell inside the
+    heal's 5 s gap, so no heal ran, and its first ask was still cancelled 0.24 s later. So the cancel is the keyguard's
+    re-occlusion, not the heal's 250 ms flip. The re-ask stayed up.
+  - **An update's restart** (Q-1): `adb install -r` with the screen on started a new process LOCKED. The system's
+    Home start then healed (as before) but marked no ask - no `the lock asks for the unlock` line.
+  - **Owed:** an own-mode reboot (Q-5 item 3, e.g. `smoke-test.sh REBOOT=1` on an own-mode phone): it should come up
+    on the glance, not our keypad, with no `the lock asks for the unlock` line.
+- **Unchanged.** The heal stays, and step M's and 59b's rules are untouched. The "Lås opp" button stays gone: the user
+  wants the swipe as the primary way, and its cause here is the AVD, not the phone.

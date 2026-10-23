@@ -245,6 +245,10 @@ class PinLockActivity : AppCompatActivity() {
      * ask makes an older one's cancel or error moot). */
     private var askedAt: Long? = null
     private var askedOffs = 0
+
+    /** Design 59d §8.16: the open ask is a home gesture's ([askAfterGesture]), and whether its one re-ask went. */
+    private var askFromGesture = false
+    private var gestureAskRetried = false
     private var askId = 0
 
     private fun askAge(): Long? = askedAt?.let { SystemClock.elapsedRealtime() - it }
@@ -306,6 +310,18 @@ class PinLockActivity : AppCompatActivity() {
         }
     }
 
+    /** Design 59d §8.16: the gesture's ask - the glance page's own unlock ([GlancePanel.askAfterGesture]), marked so its
+     * cancel by the keyguard's re-occlusion can ask once more ([gestureAskRetryDue]). */
+    private fun askAfterGesture(retry: Boolean) {
+        // Q-2: never over a call screen, never dark.
+        if (!resumed || isFinishing || finishingAfterUnlock || PinLockRuntime.mode != LockMode.LOCKED) return
+        if (!interactiveNow() || PinLockRuntime.callLiveNow(this)) return
+        gestureAskRetried = retry
+        askFromGesture = true
+        glance?.askAfterGesture()
+        if (askedAt == null) askFromGesture = false
+    }
+
     /** `requestDismissKeyguard` - Android's PIN pad over the glance; its answer within [ANDROID_ASK_TIMEOUT_MS] or the
      * state is read again once nothing covers us ([askCheck]). */
     private fun askAndroid() {
@@ -341,6 +357,10 @@ class PinLockActivity : AppCompatActivity() {
      */
     private fun androidAnswered(id: Int, offs: Int, result: String) {
         val current = id == askId && askedAt != null
+        // Design 59d §8.16: a gesture's ask cancelled by the keyguard's own re-occlusion asks once more.
+        val gestureRetry = current && result == "cancelled" &&
+            gestureAskRetryDue(askFromGesture, gestureAskRetried, offs == PinLockRuntime.screenOffs, askedAt, SystemClock.elapsedRealtime())
+        if (current) askFromGesture = false
         // B-3: a cancel (the pad's Emergency button hides the bouncer) stays "ours" for the ask's window.
         if (current) closeAsk(cancelled = result == "cancelled")
         AndroidLock.note(this, "Android's PIN pad: $result${if (current) "" else " (an earlier ask)"}")
@@ -356,6 +376,10 @@ class PinLockActivity : AppCompatActivity() {
         }
         if (!current) return
         if (result == "cancelled") glance?.back() else recoverAsk()
+        if (gestureRetry) {
+            Log.i(ANDROID_LOCK_TAG, "Lås opp: the gesture's ask was cancelled by the keyguard settling - asking once more")
+            handler.postDelayed({ askAfterGesture(retry = true) }, GESTURE_ASK_RETRY_DELAY_MS)
+        }
     }
 
     /** The run's bug 2: an ask with no answer for [ANDROID_ASK_TIMEOUT_MS] while our window has the focus - no pad and
@@ -716,6 +740,11 @@ class PinLockActivity : AppCompatActivity() {
         // Design 32 step 2: the keyguard cover is dismissed after this resume's first frame.
         watchFirstFrame()
         glance?.resume()
+        // Design 59d §8.16: a home gesture got through and brought the lock back - ask for the unlock now, as the
+        // handle's swipe does (not under the VoIP ring card, not with an ask open). After the views' resume, as a swipe's.
+        if (PinLockRuntime.takeGestureAsk(this) && askedAt == null && voipRing.root.visibility != View.VISIBLE) {
+            handler.post { askAfterGesture(retry = false) }
+        }
         ensureLockTask(fallbackDue = false)
         renderVoip()
         // Step 11: the lock in front ends the update fence in the new build (lock task not required).

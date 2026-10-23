@@ -595,6 +595,17 @@ class GlancePanel(
         handle.visibility = if (root.visibility == View.VISIBLE && glanceContentShown(leaving)) View.VISIBLE else View.GONE
     }
 
+    /**
+     * Design 59d §8.16: a home gesture got through and the system's Home brought the lock back - the page asks for the
+     * unlock as the handle's swipe does ([GlanceStageEvent.Unlock]: Android's pad as the face, our keypad in own mode),
+     * only while the page shows and isn't leaving.
+     */
+    fun askAfterGesture() = guarded("gesture ask") {
+        if (leaving || !glancePageShown(state.stage)) return@guarded
+        Log.i(LOG_TAG, "Glance: a home gesture got through - unlock asked")
+        step(GlanceStageEvent.Unlock)
+    }
+
     private fun step(event: GlanceStageEvent) = guarded("stage") {
         state = glanceStageStep(state, event, face())
         dropTargetIfGone()
