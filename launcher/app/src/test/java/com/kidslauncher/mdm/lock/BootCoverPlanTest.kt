@@ -224,12 +224,13 @@ class BootCoverPlanTest {
     @Test
     fun `f3-run B2 - destroyed by the system while in front, it starts Home on its way out, in a call too`() {
         // F3R-1: in front when the finish came = no call screen over it; the call is no input.
-        assertTrue(coverDestroyStartsHome(waitForLauncher = true, unlocked = true, ownFinish = false, visible = true, homeStarted = false))
-        assertFalse("its own finish", coverDestroyStartsHome(true, true, ownFinish = true, visible = true, homeStarted = false))
-        assertFalse("Home or a call over it", coverDestroyStartsHome(true, true, false, visible = false, homeStarted = false))
-        assertFalse("started already", coverDestroyStartsHome(true, true, false, true, homeStarted = true))
-        assertFalse("before the unlock", coverDestroyStartsHome(true, unlocked = false, ownFinish = false, visible = true, homeStarted = false))
-        assertFalse("own mode", coverDestroyStartsHome(waitForLauncher = false, unlocked = true, ownFinish = false, visible = true, homeStarted = false))
+        assertTrue(coverDestroyStartsHome(waitForLauncher = true, unlocked = true, ownFinish = false, visible = true, homeStarted = false, takenOver = true))
+        assertFalse("its own finish", coverDestroyStartsHome(true, true, ownFinish = true, visible = true, homeStarted = false, takenOver = true))
+        assertFalse("Home or a call over it", coverDestroyStartsHome(true, true, false, visible = false, homeStarted = false, takenOver = true))
+        assertFalse("started already", coverDestroyStartsHome(true, true, false, true, homeStarted = true, takenOver = true))
+        assertFalse("before the unlock", coverDestroyStartsHome(true, unlocked = false, ownFinish = false, visible = true, homeStarted = false, takenOver = true))
+        assertFalse("own mode", coverDestroyStartsHome(waitForLauncher = false, unlocked = true, ownFinish = false, visible = true, homeStarted = false, takenOver = true))
+        assertFalse("RC3-3: before the take-over", coverDestroyStartsHome(true, true, false, true, homeStarted = false, takenOver = false))
     }
 
     @Test
@@ -366,7 +367,7 @@ class BootCoverPlanTest {
     fun `one automatic ask per resume after a stop - a cancel waits for the next stop`() {
         val (asked, first) = pad(BootPad(), PadEvent.RESUMED)
         assertEquals(listOf(PadAction.ASK), first)
-        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = true), asked)
+        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = true, silentDue = true), asked)
         // Cancelled (Back): the line, and resumes without a stop never ask again - no loop.
         val (cancelled, again) = pad(asked, PadEvent.CANCELLED, PadEvent.RESUMED, PadEvent.RESUMED)
         assertEquals(listOf(PadAction.NONE, PadAction.NONE, PadAction.NONE), again)
@@ -440,7 +441,7 @@ class BootCoverPlanTest {
         // A cancel with the screen on counts.
         assertEquals(1, pad(asked, PadEvent.CANCELLED).first.autoAsks)
         // A success closes the ask and hides the line (F59d-3; CE's unlock does the rest); a late success changes nothing.
-        assertEquals(asked.copy(open = false), pad(asked, PadEvent.SUCCEEDED).first)
+        assertEquals(asked.copy(open = false, silentDue = false), pad(asked, PadEvent.SUCCEEDED).first)
         assertFalse(pad(asked.copy(line = true), PadEvent.SUCCEEDED).first.line)
         assertEquals(PadStep(BootPad(), PadAction.NONE), bootPadStep(BootPad(), PadEvent.SUCCEEDED, true, true, false))
     }
@@ -463,7 +464,65 @@ class BootCoverPlanTest {
     fun `a tap asks over an ask still marked open, uncounted (F59d-4)`() {
         val step = bootPadStep(BootPad(autoAsks = 1, armed = false, open = true, auto = true), PadEvent.TAPPED, gate = true, interactive = true, inCall = false)
         assertEquals(PadAction.ASK, step.action)
-        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = false), step.pad)
+        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = false, silentDue = true), step.pad)
+    }
+
+    /** RC3-3 (the rc.3 run's c1: Back, then Home, between the PIN and the take-over - the ANR dialog): the cover starts no
+     * Home before our main process's stamp and holds itself in front; the 30 s hand-over stays the rescue. */
+    @Test
+    fun `no Home start of the cover's before the take-over, Back held until it - the 30 s hand-over still rescues`() {
+        for (unlockedFor in listOf(0L, 2_500L, COVER_LAUNCHER_WAIT_MS - 1)) for (visible in listOf(true, false)) for (call in listOf(true, false)) {
+            val step = coverWaitStep(true, takenOver = false, visible = visible, unlockedForMs = unlockedFor, takenOverForMs = 0, homeStarted = false, callLive = call, lateStart = true)
+            assertEquals("$unlockedFor $visible $call", CoverStep.STAY, step)
+        }
+        assertFalse(coverDestroyStartsHome(waitForLauncher = true, unlocked = true, ownFinish = false, visible = true, homeStarted = false, takenOver = false))
+        // Never stranded: no stamp after the wait, in front and no call -> the hand-over (disable + our Home).
+        assertEquals(CoverStep.HAND_OVER, coverWaitStep(true, takenOver = false, visible = true, unlockedForMs = COVER_LAUNCHER_WAIT_MS, takenOverForMs = 0, homeStarted = false, callLive = false))
+        // Back: held on the BFU face and, in android mode, from the unlock to the take-over; own mode as before.
+        assertTrue(coverHoldsBack(face = true, waitForLauncher = true, unlocked = false, takenOver = false))
+        assertTrue(coverHoldsBack(face = false, waitForLauncher = true, unlocked = true, takenOver = false))
+        assertFalse("taken over: Back leaves to our Home", coverHoldsBack(face = false, waitForLauncher = true, unlocked = true, takenOver = true))
+        assertFalse("the inert cover behind SystemUI's lock", coverHoldsBack(face = false, waitForLauncher = true, unlocked = false, takenOver = false))
+        assertFalse("own mode", coverHoldsBack(face = false, waitForLauncher = false, unlocked = true, takenOver = false))
+    }
+
+    /** RC3-1 (the rc.3 run, Android 16): an ask SystemUI drops before its keyguard is ready gets no answer at all. */
+    @Test
+    fun `an ask with no answer is asked again at 3, 6 and 12 s, then every 6 s - uncounted, the same ask`() {
+        val asked = bootPadStep(BootPad(), PadEvent.RESUMED, gate = true, interactive = true, inCall = false)
+        assertEquals(PadAction.ASK, asked.action)
+        var state = asked.pad
+        var at = asked.silentInMs!!
+        val times = mutableListOf<Long>()
+        repeat(5) { n ->
+            times += at
+            val again = bootPadStep(state, PadEvent.SILENT, gate = true, interactive = true, inCall = false)
+            assertEquals("re-ask ${n + 1}", PadAction.ASK, again.action)
+            assertEquals("the same ask: uncounted, unarmed, no line", asked.pad.copy(reasks = n + 1), again.pad)
+            state = again.pad
+            at += again.silentInMs!!
+        }
+        assertEquals(listOf(3_000L, 6_000L, 12_000L, 18_000L, 24_000L), times)
+        // Every ask starts the clock anew: a tap's, a retry's, a relaunch's.
+        assertEquals(3_000L, bootPadStep(BootPad(), PadEvent.TAPPED, true, true, false).silentInMs)
+        assertEquals(3_000L, bootPadStep(BootPad(retryDue = true, retried = true), PadEvent.RETRY, true, true, false).silentInMs)
+        assertEquals(0, bootPadStep(state, PadEvent.RELAUNCHED, true, true, false).pad.reasks)
+        // Any answer, a stop or a lost gate ends it: a late silence changes nothing.
+        for (end in listOf(PadEvent.SUCCEEDED, PadEvent.CANCELLED, PadEvent.ERROR, PadEvent.STOPPED)) {
+            val ended = bootPadStep(state, end, true, true, false).pad
+            assertFalse("$end", ended.silentDue)
+            assertEquals("$end", PadStep(ended, PadAction.NONE), bootPadStep(ended, PadEvent.SILENT, true, true, false))
+        }
+        assertFalse(bootPadStep(state, PadEvent.SILENT, gate = false, interactive = true, inCall = false).pad.silentDue)
+        // Not with the screen off, nor an automatic ask in a call - that tick is skipped, the clock goes on (Q-2: no stop
+        // may follow to close the ask), and the next one, the call over, asks; a tap's asks in a call.
+        for (dark in listOf(true, false)) {
+            val skipped = bootPadStep(asked.pad, PadEvent.SILENT, true, interactive = !dark, inCall = !dark)
+            assertEquals(PadStep(asked.pad, PadAction.NONE, bootPadSilentInMs(0)), skipped)
+            assertEquals(PadAction.ASK, bootPadStep(skipped.pad, PadEvent.SILENT, true, interactive = true, inCall = false).action)
+        }
+        val tapped = bootPadStep(BootPad(), PadEvent.TAPPED, true, true, false).pad
+        assertEquals(PadAction.ASK, bootPadStep(tapped, PadEvent.SILENT, true, interactive = true, inCall = true).action)
     }
 
     @Test

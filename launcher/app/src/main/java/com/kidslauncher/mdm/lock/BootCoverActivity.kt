@@ -113,13 +113,23 @@ class BootCoverActivity : Activity() {
     private var tapLine: TextView? = null
     private val padRetry = Runnable { padStep(PadEvent.RETRY) }
 
+    /** RC3-1: the open ask's silence ([bootPadSilentInMs]) - posted by every ask, dropped by any answer. */
+    private val padSilent = Runnable { padStep(PadEvent.SILENT) }
+
+    /** What [applyBackHold] last set ([coverHoldsBack]). */
+    private var holdsBack = false
+
     /** F59d-6: the content root (the tap target, its TalkBack label) and the bottom system-bar inset for the line. */
     private var root: FrameLayout? = null
     private var insetBottom = 0
 
     /** F59d-1: Back on the BFU face does nothing - the cover is HOME, not LAUNCHER, so the default Back finishes it and
-     * SystemUI's face shows until HOME resolves to a new cover. Registered only while the flag is on. */
-    private val backOnFace = OnBackInvokedCallback { Log.i(LOG_TAG, "Boot cover: Back on the BFU face, held") }
+     * SystemUI's face shows until HOME resolves to a new cover. RC3-3: also once unlocked until the take-over (a Back
+     * there finished the cover, and its Home start on the way out landed in our busy main process - the ANR dialog).
+     * Registered only while [coverHoldsBack] says so. */
+    private val backOnFace = OnBackInvokedCallback {
+        Log.i(LOG_TAG, if (showsWhenLocked) "Boot cover: Back on the BFU face, held" else "Boot cover: Back before the take-over, held")
+    }
 
     private val loop = object : Animatable2.AnimationCallback() {
         override fun onAnimationEnd(drawable: Drawable?) {
@@ -212,6 +222,8 @@ class BootCoverActivity : Activity() {
         relaunched = false
         handler.post { if (resumed) padStep(event) }
         if (pad.retryDue) handler.postDelayed(padRetry, BOOT_PAD_RETRY_MS)
+        // RC3-1: the open ask's silence, dropped by the pause, is posted again (counted from now).
+        if (pad.silentDue) handler.postDelayed(padSilent, bootPadSilentInMs(pad.reasks))
     }
 
     /** F3: stopped while taken over = our Home (or a call) is over the cover - leaving reveals nothing. */
@@ -259,9 +271,13 @@ class BootCoverActivity : Activity() {
                 val unlockedFor = if (unlockedAtElapsed < 0) -1L else SystemClock.elapsedRealtime() - unlockedAtElapsed
                 Log.i(LOG_TAG, "Boot cover finished by the system (${if (finishedInFront) "in front" else "behind"}): $unlockedFor ms after the unlock")
             }
-            if (coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted)) {
+            // RC3-3: never before the take-over (our main process may still be in its setup on the main thread).
+            val takenOver = takenOverAtElapsed >= 0 || BootCoverGuard.takenOverThisBoot(this) || BootCoverGuard.isDisabled(this)
+            if (coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted, takenOver)) {
                 homeStarted = true
                 startOwnHome("on its way out")
+            } else if (waitForLauncher && !ownFinish && finishedInFront && !takenOver) {
+                Log.i(LOG_TAG, "Boot cover finished before the take-over: no Home start of its own (the system's HOME decides)")
             }
         }
         if (isChangingConfigurations) carriedPad = pad
@@ -352,11 +368,26 @@ class BootCoverActivity : Activity() {
     private fun applyLockedFace() {
         val show = padGate()
         faceViews(show)
-        if (show == showsWhenLocked) return
-        showsWhenLocked = show
-        setShowWhenLocked(show)
-        holdBack(show)
-        Log.i(LOG_TAG, "Boot cover showWhenLocked $show")
+        if (show != showsWhenLocked) {
+            showsWhenLocked = show
+            setShowWhenLocked(show)
+            Log.i(LOG_TAG, "Boot cover showWhenLocked $show")
+        }
+        applyBackHold(show)
+    }
+
+    /** RC3-3: Back held by [coverHoldsBack] - the BFU face, and once unlocked until the take-over (as [waitStep] last
+     * saw it: [takenOverAtElapsed]). An unreadable unlock state counts as locked here: held only as the face. Never throws. */
+    private fun applyBackHold(face: Boolean) {
+        val unlocked = try {
+            getSystemService(UserManager::class.java)?.isUserUnlocked == true
+        } catch (e: Exception) {
+            false
+        }
+        val hold = coverHoldsBack(face, waitForLauncher, unlocked, takenOver = takenOverAtElapsed >= 0)
+        if (hold == holdsBack) return
+        holdsBack = hold
+        holdBack(hold)
     }
 
     /** F59d-1: Back is held while the cover is the BFU face, and the default (finish) again once it isn't. */
@@ -402,6 +433,9 @@ class BootCoverActivity : Activity() {
         pad = step.pad
         autoAsksThisProcess = pad.autoAsks
         tapLine?.visibility = if (gate && pad.line) View.VISIBLE else View.GONE
+        if (event == PadEvent.SILENT && step.action == PadAction.NONE && step.silentInMs != null) {
+            Log.i(LOG_TAG, "Boot cover: no answer to the ask - this re-ask skipped (screen off or a call)")
+        }
         when (step.action) {
             PadAction.ASK -> askPad(event)
             PadAction.RETRY_LATER -> {
@@ -410,6 +444,12 @@ class BootCoverActivity : Activity() {
             }
             PadAction.NONE -> Unit
         }
+        // RC3-1: the silence's clock - started by every ask, replaced by a re-ask's, dropped with the open ask.
+        if (!pad.silentDue) handler.removeCallbacks(padSilent)
+        step.silentInMs?.let {
+            handler.removeCallbacks(padSilent)
+            handler.postDelayed(padSilent, it)
+        }
     }
 
     /** Step F: ask for Android's PIN pad (the BFU bouncer) - the gate read again first. It only asks; the answer goes
@@ -417,7 +457,9 @@ class BootCoverActivity : Activity() {
     private fun askPad(why: PadEvent) {
         if (!padGate()) return
         val id = ++askId
-        Log.i(LOG_TAG, "Boot cover asks for Android's PIN pad (${why.name.lowercase()}, automatic ${pad.autoAsks} of $BOOT_PAD_AUTO_ASKS)")
+        // RC3-1: a silence's re-ask says so (no answer since the ask; uncounted, the same ask).
+        val what = if (why == PadEvent.SILENT) "no answer, again ${pad.reasks}" else why.name.lowercase()
+        Log.i(LOG_TAG, "Boot cover asks for Android's PIN pad ($what, automatic ${pad.autoAsks} of $BOOT_PAD_AUTO_ASKS)")
         try {
             getSystemService(KeyguardManager::class.java)?.requestDismissKeyguard(
                 this,

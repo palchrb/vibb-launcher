@@ -300,6 +300,11 @@ enum class CoverStep {
  * [CoverStep.HAND_OVER] (no take-over) needs it in front and still no call (f3-run B5, as before): there the call's
  * end or the take-over moves it on. Never stays past [COVER_LAUNCHER_WAIT_MS] + [COVER_TAKEOVER_GRACE_MS] in front
  * after the unlock once no call is live.
+ *
+ * RC3-3: **no Home start of the cover's before the take-over** - [CoverStep.START_HOME] (and [coverDestroyStartsHome],
+ * its start on the way out) only once [takenOver]; until then it holds itself in front ([coverHoldsBack]), and the one
+ * Home start without the stamp is the hand-over after [COVER_LAUNCHER_WAIT_MS] (our main process never came: step M's
+ * "never stranded").
  */
 fun coverWaitStep(
     unlocked: Boolean,
@@ -365,7 +370,10 @@ fun coverHandOverStartsHome(disabledReadBack: Boolean, failedTries: Int): Boolea
  * destroyed by the system while still in front ([visible]: it was
  * resumed when the finish came, so no call screen was over it - F3R-1, in a call too) with no Home of its own started,
  * it starts the typed HOME on its way out, so the stock launcher a non-graceful boot left below never comes up (a death
- * between our take-over and Home's start).
+ * between our take-over and Home's start). RC3-3: only once taken over ([takenOver], as [coverWaitStep] reads it): before
+ * the stamp our main process may still be in its unlocked setup. The residual (code QA Q-4): a system finish before the
+ * stamp shows what the home task has below - on a non-graceful boot possibly the stock launcher - until our boot Home's
+ * start; Back no longer causes one (it is held until the stamp, [coverHoldsBack]).
  */
 fun coverDestroyStartsHome(
     waitForLauncher: Boolean,
@@ -373,7 +381,17 @@ fun coverDestroyStartsHome(
     ownFinish: Boolean,
     visible: Boolean,
     homeStarted: Boolean,
-): Boolean = waitForLauncher && unlocked && !ownFinish && visible && !homeStarted
+    takenOver: Boolean,
+): Boolean = waitForLauncher && unlocked && takenOver && !ownFinish && visible && !homeStarted
+
+/**
+ * RC3-3 (the rc.3 run's c1): Back is held - the cover stays in front - while it is the BFU face ([face], step F), and in
+ * android mode ([waitForLauncher]) once unlocked until our main process took over ([takenOver]): before the stamp our
+ * process may still be in its unlocked setup on the main thread, and a Home started then had no window for seconds (the
+ * ANR dialog). The rescue without a take-over is [coverWaitStep]'s 30 s hand-over, which needs the cover in front.
+ */
+fun coverHoldsBack(face: Boolean, waitForLauncher: Boolean, unlocked: Boolean, takenOver: Boolean): Boolean =
+    face || (waitForLauncher && unlocked && !takenOver)
 
 /** How often the cover looks at [coverWaitStep] while in front. */
 const val COVER_WAIT_POLL_MS = 250L
@@ -393,6 +411,30 @@ const val BOOT_PAD_AUTO_ASKS = 3
 
 /** An ask answered with an error is asked again once, this long later - the same ask (the pair counts once). */
 const val BOOT_PAD_RETRY_MS = 1_000L
+
+/**
+ * RC3-1 (the rc.3 run, Android 16): an ask that reaches SystemUI before its keyguard has finished booting is dropped
+ * with no answer at all ("PrimaryBouncerInteractor#show is being called before the primaryBouncerDelegate is set"), so
+ * the error retry never runs. An ask with no answer is asked again at these times after it - uncounted, the same ask -
+ * and then every [BOOT_PAD_SILENT_EVERY_MS] until an answer, a stop or the screen going off: in the fix run's first
+ * boot SystemUI's keyguard took its first ask 32 s after ours (26-42 s in its other boots). Every 6 s after 12 s keeps
+ * the kid's wait on SystemUI's clock, once it is ready, under 6 s. A re-ask while Android's pad is up keeps it and the
+ * digits typed (the fix run's mid-typing check); SystemUI only adds the callback.
+ */
+val BOOT_PAD_SILENT_REASK_AT_MS = listOf(3_000L, 6_000L, 12_000L)
+
+/** After [BOOT_PAD_SILENT_REASK_AT_MS], an ask still unanswered is asked again this often. */
+const val BOOT_PAD_SILENT_EVERY_MS = 6_000L
+
+/** How long after the ask's re-ask number [reasks] (0 = the ask itself) the next [PadEvent.SILENT] is due. */
+fun bootPadSilentInMs(reasks: Int): Long {
+    val at = BOOT_PAD_SILENT_REASK_AT_MS
+    return when {
+        reasks <= 0 -> at[0]
+        reasks < at.size -> at[reasks] - at[reasks - 1]
+        else -> BOOT_PAD_SILENT_EVERY_MS
+    }
+}
 
 /**
  * The pad gate (Q59d-8): showWhenLocked and every ask only with Android's PIN as the gate ([androidMarker]: the
@@ -418,6 +460,9 @@ enum class PadEvent {
      * - no stop, no new automatic ask: an ask that was out is asked again uncounted (the old instance's callback is
      * gone), else as [RESUMED]. */
     RELAUNCHED,
+
+    /** RC3-1: the ask's [bootPadSilentInMs] passed with no answer (posted by the activity, dropped by any answer). */
+    SILENT,
 }
 
 enum class PadAction {
@@ -434,7 +479,8 @@ enum class PadAction {
  * The cover's pad state. [autoAsks]: automatic asks counted in this process (the activity keeps it process-wide);
  * [armed]: an automatic ask may come at the next resume (a new cover, and after every stop); [open]: an ask is out
  * with no answer; [auto]: that ask is automatic (counted); [retried]: it used its one retry; [retryDue]: the retry is
- * posted; [line]: "Trykk for å låse opp" shows under the mark (an ask ended without the PIN).
+ * posted; [line]: "Trykk for å låse opp" shows under the mark (an ask ended without the PIN); [silentDue]: RC3-1's
+ * [PadEvent.SILENT] is posted for the open ask; [reasks]: how often that ask was asked again for its silence.
  */
 data class BootPad(
     val autoAsks: Int = 0,
@@ -444,9 +490,12 @@ data class BootPad(
     val retried: Boolean = false,
     val retryDue: Boolean = false,
     val line: Boolean = false,
+    val silentDue: Boolean = false,
+    val reasks: Int = 0,
 )
 
-data class PadStep(val pad: BootPad, val action: PadAction)
+/** [silentInMs]: post [PadEvent.SILENT] this long from now, replacing one posted (RC3-1); `null` = leave it. */
+data class PadStep(val pad: BootPad, val action: PadAction, val silentInMs: Long? = null)
 
 /**
  * The ask rule (§5 rules 2-4, §8.3, §8.5 "F"), pure:
@@ -471,47 +520,57 @@ data class PadStep(val pad: BootPad, val action: PadAction)
  *   wait).
  * - **Relaunched** (qa-59d-m-code M-4, the first resume of a cover recreated for a configuration change - the activity
  *   carries the whole pad over and skips the stop): an ask still out is asked again uncounted; else as Resumed.
+ * - **Silent** (RC3-1): every ask (automatic, tapped, a retry's, a relaunch's) posts [PadEvent.SILENT]; still open when
+ *   it comes, the ask is asked again - uncounted, the same ask, its count and arm untouched - at
+ *   [BOOT_PAD_SILENT_REASK_AT_MS] after it and then every [BOOT_PAD_SILENT_EVERY_MS], with the screen on and, for an
+ *   automatic ask, no call - else that tick is skipped and the clock goes on (code QA Q-2: a call that ends before its
+ *   screen covered the cover, or a screen off and on before the pause, brings no stop to close the ask). Any answer, a
+ *   stop or a lost gate ends the posting.
  * An answer with no ask open (an earlier ask's) changes nothing.
  */
 fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boolean, inCall: Boolean): PadStep {
-    if (!gate) return PadStep(pad.copy(open = false, retryDue = false), PadAction.NONE)
+    if (!gate) return PadStep(pad.copy(open = false, retryDue = false, silentDue = false), PadAction.NONE)
     val none = PadStep(pad, PadAction.NONE)
     // The open ask closes now: an automatic one with the screen off gives its count back.
     val closedCount = if (pad.open && pad.auto && !interactive) (pad.autoAsks - 1).coerceAtLeast(0) else pad.autoAsks
+    // RC3-1: every ask (not a silence's re-ask) starts its silence's clock.
+    fun ask(asked: BootPad) = PadStep(asked.copy(silentDue = true, reasks = 0), PadAction.ASK, bootPadSilentInMs(0))
     return when (event) {
         PadEvent.RESUMED ->
             if (pad.armed && !pad.open && interactive && !inCall && pad.autoAsks < BOOT_PAD_AUTO_ASKS) {
-                PadStep(
-                    pad.copy(autoAsks = pad.autoAsks + 1, armed = false, open = true, auto = true, retried = false, retryDue = false),
-                    PadAction.ASK,
-                )
+                ask(pad.copy(autoAsks = pad.autoAsks + 1, armed = false, open = true, auto = true, retried = false, retryDue = false))
             } else {
                 // F59d-2: a resume that doesn't ask (a call, the cap, the screen off, no stop since the last ask) shows
                 // the hint, so the face is never bare with no pad coming - unless an ask is out.
                 if (pad.open) none else PadStep(pad.copy(line = true), PadAction.NONE)
             }
-        PadEvent.TAPPED -> PadStep(pad.copy(open = true, auto = false, retried = false, retryDue = false), PadAction.ASK)
+        PadEvent.TAPPED -> ask(pad.copy(open = true, auto = false, retried = false, retryDue = false))
         // M-4: a configuration-change relaunch is no stop and no new automatic ask. The ask still out is asked again by
         // the new instance, uncounted (the pad stays up; a second request only re-registers); with the screen off it
         // closes as a stop would. Nothing out: the resume's rule.
         PadEvent.RELAUNCHED -> when {
-            pad.open && interactive -> PadStep(pad.copy(retried = false, retryDue = false), PadAction.ASK)
-            pad.open -> PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, line = true), PadAction.NONE)
+            pad.open && interactive -> ask(pad.copy(retried = false, retryDue = false))
+            pad.open -> PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, silentDue = false, line = true), PadAction.NONE)
             else -> bootPadStep(pad, PadEvent.RESUMED, gate, interactive, inCall)
         }
         PadEvent.STOPPED ->
-            PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, line = pad.line || pad.open), PadAction.NONE)
-        PadEvent.SUCCEEDED -> if (!pad.open) none else PadStep(pad.copy(open = false, line = false), PadAction.NONE)
-        PadEvent.CANCELLED -> if (!pad.open) none else PadStep(pad.copy(autoAsks = closedCount, open = false, line = true), PadAction.NONE)
+            PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, silentDue = false, line = pad.line || pad.open), PadAction.NONE)
+        PadEvent.SUCCEEDED -> if (!pad.open) none else PadStep(pad.copy(open = false, silentDue = false, line = false), PadAction.NONE)
+        PadEvent.CANCELLED -> if (!pad.open) none else PadStep(pad.copy(autoAsks = closedCount, open = false, silentDue = false, line = true), PadAction.NONE)
         PadEvent.ERROR -> when {
             !pad.open -> none
-            !pad.retried -> PadStep(pad.copy(open = false, retried = true, retryDue = true), PadAction.RETRY_LATER)
-            else -> PadStep(pad.copy(open = false, line = true), PadAction.NONE)
+            !pad.retried -> PadStep(pad.copy(open = false, retried = true, retryDue = true, silentDue = false), PadAction.RETRY_LATER)
+            else -> PadStep(pad.copy(open = false, silentDue = false, line = true), PadAction.NONE)
         }
         PadEvent.RETRY -> when {
             !pad.retryDue || pad.open -> none
-            interactive && !(pad.auto && inCall) -> PadStep(pad.copy(open = true, retryDue = false), PadAction.ASK)
+            interactive && !(pad.auto && inCall) -> ask(pad.copy(open = true, retryDue = false))
             else -> PadStep(pad.copy(retryDue = false, line = true), PadAction.NONE)
+        }
+        PadEvent.SILENT -> when {
+            !pad.silentDue || !pad.open -> none
+            !interactive || (pad.auto && inCall) -> PadStep(pad, PadAction.NONE, bootPadSilentInMs(pad.reasks))
+            else -> PadStep(pad.copy(reasks = pad.reasks + 1), PadAction.ASK, bootPadSilentInMs(pad.reasks + 1))
         }
     }
 }

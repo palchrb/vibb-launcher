@@ -322,6 +322,12 @@ class AndroidLockFaceTest {
         assertTrue(go, go.contains("if (plan.homeFirst) HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn)"))
         assertTrue(go, go.contains("if (AndroidLock.faceOn) overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)"))
         assertFalse("59b's close fade went", go.contains("fade_out"))
+        // RC3-2: the glance shows the wallpaper exactly while it asks as the face - set before the leave's transition
+        // collects it (the wallpaper-intra transition, not wallpaper_open_exit's slide), never cleared by the leave.
+        val stage = activity.substringAfter("private fun onStage() {").substringBefore("\n    }\n")
+        assertTrue(stage, stage.indexOf("if (!finishingAfterUnlock) showWallpaperBelow(asking() && AndroidLock.faceOn)") in 0 until stage.indexOf("when {"))
+        assertTrue(leave.indexOf("finishingAfterUnlock = true") in 0 until hide)
+        assertEquals(2, Regex("FLAG_SHOW_WALLPAPER\\)").findAll(activity).count())
     }
 
     @Test
