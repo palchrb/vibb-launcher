@@ -524,14 +524,16 @@ Also noted from the same test: Android's "Return to call" on the pad does nothin
 Telecom calls have no in-call screen for `showInCallScreen` to bring up - the pad closes onto SystemUI's face). Not
 ours; our own `InCallActivity` answers it for telephony. Check Element X on the emulator once (§8.4 item 2).
 
-### 8.8 Step L (the user, 2026-10-23, a thought): the glance as a twin of Android's face
+### 8.8 Step K revised, and step L (the user, 2026-10-23)
 
-The idea: make the frame before ours (SystemUI's face) and ours look the same, so the glimpse isn't seen. Measured on
-the user's rc.2 recording (24 fps): the wake glimpse is 5 frames - 2 of the blurred lock wallpaper with the lock dot,
-3 of the sharp wallpaper - and no clock in any of them; the clock only shows in the longer cases (after a call, Back
-from the pad). So, in order: (1) step K (round 1): Android's lock wallpaper is always the night ground with the mark in
-android mode; (2) the glance's own ground in android mode = the same night ground (the family photo then lives on Home
-only - the user's call; the parent's "also on the lock screen" opt-in would apply to own mode only); (3) our clock in
-Android's small-clock place and size (top-left, the date under it) for the longer cases - not pixel-identical (the
-system font varies per maker, Monet picks the colour, the lock dot is Android's), position and size carry most of it.
-Decide after rc.3's frame count. Launcher, S for (2), S-M for (3).
+The user's call after the rc.2 recording: Android's lock wallpaper in android mode is **our glance's own ground**
+("Jeg ville heller at VÅR bakgrunn er der på android sin klokkebakgrunn, ikke en svart en"), not the night mark.
+Measured on the recording (24 fps), each of three wakes: 2 frames of SystemUI's blurred wallpaper with the lock dot,
+then 3 frames of the sharp wallpaper with only the status bar, then our glance - no clock of Android's in any of
+them; Android's clock shows only in the longer cases (after a call, Back from the pad). So step K (round 1) =
+`lockScreenFill(.., androidFace)` gives the glance's own ground (the parent's lock wallpaper when allowed, else
+Home's) with the glance's scrim baked into the bitmap, so the sharp frames read as our page; NightMark only where no
+wallpaper exists, and for the boot cover's own look; re-applied whenever the glance's ground changes. Step L, if
+rc.3's frame count still shows a seam: our clock in Android's small-clock place and size (top-left, the date under)
+for the longer cases - not pixel-identical (the system font varies per maker, Monet picks the colour, the lock dot is
+Android's); position and size carry most of it. Launcher, S-M. Decide after rc.3.
