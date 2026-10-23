@@ -474,7 +474,9 @@ and while the bouncer shows; but NOT while the keyguard is occluded by an app wi
 Jelly Star's is in the power key) - so a finger on the glance does nothing until a swipe up brings the pad. In the
 rc.3 run: enrol a fingerprint on the emulator (Settings, the Child PIN, `adb emu finger touch 1`), then (a) screen
 off + `finger touch 1` -> Home with no pad; (b) glance up + `finger touch 1` -> nothing; swipe up + `finger touch 1`
--> unlocked; (c) after a reboot the finger is refused until the PIN. Confirm on the Jelly Star.
+-> unlocked; (c) after a reboot the finger is refused until the PIN. Confirm on the Jelly Star. **RC3-6 (the rc.3
+run):** removing Android's credential by hand (the `OWN_KEYPAD` path) also deletes the enrolled fingerprint (`count:0`),
+and it stays deleted after the next Child PIN sets Android's PIN again - the parent enrols it again during a pause.
 
 ### 8.5 Answers to the revision check's guess list (`qa-59d-revision-check.md`)
 
@@ -719,8 +721,9 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   `LockGlanceGuardTest` (no row swipe/dismiss; the panel's only verdict is UNLOCK), `LockGlanceLayoutTest` (the fits at
   473/497 dp with the new bottom block). `scripts/smoke-test.sh` swipes up from the hint line.
 - **L** (the clock as Android's small clock): pure `glanceClockProfile(model, manufacturer, density)` -> `ClockGeometry?`
-  (`LockGlance.kt`) - `EMULATOR_PIXEL_CLOCK` (Google's `sdk_gphone*`), `JELLY_STAR_CLOCK` (Unihertz "Jelly Star"; a TODO
-  with the emulator's numbers until a frame of its AOSP face is measured), only at 240 dpi; otherwise `null` and today's
+  (`LockGlance.kt`) - `EMULATOR_PIXEL_CLOCK` (Google's `sdk_gphone*`), `JELLY_STAR_CLOCK` (Unihertz "Jelly Star"; built
+  with the Pixel emulator's numbers, since 2026-10-23 the pure AOSP emulator image's - `AOSP_EMULATOR_CLOCK`,
+  `2026-10-23-aosp-lock-look.md`; to confirm on the phone), only at 240 dpi; otherwise `null` and today's
   centred clock. Measured on `handy36` at `wm density 240` from SystemUI's small clock (`lockscreen_use_double_line_clock
   0`; the plain-lock run's frames and this run's): the digits' ink 92 px high from y 180 to a baseline at 273 px (the
   last ink row 272), the first digit's ink at x 53 for a "5", x 49 for a "1"; the date's capitals 17 px high on a
@@ -788,7 +791,9 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   - JL-6: `glanceClockProfile(model, manufacturer, density, widthDp)` - 240 dpi **and** 320 dp (the dp width makes the
     numbers fit, the density is where they were measured; a comment says why); the Jelly Star's model matched ignoring
     spaces, underscores and case (still unverified - read `ro.product.model` on the phone); no match logs once
-    (`Glance clock: no profile (model .., maker .., density .., width .. dp)`). The Jelly Star TODO stays.
+    (`Glance clock: no profile (model .., maker .., density .., width .. dp)`). The Jelly Star's entry was the Pixel
+    emulator's numbers then; it now takes the AOSP emulator image's (§8.4 "Android's pad size", the aosp-lock-look
+    report), still to be confirmed on the phone.
   - JL-7: `HomeActivity.onCreate` with the HOME intent while LOCKED (a destroyed Home), not a recreation, is offered to
     `PinLockRuntime.homeIntent` as `onNewIntent` is; §8.4 item 7 asks for the two-swipe recording.
   - JL-8: the twin's times, `launcher/CLAUDE.md`'s ask-again line (a swipe or a row's tap) and its stale bottom-row
@@ -911,3 +916,76 @@ the system takes the gesture (a desync, §8.9) we get `ACTION_CANCEL` and do not
 bottom-edge rule goes; (3) the hint line "Sveip opp for å låse opp" goes; TalkBack's "Lås opp" click action moves to
 the pill (a focusable node with a content description); (4) own mode: the same pill, the same swipe, our keypad.
 Built in J's fix round (§8.11, "Fix round").
+
+### 8.14 The rc.3 run's fix round (RC3-1..3) (branch `rc3-fix`, 2026-10-23)
+
+**What the run found** (`docs/testing/2026-10-23-rc3-run.md`, Findings):
+- **RC3-1**, the blocker: in every boot on Android 16 the cover's automatic ask reached SystemUI before its keyguard
+  had booted. SystemUI dropped it with no answer at all ("PrimaryBouncerInteractor#show is being called before the
+  primaryBouncerDelegate is set"), so step F's error retry never ran. The kid sat on SystemUI's clock over the cover
+  with dead touches until power or the screen timeout.
+- **RC3-2**: after the pad's success the glance's photo ground slid down off the screen for ~170 ms before Home.
+- **RC3-3**: Back, then Home, between the PIN and the take-over. The cover's Home start on its way out disabled the
+  cover and started Home in a main process that was still in its 8 s unlocked setup, which gave an ANR dialog for
+  2 minutes.
+
+**The rules as built:**
+- **RC3-1, the dead-ask re-ask** (`BootCoverPlan.kt`; `PadEvent.SILENT`, `BootPad.silentDue`/`reasks`,
+  `PadStep.silentInMs`, `bootPadSilentInMs`, `BOOT_PAD_SILENT_REASK_AT_MS`, `BOOT_PAD_SILENT_EVERY_MS`).
+  - Every ask - automatic, tapped, a retry's or a relaunch's - starts a clock. The cover posts `SILENT` with its handler
+    (`padSilent`), drops it with any answer or stop, and posts it again at a resume.
+  - An ask still open when `SILENT` comes is asked again 3, 6 and 12 s after it, then every 12 s. The re-ask is
+    uncounted (not one of the 3 automatic asks) and part of the same ask: the count, the arm and `auto` stay.
+  - A re-ask needs the screen on and, for an automatic ask, no call. Otherwise nothing more is posted, and the stop that
+    follows closes the ask.
+  - Each re-ask bumps `askId`, so the old (never-arriving) answer is dropped.
+  - The log reads `Boot cover asks for Android's PIN pad (no answer, again N, automatic k of 3)`.
+  - **Changed from the brief's "3, 6 and 12 s"**: the fix run's first build stopped there and gave the ask up with the
+    line at 24 s. On the emulator SystemUI's keyguard took its first ask 26-42 s after ours, and one cold boot (e1) hung
+    exactly as in rc.3, so the re-asks now go on until an answer, a stop or the screen going off.
+  - A re-ask while the pad is up only adds a callback to SystemUI's `DismissCallbackRegistry` (the bouncer's `show`
+    returns early when showing). The typed digits stay: the mid-typing check, below.
+  - Not built: the delay of the first ask after the cover's first frame. With the keyguard ready 26-42 s after the
+    first ask, a 1.5-2 s delay would have removed no dead ask.
+- **RC3-2, no slide** (`PinLockActivity.onStage`, `showWallpaperBelow`):
+  - The cause, from the shell's transition log: the leave is one `OPEN` transition with Home's task
+    `TO_FRONT f=SHOW_WALLPAPER|NO_ANIMATION` and the glance's task `CLOSE f=NONE`. The DefaultTransitionHandler gives
+    the closing glance `wallpaperOpenExitAnimation`. AOSP 16's `wallpaper_open_exit.xml` is a translate to 110 % in
+    225 ms, drawn on top.
+  - As the face, the glance's window has `FLAG_SHOW_WALLPAPER` exactly while it asks for the pad (set in `onStage`,
+    cleared by a stage change, never by the leave itself: `finishingAfterUnlock`). The flag is in WM long before the
+    pad's success, so the glance's change is collected with `SHOW_WALLPAPER`, and the transition is the
+    wallpaper-intra kind (`wallpaper_intra_open_exit`: an alpha fade in place). The window stays opaque, so nothing
+    changes on screen.
+  - Tried and dropped:
+    - `overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)` on the glance. It is set already at its create
+      (25b) and was in place during the rc.3 run. It only applies to transitions that open the glance.
+    - `ActivityOptions.makeCustomAnimation(ctx, 0, 0)` on Home's start. Custom animations apply to a task change only
+      with `getOverrideTaskTransition()`, which no public API sets.
+    - The flag added at the leave itself. It reached WM only after the transition had collected the glance (`f=NONE`).
+  - `HomeFront.bring`'s `noAnimation` start is unchanged.
+- **RC3-3, no Home start of the cover's before the take-over** (`coverDestroyStartsHome(.., takenOver)`,
+  `coverHoldsBack`, `coverWaitStep`'s KDoc):
+  - `START_HOME` already needed the stamp. Now the start on the way out does too (`takenOver` as the wait poll reads
+    it: the stamp or its own disable).
+  - Back is held while the cover is the BFU face, and in android mode from the unlock until the take-over
+    (`applyBackHold`; `Boot cover: Back before the take-over, held`). So Back no longer finishes the cover in that
+    window, and the system's HOME brings the cover already in front.
+  - Step M's "never stranded" stays: without a stamp the 30 s hand-over (disable, then our Home) is the rescue, and it
+    needs the cover in front, which the held Back keeps.
+  - The unlocked setup was not refactored. Its time is mostly the debug build's dex verification on the main thread
+    (RC3-4). Moving any of `initRest`'s head off the main thread isn't obviously safe, so the measurement on the release
+    build is PLAN's fix backlog item.
+
+**Verified** (`docs/testing/2026-10-23-rc3-fix-run.md`, `handy36`):
+- RC3-1: six boots on the final build showed Android's pad without any key press: `adb reboot` x2, `svc power reboot`,
+  `adb reboot` with a `gsm call` ringing, and two emulator cold starts. The pad was up 26.9-45.6 s after the first ask,
+  0.5-1.5 s after SystemUI's keyguard booted. The first build's cold start (e1) reproduced RC3-1.
+- The mid-typing check: two digits, then the 3, 6 and 12 s re-asks while the pad was up, then the last two digits and
+  Enter, unlocked. The dots stayed in the screenshots.
+- RC3-2: the frames where the ground moves went from 3 to 0 (two recordings, a photo ground, 24 fps).
+- RC3-3: c1's recipe on a cover-first boot. Back was held twice, the Home key landed on the cover in front, there was
+  no finish, disable or PPA removal, the take-over and Home followed, and there was no ANR.
+- The residual, for RC3-4: on a HomeActivity-first boot the Home key starts HomeActivity itself, and WM then had no
+  focused window for 8.3 s while the main process was busy. A key pressed then and left waiting 5 s would still give an
+  ANR - the main thread's matter, not the cover's.
