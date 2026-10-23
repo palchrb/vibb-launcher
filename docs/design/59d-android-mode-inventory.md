@@ -403,6 +403,15 @@ ends with E.
    over the occluded BFU keyguard with no lock task: airplane, Wi-Fi, data, Bluetooth, location tiles against
    SystemUI's own BFU face - the occluded shade must not be wider; (c) whether the cover as the BFU face changes N2;
    plus §5's list: a reboot with and without a call, the emergency dialer, power with the pad up, cancel x3.
+   Added by step F's code QA (`qa-59d-f-code.md` F59d-7): Back twice on the face after a cancel - no SystemUI face, no
+   `wm_destroy_activity` of the cover, the line stays (`Boot cover: Back on the BFU face, held`); the Home key during a
+   call before the PIN - the cover over the call screen, no ask while the call lives, and once it ends with the cover
+   in front the line, and an ask at the next tap or screen-on; the first resume's ask answered `error` (the keyguard
+   not ready) - a `retry` ask 1 s later, not a second error; an ask line while `dumpsys` shows the keyguard **not**
+   occluded is gate (a) failing too (SystemUI's bouncer over SystemUI's own face), not a pass; with (b), the Home and
+   Overview gestures and the power menu over the occluded BFU keyguard (Overview stays unavailable, as on SystemUI's
+   own BFU face); and whether `onDismissCancelled` comes at all for the pre-unlock pad's Back (`Boot cover: Android's
+   PIN pad cancelled`) - without it only the stop's line leaves a hint.
 
 The release after the rounds is `launcher-v0.36.0-rc.3` on the same server (no API change expected; if anything
 needs a status field, both directories in one commit as always).
@@ -430,7 +439,76 @@ needs a status field, both directories in one commit as always).
 - **Docs**: round 1 edits `launcher/CLAUDE.md`'s design 32 sentence and the notice-wake line; round 2 edits its
   16b/F3 bullet; different bullets, the second to merge rebases.
 
-### 8.6 Step J (the user, 2026-10-23): swipe up to unlock, the "Lås opp" button goes
+### 8.6 Step F as built (round 2, branch `d59d-round2-f`, 2026-10-23; no emulator run in this round)
+
+**Files**: `lock/BootCoverPlan.kt` (pure: `bootPadGate`, `PadEvent`, `PadAction`, `BootPad`, `PadStep`, `bootPadStep`,
+`BOOT_PAD_AUTO_ASKS` = 3, `BOOT_PAD_RETRY_MS` = 1 s), `lock/BootCoverActivity.kt` (the wiring: `padGate`,
+`applyLockedFace`, `padStep`, `askPad`, `padAnswer`, the tap line), `boot_cover_tap_to_unlock` (nb "Trykk for å låse
+opp", en "Tap to unlock"), tests `BootCoverPlanTest` (6 new, one per rule), `BootCoverManifestTest` (the keyguard pin
+flipped), `KeyguardCoverPlanTest` (the caller list). Docs: design 59's F3 "Over the keyguard only as the BFU face"
+(with gate (a)'s fallback) and its run check 3, `launcher/CLAUDE.md`'s 16b/F3 bullet.
+
+**The rules as coded** (`bootPadStep(pad, event, gate, interactive, inCall)`):
+- No gate (`bootPadGate`: marker and not unlocked) -> nothing, the ask and its retry closed. The Activity's gate is
+  `waitForLauncher` (create's marker read) and a fresh `BootCoverGuard.androidMode` and `isUserUnlocked != false`
+  (unreadable = unlocked, inert); read in every `padStep` (every resume, stop, tap, answer, retry) and again inside
+  `askPad` right before `requestDismissKeyguard`. `applyLockedFace` sets `setShowWhenLocked` to the gate's value at
+  create, every resume, the `ACTION_USER_UNLOCKED` receiver, every pad step and F3's 250 ms wait poll once unlocked.
+- RESUMED (posted past `onResume`): asks when armed (a new cover, and every stop), no ask open, the screen on, no
+  `telecomInCall()` and fewer than 3 counted. A resume held back (call, screen off) keeps the arm, so the first resume
+  after a call asks.
+- TAPPED: always asks (in a call, after the cap), uncounted. A tap reaching the cover means no pad is over it, so an
+  ask still marked open is given up; its late answer is dropped by the ask id (`padAnswer`).
+- CANCELLED: the line shows; an automatic ask cancelled with the screen off gives its count back.
+- ERROR: one retry after 1 s, the same ask (no new count); the retry needs the screen on and, for an automatic ask, no
+  call; a second error or a retry that can't go shows the line. A retry dropped by `onPause` is posted again at the next
+  resume; a stop drops it.
+- STOPPED: arms the next resume; an ask still open is closed (uncounted when the screen is off - the power press's
+  stop may come before the cancel callback, which is then no current ask's answer).
+- SUCCEEDED: the ask closes and the line goes; CE's unlock turns the gate false.
+- The count lives in a companion var (`autoAsksThisProcess`), so a new cover instance in the same `:bootcover`
+  process carries it.
+
+**Where it goes past §5/§8.3** (choices the spec left open): the tap asks even with an ask marked open (above); a stop
+closes an open ask, so a lost cancel callback can't block rule 4's next screen-on ask; the line also shows after a
+failed retry, and never before any ask (a first resume in a call shows the mark only - a tap still asks); the resume's
+ask is a plain post after `onResume`, not "after the first frame" (an early `onDismissError` is what the 1 s retry is
+for).
+
+**What the device run must check** (§8.4 item 6, on the release candidate after both rounds merge; log tag
+`BootCover`):
+- (a) After `adb reboot` and `svc power reboot`: `Boot cover showWhenLocked true`, then `Boot cover asks for Android's
+  PIN pad (resumed, automatic 1 of 3)`; `dumpsys activity activities` shows the cover resumed on top with the keyguard
+  occluded, and the bouncer is BFU's ("PIN is required after device restarts"). No resume and no ask line while locked,
+  or an ask line with the keyguard not occluded, = gate (a) failed: the fallback in design 59's F3 section holds,
+  nothing to revert.
+- (a2) The pad keeps the cover resumed (focus only), as the rc.2 re-check measured for the glance: no `onStop` between
+  the ask and its answer. If the BFU bouncer stops the cover, each stop re-arms and every Back is followed by a new
+  automatic ask until the cap (3) - a finding for this rule, bounded, not a loop.
+- (b) The shade and QS pulled over the occluded BFU keyguard (no lock task): airplane, Wi-Fi, data, Bluetooth,
+  location tiles against SystemUI's own BFU face - not wider.
+- (c) N2: the colour overlays after an android-mode boot with the cover as the face.
+- §5's list: a reboot during a call (no ask while `isInManagedCall`, the read works BFU; the ask at the first resume
+  after the call), the pad's Emergency button (the dialer over the cover, back to the cover), power with the pad up
+  (the cancel not counted, the next screen-on asks), Back three times (the line, no loop; after 3 automatic asks only a
+  tap asks), then the PIN: `Boot cover showWhenLocked false` and F3's `Boot cover leaves (taken over, Home over it)`.
+
+**Fix round** (`docs/review/qa-59d-f-code.md`, F59d-1..7, all taken):
+- F59d-1: Back is held while the flag is on - `holdBack` registers an `OnBackInvokedCallback` (the app has
+  `enableOnBackInvokedCallback`) when `applyLockedFace` turns the flag on and unregisters it when it goes off, so F3's
+  post-unlock Back is unchanged. Without it Back finished the cover (HOME, not LAUNCHER) and SystemUI's face showed.
+- F59d-2: `bootPadStep` shows the line on every RESUMED that doesn't ask while no ask is open (a call, the cap, the
+  screen off, no stop since the last ask) and on a STOPPED that closes an open ask. The face is bare only while its
+  first ask is coming or an ask is out.
+- F59d-3: SUCCEEDED clears the line, and `applyLockedFace` hides it (`faceViews`) whenever the gate is false.
+- F59d-4: tests for a tap over an open ask, the line's gate and the resume's re-post of a due retry.
+- F59d-5: the three KDocs and the 16b/F3 bullet say what the code does.
+- F59d-6: the root is a tap target and a TalkBack node (labelled "Trykk for å låse opp") only while gated; the line
+  has 24 dp side margins and its top is the pure `tapLineTopPx` - 156 dp under the centre, but at least 16 dp above
+  the bottom system-bar inset (two lines at font scale 2.0 above a 48 dp navigation bar).
+- F59d-7: §8.4 item 6's device list.
+
+### 8.7 Step J (the user, 2026-10-23): swipe up to unlock, the "Lås opp" button goes
 
 The user, testing rc.2: "skal vi ta vekk vår egen unlock knapp og heller også la vår låseskjerm bli swipet oppover
 så den er identisk med android sin egen låseskjerm i funksjonalitet?" Yes: the glance behaves as Android's face - a

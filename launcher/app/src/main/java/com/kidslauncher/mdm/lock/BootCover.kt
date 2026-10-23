@@ -140,8 +140,9 @@ object BootCover {
      * cover is enabled and started as the typed HOME - before the first unlock only direct-boot-aware HOMEs resolve, so
      * within our package that is the cover alone - so a boot without the shutdown's arm (`adb reboot`, a crash, a hard
      * reset, a shutdown broadcast our cached process never got) has it behind Android's keyguard too, and the PIN's
-     * dismissal reveals it, not the stock launcher. The cover is never showWhenLocked: Android's lock screen (the
-     * restart line, the pad) stays the face before the PIN. Decided now ([coverAtLockedBoot], f3-run B1): nothing once
+     * dismissal reveals it, not the stock launcher. In android mode the cover is the BFU face over the keyguard while
+     * its pad gate holds (design 59d step F: showWhenLocked at runtime, it asks for Android's PIN pad), else behind it
+     * (Android's lock screen with the restart line is the face). Decided now ([coverAtLockedBoot], f3-run B1): nothing once
      * unlocked, after our take-over ([tookOver]) or with a tripped crash guard - a boot the shutdown armed included
      * (F3R-2: the typed start brings the cover over whatever the boot started, the chooser too; already in front, it
      * is a new intent to its singleTask); a live call is retried by an alarm (delivered to a frozen process, unlike a
