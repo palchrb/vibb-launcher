@@ -44,13 +44,17 @@ fn report_of<'a>(
     downloads: &'a Option<crate::app_downloads::AppDownloads>,
     app_id: i64,
 ) -> Report<'a> {
+    let claims = |capability: &str| {
+        status
+            .capabilities_json
+            .as_deref()
+            .is_some_and(|caps| caps.contains(&format!("\"{capability}\"")))
+    };
     Report {
         app_version: status.app_version.as_deref(),
         app_version_code: status.app_version_code,
-        capable: status
-            .capabilities_json
-            .as_deref()
-            .is_some_and(|caps| caps.contains(&format!("\"{}\"", install_now::CAPABILITY))),
+        capable: claims(install_now::CAPABILITY),
+        same_code_capable: claims(install_now::SAME_CODE_CAPABILITY),
         pending_tag: fence.as_ref().and_then(|f| f.pending_tag.as_deref()),
         waiting_for: fence.as_ref().and_then(|f| f.waiting_for.as_deref()),
         download: downloads.as_ref().and_then(|d| d.entry(app_id)),

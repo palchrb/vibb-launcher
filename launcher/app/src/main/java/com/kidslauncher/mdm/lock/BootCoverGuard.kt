@@ -118,7 +118,10 @@ object BootCoverGuard {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
-                val next = coverCrashed(read(app), bootCount(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong())
+                val next = coverCrashed(
+                    read(app), bootCount(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong(),
+                    com.kidslauncher.mdm.BuildConfig.VERSION_NAME,
+                )
                 write(app, next)
                 if (coverGuardTripped(next)) disable(app, "crash guard (${next.crashes} crashes this boot)")
             } catch (t: Throwable) {

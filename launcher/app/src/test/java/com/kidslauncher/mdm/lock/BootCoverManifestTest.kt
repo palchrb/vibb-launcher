@@ -178,7 +178,8 @@ class BootCoverManifestTest {
         // M7: the cover's PPA has its own category, never replacing HomeActivity's.
         assertTrue(apply.contains("addCategory(BOOT_COVER_CATEGORY)"))
         // F3C-3: the guard's clear on an update or the switch's edge.
-        assertTrue(apply.contains("coverGuardClearDue(BootCoverGuard.read(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong(), switchWas, switchOn)"))
+        // R2R-6: and the versionName (an RC over an RC of one version keeps the code).
+        assertTrue(apply.contains("coverGuardClearDue(BootCoverGuard.read(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong(), switchWas, switchOn, com.kidslauncher.mdm.BuildConfig.VERSION_NAME)"))
         // M9: the locked boot's start stays inside our package (before the unlock: the cover alone).
         val atBoot = cover.substringAfter("fun atLockedBoot(").substringBefore("\n    }\n")
         val start = atBoot.substringAfter("LockedBootCover.START ->")

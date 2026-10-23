@@ -147,8 +147,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`INSTALL_UPDATE_RECEIVED_MINUTES`), every other command after 10 minutes.
 - **The row** (pure `src/install_now.rs`, typed): `launcher_tag_version_code` (the launcher's `launcherTagVersionCode`,
   the Kotlin test's cases), `release(tag, report)` -> `Standing` NotReported / NoRelease (no release, or the row is off)
-  / UpToDate / Behind (tag code above the report's `app_version_code`, or a `pending_tag`; a manual upload's label is
-  behind unless the phone runs a build of that name) / TooOld (behind without capability `install_now_v1`); `offer`
+  / UpToDate / Behind (`build_ahead`, the launcher's `launcherBuildAhead`: the tag's code above the report's
+  `app_version_code`, or the same code and the tag's name - `release_name`, "0.36.0-rc.2" - another, newer one than
+  the report's `app_version`: every RC of one version shares a code, so rc.2 is behind-worthy over rc.1, never rc.1
+  over rc.2, and 0.36.0 over 0.36.1-rc.1 isn't; two names that can't be ordered count as ahead; or a `pending_tag`;
+  a manual upload's label is behind unless the phone runs a build of that name). Ahead by the name alone (the same
+  code) is Behind only when the report claims `same_code_update_v1` (`install_now::SAME_CODE_CAPABILITY`, the
+  launcher's `SAME_CODE_UPDATE_CAPABILITY`), else TooOld: a launcher from before the RC-to-RC fix decides by the code
+  and would answer "Already on X" (qa-rc-to-rc-code R2R-1) / TooOld (behind without capability `install_now_v1`); `offer`
   adds the newest `install_update`: Asked (Waiting, with Cancel; Sent - not lost - without) and Working (Received, no
   answer, under 25 h) - and Working "Installed - waiting for the phone's report" while the newest answer is
   `installed: X` and the latest report is older than it (`awaiting_report`, at most an hour; qa-37-code M1: in one sync

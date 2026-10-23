@@ -472,12 +472,13 @@ internal fun lockAnswer(ok: Boolean, ours: Boolean, androidGate: Boolean): Strin
 /**
  * Install Now received (design 37 §4.2): a record of another command is answered first - with its
  * own failure, else "superseded" (failed, QA L5) -, then this one is stored with the running
- * versionCode; the ordinary gate's last wait is forgotten (QA L4) and a download waiting for
- * Wi-Fi is gated again (the override is read live, [AppDownloads]' `gate`).
+ * versionCode and versionName; the ordinary gate's last wait is forgotten (QA L4) and a download
+ * waiting for Wi-Fi is gated again (the override is read live, [AppDownloads]' `gate`).
  */
 private suspend fun startInstallNow(context: Context, api: MdmApi, pending: PendingCommand) {
     val receipt = installNowOnReceipt(
         InstallNow.load(context), pending.id, pending.requestedAt, pending.releaseTag, BuildConfig.VERSION_CODE.toLong(),
+        BuildConfig.VERSION_NAME,
     )
     receipt.answerOld?.let { (old, message) ->
         CommandAnswers.result(
@@ -502,7 +503,7 @@ private suspend fun startInstallNow(context: Context, api: MdmApi, pending: Pend
  */
 private suspend fun settleInstallNow(context: Context, api: MdmApi, row: LauncherRow) {
     val record = InstallNow.load(context) ?: return
-    val (ok, message) = installNowOutcome(record, BuildConfig.VERSION_CODE.toLong(), row)
+    val (ok, message) = installNowOutcome(record, BuildConfig.VERSION_CODE.toLong(), row, BuildConfig.VERSION_NAME)
         .answer(BuildConfig.VERSION_NAME) ?: return
     Log.i(LOG_TAG, "Install Now ${record.commandId}: $message")
     CommandAnswers.result(context, api, PendingCommand(record.commandId, INSTALL_NOW_COMMAND, record.requestedAt), ok, message)
@@ -729,13 +730,14 @@ private fun handleLauncherUpdate(context: Context, update: TrackedAppUpdate?): L
         nowMs = now,
         failedBackoffMs = if (installNow) 0 else FAILED_RETRY_BACKOFF_MS,
         runningVersionCode = BuildConfig.VERSION_CODE.toLong(),
+        runningVersionName = BuildConfig.VERSION_NAME,
     )
     val row = launcherRow(true, update?.releaseTag, known?.lastInstalledTag, known?.refusedTag, step)
     val download = when (step) {
         LauncherUpdateStep.NOTHING, LauncherUpdateStep.KEEP_PENDING -> null
         LauncherUpdateStep.ALREADY_RUNNING -> {
             // update is non-null here: a withdrawn row never reaches this step.
-            Log.i(LOG_TAG, "The launcher row ${update?.releaseTag} is not newer than the running build - recorded as installed")
+            Log.i(LOG_TAG, "The launcher row ${update?.releaseTag} is not ahead of the running build ${BuildConfig.VERSION_NAME} - recorded as installed")
             if (pending != null) SelfUpdate.dropPending(context)
             if (update != null) TrackedAppUpdateState.recordInstalled(context, key, update.releaseTag)
             null
@@ -814,6 +816,8 @@ private suspend fun commitPendingSelfUpdateIfDue(context: Context, api: MdmApi) 
         ownVersionCode = BuildConfig.VERSION_CODE.toLong(),
         ourSigners = SelfUpdate.ourSigners(context),
         archiveSigners = SelfUpdate.signers(archive?.signingInfo),
+        archiveVersionName = archive?.versionName,
+        ownVersionName = BuildConfig.VERSION_NAME,
     )
     val appId = key.toLongOrNull()
     when {

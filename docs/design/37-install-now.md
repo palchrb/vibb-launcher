@@ -28,7 +28,9 @@ and installs it **at once** - screen on or off, day or night. The only wait is a
 installs the moment that ends. The parent watches it in the row ("Downloading 40 of 80 MB", "Installing", "Done ·
 1.4.0" or "Failed: ...") and on the Locate tab's Recent.
 
-**Non-goals**: relaxing any APK check (size, SHA-256, package, signer, newer versionCode); an open permission window;
+**Non-goals**: relaxing any APK check (size, SHA-256, package, signer, ahead of the running build - "newer versionCode"
+until it was superseded 2026-10-23 by the same-code rule: a higher code, or the same code under a newer name, which
+relaxes nothing); an open permission window;
 a notification or push when done (the user: "Trenger ikke noe varsel"); a button on the phone's own pages (the user:
 "bare vibb launcher", on its app page); other catalog apps (they install when downloaded already); changing the night
 window, the 24 h overdue path or debug's 2 minutes for the ordinary self-update.
@@ -98,6 +100,10 @@ window, the 24 h overdue path or debug's 2 minutes for the ordinary self-update.
 | `Asked` | newest `install_update` `Waiting`/`Sent` | sub "Install Now: waiting for the phone" (`Sent`: "… sent, not confirmed yet") | **Cancel** while unfetched |
 | `Working` | `Received`, no result, under 25 h | §2.4's words | - |
 
+Superseded 2026-10-23 by the same-code rule (the RC-to-RC fix, `qa-rc-to-rc-code.md`): "tag code > running" is now
+`build_ahead` / `launcherBuildAhead` - a higher code, or the same code under a newer name - and ahead by the name
+alone is `Behind` only with the report's `same_code_update_v1`, else `TooOld` (play-and-updates.md, launcher/CLAUDE.md).
+
 An answer under 24 h old is a `details.info` in the row: "Install Now · 14:31 · Done", the reworded line inside
 (`Installed 1.4.0`); `Failed`, `Cancelled` and "No answer" (Received > 25 h) give `Behind` its button back.
 
@@ -161,7 +167,9 @@ const val INSTALL_NOW_CAPABILITY = "install_now_v1"
   or another package; advertised == `refusedTag`; `ALREADY_RUNNING` or == `lastInstalledTag`; else).
 - `installNowOutcome(record, runningVersionCode, row)`: running > `fromVersionCode` -> `Installed`; `failure` set ->
   `Failed(failure)`; `NOT_OFFERED` -> `Failed("not offered")`; `REFUSED` -> `Failed("refused: release")`; `RUNNING`
-  -> `AlreadyRunning`; else `Keep`. `.answer(versionName): Pair<Boolean, String>?`.
+  -> `AlreadyRunning`; else `Keep`. `.answer(versionName): Pair<Boolean, String>?`. Superseded 2026-10-23 by the
+  same-code rule: `installNowOutcome(record, runningVersionCode, row, runningVersionName)`, `Installed` when the running
+  build is `launcherBuildAhead` of the record's code and its new `fromVersionName` (an older record: by the code).
 - `installNowWait(recordPresent, pendingPresent, decision)`: `install_now_download` without an APK, `install_now_call`/
   `_emergency` from a wait, else `install_now_ready`; no record -> today's word.
 - `launcherUpdateStep(…)` with a record: `failedBackoffMs = 0` (refusals still hold).

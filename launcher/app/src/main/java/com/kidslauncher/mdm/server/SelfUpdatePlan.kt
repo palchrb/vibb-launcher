@@ -40,7 +40,8 @@ enum class LauncherUpdateStep {
     /** The release is installed already, or the server withdrew it: delete the pending APK. */
     DROP_PENDING,
     /** The running build already is this release or newer (a QR/adb install the launcher has no
-     * record of): record it installed, delete any pending APK, download nothing. */
+     * record of): record it installed, delete any pending APK, download nothing
+     * ([launcherBuildAhead] says the release isn't ahead of it). */
     ALREADY_RUNNING,
 }
 
@@ -58,14 +59,53 @@ fun launcherTagVersionCode(releaseTag: String): Long? {
     return code.takeIf { it >= 1 }
 }
 
+/** The versionName the release workflow builds for [releaseTag]: the tag minus `launcher-v`, before
+ * `@` ("0.36.0-rc.2"); null for a tag [launcherTagVersionCode] doesn't read. */
+fun launcherTagVersionName(releaseTag: String): String? {
+    val tag = releaseTag.substringBefore('@')
+    return if (LAUNCHER_TAG.matchEntire(tag) == null) null else tag.removePrefix("launcher-v")
+}
+
+private val LAUNCHER_VERSION_NAME = Regex("""^(\d{1,4})\.(\d{1,3})\.(\d{1,3})(?:-rc\.(\d{1,9}))?$""")
+
+/** A release name's order ("0.36.0-rc.2" < "0.36.0-rc.10" < "0.36.0" < "0.36.1-rc.1"): X, Y, Z,
+ * then an RC before its release; null for another shape (a local build's name). */
+private fun launcherVersionOrder(name: String): List<Long>? {
+    val m = LAUNCHER_VERSION_NAME.matchEntire(name) ?: return null
+    val (x, y, z, rc) = m.destructured
+    return listOf(x.toLong(), y.toLong(), z.toLong(), if (rc.isEmpty()) Long.MAX_VALUE else rc.toLong())
+}
+
+/**
+ * Whether a build of [code]/[name] is ahead of the running one ([runningCode]/[runningName]): a
+ * higher versionCode, or the same code under another versionName that isn't older. Every RC of one
+ * version shares a code, and an RC of X.Y.Z+1 has X.Y.Z's (launcher.yml); Android installs a
+ * same-code APK (no downgrade), so 0.36.0-rc.2 goes over 0.36.0-rc.1 and 0.36.1-rc.1 over 0.36.0 -
+ * never 0.36.0-rc.1 over -rc.2, or 0.36.0 over 0.36.1-rc.1 (the prereleases turned off again).
+ * Two names that differ but can't be ordered count as ahead; an unknown name (null) never does -
+ * the same code is then the running build, as before. The server's `install_now::build_ahead` is
+ * the same rule.
+ */
+fun launcherBuildAhead(code: Long, name: String?, runningCode: Long, runningName: String?): Boolean {
+    if (code != runningCode) return code > runningCode
+    if (name == null || runningName == null || name == runningName) return false
+    val ours = launcherVersionOrder(name) ?: return true
+    val running = launcherVersionOrder(runningName) ?: return true
+    for (i in ours.indices) if (ours[i] != running[i]) return ours[i] > running[i]
+    return false
+}
+
 /**
  * The launcher's own update at sync time:
  * - [advertisedTag] `null` = the server's list (which arrived) no longer has the launcher: a
  *   pending APK is dropped (withdrawn release);
  * - the advertised release is installed, or was refused for good ([refusedTag]): nothing (a
  *   pending leftover is dropped);
- * - the advertised tag's versionCode ([launcherTagVersionCode]) is not above the running build's
- *   ([runningVersionCode]): [LauncherUpdateStep.ALREADY_RUNNING] - a tag that doesn't parse goes on;
+ * - the advertised release isn't ahead of the running build ([launcherBuildAhead] of the tag's
+ *   versionCode and name - [launcherTagVersionCode], [launcherTagVersionName] - against
+ *   [runningVersionCode]/[runningVersionName]: a lower code, or the same code and the same, an
+ *   older or an unknown name): [LauncherUpdateStep.ALREADY_RUNNING] - a tag that doesn't parse
+ *   goes on;
  * - a download or commit in flight ([attemptInFlight]): nothing;
  * - the advertised release failed less than an hour ago: nothing (the backoff), a pending APK of
  *   another release is dropped;
@@ -85,6 +125,7 @@ fun launcherUpdateStep(
     failedBackoffMs: Long,
     refusedTag: String? = null,
     runningVersionCode: Long? = null,
+    runningVersionName: String? = null,
 ): LauncherUpdateStep {
     // Installed, withdrawn, or refused for good (a deterministic failure - wrong signer, older,
     // not ours: qa-11-code #4) until the server advertises another release.
@@ -92,7 +133,11 @@ fun launcherUpdateStep(
         return if (pending != null) LauncherUpdateStep.DROP_PENDING else LauncherUpdateStep.NOTHING
     }
     val tagCode = launcherTagVersionCode(advertisedTag)
-    if (tagCode != null && runningVersionCode != null && tagCode <= runningVersionCode) return LauncherUpdateStep.ALREADY_RUNNING
+    if (tagCode != null && runningVersionCode != null &&
+        !launcherBuildAhead(tagCode, launcherTagVersionName(advertisedTag), runningVersionCode, runningVersionName)
+    ) {
+        return LauncherUpdateStep.ALREADY_RUNNING
+    }
     if (attemptInFlight) return LauncherUpdateStep.NOTHING
     val backingOff = advertisedTag == lastFailedTag && lastFailedAtMs != null && nowMs - lastFailedAtMs < failedBackoffMs
     if (backingOff) {
@@ -116,7 +161,9 @@ enum class PendingApkCheck {
     NOT_OURS,
     /** Older than the running build - Android would refuse it (recorded as failed). */
     DOWNGRADE,
-    /** The running build already is this version - nothing to install (recorded as installed). */
+    /** The running build already is this version - the same versionCode, and the same versionName
+     * or an older or unreadable one ([launcherBuildAhead]): nothing to install (recorded as
+     * installed). */
     SAME_VERSION,
     /** PackageManager couldn't parse it (recorded as failed). */
     UNPARSEABLE,
@@ -148,6 +195,8 @@ fun pendingApkCheck(
     ownVersionCode: Long,
     ourSigners: Set<String> = emptySet(),
     archiveSigners: Set<String>? = null,
+    archiveVersionName: String? = null,
+    ownVersionName: String? = null,
 ): PendingApkCheck = when {
     fileSize == null -> PendingApkCheck.MISSING
     fileSize != pending.sizeBytes || !fileSha256.equals(pending.sha256, ignoreCase = true) -> PendingApkCheck.CORRUPT
@@ -155,7 +204,7 @@ fun pendingApkCheck(
     archivePackage != ownPackage -> PendingApkCheck.NOT_OURS
     !signerMatches(ourSigners, archiveSigners) -> PendingApkCheck.WRONG_SIGNER
     archiveVersionCode < ownVersionCode -> PendingApkCheck.DOWNGRADE
-    archiveVersionCode == ownVersionCode -> PendingApkCheck.SAME_VERSION
+    !launcherBuildAhead(archiveVersionCode, archiveVersionName, ownVersionCode, ownVersionName) -> PendingApkCheck.SAME_VERSION
     else -> PendingApkCheck.OK
 }
 
@@ -341,6 +390,12 @@ fun screenOffForMs(offSinceElapsed: Long?, screenEventSeen: Boolean, processStar
 /** Status-report capability of a launcher that runs Install Now. */
 const val INSTALL_NOW_CAPABILITY = "install_now_v1"
 
+/** Status-report capability of a launcher that installs a release of its own versionCode under a
+ * newer name ([launcherBuildAhead]): the server offers such a release (Install Now) only with it -
+ * an older build decides by the code alone and would answer "already running" (qa-rc-to-rc-code
+ * R2R-1, the server's `install_now::SAME_CODE_CAPABILITY`). */
+const val SAME_CODE_UPDATE_CAPABILITY = "same_code_update_v1"
+
 /** The command's kind (`pending_command.command`). */
 const val INSTALL_NOW_COMMAND = "install_update"
 
@@ -372,8 +427,10 @@ val PendingApkCheck.installNowAnswer: String
 /**
  * The parent's Install Now while it runs (DE prefs `install_now`, `InstallNow.kt`): the command
  * ([commandId] + [requestedAt] name it for the answer), the tag the row showed, and the running
- * versionCode at the receipt - "Done" is a running build above it (no wall clock across the
- * command, design 37 §1.10). [failure] is set by every failure and answered by the next sync's
+ * versionCode and versionName at the receipt - "Done" is a running build ahead of it
+ * ([launcherBuildAhead]: an RC over an RC of the same version keeps the code; a record without
+ * [fromVersionName], written before it existed, counts by the code alone) - no wall clock across
+ * the command, design 37 §1.10. [failure] is set by every failure and answered by the next sync's
  * settle; [callWaitSinceElapsed] is when the commit began waiting for a call (elapsed realtime).
  */
 @Serializable
@@ -384,6 +441,7 @@ data class InstallNowRecord(
     val fromVersionCode: Long,
     val failure: String? = null,
     val callWaitSinceElapsed: Long? = null,
+    val fromVersionName: String? = null,
 )
 
 /** What the receipt of Install Now does: [answerOld] = a record of another command and its
@@ -397,9 +455,10 @@ fun installNowOnReceipt(
     requestedAt: String?,
     tag: String?,
     runningVersionCode: Long,
+    runningVersionName: String? = null,
 ): InstallNowReceipt {
     if (old != null && old.commandId == commandId && old.requestedAt == requestedAt) return InstallNowReceipt(null, old)
-    val fresh = InstallNowRecord(commandId, requestedAt, tag, runningVersionCode)
+    val fresh = InstallNowRecord(commandId, requestedAt, tag, runningVersionCode, fromVersionName = runningVersionName)
     return InstallNowReceipt(old?.let { it to (it.failure ?: INSTALL_NOW_SUPERSEDED) }, fresh)
 }
 
@@ -448,10 +507,16 @@ sealed interface InstallNowOutcome {
     data object Keep : InstallNowOutcome
 }
 
-/** The settle: a running build above the one at the receipt is "installed" (beats a failure
- * recorded before the kill); then a recorded failure; then what the list says. */
-fun installNowOutcome(record: InstallNowRecord, runningVersionCode: Long, row: LauncherRow): InstallNowOutcome = when {
-    runningVersionCode > record.fromVersionCode -> InstallNowOutcome.Installed
+/** The settle: a running build ahead of the one at the receipt ([launcherBuildAhead], so an RC
+ * over an RC of one version counts) is "installed" (beats a failure recorded before the kill);
+ * then a recorded failure; then what the list says. */
+fun installNowOutcome(
+    record: InstallNowRecord,
+    runningVersionCode: Long,
+    row: LauncherRow,
+    runningVersionName: String? = null,
+): InstallNowOutcome = when {
+    launcherBuildAhead(runningVersionCode, runningVersionName, record.fromVersionCode, record.fromVersionName) -> InstallNowOutcome.Installed
     record.failure != null -> InstallNowOutcome.Failed(record.failure)
     row == LauncherRow.NOT_OFFERED -> InstallNowOutcome.Failed(INSTALL_NOW_NOT_OFFERED)
     row == LauncherRow.REFUSED -> InstallNowOutcome.Failed(INSTALL_NOW_REFUSED_RELEASE)

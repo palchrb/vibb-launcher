@@ -1035,6 +1035,10 @@ findings, merge to `main`, full suite once.
 
 ### Parked
 
+- **Crash reports group by versionCode only** (qa-rc-to-rc-code R2R-6, 2026-10-23): `crash/CrashReports.kt` records
+  `BuildConfig.VERSION_CODE` and the server's `device_crashes.app_version_code` shows it, so rc.1 and rc.2 crashes
+  (one code) read as one build on About This Phone. Not changed with the RC-to-RC fix; a fix sends the versionName too
+  (a new field in `POST /api/devices/crashes`, both sides in one commit) or shows the report's `app_version` beside it.
 - **The Spotify host list is good enough** (the user, 2026-10-16: list-mode playback works on the emulator
   with every blocklist on, so the DNS capture is dropped): mark it final in one commit - the "PROVISIONAL"
   wording out of the three `spotify_hosts.json` copies, the six constants' doc comments, design 26c and the
@@ -1426,6 +1430,20 @@ findings, merge to `main`, full suite once.
   `systemd-run --user --scope -p MemoryHigh=4G -p MemoryMax=5G` around the emulator.
 
 ### Done (not released yet)
+
+- **An RC over an RC of the same version installs (2026-10-23, branch `rc-to-rc-update`; code QA
+  `docs/review/qa-rc-to-rc-code.md`, 0 / 2 Should / 4 Nit, all fixed)**: every RC of one version shares a versionCode
+  (`launcher.yml`; an RC of X.Y.Z+1 has X.Y.Z's), and both sides refused a same-code install, so 0.36.0-rc.1 never took
+  rc.2. The rule, both sides (launcher `launcherBuildAhead` in `SelfUpdatePlan.kt`, server `install_now::build_ahead`):
+  ahead = a higher code, or the same code under a newer versionName (X.Y.Z, then an RC before its release, RC numbers
+  in order; two names that can't be ordered count as ahead, an unknown name never does) - for the hourly self-update
+  step, the pending-APK check (the archive's `versionName`; signer and package checks unchanged) and Install Now's
+  settle (the record keeps `fromVersionName`). The server offers a same-code release (Install Now) only to a launcher
+  whose report claims the new capability **`same_code_update_v1`**; without it the row is TooOld ("Install Now works
+  from this update on"). **Owed once by hand**: phones on a pre-fix build (0.36.0-rc.1/rc.2, code 35999) decide by the
+  code alone and never pull the first fixed RC of the same version by themselves - step the test phones onto it once
+  with `adb install -r` (same code, same key; `apksigner verify` against `RELEASE_CERT_SHA256` first), or wait for the
+  next stable release (a higher code). The boot cover's "one more try after an update" counts the name too (R2R-6).
 
 - **Launcher round 7 (2026-10-20, merges 5248fa4e l7-a and e1569747 l7-b; design QA `docs/design/qa-r7-launcher-design.md`
   + one revision check; code QA `docs/review/qa-l7-a-code.md` (0 / 0 / 2, fixed) and `qa-l7-b-code.md` (1 High - the
