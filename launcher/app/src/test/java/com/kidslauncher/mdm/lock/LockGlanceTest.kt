@@ -152,13 +152,14 @@ class LockGlanceTest {
         assertEquals(AOSP_EMULATOR_CLOCK, glanceClockProfile("Android SDK built for arm64", "unknown", 1.5f, 320))
         assertNull("AOSP's model by another maker", glanceClockProfile("Android SDK built for x86_64", "Google", 1.5f, 320))
         assertNull("the AOSP image at its own 160 dpi", glanceClockProfile("Android SDK built for x86_64", "unknown", 1f, 480))
-        // The AOSP emulator's numbers: the digits' ink rows 104-196 (93, as Pixel's 180-272) on a baseline at 197 px,
-        // the "1"'s ink at x 56; the date 56 px under the clock's baseline (AOSP's face shows none).
+        // The AOSP emulator's numbers: the digits' ink rows 104-196 (93, as Pixel's 180-272) on a baseline at 197 px
+        // under a 36 px status bar (the keyguard's bar 60 px), the "1"'s ink at x 56; the date 56 px under the clock's
+        // baseline (AOSP's face shows none).
         val a = AOSP_EMULATOR_CLOCK
-        assertEquals(listOf(37.3f, 131.3f, 86f, 35.3f, 168.7f, 16f), listOf(a.clockInkStartDp, a.clockBaselineDp, a.clockDp, a.dateStartDp, a.dateBaselineDp, a.dateSp))
+        assertEquals(listOf(37.3f, 91.3f, 86f, 35.3f, 128.7f, 16f), listOf(a.clockInkStartDp, a.clockBaselineBelowBarDp, a.clockDp, a.dateStartDp, a.dateBaselineBelowBarDp, a.dateSp))
         assertEquals("the ink at x 56", 56f, a.clockInkStartDp * 1.5f, 0.1f)
-        assertEquals("the baseline at 197 px", 197f, a.clockBaselineDp * 1.5f, 0.1f)
-        assertEquals("the date's baseline 56 px under the clock's", 56f, (a.dateBaselineDp - a.clockBaselineDp) * 1.5f, 0.1f)
+        assertEquals("the baseline at 197 px", 197f, profileBaselinePx(keyguardStatusBarPx(36, 0, 1.5f), a.clockBaselineBelowBarDp, 1.5f), 0.1f)
+        assertEquals("the date's baseline 56 px under the clock's", 56f, (a.dateBaselineBelowBarDp - a.clockBaselineBelowBarDp) * 1.5f, 0.1f)
         assertNull("the AVD's own 320 dpi: not measured", glanceClockProfile("sdk_gphone64_x86_64", "Google", 2f, 240))
         // JL-6: keyed on the width in dp too - the six-inch AVD at 240 dpi (411 dp) or a "Display size" change.
         assertNull("411 dp at 240 dpi", glanceClockProfile("sdk_gphone64_x86_64", "Google", 1.5f, 411))
@@ -166,12 +167,41 @@ class LockGlanceTest {
         assertNull("a real Pixel", glanceClockProfile("Pixel 7", "Google", 1.5f, 320))
         assertNull("another maker's emulator name", glanceClockProfile("sdk_gphone64_x86_64", "Unihertz", 1.5f, 320))
         assertNull(glanceClockProfile(null, null, 1.5f, 320))
-        // The emulator Pixel's numbers (59d §8.11): Android's digits 92 px high on a baseline at 273 px, the first
-        // digit's ink at x 49-53 ("1"-"5"); the date's at x 50 on a baseline at 329 px.
+        // The emulator Pixel's numbers (59d §8.11): Android's digits 92 px high on a baseline 137 px under the keyguard's
+        // status bar (273 px on handy36), the first digit's ink at x 49-53 ("1"-"5"); the date's at x 50 on a baseline
+        // 193 px under it (329 px).
         val p = EMULATOR_PIXEL_CLOCK
-        assertEquals(listOf(34f, 182f, 86f, 32f, 219f, 16f), listOf(p.clockInkStartDp, p.clockBaselineDp, p.clockDp, p.dateStartDp, p.dateBaselineDp, p.dateSp))
+        assertEquals(listOf(34f, 91.3f, 86f, 32f, 128.7f, 16f), listOf(p.clockInkStartDp, p.clockBaselineBelowBarDp, p.clockDp, p.dateStartDp, p.dateBaselineBelowBarDp, p.dateSp))
+        // Both SystemUIs put the small clock at the same place under that bar (the glance-topinset round).
+        assertEquals(p.clockBaselineBelowBarDp, a.clockBaselineBelowBarDp)
+        assertEquals(p.dateBaselineBelowBarDp, a.dateBaselineBelowBarDp)
         assertEquals("the ink's target is within 2 px of Android's \"1\" and \"5\"", 51f, p.clockInkStartDp * 1.5f, 0.01f)
         assertEquals("Nunito's digits are 0.712 em: 92 px at 1.5", 92f, 0.712f * p.clockDp * 1.5f, 1f)
+    }
+
+    /**
+     * The glance-topinset round: the profile's baselines hang under SystemUI's keyguard status bar - the larger of the
+     * window's status bar (a cutout's inset where larger) and 40 dp -, never from the screen's top. Measured: Android's
+     * small clock's baseline at 273 px under handy36's 136 px status bar (pixel_7 skin), at 197 px under a 36 px one
+     * (the user's jellystar2 and jelly36, Pixel SystemUI; aosp36, AOSP SystemUI).
+     */
+    @Test
+    fun `the profile's baselines sit under the keyguard status bar, a 36 px and a 136 px status bar alike`() {
+        assertEquals("a 24 dp status bar: the 40 dp floor", 60f, keyguardStatusBarPx(36, 0, 1.5f), 0.01f)
+        assertEquals("handy36's cutout-sized status bar", 136f, keyguardStatusBarPx(136, 136, 1.5f), 0.01f)
+        assertEquals("a cutout taller than the status bar's inset", 150f, keyguardStatusBarPx(36, 150, 1.5f), 0.01f)
+        assertEquals("a 48 dp status bar (the Jelly Star's 56 dp top pad)", 72f, keyguardStatusBarPx(72, 0, 1.5f), 0.01f)
+        assertEquals("no insets yet: the floor", 60f, keyguardStatusBarPx(0, 0, 1.5f), 0.01f)
+        for (profile in listOf(EMULATOR_PIXEL_CLOCK, AOSP_EMULATOR_CLOCK, JELLY_STAR_CLOCK)) {
+            for (statusBar in listOf(36, 136)) {
+                val bar = keyguardStatusBarPx(statusBar, 0, 1.5f)
+                assertEquals(bar + profile.clockBaselineBelowBarDp * 1.5f, profileBaselinePx(bar, profile.clockBaselineBelowBarDp, 1.5f), 0.01f)
+            }
+            assertEquals("${profile.name}, 36 px: Android's 197", 197f, profileBaselinePx(keyguardStatusBarPx(36, 0, 1.5f), profile.clockBaselineBelowBarDp, 1.5f), 0.5f)
+            assertEquals("${profile.name}, 136 px: Android's 273", 273f, profileBaselinePx(keyguardStatusBarPx(136, 0, 1.5f), profile.clockBaselineBelowBarDp, 1.5f), 0.5f)
+            assertEquals("${profile.name}, the date, 36 px: 253", 253f, profileBaselinePx(keyguardStatusBarPx(36, 0, 1.5f), profile.dateBaselineBelowBarDp, 1.5f), 0.5f)
+            assertEquals("${profile.name}, the date, 136 px: 329", 329f, profileBaselinePx(keyguardStatusBarPx(136, 0, 1.5f), profile.dateBaselineBelowBarDp, 1.5f), 0.5f)
+        }
     }
 
     @Test
@@ -869,36 +899,37 @@ class LockGlanceLayoutTest {
     }
     /**
      * Design 59d step L: the fit's parts with the emulator Pixel profile at 320x569 dp (a 48 dp status bar, so the page's
-     * content starts at 56 dp): the clock's block runs from there to its descent - its margin puts the baseline at 182 dp -
+     * content starts at 56 dp): the clock's block runs from there to its descent - its margin puts the baseline 91.3 dp
+     * under the keyguard's status bar (48 dp here, the glance-topinset round), at 139.3 dp -
      * and the date's from the clock's bottom to its own descent; Nunito's descent is 0.353 em. One clock size: candidates
      * 1 and 2 are the same height, so the rows and the tile give way first.
      */
     private val profileHeights by lazy {
         val p = EMULATOR_PIXEL_CLOCK
         val descent = 0.353f
-        val clock = p.clockBaselineDp - (48f + root.dim("paddingTop")) + descent * p.clockDp
-        val date = p.dateBaselineDp + descent * p.dateSp - (p.clockBaselineDp + descent * p.clockDp)
+        val bar = keyguardStatusBarPx(72, 0, 1.5f) / 1.5f
+        val clock = bar + p.clockBaselineBelowBarDp - (48f + root.dim("paddingTop")) + descent * p.clockDp
+        val date = p.dateBaselineBelowBarDp + descent * p.dateSp - (p.clockBaselineBelowBarDp + descent * p.clockDp)
         heights.copy(clockBig = clock, clockSmall = clock, date = date)
     }
 
     @Test
     fun `the expected fits with the emulator Pixel's clock profile at 473 and 497 dp`() {
-        assertEquals(156.4f, profileHeights.clockBig, 0.1f)
-        assertEquals(12.3f, profileHeights.date, 0.1f)
+        assertEquals(113.7f, profileHeights.clockBig, 0.1f)
+        assertEquals(12.7f, profileHeights.date, 0.1f)
         fun fit(tile: Boolean, rows: Int, avail: Float) = glanceFit(avail, profileHeights, tile, rows)
         for (avail in listOf(available(48f), available(24f))) {
-            assertEquals("the full tile alone keeps it (399.5 dp)", 1, fit(true, 0, avail).candidate)
+            assertEquals("the full tile alone keeps it (357.1 dp)", 1, fit(true, 0, avail).candidate)
             fit(false, 4, avail).let { assertEquals("no music, 4 rows: all three and the more line", listOf(1, 3, 3, 1), listOf(it.candidate, it.rows, it.visibleRows, it.more)) }
+            // JL-3 (the user's call): the clock keeps Android's place and the fit's order is unchanged. Under the
+            // keyguard's status bar (the glance-topinset round) the clock sits 42.7 dp higher on a 48 dp status bar
+            // than the old fixed 182 dp, so music + 1 row keeps the full tile at 473 dp too (427.1 dp) ...
+            fit(true, 1, avail).let { assertEquals(listOf(1, 1), listOf(it.candidate, it.visibleRows)); assertEquals(GlanceTileSize.FULL, it.tile) }
+            // ... and music + 2 or 3 rows takes the full tile with one row visible, the rest scrolling (candidate 3).
+            for (rows in listOf(2, 3)) {
+                fit(true, rows, avail).let { assertEquals(listOf(3, 1), listOf(it.candidate, it.visibleRows)); assertEquals(GlanceTileSize.FULL, it.tile) }
+            }
         }
-        // JL-3 (the user's call): the clock keeps Android's place; the music tile goes compact first (the user likes the
-        // compact tile) - music + 1 row takes it at 473 dp, the full tile fits at 497 (469.5 dp).
-        fit(true, 1, available(48f)).let { assertEquals(listOf(4, 1), listOf(it.candidate, it.visibleRows)); assertEquals(GlanceTileSize.COMPACT, it.tile) }
-        fit(true, 1, available(24f)).let { assertEquals(1, it.candidate); assertEquals(GlanceTileSize.FULL, it.tile) }
-        // Music + 2 rows: the compact tile with both at 473, the full tile with one at 497; + 3 rows: one visible.
-        assertEquals(listOf(4, 2), fit(true, 2, available(48f)).let { listOf(it.candidate, it.visibleRows) })
-        assertEquals(listOf(3, 1), fit(true, 2, available(24f)).let { listOf(it.candidate, it.visibleRows) })
-        assertEquals(listOf(5, 1), fit(true, 3, available(48f)).let { listOf(it.candidate, it.visibleRows) })
-        assertEquals(listOf(3, 1), fit(true, 3, available(24f)).let { listOf(it.candidate, it.visibleRows) })
         // The panel measures the placed views: one size, the margins first (LockGlance.kt's helpers).
         val panel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
         val fitNow = panel.substringAfter("private fun fitNow()").substringBefore("val shownRows")
@@ -926,6 +957,16 @@ class LockGlanceLayoutTest {
         assertTrue(panel.contains("DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(profile != null))"))
         val place = panel.substringAfter("private fun placeProfile(").substringBefore("private fun margins(")
         assertTrue(place, place.contains("floorPx = -descent"))
+        // The glance-topinset round: the baselines under the keyguard's status bar, read from the window's own insets
+        // (the status bar whatever its visibility, the cutout) at every placing.
+        assertTrue(place, place.contains("val bar = keyguardBarPx(density)"))
+        // Whole lines (qa-glance-topinset-code Q-1): the clock's target from the clock's offset, the date's from the date's.
+        assertTrue(place, place.contains("val clockTarget = profileBaselinePx(bar, p.clockBaselineBelowBarDp, density)\n"))
+        assertTrue(place, place.contains("val dateTarget = profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)\n"))
+        assertTrue(place, place.contains("baselineMarginPx(clockTarget, contentTop, clock.baseline.toFloat(),"))
+        assertTrue(place, place.contains("baselineMarginPx(dateTarget, clockBottom, date.baseline.toFloat(),"))
+        assertTrue(place, place.contains("insets?.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars())?.top"))
+        assertTrue(place, place.contains("insets?.getInsets(WindowInsets.Type.displayCutout())?.top"))
         // The first digit's ink at the profile's start, whatever its side bearing - again when the text changes.
         assertTrue(place, place.contains("margins(clock, clockStartPx(p), clockTop)"))
         val start = panel.substringAfter("private fun clockStartPx(").substringBefore("\n    /**")

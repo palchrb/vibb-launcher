@@ -271,20 +271,24 @@ class GlanceCoalescer(private val post: (() -> Unit) -> Unit, private val work: 
 /**
  * Where Android's small single-line keyguard clock sits on one kind of phone (59d §8.8, step L: the glance takes its
  * geometry - the same left edge, baseline and size, a thin weight - with the short date in Android's date's place), in
- * dp from the window's top left at [GLANCE_CLOCK_PROFILE_DENSITY]: the clock's first digit's ink starts at
- * [clockInkStartDp] (Nunito's side bearings vary from 0.04 to 0.11 em by digit, so the box moves with the first digit -
- * Android's ink sits within 2 px of this for every digit), its baseline at [clockBaselineDp], its size [clockDp] (dp:
- * Android's small clock doesn't follow the font scale); the date's box at [dateStartDp] (a capital's bearing is a pixel
- * or two), its baseline at [dateBaselineDp], [dateSp]. Measured from frames of SystemUI's face, so the ink's left edge,
- * the baseline and the digits' height match - not the glyphs (Nunito is wider). The alarm line goes under the date.
+ * dp at [GLANCE_CLOCK_PROFILE_DENSITY]: across from the window's left edge, and down from the bottom of SystemUI's
+ * keyguard status bar ([keyguardStatusBarPx]) - never from the screen's top (the glance-topinset round: SystemUI lays
+ * the small clock out under that bar, whose height is the larger of the status bar and 40 dp, so a 136 px status bar
+ * from a pixel_7 skin's cutout puts the clock 76 px lower than a plain 24 dp one). The clock's first digit's ink starts
+ * at [clockInkStartDp] (Nunito's side bearings vary from 0.04 to 0.11 em by digit, so the box moves with the first
+ * digit - Android's ink sits within 2 px of this for every digit), its baseline [clockBaselineBelowBarDp] below the
+ * bar, its size [clockDp] (dp: Android's small clock doesn't follow the font scale); the date's box at [dateStartDp]
+ * (a capital's bearing is a pixel or two), its baseline [dateBaselineBelowBarDp] below the bar, [dateSp]. Measured from
+ * frames of SystemUI's face, so the ink's left edge, the baseline and the digits' height match - not the glyphs (Nunito
+ * is wider). The alarm line goes under the date.
  */
 data class ClockGeometry(
     val name: String,
     val clockInkStartDp: Float,
-    val clockBaselineDp: Float,
+    val clockBaselineBelowBarDp: Float,
     val clockDp: Float,
     val dateStartDp: Float,
-    val dateBaselineDp: Float,
+    val dateBaselineBelowBarDp: Float,
     val dateSp: Float,
     /** Design 59d §8.13: SystemUI's gesture handle on that phone. */
     val handle: GlanceHandle = DEFAULT_GLANCE_HANDLE,
@@ -296,46 +300,69 @@ const val GLANCE_CLOCK_PROFILE_DENSITY = 1.5f
 /** ... and the screen width in dp (480 px at 240 dpi): the two phones measured so far. */
 const val GLANCE_CLOCK_PROFILE_WIDTH_DP = 320
 
+/** SystemUI's `status_bar_header_height_keyguard`: the keyguard status bar is never shorter than this (40 dp). */
+const val KEYGUARD_STATUS_BAR_MIN_DP = 40f
+
 /**
- * The emulator's Pixel SystemUI (Android 16, `handy36` at `wm density 240`, 480x854 px), measured from SystemUI's face
- * with the small clock (`docs/testing/screens/59d-jl/clock-twin.png`): the digits' ink 92 px high from y 180 to the
- * baseline at 273 px (the last ink row 272), the first digit's ink at x 49 ("1") to 53 ("5") - 51 px, 34 dp, is within
- * 2 px of both; the date's capitals 17 px high on a baseline at 329 px, its ink at x 50. In Nunito SemiBold (digits
- * 0.712 em high, an "F" 0.082 em from the box's left edge): 86 dp; 16 sp, the box at 32 dp. Since the code QA's JL-2 the
- * clock is Nunito Light (300; its digits are 0.712 em high too). The handle (§8.13): SystemUI's, measured on the same
- * frames while it showed - 162 x 6 px (108 x 4 dp), rows 833-838 (its bottom 10 dp above the window's, centred in the
- * 24 dp gesture inset), x 159-320, luma 235 on the night (white at about 92 %).
+ * The height (px) of SystemUI's keyguard status bar, under which it lays out the small clock (`SystemBarUtils.
+ * getStatusBarHeaderHeightKeyguard`: the larger of the status bar's height - which already covers a top cutout - and
+ * [KEYGUARD_STATUS_BAR_MIN_DP]): [statusBarPx] is the status bar's top inset as the window receives it (whether shown or
+ * not), [cutoutTopPx] the display cutout's top inset (taken where larger, as the status bar is sized from it). Measured
+ * (the glance-topinset round): a 36 px status bar gives 60 px, the clock's baseline 137 px under it at 197 px (the
+ * user's `jellystar2`, `jelly36`, the AOSP image's `aosp36`); `handy36`'s 136 px status bar gives 136 and 273 px.
+ * Left out (qa-glance-topinset-code Q-5): AOSP adds the cutout's waterfall inset to the 40 dp floor
+ * (`status_bar_header_height_keyguard + waterfallInsetTop`); no phone in scope has a waterfall display.
+ */
+fun keyguardStatusBarPx(statusBarPx: Int, cutoutTopPx: Int, density: Float): Float =
+    maxOf(statusBarPx.toFloat(), cutoutTopPx.toFloat(), KEYGUARD_STATUS_BAR_MIN_DP * density)
+
+/** Where (px from the window's top) a profile's baseline [belowBarDp] under the keyguard status bar [barPx] lands. */
+fun profileBaselinePx(barPx: Float, belowBarDp: Float, density: Float): Float = barPx + belowBarDp * density
+
+/**
+ * The emulator's Pixel SystemUI (Android 16, `handy36` at `wm density 240`, 480x854 px, a 136 px status bar from the
+ * pixel_7 skin's cutout), measured from SystemUI's face with the small clock (`docs/testing/screens/59d-jl/clock-twin.png`):
+ * the digits' ink 92 px high from y 180 to the baseline at 273 px (the last ink row 272) - 137 px (91.3 dp) under the
+ * 136 px keyguard status bar -, the first digit's ink at x 49 ("1") to 53 ("5") - 51 px, 34 dp, is within 2 px of both;
+ * the date's capitals 17 px high on a baseline at 329 px (193 px, 128.7 dp, under the bar), its ink at x 50. The same
+ * offsets on the user's `jellystar2` (a 36 px status bar: the bar 60 px, the clock's baseline at 197 px, the date's at
+ * 253; the glance-topinset round). In Nunito SemiBold (digits 0.712 em high, an "F" 0.082 em from the box's left edge):
+ * 86 dp; 16 sp, the box at 32 dp. Since the code QA's JL-2 the clock is Nunito Light (300; its digits are 0.712 em high
+ * too). The handle (§8.13): SystemUI's, measured on the same frames while it showed - 162 x 6 px (108 x 4 dp), rows
+ * 833-838 (its bottom 10 dp above the window's, centred in the 24 dp gesture inset), x 159-320, luma 235 on the night
+ * (white at about 92 %).
  */
 val EMULATOR_PIXEL_CLOCK = ClockGeometry(
     name = "emulator Pixel",
     clockInkStartDp = 34f,
-    clockBaselineDp = 182f,
+    clockBaselineBelowBarDp = 91.3f,
     clockDp = 86f,
     dateStartDp = 32f,
-    dateBaselineDp = 219f,
+    dateBaselineBelowBarDp = 128.7f,
     dateSp = 16f,
     handle = GlanceHandle(widthDp = 108f, heightDp = 4f, bottomDp = 10f, alpha = 0.92f),
 )
 
 /**
  * AOSP emulator, confirm on the phone (`docs/testing/2026-10-23-aosp-lock-look.md`): pure AOSP SystemUI (Android 16,
- * the `default` x86_64 image, AVD `aosp36` at 480x854 and 240 dpi), measured from its face over our ground with the
- * single-line clock (`lockscreen_use_double_line_clock 0`; AOSP's default is the double-line clock, which this model
- * can't express - see the doc): the digits' ink from y 104 to the last row 196 (93 rows, as Pixel's 180-272: 86 dp
- * in Nunito), a baseline at 197 px, the first digit's ink at x 56 for a "1" (37.3 dp) - the box starts at 42 px (28
- * dp), left-aligned, so the ink follows the digit's bearing as the Pixel's does. AOSP's face has no date line here;
- * ours keeps the Pixel profile's 56 px from the clock's baseline to the date's (253 px) and its box 2 dp left of the
- * clock's ink. The handle is SystemUI's, pixel for pixel the Pixel image's: 162 x 6 px, rows 833-838, x 159-320,
- * luma 236. Not matched: AOSP's digits are wider and widely tracked ("12:17" 362 px against Nunito Light's ~280) and
- * its stems 11 px (Nunito Light's 8).
+ * the `default` x86_64 image, AVD `aosp36` at 480x854 and 240 dpi, `_no_skin`, a 36 px status bar - the keyguard
+ * status bar 60 px), measured from its face over our ground with the single-line clock
+ * (`lockscreen_use_double_line_clock 0`; AOSP's default is the double-line clock, which this model can't express - see
+ * the doc): the digits' ink from y 104 to the last row 196 (93 rows, as Pixel's 180-272: 86 dp in Nunito), a baseline at
+ * 197 px - 137 px (91.3 dp) under the bar, the Pixel image's offset -, the first digit's ink at x 56 for a "1" (37.3 dp) -
+ * the box starts at 42 px (28 dp), left-aligned, so the ink follows the digit's bearing as the Pixel's does. AOSP's face
+ * has no date line here; ours keeps the Pixel profile's 56 px from the clock's baseline to the date's (253 px, 128.7 dp
+ * under the bar) and its box 2 dp left of the clock's ink. The handle is SystemUI's, pixel for pixel the Pixel image's:
+ * 162 x 6 px, rows 833-838, x 159-320, luma 236. Not matched: AOSP's digits are wider and widely tracked ("12:17" 362 px
+ * against Nunito Light's ~280) and its stems 11 px (Nunito Light's 8).
  */
 val AOSP_EMULATOR_CLOCK = ClockGeometry(
     name = "AOSP emulator",
     clockInkStartDp = 37.3f,
-    clockBaselineDp = 131.3f,
+    clockBaselineBelowBarDp = 91.3f,
     clockDp = 86f,
     dateStartDp = 35.3f,
-    dateBaselineDp = 168.7f,
+    dateBaselineBelowBarDp = 128.7f,
     dateSp = 16f,
     handle = GlanceHandle(widthDp = 108f, heightDp = 4f, bottomDp = 10f, alpha = 0.92f),
 )

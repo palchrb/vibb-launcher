@@ -21,6 +21,7 @@ import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -287,8 +288,9 @@ class GlancePanel(
 
     /**
      * Design 59d step L: the clock's and the date's margins so their boxes start and their baselines sit where the
-     * profile says, in the window's coordinates ([baselineMarginPx], [startMarginPx]); the alarm line under the date at
-     * the date's start. Measured at [width] first; a margin is written only when it changed (no layout loop).
+     * profile says, in the window's coordinates ([baselineMarginPx], [startMarginPx]) - the baselines under SystemUI's
+     * keyguard status bar ([keyguardBarPx], the glance-topinset round); the alarm line under the date at the date's
+     * start. Measured at [width] first; a margin is written only when it changed (no layout loop).
      */
     private fun placeProfile(p: ClockGeometry, width: Int) {
         val density = activity.resources.displayMetrics.density
@@ -296,22 +298,44 @@ class GlancePanel(
         glance.root.getLocationOnScreen(at)
         val contentTop = (at[1] + glance.root.paddingTop + glance.lockGlanceTop.paddingTop).toFloat()
         val contentStart = (at[0] + glance.root.paddingStart + glance.lockGlanceTop.paddingStart).toFloat()
+        val bar = keyguardBarPx(density)
         val clock = glance.lockGlanceClock
         measured(clock, width)
         // The clock's box may reach above the page's content (the emulator's 136 px status bar ends below Android's
         // clock's top), as long as its digits' ink stays inside: its floor is minus the empty room above the ink.
         val ink = android.graphics.Rect()
         clock.paint.getTextBounds(CLOCK_DIGITS, 0, CLOCK_DIGITS.length, ink)
-        val clockTop = baselineMarginPx(p.clockBaselineDp * density, contentTop, clock.baseline.toFloat(), floorPx = -(clock.baseline + ink.top).toFloat())
+        val clockTarget = profileBaselinePx(bar, p.clockBaselineBelowBarDp, density)
+        val clockTop = baselineMarginPx(clockTarget, contentTop, clock.baseline.toFloat(), floorPx = -(clock.baseline + ink.top).toFloat())
         margins(clock, clockStartPx(p), clockTop)
         val date = glance.lockGlanceDate
         measured(date, width)
         val clockBottom = contentTop + clockTop + clock.measuredHeight
         val descent = (clock.measuredHeight - clock.baseline).toFloat()
         val dateStart = startMarginPx(p.dateStartDp * density, contentStart)
-        margins(date, dateStart, baselineMarginPx(p.dateBaselineDp * density, clockBottom, date.baseline.toFloat(), floorPx = -descent))
+        val dateTarget = profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)
+        margins(date, dateStart, baselineMarginPx(dateTarget, clockBottom, date.baseline.toFloat(), floorPx = -descent))
+        if (bar != placedBarPx) {
+            placedBarPx = bar
+            Log.i(LOG_TAG, "Glance clock: keyguard status bar ${bar.roundToInt()} px, the clock's baseline at ${clockTarget.roundToInt()} px, the date's at ${dateTarget.roundToInt()} px")
+        }
         val alarm = glance.lockGlanceAlarm
         margins(alarm, dateStart, (alarm.layoutParams as ViewGroup.MarginLayoutParams).topMargin)
+    }
+
+    /** The keyguard status bar [placeProfile] last placed under (logged once per value). */
+    private var placedBarPx = -1f
+
+    /**
+     * SystemUI's keyguard status bar on this window ([keyguardStatusBarPx]): the status bar's top inset whether shown or
+     * not (lock task may hide its content, never its height) and the cutout's, from the window's own insets - the root's
+     * listener consumes them for the views, not for `rootWindowInsets`. No insets yet: the 40 dp floor alone.
+     */
+    private fun keyguardBarPx(density: Float): Float {
+        val insets = glance.root.rootWindowInsets
+        val bar = insets?.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars())?.top ?: 0
+        val cutout = insets?.getInsets(WindowInsets.Type.displayCutout())?.top ?: 0
+        return keyguardStatusBarPx(bar, cutout, density)
     }
 
     private fun margins(view: View, start: Int, top: Int) {

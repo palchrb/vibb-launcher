@@ -430,8 +430,9 @@ ends with E.
    PIN pad cancelled`) - without it only the stop's line leaves a hint.
 7. J/L/§8.9 (the code QA's JL-3 and JL-7, `qa-59d-jl-code.md`): on rc.3 the user records **two bottom-edge swipes in a
    row** on the glance - if the second also goes through, §8.9's heal doesn't cure the case, and (b) or a dumpsys at that
-   moment is next; with the clock profile, music + 1 row shows the compact tile at 473 dp (the user's call: the clock
-   keeps Android's place, the tile goes compact first - he likes the compact tile).
+   moment is next; with the clock profile, music + 1 row showed the compact tile at 473 dp (the user's call: the clock
+   keeps Android's place, the tile goes compact first - he likes the compact tile). Since §8.15 the clock sits under the
+   keyguard status bar, 42.7 dp higher on the modelled 48 dp bar, and music + 1 row shows the full tile at 473 dp too.
 
 8. Step M (§8.12; on Android 15 - the `six35` AVD, whose stock launcher isn't direct-boot aware - and on 16 -
    `handy36`, Pixel launcher DBA -, and the Jelly Star): (a) `adb reboot` (no shutdown arm) boots to the cover and
@@ -610,7 +611,7 @@ line): **build it with step J, before rc.3**. Our glance's clock takes Android's
 left edge, baseline, size and a thin weight - and the date line its place and short format; the alarm line moves
 under the date. Not pixel-identical (Pixel's Google Sans Flex isn't ours; the Jelly Star's AOSP SystemUI has another
 font and placement), so the geometry is a small per-device profile (`emulator Pixel`, `Jelly Star`, measured from a
-frame of each), not fixed numbers. Android's own clock font can't be changed by an app (Pixel's clock styles in
+frame of each), not fixed numbers - and its vertical numbers hang under SystemUI's keyguard status bar, not the screen's top (§8.15). Android's own clock font can't be changed by an app (Pixel's clock styles in
 "Wallpaper & style" are the parent's by hand, during a pause - try the closest one on the emulator). Launcher, S-M.
 
 ### 8.9 The bottom-edge swipe on the glance (the user's third recording, 2026-10-23)
@@ -730,7 +731,7 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   baseline at 329 px, its ink at x 50. In Nunito SemiBold (digits 0.712 em high; the digits' side bearings run from
   0.041 em, "4", to 0.110 em, "1" - 5 to 14 px at this size): the clock 86 dp with its first digit's ink at 34 dp (51
   px, within 2 px of Android's "1" and "5"; the box moves with the digit's bearing, `GlancePanel.clockStartPx`, again
-  at every text change) and its baseline at 182 dp; the date 16 sp, its box at 32 dp, its baseline at 219 dp. The first
+  at every text change) and its baseline at 182 dp; the date 16 sp, its box at 32 dp, its baseline at 219 dp (from the window's top on `handy36`; since §8.15 91.3 and 128.7 dp under SystemUI's keyguard status bar, which is 136 px there). The first
   try put the box at a fixed 29 dp ("5" right, "1" 9 px off) - Nunito's bearings vary more than Google Sans Flex's. The user's frame's numbers (56 px, 40
   px, 180 px, 14 sp at 210 px) were the starting values; the emulator's own frames replaced them. The twin
   (`docs/testing/screens/59d-jl/clock-twin.png`, Android's left, ours right, each 240 px wide; Android's "10:18",
@@ -742,7 +743,8 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   while its digits' ink stays inside (on the emulator the 136 px status bar ends below the box's top - the first frame
   put the ink 5 px low until this floor), the date may climb into the clock's descent but never above its baseline. The
   fit measures the placed views: one clock size (`clockBig == clockSmall`), so the rows and the tile give way first;
-  `LockGlanceLayoutTest` models the profile's fits (music + 1 row takes the compact tile at 473/497 dp; no music and 4
+  `LockGlanceLayoutTest` models the profile's fits (music + 1 row took the compact tile at 473 dp - since §8.15 the full
+  tile at 473 and 497; no music and 4
   rows keeps one visible at 473). Consequence to know: Android's small clock is ~78 dp taller in the page than our big
   clock, so the full music tile shows with no row or alone more often - as on Android's face. Tests: `LockGlanceTest`
   (the profile table, the date, the margins), `LockGlanceLayoutTest` (the profile's fits, the font, the wiring),
@@ -784,7 +786,7 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
     not its files - unchanged. The new twin (`docs/testing/screens/59d-jl/clock-twin.png`, Android's "10:18" left, ours "11:17" right): ours the first digit's ink at x 51 (Android 49 for a "1", 53 for a "5"), the digits from y 181 to the last row 272 (Android 180-272), 92 px high; the stems 8 px against Android's 7-8 (SemiBold's were 13) - Light is thin enough, ExtraLight not needed; the date unchanged (ink at x 50, y 312-331, both). The profile's numbers didn't move.
   - JL-3 (the user's call): no change to the fit's order - the clock keeps Android's place and the music tile goes
     compact first; `LockGlanceLayoutTest` pins it (music + 1 row: compact at 473 dp, full at 497 now that the hint
-    line's 23.6 dp went), §8.4 item 7.
+    line's 23.6 dp went - since §8.15 full at both), §8.4 item 7.
   - JL-4: three pins - the swipe's controls are the layout's touchables less the page and the timer tile; the DOWN's
     `leaving`/`covered`/page guard; the recognised swipe's `CANCEL_VIEWS` and the activity's cancel to the views.
   - JL-5 with §8.13: the bottom inset is the page's (below).
@@ -1001,3 +1003,48 @@ Built in J's fix round (§8.11, "Fix round").
 - The residual, for RC3-4: on a HomeActivity-first boot the Home key starts HomeActivity itself, and WM then had no
   focused window for 8.3 s while the main process was busy. A key pressed then and left waiting 5 s would still give an
   ANR - the main thread's matter, not the cover's.
+
+### 8.15 The clock twin under the keyguard status bar; the edge swipe on the user's AVD (branch `glance-topinset`, 2026-10-23)
+
+The user's rc.3 recording on their own AVD (`jellystar2`: Pixel SystemUI, 480x854 at 240 dpi, no device profile, so
+no cutout and a 24 dp status bar) had our clock about 76 px (51 dp) below Android's. Step L's profiles were absolute
+numbers from the window's top. The Pixel numbers came from `handy36`, whose pixel_7 skin gives a 136 px status bar.
+Report: `docs/testing/2026-10-23-glance-topinset.md`.
+
+- **The rule.** SystemUI lays the small clock out under its keyguard status bar. That bar is
+  `SystemBarUtils.getStatusBarHeaderHeightKeyguard`: the larger of the status bar's height (which already covers a top
+  cutout) and `status_bar_header_height_keyguard`, 40 dp. Measured with Android's face and the glance in the same
+  recordings:
+
+  | Status bar | Keyguard bar | Android's clock baseline | Date baseline | Where |
+  |---|---|---|---|---|
+  | 36 px | 60 px (the 40 dp floor) | 197 px | 253 px | `jellystar2` (the user's recording), `jelly36`, `aosp36` (AOSP SystemUI) |
+  | 72 px | 72 px | 209 px | 265 px | `jelly36` with the `tall` cutout overlay |
+  | 136 px | 136 px | 273 px | 329 px | `handy36`; `jelly36` with the `hole` cutout overlay |
+
+  The baseline is always 137 px under the bar, and the date's 193 px, on the Pixel and the AOSP image alike. The brief's
+  "the status-bar inset" model (36 + 137 = 173 px) would have been 24 px too high on the user's AVD. The 40 dp floor
+  is what makes the numbers fit.
+- **Built.** `ClockGeometry.clockBaselineBelowBarDp` / `dateBaselineBelowBarDp` replace `clockBaselineDp` /
+  `dateBaselineDp`: 91.3 / 128.7 dp for both profiles (`EMULATOR_PIXEL_CLOCK`, `AOSP_EMULATOR_CLOCK`, and so
+  `JELLY_STAR_CLOCK`). The pure `keyguardStatusBarPx(statusBarPx, cutoutTopPx, density)` and `profileBaselinePx` are in
+  `LockGlance.kt`. `GlancePanel.placeProfile` reads the window's own insets at every placing (`rootWindowInsets`: the
+  status bar with `getInsetsIgnoringVisibility`, and the cutout). It logs the bar and both baselines once per bar. The
+  left edge, the sizes and the handle are unchanged.
+- **Consequence for the fit.** On a 48 dp status bar (the Jelly Star's, as the layout test models it) the clock sits
+  42.7 dp higher than the old fixed 182 dp. So music with 1 row keeps the full tile at 473 dp too, and music with 2-3
+  rows takes the full tile with one row visible (candidate 3). JL-3's order is unchanged, but on the Jelly Star's
+  modelled bar the compact tile (the user's liked look) no longer shows for music + 1 row - the full tile does.
+- **Measured on `jelly36`** (this branch's debug build, a photo ground, the single-line clock): the clock's last ink row
+  and the date's capitals' rows are equal to Android's at all three bars, within 1 px. The left edge is the profile's
+  34 dp. That is within 2 px of Android's "1" (49 px) and "5" (53 px), but Android's "7" starts at 46 px and ours at
+  52 px: Google Sans Flex's side bearings vary by digit, and the profile keeps one ink start (an open item, not this
+  round's).
+- **§8.9's edge swipe on the user's AVD** (the user: every swipe from the handle slides the glance away, SystemUI's face
+  shows, the glance comes back, and the pad never comes). The user's frames show the glance window shrinking to a card
+  over SystemUI's face, with "Denne enheten tilhører organisasjonen din" under it. That is Quickstep's
+  `DeviceLockedInputConsumer` home animation, so Quickstep did not see `home_disabled`. It did not reproduce on
+  `jelly36` in any variant: a fresh provision, the slow swipe, an `input motionevent` swipe, after `adb reboot` through
+  the boot cover's pad, after a SystemUI crash, after Back from the pad, and after an unlock and re-lock. In every run
+  the consumer was `TYPE_RESET_GESTURE` with `home_disabled`, and the swipe asked for the pad. The report lists what the
+  user's `swipe-dump.txt` / `swipe-log.txt` must show to tell the cases apart. No fix is built yet.
