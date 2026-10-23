@@ -797,6 +797,14 @@ findings, merge to `main`, full suite once.
   (`mNeedsOverlayCreation=true` 5+ min; the pad in Android's default palette) until a later reboot - cause unknown,
   check on the Jelly Star; the scratch `pwa_setup.py`'s hardening regex misses (turns restrictions off) - fix before
   the next run.
+- **Design 59d round (2026-10-23, the user: "fiks gjerne opp i alt nå så tester jeg hybriden vår på emu en gang
+  til"):** steps B, C, E, F, G, H and N1 in one round (`59d-android-mode-inventory.md` §8). The user's answers: Q1 (H)
+  Home after "Lås opp" as design 32 decision 2, except while a call is live (telephony or VoIP) - then no Home start,
+  the call's UI stays; Q2 (E) no `lockNow` at the notice wake's end in android mode. Q3 stays open for phase D. Design
+  QA on §8 first, then one implementer and one code QA, then `launcher-v0.36.0-rc.3` for the user's emulator. The
+  plain lock with the small clock forced was re-measured first (`proto-plain-lock` 13d32d7d, 59c §7): Android already
+  uses the small clock whenever a row or a media session is on the lock, so the room is unchanged - one row at 240
+  dpi, no media player; the hybrid stays.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
