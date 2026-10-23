@@ -275,49 +275,120 @@ fades out.
 3. **Q3 (phase D)**: no Android credential (removed on the phone): SystemUI's swipe face until `set_kid_pin` lands,
    or keep our keypad? Default: the command, and the PWA warns.
 
-## 8. Round plan (2026-10-23): steps B, C, E, F, G, H in one round, with the user's answers
+## 8. Round plan (2026-10-23): steps B, C, E, G, H and N1 as round 1, F as round 2 - revised from its design QA
 
-Status: the user's answers of 2026-10-23 and the round's scope. Everything above stays the specification; this
-section only fixes the open choices and the order of work. Base: `main` after the rc.2 re-check (`73227afc`): F3 is
-merged (the cover is DBA, `:bootcover`, armed at every locked boot), 59b and its two fix rounds are in, steps A and D
-are done.
+Status: revised 2026-10-23 from `docs/review/qa-59d-design.md` (Q59d-1..14; every finding taken, the choices below).
+Everything above stays the specification; this section fixes the open choices, the exact rules, and the order of work.
+Base: `main` after the rc.2 re-check (`73227afc`): F3 is merged (the cover is DBA, `:bootcover`, armed at every locked
+boot), 59b and its two fix rounds are in, steps A and D are done. Paths under
+`launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named. The bar (the QA's): no step opens a path past
+Android's PIN; every exit still needs `faceStep`'s LEAVE.
 
-**The user's answers**
+### 8.1 The user's answers
+
 - **Q1 (step H)**: after "Lås opp" (and after a row tap's pad) the phone lands on **Home**, as design 32 decision 2 -
-  **except while a call is live**: a telephony call (our `InCallActivity`/Telecom state), or a VoIP call in
-  `IN_COMMUNICATION` or ringing (59b's `voipGrace`/`VoipCalls` state). Then `lockLeave` starts no Home at all: the
-  glance only hides its content and finishes, and the call's UI (the app's own, or ours) stays in front. A row's
-  target still opens on top of a call when a row was tapped (the kid chose it). 59b step 0's rule (no Home when the
-  glance wasn't in front at the unlock) is unchanged.
-- **Q2 (step E)**: **no `lockNow`** at the notice wake's end in android mode. The 15 s end turns the screen off
-  (`goToSleep` isn't ours; use the same path the wake's end uses today minus `lockNow`), and Android relocks by its
-  own rule (the phone's lock-after-screen-off is 0 s on a managed phone - the design 59 step 3 check; if it isn't,
-  the sleep check 1 s after the screen-off relocks as in §3). Own mode keeps `lockNow`.
-- **Q3** stays open (phase D).
+  **except while a call is live**: then no Home start, the glance only hides and finishes, and the call's UI (the
+  app's own, or ours) stays in front. A row's target still opens when a row was tapped. "Live" is
+  `PinLockRuntime.callLiveNow` (ours `OngoingCalls.hasLiveCall`, Telecom's `isInManagedCall` else the audio mode,
+  `VoipCalls.phase != NONE` ringing or IN_CALL with its grace) - not `voipGrace`, which is the 3 s ring timer
+  (Q59d-4). 59b step 0's rule (no Home when the glance wasn't in front at the unlock) is unchanged.
+- **Q2 (step E)**: as the face, the notice wake has **no 15 s end** (Q59d-2: `lockNow` is the wake's only screen-off,
+  `goToSleep` isn't ours). The glance stays lit until the phone's own screen timeout - the parent's
+  `screen_timeout_seconds`, 15 s to 10 min, default 60 s (`server/ScreenTimeout.kt`). Android's keyguard is locked
+  for the whole wake (the glance only occludes it; `noticeWakeAllowed` needs LOCKED), so there is no unlocked window
+  and the fingerprint keeps working. The cost the user accepted: up to the full timeout of lit rows in a pocket (the
+  proximity read happens only at the start). Own mode keeps `lockNow`.
+- **Q3**: PIN required. The user, 2026-10-23: no own keypad in android mode. The server refuses android mode without
+  a Child PIN and the PWA can't clear the PIN while the lock is Android's; a phone that finds its Android credential
+  gone re-sets it from the reset token at the next sync; in between, SystemUI's swipe face over the night ground and
+  a PWA warning. Phase D builds it (not this round); until then `OWN_KEYPAD` stays as today.
 
-**Scope of the round**, in this order, one implementer, one worktree, one code QA:
-1. **Step B** - no KEYPAD stage in face mode (§3 "Lås opp", "PIN pad success", "A row tap"): the ask goes from the
-   glance page, `keypadIsAndroids` goes, LEAVE hides the content (INVISIBLE on the night ground) before `go()`, Home
-   `NO_ANIMATION`. This is the flicker the user filmed after a PIN.
-2. **Step C** - `lockUpStarts` takes LOCK for the face whatever `kg` read (no HOME_THEN_LOCK in face mode); the
-   ScreenOn backstop start goes in face mode (`PinLockState.kt:173-177`, `newIntentPauseKept`). 59b step 4's capture is
-   the check.
-3. **Step G** - a window edge's chrome pass (`LockTaskChrome` LOCKED features write) is held while an ask is open, at
-   most `ANDROID_ASK_TIMEOUT_MS`, then applied once.
-4. **Step H** - Q1 as above, as a pure plan function (`lockLeave`'s inputs: glanceInFront, callLive, rowTarget) with
-   tests.
-5. **Step E** - Q2 as above.
-6. **Step F** - §5 as written: the cover `setShowWhenLocked(true)` at runtime while the user is locked, the ask rule
-   as a pure `bootPadStep` (at most one automatic ask per resume after a stop, 3 per boot, then taps only), the
-   "Trykk for å låse opp" line, `setShowWhenLocked(false)` and the F3 take-over at the unlock, never showWhenLocked
-   once `isUserUnlocked`. `BootCoverManifestTest` keeps pinning the manifest without the flag.
-7. **N1** (the rc.2 re-check): the pause-based SOS mark logs only when it holds past the resume.
+### 8.2 Round 1 (one implementer, one worktree, one code QA): C, N1, H, B, E, G - in this order
 
-**Out of the round**: step I (not built), Q3, phase D, 59b §4.4's ring rule after a notice dump, N2 (Jelly Star
-palette), r10 (falls with phase D if Android's PIN stays the gate).
+1. **Step C** - `lockUpStarts` takes LOCK for the face whatever `kg` read (no HOME_THEN_LOCK in face mode); the `kg`
+   read stays (it feeds `sawLocked`, Q59d-12). Accepted cost: Android open at the screen-off and a wake within the
+   1 s sleep check shows the app's snapshot for a frame. **The ScreenOn backstop stays as the face, gated (Q59d-1)**:
+   `showLock = LOCKED && !lockShowing && !lockOnTop && !systemCall && voip == NONE` (new `face` and `lockOnTop`
+   inputs on `LockEvent.ScreenOn`); a screen-on that skips the start because `lockOnTop` is set doesn't clear the
+   mark (`screenOnUnshown` takes the face's skip as shown); a new process (`lockOnTop` false) and a lock-up whose
+   start threw still get the start. Own mode unchanged. Tests: `PinLockStateTest` (face + lockOnTop -> no start;
+   face + new process -> start; own rows unchanged), `LockUpPlanTest` (face, not locked -> LOCK).
+2. **N1** - after C (Q59d-11: the pause/resume pair at the wake is most likely the backstop's `START_DELIVERED_TO_TOP`
+   new-intent delivery, which C's gate removes). N1 stays as the cheap log guard: `sosMarkAtPause` logs only when the
+   700 ms check still finds the mark. Confirm with `wm_new_intent` in the capture (§8.4).
+3. **Step H** - `lockLeave(.., androidFace)`: kiosk on, `homeFirst = startedLockTask || (glanceInFront &&
+   !(androidFace && callLive))`; the kiosk root keeps Home (stopping a root lock task clears every locked task, the
+   call app's included; only Home re-roots). Kiosk off is unchanged (`glanceInFront && !callLive` already). Own mode
+   unchanged. Tests (`LockTaskRootTest`): face, kiosk on, not root, call -> `(false, false)`; root + call -> `(true,
+   true)`; own-mode rows equal for every input. Docs: `launcher/CLAUDE.md`'s design 32 sentence ("Unlocking lands on
+   Home in every mode ... never over a live call").
+4. **Step B** - target frames after the pad's success (Q59d-5): the night ground with the mark, then Home with no
+   slide; a recording against rc.2's check 9 (the page for ~0.8 s, then Home's slide) is the check. Rules:
+   - a third stage **`ASK`** (Q59d-6): `glanceStageStep(.., face)` gives `ASK(target)` for Unlock/Row as the face;
+     the page stays shown, the keypad is never visible or focusable; Back, a cancel, an error, the recovery, STAY and
+     LockUp give GLANCE (the target dropped); a tap in ASK runs `tapAsFace` again; a row tap in ASK replaces the
+     target; `OWN_KEYPAD` gives KEYPAD (our keys); own mode never enters ASK; `keypadIsAndroids`,
+     `GlancePanel.androidPad` and `glancePageShown`'s pad input go;
+   - on LEAVE, as the face and in front, the glance page's **children** go `INVISIBLE`; `glance.root` stays visible
+     and keeps the ground (`GlancePanel.ground`); never the decor view or the window (`GlanceOpener`'s
+     `PendingIntent` send needs our window visible); if the finish is still refused after `rootLeave`, the content
+     shows again;
+   - the leave's Home uses a new `noAnimation` parameter of `HomeFront.bring` (`FLAG_ACTIVITY_NO_ANIMATION`) that
+     still ends the dark mark and still hops to the main thread (Q59d-7); `HomeFrontTest` pins the two callers;
+   - the face's close fade (`PinLockActivity` leave) goes with hidden content (it would fade nothing).
+   Tests: `AndroidLockFaceTest` (the B-6 pins rewritten for ASK), `LockGlanceTest` (the stage machine with the face),
+   `HomeFrontTest`.
+5. **Step E** - Q2 as above: `noticeWakeOffDue(.., face = true)` is false, `noticeWakeOff` does nothing as the face.
+   Tests: `LockWakeTest` with a face row. Docs: drop `launcher/CLAUDE.md`'s "The notice wake keeps its `lockNow`
+   after 15 s"; close design 59's open question 3.
+6. **Step G** - **after its device capture** (§8.4 first item): while an ask is open, **every** lock-task DPM write
+   of a chrome pass waits - packages, features, status bar, `DISALLOW_CREATE_WINDOWS` and a heal's flip (Q59d-3: RC
+   F2 saw two applies at the pause's end, packages as well as features, and the cancelling write isn't known).
+   "Open" = `androidAskAt` set, from `noteAndroidAsk(open = true)` to its close by any answer, the screen-off or a
+   new `ANDROID_ASK_OPEN_MS` = 2 min (not `ANDROID_ASK_TIMEOUT_MS`, the 2 s dead-ask recovery). The `Plan` is stored at
+   once so the UNLOCKED edge's pass writes the newest one; the ask's close runs one `refresh`; the ask stamp is read
+   through a `@Volatile` accessor (apply runs on a background thread). Tests: a pure `chromeHeld(askOpen, ..)` and a
+   pinned release on the ask's close.
 
-**Tests**: every rule above is a pure function with unit tests (the plan files in `lock/`); the emulator checks are
-the user's hybrid run on their emulator and one run of ours on `handy36` (the 59b step 4 capture for C, a reboot with
-and without a call for F, "Lås opp" during a VoIP call for H, a notice wake for E). The release after the round is
-`launcher-v0.36.0-rc.3` on the same server (no API change expected; if F or H needs a status field, both directories
-in one commit as always).
+**Out of round 1**: step I (not built), Q3's build (phase D), R2's decision ("as the face, kiosk off, no own lock
+task" - its own small round after this one; it touches `lockTaskEntry`/`lockLeave`/`LockTaskChrome` too, but the
+user's test runs with the kiosk on, and it needs its own shade/QS check), 59b §4.4's ring rule after a notice dump,
+N2 (Jelly Star palette), r10 (falls with phase D).
+
+### 8.3 Round 2 (its own worktree and code QA, in parallel with round 1): step F, §5 revised
+
+§5 as written, plus (Q59d-8, -9):
+- **Gate**: the runtime `setShowWhenLocked(true)` and every ask only with `waitForLauncher` (the android marker) **and**
+  `isUserUnlocked == false`, read again before every ask and at every resume. The `ACTION_USER_UNLOCKED` receiver and
+  `onResume` call `setShowWhenLocked(false)` once it is true. An own-mode phone (16b's `boot_cover` switch, an
+  Android credential of its own) never gets an occluding or asking cover.
+- **`bootPadStep`** (pure, tested): at most one automatic ask per resume after a stop; **no automatic ask while
+  `telecomInCall()`** (BFU-safe: `isInManagedCall`, same uid) - a tap still asks; an `onDismissError` retries once
+  after 1 s, counted; a cancel with the screen off (power with the pad up) isn't counted; the cap is 3 automatic asks
+  per `:bootcover` process, in memory (the cover's crash guard bounds a loop); after the cap only taps ask.
+- **Pins that flip, in the same commit**: `BootCoverManifestTest` keeps the manifest attributes banned and allows
+  `setShowWhenLocked`/`requestDismissKeyguard` only inside the gated functions (pin their bodies);
+  `KeyguardCoverPlanTest`'s "requestDismissKeyguard only in the lock" gains `BootCoverActivity.kt` with one call;
+  `launcher/CLAUDE.md`'s 16b/F3 bullet and design 59's F3 "Never over the keyguard" are amended.
+- The overlap with round 1 is `KeyguardCoverPlanTest` and `launcher/CLAUDE.md` only; the second to merge rebases.
+- **No emulator in round 2's build**: F's device gates run in the combined run (§8.4) after both rounds merge.
+
+### 8.4 Device checks (`handy36`, one run after both rounds merge; G's capture before G is built)
+
+1. **G's capture (before G)**: with Android's pad open from "Lås opp", end a parent window from the PWA; record which
+   lock-task write precedes the pad's `cancelled` (`wm_*`, `LockTaskChrome` lines around `end-windows`).
+2. C: 59b step 4's capture (R2) at the wake, with `wm_new_intent` for N1.
+3. H: "Lås opp" during a VoIP call (Element X or WhatsApp on the AVD, or the fake) - no Home, the call UI stays;
+   the same with a row tap - the target opens over the call.
+4. B: a recording of the pad's success against rc.2's check 9: ground + mark, then Home without a slide; a row's
+   target still opens (the `PendingIntent` send).
+5. E: a notice wake stays lit to the screen timeout, Android locked throughout (`dumpsys` keyguard state), the
+   fingerprint (emulator `finger touch`) still works after it.
+6. F (Q59d-10): (a) whether a runtime-flagged HOME activity occludes the BFU keyguard at all - if not, the cover is
+   never resumed while locked, no ask, today's behaviour, and that is the documented fallback; (b) the shade and QS
+   over the occluded BFU keyguard with no lock task: airplane, Wi-Fi, data, Bluetooth, location tiles against
+   SystemUI's own BFU face - the occluded shade must not be wider; (c) whether the cover as the BFU face changes N2;
+   plus §5's list: a reboot with and without a call, the emergency dialer, power with the pad up, cancel x3.
+
+The release after the rounds is `launcher-v0.36.0-rc.3` on the same server (no API change expected; if anything
+needs a status field, both directories in one commit as always).
