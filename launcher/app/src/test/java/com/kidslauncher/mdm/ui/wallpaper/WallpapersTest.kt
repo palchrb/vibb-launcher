@@ -72,17 +72,29 @@ class WallpapersTest {
     }
 
     @Test
-    fun `59b - as Android's face the lock wallpaper is the night ground with the mark, the photo opt-in kept`() {
+    fun `59b, 59d K - as Android's face the lock wallpaper is always the night ground with the mark`() {
         assertEquals(WallpaperFill.NightMark, lockScreenFill(hytta, androidFace = true))
         assertEquals(WallpaperFill.NightMark, lockScreenFill(sky, androidFace = true))
         assertEquals(WallpaperFill.NightMark, lockScreenFill(NAVY, androidFace = true))
-        assertEquals("the parent's lock-photo opt-in wins", sjo.fill, lockScreenFill(sjo, androidFace = true))
-        // Not the face: design 08's rule (the default).
+        // 59d K: before the parent's lock-photo opt-in (the rc.2 recording's family photo at every wake).
+        assertEquals("the face wins over the opt-in", WallpaperFill.NightMark, lockScreenFill(sjo, androidFace = true))
+        // Own-mode rows unchanged: design 08's rule, the opt-in deciding (the default).
         for (w in listOf(hytta, sjo, sky, NAVY)) assertEquals(lockScreenFill(w), lockScreenFill(w, androidFace = false))
+        assertEquals(sjo.fill, lockScreenFill(sjo))
         // The key carries the lock fill: the face's edges and a rollback re-apply by themselves.
         assertEquals("night_mark", WallpaperFill.NightMark.describe())
         assertTrue(wallpaperKey(sky, 720, 1600, androidFace = true) != wallpaperKey(sky, 720, 1600))
-        assertEquals(wallpaperKey(sjo, 720, 1600), wallpaperKey(sjo, 720, 1600, androidFace = true))
+        assertTrue(wallpaperKey(sjo, 720, 1600, androidFace = true) != wallpaperKey(sjo, 720, 1600))
+        // ... and an apply comes at the face's edge itself, not only at the next wallpaper sync.
+        val androidLock = listOf("src/main/java/com/kidslauncher/mdm/lock/AndroidLock.kt", "app/src/main/java/com/kidslauncher/mdm/lock/AndroidLock.kt")
+            .map { java.io.File(it) }.first { it.exists() }.readText()
+        assertTrue(androidLock.substringAfter("fun face(").substringBefore("\n    }\n")
+            .contains("if (face != was) com.kidslauncher.mdm.ui.wallpaper.WallpaperStore.faceChanged(app)"))
+        val store = listOf("src/main/java/com/kidslauncher/mdm/ui/wallpaper/WallpaperStore.kt", "app/src/main/java/com/kidslauncher/mdm/ui/wallpaper/WallpaperStore.kt")
+            .map { java.io.File(it) }.first { it.exists() }.readText()
+        assertTrue(store.substringAfter("fun faceChanged(").substringBefore("\n    }\n").contains("applyAndRefresh(app)"))
+        // The glance's own background keeps the opt-in in both modes.
+        assertEquals(sjo, lockWallpaper(emptyList(), null, sjo, emptySet()))
         val applier = listOf("src/main/java/com/kidslauncher/mdm/ui/wallpaper/WallpaperApplier.kt", "app/src/main/java/com/kidslauncher/mdm/ui/wallpaper/WallpaperApplier.kt")
             .map { java.io.File(it) }.first { it.exists() }.readText()
         assertTrue(applier.contains("return wallpaperKey(home, w, h, com.kidslauncher.mdm.lock.AndroidLock.faceOn)"))

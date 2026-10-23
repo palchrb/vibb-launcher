@@ -133,6 +133,19 @@ object WallpaperStore {
         }
     }
 
+    /**
+     * Design 59d step K: Android's face went on or off (`AndroidLock.face`) - Android's lock wallpaper follows at once
+     * (`lockScreenFill`: the night ground with the mark as the face), not only at the next wallpaper sync. The apply
+     * key carries the lock fill, so this applies only when the fill really changed.
+     */
+    fun faceChanged(context: Context) {
+        val app = context.applicationContext
+        onWorker {
+            refreshNow(app)
+            applyAndRefresh(app)
+        }
+    }
+
     /** The kid picked [id] in Settings: remembered, shown, and put on the system wallpaper. */
     fun pick(context: Context, id: Long) {
         val app = context.applicationContext

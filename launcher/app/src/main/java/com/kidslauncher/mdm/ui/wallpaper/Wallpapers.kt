@@ -94,11 +94,15 @@ fun effectiveWallpaper(allowed: List<Wallpaper>, pickedId: Long?, cachedHashes: 
  * The lock screen: a photo only when the parent ticked "also on the lock screen" (anyone holding
  * the locked phone sees it, QA 08 #1); otherwise navy. Colours go on both.
  * Design 59b §5 ([androidFace]: Android's own face and pad show this wallpaper): the night ground with the Vibb mark
- * (the user's decision) - the parent's lock-photo opt-in still wins (no new family data: the opt-in is the parent's).
+ * (the user's decision). Design 59d step K: **always** as the face, before the parent's lock-photo opt-in - in android
+ * mode Android's wallpaper is only ever seen in glimpses (SystemUI's face for a few frames at a wake, the fade-out), and
+ * the user's rc.2 recording showed 2 frames of the blurred family photo, then 3 of the sharp one, before the glance at
+ * every wake. Own mode unchanged: the opt-in decides there; the glance's own background ([lockWallpaper]) keeps the
+ * opt-in in both modes.
  */
 fun lockScreenFill(home: Wallpaper, androidFace: Boolean = false): WallpaperFill = when {
-    home.fill is WallpaperFill.Image && home.lockScreen -> home.fill
     androidFace -> WallpaperFill.NightMark
+    home.fill is WallpaperFill.Image && home.lockScreen -> home.fill
     home.fill is WallpaperFill.Image -> NAVY.fill
     else -> home.fill
 }
