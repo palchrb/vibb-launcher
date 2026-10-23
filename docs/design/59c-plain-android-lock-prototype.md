@@ -199,3 +199,103 @@ and the observation that lock task keeps the shade, QS and Recents shut over And
   library entry from the PWA works: `fake-audio.py --mb 2 --feed 3` and `POST /music link=http://127.0.0.1:8731/feed.xml
   category=4`, then tick it for the phone.
 - SystemUI ANRs once after each cold boot on this AVD ("Wait").
+
+## 7. Re-run with the small clock (2026-10-23)
+
+The question: does `adb shell settings put secure lockscreen_use_double_line_clock 0` (Android's small clock forced)
+give our curated rows or Android's media player more room at the Jelly Star's 240 dpi? Same setup as §1 and §6, from
+this commit's builds: `handy36` with `-wipe-data`, English, `wm density 240`, a fresh local server over HTTP, adb
+provisioning (emulator.md §4), the Lock row on `keyguard=android`, Child PIN `1357` from the server, the switch on in
+`cancel`. Messages ticked on the Lock page with Full text, contacts Mamma, Pappa, Emma, Bestemor; SMS through the
+emulator console, the missed call as `gsm call` + `gsm cancel` from Emma. Music: `fake-audio.py --feed 3` as a library
+entry ticked for the phone (§6), playing in the music app. Frames from the emulator console, 480x854, in
+`docs/design/mockups/59c/small-clock/`. Besides the frames, SystemUI's own numbers for the lock-screen stack were read
+from `dumpsys activity service com.android.systemui/.SystemUIService` (`SharedNotificationContainerViewModel`:
+`bounds`, `availableHeight`, `LockscreenDisplayConfig(maxNotifications)`; `KeyguardMediaController`: `visible`, the
+`MediaContainerView` size).
+
+### 7.1 Room table (small clock forced unless noted)
+
+"Rows" = our curated rows posted (`PlainLock: rows: N posted`). Full = drawn as a card; shelf = an icon in the pill.
+
+| Density | Scenario | Full rows | Shelf | Media player | Frame |
+|---|---|---|---|---|---|
+| 240 (320x569 dp) | 0 rows, setting unset | - | - | - | `240-empty-default.png` (the big double-line clock) |
+| 240 | 0 rows | - | - | - | `240-empty-small.png` (small clock, nothing else) |
+| 240 | 1 row | 1 | 0 | - | `240-1row.png` |
+| 240 | 2 rows | 1 | 1 | - | `240-2rows.png` |
+| 240 | 3 rows (2 SMS + missed call) | 1 | 2 | - | `240-3rows.png` |
+| 240 | 4 rows | 1 | 3 | - | `240-4rows.png` |
+| 240 | 5 rows | 1 | 4 | - | `240-5rows.png` |
+| 240 | `redact`, 2 rows + Messages' own | Messages' redacted header + 1 row | 1 | - | `240-redact.png` (as 59c frame 7) |
+| 240 | 3 rows, setting = 1 (control) | 1 | 2 | - | `240-control-double-line.png` |
+| 240 | music playing, 0 rows | 0 | 0 | **no** (nothing under the date) | `240-music-0rows.png` |
+| 240 | music playing, 1 row | 0 | 1 | no | `240-music-1row.png` |
+| 240 | music playing, 3 rows (2 SMS + missed call) | 0 | 2 icons | no | `240-music-3rows-grouped.png` |
+| 240 | music playing, 3 rows (3 SMS) | 0 | 3 | no | `240-music-3rows.png` |
+| 220 (349x621 dp) | music playing, 0 rows | - | - | **yes** (art, title, pause, prev/next, scrubber, "This phone") | `220-music-0rows.png` |
+| 220 | music playing, 3 rows | 0 | 3 | no | `220-music-3rows.png` |
+| 320 (240x427 dp) | 3 rows | 0 | 3 | - | `320-3rows.png` |
+| 320 | music playing, 3 rows | 0 | 3 | no | `320-music-3rows.png` |
+
+SystemUI's numbers behind it (px of the 480x854 screen, dp in brackets):
+
+| Density | Stack bounds (top-bottom) | Room for the stack | Media player height | `maxNotifications` |
+|---|---|---|---|---|
+| 240 | 365-593 | 228 px (152 dp) | 276 px (184 dp) | 1 with rows only; 0 with music (with or without rows) |
+| 220 | 346-602 | 256 px (186 dp) | 253 px (184 dp) | 1 with music alone (the player); 0 with music + 3 rows |
+| 200 | 328-612 | 284 px | 230 px | 1 with music alone |
+| 180 | 308-622 | 314 px | 207 px | 1 with music alone |
+| 320 | (stack 112 px) | 112 px (56 dp) | 368 px | 0 with 3 rows, with or without music |
+
+At 240 dpi a curated row card is about 130 px (87 dp) and the shelf 72 px (48 dp): one card plus the shelf fits in
+152 dp, two cards don't. The player is 184 dp at every density, so it fits only where the stack has more than that
+and nothing else is on the lock; with rows and music together SystemUI drew neither the player nor a row, only
+the shelf, at 240 and at 220. While the music played, `KeyguardMediaController` said `visible=true` with its 276 px
+container: the player is a candidate at 240 dpi, it is left out for room (`maxNotifications=0`), not filtered away.
+
+### 7.2 The control
+
+With 3 rows on the lock, `lockscreen_use_double_line_clock` 1 and the setting deleted both gave the same small
+single-line clock (`com.android.systemui:id/lockscreen_clock_view`), the same stack bounds 365-593 and the same
+1 full row + shelf as with 0. The same holds with music playing and no rows: setting 1 still gave the small clock
+and 228 px. The big double-line clock (`lockscreen_clock_view_large`) showed only on an empty lock. So Android
+already uses the small clock whenever rows or a media session are there, and 59c's §3.2 numbers were taken with
+the small clock: its frames with rows (`2-plain-redacted.png`, `3-plain-cancelled.png`, `7-shade-pull-blocked.png`)
+show the same single-line clock as this run's frames.
+
+### 7.3 Surprises
+
+- **The media player didn't show at 240 dpi with the small clock** (the user saw it on their own emulator). On this
+  AVD at 240 dpi it needs 184 dp and the stack has 152 dp; at 220 dpi it showed. This run doesn't explain the
+  difference; that emulator's density and screen size weren't known here.
+- **Grey panel**: a lighter panel (x 24-456, down to y about 735) behind the stack showed in many frames (empty
+  small clock, 1 and 2 rows, all 220 and 320 frames) and stayed: the 1-row frame was the same 4 s and 8 s after the
+  wake. Others (3-5 rows, the control, the music frames at 240) had none. Not investigated.
+- **A stopped music session kept the media slot**: after `cmd media_session dispatch stop` the music app's session
+  (state NONE) and its notification stayed, `KeyguardMediaController` stayed `visible=true`, and 3 rows went into
+  the shelf with no player drawn (`maxNotifications=0`). After `am force-stop` of the music app the same 3 rows gave
+  1 full row again.
+- **Playback stopped when SMSes came in**: three console SMSes 4 s apart left the session `STOPPED`; the cause wasn't
+  checked.
+- **Android bundled**: once 3 rows were posted, dumpsys had an Android-made summary
+  `g:Aggregate_AlertingSection` for our package although each row has its own group; in
+  `240-music-3rows-grouped.png` the shelf shows 2 icons for 3 rows (likely the summary's icon for the two SMS rows
+  and the missed-call icon). It was gone later in the run.
+- The curated SMS rows show the sender's number ("+47 92 34 56 78") as Messages titles them (the test contacts are in
+  our phone book only); the missed-call row shows the name ("Emma").
+- No SystemUI ANR dialog in any frame; the always-on-VPN notification didn't show (no reboot this run, VPN up).
+
+Notes for a next run: `pwa_setup.py` doesn't tick Messages for the lock - `POST /devices/1/lock-screen/apps
+package_name=com.google.android.apps.messaging show=text`; the console's `gsm call` needs the `+47` form to match a
+contact (`4793456789` was rejected by `KidCallScreening`); the music app plays its cached copy, so a longer
+`--mb` on a restarted fake host didn't lengthen the 45 s episodes - `cmd media_session dispatch rewind` every 20 s
+kept one playing.
+
+### 7.4 What this changes for §5's judgement
+
+Forcing the small clock changes only the empty lock (big clock vs small); with rows or music on the lock Android was
+already using the small clock, so §3.2 stands as measured. At the Jelly Star's 240 dpi, `cancel` shows 1 full
+curated row and the rest as shelf icons for 1 to 5 rows, and `redact` shows Messages' redacted header and 1 row.
+Android's media player does not show at 240 dpi on this AVD, alone or with rows; it needs 184 dp and the stack has
+152 dp. With music and any row, the lock shows only shelf icons at 240, 220 and 320 dpi.
