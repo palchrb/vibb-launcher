@@ -143,12 +143,19 @@ class BootCoverManifestTest {
         // face views following the gate in applyLockedFace (F59d-3/6), Back held exactly while the flag is on (F59d-1).
         assertTrue(step.contains("tapLine?.visibility = if (gate && pad.line) View.VISIBLE else View.GONE"))
         assertTrue(resume.contains("if (pad.retryDue) handler.postDelayed(padRetry, BOOT_PAD_RETRY_MS)"))
-        assertTrue(face.indexOf("faceViews(show)") in 0 until face.indexOf("if (show == showsWhenLocked) return"))
-        assertTrue(face.indexOf("setShowWhenLocked(show)") in 0 until face.indexOf("holdBack(show)"))
+        assertTrue(face.indexOf("faceViews(show)") in 0 until face.indexOf("if (show != showsWhenLocked) {"))
+        assertTrue(face.indexOf("setShowWhenLocked(show)") in 0 until face.indexOf("applyBackHold(show)"))
         val back = body("holdBack")
         assertTrue(back.contains("if (hold) {\n                onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, backOnFace)"))
         assertTrue(back.contains("onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backOnFace)"))
-        assertEquals(1, Regex("holdBack\\(show\\)").findAll(activity).count())
+        // RC3-3: Back held by the rule - the face, and once unlocked until the take-over waitStep saw.
+        assertEquals(1, Regex(" holdBack\\(hold\\)").findAll(activity).count())
+        assertTrue(body("applyBackHold").contains("val hold = coverHoldsBack(face, waitForLauncher, unlocked, takenOver = takenOverAtElapsed >= 0)"))
+        // RC3-1: every ask's silence clock is posted from the rule's step, dropped with the open ask, and posted again
+        // at a resume; the runnable feeds SILENT.
+        assertTrue(activity.contains("private val padSilent = Runnable { padStep(PadEvent.SILENT) }"))
+        assertTrue(step.contains("if (!pad.silentDue) handler.removeCallbacks(padSilent)\n        step.silentInMs?.let {\n            handler.removeCallbacks(padSilent)\n            handler.postDelayed(padSilent, it)"))
+        assertTrue(resume.contains("if (pad.silentDue) handler.postDelayed(padSilent, bootPadSilentInMs(pad.reasks))"))
         assertFalse("no default Back override", activity.contains("onBackPressed"))
         val views = body("faceViews")
         for (needed in listOf("if (!face) tapLine?.visibility = View.GONE", "isClickable = face", "contentDescription = if (face) getString(R.string.boot_cover_tap_to_unlock) else null")) {
@@ -310,7 +317,9 @@ class BootCoverManifestTest {
         assertTrue(destroy.contains("if (unlocked && !isChangingConfigurations)"))
         assertTrue(destroy.contains("if (coverDisablesOnDestroy(waitForLauncher, unlocked) && !BootCoverGuard.isDisabled(this)) {"))
         // F3R-1: in front at the system's finish, it starts Home in a call too (no call screen was over it).
-        assertTrue(destroy.contains("coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted)) {"))
+        assertTrue(destroy.contains("coverDestroyStartsHome(waitForLauncher, unlocked, ownFinish, finishedInFront, homeStarted, takenOver)) {"))
+        // RC3-3: the stamp (or its own disable) as waitStep reads it.
+        assertTrue(destroy.contains("val takenOver = takenOverAtElapsed >= 0 || BootCoverGuard.takenOverThisBoot(this) || BootCoverGuard.isDisabled(this)"))
         assertTrue(destroy.contains("startOwnHome(\"on its way out\")"))
         assertFalse(destroy.contains("telecomInCall"))
         // Its own Home starts disable it first only when the typed HOME would be itself; the hand-over always does.

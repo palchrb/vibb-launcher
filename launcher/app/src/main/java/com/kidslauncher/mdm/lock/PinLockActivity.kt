@@ -266,6 +266,11 @@ class PinLockActivity : AppCompatActivity() {
     /** The glance's stage changed: ASK (only as Android's face) asks for Android's PIN pad; any other stage closes an
      * open ask; rendered. */
     private fun onStage() {
+        // RC3-2: while Android's pad is asked for, our (opaque) window also shows the wallpaper - set well before the pad's
+        // success, since WM reads it when the leave's transition collects us. Home's open is then the shell's
+        // wallpaper-intra transition (the glance fades out in place, 280 ms) instead of wallpaper_open_exit (its ground
+        // sliding down off the screen, 225 ms). Nothing changes on screen. Never cleared by the leave itself.
+        if (!finishingAfterUnlock) showWallpaperBelow(asking() && AndroidLock.faceOn)
         when {
             !asking() -> closeAsk()
             // The face went off since this glance was built: our keypad (never an ask in own mode).
@@ -273,6 +278,13 @@ class PinLockActivity : AppCompatActivity() {
             else -> tapAsFace()
         }
         render()
+    }
+
+    /** RC3-2: [onStage]'s wallpaper flag, set and cleared only on a change. */
+    private fun showWallpaperBelow(on: Boolean) {
+        val now = window.attributes.flags and WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER != 0
+        if (on == now) return
+        if (on) window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER) else window.clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER)
     }
 
     /**

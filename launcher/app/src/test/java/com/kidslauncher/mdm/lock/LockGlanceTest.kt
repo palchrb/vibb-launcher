@@ -125,7 +125,7 @@ class LockGlanceTest {
 
     /** Design 59d §8.13: Android's gesture handle on our glance - the profile's, else Android's defaults. */
     @Test
-    fun `the handle - SystemUI's measured on the emulator, else 108 x 4 dp, white at 80 %, 8 dp off the bottom`() {
+    fun `the handle - SystemUI's measured on the emulator, else 108 x 4 dp, white at 80 percent, 8 dp off the bottom`() {
         assertEquals(GlanceHandle(108f, 4f, 8f, 0.8f), glanceHandle(null))
         assertEquals(DEFAULT_GLANCE_HANDLE, glanceHandle(null))
         assertEquals(GlanceHandle(108f, 4f, 10f, 0.92f), glanceHandle(EMULATOR_PIXEL_CLOCK))
