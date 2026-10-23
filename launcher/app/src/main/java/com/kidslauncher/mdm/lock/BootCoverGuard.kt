@@ -151,7 +151,8 @@ object BootCoverGuard {
     /**
      * From `Application.onCreate` in the cover's process (qa-16b-code #2), so a crash anywhere in
      * that process counts - not only after the activity's onCreate: counts it in the record and,
-     * once the guard trips, disables the cover before the crash goes on.
+     * once the guard trips, disables the cover before the crash goes on - in own mode; in android mode it stays
+     * enabled and the next cover is inert (qa-59d-m-code M-1, [coverInert]).
      */
     fun install(app: Context) {
         if (installed) return
@@ -164,7 +165,9 @@ object BootCoverGuard {
                     com.kidslauncher.mdm.BuildConfig.VERSION_NAME,
                 )
                 write(app, next)
-                if (coverGuardTripped(next)) disable(app, "crash guard (${next.crashes} crashes this boot)")
+                // M-1: android mode keeps the cover enabled (the boot's only direct-boot-aware HOME), inert from now on.
+                val keep = bootCoverEnabled(CoverEvent.CRASH_GUARD, wanted = true, guardTripped = true, androidMode = androidMode(app))
+                if (coverGuardTripped(next) && keep == false) disable(app, "crash guard (${next.crashes} crashes this boot)")
             } catch (t: Throwable) {
                 // Never in the way of the crash itself.
             }

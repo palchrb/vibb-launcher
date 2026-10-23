@@ -32,16 +32,18 @@ class BootCoverPlanTest {
         assertEquals(false, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted = true, guardTripped = true))
     }
 
-    /** Design 59d step M (six-inch F1): in android mode the cover is enabled at every event while the guard holds - an
+    /** Design 59d step M (six-inch F1): in android mode the cover is enabled at every event (a tripped guard too, M-1) - an
      * apply and the take-over included - so a boot the shutdown didn't arm still has a direct-boot-aware HOME. */
     @Test
-    fun `android mode - enabled at every event while the guard holds, so an unarmed boot has a HOME`() {
-        for (event in listOf(CoverEvent.POLICY, CoverEvent.SHUTDOWN, CoverEvent.HANDED_OVER)) {
+    fun `android mode - enabled at every event, a tripped guard and the trip itself included, so every boot has a HOME`() {
+        for (event in CoverEvent.entries) {
             assertEquals("$event", true, bootCoverEnabled(event, wanted = true, androidMode = true))
-            assertEquals("tripped: $event", false, bootCoverEnabled(event, wanted = true, guardTripped = true, androidMode = true))
+            // qa-59d-m-code M-1 (a): a tripped guard makes the cover inert, never disabled - else F1's hang comes back.
+            assertEquals("tripped: $event", true, bootCoverEnabled(event, wanted = true, guardTripped = true, androidMode = true))
             assertEquals("not wanted: $event", false, bootCoverEnabled(event, wanted = false, androidMode = true))
         }
-        assertEquals(false, bootCoverEnabled(CoverEvent.CRASH_GUARD, wanted = true, androidMode = true))
+        // Own mode: the trip disables it, as before.
+        assertEquals(false, bootCoverEnabled(CoverEvent.CRASH_GUARD, wanted = true, guardTripped = true, androidMode = false))
         // Own mode is unchanged by the flag's default.
         assertNull(bootCoverEnabled(CoverEvent.POLICY, wanted = true, androidMode = false))
         assertEquals(false, bootCoverEnabled(CoverEvent.HANDED_OVER, wanted = true, androidMode = false))
@@ -84,6 +86,49 @@ class BootCoverPlanTest {
         assertFalse(homePinReseatDue(unlocked = true, resolvesToHome = true, reseats = 0))
         assertFalse("HomeActivity can't resolve before the unlock", homePinReseatDue(unlocked = false, resolvesToHome = false, reseats = 0))
         assertEquals(3, HOME_PIN_MAX_RESEATS)
+    }
+
+    /** qa-59d-m-code M-1 (a): the tripped android-mode cover is inert - no face, no ask - and own mode's goes away. */
+    @Test
+    fun `a tripped guard in android mode leaves an inert cover - never showWhenLocked, never an ask`() {
+        assertTrue(coverInert(androidMarker = true, guardTripped = true))
+        assertFalse(coverInert(androidMarker = true, guardTripped = false))
+        assertFalse("own mode's tripped cover finishes and disables itself", coverInert(androidMarker = false, guardTripped = true))
+        assertFalse(bootPadGate(androidMarker = true, unlocked = false, inert = true))
+        assertTrue(bootPadGate(androidMarker = true, unlocked = false, inert = false))
+        val pad = BootPad()
+        for (event in PadEvent.entries) {
+            assertEquals("$event", PadAction.NONE, bootPadStep(pad, event, gate = false, interactive = true, inCall = false).action)
+        }
+    }
+
+    /** qa-59d-m-code M-4: the boot's configuration-change relaunches no longer use up the automatic asks. */
+    @Test
+    fun `a relaunch is no stop - the ask out is asked again uncounted, two relaunches leave one counted ask`() {
+        var pad = bootPadStep(BootPad(), PadEvent.RESUMED, gate = true, interactive = true, inCall = false).also { assertEquals(PadAction.ASK, it.action) }.pad
+        assertEquals(1, pad.autoAsks)
+        repeat(2) {
+            val step = bootPadStep(pad, PadEvent.RELAUNCHED, gate = true, interactive = true, inCall = false)
+            assertEquals(PadAction.ASK, step.action)
+            pad = step.pad
+        }
+        assertEquals(1, pad.autoAsks)
+        assertTrue(pad.open)
+        assertFalse(pad.armed)
+        // Nothing out: the resume's rule (an armed cover asks, counted).
+        val fresh = bootPadStep(BootPad(autoAsks = 1), PadEvent.RELAUNCHED, gate = true, interactive = true, inCall = false)
+        assertEquals(PadAction.ASK, fresh.action)
+        assertEquals(2, fresh.pad.autoAsks)
+        // Not armed and nothing out (the kid's Back): no new automatic ask, the line.
+        val back = bootPadStep(BootPad(autoAsks = 1, armed = false, line = true), PadEvent.RELAUNCHED, gate = true, interactive = true, inCall = false)
+        assertEquals(PadAction.NONE, back.action)
+        // An ask out with the screen off closes as a stop would, its count given back.
+        val dark = bootPadStep(pad, PadEvent.RELAUNCHED, gate = true, interactive = false, inCall = false)
+        assertEquals(PadAction.NONE, dark.action)
+        assertEquals(0, dark.pad.autoAsks)
+        assertTrue(dark.pad.armed)
+        // Without the gate nothing.
+        assertEquals(PadAction.NONE, bootPadStep(pad, PadEvent.RELAUNCHED, gate = false, interactive = true, inCall = false).action)
     }
 
     @Test

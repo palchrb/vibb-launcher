@@ -443,7 +443,16 @@ ends with E.
    (f) F6: no `DevicePolicyEngine: Persistent preferred activity in package ... not found` at the locked boot or the
    take-over, and `dumpsys device_policy` still holds all five of our PPA policies after the unlock; the `HomePin:`
    lines (`HOME resolves to ... (take-over)`, any `Re-seated ...`) noted per boot. On the Jelly Star also: `cmd package
-   query-activities -c android.intent.category.HOME` in BFU (is its stock launcher direct-boot aware?).
+   query-activities -c android.intent.category.HOME` in BFU (is its stock launcher direct-boot aware? - it decides
+   whether the crash guard's case can hit it). Added by the code QA (M-10): (g) on a cover-first boot (re-run until the
+   take-over logs `HOME resolves to ...BootCoverActivity`) a Back and a Home press on the cover between the PIN and the
+   take-over end at our Home, never the chooser or the stock launcher; (h) `am start -n <pkg>/com.kidslauncher.mdm.lock
+   .BootCoverActivity` while unlocked after the take-over gives our Home at once (`late start true`); (i) a boot whose
+   re-seat runs on the fixed build; (j) the stamp against `settings get global boot_count` after the PIN (and the
+   cover's first-frame boot from its record): `BOOT_COUNT` is bumped before the unlock; (k) our `<item` count under
+   `persistent-preferred-activities` in `package-restrictions.xml` (root, `abx2xml`) before and after five boots;
+   (l, the fix round) the crash guard tripped by hand (two `am crash` of the cover in one boot), then `adb reboot`: the
+   boot completes, SystemUI's face and pad unlock it, `Boot cover inert`, then our Home.
 
 The release after the rounds is `launcher-v0.36.0-rc.3` on the same server (no API change expected; if anything
 needs a status field, both directories in one commit as always).
@@ -831,12 +840,13 @@ and writes a device-protected take-over stamp for this boot (`boot_cover_taken`)
 take-over in place of its disabled state. Own mode is unchanged: its phone has no BFU. Our package's component state
 then never changes before the unlock, so F6's BFU removals stop, and so does the take-over's removal of the cover's
 PPA. The unlocked HOME is made deterministic by `HomePin.check` (main process, at the take-over and after every
-apply): it resolves the HOME intent as the system does (we hold `QUERY_ALL_PACKAGES`). If that isn't HomeActivity
+apply with the parent's choice): it resolves the HOME intent as the system does (we hold `QUERY_ALL_PACKAGES`). If that isn't HomeActivity
 (the cover won the per-boot order, or a PPA is missing), it clears our package's PPAs and adds them back in order:
 HomeActivity's HOME, the Play link blocker, the call-log pin, the cover's last. That is at most 3 times per process
 (pure `homePinReseatDue`) and never before the unlock. The cover's own Home starts (`START_HOME`, the start on its
-way out) disable it first only when the typed HOME would resolve to itself (`coverHomeStartDisablesFirst`; the next
-apply or take-over re-enables it). Its 30 s hand-over disables it as before. A cover the system starts after the
+way out) disable it first only when the typed HOME would resolve to itself (`coverHomeStartDisablesFirst`); Home's next
+resume enables it again (fix round M-6, `BootCover.afterHomeResumed` - not the next apply, so no unarmed reboot finds
+it off). Its 30 s hand-over disables it as before, and Home's resume after it enables it again the same way. A cover the system starts after the
 take-over (a Home press while the order was still wrong) starts Home at once instead of after 3 s. The bar of step F
 holds: the gate, the mark/line face, no dismissal. **Risks**: between the unlock and our take-over the order is
 still the boot's, so a Home press there may land on the cover. That is harmless: it is already in front, or it hands
@@ -847,7 +857,14 @@ the chooser. The run also found that Android 15's policy engine re-adds every PP
 (`reapplyAllPoliciesOnBootLocked`; PMS doesn't dedupe), so `package-restrictions.xml` gains five duplicates a boot
 until a clear: before step M the F6 purge cleared them, now the re-seat does (and harmlessly - a duplicate names the
 same component). A crash between the first Android
-PIN's `configure` and the same apply's `BootCover.applyPolicy` (one apply, once) still finds the cover disabled. On a
+PIN's `configure` and the same apply's `BootCover.applyPolicy` (one apply, once) still finds the cover disabled.
+**The crash guard** (fix round M-1, option (a)): a tripped guard in android mode keeps the cover **enabled** - the boot's
+direct-boot-aware HOME, so a phone like the six-inch image still completes every boot - but **inert** (`coverInert`):
+a bare night window, never `setShowWhenLocked`, never an ask, no mark; SystemUI's own lock screen and pad are the face,
+and once unlocked it runs F3's wait and hands over to our Home. So "never hang" holds with the guard tripped too. Own
+mode's trip disables it as before. Moving the phone from Android's lock to our own (M-12) leaves the cover enabled with
+its PPA until the next CE start's own-mode take-over disables it (an own-mode apply leaves it, `POLICY -> null`, so
+the shutdown's arm keeps working); `HomePin.check` still runs at that apply, so HOME stays HomeActivity - harmless. On a
 phone whose stock launcher is DBA (Android 16's Pixel launcher) the cover now wins every BFU boot through its PPA, not
 the ~10 s stock launcher of an unarmed boot. Device checks: §8.4 item 8 above.
 
@@ -861,6 +878,17 @@ F1 reproduced on `main`; with step M `adb reboot` and a crash plus `adb reboot` 
 boot needed and got the re-seat (~475 ms). The run found one bug, fixed on the branch: `AtomicFile.readFully` in the
 cover's 250 ms poll deleted the main process's in-flight `.new` stamp, so the take-over never reached the cover - the
 stamp and the record are now read from their base files. Owed: item 8 on Android 16 and the Jelly Star.
+
+**Fix round** (`docs/review/qa-59d-m-code.md`, M-1..12, all taken): M-1 the tripped guard's inert cover (above;
+`bootCoverEnabled` true at every android-mode event, `coverInert`, `bootPadGate(.., inert)`, the crash handler disables
+only in own mode); M-2 the re-seat's body pinned line by line, `HomePin.locked`'s `synchronized` and no `openRead(` in
+`BootCoverGuard.kt`; M-3 the "never cleared" docs rewritten to the re-seat rule; M-4 (step F's) a relaunch for a
+configuration change is no stop - the old instance skips F3's and the pad's stop, carries its `BootPad` over
+(`carriedPad`), and the new one's first resume is `PadEvent.RELAUNCHED`: an ask still out is asked again uncounted, else
+the resume's rule (two boot-time relaunches with the pad up leave one counted ask); M-5 the cover is enabled before its
+PPA is added (apply and take-over); M-6 Home's resume enables a cover that disabled itself (above); M-7 a re-seat that
+didn't run is neither counted nor logged as one; M-8 `PlayInvariantsTest` reads the walked file; M-9 PLAN's backlog;
+M-10 item 8 (g)-(k); M-11, M-12 the wording above.
 
 ### 8.13 Step J addendum (the user, 2026-10-23): the handle instead of the hint line
 

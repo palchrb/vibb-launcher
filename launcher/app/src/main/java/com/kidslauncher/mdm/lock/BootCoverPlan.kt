@@ -56,22 +56,24 @@ enum class CoverEvent {
 
 /**
  * The cover component's state after [event]: `true` enable, `false` disable, `null` leave it.
- * Off (switch, unmanaged, not device owner) = disabled at every event, and the crash guard always disables it.
+ * Off (switch, unmanaged, not device owner) = disabled at every event.
  * - Own mode: enabled only at shutdown - never while the phone runs unlocked (an apply leaves it), and disabled at
- *   the hand-over. A crash reboot sends no shutdown: the cover stays off and the boot falls back to A+B (Home at boot,
- *   Home roots lock task) - with no Android PIN the boot isn't BFU.
- * - Android mode ([androidMode], the `boot_cover_android` marker - design 59d step M): enabled at every event while
- *   the guard holds, the take-over included. Before the first unlock only direct-boot-aware HOMEs resolve, and on a
- *   phone whose stock launcher isn't one (with Settings' FallbackHome hidden) a boot without a HOME never completes
- *   (six-inch F1), so the cover must already be enabled when a crash, `adb reboot` or a flat battery comes. `HomePin`
- *   keeps the unlocked HOME on HomeActivity.
+ *   the hand-over and by the crash guard. A crash reboot sends no shutdown: the cover stays off and the boot falls back
+ *   to A+B (Home at boot, Home roots lock task) - with no Android PIN the boot isn't BFU.
+ * - Android mode ([androidMode], the `boot_cover_android` marker - design 59d step M): enabled at every event, the
+ *   take-over included, **the crash guard too** (qa-59d-m-code M-1, option (a)). Before the first unlock only
+ *   direct-boot-aware HOMEs resolve, and on a phone whose stock launcher isn't one (with Settings' FallbackHome hidden)
+ *   a boot without a HOME never completes (six-inch F1), so the cover must already be enabled when a crash,
+ *   `adb reboot` or a flat battery comes - a tripped guard makes it inert instead ([coverInert]: no face, no ask,
+ *   SystemUI's lock is the face), never disabled. `HomePin` keeps the unlocked HOME on HomeActivity.
  */
 fun bootCoverEnabled(event: CoverEvent, wanted: Boolean, guardTripped: Boolean = false, androidMode: Boolean = false): Boolean? = when {
     !wanted -> false
+    // M-1: in android mode the cover is the boot's HOME whatever the guard says - a trip makes it inert, not off.
+    androidMode -> true
     event == CoverEvent.CRASH_GUARD -> false
     // A tripped guard holds until the switch goes off (which clears it) and on again, or an update
     // (qa-16b-code #2, F3C-3): no more crashing starts at every boot.
-    androidMode -> !guardTripped
     event == CoverEvent.SHUTDOWN -> !guardTripped
     event == CoverEvent.POLICY -> null
     else -> false
@@ -398,10 +400,25 @@ const val BOOT_PAD_RETRY_MS = 1_000L
  * own-mode cover (16b's `boot_cover` switch, an Android credential of its own) never gets it, and once [unlocked] it
  * is false for good - never showWhenLocked once `isUserUnlocked`.
  */
-fun bootPadGate(androidMarker: Boolean, unlocked: Boolean): Boolean = androidMarker && !unlocked
+fun bootPadGate(androidMarker: Boolean, unlocked: Boolean, inert: Boolean = false): Boolean = androidMarker && !unlocked && !inert
+
+/**
+ * qa-59d-m-code M-1 (option (a)): an android-mode cover whose crash guard tripped stays enabled - the direct-boot-aware
+ * HOME every boot needs - but inert: a bare night window, never showWhenLocked, never an ask, no breathing mark
+ * ([bootPadGate]'s `inert`); SystemUI's own lock screen and pad are the face, and once unlocked it runs F3's wait and
+ * hands over to our Home. An own-mode cover with a tripped guard finishes and disables itself as before.
+ */
+fun coverInert(androidMarker: Boolean, guardTripped: Boolean): Boolean = androidMarker && guardTripped
 
 /** What the cover's pad rule hears: its lifecycle, a tap, the ask's answer, the retry's time. */
-enum class PadEvent { RESUMED, STOPPED, TAPPED, SUCCEEDED, CANCELLED, ERROR, RETRY }
+enum class PadEvent {
+    RESUMED, STOPPED, TAPPED, SUCCEEDED, CANCELLED, ERROR, RETRY,
+
+    /** qa-59d-m-code M-4: the first resume of a cover recreated for a configuration change (the theme overlays at boot)
+     * - no stop, no new automatic ask: an ask that was out is asked again uncounted (the old instance's callback is
+     * gone), else as [RESUMED]. */
+    RELAUNCHED,
+}
 
 enum class PadAction {
     NONE,
@@ -452,6 +469,8 @@ data class PadStep(val pad: BootPad, val action: PadAction)
  *   cancel can't show it any more).
  * - **Succeeded**: the ask closes and the line goes (F59d-3); CE's unlock does the rest (the gate goes false, F3's
  *   wait).
+ * - **Relaunched** (qa-59d-m-code M-4, the first resume of a cover recreated for a configuration change - the activity
+ *   carries the whole pad over and skips the stop): an ask still out is asked again uncounted; else as Resumed.
  * An answer with no ask open (an earlier ask's) changes nothing.
  */
 fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boolean, inCall: Boolean): PadStep {
@@ -472,6 +491,14 @@ fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boole
                 if (pad.open) none else PadStep(pad.copy(line = true), PadAction.NONE)
             }
         PadEvent.TAPPED -> PadStep(pad.copy(open = true, auto = false, retried = false, retryDue = false), PadAction.ASK)
+        // M-4: a configuration-change relaunch is no stop and no new automatic ask. The ask still out is asked again by
+        // the new instance, uncounted (the pad stays up; a second request only re-registers); with the screen off it
+        // closes as a stop would. Nothing out: the resume's rule.
+        PadEvent.RELAUNCHED -> when {
+            pad.open && interactive -> PadStep(pad.copy(retried = false, retryDue = false), PadAction.ASK)
+            pad.open -> PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, line = true), PadAction.NONE)
+            else -> bootPadStep(pad, PadEvent.RESUMED, gate, interactive, inCall)
+        }
         PadEvent.STOPPED ->
             PadStep(pad.copy(autoAsks = closedCount, armed = true, open = false, retryDue = false, line = pad.line || pad.open), PadAction.NONE)
         PadEvent.SUCCEEDED -> if (!pad.open) none else PadStep(pad.copy(open = false, line = false), PadAction.NONE)

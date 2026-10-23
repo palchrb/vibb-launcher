@@ -87,10 +87,12 @@ object BootCover {
         }
         // F3: the device-protected marker the cover and the locked boot read (no CE before the PIN).
         BootCoverGuard.setAndroidMode(app, bootCoverAndroidMarker(wanted, androidGate))
-        if (wanted) HomePin.locked { addCoverPin(app, dpm, admin) }
-        // Step M: android mode enables it at every apply (the guard aside); own mode leaves it (the shutdown arms it).
+        // Step M: android mode enables it at every apply (a tripped guard too: inert, M-1); own mode leaves it (the
+        // shutdown arms it). Enabled before its PPA is added (M-5): a policy-engine purge for an earlier disable can't
+        // then drop the PPA just added.
         val tripped = coverGuardTripped(BootCoverGuard.read(app))
         setEnabled(app, bootCoverEnabled(CoverEvent.POLICY, wanted, tripped, androidMode = bootCoverAndroidMarker(wanted, androidGate)), "policy")
+        if (wanted) HomePin.locked { addCoverPin(app, dpm, admin) }
         HomePin.check(app, "policy")
     }
 
@@ -149,8 +151,8 @@ object BootCover {
         try {
             if (BootCoverGuard.androidMode(app)) {
                 val enabled = bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app), coverGuardTripped(BootCoverGuard.read(app)), androidMode = true)
-                if (enabled == true) HomePin.asOwner(app) { dpm, admin -> HomePin.locked { addCoverPin(app, dpm, admin) } }
                 setEnabled(app, enabled, "take-over (android mode)")
+                if (enabled == true) HomePin.asOwner(app) { dpm, admin -> HomePin.locked { addCoverPin(app, dpm, admin) } }
                 HomePin.check(app, "take-over", log = true)
                 if (BootCoverGuard.markTakenOver(app)) {
                     prefs(app).edit().putLong(KEY_LAUNCHER_HANDOVER_AT, System.currentTimeMillis()).apply()
@@ -163,6 +165,25 @@ object BootCover {
             }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Boot cover take-over failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * qa-59d-m-code M-6: from `HomeActivity.onResume` (a background thread). In android mode a cover that disabled
+     * itself (its own Home start while our typed HOME resolved to it, `coverHomeStartDisablesFirst`) is enabled again
+     * now, its PPA added after it and [HomePin] checked - not at the next apply: an unarmed reboot in that gap would
+     * find no direct-boot-aware HOME (F1). One PackageManager read when nothing is to do. Never throws.
+     */
+    fun afterHomeResumed(context: Context) {
+        val app = context.applicationContext
+        try {
+            if (!BootCoverGuard.androidMode(app) || isEnabled(app)) return
+            val enabled = bootCoverEnabled(CoverEvent.HANDED_OVER, wanted(app), coverGuardTripped(BootCoverGuard.read(app)), androidMode = true)
+            setEnabled(app, enabled, "Home resumed (android mode)")
+            if (enabled == true) HomePin.asOwner(app) { dpm, admin -> HomePin.locked { addCoverPin(app, dpm, admin) } }
+            HomePin.check(app, "cover enabled again")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover re-enable failed: ${e.javaClass.simpleName}")
         }
     }
 

@@ -888,7 +888,7 @@ The RC run (`docs/testing/2026-10-22-d59-rc-run.md` §9, F3): after the PIN on S
     the shutdown didn't arm (a crash, `adb reboot`, a hard reset, a flat battery) found no HOME and never completed,
     so `LOCKED_BOOT_COMPLETED` (the start above) never came. Now:
     - Every apply with the parent's choice enables the cover in android mode (`bootCoverEnabled(.., androidMode =
-      true)`: true at every event while the guard holds); the shutdown still arms it; the take-over never disables it
+      true)`: true at every event, a tripped guard too - M-1 below); the shutdown still arms it; the take-over never disables it
       (its PPA is added again, and it is enabled again after its own fallback disable). Own mode is unchanged.
     - The take-over is now a device-protected stamp, `boot_cover_taken` (this boot's count,
       `BootCoverGuard.markTakenOver`), written right before the boot's Home start; the cover reads it (or its own
@@ -903,11 +903,22 @@ The RC run (`docs/testing/2026-10-22-d59-rc-run.md` §9, F3): after the PIN on S
     - **The unlocked HOME** (`lock/HomePin`): with both of our HOMEs enabled the first matching PPA wins, in an order
       that is arbitrary per boot (PMS writes `package-restrictions.xml` from an `ArraySet` of identity-hashed PPA
       objects; a filter priority isn't persisted). `HomePin.check` resolves HOME as the system does at the take-over
-      (main thread, before Home's start) and after every apply; when it isn't HomeActivity it clears our package's
+      (main thread, before Home's start), after every apply with the parent's choice and when Home's resume enabled the
+      cover again; when it isn't HomeActivity it clears our package's
       PPAs and adds them back in order - HomeActivity's HOME, the Play link blocker, the call-log pin, the cover's last
       (`AppEnforcer.reseatPreferredActivities`, the one clear left; at most 3 a process, `homePinReseatDue`; never
       before the unlock). The cover's own Home starts disable it first only when our typed HOME would resolve to itself
       (`coverHomeStartDisablesFirst`); its 30 s hand-over disables it as before; `onDestroy` disables only in own mode.
+      Home's next resume enables a disabled android-mode cover again (`BootCover.afterHomeResumed`, qa-59d-m-code M-6),
+      and the cover is always enabled before its PPA is added (M-5).
+    - **The crash guard in android mode** (qa-59d-m-code M-1, option (a)): a trip keeps the cover enabled - every boot
+      still has its direct-boot-aware HOME and completes - but inert (`coverInert`): a bare night window, never
+      `setShowWhenLocked`, never an ask, no mark; SystemUI's own lock screen and pad are the face, and once unlocked it
+      hands over to our Home through F3's wait. Own mode's trip disables it as before. The update or the switch's edge
+      clears the guard as before (F3C-3).
+    - **Boot-time relaunches** (qa-59d-m-code M-4, step F's rule): the theme overlays loading at boot relaunch the cover
+      for a configuration change; that is no stop - the pad's state is carried over and the new instance's first resume
+      (`PadEvent.RELAUNCHED`) asks again only for an ask still out, uncounted.
     - Residuals: between the unlock and the take-over the boot's order holds (a Home press may land on the cover, which
       is in front already or hands over); the re-seat leaves no PPA of ours for ~0.5 s (emulator; the engine flushes
       at each write); the engine also re-adds every PPA at every boot (`reapplyAllPoliciesOnBootLocked`, PMS keeps the

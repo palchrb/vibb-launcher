@@ -24,7 +24,8 @@ private const val LOG_TAG = "HomePin"
  * policy engine dropped (six-inch F6) - clears our package's PPAs and adds them back in order: HomeActivity's HOME, the
  * Play link blocker, the call-log pin ([AppEnforcer.reseatPreferredActivities]), the cover's last. At most
  * [HOME_PIN_MAX_RESEATS] per process ([homePinReseatDue]), never before the unlock. Runs at the take-over (main thread,
- * before the boot's Home start) and after every apply. Never throws.
+ * before the boot's Home start), after every apply with the parent's choice and when Home's resume enabled the cover
+ * again. Never throws.
  */
 object HomePin {
     private val lock = Any()
@@ -35,16 +36,20 @@ object HomePin {
     /** Our PPA writes that must not land inside a re-seat's clear and re-add (the cover's add). */
     fun <T> locked(block: () -> T): T = synchronized(lock) { block() }
 
-    /** [block] with the device owner's DPM and admin; nothing when we aren't device owner. Never throws. */
-    fun asOwner(context: Context, block: (DevicePolicyManager, ComponentName) -> Unit) {
-        try {
-            val app = context.applicationContext
-            val dpm = app.getSystemService(DevicePolicyManager::class.java) ?: return
-            if (!dpm.isDeviceOwnerApp(app.packageName)) return
+    /** [block] with the device owner's DPM and admin; nothing when we aren't device owner. Whether [block] ran to its
+     * end (qa-59d-m-code M-7). Never throws. */
+    fun asOwner(context: Context, block: (DevicePolicyManager, ComponentName) -> Unit): Boolean = try {
+        val app = context.applicationContext
+        val dpm = app.getSystemService(DevicePolicyManager::class.java)
+        if (dpm == null || !dpm.isDeviceOwnerApp(app.packageName)) {
+            false
+        } else {
             block(dpm, ComponentName(app, MdmDeviceAdminReceiver::class.java))
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Home pin: device owner call failed: ${e.javaClass.simpleName}")
+            true
         }
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Home pin: device owner call failed: ${e.javaClass.simpleName}")
+        false
     }
 
     /** What the system's HOME resolves to now, as `package/class` (`null` = nothing or unreadable). */
@@ -69,11 +74,16 @@ object HomePin {
                 val isHome = resolved == home
                 if (log || !isHome) Log.i(LOG_TAG, "HOME resolves to ${resolved?.flattenToShortString()} ($why)")
                 if (!homePinReseatDue(unlocked, isHome, reseats)) return
-                reseats++
-                asOwner(app) { dpm, admin ->
+                val ran = asOwner(app) { dpm, admin ->
                     AppEnforcer.reseatPreferredActivities(app, dpm, admin)
                     if (BootCover.pinWanted(app)) BootCover.addCoverPin(app, dpm, admin)
                 }
+                // M-7: only a re-seat that ran counts and is logged as one.
+                if (!ran) {
+                    Log.w(LOG_TAG, "Re-seat skipped ($why): not device owner, or it failed")
+                    return
+                }
+                reseats++
                 Log.w(
                     LOG_TAG,
                     "Re-seated our persistent preferred activities ($why, $reseats of $HOME_PIN_MAX_RESEATS): " +

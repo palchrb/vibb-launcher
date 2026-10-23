@@ -96,6 +96,13 @@ class BootCoverActivity : Activity() {
     /** Step F: the pad rule's state ([bootPadStep]); its count lives in [autoAsksThisProcess]. */
     private var pad = BootPad(autoAsks = autoAsksThisProcess)
 
+    /** M-4: this instance replaces one destroyed for a configuration change ([carriedPad]); its first resume is
+     * [PadEvent.RELAUNCHED]. */
+    private var relaunched = false
+
+    /** M-1: android mode with a tripped crash guard - enabled as the boot's HOME, but no face, no ask, no mark. */
+    private var inert = false
+
     /** Step F: the current ask's id - an answer of an earlier one is dropped. */
     private var askId = 0
 
@@ -125,14 +132,24 @@ class BootCoverActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (coverGuardTripped(BootCoverGuard.read(this))) {
+        val tripped = coverGuardTripped(BootCoverGuard.read(this))
+        // M-1: own mode's tripped cover goes away; android mode's stays the boot's HOME, inert (coverInert).
+        inert = coverInert(BootCoverGuard.androidMode(this), tripped)
+        if (tripped && !inert) {
             BootCoverGuard.disable(this, "crash guard")
             ownFinish = true
             finish()
             return
         }
+        if (inert) Log.i(LOG_TAG, "Boot cover inert: the crash guard tripped (android mode) - SystemUI's lock is the face")
+        // M-4: a relaunch for a configuration change carries the pad over (no stop, no new automatic ask).
+        carriedPad?.let {
+            pad = it
+            relaunched = true
+        }
+        carriedPad = null
         val image = ImageView(this).apply {
-            setImageResource(R.drawable.splash_vibb_breathe)
+            if (!inert) setImageResource(R.drawable.splash_vibb_breathe)
             scaleType = ImageView.ScaleType.CENTER
             importantForAccessibility = ImageView.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
@@ -191,14 +208,19 @@ class BootCoverActivity : Activity() {
         // Step F: the gate read again at every resume (the flag drops once unlocked), then the resume's ask, posted
         // past the resume. A retry the pause dropped is posted again.
         applyLockedFace()
-        handler.post { if (resumed) padStep(PadEvent.RESUMED) }
+        val event = if (relaunched) PadEvent.RELAUNCHED else PadEvent.RESUMED
+        relaunched = false
+        handler.post { if (resumed) padStep(event) }
         if (pad.retryDue) handler.postDelayed(padRetry, BOOT_PAD_RETRY_MS)
     }
 
     /** F3: stopped while taken over = our Home (or a call) is over the cover - leaving reveals nothing. */
     override fun onStop() {
-        if (waitForLauncher && !isFinishing) waitStep(visible = false)
-        padStep(PadEvent.STOPPED)
+        // M-4: a configuration-change relaunch is no stop - neither F3's nor the pad's (onDestroy carries the pad over).
+        if (!isChangingConfigurations) {
+            if (waitForLauncher && !isFinishing) waitStep(visible = false)
+            padStep(PadEvent.STOPPED)
+        }
         super.onStop()
     }
 
@@ -242,6 +264,7 @@ class BootCoverActivity : Activity() {
                 startOwnHome("on its way out")
             }
         }
+        if (isChangingConfigurations) carriedPad = pad
         unlockReceiver?.let { runCatching { unregisterReceiver(it) } }
         logo?.unregisterAnimationCallback(loop)
         handler.removeCallbacksAndMessages(null)
@@ -318,6 +341,7 @@ class BootCoverActivity : Activity() {
         bootPadGate(
             androidMarker = waitForLauncher && BootCoverGuard.androidMode(this),
             unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked != false,
+            inert = inert,
         )
     } catch (e: Exception) {
         false
@@ -500,6 +524,9 @@ class BootCoverActivity : Activity() {
         /** Step F: automatic asks in this `:bootcover` process (§8.3: per process, in memory) - a new cover instance
          * in the same process carries the count on. Main thread only. */
         private var autoAsksThisProcess = 0
+
+        /** M-4: the pad of an instance destroyed for a configuration change, for its replacement. Main thread only. */
+        private var carriedPad: BootPad? = null
 
         fun component(context: Context) = ComponentName(context, BootCoverActivity::class.java)
     }
