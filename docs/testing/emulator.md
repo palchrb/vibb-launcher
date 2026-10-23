@@ -74,7 +74,7 @@ skin.name = 480x854
 skin.path = _no_skin
 hw.ramSize = 2048
 hw.keyboard = yes
-hw.mainKeys = no
+hw.mainKeys = no          # REQUIRED - see below: "yes" (the default without a device profile) means no navigation bar
 hw.gpu.enabled = yes
 hw.gpu.mode = swiftshader_indirect
 disk.dataPartition.size = 6442450944
@@ -82,6 +82,15 @@ showDeviceFrame = no
 # start (headless):
 emulator -avd jelly36 -port 5556 -wipe-data -no-window -no-audio -gpu swiftshader_indirect -no-snapshot-save -no-boot-anim
 ```
+
+**`hw.mainKeys = no` is required** (design 59d §8.16). `avdmanager` without a device profile writes `hw.mainKeys = yes`
+(`qemu.hw.mainkeys=1`): the AVD then has hardware keys and SystemUI hosts **no navigation bar and no taskbar delegate**.
+Quickstep still runs gesture navigation, but nothing turns lock task's `DISABLE_HOME`/`DISABLE_RECENT` into its
+`home_disabled`/`overview_disabled` flags, so every bottom-edge swipe over the lock goes through to the system (the
+user's `jellystar2`, 2026-10-23). A real phone without hardware keys - the Jelly Star - has the navigation bar. **On your
+own AVD made without a device profile**: set `hw.mainKeys = no` in its `config.ini` and cold boot it; check with
+`adb shell getprop qemu.hw.mainkeys` (must be `0`) and `adb shell dumpsys statusbar | grep taskbar` (a `taskbar
+mDisabledFlags` line must be there).
 
 The density is 240 already (no `wm density`). Gesture navigation is the default. Check the bars with
 `adb shell dumpsys window | grep -E 'type=(statusBars|displayCutout) frame'`: `statusBars frame=[0,0][480,36]`

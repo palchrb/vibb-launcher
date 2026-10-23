@@ -175,3 +175,18 @@ glance up, with lock task held. This is RC3-4's main-thread time (PLAN's backlog
      (`... -> LOCKED on ...`).
 
 No code change for problem 2 in this round: none of the variants reproduced it.
+
+### Resolved (branch `edge-swipe-fix`, design 59d §8.16)
+
+The user's dumps showed what none of the variants above had. Quickstep's flags were `keygrd_occluded|awake`, with no
+`home_disabled` and no `allow_gesture`. The consumer was `TYPE_DEVICE_LOCKED`. `dumpsys statusbar` had the lab's
+`0x7260000/0x15` but **no `taskbar mDisabledFlags` line**, and lock task was held.
+
+The cause is their AVD, made without a device profile: `hw.mainKeys = yes`, so SystemUI has no navigation bar and no
+taskbar delegate, and nothing passes `DISABLE_HOME` on to Quickstep. `jelly36` (the same Play image and fingerprint)
+had `hw.mainKeys = no` in these runs, which is why nothing reproduced. With that one line set to `yes` and the data kept,
+it reproduced the user's dump exactly, on every swipe.
+
+`emulator.md` §3 now requires `hw.mainKeys = no`. §8.9's option (b) is built as the safety net: the lock that comes back
+asks for the pad, and asks once more after the keyguard's re-occlusion cancels the first ask. It was verified on the
+`yes` state: swipe, a flash, the pad. Recordings: `~/handy-captures/topinset/edge/mk*`, `fx*`, `fy*`.

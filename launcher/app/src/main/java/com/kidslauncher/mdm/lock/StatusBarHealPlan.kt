@@ -78,6 +78,63 @@ fun systemHomeHealDue(locked: Boolean, interactive: Boolean, broughtByUs: Boolea
     locked && interactive && !broughtByUs &&
         (lastHealElapsedMs == null || nowElapsedMs - lastHealElapsedMs !in 0 until SYSTEM_HOME_HEAL_MIN_GAP_MS)
 
+/** Design 59d §8.16: a notification, a call's start or a screen-on this recent makes a system Home start no gesture of
+ * the kid's (no ask). */
+const val GESTURE_ASK_QUIET_MS = 1_000L
+
+/** §8.16: at most one gesture ask per this long (a swipe loop can't hammer SystemUI's pad). */
+const val GESTURE_ASK_MIN_GAP_MS = 2_000L
+
+/** §8.16: the re-fronted lock takes a gesture ask only this long after the system's Home start. */
+const val GESTURE_ASK_WINDOW_MS = 3_000L
+
+/**
+ * Design 59d §8.16, §8.9's option (b): the system's Home while our lock is [locked] with the screen [interactive] and not
+ * [broughtByUs] is a home gesture that got through (the same proof as [systemHomeHealDue]). Where SystemUI never tells
+ * Quickstep that Home is disabled - the user's AVD has no navigation bar of SystemUI's, so lock task's `DISABLE_HOME`
+ * reaches no `home_disabled` and no heal can help - every bottom-edge swipe goes through. So the kid's swipe becomes
+ * "a flash, then the unlock": the lock the system's Home brings back asks for it at once (as the handle's swipe does -
+ * Android's PIN pad as the face, our keypad in own mode), once per gesture: never with a call live ([callLive]), never
+ * within [GESTURE_ASK_QUIET_MS] of a notice ([lastNoticeElapsedMs]) or a screen-on ([lastScreenOnElapsedMs]), and at
+ * most every [GESTURE_ASK_MIN_GAP_MS] ([lastAskElapsedMs]). Independent of the heal's 5 s gap: swipes 2.5 s apart all ask.
+ */
+fun gestureAskDue(
+    locked: Boolean,
+    interactive: Boolean,
+    broughtByUs: Boolean,
+    callLive: Boolean,
+    lastScreenOnElapsedMs: Long?,
+    lastNoticeElapsedMs: Long?,
+    lastAskElapsedMs: Long?,
+    nowElapsedMs: Long,
+): Boolean {
+    fun within(at: Long?, ms: Long) = at != null && nowElapsedMs - at in 0 until ms
+    return locked && interactive && !broughtByUs && !callLive &&
+        !within(lastScreenOnElapsedMs, GESTURE_ASK_QUIET_MS) && !within(lastNoticeElapsedMs, GESTURE_ASK_QUIET_MS) &&
+        !within(lastAskElapsedMs, GESTURE_ASK_MIN_GAP_MS)
+}
+
+/** §8.16: a gesture ask cancelled this soon is the keyguard's own re-occlusion, not the kid ([gestureAskRetryDue]). */
+const val GESTURE_ASK_SETTLE_MS = 1_500L
+
+/** §8.16: the one re-ask waits this long - the re-occlusion's transition is over by then (~0.5 s on the emulator). */
+const val GESTURE_ASK_RETRY_DELAY_MS = 700L
+
+/**
+ * Design 59d §8.16: the gesture's ask goes out while SystemUI is still putting the keyguard back under the lock (the
+ * swipe un-occluded it), and that re-occlusion cancels the pad it was showing (`PRIMARY_BOUNCER -> OCCLUDED`,
+ * `onDismissCancelled` ~0.25 s after the ask on `jelly36`). So a cancel of a gesture ask ([gestureAsk]) within
+ * [GESTURE_ASK_SETTLE_MS] of it ([askedAtElapsedMs], [nowElapsedMs]), with no screen-off since ([sameScreenOn]), asks
+ * once more after [GESTURE_ASK_RETRY_DELAY_MS] - never twice ([retried]): a kid's own Back that fast gets the pad once more.
+ */
+fun gestureAskRetryDue(gestureAsk: Boolean, retried: Boolean, sameScreenOn: Boolean, askedAtElapsedMs: Long?, nowElapsedMs: Long): Boolean =
+    gestureAsk && !retried && sameScreenOn && askedAtElapsedMs != null && nowElapsedMs - askedAtElapsedMs in 0 until GESTURE_ASK_SETTLE_MS
+
+/** §8.16: whether the lock's resume takes the gesture ask marked at [markedElapsedMs] (`null` = none): only within
+ * [GESTURE_ASK_WINDOW_MS] - a mark the lock never came back for dies. Taken once (the runtime clears it). */
+fun gestureAskTaken(markedElapsedMs: Long?, nowElapsedMs: Long): Boolean =
+    markedElapsedMs != null && nowElapsedMs - markedElapsedMs in 0 until GESTURE_ASK_WINDOW_MS
+
 /**
  * Whether the lock's resume heals now: never before, or the last one [STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS]
  * ago - and not on the first resume after a screen-off heal ([healedSinceScreenOff], bug 25b-C): that
