@@ -880,6 +880,12 @@ findings, merge to `main`, full suite once.
   the cover nothing does (+4 entries a boot: HOME, the Play link blocker's two, the call log). Resolution doesn't care
   (a duplicate names the same component); only the file grows (a few hundred bytes a boot). If it ever matters: a
   re-seat at every Nth take-over in every mode bounds it, at one ~0.5 s window per N boots.
+- **PWA ⓘ panels are too wordy (the user, 2026-10-23, long list):** the info panels behind the ⓘ buttons explain
+  far more than needed ("Off switches location off on the phone. Only when asked takes a fix for ..."); the one-line
+  footer above them is usually enough. A pass over every `info-panel` in `server/templates/`: keep the ⓘ only where
+  the footer can't carry the one fact a parent needs (a consequence, a number, a "needs the phone online"), cut each
+  panel to one or two short sentences, drop the ones that repeat the row's own label. Server, S-M (text only); the
+  wording follows the PWA's register (plain, no jargon).
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
