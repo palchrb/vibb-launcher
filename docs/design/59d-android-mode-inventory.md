@@ -542,3 +542,17 @@ under the date. Not pixel-identical (Pixel's Google Sans Flex isn't ours; the Je
 font and placement), so the geometry is a small per-device profile (`emulator Pixel`, `Jelly Star`, measured from a
 frame of each), not fixed numbers. Android's own clock font can't be changed by an app (Pixel's clock styles in
 "Wallpaper & style" are the parent's by hand, during a pause - try the closest one on the emulator). Launcher, S-M.
+
+### 8.9 The bottom-edge swipe on the glance (the user's third recording, 2026-10-23)
+
+Three swipes up on the glance (kiosk on, android mode, music playing): each time the glance fades away upwards,
+SystemUI's face shows (the sharp photo, the small clock, the media card), a black frame, then the glance is back -
+about half a second each. The system's Home gesture from the bottom edge un-occludes the keyguard, and 59b's
+re-front brings us back. Step J covers a swipe that starts above the edge inset (ours -> the pad). For the edge swipe:
+with the kiosk on, lock task (features without HOME/OVERVIEW) should refuse the Home gesture (`canStartAnyGesture`,
+`recents-over-lock-2026-10-22.md` §1); that it goes through is a finding. **Device check (with J's run)**: capture
+which input consumer took the swipe (`dumpsys activity service com.google.android.apps.nexuslauncher/com.android.quickstep.TouchInteractionService`,
+the `wm_*` events, the lock-task features at that moment). Then either (a) the flags were out of sync -> the 16d heal
+is the place, or (b) Quickstep's `DeviceLockedInputConsumer` always un-occludes while locked -> the re-front after a
+loss that a user gesture caused (no notification, no call, no screen event in the last second) asks for the pad at
+once, so the edge swipe becomes "swipe, a flash, the pad". Decide from the capture.
