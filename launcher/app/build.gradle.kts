@@ -76,8 +76,9 @@ if (releaseStoreFile == null && providers.gradleProperty("requireReleaseSigning"
     )
 }
 
-// Release CI passes the version derived from the git tag (vMAJOR.MINOR.PATCH -> MAJOR*1_000_000 +
-// MINOR*1_000 + PATCH, see .github/workflows/android.yml). Local and debug builds use the
+// Release CI passes the version derived from the git tag by scripts/release-version.sh
+// (launcher-vMAJOR.MINOR.PATCH[-rc.N] -> MAJOR*10_000_000 + MINOR*10_000 + PATCH*10 + N, N = the RC
+// number 1..8 and 9 for the release; .github/workflows/launcher.yml). Local and debug builds use the
 // literals below - never bump those by hand for a release.
 val versionCodeOverride = providers.gradleProperty("versionCode").orNull?.let {
     it.toIntOrNull() ?: throw GradleException("-PversionCode must be an integer, got '$it'")

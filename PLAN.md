@@ -1164,7 +1164,8 @@ findings, merge to `main`, full suite once.
 
 - **Crash reports group by versionCode only** (qa-rc-to-rc-code R2R-6, 2026-10-23): `crash/CrashReports.kt` records
   `BuildConfig.VERSION_CODE` and the server's `device_crashes.app_version_code` shows it, so rc.1 and rc.2 crashes
-  (one code) read as one build on About This Phone. Not changed with the RC-to-RC fix; a fix sends the versionName too
+  (one code) read as one build on About This Phone. Moot from `launcher-v0.36.0-rc.4` on (every build its own
+  versionCode, the "own versionCode" entry under Done); only the old-rule RCs still share one. Not changed with the RC-to-RC fix; a fix sends the versionName too
   (a new field in `POST /api/devices/crashes`, both sides in one commit) or shows the report's `app_version` beside it.
 - **The Spotify host list is good enough** (the user, 2026-10-16: list-mode playback works on the emulator
   with every blocklist on, so the DNS capture is dropped): mark it final in one commit - the "PROVISIONAL"
@@ -1558,6 +1559,29 @@ findings, merge to `main`, full suite once.
 
 ### Done (not released yet)
 
+- **Every release build has its own versionCode (2026-10-23, branch `versioncode-rc`)**: the old rule
+  (`X*1_000_000 + Y*1_000 + Z`, an RC one less) gave every RC of a version one code (0.36.0-rc.1..3 are all 35999), so
+  Android refused rc.2 over rc.1 as the same version and the RC-to-RC fix had to compare versionNames on both sides.
+  The real fix, the user's: `versionCode = X*10_000_000 + Y*10_000 + Z*10 + N`, N = the RC number (1..8) or 9 for the
+  release (X <= 199, Y and Z <= 999), so Android's own rule orders every build. One script for both apps,
+  `scripts/release-version.sh` (`--selftest`: the examples, the ranges, malformed tags, the shared contract), used by
+  `launcher.yml` and `music.yml` and self-tested in their always-run changes jobs. Every new code is above every old
+  one (old max 0.36.0-rc.3 = 35999; music 0.5.0-rc.3 = 4999), so Android installs any new build over any old one.
+  But an old build decides with its own parser, which reads `launcher-v0.36.0-rc.4` to rc.8 as 35999 - its own code:
+  an installed rc.3 takes rc.4 only through the legacy name rule and `same_code_update_v1`; rc.1/rc.2 never take
+  rc.4 to rc.8 by themselves (they move at 0.36.0, which their parser reads as 36000, or by hand - below), and the
+  server, reading a tag the way the reporting build does (`install_now::tag_code_as_read_by`, qa-versioncode-rc-code
+  Q-1), shows them TooOld rather than an Install Now that can only answer "Already on".
+  **First tags under the new rule: `launcher-v0.36.0-rc.4` (360004) and `music-v0.5.0-rc.4` (50004)**; the script
+  refuses a tag below them, and the launcher's `launcherTagVersionCode` and the server's
+  `install_now::launcher_tag_version_code` read the older (already built) tags by the old rule - else the server would
+  show a phone on 0.34.0 "behind" the 0.34.0 row - pinned by the new shared contract
+  `server/testdata/launcher_tag_codes.json` (byte-identical in the launcher's test resources). The server's About This
+  Phone reads the music app's version by the same cutover ("0.5.0-rc.4"). `launcherBuildAhead`/`build_ahead`'s name
+  rule and the capability `same_code_update_v1` stay as they are, documented as the old rule's legacy (for phones on
+  0.36.0-rc.1..3; both stay load-bearing until no phone runs one of those - never remove them before). Nothing
+  already tagged is rebuilt.
+
 - **An RC over an RC of the same version installs (2026-10-23, branch `rc-to-rc-update`; code QA
   `docs/review/qa-rc-to-rc-code.md`, 0 / 2 Should / 4 Nit, all fixed)**: every RC of one version shares a versionCode
   (`launcher.yml`; an RC of X.Y.Z+1 has X.Y.Z's), and both sides refused a same-code install, so 0.36.0-rc.1 never took
@@ -1570,7 +1594,11 @@ findings, merge to `main`, full suite once.
   from this update on"). **Owed once by hand**: phones on a pre-fix build (0.36.0-rc.1/rc.2, code 35999) decide by the
   code alone and never pull the first fixed RC of the same version by themselves - step the test phones onto it once
   with `adb install -r` (same code, same key; `apksigner verify` against `RELEASE_CERT_SHA256` first), or wait for the
-  next stable release (a higher code). The boot cover's "one more try after an update" counts the name too (R2R-6).
+  next stable release (a higher code). **Still owed after the own-versionCode rule** (the entry above): an
+  rc.1/rc.2 phone's own parser reads `launcher-v0.36.0-rc.4` to rc.8 as 35999, its own code, so it still needs the
+  one-time `adb install -r` (now onto rc.4 or later: 360004 > 35999, an upgrade) or waits for 0.36.0 (36000 to its
+  parser); an rc.3 phone takes rc.4 by itself (the name rule). The boot cover's "one more try after an update" counts
+  the name too (R2R-6).
 
 - **Launcher round 7 (2026-10-20, merges 5248fa4e l7-a and e1569747 l7-b; design QA `docs/design/qa-r7-launcher-design.md`
   + one revision check; code QA `docs/review/qa-l7-a-code.md` (0 / 0 / 2, fixed) and `qa-l7-b-code.md` (1 High - the

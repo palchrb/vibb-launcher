@@ -46,9 +46,10 @@ jobs:
           files="$(git diff --name-only "$base" "$GITHUB_SHA")"
           # Plus the apps' copies of Spotify's host list (design 26c §8): spotify::tests compares them;
           # and the launcher's copies of the time status report (design 34 P13; devices_list compares it)
-          # and the DNS status report (design 36 §4.2; custom_dns compares it); and the apps' copies of
-          # Storytel's token answers (design 58 §8; music_storytel compares them).
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$)' <<<"$files"; then
+          # and the DNS status report (design 36 §4.2; custom_dns compares it), and the release tags'
+          # versionCodes (install_now compares it); and the apps' copies of Storytel's token answers
+          # (design 58 §8; music_storytel compares them).
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|launcher_tag_codes)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$)' <<<"$files"; then
             changed=true
           else
             changed=false

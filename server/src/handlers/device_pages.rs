@@ -283,11 +283,32 @@ pub(crate) fn short_version(full: &str) -> &str {
     full.split(['-', '+']).next().unwrap_or(full).trim()
 }
 
-/// "1.2.3" from a versionCode `X*1_000_000 + Y*1_000 + Z` (the repo's release scheme, root
-/// CLAUDE.md). A release candidate's code is one lower than its release's, so a code ending in
-/// 999 reads as the next release, "0.3.0 (pre-release)" for 2999 (qa-31-s3-code N2; a real
-/// x.y.999 would be mislabelled, which the scheme makes unlikely). The ⓘ has the code itself.
+/// The music app's first versionCode under today's rule (`music-v0.5.0-rc.4`: `MUSIC_FIRST` in
+/// `scripts/release-version.sh`); every code of the old rule is below it. The shared contract's
+/// `music_codes` rows (`testdata/launcher_tag_codes.json`, also checked by the script's
+/// `--selftest`) tie the two.
+const MUSIC_NEW_RULE_FROM: i64 = 50_004;
+
+/// The music app's version from its versionCode (the repo's release scheme, root CLAUDE.md). Today's
+/// rule, from [MUSIC_NEW_RULE_FROM] on: `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number (1..8)
+/// or 9 for the release - "0.5.0-rc.4" for 50004, "1.2.3" for 10020039; a code ending in 0 is no
+/// release build (`None`). Below it the old rule, `X*1_000_000 + Y*1_000 + Z` with an RC one lower,
+/// so a code ending in 999 reads as the next release, "0.3.0 (pre-release)" for 2999 (qa-31-s3-code
+/// N2; a real x.y.999 would be mislabelled, which the scheme made unlikely). The ⓘ has the code itself.
 pub(crate) fn version_of_code(code: i64) -> Option<String> {
+    if code >= MUSIC_NEW_RULE_FROM {
+        let version = format!(
+            "{}.{}.{}",
+            code / 10_000_000,
+            (code / 10_000) % 1_000,
+            (code / 10) % 1_000
+        );
+        return match code % 10 {
+            0 => None,
+            9 => Some(version),
+            n => Some(format!("{version}-rc.{n}")),
+        };
+    }
     let parts = |c: i64| format!("{}.{}.{}", c / 1_000_000, (c / 1_000) % 1_000, c % 1_000);
     (code > 0).then(|| {
         if code % 1_000 == 999 {
@@ -1826,20 +1847,49 @@ mod tests {
         assert_eq!(short_version("0.23.6-debug"), "0.23.6");
         assert_eq!(short_version("0.23.6"), "0.23.6");
         assert_eq!(short_version("1.0.0+build.5"), "1.0.0");
+        // The old rule (every music tag up to music-v0.5.0-rc.3).
         assert_eq!(version_of_code(3_000), Some("0.3.0".to_string()));
-        assert_eq!(version_of_code(1_002_003), Some("1.2.3".to_string()));
-        assert_eq!(version_of_code(23_006_000), Some("23.6.0".to_string()));
+        assert_eq!(version_of_code(4_000), Some("0.4.0".to_string()));
+        assert_eq!(version_of_code(2), Some("0.0.2".to_string()));
         // A release candidate: one below its release.
         assert_eq!(
             version_of_code(2_999),
             Some("0.3.0 (pre-release)".to_string())
         );
         assert_eq!(
-            version_of_code(999_999),
-            Some("1.0.0 (pre-release)".to_string())
+            version_of_code(4_999),
+            Some("0.5.0 (pre-release)".to_string())
         );
+        // Today's rule, from music-v0.5.0-rc.4 on (scripts/release-version.sh).
+        assert_eq!(version_of_code(50_004), Some("0.5.0-rc.4".to_string()));
+        assert_eq!(version_of_code(50_009), Some("0.5.0".to_string()));
+        assert_eq!(version_of_code(10_020_039), Some("1.2.3".to_string()));
+        assert_eq!(
+            version_of_code(230_060_018),
+            Some("23.6.1-rc.8".to_string())
+        );
+        assert_eq!(version_of_code(10_000_000), None);
         assert_eq!(version_of_code(0), None);
         assert_eq!(version_of_code(-5), None);
+    }
+
+    /// The shared contract's music rows: the version shown for each tag's code (the script's
+    /// `--selftest` checks that it builds those codes).
+    #[test]
+    fn music_versions_read_as_the_shared_contract() {
+        let contract: serde_json::Value =
+            serde_json::from_str(include_str!("../../testdata/launcher_tag_codes.json")).unwrap();
+        let rows = contract["music_codes"].as_array().unwrap();
+        assert!(rows.len() >= 10);
+        for row in rows {
+            let code = row["code"].as_i64().unwrap();
+            assert_eq!(
+                version_of_code(code).as_deref(),
+                row["version"].as_str(),
+                "{}",
+                row["music_tag"]
+            );
+        }
     }
 
     #[test]

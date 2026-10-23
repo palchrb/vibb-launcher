@@ -1,7 +1,15 @@
 package com.kidslauncher.mdm.server
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
@@ -223,22 +231,37 @@ class SelfUpdatePlanTest {
     private fun running(advertised: String, code: Long, pending: PendingSelfUpdate? = null) =
         launcherUpdateStep(advertised, null, null, null, false, pending, true, now, backoff, runningVersionCode = code)
 
+    /** The shared contract (`launcher_tag_codes.json`, byte-identical with the server's `testdata/`, which
+     * `install_now::launcher_tag_version_code` and `scripts/release-version.sh --selftest` read too). */
+    private val tagCodes = javaClass.classLoader!!.getResource("launcher_tag_codes.json")!!.readText()
+
     @Test
-    fun `a release tag's versionCode follows the release workflow`() {
-        assertEquals(1_003_000L, launcherTagVersionCode("launcher-v1.3.0@99"))
-        assertEquals(34_002L, launcherTagVersionCode("launcher-v0.34.2"))
-        assertEquals(1_002_999L, launcherTagVersionCode("launcher-v1.3.0-rc.2@7"))
-        for (bad in listOf("v1.3.0", "launcher-v1.3", "launcher-v1.3.0-beta", "launcher-v0.0.0-rc.1", "x@launcher-v1.3.0")) {
-            assertEquals(bad, null, launcherTagVersionCode(bad))
+    fun `a release tag's versionCode is the shared contract's`() {
+        val rows = Json.parseToJsonElement(tagCodes).jsonObject["codes"]!!.jsonArray.map { it.jsonObject }
+        assertTrue(rows.size > 20)
+        for (row in rows) {
+            val tag = row["tag"]!!.jsonPrimitive.content
+            val code = row["code"]!!.takeUnless { it is JsonNull }?.jsonPrimitive?.longOrNull
+            assertEquals(tag, code, launcherTagVersionCode(tag))
+            // The name only for a tag whose code reads.
+            assertEquals(tag, code != null, launcherTagVersionName(tag) != null)
         }
     }
 
     @Test
+    fun `the tag codes are identical to the server's copy`() {
+        val serverCopy = File("../../server/testdata/launcher_tag_codes.json")
+        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
+        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), tagCodes)
+    }
+
+    @Test
     fun `the running version or an older one is recorded installed without a download`() {
-        assertEquals("equal", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0@5", 1_003_000))
-        assertEquals("older", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.2.9@5", 1_003_000))
-        assertEquals("an rc of the running version", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0-rc.1@5", 1_003_000))
-        assertEquals("a stale pending goes too", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0@5", 1_003_000, pending))
+        assertEquals("equal", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0@5", 10_030_009))
+        assertEquals("older", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.2.9@5", 10_030_009))
+        assertEquals("an rc of the running version", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0-rc.1@5", 10_030_009))
+        assertEquals("a stale pending goes too", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0@5", 10_030_009, pending))
+        assertEquals("an older rc of the running version's", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v1.3.0-rc.1@5", 10_030_002))
     }
 
     // ---- RC over RC: one versionCode, another versionName ----------------------------------------
@@ -277,11 +300,15 @@ class SelfUpdatePlanTest {
     fun `an rc over an rc of the same version is downloaded, the same name is already running`() {
         assertEquals(LauncherUpdateStep.DOWNLOAD, runningAs("launcher-v0.36.0-rc.2@5", 35_999, "0.36.0-rc.1"))
         assertEquals(LauncherUpdateStep.REPLACE_PENDING, runningAs("launcher-v0.36.0-rc.2@5", 35_999, "0.36.0-rc.1", pending))
-        assertEquals(LauncherUpdateStep.DOWNLOAD, runningAs("launcher-v0.36.1-rc.1@5", 36_000, "0.36.0"))
+        // From launcher-v0.36.0-rc.4 on every build has its own code: the code decides (an old-rule rc.3 takes rc.4).
+        assertEquals(LauncherUpdateStep.DOWNLOAD, runningAs("launcher-v0.36.0-rc.4@5", 35_999, "0.36.0-rc.3"))
+        assertEquals(LauncherUpdateStep.DOWNLOAD, runningAs("launcher-v0.36.1-rc.1@5", 360_009, "0.36.0"))
         assertEquals(LauncherUpdateStep.DOWNLOAD, runningAs("launcher-v0.36.0@5", 35_999, "0.36.0-rc.2"))
         assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.2@5", 35_999, "0.36.0-rc.2"))
         assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.1@5", 35_999, "0.36.0-rc.2"))
-        assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0@5", 36_000, "0.36.1-rc.1"))
+        assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0@5", 360_011, "0.36.1-rc.1"))
+        assertEquals(LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.3@5", 360_004, "0.36.0-rc.4"))
+        assertEquals("an rc.4 phone under the 0.34.0 row", LauncherUpdateStep.ALREADY_RUNNING, running("launcher-v0.34.0@5", 360_004))
         assertEquals("no running name: by the code alone", LauncherUpdateStep.ALREADY_RUNNING, runningAs("launcher-v0.36.0-rc.2@5", 35_999, null))
     }
 
@@ -300,6 +327,11 @@ class SelfUpdatePlanTest {
         assertEquals("the signer still decides", PendingApkCheck.WRONG_SIGNER, same("0.36.0-rc.2", signers = setOf("bb")))
         assertEquals(PendingApkCheck.OK, same("0.36.0-rc.2", signers = setOf("aa")))
         assertEquals(
+            "the first new-rule build over an old-rule rc",
+            PendingApkCheck.OK,
+            pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "me.vibb.launcher", 360_004L, "me.vibb.launcher", 35_999L, archiveVersionName = "0.36.0-rc.4", ownVersionName = "0.36.0-rc.3"),
+        )
+        assertEquals(
             PendingApkCheck.NOT_OURS,
             pendingApkCheck(pending, pending.sizeBytes, pending.sha256, "org.example", 35_999L, "me.vibb.launcher", 35_999L, archiveVersionName = "0.36.0-rc.2", ownVersionName = "0.36.0-rc.1"),
         )
@@ -311,8 +343,9 @@ class SelfUpdatePlanTest {
 
     @Test
     fun `a newer release, the final over its rc, or an unparseable tag is downloaded as before`() {
-        assertEquals("newer", LauncherUpdateStep.DOWNLOAD, running("launcher-v1.3.1@5", 1_003_000))
-        assertEquals("the final over its rc", LauncherUpdateStep.DOWNLOAD, running("launcher-v1.3.0@5", 1_002_999))
+        assertEquals("newer", LauncherUpdateStep.DOWNLOAD, running("launcher-v1.3.1@5", 10_030_009))
+        assertEquals("the final over its rc", LauncherUpdateStep.DOWNLOAD, running("launcher-v1.3.0@5", 10_030_003))
+        assertEquals("the next rc over the last", LauncherUpdateStep.DOWNLOAD, running("launcher-v1.3.0-rc.4@5", 10_030_003))
         assertEquals("unparseable", LauncherUpdateStep.DOWNLOAD, running("v26.09.4@14", 99_000_000))
         assertEquals("a debug build's low code", LauncherUpdateStep.DOWNLOAD, running("launcher-v0.34.0@5", 116))
     }

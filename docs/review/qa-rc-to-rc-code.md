@@ -1,5 +1,8 @@
 # QA (code): an RC-to-RC launcher update installs
 
+> Superseded 2026-10-23 by the versionCode rule with room for the RC number (`scripts/release-version.sh`, from
+> `launcher-v0.36.0-rc.4` on every build has its own code); the name rule reviewed here stays as legacy for old-rule builds.
+
 Branch `rc-to-rc-update`, commit 510001b1 (on `main` d594eadc). Server and launcher. Reviewed 2026-10-23 on branch
 `qa-rc-to-rc`.
 

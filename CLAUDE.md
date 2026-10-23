@@ -22,6 +22,8 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   runbooks (`google-account.md`: the phone's Google account for Play, backup to Google off;
   `android-settings.md`: Android's settings an app can't set back - Touch feedback on, the "Modify system settings" grant).
 - `scripts/` - `dev-rebuild.sh` (pull, build + install the debug launcher, run the server),
+  `release-version.sh` (a `launcher-v`/`music-v` tag -> versionName, versionCode, prerelease: both apps' release
+  workflows use it; `--selftest`, run by both workflows' always-run changes job and before every tag build),
   `push-all.sh` (push the current branch), `smoke-test.sh` (adb/emulator-console smoke test of lock and
   calls, remote-capable; `docs/testing/emulator.md` §5b), `fake-sonos.py` (fake Sonos speakers for the
   music app on the emulator, answering from the music app's Sonos test fixtures; §6h), `fake-storytel.py` (a fake
@@ -82,6 +84,13 @@ The launcher's status body with `dns_upstream` (design 36 §4.2) is `server/test
 byte-identical in `launcher/app/src/test/resources/`: the launcher's `DnsUpstreamStatusTest` encodes exactly it, the
 server's `custom_dns::dns_upstream_status_contract` posts it, and both compare the copies. The policy's `dns_upstream`
 is pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+The versionCode a launcher release tag was built with is `server/testdata/launcher_tag_codes.json` (tag -> code or null),
+byte-identical in `launcher/app/src/test/resources/`: the launcher's `SelfUpdatePlanTest` (``a release tag's
+versionCode is the shared contract's``, ``the tag codes are identical to the server's copy``) and the server's
+`install_now::tests::launcher_tags_read_as_the_shared_contract` / `launcher_tag_codes_match_the_launchers_copy` read
+every `codes` row and compare the copies; the server's `device_pages::tests::music_versions_read_as_the_shared_contract`
+reads the `music_codes` rows (the music app's version from its code), and `scripts/release-version.sh --selftest`
+checks both lists' rows against what the workflows build.
 The launcher's `POST /api/devices/power` body (design 38 §2) is `server/testdata/power_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `PowerEventsTest` encodes exactly it, the server's
 `power::a_launcher_report_raises_both` posts it (its instants moved to the last hour), and both compare the copies.
@@ -100,7 +109,7 @@ fixtures (the phone never logs in).
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
-  `dns_upstream_status.json` and `power_report.json`, `music/gradle/` and
+  `dns_upstream_status.json`, `power_report.json` and `launcher_tag_codes.json`, `music/gradle/` and
   `music.yml`, and the server's and music's `storytel_token_answers.json`; `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
@@ -108,7 +117,7 @@ fixtures (the phone never logs in).
   after the build, the server's and the launcher's `storytel_token_answers.json` and `server/testdata/storytel/`;
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
-  `dns_upstream_status.json` and `power_report.json`;
+  `dns_upstream_status.json`, `power_report.json` and `launcher_tag_codes.json`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in
@@ -116,14 +125,21 @@ fixtures (the phone never logs in).
   Require the always-running gate jobs `launcher-ci`, `server-ci` and `music-ci` in
   branch protection, not the build jobs.
 - `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a `main` commit -> signed APK
-  release (`kids-launcher-mdm.apk`), versionCode `X*1_000_000 + Y*1_000 + Z` (RC: minus 1). Only
+  release (`kids-launcher-mdm.apk`), versionCode `X*10_000_000 + Y*10_000 + Z*10 + N` (N = the RC number
+  1..8, 9 for the release: every build its own code, `scripts/release-version.sh`; X <= 199, Y and Z <= 999).
+  In force since 2026-10-23: the first tag under it is `launcher-v0.36.0-rc.4` (360004), and the script refuses a
+  lower one; every tag before it was built as `X*1_000_000 + Y*1_000 + Z` with an RC one less (every RC of a version shared a
+  code), below every new code, and the launcher and the server still read those tags so
+  (`launcher_tag_codes.json`). Only
   stable launcher releases become GitHub's "latest", so
   `releases/latest/download/kids-launcher-mdm.apk` is the provisioning QR's URL. The release build no
   longer reads the `HANDY_FCM_*` repository variables (design 19); they can go once a `launcher-v*` tag on
   design 19's launcher commit or later has been built (an older tag would still check them).
 - `music-vX.Y.Z` (or `-rc.N`) on a `main` commit -> `vibb-music.apk` + `.sha256`, signed with the
   launcher's key in the `release` environment (its deployment rule must allow `music-v*` tags too; the same
-  `RELEASE_CERT_SHA256` check), versionCode as the launcher's, never "latest". Deploy a server with the music
+  `RELEASE_CERT_SHA256` check), versionCode as the launcher's (the same script; the first tag under today's rule
+  is `music-v0.5.0-rc.4`, 50004, the old rule built every tag up to `music-v0.5.0-rc.3`, and the server reads the
+  music app's version from its code by that cutover), never "latest". Deploy a server with the music
   catalog row (0.21.0+) before the first stable `music-v*` (design 21 QA #11).
 - `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests,
   then the aarch64 tarball and its `.sha256`, never "latest". Since 0.24.0 the tarball and `update.sh` are signed

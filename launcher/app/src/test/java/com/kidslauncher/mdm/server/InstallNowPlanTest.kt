@@ -46,6 +46,9 @@ class InstallNowPlanTest {
     fun `an rc over an rc of the same version is installed, the same name is already running`() {
         val rc1 = InstallNowRecord(9, "t9", "launcher-v0.36.0-rc.2@5", fromVersionCode = 35_999, fromVersionName = "0.36.0-rc.1")
         assertEquals(InstallNowOutcome.Installed, installNowOutcome(rc1, 35_999, LauncherRow.RUNNING, "0.36.0-rc.2"))
+        // The first new-rule build over an old-rule rc: a higher code.
+        val rc3 = InstallNowRecord(9, "t9", "launcher-v0.36.0-rc.4@81", fromVersionCode = 35_999, fromVersionName = "0.36.0-rc.3")
+        assertEquals(InstallNowOutcome.Installed, installNowOutcome(rc3, 360_004, LauncherRow.RUNNING, "0.36.0-rc.4"))
         assertEquals(InstallNowOutcome.Installed, installNowOutcome(rc1.copy(failure = "install failed: 1"), 35_999, LauncherRow.NO_LIST, "0.36.0-rc.2"))
         assertEquals(InstallNowOutcome.AlreadyRunning, installNowOutcome(rc1, 35_999, LauncherRow.RUNNING, "0.36.0-rc.1"))
         assertEquals(InstallNowOutcome.Keep, installNowOutcome(rc1, 35_999, LauncherRow.ON_ITS_WAY, "0.36.0-rc.1"))

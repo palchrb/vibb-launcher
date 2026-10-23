@@ -3512,7 +3512,7 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
                 "capabilities": ["music_v1"],
                 "music_state": {
                     "package": "me.vibb.music",
-                    "version_code": 1_002_003,
+                    "version_code": 10_020_039,
                     "bridge": "bound",
                     "library_version": version,
                     "cache_bytes": 12_300_000,
@@ -3535,7 +3535,7 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
     // What the phone reported, as rows (§4.2: the version, never the package or the version code
     // in visible text - those are behind the row's ⓘ).
     assert_eq!(row_value(&page, "app").as_deref(), Some("1.2.3"));
-    assert!(page.contains("me.vibb.music, version code 1002003."));
+    assert!(page.contains("me.vibb.music, version code 10020039."));
     assert_eq!(row_value(&page, "library").as_deref(), Some("Up to date"));
     assert_eq!(row_value(&page, "waiting").as_deref(), Some("2"));
     assert_eq!(row_value(&page, "stored").as_deref(), Some("12.3 MB"));

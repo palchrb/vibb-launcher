@@ -21,7 +21,12 @@ pub const CAPABILITY: &str = "install_now_v1";
 /// The status-report capability of a launcher that installs a release of its own versionCode
 /// under a newer name ([build_ahead]; the RC-to-RC fix, 2026-10-23). A launcher without it
 /// decides by the code alone and records such a release as running, so the row is
-/// [Standing::TooOld] for it, not an Install Now that can only answer "Already on X".
+/// [Standing::TooOld] for it, not an Install Now that can only answer "Already on X". Legacy of the
+/// old versionCode rule: since `launcher-v0.36.0-rc.4` every build has its own code
+/// ([launcher_tag_version_code]), so only builds tagged before it share one - but it stays needed
+/// while any phone runs 0.36.0-rc.1 to rc.3: such a build reads rc.4 to rc.8 with its own (old)
+/// parser as its own code, so an rc.3 (with it) takes them by the name rule and an rc.1/rc.2
+/// (without it) is TooOld ([release]).
 pub const SAME_CODE_CAPABILITY: &str = "same_code_update_v1";
 
 /// The launcher's `update_fence.waiting_for` words while an Install Now runs (design 37 §3).
@@ -33,37 +38,80 @@ pub const WAIT_READY: &str = "install_now_ready";
 /// An answer stays in the row (a `details.info`) this long after it came.
 const ANSWER_SHOWN_HOURS: i64 = 24;
 
-/// The versionCode the release workflow builds for a launcher tag - the launcher's
-/// `launcherTagVersionCode`: the part before `@`, `launcher-vX.Y.Z` = `X*1_000_000 + Y*1_000 + Z`,
-/// `-rc.N` one less; `None` for any other tag (a manual upload's label).
-pub fn launcher_tag_version_code(tag: &str) -> Option<i64> {
+/// The first tag built under today's rule, `launcher-v0.36.0-rc.4`, as X, Y, Z, RC number.
+const NEW_RULE_FROM: [i64; 4] = [0, 36, 0, 4];
+
+/// The first versionCode under today's rule (`launcher-v0.36.0-rc.4`); every old-rule build's code
+/// is below it (the highest is 0.36.0-rc.3's 35999), debug builds' too.
+const FIRST_NEW_RULE_CODE: i64 = 360_004;
+
+/// A launcher tag's X, Y, Z and RC number (the part before `@`; numbers without a leading zero, at
+/// most 9 digits; Y and Z <= 999); `None` for any other tag.
+fn tag_version(tag: &str) -> Option<(i64, i64, i64, Option<i64>)> {
     let tag = tag.split('@').next().unwrap_or(tag);
     let rest = tag.strip_prefix("launcher-v")?;
+    let number = |s: &str| -> Option<i64> {
+        (!s.is_empty()
+            && s.len() <= 9
+            && s.bytes().all(|b| b.is_ascii_digit())
+            && (s == "0" || !s.starts_with('0')))
+        .then(|| s.parse().ok())
+        .flatten()
+    };
     let (version, rc) = match rest.split_once("-rc.") {
-        Some((version, n)) => {
-            if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
-                return None;
-            }
-            (version, true)
-        }
-        None => (rest, false),
+        Some((version, n)) => (version, Some(number(n)?)),
+        None => (rest, None),
     };
     let parts: Vec<&str> = version.split('.').collect();
     let [x, y, z] = parts.as_slice() else {
         return None;
     };
-    let number = |s: &str, max: usize| -> Option<i64> {
-        (!s.is_empty() && s.len() <= max && s.bytes().all(|b| b.is_ascii_digit()))
-            .then(|| s.parse().ok())
-            .flatten()
-    };
-    let code = number(x, 4)? * 1_000_000 + number(y, 3)? * 1_000 + number(z, 3)? - i64::from(rc);
+    let (x, y, z) = (number(x)?, number(y)?, number(z)?);
+    (y <= 999 && z <= 999).then_some((x, y, z, rc))
+}
+
+/// The old rule: `X*1_000_000 + Y*1_000 + Z`, an RC one less; `None` below 1.
+fn old_rule_code(x: i64, y: i64, z: i64, rc: Option<i64>) -> Option<i64> {
+    let code = x * 1_000_000 + y * 1_000 + z - i64::from(rc.is_some());
     (code >= 1).then_some(code)
+}
+
+/// The versionCode the release workflow built for a launcher tag (`scripts/release-version.sh`) -
+/// the launcher's `launcherTagVersionCode`: the part before `@`, `launcher-vX.Y.Z` =
+/// `X*10_000_000 + Y*10_000 + Z*10 + 9`, `-rc.N` the same with N (1..8) for the 9 - every build its
+/// own code; X <= 199, Y and Z <= 999. A tag below `launcher-v0.36.0-rc.4` was built under the old
+/// rule (`X*1_000_000 + Y*1_000 + Z`, `-rc.N` one less - every RC of a version shared a code) and
+/// reads so, as phones on those builds report. `None` for any other tag (a manual upload's label).
+/// The cases are the shared `testdata/launcher_tag_codes.json`.
+pub fn launcher_tag_version_code(tag: &str) -> Option<i64> {
+    let (x, y, z, rc) = tag_version(tag)?;
+    if [x, y, z, rc.unwrap_or(i64::MAX)] < NEW_RULE_FROM {
+        return old_rule_code(x, y, z, rc);
+    }
+    let n = match rc {
+        None => 9,
+        Some(n @ 1..=8) => n,
+        Some(_) => return None,
+    };
+    (x <= 199).then_some(x * 10_000_000 + y * 10_000 + z * 10 + n)
+}
+
+/// A tag's code as the build that reported `running` reads it: an old-rule build (a code below
+/// [FIRST_NEW_RULE_CODE]) carries the old parser, which reads every tag by the old rule -
+/// `launcher-v0.36.0-rc.4` to `-rc.8` as 35999, its own code - so the server judges the row the
+/// way the phone will (qa-versioncode-rc-code Q-1); a newer build reads it as
+/// [launcher_tag_version_code].
+fn tag_code_as_read_by(tag: &str, running: i64) -> Option<i64> {
+    if running < FIRST_NEW_RULE_CODE {
+        let (x, y, z, rc) = tag_version(tag)?;
+        return old_rule_code(x, y, z, rc);
+    }
+    launcher_tag_version_code(tag)
 }
 
 /// A release name's order ("0.36.0-rc.2" < "0.36.0-rc.10" < "0.36.0" < "0.36.1-rc.1"): X, Y, Z,
 /// then an RC before its release; `None` for another shape (a local build's name). The launcher's
-/// `launcherVersionOrder`.
+/// `launcherVersionOrder`; only [build_ahead]'s legacy same-code rule reads it.
 fn version_order(name: &str) -> Option<[i64; 4]> {
     let (version, rc) = match name.split_once("-rc.") {
         Some((version, n)) => (version, Some(n)),
@@ -86,11 +134,13 @@ fn version_order(name: &str) -> Option<[i64; 4]> {
 }
 
 /// Whether a build of `code`/`name` is ahead of the running one: a higher versionCode, or the same
-/// code under another versionName that isn't older. Every RC of one version shares a code, and an
-/// RC of X.Y.Z+1 has X.Y.Z's (`launcher.yml`); Android installs a same-code APK (no downgrade), so
-/// 0.36.0-rc.2 is ahead of 0.36.0-rc.1 and 0.36.1-rc.1 of 0.36.0 - never 0.36.0-rc.1 of -rc.2, or
-/// 0.36.0 of 0.36.1-rc.1. Two names that differ but can't be ordered count as ahead; an unknown
-/// name never does (the same code is then the running build). The launcher's `launcherBuildAhead`.
+/// code under another versionName that isn't older. Since 2026-10-23 every release build has its
+/// own code ([launcher_tag_version_code]), so the code decides; the name rule is the old rule's
+/// legacy, kept for builds before `launcher-v0.36.0-rc.4`: every RC of one version shared a code,
+/// and an RC of X.Y.Z+1 had X.Y.Z's; Android installs a same-code APK (no downgrade), so
+/// 0.36.0-rc.2 was ahead of 0.36.0-rc.1 - never 0.36.0-rc.1 of -rc.2. Two names that differ but
+/// can't be ordered count as ahead; an unknown name never does (the same code is then the running
+/// build). The launcher's `launcherBuildAhead`.
 pub fn build_ahead(
     code: i64,
     name: Option<&str>,
@@ -233,9 +283,11 @@ fn release_name(tag: &str) -> String {
 }
 
 /// What a tap would do now ([Standing]): `tag` is the launcher row's release, `None` when it has
-/// none or is off. A parseable tag is behind when it is [build_ahead] of the reported build - a
-/// higher code, or the same code under a newer name (an RC over an RC of one version, which share
-/// a code) - the latter only for a launcher with [SAME_CODE_CAPABILITY], else [Standing::TooOld]
+/// none or is off. A parseable tag - its code as the reporting build reads it
+/// ([tag_code_as_read_by]) - is behind when it is [build_ahead] of the reported build - a
+/// higher code (every build since `launcher-v0.36.0-rc.4`), or the same code under a newer name
+/// (an RC over an RC of one version tagged before it, which share a code; legacy) - the latter
+/// only for a launcher with [SAME_CODE_CAPABILITY], else [Standing::TooOld]
 /// (an older one decides by the code and would answer "Already on X"). A tag that doesn't parse (a
 /// manual upload) is behind unless the phone runs a build of that name - the phone may then answer
 /// "Already on X" (design 37 §2.2, accepted).
@@ -248,11 +300,13 @@ pub fn release(tag: Option<&str>, report: Option<&Report>) -> Standing {
     };
     let waiting = release_name(tag);
     let running = report.app_version.unwrap_or("Unknown version").to_string();
-    // Ahead by the name alone: the same code as the running build.
+    // Ahead by the name alone: the same code as the running build (builds before
+    // launcher-v0.36.0-rc.4 only, which read the tag by the old rule: [tag_code_as_read_by]).
     let mut same_code = false;
     let behind = report.pending_tag.is_some()
         || match launcher_tag_version_code(tag) {
             Some(code) => report.app_version_code.is_none_or(|running| {
+                let code = tag_code_as_read_by(tag, running).unwrap_or(code);
                 same_code = code == running;
                 build_ahead(code, Some(waiting.as_str()), running, report.app_version)
             }),
@@ -536,7 +590,7 @@ mod tests {
     fn report<'a>() -> Report<'a> {
         Report {
             app_version: Some("1.3.2"),
-            app_version_code: Some(1_003_002),
+            app_version_code: Some(10_030_029),
             capable: true,
             reported_at: Some(utc("2026-10-19 12:02:00")),
             ..Report::default()
@@ -545,28 +599,32 @@ mod tests {
 
     const TAG: &str = "launcher-v1.4.0@77";
 
+    const TAG_CODES: &str = include_str!("../testdata/launcher_tag_codes.json");
+
+    /// The shared contract (the launcher's `SelfUpdatePlanTest` and `scripts/release-version.sh
+    /// --selftest` read it too).
     #[test]
-    fn launcher_tags_read_as_the_release_workflows_version_codes() {
-        // The launcher's SelfUpdatePlanTest cases.
-        assert_eq!(
-            launcher_tag_version_code("launcher-v1.4.0"),
-            Some(1_004_000)
-        );
-        assert_eq!(
-            launcher_tag_version_code("launcher-v1.4.0@77"),
-            Some(1_004_000)
-        );
-        assert_eq!(launcher_tag_version_code("launcher-v0.32.0"), Some(32_000));
-        assert_eq!(
-            launcher_tag_version_code("launcher-v2.0.1-rc.3"),
-            Some(2_000_000)
-        );
-        assert_eq!(launcher_tag_version_code("launcher-v0.0.1-rc.1"), None);
-        assert_eq!(launcher_tag_version_code("launcher-v12345.0.0"), None);
-        assert_eq!(launcher_tag_version_code("launcher-v1.4"), None);
-        assert_eq!(launcher_tag_version_code("launcher-v1.4.0-rc."), None);
-        assert_eq!(launcher_tag_version_code("v1.4.0"), None);
-        assert_eq!(launcher_tag_version_code("1.4.0 test"), None);
+    fn launcher_tags_read_as_the_shared_contract() {
+        let contract: serde_json::Value = serde_json::from_str(TAG_CODES).unwrap();
+        let rows = contract["codes"].as_array().unwrap();
+        assert!(rows.len() > 20);
+        for row in rows {
+            let tag = row["tag"].as_str().unwrap();
+            assert_eq!(
+                launcher_tag_version_code(tag),
+                row["code"].as_i64(),
+                "{tag:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn launcher_tag_codes_match_the_launchers_copy() {
+        let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../launcher/app/src/test/resources/launcher_tag_codes.json");
+        let copy = std::fs::read_to_string(&copy_path)
+            .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
+        assert_eq!(copy, TAG_CODES, "{} differs", copy_path.display());
     }
 
     #[test]
@@ -596,7 +654,7 @@ mod tests {
         );
         let running = Report {
             app_version: Some("1.4.0"),
-            app_version_code: Some(1_004_000),
+            app_version_code: Some(10_040_009),
             ..report()
         };
         assert_eq!(
@@ -730,14 +788,14 @@ mod tests {
             );
         }
         // The release over its RC (a higher code) is unchanged; a release under the next
-        // version's RC (the same code) isn't offered.
+        // version's RC (a higher code since today's rule) isn't offered.
         assert!(matches!(
             release(Some("launcher-v0.36.0@6"), Some(&on("0.36.0-rc.2"))),
             Standing::Behind { .. }
         ));
         let next_rc = Report {
             app_version: Some("0.36.1-rc.1"),
-            app_version_code: Some(36_000),
+            app_version_code: Some(360_011),
             ..report()
         };
         assert!(matches!(
@@ -751,6 +809,48 @@ mod tests {
         };
         assert!(matches!(
             release(Some(rc2), Some(&nameless)),
+            Standing::UpToDate { .. }
+        ));
+    }
+
+    /// qa-versioncode-rc-code Q-1: an old-rule build reads the first new-rule tags as its own code.
+    #[test]
+    fn old_rule_phones_read_new_rule_tags_as_they_do() {
+        let rc4 = "launcher-v0.36.0-rc.4@81";
+        let on = |name: &'static str, capable: bool| Report {
+            app_version: Some(name),
+            app_version_code: Some(35_999),
+            same_code_capable: capable,
+            ..report()
+        };
+        // rc.3 takes rc.4 by the name rule.
+        assert!(matches!(
+            release(Some(rc4), Some(&on("0.36.0-rc.3", true))),
+            Standing::Behind { .. }
+        ));
+        // rc.1/rc.2 without the capability would answer "Already on".
+        for name in ["0.36.0-rc.1", "0.36.0-rc.2"] {
+            assert_eq!(
+                release(Some(rc4), Some(&on(name, false))),
+                Standing::TooOld {
+                    waiting: "0.36.0-rc.4".into()
+                },
+                "{name}"
+            );
+        }
+        // 0.36.0 is a higher code for their parser too (36000).
+        assert!(matches!(
+            release(Some("launcher-v0.36.0@90"), Some(&on("0.36.0-rc.2", false))),
+            Standing::Behind { .. }
+        ));
+        // An rc.4 phone under the 0.34.0 row ("latest") is up to date.
+        let rc4_phone = Report {
+            app_version: Some("0.36.0-rc.4"),
+            app_version_code: Some(360_004),
+            ..report()
+        };
+        assert!(matches!(
+            release(Some("launcher-v0.34.0@60"), Some(&rc4_phone)),
             Standing::UpToDate { .. }
         ));
     }
@@ -889,7 +989,7 @@ mod tests {
         // the same code under a newer name is an RC over an RC).
         let running = Report {
             app_version: Some("1.4.0"),
-            app_version_code: Some(1_004_000),
+            app_version_code: Some(10_040_009),
             ..report()
         };
         assert_eq!(

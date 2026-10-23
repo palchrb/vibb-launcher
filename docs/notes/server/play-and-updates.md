@@ -146,11 +146,17 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Now"; `received_overdue_minutes` makes a Received `install_update` "No answer" only after 25 h
   (`INSTALL_UPDATE_RECEIVED_MINUTES`), every other command after 10 minutes.
 - **The row** (pure `src/install_now.rs`, typed): `launcher_tag_version_code` (the launcher's `launcherTagVersionCode`,
-  the Kotlin test's cases), `release(tag, report)` -> `Standing` NotReported / NoRelease (no release, or the row is off)
+  both reading the shared `testdata/launcher_tag_codes.json`: since 2026-10-23 a tag from `launcher-v0.36.0-rc.4` on is
+  `X*10_000_000 + Y*10_000 + Z*10 + N`, N the RC number 1..8 or 9 for the release - every build its own code,
+  `scripts/release-version.sh` -, an older tag the old rule's `X*1_000_000 + Y*1_000 + Z`, an RC one less, as the
+  phones on those builds report it; a report below 360004 - an old-rule build - gets every tag read by the old rule,
+  as its own parser does, `tag_code_as_read_by`, so rc.1/rc.2 phones are TooOld for rc.4 to rc.8, qa-versioncode-rc-code
+  Q-1), `release(tag, report)` -> `Standing` NotReported / NoRelease (no release, or the row is off)
   / UpToDate / Behind (`build_ahead`, the launcher's `launcherBuildAhead`: the tag's code above the report's
-  `app_version_code`, or the same code and the tag's name - `release_name`, "0.36.0-rc.2" - another, newer one than
-  the report's `app_version`: every RC of one version shares a code, so rc.2 is behind-worthy over rc.1, never rc.1
-  over rc.2, and 0.36.0 over 0.36.1-rc.1 isn't; two names that can't be ordered count as ahead; or a `pending_tag`;
+  `app_version_code`, or - legacy of the old rule, for builds tagged before `launcher-v0.36.0-rc.4` - the same code and
+  the tag's name - `release_name`, "0.36.0-rc.2" - another, newer one than
+  the report's `app_version`: every RC of one version shared a code, so rc.2 is behind-worthy over rc.1, never rc.1
+  over rc.2; two names that can't be ordered count as ahead; or a `pending_tag`;
   a manual upload's label is behind unless the phone runs a build of that name). Ahead by the name alone (the same
   code) is Behind only when the report claims `same_code_update_v1` (`install_now::SAME_CODE_CAPABILITY`, the
   launcher's `SAME_CODE_UPDATE_CAPABILITY`), else TooOld: a launcher from before the RC-to-RC fix decides by the code
