@@ -93,19 +93,7 @@
             <p class="row row-note">No device gets notifications yet. Turn them on under This Device, on each device you want them on.</p>
         </div>
         {% endfor %}
-        <div class="group-footer">Shown: the device confirmed it showed the notification.
-            <details class="info">
-                <summary aria-label="If notifications don't show"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel">
-                    <p>If a device may not be showing them, check on that device:</p>
-                    <p>Is Tailscale on? The confirmation needs it.</p>
-                    <p>On an iPhone or iPad: was Vibb Phone added to the Home Screen and opened from there?</p>
-                    <p>Are notifications allowed for Vibb Phone in its Settings?</p>
-                    <p>Is a Focus mode on?</p>
-                    <p>Then Send a Test.</p>
-                </div>
-            </details>
-        </div>
+        <div class="group-footer">Shown: the device confirmed it showed the notification.</div>
     </section>
 
     {#- One form, the handler writes every switch (a missing one is off). The switches govern the
