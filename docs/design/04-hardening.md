@@ -79,16 +79,16 @@ recording off", policy key `hardening.disallow_screen_capture` (`device_policy` 
   launcher's missing-key fallback (an older server) are all off.
 - **What it does**: the launcher (device owner) calls `DevicePolicyManager.setScreenCaptureDisabled(admin, on)` for
   the whole phone - no screenshots (the phone's own gesture is refused with Android's toast), no screen recording, no
-  casting (MediaProjection refused), every app's Recents card blank from then on, and `adb exec-out screencap`
-  returns a black image. Not a `UserManager` restriction: a sibling flag in the pure plan
+  casting (MediaProjection refused), every Recents card taken from then on blank (a card from before keeps its
+  picture until the app is used again), and `adb exec-out screencap` returns a black image. Not a `UserManager` restriction: a sibling flag in the pure plan
   (`HardeningPlan.screenCaptureDisabled`), applied in `AppEnforcer` on the same pass and triggers as the user
   restrictions - off is lifted at the start of `apply()` with the cleared restrictions (`clearHardening`), on is set at
   the end with the set ones (`applyHardening`) - and written only when `getScreenCaptureDisabled` differs (pure
   `screenCaptureWrite`, like the camera policy).
 - **Not lifted by a pause or the Parent PIN** (the group footer says so for all of them); only the server's switch or
   unmanaging lifts it. No global camera switch (decided: it would break video chat).
-- **Side effects for us**: emulator screenshots go black while it is on (`docs/testing/emulator.md` warns: leave it
-  off on test AVDs). Our own screens already have their own guards (the lock's `FLAG_SECURE`, Settings' and Home's
+- **Side effects for us**: `adb screencap` goes black while it is on (`docs/testing/emulator.md` warns: leave it
+  off on test AVDs; the emulator console's screenshot still works). Our own screens already have their own guards (the lock's `FLAG_SECURE`, Settings' and Home's
   Recents screenshots off), so the switch changes nothing in how they look.
 - Emulator check: `docs/testing/2026-10-23-screen-capture.md`.
 
