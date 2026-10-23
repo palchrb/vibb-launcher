@@ -191,6 +191,8 @@ class LockGlanceGuardTest {
         "\${p.name}",
         // JL-6: a phone with no clock profile, once - its model, maker, density and width (nothing personal).
         "\${Build.MODEL}", "\${Build.MANUFACTURER}", "\$density", "\$widthDp",
+        // The glance-topinset round: the keyguard status bar and the baselines placed under it, in px.
+        "\${bar.roundToInt()}", "\${clockTarget.roundToInt()}", "\${dateTarget.roundToInt()}",
     )
 
     @Test

@@ -690,19 +690,28 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   `null` = today's centred clock, untouched, logged once (`Glance clock: no profile (model .., maker .., density ..,
   width .. dp)`); no PWA switch - the glance's clock, the date and the alarm line go
   left-aligned where Android's small single-line clock is: the clock's first digit's ink at `clockInkStartDp` (the box
-  moves with the digit's side bearing, again at each text change) with its baseline at `clockBaselineDp` from the
-  window's top, `clockDp` in dp (no font scale, as Android's), Nunito Light (300, `nunito_light`, bundled
+  moves with the digit's side bearing, again at each text change) with its baseline `clockBaselineBelowBarDp` under
+  SystemUI's keyguard status bar - never from the screen's top (the glance-topinset round, `docs/testing/2026-10-23-glance-topinset.md`:
+  pure `keyguardStatusBarPx(statusBarPx, cutoutTopPx, density)` = the larger of the window's status-bar inset
+  (`getInsetsIgnoringVisibility(statusBars())`), its cutout's and `KEYGUARD_STATUS_BAR_MIN_DP` 40 dp, SystemUI's
+  `getStatusBarHeaderHeightKeyguard`; `profileBaselinePx`; a 36 px status bar gives 60 px, `handy36`'s pixel_7 cutout
+  136) -, `clockDp` in dp (no font scale, as Android's), Nunito Light (300, `nunito_light`, bundled
   for this clock alone - JL-2: SemiBold's stems were twice Android's); the date Android's short one (`glanceDateSkeleton`: "EEEdMMM", capitalised on screen
-  by a `TransformationMethod`, `glanceDateCapitalised`: "Fre. 23. okt.", "Fri, Oct 23") at `dateSp` with its baseline at
-  `dateBaselineDp`; the alarm line under it at the date's start. The emulator Pixel's numbers (measured on `handy36` at
-  `wm density 240`, `docs/testing/screens/59d-jl/clock-twin.png`): ink at 34 dp, baseline 182 dp, 86 dp; the date's
-  box at 32 dp, baseline 219 dp, 16 sp - the ink's left edge, baseline and digit height within 2 px of SystemUI's, the stems 8 px
+  by a `TransformationMethod`, `glanceDateCapitalised`: "Fre. 23. okt.", "Fri, Oct 23") at `dateSp` with its baseline
+  `dateBaselineBelowBarDp` under the bar; the alarm line under it at the date's start. The emulator Pixel's numbers
+  (measured on `handy36` at `wm density 240`, `docs/testing/screens/59d-jl/clock-twin.png`, and on `jelly36`, the user's
+  AVD's twin): ink at 34 dp, baseline 91.3 dp (137 px) under the bar - 273 px on `handy36`, 197 px under a 24 dp status
+  bar -, 86 dp; the date's box at 32 dp, baseline 128.7 dp (193 px) under the bar, 16 sp; the AOSP image's vertical
+  offsets are the same - the ink's left edge, baseline and digit height within 2 px of SystemUI's, the stems 8 px
   against Android's 7-8 (Nunito's digits are wider than Google Sans Flex's). `GlancePanel.placeProfile` (every fit) sets the
   margins in the window's coordinates (`baselineMarginPx`, `startMarginPx`): the clock's box may reach above the page's
-  content while its digits' ink stays inside (the emulator's status bar is 136 px), the date may climb into the clock's
-  descent, never above its baseline. The fit measures the placed views: one clock size (`clockBig == clockSmall`), so
-  the rows and the tile give way first - the user's call (JL-3): the clock keeps Android's place and the music tile
-  goes compact first (music + 1 row: compact at 473 dp, full at 497; `LockGlanceLayoutTest` models both layouts).
+  content while its digits' ink stays inside (`handy36`'s status bar is 136 px), the date may climb into the clock's
+  descent, never above its baseline; the bar and both baselines are logged once per bar (`Glance clock: keyguard status
+  bar N px, the clock's baseline at N px, the date's at N px`). The fit measures the placed views: one clock size
+  (`clockBig == clockSmall`), so the rows and the tile give way first - the user's call (JL-3): the clock keeps Android's
+  place and the fit's order holds (on a 48 dp status bar the clock is 42.7 dp higher than the old fixed 182 dp, so
+  music + 1 row keeps the full tile at 473 and 497 dp, music + 2-3 rows the full tile with one row visible;
+  `LockGlanceLayoutTest` models both layouts).
 - **The clock on the lock** (design 42, `docs/design/42-lock-clock.md`): the catalog's clock app is Fossify Clock, known
   by package and pinned signer (`lock/ClockApp`, `verified` refreshed off the main thread at start and on its package
   changes). `PinLockRuntime.clockPackages()` (the system clock - a system `ACTION_SHOW_ALARMS` handler - + Fossify while
