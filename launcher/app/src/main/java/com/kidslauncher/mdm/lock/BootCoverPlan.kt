@@ -370,8 +370,10 @@ fun coverHandOverStartsHome(disabledReadBack: Boolean, failedTries: Int): Boolea
  * destroyed by the system while still in front ([visible]: it was
  * resumed when the finish came, so no call screen was over it - F3R-1, in a call too) with no Home of its own started,
  * it starts the typed HOME on its way out, so the stock launcher a non-graceful boot left below never comes up (a death
- * between our take-over and Home's start). RC3-3: only once taken over ([takenOver], as [coverWaitStep] reads it) - before
- * the stamp the system's HOME brings a new cover (or our Home), and the cover's own 30 s hand-over is the rescue.
+ * between our take-over and Home's start). RC3-3: only once taken over ([takenOver], as [coverWaitStep] reads it): before
+ * the stamp our main process may still be in its unlocked setup. The residual (code QA Q-4): a system finish before the
+ * stamp shows what the home task has below - on a non-graceful boot possibly the stock launcher - until our boot Home's
+ * start; Back no longer causes one (it is held until the stamp, [coverHoldsBack]).
  */
 fun coverDestroyStartsHome(
     waitForLauncher: Boolean,
@@ -415,13 +417,14 @@ const val BOOT_PAD_RETRY_MS = 1_000L
  * with no answer at all ("PrimaryBouncerInteractor#show is being called before the primaryBouncerDelegate is set"), so
  * the error retry never runs. An ask with no answer is asked again at these times after it - uncounted, the same ask -
  * and then every [BOOT_PAD_SILENT_EVERY_MS] until an answer, a stop or the screen going off: in the fix run's first
- * boot SystemUI's keyguard took its first ask 32 s after ours. A re-ask while Android's pad is up keeps it and the
+ * boot SystemUI's keyguard took its first ask 32 s after ours (26-42 s in its other boots). Every 6 s after 12 s keeps
+ * the kid's wait on SystemUI's clock, once it is ready, under 6 s. A re-ask while Android's pad is up keeps it and the
  * digits typed (the fix run's mid-typing check); SystemUI only adds the callback.
  */
 val BOOT_PAD_SILENT_REASK_AT_MS = listOf(3_000L, 6_000L, 12_000L)
 
 /** After [BOOT_PAD_SILENT_REASK_AT_MS], an ask still unanswered is asked again this often. */
-const val BOOT_PAD_SILENT_EVERY_MS = 12_000L
+const val BOOT_PAD_SILENT_EVERY_MS = 6_000L
 
 /** How long after the ask's re-ask number [reasks] (0 = the ask itself) the next [PadEvent.SILENT] is due. */
 fun bootPadSilentInMs(reasks: Int): Long {
@@ -520,8 +523,9 @@ data class PadStep(val pad: BootPad, val action: PadAction, val silentInMs: Long
  * - **Silent** (RC3-1): every ask (automatic, tapped, a retry's, a relaunch's) posts [PadEvent.SILENT]; still open when
  *   it comes, the ask is asked again - uncounted, the same ask, its count and arm untouched - at
  *   [BOOT_PAD_SILENT_REASK_AT_MS] after it and then every [BOOT_PAD_SILENT_EVERY_MS], with the screen on and, for an
- *   automatic ask, no call (else nothing more is posted: the stop that follows closes the ask). Any answer, a stop or a
- *   lost gate ends the posting.
+ *   automatic ask, no call - else that tick is skipped and the clock goes on (code QA Q-2: a call that ends before its
+ *   screen covered the cover, or a screen off and on before the pause, brings no stop to close the ask). Any answer, a
+ *   stop or a lost gate ends the posting.
  * An answer with no ask open (an earlier ask's) changes nothing.
  */
 fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boolean, inCall: Boolean): PadStep {
@@ -565,7 +569,7 @@ fun bootPadStep(pad: BootPad, event: PadEvent, gate: Boolean, interactive: Boole
         }
         PadEvent.SILENT -> when {
             !pad.silentDue || !pad.open -> none
-            !interactive || (pad.auto && inCall) -> PadStep(pad.copy(silentDue = false), PadAction.NONE)
+            !interactive || (pad.auto && inCall) -> PadStep(pad, PadAction.NONE, bootPadSilentInMs(pad.reasks))
             else -> PadStep(pad.copy(reasks = pad.reasks + 1), PadAction.ASK, bootPadSilentInMs(pad.reasks + 1))
         }
     }

@@ -822,19 +822,23 @@ findings, merge to `main`, full suite once.
   face for its clock profile.
 - **The rc.3 run's fix round (branch `rc3-fix`, 2026-10-23, 59d §8.14, `docs/testing/2026-10-23-rc3-fix-run.md`):**
   - **Done** (on the branch):
-    - RC3-1: the boot cover asks again for an ask that got no answer, at 3, 6 and 12 s, then every 12 s. SystemUI's
+    - RC3-1: the boot cover asks again for an ask that got no answer, at 3, 6 and 12 s, then every 6 s. SystemUI's
       keyguard was ready 26-42 s after the first ask on the emulator. Six boots showed the pad with no key press, and a
       re-ask keeps the typed digits.
     - RC3-2: the glance shows the wallpaper while it asks, so there is no slide (3 moving frames to 0).
     - RC3-3, the narrow part: no Home start of the cover's before the take-over, Back held until it.
     - RC3-6 is a line in 59d §8.4.
   - **Open, RC3-4 (Low, measure first): the unlocked setup on the main thread.**
-    - On the emulator's debug build: `Unlocked setup took` 4.5-19 s, and the boot's Home 13-22 s after the unlock.
+    - On the emulator's debug build: `Unlocked setup took` 4.5-10.8 s in the fix run's r-boots (19.2 s at e1, a cold
+      start right after an emulator wedge; 4.6-9.6 s in the rc.3 run), and the boot's Home 13-22 s after the unlock.
     - With the main thread busy, a Home start - BootHome's, or the kid's Home key on a boot whose PPA order puts
       HomeActivity first - leaves WM with no focused window for 8-9 s. A key left waiting 5 s in that gap is an ANR
       ("Application does not have a focused window"), RC3-3's dialog without the cover's part.
     - Measure on the **release** build on the Jelly Star: `Unlocked setup took`, `Unlocked setup tail took`,
-      `Boot Home started N ms after the unlock`, and the NO_WINDOW gap (`input_focus`).
+      `Boot Home started N ms after the unlock`, the NO_WINDOW gap (`input_focus`), and the take-over stamp's time
+      after the PIN (`Boot cover taken over`; 24 s in the fix run's r2) with its margin to the cover's 30 s hand-over
+      (`COVER_LAUNCHER_WAIT_MS`): a stamp later than that brings the hand-over's Home start into the busy main process
+      - RC3-3's shape again - and Back stays held until then (code QA Q-5).
     - Only if it is still seconds there: move the parts of `initRest`'s head that can safely leave the main thread
       (none is obviously safe today: the update fence, the PIN lock's init and the time rules feed the lock's first
       decisions), or start BootHome's Home only once the head is done. Launcher, S-M after the measurement.

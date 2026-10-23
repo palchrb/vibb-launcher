@@ -377,7 +377,7 @@ class BootCoverActivity : Activity() {
     }
 
     /** RC3-3: Back held by [coverHoldsBack] - the BFU face, and once unlocked until the take-over (as [waitStep] last
-     * saw it: [takenOverAtElapsed]). An unreadable unlock state counts as locked here (held). Never throws. */
+     * saw it: [takenOverAtElapsed]). An unreadable unlock state counts as locked here: held only as the face. Never throws. */
     private fun applyBackHold(face: Boolean) {
         val unlocked = try {
             getSystemService(UserManager::class.java)?.isUserUnlocked == true
@@ -429,13 +429,12 @@ class BootCoverActivity : Activity() {
         applyLockedFace()
         val interactive = getSystemService(PowerManager::class.java)?.isInteractive == true
         val inCall = gate && telecomInCall()
-        val before = pad
         val step = bootPadStep(pad, event, gate, interactive, inCall)
         pad = step.pad
         autoAsksThisProcess = pad.autoAsks
         tapLine?.visibility = if (gate && pad.line) View.VISIBLE else View.GONE
-        if (event == PadEvent.SILENT && step.action == PadAction.NONE && step.pad != before) {
-            Log.i(LOG_TAG, "Boot cover: no answer to the ask - not asked again (screen off or a call)")
+        if (event == PadEvent.SILENT && step.action == PadAction.NONE && step.silentInMs != null) {
+            Log.i(LOG_TAG, "Boot cover: no answer to the ask - this re-ask skipped (screen off or a call)")
         }
         when (step.action) {
             PadAction.ASK -> askPad(event)

@@ -488,7 +488,7 @@ class BootCoverPlanTest {
 
     /** RC3-1 (the rc.3 run, Android 16): an ask SystemUI drops before its keyguard is ready gets no answer at all. */
     @Test
-    fun `an ask with no answer is asked again at 3, 6 and 12 s, then every 12 s - uncounted, the same ask`() {
+    fun `an ask with no answer is asked again at 3, 6 and 12 s, then every 6 s - uncounted, the same ask`() {
         val asked = bootPadStep(BootPad(), PadEvent.RESUMED, gate = true, interactive = true, inCall = false)
         assertEquals(PadAction.ASK, asked.action)
         var state = asked.pad
@@ -502,7 +502,7 @@ class BootCoverPlanTest {
             state = again.pad
             at += again.silentInMs!!
         }
-        assertEquals(listOf(3_000L, 6_000L, 12_000L, 24_000L, 36_000L), times)
+        assertEquals(listOf(3_000L, 6_000L, 12_000L, 18_000L, 24_000L), times)
         // Every ask starts the clock anew: a tap's, a retry's, a relaunch's.
         assertEquals(3_000L, bootPadStep(BootPad(), PadEvent.TAPPED, true, true, false).silentInMs)
         assertEquals(3_000L, bootPadStep(BootPad(retryDue = true, retried = true), PadEvent.RETRY, true, true, false).silentInMs)
@@ -514,9 +514,13 @@ class BootCoverPlanTest {
             assertEquals("$end", PadStep(ended, PadAction.NONE), bootPadStep(ended, PadEvent.SILENT, true, true, false))
         }
         assertFalse(bootPadStep(state, PadEvent.SILENT, gate = false, interactive = true, inCall = false).pad.silentDue)
-        // Not with the screen off, nor an automatic ask in a call (the stop that follows closes it); a tap's in a call.
-        assertEquals(PadAction.NONE, bootPadStep(asked.pad, PadEvent.SILENT, true, interactive = false, inCall = false).action)
-        assertEquals(PadAction.NONE, bootPadStep(asked.pad, PadEvent.SILENT, true, interactive = true, inCall = true).action)
+        // Not with the screen off, nor an automatic ask in a call - that tick is skipped, the clock goes on (Q-2: no stop
+        // may follow to close the ask), and the next one, the call over, asks; a tap's asks in a call.
+        for (dark in listOf(true, false)) {
+            val skipped = bootPadStep(asked.pad, PadEvent.SILENT, true, interactive = !dark, inCall = !dark)
+            assertEquals(PadStep(asked.pad, PadAction.NONE, bootPadSilentInMs(0)), skipped)
+            assertEquals(PadAction.ASK, bootPadStep(skipped.pad, PadEvent.SILENT, true, interactive = true, inCall = false).action)
+        }
         val tapped = bootPadStep(BootPad(), PadEvent.TAPPED, true, true, false).pad
         assertEquals(PadAction.ASK, bootPadStep(tapped, PadEvent.SILENT, true, interactive = true, inCall = true).action)
     }

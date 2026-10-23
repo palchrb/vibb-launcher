@@ -934,15 +934,19 @@ Built in J's fix round (§8.11, "Fix round").
   `PadStep.silentInMs`, `bootPadSilentInMs`, `BOOT_PAD_SILENT_REASK_AT_MS`, `BOOT_PAD_SILENT_EVERY_MS`).
   - Every ask - automatic, tapped, a retry's or a relaunch's - starts a clock. The cover posts `SILENT` with its handler
     (`padSilent`), drops it with any answer or stop, and posts it again at a resume.
-  - An ask still open when `SILENT` comes is asked again 3, 6 and 12 s after it, then every 12 s. The re-ask is
+  - An ask still open when `SILENT` comes is asked again 3, 6 and 12 s after it, then every 6 s. The re-ask is
     uncounted (not one of the 3 automatic asks) and part of the same ask: the count, the arm and `auto` stay.
-  - A re-ask needs the screen on and, for an automatic ask, no call. Otherwise nothing more is posted, and the stop that
-    follows closes the ask.
-  - Each re-ask bumps `askId`, so the old (never-arriving) answer is dropped.
+  - A re-ask needs the screen on and, for an automatic ask, no call. Otherwise that tick is skipped and the clock goes
+    on (code QA Q-2: a call that ends before its screen covered the cover, or the screen off and on before the pause,
+    brings no stop to close the ask - the face would sit bare with a dead ask).
+  - Each re-ask bumps `askId`. SystemUI answers every callback it holds (`notifyDismissSucceeded(4)` in the mid-typing
+    check), so the older callbacks, answered with the newest, are dropped by id.
   - The log reads `Boot cover asks for Android's PIN pad (no answer, again N, automatic k of 3)`.
   - **Changed from the brief's "3, 6 and 12 s"**: the fix run's first build stopped there and gave the ask up with the
     line at 24 s. On the emulator SystemUI's keyguard took its first ask 26-42 s after ours, and one cold boot (e1) hung
-    exactly as in rc.3, so the re-asks now go on until an answer, a stop or the screen going off.
+    exactly as in rc.3, so the re-asks now go on until an answer, a stop or the screen going off - every 6 s after the
+    12 s one (code QA Q-1: once SystemUI is ready the kid waits on its clock until the next re-ask; 6 s halves it, and
+    a re-ask with the pad up costs nothing found).
   - A re-ask while the pad is up only adds a callback to SystemUI's `DismissCallbackRegistry` (the bouncer's `show`
     returns early when showing). The typed digits stay: the mid-typing check, below.
   - Not built: the delay of the first ask after the cover's first frame. With the keyguard ready 26-42 s after the
@@ -964,6 +968,10 @@ Built in J's fix round (§8.11, "Fix round").
       with `getOverrideTaskTransition()`, which no public API sets.
     - The flag added at the leave itself. It reached WM only after the transition had collected the glance (`f=NONE`).
   - `HomeFront.bring`'s `noAnimation` start is unchanged.
+  - It also changes the transition when a row's target opens over Home after the pad, and at the time-rule screen's
+    hand-over (code QA Q-3): the closing glance is now collected with the wallpaper there too. Not recorded yet - on the
+    next device run (the Jelly Star): a row's target after the pad with a photo ground at 24 fps, and the time-rule
+    hand-over.
 - **RC3-3, no Home start of the cover's before the take-over** (`coverDestroyStartsHome(.., takenOver)`,
   `coverHoldsBack`, `coverWaitStep`'s KDoc):
   - `START_HOME` already needed the stamp. Now the start on the way out does too (`takenOver` as the wait poll reads
@@ -971,6 +979,10 @@ Built in J's fix round (§8.11, "Fix round").
   - Back is held while the cover is the BFU face, and in android mode from the unlock until the take-over
     (`applyBackHold`; `Boot cover: Back before the take-over, held`). So Back no longer finishes the cover in that
     window, and the system's HOME brings the cover already in front.
+  - The residual (code QA Q-4): if the system finishes the cover in front before the stamp, the home task shows what
+    it has below - on a non-graceful boot possibly the stock launcher - until our boot Home's start. Back no longer
+    causes one, and no other trigger is known; the trade (no Home start into a busy main process) stands. The next
+    device run greps `Boot cover finished before the take-over`.
   - Step M's "never stranded" stays: without a stamp the 30 s hand-over (disable, then our Home) is the rescue, and it
     needs the cover in front, which the held Back keeps.
   - The unlocked setup was not refactored. Its time is mostly the debug build's dex verification on the main thread
