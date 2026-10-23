@@ -816,6 +816,18 @@ findings, merge to `main`, full suite once.
   else today's centred clock. §8.9 decided (a) from the capture (`docs/testing/2026-10-23-edge-swipe-capture.md`): with
   lock task's flags in sync Quickstep refuses the edge swipe; the user's swipes went through on desynced flags - the
   system's Home while LOCKED now heals them at once (16d's heal, `HealTrigger.SYSTEM_HOME`). Code QA next, then rc.3.
+- **6-inch / Android 15 check (2026-10-23, `docs/testing/2026-10-23-six-inch-android15.md`, AVD six35 = pixel_7 411x914 dp,
+  API 35):** every screen fits at font 1.0 and 1.3, nothing broken or oversized, just more empty space. Findings: **F1
+  (High, M)** an UNARMED reboot (a crash, `adb reboot`) never finishes booting on an image whose stock launcher isn't
+  direct-boot-aware - no DBA home, Settings hidden, our cover enabled only by the shutdown arm, so `LOCKED_BOOT_COMPLETED`
+  never fires; SystemUI's lock is dead to input until an incoming call starts our call screen -> **59d step M** (the
+  cover always enabled in android mode, in progress); F2 (note) ~8 light-grey frames after the pad's success are
+  SystemUI's light pad fading, not ours; F3 (S) at font 1.3 Home's contact labels touch (`item_kid_contact.xml`,
+  `contact_name` has no horizontal padding); F4 (S) glance rows are one line even with 822 dp available - two lines on
+  tall screens; F5 (S, optional) the music library's cover cap of 180 dp (`music/.../ui/Fit.kt`) could grow on tall
+  screens; F6 (check) Android 15 logs it removed our pinned Home preference at every locked boot and at the cover's
+  hand-over - Home still came up; check on a phone (step M's run looks); F7 (note) 4-21 black frames at a wake on 15,
+  no leak. Not done there: the timer tile, the blocked/Play screens, QR provisioning.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a

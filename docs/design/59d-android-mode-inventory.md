@@ -725,3 +725,16 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   emulator ran beside) hit the 2 s dead-ask recovery while the pad was still coming up, so the leave came by
   `USER_PRESENT` and the row's target was dropped - round 1's behaviour (`ANDROID_ASK_TIMEOUT_MS`), not J's; the retry
   with the PIN typed within 1.2 s opened it.
+
+### 8.13 Step J addendum (the user, 2026-10-23): the handle instead of the hint line
+
+The user, looking at the clock twin: our glance should show Android's gesture handle (the bright pill at the bottom of
+SystemUI's face) in the same place, as the thing you grab and swipe up, and the hint text goes. Rules: (1) we draw the
+pill ourselves - lock task hides SystemUI's navigation bar while we are LOCKED, so there is never two; same size,
+place and colour as SystemUI's handle on that device (profile numbers; the fallback = Android's defaults: 108 dp x 4 dp,
+rounded, 8 dp above the bottom inset, white at 80 %); (2) a swipe that starts on the pill (in the bottom gesture inset)
+counts as the page's swipe: when lock task refuses the system's Home gesture the touches reach our window, and when
+the system takes the gesture (a desync, §8.9) we get `ACTION_CANCEL` and do nothing - so `glanceSwipeBlocked`'s
+bottom-edge rule goes; (3) the hint line "Sveip opp for å låse opp" goes; TalkBack's "Lås opp" click action moves to
+the pill (a focusable node with a content description); (4) own mode: the same pill, the same swipe, our keypad.
+Built in J's fix round.
