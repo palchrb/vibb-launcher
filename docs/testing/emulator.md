@@ -53,6 +53,43 @@ In the PWA, **before** enrolling the phone:
 - Never set a screen lock (PIN) on the AVD before provisioning: Android then disables escrow tokens for good on
   that user, and design 59's Child PIN (the reset token) can't be set afterwards. Android's PIN is set by the
   launcher through the PWA's Child PIN once the phone is enrolled (the android-mode switch).
+- Open Vibb One's Home once (`adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME -p
+  $P`) before enrolling from its Settings. Home's first interactive start sets `internal.started_before`. A phone
+  enrolled and locked before that start resets its preferences at the next process start (`initRest`'s first-launch
+  `resetPreferences`): after the reboot the cached policy was gone - no kiosk, no Android lock (`requested=false
+  kidPin=false`), navy wallpaper (glance-topinset run, 2026-10-23).
+
+**`jelly36`: the AVD that matches the user's own** (`jellystar2`, since 2026-10-23). The Google Play Android 16 image
+(Pixel SystemUI) at 480x854 and 240 dpi, made **without** a device profile, so it has no display cutout and the plain
+24 dp (36 px) status bar the user sees. `handy36`'s pixel_7 profile instead gives a 136 px status bar from its cutout,
+and that moves SystemUI's keyguard clock 76 px down (design 59d §8.15). Use `jelly36` for anything the user compares by
+eye: the glance's clock twin, the face's frames, the bottom-edge swipe.
+
+```sh
+avdmanager create avd -n jelly36 -k "system-images;android-36;google_apis_playstore;x86_64" --force   # answer "no"
+# then in ~/.android/avd/jelly36.avd/config.ini (replace these keys, keep the rest):
+hw.lcd.width = 480
+hw.lcd.height = 854
+hw.lcd.density = 240
+skin.name = 480x854
+skin.path = _no_skin
+hw.ramSize = 2048
+hw.keyboard = yes
+hw.mainKeys = no
+hw.gpu.enabled = yes
+hw.gpu.mode = swiftshader_indirect
+disk.dataPartition.size = 6442450944
+showDeviceFrame = no
+# start (headless):
+emulator -avd jelly36 -port 5556 -wipe-data -no-window -no-audio -gpu swiftshader_indirect -no-snapshot-save -no-boot-anim
+```
+
+The density is 240 already (no `wm density`). Gesture navigation is the default. Check the bars with
+`adb shell dumpsys window | grep -E 'type=(statusBars|displayCutout) frame'`: `statusBars frame=[0,0][480,36]`
+and no cutout. For other status-bar heights on the same AVD: `cmd overlay enable-exclusive --category
+com.android.internal.display.cutout.emulation.tall` gives 72 px and `.hole` gives 136 px. Disable it again before a
+run that should look like the user's. SystemUI's status bar can lag the cutout for a while after a switch, so re-read
+the frames, or reboot.
 
 ## 3b. The Jelly Star's size, font scale, time zone, adb-installed apps (design 34 step 0)
 
