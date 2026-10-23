@@ -840,10 +840,21 @@ The RC run (`docs/testing/2026-10-22-d59-rc-run.md` §9, F3): after the PIN on S
     call is a live call, so it gets RETRY. No public API tells an occluding activity apart
     (`TelecomManager.isInEmergencyCall` is a `@SystemApi` behind `READ_PRIVILEGED_PHONE_STATE`, `KeyguardManager` has
     no "occluded" query, `isKeyguardLocked` is always true BFU). The run's dialer was safetyhub's `DialPadActivity`.
-- **Never over the keyguard**: no `showWhenLocked`, no dismissal (`BootCoverManifestTest`). Before the PIN, Android's
-  lock screen stays the face: the wallpaper, "Skriv koden for å starte telefonen" and the pad, as design 59 §4.4 wants.
-  A showWhenLocked cover would hide the pad and the restart line, and it would need a dismiss path of its own. The
-  cover only becomes visible when the PIN's dismissal reveals it.
+- **Over the keyguard only as the BFU face, gated at runtime** (amended by design 59d step F, §5 and §8.3; was "never
+  over the keyguard"): the manifest still has no `showWhenLocked`, `turnScreenOn` or dismissal flag
+  (`BootCoverManifestTest`). In android mode, while the user is locked, the cover sets `setShowWhenLocked(true)` at
+  runtime (`applyLockedFace`) and so occludes the BFU keyguard: the kid sees the mark on the night ground, not
+  SystemUI's clock face. It only *asks* for Android's PIN pad (`requestDismissKeyguard`, the BFU bouncer "Skriv inn
+  PIN-koden" / "PIN is required after device restarts") by the pure `bootPadStep`, and dismisses nothing itself. The
+  gate (`bootPadGate`: the `boot_cover_android` marker and `isUserUnlocked == false`) is read again at every resume and
+  before every ask; an own-mode cover never occludes or asks. Once unlocked the flag drops at once (the unlock
+  broadcast, every resume, the 250 ms wait poll) and the cover runs the wait below - never showWhenLocked once
+  `isUserUnlocked`. A cancelled pad leaves "Trykk for å låse opp" under the mark; a tap asks again. The restart line is
+  still written: it is the face when the cover can't start (no marker, a tripped guard, a call at the locked boot).
+  **If 59d §8.4 item 6's gate (a) fails** - a runtime-flagged HOME activity doesn't occlude the BFU keyguard - the cover
+  is never resumed while locked, so it never asks, and the boot is this section's as built before step F: SystemUI's
+  lock screen and pad as the face, the cover only what the PIN reveals. The code and the flipped pins stay, inert (the
+  gate's false branch is that behaviour); nothing is reverted.
 - **It waits for our Home** (`coverWaitStep`, android mode only; own mode keeps 16b/16e's 3 s):
   - It leaves once our main process has taken over (disabled it) and Home is over it (its stop). The take-over and
     the typed Home start are one main-thread pass: `BootCover.init` (or `BootCover.takeOver`) and then `BootHome`.
@@ -986,7 +997,8 @@ dismisses it). On a boot whose `top.log` shows `ResolverActivity` (BFU behind th
    the PIN.
 3. BFU face unchanged: SystemUI's lock screen with "Type your PIN to start the phone" (after a graceful reboot) and
    the pad. The cover is not seen before the PIN, and the emergency call works. `dumpsys activity activities` shows
-   `BootCoverActivity` behind the keyguard.
+   `BootCoverActivity` behind the keyguard. (Superseded by design 59d step F: the cover is the BFU face over the
+   keyguard and asks for the pad - its checks are 59d §8.4 item 6; this row holds only where gate (a) fails.)
 4. \* F3C-1 with B1's redesign: `gsm call` an allowed number as the boot completes (before `LOCKED_BOOT_COMPLETED`
    if it can be timed). Expect `Boot cover waits: a call is live - again in 5000 ms` every 5 s while it rings or is
    live, with the call screen in front throughout. The start comes after the call ends, even with the process frozen

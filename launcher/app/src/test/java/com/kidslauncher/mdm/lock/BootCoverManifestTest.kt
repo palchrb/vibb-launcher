@@ -83,15 +83,48 @@ class BootCoverManifestTest {
         for (source in listOf(activity, guard)) assertFalse(source.contains("getSharedPreferences"))
     }
 
-    /** Design 59 F3: the cover sits behind Android's keyguard, never over it - Android's lock screen (the restart
-     * line, the pad) stays the face before the PIN, and nothing of ours occludes or dismisses it. */
+    /** Design 59 F3 as amended by 59d step F (§8.3, Q59d-8): the manifest never makes the cover show over the keyguard;
+     * at runtime it is showWhenLocked and asks for Android's PIN pad only inside the gated functions - the android
+     * marker and the user still locked, read again each time - and it never dismisses or turns the screen on itself. */
     @Test
-    fun `the cover never shows over the keyguard, and the locked boot's start reads device-protected storage only`() {
-        for (attr in listOf("showWhenLocked", "turnScreenOn", "showForAllUsers")) assertEquals(attr, "", cover.getAttributeNS(ns, attr))
+    fun `the cover shows over the keyguard only gated at runtime, and the locked boot's start reads device-protected storage only`() {
+        for (attr in listOf("showWhenLocked", "turnScreenOn", "showForAllUsers", "dismissKeyguard")) assertEquals(attr, "", cover.getAttributeNS(ns, attr))
         val activity = code("java/com/kidslauncher/mdm/lock/BootCoverActivity.kt")
-        for (banned in listOf("setShowWhenLocked", "setTurnScreenOn", "requestDismissKeyguard", "FLAG_SHOW_WHEN_LOCKED", "FLAG_DISMISS_KEYGUARD")) {
+        for (banned in listOf("setTurnScreenOn", "FLAG_SHOW_WHEN_LOCKED", "FLAG_DISMISS_KEYGUARD", "FLAG_TURN_SCREEN_ON", "dismissKeyguard(")) {
             assertFalse(banned, activity.contains(banned))
         }
+        fun body(name: String) = activity.substringAfter("private fun $name(").substringBefore("\n    }\n")
+        // The gate: the marker (create's read and a fresh one) and the user still locked; unreadable = unlocked.
+        val gate = body("padGate")
+        for (needed in listOf("bootPadGate(", "androidMarker = waitForLauncher && BootCoverGuard.androidMode(this)", "unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked != false")) {
+            assertTrue(needed, gate.contains(needed))
+        }
+        // setShowWhenLocked once, set to the gate's value; requestDismissKeyguard once, behind the gate read first.
+        assertEquals(1, Regex("setShowWhenLocked\\(").findAll(activity).count())
+        val face = body("applyLockedFace")
+        assertTrue(face.indexOf("val show = padGate()") in 0 until face.indexOf("setShowWhenLocked(show)"))
+        assertEquals(1, Regex("requestDismissKeyguard\\(").findAll(activity).count())
+        val ask = body("askPad")
+        assertTrue(ask.indexOf("if (!padGate()) return") in 0 until ask.indexOf("requestDismissKeyguard("))
+        // The ask comes only from the rule's ASK; the rule gets the gate, the screen and Telecom read now.
+        assertEquals(2, Regex("askPad\\(").findAll(activity).count())
+        val step = body("padStep")
+        assertTrue(step.contains("val gate = padGate()"))
+        assertTrue(step.contains("val inCall = gate && telecomInCall()"))
+        assertTrue(step.contains("val step = bootPadStep(pad, event, gate, interactive, inCall)"))
+        assertTrue(step.contains("PadAction.ASK -> askPad(event)"))
+        // The flag follows the gate at create, every resume, the unlock broadcast and F3's poll once unlocked.
+        assertTrue(activity.substringAfter("override fun onCreate(").substringBefore("\n    }\n").contains("waitForLauncher = BootCoverGuard.androidMode(this)\n        applyLockedFace()"))
+        val resume = activity.substringAfter("override fun onResume()").substringBefore("\n    }\n")
+        assertTrue(resume.contains("applyLockedFace()"))
+        assertTrue(resume.contains("handler.post { if (resumed) padStep(PadEvent.RESUMED) }"))
+        assertTrue(activity.substringAfter("override fun onReceive(").substringBefore("\n            }\n").contains("applyLockedFace()"))
+        assertTrue(activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n").contains("if (unlocked) applyLockedFace()"))
+        assertTrue(activity.substringAfter("override fun onStop()").substringBefore("\n    }\n").contains("padStep(PadEvent.STOPPED)"))
+        // An earlier ask's answer is dropped; the count is the process's.
+        assertTrue(body("padAnswer").contains("if (id != askId || isDestroyed) return"))
+        assertTrue(activity.contains("private var pad = BootPad(autoAsks = autoAsksThisProcess)"))
+        assertTrue(step.contains("autoAsksThisProcess = pad.autoAsks"))
         // It leaves on the take-over only when stopped or the grace is over (the rule is coverWaitStep's), and its
         // own hand-over disables itself before starting Home.
         val wait = activity.substringAfter("private fun waitStep(").substringBefore("\n    }\n")

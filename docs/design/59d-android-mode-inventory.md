@@ -429,3 +429,56 @@ needs a status field, both directories in one commit as always).
   counts 1 of the 3.
 - **Docs**: round 1 edits `launcher/CLAUDE.md`'s design 32 sentence and the notice-wake line; round 2 edits its
   16b/F3 bullet; different bullets, the second to merge rebases.
+
+### 8.6 Step F as built (round 2, branch `d59d-round2-f`, 2026-10-23; no emulator run in this round)
+
+**Files**: `lock/BootCoverPlan.kt` (pure: `bootPadGate`, `PadEvent`, `PadAction`, `BootPad`, `PadStep`, `bootPadStep`,
+`BOOT_PAD_AUTO_ASKS` = 3, `BOOT_PAD_RETRY_MS` = 1 s), `lock/BootCoverActivity.kt` (the wiring: `padGate`,
+`applyLockedFace`, `padStep`, `askPad`, `padAnswer`, the tap line), `boot_cover_tap_to_unlock` (nb "Trykk for å låse
+opp", en "Tap to unlock"), tests `BootCoverPlanTest` (6 new, one per rule), `BootCoverManifestTest` (the keyguard pin
+flipped), `KeyguardCoverPlanTest` (the caller list). Docs: design 59's F3 "Over the keyguard only as the BFU face"
+(with gate (a)'s fallback) and its run check 3, `launcher/CLAUDE.md`'s 16b/F3 bullet.
+
+**The rules as coded** (`bootPadStep(pad, event, gate, interactive, inCall)`):
+- No gate (`bootPadGate`: marker and not unlocked) -> nothing, the ask and its retry closed. The Activity's gate is
+  `waitForLauncher` (create's marker read) and a fresh `BootCoverGuard.androidMode` and `isUserUnlocked != false`
+  (unreadable = unlocked, inert); read in every `padStep` (every resume, stop, tap, answer, retry) and again inside
+  `askPad` right before `requestDismissKeyguard`. `applyLockedFace` sets `setShowWhenLocked` to the gate's value at
+  create, every resume, the `ACTION_USER_UNLOCKED` receiver, every pad step and F3's 250 ms wait poll once unlocked.
+- RESUMED (posted past `onResume`): asks when armed (a new cover, and every stop), no ask open, the screen on, no
+  `telecomInCall()` and fewer than 3 counted. A resume held back (call, screen off) keeps the arm, so the first resume
+  after a call asks.
+- TAPPED: always asks (in a call, after the cap), uncounted. A tap reaching the cover means no pad is over it, so an
+  ask still marked open is given up; its late answer is dropped by the ask id (`padAnswer`).
+- CANCELLED: the line shows; an automatic ask cancelled with the screen off gives its count back.
+- ERROR: one retry after 1 s, the same ask (no new count); the retry needs the screen on and, for an automatic ask, no
+  call; a second error or a retry that can't go shows the line. A retry dropped by `onPause` is posted again at the next
+  resume; a stop drops it.
+- STOPPED: arms the next resume; an ask still open is closed (uncounted when the screen is off - the power press's
+  stop may come before the cancel callback, which is then no current ask's answer).
+- SUCCEEDED: the ask closes; CE's unlock turns the gate false.
+- The count lives in a companion var (`autoAsksThisProcess`), so a new cover instance in the same `:bootcover`
+  process carries it.
+
+**Where it goes past §5/§8.3** (choices the spec left open): the tap asks even with an ask marked open (above); a stop
+closes an open ask, so a lost cancel callback can't block rule 4's next screen-on ask; the line also shows after a
+failed retry, and never before any ask (a first resume in a call shows the mark only - a tap still asks); the resume's
+ask is a plain post after `onResume`, not "after the first frame" (an early `onDismissError` is what the 1 s retry is
+for).
+
+**What the device run must check** (§8.4 item 6, on the release candidate after both rounds merge; log tag
+`BootCover`):
+- (a) After `adb reboot` and `svc power reboot`: `Boot cover showWhenLocked true`, then `Boot cover asks for Android's
+  PIN pad (resumed, automatic 1 of 3)`; `dumpsys activity activities` shows the cover resumed on top with the keyguard
+  occluded, and the bouncer is BFU's ("PIN is required after device restarts"). No resume and no ask line while locked
+  = gate (a) failed: the fallback in design 59's F3 section holds, nothing to revert.
+- (a2) The pad keeps the cover resumed (focus only), as the rc.2 re-check measured for the glance: no `onStop` between
+  the ask and its answer. If the BFU bouncer stops the cover, each stop re-arms and every Back is followed by a new
+  automatic ask until the cap (3) - a finding for this rule, bounded, not a loop.
+- (b) The shade and QS pulled over the occluded BFU keyguard (no lock task): airplane, Wi-Fi, data, Bluetooth,
+  location tiles against SystemUI's own BFU face - not wider.
+- (c) N2: the colour overlays after an android-mode boot with the cover as the face.
+- §5's list: a reboot during a call (no ask while `isInManagedCall`, the read works BFU; the ask at the first resume
+  after the call), the pad's Emergency button (the dialer over the cover, back to the cover), power with the pad up
+  (the cancel not counted, the next screen-on asks), Back three times (the line, no loop; after 3 automatic asks only a
+  tap asks), then the PIN: `Boot cover showWhenLocked false` and F3's `Boot cover leaves (taken over, Home over it)`.
