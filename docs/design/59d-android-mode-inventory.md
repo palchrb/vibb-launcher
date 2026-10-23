@@ -429,3 +429,19 @@ needs a status field, both directories in one commit as always).
   counts 1 of the 3.
 - **Docs**: round 1 edits `launcher/CLAUDE.md`'s design 32 sentence and the notice-wake line; round 2 edits its
   16b/F3 bullet; different bullets, the second to merge rebases.
+
+### 8.6 Step J (the user, 2026-10-23): swipe up to unlock, the "Lås opp" button goes
+
+The user, testing rc.2: "skal vi ta vekk vår egen unlock knapp og heller også la vår låseskjerm bli swipet oppover
+så den er identisk med android sin egen låseskjerm i funksjonalitet?" Yes: the glance behaves as Android's face - a
+vertical swipe up anywhere on the page (not a row tap, not the music tile's controls; a fling of >= 48 dp upwards, or a
+drag past a third of the page) asks for Android's pad the way "Lås opp" does today (the ASK stage, step B); the
+"Lås opp" button goes; a small grey hint line at the bottom, "Sveip opp for å låse opp" / "Swipe up to unlock", in
+Android's style, replaces it. "Nødsamtale" stays. Own mode: the same swipe opens our keypad (the button goes there
+too; one behaviour, two gates). A bottom-edge swipe stays the system's (gesture navigation; lock task and the locked
+keyguard refuse it) - the glance's gesture starts above the edge inset. Pure plan: `glanceSwipeStep(dy, vy, started
+on a tappable)`; tests. Launcher, S. **After round 1 merges** (it edits `GlancePanel`/`LockGlance` too), before rc.3.
+
+Also noted from the same test: Android's "Return to call" on the pad does nothing for a WhatsApp call (self-managed
+Telecom calls have no in-call screen for `showInCallScreen` to bring up - the pad closes onto SystemUI's face). Not
+ours; our own `InCallActivity` answers it for telephony. Check Element X on the emulator once (§8.4 item 2).
