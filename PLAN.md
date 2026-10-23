@@ -861,7 +861,10 @@ findings, merge to `main`, full suite once.
   fornuftig" with the shade's "Vibb One" row):** Android requires the foreground service's notification; its content
   is ours. Make it a status line - connected/offline, the pause ("Pause til 17:00"), the rule in force or the next one
   ("Nattmodus fra 20:00"), screen time left - with a tap opening Kid Settings; still silent, still the quiet channel
-  (`QuietNotificationsTest`). Seen only unlocked (the shade is shut over the lock). Launcher, S; after rc.3.
+  (`QuietNotificationsTest`). Seen only unlocked (the shade is shut over the lock). The user's second thought (the
+  empty Quick Settings area above it - lock task disables QS wholesale and no API puts anything there): make this
+  the shade's first row, an ongoing card with the kid's few controls as actions (flashlight, silent/vibrate) beside
+  the status, so the shade is "status plus the two or three switches" from any app. Launcher, S; after rc.3.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
