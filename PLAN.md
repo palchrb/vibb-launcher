@@ -804,7 +804,11 @@ findings, merge to `main`, full suite once.
   QA on §8 first, then one implementer and one code QA, then `launcher-v0.36.0-rc.3` for the user's emulator. The
   plain lock with the small clock forced was re-measured first (`proto-plain-lock` 13d32d7d, 59c §7): Android already
   uses the small clock whenever a row or a media session is on the lock, so the room is unchanged - one row at 240
-  dpi, no media player; the hybrid stays.
+  dpi, no media player; the hybrid stays. Round 1 built (branch `d59d-round1`, 59d §8.6): C, N1, H, B (ASK; the page
+  under the pad, hidden only at the leave; Home unanimated on its own ground), E, and K (added by the user: Android's
+  lock wallpaper as the face = the glance's ground with its scrim). **G not built**: the mid-round capture
+  (`docs/testing/2026-10-23-d59d-g-capture.md`) found no chrome-pass write cancelling the pad - RC F2 was most likely
+  the relock's Home start, which step A queues now. Next: the code QA of round 1.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a

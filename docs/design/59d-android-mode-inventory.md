@@ -429,3 +429,53 @@ needs a status field, both directories in one commit as always).
   counts 1 of the 3.
 - **Docs**: round 1 edits `launcher/CLAUDE.md`'s design 32 sentence and the notice-wake line; round 2 edits its
   16b/F3 bullet; different bullets, the second to merge rebases.
+- **G (after its capture, 2026-10-23)**: not built. The capture (`docs/testing/2026-10-23-d59d-g-capture.md`) found no
+  chrome-pass DPM write cancelling the pad: four runs, kiosk off and on, the window's end 0-2.5 s after the tap -
+  packages, features and the relock all ran under the open pad, which stayed. RC F2's cancel was most likely the
+  relock's own Home start over the keyguard, which step A queues for Android's unlock now.
+
+### 8.6 As built (round 1, branch `d59d-round1`, 2026-10-23)
+
+Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/` and `lock/` unless named; every rule is face-only and
+own mode's rows are pinned unchanged.
+- **C** (`c327af5a`): `lockUpStarts(.., face)` - LOCK as the face whatever `kg` read (the read stays for `sawLocked`);
+  `LockEvent.ScreenOn(.., face, lockOnTop)` built in the screen receiver - the backstop skips a glance known to be on
+  top (`faceOnTop`), and that skip keeps the mark (`screenOnUnshown`), a call's skip clears it as before
+  (`PinLockState.kt`, `LockUpPlan.kt`, `PinLockRuntime.kt`; `PinLockStateTest`, `LockUpPlanTest`, one pin in
+  `KeyguardCoverPlanTest`'s lock-up test, not the round-2 one).
+- **N1** (`b2b2a97d`): the face's pause marks a probable SOS silently; the pause's check logs `SOS_MARK_LINE` only when
+  the mark still holds (`sosPauseMarkLogDue`, `RefrontPolicy.kt`); a stop logs at once as before (`AndroidLockFaceTest`).
+- **H** (`0a8cc3dd`): `lockLeave(.., androidFace)` - kiosk on, `homeFirst = startedLockTask || (glanceInFront &&
+  !(androidFace && callLive))`, `callLive` = `PinLockRuntime.callLiveNow` (`LockTaskRoot.kt`, `PinLockActivity.leave`;
+  `LockTaskRootTest`); `launcher/CLAUDE.md`'s design 32 sentence.
+- **B** (`729a9e2c`, follow-up `eec9ee20`): the `ASK` stage (`LockGlance.kt`: `glanceStageStep(.., face)`,
+  `GlanceStageEvent.OwnKeypad`; `GlancePanel(.., face = { AndroidLock.faceOn })`; `PinLockActivity.onStage`/`tapAsFace`/
+  `asking()`); `keypadIsAndroids` and `GlancePanel.androidPad` gone. **Deviation from §8.5**: `face` is read at each
+  stage step, not fixed at the panel's construction - the lock activity lives across screen-offs, and an apply that
+  turned the face on under a fixed `false` would have kept our keypad for hours. What is drawn (the user's refinements
+  from the rc.2 recording, via the coordinator): the page stays drawn under Android's pad (ASK shows); at the leave, as
+  the face and in front (`glanceLeaveHides`), the glance root's children go `INVISIBLE` (`glanceContentShown(leaving)`,
+  `GlancePanel.leaving`/`leaveRefused`, shown again at the next resume); Home starts with `HomeFront.bring(..,
+  noAnimation)` (ends the dark mark, hops to main; `HomeFrontTest` pins the two callers); the glance's own close is
+  `overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)` (59b's fade gone). Home on black (3 frames in the rc.2
+  recording: Android's wallpaper window not yet shown under Home's transparent window while the keyguard goes away):
+  a `noAnimation` start marks `HomeFront.ownGroundDue`, Home's next resume draws its own ground until it stops
+  (`ui/wallpaper/WallpaperGround.kt` `groundKind(.., ownGround)`, `ui/HomeActivity.kt`). Frames: before (the user's
+  rc.2 recording, 24 fps) ~8 frames of the full page, 3 of its slide, 3 of Home on black; after (this branch on
+  `handy36`, 24 fps, the default night wallpaper) 3 frames of the keyguard's dark going-away, 21 frames (~0.9 s, mostly
+  Home's own resume on the emulator) of the plain ground, then Home filling in over 3 frames on its own ground - no
+  page content, no slide, no black frame. The user re-records on rc.3.
+- **E** (`c2bcbc23`): `noticeWakeOffDue(.., face)` false as the face (`NoticeWakePlan.kt`, `LockWakeTest`);
+  `launcher/CLAUDE.md`'s notice-wake line; design 59's open question 3 closed.
+- **K** (added by the user during the round; `acc306aa`, revised `d033537b`): as the face, Android's lock wallpaper is
+  the glance's own ground - `lockScreenFill(home, androidFace, glance)` with `GlanceGround` (`lockWallpaper`'s choice and
+  the glance's scrim, `lockScreenScrim`, baked into the lock bitmap in `WallpaperApplier.setBoth`); the night mark only
+  while no ground is known. The apply key carries the lock fill and a `lockscrim=` part (own-mode keys unchanged), so a
+  new ground, opt-in, scrim or mode re-applies; `AndroidLock.face`'s edges call `WallpaperStore.faceChanged`
+  (`ui/wallpaper/Wallpapers.kt`, `WallpaperApplyPlan.kt`, `WallpaperApplier.kt`, `WallpaperStore.kt`;
+  `WallpapersTest`). The first version (`acc306aa`, the night mark before the opt-in) was replaced by the user's answer.
+- **G**: not built - §8.5 above and `docs/testing/2026-10-23-d59d-g-capture.md`.
+- Not touched (round 2's): `BootCover*.kt`, `BootCoverManifestTest`, `KeyguardCoverPlanTest`'s "requestDismissKeyguard
+  only in the lock". Left stale for a doc pass (only two `launcher/CLAUDE.md` lines were this round's): the 59b bullets
+  there naming `glancePageShown`'s pad input, `GlancePanel.androidPad`, the close fade and the night-mark lock
+  wallpaper.
