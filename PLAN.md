@@ -831,6 +831,12 @@ findings, merge to `main`, full suite once.
   notifications) granted silently by the device owner before the first start; the sensor ones (camera, microphone,
   background location, body sensors) can't be granted silently since Android 12 - shown as "approve on the phone",
   and deniable per app from the same row. S-M.
+- **PWA tab switches feel slow at times (the user, 2026-10-23):** the PWA is server-rendered, so a tab is a round trip
+  plus the Pi's render. First find out where the time goes: a render-time log line per admin page (route, ms) and the
+  user checks `tailscale status` for relay vs direct. Then, if it is the round trip: prefetch the four other tabs after
+  a page settles (same session, `fetch` with low priority into the HTTP cache - no offline caching, the service worker
+  stays install-only); if it is the render: the slow page's queries. Server, S; after rc.3, with the avatar upload and
+  the screen-capture switch.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
