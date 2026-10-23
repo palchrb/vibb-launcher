@@ -215,6 +215,17 @@ body {
     position: relative;
 }
 
+/* The installed iPhone app (the user, 2026-10-23: the tab bar sat 59 pt too high after re-adding the
+   app with the black-translucent status bar): in standalone mode there is no toolbar, and iOS 26
+   reports the dynamic viewport (100dvh, innerHeight) short by exactly the top inset with that
+   status bar (WebKit 301108), while 100vh is the screen. So the shell is 100vh there, which is
+   right by construction - no toolbar can change it - whether or not WebKit fixes the bug. */
+@media (display-mode: standalone) {
+    body {
+        height: 100vh;
+    }
+}
+
 /* Night behind the status bar on every page (the user, 2026-10-22): the installed iPhone app's
    status bar is black-translucent (head.html) - the page runs under it and iOS draws white text on
    whatever is there - so the top inset is vibb's night in both schemes. Absolute in the body, which
@@ -2313,6 +2324,9 @@ details.app-display[open] > summary .section-chev {
 .bell-count { position: absolute; top: 4px; left: 24px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--count-bg); color: #FFFFFF; font-size: 0.6875rem; font-weight: 700; line-height: 18px; text-align: center; }
 /* The inbox: a row is a form's button; unread is bold with a blue dot. */
 .inbox-row { cursor: pointer; }
+/* A hovered inbox row (a desktop pointer) is a row, not a filled button: the generic button:hover
+   would paint it --strong-hover with the grey .row-sub unreadable on it (the user, 2026-10-23). */
+.inbox-row:hover { background: var(--row-active); color: var(--label); }
 .inbox-unread .inbox-title { font-weight: 600; }
 .unread-dot { display: inline-block; width: 8px; height: 8px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--tint); vertical-align: middle; }
 /* Web Push (step 2): an inbox row's delivery line, the subscribed devices' badges, This Device's

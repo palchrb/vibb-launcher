@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.lock
 
 import android.app.Activity
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
@@ -12,11 +13,19 @@ import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.os.UserManager
 import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.WindowInsets
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.TextView
 import com.kidslauncher.mdm.R
 
 /**
@@ -37,13 +46,19 @@ import com.kidslauncher.mdm.R
  *   at once, to HomeActivity, HOME-typed (QA #8, qa-16b-code #1: AMS alone removes it only with the
  *   PACKAGE_CHANGED broadcast, deferred up to 10 s right after boot).
  *
- * Design 59 F3, android mode ([BootCoverGuard.androidMode]): behind Android's keyguard before the PIN (never
- * showWhenLocked), it is what the PIN's dismissal reveals, and it waits for our main process instead of the 3 s:
+ * Design 59 F3, android mode ([BootCoverGuard.androidMode]): before the PIN the BFU face over the keyguard while the
+ * pad gate holds (59d step F, below), else behind it; it is what the PIN's dismissal reveals, and it waits for our main process instead of the 3 s:
  * that process disables it right before the boot's typed Home start, and the cover leaves once our Home is over it
  * (its stop) - never earlier, since below it may be the stock launcher a boot without `ACTION_SHUTDOWN` started.
  * Never stranded: taken over and still in front it starts our Home itself, then leaves [COVER_TAKEOVER_GRACE_MS] after
  * the take-over, and with no take-over
  * [COVER_LAUNCHER_WAIT_MS] after the unlock it hands over by itself and starts our Home ([coverWaitStep]).
+ *
+ * Design 59d step F (§5, §8.3): while the pad gate holds ([padGate]: the android marker and the user still locked) it
+ * is showWhenLocked at runtime ([applyLockedFace]) - the BFU face, the mark on the night ground - and it only *asks*
+ * for Android's PIN pad ([askPad], `requestDismissKeyguard`) by [bootPadStep]; after a cancel "Trykk for å låse opp"
+ * shows under the mark and a tap asks. It dismisses nothing itself, and once unlocked it drops the flag and runs F3's
+ * wait above. Without the gate (own mode, unlocked) it is the F3/16b cover as before.
  */
 class BootCoverActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
@@ -72,6 +87,27 @@ class BootCoverActivity : Activity() {
     private var finishedInFront = false
     private val waitTick = Runnable { waitStep(visible = true) }
 
+    /** Step F: the pad rule's state ([bootPadStep]); its count lives in [autoAsksThisProcess]. */
+    private var pad = BootPad(autoAsks = autoAsksThisProcess)
+
+    /** Step F: the current ask's id - an answer of an earlier one is dropped. */
+    private var askId = 0
+
+    /** Step F: what [applyLockedFace] last set. */
+    private var showsWhenLocked = false
+
+    /** Step F: "Trykk for å låse opp" under the mark. */
+    private var tapLine: TextView? = null
+    private val padRetry = Runnable { padStep(PadEvent.RETRY) }
+
+    /** F59d-6: the content root (the tap target, its TalkBack label) and the bottom system-bar inset for the line. */
+    private var root: FrameLayout? = null
+    private var insetBottom = 0
+
+    /** F59d-1: Back on the BFU face does nothing - the cover is HOME, not LAUNCHER, so the default Back finishes it and
+     * SystemUI's face shows until HOME resolves to a new cover. Registered only while the flag is on. */
+    private val backOnFace = OnBackInvokedCallback { Log.i(LOG_TAG, "Boot cover: Back on the BFU face, held") }
+
     private val loop = object : Animatable2.AnimationCallback() {
         override fun onAnimationEnd(drawable: Drawable?) {
             // Not while paused or under Home (qa-16b-code #4).
@@ -95,11 +131,39 @@ class BootCoverActivity : Activity() {
             importantForAccessibility = ImageView.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         waitForLauncher = BootCoverGuard.androidMode(this)
+        applyLockedFace()
         logo = image.drawable as? AnimatedVectorDrawable
         logo?.registerAnimationCallback(loop)
-        setContentView(FrameLayout(this).apply { addView(image, FrameLayout.LayoutParams(-1, -1)) })
+        val line = tapLineView()
+        tapLine = line
+        val content = FrameLayout(this).apply {
+            addView(image, FrameLayout.LayoutParams(-1, -1))
+            addView(
+                line,
+                FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                    leftMargin = dp(TAP_LINE_SIDE_DP)
+                    rightMargin = dp(TAP_LINE_SIDE_DP)
+                },
+            )
+            // Step F: a tap reaching the cover means no pad is over it - ask (bootPadStep; nothing without the gate).
+            setOnClickListener { padStep(PadEvent.TAPPED) }
+            setOnApplyWindowInsetsListener { _, insets ->
+                insetBottom = insets.getInsets(WindowInsets.Type.systemBars()).bottom
+                placeTapLine()
+                insets
+            }
+        }
+        val relayout = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> placeTapLine() }
+        content.addOnLayoutChangeListener(relayout)
+        line.addOnLayoutChangeListener(relayout)
+        root = content
+        setContentView(content)
+        faceViews(showsWhenLocked)
         val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) = scheduleHandOver()
+            override fun onReceive(context: Context, intent: Intent) {
+                applyLockedFace()
+                scheduleHandOver()
+            }
         }
         unlockReceiver = receiver
         registerReceiver(receiver, IntentFilter(Intent.ACTION_USER_UNLOCKED), Context.RECEIVER_NOT_EXPORTED)
@@ -116,11 +180,17 @@ class BootCoverActivity : Activity() {
         }
         logo?.start()
         scheduleHandOver()
+        // Step F: the gate read again at every resume (the flag drops once unlocked), then the resume's ask, posted
+        // past the resume. A retry the pause dropped is posted again.
+        applyLockedFace()
+        handler.post { if (resumed) padStep(PadEvent.RESUMED) }
+        if (pad.retryDue) handler.postDelayed(padRetry, BOOT_PAD_RETRY_MS)
     }
 
     /** F3: stopped while taken over = our Home (or a call) is over the cover - leaving reveals nothing. */
     override fun onStop() {
         if (waitForLauncher && !isFinishing) waitStep(visible = false)
+        padStep(PadEvent.STOPPED)
         super.onStop()
     }
 
@@ -192,6 +262,8 @@ class BootCoverActivity : Activity() {
         if (disabled && disabledAtElapsed < 0) disabledAtElapsed = now
         val unlockedFor = if (unlockedAtElapsed < 0) 0L else now - unlockedAtElapsed
         val disabledFor = if (disabledAtElapsed < 0) 0L else now - disabledAtElapsed
+        // Step F: never showWhenLocked once unlocked - this poll (every 250 ms in front) bounds the receiver's delay.
+        if (unlocked) applyLockedFace()
         val callLive = unlocked && telecomInCall()
         when (coverWaitStep(unlocked, disabled, visible, unlockedFor, disabledFor, homeStarted, callLive)) {
             CoverStep.STAY -> Unit
@@ -226,6 +298,123 @@ class BootCoverActivity : Activity() {
             handler.postDelayed(waitTick, COVER_WAIT_POLL_MS)
         }
     }
+
+    /**
+     * Step F's gate ([bootPadGate]): the android marker - read at create ([waitForLauncher]) and again now - and the user
+     * still locked. An unreadable unlock state counts as unlocked (the cover stays inert). Never throws.
+     */
+    private fun padGate(): Boolean = try {
+        bootPadGate(
+            androidMarker = waitForLauncher && BootCoverGuard.androidMode(this),
+            unlocked = getSystemService(UserManager::class.java)?.isUserUnlocked != false,
+        )
+    } catch (e: Exception) {
+        false
+    }
+
+    /** Step F: showWhenLocked exactly while [padGate] holds - at create, every resume, the unlock and every pad step;
+     * never once the user is unlocked. Runtime only: the manifest has no flag (BootCoverManifestTest). */
+    private fun applyLockedFace() {
+        val show = padGate()
+        faceViews(show)
+        if (show == showsWhenLocked) return
+        showsWhenLocked = show
+        setShowWhenLocked(show)
+        holdBack(show)
+        Log.i(LOG_TAG, "Boot cover showWhenLocked $show")
+    }
+
+    /** F59d-1: Back is held while the cover is the BFU face, and the default (finish) again once it isn't. */
+    private fun holdBack(hold: Boolean) {
+        try {
+            if (hold) {
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, backOnFace)
+            } else {
+                onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backOnFace)
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover couldn't change its Back: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** F59d-3/6: without the gate the line is hidden and the root is no tap target or TalkBack node (own mode, F3's wait
+     * after the unlock); with it the root is the tap with the line's words as its label. */
+    private fun faceViews(face: Boolean) {
+        if (!face) tapLine?.visibility = View.GONE
+        root?.apply {
+            isClickable = face
+            contentDescription = if (face) getString(R.string.boot_cover_tap_to_unlock) else null
+            importantForAccessibility = if (face) View.IMPORTANT_FOR_ACCESSIBILITY_YES else View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+    }
+
+    /** F59d-6: the line under the mark, but above the navigation bar ([tapLineTopPx]). */
+    private fun placeTapLine() {
+        val content = root ?: return
+        val line = tapLine ?: return
+        if (content.height <= 0) return
+        val top = tapLineTopPx(content.height, line.height, insetBottom, dp(TAP_LINE_OFFSET_DP), dp(TAP_LINE_GAP_DP))
+        line.translationY = (top - line.top).toFloat()
+    }
+
+    /** Step F: one pass of [bootPadStep] with the gate, the screen and Telecom read now; the Activity only acts on it. */
+    private fun padStep(event: PadEvent) {
+        val gate = padGate()
+        applyLockedFace()
+        val interactive = getSystemService(PowerManager::class.java)?.isInteractive == true
+        val inCall = gate && telecomInCall()
+        val step = bootPadStep(pad, event, gate, interactive, inCall)
+        pad = step.pad
+        autoAsksThisProcess = pad.autoAsks
+        tapLine?.visibility = if (gate && pad.line) View.VISIBLE else View.GONE
+        when (step.action) {
+            PadAction.ASK -> askPad(event)
+            PadAction.RETRY_LATER -> {
+                handler.removeCallbacks(padRetry)
+                handler.postDelayed(padRetry, BOOT_PAD_RETRY_MS)
+            }
+            PadAction.NONE -> Unit
+        }
+    }
+
+    /** Step F: ask for Android's PIN pad (the BFU bouncer) - the gate read again first. It only asks; the answer goes
+     * back through [padStep], an earlier ask's answer is dropped by its id. */
+    private fun askPad(why: PadEvent) {
+        if (!padGate()) return
+        val id = ++askId
+        Log.i(LOG_TAG, "Boot cover asks for Android's PIN pad (${why.name.lowercase()}, automatic ${pad.autoAsks} of $BOOT_PAD_AUTO_ASKS)")
+        try {
+            getSystemService(KeyguardManager::class.java)?.requestDismissKeyguard(
+                this,
+                object : KeyguardManager.KeyguardDismissCallback() {
+                    override fun onDismissSucceeded() = padAnswer(id, PadEvent.SUCCEEDED)
+                    override fun onDismissCancelled() = padAnswer(id, PadEvent.CANCELLED)
+                    override fun onDismissError() = padAnswer(id, PadEvent.ERROR)
+                },
+            )
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Boot cover's ask failed: ${e.javaClass.simpleName}")
+            padAnswer(id, PadEvent.ERROR)
+        }
+    }
+
+    private fun padAnswer(id: Int, event: PadEvent) {
+        if (id != askId || isDestroyed) return
+        Log.i(LOG_TAG, "Boot cover: Android's PIN pad ${event.name.lowercase()}")
+        padStep(event)
+    }
+
+    /** Step F: "Trykk for å låse opp" - APK resources only (the framework font call, no AppCompat). */
+    private fun tapLineView() = TextView(this).apply {
+        setText(R.string.boot_cover_tap_to_unlock)
+        setTextColor(getColor(R.color.kid_ink_dim))
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, TAP_LINE_SP)
+        gravity = Gravity.CENTER
+        typeface = runCatching { resources.getFont(R.font.nunito_semibold) }.getOrNull()
+        visibility = View.GONE
+    }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     /** Telecom's view of a call (the cover's process can't see our in-call service): `isInManagedCall` (the lock's
      * rule, VoipCallGuardTest), else the audio mode,
@@ -268,6 +457,17 @@ class BootCoverActivity : Activity() {
         private const val BREATH_PAUSE_MS = 700L
 
         private const val HAND_OVER_RETRY_MS = 200L
+
+        /** Step F: the line's top below the screen's centre (under the 288 dp mark), its size, its side margins and
+         * its least gap above the navigation bar (F59d-6). */
+        private const val TAP_LINE_OFFSET_DP = 156
+        private const val TAP_LINE_SP = 18f
+        private const val TAP_LINE_SIDE_DP = 24
+        private const val TAP_LINE_GAP_DP = 16
+
+        /** Step F: automatic asks in this `:bootcover` process (§8.3: per process, in memory) - a new cover instance
+         * in the same process carries the count on. Main thread only. */
+        private var autoAsksThisProcess = 0
 
         fun component(context: Context) = ComponentName(context, BootCoverActivity::class.java)
     }

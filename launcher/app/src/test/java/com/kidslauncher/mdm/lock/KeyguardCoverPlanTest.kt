@@ -401,7 +401,9 @@ class KeyguardCoverPlanTest {
         // qa-32-s2-code L1: Home's boot dismissal is gone - Home sleeps behind an un-occluded keyguard;
         // the process start's DISABLED write dismisses it instead (M2).
         val callers = mainSources.filter { code(it).contains("requestDismissKeyguard(") }.map { it.name }.sorted()
-        assertEquals(listOf("PinLockActivity.kt"), callers)
+        assertEquals(listOf("BootCoverActivity.kt", "PinLockActivity.kt"), callers)
+        // Design 59d step F: the boot cover asks once, behind its gate (BootCoverManifestTest pins the body).
+        assertEquals(1, Regex("requestDismissKeyguard\\(").findAll(code("$lock/BootCoverActivity.kt")).count())
         val lockActivity = code("$lock/PinLockActivity.kt")
         // The cover's, and design 59's "Lås opp" as Android's face (Android's PIN pad).
         assertEquals(2, Regex("requestDismissKeyguard\\(").findAll(lockActivity).count())

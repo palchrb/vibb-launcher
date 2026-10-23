@@ -222,4 +222,140 @@ class BootCoverPlanTest {
         assertFalse(isBootCoverProcess("me.vibb.launcher"))
         assertFalse(isBootCoverProcess(null))
     }
+
+    // ---- Design 59d step F: the cover as the BFU face (bootPadGate, bootPadStep) ---------------------------------
+
+    /** Runs [events] from [start] with the screen on, no call and the gate open unless a step says otherwise. */
+    private fun pad(start: BootPad = BootPad(), vararg events: PadEvent, interactive: Boolean = true, inCall: Boolean = false): Pair<BootPad, List<PadAction>> {
+        var state = start
+        val actions = events.map { e -> bootPadStep(state, e, gate = true, interactive = interactive, inCall = inCall).also { state = it.pad }.action }
+        return state to actions
+    }
+
+    @Test
+    fun `the gate is the android marker with the user still locked, and nothing asks without it`() {
+        assertTrue(bootPadGate(androidMarker = true, unlocked = false))
+        assertFalse("own mode (16b's switch, an Android credential of its own)", bootPadGate(androidMarker = false, unlocked = false))
+        assertFalse("never showWhenLocked once isUserUnlocked", bootPadGate(androidMarker = true, unlocked = true))
+        val open = BootPad(open = true, retryDue = true)
+        for (event in PadEvent.entries) {
+            val step = bootPadStep(BootPad(), event, gate = false, interactive = true, inCall = false)
+            assertEquals(event.name, PadAction.NONE, step.action)
+            assertEquals(event.name, PadStep(BootPad(), PadAction.NONE), step)
+            assertEquals(PadAction.NONE, bootPadStep(open, event, gate = false, interactive = true, inCall = false).action)
+        }
+    }
+
+    @Test
+    fun `one automatic ask per resume after a stop - a cancel waits for the next stop`() {
+        val (asked, first) = pad(BootPad(), PadEvent.RESUMED)
+        assertEquals(listOf(PadAction.ASK), first)
+        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = true), asked)
+        // Cancelled (Back): the line, and resumes without a stop never ask again - no loop.
+        val (cancelled, again) = pad(asked, PadEvent.CANCELLED, PadEvent.RESUMED, PadEvent.RESUMED)
+        assertEquals(listOf(PadAction.NONE, PadAction.NONE, PadAction.NONE), again)
+        assertTrue(cancelled.line)
+        assertEquals(1, cancelled.autoAsks)
+        // A stop arms the next resume.
+        assertEquals(listOf(PadAction.NONE, PadAction.ASK), pad(cancelled, PadEvent.STOPPED, PadEvent.RESUMED).second)
+        // Not with the screen off, nor with an ask open.
+        assertEquals(listOf(PadAction.NONE), pad(BootPad(), PadEvent.RESUMED, interactive = false).second)
+        assertEquals(PadAction.NONE, bootPadStep(BootPad(open = true), PadEvent.RESUMED, true, true, false).action)
+    }
+
+    @Test
+    fun `no automatic ask in a call, the arm kept for the first resume after it - a tap still asks`() {
+        val (inCall, actions) = pad(BootPad(), PadEvent.RESUMED, inCall = true)
+        assertEquals(listOf(PadAction.NONE), actions)
+        assertEquals("the arm kept, the hint shown (F59d-2 a)", BootPad(line = true), inCall)
+        assertEquals(listOf(PadAction.ASK), pad(inCall, PadEvent.RESUMED).second)
+        val (tapped, tap) = pad(inCall, PadEvent.TAPPED, inCall = true)
+        assertEquals(listOf(PadAction.ASK), tap)
+        assertEquals("a tap is never counted", 0, tapped.autoAsks)
+        assertFalse(tapped.auto)
+    }
+
+    @Test
+    fun `at most three automatic asks per process, then only taps`() {
+        var state = BootPad()
+        repeat(BOOT_PAD_AUTO_ASKS) {
+            val (next, actions) = pad(state, PadEvent.RESUMED, PadEvent.CANCELLED, PadEvent.STOPPED)
+            assertEquals(PadAction.ASK, actions.first())
+            state = next
+        }
+        assertEquals(3, state.autoAsks)
+        assertEquals(listOf(PadAction.NONE), pad(state, PadEvent.RESUMED).second)
+        assertEquals(listOf(PadAction.ASK), pad(state, PadEvent.TAPPED).second)
+        // The count is the process's: a new cover instance carries it in.
+        assertEquals(listOf(PadAction.NONE), pad(BootPad(autoAsks = 3), PadEvent.RESUMED).second)
+    }
+
+    @Test
+    fun `an error is asked again once a second later, the pair counting once`() {
+        val (retrying, actions) = pad(BootPad(), PadEvent.RESUMED, PadEvent.ERROR)
+        assertEquals(listOf(PadAction.ASK, PadAction.RETRY_LATER), actions)
+        assertEquals(1_000L, BOOT_PAD_RETRY_MS)
+        assertTrue(retrying.retryDue)
+        assertFalse(retrying.line)
+        val (second, retry) = pad(retrying, PadEvent.RETRY, PadEvent.ERROR)
+        assertEquals(listOf(PadAction.ASK, PadAction.NONE), retry)
+        assertEquals("the retry is the same ask", 1, second.autoAsks)
+        assertTrue("a second error ends the ask with the line", second.line)
+        // The retry needs the screen on, and an automatic ask's retry no call; a tap's goes in a call.
+        assertEquals(PadAction.NONE, bootPadStep(retrying, PadEvent.RETRY, gate = true, interactive = false, inCall = false).action)
+        assertEquals(PadAction.NONE, bootPadStep(retrying, PadEvent.RETRY, gate = true, interactive = true, inCall = true).action)
+        val tapRetry = pad(BootPad(), PadEvent.TAPPED, PadEvent.ERROR).first
+        assertEquals(PadAction.ASK, bootPadStep(tapRetry, PadEvent.RETRY, gate = true, interactive = true, inCall = true).action)
+        // A stop drops a retry still due (the next resume asks anew).
+        assertFalse(pad(retrying, PadEvent.STOPPED).first.retryDue)
+        assertEquals(listOf(PadAction.NONE), pad(pad(retrying, PadEvent.STOPPED).first, PadEvent.RETRY).second)
+    }
+
+    @Test
+    fun `a cancel with the screen off isn't counted - the screen-on's resume asks again`() {
+        val asked = pad(BootPad(), PadEvent.RESUMED).first
+        // Power with the pad up: the bouncer goes at the sleep, the cover stops.
+        val (slept, _) = pad(asked, PadEvent.CANCELLED, PadEvent.STOPPED, interactive = false)
+        assertEquals(0, slept.autoAsks)
+        assertEquals(listOf(PadAction.ASK), pad(slept, PadEvent.RESUMED).second)
+        // The stop first, the cancel after: the stop closes the ask uncounted, the late answer changes nothing.
+        val (stopped, _) = pad(asked, PadEvent.STOPPED, PadEvent.CANCELLED, interactive = false)
+        assertEquals(BootPad(autoAsks = 0, armed = true, open = false, auto = true, line = true), stopped)
+        // A cancel with the screen on counts.
+        assertEquals(1, pad(asked, PadEvent.CANCELLED).first.autoAsks)
+        // A success closes the ask and hides the line (F59d-3; CE's unlock does the rest); a late success changes nothing.
+        assertEquals(asked.copy(open = false), pad(asked, PadEvent.SUCCEEDED).first)
+        assertFalse(pad(asked.copy(line = true), PadEvent.SUCCEEDED).first.line)
+        assertEquals(PadStep(BootPad(), PadAction.NONE), bootPadStep(BootPad(), PadEvent.SUCCEEDED, true, true, false))
+    }
+
+    @Test
+    fun `the face is never left bare with no pad coming (qa-59d-f-code F59d-2)`() {
+        // (a) a resume held back by a call, (c) a new instance after the cap: the hint.
+        assertTrue(pad(BootPad(), PadEvent.RESUMED, inCall = true).first.line)
+        assertTrue(pad(BootPad(autoAsks = BOOT_PAD_AUTO_ASKS), PadEvent.RESUMED).first.line)
+        // (b) a stop that closes an open ask with the screen on: its late cancel can't show the line any more.
+        val asked = pad(BootPad(), PadEvent.RESUMED).first
+        val (stopped, _) = pad(asked, PadEvent.STOPPED, PadEvent.CANCELLED)
+        assertTrue(stopped.line)
+        // Not while an ask is out, and not before a first resume that asks.
+        assertFalse(pad(BootPad(open = true), PadEvent.RESUMED).first.line)
+        assertFalse(asked.line)
+    }
+
+    @Test
+    fun `a tap asks over an ask still marked open, uncounted (F59d-4)`() {
+        val step = bootPadStep(BootPad(autoAsks = 1, armed = false, open = true, auto = true), PadEvent.TAPPED, gate = true, interactive = true, inCall = false)
+        assertEquals(PadAction.ASK, step.action)
+        assertEquals(BootPad(autoAsks = 1, armed = false, open = true, auto = false), step.pad)
+    }
+
+    @Test
+    fun `the hint line sits under the mark, but above the navigation bar (F59d-6)`() {
+        // 569 dp tall at 1 px/dp, 48 dp navigation, 16 dp gap, 156 dp under the centre.
+        assertEquals(284 + 156, tapLineTopPx(heightPx = 569, lineHeightPx = 25, insetBottomPx = 48, offsetPx = 156, gapPx = 16))
+        // Two lines at font scale 2.0 (~98 dp) move up to stay above the bar.
+        assertEquals(569 - 48 - 16 - 98, tapLineTopPx(569, 98, 48, 156, 16))
+        assertEquals(0, tapLineTopPx(100, 400, 48, 156, 16))
+    }
 }

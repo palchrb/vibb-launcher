@@ -288,6 +288,8 @@
     <string name="home_call_with">Samtale med %1$s</string>
     <string name="home_call_ongoing">Samtale pågår</string>
     <string name="home_call_back">Trykk for å gå tilbake</string>
+    <!-- The boot cover as the BFU face (design 59d step F): under the mark once Android's PIN pad was cancelled. -->
+    <string name="boot_cover_tap_to_unlock">Trykk for å låse opp</string>
     <!-- Vibb music (design 21 step 4): Home's card, the lock's media view and its keypad stage. -->
     <string name="music_now_playing">Spilles nå</string>
     <string name="music_time_of">%1$s av %2$s</string>
