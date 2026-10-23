@@ -23,6 +23,8 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     DNS_CUSTOM_CAPABILITY,
     BATTERY_CAPABILITY,
     INSTALL_NOW_CAPABILITY,
+    // The RC-to-RC fix: a same-code release under a newer name installs (launcherBuildAhead).
+    SAME_CODE_UPDATE_CAPABILITY,
     POWER_CAPABILITY,
     com.kidslauncher.mdm.music.STORYTEL_JWT_CAPABILITY,
     // Design 59 step 4: claimed only with `set_kid_pin`'s handler (Q59-13) - the server then sends this phone the PIN.

@@ -174,6 +174,22 @@ class BootCoverPlanTest {
         assertFalse(coverGuardClearDue(null, 36_000_001L, false, true))
     }
 
+    /** qa-rc-to-rc-code R2R-6: every RC of one version shares a code, so the name counts too. */
+    @Test
+    fun `a tripped guard gets one more try after an RC over an RC of the same code`() {
+        val rc1 = coverCrashed(coverCrashed(null, 41, 35_999L, "0.36.0-rc.1"), 41, 35_999L, "0.36.0-rc.1")
+        assertTrue(coverGuardTripped(rc1))
+        assertEquals("0.36.0-rc.1", rc1.trippedVersionName)
+        assertEquals("a later crash keeps the tripping build", "0.36.0-rc.1", coverCrashed(rc1, 42, 35_999L, "0.36.0-rc.2").trippedVersionName)
+        assertEquals(rc1, decodeCoverRecord(encodeCoverRecord(rc1)))
+        assertTrue("rc.2 over rc.1", coverGuardClearDue(rc1, 35_999L, false, false, "0.36.0-rc.2"))
+        assertFalse("the same build", coverGuardClearDue(rc1, 35_999L, false, false, "0.36.0-rc.1"))
+        assertFalse("no name now: by the code", coverGuardClearDue(rc1, 35_999L, false, false, null))
+        assertFalse("a trip without a name: by the code", coverGuardClearDue(rc1.copy(trippedVersionName = null), 35_999L, false, false, "0.36.0-rc.2"))
+        // An older record (no trip_version_name line) still decodes.
+        assertEquals(null, decodeCoverRecord("v=1\nboot=41\ncrashes=2\ntripped=true\ntrip_version=35999\n")?.trippedVersionName)
+    }
+
     @Test
     fun `F3C-7 - its own hand-over starts Home after a few failed disables`() {
         assertTrue(coverHandOverStartsHome(disabledReadBack = true, failedTries = 0))

@@ -181,7 +181,9 @@ jobs:
       # (launcher SelfUpdatePlan.kt launcherBuildAhead, server install_now::build_ahead) take a
       # release as ahead of the running build when its code is higher, or the code is equal and
       # its versionName (the tag minus launcher-v) is another, newer one: rc.2 over rc.1 and
-      # 0.36.1-rc.1 over 0.36.0, never rc.1 over rc.2; same code and same name is already running.
+      # 0.36.1-rc.1 over 0.36.0, never rc.1 over rc.2; two names that can't be ordered count as ahead;
+      # same code and same name is already running. The server offers a same-code release only to a
+      # launcher whose report claims same_code_update_v1 (older ones decide by the code alone).
       run: |
         tag="$GITHUB_REF_NAME"
         if [[ "$tag" =~ ^launcher-v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then

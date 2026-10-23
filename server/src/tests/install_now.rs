@@ -197,6 +197,67 @@ async fn install_now_queues_one_command_with_the_tag_and_the_pop_sends_it() {
     assert!(ring.get("release_tag").is_none(), "{ring}");
 }
 
+/// R2R-1: an RC over an RC of one version (the same code) is offered only to a launcher that
+/// claims `same_code_update_v1` in its report; one from before the fix reads "Install Now works
+/// from this update on." and a tap answers `too_old`.
+#[tokio::test]
+async fn the_same_code_under_a_newer_name_is_offered_only_with_the_capability() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let launcher = launcher(&app).await;
+    sqlx::query(
+        "UPDATE tracked_apps SET latest_release_tag = 'launcher-v0.36.0-rc.3' WHERE id = ?",
+    )
+    .bind(launcher)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let rc2 = |caps: Value| json!({ "app_version": "0.36.0-rc.2", "capabilities": caps });
+    let (pre_fix, token) = app.enrolled_device("PreFix").await;
+    report(
+        &app,
+        &token,
+        35_999,
+        true,
+        rc2(json!(["command_receipt_v1", "install_now_v1"])),
+    )
+    .await;
+    let (fixed, token) = app.enrolled_device("Fixed").await;
+    report(
+        &app,
+        &token,
+        35_999,
+        true,
+        rc2(json!([
+            "command_receipt_v1",
+            "install_now_v1",
+            "same_code_update_v1"
+        ])),
+    )
+    .await;
+
+    let page = app
+        .get_page(&format!("/apps/tracked/{launcher}"), &cookie)
+        .await
+        .text();
+    let old = row(&page, pre_fix);
+    assert!(
+        old.contains("0.36.0-rc.3 is waiting. Install Now works from this update on."),
+        "{old}"
+    );
+    assert!(!old.contains(">Install Now</button>"), "{old}");
+    let new = row(&page, fixed);
+    assert!(new.contains("0.36.0-rc.3 not downloaded yet"), "{new}");
+    assert!(new.contains(">Install Now</button>"), "{new}");
+
+    let refused = post(&app, &cookie, &install_uri(launcher, pre_fix)).await;
+    assert!(refused.location().unwrap().contains("install=too_old"));
+    assert!(commands(&app, pre_fix).await.is_empty());
+    let queued = post(&app, &cookie, &install_uri(launcher, fixed)).await;
+    assert!(!queued.location().unwrap().contains("install=too_old"));
+    assert_eq!(commands(&app, fixed).await.len(), 1);
+}
+
 #[tokio::test]
 async fn every_refusal_lands_on_an_element_the_page_renders() {
     let app = TestApp::new().await;

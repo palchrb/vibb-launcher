@@ -77,7 +77,8 @@ object BootCover {
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_WANTED, wanted).putBoolean(KEY_SWITCH, switchOn).commit()
         // The switch off clears a tripped crash guard: on again = one more try (qa-16b-code #2). F3C-3: so does an
         // update since the trip or the switch's off -> on edge, in every mode (android mode keeps `wanted` true).
-        if (!wanted || coverGuardClearDue(BootCoverGuard.read(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong(), switchWas, switchOn)) {
+        // R2R-6: the versionName too - an RC over an RC of one version keeps the code.
+        if (!wanted || coverGuardClearDue(BootCoverGuard.read(app), com.kidslauncher.mdm.BuildConfig.VERSION_CODE.toLong(), switchWas, switchOn, com.kidslauncher.mdm.BuildConfig.VERSION_NAME)) {
             BootCoverGuard.clear(app)
         }
         // F3: the device-protected marker the cover and the locked boot read (no CE before the PIN).

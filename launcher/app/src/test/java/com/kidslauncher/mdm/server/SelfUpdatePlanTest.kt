@@ -265,6 +265,9 @@ class SelfUpdatePlanTest {
         assertEquals("the same build", false, launcherBuildAhead(35_999, "0.36.0-rc.1", 35_999, "0.36.0-rc.1"))
         assertEquals("rc.1 over rc.2", false, launcherBuildAhead(35_999, "0.36.0-rc.1", 35_999, "0.36.0-rc.2"))
         assertEquals("the release over the next version's rc", false, launcherBuildAhead(36_000, "0.36.0", 36_000, "0.36.1-rc.1"))
+        // An RC sorts before its own release (qa-rc-to-rc-code R2R-2).
+        assertEquals(true, launcherBuildAhead(5, "0.36.0", 5, "0.36.0-rc.2"))
+        assertEquals(false, launcherBuildAhead(5, "0.36.0-rc.2", 5, "0.36.0"))
         assertEquals("names that can't be ordered but differ", true, launcherBuildAhead(5, "0.36.0-rc.2", 5, "local"))
         assertEquals("an unknown name is the running build", false, launcherBuildAhead(35_999, null, 35_999, "0.36.0-rc.1"))
         assertEquals(false, launcherBuildAhead(35_999, "0.36.0-rc.2", 35_999, null))

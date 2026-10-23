@@ -390,6 +390,12 @@ fun screenOffForMs(offSinceElapsed: Long?, screenEventSeen: Boolean, processStar
 /** Status-report capability of a launcher that runs Install Now. */
 const val INSTALL_NOW_CAPABILITY = "install_now_v1"
 
+/** Status-report capability of a launcher that installs a release of its own versionCode under a
+ * newer name ([launcherBuildAhead]): the server offers such a release (Install Now) only with it -
+ * an older build decides by the code alone and would answer "already running" (qa-rc-to-rc-code
+ * R2R-1, the server's `install_now::SAME_CODE_CAPABILITY`). */
+const val SAME_CODE_UPDATE_CAPABILITY = "same_code_update_v1"
+
 /** The command's kind (`pending_command.command`). */
 const val INSTALL_NOW_COMMAND = "install_update"
 

@@ -18,6 +18,12 @@ pub const COMMAND: &str = "install_update";
 /// The status-report capability of a launcher that runs Install Now.
 pub const CAPABILITY: &str = "install_now_v1";
 
+/// The status-report capability of a launcher that installs a release of its own versionCode
+/// under a newer name ([build_ahead]; the RC-to-RC fix, 2026-10-23). A launcher without it
+/// decides by the code alone and records such a release as running, so the row is
+/// [Standing::TooOld] for it, not an Install Now that can only answer "Already on X".
+pub const SAME_CODE_CAPABILITY: &str = "same_code_update_v1";
+
 /// The launcher's `update_fence.waiting_for` words while an Install Now runs (design 37 §3).
 pub const WAIT_DOWNLOAD: &str = "install_now_download";
 pub const WAIT_CALL: &str = "install_now_call";
@@ -114,6 +120,8 @@ pub struct Report<'a> {
     pub app_version_code: Option<i64>,
     /// The report lists [CAPABILITY].
     pub capable: bool,
+    /// The report lists [SAME_CODE_CAPABILITY].
+    pub same_code_capable: bool,
     /// `update_fence.pending_tag`: a downloaded update waits.
     pub pending_tag: Option<&'a str>,
     /// `update_fence.waiting_for`.
@@ -227,8 +235,10 @@ fn release_name(tag: &str) -> String {
 /// What a tap would do now ([Standing]): `tag` is the launcher row's release, `None` when it has
 /// none or is off. A parseable tag is behind when it is [build_ahead] of the reported build - a
 /// higher code, or the same code under a newer name (an RC over an RC of one version, which share
-/// a code). A tag that doesn't parse (a manual upload) is behind unless the phone runs a build of
-/// that name - the phone may then answer "Already on X" (design 37 §2.2, accepted).
+/// a code) - the latter only for a launcher with [SAME_CODE_CAPABILITY], else [Standing::TooOld]
+/// (an older one decides by the code and would answer "Already on X"). A tag that doesn't parse (a
+/// manual upload) is behind unless the phone runs a build of that name - the phone may then answer
+/// "Already on X" (design 37 §2.2, accepted).
 pub fn release(tag: Option<&str>, report: Option<&Report>) -> Standing {
     let Some(report) = report else {
         return Standing::NotReported;
@@ -238,16 +248,19 @@ pub fn release(tag: Option<&str>, report: Option<&Report>) -> Standing {
     };
     let waiting = release_name(tag);
     let running = report.app_version.unwrap_or("Unknown version").to_string();
+    // Ahead by the name alone: the same code as the running build.
+    let mut same_code = false;
     let behind = report.pending_tag.is_some()
         || match launcher_tag_version_code(tag) {
             Some(code) => report.app_version_code.is_none_or(|running| {
+                same_code = code == running;
                 build_ahead(code, Some(waiting.as_str()), running, report.app_version)
             }),
             None => report.app_version != Some(waiting.as_str()),
         };
     if !behind {
         Standing::UpToDate { running }
-    } else if !report.capable {
+    } else if !report.capable || (same_code && !report.same_code_capable) {
         Standing::TooOld { waiting }
     } else {
         Standing::Behind {
@@ -669,6 +682,10 @@ mod tests {
             36_000,
             Some("0.36.1-rc.1")
         ));
+        // An RC sorts before its own release (R2R-2; no two CI builds share both, the codes
+        // differ by 1).
+        assert!(build_ahead(5, Some("0.36.0"), 5, Some("0.36.0-rc.2")));
+        assert!(!build_ahead(5, Some("0.36.0-rc.2"), 5, Some("0.36.0")));
         assert!(build_ahead(5, Some("0.36.0-rc.2"), 5, Some("local")));
         assert!(!build_ahead(35_999, None, 35_999, Some("0.36.0-rc.1")));
         assert!(!build_ahead(35_999, Some("0.36.0-rc.2"), 35_999, None));
@@ -680,6 +697,7 @@ mod tests {
             Report {
                 app_version: Some(name),
                 app_version_code: Some(35_999),
+                same_code_capable: true,
                 ..report()
             }
         }
@@ -734,6 +752,63 @@ mod tests {
         assert!(matches!(
             release(Some(rc2), Some(&nameless)),
             Standing::UpToDate { .. }
+        ));
+    }
+
+    /// R2R-1: a launcher from before the fix decides by the code alone - the same code under a
+    /// newer name is TooOld for it (its sub-line is then true), never a button that can only
+    /// answer "Already on X"; a higher code needs no new capability.
+    #[test]
+    fn the_same_code_needs_the_launchers_capability() {
+        let pre_fix = Report {
+            app_version: Some("0.36.0-rc.2"),
+            app_version_code: Some(35_999),
+            ..report()
+        };
+        let rc3 = "launcher-v0.36.0-rc.3@7";
+        assert_eq!(
+            release(Some(rc3), Some(&pre_fix)),
+            Standing::TooOld {
+                waiting: "0.36.0-rc.3".into()
+            }
+        );
+        assert_eq!(
+            Offer::Standing(release(Some(rc3), Some(&pre_fix))).sub(),
+            Some("0.36.0-rc.3 is waiting. Install Now works from this update on.".into())
+        );
+        let now = utc("2026-10-19 12:10:00").naive_utc();
+        assert_eq!(
+            refusal(Some(rc3), Some(&pre_fix), None, now),
+            Some("too_old")
+        );
+        // The fixed launcher gets the button.
+        let fixed = Report {
+            same_code_capable: true,
+            ..pre_fix.clone()
+        };
+        assert!(Offer::Standing(release(Some(rc3), Some(&fixed))).install());
+        assert_eq!(refusal(Some(rc3), Some(&fixed), None, now), None);
+        // A higher code (the release over its RC) doesn't need it; the same build is up to date
+        // either way.
+        assert!(matches!(
+            release(Some("launcher-v0.36.0@8"), Some(&pre_fix)),
+            Standing::Behind { .. }
+        ));
+        assert!(matches!(
+            release(Some("launcher-v0.36.0-rc.2@5"), Some(&pre_fix)),
+            Standing::UpToDate { .. }
+        ));
+        // A downloaded update waiting (pending_tag) is behind as before.
+        let pending = Report {
+            pending_tag: Some(rc3),
+            ..pre_fix.clone()
+        };
+        assert!(matches!(
+            release(Some(rc3), Some(&pending)),
+            Standing::Behind {
+                downloaded: true,
+                ..
+            }
         ));
     }
 

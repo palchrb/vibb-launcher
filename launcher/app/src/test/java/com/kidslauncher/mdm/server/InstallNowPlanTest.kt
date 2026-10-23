@@ -201,6 +201,9 @@ class InstallNowPlanTest {
     fun `the capability is announced`() {
         assertTrue(INSTALL_NOW_CAPABILITY in STATUS_CAPABILITIES)
         assertEquals("install_now_v1", INSTALL_NOW_CAPABILITY)
+        // qa-rc-to-rc-code R2R-1: the server offers a same-code release only to a launcher with it.
+        assertTrue(SAME_CODE_UPDATE_CAPABILITY in STATUS_CAPABILITIES)
+        assertEquals("same_code_update_v1", SAME_CODE_UPDATE_CAPABILITY)
         assertEquals("install_update", INSTALL_NOW_COMMAND)
     }
 
