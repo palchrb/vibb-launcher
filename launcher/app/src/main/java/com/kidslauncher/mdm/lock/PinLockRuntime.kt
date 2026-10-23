@@ -282,6 +282,7 @@ object PinLockRuntime {
      * to take it ([takeGestureAsk]), and the last notice that came ([noticeCame]). Main thread. */
     private var gestureAskAt: Long? = null
     private var gestureAskPending = false
+    private var gestureAskOffs = 0
     private var lastNoticeElapsed: Long? = null
 
     /** A screen-off heal ran since the lock last resumed (main thread, bug 25b-C). */
@@ -704,6 +705,8 @@ object PinLockRuntime {
         }
         if (before != result.mode) {
             Log.i(LOG_TAG, "$before -> ${result.mode} on $event")
+            // Design 59d §8.16 (Q-2): a gesture's mark dies with the lock state it was made in.
+            gestureAskPending = false
             if ((before == LockMode.LOCKED) != (result.mode == LockMode.LOCKED)) {
                 // Design 32: unlocked (or switched off) - the next lock-up starts the lock again.
                 if (result.mode != LockMode.LOCKED) lockOnTop = lockOnTopAfter(lockOnTop, LockTopEvent.UNLOCKED)
@@ -862,10 +865,12 @@ object PinLockRuntime {
         // Design 59d §8.16 (§8.9's option (b)): the lock this Home start brings back asks for the unlock at once - where no
         // heal can help (no navigation bar of SystemUI's: Quickstep never hears that Home is disabled), the swipe becomes
         // "a flash, then the pad". Decided before the heal, which waits 5 s between its own runs.
-        if (gestureAskDue(
+        // Q-9: the cheap reads first - Telecom's binder call only for a candidate.
+        if (mode == LockMode.LOCKED && !broughtByUs && gestureAskDue(
                 locked = mode == LockMode.LOCKED,
                 interactive = interactive(context),
                 broughtByUs = broughtByUs,
+                lockWasUp = PinLockActivity.instances > 0,
                 callLive = callLiveNow(context),
                 lastScreenOnElapsedMs = lastScreenOnElapsed,
                 lastNoticeElapsedMs = lastNoticeElapsed,
@@ -874,6 +879,7 @@ object PinLockRuntime {
             )
         ) {
             gestureAskAt = now
+            gestureAskOffs = screenOffs
             gestureAskPending = true
             Log.i(LOG_TAG, "The system's Home while LOCKED: the lock asks for the unlock when it is back")
         }
@@ -886,10 +892,10 @@ object PinLockRuntime {
 
     /** Design 59d §8.16: whether the lock's resume asks for the unlock now - the gesture ask [homeIntent] marked, taken
      * once and only within [GESTURE_ASK_WINDOW_MS] ([gestureAskTaken]). Main thread. */
-    fun takeGestureAsk(): Boolean {
+    fun takeGestureAsk(context: Context): Boolean {
         if (!gestureAskPending) return false
         gestureAskPending = false
-        return gestureAskTaken(gestureAskAt, SystemClock.elapsedRealtime())
+        return gestureAskTaken(gestureAskAt, gestureAskOffs, screenOffs, interactive(context), callLiveNow(context), SystemClock.elapsedRealtime())
     }
 
     private val bootCompletedReceiver = object : BroadcastReceiver() {
@@ -917,6 +923,8 @@ object PinLockRuntime {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 screenOffs++
                 endNoticeWake()
+                // Design 59d §8.16 (Q-2): a gesture's mark dies with its screen-on.
+                gestureAskPending = false
                 // Design 59b §3: the face's re-front cap is per screen-on; an ask dies with the screen-off.
                 androidRefronts = 0
                 androidAskAt = null

@@ -831,8 +831,13 @@ findings, merge to `main`, full suite once.
   §3). A real Jelly Star is unaffected. Built as the safety net for a desync on a phone: §8.9's option (b). The lock
   that the system's Home brings back asks for the unlock at once, once per gesture (no call, no notice or screen-on in
   the last 1 s, at most every 2 s), and asks once more when the keyguard's re-occlusion cancels the first ask. The
-  "Lås opp" button stays gone and the swipe stays primary (the user, 2026-10-23). **Device check**: on the Jelly Star,
-  ten handle swipes across a reboot and a screen-off, all refused (`TYPE_RESET_GESTURE`).
+  "Lås opp" button stays gone and the swipe stays primary (the user, 2026-10-23). The code QA's fix round (Q-1..Q-9)
+  is done: no ask at a process start's own Home start; the mark is dropped by a screen-off and a lock-state change,
+  and re-checked at the take. **Device checks**:
+  - on the Jelly Star, ten handle swipes across a reboot and a screen-off, all refused (`TYPE_RESET_GESTURE`);
+  - an own-mode reboot that comes up on the glance, not our keypad (owed).
+  Done on `jelly36` (59d §8.16): the 16d override desync with the net, a swipe with no heal on `hw.mainKeys = yes`,
+  and an update's restart that marks no ask.
 - **The rc.3 run's fix round (branch `rc3-fix`, 2026-10-23, 59d §8.14, `docs/testing/2026-10-23-rc3-fix-run.md`):**
   - **Done** (on the branch):
     - RC3-1: the boot cover asks again for an ask that got no answer, at 3, 6 and 12 s, then every 6 s. SystemUI's

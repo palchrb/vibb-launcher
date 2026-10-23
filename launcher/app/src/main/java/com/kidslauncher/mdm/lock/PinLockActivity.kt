@@ -310,18 +310,20 @@ class PinLockActivity : AppCompatActivity() {
         }
     }
 
-    /** `requestDismissKeyguard` - Android's PIN pad over the glance; its answer within [ANDROID_ASK_TIMEOUT_MS] or the
-     * state is read again once nothing covers us ([askCheck]). */
     /** Design 59d §8.16: the gesture's ask - the glance page's own unlock ([GlancePanel.askAfterGesture]), marked so its
      * cancel by the keyguard's re-occlusion can ask once more ([gestureAskRetryDue]). */
     private fun askAfterGesture(retry: Boolean) {
+        // Q-2: never over a call screen, never dark.
         if (!resumed || isFinishing || finishingAfterUnlock || PinLockRuntime.mode != LockMode.LOCKED) return
+        if (!interactiveNow() || PinLockRuntime.callLiveNow(this)) return
         gestureAskRetried = retry
         askFromGesture = true
         glance?.askAfterGesture()
         if (askedAt == null) askFromGesture = false
     }
 
+    /** `requestDismissKeyguard` - Android's PIN pad over the glance; its answer within [ANDROID_ASK_TIMEOUT_MS] or the
+     * state is read again once nothing covers us ([askCheck]). */
     private fun askAndroid() {
         val id = ++askId
         val offs = PinLockRuntime.screenOffs
@@ -740,7 +742,7 @@ class PinLockActivity : AppCompatActivity() {
         glance?.resume()
         // Design 59d §8.16: a home gesture got through and brought the lock back - ask for the unlock now, as the
         // handle's swipe does (not under the VoIP ring card, not with an ask open). After the views' resume, as a swipe's.
-        if (PinLockRuntime.takeGestureAsk() && askedAt == null && voipRing.root.visibility != View.VISIBLE) {
+        if (PinLockRuntime.takeGestureAsk(this) && askedAt == null && voipRing.root.visibility != View.VISIBLE) {
             handler.post { askAfterGesture(retry = false) }
         }
         ensureLockTask(fallbackDue = false)

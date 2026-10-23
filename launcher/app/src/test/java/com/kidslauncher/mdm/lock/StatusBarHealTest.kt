@@ -177,11 +177,14 @@ class StatusBarHealTest {
     @Test
     fun `a home gesture that got through makes the returning lock ask, once, never for a notice, a call or a screen-on`() {
         fun due(
-            locked: Boolean = true, interactive: Boolean = true, ours: Boolean = false, call: Boolean = false,
-            screenOn: Long? = 1_000L, notice: Long? = null, ask: Long? = null, now: Long = 10_000L,
-        ) = gestureAskDue(locked, interactive, ours, call, screenOn, notice, ask, now)
+            locked: Boolean = true, interactive: Boolean = true, ours: Boolean = false, lockWasUp: Boolean = true,
+            call: Boolean = false, screenOn: Long? = 1_000L, notice: Long? = null, ask: Long? = null, now: Long = 10_000L,
+        ) = gestureAskDue(locked, interactive, ours, lockWasUp, call, screenOn, notice, ask, now)
         assertTrue(due())
         assertFalse("our own HomeFront start", due(ours = true))
+        // qa-edge-swipe-fix-code Q-1: the system's own Home start at a process start (a boot, an update's restart, a crash)
+        // comes before any lock exists - no gesture.
+        assertFalse("no lock in this process yet: a boot's or an update's Home start", due(lockWasUp = false, screenOn = null))
         assertFalse("unlocked: the kid's own Home", due(locked = false))
         assertFalse("dark: a lock-up", due(interactive = false))
         assertFalse("a call is live", due(call = true))
@@ -193,12 +196,17 @@ class StatusBarHealTest {
         assertTrue("an ask 2 s ago", due(ask = 8_000L))
         assertTrue("swipes 2.5 s apart all ask (the heal's 5 s gap doesn't hold them)", due(ask = 7_500L))
         assertTrue("a clock that went back", due(ask = 12_000L, screenOn = 12_000L, notice = 12_000L))
-        // Taken once, within 3 s of the mark.
-        assertFalse(gestureAskTaken(null, 10_000L))
-        assertTrue(gestureAskTaken(10_000L, 10_000L))
-        assertTrue(gestureAskTaken(10_000L, 12_999L))
-        assertFalse("the lock never came back in time", gestureAskTaken(10_000L, 13_000L))
-        assertFalse(gestureAskTaken(10_000L, 9_000L))
+        // Taken once, within 3 s of the mark, in the same screen-on, with the screen on and no call (Q-2).
+        fun taken(mark: Long? = 10_000L, markOffs: Int = 4, offs: Int = 4, interactive: Boolean = true, call: Boolean = false, now: Long = 10_000L) =
+            gestureAskTaken(mark, markOffs, offs, interactive, call, now)
+        assertFalse(taken(mark = null))
+        assertTrue(taken())
+        assertTrue(taken(now = 12_999L))
+        assertFalse("the lock never came back in time", taken(now = 13_000L))
+        assertFalse(taken(now = 9_000L))
+        assertFalse("a screen-off since the mark", taken(offs = 5))
+        assertFalse("dark at the take", taken(interactive = false))
+        assertFalse("a call began: never the pad over its call screen", taken(call = true))
         assertEquals(listOf(1_000L, 2_000L, 3_000L), listOf(GESTURE_ASK_QUIET_MS, GESTURE_ASK_MIN_GAP_MS, GESTURE_ASK_WINDOW_MS))
     }
 
@@ -287,16 +295,31 @@ class StatusBarHealTest {
         assertTrue(home.contains("lockResumedHealAt = now"))
         assertTrue(home.contains("healStatusBar(context, HealTrigger.SYSTEM_HOME)"))
         // Design 59d §8.16: the gesture ask is decided before the heal's gap can return, marked once, taken by the lock's resume.
-        assertTrue(home, home.indexOf("if (gestureAskDue(") in 0 until home.indexOf("if (!systemHomeHealDue("))
-        assertTrue(home, home.contains("callLive = callLiveNow(context),"))
-        assertTrue(home, home.contains("lastNoticeElapsedMs = lastNoticeElapsed,"))
-        assertTrue(home, home.contains("gestureAskPending = true"))
+        // Q-3: the whole call (every argument is its own guard), Q-9's cheap reads first, the stamps.
+        val mark = home.substringAfter("if (mode == LockMode.LOCKED && !broughtByUs && gestureAskDue(").substringBefore(") {").lines().map { it.trim() }.filter { it.isNotEmpty() }
+        assertEquals(
+            listOf(
+                "locked = mode == LockMode.LOCKED,", "interactive = interactive(context),", "broughtByUs = broughtByUs,",
+                "lockWasUp = PinLockActivity.instances > 0,", "callLive = callLiveNow(context),",
+                "lastScreenOnElapsedMs = lastScreenOnElapsed,", "lastNoticeElapsedMs = lastNoticeElapsed,",
+                "lastAskElapsedMs = gestureAskAt,", "nowElapsedMs = now,",
+            ),
+            mark.dropLast(1),
+        )
+        assertTrue(home, home.indexOf("gestureAskDue(") in 0 until home.indexOf("if (!systemHomeHealDue("))
+        val stamps = home.substringAfter("nowElapsedMs = now,").substringBefore("Log.i(")
+        for (line in listOf("gestureAskAt = now", "gestureAskOffs = screenOffs", "gestureAskPending = true")) assertTrue(stamps, stamps.contains(line))
         val take = body(runtime, "takeGestureAsk")
         assertTrue(take, take.contains("gestureAskPending = false"))
-        assertTrue(take, take.contains("return gestureAskTaken(gestureAskAt, SystemClock.elapsedRealtime())"))
+        assertTrue(take, take.contains("return gestureAskTaken(gestureAskAt, gestureAskOffs, screenOffs, interactive(context), callLiveNow(context), SystemClock.elapsedRealtime())"))
+        // Q-2: the mark dies at a screen-off and at any lock-state change.
+        val screenOffBranch = runtime.substringAfter("screenOffs++").substringBefore("androidRefronts = 0")
+        assertTrue(screenOffBranch, screenOffBranch.contains("gestureAskPending = false"))
+        val modeEdge = body(runtime, "dispatch").substringAfter("if (before != result.mode) {").substringBefore("if ((before == LockMode.LOCKED)")
+        assertTrue(modeEdge, modeEdge.contains("gestureAskPending = false"))
         assertTrue(body(runtime, "noticeCame").contains("lastNoticeElapsed = SystemClock.elapsedRealtime()"))
         val lockResume = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt").substringAfter("override fun onResume() {").substringBefore("override fun dispatchTouchEvent(")
-        assertTrue(lockResume, lockResume.contains("if (PinLockRuntime.takeGestureAsk() && askedAt == null && voipRing.root.visibility != View.VISIBLE) {"))
+        assertTrue(lockResume, lockResume.contains("if (PinLockRuntime.takeGestureAsk(this) && askedAt == null && voipRing.root.visibility != View.VISIBLE) {"))
         assertTrue(lockResume, lockResume.contains("handler.post { askAfterGesture(retry = false) }"))
         // The keyguard's re-occlusion cancels the first ask: one re-ask, by the pure rule, after its delay.
         val activity = code("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")
@@ -307,7 +330,12 @@ class StatusBarHealTest {
         val gestureAsk = activity.substringAfter("private fun askAfterGesture(retry: Boolean) {").substringBefore("private fun askAndroid()")
         assertTrue(gestureAsk, gestureAsk.contains("if (!resumed || isFinishing || finishingAfterUnlock || PinLockRuntime.mode != LockMode.LOCKED) return"))
         assertTrue(gestureAsk, gestureAsk.contains("gestureAskRetried = retry"))
-        assertTrue(lockResume, lockResume.indexOf("if (resumeAsFace()) return") < lockResume.indexOf("PinLockRuntime.takeGestureAsk()"))
+        assertTrue(gestureAsk, gestureAsk.contains("if (!interactiveNow() || PinLockRuntime.callLiveNow(this)) return"))
+        // Q-3: the gesture flag never outlives its ask - reset when no ask went out, and by the ask's answer.
+        assertTrue(gestureAsk, gestureAsk.contains("askFromGesture = true\n        glance?.askAfterGesture()\n        if (askedAt == null) askFromGesture = false"))
+        assertTrue(answered, answered.contains("if (current) askFromGesture = false"))
+        assertTrue(answered, answered.indexOf("gestureAskRetryDue(") < answered.indexOf("if (current) askFromGesture = false"))
+        assertTrue(lockResume, lockResume.indexOf("if (resumeAsFace()) return") < lockResume.indexOf("PinLockRuntime.takeGestureAsk(this)"))
         val ask = code("java/com/kidslauncher/mdm/lock/GlancePanel.kt").substringAfter("fun askAfterGesture() = guarded(").substringBefore("private fun step(")
         assertTrue(ask, ask.contains("if (leaving || !glancePageShown(state.stage)) return@guarded"))
         assertTrue(ask, ask.contains("step(GlanceStageEvent.Unlock)"))

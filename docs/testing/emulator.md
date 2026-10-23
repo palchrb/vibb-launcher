@@ -74,7 +74,8 @@ skin.name = 480x854
 skin.path = _no_skin
 hw.ramSize = 2048
 hw.keyboard = yes
-hw.mainKeys = no          # REQUIRED - see below: "yes" (the default without a device profile) means no navigation bar
+# REQUIRED - "yes" (the default without a device profile) means no navigation bar (see below); keep the value bare
+hw.mainKeys = no
 hw.gpu.enabled = yes
 hw.gpu.mode = swiftshader_indirect
 disk.dataPartition.size = 6442450944

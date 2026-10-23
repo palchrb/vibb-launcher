@@ -78,8 +78,8 @@ fun systemHomeHealDue(locked: Boolean, interactive: Boolean, broughtByUs: Boolea
     locked && interactive && !broughtByUs &&
         (lastHealElapsedMs == null || nowElapsedMs - lastHealElapsedMs !in 0 until SYSTEM_HOME_HEAL_MIN_GAP_MS)
 
-/** Design 59d §8.16: a notification, a call's start or a screen-on this recent makes a system Home start no gesture of
- * the kid's (no ask). */
+/** Design 59d §8.16: a notice or a screen-on this recent makes a system Home start no gesture of the kid's (no ask; a
+ * live call never asks: [gestureAskDue]'s `callLive`, and the take checks again - [gestureAskTaken]). */
 const val GESTURE_ASK_QUIET_MS = 1_000L
 
 /** §8.16: at most one gesture ask per this long (a swipe loop can't hammer SystemUI's pad). */
@@ -90,7 +90,9 @@ const val GESTURE_ASK_WINDOW_MS = 3_000L
 
 /**
  * Design 59d §8.16, §8.9's option (b): the system's Home while our lock is [locked] with the screen [interactive] and not
- * [broughtByUs] is a home gesture that got through (the same proof as [systemHomeHealDue]). Where SystemUI never tells
+ * [broughtByUs] is a home gesture that got through (the same proof as [systemHomeHealDue]) - but only when the lock was
+ * already up in this process ([lockWasUp]): at a process start (a boot, an update's restart, a crash) the system starts
+ * Home itself with a plain HOME intent before any lock exists, and that is no gesture (qa-edge-swipe-fix-code Q-1). Where SystemUI never tells
  * Quickstep that Home is disabled - the user's AVD has no navigation bar of SystemUI's, so lock task's `DISABLE_HOME`
  * reaches no `home_disabled` and no heal can help - every bottom-edge swipe goes through. So the kid's swipe becomes
  * "a flash, then the unlock": the lock the system's Home brings back asks for it at once (as the handle's swipe does -
@@ -102,6 +104,7 @@ fun gestureAskDue(
     locked: Boolean,
     interactive: Boolean,
     broughtByUs: Boolean,
+    lockWasUp: Boolean,
     callLive: Boolean,
     lastScreenOnElapsedMs: Long?,
     lastNoticeElapsedMs: Long?,
@@ -109,7 +112,7 @@ fun gestureAskDue(
     nowElapsedMs: Long,
 ): Boolean {
     fun within(at: Long?, ms: Long) = at != null && nowElapsedMs - at in 0 until ms
-    return locked && interactive && !broughtByUs && !callLive &&
+    return locked && interactive && !broughtByUs && lockWasUp && !callLive &&
         !within(lastScreenOnElapsedMs, GESTURE_ASK_QUIET_MS) && !within(lastNoticeElapsedMs, GESTURE_ASK_QUIET_MS) &&
         !within(lastAskElapsedMs, GESTURE_ASK_MIN_GAP_MS)
 }
@@ -130,10 +133,16 @@ const val GESTURE_ASK_RETRY_DELAY_MS = 700L
 fun gestureAskRetryDue(gestureAsk: Boolean, retried: Boolean, sameScreenOn: Boolean, askedAtElapsedMs: Long?, nowElapsedMs: Long): Boolean =
     gestureAsk && !retried && sameScreenOn && askedAtElapsedMs != null && nowElapsedMs - askedAtElapsedMs in 0 until GESTURE_ASK_SETTLE_MS
 
-/** §8.16: whether the lock's resume takes the gesture ask marked at [markedElapsedMs] (`null` = none): only within
- * [GESTURE_ASK_WINDOW_MS] - a mark the lock never came back for dies. Taken once (the runtime clears it). */
-fun gestureAskTaken(markedElapsedMs: Long?, nowElapsedMs: Long): Boolean =
-    markedElapsedMs != null && nowElapsedMs - markedElapsedMs in 0 until GESTURE_ASK_WINDOW_MS
+/**
+ * §8.16: whether the lock's resume takes the gesture ask marked at [markedElapsedMs] (`null` = none): only within
+ * [GESTURE_ASK_WINDOW_MS] - a mark the lock never came back for dies -, only in the same screen-on it was marked in
+ * ([markedScreenOffs] = [screenOffs]), with the screen still [interactive] and no call live now ([callLive]: a lock
+ * resumed for a call's start must not put the pad over its call screen; qa-edge-swipe-fix-code Q-2). Taken once (the
+ * runtime clears it, and drops it at every screen-off and lock-state change).
+ */
+fun gestureAskTaken(markedElapsedMs: Long?, markedScreenOffs: Int, screenOffs: Int, interactive: Boolean, callLive: Boolean, nowElapsedMs: Long): Boolean =
+    markedElapsedMs != null && nowElapsedMs - markedElapsedMs in 0 until GESTURE_ASK_WINDOW_MS &&
+        markedScreenOffs == screenOffs && interactive && !callLive
 
 /**
  * Whether the lock's resume heals now: never before, or the last one [STATUS_BAR_HEAL_LOCK_RESUMED_MIN_GAP_MS]

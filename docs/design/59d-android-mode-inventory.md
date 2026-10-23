@@ -755,7 +755,7 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   (the face roots lock task while Android is locked). `DeviceLockedInputConsumer` comes only with the Home disable
   missing (HOME left in the LOCKED features through the debug override, standing in for 16d's desync of SystemUI's
   TaskbarDelegate): it **starts Home**, the keyguard un-occludes, Home's locked resume puts the lock back - the user's
-  frames exactly. So (b)'s premise ("always un-occludes while locked") is false and (b) isn't built; the user's swipes
+  frames exactly. So (b)'s premise ("always un-occludes while locked") is false and (b) isn't built (§8.16 built it as a safety net, 2026-10-23); the user's swipes
   went through on desynced flags. **Built**: the 16d heal gets a trigger - a Home start that isn't ours
   (`HomeFront.EXTRA_BROUGHT`) while our lock is LOCKED with the screen on is the desync's proof
   (`HomeActivity.onNewIntent` -> `PinLockRuntime.homeIntent` -> pure `systemHomeHealDue(locked, interactive,
@@ -1085,19 +1085,27 @@ AVD made without a profile to set it and cold boot.
 
 **Kept as the safety net: §8.9's option (b)** (for a desync on a phone, where the heal fixes only the next swipe).
 - **The trigger.** The system's Home start while LOCKED, with the screen on and not ours, is the same proof as the heal
-  (`HomeActivity.onNewIntent`/`onCreate` -> `PinLockRuntime.homeIntent`).
+  (`HomeActivity.onNewIntent`/`onCreate` -> `PinLockRuntime.homeIntent`) - but only with the lock already up in this
+  process (`lockWasUp` = `PinLockActivity.instances > 0`; qa-edge-swipe-fix-code Q-1). At a process start - a boot, an
+  update's restart, a crash - the system starts Home itself with a plain HOME intent before any lock exists. That is no
+  gesture, and asking then would open an own-mode boot on our keypad, or pop the pad after an Install Now update.
+  The cheap reads come first (`mode == LockMode.LOCKED && !broughtByUs && gestureAskDue(..)`), so Telecom's binder
+  call runs only for a candidate (Q-9).
 - **The mark** (pure `gestureAskDue`, `StatusBarHealPlan.kt`; decided before the heal's 5 s gap can return):
   - The lock that Home's locked resume brings back asks for the unlock at once.
   - It never asks with a call live, or within 1 s of a notice (`noticeCame`) or a screen-on (`GESTURE_ASK_QUIET_MS`).
   - It asks at most every 2 s (`GESTURE_ASK_MIN_GAP_MS`), so a swipe loop can't hammer SystemUI's pad. Swipes
     2.5 s apart all ask.
-- **The ask.** `PinLockActivity.onResume` takes the mark once, within 3 s (`gestureAskTaken`, `GESTURE_ASK_WINDOW_MS`).
-  It skips an open ask and the VoIP ring card. Then `GlancePanel.askAfterGesture` sends the swipe's own
+- **The ask.** `PinLockActivity.onResume` takes the mark once, within 3 s (`gestureAskTaken`, `GESTURE_ASK_WINDOW_MS`),
+  only in the screen-on it was marked in (`screenOffs` kept with the mark), with the screen on and no call live at the
+  take (Q-2: a lock resumed for a call's start never puts the pad over its call screen). A screen-off and any lock-state
+  change drop the mark. It skips an open ask and the VoIP ring card. Then `GlancePanel.askAfterGesture` sends the swipe's own
   `GlanceStageEvent.Unlock`: Android's PIN pad as the face, our keypad in own mode.
 - **The re-ask.** SystemUI is still putting the keyguard back under the lock when the ask goes out, and that
   re-occlusion cancels the pad: `PRIMARY_BOUNCER -> OCCLUDED`, `onDismissCancelled` 0.25-0.3 s after the ask on
   `jelly36`. So a cancel of the gesture's ask within 1.5 s, with no screen-off since, asks once more after 0.7 s
-  (`gestureAskRetryDue`, `GESTURE_ASK_SETTLE_MS`, `GESTURE_ASK_RETRY_DELAY_MS`). It never asks a third time. A kid's own
+  (`gestureAskRetryDue`, `GESTURE_ASK_SETTLE_MS`, `GESTURE_ASK_RETRY_DELAY_MS`) - again only with the screen on and no
+  call live. It never asks a third time. A kid's own
   Back that fast gets the pad once more.
 - **What the kid sees.** The swipe gets "a flash, then the pad" instead of "a flash, then the glance, and no pad ever".
 - **Verified on `jelly36` with `hw.mainKeys = yes`** (the real reproduction, not a simulated one), three swipes per
@@ -1105,5 +1113,18 @@ AVD made without a profile to set it and cold boot.
   `The system's Home while LOCKED: the lock asks for the unlock when it is back`, `Glance: a home gesture got through -
   unlock asked`, `cancelled`, `the gesture's ask was cancelled by the keyguard settling - asking once more`, and the
   second ask's pad stayed up with the focus on `NotificationShade` until the next screen-off.
+- **Code QA's fix round** (`docs/review/qa-edge-swipe-fix-code.md`, Q-1..Q-9), device checks on `jelly36`:
+  - **The desync with the net** (Q-5 item 1): `hw.mainKeys = no`, with the 16d debug override keeping HOME in the
+    LOCKED features (117). A handle swipe went through as a desync does: Quickstep flags without `home_disabled`,
+    `DeviceLockedInputConsumer`. At the same Home start the heal flipped 117 -> 116 and the net asked. The first pad
+    was cancelled 0.34 s later, the re-ask came 0.7 s after that, and the pad stayed (focus `NotificationShade`). The
+    override was reset afterwards (`--ez reset true`).
+  - **A swipe with no heal** (Q-5 item 2): `hw.mainKeys = yes`, two swipes 2.6 s apart. The second fell inside the
+    heal's 5 s gap, so no heal ran, and its first ask was still cancelled 0.24 s later. So the cancel is the keyguard's
+    re-occlusion, not the heal's 250 ms flip. The re-ask stayed up.
+  - **An update's restart** (Q-1): `adb install -r` with the screen on started a new process LOCKED. The system's
+    Home start then healed (as before) but marked no ask - no `the lock asks for the unlock` line.
+  - **Owed:** an own-mode reboot (Q-5 item 3, e.g. `smoke-test.sh REBOOT=1` on an own-mode phone): it should come up
+    on the glance, not our keypad, with no `the lock asks for the unlock` line.
 - **Unchanged.** The heal stays, and step M's and 59b's rules are untouched. The "Lås opp" button stays gone: the user
   wants the swipe as the primary way, and its cause here is the AVD, not the phone.
