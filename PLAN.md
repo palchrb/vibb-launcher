@@ -857,14 +857,13 @@ findings, merge to `main`, full suite once.
   name, never "latest", never the QR's URL, ignored by the catalog's asset pick), for emulators only. CI, S-M; decide
   before building (APK size, the self-update advertising the arm64 asset to an emulator phone - the launcher should
   refuse an APK with no matching ABI cleanly, or the server should pick by the phone's ABI).
-- **The anchor's foreground notification says something useful (the user, 2026-10-23, "er det ikke mulig å gjøre noe
-  fornuftig" with the shade's "Vibb One" row):** Android requires the foreground service's notification; its content
-  is ours. Make it a status line - connected/offline, the pause ("Pause til 17:00"), the rule in force or the next one
-  ("Nattmodus fra 20:00"), screen time left - with a tap opening Kid Settings; still silent, still the quiet channel
-  (`QuietNotificationsTest`). Seen only unlocked (the shade is shut over the lock). The user's second thought (the
-  empty Quick Settings area above it - lock task disables QS wholesale and no API puts anything there): make this
-  the shade's first row, an ongoing card with the kid's few controls as actions (flashlight, silent/vibrate) beside
-  the status, so the shade is "status plus the two or three switches" from any app. Launcher, S; after rc.3.
+- **Screen time left in the shade (the user, 2026-10-23):** NO persistent launcher notification with status or controls
+  ("helst ikke!"). The one thing wanted: when a screen-time budget is set for the phone, an ongoing notification
+  showing the time left today, optionally with one action "Be om mer tid" that posts a request to the parent
+  (a parent event + push in the PWA, where the parent answers with a lift). Since Android already forces the anchor's
+  "Vibb One" notification, that same notification carries the time when a budget exists and stays the quiet "Vibb
+  One" otherwise - never two. Nothing else goes in the shade from us; the empty Quick Settings area above it is
+  SystemUI's and stays empty under lock task. Launcher (+ server for the request), S-M; after rc.3.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a
