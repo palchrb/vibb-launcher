@@ -430,8 +430,9 @@ ends with E.
    PIN pad cancelled`) - without it only the stop's line leaves a hint.
 7. J/L/§8.9 (the code QA's JL-3 and JL-7, `qa-59d-jl-code.md`): on rc.3 the user records **two bottom-edge swipes in a
    row** on the glance - if the second also goes through, §8.9's heal doesn't cure the case, and (b) or a dumpsys at that
-   moment is next; with the clock profile, music + 1 row shows the compact tile at 473 dp (the user's call: the clock
-   keeps Android's place, the tile goes compact first - he likes the compact tile).
+   moment is next; with the clock profile, music + 1 row showed the compact tile at 473 dp (the user's call: the clock
+   keeps Android's place, the tile goes compact first - he likes the compact tile). Since §8.15 the clock sits under the
+   keyguard status bar, 42.7 dp higher on the modelled 48 dp bar, and music + 1 row shows the full tile at 473 dp too.
 
 8. Step M (§8.12; on Android 15 - the `six35` AVD, whose stock launcher isn't direct-boot aware - and on 16 -
    `handy36`, Pixel launcher DBA -, and the Jelly Star): (a) `adb reboot` (no shutdown arm) boots to the cover and
@@ -742,7 +743,8 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   while its digits' ink stays inside (on the emulator the 136 px status bar ends below the box's top - the first frame
   put the ink 5 px low until this floor), the date may climb into the clock's descent but never above its baseline. The
   fit measures the placed views: one clock size (`clockBig == clockSmall`), so the rows and the tile give way first;
-  `LockGlanceLayoutTest` models the profile's fits (music + 1 row takes the compact tile at 473/497 dp; no music and 4
+  `LockGlanceLayoutTest` models the profile's fits (music + 1 row took the compact tile at 473 dp - since §8.15 the full
+  tile at 473 and 497; no music and 4
   rows keeps one visible at 473). Consequence to know: Android's small clock is ~78 dp taller in the page than our big
   clock, so the full music tile shows with no row or alone more often - as on Android's face. Tests: `LockGlanceTest`
   (the profile table, the date, the margins), `LockGlanceLayoutTest` (the profile's fits, the font, the wiring),
@@ -784,7 +786,7 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
     not its files - unchanged. The new twin (`docs/testing/screens/59d-jl/clock-twin.png`, Android's "10:18" left, ours "11:17" right): ours the first digit's ink at x 51 (Android 49 for a "1", 53 for a "5"), the digits from y 181 to the last row 272 (Android 180-272), 92 px high; the stems 8 px against Android's 7-8 (SemiBold's were 13) - Light is thin enough, ExtraLight not needed; the date unchanged (ink at x 50, y 312-331, both). The profile's numbers didn't move.
   - JL-3 (the user's call): no change to the fit's order - the clock keeps Android's place and the music tile goes
     compact first; `LockGlanceLayoutTest` pins it (music + 1 row: compact at 473 dp, full at 497 now that the hint
-    line's 23.6 dp went), §8.4 item 7.
+    line's 23.6 dp went - since §8.15 full at both), §8.4 item 7.
   - JL-4: three pins - the swipe's controls are the layout's touchables less the page and the timer tile; the DOWN's
     `leaving`/`covered`/page guard; the recognised swipe's `CANCEL_VIEWS` and the activity's cancel to the views.
   - JL-5 with §8.13: the bottom inset is the page's (below).
@@ -1031,7 +1033,8 @@ Report: `docs/testing/2026-10-23-glance-topinset.md`.
   left edge, the sizes and the handle are unchanged.
 - **Consequence for the fit.** On a 48 dp status bar (the Jelly Star's, as the layout test models it) the clock sits
   42.7 dp higher than the old fixed 182 dp. So music with 1 row keeps the full tile at 473 dp too, and music with 2-3
-  rows takes the full tile with one row visible (candidate 3). JL-3's order is unchanged.
+  rows takes the full tile with one row visible (candidate 3). JL-3's order is unchanged, but on the Jelly Star's
+  modelled bar the compact tile (the user's liked look) no longer shows for music + 1 row - the full tile does.
 - **Measured on `jelly36`** (this branch's debug build, a photo ground, the single-line clock): the clock's last ink row
   and the date's capitals' rows are equal to Android's at all three bars, within 1 px. The left edge is the profile's
   34 dp. That is within 2 px of Android's "1" (49 px) and "5" (53 px), but Android's "7" starts at 46 px and ours at

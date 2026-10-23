@@ -53,11 +53,7 @@ In the PWA, **before** enrolling the phone:
 - Never set a screen lock (PIN) on the AVD before provisioning: Android then disables escrow tokens for good on
   that user, and design 59's Child PIN (the reset token) can't be set afterwards. Android's PIN is set by the
   launcher through the PWA's Child PIN once the phone is enrolled (the android-mode switch).
-- Open Vibb One's Home once (`adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME -p
-  $P`) before enrolling from its Settings. Home's first interactive start sets `internal.started_before`. A phone
-  enrolled and locked before that start resets its preferences at the next process start (`initRest`'s first-launch
-  `resetPreferences`): after the reboot the cached policy was gone - no kiosk, no Android lock (`requested=false
-  kidPin=false`), navy wallpaper (glance-topinset run, 2026-10-23).
+- Open Vibb One's Home once before enrolling from its Settings (§4, the enrolment step).
 
 **`jelly36`: the AVD that matches the user's own** (`jellystar2`, since 2026-10-23). The Google Play Android 16 image
 (Pixel SystemUI) at 480x854 and 240 dpi, made **without** a device profile, so it has no display cutout and the plain
@@ -181,8 +177,13 @@ first). An Android PIN keeps handy's lock off (no double lock) and Lock Screen &
 Security -> Screen lock -> None). Only for the old keyguard tests (09 doc, B2:
 `KEYGUARD_DISABLE_SECURE_CAMERA`) set an Android PIN on purpose, and remove it afterwards.
 
-Press Home, choose the launcher. In its Settings (open until the first policy arrives):
-server URL `http://10.0.2.2:3100`, enrollment code from step 2. Take a snapshot ("enrolled").
+Press Home, choose the launcher - or start it with `adb shell am start -a android.intent.action.MAIN -c
+android.intent.category.HOME -p $P`. Home must have started on screen once **before** you enrol: its first
+interactive start sets `internal.started_before`. A phone enrolled from Settings and locked before that start resets
+its preferences at the next process start (`initRest`'s first-launch `resetPreferences`). After a reboot the cached
+policy was gone - no kiosk, no Android lock (`requested=false kidPin=false`), navy wallpaper (glance-topinset run,
+2026-10-23). In its Settings (open until the first policy arrives): server URL `http://10.0.2.2:3100`, enrollment code
+from step 2. Take a snapshot ("enrolled").
 
 ## 5. Simulated calls (emulator console via adb)
 

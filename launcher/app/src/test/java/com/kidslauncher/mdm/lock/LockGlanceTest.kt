@@ -960,8 +960,11 @@ class LockGlanceLayoutTest {
         // The glance-topinset round: the baselines under the keyguard's status bar, read from the window's own insets
         // (the status bar whatever its visibility, the cutout) at every placing.
         assertTrue(place, place.contains("val bar = keyguardBarPx(density)"))
-        assertTrue(place, place.contains("profileBaselinePx(bar, p.clockBaselineBelowBarDp, density)"))
-        assertTrue(place, place.contains("profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)"))
+        // Whole lines (qa-glance-topinset-code Q-1): the clock's target from the clock's offset, the date's from the date's.
+        assertTrue(place, place.contains("val clockTarget = profileBaselinePx(bar, p.clockBaselineBelowBarDp, density)\n"))
+        assertTrue(place, place.contains("val dateTarget = profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)\n"))
+        assertTrue(place, place.contains("baselineMarginPx(clockTarget, contentTop, clock.baseline.toFloat(),"))
+        assertTrue(place, place.contains("baselineMarginPx(dateTarget, clockBottom, date.baseline.toFloat(),"))
         assertTrue(place, place.contains("insets?.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars())?.top"))
         assertTrue(place, place.contains("insets?.getInsets(WindowInsets.Type.displayCutout())?.top"))
         // The first digit's ink at the profile's start, whatever its side bearing - again when the text changes.

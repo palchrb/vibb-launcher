@@ -1117,6 +1117,13 @@ findings, merge to `main`, full suite once.
   reason (school, bedtime, custom rules and the used-up screen time), and the card is **information only** (no
   tap action; TalkBack reads it as text).
   Launcher only; a mockup first, then the usual process.
+- **Enrolment before Home's first start** (glance-topinset run, qa-glance-topinset-code Q-3): a phone enrolled from
+  Vibb One's Settings before Home ever started on screen resets its preferences at the next process start
+  (`Application.initRest`: `internal.started_before` unset -> `resetPreferences`). The cached policy is dropped, so
+  the kiosk stays off and Android's lock isn't requested until the next sync. Check whether any real provisioning path
+  enrols before that start (QR provisioning -> `ProvisioningModeActivity` -> `PolicyComplianceActivity` -> Home: in
+  which order, and can the QR's enrolment code be applied first?). If one can, mark `started_before` at enrolment or
+  make the first-launch reset skip an enrolled phone. Launcher only.
 
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK - CLOSED 2026-10-20** (the user: a second parent-owned

@@ -310,6 +310,8 @@ const val KEYGUARD_STATUS_BAR_MIN_DP = 40f
  * not), [cutoutTopPx] the display cutout's top inset (taken where larger, as the status bar is sized from it). Measured
  * (the glance-topinset round): a 36 px status bar gives 60 px, the clock's baseline 137 px under it at 197 px (the
  * user's `jellystar2`, `jelly36`, the AOSP image's `aosp36`); `handy36`'s 136 px status bar gives 136 and 273 px.
+ * Left out (qa-glance-topinset-code Q-5): AOSP adds the cutout's waterfall inset to the 40 dp floor
+ * (`status_bar_header_height_keyguard + waterfallInsetTop`); no phone in scope has a waterfall display.
  */
 fun keyguardStatusBarPx(statusBarPx: Int, cutoutTopPx: Int, density: Float): Float =
     maxOf(statusBarPx.toFloat(), cutoutTopPx.toFloat(), KEYGUARD_STATUS_BAR_MIN_DP * density)
