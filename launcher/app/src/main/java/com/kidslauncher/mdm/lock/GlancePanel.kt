@@ -12,8 +12,11 @@ import android.os.PowerManager
 import android.text.format.DateFormat
 import android.util.Log
 import android.util.TypedValue
+import android.os.Build
 import android.os.Bundle
+import android.text.method.TransformationMethod
 import android.view.Choreographer
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
@@ -25,6 +28,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.res.ResourcesCompat
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.appdisplay.AppDisplay
@@ -107,6 +111,13 @@ class GlancePanel(
 ) {
     private val glance = ViewLockGlanceBinding.inflate(activity.layoutInflater, frame, true)
 
+    /** Design 59d step L: Android's small clock's geometry on this phone, else `null` (the centred clock). */
+    private val profile: ClockGeometry? = try {
+        glanceClockProfile(Build.MODEL, Build.MANUFACTURER, activity.resources.displayMetrics.density)
+    } catch (e: Throwable) {
+        null
+    }
+
     /** r6 §2: the session's and the timer's callbacks of one frame render once - each source's tile
      * alone (qa-r6-b-code L4: the clock app posts every second, the music tile isn't touched for it). */
     private val tileChanges: GlanceCoalescer = GlanceCoalescer({ run -> Choreographer.getInstance().postFrameCallback { run() } }) { tileChanged() }
@@ -167,9 +178,10 @@ class GlancePanel(
     init {
         KidInsets.apply(glance.root)
         val locale = activity.resources.configuration.locales[0] ?: Locale.getDefault()
-        val datePattern = DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM")
+        val datePattern = DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(profile != null))
         glance.lockGlanceDate.format12Hour = datePattern
         glance.lockGlanceDate.format24Hour = datePattern
+        profile?.let { profileLook(it, locale) }
         hintAction(glance.lockGlanceHint)
         glance.lockGlanceEmergency.setOnClickListener { onEmergency() }
         glance.lockGlanceTorch.setOnClickListener { torch?.toggle() }
@@ -191,6 +203,90 @@ class GlancePanel(
             refitPending = false
             false
         }
+    }
+
+    /**
+     * Design 59d step L: the clock, the date and the alarm line left-aligned as Android's small clock - Nunito's lightest
+     * bundled weight (SemiBold) for the clock, the short date capitalised as Android's ("Fre. 23. okt."), the date's
+     * size; where they sit is [placeProfile]'s, at every fit.
+     */
+    private fun profileLook(p: ClockGeometry, locale: Locale) {
+        Log.i(LOG_TAG, "Glance clock: ${p.name} profile")
+        val clock = glance.lockGlanceClock
+        ResourcesCompat.getFont(activity, R.font.nunito_semibold)?.let { clock.typeface = it }
+        val date = glance.lockGlanceDate
+        date.transformationMethod = FirstCapital(locale)
+        date.setTextSize(TypedValue.COMPLEX_UNIT_SP, p.dateSp)
+        for (view in listOf(clock, date, glance.lockGlanceAlarm)) {
+            (view.layoutParams as LinearLayout.LayoutParams).let { view.layoutParams = it.apply { gravity = Gravity.START } }
+        }
+        date.gravity = Gravity.START
+        glance.lockGlanceAlarm.gravity = Gravity.START
+        // The first digit's ink keeps its place when the hour's first digit changes (its side bearing does).
+        clock.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: android.text.Editable?) = guarded("clock start") {
+                if (glance.root.height > 0) margins(clock, clockStartPx(p), (clock.layoutParams as ViewGroup.MarginLayoutParams).topMargin)
+            }
+        })
+    }
+
+    /** Design 59d step L: the clock's start margin that puts its first digit's ink at the profile's
+     * [ClockGeometry.clockInkStartDp] in the window ([startMarginPx] less the glyph's side bearing). */
+    private fun clockStartPx(p: ClockGeometry): Int {
+        val at = IntArray(2)
+        glance.root.getLocationOnScreen(at)
+        val contentStart = (at[0] + glance.root.paddingStart + glance.lockGlanceTop.paddingStart).toFloat()
+        val clock = glance.lockGlanceClock
+        val text = clock.text?.toString().orEmpty()
+        val first = android.graphics.Rect()
+        if (text.isNotEmpty()) clock.paint.getTextBounds(text, 0, 1, first)
+        return startMarginPx(p.clockInkStartDp * activity.resources.displayMetrics.density - first.left, contentStart)
+    }
+
+    /** The date's first letter capitalised on screen ([glanceDateCapitalised]); the TextClock's own text is unchanged. */
+    private class FirstCapital(private val locale: Locale) : TransformationMethod {
+        override fun getTransformation(source: CharSequence?, view: View?): CharSequence? = source?.let { glanceDateCapitalised(it.toString(), locale) }
+
+        override fun onFocusChanged(view: View?, sourceText: CharSequence?, focused: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) = Unit
+    }
+
+    /**
+     * Design 59d step L: the clock's and the date's margins so their boxes start and their baselines sit where the
+     * profile says, in the window's coordinates ([baselineMarginPx], [startMarginPx]); the alarm line under the date at
+     * the date's start. Measured at [width] first; a margin is written only when it changed (no layout loop).
+     */
+    private fun placeProfile(p: ClockGeometry, width: Int) {
+        val density = activity.resources.displayMetrics.density
+        val at = IntArray(2)
+        glance.root.getLocationOnScreen(at)
+        val contentTop = (at[1] + glance.root.paddingTop + glance.lockGlanceTop.paddingTop).toFloat()
+        val contentStart = (at[0] + glance.root.paddingStart + glance.lockGlanceTop.paddingStart).toFloat()
+        val clock = glance.lockGlanceClock
+        measured(clock, width)
+        // The clock's box may reach above the page's content (the emulator's 136 px status bar ends below Android's
+        // clock's top), as long as its digits' ink stays inside: its floor is minus the empty room above the ink.
+        val ink = android.graphics.Rect()
+        clock.paint.getTextBounds(CLOCK_DIGITS, 0, CLOCK_DIGITS.length, ink)
+        val clockTop = baselineMarginPx(p.clockBaselineDp * density, contentTop, clock.baseline.toFloat(), floorPx = -(clock.baseline + ink.top).toFloat())
+        margins(clock, clockStartPx(p), clockTop)
+        val date = glance.lockGlanceDate
+        measured(date, width)
+        val clockBottom = contentTop + clockTop + clock.measuredHeight
+        val descent = (clock.measuredHeight - clock.baseline).toFloat()
+        val dateStart = startMarginPx(p.dateStartDp * density, contentStart)
+        margins(date, dateStart, baselineMarginPx(p.dateBaselineDp * density, clockBottom, date.baseline.toFloat(), floorPx = -descent))
+        val alarm = glance.lockGlanceAlarm
+        margins(alarm, dateStart, (alarm.layoutParams as ViewGroup.MarginLayoutParams).topMargin)
+    }
+
+    private fun margins(view: View, start: Int, top: Int) {
+        val params = view.layoutParams as ViewGroup.MarginLayoutParams
+        if (params.marginStart == start && params.topMargin == top) return
+        params.marginStart = start
+        params.topMargin = top
+        view.layoutParams = params
     }
 
     /** onStart: watching the rows and the session; the stage decided if the lock comes up now. */
@@ -822,10 +918,21 @@ class GlancePanel(
         val room = available(root.height)
         fitFor = room
         val clock = glance.lockGlanceClock
-        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_BIG_SP)
-        val clockBig = measured(clock, width)
-        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_SMALL_SP)
-        val clockSmall = measured(clock, width)
+        val p = profile
+        val clockBig: Float
+        val clockSmall: Float
+        if (p != null) {
+            // Design 59d step L: one clock, Android's size, placed; its height counts from the page's top (its margin).
+            clock.setTextSize(TypedValue.COMPLEX_UNIT_DIP, p.clockDp)
+            placeProfile(p, width)
+            clockBig = withMargins(clock, width)
+            clockSmall = clockBig
+        } else {
+            clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_BIG_SP)
+            clockBig = measured(clock, width)
+            clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_SMALL_SP)
+            clockSmall = measured(clock, width)
+        }
         val shownRows = rowViews.take(minOf(rows.size, GLANCE_MAX_ROWS))
         val more = glance.lockGlanceMore
         more.text = activity.resources.getQuantityString(R.plurals.glance_more, 9, 9)
@@ -868,7 +975,8 @@ class GlancePanel(
     }
 
     private fun apply(fit: GlanceFit, shownRows: List<ViewLockGlanceRowBinding>) {
-        glance.lockGlanceClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (fit.bigClock) CLOCK_BIG_SP else CLOCK_SMALL_SP)
+        // Design 59d step L: the profile's clock has one size (set by the fit).
+        if (profile == null) glance.lockGlanceClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (fit.bigClock) CLOCK_BIG_SP else CLOCK_SMALL_SP)
         glance.lockGlanceDate.visibility = if (fit.date) View.VISIBLE else View.GONE
         glance.lockGlanceAlarm.visibility = if (fit.date && !glance.lockGlanceAlarm.text.isNullOrEmpty()) View.VISIBLE else View.GONE
         music.show(fit.tile, page = true)
@@ -916,6 +1024,9 @@ class GlancePanel(
 
     private companion object {
         const val CLOCK_BIG_SP = 56f
+
+        /** Design 59d step L: the digits whose ink the profile's clock keeps inside the page. */
+        const val CLOCK_DIGITS = "0123456789"
         const val CLOCK_SMALL_SP = 40f
         const val ROWS_TOP_DP = 14f
         const val ROWS_TOP_NO_TILE_DP = 22f

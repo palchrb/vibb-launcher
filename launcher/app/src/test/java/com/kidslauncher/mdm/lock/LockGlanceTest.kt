@@ -5,10 +5,12 @@ import com.kidslauncher.mdm.music.MusicSession
 import com.kidslauncher.mdm.music.SessionPlay
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.w3c.dom.Element
 import java.io.File
+import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
 
 /** Design 25 §1: the lock's stages, the music tile and the fit (pure, lock/LockGlance.kt). */
@@ -116,6 +118,47 @@ class LockGlanceTest {
         assertTrue("the music's play, the torch, Nødsamtale", glanceSwipeBlocked(onControl = true, scrollTakes = false, downY = 400f, height = 685f, edgeInset = 48f))
         assertTrue("the rows scroll", glanceSwipeBlocked(onControl = false, scrollTakes = true, downY = 400f, height = 685f, edgeInset = 48f))
         assertFalse("no inset (3-button navigation reports its bar as padding)", glanceSwipeBlocked(onControl = false, scrollTakes = false, downY = 684f, height = 685f, edgeInset = 0f))
+    }
+
+    /** Design 59d step L: Android's small clock's geometry by phone, measured at 240 dpi; else the centred clock. */
+    @Test
+    fun `the clock profile - the emulator's Pixel and the Jelly Star at 240 dpi, else none`() {
+        assertEquals(EMULATOR_PIXEL_CLOCK, glanceClockProfile("sdk_gphone64_x86_64", "Google", 1.5f))
+        assertEquals(EMULATOR_PIXEL_CLOCK, glanceClockProfile("sdk_gphone16k_arm64", "Google", 1.5f))
+        assertEquals("Jelly Star", glanceClockProfile("Jelly Star", "Unihertz", 1.5f)?.name)
+        // The Jelly Star is a placeholder: the emulator's numbers until its frame is measured (TODO in LockGlance.kt).
+        assertEquals(EMULATOR_PIXEL_CLOCK.copy(name = "Jelly Star"), JELLY_STAR_CLOCK)
+        assertNull("the AVD's own 320 dpi: not measured", glanceClockProfile("sdk_gphone64_x86_64", "Google", 2f))
+        assertNull("a real Pixel", glanceClockProfile("Pixel 7", "Google", 1.5f))
+        assertNull("another maker's emulator name", glanceClockProfile("sdk_gphone64_x86_64", "Unihertz", 1.5f))
+        assertNull(glanceClockProfile(null, null, 1.5f))
+        // The emulator Pixel's numbers (59d §8.11): Android's digits 92 px high on a baseline at 273 px, the first
+        // digit's ink at x 49-53 ("1"-"5"); the date's at x 50 on a baseline at 329 px.
+        val p = EMULATOR_PIXEL_CLOCK
+        assertEquals(listOf(34f, 182f, 86f, 32f, 219f, 16f), listOf(p.clockInkStartDp, p.clockBaselineDp, p.clockDp, p.dateStartDp, p.dateBaselineDp, p.dateSp))
+        assertEquals("the ink's target is within 2 px of Android's \"1\" and \"5\"", 51f, p.clockInkStartDp * 1.5f, 0.01f)
+        assertEquals("Nunito's digits are 0.712 em: 92 px at 1.5", 92f, 0.712f * p.clockDp * 1.5f, 1f)
+    }
+
+    @Test
+    fun `the profile's date is Android's short date, the first letter capitalised`() {
+        assertEquals("EEEdMMM", glanceDateSkeleton(profile = true))
+        assertEquals("the centred clock keeps the long date", "EEEEdMMMM", glanceDateSkeleton(profile = false))
+        assertEquals("Fre. 23. okt.", glanceDateCapitalised("fre. 23. okt.", Locale.forLanguageTag("nb")))
+        assertEquals("Fri, Oct 23", glanceDateCapitalised("Fri, Oct 23", Locale.US))
+        assertEquals("", glanceDateCapitalised("", Locale.US))
+    }
+
+    @Test
+    fun `the profile's margins put a baseline and a start where the profile says`() {
+        // The clock's baseline at 273 px; its box would start at 84 px with its baseline 130 px into it.
+        assertEquals(59, baselineMarginPx(273f, 84f, 130f))
+        assertEquals("never above the content", 0, baselineMarginPx(100f, 120f, 10f))
+        // The date may climb into the clock's descent (no ink there), never above its baseline.
+        assertEquals(-16, baselineMarginPx(328.5f, 318f, 26.5f, floorPx = -46f))
+        assertEquals(-46, baselineMarginPx(200f, 318f, 26.5f, floorPx = -46f))
+        assertEquals(20, startMarginPx(43.5f, 24f))
+        assertEquals("never left of the content", 0, startMarginPx(10f, 24f))
     }
 
     @Test
@@ -771,6 +814,70 @@ class LockGlanceLayoutTest {
         fit(true, 2, available(24f)).let { assertEquals(listOf(2, 2, 2), listOf(it.candidate, it.rows, it.visibleRows)); assertEquals(486f, total(it), 0.5f) }
         assertEquals(107f, scroll(available(48f)), 0.5f)
         assertEquals(131f, scroll(available(24f)), 0.5f)
+    }
+
+    /**
+     * Design 59d step L: the fit's parts with the emulator Pixel profile at 320x569 dp (a 48 dp status bar, so the page's
+     * content starts at 56 dp): the clock's block runs from there to its descent - its margin puts the baseline at 182 dp -
+     * and the date's from the clock's bottom to its own descent; Nunito's descent is 0.353 em. One clock size: candidates
+     * 1 and 2 are the same height, so the rows and the tile give way first.
+     */
+    private val profileHeights by lazy {
+        val p = EMULATOR_PIXEL_CLOCK
+        val descent = 0.353f
+        val clock = p.clockBaselineDp - (48f + root.dim("paddingTop")) + descent * p.clockDp
+        val date = p.dateBaselineDp + descent * p.dateSp - (p.clockBaselineDp + descent * p.clockDp)
+        heights.copy(clockBig = clock, clockSmall = clock, date = date)
+    }
+
+    @Test
+    fun `the expected fits with the emulator Pixel's clock profile at 473 and 497 dp`() {
+        assertEquals(156.4f, profileHeights.clockBig, 0.1f)
+        assertEquals(12.3f, profileHeights.date, 0.1f)
+        fun fit(tile: Boolean, rows: Int, avail: Float) = glanceFit(avail, profileHeights, tile, rows)
+        for (avail in listOf(available(48f), available(24f))) {
+            // The full tile alone keeps it (423 dp); music + 1 row takes the compact tile (Android's small clock is as tall).
+            assertEquals(1, fit(true, 0, avail).candidate)
+            assertEquals(GlanceTileSize.COMPACT, fit(true, 1, avail).tile)
+            assertEquals(4, fit(true, 1, avail).candidate)
+            fit(true, 3, avail).let { assertEquals(listOf(5, 3, 1), listOf(it.candidate, it.rows, it.visibleRows)) }
+        }
+        // No music, 4 rows: one visible at 473 (the rest scrolls), all three and the "more" line at 497 (478.3 dp).
+        fit(false, 4, available(48f)).let { assertEquals(listOf(3, 3, 1, 1), listOf(it.candidate, it.rows, it.visibleRows, it.more)) }
+        fit(false, 4, available(24f)).let { assertEquals(listOf(1, 3, 3, 1), listOf(it.candidate, it.rows, it.visibleRows, it.more)) }
+        // Music + 2 rows: the compact tile, one row at 473, both at 497.
+        assertEquals(listOf(5, 1), fit(true, 2, available(48f)).let { listOf(it.candidate, it.visibleRows) })
+        assertEquals(listOf(4, 2), fit(true, 2, available(24f)).let { listOf(it.candidate, it.visibleRows) })
+        // The panel measures the placed views: one size, the margins first (LockGlance.kt's helpers).
+        val panel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
+        val fitNow = panel.substringAfter("private fun fitNow()").substringBefore("val shownRows")
+        assertTrue(fitNow, fitNow.contains("clock.setTextSize(TypedValue.COMPLEX_UNIT_DIP, p.clockDp)\n            placeProfile(p, width)\n            clockBig = withMargins(clock, width)\n            clockSmall = clockBig"))
+        assertTrue(panel.contains("if (profile == null) glance.lockGlanceClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (fit.bigClock) CLOCK_BIG_SP else CLOCK_SMALL_SP)"))
+    }
+
+    @Test
+    fun `the profile is the phone's own, in the lightest Nunito bundled, the date and alarm at its start`() {
+        val panel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
+        assertTrue(panel.contains("glanceClockProfile(Build.MODEL, Build.MANUFACTURER, activity.resources.displayMetrics.density)"))
+        // Nunito stays; no font is added: SemiBold (600) is the lightest weight in res/font.
+        val fonts = listOf("src/main/res/font", "app/src/main/res/font").map(::File).first { it.exists() }.list()!!.filter { it.endsWith(".ttf") }.toSet()
+        assertEquals(setOf("nunito_semibold.ttf", "nunito_bold.ttf", "nunito_extrabold.ttf"), fonts)
+        val look = panel.substringAfter("private fun profileLook(").substringBefore("\n    /**")
+        assertTrue(look, look.contains("R.font.nunito_semibold"))
+        assertTrue(look, look.contains("date.transformationMethod = FirstCapital(locale)"))
+        assertTrue(look, look.contains("listOf(clock, date, glance.lockGlanceAlarm)"))
+        assertTrue(panel.contains("DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(profile != null))"))
+        val place = panel.substringAfter("private fun placeProfile(").substringBefore("private fun margins(")
+        assertTrue(place, place.contains("floorPx = -descent"))
+        // The first digit's ink at the profile's start, whatever its side bearing - again when the text changes.
+        assertTrue(place, place.contains("margins(clock, clockStartPx(p), clockTop)"))
+        val start = panel.substringAfter("private fun clockStartPx(").substringBefore("\n    /**")
+        assertTrue(start, start.contains("clock.paint.getTextBounds(text, 0, 1, first)"))
+        assertTrue(start, start.contains("startMarginPx(p.clockInkStartDp * activity.resources.displayMetrics.density - first.left, contentStart)"))
+        assertTrue(look, look.contains("clock.addTextChangedListener("))
+        assertTrue(place, place.contains("margins(alarm, dateStart,"))
+        // Without a profile the XML's centred clock is untouched (LockFontScaleTest pins its gravity).
+        assertEquals("center_horizontal", root.byId("lock_glance_top").getAttributeNS(ns, "gravity"))
     }
 
     @Test

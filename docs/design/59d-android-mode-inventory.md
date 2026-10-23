@@ -674,3 +674,28 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   touchables without the button, the hint's action, the swipe's only step is Unlock, the activity's feed),
   `LockGlanceGuardTest` (no row swipe/dismiss; the panel's only verdict is UNLOCK), `LockGlanceLayoutTest` (the fits at
   473/497 dp with the new bottom block). `scripts/smoke-test.sh` swipes up from the hint line.
+- **L** (the clock as Android's small clock): pure `glanceClockProfile(model, manufacturer, density)` -> `ClockGeometry?`
+  (`LockGlance.kt`) - `EMULATOR_PIXEL_CLOCK` (Google's `sdk_gphone*`), `JELLY_STAR_CLOCK` (Unihertz "Jelly Star"; a TODO
+  with the emulator's numbers until a frame of its AOSP face is measured), only at 240 dpi; otherwise `null` and today's
+  centred clock. Measured on `handy36` at `wm density 240` from SystemUI's small clock (`lockscreen_use_double_line_clock
+  0`; the plain-lock run's frames and this run's): the digits' ink 92 px high from y 180 to a baseline at 273 px (the
+  last ink row 272), the first digit's ink at x 53 for a "5", x 49 for a "1"; the date's capitals 17 px high on a
+  baseline at 329 px, its ink at x 50. In Nunito SemiBold (digits 0.712 em high; the digits' side bearings run from
+  0.041 em, "4", to 0.110 em, "1" - 5 to 14 px at this size): the clock 86 dp with its first digit's ink at 34 dp (51
+  px, within 2 px of Android's "1" and "5"; the box moves with the digit's bearing, `GlancePanel.clockStartPx`, again
+  at every text change) and its baseline at 182 dp; the date 16 sp, its box at 32 dp, its baseline at 219 dp. The first
+  try put the box at a fixed 29 dp ("5" right, "1" 9 px off) - Nunito's bearings vary more than Google Sans Flex's. The user's frame's numbers (56 px, 40
+  px, 180 px, 14 sp at 210 px) were the starting values; the emulator's own frames replaced them. The twin
+  (`docs/testing/screens/59d-jl/clock-twin.png`, Android's left, ours right, each 240 px wide, both "10:18") matches
+  the ink's left edge, baseline and height within 2 px; Nunito's "10:18" is wider (319 px of ink against 270). The clock in dp (Android's small clock doesn't follow the font scale), Nunito
+  SemiBold (the lightest bundled; Android's is thinner - Google Sans Flex isn't ours), the date Android's short format
+  capitalised on screen, the alarm line under the date at its start. `GlancePanel.placeProfile` at every fit sets the
+  margins in window coordinates (`baselineMarginPx`, `startMarginPx`): the clock's box may reach above the page's content
+  while its digits' ink stays inside (on the emulator the 136 px status bar ends below the box's top - the first frame
+  put the ink 5 px low until this floor), the date may climb into the clock's descent but never above its baseline. The
+  fit measures the placed views: one clock size (`clockBig == clockSmall`), so the rows and the tile give way first;
+  `LockGlanceLayoutTest` models the profile's fits (music + 1 row takes the compact tile at 473/497 dp; no music and 4
+  rows keeps one visible at 473). Consequence to know: Android's small clock is ~78 dp taller in the page than our big
+  clock, so the full music tile shows with no row or alone more often - as on Android's face. Tests: `LockGlanceTest`
+  (the profile table, the date, the margins), `LockGlanceLayoutTest` (the profile's fits, the font, the wiring),
+  `LockGlanceGuardTest` (the profile's constant name in the one log line).

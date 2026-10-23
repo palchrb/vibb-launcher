@@ -3,6 +3,9 @@ package com.kidslauncher.mdm.lock
 import com.kidslauncher.mdm.badges.GlanceConversation
 import com.kidslauncher.mdm.music.MusicSession
 import com.kidslauncher.mdm.music.clockText
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /*
  * The lock's glance page (design 25, docs/design/25-lock-glance.md at the monorepo root, mockup
@@ -236,6 +239,89 @@ class GlanceCoalescer(private val post: (() -> Unit) -> Unit, private val work: 
         }
     }
 }
+
+// ---- the clock as Android's small clock (design 59d step L) -------------------------------------
+
+/**
+ * Where Android's small single-line keyguard clock sits on one kind of phone (59d §8.8, step L: the glance takes its
+ * geometry - the same left edge, baseline and size, a thin weight - with the short date in Android's date's place), in
+ * dp from the window's top left at [GLANCE_CLOCK_PROFILE_DENSITY]: the clock's first digit's ink starts at
+ * [clockInkStartDp] (Nunito's side bearings vary from 0.04 to 0.11 em by digit, so the box moves with the first digit -
+ * Android's ink sits within 2 px of this for every digit), its baseline at [clockBaselineDp], its size [clockDp] (dp:
+ * Android's small clock doesn't follow the font scale); the date's box at [dateStartDp] (a capital's bearing is a pixel
+ * or two), its baseline at [dateBaselineDp], [dateSp]. Measured from frames of SystemUI's face, so the ink's left edge,
+ * the baseline and the digits' height match - not the glyphs (Nunito is wider). The alarm line goes under the date.
+ */
+data class ClockGeometry(
+    val name: String,
+    val clockInkStartDp: Float,
+    val clockBaselineDp: Float,
+    val clockDp: Float,
+    val dateStartDp: Float,
+    val dateBaselineDp: Float,
+    val dateSp: Float,
+)
+
+/** The density the profiles were measured at (the Jelly Star's 240 dpi; the emulator at `wm density 240`). */
+const val GLANCE_CLOCK_PROFILE_DENSITY = 1.5f
+
+/**
+ * The emulator's Pixel SystemUI (Android 16, `handy36` at `wm density 240`, 480x854 px), measured from SystemUI's face
+ * with the small clock (`docs/testing/screens/59d-jl/clock-twin.png`): the digits' ink 92 px high from y 180 to the
+ * baseline at 273 px (the last ink row 272), the first digit's ink at x 49 ("1") to 53 ("5") - 51 px, 34 dp, is within
+ * 2 px of both; the date's capitals 17 px high on a baseline at 329 px, its ink at x 50. In Nunito SemiBold (digits
+ * 0.712 em high, an "F" 0.082 em from the box's left edge): 86 dp; 16 sp, the box at 32 dp.
+ */
+val EMULATOR_PIXEL_CLOCK = ClockGeometry(
+    name = "emulator Pixel",
+    clockInkStartDp = 34f,
+    clockBaselineDp = 182f,
+    clockDp = 86f,
+    dateStartDp = 32f,
+    dateBaselineDp = 219f,
+    dateSp = 16f,
+)
+
+/**
+ * The Jelly Star (Unihertz, AOSP SystemUI). TODO(59d §8.8): measure a frame of its small clock (its own font and
+ * placement) and put its numbers here - until then the emulator's, which are at least the right kind of place.
+ */
+val JELLY_STAR_CLOCK = EMULATOR_PIXEL_CLOCK.copy(name = "Jelly Star")
+
+/**
+ * The clock profile for this phone ([model] and [manufacturer] as `Build` reports them, [density] the display's): the
+ * emulator's Pixel image (`sdk_gphone*` by Google) or the Jelly Star - only at the density they were measured at;
+ * anything else is `null`, and the glance keeps its own centred clock (56/40 sp, the long date). No PWA switch.
+ */
+fun glanceClockProfile(model: String?, manufacturer: String?, density: Float): ClockGeometry? {
+    if (abs(density - GLANCE_CLOCK_PROFILE_DENSITY) > 0.01f) return null
+    val name = model.orEmpty().trim()
+    val maker = manufacturer.orEmpty().trim()
+    return when {
+        maker.equals("Google", ignoreCase = true) && name.startsWith("sdk_gphone", ignoreCase = true) -> EMULATOR_PIXEL_CLOCK
+        maker.equals("Unihertz", ignoreCase = true) && name.contains("Jelly Star", ignoreCase = true) -> JELLY_STAR_CLOCK
+        else -> null
+    }
+}
+
+/** The date's skeleton: Android's short date as the profile's ("Fre. 23. okt.", "Fri, Oct 23"), else the long one. */
+fun glanceDateSkeleton(profile: Boolean): String = if (profile) "EEEdMMM" else "EEEEdMMMM"
+
+/** The date as Android's face writes it: the first letter capitalised ("fre. 23. okt." -> "Fre. 23. okt."). */
+fun glanceDateCapitalised(text: String, locale: Locale): String =
+    text.replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
+
+/**
+ * The top margin (px) that puts a view's baseline at [targetPx] from the window's top: with no margin the view would
+ * start at [topPx], its baseline [baselineInViewPx] below its own top; never below [floorPx] (the date never climbs above
+ * the clock's baseline - its floor is minus the clock's descent).
+ */
+fun baselineMarginPx(targetPx: Float, topPx: Float, baselineInViewPx: Float, floorPx: Float = 0f): Int =
+    maxOf(floorPx, targetPx - topPx - baselineInViewPx).roundToInt()
+
+/** The start margin (px) that puts a view's box at [targetPx] from the window's left when its parent's content starts at
+ * [contentStartPx]; never negative. */
+fun startMarginPx(targetPx: Float, contentStartPx: Float): Int = maxOf(0f, targetPx - contentStartPx).roundToInt()
 
 // ---- the flashlight button (design 41 §1.3) ------------------------------------------------------
 

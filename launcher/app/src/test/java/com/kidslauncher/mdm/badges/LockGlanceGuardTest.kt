@@ -187,6 +187,8 @@ class LockGlanceGuardTest {
         "\$what", "\$pkg", "\${next.candidate}", "\${next.rows}", "\${next.more}", "\${next.visibleRows}",
         // The fit's room and the root's paddings, in dp (r9 §1).
         "\$roomDp", "\$padTop", "\$padBottom",
+        // Design 59d step L: the clock profile's own constant name ("emulator Pixel", "Jelly Star").
+        "\${p.name}",
     )
 
     @Test
