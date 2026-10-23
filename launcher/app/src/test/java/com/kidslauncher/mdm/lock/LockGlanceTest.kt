@@ -42,6 +42,42 @@ class LockGlanceTest {
         assertEquals(GlanceStageState(LockStage.KEYPAD, null), glanceStageStep(glanceStageStep(keypad, GlanceStageEvent.Back), GlanceStageEvent.Unlock))
     }
 
+    /** Design 59d step B (Q59d-6): as Android's face the ask comes from the glance page - the ASK stage. */
+    @Test
+    fun `as the face Lås opp and a row lead to ASK, every way back is GLANCE without the target`() {
+        val face = true
+        assertEquals(GlanceStageState(LockStage.ASK, null), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Unlock, face))
+        val ask = glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(conversation), face)
+        assertEquals(GlanceStageState(LockStage.ASK, conversation), ask)
+        val missed = GlanceTarget.MissedCalls(null)
+        assertEquals("a row tap in ASK replaces the target", GlanceStageState(LockStage.ASK, missed), glanceStageStep(ask, GlanceStageEvent.Row(missed), face))
+        // Back stands for the pad's cancel, an error, the dead ask's recovery and STAY; LockUp for a screen-off.
+        assertEquals(GlanceStageState.GLANCE, glanceStageStep(ask, GlanceStageEvent.Back, face))
+        assertEquals(GlanceStageState.GLANCE, glanceStageStep(ask, GlanceStageEvent.LockUp, face))
+        assertEquals("OWN_KEYPAD: our keys, the target kept", GlanceStageState(LockStage.KEYPAD, conversation), glanceStageStep(ask, GlanceStageEvent.OwnKeypad, face))
+        assertEquals(GlanceStageState.GLANCE, glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.OwnKeypad, face))
+    }
+
+    @Test
+    fun `own mode never enters ASK - its rows unchanged`() {
+        val states = listOf(GlanceStageState.GLANCE, GlanceStageState(LockStage.KEYPAD, null), GlanceStageState(LockStage.KEYPAD, conversation))
+        val events = listOf(GlanceStageEvent.LockUp, GlanceStageEvent.Unlock, GlanceStageEvent.Row(conversation), GlanceStageEvent.Row(null), GlanceStageEvent.Back, GlanceStageEvent.OwnKeypad)
+        for (state in states) for (event in events) {
+            val next = glanceStageStep(state, event, face = false)
+            assertEquals(glanceStageStep(state, event), next)
+            assertTrue(next.stage != LockStage.ASK)
+        }
+    }
+
+    /** The coordinator's refinement (the user's rc.2 test): nothing of the page shows under the pad - only the ground. */
+    @Test
+    fun `ASK hides the page's content and GLANCE shows it`() {
+        assertFalse(glanceContentShown(LockStage.ASK, leaving = false))
+        assertTrue(glanceContentShown(LockStage.GLANCE, leaving = false))
+        val back = glanceStageStep(GlanceStageState(LockStage.ASK, conversation), GlanceStageEvent.Back, face = true)
+        assertTrue("every return to GLANCE shows it again", glanceContentShown(back.stage, leaving = false))
+    }
+
     @Test
     fun `the stage is decided when the lock comes up with the screen on, not when it comes back`() {
         assertTrue("first time, screen on", lockStageDue(interactive = true, decidedAtScreenOffs = null, screenOffs = 3))

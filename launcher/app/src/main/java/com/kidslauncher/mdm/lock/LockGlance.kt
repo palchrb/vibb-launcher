@@ -20,16 +20,27 @@ import com.kidslauncher.mdm.music.clockText
 /** The status report's capability: this launcher has the glance page (the server's notes read it). */
 const val LOCK_GLANCE_CAPABILITY = "lock_glance_v1"
 
-/** The lock's two stages: the glance page, or the keypad. */
-enum class LockStage { GLANCE, KEYPAD }
+/**
+ * The lock's stages: the glance page, our keypad, or - as Android's face (design 59d step B, Q59d-6) - [ASK]: Android's
+ * PIN pad is asked for from the glance page; our keypad is never visible or focusable there.
+ */
+enum class LockStage { GLANCE, KEYPAD, ASK }
+
+/** Whether the glance page (its root, with the ground and the mark) is on screen: on the page and under Android's pad. */
+fun glancePageShown(stage: LockStage): Boolean = stage != LockStage.KEYPAD
 
 /**
- * Whether the glance page is on screen. Design 59b (the user's rc.1 recording): as Android's face the keypad stage is
- * Android's PIN pad ([androidPad]) - our keys are hidden, and what was left of the stage (the prompt, the back arrow,
- * "Nødsamtale") showed for ~0.5 s once the pad succeeded and went, while the glance left. So the page stays drawn over
- * the stage under the pad (the stage, with a row's target, is kept), and the leave shows the face as drawn.
+ * Design 59d step B (the user's rc.2 recording: after the pad, the glance came to the front and slid away "the same as
+ * the old keypad page did"): the page's content - everything but the root's ground and mark - shows only on
+ * [LockStage.GLANCE] and never once the glance leaves ([leaving]). So the keyguard's going-away reveals only the night
+ * ground, and Home follows unanimated. A dead ask shows the ground for the recovery's 2 s (accepted). It changes only
+ * what is drawn: when the glance leaves is still `faceStep`'s LEAVE alone.
  */
-fun glancePageShown(stage: LockStage, androidPad: Boolean): Boolean = stage == LockStage.GLANCE || androidPad
+fun glanceContentShown(stage: LockStage, leaving: Boolean): Boolean = stage == LockStage.GLANCE && !leaving
+
+/** Design 59d step B: the leave hides the page's content first - only as Android's face and with the glance in front
+ * (`leaveInFront`); own mode's leave is unchanged. */
+fun glanceLeaveHides(androidFace: Boolean, inFront: Boolean): Boolean = androidFace && inFront
 
 /**
  * What a row opens after the code (memory only; redacted toString - a conversation key can be a
@@ -82,20 +93,28 @@ sealed interface GlanceStageEvent {
     /** A row: its target, or `null` when none may be taken (a time rule leaves the app unusable). */
     data class Row(val target: GlanceTarget?) : GlanceStageEvent
 
-    /** The keypad's back arrow. */
+    /** The keypad's back arrow; as the face also the pad's cancel, an error, the dead ask's recovery and STAY. */
     data object Back : GlanceStageEvent
+
+    /** Design 59d step B: as the face with no Android credential at the tap (`FaceStep.OWN_KEYPAD`) - our keys, the
+     * target kept. */
+    data object OwnKeypad : GlanceStageEvent
 }
 
 /**
  * The stage machine (§1.1): every lock-up is the glance page, without a target; "Lås opp" and a
  * row lead to the keypad (a row with its target); the arrow back drops the target. Coming back
  * with the screen on (the emergency dialer, an alarm, a call) is no event: the stage and target stay.
+ * Design 59d step B ([face]: the panel is Android's face, fixed for that glance): "Lås opp" and a row lead to
+ * [LockStage.ASK] instead - a tap in ASK asks again (a row replaces the target); Back gives GLANCE, the target dropped;
+ * [GlanceStageEvent.OwnKeypad] gives our keypad. Own mode never enters ASK.
  */
-fun glanceStageStep(state: GlanceStageState, event: GlanceStageEvent): GlanceStageState = when (event) {
+fun glanceStageStep(state: GlanceStageState, event: GlanceStageEvent, face: Boolean = false): GlanceStageState = when (event) {
     GlanceStageEvent.LockUp -> GlanceStageState.GLANCE
-    GlanceStageEvent.Unlock -> GlanceStageState(LockStage.KEYPAD, null)
-    is GlanceStageEvent.Row -> GlanceStageState(LockStage.KEYPAD, event.target)
-    GlanceStageEvent.Back -> if (state.stage == LockStage.KEYPAD) GlanceStageState.GLANCE else state
+    GlanceStageEvent.Unlock -> GlanceStageState(if (face) LockStage.ASK else LockStage.KEYPAD, null)
+    is GlanceStageEvent.Row -> GlanceStageState(if (face) LockStage.ASK else LockStage.KEYPAD, event.target)
+    GlanceStageEvent.Back -> if (state.stage != LockStage.GLANCE) GlanceStageState.GLANCE else state
+    GlanceStageEvent.OwnKeypad -> if (state.stage == LockStage.ASK) state.copy(stage = LockStage.KEYPAD) else state
 }
 
 /**

@@ -23,6 +23,9 @@ private const val LOG_TAG = "HomeFront"
  * Design 32 (QA M2): the lock-up's start, while dark, has no open animation (`animate = false`) - a
  * transition queued while the display sleeps plays at the next screen-on (bug 25b-B). The intent
  * stays typed HOME: the flag adds no category or component.
+ *
+ * Design 59d step B (Q59d-7): the face's leave starts Home with no slide either (`noAnimation`) - unlike `animate =
+ * false` it still ends the dark mark and still runs on the main thread. `HomeFrontTest` pins the two callers.
  */
 object HomeFront {
 
@@ -32,11 +35,11 @@ object HomeFront {
      * the kid's Home press, never for these (the lock leaving, the boot, the lock-up, an update). */
     const val EXTRA_BROUGHT = "me.vibb.launcher.extra.HOME_BROUGHT"
 
-    fun intent(context: Context, animate: Boolean = true): Intent =
+    fun intent(context: Context, animate: Boolean = true, noAnimation: Boolean = false): Intent =
         Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
             .setPackage(context.packageName)
-            .addFlags(if (animate) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            .addFlags(if (animate && !noAnimation) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
             .putExtra(EXTRA_BROUGHT, true)
 
     /** Design 59d step A (qa-59b-code B-1): a Home start after a policy edge (the relock, install mode's end, the update,
@@ -56,10 +59,10 @@ object HomeFront {
      * between them and leave Home, with the dark mark, over the lock. Posted, it answers `true` (the
      * background callers ignore the answer; the boot's, which reads it, runs on the main thread).
      */
-    fun bring(context: Context, why: String, animate: Boolean = true): Boolean {
+    fun bring(context: Context, why: String, animate: Boolean = true, noAnimation: Boolean = false): Boolean {
         if (animate && Looper.myLooper() != Looper.getMainLooper()) {
             val app = context.applicationContext
-            main.post { bring(app, why) }
+            main.post { bring(app, why, noAnimation = noAnimation) }
             return true
         }
         return if (BootCover.shuttingDown) {
@@ -67,7 +70,7 @@ object HomeFront {
             false
         } else try {
             if (animate) PinLockRuntime.endDarkLockUp()
-            context.startActivity(intent(context, animate))
+            context.startActivity(intent(context, animate, noAnimation))
             Log.i(LOG_TAG, "Home brought to the front: $why")
             true
         } catch (e: Exception) {

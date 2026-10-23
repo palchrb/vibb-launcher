@@ -88,17 +88,23 @@ class HomeFrontTest {
     fun `HomeFront without an animation adds only NO_ANIMATION`() {
         val text = code(file("java/com/kidslauncher/mdm/lock/HomeFront.kt"))
         val intent = text.substringAfter("fun intent(").substringBefore("fun bring(")
-        assertTrue(intent, intent.startsWith("context: Context, animate: Boolean = true): Intent ="))
-        assertTrue(intent, intent.contains(".addFlags(if (animate) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)"))
+        assertTrue(intent, intent.startsWith("context: Context, animate: Boolean = true, noAnimation: Boolean = false): Intent ="))
+        assertTrue(intent, intent.contains(".addFlags(if (animate && !noAnimation) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)"))
         assertEquals("one category, no component", 1, Regex("addCategory\\(").findAll(intent).count())
-        assertTrue(text.contains("fun bring(context: Context, why: String, animate: Boolean = true): Boolean"))
+        assertTrue(text.contains("fun bring(context: Context, why: String, animate: Boolean = true, noAnimation: Boolean = false): Boolean"))
         val bring = text.substringAfter("fun bring(")
-        assertTrue(bring.indexOf("if (animate) PinLockRuntime.endDarkLockUp()") in 0 until bring.indexOf("context.startActivity(intent(context, animate))"))
+        assertTrue(bring.indexOf("if (animate) PinLockRuntime.endDarkLockUp()") in 0 until bring.indexOf("context.startActivity(intent(context, animate, noAnimation))"))
         // qa-32-s1-code L2: such a start from another thread runs on the main thread, where the
         // lock-up marks and starts in one pass - first thing, before the mark is ended.
         val hop = bring.indexOf("if (animate && Looper.myLooper() != Looper.getMainLooper()) {")
         assertTrue(bring, hop in 0 until bring.indexOf("PinLockRuntime.endDarkLockUp()"))
-        assertTrue(bring.substring(hop).substringBefore("return true").contains("main.post { bring(app, why) }"))
+        // Design 59d step B (Q59d-7): noAnimation keeps the hop and the dark mark's end (only `animate` skips them).
+        assertTrue(bring.substring(hop).substringBefore("return true").contains("main.post { bring(app, why, noAnimation = noAnimation) }"))
+        // The two callers: the lock-up's `animate = false` (below) and the face's leave's `noAnimation`.
+        val noAnim = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }
+            .filter { code(it).contains("noAnimation = ") && it.name != "HomeFront.kt" }.map { it.name }.toList()
+        assertEquals(listOf("PinLockActivity.kt"), noAnim)
+        assertTrue(code(file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")).contains("HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn)"))
         assertTrue(text.contains("private val main = Handler(Looper.getMainLooper())"))
         // Only the lock-up starts Home unanimated - every other start ends its dark mark.
         val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()

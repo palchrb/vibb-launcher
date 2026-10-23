@@ -259,14 +259,19 @@ class PinLockActivity : AppCompatActivity() {
      * opens over Home) whatever the lifecycle reads while the keyguard goes away. Set only in [androidAnswered]. */
     private var leaveFromAsk = false
 
-    /** The keypad stage is Android's PIN pad now: our keys, dots and "Foreldrekode" stay hidden under it (the
-     * user's answer 2: no parent code on the lock as Android's face). */
-    private var keypadIsAndroids = false
+    /** Design 59d step B: the ASK stage - Android's PIN pad asked for from the glance page; our keys, dots and
+     * "Foreldrekode" are never visible or focusable then (the user's answer 2: no parent code on the lock as the face). */
+    private fun asking(): Boolean = glance?.state?.stage == LockStage.ASK
 
-    /** The glance's stage changed: as Android's face, the keypad stage is Android's PIN pad instead; rendered. */
+    /** The glance's stage changed: ASK (only as Android's face) asks for Android's PIN pad; any other stage closes an
+     * open ask; rendered. */
     private fun onStage() {
-        keypadIsAndroids = false
-        if (glance?.state?.stage == LockStage.KEYPAD && AndroidLock.faceOn) tapAsFace() else closeAsk()
+        when {
+            !asking() -> closeAsk()
+            // The face went off since this glance was built: our keypad (never an ask in own mode).
+            !AndroidLock.faceOn -> glance?.ownKeypad()
+            else -> tapAsFace()
+        }
         render()
     }
 
@@ -279,9 +284,9 @@ class PinLockActivity : AppCompatActivity() {
         val step = AndroidLock.step(this, FaceTrigger.UNLOCK_TAP)
         if (step == FaceStep.OWN_KEYPAD) {
             Log.i(ANDROID_LOCK_TAG, "Lås opp: no Android PIN now - our own keypad")
+            glance?.ownKeypad()
             return
         }
-        keypadIsAndroids = true
         if (step == FaceStep.ASK_ANDROID) {
             if (askAgain(askAge())) askAndroid()
         } else {
@@ -385,7 +390,7 @@ class PinLockActivity : AppCompatActivity() {
                 glance?.back()
                 AndroidLock.relock(this, why)
             }
-            FaceStep.STAY -> if (keypadIsAndroids && askedAt == null && glance?.state?.stage == LockStage.KEYPAD) glance?.back()
+            FaceStep.STAY -> if (askedAt == null && asking()) glance?.back()
             FaceStep.ASK_ANDROID, FaceStep.OWN_KEYPAD -> Unit
         }
         return false
@@ -487,7 +492,8 @@ class PinLockActivity : AppCompatActivity() {
         // The glance page (design 25) between the keypad and the ring screen. Built defensively: a
         // fault here leaves the plain keypad, never a crash that trips the guard.
         glance = try {
-            GlancePanel(this, frame, binding.root, ::onStage) { binding.pinEmergency.performClick() }
+            // Design 59d step B: as the face (read at each tap) "Lås opp" and a row lead to the ASK stage.
+            GlancePanel(this, frame, binding.root, ::onStage, face = { AndroidLock.faceOn }) { binding.pinEmergency.performClick() }
         } catch (e: Throwable) {
             Log.w(LOG_TAG, "The glance page couldn't be built: ${e.javaClass.simpleName}")
             null
@@ -885,7 +891,7 @@ class PinLockActivity : AppCompatActivity() {
     }
 
     /** qa-59b-code B-6: never under Android's PIN pad (our keys are hidden there; a stray tap types nothing). */
-    private fun keypadEnabled() = !keypadIsAndroids && !checking && waitMs <= 0L && PinLockRuntime.pinUsable
+    private fun keypadEnabled() = !asking() && !checking && waitMs <= 0L && PinLockRuntime.pinUsable
 
     private fun check(pin: String) {
         checking = true
@@ -961,13 +967,12 @@ class PinLockActivity : AppCompatActivity() {
         val enabled = keypadEnabled()
         binding.pinKeypad.alpha = if (enabled) 1f else 0.4f
         keys.forEach { it.isEnabled = enabled }
-        // Design 59: under Android's PIN pad none of our keypad shows - since 59b the glance page stays drawn over the
-        // stage, so the pad's success never shows the stage's left-overs while the glance leaves.
-        glance?.androidPad(keypadIsAndroids)
-        val ours = if (keypadIsAndroids) View.INVISIBLE else View.VISIBLE
+        // Design 59d step B: under Android's PIN pad (ASK) none of our keypad shows - the glance page's ground covers it.
+        val asking = asking()
+        val ours = if (asking) View.INVISIBLE else View.VISIBLE
         binding.pinKeypad.visibility = ours
         binding.pinDots.visibility = ours
-        binding.pinParentCode.visibility = if (keypadIsAndroids) View.GONE else View.VISIBLE
+        binding.pinParentCode.visibility = if (asking) View.GONE else View.VISIBLE
     }
 
     // ---- parent code ------------------------------------------------------------------------
@@ -1061,12 +1066,18 @@ class PinLockActivity : AppCompatActivity() {
         // the glance finishes under it: no Home, no row target (none exists without our ask).
         val inFront = leaveInFront(AndroidLock.faceOn, resumed, fromAsk = leaveFromAsk)
         if (!inFront) pendingOpen = null
+        // Design 59d step B: as the face and in front, the page's content goes first - the leave shows only the ground and
+        // the mark, then Home with no slide. The leave itself was decided already (faceStep's LEAVE).
+        val hides = glanceLeaveHides(AndroidLock.faceOn, inFront)
+        if (hides) glance?.leaving()
         // Design 59d step H: as the face, no Home over a live call (kiosk on too), except as the kiosk root.
         go(lockLeave(kioskOn, startedLockTask, lockTaskRunning(), PinLockRuntime.callLiveNow(this), glanceInFront = inFront, androidFace = AndroidLock.faceOn))
         if (!isFinishing && kioskOn) {
             Log.w(LOG_TAG, "Finishing the lock was refused - it is the lock-task root; stopping it first")
             go(rootLeave)
         }
+        // §8.5: still refused after the root's retry - the content shows again at once.
+        if (hides && !isFinishing) glance?.leaveRefused()
     }
 
     /**
@@ -1079,11 +1090,13 @@ class PinLockActivity : AppCompatActivity() {
      */
     private fun go(plan: LockLeave) {
         if (plan.stopLockTaskFirst) stopLockTaskQuietly()
-        if (plan.homeFirst) HomeFront.bring(this, "the lock left")
+        // Design 59d step B: as the face, Home comes with no slide (the dark mark still ends, Q59d-7).
+        if (plan.homeFirst) HomeFront.bring(this, "the lock left", noAnimation = AndroidLock.faceOn)
         pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }?.let { GlanceOpener.open(this, it, homeBelow = plan.homeFirst) }
         pendingOpen = null
-        // Design 59b: as Android's face the glance leaves as a plain fade (the keyguard is gone already).
-        if (AndroidLock.faceOn) overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, android.R.anim.fade_out)
+        // Design 59d step B: as Android's face the glance's own finish is unanimated too - no fade, no swipe-away (its
+        // content is hidden already; 59b's close fade would fade nothing).
+        if (AndroidLock.faceOn) overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
         if (!isFinishing) finishAndRemoveTask()
     }
 
