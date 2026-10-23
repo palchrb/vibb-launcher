@@ -699,3 +699,29 @@ Paths under `launcher/app/src/main/java/com/kidslauncher/mdm/lock/` unless named
   clock, so the full music tile shows with no row or alone more often - as on Android's face. Tests: `LockGlanceTest`
   (the profile table, the date, the margins), `LockGlanceLayoutTest` (the profile's fits, the font, the wiring),
   `LockGlanceGuardTest` (the profile's constant name in the one log line).
+- **§8.9: decision (a)** (`docs/testing/2026-10-23-edge-swipe-capture.md`). With lock task's flags in sync Quickstep
+  refuses the bottom-edge swipe over the locked glance - `TYPE_RESET_GESTURE` (`canStartSystemGesture=false`,
+  `home_disabled`), the glance keeps the focus - kiosk on (three runs, one after an unlock and re-lock) and kiosk off
+  (the face roots lock task while Android is locked). `DeviceLockedInputConsumer` comes only with the Home disable
+  missing (HOME left in the LOCKED features through the debug override, standing in for 16d's desync of SystemUI's
+  TaskbarDelegate): it **starts Home**, the keyguard un-occludes, Home's locked resume puts the lock back - the user's
+  frames exactly. So (b)'s premise ("always un-occludes while locked") is false and (b) isn't built; the user's swipes
+  went through on desynced flags. **Built**: the 16d heal gets a trigger - a Home start that isn't ours
+  (`HomeFront.EXTRA_BROUGHT`) while our lock is LOCKED with the screen on is the desync's proof
+  (`HomeActivity.onNewIntent` -> `PinLockRuntime.homeIntent` -> pure `systemHomeHealDue(locked, interactive,
+  broughtByUs, lastHealElapsedMs, now)` -> `HealTrigger.SYSTEM_HOME`, at most every `SYSTEM_HOME_HEAL_MIN_GAP_MS` 5 s;
+  it also stamps the lock-resume heal's minute so the resume that follows doesn't blink again), so the next swipe is
+  refused. The first swipe's flash stays: an app can't read SystemUI's flags before it. Mode-agnostic (own mode's lock
+  task has the same flags). On `handy36` the trigger fired at the simulated desync's Home start (`The system's Home
+  while LOCKED (a home gesture got through): lock task's flags healed`, then `Status bar heal (the system's Home while
+  locked): lock-task features 117 -> 116`). Not reproduced: a natural desync (killing Quickstep left the flags in
+  sync; 16d saw it after some boots) - so whether the flip cures the user's case is 16d's evidence, not this run's.
+  Tests: `StatusBarHealTest` (the rule's rows, the runtime's and Home's wiring, every trigger called).
+- **Device checks** (`handy36`, `wm density 240`, kiosk on, android mode unless named; the capture's setup): a content
+  swipe (`input swipe 240 600 240 300 150`) asks for Android's pad (`Glance swipe up: unlock asked`, the bouncer has the
+  focus); Back from the pad returns to the page (`cancelled`, the glance's focus); a missed call's row tapped, the Child
+  PIN into the pad -> the contact's sheet (`Glance: opened the missed calls`); own mode (the Lock row back to Vibb One's)
+  -> the same swipe opens our keypad; the bottom-edge swipe as in the capture. One row tap under a loaded host (a second
+  emulator ran beside) hit the 2 s dead-ask recovery while the pad was still coming up, so the leave came by
+  `USER_PRESENT` and the row's target was dropped - round 1's behaviour (`ANDROID_ASK_TIMEOUT_MS`), not J's; the retry
+  with the PIN typed within 1.2 s opened it.

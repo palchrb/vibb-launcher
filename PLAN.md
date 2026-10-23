@@ -813,7 +813,9 @@ findings, merge to `main`, full suite once.
   as "Lås opp" did (the button gone, the hint line "Sveip opp for å låse opp" in its place, TalkBack's action on it).
   L built - the glance's clock takes Android's small clock's geometry on a phone with a profile (the emulator's Pixel,
   measured on `handy36`; the Jelly Star's entry a TODO with the emulator's numbers - **measure a frame of its face**),
-  else today's centred clock.
+  else today's centred clock. §8.9 decided (a) from the capture (`docs/testing/2026-10-23-edge-swipe-capture.md`): with
+  lock task's flags in sync Quickstep refuses the edge swipe; the user's swipes went through on desynced flags - the
+  system's Home while LOCKED now heals them at once (16d's heal, `HealTrigger.SYSTEM_HOME`). Code QA next, then rc.3.
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a

@@ -616,8 +616,11 @@ class HomeActivity : UIObjectActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        val broughtByUs = intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false)
+        // Design 59d §8.9 (a): the system's Home while LOCKED - the home gesture got through - heals lock task's flags.
+        PinLockRuntime.homeIntent(this, broughtByUs)
         val toTop = homePressToTop(
-            broughtByUs = intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false),
+            broughtByUs = broughtByUs,
             contentWasUp = contentUp,
             contentShown = contentShown,
             darkLockUp = PinLockRuntime.darkLockUp,
