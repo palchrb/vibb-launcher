@@ -54,6 +54,7 @@ mod tracked_apps;
 mod wallpapers;
 mod web_push;
 mod window_relock;
+mod zones;
 
 use axum::Router;
 use axum::body::Body;

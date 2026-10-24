@@ -84,7 +84,7 @@ pub(crate) async fn rows(
     }
     for event in events {
         let at = parse_db_utc(&event.5);
-        let mut row = inbox_row(event, zone, |t| zone.at(t, now));
+        let mut row = inbox_row(event, zone, now, |t| zone.at(t, now));
         // One clock per row: the row shows `when` after the summary.
         row.summary = without_own_clock(&row.summary, &row.when);
         all.push((at, false, ActivityRow::Event(row)));
@@ -124,6 +124,10 @@ pub(crate) fn without_own_clock(summary: &str, when: &str) -> String {
     let Some(clock) = clock_of(when) else {
         return summary.to_string();
     };
+    // A summary that is only the clock (design 64's "15:42", "Yesterday 21:14") says nothing more.
+    if summary.eq_ignore_ascii_case(clock) || summary.eq_ignore_ascii_case(when) {
+        return String::new();
+    }
     for own in [clock, when] {
         if let Some(rest) = summary
             .strip_prefix(own)
@@ -196,7 +200,9 @@ mod tests {
             "Battery at 15 %"
         );
         assert_eq!(without_own_clock("", "14:09"), "");
-        assert_eq!(without_own_clock("14:09", "14:09"), "14:09");
+        // Only the clock (a zone's "15:42", design 64): nothing more to say, the row shows it.
+        assert_eq!(without_own_clock("14:09", "14:09"), "");
+        assert_eq!(without_own_clock("Yesterday 14:09", "yesterday 14:09"), "");
         assert_eq!(
             without_own_clock("Lock screen · 09:20", ""),
             "Lock screen · 09:20"

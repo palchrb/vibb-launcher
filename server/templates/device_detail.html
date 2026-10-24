@@ -30,6 +30,7 @@
         {% endif %}
         {% if let Some(battery) = battery %}<span class="summary-screen" data-battery>{{ battery }}</span>{% endif %}
         {% if let Some(off) = power_off %}<span class="summary-screen" data-power-off>{{ off }}</span>{% endif %}
+        {% if let Some(line) = zone_now %}<span class="summary-screen" data-zone-now>{{ line }}</span>{% endif %}
     </header>
 
     {% if device.enrolled_at.is_none() %}
@@ -270,7 +271,7 @@
                 <input type="hidden" name="from" value="devices">
                 <input type="hidden" name="device" value="{{ device.id }}">
                 <button type="submit" class="row inbox-row" data-event="{{ e.id }}">
-                    <span class="row-label">{{ e.title }}<span class="row-sub">{{ e.summary }} · <span title="{{ e.exact }}">{{ e.when }}</span>{% if let Some(detail) = e.detail %}<br>{{ detail }}{% endif %}</span></span>
+                    <span class="row-label">{{ e.title }}<span class="row-sub">{% if !e.summary.is_empty() %}{{ e.summary }} · {% endif %}<span title="{{ e.exact }}">{{ e.when }}</span>{% if let Some(detail) = e.detail %}<br>{{ detail }}{% endif %}</span></span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
             </form>

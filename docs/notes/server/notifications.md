@@ -260,7 +260,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   (the contract and its copy, H1's sequence - held, dropped, restarted -, the hold running out, the release before the
   "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
   the claim; since the code QA's fix round a report ending "Off since", a superseded held push, the level range in
-  the route's own test), `music_spotify::migrations_73_to_90_in_order`.
+  the route's own test), `music_spotify::migrations_73_to_91_in_order`.
 
 ## Per parent (design 62 step 5, `docs/design/62-parent-accounts.md` §5)
 
@@ -284,3 +284,12 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   `migration_0088_copies_to_active_accounts`; `tests::web_push::push_follows_each_parents_switches`,
   `push_tap_reads_for_that_parent_and_badges_their_count`; the older notification, web push, summary and power tests
   read `parent_event_reads`/`notification_prefs`.
+
+## Zone events (design 64 step 1, migration `0091_safe_zones.sql`)
+
+- `Kind::ZoneArrived`/`ZoneLeft` (`zone_arrived`/`zone_left`, after `PhoneOn`; TTL 3600, normal, foldable) share one
+  switch, `push_zones` "Zones: arrived and left" - `Kind::switches()` lists each switch once for Notify Me About. They
+  are the first kinds **stored as a key plus parameters** (`parent_events.params`, `ZoneParams`; `title`/`summary`
+  empty) and worded where shown or pushed by `parent_events::told` (the inbox's and Activity's `inbox_row`, the
+  sender's `send_due`); every older kind keeps its stored words. Pushed only while news (the confirming fix under 30
+  min old), kept with the phone's location history, not 90 days. All of it in `zones.md`.

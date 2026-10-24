@@ -52,6 +52,7 @@ mod time_state;
 mod wallpapers;
 mod webpush;
 mod window_relock;
+mod zones;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -1021,6 +1022,18 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/locate-result.json",
             get(handlers::locate::locate_result_json),
+        )
+        // Design 64: a phone's zones (the list is the Locate page's #zones).
+        .route("/devices/{id}/zones.json", get(handlers::zones::zones_json))
+        .route("/devices/{id}/zones", post(handlers::zones::create_zone))
+        .route("/devices/{id}/zones/new", get(handlers::zones::new_zone))
+        .route(
+            "/devices/{id}/zones/{zone_id}",
+            get(handlers::zones::show_zone).post(handlers::zones::save_zone),
+        )
+        .route(
+            "/devices/{id}/zones/{zone_id}/delete",
+            post(handlers::zones::delete_zone),
         )
         .route("/devices/{id}/command/ring", post(handlers::locate::ring))
         .route(

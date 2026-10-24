@@ -965,3 +965,64 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Now minute and Update fence, safe mode's restrictions, the filter's kept notifications, Locate needs location, Off
   turns location off, the Tailscale key by hand, what a backup leaves out, the lock's colour without "Also on the lock
   screen").
+
+## Locate: zones (design 64 step 1, `docs/design/64-safe-zones.md` §3.5-§3.6; the rest in `zones.md`)
+
+- **`#zones` on Locate** (`locate::zones_view`, right after `#location`): a row per zone ("Home" over "150 m · arrive
+  and leave" / "arrive" / "leave" / "no notifications", "Here now" while its side is inside, a chevron to its page;
+  each row `id="zone-N"`), then **Add Zone** (`/devices/{id}/zones/new`), at 10 zones a note "10 zones is the most"
+  instead. The footer: without zones "A zone tells you when the phone arrives or leaves, like Home or School."; with
+  them by mode - Regularly "Arrivals and departures show after two locations on the same side. That is within about
+  two intervals (here 1 hour)." (twice the interval), Only when asked "The zones are judged on the locations Update
+  Location brings.", Off "Location is off for this phone, so the zones see nothing.". With zones: Only when asked adds
+  the orange row "Zones need Regularly" / "With Only when asked the phone reports a location only when you tap Update
+  Location." and a **Locate Regularly** button (`POST /devices/{id}/location-policy#zones`, `mode=interval`,
+  `back=zones` - the interval kept; `update_location_policy` whitelists `back=zones` -> `#zones`, anything else
+  `#location-settings` as before); Off adds "Zones can't see where the phone is." to the existing location-off row;
+  "Keep location on" off (and the mode not Off) adds a row "Your child can turn Location off on the phone; zones then
+  see nothing." to `/devices/{id}/advanced#restrictions`. The decision-3 floor (`max(chosen, 30 min)`) is step 2's and
+  not said yet.
+- **The fix's badge**: the newest fix's sub-line "Within 40 m · At Home" ("At Home · School" for two), and the marker's
+  popup "10 min ago · within 40 m · at Home" (`data-shown-text`, text as before), while a zone's side is inside.
+- **The map**: the box gets `data-zones` while the phone has any; `static/locate.js` (`?v=3`, both Locate pages) then
+  fetches `GET /devices/{id}/zones.json` once (`no_store_path`: a child's home is never in a cached answer) and draws
+  each as `L.circle` in `--map-zone` (#2F6F62, the same on OSM's light tiles in both schemes, beside `--map-trail`),
+  fill 0.08, its name a tooltip built as a text node; a zone that isn't numbers isn't drawn. A phone without a fix
+  shows its first zone. The span pick doesn't touch the circles.
+- **The zone's page** (`handlers::zones`, `device_zone.html`, tab Locate, `no_store_path` `["devices", _, "zones",
+  ..]`): one form `#zone-form` with the time rule's sticky editor bar (`.nav-back` "Locate" to
+  `/devices/locate?device={id}#zones`, **Add** / **Save** at the right, a refusal's "Not saved. …" in the bar), the
+  large title (the zone's stored name, "New Zone"), the map box (`data-zone-map`: centre, radius, the slider's range,
+  the phone's newest fix), then Name, Latitude, Longitude (text, `inputmode="decimal"`, 6 decimals; a decimal comma
+  reads as a point), Radius (`type=number`, 100-2000 step 10, " m"), the slider (`type=range`, no name, `hidden`
+  until `zones.js` shows it), "Use Phone's Location" (`type=button`, only with a fix, `hidden` until the script), and
+  Notifications: Notify When They Arrive / Notify When They Leave (switches, default on; the footer says each parent
+  turns the pushes off under Notify Me About). A new zone starts at the phone's newest fix with 150 m; no fix: empty
+  coordinates and "No location yet - type the coordinates or tap the map." Below, for a zone, "Delete Zone…" as a
+  `<details class="confirm">`: "Delete Home? Its past arrivals stay in Notifications as long as the location history is
+  kept." Without JS the form is the whole feature. Coordinates are rounded to 6 decimals when saved (about 0.1 m),
+  so a form saved unchanged never "moves" the zone.
+- **Where it returns** ("a save never jumps to the top"): Add -> `/devices/locate?device={id}&zone=added&zone_id=N#zone-N`
+  and Save -> `…&zone=saved…#zone-N` (the row, with "Added." / "Saved." as a flash right under it), Delete ->
+  `…&zone=deleted#zones` ("Zone deleted." at the group's top), Locate Regularly -> `#zones`. A refusal re-renders the
+  page (400) - the form's action ends in `#zone-form`, so the answer opens there - with the field marked
+  (`aria-invalid`, `autofocus`, the reason under it: "Give the zone a name.", "At most 40 characters.", "Letters, digits
+  and spaces - no line breaks.", "This phone has a zone with that name.", "A latitude between -90 and 90.", "A
+  longitude between -180 and 180.", "Between 100 and 2000 m."), the 11th zone in the bar ("10 zones is the most for one
+  phone. Delete one first."), nothing written. An unknown phone, an unknown zone or another phone's zone is a 404; a
+  database error a 500 "Nothing was saved".
+- **`static/zones.js`** (ES5, `?v=1`, every value from `data-` attributes, nothing as HTML): `L.map(…, {
+  doubleClickZoom: false })`; a tap (`click`, which a drag never fires) places the centre; the centre's marker drags
+  (`dragend` writes the fields); the slider's `input` writes the number field and redraws, the number field's `input`
+  redraws what can be drawn (typing "1" on the way to "1500" draws 100 m, the field left as typed) and its `change`
+  clamps it into the range; a typed coordinate redraws on `change`; "Use Phone's Location" moves the centre. Every
+  change writes both coordinates (6 decimals, a longitude wrapped into -180..180), so Save posts what the map shows.
+  Long-press isn't used (a tap is enough; iOS's long-press opens its own menu). `--map-zone` for the circle.
+- **The phone's summary**: the header line "At Home since 15:42" (`data-zone-now`, after the battery and "Off since").
+- **Notify Me About** gains "Zones: arrived and left" from `Kind::switch()`, once (`Kind::switches()`); no template
+  change.
+- CSS under "Design 64" at the end of `style.css` (`?v=50`): `.zone-slider`, the two `[hidden]` rules; the token
+  `--map-zone` in `:root`.
+- Tests: `tests::zones` (the pages, the redirects with `assert_lands`, the refusals, the group by mode, the badge, the
+  summary line, the switch once), `admin_auth::tests::no_store_paths`, `tests::locations` (`locate.js?v=3`),
+  `jstest/zones.test.js`, `jstest/locate.test.js`.

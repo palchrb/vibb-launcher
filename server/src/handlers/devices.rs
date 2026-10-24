@@ -737,6 +737,8 @@ struct DeviceDetailTemplate {
     battery: Option<String>,
     /// "Off since 21:14 · battery was 3 %" between a shutdown and the next start (design 38 §3.4).
     power_off: Option<String>,
+    /// "At Home since 15:42" while a zone says the phone is in it (design 64 §3.5).
+    zone_now: Option<String>,
     /// The Attention rows, the same list the Devices list counts.
     attention: Vec<crate::attention::AttentionItem>,
     /// Design 24b: the quick actions Lock again and Unlock for 2 h…, the foreign-app warning, the
@@ -1436,6 +1438,20 @@ async fn render_device(
         }
     };
 
+    // Design 64 §3.5: "At Home since 15:42" (two zones: "At Home · Garden since 15:42", the
+    // newest arrival's time).
+    let zone_now = match crate::zones::list(&state.db, id).await {
+        Ok(zones) => zone_now_line(&zones, &zone, now),
+        Err(err) => {
+            tracing::error!(device_id = id, %err, "can't read the phone's zones");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Couldn't read this phone - check the server log.",
+            )
+                .into_response();
+        }
+    };
+
     // The Apps row (design 31 step 6): the switches on under Device › Apps, the launcher not
     // counted - the number the Apps tab shows.
     let rows = app_rows(state, id, &policy, latest.as_ref())
@@ -1659,6 +1675,7 @@ async fn render_device(
                 )
             }),
             power_off,
+            zone_now,
             attention,
             pause_rules: time_rules
                 .as_deref()
@@ -2724,6 +2741,33 @@ pub async fn delete_device(
     crate::photos::prune(&state).await;
 
     Redirect::to("/devices")
+}
+
+/// The summary's zone line (design 64 §3.5): the zones the phone is in, "At Home since 15:42",
+/// with the latest `side_since` among them; `None` while it is in none.
+pub(crate) fn zone_now_line(
+    zones: &[crate::zones::Zone],
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    let here: Vec<&crate::zones::Zone> = zones.iter().filter(|z| z.here()).collect();
+    if here.is_empty() {
+        return None;
+    }
+    let names = here
+        .iter()
+        .map(|z| z.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let since = here
+        .iter()
+        .filter_map(|z| z.side_since.as_deref())
+        .filter_map(crate::display_time::parse_db_utc)
+        .max();
+    Some(match since {
+        Some(since) => format!("At {names} since {}", zone.at(since, now)),
+        None => format!("At {names}"),
+    })
 }
 
 #[cfg(test)]

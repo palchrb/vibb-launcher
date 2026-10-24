@@ -148,6 +148,10 @@ pub async fn enroll(
         .tokens
         .refresh(&state.db, device_id, Some(&token_hash))
         .await;
+    // Another phone in the row (design 64 §3.1): its zones' sides are the old phone's.
+    if let Err(err) = crate::zones::forget_sides(&state.db, device_id).await {
+        tracing::error!(device_id, %err, "can't forget the zones' sides at enrollment");
+    }
     state.command_streams.close_device(device_id);
     state.enrollment.refresh(&state.db).await;
     // A command meant for the phone this row had before - a wipe for a lost one - must never
@@ -1410,22 +1414,12 @@ pub async fn status(
     // Only a fix that is what it says (security review H2): the time is RFC 3339 (stored
     // normalised, UTC with milliseconds), the coordinates are on Earth and the accuracy isn't
     // negative. Anything else is dropped (and logged); the rest of the report is kept.
+    // Design 64: stored once (the launcher re-sends its cached fix in every report), then the
+    // phone's zones judged on it, in one transaction (`zones::intake`).
     if let Some(loc) = report.location {
         match crate::models::checked_location(&loc) {
             Some(captured_at) => {
-                sqlx::query(
-                    "INSERT INTO device_locations \
-                     (device_id, latitude, longitude, accuracy_meters, captured_at) \
-                     VALUES (?, ?, ?, ?, ?)",
-                )
-                .bind(device.id)
-                .bind(loc.latitude)
-                .bind(loc.longitude)
-                .bind(loc.accuracy_meters)
-                .bind(captured_at)
-                .execute(&state.db)
-                .await
-                .ok();
+                crate::zones::intake(&state, device.id, &loc, &captured_at).await;
             }
             None => tracing::warn!(
                 device_id = device.id,

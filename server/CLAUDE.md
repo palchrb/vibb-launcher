@@ -173,12 +173,12 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_90_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
+(`migrations_73_to_91_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
 `0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
 out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both).
 `0080_phone_power.sql` (design 38, the two power switches) follows 0079, and
 `0081_music_art_more.sql` (2026-10-19, episode pictures ASAP: `music_listings.art_more`) follows 0080
-(`migrations_73_to_90_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
+(`migrations_73_to_91_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
 the listings with untried episode pictures, `push_subscriptions.last_opened_at`) follows 0081, and
 `0083_lock_glance_text_per_app.sql` (design 51: `device_lock_glance_apps.show_text`, backfilled from
 `device_policy.lock_glance_text`, which nothing reads after it) follows 0082, and
@@ -191,7 +191,9 @@ re-auth forms' wrong passwords in a row) follows 0085, and `0087_parent_accounts
 `notification_settings` and `parent_events.read_at` dropped) follows 0087, and `0089_screen_capture.sql` (the
 screen capture switch, 2026-10-23: `device_policy.disallow_screen_capture`, default 0) follows 0088, and
 `0090_write_settings_granted.sql` ("Modify system settings" without adb, 2026-10-24:
-`device_status.write_settings_granted`) follows 0089 (`migrations_73_to_90_in_order`). The next free number is 0091.
+`device_status.write_settings_granted`) follows 0089, and `0091_safe_zones.sql` (design 64 step 1: `device_zones`,
+`notification_prefs.push_zones`, `parent_events.params`) follows 0090 (`migrations_73_to_91_in_order`). The next free
+number is 0092.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts")
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -208,11 +210,11 @@ screen capture switch, 2026-10-23: `device_policy.disallow_screen_capture`, defa
 - `device_lock_glance_apps` (the apps whose messages the PIN lock's first page shows, each with its `show_text` since 0083) - see "The lock's glance page"; `device_policy.lock_glance_text` is unused since 0083's backfill
 - ~~`device_push`~~ - FCM tokens and health (migration `0026`), dropped by `0048` (design 19)
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
-- `parent_events` (kept 90 days; design 38's `phone_off`/`phone_on` too), `notification_prefs` (each parent's Notify Me About, no row = all on; was the singleton `notification_settings` until 0088), `parent_event_reads` (each parent's read state, 0088), `push_subscriptions` (`last_opened_at` since 0082), `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
+- `parent_events` (kept 90 days; design 38's `phone_off`/`phone_on` too; design 64's `zone_arrived`/`zone_left` go with the phone's location history and are stored as a key plus `params`, worded by `parent_events::told`), `notification_prefs` (each parent's Notify Me About, no row = all on; was the singleton `notification_settings` until 0088; `push_zones` since 0091), `parent_event_reads` (each parent's read state, 0088), `push_subscriptions` (`last_opened_at` since 0082), `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b), `device_status.write_settings_granted` (0090, About This Phone's "Modify system settings")
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"; `music_spotify_app`, `music_spotify_accounts` - Spotify's app and logins, see "Vibb music: Spotify on the server"
 - `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)
-- `device_locations` - append-only location history per device (kept `device_policy.location_retention_days`, default 7), `device_commands` - the Find My Device remote-command queue (and design 24b's `end_windows`/`allow_blocked`/`start_pause`) (`requested_at`/`delivered_at` (the last delivery)/`deliveries`/`received_at`/`acknowledged_at`/`result`/`succeeded`/`cancelled_at`/`cancel_reason`/`payload` - `allow_blocked`'s list, `install_update`'s release tag), see the Find My Device architecture bullet above
+- `device_locations` - location history per device (kept `device_policy.location_retention_days`, default 7; a fix is stored once since design 64 - the same phone, `captured_at` and coordinates are one row, `zones::store_fix`), `device_zones` - a phone's safe zones and each one's rule state (side, pending side, the cursor of the newest fix judged; design 64, `docs/notes/server/zones.md`), `device_commands` - the Find My Device remote-command queue (and design 24b's `end_windows`/`allow_blocked`/`start_pause`) (`requested_at`/`delivered_at` (the last delivery)/`deliveries`/`received_at`/`acknowledged_at`/`result`/`succeeded`/`cancelled_at`/`cancel_reason`/`payload` - `allow_blocked`'s list, `install_update`'s release tag), see the Find My Device architecture bullet above
 
 ## Device-facing API (plain JSON, no envelope)
 
@@ -246,8 +248,9 @@ Area notes, moved verbatim from this file on 2026-10-19; read only the ones your
 - `docs/notes/server/play-and-updates.md` - FCM removed, SSE only; Play; Kiosk escapes; Catalog downloads; App downloads: Wi-Fi only, resumable; Install Now (design 37)
 - `docs/notes/server/dns.md` - A custom DNS server for the Web Filter
 - `docs/notes/server/music.md` - Vibb music library; Vibb music: the server sweep; Vibb music: Storytel on the server; Vibb music: Spotify on the server; Vibb music: episode art
-- `docs/notes/server/notifications.md` - Phone off and on (design 38); Notifications to the parent, step 1: events and the inbox; Notifications to the parent, step 2: Web Push
+- `docs/notes/server/notifications.md` - Phone off and on (design 38); Notifications to the parent, step 1: events and the inbox; Notifications to the parent, step 2: Web Push; Zone events (design 64)
 - `docs/notes/server/connectivity.md` - Connectivity and exposure
-- `docs/notes/server/pwa.md` - Fix round 2026-10-06; Fix round 1; The PWA's times, connection state and Attention; About This Phone and Advanced; Lock Screen & PINs; Home Screen and Web Filter; Device › Apps; Device › Music; The phone's summary; The Apps tab; The Music tab; The Locate tab; The rest of Settings; Add Phone, sign-in, the tab pages; Connecting (reconnect.js, `/ping`); The vibb identity (direction D: tokens, the floating tab bar, Nunito, icons)
+- `docs/notes/server/pwa.md` - Fix round 2026-10-06; Fix round 1; The PWA's times, connection state and Attention; About This Phone and Advanced; Lock Screen & PINs; Home Screen and Web Filter; Device › Apps; Device › Music; The phone's summary; The Apps tab; The Music tab; The Locate tab; The rest of Settings; Add Phone, sign-in, the tab pages; Connecting (reconnect.js, `/ping`); The vibb identity (direction D: tokens, the floating tab bar, Nunito, icons); Locate: zones (design 64)
 - `docs/notes/server/retention-and-crashes.md` - Retention; Crash reports; Removed monitoring
+- `docs/notes/server/zones.md` - Safe zones, step 1 (design 64): the fix stored once, the two-fix rule, zone events as key + parameters, retention, the security log; the pages are in pwa.md, "Locate: zones"
 - `docs/notes/server/status.md` - Architecture change in progress; Current status

@@ -187,7 +187,7 @@ fn notice_of(code: Option<&str>) -> Option<(bool, &'static str, bool)> {
 }
 
 /// An event as the inbox reads it ([ROW_COLUMNS]): id, phone, title, summary, detail,
-/// `happened_at`, unread, the phone's name and `enrolled_at`.
+/// `happened_at`, unread, the phone's name and `enrolled_at`, the kind and its parameters.
 pub(crate) type Row = (
     i64,
     i64,
@@ -198,11 +198,13 @@ pub(crate) type Row = (
     bool,
     String,
     Option<String>,
+    String,
+    Option<String>,
 );
 
 /// [Row]'s columns, of [row_from]'s tables.
 pub(crate) const ROW_COLUMNS: &str = "e.id, e.device_id, e.title, e.summary, e.detail, \
-     e.happened_at, r.event_id IS NULL, d.name, d.enrolled_at";
+     e.happened_at, r.event_id IS NULL, d.name, d.enrolled_at, e.kind, e.params";
 
 /// [ROW_COLUMNS]' tables, unread for the admin bound as `?{admin}` (design 62 §5: each parent
 /// reads for themselves).
@@ -219,9 +221,13 @@ pub(crate) fn row_from(admin: usize) -> String {
 pub(crate) fn inbox_row(
     raw: Row,
     zone: &Zone,
+    now: chrono::DateTime<chrono::Utc>,
     words: impl Fn(chrono::DateTime<chrono::Utc>) -> String,
 ) -> InboxRow {
-    let (id, _device, title, summary, detail, happened_at, unread, name, enrolled) = raw;
+    let (id, _device, title, summary, detail, happened_at, unread, name, enrolled, kind, params) =
+        raw;
+    // A zone event is told from its parameters (design 64), every other kind as stored.
+    let (title, summary) = parent_events::told(&kind, title, summary, params.as_deref(), zone, now);
     let at = crate::display_time::parse_db_utc(&happened_at);
     InboxRow {
         id,
@@ -283,7 +289,7 @@ pub async fn page(
         .into_iter()
         .take(parent_events::PAGE as usize)
         .map(|raw| {
-            let mut row = inbox_row(raw, &zone, |t| zone.relative(t, now));
+            let mut row = inbox_row(raw, &zone, now, |t| zone.relative(t, now));
             row.delivery = lines.remove(&row.id).and_then(|d| delivery_line(&d));
             row
         })
@@ -332,9 +338,8 @@ pub async fn settings_page(
         Err(err) => return read_error(err),
     };
     let zone = Zone::load(&state.db).await;
-    let switches = Kind::ALL
-        .iter()
-        .filter_map(|kind| kind.switch())
+    let switches = Kind::switches()
+        .into_iter()
         .zip(settings)
         .map(|((name, label), on)| Switch { name, label, on })
         .collect();
@@ -513,11 +518,7 @@ async fn read_switches(db: &sqlx::SqlitePool, admin_id: i64) -> Result<Vec<bool>
 
 /// The switches' columns, in [Kind::ALL]'s order (compiled-in names, never input).
 fn switch_names() -> Vec<&'static str> {
-    Kind::ALL
-        .iter()
-        .filter_map(|kind| kind.switch())
-        .map(|(name, _)| name)
-        .collect()
+    Kind::switches().into_iter().map(|(name, _)| name).collect()
 }
 
 /// A row's tap: marks the event read for this parent and goes to its target (a local path;
