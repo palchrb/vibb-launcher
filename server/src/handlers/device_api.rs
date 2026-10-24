@@ -1301,26 +1301,16 @@ pub async fn status(
         }
     }
     // Design 64 step 2: a release build ignores a mock fix and counts it (decision 14); the line
-    // comes once per rise, against the count last logged (Q-9).
-    match crate::zones::mock_rise(
+    // comes once per rise, against the count last logged (Q-9), written with the counter in one
+    // transaction (`zones::mock_rise`).
+    if let Err(err) = crate::zones::mock_rise(
         &state.db,
         device.id,
         crate::zones::parse_zone_watch(zone_watch_json.as_deref()).as_ref(),
     )
     .await
     {
-        Ok(Some(line)) => {
-            crate::security::record_security_event(
-                &state.db,
-                "mock_location_ignored",
-                None,
-                None,
-                Some(&line),
-            )
-            .await;
-        }
-        Ok(None) => {}
-        Err(err) => tracing::error!(device_id = device.id, %err, "can't compare the mock count"),
+        tracing::error!(device_id = device.id, %err, "can't compare the mock count");
     }
     crate::handlers::window_relock::log_relock(
         &state.db,

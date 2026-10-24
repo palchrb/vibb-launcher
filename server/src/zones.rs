@@ -740,12 +740,14 @@ pub fn mock_log_line(device_id: i64, logged: i64, count: i64) -> Option<String> 
 }
 
 /// The report's mock count against `devices.mock_logged` (qa-design-64-step2-code Q-9, F-5): the
-/// count last logged is read and a rise written in one `BEGIN IMMEDIATE` transaction, so two
-/// parallel reports - or a report without `zone_watch` in between - log each rise once and the
-/// line's "rose" is the real rise, never one from a stale read; `Some(line)` for the report that
-/// wrote it. A lower count (the launcher's data cleared) is taken silently and the date cleared
-/// (the row's "the last ..." belonged to the higher count). A re-enrollment clears both
-/// (`device_api::enroll`).
+/// count last logged is read, a rise written **and its security line inserted**
+/// (`mock_location_ignored`, the columns `security::record_security_event` writes) in one
+/// `BEGIN IMMEDIATE` transaction, so two parallel reports - or a report without `zone_watch` in
+/// between - log each rise once, the line's "rose" is the real rise, and the counter never moves
+/// without its line (a failure rolls both back; the next report tries again). `Some(line)` for
+/// the report that wrote it. A lower count (the launcher's data cleared) is taken silently and
+/// the date cleared (the row's "the last ..." belonged to the higher count). A re-enrollment
+/// clears both (`device_api::enroll`).
 pub async fn mock_rise(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -777,7 +779,17 @@ pub async fn mock_rise(
             .bind(device_id)
             .execute(&mut *tx)
             .await?;
-        mock_log_line(device_id, logged, count)
+        let line = mock_log_line(device_id, logged, count);
+        if let Some(line) = &line {
+            sqlx::query(
+                "INSERT INTO security_events (event_type, username, ip_address, detail) \
+                 VALUES ('mock_location_ignored', NULL, NULL, ?)",
+            )
+            .bind(line)
+            .execute(&mut *tx)
+            .await?;
+        }
+        line
     } else {
         None
     };
