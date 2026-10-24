@@ -169,12 +169,14 @@ object MissedCallNotifier {
      * that may update or clear but never posts anew (and never alerts), counting against the rules themselves as
      * [relearn] does, so a no-calls time rule can't empty it. The notice leaves the contact out from then on
      * ([noticeMarks]); the phone book's badge keeps counting by the seen marks (the user's decision 3). When the last
-     * contact goes, the pass clears ours and marks the shown range read, Telecom's reset included
-     * ([NoticeStep.Clear]). Needs no listener.
+     * contact goes, the pass clears ours and marks the call log's unread missed calls read up to the pass's newest
+     * (every unread missed row, as every Clear does), Telecom's reset included ([NoticeStep.Clear]). The pass itself is
+     * silent: it alerts only for a genuinely new call it finds (qa-r11-glance-code Q-3). [done] runs on this thread once
+     * the pass is over (the glance holds the row out until then, Q-5). Needs no listener.
      */
-    fun dismissContact(context: Context, number: String, upToMs: Long) {
+    fun dismissContact(context: Context, number: String, upToMs: Long, done: (() -> Unit)? = null) {
         val app = context.applicationContext
-        runThenDone(null) {
+        runThenDone(done) {
             MissedCallsRepo.markDismissed(app, number, upToMs)
             recomputeNow(app, mayPost = false, mayClear = true, ownDismiss = true)
         }
@@ -290,16 +292,16 @@ object MissedCallNotifier {
                 step.markReadUpToId?.let { markReadAndResetTelecom(context, it) }
             }
             is NoticeStep.Post -> {
-                // A dismissal's update (design r11 §3.3) never alerts: it only takes a contact out.
-                val alert = step.alert && !ownDismiss
-                if (post(context, step.notice, alert, unread.newestId)) {
+                // A dismissal's update (design r11 §3.3) takes a contact out and so alerts only when it carries a call
+                // newer than any alerted - a genuinely new one, which must ring (qa-r11-glance-code Q-3).
+                if (post(context, step.notice, step.alert, unread.newestId)) {
                     // Round 7 §3: a new missed call (the alerting post only - never the boot re-send,
                     // relearn or an update after a call) may wake the screen on the lock.
-                    if (alert) main.post { com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame() }
+                    if (step.alert) main.post { com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame() }
                     lastPosted = step.notice
                     prefs.edit()
                         .putLong(KEY_SHOWN_UP_TO, unread.newestId)
-                        .putLong(KEY_ALERTED_UP_TO, if (alert) step.notice.newestId else prefs.getLong(KEY_ALERTED_UP_TO, 0L))
+                        .putLong(KEY_ALERTED_UP_TO, if (step.alert) step.notice.newestId else prefs.getLong(KEY_ALERTED_UP_TO, 0L))
                         .commit()
                 }
             }

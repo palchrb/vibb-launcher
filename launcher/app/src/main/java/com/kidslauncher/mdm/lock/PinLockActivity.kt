@@ -638,6 +638,8 @@ class PinLockActivity : AppCompatActivity() {
             voipRing.root.visibility = View.GONE
             voipRing.voipRingError.visibility = View.GONE
             voipShownFor = null
+            // Design r11 (qa-r11-glance-code Q-2, the user's 2026-10-24 rule): the glance is the face again, from the top.
+            glance?.covered(false)
             return
         }
         if (pkg != voipShownFor) {
@@ -657,6 +659,8 @@ class PinLockActivity : AppCompatActivity() {
         // Design 59: no "Foreldrekode" on the lock as Android's face (the user's answer 2).
         voipRing.voipRingParentCode.visibility = if (AndroidLock.faceOn) View.GONE else View.VISIBLE
         voipRing.root.visibility = View.VISIBLE
+        // The glance under the card: hidden from accessibility, no row dismissed (qa-r11-glance-code Q-2).
+        glance?.covered(true)
     }
 
     /** Answer (17b): the CallStyle answer action - one tap answers - sent from this visible lock;
@@ -756,7 +760,8 @@ class PinLockActivity : AppCompatActivity() {
     /**
      * Design 59d step J: the glance page's swipe up sees every touch first ([GlancePanel.swipe]); once it is recognised
      * the views get a cancel (a row's tap, the rows' scroll) and the rest of the touch is the swipe's. A DOWN always
-     * reaches the views (and [onUserInteraction]). Not while the VoIP ring card covers the page.
+     * reaches the views (and [onUserInteraction]). Every touch is fed, with `covered` while the VoIP ring card is over
+     * the page: then no swipe starts, and a row dragged sideways (design r11 §3) springs back.
      */
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         val panel = glance ?: return super.dispatchTouchEvent(ev)

@@ -48,7 +48,6 @@ import com.kidslauncher.mdm.badges.GlanceSubtitle
 import com.kidslauncher.mdm.badges.glanceSubtitle
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallPolicyStore
-import com.kidslauncher.mdm.calls.MissedCallNotice
 import com.kidslauncher.mdm.calls.MissedCallNotifier
 import com.kidslauncher.mdm.calls.RelativeDay
 import com.kidslauncher.mdm.calls.relativeDay
@@ -227,6 +226,10 @@ class GlancePanel(
         glance.lockGlanceEmergency.setOnClickListener { onEmergency() }
         glance.lockGlanceTorch.setOnClickListener { torch?.toggle() }
         glance.lockTimerTile.setOnClickListener { tapClock() }
+        // The user (2026-10-24): the "more" line leads to the keypad as a row without a target does (Home after the
+        // code) - a way to see the rest. It is no row: never dismissable, nothing captured.
+        glance.lockGlanceMore.setOnClickListener { tapMore() }
+        openAction(glance.lockGlanceMore, activity.getString(R.string.lock_media_unlock))
         glance.lockTimerStop.setOnClickListener { ClockActions.stop(activity, ClockReader.stopIntent) }
         openAction(glance.lockTimerTile)
         // The clock app's text, like a row's: only accessibility tools read it.
@@ -406,9 +409,39 @@ class GlancePanel(
             state = glanceStageStep(state, GlanceStageEvent.LockUp)
             dropTargetIfGone()
             onStage()
+        } else {
+            // The user (2026-10-24): back from a call, the emergency dialer, an alarm or an app over the lock, the glance
+            // is the face again - from the top.
+            backToTop()
         }
         renderNow()
     }
+
+    /**
+     * The user's rule (2026-10-24, "må alltid komme til utgangspunktet igjen"): whenever the glance is the visible face
+     * again - a lock-up, back from the keypad or Android's pad ([glanceBackToTop]), a resume that is no lock-up, the
+     * VoIP ring card gone ([covered]) - the page starts at the top; a drag in progress settles first.
+     */
+    private fun backToTop() {
+        settleDismiss()
+        glance.lockGlanceScroll.scrollTo(0, 0)
+    }
+
+    /** The VoIP ring card is over the page ([up]) or gone (PinLockActivity.renderVoip, on every change). Under it the
+     * page is hidden from accessibility, so TalkBack can't reach a row's "Fjern" or tap behind the card
+     * (qa-r11-glance-code Q-2), and a drag springs back; when it goes the page is the face again, from the top. */
+    fun covered(up: Boolean) = guarded("covered") {
+        if (up == cardUp) return@guarded
+        cardUp = up
+        glance.root.importantForAccessibility =
+            if (up) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        handle.importantForAccessibility =
+            if (up) View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS else View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        if (up) dropDrag(smooth = false) else backToTop()
+    }
+
+    /** The VoIP ring card is up ([covered]). */
+    private var cardUp = false
 
     /** onStop (and onDestroy): nothing watched, ticking or drawn while the lock isn't shown. */
     fun stop() = guarded("stop") {
@@ -476,15 +509,13 @@ class GlancePanel(
     /** The bound row view the DOWN hit, by index - only on the GLANCE stage, inside the scroller, no dismissal running. */
     private var dismissRow: Int? = null
 
-    /** The DOWN was inside the scroller (not the bottom row, the handle or the inset). */
-    private var swipeInScroll = false
-
     /** The row being dragged sideways ([SwipeMode.DISMISS]); null once it is released or sprung back (the rest of
      * that gesture is then consumed and does nothing). */
     private var dragged: Dragged? = null
 
-    /** A dragged row: its view's index and view, and the row it shows (rows aren't rebound during the drag). */
-    private class Dragged(val index: Int, val view: View, val row: GlanceRow)
+    /** A dragged row: its view's index and view, the row it shows (rows aren't rebound during the drag) and the touch
+     * slop (dp) its offset starts after (Q-9: the row doesn't jump by the slop when the drag is taken). */
+    private class Dragged(val index: Int, val view: View, val row: GlanceRow, val slopDp: Float)
 
     /**
      * Every touch of the lock's window, before its views ([PinLockActivity.dispatchTouchEvent]; [covered]: the VoIP
@@ -494,14 +525,16 @@ class GlancePanel(
      * ([glanceSwipeBlocked]), is "Lås opp" ([glanceSwipeStep]: the ASK stage as the face, our keypad in own mode). The
      * system taking the gesture sends ACTION_CANCEL, which ends it with nothing asked. It only asks; a row's tap and the
      * tile's controls are unchanged. Design r11 §3.2: the gesture's first movement past the touch slop decides its axis
-     * ([glanceTouchAxis]) - sideways on a row (the GLANCE stage only) is that row's dismiss ([dismissTouch]); sideways
-     * anywhere else is nothing and blocks the unlock for that gesture. Never throws.
+     * ([glanceTouchAxis]) - sideways on a row (the GLANCE stage only) is that row's dismiss ([dismissTouch]); a sideways
+     * start on a row that can't be taken blocks the unlock for that gesture, anywhere else the unlock's own rule stands
+     * (qa-r11-glance-code Q-8). While a finger is down the rows are never rebound (Q-1, [rowsHeld]): a render held then
+     * runs when the gesture ends. Never throws; a fault springs a drag back and commits a released dismissal (Q-7).
      */
     fun swipe(ev: MotionEvent, covered: Boolean): SwipeTouch = try {
-        swipeNow(ev, covered)
+        swipeNow(ev, covered).also { if (swipeDown == null) flushRender() }
     } catch (e: Throwable) {
         Log.w(LOG_TAG, "Glance swipe failed: ${e.javaClass.simpleName}")
-        dropDrag(smooth = false)
+        settleDismiss()
         swipeReset()
         flushRender()
         SwipeTouch.PASS
@@ -511,6 +544,8 @@ class GlancePanel(
         val action = ev.actionMasked
         if (action == MotionEvent.ACTION_DOWN) {
             dropDrag(smooth = false)
+            // Q-9: a spring-back still running ends before a new drag can take the row.
+            springing?.end()
             swipeReset()
             flushRender()
             val root = glance.root
@@ -521,8 +556,7 @@ class GlancePanel(
             val scrollTakes = hit(scroll, ev) && (scroll.canScrollVertically(1) || scroll.canScrollVertically(-1))
             swipeBlocked = glanceSwipeBlocked(swipeControls().any { hit(it, ev) }, scrollTakes)
             // r11 §3.1: only a row, only on the GLANCE stage (not under Android's pad), never while a dismissal runs.
-            swipeInScroll = hit(scroll, ev)
-            dismissRow = if (state.stage == LockStage.GLANCE && dismissing == null && swipeInScroll) rowAt(ev) else null
+            dismissRow = if (state.stage == LockStage.GLANCE && dismissing == null && hit(scroll, ev)) rowAt(ev) else null
             swipeDown = MotionEvent.obtain(ev)
             swipeVelocity = VelocityTracker.obtain().also { it.addMovement(ev) }
             return SwipeTouch.PASS
@@ -549,17 +583,18 @@ class GlancePanel(
             swipeAxis = glanceTouchAxis(dx, dy, ViewConfiguration.get(activity).scaledTouchSlop / density)
             if (swipeAxis == GlanceAxis.HORIZONTAL) {
                 // r11 §3.2: sideways on a row is its dismiss - the views get a cancel (the row's press ends, the scroll
-                // gets nothing) and the row follows the finger; sideways anywhere else in the scroller is nothing, and
-                // no unlock for this gesture. Outside it (the bottom row, the handle, the inset) the unlock's own rule
-                // stands: only a mostly vertical swipe up asks, so the handle's swipe always can.
-                val drag = dismissRow?.let(::dragOf)
+                // gets nothing) and the row follows the finger. A sideways start on a row it can't take is no unlock
+                // for this gesture; anywhere else (the clock, the tiles, the bottom row, the handle) the unlock's own
+                // rule stands - only a mostly vertical swipe up asks (qa-r11-glance-code Q-8).
+                val slop = ViewConfiguration.get(activity).scaledTouchSlop / density
+                val drag = dismissRow?.let { dragOf(it, slop) }
                 if (drag != null) {
                     swipeMode = SwipeMode.DISMISS
                     dragged = drag
                     follow(drag, dx)
                     return SwipeTouch.CANCEL_VIEWS
                 }
-                if (swipeInScroll) swipeBlocked = true
+                if (dismissRow != null) swipeBlocked = true
             }
         }
         val verdict = glanceSwipeStep(
@@ -590,7 +625,6 @@ class GlancePanel(
         swipeMode = SwipeMode.NONE
         swipeAxis = GlanceAxis.NONE
         dismissRow = null
-        swipeInScroll = false
         dragged = null
     }
 
@@ -610,15 +644,25 @@ class GlancePanel(
     /** A render came while the rows waited for a drag or a dismissal: it runs once they are free ([flushRender]). */
     private var renderPending = false
 
-    /** The missed-call rows dismissed under the notifier's [MissedCallNotice] they were shown from (compared by
-     * identity): left out until `MissedCallNotifier.current` next changes ([withoutDismissed]). */
-    private class MissedHidden(val under: MissedCallNotice?, val numbers: Set<String>, val plain: Boolean)
+    /** The missed-call rows dismissed and not yet answered by the notifier's pass for them (number -> passes
+     * outstanding; [hiddenPlain] for the plain row): left out of the rows ([withoutDismissed]) so none flashes back
+     * (qa-r11-glance-code Q-5: each until its own pass, not the first change of `MissedCallNotifier.current`). */
+    private val hiddenNumbers = HashMap<String, Int>()
+    private var hiddenPlain = 0
 
-    private var missedHidden: MissedHidden? = null
+    /** Every rebinding of the rows (commitDismiss renders only when none ran during it). */
+    private var rowBinds = 0
+
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** While a row is dragged or dismissed the rows (and the layout) aren't rebound, so a post that arrives meanwhile
      * never swaps a row's content under the finger (r11 §3.3). */
     private fun dismissBusy(): Boolean = swipeMode == SwipeMode.DISMISS || dismissing != null
+
+    /** qa-r11-glance-code Q-1: no rebind under a finger that is down either - a tap that lands during a row's slide or
+     * collapse (or while a post arrives) clicks the row it pressed, never the one a rebind moved under it. A held render
+     * runs at the gesture's end ([swipe], [flushRender]). */
+    private fun rowsHeld(): Boolean = swipeDown != null || dismissBusy()
 
     /** The rest of a row's sideways gesture ([SwipeMode.DISMISS]): it follows the finger until the lift, then
      * [glanceDismissStep] decides. A second finger, the system's cancel or the VoIP card springs it back. */
@@ -645,10 +689,10 @@ class GlancePanel(
         val lifted = action == MotionEvent.ACTION_UP
         if (lifted) tracker.computeCurrentVelocity(1000)
         val density = activity.resources.displayMetrics.density
-        val dx = (ev.rawX - down.rawX) / density
+        val dx = slopped((ev.rawX - down.rawX) / density, drag.slopDp)
         val vx = if (lifted) tracker.xVelocity / density else 0f
         when (glanceDismissStep(dx, vx, drag.view.width / density, lifted)) {
-            GlanceDismiss.FOLLOW -> follow(drag, dx)
+            GlanceDismiss.FOLLOW -> follow(drag, (ev.rawX - down.rawX) / density)
             GlanceDismiss.DISMISS -> {
                 swipeReset()
                 release(drag, dx)
@@ -669,14 +713,19 @@ class GlancePanel(
 
     private fun boundRows(): Int = minOf(rows.size, GLANCE_MAX_ROWS)
 
-    private fun dragOf(index: Int): Dragged? =
-        rows.getOrNull(index)?.takeIf { index < boundRows() }?.let { Dragged(index, rowViews[index].root, it) }
+    private fun dragOf(index: Int, slopDp: Float): Dragged? =
+        rows.getOrNull(index)?.takeIf { index < boundRows() }?.let { Dragged(index, rowViews[index].root, it, slopDp) }
 
-    /** The row follows the finger and fades ([glanceDismissAlpha]). */
+    /** The drag's travel past the slop it was taken after (Q-9, as Android's shade): 0 within it. */
+    private fun slopped(dxDp: Float, slopDp: Float): Float =
+        if (kotlin.math.abs(dxDp) <= slopDp) 0f else dxDp - kotlin.math.sign(dxDp) * slopDp
+
+    /** The row follows the finger (its travel past the slop, [dx] raw) and fades ([glanceDismissAlpha]). */
     private fun follow(drag: Dragged, dx: Float) {
         val density = activity.resources.displayMetrics.density
-        drag.view.translationX = dx * density
-        drag.view.alpha = glanceDismissAlpha(dx, drag.view.width / density)
+        val travel = slopped(dx, drag.slopDp)
+        drag.view.translationX = travel * density
+        drag.view.alpha = glanceDismissAlpha(travel, drag.view.width / density)
     }
 
     /** A drag still in progress goes back - at once (a lock-up, a stop, a new DOWN) or animated. */
@@ -732,11 +781,18 @@ class GlancePanel(
         }
         val d = Dismissal(drag.index, drag.view, drag.row)
         dismissing = d
-        if (!ValueAnimator.areAnimatorsEnabled()) {
-            commitDismiss(d)
-            return
+        // Q-7: a fault before the slide runs commits at once - `dismissing` never outlives a dismissal that can't end.
+        var running = false
+        try {
+            if (ValueAnimator.areAnimatorsEnabled()) running = slideOff(d, dx)
+        } finally {
+            if (!running) commitDismiss(d)
         }
-        val view = drag.view
+    }
+
+    /** The row slides off the screen's edge, fading; then [collapse]. Returns whether the slide runs. */
+    private fun slideOff(d: Dismissal, dx: Float): Boolean {
+        val view = d.view
         val edge = glance.lockGlanceScroll.width.toFloat()
         val toX = if (dx < 0f) -edge else edge
         val fromX = view.translationX
@@ -756,11 +812,22 @@ class GlancePanel(
             })
             start()
         }
+        return true
     }
 
     /** The slid-off row's height and the 8 dp gap above it (the first row's: below it) close in [DISMISS_ANIM_MS]. */
     private fun collapse(d: Dismissal) {
         if (dismissing !== d) return
+        // Q-7: a fault before the collapse runs commits at once.
+        var running = false
+        try {
+            running = collapseRuns(d)
+        } finally {
+            if (!running) commitDismiss(d)
+        }
+    }
+
+    private fun collapseRuns(d: Dismissal): Boolean {
         val view = d.view
         val gapView = if (d.index == 0) rowViews.getOrNull(1)?.root?.takeIf { it.visibility == View.VISIBLE } else view
         val gap = gapView?.layoutParams as? ViewGroup.MarginLayoutParams
@@ -786,18 +853,21 @@ class GlancePanel(
             })
             start()
         }
+        return true
     }
 
     /**
      * The commit (r11 §3.3), once, on the row bound when the kid saw it: a message row - [GlanceReader.dismiss] (that
      * conversation's keys up to the row's newest post; a `false` renders the row back in place); a contact's
      * missed-call row - [MissedCallNotifier.dismissContact] (its dismissed mark, the phone book's badge stays); the plain
-     * one - [MissedCallNotifier.dismiss] (ours cancelled, its range marked read, as the phone book's opening). The
-     * missed-call rows stay out until the notifier's notice changes ([withoutDismissed]). Then the deferred render: every
-     * row view reset and rebound. Returns whether it dismissed.
+     * one - [MissedCallNotifier.dismiss] (ours cancelled, its range marked read, as the phone book's opening). A
+     * missed-call row stays out until the notifier's pass for it has answered (Q-5, [withoutDismissed]). Then the
+     * deferred render - every row view reset and rebound - unless the reader's change already ran it, and never under a
+     * finger that is down (Q-1). Returns whether it dismissed.
      */
     private fun commitDismiss(d: Dismissal): Boolean {
         var done = false
+        val bound = rowBinds
         guarded("dismiss") {
             if (dismissing !== d) return@guarded
             dismissing = null
@@ -808,32 +878,46 @@ class GlancePanel(
                 }
                 is GlanceMissedRow -> {
                     val number = row.number
-                    if (number != null) {
-                        MissedCallNotifier.dismissContact(activity, number, upToMs = row.timeMs)
-                    } else {
-                        MissedCallNotifier.dismiss(activity)
-                    }
                     hideMissed(number)
+                    if (number != null) {
+                        MissedCallNotifier.dismissContact(activity, number, upToMs = row.timeMs) { main.post { missedAnswered(number) } }
+                    } else {
+                        MissedCallNotifier.dismiss(activity) { main.post { missedAnswered(null) } }
+                    }
                     Log.i(LOG_TAG, if (number != null) "Glance: a row dismissed (missed call)" else "Glance: a row dismissed (missed calls)")
                     true
                 }
             }
         }
-        renderPending = false
-        render()
+        // The reader's own change (GlanceStore.hide) may have rendered already; else render now (or at the lift).
+        if (rowBinds == bound) {
+            renderPending = true
+            flushRender()
+        }
         return done
     }
 
-    /** Leaves [number]'s row (null: the plain row) out under the notifier's notice shown now. */
+    /** Leaves [number]'s row (null: the plain row) out until the notifier's pass for it answers ([missedAnswered]). */
     private fun hideMissed(number: String?) {
-        val under = MissedCallNotifier.current
-        val held = missedHidden?.takeIf { it.under === under }
-        missedHidden = MissedHidden(under, held?.numbers.orEmpty() + listOfNotNull(number), held?.plain == true || number == null)
+        if (number != null) hiddenNumbers[number] = (hiddenNumbers[number] ?: 0) + 1 else hiddenPlain++
     }
 
-    /** The render a drag or a dismissal held back, once the rows are free. */
+    /** The notifier's pass for [number] (null: the plain row) is done and `MissedCallNotifier.current` says what is
+     * left: the row is no longer held out by us (Q-5: a pass for another contact doesn't release it). Main thread. */
+    private fun missedAnswered(number: String?) = guarded("dismiss") {
+        if (number != null) {
+            val left = (hiddenNumbers[number] ?: 0) - 1
+            if (left > 0) hiddenNumbers[number] = left else hiddenNumbers.remove(number)
+        } else {
+            hiddenPlain = (hiddenPlain - 1).coerceAtLeast(0)
+        }
+        renderPending = true
+        flushRender()
+    }
+
+    /** The render a drag, a dismissal or a finger held back, once the rows are free. */
     private fun flushRender() {
-        if (!renderPending || dismissBusy()) return
+        if (!renderPending || rowsHeld()) return
         renderPending = false
         render()
     }
@@ -841,10 +925,12 @@ class GlancePanel(
     /**
      * r11 §5: a lock-up or a stop - a drag in progress springs back at once (nothing dismissed), a dismissal already
      * released commits at once (its animation ended, its listeners dropped). A screen-off mid-drag dismisses nothing.
+     * Also every return to the glance ([backToTop]): any gesture still recorded ends here (one whose UP never reached
+     * us must not hold the rows, Q-1), and a render held back runs.
      */
     private fun settleDismiss() = guarded("dismiss") {
         dropDrag(smooth = false)
-        if (swipeMode == SwipeMode.DISMISS) swipeReset()
+        swipeReset()
         springing?.end()
         dismissing?.let { d ->
             d.animator?.let {
@@ -853,13 +939,15 @@ class GlancePanel(
             }
             commitDismiss(d)
         }
+        flushRender()
     }
 
     /**
      * Design r11 §3.4: TalkBack's touch exploration takes the drag, so every row has the custom action "Fjern" /
      * "Remove" next to its click label - set on the rows only (the timer tile keeps [openAction], F7). The action
      * commits at once, without the animation, on the row bound now; it answers `false` when the commit can't run (not
-     * on the GLANCE stage, a dismissal running, no listener for a message row). Focus stays on the view, which then reads
+     * on the GLANCE stage, under the VoIP ring card - qa-r11-glance-code Q-2 -, a dismissal running, no listener for a
+     * message row). Focus stays on the view, which then reads
      * the next row; nothing is announced (`announceForAccessibility` is deprecated, F8).
      */
     private fun rowActions(view: View, clickLabel: String, row: GlanceRow) {
@@ -879,7 +967,7 @@ class GlancePanel(
 
     private fun removeByAction(view: View, row: GlanceRow): Boolean = try {
         val index = rowViews.indexOfFirst { it.root === view }
-        val free = started && !leaving && state.stage == LockStage.GLANCE && !dismissBusy() && index in 0 until boundRows()
+        val free = started && !leaving && !cardUp && state.stage == LockStage.GLANCE && !rowsHeld() && index in 0 until boundRows()
         if (!free || (row is GlanceMessageRow && !GlanceReader.canDismiss())) {
             false
         } else {
@@ -973,7 +1061,10 @@ class GlancePanel(
     }
 
     private fun step(event: GlanceStageEvent) = guarded("stage") {
+        val from = state.stage
         state = glanceStageStep(state, event, face())
+        // The user (2026-10-24): back on the glance from the keypad or Android's pad, the page starts at the top.
+        if (glanceBackToTop(from, state.stage)) backToTop()
         dropTargetIfGone()
         renderNow()
         onStage()
@@ -989,6 +1080,14 @@ class GlancePanel(
         captured = null
         promptLabel = if (taken) glancePromptLabel(label(target.packageName)) else null
         step(GlanceStageEvent.Row(target.takeIf { taken }))
+    }
+
+    /** The "more" line's tap (the user, 2026-10-24): the keypad without a target, as a row the time rule leaves no
+     * target - the plain prompt, and Home after the code. Nothing is captured. */
+    private fun tapMore() = guarded("tap") {
+        captured = null
+        promptLabel = null
+        step(GlanceStageEvent.Row(null))
     }
 
     private fun dropTargetIfGone() {
@@ -1052,7 +1151,13 @@ class GlancePanel(
             clockUp = clock.up
             clock.show(shownClock(), page)
         }
-        placeList(glanceLayout(tileUp, rows.size, clockUp))
+        val layout = glanceLayout(tileUp, rows.size, clockUp)
+        placeList(layout)
+        // qa-r11-glance-code Q-10: a tile coming or going is a new layout - logged now, not at the next render.
+        if (layout != laidOut) {
+            logLayout(layout, available(glance.root.height))
+            laidOut = layout
+        }
     }
 
     /** The timer tile while a timer runs (always full, r11 §1.2). */
@@ -1120,10 +1225,12 @@ class GlancePanel(
         clockUp = clock.up
         // r11 §3.3: while a row is dragged or dismissed everything but the rows and the layout is bound; the rest waits
         // for the commit (or the spring-back), which renders once more.
-        val busy = dismissBusy()
+        val busy = rowsHeld()
         if (busy) {
             renderPending = true
         } else {
+            renderPending = false
+            rowBinds++
             try {
                 rows = shownRows()
                 bindRows()
@@ -1144,13 +1251,10 @@ class GlancePanel(
         layoutNow()
     }
 
-    /** The store's rows, less the missed-call rows dismissed under the notifier's notice shown now (r11 §3.3). */
+    /** The store's rows, less the missed-call rows dismissed and not yet answered by the notifier (r11 §3.3, Q-5). */
     private fun shownRows(): List<GlanceRow> {
-        val missed = MissedCallNotifier.current
-        val hidden = missedHidden?.takeIf { it.under === missed }
-        missedHidden = hidden
-        val all = GlanceStore.rows(missed)
-        return if (hidden == null) all else withoutDismissed(all, hidden.numbers, hidden.plain)
+        val all = GlanceStore.rows(MissedCallNotifier.current)
+        return if (hiddenNumbers.isEmpty() && hiddenPlain == 0) all else withoutDismissed(all, hiddenNumbers.keys, hiddenPlain > 0)
     }
 
     // ---- rows -----------------------------------------------------------------------------------
@@ -1384,17 +1488,20 @@ class GlancePanel(
             clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_BIG_SP)
         }
         val layout = glanceLayout(tileUp, rows.size, clockUp)
-        if (layout != laidOut || room != loggedFor) {
-            // Counts and dp only (LockGlanceGuardTest): the room and the paddings say which bars it saw.
-            val roomDp = px2dp(room)
-            val padTop = px2dp(root.paddingTop)
-            val padBottom = px2dp(root.paddingBottom)
-            Log.i(LOG_TAG, "Glance layout: tile ${layout.tile}, ${layout.rows} rows, ${layout.more} more, available $roomDp dp (pad $padTop/$padBottom)")
-            loggedFor = room
-        }
+        if (layout != laidOut || room != loggedFor) logLayout(layout, room)
         if (layout != laidOut || moved) refitPending = true
         laidOut = layout
         apply(layout)
+    }
+
+    /** The layout's log line - counts and dp only (LockGlanceGuardTest): the room and the paddings say which bars it saw. */
+    private fun logLayout(layout: GlanceLayout, room: Int) {
+        val root = glance.root
+        val roomDp = px2dp(room)
+        val padTop = px2dp(root.paddingTop)
+        val padBottom = px2dp(root.paddingBottom)
+        Log.i(LOG_TAG, "Glance layout: tile ${layout.tile}, ${layout.rows} rows, ${layout.more} more, available $roomDp dp (pad $padTop/$padBottom)")
+        loggedFor = room
     }
 
     private fun apply(layout: GlanceLayout) {
