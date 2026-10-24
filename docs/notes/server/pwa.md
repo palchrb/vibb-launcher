@@ -354,6 +354,22 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   repointed `app_display.rs`, `tracked_apps.rs` (downloads, the Wi-Fi switch, the tab's links and count),
   `catalog_pins.rs`, `play.rs`, `hardening.rs`, `window_relock.rs`, `device_api.rs`, `music.rs` (`back=music`);
   `app_downloads::tests` (the labels in Oslo time).
+- **Opened from the Apps tab** (2026-10-24, the user: "på apps, om jeg går inn på feks Sverre sin tlf og så trykker
+  tilbake - så kommer jeg til device taben for Sverre? Føltes unaturlig"): the Apps tab's phone rows link with
+  `?from=apps`, a catalog app's phone rows and `phone-link`s with `?from=app:<tracked app id>` (before the
+  `#app-<package>` fragment; `tracked_apps::phone_apps_href`). `device_pages::AppsFrom::parse` takes only those two
+  shapes (the id a positive number in digits); with one the page lights the Apps tab and `.nav-back` goes to `/apps`
+  ("Apps") or `/apps/tracked/<id>` (the app's name) at the phone's row, `#phone-<id>` (both pages give their phone
+  rows that id); a catalog app deleted since is the list; anything else is the phone's own page, as before. Every
+  form on the page carries a hidden `from` (the switches, Name and icon - `AppDisplayForm::from` -, the Wi-Fi switch)
+  and its redirect keeps it before the fragment (`device_pages::apps_url`: `?notice=…&app=…&from=…#row`), the
+  refused Name and icon's answer too; `auto-reload.js` (`?v=4`) drops only a shown `notice=`/`app=`, never `from=`.
+  The browser's Back is untouched. The tab is still the template's choice (§3.1): `device_apps.html` alone sets it
+  from a field, `{% let tab = nav_tab.name() %}`, a `device_pages::Tab` that can only be a tab's name
+  (`shell::every_template_with_the_bar_sets_its_tab` pins that line for this file and the literal rule for every
+  other). Tests: `device_pages::apps_from_the_apps_tab_go_back_there` (both origins, bad values, a deleted app, every
+  form's redirect, the refusals), `device_pages::tests::apps_from_takes_only_its_two_shapes`,
+  `tracked_apps::tests::a_phone_link_says_where_it_came_from`, `jstest/auto-reload.test.js`.
 
 ## Device › Music (design 31 step 7, `docs/design/31-pwa-redesign.md` §3.2, §8)
 
@@ -462,7 +478,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   admin name in the sub-line, "N phones" (`device_tracked_apps`; the launcher "all phones"), the version from the tag
   (`version_of`) or a badge instead (Off / Update failed - the in-memory last sync / No release yet), the launcher
   first; the footer and Add App. Phone rows link through `phone_apps_href` to the phone's Apps page
-  (`/devices/{id}/apps`, at `#app-<package>` from an app page; step 6).
+  (`/devices/{id}/apps?from=apps`, `?from=app:<id>#app-<package>` from an app page; step 6, and "Opened from the Apps
+  tab" there: Back returns here).
 - **`/apps/tracked/{id}`** (`render_detail_full`): the sub-page header; Version, Last checked (local, relative,
   `display_time`), Check Now with the running state or the failed check's title + ⓘ; Show on phones as (the
   `app_display_form` partial); On phones (the phones with it ticked, every set-up phone for the launcher); Source &

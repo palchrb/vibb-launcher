@@ -77,7 +77,7 @@
         </details>
         {% endif %}
         {% else %}
-        <a class="row" href="{{ p.href }}" data-phone="{{ p.id }}">
+        <a class="row" href="{{ p.href }}" id="phone-{{ p.id }}" data-phone="{{ p.id }}">
             <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}</span>
             <span class="row-label">{{ p.name }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

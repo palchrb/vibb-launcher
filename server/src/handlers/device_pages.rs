@@ -1546,11 +1546,135 @@ pub struct AppView {
     pub refused: Option<&'static str>,
 }
 
+/// A tab of the bar (`partials/tab_bar.html`'s five), for the one page whose tab is a field
+/// rather than a literal `{% let tab = "..." %}`: Device › Apps, opened from the Apps tab
+/// (`shell::every_template_with_the_bar_sets_its_tab`). Only tab names can be set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Tab {
+    Devices,
+    Apps,
+}
+
+impl Tab {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Tab::Devices => "devices",
+            Tab::Apps => "apps",
+        }
+    }
+}
+
+/// Where Device › Apps was opened from (`?from=`; the user, 2026-10-24: Back from Apps › a phone
+/// went to the phone's page): the Apps tab's list (`apps`) or a catalog app's page
+/// (`app:<tracked app id>`). The page then lights the Apps tab and its back link returns there, at
+/// the phone's row; any other value is the phone's own page, as before. Every form on the page
+/// carries it (a hidden `from`) and its redirect keeps it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AppsFrom {
+    List,
+    App(i64),
+}
+
+impl AppsFrom {
+    /// Only the two shapes, the id a positive number in digits: anything else is `None`.
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
+        if raw == "apps" {
+            return Some(Self::List);
+        }
+        let id = raw.strip_prefix("app:")?;
+        if id.is_empty() || id.len() > 18 || !id.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        id.parse::<i64>().ok().filter(|id| *id > 0).map(Self::App)
+    }
+
+    /// The value in the address and in the forms' hidden `from`.
+    pub(crate) fn value(self) -> String {
+        match self {
+            Self::List => "apps".to_string(),
+            Self::App(id) => format!("app:{id}"),
+        }
+    }
+}
+
+/// Device › Apps' address: `params` (a refusal's `notice=…&app=…`, or empty), then `from` kept,
+/// then the fragment (without `#`; empty for none).
+pub(crate) fn apps_url(
+    device_id: i64,
+    params: &str,
+    from: Option<AppsFrom>,
+    fragment: &str,
+) -> String {
+    let from = from.map(|f| format!("from={}", f.value()));
+    let query: Vec<&str> = [Some(params), from.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter(|p| !p.is_empty())
+        .collect();
+    let mut url = format!("/devices/{device_id}/apps");
+    if !query.is_empty() {
+        url.push('?');
+        url.push_str(&query.join("&"));
+    }
+    if !fragment.is_empty() {
+        url.push('#');
+        url.push_str(fragment);
+    }
+    url
+}
+
+/// The page's tab and back link: the phone's (Devices, "‹ Anna") unless it was opened from the
+/// Apps tab - then Apps, back to the list or the catalog app's page at the phone's row
+/// (`#phone-<id>`); a catalog app deleted since is the list. Also the `from` the page keeps.
+async fn apps_nav(
+    state: &AppState,
+    device: &Device,
+    from: Option<AppsFrom>,
+) -> Result<(Tab, String, String, Option<AppsFrom>), sqlx::Error> {
+    let list = (
+        Tab::Apps,
+        format!("/apps#phone-{}", device.id),
+        "Apps".to_string(),
+        Some(AppsFrom::List),
+    );
+    Ok(match from {
+        None => (
+            Tab::Devices,
+            format!("/devices/{}", device.id),
+            device.name.clone(),
+            None,
+        ),
+        Some(AppsFrom::List) => list,
+        Some(AppsFrom::App(app)) => {
+            match sqlx::query_scalar::<_, String>("SELECT name FROM tracked_apps WHERE id = ?")
+                .bind(app)
+                .fetch_optional(&state.db)
+                .await?
+            {
+                Some(name) => (
+                    Tab::Apps,
+                    format!("/apps/tracked/{app}#phone-{}", device.id),
+                    name,
+                    from,
+                ),
+                None => list,
+            }
+        }
+    })
+}
+
 #[derive(Template)]
 #[template(path = "device_apps.html")]
 struct AppsTemplate {
     title: String,
     device: Device,
+    /// Devices, or Apps when opened from the Apps tab (`AppsFrom`).
+    nav_tab: Tab,
+    /// The `.nav-back` link and its words.
+    back_href: String,
+    back_label: String,
+    /// `from` for every form's hidden field (`AppsFrom::value`), when opened from the Apps tab.
+    from: Option<String>,
     /// The stored allowlist can't be read (the phone gets a 500 for its settings): above the list.
     corrupt: Option<Note>,
     /// Vibb first, then the apps switched on; then the rest.
@@ -1584,16 +1708,19 @@ pub async fn view_apps(
             .and_then(|code| crate::handlers::devices::toggle_refusal(code))
             .map(|text| (row.as_str(), text))
     });
-    render_apps(&state, id, refused, None).await
+    let from = query.get("from").and_then(|f| AppsFrom::parse(f));
+    render_apps(&state, id, refused, None, from).await
 }
 
 /// Device › Apps; `refused` = the row whose switch was refused and why, `entered` = a refused Name
-/// and icon save (that app's form open with the entered values and the error).
+/// and icon save (that app's form open with the entered values and the error), `from` = opened
+/// from the Apps tab (the tab, the back link and every form's hidden `from`).
 pub(crate) async fn render_apps(
     state: &AppState,
     id: i64,
     refused: Option<(&str, &'static str)>,
     entered: Option<(String, crate::app_display::Entered)>,
+    from: Option<AppsFrom>,
 ) -> Response {
     use crate::app_display::{self as display, AppDisplayForm, DisplayValues};
     let device = match load_device(state, id).await {
@@ -1621,6 +1748,11 @@ pub(crate) async fn render_apps(
         Ok(own) => own,
         Err(err) => return read_failed(id, "the phone's app names", err),
     };
+    let (nav_tab, back_href, back_label, from) = match apps_nav(state, &device, from).await {
+        Ok(nav) => nav,
+        Err(err) => return read_failed(id, "the catalog app it came from", err),
+    };
+    let from = from.map(AppsFrom::value);
     let zone = Zone::load(&state.db).await;
     let now = Utc::now();
 
@@ -1674,6 +1806,7 @@ pub(crate) async fn render_apps(
                 );
                 form.catalog_default = default.map(DisplayValues::describe);
                 form.own_row = phone_row.is_some();
+                form.from = from.clone();
                 if phone_row.is_none() && default.is_some() {
                     form.summary = format!("{} (from the catalog)", form.summary);
                 }
@@ -1698,6 +1831,10 @@ pub(crate) async fn render_apps(
     Html(
         AppsTemplate {
             title: format!("Apps · {}", device.name),
+            nav_tab,
+            back_href,
+            back_label,
+            from,
             corrupt: rows.allowlist_corrupt.then(|| Note {
                 warning: true,
                 title: "App list unreadable".to_string(),
@@ -1827,6 +1964,57 @@ pub(crate) fn escapes_card(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `?from=` on Device › Apps: only `apps` and `app:<positive id in digits>`; the address
+    /// keeps it between a refusal's own parameters and the fragment.
+    #[test]
+    fn apps_from_takes_only_its_two_shapes() {
+        assert_eq!(AppsFrom::parse("apps"), Some(AppsFrom::List));
+        assert_eq!(AppsFrom::parse("app:7"), Some(AppsFrom::App(7)));
+        assert_eq!(AppsFrom::parse("app:007"), Some(AppsFrom::App(7)));
+        for bad in [
+            "",
+            "app",
+            "app:",
+            "app:0",
+            "app:-1",
+            "app:+1",
+            "app:1x",
+            "app: 1",
+            "app:1 ",
+            "apps ",
+            "Apps",
+            "APP:1",
+            "app:99999999999999999999",
+            "devices",
+            "/apps",
+        ] {
+            assert_eq!(AppsFrom::parse(bad), None, "{bad:?}");
+        }
+        for from in [AppsFrom::List, AppsFrom::App(12)] {
+            assert_eq!(AppsFrom::parse(&from.value()), Some(from));
+        }
+        assert_eq!(apps_url(3, "", None, ""), "/devices/3/apps");
+        assert_eq!(
+            apps_url(3, "", Some(AppsFrom::List), "app-org.example"),
+            "/devices/3/apps?from=apps#app-org.example"
+        );
+        assert_eq!(
+            apps_url(
+                3,
+                "notice=from_play&app=catalog-4",
+                Some(AppsFrom::App(4)),
+                "catalog-4"
+            ),
+            "/devices/3/apps?notice=from_play&app=catalog-4&from=app:4#catalog-4"
+        );
+        assert_eq!(
+            apps_url(3, "", None, "downloads"),
+            "/devices/3/apps#downloads"
+        );
+        assert_eq!(Tab::Devices.name(), "devices");
+        assert_eq!(Tab::Apps.name(), "apps");
+    }
 
     /// S2P-4: an earlier install's report isn't this one's.
     #[test]

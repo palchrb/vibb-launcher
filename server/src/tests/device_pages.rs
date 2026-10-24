@@ -2204,7 +2204,7 @@ async fn a_refused_name_save_never_reloads() {
         .await
         .text();
     assert!(page.contains("Installing 40%"));
-    assert!(page.contains("<script src=\"/static/auto-reload.js?v=3\" defer></script>"));
+    assert!(page.contains("<script src=\"/static/auto-reload.js?v=4\" defer></script>"));
     let res = app
         .request_form(
             Method::POST,
@@ -2768,4 +2768,192 @@ async fn the_music_pages_link_to_the_phones_music_page() {
         .await
         .text();
     assert!(html.contains(&format!("id=\"music-entry-{a}\"")));
+}
+
+/// The `.nav-back` link: its address and its words.
+fn nav_back(html: &str) -> (String, String) {
+    let at = html.find("class=\"nav-back\"").expect("a back link");
+    let link = &html[at..at + html[at..].find("</a>").unwrap()];
+    let href = link
+        .split("href=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap()
+        .to_string();
+    (href, link.rsplit("</svg>").next().unwrap().to_string())
+}
+
+/// The user, 2026-10-24 ("på apps, om jeg går inn på feks Sverre sin tlf og så trykker tilbake -
+/// så kommer jeg til device taben for Sverre?"): opened from the Apps tab (`?from=apps`, or
+/// `?from=app:<id>` from a catalog app's page), Device › Apps lights the Apps tab and its back link
+/// goes back there, at the phone's row. From the phone's page, or with any other `from`, nothing
+/// changes; a catalog app deleted since is the list.
+#[tokio::test]
+async fn apps_from_the_apps_tab_go_back_there() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _, element, _) = apps_phone(&app).await;
+    let page = device_page(id, Section::Apps);
+    let get = |query: String| {
+        let app = &app;
+        let cookie = &cookie;
+        let page = &page;
+        async move { app.get_page(&format!("{page}{query}"), cookie).await.text() }
+    };
+    let froms = |html: &str| -> Vec<String> {
+        forms(html)
+            .into_iter()
+            .map(|(_, hidden)| {
+                hidden
+                    .into_iter()
+                    .find(|(k, _)| k == "from")
+                    .map(|(_, v)| v)
+                    .unwrap_or_default()
+            })
+            .collect()
+    };
+
+    // From the phone's page, and every value that isn't one of the two shapes: as before.
+    let mut plain = vec![String::new()];
+    for bad in [
+        "",
+        "app",
+        "app:",
+        "app:0",
+        "app:-1",
+        "app:+1",
+        "app:1x",
+        "app: 1",
+        "apps2",
+        "Apps",
+        "devices",
+        "/evil",
+        "app:99999999999999999999",
+        "app:1&from=apps",
+    ] {
+        plain.push(format!(
+            "?from={}",
+            bad.replace('&', "%26").replace(' ', "%20")
+        ));
+    }
+    for query in plain {
+        let html = get(query.clone()).await;
+        assert_eq!(nav_current(&html), "devices", "{query}");
+        assert_eq!(
+            nav_back(&html),
+            (format!("/devices/{id}"), "Anna".to_string()),
+            "{query}"
+        );
+        let froms = froms(&html);
+        assert!(
+            !froms.is_empty() && froms.iter().all(String::is_empty),
+            "{query}"
+        );
+    }
+
+    // From the list; from a catalog app's page; from one deleted since (the list).
+    for (query, back, label, from) in [
+        (
+            "?from=apps".to_string(),
+            format!("/apps#phone-{id}"),
+            "Apps",
+            "apps".to_string(),
+        ),
+        (
+            format!("?from=app:{element}"),
+            format!("/apps/tracked/{element}#phone-{id}"),
+            "Element X",
+            format!("app:{element}"),
+        ),
+        (
+            "?from=app:99999".to_string(),
+            format!("/apps#phone-{id}"),
+            "Apps",
+            "apps".to_string(),
+        ),
+    ] {
+        let html = get(query.clone()).await;
+        assert_eq!(nav_current(&html), "apps", "{query}");
+        assert_eq!(
+            nav_back(&html),
+            (back.clone(), label.to_string()),
+            "{query}"
+        );
+        assert!(froms(&html).iter().all(|f| *f == from), "{query}");
+        // The back link lands on the phone's row there.
+        let (target, fragment) = back.split_once('#').unwrap();
+        let there = app.get_page(target, &cookie).await.text();
+        assert!(there.contains(&format!("id=\"{fragment}\"")), "{back}");
+    }
+
+    // Every form keeps `from` through its redirect, to the same fragment as without it, and the
+    // page it lands on is the Apps tab's again.
+    let from = format!("app:{element}");
+    let html = get(format!("?from={from}")).await;
+    let mut posted = 0;
+    for (action, hidden) in forms(&html) {
+        let (target, fragment) = action.split_once('#').unwrap();
+        let mut sent: Vec<(&str, &str)> = hidden
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        if target.ends_with("/apps/display") {
+            sent.extend([("label", "Mine"), ("icon", "chat"), ("color", "auto")]);
+        }
+        let res = app
+            .request_form(Method::POST, target, Some(&cookie), &sent)
+            .await;
+        assert_redirect(&res, &format!("{page}?from={from}"), Some(fragment));
+        app.assert_lands(&res, &cookie).await;
+        let landed = app
+            .get_page(res.location().unwrap().split('#').next().unwrap(), &cookie)
+            .await
+            .text();
+        assert_eq!(nav_current(&landed), "apps", "{action}");
+        posted += 1;
+    }
+    assert!(posted >= 4, "{posted} forms");
+
+    // A refused switch and a refused name keep it too: the reason's address, and the answer.
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/apps/toggle"),
+            Some(&cookie),
+            &[
+                ("package_name", ""),
+                ("tracked_app_id", "99999"),
+                ("selected", "on"),
+                ("back", "apps"),
+                ("from", "apps"),
+            ],
+        )
+        .await;
+    assert_redirect(&res, &format!("{page}?from=apps"), Some("not-allowed"));
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/apps/display"),
+            Some(&cookie),
+            &[
+                ("package_name", "io.element.android.x"),
+                ("label", "Mine"),
+                ("icon", "no-such-icon"),
+                ("color", "auto"),
+                ("from", "apps"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let answer = res.text();
+    assert_eq!(nav_current(&answer), "apps");
+    assert_eq!(nav_back(&answer).0, format!("/apps#phone-{id}"));
+    assert!(froms(&answer).iter().all(|f| f == "apps"));
+    // A refusal's own address (`?notice=…&app=…`) with `from`: the reason under the row, the tab.
+    let html = get("?notice=not_an_app&app=app-io.element.android.x&from=apps".to_string()).await;
+    assert_eq!(nav_current(&html), "apps");
+    assert!(
+        html.contains("data-flash=\"app-io.element.android.x\""),
+        "{html}"
+    );
 }

@@ -22,6 +22,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
 use crate::config::{MUSIC_RELEASE_TAG_PREFIX, SERVER_RELEASE_TAG_PREFIX};
+use crate::handlers::device_pages::AppsFrom;
 use crate::models::TrackedApp;
 use crate::security::{CurrentAdmin, generate_device_token};
 
@@ -1197,11 +1198,12 @@ struct CatalogRow {
 
 /// Where a phone's apps are listed: Device › Apps (design 31 step 6), at the app's row
 /// (`#app-<package>`) when there is one.
-fn phone_apps_href(device_id: i64, package: Option<&str>) -> String {
-    match package.filter(|p| crate::app_display::valid_package_name(p)) {
-        Some(package) => format!("/devices/{device_id}/apps#app-{package}"),
-        None => format!("/devices/{device_id}/apps"),
-    }
+fn phone_apps_href(device_id: i64, package: Option<&str>, from: AppsFrom) -> String {
+    let fragment = package
+        .filter(|p| crate::app_display::valid_package_name(p))
+        .map(|package| format!("app-{package}"))
+        .unwrap_or_default();
+    crate::handlers::device_pages::apps_url(device_id, "", Some(from), &fragment)
 }
 
 /// A release tag as a version: without the row's tag prefix and a leading "v" before a digit
@@ -1406,7 +1408,7 @@ pub async fn list_apps(
         phones.push(PhoneRow::new(
             device,
             value,
-            phone_apps_href(device.id, None),
+            phone_apps_href(device.id, None, AppsFrom::List),
         ));
     }
     let set_up = devices.iter().filter(|d| d.enrolled_at.is_some()).count() as i64;
@@ -1845,7 +1847,7 @@ async fn render_detail_full(
         let mut row = PhoneRow::new(
             device,
             String::new(),
-            phone_apps_href(device.id, row_package),
+            phone_apps_href(device.id, row_package, AppsFrom::App(id)),
         );
         if app.is_launcher {
             let flash = install
@@ -2622,6 +2624,24 @@ pub async fn delete_tracked_app(
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+
+    /// The Apps tab's phone rows say where they came from (`?from=`), kept with the app's row on
+    /// the phone's page; a package that isn't one is left out, never put in the address.
+    #[test]
+    fn a_phone_link_says_where_it_came_from() {
+        assert_eq!(
+            phone_apps_href(5, None, AppsFrom::List),
+            "/devices/5/apps?from=apps"
+        );
+        assert_eq!(
+            phone_apps_href(5, Some("io.element.android.x"), AppsFrom::App(9)),
+            "/devices/5/apps?from=app:9#app-io.element.android.x"
+        );
+        assert_eq!(
+            phone_apps_href(5, Some("not a package\"><b>"), AppsFrom::App(9)),
+            "/devices/5/apps?from=app:9"
+        );
+    }
 
     fn release(tag: &str, prerelease: bool, assets: &[(i64, &str)]) -> GithubRelease {
         GithubRelease {
