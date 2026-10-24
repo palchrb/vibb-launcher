@@ -125,7 +125,10 @@ class HomeRound7Test {
         assertEquals("appLoads.trySend(Unit)", load.trim())
         val loads = app.substringAfter("private val appLoads: Channel<Unit> by lazy {").substringBefore("\n    }\n")
         assertTrue(loads.contains("Channel<Unit>(Channel.CONFLATED)"))
-        assertTrue(loads.contains("requests.consumeEach {"))
+        assertTrue(loads.contains("com.kidslauncher.mdm.ui.home.runAppLoads("))
+        assertTrue(loads.contains("next = { timeoutMs -> requests.nextAppLoad(timeoutMs) }"))
+        assertTrue(loads.contains("now = { android.os.SystemClock.elapsedRealtime() }"))
+        assertFalse("one consumer, through the debounce only", loads.contains("consumeEach"))
         assertTrue(loads.contains("val list = getApps(packageManager, applicationContext)"))
         assertEquals("the list is posted from the one consumer only", 1, Regex("apps\\.postValue\\(").findAll(app).count())
     }
@@ -140,5 +143,102 @@ class HomeRound7Test {
         val evict = loads.indexOf("evict.forEach { com.kidslauncher.mdm.ui.home.KidAvatars.evictPackage(it) }")
         val post = loads.indexOf("apps.postValue(list)")
         assertTrue(loads, snapshot in 0 until load && load < evict && evict < post)
+    }
+
+    // ---- the provisioning storm: one load per burst (qa-home-round-code Q-4) ----------------------
+
+    @Test
+    fun `a burst loads after 300 ms of quiet, at most 2 s after its first request`() {
+        assertEquals(300L, APP_LOAD_QUIET_MS)
+        assertEquals(2_000L, APP_LOAD_MAX_WAIT_MS)
+        assertFalse(appLoadDue(now = 1_299, firstPendingAt = 1_000, lastEventAt = 1_000))
+        assertTrue(appLoadDue(now = 1_300, firstPendingAt = 1_000, lastEventAt = 1_000))
+        assertFalse("a new request moves the quiet period on", appLoadDue(now = 1_500, firstPendingAt = 1_000, lastEventAt = 1_250))
+        assertTrue("never later than 2 s after the first", appLoadDue(now = 3_000, firstPendingAt = 1_000, lastEventAt = 2_950))
+        assertEquals(300L, appLoadWaitMs(now = 1_000, firstPendingAt = 1_000, lastEventAt = 1_000))
+        assertEquals(50L, appLoadWaitMs(now = 2_950, firstPendingAt = 1_000, lastEventAt = 2_900))
+        assertEquals(0L, appLoadWaitMs(now = 1_300, firstPendingAt = 1_000, lastEventAt = 1_000))
+        // Not due always means a wait > 0, so the consumer never spins.
+        for (now in 1_000L..3_100L step 7) {
+            for (last in 1_000L..now step 13) {
+                assertEquals("$now $last", appLoadDue(now, 1_000, last), appLoadWaitMs(now, 1_000, last) == 0L)
+            }
+        }
+    }
+
+    /** The real consumer loop on a virtual clock: requests at [times] (ms), each load taking [loadMs]; the loads' times. */
+    private fun loadsFor(times: List<Long>, loadMs: Long = 0): List<Long> {
+        var now = 0L
+        val pending = ArrayDeque(times.sorted())
+        val loads = mutableListOf<Long>()
+        // The conflated channel: every request already sent comes as one.
+        fun take(): Boolean {
+            if (pending.isEmpty() || pending.first() > now) return false
+            while (pending.isNotEmpty() && pending.first() <= now) pending.removeFirst()
+            return true
+        }
+        kotlinx.coroutines.runBlocking {
+            runAppLoads(
+                next = { timeoutMs ->
+                    val until = if (timeoutMs == null) Long.MAX_VALUE else now + timeoutMs
+                    when {
+                        take() -> AppLoadNext.REQUEST
+                        pending.isNotEmpty() && pending.first() <= until -> {
+                            now = pending.first()
+                            take()
+                            AppLoadNext.REQUEST
+                        }
+                        timeoutMs == null -> AppLoadNext.CLOSED
+                        else -> {
+                            now = until
+                            AppLoadNext.TIMEOUT
+                        }
+                    }
+                },
+                now = { now },
+            ) {
+                loads += now
+                now += loadMs
+            }
+        }
+        return loads
+    }
+
+    @Test
+    fun `the process's first request loads at once - Home's cold start never waits`() {
+        assertEquals(listOf(5_000L), loadsFor(listOf(5_000L)))
+    }
+
+    @Test
+    fun `a burst of 50 package events is one load, after the first of the process`() {
+        val storm = (0 until 50).map { 10_000L + it * 20 }
+        assertEquals(listOf(0L, 10_980L + 300), loadsFor(listOf(0L) + storm))
+        // The storm beginning while the first load still runs: one load more, not 50.
+        assertEquals(2, loadsFor(listOf(0L) + (0 until 50).map { 100L + it * 20 }, loadMs = 400).size)
+    }
+
+    @Test
+    fun `a single event after quiet loads once, 300 ms later`() {
+        assertEquals(listOf(0L, 60_300L), loadsFor(listOf(0L, 60_000L)))
+    }
+
+    @Test
+    fun `a storm that never goes quiet still loads every 2 s`() {
+        val storm = (0 until 250).map { 10_000L + it * 20 } // 5 s, a request every 20 ms
+        assertEquals(listOf(0L, 12_000L, 14_020L, 15_280L), loadsFor(listOf(0L) + storm))
+    }
+
+    @Test
+    fun `the consumer's wait for the next request, on a real channel`() = kotlinx.coroutines.runBlocking {
+        val channel = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+        assertEquals(AppLoadNext.TIMEOUT, channel.nextAppLoad(10))
+        channel.trySend(Unit)
+        channel.trySend(Unit)
+        assertEquals(AppLoadNext.REQUEST, channel.nextAppLoad(10))
+        assertEquals("conflated: two sends are one request", AppLoadNext.TIMEOUT, channel.nextAppLoad(10))
+        channel.trySend(Unit)
+        assertEquals(AppLoadNext.REQUEST, channel.nextAppLoad(null))
+        channel.close()
+        assertEquals(AppLoadNext.CLOSED, channel.nextAppLoad(null))
     }
 }
