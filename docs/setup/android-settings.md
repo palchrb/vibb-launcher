@@ -56,3 +56,13 @@ pause: Settings › Display › Lock screen › "Double-line clock" off (the Sec
 emulator at the Jelly Star's profile (`docs/testing/2026-10-23-aosp-lock-look.md`): with it off the wake frame
 matches the glance's clock within 1 px; with it on, one frame of the stacked clock shows. Confirm the setting's
 place and default on the Jelly Star.
+
+## No media card on Android's lock screen (android mode)
+
+Android 13+ puts the media player's card on its own lock face whenever something plays ("Show media on lock screen",
+on by default), whatever the keyguard features say - so the frame before Vibb One's glance shows Android's media card
+instead of the glance's music tile. Switch it off once per phone, by hand, during a pause (Settings is visible then)
+or before enrolling: Settings › Sound & vibration › Media › "Show media on lock screen" off (the Secure setting
+`media_controls_lock_screen` = 0; neither a device owner nor the music app can write it). Confirmed by the user on
+their emulator 2026-10-24 ("den fiksen funket"). A pause-screen row that opens Android's sound settings is planned
+(PLAN.md, "Android's lock screen shows the media card").

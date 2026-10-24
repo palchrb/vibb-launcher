@@ -1116,8 +1116,8 @@ findings, merge to `main`, full suite once.
   puts the media carousel on SystemUI's own face whatever our keyguard features say. Neither the device owner nor the
   music app may write it. (1) A step in `docs/setup/android-settings.md` (before enrolling, or during a pause while
   Settings is visible); (2) a pause-screen row "Media on the lock screen" opening `ACTION_SOUND_SETTINGS`, the same
-  mechanism as the write-settings and fingerprint rows (rc.5). The user checks on their emulator that the switch is
-  what removes the card they see. Launcher + docs, S; next launcher round.
+  mechanism as the write-settings and fingerprint rows (rc.5). The user confirmed the switch on their emulator
+  2026-10-24 ("den fiksen funket"); (1) done the same day in `android-settings.md`; (2) launcher, S; next launcher round.
 - **A black flash behind Home after the Home button** (the user, 2026-10-16, emulator video): from an app
   (Element X), the Home button (the emulator's circle) shows Home's icons on solid black for ~150 ms
   (four frames at 30 fps) while the app slides away, and only then the wallpaper; Back has a clean
