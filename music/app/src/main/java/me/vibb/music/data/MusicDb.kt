@@ -2,6 +2,7 @@ package me.vibb.music.data
 
 import android.content.Context
 import androidx.room.AutoMigration
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -126,10 +127,12 @@ data class RepeatRow(@PrimaryKey val entryKey: String, val mode: String)
 
 /**
  * A kid's favourite track or episode (design 50 §1.5, Room 6, created with design 49's `repeat`): keyed by the entry
- * KEY and the item key like every per-entry state. Phone-only, never synced or reported.
+ * KEY and the item key like every per-entry state. Phone-only, never synced or reported. [heartedAt] (design r12 §3.6,
+ * Room 8): when the heart was set (wall clock ms), the favourites queue's order - newest first; 0 for a heart set
+ * before Room 8. The insert is `IGNORE`, so a set heart keeps its time.
  */
 @Entity(tableName = "favourites", primaryKeys = ["entryKey", "itemKey"])
-data class FavouriteRow(val entryKey: String, val itemKey: String)
+data class FavouriteRow(val entryKey: String, val itemKey: String, @ColumnInfo(defaultValue = "0") val heartedAt: Long = 0)
 
 /**
  * The stored queue after a flip of [entryId] (design 39 §3.1, qa-39-design M5): [row]'s keys in [newOrder]'s direction
@@ -137,7 +140,8 @@ data class FavouriteRow(val entryKey: String, val itemKey: String)
  * play continue the shown way. Null when the row is another entry's, shuffled, or has no current item.
  */
 fun flippedNowPlaying(row: NowPlayingRow, entryId: Long, newOrder: List<String>, nowMs: Long): NowPlayingRow? {
-    if (row.entryId != entryId || row.shuffled) return null
+    // a favourites queue's run (design r12 §3.6): the queue's order is the hearts', never the entry's - no flip there
+    if (row.entryId != entryId || row.shuffled || row.mix != null) return null
     val keys = row.keys.split('\n').filter { it.isNotEmpty() }
     val current = keys.getOrNull(row.index) ?: return null
     // its current item left the listing: rotating would put another item at the old place (qa-39-code N2)
@@ -156,8 +160,16 @@ data class NowPlayingRow(
     val durationMs: Long?,
     val shuffled: Boolean,
     val updatedAt: Long,
-    /** A "Favoritter" queue's scope (design r8 §1.3, Room 7): its keys joined by '\n'; null = the whole entry. */
+    /**
+     * A queue's scope (design r8 §1.3, Room 7): its keys joined by '\n'; null = the whole entry. Since design r12 the
+     * scope of a favourites queue's run ([mix]); a stored r8 row (a scope, no [mix]) restores as it did.
+     */
     val favourites: String? = null,
+    /**
+     * The favourites queue (design r12 §3.6, Room 8): `encodeMix` of its refs; null = an entry's queue. The row's other
+     * fields are the playing run's (its entry, keys, index, place, scope), so every reader of an entry's row works.
+     */
+    val mix: String? = null,
 ) {
     /** [favourites] as the scope (`Active.favourites`): null for the whole entry. */
     fun scope(): Set<String>? = favourites?.split('\n')?.filter { it.isNotEmpty() }?.toSet()
@@ -489,7 +501,7 @@ const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
         DownloadRow::class, ItemErrorRow::class, ShuffleRow::class, NowPlayingRow::class, KnownEntryRow::class,
         NewsBaselineRow::class, FlipRow::class, RepeatRow::class, FavouriteRow::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = MusicDb.ReapplyListings::class),
@@ -505,6 +517,8 @@ const val REAPPLY_LISTINGS_SQL = "UPDATE listings SET version = ''"
         AutoMigration(from = 5, to = 6),
         // Design r8: now_playing.favourites, nullable. Null on the stored row: the whole entry, as before.
         AutoMigration(from = 6, to = 7),
+        // Design r12: favourites.heartedAt (NOT NULL, 0 = set before) and now_playing.mix (nullable: an entry's queue).
+        AutoMigration(from = 7, to = 8),
     ],
 )
 abstract class MusicDb : RoomDatabase() {

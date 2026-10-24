@@ -52,9 +52,12 @@ fun nextAction(index: Int, count: Int): TransportAction = when {
 
 // --- design 50 §1.1: the skip pair (ours, not vibb's: the user's pick of 2026-10-20) ---
 
-/** "15 s tilbake" and "30 s fram" (design 50 §1.1). */
+/** "15 s tilbake" and "15 s fram" (design 50 §1.1, r12 §2: the user's pick of 2026-10-24, 15 s both ways). */
 const val SKIP_BACK_MS = 15_000L
-const val SKIP_FORWARD_MS = 30_000L
+const val SKIP_FORWARD_MS = 15_000L
+
+/** The skip button's number (r12 §2): the step's own seconds, so the text can't drift from the step. */
+fun skipSeconds(ms: Long): String = (ms / 1000).toString()
 
 /** A step forward never lands closer to the item's end than this: it stays inside the item, never moves on. */
 const val SKIP_END_MARGIN_MS = 1_000L

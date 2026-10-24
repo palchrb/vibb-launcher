@@ -12,7 +12,8 @@ import org.junit.Test
 
 /**
  * Room 6 (designs 49 §1.2 and 50 §1.5, one round): `repeat` and `favourites`, new tables by an auto migration; Room 7
- * (design r8 §1.3): `now_playing.favourites`, a "Favoritter" queue's scope.
+ * (design r8 §1.3): `now_playing.favourites`, a "Favoritter" queue's scope; Room 8 (design r12 §3.6):
+ * `favourites.heartedAt` and `now_playing.mix`, the favourites queue.
  */
 class Room6Test {
     private fun entities(version: Int): Map<String, JsonObject> =
@@ -50,6 +51,24 @@ class Room6Test {
         assertTrue(v7["now_playing"]!!["createSql"]!!.jsonPrimitive.content.endsWith("`updatedAt` INTEGER NOT NULL, `favourites` TEXT, PRIMARY KEY(`id`))"))
         val db = Fixtures.moduleFile("src/main/java/me/vibb/music/data/MusicDb.kt").readText()
         assertTrue(db.contains("AutoMigration(from = 6, to = 7),"))
-        assertTrue(db.contains("version = 7,"))
+    }
+
+    @Test
+    fun `r12 - 7 to 8 adds only favourites heartedAt (NOT NULL, default 0) and now_playing mix (nullable)`() {
+        val v7 = entities(7)
+        val v8 = entities(8)
+        assertEquals(v7.keys, v8.keys)
+        for ((name, table) in v7) if (name != "now_playing" && name != "favourites") assertEquals("$name unchanged", table, v8[name])
+        fun added(table: String) = (v8[table]!!["fields"]!!.jsonArray - v7[table]!!["fields"]!!.jsonArray.toSet()).map { it.toString() }
+        assertEquals(
+            "a heart from before has no time: 0, after every new one",
+            listOf("""{"fieldPath":"heartedAt","columnName":"heartedAt","affinity":"INTEGER","notNull":true,"defaultValue":"0"}"""),
+            added("favourites"),
+        )
+        assertEquals("old rows read null: an entry's queue", listOf("""{"fieldPath":"mix","columnName":"mix","affinity":"TEXT"}"""), added("now_playing"))
+        assertTrue(v8["now_playing"]!!["createSql"]!!.jsonPrimitive.content.endsWith("`favourites` TEXT, `mix` TEXT, PRIMARY KEY(`id`))"))
+        val db = Fixtures.moduleFile("src/main/java/me/vibb/music/data/MusicDb.kt").readText()
+        assertTrue(db.contains("AutoMigration(from = 7, to = 8),"))
+        assertTrue(db.contains("version = 8,"))
     }
 }

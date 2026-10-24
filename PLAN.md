@@ -1135,6 +1135,8 @@ findings, merge to `main`, full suite once.
   verdi"); (2) skip 15 s both ways (was 15/30, design 50's pick); (3) one "Favoritter" tile playing every hearted item
   across entries - option B, all sources at once ("vi holder køen selv ... jeg sier vi tar alt i 1"), replacing r8's
   option C; Spotify on a room waits for 54-a2. Music, items 1-2 XS, item 3 L.
+  - **Built** on branch `r12-music` (2026-10-24, the user's three defaults; Room 8: `favourites.heartedAt`,
+    `now_playing.mix`; the note's "As built"); code QA + two fix rounds (E-1, E-1-Q-1) and the jelly36 run `docs/testing/2026-10-24-r12-music-run.md` done 2026-10-24; merged.
 - **Android's lock screen shows the media card** (the user, 2026-10-24: "ødelegger litt illusjonen vi har skapt nå"):
   Android 13+'s "Show media on lock screen" (Settings › Sound & vibration › Media; `Settings.Secure.media_controls_lock_screen`)
   puts the media carousel on SystemUI's own face whatever our keyguard features say. Neither the device owner nor the

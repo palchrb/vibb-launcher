@@ -103,9 +103,12 @@ fun shownEntries(entries: List<Entry>, selected: Long?, favourites: Set<String> 
     return scoped.ifEmpty { entries }
 }
 
-/** The selection still in force ([selected] unless its category - or the favourites - emptied out). */
+/**
+ * The selection still in force ([selected] unless its category - or the favourites - emptied out). "Favoritter" stays
+ * while any heart is listed ([favourites] not empty, design r12 §3.1: its one tile, whatever entries show here).
+ */
 fun effectiveCategory(entries: List<Entry>, selected: Long?, favourites: Set<String> = emptySet()): Long? =
-    selected?.takeIf { s -> entries.any { inCategory(it, s, favourites) } }
+    selected?.takeIf { s -> if (s == FAVOURITES_CATEGORY) favourites.isNotEmpty() else entries.any { inCategory(it, s, favourites) } }
 
 /** Virtual pages: more than one entry wraps (laps of the list), so a swipe never hits an end. */
 const val CAROUSEL_LAPS = 1000
@@ -217,6 +220,14 @@ fun listRows(shown: List<PlayItem>, currentKey: String?, heard: Set<String>, onP
     shown.mapIndexed { i, item ->
         ListRow(item, i + 1, item.key == currentKey, item.key in heard && item.key != currentKey, item.key in onPhone, favourites?.let { item.key in it })
     }
+
+/** A row's leading text (design 39 §4, r12 §1): none in a pictured list - a picture, its own or the series cover, is
+ *  never written on; else ✓ for a heard row, else its number. */
+fun rowBadge(row: ListRow, pictures: Boolean): String? = when {
+    pictures -> null
+    row.heard -> "✓"
+    else -> row.number.toString()
+}
 
 /** 754_000 -> "12:34", 3_723_000 -> "1:02:03". */
 fun formatDuration(ms: Long?): String {

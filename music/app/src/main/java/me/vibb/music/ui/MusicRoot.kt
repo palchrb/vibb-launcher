@@ -45,7 +45,6 @@ import me.vibb.music.logic.search
 import me.vibb.music.logic.shownEntries
 import me.vibb.music.logic.FAVOURITES_CATEGORY
 import me.vibb.music.logic.canFavourite
-import me.vibb.music.logic.favouriteEntryKeys
 import me.vibb.music.logic.skipWithin
 import me.vibb.music.logic.sleepAtEndOffered
 import me.vibb.music.playback.Output
@@ -94,7 +93,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
         // A Sonos room renders: its queue and its steps (design 26a §4.2, §4.5).
         val onRoom = hub.output.kind == OutputKind.SONOS
         val screen = if (now == null && vm.screen in setOf(Screen.PLAYER, Screen.LIST)) Screen.LIBRARY else vm.screen
-        val backToLibrary = { vm.backToLibrary(s, now?.entry?.id) }
+        val backToLibrary = { vm.backToLibrary(s, now?.entry?.id, now?.favourites == true) }
         BackHandler(enabled = vm.sheet != null || screen != Screen.LIBRARY) {
             when {
                 vm.sheet != null -> vm.sheet = null
@@ -103,10 +102,15 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 else -> vm.screen = Screen.LIBRARY
             }
         }
-        // a cover tap; under "Favoritter" only the entry's hearted items (design r8 §1.1)
-        val playEntry = { id: Long, favourites: Boolean ->
-            vm.switching = playSwitch(s, id, null, current, SystemClock.elapsedRealtime(), onRoom, favourites)
-            actions.playEntry(id, favourites)
+        val playEntry = { id: Long ->
+            vm.switching = playSwitch(s, id, null, current, SystemClock.elapsedRealtime(), onRoom)
+            actions.playEntry(id)
+            vm.screen = Screen.PLAYER
+        }
+        // design r12 §3.1: the "Favoritter" tile - every heart in one queue
+        val playFavourites = {
+            vm.switching = favouritesSwitch(s, current, SystemClock.elapsedRealtime(), onRoom)
+            actions.playFavourites()
             vm.screen = Screen.PLAYER
         }
         val playItem = { id: Long, key: String ->
@@ -115,7 +119,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
             vm.screen = Screen.PLAYER
         }
         when (screen) {
-            Screen.LIBRARY -> Library(vm, s, now, hub, spotifyOutcome, actions, playEntry)
+            Screen.LIBRARY -> Library(vm, s, now, hub, spotifyOutcome, actions, playEntry, playFavourites)
             Screen.PLAYER -> now?.let { n ->
                 val (_, of) = playerNumber(s, n)
                 val position = livePosition(n)
@@ -128,7 +132,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 val skipTo = { target: Int, forward: Boolean ->
                     val item = n.queue[target]
                     swipeSwitch(s, n, target, current?.ref, held?.request, SystemClock.elapsedRealtime(), onRoom)?.let { vm.switching = it }
-                    actions.skipTo(n.entry.id, item.key, forward)
+                    actions.skipTo(item.entryId, n.entryOf(item).key, item.key, forward)
                 }
                 PlayerScreen(
                     n, { item -> playerNumberOf(s, n, item) }, of, position, hub.sleepMinutes, hub.sleepAtEnd, hub.output, hub.rendererState,
@@ -140,8 +144,9 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                     onTogglePlay = actions::togglePlay,
                     onNext = { skip(true) },
                     // design 50 §1.1: from the live place (read now, not the last tick), clamped inside the item by its live duration
-                    favourite = { item -> if (canFavourite(n.entry, item.key)) s.favourite(n.entry, item.key) else null },
-                    onFavourite = { item, on -> vm.setFavourite(n.entry, item.key, on) },
+                    // each item's own entry's heart (a favourites queue's pages come from many, design r12 §3.2)
+                    favourite = { item -> n.entryOf(item).let { e -> if (canFavourite(e, item.key)) s.favourite(e, item.key) else null } },
+                    onFavourite = { item, on -> vm.setFavourite(n.entryOf(item), item.key, on) },
                     onSkipBy = { delta -> actions.seekTo(skipWithin(if (n.live) PlayerHub.positionMs() ?: position else position, delta, n.durationMs)) },
                     onSkipTo = skipTo,
                     onList = { vm.screen = Screen.LIST },
@@ -181,7 +186,30 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                     null -> Unit
                 }
             }
-            Screen.LIST -> now?.let { n ->
+            Screen.LIST -> now?.takeIf { it.favourites }?.let { n ->
+                // design r12 §3.2: the favourites queue as it plays - always pictured (plain, no number), each row's
+                // entry named in its sub-line; a pick plays it inside the queue
+                ListScreen(
+                    n.entry,
+                    n.category,
+                    favouritesRows(s, n),
+                    summary = null,
+                    order = null,
+                    pictures = true,
+                    onFlip = {},
+                    onVisible = { first, last -> vm.listShown(FAVOURITES_CATEGORY, listArtWindow(n.queue.map { it.artHash }, first, last)) },
+                    onBack = { vm.screen = Screen.PLAYER },
+                    onPick = { item ->
+                        vm.switching = favouritePickSwitch(s, n, item, SystemClock.elapsedRealtime(), onRoom)
+                        actions.playItem(item.entryId, item.key, inFavourites = n.entryOf(item).key)
+                        vm.screen = Screen.PLAYER
+                    },
+                    onFavourite = { item, on -> vm.setFavourite(n.entryOf(item), item.key, on) },
+                    title = stringResource(R.string.category_favourites),
+                    entryOf = n::entryOf,
+                    categoryOf = n::categoryOf,
+                )
+            } ?: now?.let { n ->
                 val heard = s.positions[n.entry.key].orEmpty().filterValues { it.done }.keys
                 val onPhone = s.onPhone[n.entry.id].orEmpty()
                 val shown = listOrder(s, n)
@@ -219,7 +247,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
                 onBack = { vm.screen = Screen.LIBRARY },
                 onPick = { hit ->
                     when (hit) {
-                        is SearchHit.EntryHit -> playEntry(hit.entry.id, false)
+                        is SearchHit.EntryHit -> playEntry(hit.entry.id)
                         is SearchHit.ItemHit -> playItem(hit.entry.id, hit.item.key)
                     }
                 },
@@ -252,11 +280,13 @@ private fun Library(
     hub: PlayerHub.State,
     spotifyOutcome: String?,
     actions: Actions,
-    playEntry: (Long, Boolean) -> Unit,
+    playEntry: (Long) -> Unit,
+    playFavourites: () -> Unit,
 ) {
     val all = s.entries
-    // design 50 §1.5: "Favoritter" shows the entries holding a heart
-    val favourites = favouriteEntryKeys(s.favourites)
+    // design r12 §3.1: "Favoritter" shows while a heart is listed - one tile, every heart of every entry
+    val order = s.favouritesOrder()
+    val favourites = order.map { it.entryKey }.toSet()
     val selected = effectiveCategory(all, vm.category, favourites)
     val shown = shownEntries(all, selected, favourites)
     // design 50 §1.4: the network as the library (re)appears, at each change and with each snapshot
@@ -264,13 +294,13 @@ private fun Library(
     LaunchedEffect(Unit) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { vm.bumpNet() } }
     val onRoom = hub.output.kind == OutputKind.SONOS
     val net = remember(vm.netVersion, s, onRoom) { vm.netNow(onRoom) }
-    // design r8 §1.1: under "Favoritter" a tile describes, and its tap plays, only the entry's hearted items
     val inFavourites = selected == FAVOURITES_CATEGORY
     LibraryScreen(
         // a Spotify tile's line: the loaded entry's web player state, else the stored outcome (design 26c §5.8)
-        entries = shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome, net, if (inFavourites) s.heartsListed(it) else null) },
+        entries = if (inFavourites) emptyList() else shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome, net) },
+        favourites = if (inFavourites) favouritesUi(s, order, net) else null,
         tiles = categoryTiles(s.library?.categories.orEmpty(), all),
-        favouritesTile = all.any { it.key in favourites },
+        favouritesTile = order.isNotEmpty(),
         selected = selected,
         startIndex = vm.carouselIndex,
         jumps = vm.carouselJumps,
@@ -282,7 +312,8 @@ private fun Library(
         // "Favoritter" filters like every category tile: no tile starts sound (design 50 §1.5, code QA 4)
         onCategory = vm::pickCategory,
         onIndex = vm::turned,
-        onPlay = { playEntry(it.entry.id, inFavourites) },
+        onPlay = { playEntry(it.entry.id) },
+        onPlayFavourites = playFavourites,
         onOpenPlayer = { vm.screen = Screen.PLAYER },
         onTogglePlay = actions::togglePlay,
     )

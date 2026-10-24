@@ -44,7 +44,7 @@ import me.vibb.music.data.Store
 import me.vibb.music.data.FavouriteRow
 import me.vibb.music.logic.CarouselStart
 import me.vibb.music.logic.canFavourite
-import me.vibb.music.logic.favouriteEntryKeys
+import me.vibb.music.logic.FAVOURITES_CATEGORY
 import me.vibb.music.logic.effectiveCategory
 import me.vibb.music.logic.flipInEffect
 import me.vibb.music.logic.newestFirst
@@ -75,6 +75,12 @@ import me.vibb.music.logic.NetCaps
 enum class Screen { LIBRARY, PLAYER, LIST, NEWS, SEARCH }
 
 enum class SheetKind { SLEEP, OUTPUT }
+
+/**
+ * The entry keys holding a listed heart (design r12 §3.1, `Snapshot.favouritesOrder`): "Favoritter" shows while there is
+ * one - [shownEntries]/[effectiveCategory]'s favourites (the entries list under the chip is unused: one tile).
+ */
+fun favouritesShown(snap: Snapshot): Set<String> = snap.favouritesOrder().map { it.entryKey }.toSet()
 
 /** The screens' state: the store's snapshot, the stored now-playing row, and where the kid is. */
 /** Design 53 §2.12: a group block's slider sends at most this often while dragging (and once at the release). */
@@ -384,7 +390,15 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
      * entry's tile in the shown order - once, and never after the kid turned the carousel or came back from the player.
      */
     fun startOn(snap: Snapshot, row: NowPlayingRow) {
-        val favourites = favouriteEntryKeys(snap.favourites)
+        val favourites = favouritesShown(snap)
+        // design r12 §3.1: a stored favourites queue opens on the "Favoritter" chip and its one tile
+        if (row.mix != null && favourites.isNotEmpty()) {
+            carouselStart.first(emptyList(), null) ?: return
+            category = FAVOURITES_CATEGORY
+            carouselIndex = 0
+            carouselJumps++
+            return
+        }
         val shown = shownEntries(snap.entries, effectiveCategory(snap.entries, category, favourites), favourites)
         val index = carouselStart.first(shown, row.entryId) ?: return
         carouselIndex = index
@@ -399,15 +413,23 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Back from the player: the library shows the playing entry, in its category when the one
-     * chosen doesn't hold it (vibb's cat_carousel case 6).
+     * chosen doesn't hold it (vibb's cat_carousel case 6) - a favourites queue ([favouritesQueue]) the "Favoritter"
+     * chip and its one tile (design r12 §3.1), never an entry's tile there.
      */
-    fun backToLibrary(snap: Snapshot?, entryId: Long?) {
+    fun backToLibrary(snap: Snapshot?, entryId: Long?, favouritesQueue: Boolean = false) {
         carouselStart.moved()
         screen = Screen.LIBRARY
         val entries = snap?.entries ?: return
+        val favourites = favouritesShown(snap)
+        if (favouritesQueue && favourites.isNotEmpty()) {
+            category = FAVOURITES_CATEGORY
+            carouselIndex = 0
+            carouselJumps++
+            return
+        }
         val entry = entries.firstOrNull { it.id == entryId } ?: return
-        val favourites = favouriteEntryKeys(snap.favourites)
-        var shown = shownEntries(entries, effectiveCategory(entries, category, favourites), favourites)
+        val selected = effectiveCategory(entries, category, favourites)
+        var shown = if (selected == FAVOURITES_CATEGORY) emptyList() else shownEntries(entries, selected, favourites)
         if (entry !in shown) {
             category = entry.category?.takeIf { c -> entries.any { it.category == c } }
             shown = shownEntries(entries, effectiveCategory(entries, category, favourites), favourites)
@@ -452,12 +474,14 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * A heart set or cleared (design 50 §1.5): the kid's own, on the phone only - written off the main thread, the
-     * snapshot brings it back to the screens. Never for a context's synthetic item ([canFavourite]).
+     * snapshot brings it back to the screens. Never for a context's synthetic item ([canFavourite]). A new heart carries
+     * its time (design r12 §3.6: the favourites queue is newest first; the insert ignores a heart already set).
      */
     fun setFavourite(entry: Entry, itemKey: String, on: Boolean) {
         if (!canFavourite(entry, itemKey)) return
+        val now = System.currentTimeMillis()
         viewModelScope.launch(Dispatchers.IO) {
-            if (on) store.db.insertFavourite(FavouriteRow(entry.key, itemKey)) else store.db.deleteFavourite(entry.key, itemKey)
+            if (on) store.db.insertFavourite(FavouriteRow(entry.key, itemKey, now)) else store.db.deleteFavourite(entry.key, itemKey)
         }
     }
 

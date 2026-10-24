@@ -649,8 +649,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
 - **The episode list's pictures and the kid's order flip** (design 39; **the user's decisions, not vibb's**: vibb's
   list shows own art only in the highlighted row and follows the parent's order only). **Pictures**: `rowPictures` =
   `showsCarousel` over the rows shown (never a Spotify context) - a 40 dp `Cover(..., decodeDp = 40.dp)` per row,
-  the playing one ringed; a row whose `artHash` is null shows the series cover with its number under `Palette.scrim`
-  (by the listing's hash, so it never changes as files land). The list judges the rows it shows, the carousel the queue: on a room's
+  the playing one ringed; a row whose `artHash` is null shows the series cover plain, no number (r12 §1, `rowBadge`; a list
+  without pictures keeps its numbers and ✓) - by the listing's hash, so it never changes as files land. The list judges the rows it shows, the carousel the queue: on a room's
   speaker-playable queue (or a stored queue that lost items) the two may differ (qa-39-code N1). `decodeDp` decodes with `inSampleSize`
   (`thumbSampleSize`) into its own 2 MiB LRU (`thumbs`, `"$hash@$px"`), its own slot; no small session copy. The
   list reports its visible rows (settled 1 s) to `ListArtWants.note`: the held list `filesDir/music/list_art.txt`
@@ -697,7 +697,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   at its place (`coverTapPlan`). The flip stays hidden while shuffled; repeat applies after either.
 - **The player and library picks** (design 50 + 46 §1.4; **the user's picks of 2026-10-20, not vibb's**):
   - **The skip pair**: `controlSlots(entry)` (design 49 §1.1, `logic/Queue.kt`) gives what resumes (podcasts, books, a
-    resuming own entry) "15 s tilbake" / "30 s fram" in the control row's side slots (`SkipButton`: Material Symbols
+    resuming own entry) "15 s tilbake" / "15 s fram" (r12 §2; the number is `skipSeconds` of the step) in the control row's side slots (`SkipButton`: Material Symbols
     `replay`/`forward_media` from `scripts/material-symbols.sh`, `player_glyph_*`, the number at a fixed 7 dp, never
     sp); a step is `skipWithin` (`logic/Transport.kt`: clamped inside the item, 1 s short of its end; the live
     duration - a context item has no listed one) through the existing `seekTo` (the phone, a room's settled seek,
@@ -721,27 +721,53 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
     when the library (re)appears, on each snapshot and on the view model's network callback (`netVersion`). The cover
     at `UNPLAYABLE_ALPHA` (60 %, times the neighbour's alpha), no arrow; one line: the account/state line, else "Trenger
     Wi-Fi" (`tile_needs_wifi`), else the hint - `libraryFit`'s two lines never change. The tap answers as before.
-  - **Favourites**: Room 6 `favourites(entryKey, itemKey)` (one auto migration with design 49's `repeat`), read into
-    `Snapshot.favourites`; a heart (`HeartButton`, Material Symbols `favorite`, peach when set) trailing each list row
-    and beside "Episode N av M" in the player, never on a context's synthetic item (`canFavourite`). Pruned only when
-    a parsed listing (own files: the parsed library) no longer names the item, a gone entry's when every entry was
-    read (`favouritesToPrune`, `favouriteEntriesGone`, `Sync`). "Favoritter" is the category tile first after "Alle"
-    while an entry holds a heart, the sentinel `FAVOURITES_CATEGORY` (-1) that `shownEntries`/`effectiveCategory`
-    (and so `backToLibrary`) take with the entry keys; the tile only filters (no category tile starts sound).
+  - **Favourites**: Room 6 `favourites(entryKey, itemKey)` (one auto migration with design 49's `repeat`; Room 8 adds
+    `heartedAt`, design r12), read into `Snapshot.favourites`/`heartedAt`; a heart (`HeartButton`, Material Symbols
+    `favorite`, peach when set) trailing each list row and beside the player's number line, never on a context's
+    synthetic item (`canFavourite`). Pruned only when a parsed listing (own files: the parsed library) no longer names
+    the item, a gone entry's when every entry was read (`favouritesToPrune`, `favouriteEntriesGone`, `Sync`).
+    "Favoritter" is the category chip first after "Alle" while a heart is listed (`Snapshot.favouritesOrder` not
+    empty), the sentinel `FAVOURITES_CATEGORY` (-1) that `shownEntries`/`effectiveCategory` (and so `backToLibrary`,
+    `startOn`) take with the hearted entries' keys; the chip itself only selects (no category chip starts sound).
     Phone-only: never synced, reported or in the PWA.
-  - **A cover tap under "Favoritter" plays only that entry's hearted items** (design r8 §1, option C, the user's pick
-    of 2026-10-21): `PLAY_ENTRY` with `ARG_FAVOURITES`; the scope is the hearts at the tap that the listing names
-    (`Snapshot.heartsListed`, the same in both views), fixed with the queue (`Active.favourites`, Room 7's nullable
-    `now_playing.favourites`, `PlayerHub.State`/`NowView.favourites`) and kept on every rebuild - restore, adopt,
-    phone -> room (a room gets every hearted Storytel book), room -> phone, shuffle, the flip (`Active.order` is
-    kept to it). It starts at the bookmark when hearted, else the first hearted item in play order at its own place
-    (`favouritesScope`/`coverTapScope` in `logic/Favourites.kt`, then the unchanged `coverTapPlan`); a Storytel wait
-    looks only at a hearted bookmark (`bookmarkIn`). The same-tile rule holds per scope: the other scope is a new
-    queue, the place saved with force first. A list/Nytt/search pick of a row inside the loaded (else the stored)
-    queue's scope stays in it; any other pick plays the whole entry (`playItem`, `playSwitch`). Its end drops the
-    bookmark and only its own items' partial positions (`clearPartialPositionsOf`). The tile's hint, progress and
-    dimming describe the hearted run (`entryUi`'s `favourites`; numbered in the entry's count). Nothing hearted
-    playable: "Ikke lastet ned" (a room: "Kan ikke spilles på Sonos"), the current queue stays.
+  - **One "Favoritter" tile: every heart of every entry in one queue** (design r12 §3, option B, the user's decisions of
+    2026-10-24 - replacing r8's option C, whose cover tap under the chip is gone). Under the chip the carousel is one
+    tile (`FavouritesCarousel`: the chip's heart in peach on the card ground, never a mosaic; "Favoritter" and
+    `favourites_count`, every listed heart; dimmed with "Trenger Wi-Fi" when nothing of the phone's view can play now,
+    `favouritesUi`); its tap is `PLAY_FAVOURITES` (in `PLAYS` and `MOVES`; the loaded favourites queue unpauses, else a
+    new one from the hearts now). **The queue** (`logic/Mix.kt`, pure, `MixTest`): `mixOrder` - newest heart first
+    (`heartedAt`), the hearts from before Room 8 (0) after them in library order (`sort`, `id`), then reading order;
+    `mixView` - this renderer's view (`Snapshot.holds`: the phone's `visible`, a room's speaker filter: no own file, no
+    Spotify, every Storytel book); fixed at the tap (a heart set or cleared while it plays changes nothing in it),
+    shuffled only with its own row (`MIX_KEY` "vibb:favourites" in `shuffle`/`repeat`, never an entry key). **Runs**:
+    the service keeps a `MixQueue` beside `active`; `active` is always an ordinary one-entry queue - the consecutive refs
+    of the playing item's entry (`segmentAt`), scoped to those keys through r8's `Active.favourites` - on that entry's
+    renderer (`startRun` -> `queueFor` -> `start`: the switch between Spotify and a URL item is today's switch between
+    entries). A run's natural end (`queueEnded`, never `clear_state` for a run; "Til slutten" at its last item on the
+    phone, `sleepAtEndReached`) launches `runEnded` under the switch lock with a token (the same run still loaded):
+    `afterRun` (repeat ALL wraps the queue, ONE is the run's own), `mixPlayableFrom` past what can't play ("Ikke lastet
+    ned" once), the next run - held paused at its start after "Til slutten" - or the end (`mixEnded`: only the stored
+    queue goes). Next/previous (`KidPlayer` launches them under the lock with the screens' hold, `mixLater`; commands
+    run them in place), the swipe (`SKIP_TO` by entry key + item key) and the favourites list's pick (`PLAY_ITEM` with
+    `ARG_IN_FAVOURITES`) count over the queue: inside the run a seek, outside a new run, the play state kept, from 0 on
+    a playing room. A web player account line (`mixDropsSpotify`) drops Spotify for the queue ("Kan ikke spilles nå"
+    once). **Places**: positions per (entry key, item key) as always, but a run writes no bookmark (`persistPlace`'s
+    `bookmark = a.mix == null`, `saveBookmark`, and the suspension's standalone place when the stored row is a mix) and
+    its end clears nothing: "Alle" continues each entry where the kid left it. **Stored**: Room 8's nullable
+    `now_playing.mix` (`encodeMix` of the whole queue); the row's other fields are the run's, so Home's card, the bar and
+    every reader of an entry's row work; `flippedNowPlaying` leaves a mix row alone; `restore` brings the queue back in
+    the renderer's view (`restoredMix`: the row's item at its place, else the next ref's own - a book not on the phone is
+    skipped, never waited for; a gone entry's ref found by its item key; an unreadable `mix` is still a favourites
+    row, `storedMix` - so no rebuild ever falls back to an entry's queue and moves its bookmark). The service's own pauses
+    (a move-on past a run, a run loading paused) go through `selfPause`, never the kid's (the sleep timer stays). **A room**: `toRoom` keeps the room's view of the queue (own files and Spotify out, the
+    log line), `comeHome` the phone's again (they are back in), adopt the stored queue around the adopted run; Spotify
+    on a room stays out until round 54-a2 (r12 §3.5's hand-over: one share link per track). **The player**: the header
+    is the playing item's entry, "Favoritt N av M" over the queue, each carousel page its own entry's picture, the heart
+    the playing item's, the side slots `controlSlots` of the playing item's entry (shuffle/repeat on a song acting on the
+    whole queue); `NowView.favourites`/`entries`, `PlayerHub.State.favouritesQueue`/`favouritesIndex`/
+    `favouritesShuffled`/`favouritesRepeat` (`entryId`/`keys`/`index` stay the run's); "Liste" the queue pictured
+    (`favouritesRows`, each sub-line "<entry> · 12:34", lazy keys `pageKey` = entry id + item key). Back from the player
+    and the first start with a stored favourites queue land on the chip. `setNowPlaying` and the bridge are unchanged.
   - **A drag down closes** (design r8 §2-§3, `ui/DragDown.kt`, `DragDownTest`): `Modifier.dragDownToClose` on
     `Sheet` (the output and sleep sheets; plus TalkBack's `dismiss`) and on the player's root (= `backToLibrary`).
     Past a quarter of the height (>= 56 dp) or a downward fling > 400 dp/s closes, an upward fling never; else it

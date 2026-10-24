@@ -274,7 +274,8 @@ internal class LocalRenderer(
  * Persist where item [index] of [a] is: its position (`Bookmarks.save`, "heard to the end" decided
  * by [durationMs]), the entry's bookmark and the stored now-playing queue ([shownDurationMs]). The one
  * write behind `Renderer.saveNow` for both renderers (design 26a §3.1, QA H3); with [force] it lands
- * before this returns.
+ * before this returns. A favourites run (design r12 §3.2, `Active.mix`) saves the item's own place and the stored
+ * queue with its `mix`, but never moves the entry's bookmark: "Alle" continues the entry where the kid left it.
  */
 internal fun persistPlace(
     context: Context,
@@ -292,20 +293,23 @@ internal fun persistPlace(
 ) {
     val item = a.items.getOrNull(index) ?: return
     val now = System.currentTimeMillis()
-    val stored = if (!withQueue) null else NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, posMs, shownDurationMs, a.shuffled, now, a.storedScope())
-    val place = place(a.entry.key, item.key, posMs, durationMs, now, stored)
+    val stored = if (!withQueue) null else NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, posMs, shownDurationMs, a.shuffled, now, a.storedScope(), a.storedMix())
+    val place = place(a.entry.key, item.key, posMs, durationMs, now, stored, bookmark = a.mix == null)
     a.positions[item.key] = place.record
     val write: suspend () -> Unit = { writePlace(context, store, place) }
     if (force) runBlocking(writer) { write() } else scope.launch(writer) { write() }
 }
 
-/** One place as its rows: the item's position ([record], `Bookmarks.save`), the entry's bookmark, the stored queue's row. */
-internal class Place(val record: ItemPosition, val position: PositionRow, val bookmark: BookmarkRow, val queue: NowPlayingRow?)
+/**
+ * One place as its rows: the item's position ([record], `Bookmarks.save`), the entry's bookmark (null: a favourites
+ * run's, which moves none - design r12 §3.2), the stored queue's row.
+ */
+internal class Place(val record: ItemPosition, val position: PositionRow, val bookmark: BookmarkRow?, val queue: NowPlayingRow?)
 
-/** [posMs] of [itemKey] in entry [entryKey] as a [Place]; [durationMs] decides "heard to the end". */
-internal fun place(entryKey: String, itemKey: String, posMs: Long, durationMs: Long?, now: Long, queue: NowPlayingRow?): Place {
-    val (rec, bookmark) = save(itemKey, posMs, durationMs)
-    return Place(rec, PositionRow(entryKey, itemKey, rec.posMs, rec.done, now), BookmarkRow(entryKey, bookmark.itemKey, bookmark.posMs, now), queue)
+/** [posMs] of [itemKey] in entry [entryKey] as a [Place]; [durationMs] decides "heard to the end"; [bookmark] false: none. */
+internal fun place(entryKey: String, itemKey: String, posMs: Long, durationMs: Long?, now: Long, queue: NowPlayingRow?, bookmark: Boolean = true): Place {
+    val (rec, mark) = save(itemKey, posMs, durationMs)
+    return Place(rec, PositionRow(entryKey, itemKey, rec.posMs, rec.done, now), BookmarkRow(entryKey, mark.itemKey, mark.posMs, now).takeIf { bookmark }, queue)
 }
 
 /**
@@ -316,6 +320,6 @@ internal fun place(entryKey: String, itemKey: String, posMs: Long, durationMs: L
 internal suspend fun writePlace(context: Context, store: Store, place: Place) {
     Resumable.set(context, true)
     store.db.upsertPosition(place.position)
-    store.db.upsertBookmark(place.bookmark)
+    place.bookmark?.let { store.db.upsertBookmark(it) }
     place.queue?.let { store.db.upsertNowPlaying(it) }
 }

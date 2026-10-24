@@ -97,9 +97,11 @@ object SonosSuspension {
         val savedS = resumeFrom(snap.positions[entry.key]?.get(itemKey)) / 1000.0
         val w = suspensionBookmark(itemKey, live, savedS, SystemClock.elapsedRealtime()) ?: return
         val now = System.currentTimeMillis()
-        val row = store.db.nowPlaying()
+        val stored = store.db.nowPlaying()
+        val row = stored
             ?.takeIf { it.entryId == entry.id && it.keys.split('\n').getOrNull(it.index) == w.itemKey }
             ?.copy(posMs = w.posMs, updatedAt = now)
-        writePlace(context, store, place(entry.key, w.itemKey, w.posMs, w.durationMs, now, row))
+        // a favourites queue's run moves no bookmark (design r12 §3.2): the stored queue says whether it is one
+        writePlace(context, store, place(entry.key, w.itemKey, w.posMs, w.durationMs, now, row, bookmark = stored?.mix == null))
     }
 }

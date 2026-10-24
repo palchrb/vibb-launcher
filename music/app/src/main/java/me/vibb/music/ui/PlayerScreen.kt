@@ -57,6 +57,7 @@ import androidx.annotation.DrawableRes
 import me.vibb.music.logic.ControlSlots
 import me.vibb.music.logic.SKIP_BACK_MS
 import me.vibb.music.logic.SKIP_FORWARD_MS
+import me.vibb.music.logic.skipSeconds
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
@@ -147,11 +148,13 @@ fun PlayerScreen(
         var landing by remember(now.pagerKey) { mutableStateOf<Int?>(null) }
         PlayerArt(now, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay) { landing = it }
         val shown = landing?.let { now.queue.getOrNull(it) }?.takeIf { now.carousel } ?: now.item
-        Crossfade(shown.key, animationSpec = tween(if (animationsOn()) 200 else 0), label = "item") { key ->
-            val item = now.queue.firstOrNull { it.key == key } ?: shown
+        // keyed by entry and item: a favourites queue's pages come from many entries (design r12 §0)
+        Crossfade(pageKey(shown), animationSpec = tween(if (animationsOn()) 200 else 0), label = "item") { key ->
+            val item = now.queue.firstOrNull { pageKey(it) == key } ?: shown
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Line(if (item == now.item) now.itemTitle else item.title, 20, 800, Palette.white, Modifier.basicMarquee(iterations = Int.MAX_VALUE))
-                val numberText = when (kindOf(now.entry)) {
+                // design r12 §3.2: "Favoritt N av M" over a favourites queue
+                val numberText = if (now.favourites) R.string.favourite_of else when (kindOf(now.entry)) {
                     Kind.OWN -> R.string.track_of
                     Kind.AUDIOBOOK -> R.string.part_of
                     Kind.PODCAST -> R.string.episode_of
@@ -174,12 +177,12 @@ fun PlayerScreen(
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val row = controlRow(maxWidth.value)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(row.gap.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                // design 50 §1.1: what resumes gets "15 s tilbake" / "30 s fram" in the side slots; music gets design
+                // design 50 §1.1: what resumes gets "15 s tilbake" / "15 s fram" in the side slots; music gets design
                 // 49's shuffle (left) and repeat (right), peach when on - controlSlots decides (49 §1.1); a Spotify artist
                 // context repeat only (Spotify picks)
                 val skips = now.slots == ControlSlots.SKIP
                 if (skips) {
-                    SkipButton(R.drawable.player_glyph_replay, "15", stringResource(R.string.skip_back), row.side.dp) { onSkipBy(-SKIP_BACK_MS) }
+                    SkipButton(R.drawable.player_glyph_replay, skipSeconds(SKIP_BACK_MS), stringResource(R.string.skip_back), row.side.dp) { onSkipBy(-SKIP_BACK_MS) }
                 } else if (now.canShuffle) {
                     val state = stringResource(if (now.shuffled) R.string.shuffle_on else R.string.shuffle_off)
                     RoundButton(
@@ -200,7 +203,7 @@ fun PlayerScreen(
                 )
                 RoundButton(Icons.next, stringResource(R.string.next), onNext, row.skip.dp, 24.dp)
                 if (skips) {
-                    SkipButton(R.drawable.player_glyph_forward_media, "30", stringResource(R.string.skip_forward), row.side.dp) { onSkipBy(SKIP_FORWARD_MS) }
+                    SkipButton(R.drawable.player_glyph_forward_media, skipSeconds(SKIP_FORWARD_MS), stringResource(R.string.skip_forward), row.side.dp) { onSkipBy(SKIP_FORWARD_MS) }
                 } else if (now.canRepeat) {
                     val on = now.repeat != Repeat.OFF
                     val state = stringResource(repeatState(now.repeat))

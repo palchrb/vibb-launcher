@@ -1073,6 +1073,27 @@ class SpotifyRendererTest {
     }
 
     @Test
+    fun `r12 - a favourites run's last track unplayable - the service only pauses (the next run attaches later), nothing more is sent`() = runBlocking {
+        val r = renderer(count = 3)
+        // PlaybackService.onError at a run's last item (design r12 §3.4, mixPastRun): no step inside the Error, a pause
+        r.onEvent = { e ->
+            events += e
+            if (e is RendererEvent.Error) r.pause()
+        }
+        r.load(mediaItems(3), 2, 0, playNow = true)
+        advance(0)
+        post(state(2, 0))
+        val plays = api.plays().size
+        page.emit(HostEvent.Error("playback", "boom"))
+        advance(1_000)
+        assertEquals(1, events.count { it == RendererEvent.Error("unplayable") })
+        assertEquals("no move-on of its own: no play call", plays, api.plays().size)
+        assertFalse(r.showsPlaying)
+        assertEquals("the index stays on the track", 2, r.currentIndex())
+        r.release()
+    }
+
+    @Test
     fun `qa-music-a-code 2 - repeat all, the last track unplayable - the move-on's wrap to the first sends one play`() = runBlocking {
         val r = renderer(count = 3)
         r.setModes(false, Repeat.ALL)

@@ -65,4 +65,68 @@ class KidPlayerTest {
         assertEquals(Repeat.ONE, snap.repeatOf(own))
         assertEquals("a podcast has the skip pair, never repeat", Repeat.OFF, snap.repeatOf(podcast))
     }
+
+    @Test
+    fun `r12 E-1 - controllers hear KidPlayer's commands, never the wrapped player's - a run's last item keeps next`() {
+        // ExoPlayer drops seek-to-next on a queue's last item (a favourites run of one); the session forwards the
+        // listener's argument to every controller (the app's buttons, the lock tile, the notification)
+        val ours = Player.Commands.Builder().add(Player.COMMAND_PLAY_PAUSE).add(Player.COMMAND_SEEK_TO_NEXT).add(Player.COMMAND_SEEK_TO_PREVIOUS).build()
+        val heard = mutableListOf<Player.Commands>()
+        val listener = object : Player.Listener {
+            override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
+                heard += availableCommands
+            }
+        }
+        val listeners = KidListeners { ours }
+        val wrapped = listeners.wrap(listener)
+        wrapped.onAvailableCommandsChanged(Player.Commands.Builder().add(Player.COMMAND_PLAY_PAUSE).build())
+        assertEquals(listOf(ours), heard)
+        assertTrue(heard.single().contains(Player.COMMAND_SEEK_TO_NEXT))
+        assertTrue("one wrapper per listener", listeners.wrap(listener) === wrapped)
+        assertTrue("a removal finds the wrapper it added", listeners.unwrap(listener) === wrapped)
+        assertTrue(listeners.unwrap(listener) === listener)
+        val kid = service.substringAfter("private inner class KidPlayer").substringBefore("private val callback")
+        assertTrue(kid.contains("private val listeners = KidListeners { availableCommands }"))
+        assertTrue(kid.contains("override fun addListener(listener: Player.Listener) = super.addListener(listeners.wrap(listener))"))
+        assertTrue(kid.contains("override fun removeListener(listener: Player.Listener) = super.removeListener(listeners.unwrap(listener))"))
+    }
+
+    @Test
+    fun `r12 E-1-Q-1 - the wrapper forwards every Player Listener method, the commands alone replaced`() {
+        // Kotlin's `by` forwards no Java default method: the session's listeners went deaf (play state, items, timeline,
+        // metadata, positions, errors). Every method the interface has now - a Media3 bump's new one too - must arrive.
+        val ours = Player.Commands.Builder().add(Player.COMMAND_SEEK_TO_NEXT).build()
+        val arrived = mutableListOf<Pair<java.lang.reflect.Method, Array<Any?>?>>()
+        lateinit var inner: Player.Listener
+        inner = java.lang.reflect.Proxy.newProxyInstance(javaClass.classLoader, arrayOf(Player.Listener::class.java)) { _, m, args ->
+            when (m.name) {
+                "hashCode" -> System.identityHashCode(inner)
+                "equals" -> args!![0] === inner
+                "toString" -> "inner"
+                else -> {
+                    arrived += m to args
+                    null
+                }
+            }
+        } as Player.Listener
+        val wrapper = KidListeners { ours }.wrap(inner)
+        val methods = Player.Listener::class.java.methods.filter { it.declaringClass == Player.Listener::class.java }
+        assertTrue("Media3 1.7.1's listener has 37 methods", methods.size >= 37)
+        for (m in methods) {
+            val args = m.parameterTypes.map { t ->
+                when (t) {
+                    java.lang.Boolean.TYPE -> true
+                    Integer.TYPE -> 7
+                    java.lang.Long.TYPE -> 7L
+                    java.lang.Float.TYPE -> 0.5f
+                    else -> null
+                }
+            }.toTypedArray<Any?>()
+            arrived.clear()
+            m.invoke(wrapper, *args)
+            assertEquals("${m.name}(${m.parameterTypes.joinToString { it.simpleName }}) reaches the inner listener", listOf(m), arrived.map { it.first })
+            val got = arrived.single().second?.toList().orEmpty()
+            if (m.name == "onAvailableCommandsChanged") assertEquals(listOf<Any?>(ours), got) else assertEquals(args.toList(), got)
+        }
+    }
 }
