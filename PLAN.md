@@ -1096,6 +1096,17 @@ findings, merge to `main`, full suite once.
   Home - screen off/on + PIN, the handle swipe, the boot - and never when the unlock's target is an app (a notification
   row, a call: the app opens, Home isn't shown). Launcher, small; one Home round with the black-flash entry below
   (same activity, both need the emulator).
+- **An F-Droid repo as a release source; Etar first** (the user, 2026-10-24: Fossify Calendar opens the editor on a
+  tap - FossifyOrg/Calendar #171/#693 open - "jeg ønsker etar, og å kunne tracke updates"; Etar's GitHub releases carry
+  no APK): a tracked app of source `fdroid` = a repo URL (default `https://f-droid.org/repo`) + package id. Versions
+  from the repo's per-package API (`/api/v1/packages/<id>`: `suggestedVersionCode`, `packages[{versionName,
+  versionCode}]`), the APK at `<repo>/<id>_<versionCode>.apk`, its SHA-256 from the repo's signed index (`entry.json`
+  names `index-v2.json`, 67 MB with daily diffs, ETag) - the hash is verified before the file is served, which GitHub
+  can't give. F-Droid signs with its own key: an app installed from GitHub or Play can't switch to F-Droid without a
+  reinstall, so one source per app (the PWA says so on the row). The same protocol covers IzzyOnDroid (dev-signed APKs)
+  as another repo URL. No F-Droid client on the kid's phone (an app store breaks the model). Behind the same release
+  interface as GitHub, so GitLab/Forgejo can follow later if ever needed. Server, S-M; next server round after design 64
+  step 1. Earlier parked text (GitLab/Codeberg; Nexus looked at: no calls, UnifiedPush only; Element X stays) folded in.
 - **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
   Settings › Intelligent assistance › App blocker - Boot blocker, Start blocker, Background blocker, Background
   cleanup; on the Jelly Star only found through Settings' search. Design 19b §4 foresaw an OEM manager but had no name.
@@ -1224,14 +1235,6 @@ findings, merge to `main`, full suite once.
 
 ### Parked
 
-- **Release tracking from GitLab / Codeberg (Forgejo) public instances** (the user, 2026-10-24, "vi venter med det"):
-  no token, public HTTPS instances only, the same flow as GitHub (`fetch_latest_release` in `tracked_apps.rs`): GitLab
-  `GET /api/v4/projects/<group%2Fproject>/releases` (tag, `upcoming_release`, `assets.links[].direct_asset_url`),
-  Forgejo `GET /api/v1/repos/{owner}/{repo}/releases`. Wait until a concrete app needs it, then build both behind one
-  interface with GitHub; a self-hosted instance needs a valid certificate (no TLS-skip switch). Kid-relevant apps
-  found there today: FluffyChat (GitLab); Gadgetbridge, Conversations, Fedilab (Codeberg). Nexus (git.federated.nexus,
-  Flutter + gomuks, GPL-3, 1.0.0) was looked at as a Matrix client: no calls at all (no WebRTC/LiveKit, no telecom
-  permissions), UnifiedPush only - Element X stays. Server, S-M.
 - **Aiphor Bluefox NX1 as a second phone** (the user, 2026-10-24, romobil.no, 2 590 kr): 4" 540x1168 LCD, Helio G81,
   Android 15, 3000 mAh, 4G, no NFC, no fingerprint (PIN/pattern/face); Vipps works per the seller (so Play Integrity
   passes: Play-certified). Before buying: VoLTE with Telenor/Telia (2G/3G are going; the one deciding question), the
