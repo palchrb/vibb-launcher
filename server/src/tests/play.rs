@@ -564,3 +564,52 @@ async fn battery_exemption_is_stored_and_shown() {
     assert_eq!(stored(&app).await, None);
     assert!(!about_page(&app, id).await.contains("Battery optimisation"));
 }
+
+/// "Modify system settings" without adb (PLAN fix backlog, 2026-10-24): `write_settings_granted`
+/// is stored and shown as About This Phone's row next to the battery's; false names Vibb One's
+/// Settings row first and adb as the shortcut; a report without the key stores NULL and shows
+/// nothing.
+#[tokio::test]
+async fn write_settings_grant_is_stored_and_shown() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let stored = |app: &TestApp| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<bool>>(
+                "SELECT write_settings_granted FROM device_status WHERE device_id = ? \
+                 ORDER BY id DESC LIMIT 1",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+
+    post_status(&app, &token, json!({ "write_settings_granted": false })).await;
+    assert_eq!(stored(&app).await, Some(false));
+    let html = about_page(&app, id).await;
+    let row = &html[html.find("data-row=\"write-settings\"").expect("the row")..];
+    assert!(row.contains(">Not allowed</span>"), "{html}");
+    let on_phone = row
+        .find("Pause all restrictions › Modify system settings")
+        .expect("the on-phone path");
+    let adb = row.find("adb shell appops").expect("the shortcut");
+    assert!(on_phone < adb, "the on-phone path comes first: {html}");
+
+    post_status(&app, &token, json!({ "write_settings_granted": true })).await;
+    assert_eq!(stored(&app).await, Some(true));
+    let html = about_page(&app, id).await;
+    let row = &html[html.find("data-row=\"write-settings\"").expect("the row")..];
+    assert!(row.contains(">Allowed</span>"), "{html}");
+    assert!(!html.contains("adb shell appops"), "{html}");
+
+    post_status(&app, &token, json!({})).await;
+    assert_eq!(stored(&app).await, None);
+    assert!(
+        !about_page(&app, id)
+            .await
+            .contains("Modify system settings")
+    );
+}

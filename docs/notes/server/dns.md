@@ -51,4 +51,4 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - Tests: `dns_server::tests` (every row and refusal, normalized, hint, the wire, the sanitizer), `tests::custom_dns`
   (save/refusals/Forget/the event, the policy shapes, a pair that isn't valid, the status contract and both copies,
   the footer's lines), `policy_json_keys_snapshot` (`dns_upstream` and its `backup`), the settings redirect table,
-  `migrations_73_to_89_in_order`.
+  `migrations_73_to_90_in_order`.

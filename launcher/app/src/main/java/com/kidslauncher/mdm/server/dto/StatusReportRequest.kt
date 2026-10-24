@@ -100,6 +100,10 @@ data class StatusReportRequest(
     /** Design 35 §2.5: the battery, for the parent's "Battery low" event and the PWA's battery
      * line - see [BatteryReport] (`BatteryStatus.report`); `null` = unreadable, left out. */
     val battery: BatteryReport? = null,
+    /** "Modify system settings" (PLAN fix backlog, 2026-10-24): `Settings.System.canWrite` - the
+     * app-op the touch sounds row and the clock format need ([com.kidslauncher.mdm.server.WriteSettingsAccess]);
+     * `null` = unreadable, left out. The server names Settings' row while it is `false`. */
+    val writeSettingsGranted: Boolean? = null,
 )
 
 /** `StatusReportRequest.dnsUpstream` (no defaults: every field is always sent): the [rev] of the

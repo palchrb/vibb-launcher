@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.ui.settings.launcher
 
 import android.app.admin.DevicePolicyManager
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -9,6 +10,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.EditText
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
@@ -31,6 +33,13 @@ import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.RelockTrigger
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.WindowRelock
+import com.kidslauncher.mdm.server.FingerprintAccess
+import com.kidslauncher.mdm.server.FingerprintEnrol
+import com.kidslauncher.mdm.server.WriteSettingsAccess
+import com.kidslauncher.mdm.server.fingerprintAccess
+import com.kidslauncher.mdm.server.fingerprintRowShown
+import com.kidslauncher.mdm.server.WriteSettingsRow
+import com.kidslauncher.mdm.server.writeSettingsRowState
 import com.kidslauncher.mdm.play.InstallModeStart
 import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.server.applyProvisioningExtras
@@ -49,6 +58,8 @@ import kotlinx.coroutines.withContext
 
 private const val LOG_TAG = "SettingsFragmentLauncher"
 private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
+private const val WRITE_SETTINGS = "settings_mdm_write_settings"
+private const val FINGERPRINT = "settings_mdm_fingerprint"
 
 /**
  * "Set"/"Not set" alone left no way to tell *which* key is configured, or to notice a stale one
@@ -84,6 +95,25 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "battery_exemption")
         }
         updateBatteryRow()
+    }
+
+    /** "Modify system settings" (PLAN fix backlog, 2026-10-24): the app-op before Android's page
+     * opened - a change on return is reported at once, so the PWA's warning follows. */
+    private var writeSettingsBeforePage: Boolean? = null
+    /** Every page threw ActivityNotFoundException on the last tap: the row says so. */
+    private var writeSettingsPageMissing = false
+    private val writeSettingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val context = context ?: return@registerForActivityResult
+        if (WriteSettingsAccess.granted(context) != writeSettingsBeforePage) {
+            com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "write_settings")
+        }
+        updateWriteSettingsRow()
+    }
+
+    /** "Fingerprint" (the user, 2026-10-24): every enrolment page threw ActivityNotFoundException on the last tap. */
+    private var fingerprintPageMissing = false
+    private val fingerprintLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        updateFingerprintRow()
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -183,6 +213,34 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             true
         }
 
+        // Android's "Modify system settings" page for Vibb One (the touch sounds row, the clock
+        // format), on the battery row's path: only an unsuspended system page - during the pause on
+        // a managed phone. Our own page first, then Android's list; neither there: the row says so.
+        findPreference<Preference>(WRITE_SETTINGS)?.setOnPreferenceClickListener {
+            val context = requireContext()
+            if (WriteSettingsAccess.granted(context) == false) {
+                val pages = WriteSettingsAccess.pageIntents(context)
+                writeSettingsPageMissing = false
+                if (pages.isNotEmpty()) {
+                    writeSettingsBeforePage = false
+                    writeSettingsPageMissing = !openFirstPage(pages, writeSettingsLauncher)
+                }
+            }
+            updateWriteSettingsRow()
+            true
+        }
+
+        // Android's fingerprint enrolment for the kid (design 59d §8.4: the parent enrols it again during a pause),
+        // on the same path; Android asks for the Child PIN first. Shown only while Android's credential is ours and
+        // the phone has a sensor ([updateFingerprintRow]).
+        findPreference<Preference>(FINGERPRINT)?.setOnPreferenceClickListener {
+            val pages = FingerprintEnrol.pageIntents(requireContext())
+            fingerprintPageMissing = false
+            if (pages.isNotEmpty()) fingerprintPageMissing = !openFirstPage(pages, fingerprintLauncher)
+            updateFingerprintRow()
+            true
+        }
+
         val restrictionsPaused = findPreference<SwitchPreference>(mdm.keys().restrictionsPaused())
         // isActive() clears a pause that has run out, so the switch never shows a stale "on".
         restrictionsPaused?.isChecked = RestrictionsPause.isActive()
@@ -260,6 +318,75 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         super.onResume()
         // Re-read every time: a pause started or ended, or the dialog answered.
         updateBatteryRow()
+        updateWriteSettingsRow()
+        updateFingerprintRow()
+    }
+
+    /** Starts the first of Android's [pages] that Android finds, through [launcher]; false only when every one
+     * threw ActivityNotFoundException (any other failure is logged and counts as tried). */
+    private fun openFirstPage(pages: List<Intent>, launcher: ActivityResultLauncher<Intent>): Boolean {
+        for (page in pages) {
+            try {
+                launcher.launch(page)
+                return true
+            } catch (e: ActivityNotFoundException) {
+                Log.w(LOG_TAG, "No page for ${page.action}, trying the next")
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't open the page for ${page.action}", e)
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun updateFingerprintRow() {
+        val context = context ?: return
+        val row = findPreference<Preference>(FINGERPRINT) ?: return
+        row.isVisible = fingerprintRowShown(
+            com.kidslauncher.mdm.lock.AndroidLock.credentialOurs(context),
+            FingerprintEnrol.hasSensor(context),
+        )
+        if (!row.isVisible) return
+        val access = fingerprintAccess(
+            pageAvailable = FingerprintEnrol.pageIntents(context).isNotEmpty(),
+            windowOpen = RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive(),
+            pageMissing = fingerprintPageMissing,
+        )
+        val state = getString(
+            when (FingerprintEnrol.enrolled(context)) {
+                true -> R.string.settings_mdm_fingerprint_enrolled
+                false -> R.string.settings_mdm_fingerprint_not_enrolled
+                null -> R.string.settings_mdm_fingerprint_unknown
+            },
+        )
+        val action = getString(
+            when (access) {
+                FingerprintAccess.CAN_OPEN -> R.string.settings_mdm_fingerprint_open
+                FingerprintAccess.PAUSE_FIRST -> R.string.settings_mdm_fingerprint_pause_first
+                FingerprintAccess.NO_PAGE -> R.string.settings_mdm_fingerprint_no_page
+            },
+        )
+        row.summary = getString(R.string.settings_mdm_fingerprint_summary, state, action)
+    }
+
+    private fun updateWriteSettingsRow() {
+        val context = context ?: return
+        val row = findPreference<Preference>(WRITE_SETTINGS) ?: return
+        val state = writeSettingsRowState(
+            granted = WriteSettingsAccess.granted(context),
+            pageAvailable = WriteSettingsAccess.pageIntents(context).isNotEmpty(),
+            windowOpen = RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive(),
+            pageMissing = writeSettingsPageMissing,
+        )
+        row.summary = getString(
+            when (state) {
+                WriteSettingsRow.GRANTED -> R.string.settings_mdm_write_settings_granted
+                WriteSettingsRow.CAN_OPEN -> R.string.settings_mdm_write_settings_open
+                WriteSettingsRow.PAUSE_FIRST -> R.string.settings_mdm_write_settings_pause_first
+                WriteSettingsRow.NO_PAGE -> R.string.settings_mdm_write_settings_no_page
+                WriteSettingsRow.UNKNOWN -> R.string.settings_mdm_write_settings_unknown
+            },
+        )
     }
 
     private fun updateBatteryRow() {

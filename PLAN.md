@@ -980,6 +980,11 @@ findings, merge to `main`, full suite once.
   with our package), as "Bakgrunnstilkobling" does for the battery, plus the PWA warning while it's missing; the docs
   lead with that path. Audit the other setup docs for adb-only steps (the power-button gestures in
   `google-account.md` already have an on-phone path). Launcher (+ PWA text). Small; next launcher round.
+  **Done 2026-10-24 (branch `write-settings-row`)**: Settings' "Modify system settings" row under "Background
+  connection" (`WriteSettingsAccess`, always shown, the battery row's path); new status field `write_settings_granted`
+  (server 0090, About This Phone's row; the clock warning's ⓘ names the row); `android-settings.md` leads with it.
+  Plus a "Fingerprint" row (Android's biometric/fingerprint enrolment; only with our Android credential and a sensor,
+  `FingerprintEnrol`), the on-phone path design 59d §8.4 names.
 - **Music: search Spotify tracks** (the user, 2026-10-22): title search works on the emulator (the user). A list-mode
   item's title is already `"<name> — <artist>, <artist>"` (server listing, `docs/notes/server/music.md` list mode),
   so an artist name should match too - the user checks. A context-mode entry has no items on the phone (Spotify picks;
@@ -1144,6 +1149,9 @@ findings, merge to `main`, full suite once.
   enrols before that start (QR provisioning -> `ProvisioningModeActivity` -> `PolicyComplianceActivity` -> Home: in
   which order, and can the QR's enrolment code be applied first?). If one can, mark `started_before` at enrolment or
   make the first-launch reset skip an enrolled phone. Launcher only.
+  **Done 2026-10-24 (branch `write-settings-row`)**: QR provisioning and an exported-Settings enrolment can hit it (and
+  the reset drops the token too - a de-enrolment); the reset now skips a phone with a token or `enrolled`
+  (`firstLaunchResetDue`); design 59d §8.17.
 
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK - CLOSED 2026-10-20** (the user: a second parent-owned

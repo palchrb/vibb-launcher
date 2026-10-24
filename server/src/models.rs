@@ -423,6 +423,9 @@ pub struct DeviceStatus {
     /// without a `battery` in the report (an older launcher).
     pub battery_level: Option<i64>,
     pub battery_charging: Option<bool>,
+    /// Vibb One holds Android's "Modify system settings" app-op (PLAN fix backlog, 2026-10-24,
+    /// migrations/0090). `None` from older launchers, or when the phone couldn't read it.
+    pub write_settings_granted: Option<bool>,
     // call_state_json (migrations/0022_calls.sql) is read directly by
     // handlers::calls::call_report.
 }
@@ -1218,6 +1221,11 @@ pub struct StatusReportRequest {
     /// through the known words only (`dns_server::sanitize_dns_upstream`); never an address.
     #[serde(default)]
     pub dns_upstream: Option<serde_json::Value>,
+    /// "Modify system settings" (PLAN fix backlog, 2026-10-24): `Settings.System.canWrite` - the
+    /// app-op the touch sounds row and the clock format need. Absent from older launchers and when
+    /// the phone couldn't read it.
+    #[serde(default)]
+    pub write_settings_granted: Option<bool>,
     /// Design 35 §2.5: `{level, charging, low}` from Android's battery broadcast. Absent from
     /// older launchers; anything that isn't one with a level in 0..=100 is dropped, never the
     /// report ([lenient_battery]).

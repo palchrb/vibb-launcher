@@ -173,12 +173,12 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_89_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
+(`migrations_73_to_90_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
 `0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
 out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both).
 `0080_phone_power.sql` (design 38, the two power switches) follows 0079, and
 `0081_music_art_more.sql` (2026-10-19, episode pictures ASAP: `music_listings.art_more`) follows 0080
-(`migrations_73_to_89_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
+(`migrations_73_to_90_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
 the listings with untried episode pictures, `push_subscriptions.last_opened_at`) follows 0081, and
 `0083_lock_glance_text_per_app.sql` (design 51: `device_lock_glance_apps.show_text`, backfilled from
 `device_policy.lock_glance_text`, which nothing reads after it) follows 0082, and
@@ -189,8 +189,9 @@ re-auth forms' wrong passwords in a row) follows 0085, and `0087_parent_accounts
 `display_name`/`invited_by`/`invite_expires_at`/`removed_at`, `device_commands.requested_by`) follows 0086, and
 `0088_parent_reads_and_prefs.sql` (design 62 step 5: `notification_prefs` and `parent_event_reads` per parent;
 `notification_settings` and `parent_events.read_at` dropped) follows 0087, and `0089_screen_capture.sql` (the
-screen capture switch, 2026-10-23: `device_policy.disallow_screen_capture`, default 0) follows 0088
-(`migrations_73_to_89_in_order`). The next free number is 0090.
+screen capture switch, 2026-10-23: `device_policy.disallow_screen_capture`, default 0) follows 0088, and
+`0090_write_settings_granted.sql` ("Modify system settings" without adb, 2026-10-24:
+`device_status.write_settings_granted`) follows 0089 (`migrations_73_to_90_in_order`). The next free number is 0091.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts")
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -222,7 +223,7 @@ Every route below is declared in `src/device_routes.rs` (`device_routes()`, desi
 - `GET /api/devices/policy` (bearer) → allowlist, `time_policy` (effective rules + budget, global or the device's own, and active lifts) and `location_policy` (always), the frozen legacy schedule fields, `kiosk_desired`, `lock_task_features`, `override_pin_hash`/`override_pin_salt`, `pending_command`, `call_policy` (always, explicit `managed`; contacts carry `photo`), `hardening` (always, every switch explicit), `launcher_ui` (always; `lock_wake_on_notification` always in it since launcher round 7 §3, pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`), `block_activity_start` (always; never inside `lock_task_features`), `kid_lock` (always, null = no lock; `{pin_hash, pin_salt, pin_length, keyguard, pin_rev}`, design 59), `screen_timeout_seconds`, `update_fence`, `notification_auto_cancel` (always), `music` (always the key; `null` when unreadable)
 - `POST /api/devices/command-result` (bearer) - `{command_id, success, message, requested_at?}` → 204 (implies the receipt; a wipe only when it was refused)
 - `POST /api/devices/command-receipt` (bearer) - `{command_id, requested_at?}` → 204: the phone got the command and is about to run it (security review L12; the first receipt counts). `pending_command` is `{id, command, requested_at}` (+ `allow`, `release_tag` or `pin` on their own commands only; `pin` = `set_kid_pin`'s Child PIN, design 59): an id alone isn't unique across a restored backup or another server, so the phone keys "ran it already" on both and sends `requested_at` back; an answer that names another `requested_at` counts for nothing (QA of the launcher wave, Medium 1)
-- `POST /api/devices/status` (bearer) - `{lock_reason, kiosk_engaged, installed_apps, app_version, app_version_code, offline_override_used, location, policy_state, restrictions_paused, capabilities, call_state, notification_listener_enabled, time_state, install_mode, play_window_active, play_store_suspendable, lock_state, screen_timeout_seconds, update_fence, notification_cancels, backup_service_enabled, battery_optimization_exempt, relock, unseen_boots, battery}` (installed apps may carry `installer`) → 204
+- `POST /api/devices/status` (bearer) - `{lock_reason, kiosk_engaged, installed_apps, app_version, app_version_code, offline_override_used, location, policy_state, restrictions_paused, capabilities, call_state, notification_listener_enabled, time_state, install_mode, play_window_active, play_store_suspendable, lock_state, screen_timeout_seconds, update_fence, notification_cancels, backup_service_enabled, battery_optimization_exempt, relock, unseen_boots, battery, write_settings_granted}` (installed apps may carry `installer`) → 204
 - `GET /api/devices/contact-photos/{hash}` (bearer) - a contact photo, only for this device's contacts
 - `GET /api/devices/wallpapers/{hash}` (bearer) - a wallpaper image, only when ticked for this device
 - `POST /api/devices/crashes` (bearer) - launcher crash reports (hash + short trace), see "Crash reports" -> 204

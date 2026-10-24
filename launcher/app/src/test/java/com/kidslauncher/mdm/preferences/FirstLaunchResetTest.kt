@@ -1,0 +1,54 @@
+package com.kidslauncher.mdm.preferences
+
+import java.io.File
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** Enrolment before Home's first start (PLAN fix backlog, qa-glance-topinset-code Q-3; design 59d §8.17). */
+class FirstLaunchResetTest {
+    private val main = listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }
+    private fun src(path: String) = File(main, "java/com/kidslauncher/mdm/$path").readText()
+
+    @Test
+    fun `the reset runs only on a phone that neither started Home nor enrolled`() {
+        // A genuinely fresh install: no Home start, no enrolment - the defaults are set.
+        assertTrue(firstLaunchResetDue(startedBefore = false, enrolled = false, deviceToken = null))
+        assertTrue(firstLaunchResetDue(startedBefore = false, enrolled = false, deviceToken = ""))
+        assertTrue(firstLaunchResetDue(startedBefore = false, enrolled = false, deviceToken = "  "))
+        // Enrolled before Home's first start (the QR's onProfileProvisioningComplete, or Settings
+        // opened without Home): kept, whichever of the two writes is seen.
+        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = true, deviceToken = "tok"))
+        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = true, deviceToken = null))
+        assertFalse(firstLaunchResetDue(startedBefore = false, enrolled = false, deviceToken = "tok"))
+        // Home has started: never again, enrolled or not.
+        assertFalse(firstLaunchResetDue(startedBefore = true, enrolled = false, deviceToken = null))
+        assertFalse(firstLaunchResetDue(startedBefore = true, enrolled = true, deviceToken = "tok"))
+    }
+
+    @Test
+    fun `initRest asks the rule with what both enrolment paths write`() {
+        val app = src("Application.kt")
+        val initRest = app.substringAfter("private fun initRest()").substringBefore("\n    private fun ").substringBefore("\n    fun ")
+        val call = "firstLaunchResetDue(startedBefore, mdm.enrolled(), mdm.deviceToken())"
+        assertTrue(call in initRest)
+        assertTrue("val startedBefore = LauncherPreferences.internal().started()" in initRest)
+        // The reset is called once, only under the rule.
+        assertEquals(1, Regex("""resetPreferences\(""").findAll(initRest).count())
+        assertTrue(initRest.indexOf("resetPreferences(this)") > initRest.indexOf(call))
+        // The enrolment's mark: the QR / provisioning path and Settings' "Enroll now" both write the
+        // token and the enrolled flag on success, so the next process start keeps them.
+        for (path in listOf(
+            src("server/Provisioning.kt").substringAfter("fun applyProvisioningExtras("),
+            src("ui/settings/launcher/SettingsFragmentLauncher.kt").substringAfter("private fun enrollWithServer("),
+        )) {
+            val success = path.substringAfter("isSuccessful")
+            assertTrue("mdm.deviceToken(" in success)
+            assertTrue("mdm.enrolled(true)" in success)
+        }
+        // started_before stays Home's to set (with its first-launch work).
+        assertTrue("LauncherPreferences.internal().started(true)" in src("ui/HomeActivity.kt"))
+        assertFalse("internal().started(true)" in src("server/Provisioning.kt"))
+    }
+}
