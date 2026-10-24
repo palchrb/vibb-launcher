@@ -168,12 +168,18 @@ object MotionGate {
             app
         } ?: return
         if (!keepArmed) return
-        try {
+        // Off the sensor callback's main thread (F-4): the series reads the policy and prefs.
+        ZoneSeries.launch {
             ZoneSeries.onMotion(context)
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "The moving series failed to start: ${e.javaClass.simpleName}")
+            ensureArmed(context)
         }
-        ensureArmed(context)
+    }
+
+    /** Evidence the phone moved that the sensor may have missed - a fence crossing, a series' side
+     * change (qa-design-64-step2-code F-3): no `still` until the next fresh fix arms again. */
+    @Synchronized
+    fun markMoved() {
+        moved = true
     }
 
     /** Regularly ended: disarmed, and unknown again. */

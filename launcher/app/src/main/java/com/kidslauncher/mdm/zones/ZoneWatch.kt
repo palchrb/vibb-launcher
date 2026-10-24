@@ -36,6 +36,8 @@ private const val KEY_MOCK_IGNORED = "mock_ignored"
 private const val KEY_MOCK_LAST = "mock_last_time_ms"
 private const val KEY_MOCK_KEYS = "mock_keys_v1"
 private const val KEY_LAST_BEAT = "last_beat_ms"
+private const val KEY_LAST_FRESH_FIX = "last_fresh_fix_ms"
+private const val KEY_BUDGET = "series_budget_v1"
 private const val ACTION_CONFIRM = "com.kidslauncher.mdm.action.ZONE_CONFIRM"
 
 /** The crossing's confirming fix (§4.5); not BackstopAlarm's 7, the update fence's 11, the
@@ -144,6 +146,7 @@ object ZoneWatch {
                 prefs(app).edit()
                     .remove(KEY_FENCES).remove(KEY_QUEUE).remove(KEY_LAST_BEAT)
                     .remove(KEY_MOCK_IGNORED).remove(KEY_MOCK_LAST).remove(KEY_MOCK_KEYS)
+                    .remove(KEY_LAST_FRESH_FIX).remove(KEY_BUDGET)
                     .commit()
             }
         } catch (e: Exception) {
@@ -166,6 +169,10 @@ object ZoneWatch {
         val verdict = fenceVerdict(zoneId, zones, entering, since)
         Log.i(LOG_TAG, "Fence of zone $zoneId (entering=$entering): $verdict")
         if (verdict != FenceVerdict.CROSSING) return
+        // The fence says the phone moved, whatever the sensor saw (F-3); and a crossing starts the
+        // moving series at once, cooldown or not (F-2).
+        MotionGate.markMoved()
+        ZoneSeries.launch { ZoneSeries.onMotion(app, fromFence = true) }
         want(FreshKind.BALANCED)
         SyncRunner.request(app, "zone")
         armConfirm(app)
@@ -214,6 +221,35 @@ object ZoneWatch {
 
     fun stampBeat(context: Context, nowMs: Long) {
         prefs(context).edit().putLong(KEY_LAST_BEAT, nowMs).commit()
+    }
+
+    /** Wall time of our last **genuinely fresh** own fix (`freshOwnFix`; 0 = none) - what the
+     * heartbeat's still skip and `still` count their 4 h from, never a failed attempt (F-3). */
+    fun lastFreshFixMs(context: Context): Long = prefs(context).getLong(KEY_LAST_FRESH_FIX, 0L)
+
+    fun stampFreshFix(context: Context, fixTimeMs: Long) {
+        prefs(context).edit().putLong(KEY_LAST_FRESH_FIX, fixTimeMs).commit()
+    }
+
+    // --- The series' daily budget (F-2) ---
+
+    private fun today(): String = java.time.LocalDate.now().toString()
+
+    @Synchronized
+    private fun budget(context: Context): CheckBudget? = try {
+        prefs(context).getString(KEY_BUDGET, null)?.let { ServerJson.decodeFromString(CheckBudget.serializer(), it) }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** Series checks left today ([checksLeft]). */
+    fun checksLeftToday(context: Context): Int = checksLeft(budget(context), today())
+
+    /** One series check used today. */
+    @Synchronized
+    fun spendCheck(context: Context) {
+        val after = budgetAfterCheck(budget(context), today())
+        prefs(context).edit().putString(KEY_BUDGET, ServerJson.encodeToString(CheckBudget.serializer(), after)).commit()
     }
 
     // --- The mock rule (decision 14) ---

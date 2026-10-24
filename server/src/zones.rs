@@ -739,10 +739,13 @@ pub fn mock_log_line(device_id: i64, logged: i64, count: i64) -> Option<String> 
     })
 }
 
-/// The report's mock count against `devices.mock_logged` (qa-design-64-step2-code Q-9): a rise
-/// is written by an UPDATE only a higher count passes, so two parallel reports - or a report
-/// without `zone_watch` in between - log it once; `Some(line)` for the one that wrote it. A lower
-/// count (the launcher's data cleared, a new enrollment) is taken silently, the date kept.
+/// The report's mock count against `devices.mock_logged` (qa-design-64-step2-code Q-9, F-5): the
+/// count last logged is read and a rise written in one `BEGIN IMMEDIATE` transaction, so two
+/// parallel reports - or a report without `zone_watch` in between - log each rise once and the
+/// line's "rose" is the real rise, never one from a stale read; `Some(line)` for the report that
+/// wrote it. A lower count (the launcher's data cleared) is taken silently and the date cleared
+/// (the row's "the last ..." belonged to the higher count). A re-enrollment clears both
+/// (`device_api::enroll`).
 pub async fn mock_rise(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -751,37 +754,35 @@ pub async fn mock_rise(
     let Some(count) = watch.map(|w| w.mock_ignored) else {
         return Ok(None);
     };
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let logged: Option<i64> =
         sqlx::query_scalar("SELECT COALESCE(mock_logged, 0) FROM devices WHERE id = ?")
             .bind(device_id)
-            .fetch_optional(db)
+            .fetch_optional(&mut *tx)
             .await?;
     let Some(logged) = logged else {
         return Ok(None);
     };
-    if count < logged {
-        sqlx::query("UPDATE devices SET mock_logged = ? WHERE id = ? AND mock_logged > ?")
+    let line = if count < logged {
+        sqlx::query("UPDATE devices SET mock_logged = ?, mock_logged_at = NULL WHERE id = ?")
             .bind(count)
             .bind(device_id)
-            .bind(count)
-            .execute(db)
+            .execute(&mut *tx)
             .await?;
-        return Ok(None);
-    }
-    let rose = sqlx::query(
-        "UPDATE devices SET mock_logged = ?1, mock_logged_at = ?2 WHERE id = ?3 \
-         AND COALESCE(mock_logged, 0) < ?1",
-    )
-    .bind(count)
-    .bind(instant(Utc::now()))
-    .bind(device_id)
-    .execute(db)
-    .await?
-    .rows_affected()
-        == 1;
-    Ok(rose
-        .then(|| mock_log_line(device_id, logged, count))
-        .flatten())
+        None
+    } else if count > logged {
+        sqlx::query("UPDATE devices SET mock_logged = ?, mock_logged_at = ? WHERE id = ?")
+            .bind(count)
+            .bind(instant(Utc::now()))
+            .bind(device_id)
+            .execute(&mut *tx)
+            .await?;
+        mock_log_line(device_id, logged, count)
+    } else {
+        None
+    };
+    tx.commit().await?;
+    Ok(line)
 }
 
 /// When the phone's mock count last rose (Q-9), for the Locate page's row.

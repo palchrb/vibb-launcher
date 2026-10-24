@@ -613,6 +613,8 @@ private suspend fun currentLocationReport(
     val lastOwnFix = LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
     val motion = if (zonesOn) MotionGate.motion(context) else Motion.NO_SENSOR
     val kept = if (zonesOn) LocateCommands.keptUnreported() else null
+    // The still skip and `still` count from the last genuinely fresh own fix (F-3).
+    val lastFreshFix = if (zonesOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix
     val sync = syncLocationAction(
         policy = policy,
         zonesOn = zonesOn,
@@ -623,6 +625,7 @@ private suspend fun currentLocationReport(
         lastBeatMs = if (zonesOn) ZoneWatch.lastBeatMs(context) else 0L,
         motion = motion,
         keptFixAgeMs = kept?.let { now - it.timeMs },
+        lastFreshFixMs = lastFreshFix,
     )
     val action = sync.action
     if (zonesOn) {
@@ -636,14 +639,17 @@ private suspend fun currentLocationReport(
         ?: return LocationOutcome(action, null, null, null)
     // A genuinely fresh fix of our own (not the cached or an old last-known fallback): the motion
     // sensor counts "moved" from here (Q-6).
-    if (zonesOn && action.fresh && freshOwnFix(location.time, now)) MotionGate.arm(context)
+    if (zonesOn && action.fresh && freshOwnFix(location.time, now)) {
+        ZoneWatch.stampFreshFix(context, location.time)
+        MotionGate.arm(context)
+    }
     val accuracy = if (location.hasAccuracy()) location.accuracy else null
     return LocationOutcome(
         action,
         location.toQueued(LocateCommands.providerOf(location)),
         accuracy,
         (System.currentTimeMillis() - location.time) / 1000,
-        still = reportStill(zonesOn, action, motion, now, lastOwnFix),
+        still = reportStill(zonesOn, action, motion, now, lastFreshFix),
     )
 }
 

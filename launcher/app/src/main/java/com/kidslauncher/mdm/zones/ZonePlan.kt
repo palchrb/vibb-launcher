@@ -93,7 +93,9 @@ data class SyncLocation(val action: com.kidslauncher.mdm.server.LocationAction, 
 
 /**
  * The sync's location action (§4.4). **Without zones** ([zonesOn] false) it is exactly today's
- * `locationAction(policy, forced, now - lastOwnFix)` - nothing of step 2 changes it. With zones: a
+ * `locationAction(policy, forced, now - lastOwnFix)` ([lastOwnFixMs]: the last attempt, as today) -
+ * nothing of step 2 changes it; the heartbeat's still skip counts from [lastFreshFixMs], the last
+ * genuinely fresh own fix (F-3). With zones: a
  * forced fix is the precise path for [precise] (`locate`/`ring`, a crossing's confirm) and the
  * balanced one for a crossing's first fix; else [heartbeatDue] decides, a `FIX` taking the
  * balanced path.
@@ -108,6 +110,7 @@ fun syncLocationAction(
     lastBeatMs: Long,
     motion: Motion,
     keptFixAgeMs: Long?,
+    lastFreshFixMs: Long,
 ): SyncLocation {
     val today = com.kidslauncher.mdm.server.locationAction(policy, forced, nowMs - lastOwnFixMs)
     if (!zonesOn || policy == null || policy.mode != "interval") return SyncLocation(today, null)
@@ -117,7 +120,8 @@ fun syncLocationAction(
         return SyncLocation(fresh, null)
     }
     val intervalMs = p.intervalMinutes.coerceAtLeast(com.kidslauncher.mdm.server.MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
-    val beat = heartbeatDue(nowMs, lastBeatMs, intervalMs, motion, lastOwnFixMs, keptFixAgeMs)
+    // STILL counts from the last genuinely fresh own fix, never a failed attempt (F-3).
+    val beat = heartbeatDue(nowMs, lastBeatMs, intervalMs, motion, lastFreshFixMs, keptFixAgeMs)
     val action = if (beat == Heartbeat.FIX) com.kidslauncher.mdm.server.LocationAction.FRESH_BALANCED else com.kidslauncher.mdm.server.LocationAction.CACHED
     return SyncLocation(action, beat)
 }
@@ -296,6 +300,41 @@ const val SERIES_MAX_MS = 60 * 60_000L
 /** ... and after this many checks (60 min / 3 min). */
 const val SERIES_MAX_CHECKS = 20
 
+/**
+ * After a series ends, the motion sensor starts no new one for this long (qa-design-64-step2-code
+ * F-2, the coordinator's decision); a fence crossing still starts one at once. Provisional: the
+ * Jelly Star walk's measurement decides it (design 64 §5).
+ */
+const val SERIES_COOLDOWN_MS = 20 * 60_000L
+
+/** At most this many series checks a local calendar day (F-2); past it only the fences and the
+ * heartbeat run. Provisional, as [SERIES_COOLDOWN_MS]. */
+const val SERIES_CHECKS_PER_DAY = 60
+
+/** The series checks used on [day] (a local date, `yyyy-mm-dd`). */
+@kotlinx.serialization.Serializable
+data class CheckBudget(val day: String, val used: Int)
+
+/** Series checks left [today] ([SERIES_CHECKS_PER_DAY] on a new day). */
+fun checksLeft(budget: CheckBudget?, today: String): Int =
+    if (budget?.day == today) (SERIES_CHECKS_PER_DAY - budget.used).coerceAtLeast(0) else SERIES_CHECKS_PER_DAY
+
+/** The budget after one more check [today]. */
+fun budgetAfterCheck(budget: CheckBudget?, today: String): CheckBudget =
+    if (budget?.day == today) budget.copy(used = budget.used + 1) else CheckBudget(today, 1)
+
+/**
+ * Whether a series may start now (F-2): never with no check left today; a fence crossing
+ * ([fromFence]) at once; a motion fire only [SERIES_COOLDOWN_MS] after the last series ended
+ * ([lastEndedAtMs], elapsed; `null` = none in this process, a negative gap - a reboot - counts as
+ * past it).
+ */
+fun seriesMayStart(fromFence: Boolean, nowMs: Long, lastEndedAtMs: Long?, checksLeft: Int): Boolean = when {
+    checksLeft <= 0 -> false
+    fromFence || lastEndedAtMs == null -> true
+    else -> nowMs - lastEndedAtMs !in 0 until SERIES_COOLDOWN_MS
+}
+
 /** The haversine distance in metres - only to time a check and to tell whether a fix is worth
  * sending now; the server alone decides a crossing (its rule counts accuracy and two fixes). */
 fun distanceM(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
@@ -339,14 +378,16 @@ fun seriesOnMotion(series: CheckSeries?, nowMs: Long, firstDelayMs: Long): Check
     series?.copy(lastMotionAtMs = nowMs) ?: CheckSeries(nowMs, nowMs, 0, firstDelayMs)
 
 /** Why a series ends at a check's time - `null` when the check runs. */
-enum class SeriesEnd { HOUR, COUNT, STILL }
+enum class SeriesEnd { HOUR, COUNT, STILL, BUDGET }
 
 /**
  * At a check's alarm (§4.5): the series ends after [SERIES_MAX_MS], after [SERIES_MAX_CHECKS]
  * checks, or when motion stopped - no new fire within twice the last delay (the sensor re-arms at
- * each fire while zones are watched, so a moving phone keeps firing).
+ * each fire while zones are watched, so a moving phone keeps firing); and at once with no check
+ * left today ([checksLeft], F-2's budget).
  */
-fun seriesEnd(series: CheckSeries, nowMs: Long): SeriesEnd? = when {
+fun seriesEnd(series: CheckSeries, nowMs: Long, checksLeft: Int = SERIES_CHECKS_PER_DAY): SeriesEnd? = when {
+    checksLeft <= 0 -> SeriesEnd.BUDGET
     nowMs - series.startedAtMs >= SERIES_MAX_MS -> SeriesEnd.HOUR
     series.checks >= SERIES_MAX_CHECKS -> SeriesEnd.COUNT
     nowMs - series.lastMotionAtMs > 2 * series.lastDelayMs -> SeriesEnd.STILL
@@ -359,26 +400,41 @@ fun seriesAfterCheck(series: CheckSeries, nextDelayMs: Long): CheckSeries =
 
 /** What a check's fix is worth now (§4.5, the note's rule). */
 enum class CheckVerdict {
-    /** Nothing changed: kept in the kept slot only (a due heartbeat's `KEPT` reports it). */
+    /** Nothing the server could use changed: kept in the kept slot only (a due heartbeat's `KEPT`
+     * reports it). */
     KEEP,
 
-    /** Within its accuracy of a boundary: sent now, so the server sees it in time. */
-    NEAR_BOUNDARY,
-
-    /** On the other side of a boundary than [previous]: sent now, and a confirming GPS fix 2 min later. */
+    /** Surely on the other side of a boundary than [previous]: sent now, and a confirming GPS fix
+     * 2 min later. */
     SIDE_CHANGED,
 }
 
 /**
- * A check's [fix] against the fix before it ([previous], the cached one; `null` = none): another
- * side of any zone's boundary (plain distance against the radius - a hint, never the server's
- * judgement) is [CheckVerdict.SIDE_CHANGED]; within the fix's accuracy of a boundary
- * [CheckVerdict.NEAR_BOUNDARY]; else [CheckVerdict.KEEP].
+ * A fix's side of [zone] by the server's own rule (decision 2): inside when `d + a <= r`, outside
+ * when `d - a >= r`, `null` (unsure - it counts for neither side) otherwise and always without an
+ * accuracy.
+ */
+fun sureSide(fix: QueuedFix, zone: PolicyZone): Boolean? {
+    val accuracy = fix.accuracy?.takeIf { it.isFinite() && it >= 0f } ?: return null
+    val d = distanceM(fix.latitude, fix.longitude, zone.latitude, zone.longitude)
+    return when {
+        d + accuracy <= zone.radiusM -> true
+        d - accuracy >= zone.radiusM -> false
+        else -> null
+    }
+}
+
+/**
+ * A check's [fix] against the reported fix ([previous]; `null` = none) - qa-design-64-step2-code
+ * F-1: sent only when the server can use it - the new fix [sureSide] of some zone, and on the
+ * other side than [previous] (its sure side, or for an unsure one its plain distance against the
+ * radius) - [CheckVerdict.SIDE_CHANGED]. An unsure fix, one without accuracy or no previous fix
+ * never sends: [CheckVerdict.KEEP].
  */
 fun checkVerdict(previous: QueuedFix?, fix: QueuedFix, zones: List<PolicyZone>): CheckVerdict {
-    fun inside(f: QueuedFix, z: PolicyZone) = distanceM(f.latitude, f.longitude, z.latitude, z.longitude) <= z.radiusM
-    if (previous != null && zones.any { inside(previous, it) != inside(fix, it) }) return CheckVerdict.SIDE_CHANGED
-    val accuracy = (fix.accuracy ?: 0f).coerceAtLeast(0f)
-    if (zones.any { boundaryDistanceM(fix, it) <= accuracy }) return CheckVerdict.NEAR_BOUNDARY
-    return CheckVerdict.KEEP
+    if (previous == null) return CheckVerdict.KEEP
+    fun before(z: PolicyZone) = sureSide(previous, z)
+        ?: (distanceM(previous.latitude, previous.longitude, z.latitude, z.longitude) <= z.radiusM)
+    val changed = zones.any { z -> sureSide(fix, z)?.let { it != before(z) } == true }
+    return if (changed) CheckVerdict.SIDE_CHANGED else CheckVerdict.KEEP
 }

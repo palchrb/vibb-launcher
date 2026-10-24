@@ -387,6 +387,14 @@ So zones with a 30-min heartbeat cost about what today's 30-min Regularly costs 
 crossings, and a third of today's 10-min Regularly. The fence poll dominates and can't be stretched (§2), so a 60-min
 heartbeat saves little: **30 min** is the default (§11).
 
+**The moving series' caps (as built, qa-design-64-step2-code F-2, the coordinator's decision).** The 3-min floor holds
+within about 2.7 km of any boundary - a kid's whole neighbourhood - so a moving day could run 60-100 balanced checks,
+not the table's ~16. Two caps, both named constants in `ZonePlan.kt` and **provisional until the Jelly Star walk
+measures them** (batterystats: the `kidslauncher:zone_check` wake locks and the fused requests charged to our UID):
+`SERIES_COOLDOWN_MS` = 20 min - after a series ends, the motion sensor starts no new one for that long (a fence crossing
+still starts one at once) - and `SERIES_CHECKS_PER_DAY` = 60 checks a local calendar day, past which only the fences
+and the heartbeat run. The measurement decides both numbers; the table's row is to be redone with it.
+
 **What the emulator can and can't measure.** It can count: `dumpsys batterystats --reset` then `dumpsys batterystats
 me.vibb.launcher.debug` (wake locks, alarms, GPS time and Wi-Fi scans charged to our UID - the fence's work source
 included), `dumpsys location` (our geofences and their state, the fused provider's merged request and its 30-min
@@ -577,7 +585,8 @@ while news). The full account: `docs/notes/server/zones.md` ("Safe zones, step 2
   distance from the cached fix to the nearest boundary less the fix's accuracy, its age taken off, capped at 30 min -,
   each a balanced fused fix (no GPS); a check whose fix is on the other side of a boundary than the cached fix (plain
   distance against the radius, a hint only) is queued and reported now with the confirming GPS fix 2 min later, one
-  within its accuracy of a boundary is queued and reported now, any other waits in the kept slot (the fix round). The fused fix
+  within its accuracy of a boundary was queued too until the follow-up's F-1: now only a fix *surely* on the other side
+  (the server's own rule) is sent, any other waits in the kept slot. The fused fix
   also passes the platform fence. The series ends after 60 min, 20 checks, or no motion fire within twice the last
   delay (the sensor is kept armed while zones are watched). No sensor (the emulator): no series. The `watchStep`
   bookkeeping of §4.5 (a per-zone side of the last *reported* fix) is replaced by the cached fix.
@@ -640,6 +649,20 @@ while news). The full account: `docs/notes/server/zones.md` ("Safe zones, step 2
   against `devices.mock_logged` (an UPDATE only a higher count passes; 0093) and the Locate row says when it last rose.
 - **Q-10**: `location_policy.zones` goes only to a launcher whose latest report since enrollment claims `zones_v1`.
 - **Q-11**: the glue pins G1-G9 in `ZonePlanTest`; the server's S6, S8 and S12 tests in `tests::zone_watch`.
+- **The follow-up's F-1 to F-6** (the same review, "Follow-up"):
+  - **F-1**: a series check sends only a fix *surely* on the other side of a boundary than the reported fix, by the
+    server's rule (inside at `d + a <= r`, outside at `d - a >= r`; `sureSide`); an unsure fix or one without accuracy
+    never sends. `NEAR_BOUNDARY` is gone.
+  - **F-2**: the cooldown and the daily budget (§5's last paragraph); a fence crossing starts a series at once.
+  - **F-3**: a fence crossing and a series' side change mark the phone as moved (`MotionGate.markMoved`), so `still`
+    never follows the fence's word that the kid left; the 4-h still bound counts from the last *genuinely fresh* own
+    fix (`ZoneWatch.lastFreshFixMs`, stamped only with `freshOwnFix`), never a failed attempt.
+  - **F-4**: the motion fire's work runs on the series' IO scope, not the sensor callback's main thread; pins for
+    `promoteKept`'s "newer" condition and the series' re-arm in `finally`.
+  - **F-5**: the mock line's rise is read and written in one `BEGIN IMMEDIATE` transaction; a lower count clears the
+    date, and an enrollment clears `devices.mock_logged`/`mock_logged_at`.
+  - **F-6**: the "Here now" test reads the summary's freshness before and after the still re-send, with the served
+    interval.
 - **Latency and the still phone**: a fence-only crossing waits up to the fence's 30-min poll (or another app's fused
   fix, or the heartbeat) plus the 2-min confirm; on a phone with the motion sensor a still phone's heartbeat re-sends
   the old fix for up to 4 h - "Here now" stays by `still` (Q-3).

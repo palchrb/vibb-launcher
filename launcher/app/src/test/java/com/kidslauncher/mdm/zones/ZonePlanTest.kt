@@ -183,7 +183,7 @@ class ZonePlanTest {
         for (policy in policies) for (forced in listOf(false, true)) for (precise in listOf(false, true)) for (age in ages)
             for (motion in Motion.values()) for (kept in listOf(null, 0L, minute)) for (beat in listOf(0L, now - minute, now)) {
                 val got = syncLocationAction(policy, zonesOn = false, forced = forced, precise = precise, nowMs = now,
-                    lastOwnFixMs = now - age, lastBeatMs = beat, motion = motion, keptFixAgeMs = kept)
+                    lastOwnFixMs = now - age, lastBeatMs = beat, motion = motion, keptFixAgeMs = kept, lastFreshFixMs = now - age)
                 assertEquals(com.kidslauncher.mdm.server.locationAction(policy, forced, age), got.action)
                 assertNull(got.beat)
             }
@@ -197,17 +197,22 @@ class ZonePlanTest {
     @Test
     fun `with zones the heartbeat decides, a command and a crossing fix`() {
         val now = 1_800_000_000_000L
-        fun act(forced: Boolean = false, precise: Boolean = false, beat: Long = now - 61 * minute, motion: Motion = Motion.MOVED, kept: Long? = null) =
+        fun act(forced: Boolean = false, precise: Boolean = false, beat: Long = now - 61 * minute, motion: Motion = Motion.MOVED, kept: Long? = null,
+                fresh: Long = now - 61 * minute) =
             syncLocationAction(interval, zonesOn = true, forced = forced, precise = precise, nowMs = now,
-                lastOwnFixMs = now - 61 * minute, lastBeatMs = beat, motion = motion, keptFixAgeMs = kept)
+                lastOwnFixMs = now - 61 * minute, lastBeatMs = beat, motion = motion, keptFixAgeMs = kept, lastFreshFixMs = fresh)
         assertEquals(SyncLocation(L.FRESH, null), act(forced = true, precise = true))
         assertEquals(SyncLocation(L.FRESH_BALANCED, null), act(forced = true))
         assertEquals(SyncLocation(L.FRESH_BALANCED, Heartbeat.FIX), act())
         assertEquals(SyncLocation(L.CACHED, Heartbeat.NOT_DUE), act(beat = now - minute))
         assertEquals(SyncLocation(L.CACHED, Heartbeat.KEPT), act(kept = 5 * minute))
         assertEquals(SyncLocation(L.CACHED, Heartbeat.STILL), act(motion = Motion.STILL))
+        // F-3: the 4 h count from the last genuinely fresh fix - failed attempts (the own-fix stamp
+        // 61 min ago) don't restart it.
+        assertEquals(SyncLocation(L.FRESH_BALANCED, Heartbeat.FIX), act(motion = Motion.STILL, fresh = now - STILL_SKIP_MAX_MS))
+        assertEquals(SyncLocation(L.FRESH_BALANCED, Heartbeat.FIX), act(motion = Motion.STILL, fresh = 0))
         // Only Regularly has a heartbeat: on request and Off are today's.
-        assertEquals(L.NONE, syncLocationAction(interval.copy(mode = "on_request"), true, false, false, now, 0, 0, Motion.MOVED, null).action)
+        assertEquals(L.NONE, syncLocationAction(interval.copy(mode = "on_request"), true, false, false, now, 0, 0, Motion.MOVED, null, 0).action)
     }
 
     @Test
@@ -328,24 +333,71 @@ class ZonePlanTest {
         assertNull(seriesEnd(moving.copy(checks = SERIES_MAX_CHECKS - 1), 59 * minute))
         assertEquals(60 * minute, SERIES_MAX_MS)
         assertEquals(20, SERIES_MAX_CHECKS)
+        // F-2: no check left today ends it first.
+        assertEquals(SeriesEnd.BUDGET, seriesEnd(s, 3 * minute, checksLeft = 0))
+        assertNull(seriesEnd(s, 3 * minute, checksLeft = 1))
+    }
+
+    @Test
+    fun `a new series waits out the cooldown, a fence crossing doesn't, the day's budget binds both`() {
+        val ended = 100 * minute
+        // A motion fire: not within 20 min of the last end.
+        assertFalse(seriesMayStart(fromFence = false, nowMs = ended + 19 * minute, lastEndedAtMs = ended, checksLeft = 60))
+        assertTrue(seriesMayStart(fromFence = false, nowMs = ended + SERIES_COOLDOWN_MS, lastEndedAtMs = ended, checksLeft = 60))
+        assertTrue(seriesMayStart(fromFence = false, nowMs = 5, lastEndedAtMs = null, checksLeft = 60))
+        // A reboot (elapsed back to 0): past it.
+        assertTrue(seriesMayStart(fromFence = false, nowMs = minute, lastEndedAtMs = ended, checksLeft = 60))
+        // A fence crossing: at once.
+        assertTrue(seriesMayStart(fromFence = true, nowMs = ended + minute, lastEndedAtMs = ended, checksLeft = 1))
+        // No check left today: neither.
+        assertFalse(seriesMayStart(fromFence = true, nowMs = ended + minute, lastEndedAtMs = null, checksLeft = 0))
+        assertFalse(seriesMayStart(fromFence = false, nowMs = ended + 60 * minute, lastEndedAtMs = ended, checksLeft = 0))
+        // The budget: per local day, 60.
+        assertEquals(SERIES_CHECKS_PER_DAY, checksLeft(null, "2026-10-24"))
+        var budget: CheckBudget? = null
+        repeat(59) { budget = budgetAfterCheck(budget, "2026-10-24") }
+        assertEquals(1, checksLeft(budget, "2026-10-24"))
+        budget = budgetAfterCheck(budget, "2026-10-24")
+        assertEquals(0, checksLeft(budget, "2026-10-24"))
+        assertEquals(0, checksLeft(budgetAfterCheck(budget, "2026-10-24"), "2026-10-24"))
+        // A new day starts again.
+        assertEquals(SERIES_CHECKS_PER_DAY, checksLeft(budget, "2026-10-25"))
+        assertEquals(CheckBudget("2026-10-25", 1), budgetAfterCheck(budget, "2026-10-25"))
+        assertEquals(20 * minute, SERIES_COOLDOWN_MS)
+        assertEquals(60, SERIES_CHECKS_PER_DAY)
     }
 
     @Test
     fun `a check's fix is sent only when it could be a crossing`() {
         val zones = listOf(home)
-        // Inside before, outside now: another side - sent, and the confirm follows.
+        // Surely inside before, surely outside now (and back): sent, and the confirm follows.
         assertEquals(CheckVerdict.SIDE_CHANGED, checkVerdict(north(30.0), north(1000.0), zones))
         assertEquals(CheckVerdict.SIDE_CHANGED, checkVerdict(north(1000.0), north(30.0), zones))
-        // Within its accuracy of the boundary: sent (the server may need it in time).
-        assertEquals(CheckVerdict.NEAR_BOUNDARY, checkVerdict(north(1000.0), north(170.0, accuracy = 30f), zones))
-        assertEquals(CheckVerdict.NEAR_BOUNDARY, checkVerdict(null, north(140.0, accuracy = 20f), zones))
+        // F-1: the server's own side rule - inside at d + a <= r, outside at d - a >= r.
+        assertEquals(CheckVerdict.SIDE_CHANGED, checkVerdict(north(30.0), north(182.0, accuracy = 30f), zones))
+        assertEquals(CheckVerdict.SIDE_CHANGED, checkVerdict(north(1000.0), north(118.0, accuracy = 30f), zones))
+        // An unsure flip (plain distance over the radius, within its accuracy of it): never sent.
+        assertEquals(CheckVerdict.KEEP, checkVerdict(north(30.0), north(170.0, accuracy = 30f), zones))
+        assertEquals(CheckVerdict.KEEP, checkVerdict(north(1000.0), north(140.0, accuracy = 20f), zones))
+        // A fix without accuracy is never sure: never sent, however far.
+        assertEquals(CheckVerdict.KEEP, checkVerdict(north(30.0), north(1000.0, accuracy = null), zones))
+        // No reported fix: nothing to compare with.
+        assertEquals(CheckVerdict.KEEP, checkVerdict(null, north(140.0, accuracy = 20f), zones))
+        assertEquals(CheckVerdict.KEEP, checkVerdict(null, north(2000.0), zones))
+        // An unsure reported fix counts by its plain distance: inside by distance, surely inside now
+        // is no change; outside by distance, surely inside now is.
+        assertEquals(CheckVerdict.KEEP, checkVerdict(north(140.0, accuracy = 50f), north(30.0), zones))
+        assertEquals(CheckVerdict.SIDE_CHANGED, checkVerdict(north(160.0, accuracy = 50f), north(30.0), zones))
+        assertEquals(CheckVerdict.KEEP, checkVerdict(north(100.0, accuracy = null), north(30.0), zones))
         // Same side, clear of the boundary: kept only.
         assertEquals(CheckVerdict.KEEP, checkVerdict(north(1000.0), north(2000.0), zones))
         assertEquals(CheckVerdict.KEEP, checkVerdict(north(10.0), north(40.0), zones))
-        assertEquals(CheckVerdict.KEEP, checkVerdict(null, north(2000.0), zones))
-        // No accuracy: only on the boundary itself.
-        assertEquals(CheckVerdict.KEEP, checkVerdict(north(2000.0), north(160.0, accuracy = null), zones))
         assertEquals(CheckVerdict.KEEP, checkVerdict(null, north(30.0), emptyList()))
+        assertEquals(null, sureSide(north(170.0, accuracy = 30f), home))
+        assertEquals(true, sureSide(north(118.0, accuracy = 30f), home))
+        assertEquals(false, sureSide(north(182.0, accuracy = 30f), home))
+        assertEquals(null, sureSide(north(30.0, accuracy = null), home))
+        assertEquals(listOf("KEEP", "SIDE_CHANGED"), CheckVerdict.values().map { it.name })
     }
 
     @Test
@@ -395,16 +447,34 @@ class ZonePlanTest {
         assertTrue(Regex("""backstopAnchorMs\(\s*zonesOn,\s*com\.kidslauncher\.mdm\.zones\.ZoneWatch\.lastBeatMs\(context\),\s*LauncherPreferences\.mdm\(\)\.lastActiveLocationFetchAtMs\(\),\s*\)""").containsMatchIn(backstop))
         // G3: every due call and every fresh fix stamps the beat.
         assertTrue(sync.contains("if (action.fresh || (beat != null && beat != Heartbeat.NOT_DUE)) ZoneWatch.stampBeat(context, now)"))
-        // G1/Q-6: the gate arms only after a genuinely fresh own fix.
-        assertTrue(sync.contains("if (zonesOn && action.fresh && freshOwnFix(location.time, now)) MotionGate.arm(context)"))
-        assertTrue(source("zones/ZoneSeries.kt").contains("if (freshOwnFix(location.time, requestedAt)) MotionGate.arm(context)"))
+        // G1/Q-6: the gate arms only after a genuinely fresh own fix (pinned with F-3's stamp below).
+        val seriesSource = source("zones/ZoneSeries.kt")
+        assertTrue(seriesSource.contains("val fresh = freshOwnFix(location.time, requestedAt)"))
+        assertTrue(Regex("""if \(verdict == CheckVerdict\.KEEP\) \{\s+if \(fresh\) MotionGate\.arm\(context\)\s+return\s+\}""").containsMatchIn(seriesSource))
+        // F-3: a fence crossing and a series' side change are motion; the 4 h count from the last
+        // genuinely fresh own fix, stamped only with freshOwnFix.
+        assertTrue(Regex("""if \(verdict != FenceVerdict\.CROSSING\) return[\s\S]{0,300}MotionGate\.markMoved\(\)""").containsMatchIn(source("zones/ZoneWatch.kt")))
+        assertTrue(Regex("""MotionGate\.markMoved\(\)\s+LocateCommands\.promoteKept\(context\)""").containsMatchIn(seriesSource))
+        assertTrue(seriesSource.contains("if (fresh) ZoneWatch.stampFreshFix(context, location.time)"))
+        assertTrue(Regex("""if \(zonesOn && action\.fresh && freshOwnFix\(location\.time, now\)\) \{\s+ZoneWatch\.stampFreshFix\(context, location\.time\)\s+MotionGate\.arm\(context\)""").containsMatchIn(sync))
+        assertTrue(sync.contains("val lastFreshFix = if (zonesOn) ZoneWatch.lastFreshFixMs(context) else lastOwnFix"))
+        assertTrue(sync.contains("lastFreshFixMs = lastFreshFix,"))
+        assertEquals(1, Regex("""stampFreshFix\(""").findAll(sync).count())
+        // F-2: the cooldown and the budget in the glue; a fence crossing starts a series at once.
+        assertTrue(seriesSource.contains("if (before == null && !seriesMayStart(fromFence, now, lastEndedAtMs, left)) return"))
+        assertTrue(seriesSource.contains("seriesEnd(running, now, ZoneWatch.checksLeftToday(app))"))
+        assertTrue(Regex("""return\s+\}\s+ZoneWatch\.spendCheck\(app\)""").containsMatchIn(seriesSource))
+        assertTrue(source("zones/ZoneWatch.kt").contains("ZoneSeries.launch { ZoneSeries.onMotion(app, fromFence = true) }"))
+        // F-4 (F16): the next check is armed in `finally`, so a failed check never ends the series.
+        assertTrue(Regex("""\} finally \{[\s\S]{0,400}if \(still\) arm\(app, next\)""").containsMatchIn(seriesSource))
+        // F-4: the motion fire's work leaves the sensor callback's main thread.
+        assertTrue(Regex("""ZoneSeries\.launch \{\s+ZoneSeries\.onMotion\(context\)\s+ensureArmed\(context\)\s+\}""").containsMatchIn(source("zones/ZoneSensors.kt")))
         // Q-1: the kept fix is promoted only at a due KEPT or a crossing's sync, and by a series candidate.
         assertTrue(sync.contains("if (beat == Heartbeat.KEPT || crossing) LocateCommands.promoteKept(context)"))
         assertEquals(1, Regex("""promoteKept\(""").findAll(sync).count())
-        assertTrue(Regex("""if \(verdict == CheckVerdict\.KEEP\) return\s+LocateCommands\.promoteKept\(context\)""").containsMatchIn(source("zones/ZoneSeries.kt")))
         // Q-3: the still flag rides the report.
         assertTrue(sync.contains("zoneWatch = ZoneWatch.report(context, still = location.still),"))
-        assertTrue(sync.contains("still = reportStill(zonesOn, action, motion, now, lastOwnFix),"))
+        assertTrue(sync.contains("still = reportStill(zonesOn, action, motion, now, lastFreshFix),"))
         // Q-5: Off (and no zones) clears the queue before the report and sends no extras.
         assertTrue(sync.contains("if (queueOff) ZoneWatch.clearQueue(context)"))
         assertTrue(sync.contains("val extraFixes = if (queueOff) null else extraLocations(ZoneWatch.queue(context), location.fix)"))
@@ -424,7 +494,7 @@ class ZonePlanTest {
         val series = source("zones/ZoneSeries.kt")
         assertTrue(series.contains("LocateCommands.seriesFix(context)"))
         assertTrue(Regex("""ZoneWatch\.enqueue\(context, fix\)\s+SyncRunner\.request\(context, "zone_check"\)""").containsMatchIn(series))
-        assertTrue(series.contains("if (verdict == CheckVerdict.SIDE_CHANGED) ZoneWatch.armConfirm(context)"))
+        assertTrue(Regex("""SyncRunner\.request\(context, "zone_check"\)\s+ZoneWatch\.armConfirm\(context\)""").containsMatchIn(series))
         assertTrue(Regex("""android:name="\.zones\.ZoneCheckReceiver"\s+android:exported="false"""").containsMatchIn(manifest))
         assertTrue(sync.contains("extraLocations = extraFixes?.map { it.toReport() }"))
         assertTrue(sync.contains("afterZoneReport(context, extraFixes, location.fix, sent.isSuccessful, queueOff)"))
@@ -443,6 +513,11 @@ class ZonePlanTest {
         // The mock rule on our own fixes too, fresh and last-known.
         val locate = source("server/LocateCommands.kt")
         val keep = Regex("""fun keepFix\([\s\S]*?\n    }""").find(locate)!!.value
+        // F-4 (F12): promoteKept promotes only a kept fix newer than the reported one.
+        val promote = Regex("""fun promoteKept\([\s\S]*?\n    }""").find(locate)!!.value
+        assertTrue(promote.contains("val promoted = keptUnreported() != null && raw != null"))
+        assertTrue(promote.contains("if (promoted) edit.putString(LauncherPreferences.mdm().keys().cachedLocationJson(), raw)"))
+        assertTrue(Regex("""if \(cached != null && kept\.timeMs <= cached\) return null""").containsMatchIn(locate))
         assertTrue(keep.contains("putString(KEPT_FIX_KEY"))
         assertFalse(keep.contains("cachedLocationJson"))
         assertFalse(keep.contains("saveCachedFix"))
