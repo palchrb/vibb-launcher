@@ -351,3 +351,101 @@ say the room's outcome in §6s 12.
 | M11 | `encodeMix`: another separator than `decodeMix` reads | MixTest | caught |
 
 10 of 11 caught. The survivor is Q-8's one-line gap.
+
+## Fix round + E-1
+
+`qa-r12-music` is now rebased onto the tip of `r12-music` (4645c1e3). The review commit sits on top of it, and this
+section is a further commit. I spot-checked the fix round (e65685c9) and reviewed E-1 (4645c1e3) in full.
+
+**Run** (the rebased branch, `flock ~/build.lock`, `--no-daemon --max-workers=2 -PwarningsAsErrors=true assembleDebug
+testDebugUnitTest`): `BUILD SUCCESSFUL in 1m 49s`, `52 actionable tasks: 11 executed, 41 up-to-date`; 1206 tests,
+0 failures, 0 errors, 0 skipped.
+
+**The fix round (e65685c9), spot-check**: Q-1..Q-8 are in as described.
+- Q-1: `selfPause()` in `mixPastRun`. Q-6 uses the same `selfPause()` in `startRun` when the run loads paused.
+- Q-2: `renderer.pauseAtItemEnd(null)` before `sleepAtEndReached()`.
+- Q-3: `startRun` restores the old `run`/`index`, and `mixMoveOn` passes a refused ref, one lap at most.
+- Q-4: `storedMix` and the adopt fallback, a one-run `MixQueue`.
+- Q-5: `restartIfStale` before `renderer.play()`, repeat-aware and quiet.
+- Q-7: `storedFavourites`/`storedCurrent` and `nowView` through `restoredMix`.
+- Q-8: the test.
+- One nit: in Q-3's loop, each refused `start(play = true)` emits its own "Ikke lastet ned" (`start`'s own `tryEmit`)
+  besides the loop's one. That only happens on the rare refused path, so it can stay.
+
+**Verdict on E-1: Blocker.** The diagnosis is right, but the wrapper drops every other listener callback. Don't merge
+until E-1-Q-1 is fixed.
+
+### E-1-Q-1 (Blocker) `KidCommandsListener` passes on only `onAvailableCommandsChanged`: the session hears nothing else
+
+Evidence:
+- `playback/KidCommands.kt:14-19`: `KidCommandsListener(...) : Player.Listener by inner`. Every `Player.Listener`
+  method is a **Java default method**, and Kotlin's class delegation generates no delegating overrides for Java
+  defaults.
+- `javap -p` of the built class (`build/tmp/kotlin-classes/debug/me/vibb/music/playback/KidCommandsListener.class`)
+  shows only the constructor, `getInner()` and `onAvailableCommandsChanged`. `onEvents`, `onIsPlayingChanged`,
+  `onPlaybackStateChanged`, `onPlayWhenReadyChanged`, `onMediaItemTransition`, `onTimelineChanged`,
+  `onMediaMetadataChanged`, `onPositionDiscontinuity`, `onPlayerError` and the rest fall to `Player.Listener`'s empty
+  defaults.
+- A throwaway probe test (added, run, deleted; the tree is clean) wrapped a listener and called four callbacks:
+  `expected:<[isPlaying, state, pwr, commands]> but was:<[commands]>`.
+
+Why it matters: every listener `KidPlayer` hands out is the session's own. Media3 1.7.1's chain is `PlayerWrapper`
+(a `ForwardingPlayer`) -> `ForwardingListener(PlayerWrapper, MediaSessionImpl.PlayerListener)` -> `KidPlayer.addListener`
+-> now `KidCommandsListener` -> `ForwardingListener(KidPlayer, …)` -> the renderer's player. So `MediaSessionImpl`
+receives no play or pause, item change, timeline, metadata, position discontinuity or error from the moment a
+renderer is attached. As a result:
+- every Media3 controller's `PlayerInfo` freezes at connect time: the app's controller, and the
+  `MediaNotificationManager`'s controller behind the notification and its foreground-service decision;
+- so does the legacy platform session, which the stub updates from the same events. That covers the launcher's lock
+  tile and Home card (`MusicSessions` reads `android.media.session.MediaController`: play/pause state, metadata), the
+  shade's media controls, and Bluetooth/AVRCP metadata.
+
+The app's own screens read `PlayerHub`, not the controller, so the in-app Neste test passes and the breakage is easy to
+miss.
+
+Fix:
+- Give the wrapper explicit overrides of **every** `Player.Listener` method (1.7.1's list, as
+  `ForwardingPlayer.ForwardingListener` has them), each forwarding to `inner`, with only `onAvailableCommandsChanged`
+  substituting `commands()`. A small Java class is the least error-prone way to do this, or a Kotlin class with every
+  override spelled out.
+- Replace the unit test's single callback with a reflection test that cannot rot on a Media3 bump:
+  - make the inner listener a `java.lang.reflect.Proxy` that records each call;
+  - for every method of `Player.Listener::class.java.methods`, invoke it on the wrapper with default arguments;
+  - assert that the proxy saw it (for `onAvailableCommandsChanged`, with `commands()`).
+  - Or, as a source-level pin, assert `KidCommandsListener::class.java.getDeclaredMethod(m.name, *m.parameterTypes)`
+    exists for each.
+- Emulator, after the fix: the notification's play/pause icon and title follow a play, a pause and an item change. So
+  do the launcher's lock tile and Home card. `adb shell dumpsys media_session` shows the state moving
+  (PLAYING/PAUSED) and the new title.
+
+### E-1-Q-2 (Note) The rest of E-1 is right
+
+- **The cause**: `ForwardingPlayer.ForwardingListener.onAvailableCommandsChanged` passes the wrapped player's argument
+  verbatim (bytecode of media3-common 1.7.1). `MediaSessionImpl.onAvailableCommandsChangedFromPlayer` forwards that
+  argument to every controller (`ControllerCb.onAvailableCommandsChangedFromPlayer`, media3-session 1.7.1). A
+  controller drops `seekToNext` when `COMMAND_SEEK_TO_NEXT` is missing, and ExoPlayer omits it without a next item.
+  Connect time already used `PlayerWrapper.getAvailableCommands()` (`KidPlayer`'s), so the bug appeared only after the
+  first change. The legacy stub reads `playerWrapper.getAvailableCommands()` too.
+- **Listener identity**: `PlayerWrapper.removeListener(l)` builds a *new* `ForwardingListener(PlayerWrapper, l)`, and
+  `KidListeners.unwrap` finds the stored wrapper through its `equals`/`hashCode` (the forwarding player and the listener,
+  both compared by `equals`). Then `ForwardingPlayer.removeListener(wrapper)` builds an equal
+  `ForwardingListener(KidPlayer, wrapper)` around the same wrapper instance. Add/remove pair up.
+  - Adding twice gives one wrapper (`getOrPut`), and ExoPlayer's `ListenerSet` dedupes equal holders.
+  - One `KidListeners` lives per `KidPlayer` (per `attach`), and `setPlayer` removes the session's listener from the
+    old one, so nothing leaks.
+  - Main thread only (`PlayerWrapper.verifyApplicationThread`), and nothing iterates the map, so re-entrant
+    add/remove inside a callback is safe.
+- **`onEvents`**: once forwarded (E-1-Q-1), it carries `KidPlayer` as its player (`ForwardingListener` passes its
+  forwarding player), so a reader of `player.availableCommands` there gets `KidPlayer`'s too. `KidPlayer`'s set is
+  ExoPlayer's plus its fixed additions minus its refusals, so it never changes without ExoPlayer's changing. The
+  reverse (ExoPlayer toggles seek-to-next, `KidPlayer`'s set stays equal) only re-sends an equal set: harmless.
+- **An entry queue**: Neste on its last item now reaches `skipNext` -> `nextAction`, which wraps to the first item.
+  That is vibb's rule (`logic/Transport.kt`, ported from vibb's `mpv_next_wrap.py`), and what a headset's next already
+  did. Before E-1 the app's, the lock tile's and the notification's next did nothing there, so this is a fix, not a
+  change of rule. A one-item queue reaches `Stay`: the same nothing, now decided by us.
+- **The lock tile and the notification**: the platform session's actions were already `KidPlayer`'s (the legacy stub
+  reads the wrapper). The Media3 controllers (the app's, the notification's) now get the right commands too. The
+  refused `SET_REPEAT_MODE`/`SET_SHUFFLE_MODE` are now refused in controllers' updates as well, consistent with
+  `KidPlayer`.
+- **The design note's E-1 text** says "Forrige after 3 s into an item restarts it". `PREV_RESTART_AFTER_MS` is 5 s
+  (`logic/Transport.kt:16`), so make that line say 5 s.
