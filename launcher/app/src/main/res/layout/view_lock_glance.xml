@@ -442,13 +442,18 @@
                     android:clipChildren="false"
                     android:orientation="vertical" />
 
+                <!-- The "more" line (the user, 2026-10-24): a tap leads to the keypad as a row without a target does
+                     (Home after the code) - a 48 dp target. It is no row: never swiped away. -->
                 <TextView
                     android:id="@+id/lock_glance_more"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:fontFamily="@font/nunito_bold"
                     android:gravity="center"
-                    android:minHeight="24dp"
+                    android:minHeight="48dp"
                     android:textColor="@color/kid_core_dim"
                     android:textSize="13sp"
                     android:visibility="gone" />

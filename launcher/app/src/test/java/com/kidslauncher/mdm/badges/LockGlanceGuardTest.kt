@@ -182,9 +182,12 @@ class LockGlanceGuardTest {
     @Test
     fun `the glance's one cancel is a dismissed row's keys - nothing snoozed, marked shown or cancelled otherwise (r11 §3_5)`() {
         for (name in glanceFiles + "GlancePanel.kt") {
-            for (call in listOf("cancelNotification(", "cancelAllNotifications", "snoozeNotification", "setNotificationsShown", "migrateNotificationFilter")) {
+            for (call in listOf("cancelAllNotifications", "snoozeNotification", "setNotificationsShown", "migrateNotificationFilter")) {
                 assertFalse("$name: $call", code(name).contains(call))
             }
+            // qa-r11-glance-code Q-4: the bare name, a reference or a space before the paren included - only the
+            // dismissal's `cancelNotifications(` passes.
+            assertFalse("$name: cancelNotification", Regex("""cancelNotification(?!s\()""").containsMatchIn(code(name)))
         }
         val all = glanceFiles + "GlancePanel.kt" + "GlanceOpener.kt"
         assertEquals(1, all.sumOf { Regex("""cancelNotifications\(""").findAll(code(it)).count() })
@@ -308,14 +311,16 @@ class LockGlanceGuardTest {
         assertTrue(commit, commit.contains("MissedCallNotifier.dismissContact(activity, number, upToMs = row.timeMs)"))
         assertTrue(commit, commit.contains("if (dismissing !== d) return@guarded"))
         // Only on a bound row view, on the GLANCE stage, inside the scroller, with no dismissal running.
-        assertTrue(panel.contains("swipeInScroll = hit(scroll, ev)"))
-        assertTrue(panel.contains("dismissRow = if (state.stage == LockStage.GLANCE && dismissing == null && swipeInScroll) rowAt(ev) else null"))
+        assertTrue(panel.contains("dismissRow = if (state.stage == LockStage.GLANCE && dismissing == null && hit(scroll, ev)) rowAt(ev) else null"))
         val rowAt = body(panel, "rowAt")
         assertTrue(rowAt, rowAt.contains("rowViews[i].root.visibility == View.VISIBLE && hit(rowViews[i].root, ev)"))
         // The row is taken only when the axis is horizontal, and then the views get their cancel.
         val swipe = panel.substringAfter("private fun swipeNow(").substringBefore("private fun swipeReset(")
-        val horizontal = swipe.substringAfter("if (swipeAxis == GlanceAxis.HORIZONTAL) {").substringBefore("if (swipeInScroll) swipeBlocked = true")
+        val horizontal = swipe.substringAfter("if (swipeAxis == GlanceAxis.HORIZONTAL) {").substringBefore("\n            }\n        }")
         assertTrue(horizontal, horizontal.contains("swipeMode = SwipeMode.DISMISS") && horizontal.contains("return SwipeTouch.CANCEL_VIEWS"))
+        // Q-8 (narrowed): a sideways start blocks the unlock only on a row it couldn't take; elsewhere the unlock's rule.
+        assertTrue(horizontal, horizontal.contains("if (dismissRow != null) swipeBlocked = true"))
+        assertEquals(horizontal, 1, Regex("""swipeBlocked = true""").findAll(horizontal).count())
         // A message row needs the listener before it slides off; else it springs back.
         assertTrue(body(panel, "release").contains("if (drag.row is GlanceMessageRow && !GlanceReader.canDismiss()) {"))
         // TalkBack's "Fjern" on the rows only; the timer tile keeps openAction.
@@ -332,6 +337,67 @@ class LockGlanceGuardTest {
         for (line in Regex("""\bLog\.\w\(LOG_TAG, [^\n]*dismiss[^\n]*""", RegexOption.IGNORE_CASE).findAll(panel).map { it.value }) {
             assertFalse(line, line.replace("\${e.javaClass.simpleName}", "").contains("$"))
         }
+    }
+
+    /** qa-r11-glance-code's fix round: the dismiss machinery opens no path, its entry points have one caller, and the
+     * glue lines the review's mutations survived are pinned (Q-1, Q-2, Q-4, Q-5, Q-7). */
+    @Test
+    fun `the dismiss code opens nothing and its glue holds (qa-r11-glance-code fix round)`() {
+        // Q-4: the whole dismiss section leads nowhere - no stage step, no row tap, no target, no opener.
+        val section = panel.substringAfter("private class Dismissal(").substringBefore("private fun swipeControls(")
+        assertTrue(panel.contains("private class Dismissal("))
+        assertTrue(section.length > 2000)
+        for (forbidden in listOf("step(", "tap(", "tapClock(", "tapMore(", "captured =", "promptLabel =", "GlanceOpener", "takeTarget")) {
+            assertFalse("the dismiss section uses $forbidden", section.contains(forbidden))
+        }
+        // Q-4: the two dismiss entry points have one caller in the app - the panel.
+        val mains = sources.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        for (call in listOf("GlanceReader.dismiss(", "MissedCallNotifier.dismissContact(")) {
+            assertEquals(call, listOf("GlancePanel.kt"), mains.filter { call in strip(it.readText()) }.map { it.name })
+        }
+        // Q-4: every rebind rests every row view; "Fjern" only on the GLANCE stage, never under the ring card (Q-2).
+        assertTrue(body(panel, "bindRows").contains("rest(view.root, i)"))
+        val action = body(panel, "removeByAction")
+        assertTrue(action, action.contains("state.stage == LockStage.GLANCE") && action.contains("!cardUp") && action.contains("!rowsHeld()"))
+        // Q-2: under the ring card the page is hidden from accessibility, a drag springs back; the activity says so.
+        val covered = body(panel, "covered")
+        assertTrue(covered, covered.contains("View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS"))
+        assertTrue(covered, covered.contains("if (up) dropDrag(smooth = false) else backToTop()"))
+        val activity = code("PinLockActivity.kt")
+        assertTrue(activity.contains("glance?.covered(true)") && activity.contains("glance?.covered(false)"))
+        // Q-1: no rebind while a finger is down; a held render runs when the gesture ends.
+        assertTrue(panel.contains("private fun rowsHeld(): Boolean = swipeDown != null || dismissBusy()"))
+        assertTrue(body(panel, "flushRender").contains("if (!renderPending || rowsHeld()) return"))
+        assertTrue(body(panel, "renderNow").contains("val busy = rowsHeld()"))
+        assertTrue(panel.contains("swipeNow(ev, covered).also { if (swipeDown == null) flushRender() }"))
+        // Q-5: a missed-call row stays out until its own pass answered.
+        val commit = body(panel, "commitDismiss")
+        assertTrue(commit, commit.contains("{ main.post { missedAnswered(number) } }") && commit.contains("{ main.post { missedAnswered(null) } }"))
+        // Q-7: a dismissal that can't run its animation commits at once.
+        assertTrue(body(panel, "release").contains("if (!running) commitDismiss(d)"))
+        assertTrue(body(panel, "collapse").contains("if (!running) commitDismiss(d)"))
+        assertTrue(body(panel, "swipe").contains("settleDismiss()"))
+    }
+
+    /**
+     * The user (2026-10-24): the "more" line leads to the keypad as a row without a target does (Home after the code) -
+     * the same stage step, nothing captured, never dismissable (the drag starts only on a bound row view); and the page
+     * is back at its top whenever the glance is the face again.
+     */
+    @Test
+    fun `the more line leads to the keypad without a target, and every return to the glance starts at the top (2026-10-24)`() {
+        assertTrue(panel.contains("glance.lockGlanceMore.setOnClickListener { tapMore() }"))
+        val more = body(panel, "tapMore")
+        assertTrue(more, more.contains("captured = null") && more.contains("promptLabel = null"))
+        assertEquals(listOf("step(GlanceStageEvent.Row(null))"), Regex("""\bstep\([^\n]*\)""").findAll(more).map { it.value }.toList())
+        assertFalse(more.contains("GlanceStore") || more.contains("contentIntent"))
+        assertFalse("no row view is the more line", body(panel, "rowAt").contains("lockGlanceMore"))
+        // Back to the top: a lock-up (kept), a stage step back onto the glance, a resume that is no lock-up, the card gone.
+        val top = body(panel, "backToTop")
+        assertTrue(top, top.indexOf("settleDismiss()") in 0 until top.indexOf("glance.lockGlanceScroll.scrollTo(0, 0)"))
+        assertTrue(body(panel, "step").contains("if (glanceBackToTop(from, state.stage)) backToTop()"))
+        val resume = body(panel, "resumeNow")
+        assertTrue(resume, resume.substringAfter("} else {").substringBefore("renderNow()").contains("backToTop()"))
     }
 
     @Test

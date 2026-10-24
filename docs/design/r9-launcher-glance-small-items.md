@@ -42,6 +42,8 @@ height.
 
 ## 2. The bottom block stays put; the rows scroll
 
+*Superseded by r11 (2026-10-24): the whole page scrolls and the fit is gone - `docs/design/r11-launcher-glance-scroll.md` §1-2.*
+
 **Behaviour.** "Lås opp", "Nødsamtale" and the flashlight sit at the bottom whatever the content. Clock, date, alarm,
 the tiles and the rows share what is left; the rows scroll inside it when they don't fit. This changes design 25's
 "the page never scrolls" for the rows only - the fit still picks the clock's, date's and tiles' sizes. A drag scrolls
@@ -243,6 +245,7 @@ the same switches [unverified].
 2. **The one-row compact tile** - default: kept, unchanged, as the last resort (at font scale 2.0 the full player
    doesn't fit). Flip: drop it.
 3. **Rows** - default: at most three + "+ N varsler til". Flip: list every conversation (its own design).
+   *Answered by r11 (the user, 2026-10-24): at most eight, then the "more" line.*
 
 ## QA fixes (`qa-r9-design.md`)
 

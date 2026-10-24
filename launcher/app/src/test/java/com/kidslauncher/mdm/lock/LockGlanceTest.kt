@@ -123,6 +123,24 @@ class LockGlanceTest {
         assertTrue(swipe.substringAfter("action == MotionEvent.ACTION_CANCEL) {").substringBefore("}").contains("return SwipeTouch.PASS"))
     }
 
+    /** The user (2026-10-24): back on the glance from our keypad or Android's pad, the page starts at the top. */
+    @Test
+    fun `a step back onto the glance page starts it at the top - staying on it doesn't`() {
+        assertTrue(glanceBackToTop(LockStage.KEYPAD, LockStage.GLANCE))
+        assertTrue("the pad cancelled", glanceBackToTop(LockStage.ASK, LockStage.GLANCE))
+        assertFalse("no move", glanceBackToTop(LockStage.GLANCE, LockStage.GLANCE))
+        assertFalse("off the page", glanceBackToTop(LockStage.GLANCE, LockStage.KEYPAD))
+        assertFalse(glanceBackToTop(LockStage.GLANCE, LockStage.ASK))
+        assertFalse(glanceBackToTop(LockStage.ASK, LockStage.KEYPAD))
+        // Every way back is one of those: the arrow and the pad's cancel (Back) from the keypad or ASK.
+        for (from in listOf(GlanceStageState(LockStage.KEYPAD, null), GlanceStageState(LockStage.ASK, conversation))) {
+            assertTrue(glanceBackToTop(from.stage, glanceStageStep(from, GlanceStageEvent.Back, face = true).stage))
+        }
+        // The "more" line's tap is a row without a target: the keypad, the plain prompt.
+        assertEquals(GlanceStageState(LockStage.KEYPAD, null), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(null)))
+        assertEquals(GlancePrompt.PLAIN, glancePrompt(true, false, false, false, null))
+    }
+
     /** Design r11 §3.2: the first movement past the touch slop decides the axis; a tie is vertical. */
     @Test
     fun `the touch's axis - none within the slop, then the larger movement, a tie vertical (r11 §3_2)`() {
@@ -582,6 +600,8 @@ class LockMediaGuardTest {
             setOf(
                 "lock_glance_root", "lock_media_previous", "lock_media_play", "lock_media_next", "lock_media_compact_play",
                 "lock_glance_emergency", "lock_glance_torch", "lock_timer_tile", "lock_timer_stop",
+                // The user (2026-10-24): the "more" line leads to the keypad as a row without a target.
+                "lock_glance_more",
             ),
             touchable,
         )
@@ -596,7 +616,7 @@ class LockMediaGuardTest {
             assertTrue("${binding(id)} is wired", panel.contains("glance.${binding(id)}.setOnClickListener"))
         }
         val glance = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
-        for (id in listOf("lock_glance_emergency", "lock_glance_torch", "lock_timer_tile", "lock_timer_stop")) {
+        for (id in listOf("lock_glance_emergency", "lock_glance_torch", "lock_timer_tile", "lock_timer_stop", "lock_glance_more")) {
             assertTrue("${binding(id)} is wired", glance.contains("glance.${binding(id)}.setOnClickListener"))
         }
         assertFalse(glance.contains("glance.root.setOnClickListener"))
@@ -616,10 +636,10 @@ class LockMediaGuardTest {
         assertTrue(handle, handle.contains("Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL"))
         assertFalse(handle, handle.contains("isClickable") || handle.contains("setOnClickListener") || handle.contains("setOnTouchListener"))
         assertTrue(glance.contains("handle.visibility = if (root.visibility == View.VISIBLE && glanceContentShown(leaving)) View.VISIBLE else View.GONE"))
-        // JL-4 (a): the controls that keep their touch are exactly the layout's touchables less the page itself and the
-        // timer tile (a tile leads to the unlock, as a row) - a new control in the layout must join them.
+        // JL-4 (a): the controls that keep their touch are exactly the layout's touchables less the page itself, the
+        // timer tile and the "more" line (both lead to the unlock, as a row) - a new control in the layout must join them.
         val controls = Regex("""glance\.(\w+)""").findAll(glance.substringAfter("private fun swipeControls(): List<View> = listOf(").substringBefore(")")).map { it.groupValues[1] }.toSet()
-        assertEquals((touchable - setOf("lock_glance_root", "lock_timer_tile")).map(::binding).toSet(), controls)
+        assertEquals((touchable - setOf("lock_glance_root", "lock_timer_tile", "lock_glance_more")).map(::binding).toSet(), controls)
         // JL-1, JL-4 (b): the DOWN passes while leaving, covered or off the page; in ASK (the page shown under the pad) a
         // swipe asks again, as the button's second tap did.
         val down = glance.substringAfter("if (action == MotionEvent.ACTION_DOWN) {").substringBefore("return SwipeTouch.PASS")
@@ -745,12 +765,14 @@ class LockGlanceLayoutTest {
         // Design 42: the timer tile - 12 dp padding, the label row, the 24 sp time, the text - and its margin.
         assertEquals(114f, parts.timer, 0.01f)
         assertEquals(14f, parts.rowsTop)
-        // The "more" line: at least 24 dp, nothing above it (QA Low 4) - it grows with the font.
+        // The "more" line: nothing above it (QA Low 4), it grows with the font; since the user's 2026-10-24 ask a tap
+        // target of at least 48 dp (24 before).
         val more = root.byId("lock_glance_more")
-        assertEquals("24dp", more.getAttributeNS(ns, "minHeight"))
+        assertEquals("48dp", more.getAttributeNS(ns, "minHeight"))
         assertEquals("wrap_content", more.getAttributeNS(ns, "layout_height"))
         assertEquals(0f, more.dim("layout_marginTop"))
-        assertEquals(24f, parts.more, 0.01f)
+        assertEquals(48f, parts.more, 0.01f)
+        assertEquals("true", more.getAttributeNS(ns, "clickable"))
         // The alarm line under the date (qa-r6-b-code L7): always shown while there is an alarm (r11 §1.2).
         assertEquals("2 dp + 13 sp x 1.4", 20.2f, parts.alarm, 0.01f)
         // The scroller over the anchored bottom block: 401 dp with 3-button navigation, 425 dp with gestures.

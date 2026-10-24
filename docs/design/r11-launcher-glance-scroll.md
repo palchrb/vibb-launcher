@@ -537,3 +537,29 @@ past the slop decides, full tile with 0-1 rows, "Fjern", the spring-back without
   `${layout.rows}`, `${layout.more}`; the notifier's `relearnOnly = !mayClear || ownDismiss`.
 
 Not emulator-checked yet: §6 (the coordinator runs it after the code QA).
+
+### Fix round (qa-r11-glance-code Q-1..Q-10) and the user's two additions (2026-10-24)
+
+- **Q-8, narrowed**: a sideways first move blocks the unlock for the gesture only when it starts on a row the drag
+  couldn't take (`if (dismissRow != null) swipeBlocked = true`). On the clock, the date, the tiles and the gaps the
+  unlock's own rule (`glanceSwipeStep`, mostly vertical at every moment) stands, as before r11: a lazy diagonal swipe
+  up whose first 8 dp lean sideways still unlocks when the page can't scroll. §3.2's table rows "the rest of the
+  scroller | horizontal" and "the bottom row, the handle | horizontal" now both read "nothing; the unlock's own rule".
+- **Q-6, what a dismissal changes**: the row's notification(s), and for a contact's missed-call row its dismissed mark;
+  and, for the plain row or the last contact, the call log's unread missed calls are marked read (every unread missed
+  row up to the pass's newest, Telecom's count reset), as the shade's swipe of ours does. The phone book's badges don't
+  depend on the `new` flag, so "Pappa 1" stays.
+- **Q-1**: the rows are never rebound while a finger is down (`rowsHeld`), so a tap during the 300 ms slide/collapse
+  clicks the row it pressed; a held render runs at the gesture's end. **Q-2**: "Fjern" is refused under the VoIP ring
+  card, and the page is hidden from accessibility there (`covered`). **Q-3**: no `!ownDismiss` - a dismissal's pass
+  alerts only for a genuinely new call, as every pass. **Q-5**: a missed-call row stays out until its own pass answered
+  (a `done` callback). **Q-7**: a dismissal whose animation can't start commits at once. **Q-9**: a DOWN ends a
+  spring-back; the row follows its travel past the slop. **Q-4/Q-10**: pins and leftovers (see the commit).
+- **(A) Back at the top at every return** (the user: "må alltid komme til utgangspunktet igjen"): not only at a
+  lock-up - also a step back onto the glance from our keypad or Android's pad (`glanceBackToTop`), a resume that is no
+  lock-up (back from a call, the emergency dialer, an alarm), and the VoIP ring card going. A drag settles first. This
+  replaces §1's "Back from the keypad keeps the position".
+- **(B) The "more" line is tappable** (the user: a way to see the rest): a tap leads to the keypad as a row without a
+  target does (`GlanceStageEvent.Row(null)`: the plain prompt, Home after the code; nothing captured), a 48 dp target
+  (24 before; `LockGlanceLayoutTest`'s "more" part 24 -> 48 dp, only in the 9+ rows cases), "Lås opp" for TalkBack.
+  It is still no row: never dismissable. This replaces design 25 §1.2's "not a button".

@@ -261,6 +261,13 @@ fun glanceSwipeStep(dy: Float, vy: Float, startedOnTappable: Boolean, dx: Float 
 }
 
 /**
+ * The user's rule (2026-10-24): the page starts at the top whenever the glance is the visible face again - here, a stage
+ * step back onto the glance page from our keypad or Android's pad ([from] -> [to]). The lock-up, a resume that is no
+ * lock-up and the VoIP ring card going reset it in the glue (`GlancePanel.backToTop`).
+ */
+fun glanceBackToTop(from: LockStage, to: LockStage): Boolean = from != LockStage.GLANCE && to == LockStage.GLANCE
+
+/**
  * Whether the lock "comes up" now (its onStart/onResume) and decides its stage again: only with the
  * screen on ([interactive] - the lock is started at every screen-off and seen at the next
  * screen-on), the first time, and after every screen-off since the last decision ([screenOffs],

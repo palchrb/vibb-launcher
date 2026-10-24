@@ -319,8 +319,12 @@ class MissedCallNoticeTest {
         assertTrue(src.contains("relearnOnly = !mayClear || ownDismiss"))
         val dismiss = src.substringAfter("fun dismissContact(").substringBefore("\n    }\n")
         assertTrue(dismiss, dismiss.indexOf("MissedCallsRepo.markDismissed(app, number, upToMs)") in 0 until dismiss.indexOf("recomputeNow(app, mayPost = false, mayClear = true, ownDismiss = true)"))
-        assertTrue(dismiss, dismiss.contains("runThenDone(null) {"))
-        assertTrue(src.contains("val alert = step.alert && !ownDismiss"))
+        // Q-5: the caller hears when the pass is over (the glance holds the row out until then).
+        assertTrue(dismiss, dismiss.contains("runThenDone(done) {"))
+        assertTrue(src.contains("fun dismissContact(context: Context, number: String, upToMs: Long, done: (() -> Unit)? = null)"))
+        // Q-3: the pass itself never silences a genuinely new call it finds - step.alert as every pass.
+        assertFalse(src.contains("!ownDismiss"))
+        assertTrue(src.contains("if (post(context, step.notice, step.alert, unread.newestId)) {"))
         val repo = listOf("src/main/java", "app/src/main/java").map { java.io.File(it, "com/kidslauncher/mdm/calls/MissedCallsRepo.kt") }.first { it.exists() }.readText()
         assertTrue(repo.contains("private const val DISMISSED_PREFS = \"missed_call_dismissed\""))
         val mark = repo.substringAfter("fun markDismissed(").substringBefore("\n    }\n")
