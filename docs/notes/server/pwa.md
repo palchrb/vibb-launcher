@@ -937,8 +937,18 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `back=zones` - the interval kept; `update_location_policy` whitelists `back=zones` -> `#zones`, anything else
   `#location-settings` as before); Off adds "Zones can't see where the phone is." to the existing location-off row;
   "Keep location on" off (and the mode not Off) adds a row "Your child can turn Location off on the phone; zones then
-  see nothing." to `/devices/{id}/advanced#restrictions`. The decision-3 floor (`max(chosen, 30 min)`) is step 2's and
-  not said yet.
+  see nothing." to `/devices/{id}/advanced#restrictions`. **Step 2** (`zones.md`, "Safe zones, step 2"): with zones on a
+  phone whose latest `zone_watch` holds fences, Regularly's footer is "The phone watches the zones itself and sends a
+  location as soon as it notices a crossing. Arrivals and departures show after two locations on the same side." (no
+  "two intervals"), followed by the watch's line (`locate::watch_line`, `data-zone-watch`: "Watching 2 zones on the
+  phone." [+ "The newest zone is set up at its next sync." while it holds fewer fences than zones] [+ "It has no motion
+  sensor, so it takes a location every 30 min."], or "Location is off on the phone, so it can't watch the zones." / "The
+  phone can't use its location in the background yet, so it can't watch the zones." / "The phone hasn't set up its
+  zones yet; they are judged at each location it reports."); Location Settings' "Every" row gets the sub-line "30 min
+  while the phone has zones" (`data-interval-note`) while the served interval is above the parent's choice - the select
+  still shows the choice (decision 3: never written); and the location group a row "3 made-up locations ignored" /
+  "An app on the phone pretended it was somewhere else. Vibb One kept those out of the map and the zones."
+  (`data-row="mock-ignored"`) while the phone's running count is above 0.
 - **The fix's badge**: the newest fix's sub-line "Within 40 m · At Home" ("At Home · School" for two), and the marker's
   popup "10 min ago · within 40 m · at Home" (`data-shown-text`, text as before), while **that fix** is surely inside
   the zone (`locate::fix_badge`, `zones::side`; code QA Q-1).

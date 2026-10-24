@@ -84,7 +84,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   resetting it, the 404 for an unticked app -, refusals, the page and its notes), `device_pages`'s form table,
   `policy_json_keys_snapshot` (`lock_glance` non-null, a fresh phone's `{"apps": [{"package":
   "io.element.android.x", "show_text": false}]}`; the launcher's `PolicyResponseCompatTest` decodes the same literal),
-  `music_spotify::migrations_73_to_91_in_order`.
+  `music_spotify::migrations_73_to_92_in_order`.
 
 ## Android's lock screen (design 59, `docs/design/59-android-keyguard-design.md`, migration `0085_kid_keyguard.sql`)
 

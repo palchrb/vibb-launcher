@@ -95,6 +95,12 @@ checks both lists' rows against what the workflows build.
 The launcher's `POST /api/devices/power` body (design 38 §2) is `server/testdata/power_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `PowerEventsTest` encodes exactly it, the server's
 `power::a_launcher_report_raises_both` posts it (its instants moved to the last hour), and both compare the copies.
+The launcher's status body with `extra_locations` and `zone_watch` (design 64 step 2) is
+`server/testdata/zone_status_report.json`, byte-identical in `launcher/app/src/test/resources/`: the launcher's
+`ZoneReportTest` encodes exactly it, the server's `zone_watch::a_launcher_report_raises_the_arrival` posts it (its
+instants moved to the last minutes), and both compare the copies. The policy's `location_policy.zones` is pinned by
+`policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`. `server/testdata/zone_vectors.json` stays the
+server's alone: the phone judges no zone (design 64 decision 1).
 The answers of `POST /api/devices/music/storytel/token` (design 58 §2.2) are `server/testdata/storytel_token_answers.json`,
 byte-identical in both apps' test resources: the server's `music_storytel::the_token_route_answers_the_shared_contract`
 produces every row, the launcher's `StorytelTokenCourierTest` and the music app's `StorytelBridgeTokenTest` read each,
@@ -110,7 +116,7 @@ fixtures (the phone never logs in).
   (`launcher-build`, `server-build`, `music-build`) only runs when its own directory or workflow changed
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
-  `dns_upstream_status.json`, `power_report.json` and `launcher_tag_codes.json`, `music/gradle/` and
+  `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json` and `launcher_tag_codes.json`, `music/gradle/` and
   `music.yml`, and the server's and music's `storytel_token_answers.json`; `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
@@ -118,7 +124,7 @@ fixtures (the phone never logs in).
   after the build, the server's and the launcher's `storytel_token_answers.json` and `server/testdata/storytel/`;
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
-  `dns_upstream_status.json`, `power_report.json` and `launcher_tag_codes.json`;
+  `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json` and `launcher_tag_codes.json`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in

@@ -844,6 +844,69 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   at which level), the property read, and Restart timed to the start's arrival on Wi-Fi and on mobile data against
   the server's 5-minute hold (design 38 §6).
 
+## Safe zones on the phone (design 64 step 2, `docs/design/64-safe-zones.md` §4, at the monorepo root)
+
+- **The phone judges nothing** (decision 1): the server's two-fix rule on the stored fixes decides every arrival and
+  departure; the fences and the motion sensor are only reasons to take or keep a fix, so the launcher has no side rule
+  and no copy of `zone_vectors.json`. Pure rules in `zones/ZonePlan.kt` (`ZonePlanTest`), glue `zones/ZoneWatch.kt`,
+  `ZoneFences.kt`, `ZoneSensors.kt` (GPL, not the MIT directories), log tag `ZoneWatch`. Wire: `LocationPolicy.zones`
+  (`PolicyZone(id, latitude, longitude, radiusM)` - never a name; missing = none), `StatusReportRequest.extraLocations`
+  and `zoneWatch` (`ZoneWatchReport`), `LocationReport.provider`/`mock`; contract `zone_status_report.json`
+  (`ZoneReportTest`); capability `zones_v1`.
+- **The fences** (`ZoneFences.sync`, from `ZoneWatch.apply` right after every sync's `AppEnforcer.apply`): one
+  `LocationManager.addProximityAlert(lat, lng, radius, -1, pi)` per zone (AOSP's `GeofenceManager`, no Play services, no
+  cap; the system polls a hidden balanced fused fix at most every 30 min and judges every fused fix any app causes;
+  no location indicator). `zoneFencePlan`: remove ours and add the policy's set at the first sync of every process (a
+  reboot drops them, an update may cancel our PendingIntents) and whenever the zones' fingerprint (id, centre, radius)
+  changed; nothing otherwise; every stored fence goes when the mode isn't Regularly, the zones are `[]` or we aren't
+  device owner. A PendingIntent per zone (request code 8, data `vibb-zone:<id>`), `FLAG_MUTABLE | FLAG_UPDATE_CURRENT`
+  (AOSP fills in `KEY_PROXIMITY_ENTERING`), explicit to the non-exported `ZoneAlertReceiver`; removal is
+  `removeProximityAlert` then `cancel()`. The location permissions are self-granted first (as `LocateCommands`); a
+  `SecurityException` leaves the record without a fingerprint (CE prefs `zone_watch` `fences_v1`, `commit()`), so the
+  next sync tries again - never a loop. A policy change reaches the phone at once (the PWA's zone save nudges).
+- **A crossing** (`ZoneWatch.onFence`, `fenceVerdict`): an id not in the cached policy's zones is ignored, an
+  "entering" within 60 s of the registration is its echo (`FENCE_ECHO_WINDOW_MS`); anything else sets the fresh-fix
+  flag and asks `SyncRunner.request("zone")`, and arms `ZoneConfirmReceiver` 2 min later (`CONFIRM_DELAY_MS`,
+  `setExactAndAllowWhileIdle`, request code 9) for the confirming fix (`"zone_confirm"`). The sync's location step
+  takes the flag (`takeFreshWanted`) as a `locate` would: today's fresh path (GPS first, 15 s), never answering a
+  command.
+- **The queue** (`queueWith`/`extraLocations`/`queueAfterReport`, CE prefs `zone_watch` `queue_v1`): a report the
+  server didn't take (no network, a 5xx, an exception) leaves its `location` queued; the next report sends the queue
+  minus its own fix as `extra_locations`, oldest first; a taken report removes what it carried (what was queued
+  meanwhile stays). Each fix once (time and place, the server's key), at most `ZONE_QUEUE_MAX` 20 (the newest), emptied
+  when the policy's mode is Off. Only the reports' fixes are queued - a passive fix never is.
+- **The passive feed** (`PassiveFixes`, while Regularly as device owner; removed when Regularly ends and in the
+  anchor's `onDestroy`): `requestLocationUpdates(PASSIVE_PROVIDER, LocationRequest.Builder(60 s))`. `passiveFixWorth`:
+  not mock in a release build, accuracy <= 200 m (`PASSIVE_ACCURACY_FLOOR_M`), newer than the cached fix - then it
+  **only replaces the cached fix** (`LocateCommands.keepFix`); it reaches the server as the next heartbeat's fix (KEPT
+  below) or a crossing's, never on its own, so the trail stays as dense as the parent's interval (design 64 §4.3).
+- **The heartbeat** (`heartbeatDue`, in `currentLocationReport` for Regularly without a command): due when the served
+  interval passed since the last heartbeat (`ZoneWatch.lastBeatMs`, CE prefs `last_beat_ms`; the clock set back counts
+  as due); due, it reports a kept fix younger than the interval (`KEPT`), or the cached fix while the significant-motion
+  sensor hasn't fired since our last own fix and that fix is under 4 h old (`STILL`, `STILL_SKIP_MAX_MS`), else takes a
+  fresh fix (`FIX`); every due call and every fresh fix stamps the beat, and `BackstopAlarm` counts from it (a skip
+  waits a whole interval, not the 9-minute floor). With zones on a watching phone the server serves at least 30 min
+  (decision 3). `MotionGate`: `TYPE_SIGNIFICANT_MOTION` via `requestTriggerSensor`, armed after each own fix while
+  Regularly, one-shot (disarms itself when it fires); a new process counts as moved; **no sensor (the emulator) = always
+  fix**, today's behaviour. Not built (design 64 §4.5's moving series and §4.4's balanced fused fix): a motion fire
+  starts no checks of its own, so a crossing seen only by the fence waits for its poll, another app's fused fix or the
+  heartbeat.
+- **The mock rule** (decision 14): `ZoneWatch.accept` on every fix the phone takes or keeps - the fresh one, each
+  last-known candidate, each passive fix: a release build ignores a `Location.isMock()` fix and counts it once per fix
+  (`countMock`, CE prefs `mock_ignored`, a running count - `zone_watch.mock_ignored`), the debug build takes it (the
+  emulator's test provider; `LocationReport.mock` then says so). The cached fix keeps its provider and mock flag.
+- **`zone_watch`** (`ZoneWatch.report`, every report as device owner): `fences` (the record's ids), `motion_sensor`,
+  `location_on`, `background_location` (the self-granted permission, never confirmed on a device), `mock_ignored`.
+- **The pause and the override change nothing** (decision 12: locating isn't a restriction); "Keep location on" is
+  unchanged hardening; Doze: the fence's broadcast comes with system_server's wake lock, our alarms are while-idle on
+  the power-save allowlist (design 19b).
+- **Kid Settings** (decision 6): "This phone shares where it is with mum and dad." / "Telefonen deler hvor den er med
+  mamma og pappa." (`kid_settings_location_shared`, the wallpaper caption's look, no control) while `sharesLocation`:
+  device owner, an `Ok` cached policy whose mode isn't Off (`KidSettingsModelTest`).
+- Not device-tested: `docs/testing/emulator.md` §6t (the emulator) and design 64 §9 (the Jelly Star: the background
+  app op, the sensor armed in the background, whether the passive feed shows the location indicator, a walk home, the
+  battery run, a mock-location app).
+
 ## Quiet depth, press feedback, the badge colour (design 34 step 2, P2, `docs/design/34-launcher-polish.md`, at the monorepo root)
 
 - **Depth on the view, never in the bitmap** (QA M2): `ui/home/PressFeedback.depth` gives Home's `tile_icon` and the contact avatar (`contact_avatar`, Home's row and the phone book) an oval `ViewOutlineProvider`, `elevation` 2 dp and black shadow colours. The icon cache, its sizes and the glance/time-rule renders are untouched. The parents don't clip the shadow (`tile_frame` `clipChildren=false`; the contact item already had it). Elevation changes the drawing order among siblings, so the badges are lifted to the same 2 dp with no outline of their own (`KidBadge` style: `elevation` + `outlineProvider none`; the call badge in `PressFeedback.contact`). No top light.

@@ -3,9 +3,9 @@
 ## Safe zones, step 1: the server judges every fix (design 64, `docs/design/64-safe-zones.md`, migration `0091_safe_zones.sql`)
 
 Server only; works with every launcher (zones judged at each fix the phone already sends). Step 2 (the launcher's
-fences, `location_policy.zones`, `extra_locations`, `zone_watch`, the 30-min floor on the served interval) is not
-built: until it lands **the policy and the served Regularly interval are unchanged** (the user accepted the trail being
-as dense as today), nothing about zones goes to the phone, and no API changed.
+fences, `location_policy.zones`, `extra_locations`, `zone_watch`, the 30-min floor on the served interval) is the
+next section; without a launcher that reports a watch the policy's interval stays the parent's and the zones are judged
+at each fix, as below.
 
 - **Data** (0091): `device_zones` - one row per zone (`device_id` cascade, `name`, `latitude`/`longitude`, `radius_m`,
   `notify_arrive`/`notify_leave` default 1, `created_by`, `created_at`/`updated_at`) **with the rule's state on the
@@ -89,7 +89,7 @@ as dense as today), nothing about zones goes to the phone, and no API changed.
   from Hjem, moved, radius 150 -> 250 m, arrive off"; a save that changed nothing logs nothing), `zone_deleted`
   ("device 3 (Anna): Home") - the phone and the zone's name, **never coordinates**; labels "Zone added/changed/deleted"
   (`handlers::admin`). Every save nudges the phone (`command_notify`), for step 2's fences.
-- **Not in step 1**: the served interval's floor `max(chosen, 30 min)` with zones (decision 3) comes with step 2, to
+- **Not in step 1** (step 2 built them, below): the served interval's floor `max(chosen, 30 min)` with zones (decision 3) comes with step 2, to
   phones that report `zones_v1` - the Locate page says nothing about it yet, its footer gives today's timing ("within
   about two intervals"); the mock-location flag (decision 7): the status body has none today (`models::LocationReport`
   is latitude, longitude, accuracy, time), so nothing is ignored or counted yet - step 2 adds the flag and the count;
@@ -106,5 +106,52 @@ as dense as today), nothing about zones goes to the phone, and no API changed.
   `zones::tests::a_new_zone_is_seeded_from_a_fresh_sure_fix_only` / `here_now_needs_a_fresh_fix`,
   `locate_page::every_form_on_the_locate_page_returns_to_its_group` and
   `shell::every_form_on_every_page_lands_on_its_own_group` (with a zone: Locate Regularly, the zone's two pages),
-  `admin_auth::tests::no_store_paths`, `music_spotify::migrations_73_to_91_in_order`, `jstest/zones.test.js`,
+  `admin_auth::tests::no_store_paths`, `music_spotify::migrations_73_to_92_in_order`, `jstest/zones.test.js`,
   `jstest/locate.test.js` (the circles, their view after the locations).
+
+## Safe zones, step 2: the phone watches (design 64 §4, migration `0092_zone_watch.sql`)
+
+Both directories; the launcher's half is `launcher/CLAUDE.md`, "Safe zones on the phone". The server still decides every
+arrival and departure from the stored fixes (decision 1): nothing new comes from the phone but fixes and the watch's
+counts.
+
+- **The policy** (`device_api::build_policy`): `location_policy` always has `zones`, `[{id, latitude, longitude,
+  radius_m}]` while the mode is `interval` and `[]` otherwise (`zones::policy_zones`; **never a name**, decision 9);
+  `interval_minutes` is the **served** interval, `zones::served_interval(mode, chosen, zones, watching)` =
+  `max(chosen, HEARTBEAT_FLOOR_MINUTES = 30)` only while Regularly, the phone has zones and its latest report since its
+  enrollment holds fences (`zones::last_zone_watch`, `zones::watching`: `zone_watch.fences > 0`) - the user's decision
+  3: no separate heartbeat setting, the parent's choice never written, the last zone deleted gives it back. An older
+  launcher (no watch), a watch without fences (a refused registration) or a choice of 30 min or more: as chosen.
+  `zones::served_interval_of` reads the same for the pages (`freshness_inputs`, so "Here now" counts in the served
+  interval). Pinned by `policy_json_keys_snapshot` (`location_policy`'s keys) and the launcher's
+  `PolicyResponseCompatTest`.
+- **The report** (`models::StatusReportRequest`): `extra_locations` - the fixes the phone queued since its last report
+  the server took (a crossing's two in a tunnel, a report that failed), oldest first; read leniently
+  (`models::lenient_locations`: not a list, or an entry that isn't a `LocationReport`, is dropped and logged, never the
+  report); each through `checked_location`; the newest `MAX_EXTRA_LOCATIONS` (20) kept (`zones::report_fixes`). A fix's
+  `provider` and `mock` keys are the phone's, not stored (only a debug launcher ever sends `mock: true`; serde ignores
+  both). `zone_watch` - `{fences, motion_sensor, location_on, background_location, mock_ignored}`, all five or nothing
+  (`zones::sanitize_zone_watch`: types, fences 0..=100, mock 0..=10^9, at most 512 bytes; other keys dropped), stored in
+  `device_status.zone_watch_json` (0092). The launcher also claims `zones_v1`; the server keys nothing on it (the watch
+  says more).
+- **The intake** (code QA N-4; `zones::intake(state, device, fixes)`): every checked fix of the report - the extras,
+  then the report's own - is stored first (`store_fix`, each on its own, the dedupe as step 1), then the zones are
+  judged **once** (`judge`, one `BEGIN IMMEDIATE`); so a pair inside one report confirms at its first fix whatever the
+  order it came in, and nothing is judged twice. A late extra older than a zone's cursor is stored for the trail and
+  never judged (decision 3). Two parallel reports carrying the same fixes take turns: one crossing
+  (`zone_watch::two_parallel_reports_raise_one_crossing`).
+- **Mock fixes** (decision 14, the user's 7): a release launcher ignores a fix with `Location.isMock` and counts it;
+  `zone_watch.mock_ignored` is the phone's **running** count since its data was created (not "since the last report":
+  a lost report loses nothing). A rise against the previous report (`zones::mock_log_line`; a lower count - the data
+  cleared - starts again silently) writes the security event `mock_location_ignored` ("Made-up locations ignored",
+  "device 3: the phone ignored 2 made-up location(s) - an app pretended to be somewhere else (5 in all)" - never a
+  place); the Locate page shows the running count in the location group.
+- **Pages**: Locate's `#zones` footer and the watch's line, the "Every" row's note while the floor applies, the mock row
+  - `pwa.md`, "Locate: zones", step 2.
+- Tests: `zones::tests` (`the_served_interval_has_the_floor_only_while_watched`,
+  `the_zone_watch_keeps_its_five_keys_only`, `the_mock_line_comes_with_each_rise`,
+  `a_reports_fixes_are_checked_capped_and_ordered`, `the_policy_carries_the_zones_only_while_regularly`),
+  `src/tests/zone_watch.rs` (the contract file both ways - `the_zone_contract_matches_the_launchers_copy`,
+  `a_launcher_report_raises_the_arrival` -, the policy's zones and floor, every extra stored then one judging, two
+  parallel reports, the mock counter and junk watches, the Locate page), `device_api::policy_json_keys_snapshot`,
+  `time_rules` (the policy's `location_policy` with `zones`), `music_spotify::migrations_73_to_92_in_order`.

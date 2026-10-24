@@ -558,3 +558,44 @@ and `pwa.md`, "Locate: zones"):
   refuses Unicode's format characters too, "No line breaks or invisible characters." (Q-8); `zones.json` drops `here`
   and is a 404 for an unknown phone (N-8); tests for the confirming fix's age (Q-4), the tie at a cursor's instant
   (Q-5) and the zone forms in both "every form lands" tests (Q-3).
+
+## As built: step 2 (2026-10-24, branch `design-64-step2`)
+
+Both directories; the user's decisions of 2026-10-24 bind it (radius 100-2000 m, 10 zones, no heartbeat setting - the
+floor -, zones watch and push in a pause, English key + params, the kid's line, mock fixes ignored and counted, push
+while news). The full account: `docs/notes/server/zones.md` ("Safe zones, step 2"), `docs/notes/server/pwa.md`
+("Locate: zones", step 2), `launcher/CLAUDE.md` ("Safe zones on the phone"); the emulator run is
+`docs/testing/emulator.md` §6t. As §4 says, with these differences:
+
+- **The phone judges nothing, at all** (decision 1 taken to its end, the coordinator's brief): no local side, no
+  `watchStep`, no copy of `zone_vectors.json` in the launcher. A fence broadcast is the only crossing signal: it asks
+  for a fix now (today's fresh path, GPS first) and a confirming one 2 min later, both reported at once. §4.5's moving
+  series (checks at `max(3 min, d / 15 m/s)` after a motion fire) and §4.4's `FRESH_BALANCED` fused fix are **not
+  built**: a crossing seen only by the fence waits for its 30-min poll, another app's fused fix or the heartbeat - up
+  to about 30 min plus the confirm's 2 min, not "within minutes". The footer says only "as soon as it notices a
+  crossing". A later step can add the series without local judging (a motion fire taking fused fixes that the fence
+  itself judges).
+- **The capability is the watch**: the floor waits for `zone_watch.fences > 0` in the phone's latest report since its
+  enrollment, not for `zones_v1` (claimed, read by nothing): a phone whose fences were refused keeps the parent's
+  interval. `zone_watch` is §4.1's object; `mock_ignored` is a **running** count since the launcher's data was created
+  (not "since the last report"), so a lost report loses nothing; the server logs each rise (`mock_location_ignored`)
+  and the Locate page shows the count.
+- **`extra_locations`** are the fixes of reports the server didn't take (the report's own `location` queued on a
+  failure), not every own fix at capture; a passive fix is never queued or sent on its own (§4.3, the trail as dense as
+  the parent's interval) - it only replaces the cached fix, which the next due heartbeat reports (`KEPT`). Read
+  leniently on the server (a bad entry is dropped, never the report); every one stored before one judging (code QA
+  N-4). Each fix may carry `provider` and `mock`; the server stores neither.
+- **The heartbeat** is `heartbeatDue` with a stamp of its own (`last_beat_ms`), so a skipped fix (`STILL`, `KEPT`) waits
+  a whole interval and `BackstopAlarm` counts from it; the 4-h cap counts from our last own fix. The fix itself is
+  today's GPS-first path.
+- **Names and numbers**: the fences' action `com.kidslauncher.mdm.action.ZONE` (the codebase's prefix, not §4.2's
+  `me.vibb.launcher...`), request code 8 for the fences (one per zone by the data URI) and 9 for the confirming fix;
+  the record and the queue in CE prefs `zone_watch`. The kid's line uses the app's "mum and dad" / "mamma og pappa"
+  (§4.6 said "your parents").
+- **The Locate page**: Regularly's footer for a watching phone drops "within about two intervals"; the watch's line
+  (fences, no motion sensor, Location off, no background grant, no fence yet); "Every" says "30 min while the phone has
+  zones" while the served interval is above the choice (the select keeps the choice); "Here now" counts in the served
+  interval (`freshness_inputs`).
+- **Mock fixes on the emulator** (read from AOSP, to confirm in §6t step 1): `adb emu geo fix` reaches the GNSS HAL, so
+  its fixes are the `gps` provider's and not mock; a `cmd location providers` test provider's fixes are mock
+  (`MockLocationProvider`). The debug build takes both; a release build would refuse and count the second.
