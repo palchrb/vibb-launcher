@@ -1129,7 +1129,10 @@ findings, merge to `main`, full suite once.
   (drain until 300 ms pass with no request, or 2 s since the first), then loads once (`iconsToEvict` already
   accumulates the packages); coalesce `WindowRelock.onPackageInstalled` per burst the same way, so a storm can't
   queue one `apply` per package; pin the quiet period in `HomeRound7Test` next to the conflated-channel pin. Launcher,
-  S; not built yet.
+  S. **Done** (branch `appload-debounce`, 2026-10-24): `ui/home/AppLoads.kt` (`appLoadDue`, 300 ms / 2 s,
+  `runAppLoads`; the process's first request loads at once), pinned in `HomeRound7Test`. `onPackageInstalled` stays
+  per package: on IO, one or two PackageManager reads, and `apply` only when a block changes (never for a hide,
+  unhide or suspend - an old update time or a system app). Emulator check owed: the next provisioning run.
 - **An F-Droid repo as a release source; Etar first** (the user, 2026-10-24: Fossify Calendar opens the editor on a
   tap - FossifyOrg/Calendar #171/#693 open - "jeg ønsker etar, og å kunne tracke updates"; Etar's GitHub releases carry
   no APK): a tracked app of source `fdroid` = a repo URL (default `https://f-droid.org/repo`) + package id. Versions
