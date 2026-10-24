@@ -95,8 +95,10 @@ After a wipe - from the recovery menu, or Erase Phone… on the Locate tab (it d
 reset protection, which helps with a lost phone) - Android's setup asks for the Google account that was on the
 phone, and won't continue without it. **Keep the account's address, password and 2-Step backup
 codes with the override PIN** (and the Play parental-controls PIN). After such a wipe, finish
-setup with the account, remove it again in Settings, then `dpm set-device-owner`, then add it back
-(section 3). Before a planned reset, remove the account first (section 3, steps 1-3, then remove
+setup with the account, remove it again in Settings (that clears the reset protection), then make Vibb One the
+device owner again: without adb, reset the phone once more and scan the provisioning QR from the phone's page in
+the fresh setup (no account, so no FRP this time); with adb, `dpm set-device-owner` right away. Then add the
+account back (section 3). Before a planned reset, remove the account first (section 3, steps 1-3, then remove
 instead of add).
 
 ## 7. Backup to Google: always off

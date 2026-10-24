@@ -56,7 +56,6 @@ In the PWA, **before** enrolling the phone:
 - Leave Advanced › Restrictions' "Block screenshots" off on a test AVD (it is off by default):
   with it on `adb exec-out screencap` is black, the phone's own screenshot is refused and new Recents cards are blank
   (2026-10-23). The emulator console's `adb emu screenrecord screenshot` still works (it reads the host's frame).
-- Open Vibb One's Home once before enrolling from its Settings (§4, the enrolment step).
 
 **`jelly36`: the AVD that matches the user's own** (`jellystar2`, since 2026-10-23). The Google Play Android 16 image
 (Pixel SystemUI) at 480x854 and 240 dpi, made **without** a device profile, so it has no display cutout and the plain
@@ -153,6 +152,8 @@ adb shell cmd notification allow_listener $P/com.kidslauncher.mdm.badges.BadgeLi
 # WRITE_SETTINGS app-op, which a device owner can't grant itself (TIME_12_24 isn't on setSystemSetting's list;
 # kid Settings' brightness is, so it needs no app-op). Without it the PWA's Home Screen warns. Launcher round 9 §4:
 # kid Settings' touch sounds and vibration need it too (read-only without it; docs/setup/android-settings.md).
+# On a phone the parent grants it from Vibb One's Settings ("Modify system settings" row, under Background
+# connection, during a pause - write-settings-row, 2026-10-24); adb is the emulator's shortcut.
 adb shell appops set $P WRITE_SETTINGS allow
 # Design 19b: the launcher on the power-save allowlist ("battery: Unrestricted"); expect "Added: ...".
 # Check with `=$P` (true/false). Android's Settings shows it as "Unrestricted" either way.
@@ -191,11 +192,10 @@ Security -> Screen lock -> None). Only for the old keyguard tests (09 doc, B2:
 `KEYGUARD_DISABLE_SECURE_CAMERA`) set an Android PIN on purpose, and remove it afterwards.
 
 Press Home, choose the launcher - or start it with `adb shell am start -a android.intent.action.MAIN -c
-android.intent.category.HOME -p $P`. Home must have started on screen once **before** you enrol: its first
-interactive start sets `internal.started_before`. A phone enrolled from Settings and locked before that start resets
-its preferences at the next process start (`initRest`'s first-launch `resetPreferences`). After a reboot the cached
-policy was gone - no kiosk, no Android lock (`requested=false kidPin=false`), navy wallpaper (glance-topinset run,
-2026-10-23). In its Settings (open until the first policy arrives): server URL `http://10.0.2.2:3100`, enrollment code
+android.intent.category.HOME -p $P`. (Until 2026-10-24 Home had to start on screen once **before** the enrolment:
+a phone enrolled from Settings before that start lost its whole preferences file at the next process start, the
+token included - glance-topinset run, 2026-10-23. Since write-settings-row the first-launch reset skips an enrolled
+phone, `firstLaunchResetDue`, design 59d §8.17; the order no longer matters.) In its Settings (open until the first policy arrives): server URL `http://10.0.2.2:3100`, enrollment code
 from step 2. Take a snapshot ("enrolled").
 
 ## 5. Simulated calls (emulator console via adb)
