@@ -1937,7 +1937,9 @@ away() { adb shell cmd location providers set-test-provider-location fused --loc
    "Every" says "30 min while the phone has zones" when the parent's interval is shorter (the select still shows the
    parent's).
 3. **Inside, silent**: `home` twice, 2 min apart - the first "entering" right after a registration is dropped
-   (`ECHO`) when it comes within 60 s of it; Home's side set, no event in the inbox.
+   (`ECHO`) when it comes within 60 s of it. The test provider's fixes reach only the fence, not the server (nothing
+   asks the phone for a location until a heartbeat, a crossing or Update Location - the 2026-10-24 run), so tap Update
+   Location twice (a minute apart) to put two GPS fixes inside: Home's side set ("Here now"), no event in the inbox.
 4. **Leave**: `away` - the fence's exit broadcast (`CROSSING`), `Sync for [zone]` with a balanced fused fix (the fused
    test provider answers it), and 2 min later `[zone_confirm]` with a precise one (GPS first: the `geo fix` place):
    "Anna left Home" in the inbox and as a push, timed at the first fix. The Locate page's newest-fix row's title ends in
