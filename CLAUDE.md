@@ -33,8 +33,9 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   Spotify test fixtures; design 26c §9, `docs/testing/emulator.md` §6l), `fake-audio.py` (a fake podcast host of
   silent episodes with Range; `--vary` serves another length per request, design 30's changed-source check; §6f;
   `--feed N` an RSS feed of N items with their own pictures the server judges `own`, `--hls K` item K as HLS, design
-  39's list pictures and order flip; §6q), `pwa-startup-images.py` (the PWA's iPhone start-up PNGs and head.html's
-  links from `server/testdata/pwa_startup_screens.json`; `--selftest`; `docs/notes/server/pwa.md`, "Start-up splash").
+  39's list pictures and order flip; §6q), `pwa-startup-images.py` (the PWA's iPhone start-up PNGs, head.html's
+  links and the start-up hold's mark `server/templates/partials/splash_hold.html`, from
+  `server/testdata/pwa_startup_screens.json`; `--selftest`; `docs/notes/server/pwa.md`, "Start-up splash").
 - `PLAN.md` - the plan and status, and the fix backlog ("Fix backlog": keep it current as items come in and are done).
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
@@ -118,7 +119,8 @@ fixtures (the phone never logs in).
   after the build, the server's and the launcher's `storytel_token_answers.json` and `server/testdata/storytel/`;
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
-  `dns_upstream_status.json`, `power_report.json` and `launcher_tag_codes.json`;
+  `dns_upstream_status.json`, `power_report.json` and `launcher_tag_codes.json`, and `scripts/pwa-startup-images.py`
+  (the start-up hold's mark test reads it);
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in

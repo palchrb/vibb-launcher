@@ -1,4 +1,4 @@
-// Behaviour of static/splash-hold.js (the start-up hold, 2026-10-24).
+// Behaviour of static/splash-hold.js (the start-up hold, 2026-10-24; qa-pwa-splash-hold-code Q-1..Q-3).
 // Run: node --test jstest/splash-hold.test.js
 "use strict";
 const test = require("node:test");
@@ -6,7 +6,14 @@ const assert = require("node:assert");
 const { install, splashHoldDue, splashHoldEnd, firstInSession, CAP_MS, FADE_MS } =
     require("../static/splash-hold.js");
 
-const cold = { standalone: true, coarse: true, firstInSession: true, now: 120 };
+const cold = {
+    standalone: true,
+    coarse: true,
+    firstInSession: true,
+    navigation: "navigate",
+    referrer: "",
+    now: 120,
+};
 
 function memoryStorage() {
     const items = {};
@@ -16,8 +23,20 @@ function memoryStorage() {
     };
 }
 
-// A window: `media` the queries that match, `storage` its sessionStorage (or a getter that throws).
-function fakeWindow({ media = [], standalone, storage = memoryStorage(), start = 100 } = {}) {
+// A window: iOS's installed app on a phone, launched from the home screen, unless told otherwise.
+// `media` the queries that match, `storage` its sessionStorage (or a getter that throws),
+// `localStorage` one that may be shared between windows, `nav` the Navigation Timing type ("" for
+// no entry), `oldNav` performance.navigation's type, `referrer` document.referrer.
+function fakeWindow({
+    media = ["(pointer: coarse)"],
+    standalone = true,
+    storage = memoryStorage(),
+    localStorage = memoryStorage(),
+    nav = "navigate",
+    oldNav,
+    referrer = "",
+    start = 100,
+} = {}) {
     const listeners = {};
     const docListeners = {};
     const timers = [];
@@ -30,14 +49,20 @@ function fakeWindow({ media = [], standalone, storage = memoryStorage(), start =
     const html = { className: "" };
     const doc = {
         documentElement: html,
+        referrer,
         getElementById: (id) => (id === "splash-hold" && overlay.parentNode ? overlay : null),
         addEventListener: (type, fn) => (docListeners[type] = docListeners[type] || []).push(fn),
     };
     const win = {
         document: doc,
-        navigator: standalone === undefined ? {} : { standalone },
+        navigator: standalone === null ? {} : { standalone },
         matchMedia: (q) => ({ matches: media.includes(q) }),
-        performance: { now: () => clock },
+        performance: {
+            now: () => clock,
+            getEntriesByType: (t) => (t === "navigation" && nav ? [{ type: nav }] : []),
+            navigation: oldNav === undefined ? undefined : { type: oldNav },
+        },
+        localStorage,
         addEventListener: (type, fn) => (listeners[type] = listeners[type] || []).push(fn),
         setTimeout: (fn, ms) => timers.push({ fn, at: clock + ms }),
     };
@@ -58,18 +83,20 @@ function fakeWindow({ media = [], standalone, storage = memoryStorage(), start =
         clock = to;
     };
     const fire = (type) => (listeners[type] || []).forEach((fn) => fn({ type }));
-    const tap = () => (docListeners.pointerdown || []).forEach((fn) => fn({ type: "pointerdown" }));
-    return { win, html, overlay, advance, fire, tap, removed: () => removed };
+    const touch = (type) => (docListeners[type] || []).forEach((fn) => fn({ type }));
+    return { win, html, overlay, advance, fire, touch, removed: () => removed };
 }
 
-const PHONE_APP = ["(display-mode: standalone)", "(pointer: coarse)"];
-
-test("due only on a phone's installed app, on the session's first document", () => {
+test("due only on iOS's installed app on a phone, launched from the home screen, once a session", () => {
     assert.strictEqual(splashHoldDue(cold), true);
-    assert.strictEqual(splashHoldDue({ ...cold, standalone: false }), false, "a browser tab");
-    assert.strictEqual(splashHoldDue({ ...cold, coarse: false }), false, "an app installed on a PC");
+    assert.strictEqual(splashHoldDue({ ...cold, standalone: false }), false, "a browser tab, Android");
+    assert.strictEqual(splashHoldDue({ ...cold, coarse: false }), false, "a fine pointer");
     assert.strictEqual(splashHoldDue({ ...cold, firstInSession: false }), false, "a later page");
     assert.strictEqual(splashHoldDue({ ...cold, firstInSession: null }), false, "no storage: never");
+    assert.strictEqual(splashHoldDue({ ...cold, navigation: "reload" }), false, "a reload");
+    assert.strictEqual(splashHoldDue({ ...cold, navigation: "back_forward" }), false, "Back");
+    assert.strictEqual(splashHoldDue({ ...cold, referrer: "https://pi/devices" }), false, "a link");
+    assert.strictEqual(splashHoldDue({ ...cold, referrer: null }), false, "no referrer to read");
     assert.strictEqual(splashHoldDue({ ...cold, now: CAP_MS }), false, "past the cap: nothing to hold");
 });
 
@@ -93,7 +120,7 @@ test("the hold ends 1000 ms after load, never past 1600 ms from the navigation's
 });
 
 test("a cold start shows it, fades it 1000 ms after load and removes it after the fade", () => {
-    const w = fakeWindow({ media: PHONE_APP });
+    const w = fakeWindow();
     assert.strictEqual(install(w.win), true);
     assert.strictEqual(w.html.className, "splash-holding");
     w.advance(300);
@@ -111,7 +138,7 @@ test("a cold start shows it, fades it 1000 ms after load and removes it after th
 });
 
 test("a slow load ends it at the cap", () => {
-    const w = fakeWindow({ media: PHONE_APP });
+    const w = fakeWindow();
     install(w.win);
     w.advance(CAP_MS - 1);
     assert.strictEqual(w.overlay.className, "splash-hold");
@@ -123,7 +150,7 @@ test("a slow load ends it at the cap", () => {
 });
 
 test("with reduced motion it is removed at once at the same moment, no fade", () => {
-    const w = fakeWindow({ media: PHONE_APP.concat(["(prefers-reduced-motion: reduce)"]) });
+    const w = fakeWindow({ media: ["(pointer: coarse)", "(prefers-reduced-motion: reduce)"] });
     install(w.win);
     w.advance(200);
     w.fire("load");
@@ -134,34 +161,75 @@ test("with reduced motion it is removed at once at the same moment, no fade", ()
     assert.strictEqual(w.overlay.className, "splash-hold", "never faded");
 });
 
-test("a tap ends it at once", () => {
-    const w = fakeWindow({ media: PHONE_APP });
+test("a tap ends it at once, by a pointer or a touch", () => {
+    for (const type of ["pointerdown", "touchstart"]) {
+        const w = fakeWindow();
+        install(w.win);
+        w.touch(type);
+        assert.strictEqual(w.overlay.className, "splash-hold is-fading", type);
+    }
+});
+
+test("ended twice while it fades (a tap, the load's timer, the cap): one fade, one removal", () => {
+    const w = fakeWindow({ start: 1000 });
     install(w.win);
-    w.tap();
+    w.advance(1100);
+    w.fire("load"); // its end at the cap, 1600
+    w.advance(1590);
+    w.touch("pointerdown");
+    w.advance(1600); // the load's timer and the cap's, inside the fade
     assert.strictEqual(w.overlay.className, "splash-hold is-fading");
+    assert.strictEqual(w.removed(), 0);
+    w.advance(1590 + FADE_MS);
+    assert.strictEqual(w.removed(), 1);
+    assert.strictEqual(w.html.className, "");
 });
 
-test("iOS's navigator.standalone counts as the installed app", () => {
-    const w = fakeWindow({ media: ["(pointer: coarse)"], standalone: true });
-    assert.strictEqual(install(w.win), true);
+test("the flag is the session's: two launches sharing localStorage both hold", () => {
+    const shared = memoryStorage();
+    assert.strictEqual(install(fakeWindow({ localStorage: shared }).win), true);
+    assert.strictEqual(install(fakeWindow({ localStorage: shared }).win), true, "a new session holds again");
 });
 
-test("never in a browser tab, on a PC's installed app, on a later page or without storage", () => {
+test("never in a browser tab, on Android's installed app, with a fine pointer or without storage", () => {
     const cases = [
-        fakeWindow({ media: ["(pointer: coarse)"] }),
-        fakeWindow({ media: ["(display-mode: standalone)"] }),
-        fakeWindow({ media: PHONE_APP, storage: null }),
-        fakeWindow({ media: PHONE_APP, storage: () => { throw new Error("SecurityError"); } }),
-        fakeWindow({ media: PHONE_APP, start: CAP_MS + 50 }),
+        fakeWindow({ standalone: null }),
+        fakeWindow({ standalone: false }),
+        // Android's installed app: display-mode standalone, no navigator.standalone (Q-2).
+        fakeWindow({ standalone: null, media: ["(pointer: coarse)", "(display-mode: standalone)"] }),
+        fakeWindow({ media: [] }),
+        fakeWindow({ storage: null }),
+        fakeWindow({ storage: () => { throw new Error("SecurityError"); } }),
+        fakeWindow({ start: CAP_MS + 50 }),
     ];
     for (const w of cases) {
         assert.strictEqual(install(w.win), false);
         assert.strictEqual(w.html.className, "");
     }
-    // The second document of the session (a tab, a link, a reload).
+});
+
+test("never on a later document of the session (a tab, a link, a reload)", () => {
     const storage = memoryStorage();
-    assert.strictEqual(install(fakeWindow({ media: PHONE_APP, storage }).win), true);
-    const next = fakeWindow({ media: PHONE_APP, storage });
+    assert.strictEqual(install(fakeWindow({ storage }).win), true);
+    const next = fakeWindow({ storage });
     assert.strictEqual(install(next.win), false);
     assert.strictEqual(next.html.className, "");
+});
+
+// Q-1: even when sessionStorage was lost (a fresh one, as the iPhone app has done across a form's
+// navigation), a document reached inside the app never holds.
+test("never on a reload, Back or Forward, an in-app link or a form's 303, even with a fresh storage", () => {
+    const cases = {
+        "a reload": fakeWindow({ nav: "reload" }),
+        "back/forward": fakeWindow({ nav: "back_forward" }),
+        "a reload, old API": fakeWindow({ nav: "", oldNav: 1 }),
+        "back/forward, old API": fakeWindow({ nav: "", oldNav: 2 }),
+        "an in-app link": fakeWindow({ referrer: "https://pi.tailnet.ts.net/devices" }),
+        "a form's 303": fakeWindow({ referrer: "https://pi.tailnet.ts.net/devices/3/lock" }),
+    };
+    for (const [name, w] of Object.entries(cases)) {
+        assert.strictEqual(install(w.win), false, name);
+        assert.strictEqual(w.html.className, "", name);
+    }
+    assert.strictEqual(install(fakeWindow({ nav: "", oldNav: 0 }).win), true, "old API, a launch");
 });

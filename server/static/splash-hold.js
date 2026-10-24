@@ -2,17 +2,22 @@
 // longer"): iOS shows the apple-touch-startup-image only until the page's first paint, so the page
 // itself holds the same picture a moment - templates/partials/splash_hold.html, the night and the Vibb
 // mark written by scripts/pwa-startup-images.py, first in the body of every page with the tab bar.
-// It shows only on a cold start of the installed app on a phone:
-// - standalone (the display-mode media query, or iOS's navigator.standalone): never in a browser tab;
-// - a coarse pointer: never in a PWA installed on a PC;
+// It shows only on a cold start of the installed iPhone app (all must hold):
+// - iOS's installed app: navigator.standalone, which only iOS sets (qa-pwa-splash-hold-code Q-2:
+//   Android's installed app keeps Chrome's own splash and nothing of ours); never in a browser tab;
+// - a coarse pointer: never with a fine one;
 // - the session's first document (a sessionStorage flag): a tab, a link, a reload or Back never shows
-//   it again. Without a working sessionStorage it never shows (it would show on every page).
+//   it again. Without a working sessionStorage it never shows (it would show on every page);
+// - and, not resting on storage alone (Q-1: the installed iPhone app has lost sessionStorage across a
+//   form's navigation before, scroll-restore.js), a plain `navigate` with no referrer: the server's
+//   Referrer-Policy is same-origin, so every link, tab and form's 303 inside the app has one, and a
+//   reload or Back is not `navigate` - only the home screen's launch has neither.
 // It then stays until 1000 ms after the page's load, at most until 1600 ms after the navigation
 // started (a slow load - images, the font - never adds a second hold; the cap is the fallback), then
 // fades out over 250 ms and is removed; with prefers-reduced-motion it is removed at once, no fade. A
 // tap ends it at once. Loaded in the head, not deferred, so the decision is made before the first
-// paint (the overlay is `hidden` until style.css's `.splash-holding` shows it); it only sets a class
-// and timers, so the page's own scripts run as before.
+// paint (the overlay is `hidden` until style.css's `.splash-holding` shows it); it only sets a class,
+// timers and two tap listeners, so the page's own scripts run as before.
 // ES5, no framework. Tested with node (jstest/splash-hold.test.js).
 (function (root) {
     "use strict";
@@ -36,11 +41,27 @@
         }
     }
 
-    // The decision, pure: env = { standalone, coarse, firstInSession (true/false/null), now (ms since
-    // the navigation started) }.
+    // The decision, pure: env = { standalone, coarse, firstInSession (true/false/null), navigation
+    // (the navigation's type), referrer (document.referrer), now (ms since the navigation started) }.
     function splashHoldDue(env) {
         return env.standalone === true && env.coarse === true && env.firstInSession === true &&
+            env.navigation === "navigate" && env.referrer === "" &&
             typeof env.now === "number" && env.now < CAP_MS;
+    }
+
+    // As scroll-restore.js reads it: the Navigation Timing entry's type, else the old
+    // performance.navigation (1 reload, 2 back/forward), else "navigate".
+    function navigationType(win) {
+        var perf = win.performance;
+        if (!perf) return "navigate";
+        try {
+            var entries = perf.getEntriesByType ? perf.getEntriesByType("navigation") : null;
+            if (entries && entries.length && entries[0].type) return entries[0].type;
+        } catch (e) {}
+        var nav = perf.navigation;
+        if (nav && nav.type === 1) return "reload";
+        if (nav && nav.type === 2) return "back_forward";
+        return "navigate";
     }
 
     // When the hold ends, in ms since the navigation started: 1000 ms after load, never past the cap
@@ -74,10 +95,11 @@
         var doc = win.document;
         var html = doc.documentElement;
         var env = {
-            standalone: matches(win, "(display-mode: standalone)") ||
-                !!(win.navigator && win.navigator.standalone === true),
+            standalone: !!(win.navigator && win.navigator.standalone === true),
             coarse: matches(win, "(pointer: coarse)"),
             firstInSession: firstInSession(storageOf(win)),
+            navigation: navigationType(win),
+            referrer: typeof doc.referrer === "string" ? doc.referrer : null,
             now: now(win),
         };
         if (!splashHoldDue(env)) return false;
