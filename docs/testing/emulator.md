@@ -1965,7 +1965,9 @@ away() { adb shell cmd location providers set-test-provider-location fused --loc
    takes today's GPS-first fix (Q-2).
    The moving series (design 64 §4.5) needs the sensor too, so it **can't run on the emulator** - `ZonePlanTest` covers
    its rules; the Jelly Star run below checks it (a walk with the screen off: `Moving series: started`, `Series check:
-   KEEP|NEAR_BOUNDARY|SIDE_CHANGED`, `Moving series: ended (STILL)` a few minutes after stopping).
+   KEEP|SIDE_CHANGED` - only a fix surely across a boundary is sent -, `Moving series: ended (STILL)` a few minutes
+   after stopping; no new `started` from motion within 20 min of an end, at most 60 checks a day -
+   `ended (BUDGET)` past them).
 10. **Un-managed and re-enrolled**: un-manage the phone in the PWA (or enroll it anew from Settings) -> `Fences: 1
     removed, none watched`, `dumpsys location` lists no geofence of ours, the passive feed is off; after a re-enrollment
     the first report carries no `extra_locations` of the old row (Q-8).

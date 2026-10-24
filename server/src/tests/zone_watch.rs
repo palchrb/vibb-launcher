@@ -351,9 +351,20 @@ async fn here_now_counts_the_served_interval_and_a_still_re_send() {
     };
     // The parent's 10 min: 45 min is past two intervals.
     assert!(!page().await.contains("data-here>Here now"));
+    let fresh_now = || async {
+        let (when, mode, interval) = crate::zones::freshness_inputs(&app.db, id).await.unwrap();
+        (
+            crate::zones::fresh(when, &mode, interval, Utc::now()),
+            interval,
+        )
+    };
+    // F-6 (S12): the parent's 10 min as served, 45 min is stale for the summary too.
+    assert_eq!(fresh_now().await, (false, 10));
     // The phone watches: served 30, two intervals are 60 min.
     post(&app, &token, json!({"zone_watch": watch(1, 0)})).await;
     assert!(page().await.contains("data-here>Here now"));
+    // ... and the summary's freshness counts in the served 30 before any still re-send.
+    assert_eq!(fresh_now().await, (true, 30));
     // 70 min later by the fix's own time: stale without a re-send...
     sqlx::query("UPDATE device_locations SET captured_at = ? WHERE latitude = ?")
         .bind(stored(&at(70)))
@@ -366,6 +377,7 @@ async fn here_now_counts_the_served_interval_and_a_still_re_send() {
         .await
         .unwrap();
     assert!(!page().await.contains("data-here>Here now"));
+    assert_eq!(fresh_now().await, (false, 30));
     // ... a re-send that isn't still changes nothing ...
     let mut resent = fix(NEAR, &newest);
     post(
@@ -396,8 +408,7 @@ async fn here_now_counts_the_served_interval_and_a_still_re_send() {
         .unwrap();
     assert_eq!(kept, newest);
     // The devices list's summary agrees (the same freshness).
-    let (when, mode, interval) = crate::zones::freshness_inputs(&app.db, id).await.unwrap();
-    assert!(crate::zones::fresh(when, &mode, interval, Utc::now()));
+    assert_eq!(fresh_now().await, (true, 30));
 }
 
 /// Code QA N-4: every extra fix is stored before the zones are judged, once, in time order -
@@ -504,6 +515,70 @@ async fn the_mock_counter_logs_each_rise() {
     post(&app, &token, json!({"zone_watch": watch(0, 1)})).await;
     let logged = lines().await;
     assert_eq!(logged.len(), 2, "{logged:?}");
+    // F-5: two different counts over the logged one, back to back - each line is its own rise
+    // (1 and 1), never one read before the other's write (2).
+    let w = |n| crate::zones::ZoneWatch {
+        fences: 0,
+        motion_sensor: true,
+        location_on: true,
+        background_location: true,
+        mock_ignored: n,
+    };
+    crate::zones::mock_rise(&app.db, id, Some(&w(3)))
+        .await
+        .unwrap();
+    let (four, five) = (w(4), w(5));
+    let (a, b) = tokio::join!(
+        crate::zones::mock_rise(&app.db, id, Some(&four)),
+        crate::zones::mock_rise(&app.db, id, Some(&five))
+    );
+    let rises: Vec<String> = [a.unwrap(), b.unwrap()].into_iter().flatten().collect();
+    assert!(
+        rises.iter().all(|l| l.contains("ignored 1 made-up")),
+        "{rises:?}"
+    );
+    // The same count again: nothing.
+    assert_eq!(
+        crate::zones::mock_rise(&app.db, id, Some(&w(5)))
+            .await
+            .unwrap(),
+        None
+    );
+    // A lower count clears the date; a re-enrollment clears both.
+    crate::zones::mock_rise(&app.db, id, Some(&w(2)))
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::zones::mock_logged_at(&app.db, id).await.unwrap(),
+        None
+    );
+    crate::zones::mock_rise(&app.db, id, Some(&w(4)))
+        .await
+        .unwrap();
+    assert!(
+        crate::zones::mock_logged_at(&app.db, id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let code = app.new_code(id, crate::enrollment::Kind::Qr).await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/enroll",
+            None,
+            Some(json!({ "enrollment_code": code })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::OK);
+    let after: (Option<i64>, Option<String>) =
+        sqlx::query_as("SELECT mock_logged, mock_logged_at FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(after, (None, None));
+    let token = res.json()["device_token"].as_str().unwrap().to_string();
     assert!(logged[0].contains(&format!("device {id}: the phone ignored 3 ")));
     assert!(
         logged[1].contains("ignored 2 made-up location(s)") && logged[1].contains("(5 in all)")

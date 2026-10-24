@@ -151,9 +151,9 @@ counts.
 - **Mock fixes** (decision 14, the user's 7): a release launcher ignores a fix with `Location.isMock` and counts it;
   `zone_watch.mock_ignored` is the phone's **running** count since its data was created (not "since the last report":
   a lost report loses nothing; the phone counts a fix once by its time and place, Q-9). A rise against the count last
-  logged (`zones::mock_rise`: `devices.mock_logged`, 0093, written by an UPDATE only a higher count passes, so two
-  parallel reports or a report without `zone_watch` in between log it once; a lower count - the data cleared, a new
-  enrollment - is taken silently) writes the security event `mock_location_ignored` ("Made-up locations ignored",
+  logged (`zones::mock_rise`: `devices.mock_logged`, 0093, read and written in one `BEGIN IMMEDIATE` transaction, so
+  two parallel reports or a report without `zone_watch` in between log each rise once with its real size - F-5; a lower
+  count - the data cleared - is taken silently and clears the date; an enrollment clears both, `device_api::enroll`) writes the security event `mock_location_ignored` ("Made-up locations ignored",
   "device 3: the phone ignored 2 made-up location(s) - an app pretended to be somewhere else (5 in all)" - never a
   place, `zones::mock_log_line`) and stamps `devices.mock_logged_at`; the Locate page shows the running count in the
   location group with when it last rose ("4 made-up locations ignored, the last 14:02").

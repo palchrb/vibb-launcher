@@ -887,10 +887,16 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   request code 10, a 45 s wake lock) come every `nextCheckDelay`: the cached fix's distance to the nearest boundary
   less its accuracy, at 15 m/s (`CHECK_SPEED_MPS`), less its age, within 3..30 min (`CHECK_MIN_DELAY_MS`,
   `CHECK_MAX_DELAY_MS`), from the newest fix known (`LocateCommands.newestKnown`: the kept one or the reported one); no
-  zones = no series, no fix = 3 min. A check's fix: on the other side of a boundary than the **reported** fix (plain
-  distance against the radius) -> promoted to the reported fix, queued, a sync (`"zone_check"`) and the confirming GPS
-  fix 2 min later; within its accuracy of a boundary -> the same without the confirm; else only the kept slot
-  (`keepFix`, the heartbeat's `KEPT`). The fused fix passes the platform fence too. The series ends after `SERIES_MAX_MS` 60 min,
+  zones = no series, no fix = 3 min. A check's fix (`checkVerdict`, qa-design-64-step2-code F-1): **surely** on the
+  other side of a boundary than the **reported** fix by the server's own rule (`sureSide`: inside at `d + a <= r`,
+  outside at `d - a >= r`; the reported fix's sure side, or its plain distance when unsure) -> the phone marked moved,
+  promoted to the reported fix, queued, a sync (`"zone_check"`) and the confirming GPS fix 2 min later; anything else
+  (unsure, no accuracy, the same side) -> only the kept slot (`keepFix`, the heartbeat's `KEPT`). **Caps** (F-2,
+  provisional until the Jelly Star walk, design 64 §5): after a series ends the motion sensor starts no new one for
+  `SERIES_COOLDOWN_MS` 20 min (a fence crossing starts one at once, `onMotion(fromFence = true)`), and at most
+  `SERIES_CHECKS_PER_DAY` 60 checks a local day (`seriesMayStart`, `checksLeft`/`budgetAfterCheck`, CE prefs
+  `zone_watch` `series_budget_v1`; `SeriesEnd.BUDGET`). A motion fire's work runs on the series' IO scope
+  (`ZoneSeries.launch`), never the sensor callback's main thread (F-4). The fused fix passes the platform fence too. The series ends after `SERIES_MAX_MS` 60 min,
   `SERIES_MAX_CHECKS` 20, or no fire within twice the last delay (`SeriesEnd.HOUR`/`COUNT`/`STILL`); no zones watched
   stops it (`ZoneSeries.stop`).
 - **The queue** (`queueWith`/`extraLocations`/`queueAfterReport`, CE prefs `zone_watch` `queue_v1`): a report the
@@ -911,14 +917,17 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   `last_beat_ms`; the clock set back counts as due); due, it reports the kept slot's fix when it is not yet reported and
   younger than the interval (`KEPT`, promoted first; never our own reported fix, Q-4), or the reported fix while the
   significant-motion sensor hasn't fired since our last own fix and that fix is under 4 h old (`STILL`,
-  `STILL_SKIP_MAX_MS`), else takes a fresh fix (`FIX`); every due call and every fresh fix stamps the beat, and
+  `STILL_SKIP_MAX_MS`, counted from the last **genuinely fresh** own fix - `ZoneWatch.lastFreshFixMs`, stamped only with
+  `freshOwnFix`, never a failed attempt; F-3), else takes a fresh fix (`FIX`); every due call and every fresh fix stamps the beat, and
   `BackstopAlarm` counts from it (a skip waits a whole interval, not the 9-minute floor). A report that re-sends the
   cached fix while the sensor says still (`reportStill`) sends `zone_watch.still: true`, so the server's "Here now"
   counts from it (Q-3). With zones on a watching phone the server serves at least 30 min (decision 3). `MotionGate`:
   `TYPE_SIGNIFICANT_MOTION` via `requestTriggerSensor`, armed only after a **genuinely fresh** own fix (`freshOwnFix`:
   taken at the request, less 60 s - never after a fallback to the cached or an old last-known fix, Q-6; `arm` and the
   fire share one monitor) and kept armed while the watch is on, for the series; one-shot (disarms itself when it
-  fires); a new process counts as moved; **no sensor (the emulator) = always fix**, and no series.
+  fires); a new process counts as moved; a fence crossing and a series' side change mark it moved too
+  (`MotionGate.markMoved`, F-3: the sensor may miss a smooth ride); **no sensor (the emulator) = always fix**, and no
+  series.
 - **The mock rule** (decision 14): `ZoneWatch.accept` on every fix the phone takes or keeps - the fresh one, each
   last-known candidate, each passive fix: a release build ignores a `Location.isMock()` fix and counts it once per fix
   (`countMock`, CE prefs `mock_ignored`, a running count - `zone_watch.mock_ignored`), the debug build takes it (the

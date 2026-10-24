@@ -98,7 +98,7 @@ pub async fn enroll(
     let enrolled: Result<Option<(i64, String)>, sqlx::Error> = sqlx::query_as(
         "UPDATE devices SET token_hash = ?, enrollment_code_hash = NULL, \
          enrollment_code_kind = NULL, enrollment_code_expires_at = NULL, \
-         enrolled_at = datetime('now') \
+         enrolled_at = datetime('now'), mock_logged = NULL, mock_logged_at = NULL \
          WHERE enrollment_code_hash = ? AND enrollment_code_expires_at > datetime('now') \
          RETURNING id, name",
     )
