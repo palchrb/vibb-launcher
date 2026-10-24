@@ -445,6 +445,9 @@ fun glanceTorchButton(hasFlash: Boolean, refusedWhileLocked: Boolean, lit: Boole
  * count. Three before r11. */
 const val GLANCE_MAX_ROWS = 8
 
+/** From this many bound rows the music tile is the compact one (r11 §2, the user's ask: "ved 2 notifications"). */
+const val GLANCE_COMPACT_FROM_ROWS = 2
+
 enum class GlanceTileSize { NONE, FULL, COMPACT }
 
 /** What the page shows (r11 §1.2): [tile] the music tile's size, [rows] the rows bound, [more] the "more" line's count,
@@ -452,15 +455,23 @@ enum class GlanceTileSize { NONE, FULL, COMPACT }
 data class GlanceLayout(val tile: GlanceTileSize, val rows: Int, val more: Int, val timer: Boolean)
 
 /**
- * The page's sizes are rules, not a fit (r11 §1.2): the big clock, the date and the alarm line always; the music tile
- * while there is a session ([tile]); the timer tile while a timer runs ([timer], always full); min(n, [GLANCE_MAX_ROWS])
- * rows of [rowCount] and the "more" line for the rest. An overflow is a scroll, never a clipped or shrunk part - at
- * 320x569 dp and at font scale 2.0 alike.
+ * The page's sizes are rules, not a fit (r11 §1.2): the big clock, the date and the alarm line always; the timer tile
+ * while a timer runs ([timer], always full); min(n, [GLANCE_MAX_ROWS]) rows of [rowCount] and the "more" line for the
+ * rest. The music tile (r11 §2) while there is a session ([tile]): **full with 0 or 1 rows, compact from
+ * [GLANCE_COMPACT_FROM_ROWS]** - counted on the rows the page binds (the "more" line is no row; a missed-call row is
+ * one), with no hysteresis (a row's coming or going is a deliberate re-render) and whatever the bar, the navigation
+ * mode or the clock profile. An overflow is a scroll, never a clipped or shrunk part - at 320x569 dp and at font scale
+ * 2.0 alike.
  */
 fun glanceLayout(tile: Boolean, rowCount: Int, timer: Boolean): GlanceLayout {
     val n = rowCount.coerceAtLeast(0)
     val rows = minOf(n, GLANCE_MAX_ROWS)
-    return GlanceLayout(if (tile) GlanceTileSize.FULL else GlanceTileSize.NONE, rows, n - rows, timer)
+    val size = when {
+        !tile -> GlanceTileSize.NONE
+        rows < GLANCE_COMPACT_FROM_ROWS -> GlanceTileSize.FULL
+        else -> GlanceTileSize.COMPACT
+    }
+    return GlanceLayout(size, rows, n - rows, timer)
 }
 
 // ---- the keypad's prompt -------------------------------------------------------------------------

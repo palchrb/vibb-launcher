@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The PIN lock's glance page (design 25, mockup LockGlance.dc.html A and B; design r9; design r11; lock.GlancePanel,
      pure lock.LockGlance): everything above the bottom block scrolls as one (r11 §1) - the clock, the date, the alarm
-     line, the music tile while something plays (full with 0 or 1 rows, compact from 2 - lock.glanceLayout), the timer
+     line, the music tile while something plays (full with 0 or 1 rows, compact from 2 - lock.glanceLayout, r11 §2), the timer
      tile, then up to eight notification rows and the "more" line - and the bottom block, the bottom row: the lock's
      emergency call and the flashlight (design 41), anchored below the scroller. When the content fits nothing scrolls;
      nothing is measured or shrunk to make room (r9's fit is gone). A swipe up asks for the unlock when the page can't
@@ -248,7 +248,7 @@
             <!-- The compact tile (mockup A): one row - 52 dp art, item, entry, a 3 dp progress bar under them,
                  a 48 dp peach play/pause. No time line (the user, 2026-10-20: the full tile's is enough - the
                  compact form exists to make room for the rows); the bar's content description says the time.
-                 Since r9 the fit's last resort (font scale 2.0 on 320 dp: the full tile doesn't fit). -->
+                 Since r11 §2 the tile with two rows or more (lock.glanceLayout; r9's fit took it as its last resort). -->
             <LinearLayout
                 android:id="@+id/lock_media_compact"
                 android:layout_width="match_parent"

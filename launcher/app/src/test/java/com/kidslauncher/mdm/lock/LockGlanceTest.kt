@@ -258,6 +258,27 @@ class LockGlanceTest {
         assertEquals("a negative count is none", GlanceLayout(GlanceTileSize.NONE, 0, 0, true), glanceLayout(tile = false, rowCount = -3, timer = true))
     }
 
+    /** Design r11 §2 (the user's ask 2): a rule, not a fit - full with 0 or 1 rows, compact from 2. */
+    @Test
+    fun `the music tile - full with 0 or 1 rows, compact from 2, none without a session (r11 §2)`() {
+        assertEquals(2, GLANCE_COMPACT_FROM_ROWS)
+        assertEquals(GlanceTileSize.FULL, glanceLayout(tile = true, rowCount = 0, timer = false).tile)
+        assertEquals(GlanceTileSize.FULL, glanceLayout(tile = true, rowCount = 1, timer = false).tile)
+        assertEquals(GlanceTileSize.COMPACT, glanceLayout(tile = true, rowCount = 2, timer = false).tile)
+        assertEquals(GlanceTileSize.COMPACT, glanceLayout(tile = true, rowCount = 8, timer = false).tile)
+        assertEquals("nine: eight rows, + 1, compact", GlanceLayout(GlanceTileSize.COMPACT, 8, 1, false), glanceLayout(tile = true, rowCount = 9, timer = false))
+        for (rows in listOf(0, 1, 2, 9)) assertEquals("no session: no tile", GlanceTileSize.NONE, glanceLayout(tile = false, rowCount = rows, timer = false).tile)
+        // A running timer doesn't change the rule (it is always full itself).
+        for (rows in 0..3) {
+            assertEquals(glanceLayout(tile = true, rowCount = rows, timer = false).tile, glanceLayout(tile = true, rowCount = rows, timer = true).tile)
+        }
+        // A dismissal from 2 rows to 1 brings the full tile back in the commit's render (no hysteresis).
+        assertEquals(GlanceTileSize.FULL, glanceLayout(tile = true, rowCount = 2 - 1, timer = false).tile)
+        // The panel takes the tile from the rule alone (shownTile), the rows counted as the store gives them.
+        val panel = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/lock/GlancePanel.kt") }.first { it.exists() }.readText()
+        assertTrue(panel.contains("private fun shownTile(): GlanceTileSize = glanceLayout(tileUp, rows.size, clockUp).tile"))
+    }
+
     @Test
     fun `the timer tile's tap - the keypad with the clock app, its hint, and a time rule's usable apps (design 42)`() {
         assertEquals(GlanceStageState(LockStage.KEYPAD, GlanceTarget.ClockApp), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(GlanceTarget.ClockApp)))
@@ -789,19 +810,36 @@ class LockGlanceLayoutTest {
     @Test
     fun `what scrolls at 473 and 497 dp (r11 §1_2)`() {
         fun at(tile: Boolean, rows: Int) = content(glanceLayout(tile, rows, timer = false))
-        assertEquals("the full tile alone", 278.8f, at(true, 0), 0.01f)
-        assertEquals("music + 1 row", 348.8f, at(true, 1), 0.01f)
-        assertEquals("no music, 5 rows", 438f, at(false, 5), 0.01f)
-        for ((nav, scroll) in listOf(48f to 401f, 24f to 425f)) {
-            assertEquals(scroll, scroller(nav), 0.01f)
-            assertTrue("$nav: the full tile alone fits", at(true, 0) <= scroll)
-            assertTrue("$nav: music + 1 row fits", at(true, 1) <= scroll)
+        // r11 §1.2's table: the content, then how far it scrolls in the 401 / 425 dp scroller (0 = it fits).
+        val table = listOf(
+            Triple("the full tile alone", at(true, 0), 278.8f),
+            Triple("music + 1 row (full)", at(true, 1), 348.8f),
+            Triple("music + 2 rows (compact)", at(true, 2), 328f),
+            Triple("music + 3 rows (compact)", at(true, 3), 392f),
+            Triple("music + 4 rows", at(true, 4), 456f),
+            Triple("music + 8 rows", at(true, 8), 712f),
+            Triple("no music, 5 rows", at(false, 5), 438f),
+        )
+        for ((case, content, expected) in table) assertEquals(case, expected, content, 0.01f)
+        val scrolls = mapOf(
+            "music + 4 rows" to (55f to 31f), "music + 8 rows" to (311f to 287f), "no music, 5 rows" to (37f to 13f),
+        )
+        for ((case, content, _) in table) {
+            val (at473, at497) = scrolls[case] ?: (0f to 0f)
+            assertEquals("$case at 473", at473, maxOf(0f, content - scroller(48f)), 0.01f)
+            assertEquals("$case at 497", at497, maxOf(0f, content - scroller(24f)), 0.01f)
         }
-        assertEquals("no music, 5 rows scroll 37 dp at 473", 37f, at(false, 5) - scroller(48f), 0.01f)
-        assertEquals("... and 13 dp at 497", 13f, at(false, 5) - scroller(24f), 0.01f)
         // Nine rows and more: eight and the "more" line.
         assertEquals(at(false, 8) + parts.more, at(false, 9), 0.01f)
         assertEquals(at(false, 9), at(false, 30), 0.01f)
+        // The user's case (their screenshot): the profile's clock and date, the alarm line, music + 2 rows - compact,
+        // and it fits (370.6 dp) at both.
+        val users = content(glanceLayout(tile = true, rowCount = 2, timer = false), profileParts, alarm = true)
+        assertEquals(370.6f, users, 0.1f)
+        assertTrue(users <= scroller(48f) && users <= scroller(24f))
+        // ... and with one row the full tile, on every bar (59d §8.15's "compact no longer for music + 1 row" is the
+        // rule's first line now).
+        assertEquals(GlanceTileSize.FULL, glanceLayout(tile = true, rowCount = 1, timer = false).tile)
     }
 
     /**
