@@ -1625,7 +1625,10 @@ pub(crate) fn apps_url(
 
 /// The page's tab and back link: the phone's (Devices, "‹ Anna") unless it was opened from the
 /// Apps tab - then Apps, back to the list or the catalog app's page at the phone's row
-/// (`#phone-<id>`); a catalog app deleted since is the list. Also the `from` the page keeps.
+/// (`#phone-<id>`), or at its phones' group (`#phones`, always there) when the app's page doesn't
+/// list this phone (unticked here since: the page lists the phones with it ticked, the launcher's
+/// every set-up phone; qa-pwa-polish-a Q-10); a catalog app deleted since is the list. Also the
+/// `from` the page keeps.
 async fn apps_nav(
     state: &AppState,
     device: &Device,
@@ -1646,17 +1649,29 @@ async fn apps_nav(
         ),
         Some(AppsFrom::List) => list,
         Some(AppsFrom::App(app)) => {
-            match sqlx::query_scalar::<_, String>("SELECT name FROM tracked_apps WHERE id = ?")
-                .bind(app)
-                .fetch_optional(&state.db)
-                .await?
+            match sqlx::query_as::<_, (String, bool, bool)>(
+                "SELECT name, is_launcher, EXISTS(SELECT 1 FROM device_tracked_apps \
+                 WHERE device_id = ? AND tracked_app_id = tracked_apps.id) \
+                 FROM tracked_apps WHERE id = ?",
+            )
+            .bind(device.id)
+            .bind(app)
+            .fetch_optional(&state.db)
+            .await?
             {
-                Some(name) => (
-                    Tab::Apps,
-                    format!("/apps/tracked/{app}#phone-{}", device.id),
-                    name,
-                    from,
-                ),
+                Some((name, is_launcher, ticked)) => {
+                    let listed = if is_launcher {
+                        device.enrolled_at.is_some()
+                    } else {
+                        ticked
+                    };
+                    let row = if listed {
+                        format!("phone-{}", device.id)
+                    } else {
+                        "phones".to_string()
+                    };
+                    (Tab::Apps, format!("/apps/tracked/{app}#{row}"), name, from)
+                }
                 None => list,
             }
         }

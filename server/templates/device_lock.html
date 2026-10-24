@@ -109,9 +109,9 @@
                 <summary aria-label="About the Child PIN"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel" data-privacy="{% if keyguard_android %}android{% else %}own{% endif %}">
                     {% if keyguard_android %}
-                    <p>After a restart the phone can't be located, rung or erased until the Child PIN is typed. The Parent PIN doesn't open this lock.</p>
+                    <p>After a restart the phone can't be located, rung or erased, and alarms may not ring, until the Child PIN is typed. The Parent PIN doesn't open this lock: use Show Child PIN above.</p>
                     {% else %}
-                    <p>After 5 wrong PINs the phone waits 30 s, then longer; it never erases itself. Your Parent PIN ("Parent code" on the lock) always opens it.</p>
+                    <p>After 5 wrong PINs the phone waits 30 s, then longer; your Parent PIN ("Parent code" on the lock) always opens it. It doesn't encrypt the phone's data, and some bank apps won't work with it.</p>
                     {% endif %}
                 </div>
             </details>
@@ -163,7 +163,7 @@
             <details class="info">
                 <summary aria-label="About the Parent PIN"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>It never lifts the call limits or Restrictions. If your child saw it typed, change it here.</p>
+                    <p>On a time lock it lifts the rules for up to two hours, never Calls or Restrictions. Locked out after wrong tries, or your child saw it? Save a new PIN here: the wait ends once the phone checks in.</p>
                 </div>
             </details>
         </div>

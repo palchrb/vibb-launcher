@@ -183,7 +183,12 @@ async fn save_probes_then_seals() {
     assert!(page.contains("Storytel accepted the login (12:02)."));
     assert!(page.contains("href=\"/music/storytel\""));
     assert!(page.contains("Storytel Family, which isn't supported yet"));
-    assert!(page.contains("The phones never get the password."));
+    assert!(
+        page.contains(
+            "Kept encrypted on this server; a phone with an older music app keeps a copy."
+        )
+    );
+    assert!(page.contains("Lost a phone? Remove it, then change the password at Storytel"));
     assert_no_secret(&page, PASSWORD, "/music/settings");
     let again = app
         .get_page("/music/settings", &cookie)

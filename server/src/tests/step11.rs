@@ -81,7 +81,11 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
     for name in ["update_fence", "notification_auto_cancel", "boot_cover"] {
         assert_eq!(input_checked(&page, name, "on"), Some(true), "{name}");
     }
-    assert!(page.contains("Test Update fence and Boot cover on this phone model"));
+    assert!(
+        page.contains(
+            "Test Update fence and Boot cover (from the next restart) on this phone model"
+        )
+    );
 
     // The phone's state (qa-16b-code #5): a launcher without the boot cover is told to update; one
     // with it reports a tripped guard, which the card shows as a warning.

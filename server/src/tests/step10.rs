@@ -491,6 +491,10 @@ async fn lock_page_warns_about_the_lock_state() {
         group.contains("After 5 wrong PINs the phone waits 30 s, then longer"),
         "qa-10-code #8"
     );
+    assert!(
+        group.contains("It doesn't encrypt the phone's data"),
+        "qa-pwa-polish-a Q-4"
+    );
 }
 
 #[tokio::test]
