@@ -681,9 +681,12 @@ async fn clock_format_not_applied_is_a_warning() {
             let command = html.find("WRITE_SETTINGS allow").expect("the fix");
             let panel = html[..command].rfind("<details class=\"info\">").unwrap();
             assert!(at < panel && !html[panel..command].contains("</details>"));
-            // The Settings path names the launcher's label (design 34 P11, qa-34-s12-code L1).
+            // The on-phone path names the launcher's label (design 34 P11, qa-34-s12-code L1) and
+            // its Settings row (2026-10-24), before the adb shortcut.
             assert!(
-                html[panel..].contains("Modify system settings › Vibb One › Allow."),
+                html[panel..command]
+                    .contains("Settings › Pause all restrictions › Modify system settings")
+                    && html[panel..command].contains("Vibb One"),
                 "{html}"
             );
         }

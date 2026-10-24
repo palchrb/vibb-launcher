@@ -30,8 +30,10 @@
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <!-- One clock format on the whole phone (design 34 P12, server/ClockFormatSetting): writing
          Settings.System.TIME_12_24 needs the "Modify system settings" app-op, which the device owner
-         can't grant - `adb shell appops set me.vibb.launcher WRITE_SETTINGS allow` at provisioning,
-         or the parent in Android Settings. Without it nothing is written and the PWA warns. -->
+         can't grant - the parent turns it on during a pause from Settings' "Modify system settings"
+         row (server/WriteSettingsAccess), or `adb shell appops set me.vibb.launcher WRITE_SETTINGS
+         allow` as the shortcut. The touch sounds row needs it too. Without it nothing is written and
+         the PWA warns. -->
     <uses-permission
         android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions" />

@@ -44,6 +44,12 @@
         android:key="settings_mdm_background_connection"
         android:title="@string/settings_mdm_background_connection" />
 
+    <!-- "Modify system settings" (the touch sounds row, the clock format) without adb; the
+         summary is set in code. -->
+    <Preference
+        android:key="settings_mdm_write_settings"
+        android:title="@string/settings_mdm_write_settings" />
+
     <Preference
         android:key="settings_play_install_mode"
         android:title="@string/settings_play_install_mode"

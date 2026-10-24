@@ -67,8 +67,9 @@ fun clockFormatApplied(choice: String?, current: String?): Boolean? =
  * bar and Vibb's own clocks ([com.kidslauncher.mdm.ui.ClockFormat]) show the same. A device owner
  * can't write it (`setSystemSetting` allows only brightness and the screen-off timeout); an app may,
  * with the "Modify system settings" app-op (`WRITE_SETTINGS`, declared in the manifest), which the
- * device owner can't grant: `adb shell appops set me.vibb.launcher WRITE_SETTINGS allow` at
- * provisioning, or the parent in Android Settings during a pause. Without it nothing is written and
+ * device owner can't grant: the parent turns it on during a pause from Settings' "Modify system
+ * settings" row ([WriteSettingsAccess]), or `adb shell appops set me.vibb.launcher WRITE_SETTINGS
+ * allow` as the shortcut at provisioning. Without it nothing is written and
  * the status says `false` (the PWA warns). Whether SettingsProvider refuses the write while our
  * `DISALLOW_CONFIG_DATE_TIME` is on is a device check; a refusal reads back as `false` too, and the
  * restriction is never lifted for it. Not a restriction: the override and the pause change nothing.

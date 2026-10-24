@@ -1160,8 +1160,9 @@ pub async fn status(
           backup_service_enabled, app_downloads_json, boot_cover_json, music_state_json, \
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
-          relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
+          write_settings_granted) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1215,6 +1216,7 @@ pub async fn status(
     .bind(report.battery.map(|b| b.level))
     .bind(report.battery.map(|b| b.charging))
     .bind(&dns_upstream_json)
+    .bind(report.write_settings_granted)
     .execute(&state.db)
     .await
     .ok();

@@ -1,6 +1,7 @@
 package com.kidslauncher.mdm.ui.settings.launcher
 
 import android.app.admin.DevicePolicyManager
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -31,6 +32,9 @@ import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.RelockTrigger
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.WindowRelock
+import com.kidslauncher.mdm.server.WriteSettingsAccess
+import com.kidslauncher.mdm.server.WriteSettingsRow
+import com.kidslauncher.mdm.server.writeSettingsRowState
 import com.kidslauncher.mdm.play.InstallModeStart
 import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.server.applyProvisioningExtras
@@ -49,6 +53,7 @@ import kotlinx.coroutines.withContext
 
 private const val LOG_TAG = "SettingsFragmentLauncher"
 private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
+private const val WRITE_SETTINGS = "settings_mdm_write_settings"
 
 /**
  * "Set"/"Not set" alone left no way to tell *which* key is configured, or to notice a stale one
@@ -84,6 +89,19 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "battery_exemption")
         }
         updateBatteryRow()
+    }
+
+    /** "Modify system settings" (PLAN fix backlog, 2026-10-24): the app-op before Android's page
+     * opened - a change on return is reported at once, so the PWA's warning follows. */
+    private var writeSettingsBeforePage: Boolean? = null
+    /** Every page threw ActivityNotFoundException on the last tap: the row says so. */
+    private var writeSettingsPageMissing = false
+    private val writeSettingsLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val context = context ?: return@registerForActivityResult
+        if (WriteSettingsAccess.granted(context) != writeSettingsBeforePage) {
+            com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "write_settings")
+        }
+        updateWriteSettingsRow()
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -183,6 +201,23 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             true
         }
 
+        // Android's "Modify system settings" page for Vibb One (the touch sounds row, the clock
+        // format), on the battery row's path: only an unsuspended system page - during the pause on
+        // a managed phone. Our own page first, then Android's list; neither there: the row says so.
+        findPreference<Preference>(WRITE_SETTINGS)?.setOnPreferenceClickListener {
+            val context = requireContext()
+            if (WriteSettingsAccess.granted(context) == false) {
+                val pages = WriteSettingsAccess.pageIntents(context)
+                writeSettingsPageMissing = false
+                if (pages.isNotEmpty()) {
+                    writeSettingsBeforePage = false
+                    writeSettingsPageMissing = !openWriteSettingsPage(pages)
+                }
+            }
+            updateWriteSettingsRow()
+            true
+        }
+
         val restrictionsPaused = findPreference<SwitchPreference>(mdm.keys().restrictionsPaused())
         // isActive() clears a pause that has run out, so the switch never shows a stale "on".
         restrictionsPaused?.isChecked = RestrictionsPause.isActive()
@@ -260,6 +295,44 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         super.onResume()
         // Re-read every time: a pause started or ended, or the dialog answered.
         updateBatteryRow()
+        updateWriteSettingsRow()
+    }
+
+    /** Starts the first of [pages] that Android finds; false only when every one threw
+     * ActivityNotFoundException (any other failure is logged and counts as tried). */
+    private fun openWriteSettingsPage(pages: List<Intent>): Boolean {
+        for (page in pages) {
+            try {
+                writeSettingsLauncher.launch(page)
+                return true
+            } catch (e: ActivityNotFoundException) {
+                Log.w(LOG_TAG, "No \"Modify system settings\" page for this intent, trying the next")
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't open the \"Modify system settings\" page", e)
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun updateWriteSettingsRow() {
+        val context = context ?: return
+        val row = findPreference<Preference>(WRITE_SETTINGS) ?: return
+        val state = writeSettingsRowState(
+            granted = WriteSettingsAccess.granted(context),
+            pageAvailable = WriteSettingsAccess.pageIntents(context).isNotEmpty(),
+            windowOpen = RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive(),
+            pageMissing = writeSettingsPageMissing,
+        )
+        row.summary = getString(
+            when (state) {
+                WriteSettingsRow.GRANTED -> R.string.settings_mdm_write_settings_granted
+                WriteSettingsRow.CAN_OPEN -> R.string.settings_mdm_write_settings_open
+                WriteSettingsRow.PAUSE_FIRST -> R.string.settings_mdm_write_settings_pause_first
+                WriteSettingsRow.NO_PAGE -> R.string.settings_mdm_write_settings_no_page
+                WriteSettingsRow.UNKNOWN -> R.string.settings_mdm_write_settings_unknown
+            },
+        )
     }
 
     private fun updateBatteryRow() {

@@ -45,20 +45,28 @@ object BatteryExemption {
 
     /** Android's dialog for our package as an explicit intent, or null when it doesn't resolve to
      * an unsuspended system package ([dialogTarget]). Started without NEW_TASK, from the activity. */
-    fun dialogIntent(context: Context): Intent? = try {
-        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
-        val info = context.packageManager.resolveActivity(intent, PackageManager.MATCH_SYSTEM_ONLY)?.activityInfo
-        val resolved = info?.let {
-            val flags = it.applicationInfo.flags
-            ResolvedDialog(
-                it.packageName,
-                it.name,
-                system = flags and ApplicationInfo.FLAG_SYSTEM != 0,
-                suspended = flags and ApplicationInfo.FLAG_SUSPENDED != 0,
-            )
-        }
-        dialogTarget(resolved, context.packageName)?.let { intent.setClassName(it.packageName, it.className) }
-    } catch (e: Exception) {
-        null
+    fun dialogIntent(context: Context): Intent? = systemPageIntent(
+        context,
+        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}")),
+    )
+}
+
+/** [intent] made explicit to the system activity that takes it, or null when it doesn't resolve to
+ * an unsuspended system package that isn't ours ([dialogTarget]) - on a managed phone Android's
+ * Settings is hidden and suspended outside "Pause all restrictions". Shared by the battery dialog
+ * and the "Modify system settings" page ([WriteSettingsAccess]). */
+internal fun systemPageIntent(context: Context, intent: Intent): Intent? = try {
+    val info = context.packageManager.resolveActivity(intent, PackageManager.MATCH_SYSTEM_ONLY)?.activityInfo
+    val resolved = info?.let {
+        val flags = it.applicationInfo.flags
+        ResolvedDialog(
+            it.packageName,
+            it.name,
+            system = flags and ApplicationInfo.FLAG_SYSTEM != 0,
+            suspended = flags and ApplicationInfo.FLAG_SUSPENDED != 0,
+        )
     }
+    dialogTarget(resolved, context.packageName)?.let { intent.setClassName(it.packageName, it.className) }
+} catch (e: Exception) {
+    null
 }

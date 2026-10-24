@@ -266,6 +266,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 // Design 36 §4.2: only while the VPN runs with the parent's own server.
                 dnsUpstream = KidVpnService.dnsUpstreamReport(),
                 battery = BatteryStatus.report(context),
+                writeSettingsGranted = WriteSettingsAccess.granted(context),
             )
         )
         // Design 59 (qa-59-step4-code N2): the relocks are told only by a report the server took.
