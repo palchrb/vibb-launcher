@@ -2,7 +2,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>{{ title }} · Vibb Phone</title>
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/static/style.css?v=48">
+<link rel="stylesheet" href="/static/style.css?v=49">
 <!-- The headings' Nunito, from this server only (style.css's @font-face). -->
 <link rel="preload" href="/static/fonts/nunito-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
 
@@ -34,6 +34,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Vibb Phone">
+<!-- The start-up hold (2026-10-24): on the installed app's cold start the page keeps the start-up
+     image's night and mark a moment longer (partials/splash_hold.html, first in the tab pages' body).
+     Not deferred: it decides before the first paint, so the overlay never flashes on another page;
+     it only sets a class and timers. -->
+<script src="/static/splash-hold.js?v=1"></script>
 <script src="/static/register-sw.js?v=3" defer></script>
 <!-- No POST may make the page jump to the top (server/CLAUDE.md): static/scroll-restore.js. Not
      deferred, so form.submit() is hooked before any control can call it. -->

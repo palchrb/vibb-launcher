@@ -2363,3 +2363,15 @@ details.app-display[open] > summary .section-chev {
 @media (prefers-reduced-motion: reduce) {
     .net-progress::before { width: 100%; opacity: 0.5; }
 }
+
+/* ---- The start-up hold (static/splash-hold.js, 2026-10-24): the start-up image a moment longer ---- */
+/* The installed app's cold start only (the script sets .splash-holding on <html> before the first
+   paint; without it the overlay stays `hidden`): the night and the mark exactly as the iPhone's
+   start-up images (templates/partials/splash_hold.html, written by scripts/pwa-startup-images.py),
+   over everything - the status bar's night strip, the tab bar, the Connecting bar. Absolute in the
+   body, which is the screen (design 43: nothing against the viewport). Night in both schemes. */
+.splash-holding .splash-hold { position: absolute; z-index: 3000; top: 0; right: 0; bottom: 0; left: 0; display: flex; align-items: center; justify-content: center; background: var(--night); transition: opacity 250ms ease-out; }
+.splash-holding .splash-hold.is-fading { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+    .splash-holding .splash-hold { transition: none; }
+}

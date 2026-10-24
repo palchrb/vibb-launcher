@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The PWA's iPhone start-up splash: one flat night ground and the Vibb mark, nothing else.
 
-    python3 -I scripts/pwa-startup-images.py             # write the PNGs and head.html's links
+    python3 -I scripts/pwa-startup-images.py             # write the PNGs, head.html's links, the hold's mark
     python3 -I scripts/pwa-startup-images.py --selftest  # check them, write nothing
 
 The mark is the launcher's own Home splash at rest (launcher/app/src/main/res/drawable/
@@ -21,6 +21,11 @@ The screens are server/testdata/pwa_startup_screens.json (shared with the server
 `shell::every_startup_image_has_its_screens_size`): each iPhone portrait size in CSS px and its
 device pixel ratio. head.html's links between the two markers are written from it.
 
+The page then holds the same picture a moment longer (static/splash-hold.js): its overlay,
+server/templates/partials/splash_hold.html, is written here too - the same rings, core, scales, alpha
+and colours as an inline SVG whose viewBox is the PNGs' mark box (the outer ring's edges), MARK_SHARE
+of the shorter side wide (`vmin`), so the overlay and the images can't drift apart.
+
 Python 3 and Pillow, nothing else.
 """
 import json
@@ -35,6 +40,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCREENS = os.path.join(ROOT, "server", "testdata", "pwa_startup_screens.json")
 OUT = os.path.join(ROOT, "server", "static", "startup")
 HEAD = os.path.join(ROOT, "server", "templates", "partials", "head.html")
+HOLD = os.path.join(ROOT, "server", "templates", "partials", "splash_hold.html")
 LAUNCHER_SPLASH = os.path.join(
     ROOT, "launcher", "app", "src", "main", "res", "drawable", "splash_vibb_breathe.xml"
 )
@@ -243,6 +249,75 @@ def head_block(screens, version):
     return "\n".join([BEGIN] + [link(s, version) for s in screens] + [END])
 
 
+def num(v):
+    """A path number as short as SVG reads it: 2 decimals at most, no leading zero."""
+    text = f"{v:.2f}".rstrip("0").rstrip(".")
+    if text in ("", "-0", "-"):
+        return "0"
+    if text.startswith("-0."):
+        return "-" + text[2:]
+    return text[1:] if text.startswith("0.") else text
+
+
+def joined(values):
+    # No separator before a sign, nor before ".5" after a number with its own point (SVG's grammar).
+    out, last = "", ""
+    for v in values:
+        text = num(v)
+        bare = not out or text.startswith("-") or (text.startswith(".") and "." in last)
+        out += text if bare else " " + text
+        last = text
+    return out
+
+
+def svg_path(path):
+    """A ring's polyline as a relative SVG path: the deltas of the copied 2-decimal points, so the
+    sums are those points again (`svg_points` reads it back)."""
+    pts = points(path)
+    deltas = []
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        deltas += [bx - ax, by - ay]
+    return "M" + joined(pts[0]) + "l" + joined(deltas) + "z"
+
+
+def svg_points(d):
+    """The absolute points of an `svg_path` (the selftest's check of the compaction)."""
+    match = re.fullmatch(r"M([^l]+)l(.+)z", d)
+    assert match, d
+    number = r"-?(?:\d+\.?\d*|\.\d+)"
+    x, y = (float(v) for v in re.findall(number, match.group(1)))
+    rest = [float(v) for v in re.findall(number, match.group(2))]
+    out = [(x, y)]
+    for dx, dy in zip(rest[::2], rest[1::2]):
+        x, y = round(x + dx, 2), round(y + dy, 2)
+        out.append((x, y))
+    return out
+
+
+def hex_colour(rgb):
+    return "#%02X%02X%02X" % rgb
+
+
+def hold_partial(share):
+    """templates/partials/splash_hold.html, the overlay static/splash-hold.js shows on a cold start:
+    the viewBox is the PNGs' mark box in path units (2 x RING_REST x reach, as `mark` scales it), the
+    SVG `share` of the shorter side wide, centred on the night by style.css like the PNGs' mark."""
+    half = RING_REST * reach()
+    box = f"{-half:g} {-half:g} {2 * half:g} {2 * half:g}"
+    size = f"{share * 100:g}vmin"
+    rings = "".join(f'<path d="{svg_path(p)}"/>' for p in RINGS)
+    return (
+        "{#- Written by scripts/pwa-startup-images.py (don't edit by hand): the start-up hold, the start-up\n"
+        "    images' night and mark, shown by static/splash-hold.js only on a cold start of the installed app. -#}\n"
+        '<div id="splash-hold" class="splash-hold" aria-hidden="true" hidden>'
+        f'<svg viewBox="{box}" style="width: {size}; height: {size};" focusable="false">'
+        f'<g transform="scale({RING_REST})" fill="none" stroke="{hex_colour(RING)}" '
+        f'stroke-opacity="{RING_ALPHA}" stroke-width="{STROKE}">{rings}</g>'
+        f'<circle r="{CORE_R * CORE_REST:g}" fill="{hex_colour(CORE)}"/>'
+        "</svg></div>\n"
+    )
+
+
 def png_size(path):
     with open(path, "rb") as f:
         head = f.read(24)
@@ -278,6 +353,11 @@ def selftest():
         drawn = render(screen, share).convert("RGB").tobytes()
         with Image.open(os.path.join(OUT, name)) as committed:
             assert committed.convert("RGB").tobytes() == drawn, f"{name} differs from the drawing: run the script"
+    # The hold's overlay: written from the same numbers, its paths exactly the copied rings.
+    assert open(HOLD, encoding="utf-8").read() == hold_partial(share), "splash_hold.html differs: run the script"
+    for path in RINGS:
+        assert svg_points(svg_path(path)) == points(path), "an SVG path isn't its ring"
+    assert [num(v) for v in (0.5, -0.25, -0.001, 12.3, 0.0)] == [".5", "-.25", "0", "12.3", "0"]
     tile = mark(200)
     assert tile.getpixel((0, 0)) == NIGHT
     centre = tile.getpixel((tile.width // 2, tile.height // 2))
@@ -323,7 +403,8 @@ def main():
     head = open(HEAD, encoding="utf-8").read()
     head = head.replace(current_block(head), head_block(screens, version))
     open(HEAD, "w", encoding="utf-8").write(head)
-    print(f"{len(screens)} images, {total} bytes")
+    open(HOLD, "w", encoding="utf-8").write(hold_partial(share))
+    print(f"{len(screens)} images, {total} bytes; {os.path.basename(HOLD)}")
 
 
 if __name__ == "__main__":
