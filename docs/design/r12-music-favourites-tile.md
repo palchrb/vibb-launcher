@@ -642,7 +642,7 @@ Spotify on a room stays out until 54-a2 (§3.5's hand-over unchanged). Four comm
   content over the cover; `LibraryViewTest`'s r12 case.
 - **§2 built as written**: `SKIP_FORWARD_MS = 15_000L`, `skipSeconds`, both `SkipButton`s, the two strings,
   `TransportTest`, `FitTest`'s comment, music/CLAUDE.md. No media-session increments exist (none set), so nothing else.
-- **§3 built**, with these differences from the text:
+- **§3 built**, with these twelve differences from the text:
   1. `mixPlayableFrom(size, from, forward, wrap, origin, playable)` takes `wrap: Boolean`, not the repeat: a step
      wraps always (as `goTo` did), a run's end and a move-on past a run only with repeat ALL.
   2. `MixQueue(order, all, shuffled, repeat)` keeps the queue fixed at the tap (`all`, what `now_playing.mix` stores)
@@ -656,7 +656,9 @@ Spotify on a room stays out until 54-a2 (§3.5's hand-over unchanged). Four comm
      the hearts' order now kept to the stored refs (a ref unhearted since drops on the next shuffle-off, never the
      current one).
   5. Adopt brings the queue back only around the adopted item itself (`restoredMix(...).same`); otherwise the room plays
-     on as that entry's run alone - never a stop because the queue can't be rebuilt.
+     on as a favourites queue of that run alone (its refs only) - never a stop because the queue can't be rebuilt, and
+     still no bookmark moved; at that run's end the queue ends (`mixEnded`: only the stored queue goes, nothing is
+     cleared). Since the fix round (Q-4).
   6. `SonosSuspension`'s standalone place writes no bookmark either when the stored row is a favourites row (the note
      accepted that it might).
   7. A pick in the favourites list always starts its run (`startRun`, `newChoice`), also inside the run: a new pick
@@ -679,3 +681,25 @@ Spotify on a room stays out until 54-a2 (§3.5's hand-over unchanged). Four comm
   -> 8); `SpotifyRendererTest` (an unplayable last track with only a pause: no play call); `GuardsTest`, `NowPlayingTest`,
   `OfflineTest` pins moved with the code. The r8 cases went with option C.
 - **Not done here**: the emulator checks (§4, now docs/testing/emulator.md §6s) - the coordinator's, after code QA.
+
+### Fix round (`docs/review/qa-r12-music-code.md`, Q-1..Q-11)
+
+- **Q-1** `mixPastRun`'s pause is the service's own (`selfPause`: `selfPausing` around it), so the move-on past an item
+  that can't play keeps the sleep timer and "Til slutten"; pinned in `FavouritesTest`, §6s 7b.
+- **Q-2** a held run end (`queueEnded` with "Til slutten" on, a room's Stop) disarms the renderer's
+  `pauseAtItemEnd(null)` before `sleepAtEndReached()`, as §3.4 says; pinned, §6s 12b.
+- **Q-3** `startRun` makes the run the queue's only once `start` took it (the old `run`/`index` back otherwise);
+  `mixMoveOn` passes a refused ref like one that can't play (one lap) instead of ending the queue.
+- **Q-4** a favourites row stays one on every rebuild: `storedMix` reads an unreadable `mix` as the run's own refs
+  (`Snapshot.storedFavourites`, used by restore, adopt and "Spill av på"), and adopt's fallback is a one-run favourites
+  queue (deviation 5) - no bookmark, nothing cleared at its end.
+- **Q-5** RESUME's and the tile's unpause of a favourites queue go through `restartIfStale`; its move-on wraps only
+  with repeat all and says nothing for the stale refs.
+- **Q-6** a run that loads paused on the phone pauses the playing renderer first (an ExoPlayer in ENDED kept
+  `playWhenReady`): the next run never sounds while suspended or held; pinned.
+- **Q-7** `nowView`'s stored path shows what RESUME plays (`restoredMix` over the view: the next favourite at its own
+  place when the row's item isn't held); a row whose entry left the library goes on after its own ref (`storedCurrent`).
+- **Q-8** `UiModelTest`: a stored favourites view is not the same tile (M10).
+- **Q-9/Q-10/Q-11** docs: §6s 10 says the room's "Til slutten" outcome, §6s 13 the gone entry's "Ikke lastet ned"
+  (it stays: §3.9's "no toast" is superseded) and the restart after it, §6s 7b and 12b are new; deviation 5 says its end;
+  the deviations are twelve. Q-10's cost and clock points are accepted as noted (tens of hearts; the wall clock).

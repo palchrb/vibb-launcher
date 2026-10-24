@@ -757,7 +757,9 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
     `now_playing.mix` (`encodeMix` of the whole queue); the row's other fields are the run's, so Home's card, the bar and
     every reader of an entry's row work; `flippedNowPlaying` leaves a mix row alone; `restore` brings the queue back in
     the renderer's view (`restoredMix`: the row's item at its place, else the next ref's own - a book not on the phone is
-    skipped, never waited for). **A room**: `toRoom` keeps the room's view of the queue (own files and Spotify out, the
+    skipped, never waited for; a gone entry's ref found by its item key; an unreadable `mix` is still a favourites
+    row, `storedMix` - so no rebuild ever falls back to an entry's queue and moves its bookmark). The service's own pauses
+    (a move-on past a run, a run loading paused) go through `selfPause`, never the kid's (the sleep timer stays). **A room**: `toRoom` keeps the room's view of the queue (own files and Spotify out, the
     log line), `comeHome` the phone's again (they are back in), adopt the stored queue around the adopted run; Spotify
     on a room stays out until round 54-a2 (r12 §3.5's hand-over: one share link per track). **The player**: the header
     is the playing item's entry, "Favoritt N av M" over the queue, each carousel page its own entry's picture, the heart

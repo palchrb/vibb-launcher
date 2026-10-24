@@ -1872,6 +1872,8 @@ bridge chain (§6l Part A1's setup); the fakes as their sections say (`fake-audi
    tile dims with "Trenger Wi-Fi" when nothing of it can play. Wi-Fi on, fake-spotify `--not-premium`: the Spotify item
    shows "Spør en voksen", "Kan ikke spilles nå" once, the queue goes on and later Spotify refs are skipped; a new tap
    tries again. `--unplayable`: the track is skipped inside its run, or - last in its run - the next run starts.
+   - 7b (qa-r12-music-code Q-1): the sleep sheet's 30 minutes on, Wi-Fi off and mobile data on, a favourites run whose
+     last item is an uncopied stream: the queue moves on past it, and the timer is still shown and still fires.
 8. **Storytel** (fake-storytel §6i): heart book 1 (downloaded) and book 2 (`--no-download`): the tile counts both; on the
    phone only book 1 plays (from its copy, no mint in the log); on the fake room both play (a mint per book).
 9. **Hearts while it plays**: unheart the playing item - it plays on, the tile says 3; heart a new item - not in this
@@ -1879,7 +1881,9 @@ bridge chain (§6l Part A1's setup); the fakes as their sections say (`fake-audi
    the RSS entry's own bookmark was, not where the favourites left it; the half-heard favourite episode shows its
    progress in its list.
 10. **"Til slutten"** on the last item of a run: it pauses at the end; the player shows the next favourite at its own
-    place, paused; play plays it. The minute timer across an RSS -> Spotify switch fades on the web player.
+    place, paused; play plays it. The minute timer across an RSS -> Spotify switch fades on the web player. On a room
+    (qa-r12-music-code Q-9) the usual outcome is the 3 s ramp's pause just before the run's last item ends: the room
+    sits paused on that item; play plays its last seconds, then the next run (as inside an entry's queue).
 11. **Restart**: pause on the Spotify item, `adb shell am force-stop me.vibb.music.debug`, open: the library opens on
     "Favoritter", the bar shows the Spotify item paused (no WebView in logcat); Home's RESUME plays it; next goes to the
     next favourite. Again paused on an RSS item, with the queue shuffled: the order comes back the same.
@@ -1888,8 +1892,12 @@ bridge chain (§6l Part A1's setup); the fakes as their sections say (`fake-audi
     itself (fake-sonos's log: Stop + `SetAVTransportURI` per run); back to the phone: on at the room's item, the own file
     and Spotify back in the queue. Only own files and Spotify hearted: the room says "Kan ikke spilles på Sonos", the
     phone plays on.
+    - 12b (qa-r12-music-code Q-2): on the fake room, "Til slutten" during a run's last item, let it run off its end
+      (Stop, the next run held paused), then play: the next run's first item plays through - no second stop at its end.
 13. **An entry removed** (the debug feed without it) while its favourite plays: plays on; its other favourites are
-    skipped; after the sync the tile's count drops.
+    skipped with "Ikke lastet ned" once (qa-r12-music-code Q-10: the note's "no toast" is superseded); after the sync the
+    tile's count drops. Force-stop and open with the stored queue on that gone entry: the bar and RESUME go on at the
+    next favourite, not from the queue's top (Q-7).
 14. **Back and start**: back from the player during the favourites queue lands on "Favoritter" with its tile; after a
     restart with it stored, the library opens on "Favoritter". A tap on the playing run's own entry under "Alle" starts
     that entry (it doesn't unpause the favourites queue).
