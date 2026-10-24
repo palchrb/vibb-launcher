@@ -147,7 +147,7 @@ class HomeRound7Test {
         assertTrue(loads.contains("now = { android.os.SystemClock.elapsedRealtime() }"))
         assertFalse("one consumer, through the debounce only", loads.contains("consumeEach"))
         // A failing load is logged and the consumer drains on (qa-appload-debounce-code Q-3).
-        val body = loads.substringAfter("now = { android.os.SystemClock.elapsedRealtime() },")
+        val body = loads.substringAfter("heldSince = { com.kidslauncher.mdm.ui.home.AppLoadHold.heldSince },")
         assertTrue(body.trimStart().startsWith(") {\n"))
         assertTrue(body.substringAfter(") {").trimStart().startsWith("try {"))
         assertTrue(body.contains("} catch (e: Exception) {"))
@@ -189,7 +189,12 @@ class HomeRound7Test {
     }
 
     /** The real consumer loop on a virtual clock: requests at [times] (ms), each load taking [loadMs]; the loads' times. */
-    private fun loadsFor(times: List<Long>, loadMs: Long = 0, closeAfter: Boolean = false): List<Long> {
+    private fun loadsFor(
+        times: List<Long>,
+        loadMs: Long = 0,
+        closeAfter: Boolean = false,
+        held: (Long) -> Long? = { null },
+    ): List<Long> {
         var now = 0L
         val pending = ArrayDeque(times.sorted())
         val loads = mutableListOf<Long>()
@@ -218,6 +223,7 @@ class HomeRound7Test {
                     }
                 },
                 now = { now },
+                heldSince = { held(now) },
             ) {
                 loads += now
                 now += loadMs
@@ -253,6 +259,63 @@ class HomeRound7Test {
     fun `a storm that never goes quiet still loads every 2 s`() {
         val storm = (0 until 250).map { 10_000L + it * 20 } // 5 s, a request every 20 ms
         assertEquals(listOf(0L, 12_000L, 14_020L, 15_280L), loadsFor(listOf(0L) + storm))
+    }
+
+    // ---- an apply holds the loads until it ends (the jelly36 storm run: 59 loads in two minutes) -----------------
+
+    @Test
+    fun `an apply holds the loads, at most 10 s`() {
+        assertEquals(10_000L, APP_LOAD_HOLD_CAP_MS)
+        assertFalse("no apply", appLoadHeld(now = 5_000, heldSince = null))
+        assertTrue(appLoadHeld(now = 5_000, heldSince = 5_000))
+        assertTrue(appLoadHeld(now = 14_999, heldSince = 5_000))
+        assertFalse("the cap", appLoadHeld(now = 15_000, heldSince = 5_000))
+        // apply holds at its start and releases in a finally; the consumer reads the hold.
+        val enforcer = code("server/AppEnforcer.kt")
+        val apply = enforcer.substringAfter("fun apply(context: Context, policy: PolicyResponse?").substringBefore("\n    }\n")
+        val hold = apply.indexOf("AppLoadHold.hold(android.os.SystemClock.elapsedRealtime())")
+        val body = apply.indexOf("applyHeld(context, policy, fromSync, parentChoice)")
+        val release = apply.indexOf("} finally {\n            com.kidslauncher.mdm.ui.home.AppLoadHold.release()")
+        assertTrue(apply, hold >= 0 && hold < apply.indexOf("try {") && apply.indexOf("try {") < body && body < release)
+        assertEquals("the pass itself is applyHeld", 1, Regex("private fun applyHeld\\(").findAll(enforcer).count())
+        val loads = code("Application.kt").substringAfter("private val appLoads: Channel<Unit> by lazy {").substringBefore("\n    }\n")
+        assertTrue(loads.contains("heldSince = { com.kidslauncher.mdm.ui.home.AppLoadHold.heldSince },"))
+    }
+
+    @Test
+    fun `the hold nests and ends only at the outer release`() {
+        AppLoadHold.hold(1_000)
+        AppLoadHold.hold(2_000)
+        assertEquals(1_000L, AppLoadHold.heldSince)
+        AppLoadHold.release()
+        assertEquals(1_000L, AppLoadHold.heldSince)
+        AppLoadHold.release()
+        assertEquals(null, AppLoadHold.heldSince)
+        AppLoadHold.release()
+        assertEquals("an extra release is harmless", null, AppLoadHold.heldSince)
+    }
+
+    @Test
+    fun `a 5 s apply with 50 callbacks is one load, at its release`() {
+        val storm = (0 until 50).map { 10_000L + it * 100 } // 10.0 .. 14.9 s, more than 300 ms apart would not matter
+        val apply: (Long) -> Long? = { t -> if (t in 10_000L until 15_000L) 10_000L else null }
+        assertEquals(listOf(0L, 15_000L), loadsFor(listOf(0L) + storm, held = apply))
+        // Callbacks 400 ms apart - each its own burst without the hold - still one load.
+        val sparse = (0 until 12).map { 10_000L + it * 400 }
+        assertEquals(listOf(0L, 15_000L), loadsFor(listOf(0L) + sparse, held = apply))
+    }
+
+    @Test
+    fun `a hung apply holds the loads 10 s, then one load`() {
+        val storm = (0 until 50).map { 10_000L + it * 100 }
+        assertEquals(listOf(0L, 20_000L), loadsFor(listOf(0L) + storm, held = { 10_000L }))
+    }
+
+    @Test
+    fun `no apply keeps the debounce, and the process's first request stays at once during an apply`() {
+        val sparse = (0 until 12).map { 10_000L + it * 400 }
+        assertEquals(listOf(0L) + sparse.map { it + 300 }, loadsFor(listOf(0L) + sparse))
+        assertEquals(listOf(10_000L), loadsFor(listOf(10_000L), held = { 10_000L }))
     }
 
     @Test

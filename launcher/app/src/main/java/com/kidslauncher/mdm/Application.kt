@@ -508,6 +508,7 @@ class Application : android.app.Application() {
                 com.kidslauncher.mdm.ui.home.runAppLoads(
                     next = { timeoutMs -> requests.nextAppLoad(timeoutMs) },
                     now = { android.os.SystemClock.elapsedRealtime() },
+                    heldSince = { com.kidslauncher.mdm.ui.home.AppLoadHold.heldSince },
                 ) {
                     try {
                         // Once per process, before the first list (it decodes the cached policy -

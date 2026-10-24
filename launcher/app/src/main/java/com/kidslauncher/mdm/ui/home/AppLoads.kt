@@ -43,6 +43,42 @@ fun appLoadWaitMs(
     maxWaitMs: Long = APP_LOAD_MAX_WAIT_MS,
 ): Long = (minOf(lastEventAt + quietMs, firstPendingAt + maxWaitMs) - now).coerceAtLeast(0L)
 
+/** How long an `AppEnforcer.apply` may hold the app-list loads at most (one that hangs). */
+const val APP_LOAD_HOLD_CAP_MS = 10_000L
+
+/** How often a burst that waits for a hold looks again whether it was released. */
+const val APP_LOAD_HOLD_POLL_MS = 100L
+
+/**
+ * Whether an `AppEnforcer.apply` holds the app-list loads now (the provisioning storm's follow-up, the coordinator's
+ * jelly36 run: on a loaded emulator the enforcer's per-package calls came more than 300 ms apart, so most packages
+ * opened a burst of their own - 59 loads in two minutes). [heldSince] is the apply's start (`null` = no apply runs);
+ * a hold ends with the apply, or [capMs] after its start.
+ */
+fun appLoadHeld(now: Long, heldSince: Long?, capMs: Long = APP_LOAD_HOLD_CAP_MS): Boolean =
+    heldSince != null && now - heldSince < capMs
+
+/**
+ * The hold's state: `AppEnforcer.apply` calls [hold] at its start and [release] at its end (in a `finally`). A nested
+ * hold (`apply` is `@Synchronized`, so only a reentrant call) keeps the first start.
+ */
+object AppLoadHold {
+    @Volatile
+    var heldSince: Long? = null
+        private set
+    private var depth = 0
+
+    @Synchronized
+    fun hold(nowElapsed: Long) {
+        if (depth++ == 0) heldSince = nowElapsed
+    }
+
+    @Synchronized
+    fun release() {
+        if (depth > 0 && --depth == 0) heldSince = null
+    }
+}
+
 /** What waiting for the next load request gave. */
 enum class AppLoadNext { REQUEST, TIMEOUT, CLOSED }
 
@@ -63,12 +99,15 @@ suspend fun ReceiveChannel<Unit>.nextAppLoad(timeoutMs: Long?): AppLoadNext {
 /**
  * The `appLoads` consumer: the process's first request loads at once; every later one opens a burst that loads once
  * when [appLoadDue] says so, each request inside it moving the quiet period on. [next] waits for a request (see
- * [nextAppLoad]), [now] is elapsed realtime, [load] is the whole load (the same work as before the debounce). Returns
- * when the channel closes (tests; the app's never does), after loading a burst still pending.
+ * [nextAppLoad]), [now] is elapsed realtime, [load] is the whole load (the same work as before the debounce). While
+ * [heldSince] says an `AppEnforcer.apply` runs ([appLoadHeld]) a burst waits for its end - looking again every
+ * [APP_LOAD_HOLD_POLL_MS] - and loads at once when the hold ends (released, or its cap). Returns when the channel
+ * closes (tests; the app's never does), after loading a burst still pending.
  */
 suspend fun runAppLoads(
     next: suspend (timeoutMs: Long?) -> AppLoadNext,
     now: () -> Long,
+    heldSince: () -> Long? = { null },
     load: suspend () -> Unit,
 ) {
     var firstOfProcess = true
@@ -82,8 +121,20 @@ suspend fun runAppLoads(
         // When the consumer took it: a request sent during the last load waited for that load's end.
         val firstAt = now()
         var lastAt = firstAt
-        while (!appLoadDue(now(), firstAt, lastAt)) {
-            when (next(appLoadWaitMs(now(), firstAt, lastAt))) {
+        var wasHeld = false
+        while (true) {
+            val t = now()
+            val since = heldSince()
+            val held = appLoadHeld(t, since)
+            // A hold that ended (released, or its cap) loads the burst at once.
+            if (!held && (wasHeld || appLoadDue(t, firstAt, lastAt))) break
+            val wait = if (held && since != null) {
+                wasHeld = true
+                minOf(APP_LOAD_HOLD_POLL_MS, since + APP_LOAD_HOLD_CAP_MS - t)
+            } else {
+                appLoadWaitMs(t, firstAt, lastAt)
+            }
+            when (next(wait)) {
                 AppLoadNext.REQUEST -> lastAt = now()
                 AppLoadNext.TIMEOUT -> Unit
                 AppLoadNext.CLOSED -> {

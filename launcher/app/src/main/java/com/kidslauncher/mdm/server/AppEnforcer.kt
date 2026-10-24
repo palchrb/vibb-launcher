@@ -297,6 +297,18 @@ object AppEnforcer {
      * only then may Android's lock be rolled back. A bare policy is never one. */
     @Synchronized
     fun apply(context: Context, policy: PolicyResponse?, fromSync: Boolean = false, parentChoice: Boolean = false) {
+        // The app list loads once when this pass ends, not once per package it hides or suspends (the provisioning
+        // storm's follow-up, `ui/home/AppLoads.kt`'s `appLoadHeld`; at most 10 s if a pass hangs).
+        com.kidslauncher.mdm.ui.home.AppLoadHold.hold(android.os.SystemClock.elapsedRealtime())
+        try {
+            applyHeld(context, policy, fromSync, parentChoice)
+        } finally {
+            com.kidslauncher.mdm.ui.home.AppLoadHold.release()
+        }
+    }
+
+    /** [apply]'s pass, under its lock and its hold of the app-list loads. */
+    private fun applyHeld(context: Context, policy: PolicyResponse?, fromSync: Boolean, parentChoice: Boolean) {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         if (!dpm.isDeviceOwnerApp(context.packageName)) {
             return
