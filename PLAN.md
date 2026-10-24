@@ -1637,6 +1637,9 @@ findings, merge to `main`, full suite once.
   tekst; bare en stor logo og natt bakgrunnen". The launcher's resting Vibb mark on night, 13 iPhone portrait PNGs
   from `scripts/pwa-startup-images.py`; Android's manifest background night (pwa.md, "Start-up splash"). The real
   iPhone cold start is the user's check.
+  - **The hold (2026-10-24, branch `pwa-splash-hold`)**: "Kunne kanskje blitt vist et sekund lenger": the page keeps
+    the same night and mark until 1000 ms after load (at most 1600 ms), then fades - the installed app's cold start
+    on a phone only (pwa.md, "Start-up splash", "The hold"). The iPhone check is the user's.
 - **The lock glance round (2026-10-24, branch `r11-glance`, design r11; merged 2026-10-24; emulator run `docs/testing/2026-10-24-r11-glance-run.md`, all PASS)**: the user's
   three asks on `jellystar2` - (1) the whole page scrolls (clock, date, tiles and rows as one; r9's fit is gone, at
   most eight rows then "+ N varsler til"), (2) the music tile is compact from two rows, (3) a row swiped sideways is
