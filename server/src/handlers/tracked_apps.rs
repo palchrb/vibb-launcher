@@ -1,7 +1,9 @@
 //! Watches arbitrary GitHub repos' Releases for a new APK and pushes it to
 //! devices - or, for apps with no public release feed (or where an admin
 //! wants full manual control, including the launcher's own updates), lets
-//! the admin upload an APK directly. Both source types feed the same
+//! the admin upload an APK directly; or watches an F-Droid repo for a package's newest version,
+//! each APK checked against the repo's index ([crate::fdroid], `sync_fdroid`). All three source
+//! types feed the same
 //! `latest_release_tag`/`latest_release_file_path` fields and the same
 //! device-facing API (`handlers::device_api::tracked_app_updates`), so nothing
 //! downstream of "there's a cached release ready to serve" needs to know or
@@ -37,14 +39,20 @@ const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// ...and so does one still running after this, however steadily it trickles.
 const DOWNLOAD_TOTAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
+/// A release's APK: a GitHub release asset as its API lists it, or an F-Droid repo's APK
+/// (`sync_fdroid`: the id is the versionCode).
 #[derive(Deserialize)]
-struct GithubAsset {
+struct ReleaseAsset {
     id: i64,
     name: String,
     browser_download_url: String,
-    /// Bytes, as GitHub reports it; 0 if missing.
+    /// Bytes, as GitHub (or the repo's index) reports it; 0 if missing.
     #[serde(default)]
     size: u64,
+    /// The SHA-256 (lower-case hex) the download must have, from an F-Droid repo's index: checked
+    /// before the file is moved into place ([stream_to_file]). `None` for GitHub.
+    #[serde(skip)]
+    sha256: Option<String>,
 }
 
 /// An APK is a ZIP file: anything else (an HTML error page, a truncated download) must never be
@@ -56,7 +64,7 @@ fn check_apk_download(head: &[u8], len: u64, expected_size: u64) -> Result<(), S
     }
     if expected_size != 0 && len != expected_size {
         return Err(format!(
-            "downloaded asset has {len} bytes, GitHub lists {expected_size}"
+            "downloaded asset has {len} bytes, the release lists {expected_size}"
         ));
     }
     Ok(())
@@ -140,7 +148,7 @@ struct GithubRelease {
     prerelease: bool,
     #[serde(default)]
     draft: bool,
-    assets: Vec<GithubAsset>,
+    assets: Vec<ReleaseAsset>,
 }
 
 /// Hits the Releases *list* endpoint rather than `/releases/latest` - the
@@ -161,7 +169,7 @@ async fn fetch_latest_release(
     include_prereleases: bool,
     asset_pattern: Option<&str>,
     tag_prefix: Option<&str>,
-) -> Result<(GithubRelease, GithubAsset), Failure> {
+) -> Result<(GithubRelease, ReleaseAsset), Failure> {
     use SyncProblem::*;
     // An invalid stored filter fails before any request.
     AssetFilter::parse(asset_pattern).map_err(filter_failure)?;
@@ -215,7 +223,7 @@ fn release_from(
     include_prereleases: bool,
     asset_pattern: Option<&str>,
     tag_prefix: Option<&str>,
-) -> Result<(GithubRelease, GithubAsset), Failure> {
+) -> Result<(GithubRelease, ReleaseAsset), Failure> {
     let filter = AssetFilter::parse(asset_pattern).map_err(filter_failure)?;
     newest_matching_release(releases, include_prereleases, &filter, tag_prefix)
         .map_err(|e| Failure::new(SyncProblem::NoRelease, e))
@@ -269,7 +277,7 @@ fn newest_matching_release(
     include_prereleases: bool,
     filter: &AssetFilter,
     tag_prefix: Option<&str>,
-) -> Result<(GithubRelease, GithubAsset), String> {
+) -> Result<(GithubRelease, ReleaseAsset), String> {
     releases
         .into_iter()
         .filter(|r| !r.draft && (include_prereleases || !r.prerelease))
@@ -297,13 +305,17 @@ impl ChunkSource for reqwest::Response {
 /// A download's temp file, deleted when this is dropped unless [TempDownload::keep] ran - so an
 /// error return, a timeout and a future dropped half-way (a "Check now" whose request went away,
 /// a shutdown) all remove it.
-struct TempDownload {
-    path: String,
+pub(crate) struct TempDownload {
+    pub(crate) path: String,
     keep: bool,
 }
 
 impl TempDownload {
-    fn keep(mut self) {
+    pub(crate) fn new(path: String) -> Self {
+        TempDownload { path, keep: false }
+    }
+
+    pub(crate) fn keep(mut self) {
         self.keep = true;
     }
 }
@@ -330,13 +342,16 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 
 /// Streams an asset to `final_path` through a temp file next to it (`<final_path>.<random>.part`),
 /// renamed into place only once it is a complete APK: ZIP header, exactly `expected_size` bytes
-/// when GitHub lists one, never over [MAX_ASSET_BYTES]. A chunk that takes longer than `stall`
-/// fails the download. Nothing is held in memory beyond one chunk. Returns the bytes written and
-/// their SHA-256, which the phones check the whole file against (design 13 QA #2).
+/// when the release lists one, never over [MAX_ASSET_BYTES], and - with `expected_sha256` (an
+/// F-Droid repo's index) - exactly that SHA-256, else `ChecksumMismatch` and nothing is kept. A
+/// chunk that takes longer than `stall` fails the download. Nothing is held in memory beyond one
+/// chunk. Returns the bytes written and their SHA-256, which the phones check the whole file
+/// against (design 13 QA #2).
 async fn stream_to_file(
     source: &mut impl ChunkSource,
     final_path: &str,
     expected_size: u64,
+    expected_sha256: Option<&str>,
     stall: Duration,
 ) -> Result<Downloaded, Failure> {
     use SyncProblem::{Download, Server, TooBig};
@@ -375,7 +390,7 @@ async fn stream_to_file(
         if expected_size != 0 && written > expected_size {
             return Err(Failure::new(
                 Download,
-                format!("download is longer than the {expected_size} bytes GitHub lists"),
+                format!("download is longer than the {expected_size} bytes the release lists"),
             ));
         }
         if head.len() < 4 {
@@ -391,6 +406,17 @@ async fn stream_to_file(
         digest.update(&chunk);
     }
     check_apk_download(&head, written, expected_size).map_err(|e| Failure::new(Download, e))?;
+    let sha256 = hex_digest(digest.finalize());
+    if let Some(expected) = expected_sha256
+        && !sha256.eq_ignore_ascii_case(expected)
+    {
+        return Err(Failure::new(
+            SyncProblem::ChecksumMismatch,
+            format!(
+                "the download's SHA-256 is {sha256}, the repo's index says {expected} - not stored"
+            ),
+        ));
+    }
     let server = |e: std::io::Error| Failure::new(Server, e.to_string());
     file.flush().await.map_err(server)?;
     file.sync_all().await.map_err(server)?;
@@ -401,7 +427,7 @@ async fn stream_to_file(
     temp.keep();
     Ok(Downloaded {
         size: written,
-        sha256: hex_digest(digest.finalize()),
+        sha256,
     })
 }
 
@@ -413,7 +439,7 @@ fn size_limit_text() -> String {
 /// Downloads `asset` to `final_path` (see [stream_to_file]): refused up front when GitHub lists it
 /// over [MAX_ASSET_BYTES]; fails when the server sends no data for [DOWNLOAD_STALL_TIMEOUT]. The
 /// overall cap ([DOWNLOAD_TOTAL_TIMEOUT]) is the caller's.
-async fn download_asset(asset: &GithubAsset, final_path: &str) -> Result<Downloaded, Failure> {
+async fn download_asset(asset: &ReleaseAsset, final_path: &str) -> Result<Downloaded, Failure> {
     use SyncProblem::{Download, Server};
     let too_big = |bytes: u64| {
         Failure::new(
@@ -432,6 +458,7 @@ async fn download_asset(asset: &GithubAsset, final_path: &str) -> Result<Downloa
     let client = reqwest::Client::builder()
         .user_agent("kid-phone-server (self-hosted, github.com)")
         .connect_timeout(Duration::from_secs(15))
+        .redirect(https_redirects())
         .build()
         .map_err(|e| Failure::new(Server, e.to_string()))?;
     let mut response = tokio::time::timeout(
@@ -460,9 +487,29 @@ async fn download_asset(asset: &GithubAsset, final_path: &str) -> Result<Downloa
         &mut response,
         final_path,
         asset.size,
+        asset.sha256.as_deref(),
         DOWNLOAD_STALL_TIMEOUT,
     )
     .await
+}
+
+/// At most 5 redirects, and never from https to anything else: GitHub's asset links redirect to
+/// its CDN, an F-Droid repo's to a mirror - both over https (the F-Droid trust statement: the
+/// index and the APK come over HTTPS).
+pub(crate) fn https_redirects() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let from_https = attempt
+            .previous()
+            .first()
+            .is_some_and(|first| first.scheme() == "https");
+        if attempt.previous().len() > 5 {
+            attempt.error("more than 5 redirects")
+        } else if from_https && attempt.url().scheme() != "https" {
+            attempt.error("a redirect away from https")
+        } else {
+            attempt.follow()
+        }
+    })
 }
 
 /// Deletes every `<root>/<app id>/*.part`: left by a crash or a power cut mid-download, which
@@ -824,6 +871,15 @@ pub enum SyncProblem {
     Server,
     /// The app was removed while it synced.
     Removed,
+    /// The F-Droid repo doesn't have the package (its API's 404, or not in its index).
+    FdroidUnknown,
+    /// No answer from the F-Droid repo: the network, a timeout, a 5xx.
+    RepoUnreachable,
+    /// The repo's entry.json, index or API answer can't be used (not an F-Droid repo, too big,
+    /// no APK for the version, the stored repo or package invalid).
+    RepoError,
+    /// The APK (or the index) didn't have the SHA-256 the repo lists: nothing stored.
+    ChecksumMismatch,
 }
 
 impl SyncProblem {
@@ -844,6 +900,10 @@ impl SyncProblem {
             SyncProblem::Taken => "Package belongs to another app",
             SyncProblem::Server => "Something went wrong",
             SyncProblem::Removed => "The app was removed",
+            SyncProblem::FdroidUnknown => "F-Droid doesn't know this package",
+            SyncProblem::RepoUnreachable => "The repo didn't answer",
+            SyncProblem::RepoError => "The repo's answer can't be used",
+            SyncProblem::ChecksumMismatch => "Download didn't match the repo's checksum",
         }
     }
 }
@@ -965,8 +1025,10 @@ async fn sync_one_app(state: &AppState, id: i64, forced: bool) -> Result<(), Fai
         .await
         .map_err(|e| Failure::new(SyncProblem::Server, e.to_string()))?
         .ok_or_else(|| Failure::new(SyncProblem::Removed, "the app was removed"))?;
-    if app.source_type != "github" {
-        return Ok(());
+    match app.source_type.as_str() {
+        "github" => {}
+        "fdroid" => return sync_fdroid(state, &app, forced).await,
+        _ => return Ok(()),
     }
 
     let (release, asset) = fetch_latest_release(
@@ -985,6 +1047,121 @@ async fn sync_one_app(state: &AppState, id: i64, forced: bool) -> Result<(), Fai
     sync_release(state, &app, &release.tag_name, &asset, forced).await
 }
 
+/// Marks the app checked (the page's "Last checked").
+async fn touch_checked(state: &AppState, id: i64) {
+    sqlx::query("UPDATE tracked_apps SET last_checked_at = datetime('now') WHERE id = ?")
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .ok();
+}
+
+/// An F-Droid app's sync ([crate::fdroid]): the newest version from the repo's per-package API
+/// (f-droid.org) or its index (any other repo), its SHA-256 and size from the repo's index, then
+/// [sync_release] with that hash, so the APK is checked before it is stored. The release is
+/// stored as a GitHub one: tag `v<versionName>`, asset id = the versionCode.
+async fn sync_fdroid(state: &AppState, app: &TrackedApp, forced: bool) -> Result<(), Failure> {
+    use crate::fdroid;
+    let repo = app
+        .fdroid_repo
+        .as_deref()
+        .and_then(fdroid::Repo::from_stored);
+    let package = app
+        .fdroid_package
+        .as_deref()
+        .filter(|p| crate::app_display::valid_package_name(p));
+    let (Some(repo), Some(package)) = (repo, package) else {
+        return Err(Failure::new(
+            SyncProblem::RepoError,
+            "the stored repo address or package isn't valid - fix it under Details",
+        ));
+    };
+    let client = fdroid::client()?;
+    let from_api = match &repo.api {
+        Some(api) => Some(fdroid::api_version(&client, api, package).await?),
+        None => None,
+    };
+    // The API's version is the cached one: nothing to download, and no index needed.
+    if let Some((code, name)) = &from_api
+        && app.latest_release_asset_id == Some(*code)
+        && app.latest_release_tag.as_deref() == Some(fdroid::tag_of(name, *code).as_str())
+    {
+        touch_checked(state, app.id).await;
+        return Ok(());
+    }
+    let index = fdroid::index_file(
+        &client,
+        &repo,
+        &state.tracked_apps_dir.join(fdroid::CACHE_DIR),
+    )
+    .await?;
+    let versions = fdroid::read_package(index, package).await?;
+    let version = fdroid::pick(&versions, package, from_api.as_ref().map(|(code, _)| *code))?;
+    touch_checked(state, app.id).await;
+    // The API's name when there is one, so the check above matches next time.
+    let name = match &from_api {
+        Some((_, name)) if !name.trim().is_empty() => name.as_str(),
+        _ => version.name.as_str(),
+    };
+    let asset = ReleaseAsset {
+        id: version.code,
+        name: version.file.clone(),
+        browser_download_url: format!("{}/{}", repo.url, version.file),
+        size: version.size,
+        sha256: Some(version.sha256.clone()),
+    };
+    sync_release(
+        state,
+        app,
+        &fdroid::tag_of(name, version.code),
+        &asset,
+        forced,
+    )
+    .await
+}
+
+/// A release tag as part of a file name: anything but letters, digits, `.`, `_` and `-` becomes
+/// `_` (an F-Droid versionName is free text; a GitHub tag may hold a `/`).
+fn file_safe(tag: &str) -> String {
+    tag.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// An F-Droid app's APK must be the repo's package: anything else is refused before it is pinned
+/// or stored (a GitHub or manual app is checked by its pins alone).
+fn check_fdroid_package(
+    app: &TrackedApp,
+    identity: &crate::apk::ApkIdentity,
+) -> Result<(), Failure> {
+    let Some(expected) = app
+        .fdroid_package
+        .as_deref()
+        .filter(|_| app.source_type == "fdroid")
+    else {
+        return Ok(());
+    };
+    match identity.package.as_deref() {
+        Some(package) if package == expected => Ok(()),
+        Some(package) => Err(Failure::new(
+            SyncProblem::OtherApp,
+            format!(
+                "refused: the repo's APK is the Android package {package}, this app is {expected}"
+            ),
+        )),
+        None => Err(Failure::new(
+            SyncProblem::CantCheck,
+            "refused: the repo's APK has no readable Android package",
+        )),
+    }
+}
+
 /// Downloads `asset` of release `tag` for `app` and caches it, unless it is what's cached already,
 /// or the release the last sync refused (unless `forced`). A release refused for its package or
 /// key is remembered ([SyncStatus::refused]).
@@ -992,7 +1169,7 @@ async fn sync_release(
     state: &AppState,
     app: &TrackedApp,
     tag: &str,
-    asset: &GithubAsset,
+    asset: &ReleaseAsset,
     forced: bool,
 ) -> Result<(), Failure> {
     use SyncProblem::*;
@@ -1025,7 +1202,7 @@ async fn sync_release(
         .await
         .map_err(|e| Failure::new(Server, e.to_string()))?;
     let file_path = app_dir
-        .join(format!("{}-{}.apk", tag, asset.id))
+        .join(format!("{}-{}.apk", file_safe(tag), asset.id))
         .to_string_lossy()
         .into_owned();
     // Streamed to disk, never held in memory: Element X's universal APK is 326 MB.
@@ -1046,12 +1223,14 @@ async fn sync_release(
         .await
         .map_err(|e| Failure::new(Unreadable, e))
     {
-        Ok(identity) => match check_pins(app, &identity) {
-            Ok(()) => check_new_package(state, app, &identity)
-                .await
-                .map(|()| identity),
-            Err(err) => Err(err),
-        },
+        Ok(identity) => {
+            match check_fdroid_package(app, &identity).and_then(|()| check_pins(app, &identity)) {
+                Ok(()) => check_new_package(state, app, &identity)
+                    .await
+                    .map(|()| identity),
+                Err(err) => Err(err),
+            }
+        }
         Err(err) => Err(err),
     };
     let identity = match checked {
@@ -1141,7 +1320,7 @@ pub async fn run_scheduled_tracked_app_sync(state: AppState) {
 /// A random on-disk filename component, not anything browser-supplied -
 /// avoids trusting client input for a filesystem path. Reuses the device-
 /// token generator purely for its randomness, not as a credential here.
-fn random_label() -> String {
+pub(crate) fn random_label() -> String {
     generate_device_token()
 }
 
@@ -2650,11 +2829,12 @@ mod tests {
             draft: false,
             assets: assets
                 .iter()
-                .map(|(id, name)| GithubAsset {
+                .map(|(id, name)| ReleaseAsset {
                     id: *id,
                     name: name.to_string(),
                     browser_download_url: format!("https://example.org/{name}"),
                     size: 0,
+                    sha256: None,
                 })
                 .collect(),
         }
@@ -2935,7 +3115,7 @@ mod tests {
             Step::Data(b"\x04rest"),
             Step::Data(b"-of-the-zip"),
         ]);
-        let written = stream_to_file(&mut source, target, 19, STALL)
+        let written = stream_to_file(&mut source, target, 19, None, STALL)
             .await
             .unwrap();
         assert_eq!(written.size, 19);
@@ -2958,8 +3138,12 @@ mod tests {
         let target = dir.path().join("v1-14.apk");
         let target = target.to_str().unwrap();
         let cases: Vec<(Vec<Step>, u64, &str)> = vec![
-            // Shorter than GitHub lists.
-            (vec![Step::Data(b"PK\x03\x04abc")], 100, "GitHub lists 100"),
+            // Shorter than the release lists.
+            (
+                vec![Step::Data(b"PK\x03\x04abc")],
+                100,
+                "the release lists 100",
+            ),
             // Longer than GitHub lists: stopped at once.
             (
                 vec![Step::Data(b"PK\x03\x04abc"), Step::Data(b"more")],
@@ -2988,7 +3172,7 @@ mod tests {
         ];
         for (steps, expected_size, error) in cases {
             let mut source = Canned::new(steps);
-            let err = stream_to_file(&mut source, target, expected_size, STALL)
+            let err = stream_to_file(&mut source, target, expected_size, None, STALL)
                 .await
                 .unwrap_err();
             assert!(err.detail.contains(error), "{err}");
@@ -3008,7 +3192,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("missing").join("v1-14.apk");
         let mut source = Canned::new([Step::Data(b"PK\x03\x04abc")]);
-        let err = stream_to_file(&mut source, target.to_str().unwrap(), 0, STALL)
+        let err = stream_to_file(&mut source, target.to_str().unwrap(), 0, None, STALL)
             .await
             .unwrap_err();
         assert_eq!(err.problem, SyncProblem::Server, "{err}");
@@ -3023,7 +3207,7 @@ mod tests {
         let target = dir.path().join("v1-14.apk");
         let target = target.to_str().unwrap();
         let mut source = Canned::new([Step::Data(b"PK\x03\x04abc"), Step::Stall]);
-        let download = stream_to_file(&mut source, target, 0, Duration::from_secs(600));
+        let download = stream_to_file(&mut source, target, 0, None, Duration::from_secs(600));
         assert!(
             tokio::time::timeout(Duration::from_millis(200), download)
                 .await
@@ -3040,12 +3224,13 @@ mod tests {
     async fn an_asset_over_the_limit_is_refused_before_downloading() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("big.apk");
-        let asset = GithubAsset {
+        let asset = ReleaseAsset {
             id: 1,
             name: "big.apk".to_string(),
             // Nothing listens there: an attempt to download would fail differently.
             browser_download_url: "http://127.0.0.1:9/big.apk".to_string(),
             size: MAX_ASSET_BYTES + 1,
+            sha256: None,
         };
         let err = download_asset(&asset, target.to_str().unwrap())
             .await
@@ -3118,6 +3303,10 @@ mod tests {
             Taken,
             Server,
             Removed,
+            FdroidUnknown,
+            RepoUnreachable,
+            RepoError,
+            ChecksumMismatch,
         ];
         let titles: std::collections::HashSet<&str> = all.iter().map(|p| p.title()).collect();
         assert_eq!(titles.len(), all.len());
@@ -3251,11 +3440,12 @@ mod tests {
                 .await
                 .unwrap()
         };
-        let asset = GithubAsset {
+        let asset = ReleaseAsset {
             id: 77,
             name: "app.apk".to_string(),
             browser_download_url: url,
             size,
+            sha256: None,
         };
 
         let first = sync_release(&app.state, &row().await, "v2", &asset, false).await;
@@ -3312,13 +3502,14 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
-        let asset = |id: i64, file: &str| GithubAsset {
+        let asset = |id: i64, file: &str| ReleaseAsset {
             id,
             name: format!("{file}.apk"),
             browser_download_url: format!("{base}/{file}.apk"),
             size: std::fs::metadata(format!("testdata/apk/fixture-{file}.apk"))
                 .unwrap()
                 .len(),
+            sha256: None,
         };
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO tracked_apps (name, package_name, github_repo) \
@@ -3654,5 +3845,269 @@ mod tests {
         for tag in ["server-v0.26.0", "music-v0.2.0", "music-v0.1.0"] {
             assert!(!release_allowed(tag, row.release_tag_prefix.as_deref()));
         }
+    }
+
+    // --------------------------------------------------------------------------------------------
+    // The F-Droid source (crate::fdroid): the whole sync against an in-process repo
+    // --------------------------------------------------------------------------------------------
+
+    /// The test fixture APK (package `me.vibb.testfixture`) and its SHA-256.
+    fn fixture_apk() -> (Vec<u8>, String) {
+        let apk = std::fs::read("testdata/apk/fixture-key1.apk").unwrap();
+        let sha = hex::encode(Sha256::digest(&apk));
+        (apk, sha)
+    }
+
+    /// A repo serving the fixture as version 57 ("1.0.57") of `package`, with a 56 and a beta 58
+    /// beside it, and the API suggesting 57; the index lists `listed_sha` for 57.
+    fn serve_fixture(
+        fake: &crate::fdroid::tests::FakeRepo,
+        package: &str,
+        listed_sha: &str,
+        apk: &[u8],
+    ) {
+        let other = |n: u8| format!("{n:02x}").repeat(32);
+        let file = |code: i64| format!("{package}_{code}.apk");
+        let mut index: serde_json::Value =
+            serde_json::from_str(&crate::fdroid::tests::index_json(&[(
+                package,
+                vec![
+                    (other(1), 56, "1.0.56", file(56), false),
+                    (listed_sha.to_string(), 57, "1.0.57", file(57), false),
+                    (other(2), 58, "1.0.58-beta", file(58), true),
+                ],
+            )]))
+            .unwrap();
+        index["packages"][package]["versions"][listed_sha]["file"]["size"] =
+            serde_json::json!(apk.len());
+        fake.publish(&index.to_string());
+        fake.files.lock().unwrap().insert(file(57), apk.to_vec());
+        fake.api.lock().unwrap().insert(
+            package.to_string(),
+            format!(
+                r#"{{"packageName":"{package}","suggestedVersionCode":57,"packages":[
+                {{"versionName":"1.0.58-beta","versionCode":58}},
+                {{"versionName":"1.0.57","versionCode":57}}]}}"#
+            ),
+        );
+    }
+
+    async fn fdroid_row(app: &crate::tests::TestApp, repo: &str, package: &str) -> i64 {
+        sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, source_type, github_repo, fdroid_repo, \
+             fdroid_package) VALUES ('Etar', '', 'fdroid', '', ?, ?) RETURNING id",
+        )
+        .bind(repo)
+        .bind(package)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    }
+
+    async fn row_of(app: &crate::tests::TestApp, id: i64) -> TrackedApp {
+        sqlx::query_as("SELECT * FROM tracked_apps WHERE id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    }
+
+    /// f-droid.org's path (the API on 127.0.0.1 in the tests): the API's suggested version, its
+    /// hash from the index, the APK checked and stored as a GitHub release is - and a check that
+    /// finds the cached version asks for neither the index nor the APK again.
+    #[tokio::test]
+    async fn an_fdroid_app_syncs_by_the_api_and_the_index() {
+        use crate::fdroid::tests::FakeRepo;
+        let app = crate::tests::TestApp::new().await;
+        let (repo, fake) = crate::fdroid::tests::fake_repo("127.0.0.1").await;
+        let (apk, sha) = fixture_apk();
+        serve_fixture(&fake, "me.vibb.testfixture", &sha, &apk);
+        let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
+        let (device, _) = app.enrolled_device("Anna").await;
+        sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+            .bind(device)
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        let mut nudges = app.state.command_notify.subscribe();
+
+        sync_one_app(&app.state, id, false).await.unwrap();
+        let row = row_of(&app, id).await;
+        assert_eq!(row.latest_release_tag.as_deref(), Some("v1.0.57"));
+        assert_eq!(row.latest_release_asset_id, Some(57));
+        assert_eq!(row.latest_release_sha256.as_deref(), Some(sha.as_str()));
+        assert_eq!(
+            row.latest_release_asset_name.as_deref(),
+            Some("me.vibb.testfixture_57.apk")
+        );
+        assert_eq!(row.latest_release_asset_size, Some(apk.len() as i64));
+        assert!(row.last_checked_at.is_some());
+        let path = row.latest_release_file_path.clone().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), apk);
+        assert!(path.ends_with("v1.0.57-57.apk"), "{path}");
+        // Pinned from the APK, like a GitHub release.
+        assert_eq!(row.package_name, "me.vibb.testfixture");
+        assert!(row.signer_sha256.is_some());
+        assert_eq!(
+            version_of(row.latest_release_tag.as_deref().unwrap(), None),
+            "1.0.57"
+        );
+        assert_eq!(
+            nudges.try_recv().unwrap(),
+            device,
+            "the phone with it is nudged"
+        );
+        assert_eq!(
+            (
+                FakeRepo::count(&fake.api_gets),
+                FakeRepo::count(&fake.index_gets),
+                FakeRepo::count(&fake.file_gets)
+            ),
+            (1, 1, 1)
+        );
+
+        // The next check: the API says 57 again - no index, no download.
+        sync_one_app(&app.state, id, false).await.unwrap();
+        assert_eq!(
+            (
+                FakeRepo::count(&fake.api_gets),
+                FakeRepo::count(&fake.entry_gets),
+                FakeRepo::count(&fake.index_gets),
+                FakeRepo::count(&fake.file_gets)
+            ),
+            (2, 1, 1, 1)
+        );
+        assert_eq!(row_of(&app, id).await.latest_release_file_path, Some(path));
+    }
+
+    /// Another repo's path (no API: `localhost` in the tests): the highest stable versionCode in
+    /// the index (the beta 58 left out), the API never asked.
+    #[tokio::test]
+    async fn another_repo_syncs_by_the_index_alone() {
+        use crate::fdroid::tests::FakeRepo;
+        let app = crate::tests::TestApp::new().await;
+        let (repo, fake) = crate::fdroid::tests::fake_repo("localhost").await;
+        let (apk, sha) = fixture_apk();
+        serve_fixture(&fake, "me.vibb.testfixture", &sha, &apk);
+        let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
+
+        sync_one_app(&app.state, id, false).await.unwrap();
+        let row = row_of(&app, id).await;
+        assert_eq!(row.latest_release_tag.as_deref(), Some("v1.0.57"));
+        assert_eq!(row.latest_release_asset_id, Some(57));
+        assert_eq!(row.latest_release_sha256.as_deref(), Some(sha.as_str()));
+        assert_eq!(FakeRepo::count(&fake.api_gets), 0, "no API on this repo");
+        // Unchanged: entry.json again, the index from the cache, no download.
+        sync_one_app(&app.state, id, false).await.unwrap();
+        assert_eq!(
+            (
+                FakeRepo::count(&fake.entry_gets),
+                FakeRepo::count(&fake.index_gets),
+                FakeRepo::count(&fake.file_gets)
+            ),
+            (2, 1, 1)
+        );
+    }
+
+    /// An APK that isn't what the repo's index lists is never stored: nothing in the app's
+    /// directory, no release on the row, and the check's problem says so.
+    #[tokio::test]
+    async fn an_apk_that_doesnt_match_the_index_is_refused() {
+        let app = crate::tests::TestApp::new().await;
+        let (repo, fake) = crate::fdroid::tests::fake_repo("127.0.0.1").await;
+        let (apk, _) = fixture_apk();
+        let wrong = "ab".repeat(32);
+        serve_fixture(&fake, "me.vibb.testfixture", &wrong, &apk);
+        let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
+
+        let err = sync_app(&app.state, id, true).await.err().unwrap();
+        let SyncError::Failed(err) = err else {
+            panic!("already running")
+        };
+        assert_eq!(err.problem, SyncProblem::ChecksumMismatch);
+        assert_eq!(
+            err.problem.title(),
+            "Download didn't match the repo's checksum"
+        );
+        assert!(err.detail.contains(&wrong), "{}", err.detail);
+        let row = row_of(&app, id).await;
+        assert_eq!(row.latest_release_tag, None);
+        assert_eq!(row.latest_release_file_path, None);
+        assert_eq!(
+            row.signer_sha256, None,
+            "nothing pinned from an unverified file"
+        );
+        let app_dir = app.state.tracked_apps_dir.join(id.to_string());
+        assert_eq!(files_in(&app_dir), Vec::<String>::new());
+        // The app's page shows the problem's words.
+        assert_eq!(
+            app.state
+                .app_syncs
+                .status(id)
+                .last_error
+                .unwrap()
+                .failure
+                .problem,
+            SyncProblem::ChecksumMismatch
+        );
+    }
+
+    /// The parent's words for what can go wrong: an unknown package (the API's 404, or not in
+    /// another repo's index), a repo that doesn't answer, an APK of another package.
+    #[tokio::test]
+    async fn fdroid_sync_problems_have_plain_words() {
+        let app = crate::tests::TestApp::new().await;
+        let (api_repo, api_fake) = crate::fdroid::tests::fake_repo("127.0.0.1").await;
+        let (index_repo, index_fake) = crate::fdroid::tests::fake_repo("localhost").await;
+        let (apk, sha) = fixture_apk();
+        serve_fixture(&api_fake, "me.vibb.testfixture", &sha, &apk);
+        serve_fixture(&index_fake, "me.vibb.testfixture", &sha, &apk);
+
+        let unknown = fdroid_row(&app, &api_repo, "org.nobody.app").await;
+        let err = sync_one_app(&app.state, unknown, false).await.unwrap_err();
+        assert_eq!(err.problem, SyncProblem::FdroidUnknown);
+        assert_eq!(err.problem.title(), "F-Droid doesn't know this package");
+        let unknown = fdroid_row(&app, &index_repo, "org.nobody.app").await;
+        assert_eq!(
+            sync_one_app(&app.state, unknown, false)
+                .await
+                .unwrap_err()
+                .problem,
+            SyncProblem::FdroidUnknown
+        );
+
+        let gone = fdroid_row(&app, "http://127.0.0.1:9/repo", "me.vibb.testfixture").await;
+        let err = sync_one_app(&app.state, gone, false).await.unwrap_err();
+        assert_eq!(err.problem, SyncProblem::RepoUnreachable);
+        assert_eq!(err.problem.title(), "The repo didn't answer");
+
+        // The repo lists the fixture under another package id: refused before it is pinned.
+        serve_fixture(&index_fake, "org.other.app", &sha, &apk);
+        let other = fdroid_row(&app, &index_repo, "org.other.app").await;
+        let err = sync_one_app(&app.state, other, false).await.unwrap_err();
+        assert_eq!(err.problem, SyncProblem::OtherApp, "{}", err.detail);
+        let row = row_of(&app, other).await;
+        assert_eq!(
+            (row.package_name.as_str(), row.latest_release_tag),
+            ("", None)
+        );
+
+        // A stored address that isn't https (only the tests' loopback may be http).
+        let plain = fdroid_row(&app, "http://f-droid.org/repo", "ws.xsoh.etar").await;
+        assert_eq!(
+            sync_one_app(&app.state, plain, false)
+                .await
+                .unwrap_err()
+                .problem,
+            SyncProblem::RepoError
+        );
+    }
+
+    #[test]
+    fn a_tag_is_safe_in_a_file_name() {
+        assert_eq!(file_safe("v1.0.57"), "v1.0.57");
+        assert_eq!(file_safe("launcher-v0.36.0-rc.4"), "launcher-v0.36.0-rc.4");
+        assert_eq!(file_safe("v1/../../x y"), "v1_.._.._x_y");
     }
 }
