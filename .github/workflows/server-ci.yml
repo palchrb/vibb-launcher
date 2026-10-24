@@ -112,10 +112,13 @@ jobs:
         uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
           tool: cross@0.2.5
+      - name: Build (aarch64-unknown-linux-musl)
+        # aarch64 first, as server-release.yml does: the build scripts in target/release/build are host
+        # artefacts shared by both cross targets, and the aarch64 image's older glibc must be the one they link
+        # against (the other order fails with "symbol gettid version GLIBC_2.30 not defined", 2026-10-24).
+        run: cross build --release --locked --target aarch64-unknown-linux-musl
       - name: Build (x86_64-unknown-linux-musl)
         run: cross build --release --locked --target x86_64-unknown-linux-musl
-      - name: Build (aarch64-unknown-linux-musl)
-        run: cross build --release --locked --target aarch64-unknown-linux-musl
       - name: Stage the image context
         run: |
           set -euo pipefail
