@@ -900,54 +900,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   PNGs, removes stale ones and rewrites head.html's links between the two `Start-up images` markers), check with
   `--selftest` (it draws every screen again in memory and compares it with the committed PNG pixel for pixel, and
   with the launcher in the tree compares the copied rings, core, scales, alpha, stroke and colours with its drawable),
-  commit the PNGs, the JSON, head.html and `partials/splash_hold.html` (the hold, below). A new mark means new ring data in the script (copied from the
+  commit the PNGs, the JSON and head.html. A new mark means new ring data in the script (copied from the
   launcher's regenerated `splash_vibb_breathe.xml`; the script never reads the launcher's files). Test:
   `shell::every_startup_image_has_its_screens_size` (the links against the JSON in order, each PNG's exact pixels, the
   folder holds only those, the caching, under 300 KB, the one night in the manifest and the meta).
-- **The hold** (2026-10-24, the user after the first cold start: "Kunne kanskje blitt vist et sekund lenger"): iOS shows
-  the start-up image only until the page's first paint, so the page holds the same picture a moment longer.
-  `partials/splash_hold.html` is the overlay - `<div id="splash-hold" aria-hidden="true" hidden>` with the mark as an
-  inline SVG (about 5 KB; an `<img>` would miss the first frame on a cold process) - included first by
-  `partials/tab_bar.html`, so it is the first thing in the body of every page with the tab bar (each template includes
-  the bar right after `<body>`), before any content; pages without the bar (sign-in, the two 2FA pages, Change
-  Password, Spotify's "done" page) have none.
-  `static/splash-hold.js?v=2` is in the head, not deferred (like scroll-restore.js), so it decides before the first
-  paint; it only sets `.splash-holding` on `<html>` (style.css then shows the overlay: absolute in the body over
-  everything, z-index 3000, `var(--night)` in both schemes), timers and two tap listeners. It shows only when all
-  hold: (1) iOS's installed app - `navigator.standalone === true`, which only iOS sets (`docs/review/qa-pwa-splash-hold-code.md`
-  Q-2, decided for the user: Android's installed app keeps Chrome's own splash - the icon and the name - and nothing
-  of ours, no second splash after it); (2) a coarse pointer - `(pointer: coarse)`; (3) the session's first document -
-  a sessionStorage flag (`vibb.splashHeld`), set when the first document decides, so a tab, a link, a reload or Back
-  never shows it again. Storage missing, throwing or not keeping the flag: never (else it would show on every page);
-  (4) not resting on storage alone (Q-1: the installed iPhone app has lost sessionStorage across a form's navigation
-  before, `scroll-restore.js`): the navigation is a plain `navigate` (the Navigation Timing type, else
-  `performance.navigation`, as scroll-restore.js reads it) and `document.referrer` is empty. The server's
-  `Referrer-Policy: same-origin` gives every link, tab and form's 303 inside the app a referrer, and a reload or Back
-  isn't `navigate`, so only the home screen's launch has neither - a lost storage can never make a saved page hold.
-  `window.name` is not used (scroll-restore.js and reconnect.js own the whole string). **Accepted**: an iPad, an
-  iPhone launched in landscape, or a size no start-up PNG matches (Display Zoom, a new model) still gets iOS's white
-  launch first and then the night overlay. The first
-  document is the one that decides even when it has no overlay: a cold start on the sign-in page uses it up, so
-  Devices after signing in doesn't hold. It stays until 1000 ms after `load`, never past 1600 ms from the
-  navigation's start (`performance.now()`; a slow load - images, the font - ends at the cap, which is also why there
-  is no separate DOMContentLoaded rule: DOMContentLoaded comes before load, and a load slow enough to need it is
-  already capped; a document that only decides at 1600 ms or later doesn't show it), then fades over 250 ms and is
-  removed from the DOM; with `prefers-reduced-motion: reduce` it is removed at once at the same moment. A tap ends it
-  at once (it takes taps, since the page under it isn't seen yet). It never takes focus (no focusable content, the SVG
-  `focusable="false"`). `theme-color` is the one night `#0C0C14` on every page since the status-bar night, so the
-  status bar is the overlay's night throughout and nothing changes when it goes (the shell test checks Devices, Apps
-  and Settings). **Regenerate the mark** with the images: `python3 -I scripts/pwa-startup-images.py` writes
-  `splash_hold.html` from the same rings, core, scales, alpha and colours (relative paths of the copied 2-decimal
-  points; the viewBox the PNGs' mark box, 0.94 x the rings' reach, the width `mark_share` x 100 `vmin`), and
-  `--selftest` checks the file is what it writes and that each path sums back to its ring. A headless Chromium
-  screenshot at 390 x 844 @3 matched `startup-1170x2532.png`'s mark to the pixel box (antialiasing differences only).
-  Tests: `jstest/splash-hold.test.js` (the decision, the storage - sessionStorage, not localStorage - the times, the
-  fade, reduced motion, a pointer's and a touch's tap, a double end; never on Android's installed app, a reload,
-  Back, an in-app link or a form's 303 even with a fresh storage),
-  `shell::the_start_up_hold_comes_first_on_every_tab_page` (the head's script with `?v=` and not deferred; every
-  template with the bar renders nothing before it; the overlay first in the rendered body; none on sign-in),
-  `shell::the_start_up_holds_mark_is_the_start_up_images` (the overlay's paths, scales, alpha, colours, viewBox and
-  width against the script's constants and the JSON; the CSS). The real iPhone cold start is the user's check.
 
 ## The ⓘ cut (2026-10-24, PLAN "PWA ⓘ panels are too wordy")
 

@@ -48,9 +48,8 @@ jobs:
           # and the launcher's copies of the time status report (design 34 P13; devices_list compares it)
           # and the DNS status report (design 36 §4.2; custom_dns compares it), and the release tags'
           # versionCodes (install_now compares it); and the apps' copies of Storytel's token answers
-          # (design 58 §8; music_storytel compares them); and the PWA's start-up image script
-          # (shell::the_start_up_holds_mark_is_the_start_up_images reads its constants and rings).
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|scripts/pwa-startup-images\.py$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|launcher_tag_codes)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$)' <<<"$files"; then
+          # (design 58 §8; music_storytel compares them).
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|launcher_tag_codes)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$)' <<<"$files"; then
             changed=true
           else
             changed=false
