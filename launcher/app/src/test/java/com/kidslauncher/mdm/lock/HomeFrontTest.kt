@@ -94,7 +94,7 @@ class HomeFrontTest {
         val bring = front.substringAfter("fun bring(")
         // R1-4: set only by a noAnimation start that went through, and it expires.
         val set = bring.indexOf("if (noAnimation) ownGroundSetAt = android.os.SystemClock.elapsedRealtime()")
-        assertTrue("set after the start returned", set > bring.indexOf("context.startActivity(intent(context, animate, noAnimation))"))
+        assertTrue("set after the start returned", set > bring.indexOf("context.startActivity(intent(context, animate, noAnimation, arrival))"))
         assertEquals(1, Regex("ownGroundSetAt = android").findAll(front).count())
         assertTrue(ownGroundDue(setAtMs = 10_000L, nowMs = 10_000L + OWN_GROUND_WINDOW_MS))
         assertFalse("a later, unrelated resume", ownGroundDue(setAtMs = 10_000L, nowMs = 10_001L + OWN_GROUND_WINDOW_MS))
@@ -113,23 +113,23 @@ class HomeFrontTest {
     fun `HomeFront without an animation adds only NO_ANIMATION`() {
         val text = code(file("java/com/kidslauncher/mdm/lock/HomeFront.kt"))
         val intent = text.substringAfter("fun intent(").substringBefore("fun bring(")
-        assertTrue(intent, intent.startsWith("context: Context, animate: Boolean = true, noAnimation: Boolean = false): Intent ="))
+        assertTrue(intent, intent.startsWith("context: Context, animate: Boolean = true, noAnimation: Boolean = false, arrival: HomeArrival = HomeArrival.OURS): Intent ="))
         assertTrue(intent, intent.contains(".addFlags(if (animate && !noAnimation) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)"))
         assertEquals("one category, no component", 1, Regex("addCategory\\(").findAll(intent).count())
-        assertTrue(text.contains("fun bring(context: Context, why: String, animate: Boolean = true, noAnimation: Boolean = false): Boolean"))
+        assertTrue(text.contains("fun bring(\n        context: Context,\n        why: String,\n        animate: Boolean = true,\n        noAnimation: Boolean = false,\n        arrival: HomeArrival = HomeArrival.OURS,\n    ): Boolean"))
         val bring = text.substringAfter("fun bring(")
-        assertTrue(bring.indexOf("if (animate) PinLockRuntime.endDarkLockUp()") in 0 until bring.indexOf("context.startActivity(intent(context, animate, noAnimation))"))
+        assertTrue(bring.indexOf("if (animate) PinLockRuntime.endDarkLockUp()") in 0 until bring.indexOf("context.startActivity(intent(context, animate, noAnimation, arrival))"))
         // qa-32-s1-code L2: such a start from another thread runs on the main thread, where the
         // lock-up marks and starts in one pass - first thing, before the mark is ended.
         val hop = bring.indexOf("if (animate && Looper.myLooper() != Looper.getMainLooper()) {")
         assertTrue(bring, hop in 0 until bring.indexOf("PinLockRuntime.endDarkLockUp()"))
         // Design 59d step B (Q59d-7): noAnimation keeps the hop and the dark mark's end (only `animate` skips them).
-        assertTrue(bring.substring(hop).substringBefore("return true").contains("main.post { bring(app, why, noAnimation = noAnimation) }"))
+        assertTrue(bring.substring(hop).substringBefore("return true").contains("main.post { bring(app, why, noAnimation = noAnimation, arrival = arrival) }"))
         // The two callers: the lock-up's `animate = false` (below) and the face's leave's `noAnimation`.
         val noAnim = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }
             .filter { code(it).contains("noAnimation = ") && it.name != "HomeFront.kt" }.map { it.name }.toList()
         assertEquals(listOf("PinLockActivity.kt"), noAnim)
-        assertTrue(code(file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")).contains("HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn)"))
+        assertTrue(code(file("java/com/kidslauncher/mdm/lock/PinLockActivity.kt")).contains("HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn, arrival = arrival)"))
         assertTrue(text.contains("private val main = Handler(Looper.getMainLooper())"))
         // Only the lock-up starts Home unanimated - every other start ends its dark mark.
         val sources = file("java/com/kidslauncher/mdm").walk().filter { it.isFile && it.name.endsWith(".kt") }.toList()

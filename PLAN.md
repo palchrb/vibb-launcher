@@ -1095,7 +1095,20 @@ findings, merge to `main`, full suite once.
   tror jeg at jeg vil at home starter på null"): Home's grid scroll resets to the top whenever the lock is left for
   Home - screen off/on + PIN, the handle swipe, the boot - and never when the unlock's target is an app (a notification
   row, a call: the app opens, Home isn't shown). Launcher, small; one Home round with the black-flash entry below
-  (same activity, both need the emulator).
+  (same activity, both need the emulator). **Done 2026-10-24 (branch `home-round`; emulator check owed)**: Home learns
+  why it is shown from the typed HOME start that brought it - `HomeFront.EXTRA_ARRIVAL` next to `EXTRA_BROUGHT`, no
+  new broadcast: the lock's leave through Home (`PinLockActivity.go`, every mode: own keypad, the handle's swipe,
+  Android's pad in front) says `LOCK_LEFT_FOR_HOME`, or `LOCK_LEFT_FOR_APP` when a glance row's target opens over Home
+  (`lockLeaveArrival`; as the kiosk's root the opener opens nothing, so that is Home again); the boot's `BootHome`
+  says `BOOT`; every other start of ours (dark lock-up, update, relock, role change, install mode, rooting lock task)
+  is `OURS`. Pure `ui/home/HomeReset.kt` (`homeResetDue`, `homeResetPending`, `HomeResetTest`): only a leave for Home
+  and the boot reset; the reset is taken at the content's next resume (`resetToTopIfDue`, the one unanimated
+  `scrollToPositionWithOffset(0, 0)` plus the contacts row's start) and dropped at Home's stop. A call over the
+  unlock brings no Home (`lockLeave`), so nothing resets; an unlock on SystemUI's own face or pad (the glance stopped
+  under an app, design 59b step 0) brings no Home either. Unchanged: the Home button or Back from an app keeps the
+  kid's place (no extra, Home was stopped: `homePressToTop` needs Home up), and the kid's press on Home itself still
+  scrolls smoothly to the top (round 7 §4). Residual: a row's target the opener can't open (not installed, refused
+  send, kiosk on with no lock task) leaves Home where it was.
 - **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
   Settings › Intelligent assistance › App blocker - Boot blocker, Start blocker, Background blocker, Background
   cleanup; on the Jelly Star only found through Settings' search. Design 19b §4 foresaw an OEM manager but had no name.

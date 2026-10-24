@@ -76,8 +76,10 @@ import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.NightGround
 import com.kidslauncher.mdm.ui.home.PressFeedback
 import com.kidslauncher.mdm.ui.home.gridColumns
+import com.kidslauncher.mdm.ui.home.homeArrivalOf
 import com.kidslauncher.mdm.ui.home.homeGrid
 import com.kidslauncher.mdm.ui.home.homePressToTop
+import com.kidslauncher.mdm.ui.home.homeResetPending
 import com.kidslauncher.mdm.ui.home.showPhoneBookTile
 import com.kidslauncher.mdm.ui.wallpaper.InkChoice
 import com.kidslauncher.mdm.ui.wallpaper.KidInk
@@ -139,6 +141,9 @@ class HomeActivity : UIObjectActivity() {
     /** Home's content was resumed in front and Home hasn't stopped since (launcher round 7 §4): a
      * HOME intent then is the kid pressing Home on Home ([homePressToTop]). */
     private var contentUp = false
+    /** PLAN "Home starts at the top after an unlock": the lock was left for Home (or the boot brought it) - the grid
+     * goes back to the top at the content's next resume ([homeResetPending], [resetToTopIfDue]); dropped at the stop. */
+    private var resetDue = false
     /** What Home opened over its content - the contact sheet, an app's long-press menu and its
      * rename dialog: closed when the lock engages (16c, qa-16c-code #2). */
     private val overlays = ArrayDeque<() -> Unit>()
@@ -249,6 +254,8 @@ class HomeActivity : UIObjectActivity() {
         if (savedInstanceState == null && intent?.hasCategory(Intent.CATEGORY_HOME) == true) {
             PinLockRuntime.homeIntent(this, intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false))
         }
+        // A new Home starts at the top anyway; read for the rule's sake, never again for a recreation.
+        if (savedInstanceState == null) intent?.let(::noteArrival)
         // Design 16c: the content only when the lock allows it - the night ground otherwise; the
         // lock's edges swap them.
         PinLockRuntime.addModeListener(modeListener)
@@ -526,6 +533,7 @@ class HomeActivity : UIObjectActivity() {
     private fun resumeContent() {
         if (!contentShown) return
         contentUp = true
+        resetToTopIfDue()
         // The parent's language choice, now that Home is in front (no call screen or dialog).
         LauncherLocales.applyIfSafe(this)
         // Also refreshes whether the system wallpaper is still ours (in the background).
@@ -625,6 +633,8 @@ class HomeActivity : UIObjectActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         val broughtByUs = intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false)
+        // Why we are shown: the lock left for Home -> back to the top at the resume that follows (resumeContent).
+        noteArrival(intent)
         // Design 59d §8.9 (a): the system's Home while LOCKED - the home gesture got through - heals lock task's flags.
         PinLockRuntime.homeIntent(this, broughtByUs)
         val toTop = homePressToTop(
@@ -642,6 +652,7 @@ class HomeActivity : UIObjectActivity() {
 
     override fun onStop() {
         contentUp = false
+        resetDue = false
         // Design 59d step B: the next start is transparent over Android's wallpaper again.
         ownGround = false
         // Design 16e: something covers the mark - the boot's wait for it ends.
@@ -658,6 +669,21 @@ class HomeActivity : UIObjectActivity() {
         WallpaperStore.removeListener(wallpaperListener)
         contentResolver.unregisterContentObserver(callLogObserver)
         super.onStop()
+    }
+
+    /** What the HOME intent says about why Home is shown ([homeArrivalOf]), folded into the reset still owed. */
+    private fun noteArrival(intent: Intent) {
+        val arrival = homeArrivalOf(intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false), intent.getStringExtra(HomeFront.EXTRA_ARRIVAL))
+        resetDue = homeResetPending(resetDue, arrival)
+    }
+
+    /** The one place Home's grid goes back to the top for an unlock (the kid's own press on Home is [onNewIntent]'s
+     * smooth scroll): no animation - Home simply starts at the top, the contacts row at its start. */
+    private fun resetToTopIfDue() {
+        if (!resetDue) return
+        resetDue = false
+        gridLayout.scrollToPositionWithOffset(0, 0)
+        binding.homeContactsScroll.scrollTo(0, 0)
     }
 
     override fun onDestroy() {

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.kidslauncher.mdm.ui.home.HomeArrival
 
 private const val LOG_TAG = "HomeFront"
 
@@ -41,6 +42,10 @@ object HomeFront {
      * the kid's Home press, never for these (the lock leaving, the boot, the lock-up, an update). */
     const val EXTRA_BROUGHT = "me.vibb.launcher.extra.HOME_BROUGHT"
 
+    /** Why we brought Home (a [HomeArrival] name, PLAN "Home starts at the top after an unlock"): Home's grid goes
+     * back to the top only when the lock was left for Home or at the boot (`homeResetDue`). */
+    const val EXTRA_ARRIVAL = "me.vibb.launcher.extra.HOME_ARRIVAL"
+
     /**
      * Design 59d step B (the user's rc.2 recording: Home drawn on black for 3 frames after the pad, then its wallpaper):
      * the face's unanimated leave brought Home while the keyguard goes away, and Android's wallpaper window isn't shown
@@ -55,12 +60,13 @@ object HomeFront {
     fun takeOwnGroundDue(): Boolean =
         ownGroundDue(ownGroundSetAt, android.os.SystemClock.elapsedRealtime()).also { ownGroundSetAt = null }
 
-    fun intent(context: Context, animate: Boolean = true, noAnimation: Boolean = false): Intent =
+    fun intent(context: Context, animate: Boolean = true, noAnimation: Boolean = false, arrival: HomeArrival = HomeArrival.OURS): Intent =
         Intent(Intent.ACTION_MAIN)
             .addCategory(Intent.CATEGORY_HOME)
             .setPackage(context.packageName)
             .addFlags(if (animate && !noAnimation) Intent.FLAG_ACTIVITY_NEW_TASK else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
             .putExtra(EXTRA_BROUGHT, true)
+            .putExtra(EXTRA_ARRIVAL, arrival.name)
 
     /** Design 59d step A (qa-59b-code B-1): a Home start after a policy edge (the relock, install mode's end, the update,
      * a role change) - as Android's face with its keyguard locked it waits for the unlock
@@ -79,11 +85,18 @@ object HomeFront {
      * the lock-up marks and starts there in one pass, so a background end-and-start can't land
      * between them and leave Home, with the dark mark, over the lock. Posted, it answers `true` (the
      * background callers ignore the answer; the boot's, which reads it, runs on the main thread).
+     * [arrival]: why, for Home's reset to the top (`homeResetDue`) - the lock's leave and the boot say so.
      */
-    fun bring(context: Context, why: String, animate: Boolean = true, noAnimation: Boolean = false): Boolean {
+    fun bring(
+        context: Context,
+        why: String,
+        animate: Boolean = true,
+        noAnimation: Boolean = false,
+        arrival: HomeArrival = HomeArrival.OURS,
+    ): Boolean {
         if (animate && Looper.myLooper() != Looper.getMainLooper()) {
             val app = context.applicationContext
-            main.post { bring(app, why, noAnimation = noAnimation) }
+            main.post { bring(app, why, noAnimation = noAnimation, arrival = arrival) }
             return true
         }
         return if (BootCover.shuttingDown) {
@@ -91,7 +104,7 @@ object HomeFront {
             false
         } else try {
             if (animate) PinLockRuntime.endDarkLockUp()
-            context.startActivity(intent(context, animate, noAnimation))
+            context.startActivity(intent(context, animate, noAnimation, arrival))
             // Design 59d R1-4: marked only once the start went through.
             if (noAnimation) ownGroundSetAt = android.os.SystemClock.elapsedRealtime()
             Log.i(LOG_TAG, "Home brought to the front: $why")

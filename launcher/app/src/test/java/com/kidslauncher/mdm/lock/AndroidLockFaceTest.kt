@@ -319,7 +319,7 @@ class AndroidLockFaceTest {
         assertTrue(leave, hide in 0 until leave.indexOf("go(lockLeave("))
         assertTrue(leave, leave.indexOf("if (hides && !isFinishing) glance?.leaveRefused()") > leave.indexOf("go(rootLeave)"))
         val go = activity.substringAfter("private fun go(plan: LockLeave) {").substringBefore("\n    }\n")
-        assertTrue(go, go.contains("if (plan.homeFirst) HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn)"))
+        assertTrue(go, go.contains("if (plan.homeFirst) HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn, arrival = arrival)"))
         assertTrue(go, go.contains("if (AndroidLock.faceOn) overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)"))
         assertFalse("59b's close fade went", go.contains("fade_out"))
         // RC3-2: the glance shows the wallpaper exactly while it asks as the face - set before the leave's transition
