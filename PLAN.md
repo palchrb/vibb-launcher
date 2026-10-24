@@ -1590,6 +1590,11 @@ findings, merge to `main`, full suite once.
 
 ### Done (not released yet)
 
+- **The lock glance round (2026-10-24, branch `r11-glance`, design r11; not merged, emulator §6 owed)**: the user's
+  three asks on `jellystar2` - (1) the whole page scrolls (clock, date, tiles and rows as one; r9's fit is gone, at
+  most eight rows then "+ N varsler til"), (2) the music tile is compact from two rows, (3) a row swiped sideways is
+  dismissed (a missed call keeps the phone book's badge). The PWA's lock-page line says so.
+
 - **Every release build has its own versionCode (2026-10-23, branch `versioncode-rc`)**: the old rule
   (`X*1_000_000 + Y*1_000 + Z`, an RC one less) gave every RC of a version one code (0.36.0-rc.1..3 are all 35999), so
   Android refused rc.2 over rc.1 as the same version and the RC-to-RC fix had to compare versionNames on both sides.

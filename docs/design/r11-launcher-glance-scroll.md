@@ -493,3 +493,47 @@ One implementer, one branch, roughly 900-1100 changed lines, about half of them 
 - the tests in §4.
 
 Without the server lines in F2, it is launcher-only. One code QA round.
+
+## As built (2026-10-24, branch `r11-glance`)
+
+The user's §8 decisions (2026-10-24): (1) no fit at all, the page scrolls, font scale 2.0 included; (2) at most eight
+rows, then "+ N varsler til"; (3) a dismissed missed call keeps the phone book's badge; (4) the PWA's line is fixed in
+this branch. The note's own picks stand (both directions, 40 % or a fling, the bottom-end overscroll, the first move
+past the slop decides, full tile with 0-1 rows, "Fjern", the spring-back without a listener). One commit per section:
+§1 the scroller, §2 the tile rule, §3 the dismiss, then the PWA line and these docs.
+
+**Deviations from the note** (each small, said in its commit):
+- §1.2 `tileChanged` also sets the list's 14/22 dp margin (`placeList`) when a tile comes or goes - the margin under
+  the tile is part of its coming and going. Nothing is refitted.
+- §3.3 the rows are held back (`dismissBusy`) during the drag itself too, not only while the dismissal animates, so a
+  post can't swap the row under the finger before the lift. A render held back runs at the commit or the spring-back's
+  end (`flushRender`, also at the next DOWN).
+- §3.2 a sideways first movement blocks the unlock only when the touch began inside the scroller. Outside it (the
+  bottom row, the handle, the inset) the unlock's own rule (`glanceSwipeStep`: mostly vertical at every moment) is
+  unchanged, so a horizontal gesture there still does nothing and the handle's swipe up always asks.
+- §3.3 a dismissal's update of our missed-call notification never alerts (`step.alert && !ownDismiss`).
+- §3.3 `withoutDismissed(rows, numbers: Set<String>, plain)` takes a set: two contacts dismissed before the notifier
+  answers stay out together.
+- F2: the PWA says "One can be swiped away, as on Android's own lock screen. Nothing can be answered there, and it
+  can't be screenshotted." - the user's brief (a notification can be swiped away, as on Android's own, nothing can be
+  answered) rather than the note's "a row can be swiped away".
+
+**The pins that moved** (`LockGlanceLayoutTest`, `LockGlanceTest`, `LockGlanceGuardTest`):
+- the fit's totals at 473/497 dp (the full tile alone 350.8, music + 1 row 420.8, music + 2 rows 462.4 / 484.8, music
+  + 3 rows 406.4, no music + 4 rows 406, with the profile music + 1 full / + 2-3 candidate 3) -> §1.2's table: the
+  content 278.8 / 348.8 / 328 (compact) / 392 / 456 / 712 / 438 dp against the scroller's 401 / 425 dp (the
+  available 457 / 481 less the 56 dp bottom block); music + 4 scrolls 55 / 31 dp, + 8 311 / 287, no music + 5 37 / 13;
+  the user's case (profile clock, alarm, music + 2, compact) 370.6 dp fits;
+- the rows' scroll under candidate 3, 130.6 / 154.6 dp -> the whole page's scroller, 401 / 425 dp; the fade's 8 dp
+  model part is gone (the fade is the scroller's 16 dp at an edge with more);
+- `GLANCE_MAX_ROWS` 3 -> 8; `GLANCE_COMPACT_FROM_ROWS` = 2 (new);
+- the root's side padding 16 -> 0 dp, `lock_glance_top`'s 0 -> 16 dp, the bottom block's side margins 0 -> 16 dp (the
+  content width stays 288 dp at 320);
+- unchanged: the full tile 174.8, compact 90, bottom block 56, timer 114, row 56, "more" 24, alarm line 20.2, clock
+  78.4 and date 25.6 dp (the profile's 113.7 / 12.7);
+- `LockGlanceGuardTest`: "nothing glance cancels" -> exactly one `cancelNotifications(`, in `GlanceReader.dismiss`, of
+  `GlanceStore.keysOf`'s keys; the panel's ban on `dismiss` -> `GlanceReader.dismiss(`, `MissedCallNotifier.dismissContact(`
+  and `MissedCallNotifier.dismiss(` once each inside `commitDismiss`; the log line's interpolations `${layout.tile}`,
+  `${layout.rows}`, `${layout.more}`; the notifier's `relearnOnly = !mayClear || ownDismiss`.
+
+Not emulator-checked yet: §6 (the coordinator runs it after the code QA).
