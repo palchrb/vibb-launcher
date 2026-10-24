@@ -58,7 +58,7 @@ class FitTest {
         // the row is the same five slots as before: v15's 44/52/72/52/44 in exactly 288 dp
         assertEquals(288, controlRow(288f).width)
         assertEquals(44, controlRow(288f).side)
-        // "15"/"30": Nunito ExtraBold at a fixed 7 dp is 8.4 dp wide; the replay/forward_media ring inside the 20 dp
+        // "15": Nunito ExtraBold at a fixed 7 dp is 8.4 dp wide; the replay/forward_media ring inside the 20 dp
         // glyph is 15 dp across less its 1.7 dp stroke on each side - 11.7 dp; its centre sits 0.83 dp below the glyph's
         assertEquals(20, SKIP_GLYPH_DP)
         assertTrue(8.4f * SKIP_NUMBER_DP / 7 <= 20f * (720 - 2 * 80) / 960)

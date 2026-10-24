@@ -697,7 +697,7 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
   at its place (`coverTapPlan`). The flip stays hidden while shuffled; repeat applies after either.
 - **The player and library picks** (design 50 + 46 §1.4; **the user's picks of 2026-10-20, not vibb's**):
   - **The skip pair**: `controlSlots(entry)` (design 49 §1.1, `logic/Queue.kt`) gives what resumes (podcasts, books, a
-    resuming own entry) "15 s tilbake" / "30 s fram" in the control row's side slots (`SkipButton`: Material Symbols
+    resuming own entry) "15 s tilbake" / "15 s fram" (r12 §2; the number is `skipSeconds` of the step) in the control row's side slots (`SkipButton`: Material Symbols
     `replay`/`forward_media` from `scripts/material-symbols.sh`, `player_glyph_*`, the number at a fixed 7 dp, never
     sp); a step is `skipWithin` (`logic/Transport.kt`: clamped inside the item, 1 s short of its end; the live
     duration - a context item has no listed one) through the existing `seekTo` (the phone, a room's settled seek,

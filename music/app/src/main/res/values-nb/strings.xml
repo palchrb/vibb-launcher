@@ -62,7 +62,7 @@
     <string name="sleep_at_end">Til slutten</string>
     <string name="sleep_at_end_on">Sov · til slutten</string>
     <string name="skip_back">15 sekunder tilbake</string>
-    <string name="skip_forward">30 sekunder fram</string>
+    <string name="skip_forward">15 sekunder fram</string>
     <string name="output">Spill av på</string>
     <string name="output_label">Spill av på: %1$s</string>
     <string name="output_phone">Telefonen</string>

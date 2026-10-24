@@ -57,6 +57,7 @@ import androidx.annotation.DrawableRes
 import me.vibb.music.logic.ControlSlots
 import me.vibb.music.logic.SKIP_BACK_MS
 import me.vibb.music.logic.SKIP_FORWARD_MS
+import me.vibb.music.logic.skipSeconds
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
@@ -174,12 +175,12 @@ fun PlayerScreen(
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val row = controlRow(maxWidth.value)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(row.gap.dp, Alignment.CenterHorizontally), verticalAlignment = Alignment.CenterVertically) {
-                // design 50 §1.1: what resumes gets "15 s tilbake" / "30 s fram" in the side slots; music gets design
+                // design 50 §1.1: what resumes gets "15 s tilbake" / "15 s fram" in the side slots; music gets design
                 // 49's shuffle (left) and repeat (right), peach when on - controlSlots decides (49 §1.1); a Spotify artist
                 // context repeat only (Spotify picks)
                 val skips = now.slots == ControlSlots.SKIP
                 if (skips) {
-                    SkipButton(R.drawable.player_glyph_replay, "15", stringResource(R.string.skip_back), row.side.dp) { onSkipBy(-SKIP_BACK_MS) }
+                    SkipButton(R.drawable.player_glyph_replay, skipSeconds(SKIP_BACK_MS), stringResource(R.string.skip_back), row.side.dp) { onSkipBy(-SKIP_BACK_MS) }
                 } else if (now.canShuffle) {
                     val state = stringResource(if (now.shuffled) R.string.shuffle_on else R.string.shuffle_off)
                     RoundButton(
@@ -200,7 +201,7 @@ fun PlayerScreen(
                 )
                 RoundButton(Icons.next, stringResource(R.string.next), onNext, row.skip.dp, 24.dp)
                 if (skips) {
-                    SkipButton(R.drawable.player_glyph_forward_media, "30", stringResource(R.string.skip_forward), row.side.dp) { onSkipBy(SKIP_FORWARD_MS) }
+                    SkipButton(R.drawable.player_glyph_forward_media, skipSeconds(SKIP_FORWARD_MS), stringResource(R.string.skip_forward), row.side.dp) { onSkipBy(SKIP_FORWARD_MS) }
                 } else if (now.canRepeat) {
                     val on = now.repeat != Repeat.OFF
                     val state = stringResource(repeatState(now.repeat))

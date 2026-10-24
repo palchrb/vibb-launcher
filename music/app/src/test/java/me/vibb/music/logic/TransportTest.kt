@@ -93,11 +93,13 @@ class TransportTest {
     // design 50 §1.1: the skip pair
 
     @Test
-    fun `d50 - 15 s back and 30 s on stay inside the item`() {
+    fun `d50 r12 - 15 s back and 15 s on stay inside the item`() {
+        assertEquals(SKIP_BACK_MS, SKIP_FORWARD_MS)
+        assertEquals("the button's number is the step's", "15", skipSeconds(SKIP_FORWARD_MS))
         assertEquals(45_000L, skipWithin(60_000, -SKIP_BACK_MS, 600_000))
         assertEquals("never below 0", 0L, skipWithin(10_000, -SKIP_BACK_MS, 600_000))
-        assertEquals(90_000L, skipWithin(60_000, SKIP_FORWARD_MS, 600_000))
-        assertEquals("never across into the next item", 599_000L, skipWithin(580_000, SKIP_FORWARD_MS, 600_000))
+        assertEquals(75_000L, skipWithin(60_000, SKIP_FORWARD_MS, 600_000))
+        assertEquals("never across into the next item", 599_000L, skipWithin(590_000, SKIP_FORWARD_MS, 600_000))
         assertEquals("already that close: forward stays put", 599_500L, skipWithin(599_500, SKIP_FORWARD_MS, 600_000))
         assertEquals("back still goes back from there", 584_500L, skipWithin(599_500, -SKIP_BACK_MS, 600_000))
     }
