@@ -711,7 +711,11 @@ async fn the_page_lists_the_allowed_apps_with_their_ticks() {
     assert!(!summary.contains("lock-screen"), "{summary}");
     let section = subsection(&page);
     assert!(section.contains("SMS login codes included"));
-    assert!(section.contains("swiped away there, as on Android's own lock screen; nothing can be answered"));
+    assert!(
+        section.contains(
+            "swiped away there, as on Android's own lock screen; nothing can be answered"
+        )
+    );
     // The footer says what Name only is for a chat and for any other app (the launcher's
     // `glanceLevel`), and what Full text costs.
     assert!(
