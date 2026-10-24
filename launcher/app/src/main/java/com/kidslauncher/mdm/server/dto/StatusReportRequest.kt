@@ -122,6 +122,9 @@ data class StatusReportRequest(
  * heartbeat never skips), the system Location switch, the background-location grant, and the
  * mock fixes a release build ignored since the launcher's data was created - a running count, so a
  * lost report loses none (the server logs each rise). Counts and switches only, never a place.
+ * [still] (qa-design-64-step2-code Q-3; `false` is left out): this report re-sends the cached fix
+ * while the motion sensor says the phone hasn't moved since it (`reportStill`), so the server
+ * counts "Here now" from this report - the fix's own time stays.
  */
 @Serializable
 data class ZoneWatchReport(
@@ -130,6 +133,7 @@ data class ZoneWatchReport(
     val locationOn: Boolean,
     val backgroundLocation: Boolean,
     val mockIgnored: Long,
+    val still: Boolean = false,
 )
 
 /** `StatusReportRequest.dnsUpstream` (no defaults: every field is always sent): the [rev] of the

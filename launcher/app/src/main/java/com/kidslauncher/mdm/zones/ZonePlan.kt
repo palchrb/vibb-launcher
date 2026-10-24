@@ -67,15 +67,72 @@ fun zoneFencePlan(zones: List<PolicyZone>, watching: Boolean, stored: FenceRecor
 }
 
 /** The fence broadcast's verdict (§4.2): a zone not in the current policy is no crossing, nor an
- * "entering" within [FENCE_ECHO_WINDOW_MS] of the registration ([sinceRegisteredMs], elapsed;
- * negative = a record from before a reboot, no echo). */
+ * "entering" within [FENCE_ECHO_WINDOW_MS] of the registration ([sinceRegisteredMs], elapsed). The
+ * record (and its stamp) is written before the first add (qa-design-64-step2-code Q-7), so no
+ * record (`null`) or a stamp from before a reboot (negative) is within the window too: an
+ * "entering" then is the registration's own echo. */
 enum class FenceVerdict { CROSSING, NOT_OURS, ECHO }
 
-fun fenceVerdict(zoneId: Long, policyZones: List<PolicyZone>, entering: Boolean, sinceRegisteredMs: Long): FenceVerdict = when {
+fun fenceVerdict(zoneId: Long, policyZones: List<PolicyZone>, entering: Boolean, sinceRegisteredMs: Long?): FenceVerdict = when {
     policyZones.none { it.id == zoneId } -> FenceVerdict.NOT_OURS
-    entering && sinceRegisteredMs in 0 until FENCE_ECHO_WINDOW_MS -> FenceVerdict.ECHO
+    entering && (sinceRegisteredMs == null || sinceRegisteredMs < FENCE_ECHO_WINDOW_MS) -> FenceVerdict.ECHO
     else -> FenceVerdict.CROSSING
 }
+
+/**
+ * The zone watch is on (qa-design-64-step2-code Q-2, the coordinator's decision): device owner,
+ * managed, Regularly **with zones**. Everything new of step 2 - the passive feed, the motion gate,
+ * the heartbeat's skips, the backstop counting from the beat, the series, the balanced path -
+ * hangs on this; without zones the phone does exactly what it did before ([syncLocationAction]).
+ */
+fun zoneWatchActive(owner: Boolean, managed: Boolean, policy: com.kidslauncher.mdm.server.dto.LocationPolicy?): Boolean =
+    owner && managed && policy != null && policy.mode == "interval" && policy.zones.isNotEmpty()
+
+/** The location step's action and, with zones, the heartbeat's verdict (`null` = no heartbeat ran). */
+data class SyncLocation(val action: com.kidslauncher.mdm.server.LocationAction, val beat: Heartbeat?)
+
+/**
+ * The sync's location action (§4.4). **Without zones** ([zonesOn] false) it is exactly today's
+ * `locationAction(policy, forced, now - lastOwnFix)` - nothing of step 2 changes it. With zones: a
+ * forced fix is the precise path for [precise] (`locate`/`ring`, a crossing's confirm) and the
+ * balanced one for a crossing's first fix; else [heartbeatDue] decides, a `FIX` taking the
+ * balanced path.
+ */
+fun syncLocationAction(
+    policy: com.kidslauncher.mdm.server.dto.LocationPolicy?,
+    zonesOn: Boolean,
+    forced: Boolean,
+    precise: Boolean,
+    nowMs: Long,
+    lastOwnFixMs: Long,
+    lastBeatMs: Long,
+    motion: Motion,
+    keptFixAgeMs: Long?,
+): SyncLocation {
+    val today = com.kidslauncher.mdm.server.locationAction(policy, forced, nowMs - lastOwnFixMs)
+    if (!zonesOn || policy == null || policy.mode != "interval") return SyncLocation(today, null)
+    val p = policy
+    if (forced) {
+        val fresh = if (precise) com.kidslauncher.mdm.server.LocationAction.FRESH else com.kidslauncher.mdm.server.LocationAction.FRESH_BALANCED
+        return SyncLocation(fresh, null)
+    }
+    val intervalMs = p.intervalMinutes.coerceAtLeast(com.kidslauncher.mdm.server.MIN_LOCATION_INTERVAL_MINUTES) * 60_000L
+    val beat = heartbeatDue(nowMs, lastBeatMs, intervalMs, motion, lastOwnFixMs, keptFixAgeMs)
+    val action = if (beat == Heartbeat.FIX) com.kidslauncher.mdm.server.LocationAction.FRESH_BALANCED else com.kidslauncher.mdm.server.LocationAction.CACHED
+    return SyncLocation(action, beat)
+}
+
+/** What the backstop counts the next fix from: the beat with zones (a skip waits a whole
+ * interval), our last own fix without - today's. */
+fun backstopAnchorMs(zonesOn: Boolean, lastBeatMs: Long, lastOwnFixMs: Long): Long = if (zonesOn) lastBeatMs else lastOwnFixMs
+
+/** A fix younger than this at the request is one LocationManager just made, not an older
+ * last-known or cached one (Q-6). */
+const val FRESH_FIX_SLACK_MS = 60_000L
+
+/** The fix a fresh request returned is genuinely new (taken at or after the request, less
+ * [FRESH_FIX_SLACK_MS]) - only then may the motion gate say "still from here" (Q-6). */
+fun freshOwnFix(fixTimeMs: Long, requestedAtMs: Long): Boolean = fixTimeMs >= requestedAtMs - FRESH_FIX_SLACK_MS
 
 /** A fix waiting for a report (CE prefs `zone_queue`): what [com.kidslauncher.mdm.server.dto.LocationReport]
  * sends. Its key is its time and place - the server's dedupe key. */
@@ -109,8 +166,9 @@ fun extraLocations(queue: List<QueuedFix>, location: QueuedFix?): List<QueuedFix
  * The queue after a report (§4.5: every reported fix also feeds the queue when its sync fails):
  * taken by the server ([accepted]) - what it carried ([sent], the extras and the location) leaves,
  * whatever was queued meanwhile stays; not taken - the report's [location] joins the queue, so a
- * crossing's fix made in a tunnel arrives with the next report, in order. A report while location
- * is off ([locationOff]) empties it: nothing kept from before the parent turned it off is sent.
+ * crossing's fix made in a tunnel arrives with the next report, in order. [locationOff] (location
+ * Off, or no zones watched) empties it; the sync also clears it and sends no extras before such a
+ * report (Q-5), so nothing kept from before the parent turned it off is ever sent.
  */
 fun queueAfterReport(queue: List<QueuedFix>, sent: List<QueuedFix>, location: QueuedFix?, accepted: Boolean, locationOff: Boolean): List<QueuedFix> = when {
     locationOff -> emptyList()
@@ -142,9 +200,11 @@ enum class Heartbeat {
 }
 
 /**
- * The Regularly heartbeat (decision 11, §4.4): due when [intervalMs] passed since the last
- * heartbeat ([lastBeatMs], wall clock; the clock set back counts as due). Due, it takes no fix when
- * a kept fix is younger than the interval ([keptFixAgeMs], `null` = none) or when [motion] says the
+ * The Regularly heartbeat with zones (decision 11, §4.4): due when [intervalMs] passed since the
+ * last heartbeat ([lastBeatMs], wall clock; the clock set back counts as due). Due, it takes no fix
+ * when a kept fix **not yet reported** is younger than the interval ([keptFixAgeMs]: the kept slot's
+ * fix - a passive fix or a series check's -, `null` when there is none or it isn't newer than the
+ * reported one; our own reported fixes never count, Q-4) or when [motion] says the
  * phone hasn't moved and our last own fix ([lastOwnFixMs]) is under [STILL_SKIP_MAX_MS] old. Each due
  * call counts as a heartbeat (the caller stamps it), so a skip waits a whole interval, never the
  * backstop's 9-minute floor.
@@ -153,10 +213,35 @@ fun heartbeatDue(nowMs: Long, lastBeatMs: Long, intervalMs: Long, motion: Motion
     val since = nowMs - lastBeatMs
     if (since in 0 until intervalMs) return Heartbeat.NOT_DUE
     if (keptFixAgeMs != null && keptFixAgeMs in 0 until intervalMs) return Heartbeat.KEPT
-    val sinceOwn = nowMs - lastOwnFixMs
-    if (motion == Motion.STILL && sinceOwn in 0 until STILL_SKIP_MAX_MS) return Heartbeat.STILL
+    if (stillSinceOwnFix(motion, nowMs, lastOwnFixMs)) return Heartbeat.STILL
     return Heartbeat.FIX
 }
+
+/** The motion sensor hasn't fired since our last own fix ([lastOwnFixMs]), and that fix is under
+ * [STILL_SKIP_MAX_MS] old: the phone is still where the reported fix says. */
+fun stillSinceOwnFix(motion: Motion, nowMs: Long, lastOwnFixMs: Long): Boolean =
+    motion == Motion.STILL && nowMs - lastOwnFixMs in 0 until STILL_SKIP_MAX_MS
+
+/**
+ * The report's `zone_watch.still` (qa-design-64-step2-code Q-3): with zones, a sync that re-sends
+ * the cached fix ([action] `CACHED`) while [stillSinceOwnFix] says the phone hasn't moved tells the
+ * server the fix is still current, so "Here now" counts from this report, not from the fix's own
+ * time - the fix's time is never rewritten. A fresh fix is current anyway; without zones never.
+ */
+fun reportStill(zonesOn: Boolean, action: com.kidslauncher.mdm.server.LocationAction, motion: Motion, nowMs: Long, lastOwnFixMs: Long): Boolean =
+    zonesOn && action == com.kidslauncher.mdm.server.LocationAction.CACHED && stillSinceOwnFix(motion, nowMs, lastOwnFixMs)
+
+/** A mock fix's key for the count (Q-9): its time and place, so the same fix read again through
+ * another provider or the passive feed counts once. */
+fun mockKey(timeMs: Long, latitude: Double, longitude: Double): String = "$timeMs,$latitude,$longitude"
+
+/** How many counted mock fixes' keys the phone remembers (Q-9). */
+const val MOCK_KEYS_KEPT = 8
+
+/** The mock count's step (Q-9): [key] already counted - `null` (nothing to count); else the keys
+ * to keep, the newest [MOCK_KEYS_KEPT]. */
+fun mockKeysAfter(recent: List<String>, key: String): List<String>? =
+    if (key in recent) null else (recent + key).takeLast(MOCK_KEYS_KEPT)
 
 /** Why a fix is or isn't kept. */
 enum class FixVerdict { KEEP, MOCK, INACCURATE, NOT_NEWER }
@@ -165,9 +250,10 @@ enum class FixVerdict { KEEP, MOCK, INACCURATE, NOT_NEWER }
  * A fix the platform hands us (§4.3, decision 14): a mock fix (`Location.isMock`) counts for
  * nothing in a release build ([acceptMock] false) - [FixVerdict.MOCK], counted by the caller; the
  * debug build takes it (the emulator's test provider). [requireBetter] (the passive feed): also
- * refused without an accuracy, less accurate than [floorM], or not newer than the cached fix
- * ([cachedTimeMs], `null` = none) - it then only replaces the cached fix, it is never sent on its
- * own (the trail stays as dense as the parent's interval).
+ * refused without an accuracy, less accurate than [floorM], or not newer than the newest fix the
+ * phone knows ([cachedTimeMs], `null` = none) - it then goes to the kept slot, never the cached
+ * (reported) fix: only a due heartbeat (`KEPT`) or a crossing promotes it, so the trail stays as
+ * dense as the parent's interval (Q-1).
  */
 fun fixVerdict(
     isMock: Boolean,
@@ -273,7 +359,7 @@ fun seriesAfterCheck(series: CheckSeries, nextDelayMs: Long): CheckSeries =
 
 /** What a check's fix is worth now (§4.5, the note's rule). */
 enum class CheckVerdict {
-    /** Nothing changed: kept as the cached fix only (the heartbeat reports it). */
+    /** Nothing changed: kept in the kept slot only (a due heartbeat's `KEPT` reports it). */
     KEEP,
 
     /** Within its accuracy of a boundary: sent now, so the server sees it in time. */

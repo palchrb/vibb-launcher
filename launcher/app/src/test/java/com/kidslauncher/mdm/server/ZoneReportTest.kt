@@ -32,7 +32,7 @@ class ZoneReportTest {
                 LocationReport(59.9229, 10.7522, 30.0f, "2026-10-24T08:02:00Z", provider = "fused"),
                 LocationReport(59.91417, 10.7522, 25.0f, "2026-10-24T08:12:03.250Z", provider = "fused"),
             ),
-            zoneWatch = ZoneWatchReport(fences = 1, motionSensor = true, locationOn = true, backgroundLocation = true, mockIgnored = 2),
+            zoneWatch = ZoneWatchReport(fences = 1, motionSensor = true, locationOn = true, backgroundLocation = true, mockIgnored = 2, still = true),
         )
         assertEquals(contract.trimEnd(), ServerJson.encodeToString(StatusReportRequest.serializer(), report))
         val none = ServerJson.parseToJsonElement(

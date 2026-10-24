@@ -13,7 +13,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.push.SyncRunner
-import com.kidslauncher.mdm.server.LEGACY_LOCATION_POLICY
+import com.kidslauncher.mdm.server.LocateCommands
 import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.server.QuickControls
@@ -26,6 +26,7 @@ import com.kidslauncher.mdm.server.dto.ZoneWatchReport
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 
 private const val LOG_TAG = "ZoneWatch"
 private const val PREFS = "zone_watch"
@@ -33,6 +34,7 @@ private const val KEY_FENCES = "fences_v1"
 private const val KEY_QUEUE = "queue_v1"
 private const val KEY_MOCK_IGNORED = "mock_ignored"
 private const val KEY_MOCK_LAST = "mock_last_time_ms"
+private const val KEY_MOCK_KEYS = "mock_keys_v1"
 private const val KEY_LAST_BEAT = "last_beat_ms"
 private const val ACTION_CONFIRM = "com.kidslauncher.mdm.action.ZONE_CONFIRM"
 
@@ -43,13 +45,15 @@ private const val CONFIRM_REQUEST_CODE = 9
 /**
  * The phone's zone watch (design 64 step 2, `docs/design/64-safe-zones.md` §4; rules in
  * `ZonePlan.kt`): after every sync's `apply()` ([apply]) the platform fences ([ZoneFences]), the
- * passive feed ([PassiveFixes]) and the motion sensor ([MotionGate]) follow the enforced policy; a
+ * passive feed ([PassiveFixes]) and the motion sensor ([MotionGate]) follow the enforced policy -
+ * only while it is Regularly with zones ([zonesOn]); a
  * fence broadcast ([onFence]) asks for a sync with a fresh fix now and another 2 min later
  * ([takeFreshWanted]); the fixes a report didn't get through wait in a queue for the next
  * ([afterReport]). The phone judges nothing: the server's two-fix rule on the fixes decides.
  *
  * State in CE prefs `zone_watch` (every write `commit()`): the fences we registered, the queue,
- * the running count of ignored mock fixes and the last heartbeat. Nothing here names a zone - the
+ * the running count of ignored mock fixes (and the last ones' keys) and the last heartbeat; the
+ * kept fix is `LocateCommands`' slot. Nothing here names a zone - the
  * policy carries none - and nothing but fixes leaves the phone.
  */
 /** Which fresh fix a zone sync asks for (design 64 §4.4): a crossing's first fix is balanced, its
@@ -68,24 +72,40 @@ object ZoneWatch {
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     /**
+     * Whether the zone watch is on for [policy] ([zoneWatchActive]: device owner, managed,
+     * Regularly with zones) - the one gate of everything new in step 2 (qa-design-64-step2-code
+     * Q-2): without it the phone does exactly what it did before. False on any error.
+     */
+    fun zonesOn(context: Context, policy: PolicyResponse?): Boolean = try {
+        val app = context.applicationContext
+        val owner = app.getSystemService(DevicePolicyManager::class.java)?.isDeviceOwnerApp(app.packageName) == true
+        CallPolicyStore.ensureLoaded(app)
+        val managed = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
+        zoneWatchActive(owner, managed, policy?.locationPolicy)
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Zone watch gate failed: ${e.javaClass.simpleName}")
+        false
+    }
+
+    /**
      * The enforced policy's zone watch, after every sync's `apply()` (and so at the first sync of
-     * every process start - decision 10): Regularly as device owner turns the passive feed on,
-     * zones add the fences; anything else turns all of it off. The pause and the override change
-     * nothing (decision 12: locating isn't a restriction). Never throws.
+     * every process start - decision 10): with the watch on ([zonesOn]) the fences, the passive
+     * feed and the motion sensor (kept armed for the series); anything else turns all of it off
+     * and drops a kept fix - a phone without zones has none of it (Q-2). The pause and the
+     * override change nothing (decision 12: locating isn't a restriction). Never throws.
      */
     fun apply(context: Context, policy: PolicyResponse?) {
         val app = context.applicationContext
         try {
-            val owner = app.getSystemService(DevicePolicyManager::class.java)?.isDeviceOwnerApp(app.packageName) == true
-            CallPolicyStore.ensureLoaded(app)
-            val managed = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
-            val location = policy?.locationPolicy ?: LEGACY_LOCATION_POLICY
-            val regularly = owner && managed && location.mode == "interval"
-            val zones = policy?.locationPolicy?.zones.orEmpty()
-            ZoneFences.sync(app, zones, watching = regularly)
-            PassiveFixes.update(app, on = regularly)
-            if (!regularly) MotionGate.stop(app) else MotionGate.watch(app, zones = zones.isNotEmpty())
-            if (!regularly || zones.isEmpty()) ZoneSeries.stop(app)
+            val on = zonesOn(app, policy)
+            val zones = if (on) policy?.locationPolicy?.zones.orEmpty() else emptyList()
+            ZoneFences.sync(app, zones, watching = on)
+            PassiveFixes.update(app, on = on)
+            if (on) MotionGate.watch(app, zones = true) else MotionGate.stop(app)
+            if (!on) {
+                ZoneSeries.stop(app)
+                LocateCommands.clearKept(app)
+            }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Zone watch apply failed", e)
         }
@@ -94,8 +114,8 @@ object ZoneWatch {
     /**
      * Not managed any more, or a new enrollment (design 64 step 2, the coordinator's decision 3):
      * every fence of ours removed, the passive feed, the motion sensor and the series stopped, the
-     * queue emptied - nothing of the old setup keeps watching or waits to be sent. Cheap when there
-     * is nothing (no record, nothing running). Never throws.
+     * queue and the kept fix emptied - nothing of the old setup keeps watching or waits to be sent.
+     * Cheap when there is nothing (no record, nothing running). Never throws.
      */
     fun release(context: Context) {
         val app = context.applicationContext
@@ -105,8 +125,29 @@ object ZoneWatch {
             MotionGate.stop(app)
             ZoneSeries.stop(app)
             clearQueue(app)
+            LocateCommands.clearKept(app)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Zone watch release failed", e)
+        }
+    }
+
+    /**
+     * A new enrollment (both paths, next to `CommandAnswers.clear`; qa-design-64-step2-code Q-8):
+     * [release], then the fence record, the heartbeat's stamp and the mock count go too - the new
+     * row starts from nothing of the old one's. Never throws.
+     */
+    fun forget(context: Context) {
+        val app = context.applicationContext
+        release(app)
+        try {
+            synchronized(this) {
+                prefs(app).edit()
+                    .remove(KEY_FENCES).remove(KEY_QUEUE).remove(KEY_LAST_BEAT)
+                    .remove(KEY_MOCK_IGNORED).remove(KEY_MOCK_LAST).remove(KEY_MOCK_KEYS)
+                    .commit()
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Zone watch forget failed", e)
         }
     }
 
@@ -120,8 +161,8 @@ object ZoneWatch {
     fun onFence(context: Context, zoneId: Long, entering: Boolean) {
         val app = context.applicationContext
         val zones = watchedZones()
-        val record = fenceRecord(app)
-        val since = if (record == null) -1L else SystemClock.elapsedRealtime() - record.registeredAtElapsed
+        // No record = the registration is under way or gone: an "entering" is its echo (Q-7).
+        val since = fenceRecord(app)?.let { SystemClock.elapsedRealtime() - it.registeredAtElapsed }
         val verdict = fenceVerdict(zoneId, zones, entering, since)
         Log.i(LOG_TAG, "Fence of zone $zoneId (entering=$entering): $verdict")
         if (verdict != FenceVerdict.CROSSING) return
@@ -181,18 +222,28 @@ object ZoneWatch {
      * emulator's test provider). True when [location] may be used. */
     fun accept(context: Context, location: Location): Boolean {
         val verdict = fixVerdict(isMock = location.isMock, acceptMock = BuildConfig.DEBUG)
-        if (verdict == FixVerdict.MOCK) countMock(context, location.time)
+        if (verdict == FixVerdict.MOCK) countMock(context, location)
         return verdict != FixVerdict.MOCK
     }
 
-    /** One more mock fix ignored - once per fix: the same fix seen again (a last-known read after
-     * the passive feed had it, two providers handing back one fix) counts once. */
+    private val keysSerializer = ListSerializer(String.serializer())
+
+    /** One more mock fix ignored - once per fix (qa-design-64-step2-code Q-9): the keys
+     * ([mockKey]: time and place) of the last [MOCK_KEYS_KEPT] counted fixes are kept, so a fix
+     * seen again - a last-known read after the passive feed had it, two providers alternating -
+     * counts once. */
     @Synchronized
-    fun countMock(context: Context, timeMs: Long) {
+    fun countMock(context: Context, location: Location) {
         val p = prefs(context)
-        if (p.getLong(KEY_MOCK_LAST, Long.MIN_VALUE) == timeMs) return
+        val recent = try {
+            p.getString(KEY_MOCK_KEYS, null)?.let { ServerJson.decodeFromString(keysSerializer, it) }.orEmpty()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val keys = mockKeysAfter(recent, mockKey(location.time, location.latitude, location.longitude)) ?: return
         val count = p.getLong(KEY_MOCK_IGNORED, 0L) + 1
-        p.edit().putLong(KEY_MOCK_IGNORED, count).putLong(KEY_MOCK_LAST, timeMs).commit()
+        p.edit().putLong(KEY_MOCK_IGNORED, count).putString(KEY_MOCK_KEYS, ServerJson.encodeToString(keysSerializer, keys))
+            .remove(KEY_MOCK_LAST).commit()
         // The first of a series, then every hundredth: a spoofing app sends one a second.
         if (count == 1L || count % 100 == 0L) Log.w(LOG_TAG, "Ignored a mock location ($count in all)")
     }
@@ -235,8 +286,10 @@ object ZoneWatch {
         }
     }
 
+    /** Location Off or no zones watched (Q-5): emptied before the report, which then carries no
+     * extras. */
     @Synchronized
-    private fun clearQueue(context: Context) {
+    fun clearQueue(context: Context) {
         val p = prefs(context)
         if (p.contains(KEY_QUEUE)) p.edit().remove(KEY_QUEUE).commit()
     }
@@ -255,8 +308,9 @@ object ZoneWatch {
 
     // --- The report ---
 
-    /** `zone_watch` for the status report; `null` when not device owner. Counts and switches only. */
-    fun report(context: Context): ZoneWatchReport? = try {
+    /** `zone_watch` for the status report; `null` when not device owner. Counts and switches only;
+     * [still] = [reportStill] (Q-3). */
+    fun report(context: Context, still: Boolean = false): ZoneWatchReport? = try {
         val app = context.applicationContext
         if (app.getSystemService(DevicePolicyManager::class.java)?.isDeviceOwnerApp(app.packageName) != true) {
             null
@@ -268,6 +322,7 @@ object ZoneWatch {
                 backgroundLocation = ContextCompat.checkSelfPermission(app, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
                     PackageManager.PERMISSION_GRANTED,
                 mockIgnored = prefs(app).getLong(KEY_MOCK_IGNORED, 0L),
+                still = still,
             )
         }
     } catch (e: Exception) {

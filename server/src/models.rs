@@ -595,6 +595,20 @@ pub struct DeviceLocation {
     /// Design 64 step 2 (0093): the phone's provider word and mock flag; NULL for older rows.
     pub provider: Option<String>,
     pub mock: Option<bool>,
+    /// When the phone last re-sent the fix as still current (0093, Q-3); NULL = never.
+    pub resent_at: Option<String>,
+}
+
+impl DeviceLocation {
+    /// The later of the fix's own time and its last still re-send: what "Here now" counts from.
+    pub fn seen_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        let captured = crate::display_time::parse_db_utc(&self.captured_at);
+        let resent = self
+            .resent_at
+            .as_deref()
+            .and_then(crate::display_time::parse_db_utc);
+        captured.max(resent)
+    }
 }
 
 /// A queued remote command (ring/lock/wipe/locate, design 24b's window commands) - `delivered_at`
@@ -686,6 +700,10 @@ pub const ENROLLED_AT: &str =
 /// Status-report capability of a launcher that confirms each command before running it
 /// (`POST /api/devices/command-receipt`, security review L12).
 pub const COMMAND_RECEIPT_CAPABILITY: &str = "command_receipt_v1";
+
+/// Status-report capability of a launcher that watches its zones itself (design 64 step 2): only
+/// such a phone is sent the zones' centres and radii (qa-design-64-step2-code Q-10).
+pub const ZONES_CAPABILITY: &str = "zones_v1";
 
 fn minutes_since(at: &str, now: chrono::NaiveDateTime) -> Option<i64> {
     chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M:%S")

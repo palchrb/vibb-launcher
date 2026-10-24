@@ -298,7 +298,16 @@ pub(crate) async fn build_policy(
             zones.len(),
             crate::zones::watching(watch.as_ref()),
         ),
-        zones: crate::zones::policy_zones(&policy.location_mode, &zones),
+        // Q-10: the centres and radii only to a launcher that watches zones itself.
+        zones: if last_capabilities(&state.db, device_id)
+            .await?
+            .iter()
+            .any(|c| c == crate::models::ZONES_CAPABILITY)
+        {
+            crate::zones::policy_zones(&policy.location_mode, &zones)
+        } else {
+            Vec::new()
+        },
     };
 
     // Design 36 §4.1: Custom with a valid pair is the `dns_upstream` object and "cloudflare" for a
@@ -1158,7 +1167,7 @@ pub async fn status(
     // events (design 35 §2.1: its emergency call, its id for foreign access).
     let previous: Option<PreviousReport> = sqlx::query_as(
         "SELECT id, installed_apps_json, install_mode_until_ms, call_state_json, \
-                foreign_access_json, unseen_boots_count, zone_watch_json FROM device_status \
+                foreign_access_json, unseen_boots_count FROM device_status \
          WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(device.id)
@@ -1291,23 +1300,27 @@ pub async fn status(
             crate::parent_events::raise_logged(&state, &phone.unseen_boot(count, last_at_ms)).await;
         }
     }
-    // Design 64 step 2: a release build ignores a mock fix and counts it (decision 14).
-    if let Some(line) = crate::zones::mock_log_line(
+    // Design 64 step 2: a release build ignores a mock fix and counts it (decision 14); the line
+    // comes once per rise, against the count last logged (Q-9).
+    match crate::zones::mock_rise(
+        &state.db,
         device.id,
-        crate::zones::parse_zone_watch(
-            previous.as_ref().and_then(|p| p.zone_watch_json.as_deref()),
-        )
-        .as_ref(),
         crate::zones::parse_zone_watch(zone_watch_json.as_deref()).as_ref(),
-    ) {
-        crate::security::record_security_event(
-            &state.db,
-            "mock_location_ignored",
-            None,
-            None,
-            Some(&line),
-        )
-        .await;
+    )
+    .await
+    {
+        Ok(Some(line)) => {
+            crate::security::record_security_event(
+                &state.db,
+                "mock_location_ignored",
+                None,
+                None,
+                Some(&line),
+            )
+            .await;
+        }
+        Ok(None) => {}
+        Err(err) => tracing::error!(device_id = device.id, %err, "can't compare the mock count"),
     }
     crate::handlers::window_relock::log_relock(
         &state.db,
@@ -1462,7 +1475,13 @@ pub async fn status(
             "dropped locations that aren't valid (time, coordinates or accuracy) or too many"
         );
     }
-    crate::zones::intake(&state, device.id, &fixes).await;
+    // Q-3: a `still` report's own fix is current as of now ("Here now" counts from it).
+    let resent = report
+        .location
+        .as_ref()
+        .filter(|_| crate::zones::report_still(report.zone_watch.as_ref()))
+        .and_then(|loc| crate::models::checked_location(loc).map(|at| (loc, at)));
+    crate::zones::intake(&state, device.id, &fixes, resent.as_ref()).await;
 
     StatusCode::NO_CONTENT
 }
@@ -1476,7 +1495,6 @@ struct PreviousReport {
     call_state_json: Option<String>,
     foreign_access_json: Option<String>,
     unseen_boots_count: Option<i64>,
-    zone_watch_json: Option<String>,
 }
 
 /// A stored `call_state`'s last emergency call (`last_emergency_call_at`, RFC 3339, read as the

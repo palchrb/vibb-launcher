@@ -41,8 +41,13 @@ fn watch(fences: i64, mock_ignored: i64) -> Value {
            "background_location": true, "mock_ignored": mock_ignored})
 }
 
+/// A status report with `extra`; one with a `zone_watch` and no `capabilities` claims `zones_v1`
+/// (a launcher with the watch).
 async fn post(app: &TestApp, token: &str, extra: Value) {
     let mut body = json!({"lock_reason": "NONE", "kiosk_engaged": true});
+    if extra.get("zone_watch").is_some() && extra.get("capabilities").is_none() {
+        body["capabilities"] = json!(["zones_v1"]);
+    }
     body.as_object_mut()
         .unwrap()
         .extend(extra.as_object().unwrap().clone());
@@ -225,7 +230,16 @@ async fn the_policy_serves_the_zones_and_the_floor() {
         json!({"mode": "interval", "interval_minutes": 10, "zones": []})
     );
     let home = add_home(&app, id).await;
-    // Zones but a launcher without the watch (no zone_watch): as chosen, the zones sent.
+    // Zones and a launcher that doesn't claim `zones_v1` (none reported yet, or an older one):
+    // no centres, no floor (Q-10).
+    assert_eq!(
+        location_policy(&app, &token).await,
+        json!({"mode": "interval", "interval_minutes": 10, "zones": []})
+    );
+    post(&app, &token, json!({"capabilities": ["call_policy_v1"]})).await;
+    assert_eq!(location_policy(&app, &token).await["zones"], json!([]));
+    // A launcher with the watch but no zone_watch yet: as chosen, the zones sent.
+    post(&app, &token, json!({"capabilities": ["zones_v1"]})).await;
     let policy = location_policy(&app, &token).await;
     assert_eq!(policy["interval_minutes"], 10);
     assert_eq!(
@@ -266,6 +280,124 @@ async fn the_policy_serves_the_zones_and_the_floor() {
         location_policy(&app, &token).await,
         json!({"mode": "interval", "interval_minutes": 10, "zones": []})
     );
+}
+
+/// Q-11 (S6): a watch - and its `zones_v1` - reported before the phone was enrolled into the row
+/// anew belongs to the earlier install: no floor, no zones until the new one reports.
+#[tokio::test]
+async fn a_watch_from_before_a_re_enrollment_gives_no_floor() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    set_location(&app, id, "interval", 10).await;
+    add_home(&app, id).await;
+    post(&app, &token, json!({"zone_watch": watch(1, 0)})).await;
+    assert_eq!(location_policy(&app, &token).await["interval_minutes"], 30);
+    sqlx::query("UPDATE device_status SET reported_at = datetime('now', '-1 hour')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE devices SET enrolled_at = datetime('now', '-1 minute') WHERE id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        location_policy(&app, &token).await,
+        json!({"mode": "interval", "interval_minutes": 10, "zones": []})
+    );
+}
+
+/// Q-11 (S8): a report whose own location is older than its extra (a confirm whose GPS failed and
+/// fell back to an older fix) - all stored, then judged once in time order: the arrival at the
+/// earlier fix.
+#[tokio::test]
+async fn a_location_older_than_its_extra_is_judged_in_order() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    add_home(&app, id).await;
+    post(&app, &token, json!({"location": fix(AWAY, &at(60))})).await;
+    post(&app, &token, json!({"location": fix(AWAY, &at(55))})).await;
+    let (early, late) = (at(20), at(15));
+    post(
+        &app,
+        &token,
+        json!({"extra_locations": [fix(NEAR, &late)], "location": fix(NEAR, &early)}),
+    )
+    .await;
+    assert_eq!(
+        events(&app).await,
+        [("zone_arrived".to_string(), stored(&early))]
+    );
+}
+
+/// Q-11 (S12) and Q-3: "Here now" counts in the served interval (the floor's 30 min, so a fix 45
+/// min old is fresh where the parent's 10 would make it stale), and from the fix's last still
+/// re-send - a phone lying at home re-sends its old fix, the fix's own time unchanged.
+#[tokio::test]
+async fn here_now_counts_the_served_interval_and_a_still_re_send() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    set_location(&app, id, "interval", 10).await;
+    add_home(&app, id).await;
+    post(&app, &token, json!({"location": fix(AWAY, &at(70))})).await;
+    post(&app, &token, json!({"location": fix(NEAR, &at(50))})).await;
+    let home_fix = fix(NEAR, &at(45));
+    post(&app, &token, json!({"location": home_fix.clone()})).await;
+    let page = || async {
+        app.get_page(&format!("/devices/locate?device={id}"), &cookie)
+            .await
+            .text()
+    };
+    // The parent's 10 min: 45 min is past two intervals.
+    assert!(!page().await.contains("data-here>Here now"));
+    // The phone watches: served 30, two intervals are 60 min.
+    post(&app, &token, json!({"zone_watch": watch(1, 0)})).await;
+    assert!(page().await.contains("data-here>Here now"));
+    // 70 min later by the fix's own time: stale without a re-send...
+    sqlx::query("UPDATE device_locations SET captured_at = ? WHERE latitude = ?")
+        .bind(stored(&at(70)))
+        .bind(NEAR.0)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let newest: String = sqlx::query_scalar("SELECT MAX(captured_at) FROM device_locations")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert!(!page().await.contains("data-here>Here now"));
+    // ... a re-send that isn't still changes nothing ...
+    let mut resent = fix(NEAR, &newest);
+    post(
+        &app,
+        &token,
+        json!({"location": resent.clone(), "zone_watch": watch(1, 0)}),
+    )
+    .await;
+    assert!(!page().await.contains("data-here>Here now"));
+    // ... a still one makes it current again; the fix's own time stays, no new row.
+    let mut still = watch(1, 0);
+    still["still"] = json!(true);
+    resent["accuracy_meters"] = json!(20.0);
+    post(
+        &app,
+        &token,
+        json!({"location": resent, "zone_watch": still}),
+    )
+    .await;
+    assert!(page().await.contains("data-here>Here now"));
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM device_locations").await,
+        3
+    );
+    let kept: String = sqlx::query_scalar("SELECT MAX(captured_at) FROM device_locations")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(kept, newest);
+    // The devices list's summary agrees (the same freshness).
+    let (when, mode, interval) = crate::zones::freshness_inputs(&app.db, id).await.unwrap();
+    assert!(crate::zones::fresh(when, &mode, interval, Utc::now()));
 }
 
 /// Code QA N-4: every extra fix is stored before the zones are judged, once, in time order -
@@ -342,8 +474,9 @@ async fn two_parallel_reports_raise_one_crossing() {
 }
 
 /// The mock counter is the phone's running count: a rise is one security line with the rise,
-/// the same count nothing, a lower one (the data cleared) starts again silently; a `zone_watch`
-/// that isn't one stores nothing.
+/// the same count nothing, a lower one (the data cleared) starts again silently - a report
+/// without `zone_watch` in between doesn't make the next rise count from 0, and two parallel
+/// reports log one rise (Q-9); a `zone_watch` that isn't one stores nothing.
 #[tokio::test]
 async fn the_mock_counter_logs_each_rise() {
     let app = TestApp::new().await;
@@ -361,7 +494,13 @@ async fn the_mock_counter_logs_each_rise() {
     assert!(lines().await.is_empty());
     post(&app, &token, json!({"zone_watch": watch(0, 3)})).await;
     post(&app, &token, json!({"zone_watch": watch(0, 3)})).await;
-    post(&app, &token, json!({"zone_watch": watch(0, 5)})).await;
+    // Not device owner for a moment: no watch.
+    post(&app, &token, json!({})).await;
+    post(&app, &token, json!({"zone_watch": watch(0, 3)})).await;
+    tokio::join!(
+        post(&app, &token, json!({"zone_watch": watch(0, 5)})),
+        post(&app, &token, json!({"zone_watch": watch(0, 5)}))
+    );
     post(&app, &token, json!({"zone_watch": watch(0, 1)})).await;
     let logged = lines().await;
     assert_eq!(logged.len(), 2, "{logged:?}");
@@ -472,11 +611,19 @@ async fn the_locate_page_tells_the_floor_the_watch_and_the_mock_count() {
     assert!(!page().await.contains("data-interval-note"));
     // The mock count, from the phone's running number.
     post(&app, &token, json!({"zone_watch": watch(1, 1)})).await;
-    assert!(page().await.contains("1 made-up location ignored<"));
+    assert!(
+        page()
+            .await
+            .contains("1 made-up location ignored, the last ")
+    );
     post(&app, &token, json!({"zone_watch": watch(1, 4)})).await;
     let html = page().await;
     assert!(html.contains("data-row=\"mock-ignored\""));
-    assert!(html.contains("4 made-up locations ignored<"), "{html}");
+    // With when the count last rose (Q-9): just now.
+    assert!(
+        html.contains("4 made-up locations ignored, the last "),
+        "{html}"
+    );
 }
 
 /// Migration 0093: a fix keeps the phone's provider word (a short lowercase word or nothing) and

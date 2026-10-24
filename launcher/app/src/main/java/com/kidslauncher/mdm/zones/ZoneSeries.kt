@@ -29,10 +29,11 @@ private const val CHECK_WAKELOCK_MS = 45_000L
  * The moving series (design 64 §4.5): a significant-motion fire while the policy has zones starts
  * cheap checks - each one balanced fused fix (`LocateCommands.seriesFix`: Wi-Fi/cell, no GPS) -
  * every [nextCheckDelay] (the time to the nearest boundary at 15 m/s, 3..30 min). A fix the
- * phone could have crossed with ([checkVerdict]: on the other side of a boundary than the cached
- * fix, or within its accuracy of one) is sent now - queued, so it rides the report the sync it asks
- * for makes, and with a side change the crossing's confirming GPS fix 2 min later - else it is only
- * kept as the cached fix (the heartbeat reports it). The fused fix also passes the platform fence,
+ * phone could have crossed with ([checkVerdict]: on the other side of a boundary than the reported
+ * fix, or within its accuracy of one) is sent now - promoted to the reported fix and queued, so it
+ * rides the report the sync it asks for makes, and with a side change the crossing's confirming GPS
+ * fix 2 min later - else it only goes to the kept slot (a due heartbeat's `KEPT` reports it,
+ * qa-design-64-step2-code Q-1). The fused fix also passes the platform fence,
  * which judges every fused fix. The series ends after an hour, 20 checks, or when the sensor fired
  * no more within twice the last delay ([seriesEnd]). The phone decides nothing: the server's rule
  * on the fixes does. State in memory only (a new process starts no series until the next fire).
@@ -52,7 +53,7 @@ object ZoneSeries {
     fun onMotion(context: Context) {
         val app = context.applicationContext
         val zones = ZoneWatch.watchedZones()
-        val first = nextCheckDelay(LocateCommands.cachedQueued(), zones, System.currentTimeMillis()) ?: return
+        val first = nextCheckDelay(LocateCommands.newestKnown(), zones, System.currentTimeMillis()) ?: return
         val now = SystemClock.elapsedRealtime()
         val started = synchronized(this) {
             val before = series
@@ -84,7 +85,7 @@ object ZoneSeries {
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "A series check failed: ${e.javaClass.simpleName}")
             } finally {
-                val next = nextCheckDelay(LocateCommands.cachedQueued(), zones, System.currentTimeMillis()) ?: CHECK_MAX_DELAY_MS
+                val next = nextCheckDelay(LocateCommands.newestKnown(), zones, System.currentTimeMillis()) ?: CHECK_MAX_DELAY_MS
                 val still = synchronized(this@ZoneSeries) {
                     series?.let { series = seriesAfterCheck(it, next) } != null
                 }
@@ -99,14 +100,19 @@ object ZoneSeries {
     }
 
     private suspend fun check(context: Context, zones: List<com.kidslauncher.mdm.server.dto.PolicyZone>) {
+        // Compared with the reported fix: the server knows that one's side.
         val previous = LocateCommands.cachedQueued()
+        val requestedAt = System.currentTimeMillis()
         val location = LocateCommands.seriesFix(context) ?: return
         val fix = location.toQueued(LocateCommands.providerOf(location))
         val verdict = checkVerdict(previous, fix, zones)
+        // Kept for the heartbeat (Q-1); a crossing candidate is reported now, so it becomes the
+        // reported fix at once.
         LocateCommands.keepFix(context, location)
-        MotionGate.arm(context)
+        if (freshOwnFix(location.time, requestedAt)) MotionGate.arm(context)
         Log.i(LOG_TAG, "Series check: $verdict")
         if (verdict == CheckVerdict.KEEP) return
+        LocateCommands.promoteKept(context)
         ZoneWatch.enqueue(context, fix)
         SyncRunner.request(context, "zone_check")
         if (verdict == CheckVerdict.SIDE_CHANGED) ZoneWatch.armConfirm(context)

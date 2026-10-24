@@ -309,18 +309,22 @@ pub fn fresh(
     newest.is_some_and(|at| now - at < fresh_for(mode, interval_minutes))
 }
 
-/// The phone's newest fix time and its location setting (`location_mode`,
+/// The phone's newest fix time - its own, or its last still re-send (`resent_at`, Q-3) - and its
+/// location setting (`location_mode`,
 /// the interval as served - [served_interval_of]; a phone without a policy row reads as a new
 /// phone's), for [fresh].
 pub async fn freshness_inputs(
     db: &sqlx::SqlitePool,
     device_id: i64,
 ) -> Result<(Option<DateTime<Utc>>, String, i64), sqlx::Error> {
-    let newest: Option<String> =
-        sqlx::query_scalar("SELECT MAX(captured_at) FROM device_locations WHERE device_id = ?")
-            .bind(device_id)
-            .fetch_one(db)
-            .await?;
+    // Q-3: a fix the phone re-sent as still current counts from that re-send.
+    let newest: Option<String> = sqlx::query_scalar(
+        "SELECT MAX(MAX(captured_at, COALESCE(resent_at, captured_at))) FROM device_locations \
+         WHERE device_id = ?",
+    )
+    .bind(device_id)
+    .fetch_one(db)
+    .await?;
     let (mode, interval): (String, i64) = sqlx::query_as(
         "SELECT location_mode, location_interval_minutes FROM device_policy WHERE device_id = ?",
     )
@@ -458,7 +462,16 @@ async fn store_fix(
 /// checked ([report_fixes]) - are **all** stored first, each on its own, and the zones judged
 /// **once** after them, so a crossing's pair that arrives in one report is judged in time order,
 /// and an extra fix is never left unjudged behind a newer one it came with.
-pub async fn intake(state: &AppState, device_id: i64, fixes: &[(&LocationReport, String)]) {
+///
+/// `resent` (qa-design-64-step2-code Q-3): the report's own `location` when its `zone_watch` says
+/// `still` - the phone re-sent its fix while its motion sensor says it hasn't moved since; that
+/// row's `resent_at` becomes now, so "Here now" counts from this report ([freshness_inputs]).
+pub async fn intake(
+    state: &AppState,
+    device_id: i64,
+    fixes: &[(&LocationReport, String)],
+    resent: Option<&(&LocationReport, String)>,
+) {
     if fixes.is_empty() {
         return;
     }
@@ -471,6 +484,11 @@ pub async fn intake(state: &AppState, device_id: i64, fixes: &[(&LocationReport,
                     Err(err) => tracing::error!(device_id, %err, "can't store the fix"),
                 }
             }
+            if let Some((loc, captured_at)) = resent
+                && let Err(err) = mark_resent(&mut conn, device_id, loc, captured_at).await
+            {
+                tracing::error!(device_id, %err, "can't mark the fix as re-sent");
+            }
         }
         Err(err) => tracing::error!(device_id, %err, "can't store the fixes"),
     }
@@ -480,6 +498,36 @@ pub async fn intake(state: &AppState, device_id: i64, fixes: &[(&LocationReport,
     if let Err(err) = judge(state, device_id, Utc::now()).await {
         tracing::error!(device_id, %err, "can't judge the zones; the next report will");
     }
+}
+
+/// The stored fix (the phone, `captured_at` and the coordinates - [store_fix]'s identity) re-sent
+/// as still current now (Q-3). The fix's own time stays.
+async fn mark_resent(
+    conn: &mut SqliteConnection,
+    device_id: i64,
+    loc: &LocationReport,
+    captured_at: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE device_locations SET resent_at = ? WHERE device_id = ? AND captured_at = ? \
+         AND latitude = ? AND longitude = ?",
+    )
+    .bind(instant(Utc::now()))
+    .bind(device_id)
+    .bind(captured_at)
+    .bind(loc.latitude)
+    .bind(loc.longitude)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// The report's `zone_watch.still` (Q-3): `true` only for a JSON `true`.
+pub fn report_still(zone_watch: Option<&serde_json::Value>) -> bool {
+    zone_watch
+        .and_then(|w| w.get("still"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// Step 2 of [intake]: the zones judged on the stored fixes, the events raised, the sender woken.
@@ -678,23 +726,75 @@ pub fn parse_zone_watch(stored: Option<&str>) -> Option<ZoneWatch> {
     serde_json::from_str(stored?).ok()
 }
 
-/// The security log's line when the phone's count of ignored mock fixes rose since its previous
-/// report (`mock_location_ignored`, "Made-up locations ignored"): the phone and the count, never
-/// a place. A lower count (the launcher's data cleared, a new install) starts again silently.
-pub fn mock_log_line(
-    device_id: i64,
-    previous: Option<&ZoneWatch>,
-    now: Option<&ZoneWatch>,
-) -> Option<String> {
-    let count = now?.mock_ignored;
-    let before = previous.map_or(0, |w| w.mock_ignored);
-    let rose = count - before;
+/// The security log's line when the phone's count of ignored mock fixes rose past the count
+/// last logged (`mock_location_ignored`, "Made-up locations ignored"): the phone and the count,
+/// never a place.
+pub fn mock_log_line(device_id: i64, logged: i64, count: i64) -> Option<String> {
+    let rose = count - logged;
     (rose > 0).then(|| {
         format!(
             "device {device_id}: the phone ignored {rose} made-up location(s) - an app pretended \
              to be somewhere else ({count} in all)"
         )
     })
+}
+
+/// The report's mock count against `devices.mock_logged` (qa-design-64-step2-code Q-9): a rise
+/// is written by an UPDATE only a higher count passes, so two parallel reports - or a report
+/// without `zone_watch` in between - log it once; `Some(line)` for the one that wrote it. A lower
+/// count (the launcher's data cleared, a new enrollment) is taken silently, the date kept.
+pub async fn mock_rise(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    watch: Option<&ZoneWatch>,
+) -> Result<Option<String>, sqlx::Error> {
+    let Some(count) = watch.map(|w| w.mock_ignored) else {
+        return Ok(None);
+    };
+    let logged: Option<i64> =
+        sqlx::query_scalar("SELECT COALESCE(mock_logged, 0) FROM devices WHERE id = ?")
+            .bind(device_id)
+            .fetch_optional(db)
+            .await?;
+    let Some(logged) = logged else {
+        return Ok(None);
+    };
+    if count < logged {
+        sqlx::query("UPDATE devices SET mock_logged = ? WHERE id = ? AND mock_logged > ?")
+            .bind(count)
+            .bind(device_id)
+            .bind(count)
+            .execute(db)
+            .await?;
+        return Ok(None);
+    }
+    let rose = sqlx::query(
+        "UPDATE devices SET mock_logged = ?1, mock_logged_at = ?2 WHERE id = ?3 \
+         AND COALESCE(mock_logged, 0) < ?1",
+    )
+    .bind(count)
+    .bind(instant(Utc::now()))
+    .bind(device_id)
+    .execute(db)
+    .await?
+    .rows_affected()
+        == 1;
+    Ok(rose
+        .then(|| mock_log_line(device_id, logged, count))
+        .flatten())
+}
+
+/// When the phone's mock count last rose (Q-9), for the Locate page's row.
+pub async fn mock_logged_at(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    let at: Option<Option<String>> =
+        sqlx::query_scalar("SELECT mock_logged_at FROM devices WHERE id = ?")
+            .bind(device_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(at.flatten().as_deref().and_then(parse_db_utc))
 }
 
 /// The phone's latest `zone_watch` since its enrollment (a phone enrolled into the row anew is
@@ -1192,33 +1292,21 @@ mod tests {
 
     #[test]
     fn the_mock_line_comes_with_each_rise() {
-        let watch = |mock_ignored| ZoneWatch {
-            fences: 0,
-            motion_sensor: true,
-            location_on: true,
-            background_location: true,
-            mock_ignored,
-        };
-        assert_eq!(mock_log_line(3, None, Some(&watch(0))), None);
+        assert_eq!(mock_log_line(3, 0, 0), None);
         assert_eq!(
-            mock_log_line(3, None, Some(&watch(2))).as_deref(),
+            mock_log_line(3, 0, 2).as_deref(),
             Some(
                 "device 3: the phone ignored 2 made-up location(s) - an app pretended to be \
                  somewhere else (2 in all)"
             )
         );
         assert!(
-            mock_log_line(3, Some(&watch(2)), Some(&watch(5)))
+            mock_log_line(3, 2, 5)
                 .unwrap()
                 .contains("ignored 3 made-up")
         );
-        assert_eq!(mock_log_line(3, Some(&watch(5)), Some(&watch(5))), None);
-        assert_eq!(
-            mock_log_line(3, Some(&watch(5)), Some(&watch(1))),
-            None,
-            "a reset count"
-        );
-        assert_eq!(mock_log_line(3, Some(&watch(5)), None), None);
+        assert_eq!(mock_log_line(3, 5, 5), None);
+        assert_eq!(mock_log_line(3, 5, 1), None, "a reset count");
     }
 
     /// The report's fixes: every extra checked, the newest 20 of them in time order, then the

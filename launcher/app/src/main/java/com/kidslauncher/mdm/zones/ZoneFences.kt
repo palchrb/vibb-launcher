@@ -70,6 +70,11 @@ object ZoneFences {
             return
         }
         grantLocation(context)
+        // The record and its stamp before the first add (qa-design-64-step2-code Q-7): AOSP fires
+        // the registration's "entering" from addProximityAlert itself, and the echo window must
+        // already hold for it. No fingerprint yet, so a death mid-way plans again.
+        val registeredAt = SystemClock.elapsedRealtime()
+        ZoneWatch.saveFenceRecord(context, FenceRecord("", plan.add.map { it.id }, registeredAt))
         val added = mutableListOf<Long>()
         for (zone in plan.add) {
             try {
@@ -85,7 +90,7 @@ object ZoneFences {
         }
         // A record that isn't the whole set has no fingerprint, so the next sync plans again.
         val fingerprint = if (added.size == plan.add.size) fenceFingerprint(plan.add) else ""
-        ZoneWatch.saveFenceRecord(context, FenceRecord(fingerprint, added, SystemClock.elapsedRealtime()))
+        ZoneWatch.saveFenceRecord(context, FenceRecord(fingerprint, added, registeredAt))
         Log.i(LOG_TAG, "Fences: ${plan.remove.size} removed, ${added.size} of ${plan.add.size} added")
     }
 

@@ -42,6 +42,10 @@ private const val FRESH_LOCATION_TIMEOUT_MS = 15_000L
 // command ("Update location now") always asks for a fresh fix unless location is off.
 private const val CACHED_LOCATION_PROVIDER = "kid_phone_cached"
 
+// Design 64 step 2 (Q-1): the kept slot - a passive or series fix kept for the next heartbeat or
+// crossing, never the cached (reported) fix. Default prefs, a CachedFix JSON.
+private const val KEPT_FIX_KEY = "zone_kept_fix"
+
 // Android's location-in-use indicator fires on *any* LocationManager query that returns a fix -
 // confirmed live, the passive getLastKnownLocation() fallback below was still triggering it (and
 // still touching LocationManager) on every throttled-skip sync, even after gating the active fetch
@@ -238,18 +242,76 @@ object LocateCommands {
         }
     }
 
-    /** When the cached fix was taken (its own time), `null` without one - for the passive feed
-     * ("newer than the cached fix") and the heartbeat ("a kept fix younger than the interval"). */
-    fun cachedFixTimeMs(): Long? = cachedFix()?.timeMs
+    /** When the cached (reported) fix was taken (its own time), `null` without one - for the kept
+     * slot's "newer than" checks. */
+    private fun cachedFixTimeMs(): Long? = cachedFix()?.timeMs
 
-    /** Design 64 step 2: a passive fix [com.kidslauncher.mdm.zones.passiveFixWorth] kept replaces
-     * the cached fix - only when it is still newer (the sync's own fix may have landed meanwhile).
-     * Never sent on its own: the next report's `CACHED` fix is it. */
+    /**
+     * Design 64 step 2 (qa-design-64-step2-code Q-1): a kept fix - a passive fix
+     * [com.kidslauncher.mdm.zones.passiveFixWorth] took, or a series check's that is no crossing
+     * candidate - goes into **its own slot** (`zone_kept_fix`), never the cached fix: every sync
+     * that takes no fresh fix re-sends the cached fix, so a kept fix there would ride on any
+     * backstop, nudge or command sync. Only [promoteKept] moves it into the cached fix - at a due
+     * heartbeat (`KEPT`) or a crossing's sync. Written only when newer than both.
+     */
     @Synchronized
     fun keepFix(context: Context, location: Location) {
+        val newest = listOfNotNull(cachedFixTimeMs(), keptFix()?.timeMs).maxOrNull()
+        if (newest != null && location.time <= newest) return
+        val kept = CachedFix(
+            latitude = location.latitude,
+            longitude = location.longitude,
+            accuracy = if (location.hasAccuracy()) location.accuracy else null,
+            timeMs = location.time,
+            provider = providerOf(location),
+            mock = location.isMock,
+        )
+        PreferenceManager.getDefaultSharedPreferences(context).edit()
+            .putString(KEPT_FIX_KEY, ServerJson.encodeToString(kept)).commit()
+    }
+
+    private fun keptRaw(): String? = try {
+        LauncherPreferences.getSharedPreferences().getString(KEPT_FIX_KEY, null)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun keptFix(): CachedFix? = keptRaw()?.let {
+        try {
+            ServerJson.decodeFromString<CachedFix>(it)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** The kept slot's fix when it is newer than the cached (reported) one - not yet reported;
+     * `null` otherwise. */
+    fun keptUnreported(): com.kidslauncher.mdm.zones.QueuedFix? {
+        val kept = keptFix() ?: return null
         val cached = cachedFixTimeMs()
-        if (cached != null && location.time <= cached) return
-        saveCachedFix(context, location)
+        if (cached != null && kept.timeMs <= cached) return null
+        return com.kidslauncher.mdm.zones.QueuedFix(kept.latitude, kept.longitude, kept.accuracy, kept.timeMs, kept.provider, kept.mock)
+    }
+
+    /** The newest fix the phone knows, reported or kept - what the series times its next check by. */
+    fun newestKnown(): com.kidslauncher.mdm.zones.QueuedFix? = keptUnreported() ?: cachedQueued()
+
+    /** A due heartbeat's `KEPT` or a crossing's sync: the kept fix, if newer, becomes the cached
+     * (reported) fix; the slot empties. True when one was promoted. */
+    @Synchronized
+    fun promoteKept(context: Context): Boolean {
+        val raw = keptRaw()
+        val promoted = keptUnreported() != null && raw != null
+        val edit = PreferenceManager.getDefaultSharedPreferences(context).edit()
+        if (promoted) edit.putString(LauncherPreferences.mdm().keys().cachedLocationJson(), raw)
+        edit.remove(KEPT_FIX_KEY).commit()
+        return promoted
+    }
+
+    /** The zone watch went (no zones, unmanaged, a new enrollment): nothing kept waits. */
+    fun clearKept(context: Context) {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        if (prefs.contains(KEPT_FIX_KEY)) prefs.edit().remove(KEPT_FIX_KEY).commit()
     }
 
     /** The provider a report names for [location] - its own, never the old cache marker. */

@@ -47,8 +47,8 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
             ParentPin.clearEvents(context)
             // And the commands it ran and the answers it queued (QA of the launcher wave, Medium 1).
             CommandAnswers.clear(context)
-            // And the old enrollment's zone fences and queued fixes (design 64 step 2).
-            com.kidslauncher.mdm.zones.ZoneWatch.release(context)
+            // And the old enrollment's zone watch: fences, queue, kept fix, beat, mock count (design 64 step 2, Q-8).
+            com.kidslauncher.mdm.zones.ZoneWatch.forget(context)
             // And a running Install Now (design 37): its command was the old enrollment's.
             InstallNow.clear(context)
             Result.success(Unit)

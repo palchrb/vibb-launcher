@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.zones
 
+import com.kidslauncher.mdm.server.LocationAction as L
 import com.kidslauncher.mdm.server.STATUS_CAPABILITIES
 import com.kidslauncher.mdm.server.ZONES_CAPABILITY
 import com.kidslauncher.mdm.server.dto.PolicyZone
@@ -67,8 +68,11 @@ class ZonePlanTest {
         assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = FENCE_ECHO_WINDOW_MS))
         // Leaving is never the echo (the platform fires "exiting" only after inside).
         assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = false, sinceRegisteredMs = 5))
-        // No record (-1) or one from before a reboot: no echo window.
-        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = -1))
+        // No record yet (the registration under way - the record is written before the adds, Q-7)
+        // or a stamp from before a reboot: an "entering" is the echo; leaving still counts.
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = null))
+        assertEquals(FenceVerdict.ECHO, fenceVerdict(7, zones, entering = true, sinceRegisteredMs = -1))
+        assertEquals(FenceVerdict.CROSSING, fenceVerdict(7, zones, entering = false, sinceRegisteredMs = null))
         assertEquals(FenceVerdict.NOT_OURS, fenceVerdict(9, zones, entering = false, sinceRegisteredMs = 10 * minute))
         assertEquals(FenceVerdict.NOT_OURS, fenceVerdict(7, emptyList(), entering = true, sinceRegisteredMs = 10 * minute))
         assertEquals(60_000L, FENCE_ECHO_WINDOW_MS)
@@ -141,7 +145,103 @@ class ZonePlanTest {
         assertEquals(Heartbeat.FIX, beat(now - 30 * minute, Motion.MOVED, keptAge = -minute))
         // Never stamped (a new install): due at once.
         assertEquals(Heartbeat.FIX, heartbeatDue(now, 0, interval, Motion.MOVED, 0, null))
+        // Q-4: our own fix that landed 5 s after the last beat isn't a kept fix (none waits): a due
+        // beat right after the interval fixes, it doesn't skip.
+        val lastBeat = now - interval - 1_000
+        assertEquals(Heartbeat.FIX, heartbeatDue(now, lastBeat, interval, Motion.MOVED, lastBeat + 5_000, keptFixAgeMs = null))
         assertEquals(4 * 60 * minute, STILL_SKIP_MAX_MS)
+    }
+
+    private val interval = com.kidslauncher.mdm.server.dto.LocationPolicy(mode = "interval", intervalMinutes = 60, zones = listOf(home))
+
+    @Test
+    fun `the zone watch is on only as owner, managed, Regularly with zones`() {
+        assertTrue(zoneWatchActive(owner = true, managed = true, policy = interval))
+        assertFalse(zoneWatchActive(owner = false, managed = true, policy = interval))
+        assertFalse(zoneWatchActive(owner = true, managed = false, policy = interval))
+        assertFalse(zoneWatchActive(owner = true, managed = true, policy = interval.copy(zones = emptyList())))
+        assertFalse(zoneWatchActive(owner = true, managed = true, policy = interval.copy(mode = "on_request")))
+        assertFalse(zoneWatchActive(owner = true, managed = true, policy = interval.copy(mode = "off")))
+        // An older server (no location_policy): no zones.
+        assertFalse(zoneWatchActive(owner = true, managed = true, policy = null))
+    }
+
+    @Test
+    fun `without zones the location step is exactly today's, for every input`() {
+        val now = 1_800_000_000_000L
+        val policies = listOf(
+            null,
+            com.kidslauncher.mdm.server.LEGACY_LOCATION_POLICY,
+            interval.copy(zones = emptyList()),
+            interval.copy(zones = emptyList(), intervalMinutes = 10),
+            interval.copy(mode = "on_request", zones = emptyList()),
+            interval.copy(mode = "off", zones = emptyList()),
+            // The gate is the caller's: with zonesOn false even a policy with zones is today's.
+            interval,
+        )
+        val ages = listOf(-minute, 0L, minute, 9 * minute, 10 * minute, 59 * minute, 60 * minute, 61 * minute, 5 * 60 * minute)
+        for (policy in policies) for (forced in listOf(false, true)) for (precise in listOf(false, true)) for (age in ages)
+            for (motion in Motion.values()) for (kept in listOf(null, 0L, minute)) for (beat in listOf(0L, now - minute, now)) {
+                val got = syncLocationAction(policy, zonesOn = false, forced = forced, precise = precise, nowMs = now,
+                    lastOwnFixMs = now - age, lastBeatMs = beat, motion = motion, keptFixAgeMs = kept)
+                assertEquals(com.kidslauncher.mdm.server.locationAction(policy, forced, age), got.action)
+                assertNull(got.beat)
+            }
+        // ... and the backstop counts from our last own fix, as before.
+        assertEquals(5L, backstopAnchorMs(zonesOn = false, lastBeatMs = 9, lastOwnFixMs = 5))
+        assertEquals(9L, backstopAnchorMs(zonesOn = true, lastBeatMs = 9, lastOwnFixMs = 5))
+        // ... and no still flag (Q-3).
+        assertFalse(reportStill(false, com.kidslauncher.mdm.server.LocationAction.CACHED, Motion.STILL, now, now - minute))
+    }
+
+    @Test
+    fun `with zones the heartbeat decides, a command and a crossing fix`() {
+        val now = 1_800_000_000_000L
+        fun act(forced: Boolean = false, precise: Boolean = false, beat: Long = now - 61 * minute, motion: Motion = Motion.MOVED, kept: Long? = null) =
+            syncLocationAction(interval, zonesOn = true, forced = forced, precise = precise, nowMs = now,
+                lastOwnFixMs = now - 61 * minute, lastBeatMs = beat, motion = motion, keptFixAgeMs = kept)
+        assertEquals(SyncLocation(L.FRESH, null), act(forced = true, precise = true))
+        assertEquals(SyncLocation(L.FRESH_BALANCED, null), act(forced = true))
+        assertEquals(SyncLocation(L.FRESH_BALANCED, Heartbeat.FIX), act())
+        assertEquals(SyncLocation(L.CACHED, Heartbeat.NOT_DUE), act(beat = now - minute))
+        assertEquals(SyncLocation(L.CACHED, Heartbeat.KEPT), act(kept = 5 * minute))
+        assertEquals(SyncLocation(L.CACHED, Heartbeat.STILL), act(motion = Motion.STILL))
+        // Only Regularly has a heartbeat: on request and Off are today's.
+        assertEquals(L.NONE, syncLocationAction(interval.copy(mode = "on_request"), true, false, false, now, 0, 0, Motion.MOVED, null).action)
+    }
+
+    @Test
+    fun `a re-sent fix is still current only while the sensor says so`() {
+        val now = 1_800_000_000_000L
+        assertTrue(reportStill(true, L.CACHED, Motion.STILL, now, now - 3 * 60 * minute))
+        assertFalse(reportStill(true, L.CACHED, Motion.STILL, now, now - STILL_SKIP_MAX_MS))
+        assertFalse(reportStill(true, L.CACHED, Motion.MOVED, now, now - minute))
+        assertFalse(reportStill(true, L.CACHED, Motion.NO_SENSOR, now, now - minute))
+        assertFalse(reportStill(true, L.FRESH_BALANCED, Motion.STILL, now, now - minute))
+        assertFalse(reportStill(true, L.CACHED, Motion.STILL, now, now + minute))
+    }
+
+    @Test
+    fun `a fix is fresh only when made for the request`() {
+        assertTrue(freshOwnFix(fixTimeMs = 1_000_000, requestedAtMs = 1_000_000))
+        assertTrue(freshOwnFix(fixTimeMs = 1_000_000 - FRESH_FIX_SLACK_MS, requestedAtMs = 1_000_000))
+        // The cached fix or an old last-known one handed back by a timeout.
+        assertFalse(freshOwnFix(fixTimeMs = 1_000_000 - FRESH_FIX_SLACK_MS - 1, requestedAtMs = 1_000_000))
+    }
+
+    @Test
+    fun `a mock fix counts once, by its time and place`() {
+        val a = mockKey(10, 59.9, 10.7)
+        val b = mockKey(20, 59.9, 10.7)
+        assertEquals(listOf(a), mockKeysAfter(emptyList(), a))
+        assertNull(mockKeysAfter(listOf(a, b), a))
+        // Two providers alternating count once each.
+        assertNull(mockKeysAfter(mockKeysAfter(listOf(a), b)!!, a))
+        assertFalse(mockKey(10, 59.9, 10.7) == mockKey(10, 59.9, 10.8))
+        val many = (1..20).map { mockKey(it.toLong(), 0.0, 0.0) }.fold(emptyList<String>()) { acc, k -> mockKeysAfter(acc, k)!! }
+        assertEquals(MOCK_KEYS_KEPT, many.size)
+        assertEquals(mockKey(20, 0.0, 0.0), many.last())
+        assertEquals(8, MOCK_KEYS_KEPT)
     }
 
     @Test
@@ -276,12 +376,50 @@ class ZonePlanTest {
         assertTrue(sync.contains("val forceFreshLocation = commandFix || zoneFix != null"))
         // §4.4's paths: GPS first only for locate/ring and the crossing's confirm, the rest balanced.
         assertTrue(sync.contains("val preciseFix = commandFix || zoneFix == FreshKind.PRECISE"))
-        assertTrue(sync.contains("if (beat == Heartbeat.FIX) LocationAction.FRESH_BALANCED else LocationAction.CACHED"))
-        assertTrue(sync.contains("if (it == LocationAction.FRESH && !precise) LocationAction.FRESH_BALANCED else it"))
-        // Un-managed and a new enrollment release every fence, the feed, the series and the queue.
+        // Q-2: one gate for the sync, the watch and the backstop; without it today's action.
+        assertTrue(sync.contains("val zonesOn = ZoneWatch.zonesOn(context, decision.policy)"))
+        assertTrue(sync.contains("val zoneFix = ZoneWatch.takeFreshWanted()?.takeIf { zonesOn }"))
+        assertTrue(sync.contains("val sync = syncLocationAction("))
+        assertFalse(sync.contains("heartbeatDue("))
+        val watch = source("zones/ZoneWatch.kt")
+        // G8: as device owner and managed only.
+        assertTrue(watch.contains("zoneWatchActive(owner, managed, policy?.locationPolicy)"))
+        assertTrue(watch.contains("PassiveFixes.update(app, on = on)"))
+        assertTrue(watch.contains("if (on) MotionGate.watch(app, zones = true) else MotionGate.stop(app)"))
+        assertTrue(watch.contains("ZoneFences.sync(app, zones, watching = on)"))
+        // G7: a fence's zones only from a Regularly policy.
+        assertTrue(watch.contains("currentPolicyDecision().policy?.locationPolicy?.takeIf { it.mode == \"interval\" }?.zones.orEmpty()"))
+        // G2: the backstop counts from the beat only with zones.
+        val backstop = source("push/BackstopAlarm.kt")
+        assertTrue(backstop.contains("val zonesOn = com.kidslauncher.mdm.zones.ZoneWatch.zonesOn(context, policy)"))
+        assertTrue(Regex("""backstopAnchorMs\(\s*zonesOn,\s*com\.kidslauncher\.mdm\.zones\.ZoneWatch\.lastBeatMs\(context\),\s*LauncherPreferences\.mdm\(\)\.lastActiveLocationFetchAtMs\(\),\s*\)""").containsMatchIn(backstop))
+        // G3: every due call and every fresh fix stamps the beat.
+        assertTrue(sync.contains("if (action.fresh || (beat != null && beat != Heartbeat.NOT_DUE)) ZoneWatch.stampBeat(context, now)"))
+        // G1/Q-6: the gate arms only after a genuinely fresh own fix.
+        assertTrue(sync.contains("if (zonesOn && action.fresh && freshOwnFix(location.time, now)) MotionGate.arm(context)"))
+        assertTrue(source("zones/ZoneSeries.kt").contains("if (freshOwnFix(location.time, requestedAt)) MotionGate.arm(context)"))
+        // Q-1: the kept fix is promoted only at a due KEPT or a crossing's sync, and by a series candidate.
+        assertTrue(sync.contains("if (beat == Heartbeat.KEPT || crossing) LocateCommands.promoteKept(context)"))
+        assertEquals(1, Regex("""promoteKept\(""").findAll(sync).count())
+        assertTrue(Regex("""if \(verdict == CheckVerdict\.KEEP\) return\s+LocateCommands\.promoteKept\(context\)""").containsMatchIn(source("zones/ZoneSeries.kt")))
+        // Q-3: the still flag rides the report.
+        assertTrue(sync.contains("zoneWatch = ZoneWatch.report(context, still = location.still),"))
+        assertTrue(sync.contains("still = reportStill(zonesOn, action, motion, now, lastOwnFix),"))
+        // Q-5: Off (and no zones) clears the queue before the report and sends no extras.
+        assertTrue(sync.contains("if (queueOff) ZoneWatch.clearQueue(context)"))
+        assertTrue(sync.contains("val extraFixes = if (queueOff) null else extraLocations(ZoneWatch.queue(context), location.fix)"))
+        // Q-7: the record (and its stamp) before the first add; a partial set has no fingerprint (G6).
+        assertTrue(Regex("""saveFenceRecord\(context, FenceRecord\("", plan\.add\.map \{ it\.id \}, registeredAt\)\)[\s\S]{0,200}for \(zone in plan\.add\)""").containsMatchIn(fences))
+        assertTrue(fences.contains("val fingerprint = if (added.size == plan.add.size) fenceFingerprint(plan.add) else \"\""))
+        assertTrue(watch.contains("val since = fenceRecord(app)?.let { SystemClock.elapsedRealtime() - it.registeredAtElapsed }"))
+        // G5/Q-9: the mock count by the recent fixes' keys.
+        assertTrue(watch.contains("mockKeysAfter(recent, mockKey(location.time, location.latitude, location.longitude)) ?: return"))
+        // Un-managed releases every fence, the feed, the series, the queue and the kept fix; a new
+        // enrollment forgets the watch's state too (Q-8).
         assertTrue(source("server/AppEnforcer.kt").contains("if (!managedForHardening) com.kidslauncher.mdm.zones.ZoneWatch.release(context)"))
-        assertTrue(source("server/Provisioning.kt").contains("com.kidslauncher.mdm.zones.ZoneWatch.release(context)"))
-        assertTrue(source("ui/settings/launcher/SettingsFragmentLauncher.kt").contains("com.kidslauncher.mdm.zones.ZoneWatch.release(context)"))
+        assertTrue(source("server/Provisioning.kt").contains("com.kidslauncher.mdm.zones.ZoneWatch.forget(context)"))
+        assertTrue(source("ui/settings/launcher/SettingsFragmentLauncher.kt").contains("com.kidslauncher.mdm.zones.ZoneWatch.forget(context)"))
+        assertTrue(Regex("""fun forget\(context: Context\) \{[\s\S]{0,200}release\(app\)[\s\S]{0,300}\.remove\(KEY_FENCES\)\.remove\(KEY_QUEUE\)\.remove\(KEY_LAST_BEAT\)""").containsMatchIn(watch))
         // A series check is a balanced fused fix only; a candidate is queued and asks for a sync.
         val series = source("zones/ZoneSeries.kt")
         assertTrue(series.contains("LocateCommands.seriesFix(context)"))
@@ -289,13 +427,27 @@ class ZonePlanTest {
         assertTrue(series.contains("if (verdict == CheckVerdict.SIDE_CHANGED) ZoneWatch.armConfirm(context)"))
         assertTrue(Regex("""android:name="\.zones\.ZoneCheckReceiver"\s+android:exported="false"""").containsMatchIn(manifest))
         assertTrue(sync.contains("extraLocations = extraFixes?.map { it.toReport() }"))
-        assertTrue(sync.contains("afterZoneReport(context, extraFixes, location.fix, sent.isSuccessful, locationOff)"))
-        // A passive fix is never sent on its own: the feed only keeps it as the cached fix.
+        assertTrue(sync.contains("afterZoneReport(context, extraFixes, location.fix, sent.isSuccessful, queueOff)"))
+        // G4: a report that threw leaves its fix queued.
+        assertTrue(sync.contains("if (!zoneQueueDone) afterZoneReport(context, extraFixes, location.fix, accepted = false, locationOff = queueOff)"))
+        // A passive fix is never sent on its own: the feed only puts it in the kept slot (Q-1), and
+        // the slot never writes the cached (reported) fix but in promoteKept.
         val sensors = source("zones/ZoneSensors.kt")
         assertFalse(sensors.contains("SyncRunner"))
         assertTrue(sensors.contains("FixVerdict.KEEP -> LocateCommands.keepFix(context, location)"))
+        // G9: a passive mock fix is counted.
+        assertTrue(sensors.contains("FixVerdict.MOCK -> ZoneWatch.countMock(context, location)"))
+        // Q-6: the trigger's fire and the arm share one monitor.
+        assertTrue(Regex("""@Synchronized\s+fun arm\(context: Context\)""").containsMatchIn(sensors))
+        assertTrue(Regex("""synchronized\(this\) \{\s+moved = true\s+listener = null""").containsMatchIn(sensors))
         // The mock rule on our own fixes too, fresh and last-known.
         val locate = source("server/LocateCommands.kt")
+        val keep = Regex("""fun keepFix\([\s\S]*?\n    }""").find(locate)!!.value
+        assertTrue(keep.contains("putString(KEPT_FIX_KEY"))
+        assertFalse(keep.contains("cachedLocationJson"))
+        assertFalse(keep.contains("saveCachedFix"))
+        // Only promoteKept and the own-fix save write the cached fix.
+        assertEquals(2, Regex("""keys\(\)\.cachedLocationJson\(\)""").findAll(locate).count())
         assertTrue(locate.contains("requestFreshFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) }"))
         assertTrue(locate.contains(".filter { ZoneWatch.accept(context, it) }"))
     }

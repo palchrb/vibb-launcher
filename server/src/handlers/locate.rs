@@ -197,7 +197,8 @@ fn notify_words(arrive: bool, leave: bool) -> &'static str {
 
 /// The zones' part of the page for `zones` with the location setting (`mode`, `interval` - the
 /// served one, design 64 step 2) and "Keep location on" (`locked`); `flash` is `?zone=`,
-/// `flash_zone` `?zone_id=`; `watch` the phone's latest `zone_watch` (step 2).
+/// `flash_zone` `?zone_id=`; `newest` the newest fix's time and `seen` the later of it and its
+/// last still re-send (Q-3); `watch` the phone's latest `zone_watch` (step 2).
 #[allow(clippy::too_many_arguments)]
 fn zones_view(
     zones: &[crate::zones::Zone],
@@ -207,11 +208,13 @@ fn zones_view(
     flash: Option<&str>,
     flash_zone: Option<i64>,
     newest: Option<DateTime<Utc>>,
+    seen: Option<DateTime<Utc>>,
     watch: Option<&crate::zones::ZoneWatch>,
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> ZonesView {
-    let fresh = crate::zones::fresh(newest, mode, interval, now);
+    // "Here now" counts from the newest fix's last still re-send too (Q-3): `seen`.
+    let fresh = crate::zones::fresh(seen, mode, interval, now);
     let row_flash = match flash {
         Some("added") => Some("Added."),
         Some("saved") => Some("Saved."),
@@ -1001,6 +1004,7 @@ async fn locate_view(
         zone_flash,
         flash_zone,
         newest.as_ref().and_then(|l| parse_db_utc(&l.captured_at)),
+        newest.as_ref().and_then(DeviceLocation::seen_at),
         watch.as_ref(),
         zone,
         now,
@@ -1011,12 +1015,18 @@ async fn locate_view(
             interval_label(served_interval)
         )
     });
-    let mock_ignored = watch
-        .filter(|w| w.mock_ignored > 0)
-        .map(|w| match w.mock_ignored {
+    // Q-9: with when the count last rose.
+    let mock_at = crate::zones::mock_logged_at(&state.db, id).await?;
+    let mock_ignored = watch.filter(|w| w.mock_ignored > 0).map(|w| {
+        let count = match w.mock_ignored {
             1 => "1 made-up location ignored".to_string(),
             n => format!("{n} made-up locations ignored"),
-        });
+        };
+        match mock_at {
+            Some(at) => format!("{count}, the last {}", zone.at(at, now)),
+            None => count,
+        }
+    });
     Ok(Locate {
         device,
         fix,

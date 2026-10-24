@@ -20,14 +20,15 @@ private const val LOG_TAG = "ZoneWatch"
 private const val PASSIVE_INTERVAL_MS = 60_000L
 
 /**
- * The passive provider's fixes (design 64 §4.3): while Regularly is on, as device owner, every fix
- * someone else made - the fence's own poll, Maps, the system - reaches us for free (it wakes
- * nothing and turns on no radio). [passiveFixWorth] decides: not a mock fix in a release build
- * (counted), accuracy 200 m or better, newer than the cached fix - then it **replaces the cached
- * fix only** (`LocateCommands.keepFix`). It is never sent on its own: it reaches the server as the
- * next heartbeat's fix (`Heartbeat.KEPT`) or a crossing's, so the trail stays as dense as the
- * parent's interval. Registered from [ZoneWatch.apply], removed when Regularly ends and when the
- * anchor service stops.
+ * The passive provider's fixes (design 64 §4.3): while the zone watch is on (Regularly with zones,
+ * as device owner - `ZoneWatch.zonesOn`), every fix someone else made - the fence's own poll, Maps,
+ * the system - reaches us for free (it wakes nothing and turns on no radio). [passiveFixWorth]
+ * decides: not a mock fix in a release build (counted), accuracy 200 m or better, newer than the
+ * newest fix the phone knows - then it goes to the **kept slot** (`LocateCommands.keepFix`), never
+ * the cached (reported) fix (qa-design-64-step2-code Q-1). A sync between heartbeats re-sends the
+ * reported fix as before; only a due heartbeat (`Heartbeat.KEPT`) or a crossing's sync promotes the
+ * kept one, so the trail stays as dense as the parent's interval. Registered from [ZoneWatch.apply],
+ * removed when the watch ends and when the anchor service stops.
  */
 object PassiveFixes {
     private val executor = Executors.newSingleThreadExecutor()
@@ -72,14 +73,14 @@ object PassiveFixes {
     private fun offer(context: Context, location: Location) {
         try {
             val verdict = passiveFixWorth(
-                cachedTimeMs = LocateCommands.cachedFixTimeMs(),
+                cachedTimeMs = LocateCommands.newestKnown()?.timeMs,
                 isMock = location.isMock,
                 accuracyM = if (location.hasAccuracy()) location.accuracy else null,
                 timeMs = location.time,
                 acceptMock = BuildConfig.DEBUG,
             )
             when (verdict) {
-                FixVerdict.MOCK -> ZoneWatch.countMock(context, location.time)
+                FixVerdict.MOCK -> ZoneWatch.countMock(context, location)
                 FixVerdict.KEEP -> LocateCommands.keepFix(context, location)
                 FixVerdict.INACCURATE, FixVerdict.NOT_NEWER -> {}
             }
@@ -92,7 +93,9 @@ object PassiveFixes {
 /**
  * The significant-motion sensor (decision 11, §4.5): a one-shot wake-up trigger in the sensor hub
  * that needs no permission. It fires once the phone moves and disarms itself.
- * - **The heartbeat's flag**: armed after each fix of our own ([arm]); the heartbeat skips its fix
+ * Only while the zone watch is on (`ZoneWatch.zonesOn`, qa-design-64-step2-code Q-2).
+ * - **The heartbeat's flag**: armed after each **genuinely fresh** fix of our own ([arm]; never
+ *   after a fallback to the cached or an old last-known fix, Q-6); the heartbeat skips its fix
  *   while it hasn't fired ([motion] = STILL; at most 4 h in a row, `heartbeatDue`). A new process
  *   doesn't know, so it counts as moved until its first fix.
  * - **The moving series**: while the policy has zones ([watch] with `zones`) the trigger is kept
@@ -129,7 +132,9 @@ object MotionGate {
         if (zones) ensureArmed(context)
     }
 
-    /** After a fix of our own while Regularly: still from here until the trigger fires. */
+    /** After a fresh fix of our own with zones: still from here until the trigger fires. One
+     * monitor with [fired]'s, so a fire can't land between `moved = false` and the arm (Q-6). */
+    @Synchronized
     fun arm(context: Context) {
         if (sensor(context) == null) return
         moved = false
@@ -157,9 +162,11 @@ object MotionGate {
     /** The trigger fired (it disarmed itself): moved; with zones the series hears it and the
      * trigger is armed again. */
     private fun fired() {
-        moved = true
-        synchronized(this) { listener = null }
-        val context = app ?: return
+        val context = synchronized(this) {
+            moved = true
+            listener = null
+            app
+        } ?: return
         if (!keepArmed) return
         try {
             ZoneSeries.onMotion(context)
