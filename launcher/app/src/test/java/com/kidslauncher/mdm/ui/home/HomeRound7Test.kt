@@ -46,7 +46,24 @@ class HomeRound7Test {
         }
         assertTrue(app.contains("KidAvatars.evictPackage(it)"))
         val avatars = code("ui/home/KidAvatars.kt").substringAfter("fun evictPackage(")
-        assertTrue(avatars.substringBefore("\n    }\n").contains("packageOf(appIconKeyApp(it)) == packageName"))
+        assertTrue(avatars.substringBefore("\n    }\n").contains(".filter { iconKeyIsPackage(it, packageName) }"))
+    }
+
+    @Test
+    fun `a cache key is the package's only by its decoded app key, and others are skipped before the decode`() {
+        val app = AppInfo("org.example.app", "org.example.app.Main", 0).serialize()
+        assertTrue(iconKeyIsPackage(appIconKey(app, 144, 320, null), "org.example.app"))
+        assertTrue(iconKeyIsPackage(appIconKey(app, 96, 480, AppDisplayEntry(label = null, icon = "own", color = "auto")), "org.example.app"))
+        assertFalse("a prefix of the name", iconKeyIsPackage(appIconKey(app, 144, 320, null), "org.example"))
+        assertFalse("a longer name", iconKeyIsPackage(appIconKey(app, 144, 320, null), "org.example.app2"))
+        // The name in another field (the activity of another package) still decodes to that other package.
+        val other = AppInfo("org.other", "org.example.app", 0).serialize()
+        assertFalse(iconKeyIsPackage(appIconKey(other, 144, 320, null), "org.example.app"))
+        assertFalse("not an app key", iconKeyIsPackage("\"org.example.app\"|144|320", "org.example.app"))
+        // The skip comes first: a key without the quoted name is never decoded.
+        val rule = code("ui/home/KidAvatars.kt").substringAfter("internal fun iconKeyIsPackage(").substringBefore("\n}\n")
+        val skip = rule.indexOf("if (!cacheKey.contains(\"\\\"\$packageName\\\"\")) return false")
+        assertTrue(rule, skip >= 0 && skip < rule.indexOf("deserialize("))
     }
 
     // ---- (2) Home pressed on Home -----------------------------------------------------------------
@@ -129,6 +146,11 @@ class HomeRound7Test {
         assertTrue(loads.contains("next = { timeoutMs -> requests.nextAppLoad(timeoutMs) }"))
         assertTrue(loads.contains("now = { android.os.SystemClock.elapsedRealtime() }"))
         assertFalse("one consumer, through the debounce only", loads.contains("consumeEach"))
+        // A failing load is logged and the consumer drains on (qa-appload-debounce-code Q-3).
+        val body = loads.substringAfter("now = { android.os.SystemClock.elapsedRealtime() },")
+        assertTrue(body.trimStart().startsWith(") {\n"))
+        assertTrue(body.substringAfter(") {").trimStart().startsWith("try {"))
+        assertTrue(body.contains("} catch (e: Exception) {"))
         assertTrue(loads.contains("val list = getApps(packageManager, applicationContext)"))
         assertEquals("the list is posted from the one consumer only", 1, Regex("apps\\.postValue\\(").findAll(app).count())
     }
@@ -167,7 +189,7 @@ class HomeRound7Test {
     }
 
     /** The real consumer loop on a virtual clock: requests at [times] (ms), each load taking [loadMs]; the loads' times. */
-    private fun loadsFor(times: List<Long>, loadMs: Long = 0): List<Long> {
+    private fun loadsFor(times: List<Long>, loadMs: Long = 0, closeAfter: Boolean = false): List<Long> {
         var now = 0L
         val pending = ArrayDeque(times.sorted())
         val loads = mutableListOf<Long>()
@@ -188,7 +210,7 @@ class HomeRound7Test {
                             take()
                             AppLoadNext.REQUEST
                         }
-                        timeoutMs == null -> AppLoadNext.CLOSED
+                        timeoutMs == null || closeAfter -> AppLoadNext.CLOSED
                         else -> {
                             now = until
                             AppLoadNext.TIMEOUT
@@ -215,6 +237,11 @@ class HomeRound7Test {
         assertEquals(listOf(0L, 10_980L + 300), loadsFor(listOf(0L) + storm))
         // The storm beginning while the first load still runs: one load more, not 50.
         assertEquals(2, loadsFor(listOf(0L) + (0 until 50).map { 100L + it * 20 }, loadMs = 400).size)
+    }
+
+    @Test
+    fun `a channel closed inside a burst still loads the pending burst`() {
+        assertEquals(listOf(0L, 1_000L), loadsFor(listOf(0L, 1_000L), closeAfter = true))
     }
 
     @Test

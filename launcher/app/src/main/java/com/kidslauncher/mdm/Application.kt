@@ -499,7 +499,7 @@ class Application : android.app.Application() {
      *
      * Once per burst (PLAN "Provisioning storm", qa-home-round-code Q-4): the consumer loads when
      * [com.kidslauncher.mdm.ui.home.appLoadDue] says so - 300 ms with no new request, at most 2 s after
-     * the burst's first - so the enforcer's hide/suspend storm at provisioning is one load and one Home
+     * it took the burst's first (a request made during a load counts from that load's end) - so the enforcer's hide/suspend storm at provisioning is one load and one Home
      * render, not one per package. The process's first request loads at once (Home's cold start).
      */
     private val appLoads: Channel<Unit> by lazy {

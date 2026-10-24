@@ -10,19 +10,21 @@ import kotlinx.coroutines.withTimeoutOrNull
  * running and one pending, so the loads ran back to back for the whole storm and Home rendered every list on the main
  * thread - two "no focused window" ANRs on the emulator (docs/testing/2026-10-24-home-round-run.md). Now the channel's
  * one consumer loads once per burst: after [APP_LOAD_QUIET_MS] with no new request, or at the latest
- * [APP_LOAD_MAX_WAIT_MS] after the burst's first request. The process's first request loads at once, so Home's cold
- * start never waits for the quiet period.
+ * [APP_LOAD_MAX_WAIT_MS] after the consumer took the burst's first request - a request made while a load runs is taken
+ * when that load ends, so it waits for the rest of that load as well (qa-appload-debounce-code Q-2). The process's
+ * first request loads at once, so Home's cold start never waits for the quiet period.
  */
 
 /** A burst ends after this long with no new request. */
 const val APP_LOAD_QUIET_MS = 300L
 
-/** A burst that never goes quiet still loads this long after its first request. */
+/** A burst that never goes quiet still loads this long after the consumer took its first request (a request made
+ * during a load counts from that load's end). */
 const val APP_LOAD_MAX_WAIT_MS = 2_000L
 
 /**
- * Whether the pending burst loads now: [quietMs] since its last request ([lastEventAt]), or [maxWaitMs] since its first
- * ([firstPendingAt]). Times are one monotonic clock (elapsed realtime).
+ * Whether the pending burst loads now: [quietMs] since its last request ([lastEventAt]), or [maxWaitMs] since the
+ * consumer took its first ([firstPendingAt]). Times are one monotonic clock (elapsed realtime).
  */
 fun appLoadDue(
     now: Long,
@@ -77,6 +79,7 @@ suspend fun runAppLoads(
             load()
             continue
         }
+        // When the consumer took it: a request sent during the last load waited for that load's end.
         val firstAt = now()
         var lastAt = firstAt
         while (!appLoadDue(now(), firstAt, lastAt)) {
