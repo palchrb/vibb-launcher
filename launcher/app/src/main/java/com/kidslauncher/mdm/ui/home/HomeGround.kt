@@ -4,14 +4,15 @@ package com.kidslauncher.mdm.ui.home
  * The black behind Home after the Home button (PLAN "Fix backlog", the user's videos 2026-10-16): from an app, the Home
  * button showed Home's icons on solid black for ~150 ms while the app slid away, then the wallpaper; Back was clean.
  * Home's window is transparent over Android's wallpaper (`windowShowWallpaper`), and that wallpaper isn't shown under it
- * while the app-close transition runs (or the transition's backdrop covers it - both are below Home's window). So Home
- * draws its own copy of the wallpaper under the grid - `WallpaperGround`'s FULL ground, the store's colour, gradient or
+ * while the app-close transition runs (measured on `jelly36` 2026-10-24: 2-3 black frames at 30 fps before, 0 with the
+ * copy - `docs/testing/2026-10-24-home-round-run.md`). So Home draws its own copy of the wallpaper under the grid - `WallpaperGround`'s FULL ground, the store's colour, gradient or
  * the one decoded photo with the ink's scrim, placed as Android's (centre crop over the whole window, as the bitmap
  * `WallpaperApplier` sets is drawn) - for the time a transition into Home can run, then goes transparent again.
  *
  * Only for a HOME intent that brings Home from behind (the Home button or gesture, our own `HomeFront` starts: the lock
- * leaving, the boot, an update): never for Back (Home is revealed, no intent - its predictive animation is clean and may
- * move Home's window, which a copy would show as a seam), never for a press on Home itself. Never at a lock-up: the copy
+ * leaving, the boot, an update; leaving Quickstep's fallback Recents for Home sends one too, harmlessly): never for Back
+ * (Home is revealed, no intent - its predictive animation is clean and may move Home's window, which a copy would show
+ * as a seam), never for a press on Home itself. Never at a lock-up: the copy
  * is the content's background, and the content isn't on the window while the lock is LOCKED or at a dark lock-up
  * (design 16c/32 - the night ground is), and Home's snapshot stays the black task description (no screenshot).
  */

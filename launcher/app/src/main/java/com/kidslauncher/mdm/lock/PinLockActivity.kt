@@ -1160,8 +1160,8 @@ class PinLockActivity : AppCompatActivity() {
         // Design 59d step B: as the face, Home comes with no slide (the dark mark still ends, Q59d-7).
         val target = pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }
         // PLAN "Home starts at the top after an unlock": Home goes back to the top when it is what the kid sees - not
-        // when a row's target opens over it (homeResetDue).
-        val arrival = lockLeaveArrival(hasTarget = target != null, lockWasRoot = target?.lockWasRoot == true)
+        // when a row's target opens over it (homeResetDue); a target that opens nothing is Home (Q-3).
+        val arrival = lockLeaveArrival(hasTarget = target != null && GlanceOpener.opens(this, target), lockWasRoot = target?.lockWasRoot == true)
         if (plan.homeFirst) HomeFront.bring(this, "the lock left", noAnimation = AndroidLock.faceOn, arrival = arrival)
         target?.let { GlanceOpener.open(this, it, homeBelow = plan.homeFirst) }
         pendingOpen = null

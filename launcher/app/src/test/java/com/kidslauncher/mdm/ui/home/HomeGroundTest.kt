@@ -46,6 +46,9 @@ class HomeGroundTest {
         assertFalse("Home left the front", homeGroundDue(arrived.copy(leftFront = true), 10_000L))
         assertTrue(HOME_GROUND_MIN_MS in 300L..1_000L)
         assertTrue(HOME_GROUND_MAX_MS in HOME_GROUND_MIN_MS..3_000L)
+        // qa-home-round-code Q-6: the brief's numbers exactly - the floor the emulator run passed with, and the cap.
+        assertEquals("the floor (700 ms)", 700L, HOME_GROUND_MIN_MS)
+        assertEquals("the cap (2.5 s)", 2_500L, HOME_GROUND_MAX_MS)
     }
 
     @Test
@@ -90,13 +93,21 @@ class HomeGroundTest {
         val render = body(home, "private fun renderWallpaper() {")
         assertTrue(render.contains("WallpaperGround.apply(this, binding.root, ownGround = homeGroundDue(ground, now))"))
         assertTrue(render.contains("homeGroundRecheckInMs(ground, now)?.let { refreshHandler.postDelayed(groundRecheck, it + 1) }"))
+        // Q-6: one recheck at a time - the pending one goes before the next is posted.
+        val remove = render.indexOf("refreshHandler.removeCallbacks(groundRecheck)")
+        assertTrue(render, remove in 0 until render.indexOf("refreshHandler.postDelayed(groundRecheck"))
+        // Q-8: an unchanged ground keeps its drawable (no allocation, no layout request).
+        val apply = ground.substringAfter("fun apply(")
+        val skip = apply.indexOf("if (root.getTag(com.kidslauncher.mdm.R.id.wallpaper_ground_key) != key) {")
+        assertTrue(apply, skip in 0 until apply.indexOf("root.background = when (kind) {"))
+        assertTrue(apply.contains("root.setTag(com.kidslauncher.mdm.R.id.wallpaper_ground_key, key)"))
     }
 
     @Test
     fun `armed by a HOME intent from behind only, ended by the animation, a pause and the stop`() {
         val home = code("ui/HomeActivity.kt")
         // onNewIntent: not for a press on Home itself (Home up in front).
-        assertTrue(body(home, "override fun onNewIntent(intent: Intent) {").contains("if (!contentUp) groundArrived()"))
+        assertTrue(body(home, "override fun onNewIntent(intent: Intent) {").contains("if (!contentUp && intent.hasCategory(Intent.CATEGORY_HOME)) groundArrived()"))
         assertTrue(body(home, "override fun onCreate(").contains(
             "if (savedInstanceState == null && intent?.hasCategory(Intent.CATEGORY_HOME) == true) groundArrived()",
         ))
@@ -104,13 +115,24 @@ class HomeGroundTest {
         val arrive = body(home, "private fun groundArrived() {")
         assertTrue(arrive.contains("ground = HomeGroundState(arrivedAtMs = SystemClock.elapsedRealtime(), faceLeave = ground.faceLeave)"))
         val enter = home.substringAfter("override fun onEnterAnimationComplete() {").substringBefore("\n    }\n")
-        assertTrue(enter.contains("window.decorView.postOnAnimation {"))
-        assertTrue(enter.indexOf("ground = ground.copy(enterDone = true)") > enter.indexOf("postOnAnimation"))
+        assertTrue(enter.contains("window.decorView.postOnAnimation(groundEnterDone)"))
+        val enterDone = home.substringAfter("private val groundEnterDone = Runnable {").substringBefore("\n    }\n")
+        assertTrue(enterDone.contains("ground = ground.copy(enterDone = true)"))
+        // Q-8: a late end of an earlier transition is dropped by the next arrival.
+        assertTrue(arrive.indexOf("window.decorView.removeCallbacks(groundEnterDone)") in 0 until arrive.indexOf("ground = HomeGroundState("))
+        // Q-2: the pause's end is posted and skipped when Home resumed again in the same transaction (a new intent's
+        // delivery to a resumed Home - a second Home press during the transition).
         val pause = body(home, "override fun onPause() {")
-        assertTrue(pause.contains("ground = ground.copy(leftFront = true)"))
+        assertTrue(pause.contains("if (ground.arrivedAtMs != null && !ground.leftFront) refreshHandler.post(groundLeftFront)"))
+        assertFalse(pause.contains("ground = ground.copy(leftFront = true)"))
+        val leftFront = home.substringAfter("private val groundLeftFront = Runnable {").substringBefore("\n    }\n")
+        assertTrue(leftFront.contains("if (!resumedNow && ground.arrivedAtMs != null && !ground.leftFront) {"))
+        assertTrue(leftFront.contains("ground = ground.copy(leftFront = true)"))
         val stop = body(home, "override fun onStop() {")
         assertTrue(stop.contains("ground = HomeGroundState()"))
         assertTrue(stop.contains("refreshHandler.removeCallbacks(groundRecheck)"))
+        assertTrue(stop.contains("refreshHandler.removeCallbacks(groundLeftFront)"))
+        assertTrue(stop.contains("window.decorView.removeCallbacks(groundEnterDone)"))
         // Back reveals Home with no intent: nothing in onStart or onResume arms it.
         assertFalse(body(home, "override fun onStart() {").contains("ground"))
         assertFalse(body(home, "override fun onResume() {").contains("groundArrived"))

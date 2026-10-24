@@ -288,9 +288,12 @@ over Android's wallpaper (`windowShowWallpaper`, §3's "transparent when ours"),
 that wallpaper isn't visible under it: either the wallpaper window isn't shown until Home is the wallpaper target, or
 the transition's backdrop (Shell's colour layer on the task display area, above the wallpaper's layer) covers it. Our
 Home isn't the recents provider, so the stock launcher's own go-home animation (which shows the wallpaper itself)
-doesn't run; Shell's default handler does. Which of the two it is wasn't measured (no emulator in this round);
-design 32's black `TaskDescription` could only matter through that backdrop, and it must stay black (it is Home's
-snapshot stand-in at a lock-up). Both causes sit **below Home's window**, so one fix covers both:
+doesn't run; Shell's default handler does. Both causes sit **below Home's window**, so one fix covers both - and the
+coordinator's run on `jelly36` (2026-10-24, `docs/testing/2026-10-24-home-round-run.md`) measured it: the old build
+showed **2-3 black frames at 30 fps** (one fully black), this one **0** in three valid runs (a gradient, gesture
+navigation, kiosk off); Back stayed clean and no seam was seen when the copy went. So the cause is Android's
+wallpaper not yet shown under Home during the app-close transition; design 32's black `TaskDescription` stays (it is
+Home's snapshot stand-in at a lock-up).
 
 - **What is drawn**: `WallpaperGround`'s FULL ground on Home's content root - the store's colour, 160° gradient or
   the one decoded photo (no new bitmap: the store holds it already), then the ink's scrim - i.e. exactly what Home
@@ -303,18 +306,28 @@ snapshot stand-in at a lock-up). Both causes sit **below Home's window**, so one
   Home from behind - `onNewIntent` while Home's content wasn't up (the Home button or gesture, every `HomeFront`
   start: the lock leaving, the boot, an update, a relock), or a create by a HOME intent - for at least
   `HOME_GROUND_MIN_MS` (700 ms), then until `onEnterAnimationComplete` plus one frame (`postOnAnimation`), at most
-  `HOME_GROUND_MAX_MS` (2.5 s) when that callback never comes; ended at once when Home leaves the front (`onPause`:
-  an app opening over Home sees the system wallpaper, never a copy that would move with Home's exit animation) and
-  at `onStop`. Design 59d step B's face leave keeps its rule (the copy until the stop). **Not** for Back or Recents
-  (no intent: Home is revealed, and Back's predictive animation may scale Home's window - a copy would move against
-  the still wallpaper), nor for a press on Home itself. Not drawn always: the steady state stays transparent over
-  Android's wallpaper (59d §8.4 item 3's check), and an always-opaque Home would show a moving copy in Home's own
-  exit and Back animations.
+  `HOME_GROUND_MAX_MS` (2.5 s) when that callback never comes; ended when Home leaves the front (`onPause`, posted
+  and skipped when Home resumed again in the same transaction - a new intent's delivery pauses a resumed Home, so a
+  second Home press during the transition keeps the copy, qa-home-round-code Q-2; an app opening over Home sees the
+  system wallpaper, never a copy that would move with Home's exit animation) and at `onStop`. Design 59d step B's
+  face leave keeps its rule (the copy until the stop). **Not** for Back (no intent: Home is revealed, and Back's
+  predictive animation may scale Home's window - a copy would move against the still wallpaper), nor for a press on
+  Home itself; leaving Quickstep's fallback Recents for Home sends a typed HOME intent, so the copy arms there too,
+  harmlessly. Not drawn always: the steady state stays transparent over Android's wallpaper (59d §8.4 item 3's
+  check), and an always-opaque Home would show a moving copy in Home's own exit and Back animations. An unchanged
+  ground keeps its drawable (`WallpaperGround`'s key tag), so the floor's and the cap's rechecks cost nothing.
 - **Design 32 holds**: the copy is the content root's background, and the content is never on the window while the
   lock is LOCKED or at a dark lock-up (16c's night ground, design 32's `homeDarkResume`); Home's snapshot is still the
   black task description (`setRecentsScreenshotEnabled(false)`). `HomeGroundTest` pins both.
-- **Device check owed** (`docs/testing/emulator.md` style, 24-30 fps screen recording, both navigation modes, kiosk on
-  and off, a photo, a gradient and a colour wallpaper): from an app (Element X), the Home button - no black frame
-  between the app's slide and the wallpaper, and no brightness, crop or position step when the copy goes (~0.7 s after
-  the press, or at the animation's end); Back - unchanged; the lock's leave (own keypad and Android's pad) - no black
-  frame; screen off/on over the PIN lock - the first frame is still the lock or black (design 32).
+- **Device checks** (24-30 fps screen recording, from an app, the Home button): **done** on `jelly36` with a
+  gradient, gesture navigation and kiosk off - 0 black frames (before 2-3), Back clean, no seam. **Still owed**:
+  - 3-button navigation;
+  - **a photo with 3-button navigation: no zoom step when the copy goes** (~0.7 s after the press, or at the
+    animation's end) - qa-home-round-code Q-7: Android's wallpaper is the photo centre-cropped into a
+    `resources.displayMetrics`-sized bitmap, the copy the photo centre-cropped into Home's full window; if the
+    display metrics leave out a bar or the cutout, the system's picture is zoomed by about 3-5 % against the copy.
+    If it shows, render the applier's bitmap at `WindowManager.maximumWindowMetrics` instead;
+  - kiosk on;
+  - a photo and a plain colour wallpaper (gesture navigation);
+  - the lock's leave on both pads (own keypad and Android's pad) - no black frame;
+  - screen off/on over the PIN lock - the first frame is still the lock or black (design 32).
