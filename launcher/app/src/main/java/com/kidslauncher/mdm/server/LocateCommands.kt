@@ -25,6 +25,7 @@ import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_RING
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.RING_NOTIFICATION_ID
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.zones.ZoneWatch
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -46,12 +47,16 @@ private const val CACHED_LOCATION_PROVIDER = "kid_phone_cached"
 // still touching LocationManager) on every throttled-skip sync, even after gating the active fetch
 // alone. This app now keeps its own copy of the last fix it obtained instead, so a skipped cycle
 // can hand that back without calling into LocationManager at all.
+// Design 64 step 2: the fix's own provider and mock flag ride along (an older cache has neither:
+// the provider unknown, not mock), so a cached re-send reports where the fix came from.
 @Serializable
 private data class CachedFix(
     val latitude: Double,
     val longitude: Double,
     val accuracy: Float?,
     val timeMs: Long,
+    val provider: String? = null,
+    val mock: Boolean = false,
 )
 
 /**
@@ -131,7 +136,9 @@ object LocateCommands {
         // a due cycle often runs right before checkForTrackedAppUpdates triggers a self-update,
         // which SIGKILLs this process, and an async write can lose the race against that kill.
         saveLastActiveFetchAt(context, System.currentTimeMillis())
-        val fresh = requestFreshFix(context, lm) ?: try {
+        // Design 64 step 2, decision 14: a release build ignores a mock fix (`Location.isMock`)
+        // and counts it - the fresh one and every last-known candidate; the debug build takes it.
+        val fresh = requestFreshFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } ?: try {
             val providers = mutableListOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 providers.add(LocationManager.FUSED_PROVIDER)
@@ -144,6 +151,7 @@ object LocateCommands {
                         null
                     }
                 }
+                .filter { ZoneWatch.accept(context, it) }
                 .maxByOrNull { it.time }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to read cached location", e)
@@ -156,31 +164,58 @@ object LocateCommands {
         return fresh ?: loadCachedFix()
     }
 
-    private fun loadCachedFix(): Location? {
+    private fun cachedFix(): CachedFix? {
         val raw = LauncherPreferences.mdm().cachedLocationJson() ?: return null
         return try {
-            val cached: CachedFix = ServerJson.decodeFromString(raw)
-            Location(CACHED_LOCATION_PROVIDER).apply {
-                latitude = cached.latitude
-                longitude = cached.longitude
-                cached.accuracy?.let { accuracy = it }
-                time = cached.timeMs
-            }
+            ServerJson.decodeFromString<CachedFix>(raw)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to decode cached location fix", e)
             null
         }
     }
 
+    /** The cached fix as a [Location] with its own provider (the old marker provider for a fix
+     * cached before design 64 step 2) and mock flag. */
+    private fun loadCachedFix(): Location? {
+        val cached = cachedFix() ?: return null
+        return Location(cached.provider ?: CACHED_LOCATION_PROVIDER).apply {
+            latitude = cached.latitude
+            longitude = cached.longitude
+            cached.accuracy?.let { accuracy = it }
+            time = cached.timeMs
+            isMock = cached.mock
+        }
+    }
+
+    /** When the cached fix was taken (its own time), `null` without one - for the passive feed
+     * ("newer than the cached fix") and the heartbeat ("a kept fix younger than the interval"). */
+    fun cachedFixTimeMs(): Long? = cachedFix()?.timeMs
+
+    /** Design 64 step 2: a passive fix [com.kidslauncher.mdm.zones.passiveFixWorth] kept replaces
+     * the cached fix - only when it is still newer (the sync's own fix may have landed meanwhile).
+     * Never sent on its own: the next report's `CACHED` fix is it. */
+    @Synchronized
+    fun keepFix(context: Context, location: Location) {
+        val cached = cachedFixTimeMs()
+        if (cached != null && location.time <= cached) return
+        saveCachedFix(context, location)
+    }
+
+    /** The provider a report names for [location] - its own, never the old cache marker. */
+    fun providerOf(location: Location): String? = location.provider?.takeIf { it != CACHED_LOCATION_PROVIDER }
+
     // Both writes below commit() synchronously rather than going through the generated
     // apply()-based setters - see the call site's comment on why an async write here can lose the
     // race against a same-cycle self-update's SIGKILL.
+    @Synchronized
     private fun saveCachedFix(context: Context, location: Location) {
         val cached = CachedFix(
             latitude = location.latitude,
             longitude = location.longitude,
             accuracy = if (location.hasAccuracy()) location.accuracy else null,
             timeMs = location.time,
+            provider = providerOf(location),
+            mock = location.isMock,
         )
         val key = LauncherPreferences.mdm().keys().cachedLocationJson()
         PreferenceManager.getDefaultSharedPreferences(context)

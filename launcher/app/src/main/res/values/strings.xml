@@ -131,6 +131,8 @@
     <string name="kid_settings_touch_vibration">Vibrate on touch</string>
     <string name="kid_settings_touch_keyboard">The keyboard has its own sound and vibration in its settings.</string>
     <string name="kid_settings_touch_read_only">Can\'t be changed on this phone yet.</string>
+    <!-- Design 64 step 2: Kid Settings' calm line while the phone shares where it is (sharesLocation). -->
+    <string name="kid_settings_location_shared">This phone shares where it is with mum and dad.</string>
     <string name="wallpaper_navy">Dark blue</string>
     <string name="wallpaper_vibb_night">Night</string>
     <string name="wallpaper_forest">Forest</string>

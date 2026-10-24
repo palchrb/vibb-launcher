@@ -310,5 +310,19 @@
                     android:thumbTint="@color/kid_slider" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- Design 64 step 2 (the user's decision 6): one calm line, no control, while the phone
+             shares its location (sharesLocation) - the wallpaper caption's look. -->
+        <TextView
+            android:id="@+id/kid_settings_location_line"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:alpha="0.7"
+            android:fontFamily="@font/nunito_bold"
+            android:text="@string/kid_settings_location_shared"
+            android:textColor="@color/kid_ink"
+            android:textSize="13sp"
+            android:visibility="gone" />
     </LinearLayout>
 </ScrollView>

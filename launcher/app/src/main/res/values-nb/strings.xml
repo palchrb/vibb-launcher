@@ -106,6 +106,7 @@
     <string name="kid_settings_touch_vibration">Vibrasjon ved trykk</string>
     <string name="kid_settings_touch_keyboard">Tastaturet har egen lyd og vibrasjon i sine innstillinger.</string>
     <string name="kid_settings_touch_read_only">Kan ikke endres på denne telefonen ennå.</string>
+    <string name="kid_settings_location_shared">Telefonen deler hvor den er med mamma og pappa.</string>
     <string name="wallpaper_navy">Mørk blå</string>
     <string name="wallpaper_vibb_night">Natt</string>
     <string name="wallpaper_forest">Skog</string>

@@ -56,4 +56,29 @@ class KidSettingsModelTest {
         assertEquals(ControlsSection.Rows(wifi = true, bluetooth = false, brightness = false, sound = false, touch = false), model.controls)
         assertEquals(2, model.wallpapers.size)
     }
+
+    /** Design 64 step 2 (the user's decision 6): the calm line while the phone shares its location. */
+    @Test
+    fun `the location line shows while location isn't off`() {
+        fun located(mode: String?) = CachedPolicy.Ok(
+            PolicyResponse(allowlist = emptyList(), locationPolicy = mode?.let { com.kidslauncher.mdm.server.dto.LocationPolicy(it, 30) }),
+        )
+        assertEquals(true, sharesLocation(true, located("interval")))
+        assertEquals(true, sharesLocation(true, located("on_request")))
+        // An older server's policy without location_policy: the old every-10-minutes trail.
+        assertEquals(true, sharesLocation(true, located(null)))
+        assertEquals(false, sharesLocation(true, located("off")))
+        assertEquals(false, sharesLocation(false, located("interval")))
+        assertEquals(false, sharesLocation(true, CachedPolicy.Absent))
+        assertEquals(false, sharesLocation(true, CachedPolicy.Corrupt("x")))
+        assertEquals(true, kidSettingsModel(true, located("interval"), listOf(NAVY), NAVY).sharesLocation)
+        // The words, calm and the same in both languages' structure; no control on the line.
+        val layout = java.io.File("src/main/res/layout/activity_kid_settings.xml").readText()
+        val line = Regex("""<TextView\s+android:id="@\+id/kid_settings_location_line"[^>]*/>""").find(layout)!!.value
+        assertEquals(false, line.contains("clickable") || line.contains("onClick"))
+        val en = java.io.File("src/main/res/values/strings.xml").readText()
+        val nb = java.io.File("src/main/res/values-nb/strings.xml").readText()
+        assertEquals(true, en.contains(">This phone shares where it is with mum and dad.</string>"))
+        assertEquals(true, nb.contains(">Telefonen deler hvor den er med mamma og pappa.</string>"))
+    }
 }
