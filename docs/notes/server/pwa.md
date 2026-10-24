@@ -169,7 +169,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **About This Phone** (`GET /devices/{id}/about`, read-only): Connection (Status "Online since 08:12" from
   `connection_state`, Last contact, Last full report, Network from `limits::LastAccess`), Sound (`sound_mode::state`),
   Software (Vibb version, the music app's version from its versionCode, "Settings from server" = Applied or a
-  `PolicyProblem` title, Battery optimisation), Diagnostics (crash reports, each a row whose ⓘ has the trace;
+  `PolicyProblem` title, Battery optimisation, "Modify system settings" - Allowed, or Not allowed with the on-phone path and adb in its detail, from `write_settings_granted`), Diagnostics (crash reports, each a row whose ⓘ has the trace;
   "Starts without Vibb One" from `boot_witness::unseen`; the time lock). Times are local (`display_time`), the exact one
   in `title`. Rows are `device_pages::Row` (`partials/info_row.html`: a row with a sentence opens it as an ⓘ panel).
 - **Advanced** (`GET /devices/{id}/advanced`): Restrictions (the 11 hardening switches as one form, split into

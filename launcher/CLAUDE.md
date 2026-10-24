@@ -578,7 +578,8 @@ Part A (SMS allowlist via the SMS role) is **postponed (user, 2026-10-05)**: SMS
   a vibrator), then "Tastaturet har egen lyd og vibrasjon i sine innstillinger." (HeliBoard plays its own click;
   nothing opens). `DTMF_TONE_WHEN_DIALING` is left alone (Vibb has no dial pad). Pure `server/TouchFeedback.kt`
   (`touchRowState`, `TouchFeedbackTest`; missing keys = on). Writable only with the "Modify system settings" app-op
-  design 34 P12 already asks for (`Settings.System.canWrite`); without it both switches show the phone's state at 50 %
+  design 34 P12 already asks for (`Settings.System.canWrite`; Settings' "Modify system settings" row during a pause,
+  `WriteSettingsAccess`); without it both switches show the phone's state at 50 %
   with "Kan ikke endres på denne telefonen ennå." Never on the PIN lock or the time-rule screen; not a restriction - the
   override/pause change nothing, the bit going off leaves the settings as they are.
 - **Writes** only in `QuickControls.setTouchSounds`/`setTouchVibration` (`suspend`, `Dispatchers.IO`, one `Mutex` so two
@@ -742,6 +743,8 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 
 - Every status report sends `battery_optimization_exempt` (`PowerManager.isIgnoringBatteryOptimizations`, left out when unreadable; `PolicyResponseCompatTest`). The manifest declares `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` (`PushManifestTest`) - without it Android's dialog finishes silently.
 - The PIN-gated Settings' "Background connection" row (`server/BatteryExemption.kt`, `BatteryExemptionTest`) opens Android's dialog only when it resolves to an unsuspended system package that isn't ours (`dialogTarget`) - on a managed phone that is during "Pause all restrictions"; otherwise it says to pause first. Never Android Settings' battery page: it shows a device owner as "Unrestricted" whatever the truth. On return the state is read again and a change requests a sync. Phase 2 (a prompt in QR provisioning) only if the Jelly Star run shows it matters.
+- **Two more rows on the same path** (2026-10-24, branch `write-settings-row`; no adb step for any grant): the battery row's resolution is the shared `systemPageIntent` (`MATCH_SYSTEM_ONLY` + `dialogTarget`, `BatteryExemption.kt`), which on a managed phone resolves only during the pause or the override (the window's plan unhides Android's Settings and pins nothing). "Modify system settings" (`server/WriteSettingsAccess.kt`, `WriteSettingsAccessTest`), always shown under "Background connection": `ACTION_MANAGE_WRITE_SETTINGS` with `package:` + our id, then the plain action (an `ActivityNotFoundException` tries the next, all failing = "no page"); the tap opens only when `canWrite` is known false, a change on return requests a sync, and every report sends `write_settings_granted` (`StatusReportRequest.writeSettingsGranted`, `null` left out; the server's About This Phone row, migration 0090). "Fingerprint" (`server/FingerprintEnrol.kt`, `FingerprintEnrolTest`), under it: `ACTION_BIOMETRIC_ENROLL` for `BIOMETRIC_STRONG`, then `ACTION_FINGERPRINT_ENROLL`; shown only by `fingerprintRowShown(AndroidLock.fingerprintLockState, FEATURE_FINGERPRINT)` - we own Android's live credential, its `android_pin_rev` is known (not changed on the phone) and android mode is requested (not the rollback's escrow) - and its state line says registered / not registered only from `canAuthenticate(BIOMETRIC_STRONG)` (`USE_BIOMETRIC` in the manifest). Both rows' access is the pure `systemPageAccess`: "no page" only once `AppEnforcer.lastEnforcedOverride` says the window's plan is applied, "a moment" before; the fragment re-reads the three rows on resume, when the pause starts and after each `apply()` while shown (`AppEnforcer.addAppliedListener`).
+- **The first-launch reset never de-enrols** (design 59d §8.17): `Application.initRest`'s `resetPreferences` clears the whole default prefs file (token, server URL and cached policy included), and only Home's first interactive start sets `internal.started_before`; so it runs only by the pure `firstLaunchResetDue(startedBefore, enrolled, deviceToken)` (`preferences/FirstLaunchReset.kt`, `FirstLaunchResetTest`) - no mark, no `mdm.enrolled`, no token. A phone enrolled before Home ever started (QR provisioning, Settings opened through `APPLICATION_PREFERENCES`) keeps its preferences.
 
 ## The battery in the status report (design 35 §2.5, `docs/design/35-parent-notifications.md`, at the monorepo root)
 
@@ -982,9 +985,10 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   restriction: the override and the pause change nothing, and the write never lifts `DISALLOW_CONFIG_DATE_TIME`
   (pinned: `applyDateTimeLock` is called once, before the write, and nothing after it in `apply()` touches the
   restriction). **Android's limit**: a device owner can't write it (`setSystemSetting` takes only brightness and the
-  screen-off timeout); the manifest declares `WRITE_SETTINGS` and the "Modify system settings" app-op is granted once
-  with adb (`adb shell appops set me.vibb.launcher WRITE_SETTINGS allow`, `docs/testing/emulator.md` §4) or by the
-  parent during a pause. Without it (`Settings.System.canWrite` false) nothing is written.
+  screen-off timeout); the manifest declares `WRITE_SETTINGS` and the "Modify system settings" app-op is granted by
+  the parent during a pause from Settings' "Modify system settings" row (`WriteSettingsAccess`, "Background
+  connection" below), or with adb as the shortcut (`adb shell appops set me.vibb.launcher WRITE_SETTINGS allow`,
+  `docs/testing/emulator.md` §4). Without it (`Settings.System.canWrite` false) nothing is written.
 - **Status** `clock_format_applied`: `true`/`false` = whether `TIME_12_24` reads back as the choice (so a missing
   app-op and a refused write are both `false`; the PWA warns), left out (`null`) for "Follow the phone" or without
   `launcher_ui`. Device check (design 34 step 6): whether SettingsProvider refuses the write under our
