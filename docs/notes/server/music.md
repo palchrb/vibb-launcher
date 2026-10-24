@@ -403,7 +403,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   lines ("Plays as Ella", "Not sent - Spotify is off on this phone"; `gated`/`phone_count` follow the binding as the
   gate does), `unplayable` from `item_errors`. "From Spotify ›" is the Music tab's fifth Add row. The streaming switch's
   ⓘ names Spotify (it streams, never saved); the phone's Web Filter page (`/devices/{id}/filter`) says in its one footer
-  that Spotify's hosts aren't blocked while bound (the detail and the site-wide blocks it overrides behind the ⓘ) and
+  that Spotify's hosts aren't blocked while bound (behind the ⓘ, one sentence since the ⓘ cut, and the site-wide blocks it overrides) and
   marks the phone's own blocks it overrides. The import (`music_import.rs`): a Spotify URI or `open.spotify.com` link
   imports as a Spotify entry on no phone, a short link is `Skip::SpotifyShortLink`, `spotify_user` sections stay
   `Skip::SpotifyProfile`.

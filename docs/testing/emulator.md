@@ -66,8 +66,8 @@ eye: the glance's clock twin, the face's frames, the bottom-edge swipe.
 
 ```sh
 avdmanager create avd -n jelly36 -k "system-images;android-36;google_apis_playstore;x86_64" --force   # answer "no"
-# then in the AVD's config.ini (replace these keys, keep the rest): ~/.config/.android/avd/jelly36.avd/config.ini
-# (newer Android Studio on Linux), else ~/.android/avd/jelly36.avd/config.ini:
+# then in the AVD's config.ini (replace these keys, keep the rest): ~/.android/avd/jelly36.avd/config.ini
+# (avdmanager's default), or ~/.config/.android/avd/jelly36.avd/config.ini where Android Studio keeps its AVDs:
 hw.lcd.width = 480
 hw.lcd.height = 854
 hw.lcd.density = 240
