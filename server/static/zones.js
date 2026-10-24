@@ -45,6 +45,16 @@
         return isFinite(n) && Math.abs(n) <= limit ? n : null;
     }
 
+    /** The circle's bounds as two corners, from the centre and radius alone (no projection: Leaflet's
+     *  `Circle.getBounds` needs the map to have a view first, and Safari throws before one is set).
+     *  Metres to degrees at this latitude; the longitude span is capped near the poles. */
+    function zoneBounds(lat, lng, radiusM) {
+        var dLat = radiusM / 111320;
+        var cosLat = Math.cos(lat * Math.PI / 180);
+        var dLng = cosLat < 0.01 ? 180 : radiusM / (111320 * cosLat);
+        return [[Math.max(-90, lat - dLat), lng - dLng], [Math.min(90, lat + dLat), lng + dLng]];
+    }
+
     /** Writes a centre into the two fields. */
     function place(fields, lat, lng) {
         fields.lat.value = fixed6(lat);
@@ -123,7 +133,7 @@
                 circle.setRadius(radius());
                 marker.setLatLng(at);
             }
-            if (fit) map.fitBounds(circle.getBounds(), { maxZoom: 17, padding: [24, 24] });
+            if (fit) map.fitBounds(zoneBounds(at[0], at[1], radius()), { maxZoom: 17, padding: [24, 24] });
         }
 
         map.on("click", function (e) {
@@ -177,7 +187,7 @@
         return { map: map, redraw: redraw };
     }
 
-    var api = { install: install, clampRadius: clampRadius, fixed6: fixed6, wrapLng: wrapLng, readCoord: readCoord, place: place, zoneColour: zoneColour };
+    var api = { install: install, clampRadius: clampRadius, fixed6: fixed6, wrapLng: wrapLng, readCoord: readCoord, place: place, zoneColour: zoneColour, zoneBounds: zoneBounds };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else if (root.document) {

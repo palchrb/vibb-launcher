@@ -1160,6 +1160,12 @@ findings, merge to `main`, full suite once.
   GitHub). Fallbacks: `dpm set-device-owner` over adb (documented), or registering the user as a verified developer
   with the release signing key (~25 USD + ID, a one-time job, no code change) - recommended when verification opens
   for Norway. Watch Google's Android Enterprise FAQ for the provisioning case; re-read before stable 1.0.
+- **Zone page map grey on the iPhone** (the user, 2026-10-24, screenshot: zoom buttons and "Leaflet" shown, no
+  tiles, no circle) - **fixed the same day on main**: `zones.js` fitted the map to `circle.getBounds()` before the
+  map had a view; Leaflet projects the circle only once a view exists, so Safari threw `undefined is not an object
+  (evaluating 'this._map.layerPointToLatLng')` right after `L.map` (Chromium tolerated it). Reproduced in Playwright's
+  WebKit; the fit now uses a pure `zoneBounds(lat, lng, r)` (metres to degrees) with a jstest, `zones.js?v=2`. Lesson:
+  a PWA page with Leaflet gets a WebKit pass before release (the Locate page was fine because it sets the view first).
 - **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
   Settings › Intelligent assistance › App blocker - Boot blocker, Start blocker, Background blocker, Background
   cleanup; on the Jelly Star only found through Settings' search. Design 19b §4 foresaw an OEM manager but had no name.

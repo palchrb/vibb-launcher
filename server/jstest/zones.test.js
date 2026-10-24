@@ -3,7 +3,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { install, clampRadius, fixed6, wrapLng, readCoord, place } = require("../static/zones.js");
+const { install, clampRadius, fixed6, wrapLng, readCoord, place, zoneBounds } = require("../static/zones.js");
 
 /** A fake Leaflet: the map's handlers, the circle and the marker, what was drawn. */
 function fakeLeaflet() {
@@ -164,4 +164,19 @@ test("Use Phone's Location moves the centre to the newest fix", () => {
     page.fields.lat.value = "95";
     page.fields.lat.listeners.change();
     assert.ok(L.calls.some((c) => c[0] === "remove" && c[1] === "circle"));
+});
+
+test("zoneBounds: the circle's corners from the centre and radius, no map needed (Safari fix 2026-10-24)", () => {
+    const [[s, w], [n, e]] = zoneBounds(59.9139, 10.7522, 150);
+    assert.ok(Math.abs((n - s) * 111320 - 300) < 1, `lat span ${(n - s) * 111320} m`);
+    const lngSpanM = (e - w) * 111320 * Math.cos(59.9139 * Math.PI / 180);
+    assert.ok(Math.abs(lngSpanM - 300) < 1, `lng span ${lngSpanM} m`);
+    assert.ok(s < 59.9139 && n > 59.9139 && w < 10.7522 && e > 10.7522);
+    const pole = zoneBounds(89.999, 0, 2000);
+    assert.strictEqual(pole[1][0], 90);
+    assert.strictEqual(pole[1][1], 180);
+    // The page never calls Circle.getBounds before a view exists (the WebKit failure).
+    const src = require("node:fs").readFileSync(require.resolve("../static/zones.js"), "utf8");
+    assert.ok(!src.includes("circle.getBounds()"), "fitBounds reads zoneBounds, not the circle's projection");
+    assert.ok(src.includes("map.fitBounds(zoneBounds("));
 });
