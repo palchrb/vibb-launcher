@@ -1107,6 +1107,10 @@ findings, merge to `main`, full suite once.
   as another repo URL. No F-Droid client on the kid's phone (an app store breaks the model). Behind the same release
   interface as GitHub, so GitLab/Forgejo can follow later if ever needed. Server, S-M; next server round after design 64
   step 1. Earlier parked text (GitLab/Codeberg; Nexus looked at: no calls, UnifiedPush only; Element X stays) folded in.
+- **PWA: reload on return after 1 minute, not 10** (the user, 2026-10-24: "blir ett minutt for kort?" - no): the
+  return reload in `static/reconnect.js` (pwa.md "Connecting") fires after more than 10 minutes hidden; make it 1
+  minute. One constant + `jstest/reconnect.test.js`'s timeline; the save/details/typed-field/POST-answer rules stay.
+  Server, XS; with the next server round.
 - **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
   Settings › Intelligent assistance › App blocker - Boot blocker, Start blocker, Background blocker, Background
   cleanup; on the Jelly Star only found through Settings' search. Design 19b §4 foresaw an OEM manager but had no name.
