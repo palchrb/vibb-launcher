@@ -452,7 +452,8 @@ pub struct TrackedApp {
     pub id: i64,
     pub name: String,
     pub package_name: String,
-    /// "github" or "manual" - see migrations/0008_tracked_apps_source_type.sql.
+    /// "github", "manual" (migrations/0008_tracked_apps_source_type.sql) or "fdroid"
+    /// (migrations/0094_tracked_app_fdroid.sql, [crate::fdroid]).
     pub source_type: String,
     /// Empty string (not NULL) for manual-source apps - avoids a SQLite
     /// table rebuild to loosen the original NOT NULL constraint; a real
@@ -489,6 +490,10 @@ pub struct TrackedApp {
     /// SHA-256 (lower-case hex) of the signing certificate, pinned from the first release
     /// (migrations/0062, security review M10); `None` until then.
     pub signer_sha256: Option<String>,
+    /// An `fdroid` app's repo (https, no trailing slash) and package id there (migrations/0094);
+    /// `None` on GitHub and manual rows.
+    pub fdroid_repo: Option<String>,
+    pub fdroid_package: Option<String>,
 }
 
 impl TrackedApp {

@@ -173,12 +173,12 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_93_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
+(`migrations_73_to_94_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
 `0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
 out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both).
 `0080_phone_power.sql` (design 38, the two power switches) follows 0079, and
 `0081_music_art_more.sql` (2026-10-19, episode pictures ASAP: `music_listings.art_more`) follows 0080
-(`migrations_73_to_93_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
+(`migrations_73_to_94_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
 the listings with untried episode pictures, `push_subscriptions.last_opened_at`) follows 0081, and
 `0083_lock_glance_text_per_app.sql` (design 51: `device_lock_glance_apps.show_text`, backfilled from
 `device_policy.lock_glance_text`, which nothing reads after it) follows 0082, and
@@ -194,7 +194,9 @@ screen capture switch, 2026-10-23: `device_policy.disallow_screen_capture`, defa
 `device_status.write_settings_granted`) follows 0089, and `0091_safe_zones.sql` (design 64 step 1: `device_zones`,
 `notification_prefs.push_zones`, `parent_events.params`) follows 0090, and `0092_zone_watch.sql` (design 64 step 2:
 `device_status.zone_watch_json`) follows 0091, and `0093_location_provider.sql` (design 64 step 2:
-`device_locations.provider`/`mock`/`resent_at`, `devices.mock_logged`/`mock_logged_at`) follows 0092 (`migrations_73_to_93_in_order`). The next free number is 0094.
+`device_locations.provider`/`mock`/`resent_at`, `devices.mock_logged`/`mock_logged_at`) follows 0092, and
+`0094_tracked_app_fdroid.sql` (the F-Droid source, 2026-10-24: `tracked_apps.fdroid_repo`/`fdroid_package`) follows
+0093 (`migrations_73_to_94_in_order`). The next free number is 0095.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts")
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -202,7 +204,7 @@ screen capture switch, 2026-10-23: `device_policy.disallow_screen_capture`, defa
 - `global_schedule` - singleton (`id = 1`): the global `daily_budget_json` and the frozen pre-step-6 schedule; `time_rules` (device_id NULL = global) and `time_lifts` - see "Time rules" above
 - `device_status` - append-only heartbeat log (pruned after 30 days, the newest report per phone kept): lock reason, kiosk-engaged, installed-app snapshot, app version, timestamp, `offline_override_used`, `policy_state`, `restrictions_paused`, `capabilities_json`, `call_state_json`, `time_state_json`, `lock_state_json`, `update_fence_json`, `notification_cancels_json`, `backup_service_enabled`, `relock_json`, `unseen_boots_count`/`_last_at_ms`, `foreign_access_json`, `relock_blocks_json` (design 24b), `zone_watch_json` (design 64 step 2, 0092)
 - `security_events` / `banned_ips` - admin login audit trail and lockout tracking
-- `tracked_apps` - one row per app in the global catalog (including the launcher itself, `is_launcher`), GitHub-sourced or manually-uploaded - see the "Apps tab"/"global catalog" bullets above
+- `tracked_apps` - one row per app in the global catalog (including the launcher itself, `is_launcher`), GitHub-sourced, manually-uploaded or from an F-Droid repo (`source_type` `fdroid`, `fdroid_repo`/`fdroid_package` since 0094; `docs/notes/server/play-and-updates.md`, "F-Droid source") - see the "Apps tab"/"global catalog" bullets above
 - `device_tracked_apps` - per-device opt-in join table (device_id, tracked_app_id) scoping which catalog apps actually get pushed to which device - see the "global catalog" bullet above
 - `device_pending_uninstalls` - packages queued for silent on-device uninstall, self-cleared once a status report confirms the package is gone - see the "unchecking Apps to install" bullet above
 - `dns_filter_settings` (singleton), `dns_blocklists`, `dns_custom_domains` - the DNS/Filters feature's config; global, not per-device, see the DNS/Filters gotcha above
@@ -246,7 +248,7 @@ Area notes, moved verbatim from this file on 2026-10-19; read only the ones your
 - `docs/notes/server/hardening-and-pins.md` - Hardening; Handy's own PIN lock; Parent PIN; Windows that lock again, unseen boots; The lock's glance page; Android's lock screen (design 59)
 - `docs/notes/server/time-rules.md` - Time rules, screen time, location policy; Time Rules and Device › Time
 - `docs/notes/server/launcher-ui.md` - Launcher UI, contact photos, airplane mode; Wallpapers; App names and icons; The launcher is "Vibb One"
-- `docs/notes/server/play-and-updates.md` - FCM removed, SSE only; Play; Kiosk escapes; Catalog downloads; App downloads: Wi-Fi only, resumable; Install Now (design 37)
+- `docs/notes/server/play-and-updates.md` - FCM removed, SSE only; Play; Kiosk escapes; Catalog downloads; App downloads: Wi-Fi only, resumable; Install Now (design 37); F-Droid source
 - `docs/notes/server/dns.md` - A custom DNS server for the Web Filter
 - `docs/notes/server/music.md` - Vibb music library; Vibb music: the server sweep; Vibb music: Storytel on the server; Vibb music: Spotify on the server; Vibb music: episode art
 - `docs/notes/server/notifications.md` - Phone off and on (design 38); Notifications to the parent, step 1: events and the inbox; Notifications to the parent, step 2: Web Push; Zone events (design 64)

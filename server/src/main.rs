@@ -13,6 +13,7 @@ mod display_time;
 mod dns_engine;
 mod dns_server;
 mod enrollment;
+mod fdroid;
 mod gate;
 mod handlers;
 mod install_now;

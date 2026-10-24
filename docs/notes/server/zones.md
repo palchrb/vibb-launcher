@@ -106,7 +106,7 @@ at each fix, as below.
   `zones::tests::a_new_zone_is_seeded_from_a_fresh_sure_fix_only` / `here_now_needs_a_fresh_fix`,
   `locate_page::every_form_on_the_locate_page_returns_to_its_group` and
   `shell::every_form_on_every_page_lands_on_its_own_group` (with a zone: Locate Regularly, the zone's two pages),
-  `admin_auth::tests::no_store_paths`, `music_spotify::migrations_73_to_93_in_order`, `jstest/zones.test.js`,
+  `admin_auth::tests::no_store_paths`, `music_spotify::migrations_73_to_94_in_order`, `jstest/zones.test.js`,
   `jstest/locate.test.js` (the circles, their view after the locations).
 
 ## Safe zones, step 2: the phone watches (design 64 §4, migration `0092_zone_watch.sql`)
@@ -167,5 +167,5 @@ counts.
   parallel reports, the mock counter and junk watches, the Locate page; the code QA's
   `a_watch_from_before_a_re_enrollment_gives_no_floor`, `a_location_older_than_its_extra_is_judged_in_order`,
   `here_now_counts_the_served_interval_and_a_still_re_send`), `device_api::policy_json_keys_snapshot`,
-  `time_rules` (the policy's `location_policy` with `zones`), `music_spotify::migrations_73_to_93_in_order`,
+  `time_rules` (the policy's `location_policy` with `zones`), `music_spotify::migrations_73_to_94_in_order`,
   `zone_watch::a_fix_keeps_its_provider_and_mock_flag_in_the_title_only`.

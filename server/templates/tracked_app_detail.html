@@ -17,7 +17,7 @@
         </div>
         {% if let Some(checked) = last_checked %}
         <div class="row" data-row="last-checked">
-            <span class="row-label">{% if app.source_type == "github" %}Last checked{% else %}Last upload{% endif %}</span>
+            <span class="row-label">{% if app.source_type == "manual" %}Last upload{% else %}Last checked{% endif %}</span>
             <span class="row-value" title="{{ checked.exact }}">{{ checked.text }}</span>
         </div>
         {% endif %}
@@ -31,7 +31,7 @@
             <div class="info-panel"><p>{{ failed.detail }}</p>{% if let Some(when) = failed.when %}<p>{{ when.exact }}</p>{% endif %}</div>
         </details>
         {% endif %}
-        {% if app.source_type == "github" %}
+        {% if app.source_type != "manual" %}
         <form method="post" action="/apps/tracked/{{ app.id }}/check#check" class="cell">
             <button type="submit" class="row row-button">Check Now</button>
         </form>
@@ -92,7 +92,7 @@
     {% endif %}
 
     <details class="section" id="source"{% if source_open %} open{% endif %}>
-        <summary class="row section-toggle"><span class="row-label">Source &amp; Signing</span><span class="row-value">{% if app.source_type == "github" %}GitHub{% else %}Uploaded{% endif %}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+        <summary class="row section-toggle"><span class="row-label">Source &amp; Signing</span><span class="row-value">{{ source_label }}</span><svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 
         <h2 class="group-header">Release</h2>
         <div class="group" id="release">
@@ -102,6 +102,16 @@
                 <span class="row-value">{{ app.github_repo }}</span>
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
+            {% else if let Some(source) = fdroid_source %}
+            {% if let Some(href) = fdroid_page %}
+            <a class="row" href="{{ href }}" data-row="source">
+                <span class="row-label">Source<span class="row-sub" data-note="one-source">{{ fdroid_note }}</span></span>
+                <span class="row-value">{{ source }}</span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% else %}
+            <div class="row" data-row="source"><span class="row-label">Source<span class="row-sub" data-note="one-source">{{ fdroid_note }}</span></span><span class="row-value">{{ source }}</span></div>
+            {% endif %}
             {% else %}
             <div class="row" data-row="source"><span class="row-label">Source</span><span class="row-value">Uploaded by you</span></div>
             {% endif %}
@@ -149,6 +159,8 @@
 
         <h2 class="group-header">Details</h2>
         <form method="post" action="/apps/tracked/{{ app.id }}#details" class="group form-group" id="details">
+            <input type="hidden" name="source_type" value="{{ app.source_type }}">
+            {% if details.error_field == "source_type" %}{% if let Some(e) = details.error %}<p class="field-error" id="source_type-error" data-error="source_type">{{ e }}</p>{% endif %}{% endif %}
             <div class="field">
                 <label class="field-label" for="name">Name</label>
                 <input type="text" id="name" name="name" value="{{ details.name }}" required>
@@ -169,6 +181,18 @@
                 <details class="info field-info"><summary aria-label="About the tag prefix"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>For a repo with several apps: launcher-v or music-v in this project's repo. Blank: any release but server-v and music-v.</p></div></details>
                 <input type="text" id="release_tag_prefix" name="release_tag_prefix" value="{{ details.release_tag_prefix }}" placeholder="e.g. launcher-v"{% if details.error_field == "release_tag_prefix" %} aria-invalid="true" aria-describedby="release_tag_prefix-error" autofocus{% endif %}>
                 {% if details.error_field == "release_tag_prefix" %}{% if let Some(e) = details.error %}<p class="field-error" id="release_tag_prefix-error">{{ e }}</p>{% endif %}{% endif %}
+            </div>
+            {% endif %}
+            {% if app.source_type == "fdroid" %}
+            <div class="field">
+                <label class="field-label" for="fdroid_package">Package</label>
+                <input type="text" id="fdroid_package" name="fdroid_package" value="{{ details.fdroid_package }}" placeholder="e.g. ws.xsoh.etar" autocapitalize="off" autocorrect="off" spellcheck="false"{% if details.error_field == "fdroid_package" %} aria-invalid="true" aria-describedby="fdroid_package-error" autofocus{% endif %}>
+                {% if details.error_field == "fdroid_package" %}{% if let Some(e) = details.error %}<p class="field-error" id="fdroid_package-error">{{ e }}</p>{% endif %}{% endif %}
+            </div>
+            <div class="field">
+                <label class="field-label" for="fdroid_repo">Repo</label>
+                <input type="text" inputmode="url" id="fdroid_repo" name="fdroid_repo" value="{{ details.fdroid_repo }}" placeholder="https://f-droid.org/repo" autocapitalize="off" autocorrect="off" spellcheck="false"{% if details.error_field == "fdroid_repo" %} aria-invalid="true" aria-describedby="fdroid_repo-error" autofocus{% endif %}>
+                {% if details.error_field == "fdroid_repo" %}{% if let Some(e) = details.error %}<p class="field-error" id="fdroid_repo-error">{{ e }}</p>{% endif %}{% endif %}
             </div>
             {% endif %}
             <button type="submit" class="button-wide">Save</button>
@@ -192,6 +216,8 @@
                 </label>
                 <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
             </form>
+            {#- Vibb One updates itself from its GitHub releases: an F-Droid app is never the launcher. -#}
+            {% if app.source_type != "fdroid" %}
             <form method="post" action="/apps/tracked/{{ app.id }}/is-launcher#updates" class="cell">
                 <label class="row">
                     <span class="row-label">This is the launcher app</span>
@@ -199,13 +225,14 @@
                 </label>
                 <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
             </form>
+            {% endif %}
             <details class="info cell">
                 <summary class="row"><span class="row-label row-label-quiet">About these switches</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="About Enabled and the launcher app"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel"><p>Off: phones get nothing new. Mark exactly one app as the launcher: Vibb One itself, on every phone.</p></div>
             </details>
         </div>
 
-        {% if app.source_type != "github" %}
+        {% if app.source_type == "manual" %}
         <h2 class="group-header">Upload a new version</h2>
         <form method="post" action="/apps/tracked/{{ app.id }}/upload#upload" enctype="multipart/form-data" class="group form-group" id="upload">
             <div class="field">

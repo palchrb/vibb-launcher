@@ -212,3 +212,74 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   start, the working words through a real report, the poll JSON, Recent's label and "No answer" at 25 h, the answer's
   ⓘ, the 500s), `locate::tests` (reword, label), `kiosk_escapes::tests::install_now_waits_have_words`,
   `jstest/install-now.test.js`.
+
+## F-Droid source (2026-10-24, PLAN "An F-Droid repo as a release source; Etar first", migration `0094_tracked_app_fdroid.sql`)
+
+- **What**: a catalog app of `source_type` `fdroid` takes its releases from an F-Droid repo: `fdroid_repo` (https only,
+  stored without a trailing slash, default `https://f-droid.org/repo`; `fdroid::normalize_repo`) and `fdroid_package`
+  (an Android package name; `fdroid::parse_package`). For Etar (`ws.xsoh.etar`), whose GitHub releases carry no APK.
+  The release is stored as a GitHub one (`sync_fdroid` -> `sync_release`): tag `v<versionName>` (`fdroid::tag_of`;
+  `v<versionCode>` for a blank, over 64 chars or control-character name), `latest_release_asset_id` = the
+  versionCode, the `latest_release_*` columns, pins from the first APK; the page and the Apps list show the version as
+  a GitHub row's ("1.0.57"). The phones' catalog is unchanged - they only download what the server serves
+  (`tests::fdroid::the_phone_gets_an_fdroid_app_as_any_other`).
+- **The newest version, by the repo** (`src/fdroid.rs`): **f-droid.org** (`API_HOSTS`) asks its per-package API,
+  `https://f-droid.org/api/v1/packages/<id>` (`suggestedVersionCode`, else the highest listed `versionCode`; a 404 is
+  `FdroidUnknown`); a version that is cached already (code and tag) ends the check there - no entry.json, no index.
+  **Any other repo** (IzzyOnDroid `https://apt.izzysoft.de/fdroid/repo`, a self-hosted one) takes the index alone: the
+  highest `versionCode` without a `releaseChannels` entry (betas are never picked; no "include betas" switch yet).
+- **The hash, always from the index**: `<repo>/entry.json` (every check, at most 1 MiB) names the index
+  (`index-v2.json`, a plain file name), its SHA-256 and size; `fdroid::index_file` downloads `<repo>/index-v2.json`
+  only when no cached copy has that SHA-256 - streamed to a `.part` file, refused over the size entry.json lists or
+  `MAX_INDEX_BYTES` (100 MB; f-droid.org's was 67 MB), its size and SHA-256 checked against entry.json before the
+  rename (`ChecksumMismatch` / `RepoError` otherwise - nothing kept, the good copy stays), 10 min overall, 60 s
+  without data. Cached as `data/tracked_apps/fdroid/<first 16 hex of SHA-256(repo url)>-<index sha256>.json` (named by
+  the hash, so two syncs at once can't pair one index with another's hash; the repo's older copies removed after a new
+  one is in place; `remove_partial_downloads` cleans its `.part` files at startup). entry.json's daily diffs are never
+  applied: a full fetch when it changes is fine at one repo a day. Only `packages.<id>` is parsed
+  (`fdroid::package_versions`, a `DeserializeSeed` that skips every other package), off the async threads. A version
+  whose key isn't a SHA-256, whose `file.sha256` differs from its key, or whose `file.name` isn't a plain `.apk` name is
+  left out. The version picked: the API's code (the file named `<id>_<code>.apk` first), else the highest stable.
+- **The APK**: `<repo>/<file.name>` (`<id>_<versionCode>.apk`), streamed by `download_asset` with the index's size
+  and SHA-256: `stream_to_file` checks the hash **before** the rename, so a mismatch keeps nothing and the row is
+  untouched (`ChecksumMismatch`, retried at the next hourly check - not remembered as refused). Then
+  `check_fdroid_package`: the APK's manifest package must be `fdroid_package` (`OtherApp`), before the pins
+  (`check_pins`, `check_new_package`) as for GitHub. Redirects may not leave https (`tracked_apps::https_redirects`,
+  at most 5; GitHub's downloads use it too). The cached file's name is `file_safe(tag)-<code>.apk`.
+- **Trust statement**: the index and the APK come over HTTPS from the repo, and the APK's SHA-256 must be the one the
+  repo's index lists (and the index's the one entry.json lists) - so a file is never served unverified, which GitHub
+  can't give. The repo's own signature (`entry.jar`, the JAR signature over entry.json by the repo's key) is **not**
+  verified in this round: a JAR signature verifier in Rust is its own piece of work (PLAN, the follow-up). Until then a
+  repo's TLS certificate is the trust anchor; the per-app signing-key pin (security review M10) still refuses a
+  release signed with another key than the first one's.
+- **One source per app**: F-Droid signs with its own key, so an app installed from GitHub or Play can't switch to
+  F-Droid (or back) without a reinstall. Add App says so under the F-Droid fields, the app's page under its Source
+  row ("F-Droid · ws.xsoh.etar", linked to `https://f-droid.org/packages/<id>/`; another repo shows its host, unlinked,
+  and words the line for a repo that may carry the developer's key). The Details form posts its own `source_type`
+  (hidden); another one is refused (400, nothing written, the reason at the form's top, `data-error="source_type"`):
+  with a cached release "its source can't change, since the phones would have to reinstall it", without one "remove
+  the app and add it again". `source_type` is still not editable in the UI (as for GitHub/manual).
+- **The launcher's and the music app's rows stay GitHub**: Add App and Details refuse `fdroid_package` = Vibb One's
+  (`installed_by_launcher`) or Vibb music's (`music::MUSIC_PACKAGES`), a system package (`never_a_catalog_package`)
+  and a package another catalog app already is (`package_name` or `fdroid_package`); `set_is_launcher` never flags an
+  `fdroid` row (no switch on its page); the launcher row's source can't change. An upload to an F-Droid app is
+  refused (400) - only the repo's checked APKs.
+- **Sync problems** (`SyncProblem`, the page's title, the raw detail behind ⓘ): `FdroidUnknown` "F-Droid doesn't know
+  this package" (the API's 404, or not in another repo's index), `RepoUnreachable` "The repo didn't answer" (network,
+  timeout, a non-2xx other than 404), `RepoError` "The repo's answer can't be used" (no entry.json - not an index-v2
+  repo -, an unreadable or oversized index, no APK for the API's version, a stored repo or package that isn't valid),
+  `ChecksumMismatch` "Download didn't match the repo's checksum" (the APK or the index).
+- **The pages**: Add App's third radio (`#source-fdroid`, `.fdroid-only`, `style.css?v=52`), the fields' refusals as
+  the GitHub ones (400, the values kept, F-Droid still chosen, `aria-invalid` + `autofocus` + the reason under the
+  field); the app's page: Check Now and "Last checked" for every source but uploads, the F-Droid fields in Details,
+  no Upload group and no launcher switch; the Apps list unchanged.
+- No F-Droid client on the kid's phone (an app store breaks the model). No `scripts/fake-fdroid.py`: the tests fake the
+  repo in-process (`fdroid::tests::fake_repo`: entry.json, the index, the API, the APKs, with request counters; on
+  `127.0.0.1` it has the API, on `localhost` the sync takes the index path).
+- Tests: `fdroid::tests` (the address rules, the two paths, the API's pick, entry.json, the one-package parse, the
+  cache keyed on the entry's SHA-256 - no re-download when unchanged, a re-download when changed, a tampered or
+  wrong-sized index refused), `tracked_apps::tests` (`an_fdroid_app_syncs_by_the_api_and_the_index`,
+  `another_repo_syncs_by_the_index_alone`, `an_apk_that_doesnt_match_the_index_is_refused`,
+  `fdroid_sync_problems_have_plain_words`, `a_tag_is_safe_in_a_file_name`, `sync_problems_have_short_titles`),
+  `tests::fdroid` (Add App and its refusals, the page, one source per app, the launcher switch and the upload, the
+  phones' catalog), `music_spotify::migrations_73_to_94_in_order`.

@@ -1652,8 +1652,8 @@ code.key {
     padding: 0 16px 16px;
 }
 
-/* Add App's source: two real radios before the rows, so CSS marks the chosen row and hides the
-   GitHub fields for uploads (no script, no :has()). */
+/* Add App's source: three real radios before the rows, so CSS marks the chosen row and shows only
+   its fields - GitHub's, F-Droid's, none for uploads (no script, no :has()). */
 .choice-radio {
     position: absolute;
     width: 1px;
@@ -1675,21 +1675,33 @@ code.key {
 }
 
 #source-github:checked ~ .group .check-github,
+#source-fdroid:checked ~ .group .check-fdroid,
 #source-manual:checked ~ .group .check-manual {
     visibility: visible;
 }
 
-#source-manual:checked ~ .github-only {
+#source-manual:checked ~ .github-only,
+#source-fdroid:checked ~ .github-only {
     display: none;
 }
 
+.fdroid-only {
+    display: none;
+}
+
+#source-fdroid:checked ~ .fdroid-only {
+    display: block;
+}
+
 #source-github:focus ~ .group label[for="source-github"],
+#source-fdroid:focus ~ .group label[for="source-fdroid"],
 #source-manual:focus ~ .group label[for="source-manual"] {
     outline: 2px solid var(--tint);
     outline-offset: -2px;
 }
 
 #source-github:focus:not(:focus-visible) ~ .group label[for="source-github"],
+#source-fdroid:focus:not(:focus-visible) ~ .group label[for="source-fdroid"],
 #source-manual:focus:not(:focus-visible) ~ .group label[for="source-manual"] {
     outline: none;
 }
