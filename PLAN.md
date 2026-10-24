@@ -1135,9 +1135,10 @@ findings, merge to `main`, full suite once.
   under "Fingerprint", always shown (`server/MediaLockScreen.kt`, `MediaLockScreenTest`): `ACTION_SOUND_SETTINGS`
   through the battery row's `systemPageIntent` (so only during the pause on a managed phone; `systemPageAccess`'s
   states, re-read after the pause's apply); no public action opens the Media sub-page, so the summary names the path
-  ("Lyd og vibrasjon › Medier › Vis medier på låseskjermen av"). Its state line reads
-  `Settings.Secure.getInt("media_controls_lock_screen", 1)`: "På - vises på Androids låseskjerm" / "Av" ("Ukjent"
-  when the read throws); a tap opens the page unless it reads off. `android-settings.md` names the row first.
+  ("Lyd og vibrasjon › Medier › Vis medier på låseskjermen av"). No state line (qa-home-round-code Q-1):
+  `media_controls_lock_screen` has no `@Readable`, so SettingsProvider refuses it to an app targeting S+ (a device
+  owner too) - the summary is the action line alone, a tap always opens the page, and the check is the switch on
+  Android's page. `android-settings.md` names the row first.
 - **A black flash behind Home after the Home button** (the user, 2026-10-16, emulator video): from an app
   (Element X), the Home button (the emulator's circle) shows Home's icons on solid black for ~150 ms
   (four frames at 30 fps) while the app slides away, and only then the wallpaper; Back has a clean
