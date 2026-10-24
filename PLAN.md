@@ -1269,6 +1269,11 @@ findings, merge to `main`, full suite once.
 
 ### Asked for, scope not settled yet
 
+- **PWA i18n** (the user, 2026-10-24, on design 64's push wording: "burde gå for i18n så man enkelt kan endre og legge
+  til flere på sikt ... mer som en generell long list ting"): the PWA is English-only; a translation layer (strings in
+  one table per language, the parent's language on the account, Norwegian first) would also need every event text to
+  be a key plus parameters - design 64 step 1 already stores zone events that way; the older events are prose. Long
+  list; decide the scope when a second language is wanted.
 - **Design 50: the player and the library, the user's picks of 2026-10-20** ("Jeg liker 1, 4 ... Ang 5 ... husker
   hvilken tile som ble spilt ved siste avslutning ... Ang 6 ... grey out de tilesene man vet man ikke får spilt av"):
   (1) **skip buttons** for everything that resumes (books, podcasts): the control row's two side slots become "15 s
