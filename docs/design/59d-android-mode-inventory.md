@@ -1038,6 +1038,8 @@ Report: `docs/testing/2026-10-23-glance-topinset.md`.
   42.7 dp higher than the old fixed 182 dp. So music with 1 row keeps the full tile at 473 dp too, and music with 2-3
   rows takes the full tile with one row visible (candidate 3). JL-3's order is unchanged, but on the Jelly Star's
   modelled bar the compact tile (the user's liked look) no longer shows for music + 1 row - the full tile does.
+  *Superseded by r11 (2026-10-24): no fit any more - the full tile with 0 or 1 rows and the compact one from 2, on
+  every bar (`docs/design/r11-launcher-glance-scroll.md` §2).*
 - **Measured on `jelly36`** (this branch's debug build, a photo ground, the single-line clock): the clock's last ink row
   and the date's capitals' rows are equal to Android's at all three bars, within 1 px. The left edge is the profile's
   34 dp. That is within 2 px of Android's "1" (49 px) and "5" (53 px), but Android's "7" starts at 46 px and ours at

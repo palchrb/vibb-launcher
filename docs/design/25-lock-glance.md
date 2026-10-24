@@ -392,6 +392,8 @@ server. The listener's state is already reported (`notification_listener_enabled
 - **What never runs from the lock**: no notification action (reply, mark as read, archive, call back), no remote
   input, no dismiss or snooze, no `setNotificationsShown`, no content intent before the code; rows can't be swiped
   away (a stranger can't hide a message from the kid). The only send is §1.4's, after the code, from the unlock path.
+  *Superseded by r11 §3 (2026-10-24, the user's ask): a row swiped sideways is dismissed, as on Android's own lock
+  screen - `docs/design/r11-launcher-glance-scroll.md`.*
 - **What never leaves memory**: §2.5. The server learns nothing new (§3.4).
 - **Guarded by** `LockGlanceGuardTest` (§7, steps 2 and 3).
 
@@ -508,6 +510,7 @@ open %s"; `pin_lock_prompt_missed` "Skriv koden for å se tapte anrop" / "Enter 
   screenshot shows it [device].
 - **Nothing runs from the lock**: long-press, swipe and double-tap on rows do nothing; Element X's quick reply never
   appears; the notification is still unread in Element X until the room opens.
+  *Superseded by r11 §3 for the swipe: a row swiped sideways is dismissed (r11 §6 check 4).*
 
 ## 10. Open questions
 

@@ -162,6 +162,24 @@ object MissedCallNotifier {
         }
     }
 
+    /**
+     * Design r11 §3.3: one contact's row swiped away on the lock's glance page. Ours is one notification for every
+     * contact, so that contact can't be cancelled alone: on this thread, in order, its dismissed mark is committed
+     * ([MissedCallsRepo.markDismissed], [number] up to its newest missed call [upToMs]), then ours is recomputed - a pass
+     * that may update or clear but never posts anew (and never alerts), counting against the rules themselves as
+     * [relearn] does, so a no-calls time rule can't empty it. The notice leaves the contact out from then on
+     * ([noticeMarks]); the phone book's badge keeps counting by the seen marks (the user's decision 3). When the last
+     * contact goes, the pass clears ours and marks the shown range read, Telecom's reset included
+     * ([NoticeStep.Clear]). Needs no listener.
+     */
+    fun dismissContact(context: Context, number: String, upToMs: Long) {
+        val app = context.applicationContext
+        runThenDone(null) {
+            MissedCallsRepo.markDismissed(app, number, upToMs)
+            recomputeNow(app, mayPost = false, mayClear = true, ownDismiss = true)
+        }
+    }
+
     /** The kid swiped ours away (qa-12-code #7): the range it showed is marked read. A newer post
      * since then stays, and keeps its own range. */
     fun swiped(context: Context, swipedUpToId: Long, done: () -> Unit) {
@@ -231,13 +249,14 @@ object MissedCallNotifier {
         }
     }
 
-    private fun recomputeNow(context: Context, mayPost: Boolean, mayClear: Boolean) {
+    /** [ownDismiss]: the pass after a contact's row was dismissed on the lock ([dismissContact]). */
+    private fun recomputeNow(context: Context, mayPost: Boolean, mayClear: Boolean, ownDismiss: Boolean = false) {
         // The in-call service runs before the first unlock too: no call log, no CE prefs then.
         if (!CallPolicyStore.userUnlocked(context)) return
         CallPolicyStore.ensureLoaded(context)
         // A re-learning pass (mayClear false: every request of the run was one) counts against the
-        // rules without the time rule's block (code QA Low 3).
-        val state = noticeState(CallPolicyStore.state, CallPolicyStore.effectiveState(), relearnOnly = !mayClear)
+        // rules without the time rule's block (code QA Low 3); so does a dismissal's (design r11 §3.3).
+        val state = noticeState(CallPolicyStore.state, CallPolicyStore.effectiveState(), relearnOnly = !mayClear || ownDismiss)
         val rules = (state as? CallPolicyState.Managed)?.rules
         // The bound first, then the log: every unread row up to it has been looked at.
         val unread = MissedCallsRepo.unreadMissed(context)
@@ -247,7 +266,9 @@ object MissedCallNotifier {
             plainMissedCallNotice(unread)
         } else {
             val view = phoneBookView(state) { CallSystem.isEmergencyOutgoing(context, it) }
-            missedCallNotice(log, view.contacts, rules.defaultCc, MissedCallsRepo.seenMarks(context), unread.newestId)
+            // Design r11 §3.3: a contact dismissed on the lock is left out until a newer call (the badges keep theirs).
+            val marks = noticeMarks(MissedCallsRepo.seenMarks(context), MissedCallsRepo.dismissedMarks(context))
+            missedCallNotice(log, view.contacts, rules.defaultCc, marks, unread.newestId)
         }
         val prefs = prefs(context)
         val step = noticeStep(
@@ -269,14 +290,16 @@ object MissedCallNotifier {
                 step.markReadUpToId?.let { markReadAndResetTelecom(context, it) }
             }
             is NoticeStep.Post -> {
-                if (post(context, step.notice, step.alert, unread.newestId)) {
+                // A dismissal's update (design r11 §3.3) never alerts: it only takes a contact out.
+                val alert = step.alert && !ownDismiss
+                if (post(context, step.notice, alert, unread.newestId)) {
                     // Round 7 §3: a new missed call (the alerting post only - never the boot re-send,
                     // relearn or an update after a call) may wake the screen on the lock.
-                    if (step.alert) main.post { com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame() }
+                    if (alert) main.post { com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame() }
                     lastPosted = step.notice
                     prefs.edit()
                         .putLong(KEY_SHOWN_UP_TO, unread.newestId)
-                        .putLong(KEY_ALERTED_UP_TO, if (step.alert) step.notice.newestId else prefs.getLong(KEY_ALERTED_UP_TO, 0L))
+                        .putLong(KEY_ALERTED_UP_TO, if (alert) step.notice.newestId else prefs.getLong(KEY_ALERTED_UP_TO, 0L))
                         .commit()
                 }
             }

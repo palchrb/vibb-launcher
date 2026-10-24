@@ -170,11 +170,11 @@ class LockUpTest {
     }
 
     @Test
-    fun `the glance page never draws a frame before its fit`() {
+    fun `the glance page never draws a frame before its layout`() {
         val panel = code("java/com/kidslauncher/mdm/lock/GlancePanel.kt")
         assertTrue(panel.contains("glance.root.viewTreeObserver.addOnPreDrawListener {"))
         assertTrue(panel.contains("if (!refitPending) return@addOnPreDrawListener true"))
-        val fit = body(panel, "fitNow")
+        val fit = body(panel, "layoutNow")
         assertTrue(fit.contains("refitPending = true"))
     }
 

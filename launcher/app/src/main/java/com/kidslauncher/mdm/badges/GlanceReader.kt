@@ -29,6 +29,9 @@ import java.lang.ref.WeakReference
  * [GlanceLevel.TEXT], reads a text. Never read: the
  * actions, remote inputs, the delete and full-screen intents, the public version, pictures, icons,
  * a person's key, URI or icon, the big text or text lines. LockGlanceGuardTest scans this file.
+ *
+ * Its one write since design r11 §3: [dismiss], a row the kid swiped away on the lock - only that conversation's kept
+ * keys, through the listener's `cancelNotifications`.
  */
 object GlanceReader {
     private const val LOG_TAG = "GlanceReader"
@@ -57,6 +60,30 @@ object GlanceReader {
     /** The policy changed (main thread): everything is read again under it. */
     fun resweep() {
         service?.get()?.let(::sweep)
+    }
+
+    /** Design r11 §3.3: a message row can be dismissed now - the listener is connected. Checked before a row slides
+     * off; without it the row springs back and nothing changes. */
+    fun canDismiss(): Boolean = service?.get() != null
+
+    /**
+     * Design r11 §3.3: a message row swiped away on the lock - the glance's one cancel. Every kept key of
+     * [conversation] posted up to the row's newest ([upToPostTimeMs], [GlanceStore.keysOf]: clearable keys only) is
+     * cancelled through the listener, as the shade's own swipe does - NMS cancels a listener's keys with
+     * `REASON_LISTENER_CANCEL` and sends their delete intents, so the app learns of it as from the shade (F3); the message
+     * stays in the app. Then [GlanceStore.hide] keeps the row gone until a newer post. False with no listener connected
+     * or on any exception (logged by class only): the row comes back. No keys left (the app removed them): true.
+     */
+    fun dismiss(conversation: GlanceConversation, upToPostTimeMs: Long): Boolean {
+        var done = false
+        guarded(conversation.packageName) {
+            val listener = service?.get() ?: return@guarded
+            val keys = GlanceStore.keysOf(conversation, upToPostTimeMs)
+            if (keys.isNotEmpty()) listener.cancelNotifications(keys.toTypedArray())
+            GlanceStore.hide(conversation, upToPostTimeMs)
+            done = true
+        }
+        return done
     }
 
     fun posted(service: NotificationListenerService, sbn: StatusBarNotification, rankingMap: NotificationListenerService.RankingMap?) =

@@ -350,6 +350,8 @@
     <string name="glance_yesterday">i går</string>
     <string name="glance_open_action">Lås opp og åpne</string>
     <string name="glance_missed_action">Lås opp og se tapte anrop</string>
+    <!-- Design r11 §3.4: TalkBacks handling på en rad på låseskjermen - det samme som å sveipe den bort. -->
+    <string name="glance_dismiss_action">Fjern</string>
     <string name="glance_missed_from">Tapt anrop fra %1$s</string>
     <!-- Design 24b: et foreldrekode-vindu som låses igjen av seg selv (varsel, banner på Hjem). -->
     <string name="notification_channel_window">Åpnet med foreldrekoden</string>

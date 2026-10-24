@@ -75,10 +75,10 @@ class LockFontScaleTest {
         assertTrue("view !in skip" in refresh)
         // Every view under the root is visited through walk, with a ViewGroup's children.
         assertTrue("walk(root, { v -> if (v is ViewGroup) List(v.childCount) { v.getChildAt(it) } else emptyList() })" in refresh)
-        // The glance fit starts again at the same height.
+        // The glance layout is placed again at the same height (r11: no fit).
         val glance = src("lock/GlancePanel.kt")
         val refit = glance.substringAfter("fun refit() = guarded(\"refit\") {").substringBefore("}")
-        assertTrue("fitFor = 0" in refit && "fitNow()" in refit)
+        assertTrue("placedFor = 0" in refit && "layoutNow()" in refit)
     }
 
     /** qa-34-emu-launcher-code L2: the walk reaches every text, however deep (a fake tree). */
