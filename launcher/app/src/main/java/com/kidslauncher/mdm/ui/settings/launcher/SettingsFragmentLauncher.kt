@@ -35,11 +35,15 @@ import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.WindowRelock
 import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.FingerprintEnrol
+import com.kidslauncher.mdm.server.MediaLockScreen
 import com.kidslauncher.mdm.server.SystemPageAccess
 import com.kidslauncher.mdm.server.WriteSettingsAccess
 import com.kidslauncher.mdm.server.fingerprintActionText
 import com.kidslauncher.mdm.server.fingerprintRowShown
 import com.kidslauncher.mdm.server.fingerprintStateText
+import com.kidslauncher.mdm.server.mediaLockActionText
+import com.kidslauncher.mdm.server.mediaLockStateText
+import com.kidslauncher.mdm.server.mediaLockTapOpens
 import com.kidslauncher.mdm.server.systemPageAccess
 import com.kidslauncher.mdm.server.writeSettingsText
 import com.kidslauncher.mdm.server.writeSettingsRowState
@@ -63,6 +67,7 @@ private const val LOG_TAG = "SettingsFragmentLauncher"
 private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
 private const val WRITE_SETTINGS = "settings_mdm_write_settings"
 private const val FINGERPRINT = "settings_mdm_fingerprint"
+private const val MEDIA_LOCK = "settings_mdm_media_lock"
 
 /**
  * "Set"/"Not set" alone left no way to tell *which* key is configured, or to notice a stale one
@@ -117,6 +122,13 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     private var fingerprintPageMissing = false
     private val fingerprintLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         updateFingerprintRow()
+    }
+
+    /** "Media on the lock screen" (PLAN, "Android's lock screen shows the media card"): the page threw
+     * ActivityNotFoundException on the last tap. Read again on return. */
+    private var mediaLockPageMissing = false
+    private val mediaLockLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        updateMediaLockRow()
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -244,6 +256,20 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             true
         }
 
+        // Android's "Show media on lock screen" (its media card on SystemUI's face, whatever our keyguard features say):
+        // its Sound & vibration page on the same path - the summary names the way to the Media page. Opens unless the
+        // switch already reads off.
+        findPreference<Preference>(MEDIA_LOCK)?.setOnPreferenceClickListener {
+            val context = requireContext()
+            if (mediaLockTapOpens(MediaLockScreen.shown(context))) {
+                val pages = MediaLockScreen.pageIntents(context)
+                mediaLockPageMissing = false
+                if (pages.isNotEmpty()) mediaLockPageMissing = !openFirstPage(pages, mediaLockLauncher)
+            }
+            updateMediaLockRow()
+            true
+        }
+
         val restrictionsPaused = findPreference<SwitchPreference>(mdm.keys().restrictionsPaused())
         // isActive() clears a pause that has run out, so the switch never shows a stale "on".
         restrictionsPaused?.isChecked = RestrictionsPause.isActive()
@@ -359,12 +385,13 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         pageMissing = pageMissing,
     )
 
-    /** The three rows that open Android's pages, read again: on resume, after a tap, when the pause starts and
+    /** The four rows that open Android's pages, read again: on resume, after a tap, when the pause starts and
      * after each apply (the window's apply unhides Android's Settings - code QA Q-2). */
     private fun updateSystemPageRows() {
         updateBatteryRow()
         updateWriteSettingsRow()
         updateFingerprintRow()
+        updateMediaLockRow()
     }
 
     private val appliedListener: () -> Unit = { updateSystemPageRows() }
@@ -383,6 +410,18 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             getString(fingerprintStateText(FingerprintEnrol.enrolled(context))),
             getString(fingerprintActionText(access)),
         )
+    }
+
+    private fun updateMediaLockRow() {
+        val context = context ?: return
+        val row = findPreference<Preference>(MEDIA_LOCK) ?: return
+        val shown = MediaLockScreen.shown(context)
+        val action = mediaLockActionText(shown, pageAccess(MediaLockScreen.pageIntents(context), mediaLockPageMissing))
+        row.summary = if (action == null) {
+            getString(mediaLockStateText(shown))
+        } else {
+            getString(R.string.settings_mdm_media_lock_summary, getString(mediaLockStateText(shown)), getString(action))
+        }
     }
 
     private fun updateWriteSettingsRow() {

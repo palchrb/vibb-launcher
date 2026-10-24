@@ -78,7 +78,7 @@ object BootHome {
                 return false
             }
             BootHomeAction.START -> {
-                if (!HomeFront.bring(app, "boot $boot")) return false
+                if (!HomeFront.bring(app, "boot $boot", arrival = com.kidslauncher.mdm.ui.home.HomeArrival.BOOT)) return false
                 // F3 timing: the real gap's end on our side - since the unlock reached this process.
                 com.kidslauncher.mdm.Application.instance?.unlockedAtElapsed?.let {
                     Log.i(LOG_TAG, "Boot Home started ${android.os.SystemClock.elapsedRealtime() - it} ms after the unlock reached this process")

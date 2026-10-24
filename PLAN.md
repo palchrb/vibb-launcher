@@ -1095,7 +1095,20 @@ findings, merge to `main`, full suite once.
   tror jeg at jeg vil at home starter på null"): Home's grid scroll resets to the top whenever the lock is left for
   Home - screen off/on + PIN, the handle swipe, the boot - and never when the unlock's target is an app (a notification
   row, a call: the app opens, Home isn't shown). Launcher, small; one Home round with the black-flash entry below
-  (same activity, both need the emulator).
+  (same activity, both need the emulator). **Done 2026-10-24 (branch `home-round`; emulator check owed)**: Home learns
+  why it is shown from the typed HOME start that brought it - `HomeFront.EXTRA_ARRIVAL` next to `EXTRA_BROUGHT`, no
+  new broadcast: the lock's leave through Home (`PinLockActivity.go`, every mode: own keypad, the handle's swipe,
+  Android's pad in front) says `LOCK_LEFT_FOR_HOME`, or `LOCK_LEFT_FOR_APP` when a glance row's target opens over Home
+  (`lockLeaveArrival`; as the kiosk's root the opener opens nothing, so that is Home again); the boot's `BootHome`
+  says `BOOT`; every other start of ours (dark lock-up, update, relock, role change, install mode, rooting lock task)
+  is `OURS`. Pure `ui/home/HomeReset.kt` (`homeResetDue`, `homeResetPending`, `HomeResetTest`): only a leave for Home
+  and the boot reset; the reset is taken at the content's next resume (`resetToTopIfDue`, the one unanimated
+  `scrollToPositionWithOffset(0, 0)` plus the contacts row's start) and dropped at Home's stop. A call over the
+  unlock brings no Home (`lockLeave`), so nothing resets; an unlock on SystemUI's own face or pad (the glance stopped
+  under an app, design 59b step 0) brings no Home either. Unchanged: the Home button or Back from an app keeps the
+  kid's place (no extra, Home was stopped: `homePressToTop` needs Home up), and the kid's press on Home itself still
+  scrolls smoothly to the top (round 7 §4). Residual: a row's target the opener can't open (not installed, refused
+  send, kiosk on with no lock task) leaves Home where it was.
 - **An F-Droid repo as a release source; Etar first** (the user, 2026-10-24: Fossify Calendar opens the editor on a
   tap - FossifyOrg/Calendar #171/#693 open - "jeg ønsker etar, og å kunne tracke updates"; Etar's GitHub releases carry
   no APK): a tracked app of source `fdroid` = a repo URL (default `https://f-droid.org/repo`) + package id. Versions
@@ -1144,6 +1157,13 @@ findings, merge to `main`, full suite once.
   Settings is visible); (2) a pause-screen row "Media on the lock screen" opening `ACTION_SOUND_SETTINGS`, the same
   mechanism as the write-settings and fingerprint rows (rc.5). The user confirmed the switch on their emulator
   2026-10-24 ("den fiksen funket"); (1) done the same day in `android-settings.md`; (2) launcher, S; next launcher round.
+  **(2) done 2026-10-24 (branch `home-round`)**: Settings' "Media on the lock screen" ("Medier på låseskjermen") row
+  under "Fingerprint", always shown (`server/MediaLockScreen.kt`, `MediaLockScreenTest`): `ACTION_SOUND_SETTINGS`
+  through the battery row's `systemPageIntent` (so only during the pause on a managed phone; `systemPageAccess`'s
+  states, re-read after the pause's apply); no public action opens the Media sub-page, so the summary names the path
+  ("Lyd og vibrasjon › Medier › Vis medier på låseskjermen av"). Its state line reads
+  `Settings.Secure.getInt("media_controls_lock_screen", 1)`: "På - vises på Androids låseskjerm" / "Av" ("Ukjent"
+  when the read throws); a tap opens the page unless it reads off. `android-settings.md` names the row first.
 - **A black flash behind Home after the Home button** (the user, 2026-10-16, emulator video): from an app
   (Element X), the Home button (the emulator's circle) shows Home's icons on solid black for ~150 ms
   (four frames at 30 fps) while the app slides away, and only then the wallpaper; Back has a clean
@@ -1158,6 +1178,16 @@ findings, merge to `main`, full suite once.
   already holds the one decoded photo). Launcher only. A second video (2026-10-16) shows the same black frame
   with a built-in gradient wallpaper (not only a photo), and Back's predictive animation clean; power
   off/on over the PIN lock showed no flash of content (design 32 holds).
+  **Built 2026-10-24 (branch `home-round`; emulator check owed - design 08's last section)**: the cause wasn't
+  measured (no emulator in the round); both candidates - Android's wallpaper not shown under Home yet, or the
+  transition's backdrop (which could take design 32's black task description) - lie below Home's window, so Home now
+  draws its own copy (`WallpaperGround`'s FULL ground: the store's colour, gradient or the one decoded photo, then the
+  scrim - no new memory, Android's placement) after a HOME intent that brings it from behind (the Home button or
+  gesture, every `HomeFront` start), for at least 700 ms and until `onEnterAnimationComplete` plus a frame, at most
+  2.5 s; ended by a pause and the stop; never for Back or Recents, never at a lock-up (the content isn't on the
+  window then; the black snapshot stays). Pure `ui/home/HomeGround.kt` (`homeGroundDue`, `HomeGroundTest`); design
+  59d step B's face leave folded in unchanged. If the recording still shows black, the backdrop/wallpaper timing
+  isn't the cause (look at `TaskDescription` and Shell's transition then).
 
 - **The last app still flashes for one frame at screen-on** (design 32's lock flash isn't gone; the user,
   2026-10-16, three emulator videos read frame by frame): turning the screen on over the PIN lock shows, for

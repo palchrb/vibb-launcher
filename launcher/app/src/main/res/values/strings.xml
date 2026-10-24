@@ -252,6 +252,15 @@
     <string name="settings_mdm_fingerprint_pause_first">pause all restrictions first (Android\'s Settings is hidden while the phone is managed), tap here, then end the pause</string>
     <string name="settings_mdm_fingerprint_wait">the pause is starting, a moment…</string>
     <string name="settings_mdm_fingerprint_no_page">Android has no page for this on this phone</string>
+    <string name="settings_mdm_media_lock">Media on the lock screen</string>
+    <string name="settings_mdm_media_lock_summary">%1$s\n%2$s</string>
+    <string name="settings_mdm_media_lock_on">On - shows on Android\'s lock screen</string>
+    <string name="settings_mdm_media_lock_off">Off</string>
+    <string name="settings_mdm_media_lock_unknown">Unknown</string>
+    <string name="settings_mdm_media_lock_open">Tap, then Sound &amp; vibration › Media › Show media on lock screen off, and come back</string>
+    <string name="settings_mdm_media_lock_pause_first">Pause all restrictions first (Android\'s Settings is hidden while the phone is managed), tap here, then Sound &amp; vibration › Media › Show media on lock screen off, and end the pause</string>
+    <string name="settings_mdm_media_lock_wait">The pause is starting, a moment…</string>
+    <string name="settings_mdm_media_lock_no_page">Android has no page for this on this phone - Settings › Sound &amp; vibration › Media › Show media on lock screen off</string>
     <string name="toast_mdm_sync_done">Sync complete.</string>
     <string name="toast_mdm_sync_failed">Sync failed - couldn\'t reach the server.</string>
 

@@ -30,6 +30,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.res.ResourcesCompat
 import androidx.lifecycle.lifecycleScope
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.ui.home.lockLeaveArrival
 import com.kidslauncher.mdm.calls.EmergencyCall
 import com.kidslauncher.mdm.databinding.ActivityPinLockBinding
 import com.kidslauncher.mdm.databinding.ViewVoipRingBinding
@@ -1157,8 +1158,12 @@ class PinLockActivity : AppCompatActivity() {
     private fun go(plan: LockLeave) {
         if (plan.stopLockTaskFirst) stopLockTaskQuietly()
         // Design 59d step B: as the face, Home comes with no slide (the dark mark still ends, Q59d-7).
-        if (plan.homeFirst) HomeFront.bring(this, "the lock left", noAnimation = AndroidLock.faceOn)
-        pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }?.let { GlanceOpener.open(this, it, homeBelow = plan.homeFirst) }
+        val target = pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }
+        // PLAN "Home starts at the top after an unlock": Home goes back to the top when it is what the kid sees - not
+        // when a row's target opens over it (homeResetDue).
+        val arrival = lockLeaveArrival(hasTarget = target != null, lockWasRoot = target?.lockWasRoot == true)
+        if (plan.homeFirst) HomeFront.bring(this, "the lock left", noAnimation = AndroidLock.faceOn, arrival = arrival)
+        target?.let { GlanceOpener.open(this, it, homeBelow = plan.homeFirst) }
         pendingOpen = null
         // Design 59d step B: as Android's face the glance's own finish is unanimated too - no fade, no swipe-away (its
         // content is hidden already; 59b's close fade would fade nothing).

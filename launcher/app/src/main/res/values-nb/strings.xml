@@ -210,6 +210,15 @@
     <string name="settings_mdm_fingerprint_pause_first">sett alle begrensninger på pause først (Androids innstillinger er skjult mens telefonen er styrt), trykk her, og avslutt pausen etterpå</string>
     <string name="settings_mdm_fingerprint_wait">pausen starter, et øyeblikk …</string>
     <string name="settings_mdm_fingerprint_no_page">Android har ingen side for dette på denne telefonen</string>
+    <string name="settings_mdm_media_lock">Medier på låseskjermen</string>
+    <string name="settings_mdm_media_lock_summary">%1$s\n%2$s</string>
+    <string name="settings_mdm_media_lock_on">På - vises på Androids låseskjerm</string>
+    <string name="settings_mdm_media_lock_off">Av</string>
+    <string name="settings_mdm_media_lock_unknown">Ukjent</string>
+    <string name="settings_mdm_media_lock_open">Trykk, så Lyd og vibrasjon › Medier › Vis medier på låseskjermen av, og kom tilbake</string>
+    <string name="settings_mdm_media_lock_pause_first">Sett alle begrensninger på pause først (Androids innstillinger er skjult mens telefonen er styrt), trykk her, så Lyd og vibrasjon › Medier › Vis medier på låseskjermen av, og avslutt pausen</string>
+    <string name="settings_mdm_media_lock_wait">Pausen starter, et øyeblikk …</string>
+    <string name="settings_mdm_media_lock_no_page">Android har ingen side for dette på denne telefonen - Innstillinger › Lyd og vibrasjon › Medier › Vis medier på låseskjermen av</string>
     <string name="settings_mdm_restrictions_paused_pin_title">Skriv inn PIN-koden for å sette begrensningene på pause</string>
     <string name="toast_mdm_pause_needs_pin">Pause krever en PIN-kode. Sett en for denne telefonen på serveren først.</string>
     <string name="settings_gate_dialog_title">Skriv inn koden for å åpne innstillingene</string>
