@@ -1440,8 +1440,14 @@ async fn render_device(
 
     // Design 64 §3.5: "At Home since 15:42" (two zones: "At Home · Garden since 15:42", the
     // newest arrival's time).
-    let zone_now = match crate::zones::list(&state.db, id).await {
-        Ok(zones) => zone_now_line(&zones, &zone, now),
+    let zone_now = match async {
+        let zones = crate::zones::list(&state.db, id).await?;
+        let (newest, mode, interval) = crate::zones::freshness_inputs(&state.db, id).await?;
+        Ok::<_, sqlx::Error>((zones, crate::zones::fresh(newest, &mode, interval, now)))
+    }
+    .await
+    {
+        Ok((zones, fresh)) => zone_now_line(&zones, fresh, &zone, now),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the phone's zones");
             return (
@@ -2743,14 +2749,19 @@ pub async fn delete_device(
     Redirect::to("/devices")
 }
 
-/// The summary's zone line (design 64 §3.5): the zones the phone is in, "At Home since 15:42",
-/// with the latest `side_since` among them; `None` while it is in none.
+/// The summary's zone line (design 64 §3.5): the zones the phone is in now ([Zone::here_now]:
+/// inside, nothing pending, the newest fix `fresh` - code QA Q-1, Q-2), "At Home since 15:42",
+/// with the latest `side_since` among them; `None` otherwise (a stale phone's summary says
+/// nothing; its Locate row says when it was last seen there).
+///
+/// [Zone::here_now]: crate::zones::Zone::here_now
 pub(crate) fn zone_now_line(
     zones: &[crate::zones::Zone],
+    fresh: bool,
     zone: &crate::display_time::Zone,
     now: chrono::DateTime<chrono::Utc>,
 ) -> Option<String> {
-    let here: Vec<&crate::zones::Zone> = zones.iter().filter(|z| z.here()).collect();
+    let here: Vec<&crate::zones::Zone> = zones.iter().filter(|z| z.here_now(fresh)).collect();
     if here.is_empty() {
         return None;
     }

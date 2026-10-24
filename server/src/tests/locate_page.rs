@@ -87,22 +87,33 @@ async fn every_form_on_the_locate_page_returns_to_its_group() {
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("Anna").await;
     app.enrolled_device("Emil").await;
-    sqlx::query("UPDATE device_policy SET location_mode = 'interval' WHERE device_id = ?")
-        .bind(id)
-        .execute(&app.db)
-        .await
-        .unwrap();
+    // A zone with the phone in Only when asked (design 64, code QA Q-3): #zones' Locate Regularly
+    // is on the page too.
+    sqlx::query(
+        "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
+         VALUES (?, 'Home', 59.9139, 10.7522, 150)",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
     let lock = waiting(&app, id, "lock", "datetime('now', '-1 minutes')").await;
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
     check_forms(&html);
     let page = format!("/devices/locate?device={id}");
     // (action as rendered, the fields a parent sends, the expected Location).
     type Row<'a> = (String, &'a [(&'a str, &'a str)], (String, Option<&'a str>));
-    let table: [Row; 8] = [
+    let table: [Row; 9] = [
         (
             format!("/devices/{id}/command/locate#location"),
             &[],
             (format!("{page}&requested=1"), Some("location")),
+        ),
+        // Locate Regularly (its `mode` and `back=zones` are the form's own hidden fields).
+        (
+            format!("/devices/{id}/location-policy#zones"),
+            &[],
+            (page.clone(), Some("zones")),
         ),
         (
             format!("/devices/{id}/command/ring#actions"),

@@ -72,10 +72,10 @@
 
     /**
      * The phone's zones on `map` (design 64): a calm outline per zone in `colour`, its name a
-     * tooltip built as text. Returns how many were drawn.
+     * tooltip built as text. Returns the centres drawn.
      */
     function drawZones(L, doc, layer, zones, colour) {
-        var drawn = 0;
+        var drawn = [];
         for (var i = 0; i < zones.length; i++) {
             var z = zones[i];
             if (typeof z.latitude !== "number" || typeof z.longitude !== "number" || typeof z.radius_m !== "number") continue;
@@ -84,7 +84,7 @@
             L.circle([z.latitude, z.longitude], { radius: z.radius_m, color: colour, weight: 2, fillColor: colour, fillOpacity: 0.08 })
                 .addTo(layer)
                 .bindTooltip(name);
-            drawn += 1;
+            drawn.push([z.latitude, z.longitude]);
         }
         return drawn;
     }
@@ -140,14 +140,26 @@
         var layer = L.layerGroup().addTo(map);
         var zoneLayer = L.layerGroup().addTo(map);
         var drawn = false;
-        var hasPoints = false;
+        var zoneCentres = [];
+        var lastPoints = null;
         var asked = 0;
+
+        // A span without points shows the zones when there are any (code QA Q-7), else the world.
+        function emptyView() {
+            if (zoneCentres.length === 1) {
+                map.setView(zoneCentres[0], 15);
+            } else if (zoneCentres.length) {
+                map.fitBounds(zoneCentres, { maxZoom: 15, padding: [30, 30] });
+            } else {
+                map.setView([20, 0], 2);
+            }
+        }
 
         function draw(points) {
             layer.clearLayers();
-            hasPoints = points.length > 0;
+            lastPoints = points;
             if (!points.length) {
-                map.setView([20, 0], 2);
+                emptyView();
                 return;
             }
             var all = [];
@@ -295,20 +307,21 @@
         }
 
         // The zones (`data-zones` while the phone has any), once: they don't change with the span.
-        // A phone with no fix yet shows its first zone.
-        if (box.hasAttribute("data-zones")) {
-            win.fetch("/devices/" + id + "/zones.json", { credentials: "same-origin" })
-                .then(function (r) { return r.ok ? r.json() : null; })
-                .then(function (zones) {
-                    if (!zones || !zones.length) return;
-                    drawZones(L, doc, zoneLayer, zones, tokenColour(win, "--map-zone", ZONE));
-                    if (!hasPoints) map.setView([zones[0].latitude, zones[0].longitude], 15);
-                })
-                .catch(function () {});
-        }
-
-        choose(span);
-        return { choose: choose, map: map };
+        // Asked after the first locations settled (code QA Q-7: in either order the view is the
+        // trail's, or the zones' when the span has no points).
+        var first = choose(span);
+        var zonesLoaded = !box.hasAttribute("data-zones") ? first : first
+            .then(function () {
+                return win.fetch("/devices/" + id + "/zones.json", { credentials: "same-origin" });
+            })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (zones) {
+                if (!zones || !zones.length) return;
+                zoneCentres = drawZones(L, doc, zoneLayer, zones, tokenColour(win, "--map-zone", ZONE));
+                if (!lastPoints || !lastPoints.length) emptyView();
+            })
+            .catch(function () {});
+        return { choose: choose, map: map, zonesLoaded: zonesLoaded };
     }
 
     var api = { install: install, countText: countText, readSpan: readSpan, trailColour: trailColour, drawZones: drawZones, SPAN_KEY: SPAN_KEY, SPANS: SPANS };

@@ -10,11 +10,12 @@
 //!   [CONFIRM_GAP] apart; only fixes after the zone's cursor (the newest fix evaluated) count; a
 //!   new or moved zone's first side is set silently.
 //! - **The intake** ([intake]): a status report's fix is stored once (the same phone, time and
-//!   coordinates are the same fix - every report re-sends the cached one), then every zone of the
-//!   phone is stepped through every stored fix after its cursor, in time order, the zones' state
-//!   written and the events raised - one `BEGIN IMMEDIATE` transaction, so a crash or a restart
-//!   leaves either all of it or none (the phone sends its fix again) and two parallel reports
-//!   take turns. An event is keyed `<zone>:<side>:<first fix>` on top, so one crossing is one row.
+//!   coordinates are the same fix - every report re-sends the cached one), on its own; then
+//!   ([judge]) every zone of the phone is stepped through every stored fix after its cursor, in
+//!   time order, the zones' state written and the events raised - one `BEGIN IMMEDIATE`
+//!   transaction, so a crash or an error leaves the fix stored and the judging for the next
+//!   report (the cursors didn't move), and two parallel reports take turns. An event is keyed
+//!   `<zone>:<side>:<first fix>` on top, so one crossing is one row.
 //! - **The events** (`parent_events::Kind::ZoneArrived`/`ZoneLeft`) are stored as a key plus
 //!   parameters (the user's decision 5), raised only when the zone's switch for that direction is
 //!   on, pushed only while news ([NEWS_FOR]) and to the parents whose "Zones" switch is on.
@@ -47,6 +48,12 @@ pub const CONFIRM_GAP: Duration = Duration::seconds(60);
 pub const NEWS_FOR: Duration = Duration::minutes(30);
 /// The mean Earth radius (IUGG), in metres.
 pub const EARTH_RADIUS_M: f64 = 6_371_008.8;
+/// A new or moved zone takes the phone's newest fix as its pending side when the fix is younger
+/// than this (code QA open question 2): the next sure fix on that side confirms it - silently, as
+/// every first side is - so "Here now" waits for one new location, not two.
+pub const SEED_WITHIN: Duration = Duration::minutes(30);
+/// "Here now" outside Regularly: the newest fix is younger than this.
+pub const FRESH_OUTSIDE_REGULARLY: Duration = Duration::hours(1);
 /// At most this many stored fixes are evaluated in one intake; the cursor takes the rest the
 /// next time.
 const EVALUATE_AT_MOST: i64 = 1000;
@@ -257,10 +264,58 @@ impl Zone {
         }
     }
 
-    /// The parent is here now: the zone's confirmed side is inside.
+    /// The zone's confirmed side is inside (the rule's state; what the pages say is
+    /// [Zone::here_now]).
     pub fn here(&self) -> bool {
         self.side.as_deref() == Some("inside")
     }
+
+    /// The confirmed side is inside, no other side is pending (the newest sure fix agrees) and the
+    /// newest fix is fresh ([fresh]): "Here now" and "At Home since" (code QA Q-1, Q-2).
+    pub fn here_now(&self, fresh: bool) -> bool {
+        self.here() && self.pending_side.is_none() && fresh
+    }
+}
+
+/// How old the phone's newest fix may be for "Here now": twice the interval in Regularly, else
+/// [FRESH_OUTSIDE_REGULARLY].
+pub fn fresh_for(mode: &str, interval_minutes: i64) -> Duration {
+    if mode == "interval" {
+        Duration::minutes(2 * interval_minutes)
+    } else {
+        FRESH_OUTSIDE_REGULARLY
+    }
+}
+
+/// The newest fix is younger than [fresh_for] at `now`.
+pub fn fresh(
+    newest: Option<DateTime<Utc>>,
+    mode: &str,
+    interval_minutes: i64,
+    now: DateTime<Utc>,
+) -> bool {
+    newest.is_some_and(|at| now - at < fresh_for(mode, interval_minutes))
+}
+
+/// The phone's newest fix time and its location setting (`location_mode`,
+/// `location_interval_minutes`; a phone without a policy row reads as a new phone's), for [fresh].
+pub async fn freshness_inputs(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<(Option<DateTime<Utc>>, String, i64), sqlx::Error> {
+    let newest: Option<String> =
+        sqlx::query_scalar("SELECT MAX(captured_at) FROM device_locations WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_one(db)
+            .await?;
+    let (mode, interval): (String, i64) = sqlx::query_as(
+        "SELECT location_mode, location_interval_minutes FROM device_policy WHERE device_id = ?",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?
+    .unwrap_or_else(|| ("on_request".to_string(), 30));
+    Ok((newest.as_deref().and_then(parse_db_utc), mode, interval))
 }
 
 /// The phone's zones, oldest first.
@@ -274,39 +329,64 @@ pub async fn list<'e, E: sqlx::SqliteExecutor<'e>>(
         .await
 }
 
-/// The phone's newest stored fix as a cursor `(captured_at, id)`: where a new or moved zone
-/// starts, so the history before it is never judged against it (decision 4).
-pub async fn newest_fix(
-    conn: &mut SqliteConnection,
-    device_id: i64,
-) -> Result<Option<(String, i64)>, sqlx::Error> {
-    sqlx::query_as(
-        "SELECT captured_at, id FROM device_locations WHERE device_id = ? \
-         ORDER BY captured_at DESC, id DESC LIMIT 1",
-    )
-    .bind(device_id)
-    .fetch_optional(&mut *conn)
-    .await
-}
-
-/// Forgets a zone's side (a moved centre, a changed radius): unknown again, the cursor at the
-/// phone's newest fix, so the next confirmed side is set silently and the history isn't read.
+/// Forgets a zone's side (a new zone, a moved centre, a changed radius): unknown again, the
+/// cursor at the phone's newest fix, so the history isn't read and the next confirmed side is set
+/// silently. A newest fix younger than [SEED_WITHIN] that is sure for `circle` is the pending side
+/// ([seed]): one more fix on that side confirms it. A pending side raises nothing.
 pub async fn start_over(
     conn: &mut SqliteConnection,
     zone_id: i64,
     device_id: i64,
+    circle: &Circle,
+    now: DateTime<Utc>,
 ) -> Result<(), sqlx::Error> {
-    let cursor = newest_fix(conn, device_id).await?;
-    sqlx::query(
-        "UPDATE device_zones SET side = NULL, side_since = NULL, pending_side = NULL, \
-         pending_at = NULL, evaluated_at = ?, evaluated_fix_id = ? WHERE id = ?",
+    let newest: Option<(i64, f64, f64, Option<f64>, String)> = sqlx::query_as(
+        "SELECT id, latitude, longitude, accuracy_meters, captured_at FROM device_locations \
+         WHERE device_id = ? ORDER BY captured_at DESC, id DESC LIMIT 1",
     )
-    .bind(cursor.as_ref().map(|c| c.0.clone()))
-    .bind(cursor.map(|c| c.1))
+    .bind(device_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let fix = newest.and_then(|(id, latitude, longitude, accuracy_m, at)| {
+        Some(Fix {
+            id,
+            latitude,
+            longitude,
+            accuracy_m,
+            at: parse_db_utc(&at)?,
+        })
+    });
+    let state = seed(circle, fix.as_ref(), now);
+    sqlx::query(
+        "UPDATE device_zones SET side = NULL, side_since = NULL, pending_side = ?, \
+         pending_at = ?, evaluated_at = ?, evaluated_fix_id = ? WHERE id = ?",
+    )
+    .bind(state.pending.map(|(side, _)| side.word()))
+    .bind(state.pending.map(|(_, at)| instant(at)))
+    .bind(state.cursor.map(|(at, _)| instant(at)))
+    .bind(state.cursor.map(|(_, id)| id))
     .bind(zone_id)
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+/// A new or moved zone's state from the phone's newest fix: the side unknown, the cursor at the
+/// fix, and the fix's sure side pending when it is younger than [SEED_WITHIN] (one ahead by the
+/// phone's clock counts as young). No fix: everything empty, every later fix is read.
+pub fn seed(circle: &Circle, newest: Option<&Fix>, now: DateTime<Utc>) -> State {
+    let Some(fix) = newest else {
+        return State::default();
+    };
+    let pending = (now - fix.at < SEED_WITHIN)
+        .then(|| side(circle, fix.latitude, fix.longitude, fix.accuracy_m))
+        .flatten()
+        .map(|side| (side, fix.at));
+    State {
+        pending,
+        cursor: Some((fix.at, fix.id)),
+        ..State::default()
+    }
 }
 
 /// Another phone was enrolled into the row (§3.1): every zone's side is forgotten; the cursors
@@ -346,28 +426,46 @@ async fn store_fix(
 }
 
 /// A status report's fix (already through `models::checked_location`; `captured_at` as stored),
-/// in one `BEGIN IMMEDIATE` transaction: stored once ([store_fix]), every zone of the phone
-/// evaluated on the stored fixes after its cursor ([evaluate_stored]), the events raised; then
-/// the push sender's wake-up. A failure rolls all of it back and is logged (the report's other
-/// parts are stored already; the phone sends the fix again).
+/// in two steps (code QA Q-6: a zone's error never costs the trail its fix):
+/// 1. stored once ([store_fix]), on its own;
+/// 2. [judge]: in one `BEGIN IMMEDIATE` transaction every zone of the phone evaluated on the
+///    stored fixes after its cursor ([evaluate_stored]), the states written, the events raised;
+///    then the push sender's wake-up.
+///
+/// A failure in step 2 rolls back step 2 only and is logged: the cursors didn't move, so the next
+/// report's step 2 judges the fix - once. A crash between the two is the same. A parallel report's
+/// step 2 may judge this fix first; the cursors make this one find nothing then.
 pub async fn intake(state: &AppState, device_id: i64, loc: &LocationReport, captured_at: &str) {
-    let now = Utc::now();
-    let result = async {
-        let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
-        store_fix(&mut tx, device_id, loc, captured_at).await?;
-        let events = evaluate_stored(&mut tx, device_id, now).await?;
-        let mut raised = false;
-        for event in &events {
-            raised |= parent_events::raise(&mut tx, event).await?.is_some();
-        }
-        tx.commit().await?;
-        Ok::<_, sqlx::Error>(raised)
+    let stored = async {
+        let mut conn = state.db.acquire().await?;
+        store_fix(&mut conn, device_id, loc, captured_at).await
     };
-    match result.await {
-        Ok(true) => state.push.wake(),
-        Ok(false) => {}
-        Err(err) => tracing::error!(device_id, %err, "can't store the fix or judge the zones"),
+    if let Err(err) = stored.await {
+        tracing::error!(device_id, %err, "can't store the fix");
+        return;
     }
+    if let Err(err) = judge(state, device_id, Utc::now()).await {
+        tracing::error!(device_id, %err, "can't judge the zones; the next report will");
+    }
+}
+
+/// Step 2 of [intake]: the zones judged on the stored fixes, the events raised, the sender woken.
+pub async fn judge(
+    state: &AppState,
+    device_id: i64,
+    now: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+    let events = evaluate_stored(&mut tx, device_id, now).await?;
+    let mut raised = false;
+    for event in &events {
+        raised |= parent_events::raise(&mut tx, event).await?.is_some();
+    }
+    tx.commit().await?;
+    if raised {
+        state.push.wake();
+    }
+    Ok(())
 }
 
 /// Every zone of the phone through the stored fixes after its cursor (at most
@@ -787,6 +885,50 @@ mod tests {
         assert_eq!(zones[0].1.cursor, Some((utc("2026-10-24T08:12:00Z"), 12)));
         // The same fixes again: nothing more.
         assert!(evaluate(&mut zones, &fixes).is_empty());
+    }
+
+    #[test]
+    fn a_new_zone_is_seeded_from_a_fresh_sure_fix_only() {
+        let now = utc("2026-10-24T08:30:00Z");
+        let fresh = inside(7, "2026-10-24T08:10:00Z");
+        let state = seed(&HOME, Some(&fresh), now);
+        assert_eq!(
+            state,
+            State {
+                pending: Some((Side::Inside, fresh.at)),
+                cursor: Some((fresh.at, 7)),
+                ..State::default()
+            }
+        );
+        // The next sure fix on that side a minute later confirms it - silently.
+        let mut state = state;
+        assert_eq!(
+            step(&mut state, &HOME, &inside(8, "2026-10-24T08:11:00Z")),
+            None
+        );
+        assert_eq!(state.side, Some(Side::Inside));
+        // 30 minutes or older, or unsure: only the cursor.
+        for fix in [
+            inside(7, "2026-10-24T08:00:00Z"),
+            fix(7, "2026-10-24T08:20:00Z", NEAR, Some(500.0)),
+        ] {
+            let state = seed(&HOME, Some(&fix), now);
+            assert_eq!(state.pending, None);
+            assert_eq!(state.cursor, Some((fix.at, 7)));
+        }
+        assert_eq!(seed(&HOME, None, now), State::default());
+    }
+
+    #[test]
+    fn here_now_needs_a_fresh_fix() {
+        let now = utc("2026-10-24T12:00:00Z");
+        let at = |t: &str| Some(utc(t));
+        assert!(fresh(at("2026-10-24T11:01:00Z"), "on_request", 30, now));
+        assert!(!fresh(at("2026-10-24T11:00:00Z"), "on_request", 30, now));
+        assert!(fresh(at("2026-10-24T11:01:00Z"), "interval", 30, now));
+        assert!(!fresh(at("2026-10-24T10:59:00Z"), "interval", 30, now));
+        assert!(fresh(at("2026-10-24T08:01:00Z"), "interval", 120, now));
+        assert!(!fresh(None, "interval", 120, now));
     }
 
     #[test]

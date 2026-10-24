@@ -103,6 +103,37 @@ fn number(raw: &str) -> Option<f64> {
     raw.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
+/// Unicode's format characters (general category `Cf`, Unicode 15): zero-width spaces and joiners,
+/// the bidi overrides and isolates, the soft hyphen, the BOM, the tag characters. In a name they
+/// make two names that look the same, or turn "Anna arrived at …" around (code QA Q-8). A name may
+/// hold any other visible character: letters, digits, spaces, punctuation, emoji.
+fn is_format(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
+}
+
 /// The form read: the values to show again, and the input or each field's refusal. The name's
 /// uniqueness and the cap are checked in the save's transaction.
 fn parse(form: &HashMap<String, String>) -> (ZoneForm, Result<Input, ZoneErrors>) {
@@ -121,8 +152,8 @@ fn parse(form: &HashMap<String, String>) -> (ZoneForm, Result<Input, ZoneErrors>
         errors.name = Some("Give the zone a name.");
     } else if name.chars().count() > NAME_MAX {
         errors.name = Some("At most 40 characters.");
-    } else if name.chars().any(char::is_control) {
-        errors.name = Some("Letters, digits and spaces - no line breaks.");
+    } else if name.chars().any(|c| c.is_control() || is_format(c)) {
+        errors.name = Some("No line breaks or invisible characters.");
     }
     let latitude = number(&typed.latitude).filter(|v| v.abs() <= 90.0);
     if latitude.is_none() {
@@ -422,7 +453,12 @@ pub async fn create_zone(
         .bind(admin.id)
         .fetch_one(&mut *tx)
         .await?;
-        zones::start_over(&mut tx, zone_id, id).await?;
+        let circle = zones::Circle {
+            latitude: input.latitude,
+            longitude: input.longitude,
+            radius_m: input.radius_m,
+        };
+        zones::start_over(&mut tx, zone_id, id, &circle, chrono::Utc::now()).await?;
         tx.commit().await?;
         Ok::<_, sqlx::Error>(Outcome::Written(zone_id))
     };
@@ -534,7 +570,12 @@ pub async fn save_zone(
             || before.longitude != input.longitude
             || before.radius_m != input.radius_m;
         if moved {
-            zones::start_over(&mut tx, zone_id, id).await?;
+            let circle = zones::Circle {
+                latitude: input.latitude,
+                longitude: input.longitude,
+                radius_m: input.radius_m,
+            };
+            zones::start_over(&mut tx, zone_id, id, &circle, chrono::Utc::now()).await?;
         }
         tx.commit().await?;
         Ok::<_, sqlx::Error>((Outcome::Written(zone_id), changes(&before, &input)))
@@ -609,17 +650,20 @@ struct ZonePoint {
     latitude: f64,
     longitude: f64,
     radius_m: i64,
-    here: bool,
 }
 
 /// `GET /devices/{id}/zones.json` (no-store: the coordinates of a child's home never sit in a
-/// cached page): the phone's zones, oldest first.
+/// cached page): the phone's zones, oldest first; 404 for an unknown phone (code QA N-8).
 pub async fn zones_json(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    match device_of(&state, id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found("Device not found"),
+        Err(err) => return db_error(id, err),
+    }
     match zones::list(&state.db, id).await {
         Ok(list) => Json(
             list.into_iter()
                 .map(|z| ZonePoint {
-                    here: z.here(),
                     id: z.id,
                     name: z.name,
                     latitude: z.latitude,
@@ -768,6 +812,30 @@ mod tests {
             ("radius_m", "2000"),
         ]));
         assert!(edge.is_ok());
+        // Invisible characters (code QA Q-8): a zero-width space, a bidi override, a BOM, a soft
+        // hyphen; punctuation and emoji are fine.
+        for name in [
+            "Ho\u{200B}me",
+            "\u{202E}emoH",
+            "\u{FEFF}Home",
+            "Ho\u{00AD}me",
+        ] {
+            let (_, parsed) = parse(&form(&[
+                ("name", name),
+                ("latitude", "1"),
+                ("longitude", "1"),
+                ("radius_m", "150"),
+            ]));
+            let errors = parsed.expect_err(name);
+            assert_eq!(errors.name, Some("No line breaks or invisible characters."));
+        }
+        let (_, fine) = parse(&form(&[
+            ("name", "Bestemor & Co. (Ålesund) 🏠"),
+            ("latitude", "1"),
+            ("longitude", "1"),
+            ("radius_m", "150"),
+        ]));
+        assert!(fine.is_ok());
     }
 
     #[test]

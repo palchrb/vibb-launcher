@@ -181,7 +181,7 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// Launcher round 7 §3 added 0084 (the wake switch; was `migrations_73_to_83_in_order`); design 59 0085
 /// and its step 2's fix round 0086 (was `migrations_73_to_85_in_order`). The screen capture switch added 0089
 /// (was `migrations_73_to_88_in_order`), "Modify system settings" without adb 0090 (was
-/// `migrations_73_to_89_in_order`).
+/// `migrations_73_to_89_in_order`), design 64's zones 0091 (was `migrations_73_to_90_in_order`).
 #[test]
 fn migrations_73_to_91_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR

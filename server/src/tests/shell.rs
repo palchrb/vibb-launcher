@@ -673,7 +673,19 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
             .await;
         assert!(res.status.is_redirection(), "{path}: {}", res.text());
     }
+    // A zone (design 64, code QA Q-3): Locate's #zones with Locate Regularly (a new phone is in
+    // Only when asked), and the zone's two pages.
+    sqlx::query(
+        "INSERT INTO device_zones (device_id, name, latitude, longitude, radius_m) \
+         VALUES (?, 'Home', 59.9139, 10.7522, 150)",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
     let mut pages = vec![
+        format!("/devices/{id}/zones/new"),
+        format!("/devices/{id}/zones/1"),
         "/devices".to_string(),
         "/devices/new".to_string(),
         "/apps".to_string(),
@@ -743,6 +755,11 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
         let html = app.get_page(&page, &cookie).await.text();
         assert!(html.contains(&part), "{page} has no {part}");
     }
+    let locate = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await
+        .text();
+    assert!(locate.contains(&format!("action=\"/devices/{id}/location-policy#zones\"")));
     let mut forms = 0;
     for page in pages {
         let res = app.get_page(&page, &cookie).await;
