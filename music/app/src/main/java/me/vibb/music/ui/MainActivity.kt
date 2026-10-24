@@ -119,9 +119,17 @@ class MainActivity : ComponentActivity() {
         command(Commands.RESTORE, bundleOf(Commands.ARG_THEN to then, Commands.ARG_POSITION to positionMs))
 
     private val actions = object : Actions {
-        override fun playEntry(entryId: Long, favourites: Boolean) =
-            command(Commands.PLAY_ENTRY, bundleOf(Commands.ARG_ENTRY to entryId, Commands.ARG_FAVOURITES to favourites))
-        override fun playItem(entryId: Long, key: String) = command(Commands.PLAY_ITEM, bundleOf(Commands.ARG_ENTRY to entryId, Commands.ARG_KEY to key))
+        override fun playEntry(entryId: Long) = command(Commands.PLAY_ENTRY, bundleOf(Commands.ARG_ENTRY to entryId))
+        override fun playFavourites() = command(Commands.PLAY_FAVOURITES)
+        override fun playItem(entryId: Long, key: String, inFavourites: String?) = command(
+            Commands.PLAY_ITEM,
+            bundleOf(Commands.ARG_ENTRY to entryId, Commands.ARG_KEY to key).apply {
+                if (inFavourites != null) {
+                    putBoolean(Commands.ARG_IN_FAVOURITES, true)
+                    putString(Commands.ARG_ENTRY_KEY, inFavourites)
+                }
+            },
+        )
         override fun togglePlay() {
             val hub = PlayerHub.state.value
             when {
@@ -135,8 +143,8 @@ class MainActivity : ComponentActivity() {
         override fun previous() = if (PlayerHub.state.value.live) withController { it.seekToPrevious() } else restoreThen(Commands.THEN_PREVIOUS)
         override fun seekTo(ms: Long) = if (PlayerHub.state.value.live) withController { it.seekTo(ms) } else restoreThen(Commands.THEN_SEEK, ms)
         // A swipe (design 27): before play after a restart, the stored queue loads paused first and stays paused.
-        override fun skipTo(entryId: Long, key: String, forward: Boolean) {
-            val args = bundleOf(Commands.ARG_ENTRY to entryId, Commands.ARG_KEY to key, Commands.ARG_FORWARD to forward)
+        override fun skipTo(entryId: Long, entryKey: String, key: String, forward: Boolean) {
+            val args = bundleOf(Commands.ARG_ENTRY to entryId, Commands.ARG_ENTRY_KEY to entryKey, Commands.ARG_KEY to key, Commands.ARG_FORWARD to forward)
             if (PlayerHub.state.value.live) {
                 command(Commands.SKIP_TO, args)
             } else {
@@ -168,15 +176,22 @@ class MainActivity : ComponentActivity() {
 
 /** What the screens ask of the player. */
 interface Actions {
-    /** A cover tap; [favourites]: under "Favoritter", only the entry's hearted items (design r8 §1.1). */
-    fun playEntry(entryId: Long, favourites: Boolean)
-    fun playItem(entryId: Long, key: String)
+    fun playEntry(entryId: Long)
+
+    /** The "Favoritter" tile (design r12 §3.1): every heart in one queue; the loaded one unpauses. */
+    fun playFavourites()
+
+    /** A pick; [inFavourites]: the favourites list's, the item's entry KEY - inside the favourites queue (design r12 §3.2). */
+    fun playItem(entryId: Long, key: String, inFavourites: String? = null)
     fun togglePlay()
     fun next()
     fun previous()
 
-    /** To item [key] of [entryId] (a swipe of the episode carousel): as next or previous by [forward], never a restart. */
-    fun skipTo(entryId: Long, key: String, forward: Boolean)
+    /**
+     * To item [key] of [entryId] (a swipe of the episode carousel): as next or previous by [forward], never a restart;
+     * [entryKey] the entry's key (a favourites queue's refs carry it, design r12 §3.9).
+     */
+    fun skipTo(entryId: Long, entryKey: String, key: String, forward: Boolean)
     fun seekTo(ms: Long)
     fun toggleShuffle()
 

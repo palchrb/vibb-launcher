@@ -60,6 +60,11 @@
     <string name="sleep_off">Off</string>
     <string name="favourite">Favourite</string>
     <string name="category_favourites">Favourites</string>
+    <string name="favourite_of">Favourite %1$d of %2$d</string>
+    <plurals name="favourites_count">
+        <item quantity="one">%d favourite</item>
+        <item quantity="other">%d favourites</item>
+    </plurals>
     <string name="tile_needs_wifi">Needs Wi-Fi</string>
     <string name="sleep_at_end">To the end</string>
     <string name="sleep_at_end_on">Sleep · at the end</string>

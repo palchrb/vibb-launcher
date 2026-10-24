@@ -331,7 +331,7 @@ class OfflineTest {
         assertTrue(v4.contains("`attempts` INTEGER NOT NULL, `playedAt` INTEGER, PRIMARY KEY(`entryId`, `itemKey`))"))
         val db = Fixtures.moduleFile("src/main/java/me/vibb/music/data/MusicDb.kt").readText()
         assertTrue(db.contains("AutoMigration(from = 3, to = 4),"))
-        assertTrue("designs 39, 49/50 and r8 moved it on", db.contains("version = 7,"))
+        assertTrue("designs 39, 49/50, r8 and r12 moved it on", db.contains("version = 8,"))
     }
 
     @Test

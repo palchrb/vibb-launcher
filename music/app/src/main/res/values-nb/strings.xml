@@ -58,6 +58,11 @@
     <string name="sleep_off">Av</string>
     <string name="favourite">Favoritt</string>
     <string name="category_favourites">Favoritter</string>
+    <string name="favourite_of">Favoritt %1$d av %2$d</string>
+    <plurals name="favourites_count">
+        <item quantity="one">%d favoritt</item>
+        <item quantity="other">%d favoritter</item>
+    </plurals>
     <string name="tile_needs_wifi">Trenger Wi-Fi</string>
     <string name="sleep_at_end">Til slutten</string>
     <string name="sleep_at_end_on">Sov · til slutten</string>

@@ -36,8 +36,10 @@ class GuardsTest {
         // its new queue through playEntry under the switch lock, as a cover tap does; RESUME goes through playEntry too
         val stale = service.substringAfter("private fun restartIfStale(): Boolean {").substringBefore("\n    }\n")
         assertTrue(stale.contains("loadedPlayStale(a.entry, spotifyEntriesNow[a.entry.id])"))
-        assertTrue(stale.contains("switching.withLock { playEntry(a.entry.id, favourites = false) }"))
-        assertTrue(service.substringAfter("private suspend fun resumeLast() {").substringBefore("\n    }\n").contains("if (isSpotify(current.entry)) return playEntry(current.entry.id, current.favourites != null)"))
+        assertTrue(stale.contains("switching.withLock { playEntry(a.entry.id) }"))
+        // design r12 §3.9: a favourites run moves on instead - never the entry's own queue
+        assertTrue(stale.indexOf("val m = mixOf(a)") in 0 until stale.indexOf("playEntry(a.entry.id)"))
+        assertTrue(service.substringAfter("private suspend fun resumeLast() {").substringBefore("\n    }\n").contains("if (isSpotify(current.entry) && mix == null) return playEntry(current.entry.id)"))
         val command = service.substringAfter("override fun onCustomCommand(").substringBefore("when (customCommand.customAction)")
         // OUTPUT to a Sonos room starts the speaker (design 26a §3.3): the synchronous prefix reads its argument
         assertTrue(command.contains("val toRoom = customCommand.customAction == Commands.OUTPUT && Output.sonosUid(args.getString(Commands.ARG_OUTPUT)) != null"))
@@ -46,7 +48,7 @@ class GuardsTest {
         val resumption = service.substringAfter("override fun onPlaybackResumption(").substringBefore("val future")
         assertTrue(resumption.contains("if (!playAllowed(suspendedNow())) return"))
         // (Commands itself builds SessionCommands with Android Bundles: read, not loaded.)
-        assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME, ROOM_JOIN)"))
+        assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, PLAY_FAVOURITES, RESUME, ROOM_JOIN)"))
         // The session is built on KidPlayer, so every controller goes through it - also after a
         // renderer switch (design 26a §0): every setPlayer wraps KidPlayer.
         assertTrue(service.contains("MediaSession.Builder(this, KidPlayer(renderer.player))"))
@@ -64,7 +66,7 @@ class GuardsTest {
         assertTrue("and after it, also when cancelled", command.trimEnd().endsWith("}.invokeOnCompletion { if (moves) waitingMoves(-1) }"))
         assertTrue(service.substringAfter("private fun publish() {").substringBefore("\n    }\n").contains("waiting = waitingMoves.get() > 0,"))
         // design 27's swipe (SKIP_TO) waits behind a room switch like a tap (the merge of design 27)
-        assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESTORE, SKIP_TO)"))
+        assertTrue(code("src/main/java/me/vibb/music/playback/PlayerHub.kt").contains("val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, PLAY_FAVOURITES, RESTORE, SKIP_TO)"))
     }
 
     @Test
@@ -75,7 +77,8 @@ class GuardsTest {
         assertTrue(root.contains("LaunchedEffect(switching, held != null, hub.waiting) {"))
         assertTrue(root.contains("delay(holdEndsAt(switching.request, hub.waiting) - SystemClock.elapsedRealtime())"))
         assertTrue(root.contains("val onRoom = hub.output.kind == OutputKind.SONOS"))
-        assertTrue(root.contains("vm.switching = playSwitch(s, id, null, current, SystemClock.elapsedRealtime(), onRoom, favourites)"))
+        assertTrue(root.contains("vm.switching = playSwitch(s, id, null, current, SystemClock.elapsedRealtime(), onRoom)"))
+        assertTrue(root.contains("vm.switching = favouritesSwitch(s, current, SystemClock.elapsedRealtime(), onRoom)"))
         assertTrue(root.contains("vm.switching = playSwitch(s, id, key, current, SystemClock.elapsedRealtime(), onRoom)"))
         assertTrue(root.contains("vm.switching = skipSwitch(s, n, forward, position, SystemClock.elapsedRealtime(), onRoom)"))
         // design 27's carousel swipe too (the merge of design 27): the room's queue, from 0 while it plays
@@ -191,8 +194,9 @@ class GuardsTest {
         assertFalse(service.contains("savePosition"))
         // The display position is never stored (qa-26a-step2-code M2): its six readers are PlayerHub.position,
         // previous's 3 s rule, the resume overlap, the launcher's setNowPlaying, the seek back to where a
-        // changed source failed (design 30 §1.6, playOnUncached) and the held window (qa-30-s3b-code L5) - no other.
-        assertEquals(6, Regex("""positionMs\(\)""").findAll(service).count())
+        // changed source failed (design 30 §1.6, playOnUncached) and the held window (qa-30-s3b-code L5) - and since
+        // design r12 previous's 3 s rule over a favourites queue (mixStep) - no other.
+        assertEquals(7, Regex("""positionMs\(\)""").findAll(service).count())
         assertTrue(service.contains("val remaining = length(current)?.let { (it - renderer.positionMs()).coerceAtLeast(0) }"))
         assertTrue(service.contains("val pos = renderer.positionMs()\n        val entryId = a.entry.id\n        a.uncached += item.key"))
         assertTrue(service.contains("PlayerHub.position = { renderer.positionMs() }"))
@@ -215,7 +219,7 @@ class GuardsTest {
     fun `design 27's swipe and late art go through the renderer - a room steps the speaker, the art is the player's only`() {
         // The merge of design 27 (design 26a): SKIP_TO counts in the renderer's queue (a room's is the
         // speaker-playable Active.items) and moves through goTo -> renderer.seekTo, a room's stepTo.
-        val skipTo = service.substringAfter("private fun skipTo(args: Bundle) {").substringBefore("\n    }\n")
+        val skipTo = service.substringAfter("private suspend fun skipTo(args: Bundle) {").substringBefore("\n    }\n")
         assertTrue(skipTo.contains("if (renderer.itemCount() == 0) return"))
         assertTrue(skipTo.contains("swipeTarget(loaded, a.items.map { it.key }, renderer.currentIndex(), "))
         assertTrue(skipTo.contains("goTo(a, target, args.getBoolean(Commands.ARG_FORWARD, true))"))
@@ -285,11 +289,15 @@ class GuardsTest {
         assertTrue(service.contains("Commands.OUTPUT -> output(args.getString(Commands.ARG_OUTPUT) ?: Output.PHONE_KEY)"))
         // coming home plays on only when the speaker was PLAYING and nothing forbids it; a failed start never plays
         assertTrue(service.contains("comeHome(sonos, (resume ?: wasPlaying) && playAllowed(suspendedNow()))"))
-        assertEquals(5, Regex("""\bcomeHome\(""").findAll(service).count() - 1)
-        assertEquals("lost, nothing playable, the suspension, the room scope", 4, Regex("""comeHome\((old|sonos), play = false(, quiet = true)?\)""").findAll(service).count())
+        assertEquals(6, Regex("""\bcomeHome\(""").findAll(service).count() - 1)
+        assertEquals(
+            "lost, nothing playable (an entry's queue, a favourites queue: design r12 §3.5), the suspension, the room scope",
+            5, Regex("""comeHome\((old|sonos), play = false(, quiet = true)?\)""").findAll(service).count(),
+        )
         // the renderer changes only in attach: the phone at start, an adopted room, a picked room, the phone again, and
-        // the phone's renderer for an entry (design 26c §5.10: the phone's own player or Spotify's web player)
-        assertEquals("attach: defined once, five callers", 6, Regex("""\battach\(""").findAll(service).count())
+        // the phone's renderer for an entry (design 26c §5.10: the phone's own player or Spotify's web player) - and a
+        // favourites queue's picked room (design r12 §3.5, mixToRoom)
+        assertEquals("attach: defined once, six callers", 7, Regex("""\battach\(""").findAll(service).count())
         assertTrue(service.substringAfter("private fun usePhoneRenderer(entry: Entry) {").substringBefore("\n    }\n").contains("attach(next)"))
         assertTrue(service.contains("attach(sonosRenderer(uid, name))"))
         assertTrue(service.contains("attach(sonos)\n        active = a"))
@@ -620,7 +628,12 @@ class GuardsTest {
         assertTrue(body("private suspend fun lookAtRoom(").contains("val (snap, rows) = load(remote = true)"))
         assertTrue(body("private suspend fun toRoom(").contains("val (snap, rows) = load(remote = true)"))
         assertTrue(body("private suspend fun comeHome(").contains("val (snap, rows) = load(remote = false)"))
-        assertEquals("the six call sites and loadForRenderer's own, no other read", 7, Regex("""(?<![.\w])load(ForRenderer)?\(""").findAll(service).count() - 2)
+        // design r12 adds four, each the renderer's own view: playFavourites, startRun, mixMoveOn, mixGoTo
+        for (f in listOf("private suspend fun playFavourites(", "private suspend fun mixMoveOn(", "private suspend fun mixGoTo(")) {
+            assertTrue(f, body(f).contains("= loadForRenderer()"))
+        }
+        assertTrue(body("private suspend fun startRun(").contains("val (snap, rows) = loaded ?: loadForRenderer()"))
+        assertEquals("the ten call sites and loadForRenderer's own, no other read", 11, Regex("""(?<![.\w])load(ForRenderer)?\(""").findAll(service).count() - 2)
         val suspension = code("src/main/java/me/vibb/music/sonos/SonosSuspension.kt")
         assertEquals("entryMatcher and the bookmark: the stored room's view", 2, Regex("""store\.snapshot\(\)\.forRenderer\(true\)""").findAll(suspension).count())
         assertEquals(2, Regex("""store\.snapshot\(\)""").findAll(suspension).count())
@@ -652,7 +665,7 @@ class GuardsTest {
         fun body(start: String) = service.substringAfter(start).substringBefore("\n    }\n")
         // the cover tap, before any plan (coverTapPlan would start book 1 from 0)
         val entry = body("private suspend fun playEntry(")
-        assertTrue(entry.contains("if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, bookmarkIn(snap.bookmarks[entry.key], scopeOf(entry)), shown, listed) }) return"))
+        assertTrue(entry.contains("if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, snap.bookmarks[entry.key], shown, listed) }) return"))
         assertTrue(entry.indexOf("awaitsBook(") < entry.indexOf("coverTapPlan("))
         // the stored queue (restoredQueue would skip to the next book there), for every caller
         val restore = body("private suspend fun restore(): Restored {")
@@ -664,14 +677,15 @@ class GuardsTest {
         val notOnPhone = resumption.substringAfter("if (restored == Restored.NotOnPhone) {").substringBefore("} else if")
         assertTrue("a headset's play", notOnPhone.contains("future.setException("))
         assertFalse("the stored queue stays resumable", notOnPhone.contains("Resumable.set"))
-        assertEquals("restore's three callers", 3, Regex("""\brestore\(\)""").findAll(service).count() - 1)
+        // design r12: the favourites list's pick loads the stored favourites queue first (a favourites row is never NotOnPhone)
+        assertEquals("restore's four callers", 4, Regex("""\brestore\(\)""").findAll(service).count() - 1)
         // the one place that says it: "Ikke lastet ned", nothing started or saved
         val awaits = body("private fun awaitsBook(")
         assertTrue(awaits.contains("PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)"))
         for (move in listOf("start(", "saveNow(", "persistPlace", ".play()")) assertFalse(move, awaits.contains(move))
         // the screens agree: no switch for such a cover tap
         val switch = code("src/main/java/me/vibb/music/ui/UiModel.kt").substringAfter("fun playSwitch(").substringBefore("\n}\n")
-        assertTrue(switch.contains("if (itemKey == null && coverTapAwaitsBook(entry, bookmarkIn(bookmark, scope), visible, shown.listed[entry.id].orEmpty().map { it.key })) return null"))
+        assertTrue(switch.contains("if (itemKey == null && coverTapAwaitsBook(entry, bookmark, visible, shown.listed[entry.id].orEmpty().map { it.key })) return null"))
     }
 
     @Test
@@ -877,10 +891,13 @@ class GuardsTest {
         assertTrue(serviceBody("private fun updateHeld(loaded: Boolean = false) {").contains("renderer.kind != RendererKind.LOCAL || renderer.itemCount() == 0"))
         assertTrue(serviceBody("private suspend fun activeFor(").contains("if (claimsQueue(kind, entry)) {"))
         // qa-26c-merge-code M1: a new queue's kind is the renderer that will play it, never the attached one
-        assertTrue(serviceBody("private suspend fun playEntry(entryId: Long, favourites: Boolean) {").contains("queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), scope)"))
-        assertTrue(serviceBody("private suspend fun playItem(entryId: Long, key: String) {").contains("queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), scope)"))
+        assertTrue(serviceBody("private suspend fun playEntry(entryId: Long) {").contains("queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), favourites = null)"))
+        assertTrue(serviceBody("private suspend fun playItem(entryId: Long, key: String) {").contains("queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), favourites = null)"))
         assertTrue(serviceBody("private suspend fun restore(): Restored {").contains("queueFor(snap, rows, entry, plan, row.shuffled, queueKind(renderer.kind, entry), row.scope())"))
-        assertEquals(3, Regex("""queueKind\(renderer\.kind, entry\)""").findAll(service).count())
+        // design r12: a favourites run's queue (a tap, a step, a run's end, the stored queue) by the same rule
+        assertTrue(serviceBody("private suspend fun startRun(").contains("queueFor(snap, rows, entry, plan, shuffled = false, queueKind(renderer.kind, entry), run.keys.toSet())"))
+        assertTrue(serviceBody("private suspend fun restoreMix(").contains("queueFor(snap, rows, entry, plan, shuffled = false, queueKind(renderer.kind, entry), run.keys.toSet())"))
+        assertEquals(5, Regex("""queueKind\(renderer\.kind, entry\)""").findAll(service).count())
         val queueCalls = Regex("""(queueFor|activeFor)\([^\n]*""").findAll(service).map { it.value }.toList()
         assertTrue(queueCalls.toString(), queueCalls.isNotEmpty() && queueCalls.none { Regex("""[(,] ?renderer\.kind\)""").containsMatchIn(it) })
         // only the phone's own player has the media source factory ...
@@ -930,7 +947,7 @@ class GuardsTest {
         // the report's word from the file; the screens' tiles from the store
         assertTrue(code("src/main/java/me/vibb/music/sync/Sync.kt").contains("spotify = SpotifyOutcome.reported(runCatching { store.spotifyStateFile.readText() }.getOrNull()),"))
         val root = code("src/main/java/me/vibb/music/ui/MusicRoot.kt")
-        assertTrue(root.contains("entries = shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome, net, if (inFavourites) s.heartsListed(it) else null) },"))
+        assertTrue(root.contains("entries = if (inFavourites) emptyList() else shown.map { entryUi(s, it, hub.entryId, hub.rendererState, spotifyOutcome, net) },"))
         assertTrue("no offline summary for Spotify", root.contains("if (isSpotify(n.entry)) null else offlineSummary("))
         assertTrue(code("src/main/java/me/vibb/music/ui/MusicViewModel.kt").contains("store.spotifyOutcomes().map { it?.outcome }"))
         assertTrue(code("src/main/java/me/vibb/music/ui/LibraryScreen.kt").contains("val line = e.state?.let { stringResource(rendererStateText(it)) }"))
@@ -972,7 +989,7 @@ class GuardsTest {
         assertTrue(service.contains(".apply { inCall = spotifyInCall(launcherInCall, modeInCall) }.also { spotify = it }"))
         assertEquals("inCall set nowhere else", 3, Regex("""inCall = spotifyInCall\(""").findAll(service).count())
         // N5: a cover tap on the loaded Spotify entry goes on with it only while the library lists it the same way
-        val tap = serviceBody("private suspend fun playEntry(entryId: Long, favourites: Boolean) {")
+        val tap = serviceBody("private suspend fun playEntry(entryId: Long) {")
         assertTrue(tap.contains("if (!loadedPlayStale(current.entry, now)) {\n                    renderer.play()"))
         assertTrue(tap.contains("store.library()?.entries?.firstOrNull { it.id == entryId }"))
         val root = code("src/main/java/me/vibb/music/ui/MusicRoot.kt")
@@ -994,7 +1011,7 @@ class GuardsTest {
         assertTrue(store.contains("val next = SpotifyContexts.next(spotifyContexts(), entryKey, track) ?: return"))
         assertTrue("tmp + rename", store.contains("writeAtomic(spotifyContextFile, SpotifyContexts.encode(next).toByteArray())"))
         assertTrue(store.contains("spotifyContextFlow(),\n        db.favouritesFlow(),\n    ) { lib, (items, downloads, listings), rows, contexts, favourites ->\n        snapshot(lib, items, downloads, listings, rows, contexts, favourites)"))
-        assertTrue(store.contains("return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts, flips, hearts, repeat)"))
+        assertTrue(store.contains("return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts, flips, hearts, repeat, heartedAt)"))
         assertTrue(code("src/main/java/me/vibb/music/data/Snapshot.kt").contains("listed[e.id] = listOf(contextItem(e, spotifyContexts[e.key]))"))
         // the UI: no number and no instant step for a context; the list says the order is picked (no source, step 8)
         assertTrue(code("src/main/java/me/vibb/music/ui/PlayerScreen.kt").contains("if (showsNumber(now)) Line(stringResource(numberText, numberOf(item), of), 13, 700, Palette.sub)"))

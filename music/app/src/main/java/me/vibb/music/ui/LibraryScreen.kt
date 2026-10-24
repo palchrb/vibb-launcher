@@ -52,6 +52,8 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -117,6 +119,8 @@ fun animationsOn(): Boolean = ValueAnimator.areAnimatorsEnabled()
 @Composable
 fun LibraryScreen(
     entries: List<EntryUi>,
+    /** Under the "Favoritter" chip (design r12 §3.1): its one tile in the carousel's place; null: [entries]. */
+    favourites: FavouritesUi?,
     tiles: List<Category>,
     /** "Favoritter" first after "Alle" (design 50 §1.5): while an entry here holds a favourite. */
     favouritesTile: Boolean,
@@ -132,6 +136,7 @@ fun LibraryScreen(
     onCategory: (Long?) -> Unit,
     onIndex: (Int) -> Unit,
     onPlay: (EntryUi) -> Unit,
+    onPlayFavourites: () -> Unit,
     onOpenPlayer: () -> Unit,
     onTogglePlay: () -> Unit,
 ) {
@@ -157,7 +162,9 @@ fun LibraryScreen(
         }
         // The weighted slot takes what the header, the tiles and the bar leave; they always keep their own height
         // (design 34 P10 b, QA L1), so the tiles never slide under the bar.
-        if (entries.isEmpty()) {
+        if (favourites != null) {
+            FavouritesCarousel(favourites, now != null, onPlayFavourites, Modifier.weight(1f).fillMaxWidth())
+        } else if (entries.isEmpty()) {
             EmptyState(
                 Icons.headphones,
                 stringResource(R.string.no_library),
@@ -221,6 +228,71 @@ private fun Carousel(
         ) {
             CarouselPager(entries, pager, fit.coverPx, scope, snap, onPlay)
             CarouselTitle(entries, pager.targetPage)
+        }
+    }
+}
+
+/**
+ * The "Favoritter" chip's one tile (design r12 §3.1, the user's decision 1): the chip's heart in peach on the calm card
+ * ground - never a mosaic of the hearted covers (it would change with every heart and decode four pictures for one
+ * tile) - at the carousel's size, shadow and play mark; "Favoritter" and the count under it. One page: no swipe, and
+ * the dots' room kept so nothing moves between the chips. Dimmed as any tile the phone can't play now (design 50 §1.4).
+ */
+@Composable
+private fun FavouritesCarousel(fav: FavouritesUi, hasBar: Boolean, onPlay: () -> Unit, modifier: Modifier) {
+    val density = LocalDensity.current
+    val lines = measuredLinesPx(21 to 800, 13 to 700)
+    val barReserve = if (hasBar) 0 else nowBarRoomPx(measuredLinesPx(13 to 800, 11 to 700), density.density)
+    val scroll = rememberScrollState()
+    val name = stringResource(R.string.category_favourites)
+    val label = stringResource(R.string.play_entry, name)
+    BoxWithConstraints(modifier) {
+        val slot = if (constraints.hasBoundedHeight) constraints.maxHeight else Int.MAX_VALUE
+        val fit = libraryFit(slot, lines, barReserve, density.density)
+        val scrolling = if (fit.scrolls) Modifier.verticalScroll(scroll) else Modifier
+        val fill = if (constraints.hasBoundedHeight) Modifier.heightIn(min = maxHeight) else Modifier
+        val cover = fit.coverPx / density.density
+        val shape = RoundedCornerShape(24.dp)
+        Column(
+            Modifier.fillMaxWidth().then(scrolling).then(fill),
+            verticalArrangement = Arrangement.spacedBy(CAROUSEL_GAP_DP.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            val box = with(density) { (fit.coverPx + dpToPx(CAROUSEL_BOX_EXTRA_DP, density.density)).toDp() }
+            Box(Modifier.fillMaxWidth().height(box), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier.size(cover.dp)
+                        .graphicsLayer {
+                            alpha = if (fav.dimmed) UNPLAYABLE_ALPHA else 1f
+                            shadowElevation = COVER_ELEVATION_DP.dp.toPx()
+                            this.shape = shape
+                            clip = false
+                        }
+                        .clip(shape)
+                        .background(Brush.linearGradient(listOf(Palette.card, androidx.compose.ui.graphics.lerp(Palette.card, Palette.bg, 0.8f))))
+                        .button(label, onPlay),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Glyph(ImageVector.vectorResource(R.drawable.player_glyph_favorite), carouselGlyph(cover).dp, Palette.peach)
+                    if (!fav.dimmed) {
+                        Box(Modifier.fillMaxSize().padding(10.dp)) {
+                            Box(Modifier.align(Alignment.TopEnd).size(32.dp).clip(CircleShape).background(Palette.peach), contentAlignment = Alignment.Center) {
+                                Glyph(Icons.play, 16.dp, Palette.bg)
+                            }
+                        }
+                    }
+                }
+            }
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(CAROUSEL_TITLE_GAP_DP.dp)) {
+                Line(name, 21, 800, Palette.white)
+                Line(
+                    if (fav.needsWifi) stringResource(R.string.tile_needs_wifi) else pluralStringResource(R.plurals.favourites_count, fav.count, fav.count),
+                    13, 700, Palette.sub,
+                )
+                // no progress line: its room stays reserved, as under every tile
+                Spacer(Modifier.height(with(density) { progressRoomPx(density.density).toDp() }))
+            }
+            Spacer(Modifier.height(CAROUSEL_DOTS_DP.dp))
         }
     }
 }

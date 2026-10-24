@@ -103,9 +103,12 @@ fun shownEntries(entries: List<Entry>, selected: Long?, favourites: Set<String> 
     return scoped.ifEmpty { entries }
 }
 
-/** The selection still in force ([selected] unless its category - or the favourites - emptied out). */
+/**
+ * The selection still in force ([selected] unless its category - or the favourites - emptied out). "Favoritter" stays
+ * while any heart is listed ([favourites] not empty, design r12 §3.1: its one tile, whatever entries show here).
+ */
 fun effectiveCategory(entries: List<Entry>, selected: Long?, favourites: Set<String> = emptySet()): Long? =
-    selected?.takeIf { s -> entries.any { inCategory(it, s, favourites) } }
+    selected?.takeIf { s -> if (s == FAVOURITES_CATEGORY) favourites.isNotEmpty() else entries.any { inCategory(it, s, favourites) } }
 
 /** Virtual pages: more than one entry wraps (laps of the list), so a swipe never hits an end. */
 const val CAROUSEL_LAPS = 1000

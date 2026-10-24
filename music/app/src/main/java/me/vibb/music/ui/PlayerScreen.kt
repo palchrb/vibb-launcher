@@ -148,11 +148,13 @@ fun PlayerScreen(
         var landing by remember(now.pagerKey) { mutableStateOf<Int?>(null) }
         PlayerArt(now, Modifier.weight(1f).fillMaxWidth(), onSkipTo, onTogglePlay) { landing = it }
         val shown = landing?.let { now.queue.getOrNull(it) }?.takeIf { now.carousel } ?: now.item
-        Crossfade(shown.key, animationSpec = tween(if (animationsOn()) 200 else 0), label = "item") { key ->
-            val item = now.queue.firstOrNull { it.key == key } ?: shown
+        // keyed by entry and item: a favourites queue's pages come from many entries (design r12 §0)
+        Crossfade(pageKey(shown), animationSpec = tween(if (animationsOn()) 200 else 0), label = "item") { key ->
+            val item = now.queue.firstOrNull { pageKey(it) == key } ?: shown
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Line(if (item == now.item) now.itemTitle else item.title, 20, 800, Palette.white, Modifier.basicMarquee(iterations = Int.MAX_VALUE))
-                val numberText = when (kindOf(now.entry)) {
+                // design r12 §3.2: "Favoritt N av M" over a favourites queue
+                val numberText = if (now.favourites) R.string.favourite_of else when (kindOf(now.entry)) {
                     Kind.OWN -> R.string.track_of
                     Kind.AUDIOBOOK -> R.string.part_of
                     Kind.PODCAST -> R.string.episode_of

@@ -20,6 +20,8 @@ import me.vibb.music.logic.keepSet
 import me.vibb.music.logic.artSkipsAfter
 import me.vibb.music.logic.skippedArt
 import me.vibb.music.logic.nowArt
+import me.vibb.music.logic.decodeMix
+import me.vibb.music.logic.MixRef
 import me.vibb.music.logic.storytelKeepSet
 import me.vibb.music.logic.storytelWanted
 import me.vibb.music.logic.wantedArt
@@ -96,8 +98,16 @@ fun artWant(
     return wantedArt(now, kept, news, recent, held, lib?.covers.orEmpty(), ahead = laterAhead, list = list, all = all, allLater = unmetered, skip = skip)
 }
 
-/** The queue the player holds (live), else the stored one, with its current index; empty when there is none. */
+/**
+ * The queue the player holds (live), else the stored one, with its current index; empty when there is none. A
+ * favourites queue (design r12 §3.7) is its refs, each item from its own entry - the window reaches across runs.
+ */
 fun nowQueue(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): Pair<List<PlayItem>, Int> {
+    favouritesNow(snap, hub, row)?.let { (refs, at) ->
+        val queue = refs.mapNotNull { r -> snap.entryByKey(r.entryKey)?.let { e -> snap.item(e.id, r.itemKey) } }
+        val current = refs.getOrNull(at)?.let { c -> snap.entryByKey(c.entryKey)?.let { e -> snap.item(e.id, c.itemKey) } }
+        return queue to (current?.let { queue.indexOf(it) } ?: -1)
+    }
     val (entryId, keys, index) = when {
         hub.live && hub.entryId != null -> Triple(hub.entryId, hub.keys, hub.index)
         row != null -> Triple(row.entryId, row.keys.split('\n').filter { it.isNotEmpty() }, row.index)
@@ -106,6 +116,16 @@ fun nowQueue(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): Pair<Li
     val current = keys.getOrNull(index)
     val queue = keys.mapNotNull { snap.item(entryId, it) }
     return queue to queue.indexOfFirst { it.key == current }
+}
+
+/** The favourites queue the player holds (live), else the stored one (`now_playing.mix`), and its current index. */
+fun favouritesNow(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): Pair<List<MixRef>, Int>? {
+    if (hub.live) return hub.favouritesQueue?.let { it to hub.favouritesIndex }
+    row ?: return null
+    val stored = decodeMix(row.mix) ?: return null
+    val entry = snap.library?.entries?.firstOrNull { it.id == row.entryId }
+    val key = row.keys.split('\n').filter { it.isNotEmpty() }.getOrNull(row.index)
+    return stored to if (entry != null && key != null) stored.indexOf(MixRef(entry.key, key)) else -1
 }
 
 /**

@@ -34,21 +34,21 @@ class FavouritesTest {
     }
 
     @Test
-    fun `the Favoritter tile - the sentinel id, the entries holding a heart, a re-tap or Alle shows all`() {
+    fun `the Favoritter chip - the sentinel id, while a heart is listed, a re-tap or Alle shows all`() {
         assertEquals(-1L, FAVOURITES_CATEGORY)
-        val favs = favouriteEntryKeys(mapOf(a.key to setOf("y"), b.key to setOf("z"), c.key to emptySet()))
-        assertEquals(setOf(a.key, b.key), favs)
-        assertEquals(listOf(a, b), shownEntries(entries, FAVOURITES_CATEGORY, favs))
+        val favs = setOf(a.key, b.key)
         assertEquals(FAVOURITES_CATEGORY, effectiveCategory(entries, FAVOURITES_CATEGORY, favs))
+        assertEquals("r12: a heart in an entry not shown here (a book not on the phone) keeps the chip", FAVOURITES_CATEGORY, effectiveCategory(entries, FAVOURITES_CATEGORY, setOf("elsewhere")))
         assertNull("the last heart cleared: the selection falls back to all", effectiveCategory(entries, FAVOURITES_CATEGORY, emptySet()))
-        assertEquals(entries, shownEntries(entries, FAVOURITES_CATEGORY, emptySet()))
         assertNull(tapCategory(FAVOURITES_CATEGORY, FAVOURITES_CATEGORY))
         assertEquals(FAVOURITES_CATEGORY, tapCategory(10, FAVOURITES_CATEGORY))
         assertEquals("a real category is untouched by the hearts", listOf(a, c), shownEntries(entries, 10, favs))
-        // code QA 4: the tile filters like every category, one entry or many - no category tile starts sound
-        assertEquals(listOf(a), shownEntries(entries, FAVOURITES_CATEGORY, setOf(a.key)))
+        // r12 §3.1: under the chip one tile plays every heart; no entry tile, and a category tile never starts sound
         val root = moduleFile("src/main/java/me/vibb/music/ui/MusicRoot.kt").readText()
         assertTrue(root.contains("onCategory = vm::pickCategory,"))
+        assertTrue(root.contains("entries = if (inFavourites) emptyList() else shown.map {"))
+        assertTrue(root.contains("favourites = if (inFavourites) favouritesUi(s, order, net) else null,"))
+        assertTrue(root.contains("favouritesTile = order.isNotEmpty(),"))
     }
 
     @Test
@@ -76,73 +76,58 @@ class FavouritesTest {
         assertEquals("no hearts asked: none drawn", listOf(null, null), listRows(s.order(a), "x", emptySet(), emptySet()).map { it.favourite })
         val root = moduleFile("src/main/java/me/vibb/music/ui/MusicRoot.kt").readText()
         assertTrue(root.contains("s.favourites[n.entry.key].orEmpty().takeIf { !isSpotifyContext(n.entry) }"))
-        assertTrue(root.contains("favourite = { item -> if (canFavourite(n.entry, item.key)) s.favourite(n.entry, item.key) else null }"))
+        assertTrue(root.contains("favourite = { item -> n.entryOf(item).let { e -> if (canFavourite(e, item.key)) s.favourite(e, item.key) else null } }"))
     }
 
-    // design r8 §1: option C - under "Favoritter" a cover tap plays only the entry's hearted items
+
+    // design r12 §3: one "Favoritter" tile, every heart of every entry in one queue (option C is gone)
 
     @Test
-    fun `r8 - the scope is the hearts the listing still names, the same in both views`() {
-        val s = snapshot(library(entries), items(1, listOf("x", "y", "z"), gone = setOf("z")))
-            .copy(favourites = mapOf(a.key to setOf("z", "x", "dropped")))
-        assertEquals("in the listing's order; a withdrawn item stays, a dropped one waits for the prune", listOf("x", "z"), s.heartsListed(a).toList())
-        assertEquals(s.heartsListed(a), s.forRenderer(true).heartsListed(a))
-        assertEquals(emptySet<String>(), s.heartsListed(b))
-    }
-
-    @Test
-    fun `r8 - favouritesScope keeps the scope in the given order and starts at the bookmark in it, else the first at its place`() {
-        val flipped = listOf("e5", "e4", "e3", "e2", "e1")
-        val scope = setOf("e2", "e4", "gone")
-        val pos = { k: String -> if (k == "e4") ItemPosition(90_000, false) else null }
-        assertEquals("a flipped order stays flipped; a key the order lacks drops", listOf("e4", "e2"), favouritesScope(flipped, scope, null, true, pos).keys)
-        assertEquals("the bookmark when it is in the scope", Bookmark("e2", 30_000), favouritesScope(flipped, scope, Bookmark("e2", 30_000), true, pos).bookmark)
-        assertEquals("else the first item at its own place", Bookmark("e4", 90_000), favouritesScope(flipped, scope, Bookmark("e3", 30_000), true, pos).bookmark)
-        assertEquals("a done first item from 0", Bookmark("e4", 0), favouritesScope(flipped, scope, null, true) { ItemPosition(600_000, true) }.bookmark)
-        assertNull("resume off: no bookmark, the top", favouritesScope(flipped, scope, Bookmark("e3", 30_000), false, pos).bookmark)
-        assertEquals("nothing of the scope in the order", FavouritesScope(emptyList(), null), favouritesScope(flipped, setOf("x"), Bookmark("e3", 1), true, pos))
-        // through the unchanged coverTapPlan: the hearted run, at e4's place
-        val from = favouritesScope(flipped, scope, Bookmark("e3", 30_000), true, pos)
-        assertEquals(QueuePlan(listOf("e4", "e2"), 0, 90_000), coverTapPlan(from.keys, true, from.bookmark, shuffle = false))
-        // no scope: the whole entry, the bookmark as it is
-        assertEquals(FavouritesScope(flipped, Bookmark("e3", 30_000)), coverTapScope(flipped, null, Bookmark("e3", 30_000), true, pos))
-    }
-
-    @Test
-    fun `r8 - the Storytel wait - a bookmark on a hearted book not on the phone waits, on an unhearted one it doesn't`() {
-        val series = entry(7, Source.STORYTEL, target = "storytel:series:26175", cache = -1)
-        val mark = Bookmark("b3", 120_000)
-        val onPhone = listOf("b1")
-        val listed = listOf("b1", "b2", "b3")
-        assertTrue(coverTapAwaitsBook(series, bookmarkIn(mark, setOf("b1", "b3")), onPhone, listed))
-        assertFalse("its tap plays the hearted b1", coverTapAwaitsBook(series, bookmarkIn(mark, setOf("b1")), onPhone, listed))
-        assertTrue("Alle: the whole entry waits, as before", coverTapAwaitsBook(series, bookmarkIn(mark, null), onPhone, listed))
-    }
-
-    @Test
-    fun `r8 - the service keeps the scope - the same-tile rule, both row writers, restore and the queue's end`() {
+    fun `r12 - the service - a run's end hands over before any clear_state, no bookmark in a run, the same-tile rules, the commands`() {
         val service = moduleFile("src/main/java/me/vibb/music/playback/PlaybackService.kt").readText()
         fun body(start: String) = service.substringAfter(start).substringBefore("\n    }\n")
-        val tap = body("private suspend fun playEntry(entryId: Long, favourites: Boolean) {")
-        assertTrue("a tap with the loaded queue's scope unpauses", tap.contains("if ((current.favourites != null) == favourites) {"))
-        assertTrue("the other scope: the place lands before the plan", tap.indexOf("renderer.saveNow(force = true)") in 0 until tap.indexOf("loadForRenderer()"))
-        assertTrue(service.contains("Commands.PLAY_ENTRY -> playEntry(args.getLong(Commands.ARG_ENTRY), args.getBoolean(Commands.ARG_FAVOURITES))"))
-        assertTrue(body("private fun saveBookmark(").contains("a.shuffled, now, a.storedScope())"))
-        assertTrue(moduleFile("src/main/java/me/vibb/music/playback/LocalRenderer.kt").readText().contains("a.shuffled, now, a.storedScope())"))
-        assertTrue(body("private fun queueEnded() {").contains("if (held == null) store.db.clearPartialPositions(entryKey) else store.db.clearPartialPositionsOf(entryKey, held)"))
-        assertTrue(body("private fun publish() {").contains("favourites = a?.favourites,"))
-        // activeFor is the one guard (R8C-6): every queue's keys and order go through the scope
-        assertTrue(body("private suspend fun activeFor(").contains("val order = scoped(snap.order(entry), favourites)"))
-        // qa-r8-code R8C-3: the carries no behaviour test sees - adopt after a restart, "Spill av på" from a stored
-        // queue, the end's own items, the list pick's rule in the service
-        assertTrue(body("private suspend fun adoptedQueue(").contains("val favourites = row?.scope()"))
-        assertTrue(body("private suspend fun toRoom(").contains("Triple(entry, it, row.scope())"))
-        assertTrue(body("private fun queueEnded() {").contains("val held = a.favourites?.let { a.items.map { it.key } }"))
-        assertTrue(body("private suspend fun playItem(").contains("val scope = queueScope?.takeIf { key in it }"))
-        // R8C-1: a stale Spotify play (RESUME, the same scope) starts the whole entry, as restartIfStale does
-        assertTrue(tap.substringAfter("spotifyLog(\"web player: the entry's mode changed").substringBefore("}").contains("hearted = false"))
-        assertTrue(tap.contains("val scopeOf = { e: Entry -> snap.heartsListed(e).takeIf { hearted } }"))
-        // R8C-4: an empty plan says why only under "Favoritter"; the whole entry stays silent, as before r8
-        assertTrue(tap.contains("if (scope != null) PlayerHub.mutableMessages.tryEmit("))
+        val ended = body("private fun queueEnded() {")
+        assertTrue("a favourites run's end hands over first", ended.indexOf("runEnded(ran, m, held)") in 0 until ended.indexOf("store.db.deleteBookmark(entryKey)"))
+        assertTrue(ended.substringBefore("endSleepAtEnd(SleepEvent.QUEUE_ENDED)").contains("return"))
+        // its end clears only the stored queue: no bookmark, no partial positions
+        val end = body("private fun mixEnded() {")
+        assertTrue(end.contains("store.db.clearNowPlaying()"))
+        assertFalse(end.contains("Bookmark") || end.contains("clearPartialPositions"))
+        // the row writers store the queue and write no bookmark for a run
+        val local = moduleFile("src/main/java/me/vibb/music/playback/LocalRenderer.kt").readText()
+        assertTrue(local.contains("a.shuffled, now, a.storedScope(), a.storedMix())"))
+        assertTrue(local.contains("val place = place(a.entry.key, item.key, posMs, durationMs, now, stored, bookmark = a.mix == null)"))
+        assertTrue(local.contains("place.bookmark?.let { store.db.upsertBookmark(it) }"))
+        val save = body("private fun saveBookmark(")
+        assertTrue(save.contains("BookmarkRow(a.entry.key, item.key, 0, now).takeIf { a.mix == null }"))
+        assertTrue(save.contains("a.shuffled, now, a.storedScope(), a.storedMix())"))
+        // r12 §0: a tap on the playing run's own entry starts that entry - it never unpauses the run
+        assertTrue(body("private suspend fun playEntry(entryId: Long) {").contains("if (mix == null) {"))
+        // the session's next/previous count the favourites queue (the lock tile, a headset, the notification)
+        assertTrue(service.contains("override fun hasNextMediaItem(): Boolean = (mixOf(active)?.items?.size ?: mediaItemCount) > 1"))
+        assertTrue(body("private fun skipNext() {").contains("if (mixOf(a) != null) return mixLater(moves = true) { mixStep(forward = true) }"))
+        // (Commands builds SessionCommands with Android Bundles: read, not loaded)
+        val hub = moduleFile("src/main/java/me/vibb/music/playback/PlayerHub.kt").readText()
+        assertTrue(hub.contains("val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, PLAY_FAVOURITES, RESUME, ROOM_JOIN)"))
+        assertTrue(hub.contains("val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, PLAY_FAVOURITES, RESTORE, SKIP_TO)"))
+        assertTrue(hub.contains("PLAY_ENTRY, PLAY_ITEM, PLAY_FAVOURITES, RESUME, RESTORE, SHUFFLE,"))
+        assertTrue(service.contains("Commands.PLAY_FAVOURITES -> playFavourites()"))
+        // every queue that isn't a run leaves the favourites queue: start takes the queue's own
+        assertTrue(body("private fun start(a: Active, plan: QueuePlan, play: Boolean = true, newChoice: Boolean = false) {").contains("mix = a.mix"))
+        // a run's step outside it keeps the play state; the next favourite is never started while suspended
+        assertTrue(body("private suspend fun mixGoTo(").contains("startRun(m, found, play && playAllowed(suspendedNow())"))
+        assertTrue(body("private suspend fun mixMoveOn(").contains("end.play && playAllowed(suspendedNow())"))
+        // option C is gone with its flag; its scope plumbing carries a run now
+        assertFalse(service.contains("ARG_FAVOURITES"))
+        assertTrue(body("private suspend fun startRun(").contains("queueFor(snap, rows, entry, plan, shuffled = false, queueKind(renderer.kind, entry), run.keys.toSet())"))
+    }
+
+    @Test
+    fun `r12 - the stored queue - flippedNowPlaying leaves a run's row alone, a heart carries its time`() {
+        val row = me.vibb.music.data.NowPlayingRow(0, 1, "x\ny", 0, 5_000, null, false, 0, favourites = "x\ny", mix = encodeMix(listOf(MixRef(a.key, "x"), MixRef(a.key, "y"))))
+        assertNull(me.vibb.music.data.flippedNowPlaying(row, 1, listOf("y", "x"), 1))
+        assertTrue("an entry's row still flips", me.vibb.music.data.flippedNowPlaying(row.copy(mix = null), 1, listOf("y", "x"), 1) != null)
+        val vm = moduleFile("src/main/java/me/vibb/music/ui/MusicViewModel.kt").readText()
+        assertTrue(vm.contains("store.db.insertFavourite(FavouriteRow(entry.key, itemKey, now))"))
     }
 }

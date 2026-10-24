@@ -10,6 +10,8 @@ package me.vibb.music.data
 import me.vibb.music.logic.Bookmark
 import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.KeepItem
+import me.vibb.music.logic.MixRef
+import me.vibb.music.logic.mixOrder
 import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.canRepeat
@@ -46,6 +48,8 @@ fun buildSnapshot(
     favourites: Map<String, Set<String>> = emptyMap(),
     /** `repeat` (design 49 §1.2, Room 6): entry key -> the kid's repeat, only those not off. */
     repeat: Map<String, Repeat> = emptyMap(),
+    /** `favourites.heartedAt` (design r12 §3.6): entry key -> item key -> when the heart was set (0: before Room 8). */
+    heartedAt: Map<String, Map<String, Long>> = emptyMap(),
 ): Snapshot {
     val byEntry = items.groupBy { it.entryId }
     val done = downloads.filter { it.done }.groupBy { it.entryId }.mapValues { (_, ds) -> ds.map { it.itemKey }.toSet() }
@@ -79,6 +83,7 @@ fun buildSnapshot(
         flips = flips,
         favourites = favourites,
         repeat = repeat,
+        heartedAt = heartedAt,
     )
 }
 
@@ -111,18 +116,36 @@ data class Snapshot(
     val favourites: Map<String, Set<String>> = emptyMap(),
     /** The kid's repeat (design 49 §1.2): entry key -> its mode, only those not off. */
     val repeat: Map<String, Repeat> = emptyMap(),
+    /** When each heart was set (design r12 §3.6): entry key -> item key -> wall clock ms, 0 for a heart from before Room 8. */
+    val heartedAt: Map<String, Map<String, Long>> = emptyMap(),
 ) {
     /** Does item [itemKey] of [entry] carry the kid's heart? */
     fun favourite(entry: Entry, itemKey: String): Boolean = itemKey in favourites[entry.key].orEmpty()
 
     /**
-     * A "Favoritter" queue's scope (design r8 §1.2): [entry]'s hearts that its listing still names, in the listing's
-     * order - the same in both renderers' views (a heart on an item the listing dropped waits for `Sync`'s prune).
+     * The favourites queue's order (design r12 §3.2, [mixOrder]): every heart on an item its entry's listing names, in
+     * an entry the library holds - newest heart first, the hearts from before Room 8 after them in library order (`sort`,
+     * `id`, as [entries]), then reading order. The "Favoritter" tile's count; both renderers' views start from it.
      */
-    fun heartsListed(entry: Entry): Set<String> {
-        val hearts = favourites[entry.key].orEmpty()
-        return listed[entry.id].orEmpty().map { it.key }.filter { it in hearts }.toSet()
+    fun favouritesOrder(): List<MixRef> {
+        val all = library?.entries.orEmpty().sortedWith(compareBy({ it.sort }, { it.id }))
+        val hearts = favourites.mapValues { (key, items) -> items.associateWith { heartedAt[key]?.get(it) ?: 0L } }
+        return mixOrder(all, { e -> listed[e.id].orEmpty().map { it.key } }, hearts)
     }
+
+    /**
+     * Can this view hold [ref] (design r12 §3.2, r8's rule per item)? Its entry in the library, its item visible here
+     * ([visible]: on the phone a Storytel book or an own file only with its copy, a listed Spotify item; on a room every
+     * Storytel book) - on a room also only what a speaker can play (`PlayBodies.speakerPlayable`: no own file, no Spotify).
+     */
+    fun holds(ref: MixRef): Boolean {
+        val entry = entryByKey(ref.entryKey) ?: return false
+        val item = visible(entry).firstOrNull { it.key == ref.itemKey } ?: return false
+        return !remote || me.vibb.music.sonos.PlayBodies.speakerPlayable(entry, item)
+    }
+
+    /** The library's entry of [key], if it holds one. */
+    fun entryByKey(key: String): Entry? = library?.entries?.firstOrNull { it.key == key }
 
     /** [entry]'s repeat: off where it has none to offer ([canRepeat]). */
     fun repeatOf(entry: Entry): Repeat = if (canRepeat(entry)) repeat[entry.key] ?: Repeat.OFF else Repeat.OFF

@@ -98,11 +98,16 @@ fun ListScreen(
     onPick: (PlayItem) -> Unit,
     /** A row's heart tapped (design 50 §1.5): the item, the new state. */
     onFavourite: (PlayItem, Boolean) -> Unit,
+    /** The header's title: the entry's name, or "Favoritter" for the favourites queue (design r12 §3.2). */
+    title: String = entry.name,
+    /** Each row's own entry and its category: a favourites queue's rows come from many - each sub-line names it. */
+    entryOf: ((PlayItem) -> Entry)? = null,
+    categoryOf: (PlayItem) -> Category? = { category },
 ) {
     Column(Modifier.fillMaxSize().padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val words = order?.let { stringResource(orderWordsText(it.words)) }
         if (order != null) {
-            Header(stringResource(R.string.back_player), onBack, entry.name) {
+            Header(stringResource(R.string.back_player), onBack, title) {
                 // the shuffle idiom: peach when flipped; TalkBack says "Snu rekkefølgen, nyeste først"
                 RoundButton(
                     Icons.flipOrder, stringResource(R.string.flip_order), onFlip, 44.dp, 20.dp,
@@ -115,7 +120,7 @@ fun ListScreen(
                 )
             }
         } else {
-            Header(stringResource(R.string.back_player), onBack, entry.name)
+            Header(stringResource(R.string.back_player), onBack, title)
         }
         if (summary != null) {
             val summaryText = when (summary) {
@@ -154,7 +159,10 @@ fun ListScreen(
             }
         }
         LazyColumn(state = state, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(rows, key = { it.item.key }) { row -> ListRowView(row, entry, category, pictures, onPick, onFavourite) }
+            // keyed by entry and item: two entries' items can share a key in a favourites queue (design r12 §0)
+            items(rows, key = { pageKey(it.item) }) { row ->
+                ListRowView(row, entryOf?.invoke(row.item) ?: entry, categoryOf(row.item), pictures, named = entryOf != null, onPick, onFavourite)
+            }
         }
     }
 }
@@ -189,7 +197,16 @@ private fun ListLine(summary: String, full: String, glyph: Boolean) {
 }
 
 @Composable
-private fun ListRowView(row: ListRow, entry: Entry, category: Category?, pictures: Boolean, onPick: (PlayItem) -> Unit, onFavourite: (PlayItem, Boolean) -> Unit) {
+private fun ListRowView(
+    row: ListRow,
+    entry: Entry,
+    category: Category?,
+    pictures: Boolean,
+    /** The sub-line names the row's entry first (the favourites list, design r12 §3.2: "<entry> · 12:34"). */
+    named: Boolean,
+    onPick: (PlayItem) -> Unit,
+    onFavourite: (PlayItem, Boolean) -> Unit,
+) {
     val duration = formatDuration(row.item.durationMs)
     // a Spotify context's one row has no duration (design 26c §5.9): "Spilles nå" alone, no trailing dot
     val playing = stringResource(R.string.row_playing, duration).removeSuffix(" · ")
@@ -214,14 +231,12 @@ private fun ListRowView(row: ListRow, entry: Entry, category: Category?, picture
         }
         Column(Modifier.weight(1f)) {
             Line(row.item.title, 15, 800, Palette.white)
-            Line(
-                when {
-                    row.playing -> playing
-                    row.heard -> stringResource(R.string.row_heard, duration)
-                    else -> duration
-                },
-                12, 700, Palette.sub,
-            )
+            val sub = when {
+                row.playing -> playing
+                row.heard -> stringResource(R.string.row_heard, duration)
+                else -> duration
+            }
+            Line(if (named) listOf(entry.name, sub).filter { it.isNotEmpty() }.joinToString(" · ") else sub, 12, 700, Palette.sub)
         }
         if (row.offline) {
             val label = stringResource(R.string.downloaded)

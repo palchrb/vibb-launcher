@@ -80,11 +80,24 @@ import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.canRepeat
 import me.vibb.music.logic.canShuffle
 import me.vibb.music.logic.moveOnIndex
-import me.vibb.music.logic.bookmarkIn
 import me.vibb.music.logic.coverTapAwaitsBook
 import me.vibb.music.logic.coverTapPlan
-import me.vibb.music.logic.coverTapScope
 import me.vibb.music.logic.scoped
+import me.vibb.music.logic.MIX_KEY
+import me.vibb.music.logic.MixRef
+import me.vibb.music.logic.Run
+import me.vibb.music.logic.RunEnd
+import me.vibb.music.logic.afterRun
+import me.vibb.music.logic.encodeMix
+import me.vibb.music.logic.decodeMix
+import me.vibb.music.logic.mixDropsSpotify
+import me.vibb.music.logic.mixPlayableFrom
+import me.vibb.music.logic.mixTapQueue
+import me.vibb.music.logic.mixView
+import me.vibb.music.logic.restoredMix
+import me.vibb.music.logic.runEnd
+import me.vibb.music.logic.segmentAt
+import me.vibb.music.logic.toggledMix
 import me.vibb.music.logic.finished
 import me.vibb.music.logic.isSpotify
 import me.vibb.music.logic.isSpotifyContext
@@ -184,13 +197,52 @@ internal class Active(
      */
     var failRunFrom: Int? = null,
     /**
-     * A "Favoritter" queue's scope (design r8 §1.2): the hearts at the tap the listing named, fixed with the queue and
-     * kept on every rebuild (restore, a room and back, a pick inside it); [order] holds only these. Null: the whole entry.
+     * The queue's scope (design r8 §1.2): [order] holds only these keys, kept on every rebuild (restore, adopt, a room and
+     * back). Since design r12 the keys of a favourites queue's run ([mix]); a stored r8 row restores with its own. Null:
+     * the whole entry.
      */
     val favourites: Set<String>? = null,
 ) {
+    /**
+     * The favourites queue this queue is a run of (design r12 §3.3; the service's own [MixQueue], set by `startRun`):
+     * the row writers store it and write no bookmark. Null: an entry's queue.
+     */
+    var mix: MixQueue? = null
+
     /** [favourites] as `NowPlayingRow.favourites` stores it. */
     fun storedScope(): String? = favourites?.joinToString("\n")
+
+    /** [mix] as `NowPlayingRow.mix` stores it (the whole queue, whichever renderer). */
+    fun storedMix(): String? = mix?.let { encodeMix(it.all) }
+}
+
+/**
+ * The favourites queue (design r12 §3.2-§3.3): every heart at the tap, newest first (or shuffled), played as runs - the
+ * consecutive refs of one entry, each an ordinary one-entry [Active] on its entry's renderer. Main thread only.
+ */
+internal class MixQueue(
+    /** The tap's unshuffled view: shuffle off goes back to it ([toggledMix]). */
+    var order: List<MixRef>,
+    /** The queue fixed at the tap in play order (shuffled or not), whichever renderer holds it: `now_playing.mix`. */
+    var all: List<MixRef>,
+    var shuffled: Boolean,
+    /** The queue's repeat (its own row, `MIX_KEY`): ALL wraps the queue, ONE repeats inside the run. */
+    var repeat: Repeat,
+) {
+    /** [all] as this renderer holds it (a room leaves out own files and Spotify; back home they are in again). */
+    var items: List<MixRef> = all
+
+    /** The playing ref's index in [items], as the last run start or item change left it. */
+    var index: Int = 0
+
+    /** The run the renderer holds (its entry, its first index in [items], its keys). */
+    var run: Run = Run("", 0, emptyList())
+
+    /** Where a run of play-time failures across runs began ([mixPlayableFrom]'s origin); cleared by 15 s of play or an end. */
+    var failRunFrom: Int? = null
+
+    /** An account line ended Spotify for this queue (`mixDropsSpotify`): every Spotify ref is skipped until a new tap. */
+    var spotifyOut: Boolean = false
 }
 
 /**
@@ -505,8 +557,9 @@ class PlaybackService : MediaSessionService() {
         // the launcher, Bluetooth, the notification: refused (Commands.SHUFFLE / REPEAT are the app's own)
         override fun setRepeatMode(repeatMode: Int) = Unit
         override fun setShuffleModeEnabled(shuffleModeEnabled: Boolean) = Unit
-        override fun hasNextMediaItem(): Boolean = mediaItemCount > 1
-        override fun hasPreviousMediaItem(): Boolean = mediaItemCount > 1
+        // design r12 §3.4: a favourites queue steps across its runs
+        override fun hasNextMediaItem(): Boolean = (mixOf(active)?.items?.size ?: mediaItemCount) > 1
+        override fun hasPreviousMediaItem(): Boolean = (mixOf(active)?.items?.size ?: mediaItemCount) > 1
         override fun seekToNext() = skipNext()
         override fun seekToNextMediaItem() = skipNext()
         override fun seekToPrevious() = skipPrevious()
@@ -531,10 +584,18 @@ class PlaybackService : MediaSessionService() {
     private fun restartIfStale(): Boolean {
         val a = active ?: return false
         if (renderer.itemCount() == 0 || !loadedPlayStale(a.entry, spotifyEntriesNow[a.entry.id])) return false
+        val m = mixOf(a)
+        if (m != null) {
+            // design r12 §3.9: a favourites run whose entry changed mode - its track keys are gone, so its refs drop
+            // and the queue moves on from there (never the entry's own queue)
+            mixLater(moves = false) {
+                if (active === a && mix === m) mixMoveOn(m, mixIndexNow(m, a), play = true, wrap = true, origin = null)
+            }
+            return true
+        }
         scope.launch {
             rendererReady.await()
-            // the whole entry: a context has no hearts to keep to (design r8 §1.3)
-            switching.withLock { playEntry(a.entry.id, favourites = false) }
+            switching.withLock { playEntry(a.entry.id) }
         }
         return true
     }
@@ -577,8 +638,13 @@ class PlaybackService : MediaSessionService() {
                     // a room still recorded after an unanswered look: one more look before the phone plays (M1)
                     if (customCommand.customAction in Commands.PLAYS) lookAgainBeforePlaying()
                     when (customCommand.customAction) {
-                        Commands.PLAY_ENTRY -> playEntry(args.getLong(Commands.ARG_ENTRY), args.getBoolean(Commands.ARG_FAVOURITES))
-                        Commands.PLAY_ITEM -> playItem(args.getLong(Commands.ARG_ENTRY), args.getString(Commands.ARG_KEY).orEmpty())
+                        Commands.PLAY_ENTRY -> playEntry(args.getLong(Commands.ARG_ENTRY))
+                        Commands.PLAY_FAVOURITES -> playFavourites()
+                        Commands.PLAY_ITEM -> if (args.getBoolean(Commands.ARG_IN_FAVOURITES)) {
+                            playFavourite(args.getLong(Commands.ARG_ENTRY), MixRef(args.getString(Commands.ARG_ENTRY_KEY).orEmpty(), args.getString(Commands.ARG_KEY).orEmpty()))
+                        } else {
+                            playItem(args.getLong(Commands.ARG_ENTRY), args.getString(Commands.ARG_KEY).orEmpty())
+                        }
                         Commands.RESUME -> resumeLast()
                         Commands.RESTORE -> restoreThen(args.getString(Commands.ARG_THEN), args.getLong(Commands.ARG_POSITION), args)
                         Commands.SKIP_TO -> skipTo(args)
@@ -649,6 +715,7 @@ class PlaybackService : MediaSessionService() {
                         usePhoneRenderer(a.entry)
                         active = a
                         applyModes(a)
+                        mix = a.mix
                         lastIndex = index
                         clearFault()
                         renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
@@ -684,9 +751,9 @@ class PlaybackService : MediaSessionService() {
      * before the rows are read again - a sync can no longer delete them under the new queue - and an
      * NRK/RSS item whose cached bytes are stale (`staleThrough`) plays uncached, its row gone.
      *
-     * [favourites]: a "Favoritter" queue's scope (design r8 §1.2), null for the whole entry - the one guard: [keys]
-     * outside it drop (the re-plans over the whole order - adopt, phone <-> room - start at index 0, the current item,
-     * which is in it), and its order (shuffle, the flip, a room's reorder) holds only those items.
+     * [favourites]: the queue's scope (design r8 §1.2; since r12 a favourites run's keys), null for the whole entry - the
+     * one guard: [keys] outside it drop (the re-plans over the whole order - adopt, phone <-> room - start at index 0, the
+     * current item, which is in it), and its order (shuffle, the flip, a room's reorder) holds only those items.
      */
     private suspend fun activeFor(
         snap: Snapshot,
@@ -775,14 +842,13 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * A cover tap; [favourites]: under "Favoritter", only the entry's hearted items (design r8 §1.1, the hearts read from
-     * the service's own snapshot). On the loaded entry with the same scope it unpauses; the other scope is a new choice.
+     * A cover tap. On the loaded entry it unpauses (vibb's tile press) - not while a favourites queue plays one of its
+     * items (design r12 §0: a tap on that entry's own tile starts the entry, it never unpauses the run).
      */
-    private suspend fun playEntry(entryId: Long, favourites: Boolean) {
+    private suspend fun playEntry(entryId: Long) {
         val current = active
-        var hearted = favourites
         if (current != null && current.entry.id == entryId && renderer.itemCount() > 0) {
-            if ((current.favourites != null) == favourites) {
+            if (mix == null) {
                 // a Spotify entry the library now lists another way (list <-> context, N5) starts its new queue instead
                 val now = if (isSpotify(current.entry)) withContext(Dispatchers.IO) { store.library()?.entries?.firstOrNull { it.id == entryId } } else null
                 if (!loadedPlayStale(current.entry, now)) {
@@ -790,64 +856,348 @@ class PlaybackService : MediaSessionService() {
                     return
                 }
                 spotifyLog("web player: the entry's mode changed under its play - its new queue starts")
-                // the hearts were the old listing's: the whole entry, as restartIfStale starts it (qa-r8-code R8C-1)
-                hearted = false
             }
             // a new queue of the loaded entry: its place lands before the plan reads it (design r8 §1.1, R8-6)
             renderer.saveNow(force = true)
         }
         val (snap, rows) = loadForRenderer()
-        val scopeOf = { e: Entry -> snap.heartsListed(e).takeIf { hearted } }
-        if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, bookmarkIn(snap.bookmarks[entry.key], scopeOf(entry)), shown, listed) }) return
+        if (awaitsBook(snap, entryId) { entry, shown, listed -> coverTapAwaitsBook(entry, snap.bookmarks[entry.key], shown, listed) }) return
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
-        val scope = scopeOf(entry)
-        val from = coverTapScope(snap.order(entry).map { it.key }, scope, snap.bookmarks[entry.key], entry.resume) { snap.positions[entry.key]?.get(it) }
-        val plan = coverTapPlan(from.keys, entry.resume, from.bookmark, shuffle) ?: run {
-            // nothing hearted plays in this renderer's view (design r8 §1.2): nothing starts, the current queue stays;
-            // the whole entry with nothing to plan stays silent, as before (R8C-4)
-            if (scope != null) PlayerHub.mutableMessages.tryEmit(if (renderer.kind.onPhone) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY_ON_SONOS)
-            return
-        }
-        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), scope) ?: return
+        val plan = coverTapPlan(snap.order(entry).map { it.key }, entry.resume, snap.bookmarks[entry.key], shuffle) ?: return
+        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), favourites = null) ?: return
         start(a, p, newChoice = true)
     }
 
     /**
-     * A pick from the list, Nytt or search. A row inside the loaded queue's scope (a "Favoritter" queue, design r8 §1.1;
-     * with nothing loaded the stored queue's, which the player shows) stays in that scope; any other pick plays the whole
-     * entry from that row. The screens' `playSwitch` reads the same scope (`NowView.favourites`).
+     * A pick from an entry's list, Nytt or search: the whole entry from that row (a favourites queue playing is left; the
+     * favourites list's own pick is [playFavourite]).
      */
     private suspend fun playItem(entryId: Long, key: String) {
         renderer.saveNow()
         val (snap, rows) = loadForRenderer()
         val entry = snap.entries.firstOrNull { it.id == entryId } ?: return
         val shuffle = canShuffle(entry) && entry.key in snap.shuffle
-        val loaded = active?.takeIf { renderer.itemCount() > 0 }
-        val queueScope = if (loaded != null) {
-            loaded.favourites.takeIf { loaded.entry.id == entryId }
-        } else {
-            withContext(Dispatchers.IO) { store.db.nowPlaying() }?.takeIf { it.entryId == entryId }?.scope()
-        }
-        val scope = queueScope?.takeIf { key in it }
-        val current = active?.takeIf { it.entry.id == entryId && it.shuffled }?.items?.map { it.key }
-        val order = scoped(snap.order(entry), scope).map { it.key }
-        val plan = pickPlan(order, key, entry.resume, snap.positions[entry.key]?.get(key), if (shuffle) current else null) ?: return
-        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), scope) ?: return
+        val current = active?.takeIf { it.entry.id == entryId && it.shuffled && it.mix == null }?.items?.map { it.key }
+        val plan = pickPlan(snap.order(entry).map { it.key }, key, entry.resume, snap.positions[entry.key]?.get(key), if (shuffle) current else null) ?: return
+        val (a, p) = queueFor(snap, rows, entry, plan, shuffle, queueKind(renderer.kind, entry), favourites = null) ?: return
         start(a, p, newChoice = true)
     }
 
     private suspend fun resumeLast() {
         val current = active
         if (current != null && renderer.itemCount() > 0) {
-            // RESUME (Home's card) of a Spotify entry the library now lists another way: its new queue (N1 of the QA),
-            // in the loaded queue's scope (design r8 §1.3)
-            if (isSpotify(current.entry)) return playEntry(current.entry.id, current.favourites != null)
+            // RESUME (Home's card) of a Spotify entry the library now lists another way: its new queue (N1 of the QA) -
+            // never inside a favourites queue (design r12 §3.7: it plays on; a stale run moves on at play, restartIfStale)
+            if (isSpotify(current.entry) && mix == null) return playEntry(current.entry.id)
             renderer.play()
             return
         }
         val (a, index, pos) = restore() as? Restored.Queue ?: return
         start(a, QueuePlan(a.items.map { it.key }, index, pos))
+    }
+
+    // --- the favourites queue (design r12 §3.3-§3.5): runs of one entry, stepped across by the service ---
+
+    /** The favourites queue the loaded run belongs to; null for an entry's queue ([start] sets it from the queue's own). */
+    private var mix: MixQueue? = null
+
+    /** [a]'s favourites queue when [a] is the run loaded now; null for an entry's queue. */
+    private fun mixOf(a: Active?): MixQueue? = a?.mix?.takeIf { it === mix && a === active }
+
+    /** The renderer's repeat for a run of [m]: only ONE is the run's own; ALL wraps the queue, which the service does. */
+    private fun runRepeat(m: MixQueue): Repeat = if (m.repeat == Repeat.ONE) Repeat.ONE else Repeat.OFF
+
+    /** The index in [m]'s queue of what its run [a] plays now. */
+    private fun mixIndexNow(m: MixQueue, a: Active): Int {
+        val key = a.items.getOrNull(renderer.currentIndex())?.key ?: return m.index
+        val at = m.run.keys.indexOf(key)
+        return if (at >= 0) m.run.from + at else m.index
+    }
+
+    /** Ref [index] of [m] as an index of the loaded run [a] (the renderer's queue); null outside the run. */
+    private fun runIndexOf(a: Active, m: MixQueue, index: Int): Int? {
+        val ref = m.items.getOrNull(index) ?: return null
+        if (index !in m.run.from until m.run.end || ref.entryKey != a.entry.key) return null
+        return a.items.indexOfFirst { it.key == ref.itemKey }.takeIf { it >= 0 }
+    }
+
+    /**
+     * Can ref `i` of [m] play now on this renderer ([snap]: its view, [Snapshot.holds])? Its entry still listed, the
+     * item in the view, and the renderer's gate (`itemPlayable`: on the phone a copy, else the streaming gate; Spotify
+     * the network; a room always) - never a Spotify ref once an account line dropped Spotify for this queue.
+     */
+    private fun mixPlayable(snap: Snapshot, m: MixQueue): (Int) -> Boolean {
+        val caps = netCaps(this)
+        val streamMobileData = store.streamMobileData
+        val kind = renderer.kind
+        return { i ->
+            val ref = m.items[i]
+            val entry = snap.entryByKey(ref.entryKey)
+            val item = entry?.let { e -> snap.visible(e).firstOrNull { it.key == ref.itemKey } }
+            entry != null && item != null && snap.holds(ref) && !(m.spotifyOut && isSpotify(entry)) &&
+                itemPlayable(kind, entry, item.fileId != null || snap.hasCopy(entry.id, item.key), item.url != null, caps, streamMobileData)
+        }
+    }
+
+    /** Nothing of the favourites this renderer can play now: why, and nothing changes (design r12 §3.9). */
+    private fun favouritesNothingPlays() {
+        PlayerHub.mutableMessages.tryEmit(if (renderer.kind.onPhone) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY_ON_SONOS)
+        publish()
+    }
+
+    /**
+     * `PLAY_FAVOURITES` (design r12 §3.1, §3.7): the "Favoritter" tile. The loaded favourites queue unpauses (the
+     * same-tile rule, vibb's tile press); else a new queue of the hearts now, in this renderer's view, from its first ref
+     * that can play now - its own place when its entry resumes. Nothing to play: why, the current queue stays.
+     */
+    private suspend fun playFavourites() {
+        val loaded = mixOf(active)
+        if (loaded != null && renderer.itemCount() > 0) {
+            renderer.play()
+            return
+        }
+        if (active != null && renderer.itemCount() > 0) renderer.saveNow(force = true)
+        val (snap, rows) = loadForRenderer()
+        val order = snap.favouritesOrder()
+        val view = mixView(order) { snap.holds(it) }
+        if (!renderer.kind.onPhone && view.size < order.size) SonosHome.log("sonos: favourites - ${order.size - view.size} of ${order.size} a speaker can't play left out")
+        val shuffled = MIX_KEY in snap.shuffle
+        val queue = mixTapQueue(view, shuffled) ?: return favouritesNothingPlays()
+        val m = MixQueue(view, queue, shuffled, snap.repeat[MIX_KEY] ?: Repeat.OFF)
+        val first = mixPlayableFrom(queue.size, 0, forward = true, wrap = false, origin = null, mixPlayable(snap, m)) ?: return favouritesNothingPlays()
+        if (first != 0) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
+        if (!startRun(m, first, play = true, newChoice = true, loaded = snap to rows)) publish()
+    }
+
+    /**
+     * A pick in the favourites list (design r12 §3.2): that item inside the loaded - else the stored - favourites queue,
+     * from its own place, a new pick ("Til slutten" ends). A ref no longer in the queue plays its whole entry, as any pick.
+     */
+    private suspend fun playFavourite(entryId: Long, ref: MixRef) {
+        if (mixOf(active) == null && (active == null || renderer.itemCount() == 0)) {
+            val restored = restore() as? Restored.Queue
+            if (restored?.active?.mix != null) start(restored.active, QueuePlan(restored.active.items.map { it.key }, restored.index, restored.posMs), play = false)
+        }
+        val a = active
+        val m = mixOf(a)
+        val target = m?.items?.indexOf(ref) ?: -1
+        if (a == null || m == null || target < 0) return playItem(entryId, ref.itemKey)
+        renderer.saveNow()
+        startRun(m, target, play = true, newChoice = true)
+    }
+
+    /**
+     * Ref [index] of [m] as a run (design r12 §3.4): the consecutive refs of its entry ([segmentAt]) as that entry's
+     * queue through the existing seam - `queueFor` (a room's speaker plan, the claims) with the run's keys as its scope,
+     * then [start] (the renderer the entry needs, `attach` saving and pausing the old one). It starts at [posMs], else
+     * the ref's own place when its entry resumes; [play] as a step leaves it (paused stays paused). True when it loaded.
+     */
+    private suspend fun startRun(
+        m: MixQueue,
+        index: Int,
+        play: Boolean,
+        newChoice: Boolean = false,
+        posMs: Long? = null,
+        loaded: Pair<Snapshot, List<DownloadRow>>? = null,
+    ): Boolean {
+        val (snap, rows) = loaded ?: loadForRenderer()
+        val ref = m.items.getOrNull(index) ?: return false
+        val entry = snap.entryByKey(ref.entryKey) ?: return false
+        val run = segmentAt(m.items, index)
+        val plan = QueuePlan(run.keys, index - run.from, posMs ?: startPos(entry, snap.positions[entry.key]?.get(ref.itemKey)))
+        val (a, p) = queueFor(snap, rows, entry, plan, shuffled = false, queueKind(renderer.kind, entry), run.keys.toSet()) ?: return false
+        a.mix = m
+        a.repeat = runRepeat(m)
+        m.run = run
+        m.index = index
+        start(a, p, play, newChoice)
+        return active === a
+    }
+
+    /**
+     * A run of [m] ended by itself (design r12 §3.4: the renderer's `Ended`, or "Til slutten" at its last item - [held]):
+     * the next run, launched under the switch lock, only while that run is still what is loaded (a newer queue, a step
+     * or another end that got there first wins).
+     */
+    private fun runEnded(a: Active, m: MixQueue, held: Boolean) = mixLater(moves = false) {
+        if (active !== a || mix !== m) return@mixLater
+        m.failRunFrom = null
+        mixMoveOn(m, afterRun(m.items, m.run, m.repeat), play = !held, wrap = m.repeat == Repeat.ALL, origin = null)
+    }
+
+    /**
+     * Nothing after the current item of the run [a] can play now (a gated item, a failure): paused here - the web
+     * player's move-on without a step, so nothing is sent - and the queue moves on past the run, as at its end.
+     */
+    private fun mixPastRun(a: Active, m: MixQueue, play: Boolean) {
+        renderer.pause()
+        mixLater(moves = false) {
+            if (active !== a || mix !== m) return@mixLater
+            mixMoveOn(m, afterRun(m.items, m.run, m.repeat), play, wrap = m.repeat == Repeat.ALL, origin = m.failRunFrom)
+        }
+    }
+
+    /**
+     * From ref [from] on (null: past the queue's end) the first that can play now ([mixPlayableFrom]: one lap, wrapping
+     * with [wrap], never back to [origin]) starts as its run, playing with [play] - a skipped ref says "Ikke lastet ned"
+     * once; none is the queue's end ([mixEnded]).
+     */
+    private suspend fun mixMoveOn(m: MixQueue, from: Int?, play: Boolean, wrap: Boolean, origin: Int?) {
+        val (snap, rows) = loadForRenderer()
+        if (mix !== m) return
+        val target = from?.let { mixPlayableFrom(m.items.size, it, forward = true, wrap = wrap, origin = origin, mixPlayable(snap, m)) }
+        when (val end = runEnd(target, heldBySleep = !play)) {
+            RunEnd.End -> mixEnded()
+            is RunEnd.Next -> {
+                if (end.index != from) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
+                // the next favourite is the queue's own advance, the kid's start: never while the app is suspended
+                if (!startRun(m, end.index, end.play && playAllowed(suspendedNow()), loaded = snap to rows)) mixEnded()
+            }
+        }
+    }
+
+    /**
+     * The favourites queue played to its end (design r12 §3.2): only the stored queue goes - no bookmark moved, no place
+     * cleared (vibb's `clear_state` is one entry's end; a mix of many ending says nothing about them). Done marks stay.
+     */
+    private fun mixEnded() {
+        endSleepAtEnd(SleepEvent.QUEUE_ENDED)
+        mix = null
+        active = null
+        lastIndex = -1
+        Resumable.set(this, false)
+        scope.launch(writer) { store.db.clearNowPlaying() }
+        renderer.clear()
+        publish()
+    }
+
+    /** Next or previous over the favourites queue (design r12 §3.4): vibb's wrap and 5 s restart at the queue's index. */
+    private suspend fun mixStep(forward: Boolean) {
+        val a = active ?: return
+        val m = mixOf(a) ?: return
+        val at = mixIndexNow(m, a)
+        val action = if (forward) {
+            nextAction(at, m.items.size)
+        } else {
+            previousAction(at, m.items.size, renderer.positionMs(), renderer.durationMs() ?: a.items.getOrNull(renderer.currentIndex())?.durationMs)
+        }
+        when (action) {
+            TransportAction.Restart -> renderer.seekTo(0L)
+            is TransportAction.GoTo -> mixGoTo(a, m, action.index, forward)
+            TransportAction.Stay -> Unit
+        }
+    }
+
+    /**
+     * To ref [target] of [m] in the step's direction ([forward]): inside the run a seek as `goTo` does, outside it a new
+     * run - the play state kept (a paused player stays paused, design 27's swipe), from 0 on a playing room (`stepTo`'s
+     * rule). A ref that can't play now is skipped in the step's direction ("Ikke lastet ned"); none: the line, it stays.
+     */
+    private suspend fun mixGoTo(a: Active, m: MixQueue, target: Int, forward: Boolean) {
+        renderer.saveNow()
+        val play = renderer.player.playWhenReady
+        val inRun = runIndexOf(a, m, target)
+        if (inRun != null && playable(a, inRun)) return seekInRun(a, inRun)
+        val (snap, rows) = loadForRenderer()
+        if (active !== a || mix !== m) return
+        val found = mixPlayableFrom(m.items.size, target, forward, wrap = true, origin = mixIndexNow(m, a), mixPlayable(snap, m)) ?: run {
+            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
+            return
+        }
+        if (found != target) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
+        runIndexOf(a, m, found)?.let { return seekInRun(a, it) }
+        val fromZero = !renderer.kind.onPhone && renderer.showsPlaying
+        startRun(m, found, play && playAllowed(suspendedNow()), posMs = if (fromZero) 0L else null, loaded = snap to rows)
+    }
+
+    private fun seekInRun(a: Active, index: Int) {
+        renderer.seekTo(index, startPos(a, index))
+        if (renderer.player.playbackState == Player.STATE_IDLE) renderer.prepare()
+    }
+
+    /**
+     * A favourites step from the session (the notification, the lock tile, a headset - [KidPlayer]) or a run's own end:
+     * it may need IO (the snapshot, the claims), so it runs under the switch lock; [moves]: the screens' hold lasts until
+     * it has run (`PlayerHub.State.waiting`). With the lock free it runs at once, so a step inside the run is synchronous.
+     */
+    private fun mixLater(moves: Boolean, step: suspend () -> Unit) {
+        if (moves) waitingMoves(+1)
+        scope.launch {
+            rendererReady.await()
+            switching.withLock { step() }
+        }.invokeOnCompletion { if (moves) waitingMoves(-1) }
+    }
+
+    /** Shuffle toggled on a favourites queue (design r12 §3.2): the whole queue, the playing item plays on as its run's first. */
+    private fun toggleMixShuffle(a: Active, m: MixQueue) {
+        val index = renderer.currentIndex().coerceIn(a.items.indices)
+        val current = MixRef(a.entry.key, a.items[index].key)
+        val on = !m.shuffled
+        val held = m.items.toSet()
+        m.all = toggledMix(m.order, m.all, current, on)
+        m.items = m.all.filter { it in held || it == current }
+        m.shuffled = on
+        // the run goes on as far as the new queue keeps this entry's items next to it (the rest of it is a later run)
+        val at = m.items.indexOf(current)
+        val byKey = a.order.associateBy { it.key }
+        val follow = m.items.drop(at + 1).takeWhile { it.entryKey == a.entry.key && it.itemKey in byKey }.mapNotNull { byKey[it.itemKey] }
+        renderer.reorder(index, follow.map { mediaItem(a, it) })
+        a.items = listOf(a.items[index]) + follow
+        m.run = Run(a.entry.key, at, a.items.map { it.key })
+        m.index = at
+        lastIndex = 0
+        scope.launch(writer) { store.db.upsertShuffle(ShuffleRow(MIX_KEY, on)) }
+        renderer.saveNow()
+        publish()
+    }
+
+    /**
+     * A favourites queue brought back - a restart, an adopt ([stored]: `now_playing.mix`; [items]: this renderer's view
+     * of it) - with its own shuffle and repeat. The tap's unshuffled view isn't stored: the hearts' order now, kept to
+     * the stored refs.
+     */
+    private fun mixQueueOf(snap: Snapshot, stored: List<MixRef>, items: List<MixRef>): MixQueue {
+        val shuffled = MIX_KEY in snap.shuffle
+        val storedSet = stored.toSet()
+        val order = if (shuffled) snap.favouritesOrder().filter { it in storedSet } else stored
+        return MixQueue(order, stored, shuffled, snap.repeat[MIX_KEY] ?: Repeat.OFF).also { it.items = items }
+    }
+
+    /**
+     * The stored favourites queue (design r12 §3.7): kept to this renderer's view, at the row's run item ([restoredMix]:
+     * the row's place when it survived, else the next surviving ref's own) - its run loaded as [restore] hands it on. A
+     * Storytel book not on the phone is not in the phone's view: the queue goes on at the next favourite, never waits.
+     */
+    private suspend fun restoreMix(snap: Snapshot, rows: List<DownloadRow>, row: NowPlayingRow, stored: List<MixRef>): Restored {
+        val rowEntry = snap.library?.entries?.firstOrNull { it.id == row.entryId }
+        val current = rowEntry?.let { e -> row.keys.split('\n').filter { it.isNotEmpty() }.getOrNull(row.index)?.let { MixRef(e.key, it) } }
+        val restored = restoredMix(stored, current) { snap.holds(it) } ?: return Restored.Empty
+        val m = mixQueueOf(snap, stored, restored.queue)
+        val ref = restored.queue[restored.index]
+        val entry = snap.entryByKey(ref.entryKey) ?: return Restored.Empty
+        val run = segmentAt(m.items, restored.index)
+        val pos = if (restored.same) row.posMs else startPos(entry, snap.positions[entry.key]?.get(ref.itemKey))
+        val plan = QueuePlan(run.keys, restored.index - run.from, pos)
+        val (a, p) = queueFor(snap, rows, entry, plan, shuffled = false, queueKind(renderer.kind, entry), run.keys.toSet()) ?: return Restored.Empty
+        a.mix = m
+        a.repeat = runRepeat(m)
+        m.run = run
+        m.index = restored.index
+        return Restored.Queue(a, p.startIndex, p.startPosMs)
+    }
+
+    /**
+     * "Spill av på" a room, or coming home, with a favourites queue (design r12 §3.5): [m] kept to the new renderer's
+     * view ([snap]'s, `restoredMix` from [current] - the playing item, its place [currentPosMs] when it is in the view,
+     * else the next ref the renderer holds from its own place) and that run started, playing with [play]. False: nothing
+     * of the queue plays there (the caller says why).
+     */
+    private suspend fun mixOnRenderer(m: MixQueue, current: MixRef?, currentPosMs: Long, snap: Snapshot, rows: List<DownloadRow>, play: Boolean): Boolean {
+        val restored = restoredMix(m.all, current) { snap.holds(it) } ?: return false
+        m.items = restored.queue
+        val pos = if (restored.same) currentPosMs else null
+        return startRun(m, restored.index, play, posMs = pos, loaded = snap to rows)
     }
 
     /**
@@ -862,8 +1212,9 @@ class PlaybackService : MediaSessionService() {
             start(a, QueuePlan(a.items.map { it.key }, index, pos), play = false)
         }
         when (then) {
-            Commands.THEN_NEXT -> skipNext()
-            Commands.THEN_PREVIOUS -> skipPrevious()
+            // design r12 §3.4: inside a command a favourites step runs in place
+            Commands.THEN_NEXT -> if (mixOf(active) != null) mixStep(forward = true) else skipNext()
+            Commands.THEN_PREVIOUS -> if (mixOf(active) != null) mixStep(forward = false) else skipPrevious()
             Commands.THEN_SEEK -> renderer.seekTo(positionMs)
             Commands.THEN_SHUFFLE -> toggleShuffle()
             Commands.THEN_REPEAT -> toggleRepeat()
@@ -885,11 +1236,13 @@ class PlaybackService : MediaSessionService() {
      * The stored queue (21 §4.4: back after a restart, paused until a tap). Its current item a Storytel
      * book that isn't on the phone (heard on a room): nothing starts and "Ikke lastet ned" - never the
      * next book there, never a moved bookmark (design 26b §5.6, qa-26b-step4b-code M1) - for RESUME,
-     * `restoreThen` and a headset's play alike. A "Favoritter" queue comes back with its scope (design r8 §1.1).
+     * `restoreThen` and a headset's play alike. An r8 row comes back with its scope (design r8 §1.1); a favourites queue
+     * around its run ([restoreMix]).
      */
     private suspend fun restore(): Restored {
         val row = withContext(Dispatchers.IO) { store.db.nowPlaying() } ?: return Restored.Empty
         val (snap, rows) = loadForRenderer()
+        decodeMix(row.mix)?.let { stored -> return restoreMix(snap, rows, row, stored) }
         val stored = row.keys.split('\n').filter { it.isNotEmpty() }
         if (awaitsBook(snap, row.entryId) { entry, shown, listed -> storedRowAwaitsBook(entry, stored, row.index, shown, listed) }) return Restored.NotOnPhone
         val entry = snap.entries.firstOrNull { it.id == row.entryId } ?: return Restored.Empty
@@ -941,6 +1294,8 @@ class PlaybackService : MediaSessionService() {
         usePhoneRenderer(a.entry)
         active = a
         applyModes(a)
+        // a favourites run carries its queue (design r12 §3.3); every other queue leaves it
+        mix = a.mix
         lastIndex = index
         renderer.setAudioAttributes(audioAttributes(speech = a.entry.resume))
         // Loaded paused: the wake mode goes between prepare and play, as before step 2.
@@ -1202,9 +1557,16 @@ class PlaybackService : MediaSessionService() {
      * Sonos room the speaker-playable items - and goes through [goTo] -> `renderer.seekTo` (a room's
      * `stepTo`: from 0 while playing, design 26a §4.3), never ExoPlayer directly.
      */
-    private fun skipTo(args: Bundle) {
+    private suspend fun skipTo(args: Bundle) {
         val a = active ?: return
         if (renderer.itemCount() == 0) return
+        val m = mixOf(a)
+        if (m != null) {
+            // design r12 §3.9: a swipe over a favourites queue - by (entry, key) in the queue, inside the run or a new run
+            val target = m.items.indexOf(MixRef(args.getString(Commands.ARG_ENTRY_KEY).orEmpty(), args.getString(Commands.ARG_KEY).orEmpty()))
+            if (target >= 0 && target != mixIndexNow(m, a)) mixGoTo(a, m, target, args.getBoolean(Commands.ARG_FORWARD, true))
+            return
+        }
         val loaded = a.entry.id == args.getLong(Commands.ARG_ENTRY, -1)
         val target = swipeTarget(loaded, a.items.map { it.key }, renderer.currentIndex(), args.getString(Commands.ARG_KEY).orEmpty()) ?: return
         goTo(a, target, args.getBoolean(Commands.ARG_FORWARD, true))
@@ -1212,6 +1574,8 @@ class PlaybackService : MediaSessionService() {
 
     private fun skipNext() {
         val a = active ?: return
+        // design r12 §3.4: over a favourites queue the step may leave the run - under the switch lock, the screens held
+        if (mixOf(a) != null) return mixLater(moves = true) { mixStep(forward = true) }
         // a Spotify context (design 26c §5.9): the web player's next - Spotify's order - never the one item's rules
         if (stepsOnWebPlayer(a.entry)) return stepOnWebPlayer(forward = true)
         when (val action = nextAction(renderer.currentIndex(), renderer.itemCount())) {
@@ -1222,6 +1586,7 @@ class PlaybackService : MediaSessionService() {
 
     private fun skipPrevious() {
         val a = active ?: return
+        if (mixOf(a) != null) return mixLater(moves = true) { mixStep(forward = false) }
         if (stepsOnWebPlayer(a.entry)) return stepOnWebPlayer(forward = false)
         val duration = renderer.durationMs() ?: a.items.getOrNull(renderer.currentIndex())?.durationMs
         when (val action = previousAction(renderer.currentIndex(), renderer.itemCount(), renderer.positionMs(), duration)) {
@@ -1265,6 +1630,7 @@ class PlaybackService : MediaSessionService() {
     private fun toggleShuffle() {
         val a = active ?: return
         if (!canShuffle(a.entry)) return
+        mixOf(a)?.let { return toggleMixShuffle(a, it) }
         val on = !a.shuffled
         if (isSpotifyContext(a.entry)) {
             // a playlist context (design 49 §1.7): Spotify's own shuffle - one synthetic item, no order of ours
@@ -1295,6 +1661,16 @@ class PlaybackService : MediaSessionService() {
     private fun toggleRepeat() {
         val a = active ?: return
         if (!canRepeat(a.entry)) return
+        mixOf(a)?.let { m ->
+            // design r12 §3.2: the favourites queue's own repeat (`MIX_KEY`); the run repeats only ONE itself, ALL is ours
+            m.repeat = m.repeat.next()
+            a.repeat = runRepeat(m)
+            applyModes(a)
+            val word = m.repeat.word
+            scope.launch(writer) { store.db.upsertRepeat(RepeatRow(MIX_KEY, word)) }
+            publish()
+            return
+        }
         val next = a.repeat.next()
         a.repeat = next
         applyModes(a)
@@ -1314,7 +1690,8 @@ class PlaybackService : MediaSessionService() {
      */
     private fun flipOrder(entryKey: String?, newestFirst: Boolean) {
         val a = active ?: return
-        if (a.entry.key != entryKey || a.shuffled || a.shownNewestFirst == newestFirst || renderer.itemCount() == 0) return
+        // a favourites queue's order is the hearts' (design r12 §3.7): no flip there
+        if (a.entry.key != entryKey || a.shuffled || a.mix != null || a.shownNewestFirst == newestFirst || renderer.itemCount() == 0) return
         val index = renderer.currentIndex().coerceIn(a.items.indices)
         val current = a.items[index]
         a.order = a.order.asReversed().toList()
@@ -1377,12 +1754,22 @@ class PlaybackService : MediaSessionService() {
         if (!sleepAtEnd) renderer.pauseAtItemEnd(null)
     }
 
-    /** The pause "Til slutten" caused: like the minute timer's end (a call's pause is not undone after it). */
+    /**
+     * The pause "Til slutten" caused: like the minute timer's end (a call's pause is not undone after it). At a
+     * favourites run's last item on the phone (its own player, the web player) the next favourite then waits at its start,
+     * paused (design r12 §3.4); a room reaches the run's end through `queueEnded` instead.
+     */
     private fun sleepAtEndReached() {
         sleepAtEnd = sleepAtEndAfter(sleepAtEnd, SleepEvent.ITEM_END_PAUSE)
         callPause = callTimerEnded(callPause)
         renderer.saveNow()
         publish()
+        val a = active ?: return
+        val m = mixOf(a) ?: return
+        if (renderer.kind.onPhone && m.repeat != Repeat.ONE && renderer.currentIndex() >= renderer.itemCount() - 1) {
+            a.items.getOrNull(renderer.currentIndex())?.let { markDone(a, it) }
+            runEnded(a, m, held = true)
+        }
     }
 
     private fun sleepEnded() {
@@ -1449,6 +1836,7 @@ class PlaybackService : MediaSessionService() {
             // 15 s of real play (the tick starts when it plays): a run of failures ends here (qa-music-a-code 1) - not at
             // the first isPlaying, which an item that fails on its first frames may give too
             active?.failRunFrom = null
+            mix?.failRunFrom = null
             renderer.saveNow()
             // The launcher's snapshot keeps the place too, so Home is right after a crash or a
             // dead battery (qa-21-step4-code L4).
@@ -1500,7 +1888,26 @@ class PlaybackService : MediaSessionService() {
             }
             is RendererEvent.Error -> onError(event.code, event.gated)
             RendererEvent.Lost -> scope.launch { lost() }
-            RendererEvent.StateChanged -> publish()
+            RendererEvent.StateChanged -> {
+                publish()
+                mixSpotifyLine()
+            }
+        }
+    }
+
+    /**
+     * Design r12 §3.4: a favourites run on the web player stopped on an account line (`mixDropsSpotify`: an adult's
+     * matter, no Widevine) - "Kan ikke spilles nå" once, Spotify is out for the rest of this queue and it moves on as at a
+     * run's end. The network's lines, "elsewhere" and "stopped" pause as on any queue; a new tap tries Spotify again.
+     */
+    private fun mixSpotifyLine() {
+        val a = active ?: return
+        val m = mixOf(a) ?: return
+        if (renderer !== spotify || m.spotifyOut || !mixDropsSpotify(renderer.rendererState)) return
+        m.spotifyOut = true
+        PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY)
+        mixLater(moves = false) {
+            if (active === a && mix === m) mixMoveOn(m, afterRun(m.items, m.run, m.repeat), play = true, wrap = m.repeat == Repeat.ALL, origin = null)
         }
     }
 
@@ -1511,8 +1918,10 @@ class PlaybackService : MediaSessionService() {
         if (auto && previous != null && lastIndex != index) {
             markDone(a, previous)
             a.failRunFrom = null // an item played to its end: no run of failures (qa-music-a-code 1)
+            mixOf(a)?.failRunFrom = null
         }
         lastIndex = index
+        mixOf(a)?.let { it.index = mixIndexNow(it, a) }
         wakeModeFor(a, index)
         wantArtSoon()
         refreshArt()
@@ -1524,8 +1933,12 @@ class PlaybackService : MediaSessionService() {
             // The queue moves on (21 §4.2's one line beyond the mockup).
             PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
             val nextIndex = moveOnFrom(a, index)
+            val m = mixOf(a)
             if (nextIndex != null) {
                 renderer.seekTo(nextIndex, startPos(a, nextIndex))
+            } else if (m != null) {
+                // design r12 §3.4: nothing after it in the run - the favourites queue moves on past the run
+                mixPastRun(a, m, play = true)
             } else {
                 renderer.pause()
                 // The bookmark moves on to the item that plays next, not back to the finished one.
@@ -1663,11 +2076,17 @@ class PlaybackService : MediaSessionService() {
         PlayerHub.mutableMessages.tryEmit(if (offline) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY)
         renderer.saveNow()
         if (a.failRunFrom == null) a.failRunFrom = index // the run's first failure: its lap ends back here
+        val m = mixOf(a)
+        if (m != null && m.failRunFrom == null) m.failRunFrom = mixIndexNow(m, a)
         val nextIndex = moveOnFrom(a, index)
         if (nextIndex != null) {
             renderer.seekTo(nextIndex, startPos(a, nextIndex))
             renderer.prepare()
             renderer.play()
+        } else if (m != null) {
+            // design r12 §3.4: past the run's last item - paused here (the web player's move-on without a step: nothing
+            // sent), then the next run, launched (it attaches another renderer)
+            mixPastRun(a, m, play = true)
         } else {
             // Nothing after it can play now: stay here, paused (a tap on play tries again).
             renderer.pause()
@@ -1726,14 +2145,26 @@ class PlaybackService : MediaSessionService() {
     }
 
     /** The queue played to its end (vibb `clear_state`): the last item is done, the bookmark and the
-     * partial positions go, the done marks stay. A "Favoritter" queue clears only its own items' partial
-     * positions (design r8 §1.1): a half-heard episode outside it keeps its place. */
+     * partial positions go, the done marks stay. A scoped queue (an r8 row's) clears only its own items' partial
+     * positions (design r8 §1.1): a half-heard episode outside it keeps its place. A favourites run's end is no queue's
+     * end (design r12 §3.4): its last item is done and the next run starts ([runEnded]) - nothing is cleared. */
     private fun queueEnded() {
+        val ran = active
+        val m = mixOf(ran)
+        if (ran != null && m != null) {
+            ran.items.getOrNull(renderer.currentIndex())?.takeIf { keepsDuration(ran.entry, it.key) }?.let { markDone(ran, it) }
+            // a room at a run's last item sends Stop and Ended with "Til slutten" still on: that is its item-end pause
+            val held = sleepAtEnd
+            if (held) sleepAtEndReached()
+            runEnded(ran, m, held)
+            return
+        }
         endSleepAtEnd(SleepEvent.QUEUE_ENDED)
         val a = active ?: return
         // a Spotify context's item is never done (design 26c §5.9): its end drops its place and its live track only
         a.items.getOrNull(renderer.currentIndex())?.takeIf { keepsDuration(a.entry, it.key) }?.let { markDone(a, it) }
         active = null
+        mix = null
         lastIndex = -1
         Resumable.set(this, false)
         val entryKey = a.entry.key
@@ -1777,15 +2208,18 @@ class PlaybackService : MediaSessionService() {
         if (overlap > 0) renderer.seekTo(overlapStart(renderer.positionMs(), overlap))
     }
 
-    /** The bookmark (and the stored queue) on item [index] at its start, its own position untouched. */
+    /**
+     * The bookmark (and the stored queue) on item [index] at its start, its own position untouched. A favourites run
+     * moves no bookmark (design r12 §3.2): only its stored queue.
+     */
     private fun saveBookmark(a: Active, index: Int) {
         val item = a.items.getOrNull(index) ?: return
         val now = System.currentTimeMillis()
-        val mark = BookmarkRow(a.entry.key, item.key, 0, now)
-        val queue = NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, 0, a.durations[item.key] ?: item.durationMs, a.shuffled, now, a.storedScope())
+        val mark = BookmarkRow(a.entry.key, item.key, 0, now).takeIf { a.mix == null }
+        val queue = NowPlayingRow(0, a.entry.id, a.items.joinToString("\n") { it.key }, index, 0, a.durations[item.key] ?: item.durationMs, a.shuffled, now, a.storedScope(), a.storedMix())
         Resumable.set(this, true)
         scope.launch(writer) {
-            store.db.upsertBookmark(mark)
+            mark?.let { store.db.upsertBookmark(it) }
             store.db.upsertNowPlaying(queue)
         }
     }
@@ -1848,6 +2282,8 @@ class PlaybackService : MediaSessionService() {
         }
         groupPending.values.removeAll { now >= it.until }
         groupFailed.values.removeAll { now >= it }
+        // design r12 §3.7: a favourites queue - entryId, keys and index stay the run's (the claims, the art, a tile's line)
+        val m = mixOf(a)
         PlayerHub.mutableState.value = PlayerHub.State(
             live = a != null && renderer.itemCount() > 0,
             entryId = a?.entry?.id,
@@ -1855,7 +2291,10 @@ class PlaybackService : MediaSessionService() {
             index = renderer.currentIndex(),
             shuffled = a?.shuffled ?: false,
             repeat = a?.repeat ?: Repeat.OFF,
-            favourites = a?.favourites,
+            favouritesQueue = m?.items,
+            favouritesIndex = if (m != null && a != null) mixIndexNow(m, a) else 0,
+            favouritesShuffled = m?.shuffled ?: false,
+            favouritesRepeat = m?.repeat ?: Repeat.OFF,
             playing = renderer.showsPlaying,
             durationMs = renderer.durationMs() ?: a?.items?.getOrNull(renderer.currentIndex())?.durationMs,
             sleepEndsAt = sleepEndsAt,
@@ -2123,6 +2562,7 @@ class PlaybackService : MediaSessionService() {
         attach(sonos)
         active = a
         applyModes(a)
+        mix = a.mix
         lastIndex = index
         // design 53 §2.9: the adopt's baseline is the first fresh topology after it (the controller asks for it), nothing sent
         sonos.adopt(a.items.map { mediaItem(a, it) }, index, uri, live)
@@ -2162,6 +2602,18 @@ class PlaybackService : MediaSessionService() {
         val plan = adoptPlan(entry, snap.order(entry), stored, row?.shuffled == true, uri) ?: return null
         val a = activeFor(snap, rows, entry, plan.keys, plan.shuffled, RendererKind.SONOS, favourites) ?: return null
         if (a.items.map { it.key } != plan.keys) return null
+        // design r12 §3.5: the stored row is a favourites run's - the queue comes back around it, in the room's view
+        decodeMix(row?.mix)?.let { storedMix ->
+            val current = MixRef(entry.key, plan.keys[plan.index])
+            // only around the adopted item itself; else the room plays on as that entry's run alone
+            restoredMix(storedMix, current) { snap.holds(it) }?.takeIf { it.same }?.let { restored ->
+                val m = mixQueueOf(snap, storedMix, restored.queue)
+                m.index = restored.index
+                m.run = segmentAt(m.items, restored.index)
+                a.mix = m
+                a.repeat = runRepeat(m)
+            }
+        }
         return a to plan.index
     }
 
@@ -2241,6 +2693,20 @@ class PlaybackService : MediaSessionService() {
         // the room's view (design 26b §5.6, QA H2): every Storytel book, downloaded or not
         val (snap, rows) = load(remote = true)
         if (renderer !== old) return // changed under us (the switch lock makes this a belt)
+        // design r12 §3.5: a favourites queue - the loaded one, else the stored one - goes on in the room's view
+        val mixPlace = if (current != null) {
+            val (a0, item) = current
+            mixOf(a0)?.let { Triple(it, MixRef(a0.entry.key, item.key), resumeFrom(a0.positions[item.key])) }
+        } else {
+            withContext(Dispatchers.IO) { store.db.nowPlaying() }?.let { row ->
+                decodeMix(row.mix)?.let { stored ->
+                    val e = snap.library?.entries?.firstOrNull { it.id == row.entryId }
+                    val key = row.keys.split('\n').filter { it.isNotEmpty() }.getOrNull(row.index)
+                    Triple(mixQueueOf(snap, stored, stored), if (e != null && key != null) MixRef(e.key, key) else null, row.posMs)
+                }
+            }
+        }
+        if (mixPlace != null) return mixToRoom(old, uid, name, mixPlace, snap, rows)
         val place = if (current != null) {
             val (a0, item) = current
             if (a0.entry.source == Source.STORYTEL) {
@@ -2290,6 +2756,37 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
+     * Phone -> room (or room -> room) with a favourites queue (design r12 §3.5): its refs a speaker can play, from the
+     * playing item (or, an own file or a Spotify track playing, the next one the room holds); nothing left: "Kan ikke
+     * spilles på Sonos" and nothing changes. renderer.json before the first SOAP, as [toRoom].
+     */
+    private suspend fun mixToRoom(old: Renderer, uid: String, name: String?, place: Triple<MixQueue, MixRef?, Long>, snap: Snapshot, rows: List<DownloadRow>) {
+        val (m, current, posMs) = place
+        val restored = restoredMix(m.all, current) { snap.holds(it) }
+        if (restored == null) {
+            PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.CANT_PLAY_ON_SONOS)
+            if (old is SonosRenderer) comeHome(old, play = false)
+            publish()
+            return
+        }
+        val first = restored.queue[restored.index]
+        if (m.all.size > restored.queue.size) SonosHome.log("sonos: favourites - ${m.all.size - restored.queue.size} of ${m.all.size} a speaker can't play left out")
+        withContext(writer) {
+            val ramp = home.choice()
+            home.write(RendererChoice(RendererChoice.SONOS, uid, name, snap.entryByKey(first.entryKey)?.id, first.itemKey, volume = ramp.volume, volumeUid = ramp.volumeUid))
+        }
+        if (renderer !== old) return
+        attach(sonosRenderer(uid, name))
+        if (old is SonosRenderer) old.release() else local.standDown()
+        if (!mixOnRenderer(m, current, posMs, snap, rows, play = true)) {
+            active = null
+            mix = null
+            lastIndex = -1
+        }
+        publish()
+    }
+
+    /**
      * Room -> phone (`_renderer_to_box`, 1669-1708): the live classify, the bookmark and the Stop
      * (ours-gated), renderer.json back to the phone, the phone's player, and the queue on the phone
      * from that bookmark - playing on only if the speaker was PLAYING (a paused speaker comes home
@@ -2316,6 +2813,7 @@ class PlaybackService : MediaSessionService() {
         }
         val a0 = active?.takeIf { sonos.itemCount() > 0 }
         val item = a0?.items?.getOrNull(sonos.currentIndex())
+        val m0 = mixOf(a0)
         withContext(writer) { home.write(RendererChoice.local(home.choice())) }
         if (renderer !== sonos) return
         attach(local)
@@ -2329,6 +2827,18 @@ class PlaybackService : MediaSessionService() {
         // the phone's view (design 26b §5.6): it is the phone
         val (snap, rows) = load(remote = false)
         if (renderer !== local) return
+        if (m0 != null) {
+            // design r12 §3.5: the favourites queue in the phone's view (own files and Spotify back in) from the room's
+            // item - a book heard on the room and not on the phone: the next favourite, "Ikke lastet ned" once (a
+            // favourites queue has no series to wait for)
+            val ref = MixRef(a0.entry.key, item.key)
+            if (!snap.holds(ref) && !quiet) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)
+            if (!mixOnRenderer(m0, ref, resumeFrom(a0.positions[item.key]), snap, rows, play)) {
+                mix = null
+                publish()
+            }
+            return
+        }
         val order = snap.order(a0.entry).map { it.key }
         if (a0.entry.source == Source.STORYTEL && item.key !in order) {
             if (!quiet) PlayerHub.mutableMessages.tryEmit(PlayerHub.Message.NOT_DOWNLOADED)

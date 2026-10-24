@@ -174,8 +174,10 @@ private fun EpisodeCarousel(
             page < pager.targetPage -> stringResource(R.string.previous_entry, title(page))
             else -> stringResource(R.string.next_entry, title(page))
         }
+        // a favourites queue's page shows its own entry's cover (design r12 §3.2)
+        val own = now.entryOf(item)
         Cover(
-            item.artHash ?: now.entry.cover, now.category, 26.dp, 104.dp,
+            item.artHash ?: own.cover, now.categoryOf(item), 26.dp, 104.dp,
             Modifier.size(artDp.dp)
                 .graphicsLayer {
                     val offset = (pager.currentPage - page) + pager.currentPageOffsetFraction
@@ -196,7 +198,7 @@ private fun EpisodeCarousel(
                         }
                     }
                 },
-            fallback = now.entry.cover,
+            fallback = own.cover,
         )
     }
 }

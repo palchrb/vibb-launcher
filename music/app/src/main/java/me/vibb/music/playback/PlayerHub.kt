@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import me.vibb.music.logic.ItemRef
+import me.vibb.music.logic.MixRef
 import me.vibb.music.logic.Repeat
 import me.vibb.music.sonos.RoomsView
 
@@ -15,6 +16,12 @@ import me.vibb.music.sonos.RoomsView
 object Commands {
     const val PLAY_ENTRY = "me.vibb.music.PLAY_ENTRY"
     const val PLAY_ITEM = "me.vibb.music.PLAY_ITEM"
+
+    /**
+     * The "Favoritter" tile (design r12 §3.1): every heart of every entry in one queue, newest first. The loaded
+     * favourites queue unpauses; else a new one from the hearts now. A play (in [PLAYS]) and a move ([MOVES]).
+     */
+    const val PLAY_FAVOURITES = "me.vibb.music.PLAY_FAVOURITES"
     const val RESUME = "me.vibb.music.RESUME"
     const val RESTORE = "me.vibb.music.RESTORE"
     const val SHUFFLE = "me.vibb.music.SHUFFLE"
@@ -69,8 +76,11 @@ object Commands {
 
     const val ARG_ENTRY = "entry"
 
-    /** [PLAY_ENTRY] under "Favoritter" (design r8 §1.1): only the entry's hearted items, read from the service's own snapshot. */
-    const val ARG_FAVOURITES = "favourites"
+    /**
+     * [PLAY_ITEM] from the favourites list (design r12 §3.2): [ARG_KEY] of the entry [ARG_ENTRY_KEY] inside the loaded (else
+     * the stored) favourites queue; not in it, the whole entry ([ARG_ENTRY]) as any pick.
+     */
+    const val ARG_IN_FAVOURITES = "in_favourites"
     const val ARG_KEY = "key"
     const val ARG_MINUTES = "minutes"
 
@@ -95,7 +105,7 @@ object Commands {
 
     val ALL: List<SessionCommand> =
         listOf(
-            PLAY_ENTRY, PLAY_ITEM, RESUME, RESTORE, SHUFFLE, REPEAT, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN, SKIP_TO, FLIP_ORDER,
+            PLAY_ENTRY, PLAY_ITEM, PLAY_FAVOURITES, RESUME, RESTORE, SHUFFLE, REPEAT, SLEEP, OUTPUT, ROOMS_REFRESH, ROOMS_RESCAN, SKIP_TO, FLIP_ORDER,
             ROOM_JOIN, ROOM_LEAVE, ROOM_VOLUME,
         ).map { SessionCommand(it, Bundle.EMPTY) }
 
@@ -119,7 +129,7 @@ object Commands {
      * to a Sonos room starts the speaker too: that depends on its argument, so the service's command
      * gate reads [ARG_OUTPUT] (`Output.sonosUid`) beside this set (design 26a §3.3).
      */
-    val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESUME, ROOM_JOIN)
+    val PLAYS: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, PLAY_FAVOURITES, RESUME, ROOM_JOIN)
 
     /**
      * The commands a tap's instant switch waits for (`logic/Switch.kt`): a cover, a pick,
@@ -127,7 +137,7 @@ object Commands {
      * waits behind the renderer's settle and a switch's hand-off like the others). While one is
      * accepted but hasn't run, [PlayerHub.State.waiting].
      */
-    val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, RESTORE, SKIP_TO)
+    val MOVES: Set<String> = setOf(PLAY_ENTRY, PLAY_ITEM, PLAY_FAVOURITES, RESTORE, SKIP_TO)
 }
 
 /**
@@ -145,8 +155,15 @@ object PlayerHub {
         val shuffled: Boolean = false,
         /** The loaded entry's repeat (design 49 §1.2). */
         val repeat: Repeat = Repeat.OFF,
-        /** The loaded queue's "Favoritter" scope (design r8 §1.2, `Active.favourites`); null: the whole entry. */
-        val favourites: Set<String>? = null,
+        /**
+         * A favourites queue is loaded (design r12 §3.7): its refs in play order as this renderer holds them, the playing
+         * one's index there, and the queue's own shuffle and repeat; null/0/false/OFF for an entry's queue. [entryId],
+         * [keys] and [index] stay the playing run's (the claims, the art, a Spotify tile's line).
+         */
+        val favouritesQueue: List<MixRef>? = null,
+        val favouritesIndex: Int = 0,
+        val favouritesShuffled: Boolean = false,
+        val favouritesRepeat: Repeat = Repeat.OFF,
         /** The intent: "playing" shows at once on a tap. */
         val playing: Boolean = false,
         val durationMs: Long? = null,

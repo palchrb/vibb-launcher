@@ -337,8 +337,9 @@ class Store private constructor(context: Context) {
         val shuffle = rows.shuffle.filter { it.on }.map { it.entryKey }.toSet()
         val flips = rows.flips.associate { it.entryKey to it.parentNewestFirst }
         val hearts = favourites.groupBy { it.entryKey }.mapValues { (_, fs) -> fs.map { it.itemKey }.toSet() }
+        val heartedAt = favourites.groupBy { it.entryKey }.mapValues { (_, fs) -> fs.associate { it.itemKey to it.heartedAt } }
         val repeat = rows.repeat.associate { it.entryKey to Repeat.of(it.mode) }.filterValues { it != Repeat.OFF }
-        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts, flips, hearts, repeat)
+        return buildSnapshot(lib, items, downloads, listings, ownCopies(), positions, rows.bookmarks, rows.news, shuffle, contexts, flips, hearts, repeat, heartedAt)
     }
 
     companion object {
