@@ -11,7 +11,8 @@ import kotlin.math.roundToInt
  * The lock's glance page (design 25, docs/design/25-lock-glance.md at the monorepo root, mockup
  * LockGlance.dc.html): pure, LockGlanceTest. Replaces step 4's media view (lock/LockMedia.kt): the
  * PIN lock always comes up on the glance page - clock, date, the music tile while something plays,
- * up to three notification rows, "Nødsamtale" - and the swipe up (design 59d step J; the "Lås opp" button before it)
+ * up to eight notification rows (design r11; three before it), "Nødsamtale" - and the swipe up (design 59d step J; the
+ * "Lås opp" button before it)
  * or a row leads to the keypad. lock/GlancePanel draws it inside PinLockActivity; lock/GlanceOpener opens a row's target
  * after the right code.
  *
@@ -240,15 +241,6 @@ fun glanceTimeWidest(durationMs: Long, positionMs: Long = 0): String =
     if (durationMs <= 0) "0:00:00" else clockText(maxOf(durationMs, positionMs)).replace(Regex("[0-9]"), "0")
 
 /**
- * The refit rule (r6 §2, qa-r6 r6-4): a session callback renders the tile alone and refits the page
- * only when the tile came or went ([tileWasUp] -> [tileUp]) or the shown tile's measured height
- * ([measuredPx], with its margins; `null` before the page is laid out) differs from the one the last
- * fit was made with ([fittedPx]; `null` = no fit with a tile yet).
- */
-fun glanceRefitDue(tileWasUp: Boolean, tileUp: Boolean, fittedPx: Int?, measuredPx: Int?): Boolean =
-    tileWasUp != tileUp || (tileUp && (fittedPx == null || fittedPx != measuredPx))
-
-/**
  * Callbacks within one frame draw once (r6 §2): [request] posts [work] through [post] (the glue's
  * `Choreographer.postFrameCallback`) only when none is pending, so the two or three session
  * messages of one tap render the tile once. Main thread only.
@@ -447,115 +439,28 @@ fun glanceTorchButton(hasFlash: Boolean, refusedWhileLocked: Boolean, lit: Boole
     else -> GlanceTorchButton.OFF
 }
 
-// ---- the fit -------------------------------------------------------------------------------------
+// ---- the layout (design r11 §1.2-1.3; r9's fit is gone) ----------------------------------------------
 
-/** The page shows at most this many rows; the rest is the "more" line's count. */
-const val GLANCE_MAX_ROWS = 3
-
-/**
- * Each part's height as measured (any unit, the same for all and for the available height):
- * [fixed] = the swipe hint line (design 59d step J; "Lås opp" before it) and the bottom row ("Nødsamtale" and the
- * flashlight, design 41) with their margins; [date] with its margin; the tiles with their top margin (the full one with its progress
- * row, r9 §3); [clockFull] the timer tile with its margin (design 42); [rowsTop] the rows' scroll's
- * margin below a tile, [rowsTopNoTile] below the date; [row] one row (the tallest); [rowGap] between
- * rows; [more] the "more" line (nothing above it); [fade] what the scroll's bottom fade covers past a row's own
- * bottom padding, kept clear under the one visible row while more scrolls below it (qa-r9-code R9C-1).
- */
-data class GlanceHeights(
-    val fixed: Float,
-    val clockBig: Float,
-    val clockSmall: Float,
-    val date: Float,
-    val tileFull: Float,
-    val tileCompact: Float,
-    val clockFull: Float,
-    val rowsTop: Float,
-    val rowsTopNoTile: Float,
-    val row: Float,
-    val rowGap: Float,
-    val more: Float,
-    val fade: Float,
-)
+/** The page binds at most this many rows (r11 §1.3: two to three screens at 320 dp); the rest is the "more" line's
+ * count. Three before r11. */
+const val GLANCE_MAX_ROWS = 8
 
 enum class GlanceTileSize { NONE, FULL, COMPACT }
 
-/** What the page shows: [candidate] is the fit's number (1-7), for the logs and tests; [rows] the rows
- * bound (min(n, 3) - none only in candidate 7), [visibleRows] those the fit counted on screen (all of
- * them, or one with the rest below it in the scroll), [more] the "more" line's count; [clock]: the
- * timer tile (design 42). */
-data class GlanceFit(
-    val candidate: Int,
-    val bigClock: Boolean,
-    val date: Boolean,
-    val tile: GlanceTileSize,
-    val rows: Int,
-    val visibleRows: Int,
-    val more: Int,
-    val height: Float,
-    val clock: Boolean = false,
-)
-
-/** The rows' scroll shows whenever there is a row at all - in candidate 7 with the "more" line alone
- * (qa-r9-revision-check N1). */
-val GlanceFit.scrollShown: Boolean get() = rows > 0 || more > 0
+/** What the page shows (r11 §1.2): [tile] the music tile's size, [rows] the rows bound, [more] the "more" line's count,
+ * [timer] the timer tile (design 42). Nothing is measured: the page scrolls when it doesn't fit. */
+data class GlanceLayout(val tile: GlanceTileSize, val rows: Int, val more: Int, val timer: Boolean)
 
 /**
- * The fit (design 25 §1.2, r9 §2): the clock's, date's and tiles' sizes; the bottom block always
- * stays whole (the layout keeps it), and the rows scroll in what is left. A candidate counts every
- * row (with the "more" line when n > 3) or one row (the rest, and the line, below it in the scroll);
- * rows are never folded into "+ N varsler til" to make room. The first whose height fits [available]
- * wins:
- * 1. big clock, date, full tile, every row; 2. small clock, the same;
- * 3. small clock, date, full tile, one row visible;
- * 4. small clock, date, compact tile, every row; 5. the same, one row visible;
- * 6. small clock, no date, compact tile, one row visible;
- * 7. small clock, no date, compact tile, no row - only the "more" line, counting all n (the last
- *    resort is a line, never a faded sliver of a row).
- * Without a tile 4 = 2 and 5 = 3. Nothing fits: the last candidate.
- *
- * With a running timer ([clock], design 42 §1.6 as changed by r9 §2) the seven with the timer tile
- * come first, then the seven without it: a running timer outlives the music tile's full size, a
- * second visible row and the date.
+ * The page's sizes are rules, not a fit (r11 §1.2): the big clock, the date and the alarm line always; the music tile
+ * while there is a session ([tile]); the timer tile while a timer runs ([timer], always full); min(n, [GLANCE_MAX_ROWS])
+ * rows of [rowCount] and the "more" line for the rest. An overflow is a scroll, never a clipped or shrunk part - at
+ * 320x569 dp and at font scale 2.0 alike.
  */
-fun glanceFit(available: Float, heights: GlanceHeights, tile: Boolean, rowCount: Int, clock: Boolean = false): GlanceFit {
+fun glanceLayout(tile: Boolean, rowCount: Int, timer: Boolean): GlanceLayout {
     val n = rowCount.coerceAtLeast(0)
-    val most = minOf(n, GLANCE_MAX_ROWS)
-    val one = minOf(most, 1)
-    val full = if (tile) GlanceTileSize.FULL else GlanceTileSize.NONE
-    val compact = if (tile) GlanceTileSize.COMPACT else GlanceTileSize.NONE
-    fun fit(candidate: Int, big: Boolean, date: Boolean, size: GlanceTileSize, rows: Int, visible: Int, withClock: Boolean): GlanceFit {
-        val more = n - rows
-        val tileHeight = when (size) {
-            GlanceTileSize.NONE -> 0f
-            GlanceTileSize.FULL -> heights.tileFull
-            GlanceTileSize.COMPACT -> heights.tileCompact
-        }
-        // The "more" line sits after row 3: on screen only when every bound row is. With more below the
-        // visible row, the scroll's fade is counted so that row stays clear of it.
-        val list = if (n == 0) {
-            0f
-        } else {
-            (if (size == GlanceTileSize.NONE && !withClock) heights.rowsTopNoTile else heights.rowsTop) +
-                visible * heights.row + (visible - 1).coerceAtLeast(0) * heights.rowGap +
-                (if (visible == rows && more > 0) heights.more else 0f) +
-                (if (visible < rows) heights.fade else 0f)
-        }
-        val height = heights.fixed + (if (big) heights.clockBig else heights.clockSmall) +
-            (if (date) heights.date else 0f) + tileHeight + (if (withClock) heights.clockFull else 0f) + list
-        return GlanceFit(candidate, big, date, size, rows, visible, more, height, withClock)
-    }
-    val candidates = (if (clock) listOf(true, false) else listOf(false)).flatMap { withClock ->
-        listOf(
-            fit(1, big = true, date = true, size = full, rows = most, visible = most, withClock = withClock),
-            fit(2, big = false, date = true, size = full, rows = most, visible = most, withClock = withClock),
-            fit(3, big = false, date = true, size = full, rows = most, visible = one, withClock = withClock),
-            fit(4, big = false, date = true, size = compact, rows = most, visible = most, withClock = withClock),
-            fit(5, big = false, date = true, size = compact, rows = most, visible = one, withClock = withClock),
-            fit(6, big = false, date = false, size = compact, rows = most, visible = one, withClock = withClock),
-            fit(7, big = false, date = false, size = compact, rows = 0, visible = 0, withClock = withClock),
-        )
-    }
-    return candidates.firstOrNull { it.height <= available } ?: candidates.last()
+    val rows = minOf(n, GLANCE_MAX_ROWS)
+    return GlanceLayout(if (tile) GlanceTileSize.FULL else GlanceTileSize.NONE, rows, n - rows, timer)
 }
 
 // ---- the keypad's prompt -------------------------------------------------------------------------

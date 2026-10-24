@@ -48,7 +48,7 @@ class MusicLockPanel(
     private var artShown = false
     private val ticker = Runnable { tick() }
     private val changed: () -> Unit = { onChange() }
-    /** The listening window's end while a paused session shows: the panel refits without the tile (design 28 §2.4). */
+    /** The listening window's end while a paused session shows: the panel lays the page out without the tile (design 28 §2.4). */
     private val expiry = Runnable { changed() }
 
     init {

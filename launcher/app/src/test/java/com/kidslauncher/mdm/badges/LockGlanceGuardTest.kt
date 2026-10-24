@@ -184,8 +184,10 @@ class LockGlanceGuardTest {
      * name, text, key or shortcut id. */
     private val allowedInterpolations = setOf(
         "\$source", "\${e.javaClass.simpleName}", "\${next.apps.size}", "\$withText",
-        "\$what", "\$pkg", "\${next.candidate}", "\${next.rows}", "\${next.more}", "\${next.visibleRows}",
-        // The fit's room and the root's paddings, in dp (r9 §1).
+        "\$what", "\$pkg",
+        // r11 §1.2: the layout's tile size (an enum name) and counts, replacing the fit's candidate.
+        "\${layout.tile}", "\${layout.rows}", "\${layout.more}",
+        // The room and the root's paddings, in dp (r9 §1).
         "\$roomDp", "\$padTop", "\$padBottom",
         // Design 59d step L: the clock profile's own constant name ("emulator Pixel", "Jelly Star").
         "\${p.name}",
@@ -430,7 +432,7 @@ class LockGlanceGuardTest {
         }
         assertTrue(body(panel, "back").contains("step(GlanceStageEvent.Back)"))
         assertTrue(body(panel, "guarded").contains("catch (e: Throwable)"))
-        assertTrue(panel.contains("guarded(\"fit\") { fitNow() }"))
+        assertTrue(panel.contains("guarded(\"layout\") { layoutNow() }"))
         assertTrue("the icon job", body(panel, "renderIcons").contains("catch (e: Throwable)"))
         assertTrue("a row fault hides the rows", body(panel, "renderNow").contains("catch (e: Throwable)"))
         val onCreate = body(code("PinLockActivity.kt"), "onCreate")

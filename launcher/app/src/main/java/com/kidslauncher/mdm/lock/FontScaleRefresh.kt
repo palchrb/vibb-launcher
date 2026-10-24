@@ -14,7 +14,7 @@ import kotlin.math.roundToInt
  * follow a font-scale change until it is recreated"). On a change [PinLockActivity] re-sizes every
  * text in place: each one's size back to the sp it was set in (at the old metrics, Android 14's
  * non-linear scale included - [TypedValue.deriveDimension]) and set again in sp at the new ones;
- * then the keys and the glance fit are measured again. No recreation, no lifecycle change.
+ * then the keys are sized and the glance page laid out again. No recreation, no lifecycle change.
  */
 object FontScaleRefresh {
     /** A change the lock must follow: the font scale moved (a density change is not handled here). */

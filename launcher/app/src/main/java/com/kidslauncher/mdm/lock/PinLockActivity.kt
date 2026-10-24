@@ -690,7 +690,7 @@ class PinLockActivity : AppCompatActivity() {
 
     /**
      * The lock handles every configuration change itself (manifest `configChanges`): a font-scale
-     * change re-sizes its texts in place, then the keys and the glance fit follow (emulator round
+     * change re-sizes its texts in place, then the keys and the glance layout follow (emulator round
      * 2026-10-14 N8). Never a recreation; a fault keeps the old sizes, never a crash.
      */
     override fun onConfigurationChanged(newConfig: Configuration) {

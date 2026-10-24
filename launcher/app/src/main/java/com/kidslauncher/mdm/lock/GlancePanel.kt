@@ -81,7 +81,8 @@ internal fun lockTorch(context: Context): TorchPort = object : TorchPort {
 /**
  * The PIN lock's glance page (design 25, mockup LockGlance.dc.html; the rules are the pure
  * lock/LockGlance.kt and badges/GlanceRows.kt): in the lock's frame over the keypad stage and under
- * the VoIP ring screen. Holds the stage, the rows and the fit; listens to [GlanceStore] and
+ * the VoIP ring screen. Holds the stage, the rows and the layout (design r11: the page scrolls, nothing is fitted);
+ * listens to [GlanceStore] and
  * [MissedCallNotifier] between the lock's onStart and onStop. Every time the lock comes up with the
  * screen on ([lockStageDue]) it shows the glance page.
  *
@@ -175,24 +176,21 @@ class GlancePanel(
     private var decidedAt: Int? = null
     private var tileUp = false
 
-    /** A timer runs (design 42): the timer tile is in the fit. */
+    /** A timer runs (design 42): the timer tile shows. */
     private var clockUp = false
     private var rows: List<GlanceRow> = emptyList()
     private val rowViews = mutableListOf<ViewLockGlanceRowBinding>()
 
-    /** A fit changed the page in this traversal: its frame is skipped (the next one is fitted). */
+    /** A layout or a profile placement changed the page in this traversal: its frame is skipped (the next one is laid
+     * out). */
     private var refitPending = false
 
-    /** The available height ([available]) the current fit was made for (0 = a new fit is due). */
-    private var fitFor = 0
-    private var fit: GlanceFit? = null
+    /** The available height ([available]) the current layout was placed for (0 = a new placement is due). */
+    private var placedFor = 0
+    private var laidOut: GlanceLayout? = null
 
-    /** The available height the last log line named (it is written when this or the fit changes). */
+    /** The available height the last log line named (it is written when this or the layout changes). */
     private var loggedFor = 0
-
-    /** The shown tiles' heights (px, with their margins) the current fit was made with (null: none). */
-    private var fitTilePx: Int? = null
-    private var fitClockPx: Int? = null
 
     /** The next alarm changed (design 42 §1.3): the line under the date again. */
     private val alarmChanged = object : BroadcastReceiver() {
@@ -223,14 +221,14 @@ class GlancePanel(
         openAction(glance.lockTimerTile)
         // The clock app's text, like a row's: only accessibility tools read it.
         sensitive(glance.lockTimerTile)
-        // The fit needs the page's room: never before the first layout, again after every change of the
-        // height or of the system bars' padding (r9 §1: edge-to-edge, the bars arrive as padding at the
-        // same height - at the screen-on of a lock started dark, a gesture <-> 3-button switch, QA Low 4).
+        // The layout is placed once the page has its room, and again after every change of the height or of the
+        // system bars' padding (r9 §1: edge-to-edge, the bars arrive as padding at the same height - at the screen-on
+        // of a lock started dark, a gesture <-> 3-button switch, QA Low 4; the bars move the profile's clock, r11 §1.2).
         glance.root.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
-            if (bottom - top > 0 && available(bottom - top) != fitFor) guarded("fit") { fitNow() }
+            if (bottom - top > 0 && available(bottom - top) != placedFor) guarded("layout") { layoutNow() }
         }
-        // Bug 25b-B/C: a fit that changed the page skips the frame it was made in - the first frame
-        // drawn is the fitted page, never the big clock and tile settling a moment later.
+        // Bug 25b-B/C: a layout that changed the page skips the frame it was made in - the first frame
+        // drawn is the laid-out page, never the clock and tile settling a moment later.
         glance.root.viewTreeObserver.addOnPreDrawListener {
             if (!refitPending) return@addOnPreDrawListener true
             refitPending = false
@@ -241,7 +239,7 @@ class GlancePanel(
     /**
      * Design 59d step L: the clock, the date and the alarm line left-aligned as Android's small clock - Nunito Light for
      * the clock (JL-2), the short date capitalised as Android's ("Fre. 23. okt."), the date's
-     * size; where they sit is [placeProfile]'s, at every fit.
+     * size; where they sit is [placeProfile]'s, at every layout.
      */
     private fun profileLook(p: ClockGeometry, locale: Locale) {
         Log.i(LOG_TAG, "Glance clock: ${p.name} profile")
@@ -290,9 +288,10 @@ class GlancePanel(
      * Design 59d step L: the clock's and the date's margins so their boxes start and their baselines sit where the
      * profile says, in the window's coordinates ([baselineMarginPx], [startMarginPx]) - the baselines under SystemUI's
      * keyguard status bar ([keyguardBarPx], the glance-topinset round); the alarm line under the date at the date's
-     * start. Measured at [width] first; a margin is written only when it changed (no layout loop).
+     * start. Measured at [width] first; a margin is written only when it changed (no layout loop). Returns whether one
+     * was.
      */
-    private fun placeProfile(p: ClockGeometry, width: Int) {
+    private fun placeProfile(p: ClockGeometry, width: Int): Boolean {
         val density = activity.resources.displayMetrics.density
         val at = IntArray(2)
         glance.root.getLocationOnScreen(at)
@@ -307,20 +306,20 @@ class GlancePanel(
         clock.paint.getTextBounds(CLOCK_DIGITS, 0, CLOCK_DIGITS.length, ink)
         val clockTarget = profileBaselinePx(bar, p.clockBaselineBelowBarDp, density)
         val clockTop = baselineMarginPx(clockTarget, contentTop, clock.baseline.toFloat(), floorPx = -(clock.baseline + ink.top).toFloat())
-        margins(clock, clockStartPx(p), clockTop)
+        var moved = margins(clock, clockStartPx(p), clockTop)
         val date = glance.lockGlanceDate
         measured(date, width)
         val clockBottom = contentTop + clockTop + clock.measuredHeight
         val descent = (clock.measuredHeight - clock.baseline).toFloat()
         val dateStart = startMarginPx(p.dateStartDp * density, contentStart)
         val dateTarget = profileBaselinePx(bar, p.dateBaselineBelowBarDp, density)
-        margins(date, dateStart, baselineMarginPx(dateTarget, clockBottom, date.baseline.toFloat(), floorPx = -descent))
+        moved = margins(date, dateStart, baselineMarginPx(dateTarget, clockBottom, date.baseline.toFloat(), floorPx = -descent)) || moved
         if (bar != placedBarPx) {
             placedBarPx = bar
             Log.i(LOG_TAG, "Glance clock: keyguard status bar ${bar.roundToInt()} px, the clock's baseline at ${clockTarget.roundToInt()} px, the date's at ${dateTarget.roundToInt()} px")
         }
         val alarm = glance.lockGlanceAlarm
-        margins(alarm, dateStart, (alarm.layoutParams as ViewGroup.MarginLayoutParams).topMargin)
+        return margins(alarm, dateStart, (alarm.layoutParams as ViewGroup.MarginLayoutParams).topMargin) || moved
     }
 
     /** The keyguard status bar [placeProfile] last placed under (logged once per value). */
@@ -338,12 +337,14 @@ class GlancePanel(
         return keyguardStatusBarPx(bar, cutout, density)
     }
 
-    private fun margins(view: View, start: Int, top: Int) {
+    /** Writes the margins only when they differ; returns whether it did. */
+    private fun margins(view: View, start: Int, top: Int): Boolean {
         val params = view.layoutParams as ViewGroup.MarginLayoutParams
-        if (params.marginStart == start && params.topMargin == top) return
+        if (params.marginStart == start && params.topMargin == top) return false
         params.marginStart = start
         params.topMargin = top
         view.layoutParams = params
+        return true
     }
 
     /** onStart: watching the rows and the session; the stage decided if the lock comes up now. */
@@ -424,11 +425,11 @@ class GlancePanel(
     }
 
     /** The font scale changed under the lock (it handles `fontScale` itself, emulator round N8): the
-     * texts were resized by the activity; the fit starts again at the same height. */
+     * texts were resized by the activity; the layout is placed again at the same height (the clock's size back). */
     fun refit() = guarded("refit") {
-        fitFor = 0
-        fit = null
-        fitNow()
+        placedFor = 0
+        laidOut = null
+        layoutNow()
         glance.root.requestLayout()
     }
 
@@ -667,9 +668,9 @@ class GlancePanel(
     private fun render() = guarded("render") { renderNow() }
 
     /**
-     * A session callback (r6 §2, coalesced per frame): the tile rendered alone - the rows aren't
-     * rebound and the clock isn't touched. The page refits only when the tile came or went or the shown
-     * tile's height changed (a two-line title, the entry line coming or going; [glanceRefitDue]).
+     * A session callback (r6 §2, coalesced per frame): the tile rendered alone - the rows aren't rebound and the clock
+     * isn't touched. Since r11 nothing is refitted: the tile shows by the rule ([glanceLayout]) and its coming or going
+     * is plain layout (the scroller takes it); only the list's margin under it follows.
      */
     private fun tileChanged() = guarded("tile") {
         val musicChanged = musicDirty
@@ -678,55 +679,35 @@ class GlancePanel(
         clockDirty = false
         if (!started) return@guarded
         val page = glancePageShown(state.stage)
-        var refit = false
         if (musicChanged) {
-            val wasUp = tileUp
             tileUp = glanceTile(music.lookUp())
             music.show(shownTile(), page)
-            refit = glanceRefitDue(wasUp, tileUp, fitTilePx, shownTilePx())
         }
         if (clockChanged) {
-            val wasUp = clockUp
             clockUp = clock.up
             clock.show(shownClock(), page)
-            val width = pageWidth()
-            val clockPx = if (fit?.clock == true && width != null) withMargins(glance.lockTimerTile, width).roundToInt() else null
-            refit = glanceRefitDue(wasUp, clockUp, fitClockPx, clockPx) || refit
         }
-        if (refit) {
-            fitFor = 0
-            fitNow()
-        }
+        placeList(glanceLayout(tileUp, rows.size, clockUp))
     }
 
-    /** The timer tile while a timer runs and the fit keeps it (before the first fit: shown). */
-    private fun shownClock(): Boolean = clockUp && fit?.clock != false
+    /** The timer tile while a timer runs (always full, r11 §1.2). */
+    private fun shownClock(): Boolean = clockUp
 
-    /** The fit's tile while one is up (the full one before the first fit). */
-    private fun shownTile(): GlanceTileSize =
-        if (!tileUp) GlanceTileSize.NONE else fit?.tile?.takeIf { it != GlanceTileSize.NONE } ?: GlanceTileSize.FULL
+    /** The music tile by the rule ([glanceLayout]): none without a session. */
+    private fun shownTile(): GlanceTileSize = glanceLayout(tileUp, rows.size, clockUp).tile
 
-    /** The shown tile's height with its margins at the page's width; null before the page is laid out. */
-    private fun shownTilePx(): Int? {
-        val width = pageWidth() ?: return null
-        val view = when (fit?.tile) {
-            GlanceTileSize.FULL -> glance.lockMediaTile
-            GlanceTileSize.COMPACT -> glance.lockMediaCompact
-            else -> return null
-        }
-        return withMargins(view, width).roundToInt()
-    }
-
-    /** The page's content width once it is laid out and shown, else null. */
+    /** The page's content width - the top block's, less its side padding (r11 §1.1) - once it is laid out and shown,
+     * else null. */
     private fun pageWidth(): Int? {
         val root = glance.root
         if (root.height <= 0 || root.visibility != View.VISIBLE) return null
-        return (root.width - root.paddingStart - root.paddingEnd).takeIf { it > 0 }
+        val top = glance.lockGlanceTop
+        return (root.width - root.paddingStart - root.paddingEnd - top.paddingStart - top.paddingEnd).takeIf { it > 0 }
     }
 
     /** The next alarm under the date (design 42 §1.3): the system clock app's or the pinned clock
      * app's only ([PinLockRuntime.clockPackages]), "Alarm 07:00" - with the weekday more than 24 h
-     * away; it goes with the date when the fit drops that. */
+     * away; always shown while there is one (r11 §1.2: nothing drops it). */
     private fun bindAlarm() {
         val next = try {
             activity.getSystemService(AlarmManager::class.java)?.nextAlarmClock
@@ -736,7 +717,7 @@ class GlancePanel(
         val alarm = glanceAlarm(next?.triggerTime, next?.showIntent?.creatorPackage, PinLockRuntime.clockPackages(), System.currentTimeMillis())
         val view = glance.lockGlanceAlarm
         view.text = alarm?.let { activity.getString(R.string.lock_alarm, alarmText(it)) }
-        view.visibility = if (alarm != null && fit?.date != false) View.VISIBLE else View.GONE
+        view.visibility = if (alarm != null) View.VISIBLE else View.GONE
     }
 
     private fun alarmText(alarm: GlanceAlarm): String {
@@ -748,7 +729,7 @@ class GlancePanel(
     }
 
     /** The flashlight button (design 41 §1.3): hidden, off, or lit - a filled peach disc with the
-     * ground's glyph. It toggles the torch and opens nothing; its presence never moves the fit (the
+     * ground's glyph. It toggles the torch and opens nothing; its presence never moves the page (the
      * row is as tall as "Nødsamtale" either way). */
     private fun bindTorch() {
         val t = torch
@@ -783,11 +764,11 @@ class GlancePanel(
         }
         bindTorch()
         bindAlarm()
-        // The tile's content first (the fit measures it), then the fit decides which tile shows.
+        // The tiles by the rule, then the layout (and the profile's placement once the page has its room).
         music.show(shownTile(), page = shown)
         clock.show(shownClock(), page = shown)
-        fitFor = 0
-        fitNow()
+        placedFor = 0
+        layoutNow()
     }
 
     // ---- rows -----------------------------------------------------------------------------------
@@ -972,96 +953,65 @@ class GlancePanel(
         }
     }
 
-    // ---- the fit (§1.2) ---------------------------------------------------------------------------
+    // ---- the layout (r11 §1.2) ---------------------------------------------------------------------------
 
-    /** The page's room for its parts at [height]: the root less its paddings, which carry the visible
-     * system bars (`KidInsets`). */
+    /** The page's room at [height]: the root less its paddings, which carry the visible system bars (`KidInsets`). */
     private fun available(height: Int): Int = glance.root.let { height - it.paddingTop - it.paddingBottom }
 
-    /** Measures every part at the page's width once, picks the first candidate that fits and shows it.
-     * Only once the page is laid out; a re-render starts again from candidate 1. */
-    private fun fitNow() {
+    /**
+     * The layout (r11 §1.2): nothing is measured to make room any more - the no-profile clock's 56 sp, or the profile's
+     * clock placed under the keyguard status bar ([placeProfile]), then the rule's layout ([glanceLayout]) applied.
+     * Only once the page is laid out (the profile reads the window's insets); the listener keys it on the available
+     * height, so the bars arriving as padding still move the profile's clock.
+     */
+    private fun layoutNow() {
         val root = glance.root
         val width = pageWidth() ?: return
         val room = available(root.height)
-        fitFor = room
+        placedFor = room
         val clock = glance.lockGlanceClock
         val p = profile
-        val clockBig: Float
-        val clockSmall: Float
+        var moved = false
         if (p != null) {
-            // Design 59d step L: one clock, Android's size, placed; its height counts from the page's top (its margin).
+            // Design 59d step L: one clock, Android's size, placed under the keyguard status bar.
             clock.setTextSize(TypedValue.COMPLEX_UNIT_DIP, p.clockDp)
-            placeProfile(p, width)
-            clockBig = withMargins(clock, width)
-            clockSmall = clockBig
+            moved = placeProfile(p, width)
         } else {
             clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_BIG_SP)
-            clockBig = measured(clock, width)
-            clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_SMALL_SP)
-            clockSmall = measured(clock, width)
         }
-        val shownRows = rowViews.take(minOf(rows.size, GLANCE_MAX_ROWS))
-        val more = glance.lockGlanceMore
-        more.text = activity.resources.getQuantityString(R.plurals.glance_more, 9, 9)
-        val heights = GlanceHeights(
-            // §8.13: the handle sits in the bottom inset (the root's padding), outside the fit.
-            fixed = withMargins(glance.lockGlanceBottom, width),
-            clockBig = clockBig,
-            clockSmall = clockSmall,
-            // The alarm line goes with the date (design 42 §1.3).
-            date = withMargins(glance.lockGlanceDate, width) +
-                (if (glance.lockGlanceAlarm.text.isNullOrEmpty()) 0f else withMargins(glance.lockGlanceAlarm, width)),
-            tileFull = withMargins(glance.lockMediaTile, width),
-            tileCompact = withMargins(glance.lockMediaCompact, width),
-            clockFull = withMargins(glance.lockTimerTile, width),
-            rowsTop = dp(ROWS_TOP_DP).toFloat(),
-            rowsTopNoTile = dp(ROWS_TOP_NO_TILE_DP).toFloat(),
-            row = shownRows.maxOfOrNull { measured(it.root, width) } ?: 0f,
-            rowGap = dp(8f).toFloat(),
-            more = measured(more, width),
-            fade = (glance.lockGlanceScroll.verticalFadingEdgeLength - (shownRows.firstOrNull()?.root?.paddingBottom ?: 0))
-                .coerceAtLeast(0).toFloat(),
-        )
-        val next = glanceFit(room.toFloat(), heights, tileUp, rows.size, clockUp)
-        if (next != fit || room != loggedFor) {
+        val layout = glanceLayout(tileUp, rows.size, clockUp)
+        if (layout != laidOut || room != loggedFor) {
             // Counts and dp only (LockGlanceGuardTest): the room and the paddings say which bars it saw.
             val roomDp = px2dp(room)
             val padTop = px2dp(root.paddingTop)
             val padBottom = px2dp(root.paddingBottom)
-            Log.i(LOG_TAG, "Glance fit: candidate ${next.candidate}, ${next.rows} rows, ${next.more} more, ${next.visibleRows} visible, available $roomDp dp (pad $padTop/$padBottom)")
+            Log.i(LOG_TAG, "Glance layout: tile ${layout.tile}, ${layout.rows} rows, ${layout.more} more, available $roomDp dp (pad $padTop/$padBottom)")
             loggedFor = room
         }
-        if (next != fit) refitPending = true
-        fit = next
-        fitTilePx = when (next.tile) {
-            GlanceTileSize.FULL -> heights.tileFull
-            GlanceTileSize.COMPACT -> heights.tileCompact
-            GlanceTileSize.NONE -> null
-        }?.roundToInt()
-        fitClockPx = heights.clockFull.roundToInt().takeIf { next.clock }
-        apply(next, shownRows)
+        if (layout != laidOut || moved) refitPending = true
+        laidOut = layout
+        apply(layout)
     }
 
-    private fun apply(fit: GlanceFit, shownRows: List<ViewLockGlanceRowBinding>) {
-        // Design 59d step L: the profile's clock has one size (set by the fit).
-        if (profile == null) glance.lockGlanceClock.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (fit.bigClock) CLOCK_BIG_SP else CLOCK_SMALL_SP)
-        glance.lockGlanceDate.visibility = if (fit.date) View.VISIBLE else View.GONE
-        glance.lockGlanceAlarm.visibility = if (fit.date && !glance.lockGlanceAlarm.text.isNullOrEmpty()) View.VISIBLE else View.GONE
-        music.show(fit.tile, page = true)
-        clock.show(fit.clock, page = true)
-        // The rows' scroll: gone only without any row (n = 0) - candidate 7 binds none but shows the
-        // "more" line in it (qa-r9-revision-check N1).
-        val scroll = glance.lockGlanceScroll
-        scroll.visibility = if (fit.scrollShown) View.VISIBLE else View.GONE
-        val top = dp(if (fit.tile == GlanceTileSize.NONE && !fit.clock) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)
-        (scroll.layoutParams as ViewGroup.MarginLayoutParams).let {
-            if (it.topMargin != top) scroll.layoutParams = it.apply { topMargin = top }
-        }
-        shownRows.forEachIndexed { i, view -> view.root.visibility = if (i < fit.rows) View.VISIBLE else View.GONE }
+    private fun apply(layout: GlanceLayout) {
+        val page = glancePageShown(state.stage)
+        music.show(layout.tile, page)
+        clock.show(layout.timer, page)
+        placeList(layout)
+        rowViews.forEachIndexed { i, view -> view.root.visibility = if (i < layout.rows) View.VISIBLE else View.GONE }
         val more = glance.lockGlanceMore
-        more.visibility = if (fit.more > 0) View.VISIBLE else View.GONE
-        if (fit.more > 0) more.text = activity.resources.getQuantityString(R.plurals.glance_more, fit.more, fit.more)
+        more.visibility = if (layout.more > 0) View.VISIBLE else View.GONE
+        if (layout.more > 0) more.text = activity.resources.getQuantityString(R.plurals.glance_more, layout.more, layout.more)
+    }
+
+    /** The list (the rows and the "more" line): gone only without a row; 22 dp under the date without a tile, else 14. */
+    private fun placeList(layout: GlanceLayout) {
+        val list = glance.lockGlanceList
+        list.visibility = if (layout.rows > 0) View.VISIBLE else View.GONE
+        val top = dp(if (layout.tile == GlanceTileSize.NONE && !layout.timer) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)
+        (list.layoutParams as ViewGroup.MarginLayoutParams).let {
+            if (it.topMargin != top) list.layoutParams = it.apply { topMargin = top }
+        }
     }
 
     private fun measured(view: View, width: Int): Float {
@@ -1072,12 +1022,6 @@ class GlancePanel(
         )
         return view.measuredHeight.toFloat()
     }
-
-    private fun withMargins(view: View, width: Int): Float {
-        val params = view.layoutParams as? ViewGroup.MarginLayoutParams
-        return measured(view, width) + (params?.topMargin ?: 0) + (params?.bottomMargin ?: 0)
-    }
-
     private fun dp(value: Float): Int = KidAvatars.dp(activity, value)
 
     private fun px2dp(px: Int): Int = (px / activity.resources.displayMetrics.density).roundToInt()
@@ -1096,7 +1040,6 @@ class GlancePanel(
 
         /** Design 59d step L: the digits whose ink the profile's clock keeps inside the page. */
         const val CLOCK_DIGITS = "0123456789"
-        const val CLOCK_SMALL_SP = 40f
         const val ROWS_TOP_DP = 14f
         const val ROWS_TOP_NO_TILE_DP = 22f
     }
