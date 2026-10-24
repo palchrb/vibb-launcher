@@ -503,9 +503,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   fragment (`.../upload#upload`, `.../confirm-package#release`) and a success redirects to
   `?notice=uploaded#upload` / `?notice=package_confirmed#release`, so the result is in view where the parent was
   (qa-31-s11-code M1).
-- **Add App** (`tracked_app_add.html`): name, source (two radios before the rows, so CSS - no script - hides the
-  GitHub fields for an upload), repo; filter, tag prefix, package and pre-releases under More Options
-  (`TrackedAppAddTemplate::more_open`).
+- **Add App** (`tracked_app_add.html`): name, source (three radios before the rows - GitHub, F-Droid, Upload - so
+  CSS, no script, shows only the chosen source's fields), repo; filter, tag prefix, package and pre-releases under More
+  Options (`TrackedAppAddTemplate::more_open`); F-Droid's package and repo in `.fdroid-only` with the one-source line
+  (`play-and-updates.md`, "F-Droid source").
 
 ## The Music tab (design 31 step 12, `docs/design/31-pwa-redesign.md` §3.4)
 

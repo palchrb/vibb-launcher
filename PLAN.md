@@ -1141,6 +1141,19 @@ findings, merge to `main`, full suite once.
   as another repo URL. No F-Droid client on the kid's phone (an app store breaks the model). Behind the same release
   interface as GitHub, so GitLab/Forgejo can follow later if ever needed. Server, S-M; next server round after design 64
   step 1. Earlier parked text (GitLab/Codeberg; Nexus looked at: no calls, UnifiedPush only; Element X stays) folded in.
+  **Done 2026-10-24 (branch `fdroid-source`, server only, migration 0094)**: source `fdroid` = `fdroid_repo` (https,
+  default f-droid.org's) + `fdroid_package`; f-droid.org takes its per-package API, any other repo (IzzyOnDroid) the
+  index alone; the SHA-256 always from `index-v2.json` (fetched only when entry.json's hash changed, checked against
+  it, cached under `data/tracked_apps/fdroid/`, at most 100 MB, no diffs); the APK checked before it is stored and
+  stored as a GitHub release (tag `v<versionName>`). Add App's F-Droid choice, "F-Droid · ws.xsoh.etar" on the app's
+  page with the one-source line, a source change refused (worded by a cached release), the launcher's and music's
+  rows stay GitHub. `docs/notes/server/play-and-updates.md`, "F-Droid source".
+- **F-Droid: verify the repo's signature (`entry.jar`)** (follow-up of the F-Droid source, 2026-10-24): today the index
+  and the APK come over HTTPS and the APK's hash is checked against the index, but the repo's own JAR signature over
+  entry.json (`entry.jar`, signed by the repo's key - F-Droid's, IzzyOnDroid's) isn't verified, so the repo's TLS
+  certificate is the trust anchor. Verify it and pin the repo's signing certificate per repo (first use, or the known
+  fingerprints of f-droid.org and IzzyOnDroid), refusing an entry.json whose signature fails. Not done in the first
+  round: a JAR signature verifier in Rust (PKCS#7/CMS over the manifest's digests) is its own piece of work. Server, M.
 - **PWA: reload on return after 1 minute, not 10** (the user, 2026-10-24: "blir ett minutt for kort?" - no): the
   return reload in `static/reconnect.js` (pwa.md "Connecting") fires after more than 10 minutes hidden; make it 1
   minute. One constant + `jstest/reconnect.test.js`'s timeline; the save/details/typed-field/POST-answer rules stay.
