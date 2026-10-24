@@ -1111,6 +1111,15 @@ findings, merge to `main`, full suite once.
   return reload in `static/reconnect.js` (pwa.md "Connecting") fires after more than 10 minutes hidden; make it 1
   minute. One constant + `jstest/reconnect.test.js`'s timeline; the save/details/typed-field/POST-answer rules stay.
   **Done 2026-10-24 on main** (`reconnect.js?v=3`, `AWAY_MS` = 60 s; jstests 25, `shell::` 22).
+- **Google's developer verification (the user, 2026-10-24, keepandroidopen.org: "har jeg nettopp kastet bort mange
+  uker"):** no. Google's enterprise FAQ (as summarised by bayton.org, 2025-09): apps installed by a DPC/EMM agent are
+  exempt indefinitely - Vibb One is the device owner and installs every app from the catalog; Play apps on fully
+  managed devices have until September 2027; installed apps are never removed; ADB installs and the "advanced flow"
+  stay. Enforcement: Brazil, Indonesia, Singapore, Thailand from 2026-09-30; global "2027 and beyond" (Norway not yet).
+  The open question nobody answers: the DPC itself at QR provisioning (the setup wizard downloads our APK from
+  GitHub). Fallbacks: `dpm set-device-owner` over adb (documented), or registering the user as a verified developer
+  with the release signing key (~25 USD + ID, a one-time job, no code change) - recommended when verification opens
+  for Norway. Watch Google's Android Enterprise FAQ for the provisioning case; re-read before stable 1.0.
 - **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
   Settings › Intelligent assistance › App blocker - Boot blocker, Start blocker, Background blocker, Background
   cleanup; on the Jelly Star only found through Settings' search. Design 19b §4 foresaw an OEM manager but had no name.
