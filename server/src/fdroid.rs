@@ -867,10 +867,11 @@ pub(crate) mod tests {
         );
     }
 
-    /// An index-v2 document: `packages` maps each id to `(sha256, code, name, file, beta)`.
-    pub(crate) fn index_json(
-        packages: &[(&str, Vec<(String, i64, &str, String, bool)>)],
-    ) -> String {
+    /// One version in [index_json]: `(sha256, code, name, file, beta)`.
+    pub(crate) type FakeVersion<'a> = (String, i64, &'a str, String, bool);
+
+    /// An index-v2 document: `packages` maps each id to its versions.
+    pub(crate) fn index_json(packages: &[(&str, Vec<FakeVersion>)]) -> String {
         let packages: serde_json::Map<String, serde_json::Value> = packages
             .iter()
             .map(|(id, versions)| {
@@ -1011,6 +1012,8 @@ pub(crate) mod tests {
     /// before it is used, and the repo's older copy goes once a new one is in place.
     #[tokio::test]
     async fn the_index_is_cached_by_the_entrys_hash() {
+        // As `main` (and `TestApp::new`) do: reqwest's rustls needs the process-wide provider.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let (url, fake) = fake_repo("127.0.0.1").await;
         let sha = |n: u8| format!("{n:02x}").repeat(32);
         let v1 = index_json(&[(

@@ -1634,20 +1634,25 @@ struct TrackedAppAddTemplate {
     error: Option<String>,
     name: String,
     package_name: String,
-    manual: bool,
+    /// The chosen source: "github", "fdroid" or "manual".
+    source: &'static str,
     github_repo: String,
     asset_pattern: String,
     include_prereleases: bool,
     /// Design 21: only releases whose tag starts with this.
     release_tag_prefix: String,
-    /// The field the error belongs to ("asset_pattern" or "release_tag_prefix").
+    /// An F-Droid app's repo (prefilled with [crate::fdroid::DEFAULT_REPO]) and package id.
+    fdroid_repo: String,
+    fdroid_package: String,
+    /// The field the error belongs to ("asset_pattern", "release_tag_prefix", "fdroid_repo" or
+    /// "fdroid_package").
     error_field: &'static str,
 }
 
 impl TrackedAppAddTemplate {
     /// "More options" starts open when one of its fields holds something or was refused.
     fn more_open(&self) -> bool {
-        self.error.is_some()
+        matches!(self.error_field, "asset_pattern" | "release_tag_prefix")
             || !self.package_name.trim().is_empty()
             || !self.asset_pattern.trim().is_empty()
             || !self.release_tag_prefix.trim().is_empty()
@@ -1662,16 +1667,68 @@ pub async fn new_tracked_app_form() -> impl IntoResponse {
             error: None,
             name: String::new(),
             package_name: String::new(),
-            manual: false,
+            source: "github",
             github_repo: String::new(),
             asset_pattern: String::new(),
             include_prereleases: false,
             release_tag_prefix: String::new(),
+            fdroid_repo: crate::fdroid::DEFAULT_REPO.to_string(),
+            fdroid_package: String::new(),
             error_field: "",
         }
         .render()
         .unwrap(),
     )
+}
+
+/// An F-Droid source as typed (the add and edit forms): the normalised repo and the package, or
+/// the reason and the field it belongs to. The launcher's and the music app's packages stay
+/// GitHub's (their release workflows sign them; F-Droid would sign with its own key), a system
+/// package is never a catalog app, and a package another catalog app (not `this` one) already is
+/// is refused - the phones would get two rows for one app.
+async fn parse_fdroid_source(
+    state: &AppState,
+    repo: &str,
+    package: &str,
+    this: Option<i64>,
+) -> Result<(String, String), (String, &'static str)> {
+    let repo = crate::fdroid::normalize_repo(repo).map_err(|e| (e, "fdroid_repo"))?;
+    let package = crate::fdroid::parse_package(package).map_err(|e| (e, "fdroid_package"))?;
+    let refused = |text: String| Err((format!("{text} Nothing was saved."), "fdroid_package"));
+    if crate::handlers::device_api::installed_by_launcher(state, Some(&package)) {
+        return refused(
+            "Vibb One updates itself from its own GitHub releases, never from F-Droid.".into(),
+        );
+    }
+    if crate::music::MUSIC_PACKAGES.contains(&package.as_str()) {
+        return refused(
+            "Vibb music comes from this project's GitHub releases, never from F-Droid.".into(),
+        );
+    }
+    if never_a_catalog_package(&package) {
+        return refused(format!(
+            "{package} belongs to the system - a catalog app can't be it."
+        ));
+    }
+    let taken: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
+        "SELECT name FROM tracked_apps WHERE (package_name = ?1 OR fdroid_package = ?1) \
+         AND id IS NOT ?2 ORDER BY id LIMIT 1",
+    )
+    .bind(&package)
+    .bind(this)
+    .fetch_optional(&state.db)
+    .await;
+    match taken {
+        Ok(None) => Ok((repo, package)),
+        Ok(Some(name)) => refused(format!("{name} in the catalog is already {package}.")),
+        Err(err) => {
+            tracing::error!(%err, "can't check the catalog's packages");
+            Err((
+                "Couldn't check the catalog. Nothing was saved.".to_string(),
+                "fdroid_package",
+            ))
+        }
+    }
 }
 
 /// Accepts a plain "owner/repo" string, or a pasted GitHub URL in any of its common forms - full
@@ -1708,10 +1765,23 @@ pub async fn create_tracked_app(
     Form(fields): Form<HashMap<String, String>>,
 ) -> Response {
     let field = |k: &str| fields.get(k).cloned().unwrap_or_default();
-    let source_type = if field("source_type") == "manual" {
-        "manual"
+    let source_type = match field("source_type").as_str() {
+        "manual" => "manual",
+        "fdroid" => "fdroid",
+        _ => "github",
+    };
+    let fdroid = if source_type == "fdroid" {
+        Some(
+            parse_fdroid_source(
+                &state,
+                &field("fdroid_repo"),
+                &field("fdroid_package"),
+                None,
+            )
+            .await,
+        )
     } else {
-        "github"
+        None
     };
 
     let github_repo = if source_type == "github" {
@@ -1737,10 +1807,12 @@ pub async fn create_tracked_app(
     let refused = match (
         validate_asset_pattern(asset_pattern.as_deref()),
         &tag_prefix,
+        &fdroid,
     ) {
-        (Err(error), _) => Some((error, "asset_pattern")),
-        (Ok(()), Err(error)) => Some((error.clone(), "release_tag_prefix")),
-        (Ok(()), Ok(_)) => None,
+        (Err(error), _, _) => Some((error, "asset_pattern")),
+        (Ok(()), Err(error), _) => Some((error.clone(), "release_tag_prefix")),
+        (Ok(()), Ok(_), Some(Err((error, field)))) => Some((error.clone(), *field)),
+        (Ok(()), Ok(_), _) => None,
     };
     if let Some((error, error_field)) = refused {
         let page = TrackedAppAddTemplate {
@@ -1748,23 +1820,31 @@ pub async fn create_tracked_app(
             error: Some(error),
             name: field("name"),
             package_name: field("package_name"),
-            manual: source_type == "manual",
+            source: source_type,
             github_repo: field("github_repo"),
             asset_pattern: field("asset_pattern"),
             include_prereleases,
             release_tag_prefix: field("release_tag_prefix"),
+            fdroid_repo: field("fdroid_repo"),
+            fdroid_package: field("fdroid_package"),
             error_field,
         };
         return (StatusCode::BAD_REQUEST, Html(page.render().unwrap())).into_response();
     }
     let tag_prefix = tag_prefix.unwrap_or_default();
+    let (fdroid_repo, fdroid_package) = match fdroid {
+        Some(Ok((repo, package))) => (Some(repo), Some(package)),
+        _ => (None, None),
+    };
 
     // package_name is never taken from admin input (see update_tracked_app's own doc comment) -
     // a brand-new app can't have one known yet anyway, since nothing's been installed to detect
-    // it from. Always starts empty; device_api::status backfills it automatically.
+    // it from. Always starts empty and is pinned from the first release's APK (an F-Droid app's
+    // APK must also be its `fdroid_package`, `check_fdroid_package`).
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO tracked_apps (name, package_name, source_type, github_repo, asset_pattern, \
-         include_prereleases, release_tag_prefix) VALUES (?, '', ?, ?, ?, ?, ?) RETURNING id",
+         include_prereleases, release_tag_prefix, fdroid_repo, fdroid_package) \
+         VALUES (?, '', ?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(field("name").trim())
     .bind(source_type)
@@ -1772,6 +1852,8 @@ pub async fn create_tracked_app(
     .bind(&asset_pattern)
     .bind(include_prereleases)
     .bind(&tag_prefix)
+    .bind(&fdroid_repo)
+    .bind(&fdroid_package)
     .fetch_one(&state.db)
     .await
     .expect("failed to create tracked app");
@@ -1812,6 +1894,13 @@ struct TrackedAppDetailTemplate {
     install_flash: Option<(&'static str, bool)>,
     /// A launcher row is waiting for its phone: `static/install-now.js` polls.
     install_polling: bool,
+    /// Source & Signing's value: "GitHub", "F-Droid" (or another repo's host), "Uploaded".
+    source_label: String,
+    /// An F-Droid app's source row: "F-Droid · ws.xsoh.etar", the package's page on f-droid.org,
+    /// and the one-source line under it.
+    fdroid_source: Option<String>,
+    fdroid_page: Option<String>,
+    fdroid_note: &'static str,
 }
 
 /// A local time on a page: "2 h ago" and the exact time for `title=` and ⓘ panels.
@@ -1902,8 +1991,12 @@ struct DetailsForm {
     asset_pattern: String,
     /// Design 21: only releases whose tag starts with this (blank = any but server-v*/music-v*).
     release_tag_prefix: String,
+    /// An F-Droid app's repo and package.
+    fdroid_repo: String,
+    fdroid_package: String,
     error: Option<String>,
-    /// The field the error belongs to ("asset_pattern" or "release_tag_prefix").
+    /// The field the error belongs to ("asset_pattern", "release_tag_prefix", "fdroid_repo",
+    /// "fdroid_package", or "source_type" - a refused source change, above the fields).
     error_field: &'static str,
 }
 
@@ -1972,9 +2065,26 @@ async fn render_detail_full(
         github_repo: app.github_repo.clone(),
         asset_pattern: app.asset_pattern.clone().unwrap_or_default(),
         release_tag_prefix: app.release_tag_prefix.clone().unwrap_or_default(),
+        fdroid_repo: app.fdroid_repo.clone().unwrap_or_default(),
+        fdroid_package: app.fdroid_package.clone().unwrap_or_default(),
         error: None,
         error_field: "",
     });
+    let fdroid_repo = app.fdroid_repo.as_deref().unwrap_or_default();
+    let fdroid_package = app.fdroid_package.as_deref().unwrap_or_default();
+    let source_label = source_label(&app);
+    let is_fdroid = app.source_type == "fdroid";
+    let fdroid_source = is_fdroid.then(|| format!("{source_label} · {fdroid_package}"));
+    let fdroid_page = is_fdroid
+        .then(|| crate::fdroid::package_page(fdroid_repo, fdroid_package))
+        .flatten();
+    let fdroid_note = if fdroid_page.is_some() || source_label == "F-Droid" {
+        "One source per app: F-Droid signs it with its own key, so it can't switch to GitHub or \
+         Play without a reinstall."
+    } else {
+        "One source per app: switching it to GitHub or Play needs a reinstall when the repo's \
+         signing key isn't the developer's."
+    };
     let zone = crate::display_time::Zone::load(&state.db).await;
     let now = chrono::Utc::now();
     let sync = state.app_syncs.status(id);
@@ -2098,11 +2208,25 @@ async fn render_detail_full(
             source_open,
             install_flash,
             install_polling,
+            source_label,
+            fdroid_source,
+            fdroid_page,
+            fdroid_note,
         }
         .render()
         .unwrap(),
     )
     .into_response()
+}
+
+/// What the app's page calls its source: "GitHub", "F-Droid" (another repo: its host),
+/// "Uploaded".
+fn source_label(app: &TrackedApp) -> String {
+    match app.source_type.as_str() {
+        "github" => "GitHub".to_string(),
+        "fdroid" => crate::fdroid::repo_label(app.fdroid_repo.as_deref().unwrap_or_default()),
+        _ => "Uploaded".to_string(),
+    }
 }
 
 /// The app's page can't be read: a 500, never a page with a made-up part.
@@ -2163,6 +2287,28 @@ pub async fn upload_tracked_app_release(
     let Some(app) = app else {
         return (StatusCode::NOT_FOUND, "App not found").into_response();
     };
+    // An F-Droid app takes only the repo's APKs, each checked against the repo's index: an
+    // upload would be a file nothing checked.
+    if app.source_type == "fdroid" {
+        let mut page = render_detail(
+            &state,
+            id,
+            Some(Note::Upload(Flash {
+                title: "F-Droid apps come from the repo".to_string(),
+                detail: Some(
+                    "Each release comes from the F-Droid repo and is checked against its \
+                     checksum - nothing was uploaded."
+                        .to_string(),
+                ),
+                ok: false,
+            })),
+        )
+        .await;
+        if page.status() == StatusCode::OK {
+            *page.status_mut() = StatusCode::BAD_REQUEST;
+        }
+        return page;
+    }
 
     let mut release_label: Option<String> = None;
     let mut apk_bytes: Option<Vec<u8>> = None;
@@ -2343,7 +2489,9 @@ pub async fn save_display(
 /// Lets an admin fix any of a tracked app's identifying details after creation - there was
 /// previously no way to do this short of deleting and re-adding the row (losing its cached
 /// release/check history). `source_type` itself isn't editable here - switching between
-/// GitHub-tracked and manually-uploaded changes the whole update-fetching model, not just a field.
+/// GitHub-tracked, F-Droid and manually-uploaded changes the whole update-fetching model, not just
+/// a field, and an F-Droid build is signed with F-Droid's key: a posted `source_type` other than
+/// the app's is refused (400, nothing written), worded by whether a release is cached.
 pub async fn update_tracked_app(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2361,6 +2509,40 @@ pub async fn update_tracked_app(
 
     let field = |k: &str| fields.get(k).cloned().unwrap_or_default();
     let name = field("name").trim().to_string();
+
+    // One source per app: a change is refused, the reason by the form's top. With a cached
+    // release the phones have it from that source - another one (F-Droid signs with its own key)
+    // would need a reinstall; without one, the app is removed and added again.
+    let source_refused = fields
+        .get("source_type")
+        .filter(|source| **source != app.source_type)
+        .map(|_| {
+            if app.latest_release_tag.is_some() {
+                format!(
+                    "This app's releases come from {}: its source can't change, since the phones \
+                     would have to reinstall it (another source signs it with another key). \
+                     Nothing was saved.",
+                    source_label(&app)
+                )
+            } else {
+                "An app's source is chosen when it is added: remove the app and add it again \
+                 with the other source. Nothing was saved."
+                    .to_string()
+            }
+        });
+    let fdroid = if app.source_type == "fdroid" && source_refused.is_none() {
+        Some(
+            parse_fdroid_source(
+                &state,
+                &field("fdroid_repo"),
+                &field("fdroid_package"),
+                Some(app.id),
+            )
+            .await,
+        )
+    } else {
+        None
+    };
 
     let (github_repo, asset_pattern, tag_prefix) = if app.source_type == "github" {
         let repo = normalize_github_repo(field("github_repo").trim());
@@ -2381,12 +2563,16 @@ pub async fn update_tracked_app(
     // Refused as a whole (400, nothing written): the page comes back with the entered values and
     // the reason in the Details card, that field focused (and so scrolled into view).
     let refused = match (
+        source_refused,
         validate_asset_pattern(asset_pattern.as_deref()),
         &tag_prefix,
+        &fdroid,
     ) {
-        (Err(error), _) => Some((error, "asset_pattern")),
-        (Ok(()), Err(error)) => Some((error.clone(), "release_tag_prefix")),
-        (Ok(()), Ok(_)) => None,
+        (Some(error), _, _, _) => Some((error, "source_type")),
+        (None, Err(error), _, _) => Some((error, "asset_pattern")),
+        (None, Ok(()), Err(error), _) => Some((error.clone(), "release_tag_prefix")),
+        (None, Ok(()), Ok(_), Some(Err((error, field)))) => Some((error.clone(), *field)),
+        (None, Ok(()), Ok(_), _) => None,
     };
     if let Some((error, error_field)) = refused {
         let details = DetailsForm {
@@ -2394,6 +2580,8 @@ pub async fn update_tracked_app(
             github_repo: field("github_repo"),
             asset_pattern: field("asset_pattern"),
             release_tag_prefix: field("release_tag_prefix"),
+            fdroid_repo: field("fdroid_repo"),
+            fdroid_package: field("fdroid_package"),
             error: Some(error),
             error_field,
         };
@@ -2402,6 +2590,10 @@ pub async fn update_tracked_app(
         return page;
     }
     let tag_prefix = tag_prefix.unwrap_or_default();
+    let (fdroid_repo, fdroid_package) = match fdroid {
+        Some(Ok((repo, package))) => (Some(repo), Some(package)),
+        _ => (app.fdroid_repo.clone(), app.fdroid_package.clone()),
+    };
 
     // package_name is deliberately not editable here - it used to be free text ("Android package
     // name (optional)"), and a typo or a missed applicationIdSuffix (confirmed live: the browser
@@ -2413,12 +2605,14 @@ pub async fn update_tracked_app(
     // detected wrong.
     sqlx::query(
         "UPDATE tracked_apps SET name = ?, github_repo = ?, asset_pattern = ?, \
-         release_tag_prefix = ? WHERE id = ?",
+         release_tag_prefix = ?, fdroid_repo = ?, fdroid_package = ? WHERE id = ?",
     )
     .bind(&name)
     .bind(&github_repo)
     .bind(&asset_pattern)
     .bind(&tag_prefix)
+    .bind(&fdroid_repo)
+    .bind(&fdroid_package)
     .bind(id)
     .execute(&state.db)
     .await
@@ -2577,12 +2771,18 @@ pub async fn set_is_launcher(
     Form(form): Form<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let is_launcher = form.contains_key("is_launcher");
-    sqlx::query("UPDATE tracked_apps SET is_launcher = ? WHERE id = ?")
-        .bind(is_launcher)
-        .bind(id)
-        .execute(&state.db)
-        .await
-        .ok();
+    // The launcher's row stays GitHub: Vibb One updates itself from its signed GitHub releases,
+    // and an F-Droid app is F-Droid's build (the page shows no switch for one).
+    sqlx::query(
+        "UPDATE tracked_apps SET is_launcher = ? WHERE id = ? \
+         AND NOT (? AND source_type = 'fdroid')",
+    )
+    .bind(is_launcher)
+    .bind(id)
+    .bind(is_launcher)
+    .execute(&state.db)
+    .await
+    .ok();
 
     Redirect::to(&format!("/apps/tracked/{id}?open=source#updates"))
 }

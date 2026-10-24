@@ -21,6 +21,7 @@ mod dns_blocklist;
 mod docker;
 mod edge;
 mod enrollment;
+mod fdroid;
 mod hardening;
 mod install_now;
 mod intake_limits;

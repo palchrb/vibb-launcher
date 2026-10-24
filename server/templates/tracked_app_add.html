@@ -18,18 +18,39 @@
             </div>
         </div>
 
-        {#- The source: two radios before the groups, so CSS can mark the chosen row and hide the
-            GitHub fields for uploads - no script. The wrapper holds the fields too, so it has no
-            radiogroup role: the two radios with one name are the group (qa-31-s11-code L7). -#}
+        {#- The source: three radios before the groups, so CSS can mark the chosen row and show
+            only its fields (GitHub's, F-Droid's, none for uploads) - no script. The wrapper holds
+            the fields too, so it has no radiogroup role: the radios with one name are the group
+            (qa-31-s11-code L7). -#}
         <h2 class="group-header">Source</h2>
         <div class="source-choice">
-            <input type="radio" class="choice-radio" id="source-github" name="source_type" value="github"{% if !manual %} checked{% endif %}>
-            <input type="radio" class="choice-radio" id="source-manual" name="source_type" value="manual"{% if manual %} checked{% endif %}>
+            <input type="radio" class="choice-radio" id="source-github" name="source_type" value="github"{% if source == "github" %} checked{% endif %}>
+            <input type="radio" class="choice-radio" id="source-fdroid" name="source_type" value="fdroid"{% if source == "fdroid" %} checked{% endif %}>
+            <input type="radio" class="choice-radio" id="source-manual" name="source_type" value="manual"{% if source == "manual" %} checked{% endif %}>
             <div class="group">
                 <label class="row choice-row" for="source-github"><span class="row-label">GitHub releases</span><svg class="choice-check check-github" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
+                <label class="row choice-row" for="source-fdroid"><span class="row-label">F-Droid</span><svg class="choice-check check-fdroid" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
                 <label class="row choice-row" for="source-manual"><span class="row-label">Upload APKs yourself</span><svg class="choice-check check-manual" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></label>
             </div>
             <p class="group-footer">Phones get each new version by themselves.</p>
+
+            <div class="fdroid-only">
+                <div class="group form-group">
+                    <div class="field">
+                        <label class="field-label" for="fdroid_package">Package</label>
+                        <details class="info field-info"><summary aria-label="About the package"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>The app's id in the repo: the end of its address on F-Droid, e.g. ws.xsoh.etar for f-droid.org/packages/ws.xsoh.etar.</p></div></details>
+                        <input type="text" id="fdroid_package" name="fdroid_package" value="{{ fdroid_package }}" placeholder="e.g. ws.xsoh.etar" autocapitalize="off" autocorrect="off" spellcheck="false"{% if error_field == "fdroid_package" %} aria-invalid="true" aria-describedby="fdroid_package-error" autofocus{% endif %}>
+                        {% if error_field == "fdroid_package" %}{% if let Some(e) = error %}<p class="field-error" id="fdroid_package-error">{{ e }}</p>{% endif %}{% endif %}
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="fdroid_repo">Repo</label>
+                        <details class="info field-info"><summary aria-label="About the repo"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>F-Droid's own repo, or another F-Droid repo such as IzzyOnDroid (https://apt.izzysoft.de/fdroid/repo). Each download is checked against the checksum in the repo's index.</p></div></details>
+                        <input type="text" inputmode="url" id="fdroid_repo" name="fdroid_repo" value="{{ fdroid_repo }}" placeholder="https://f-droid.org/repo" autocapitalize="off" autocorrect="off" spellcheck="false"{% if error_field == "fdroid_repo" %} aria-invalid="true" aria-describedby="fdroid_repo-error" autofocus{% endif %}>
+                        {% if error_field == "fdroid_repo" %}{% if let Some(e) = error %}<p class="field-error" id="fdroid_repo-error">{{ e }}</p>{% endif %}{% endif %}
+                    </div>
+                </div>
+                <p class="group-footer" data-note="one-source">F-Droid signs apps with its own key: an app from F-Droid can't later switch to GitHub or Play without a reinstall.</p>
+            </div>
 
             <div class="github-only">
                 <div class="group form-group">
