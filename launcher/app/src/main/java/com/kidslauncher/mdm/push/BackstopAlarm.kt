@@ -47,7 +47,16 @@ object BackstopAlarm {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
             val policy = currentPolicyDecision().policy
             val locationPolicy = policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
-            val sinceLastFix = System.currentTimeMillis() - LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
+            // Design 64 step 2: with zones from the last heartbeat (a fix, or one it skipped while
+            // the phone stayed put), so a skip waits a whole interval, not the 9-minute floor;
+            // without zones from our last own fix, as before (qa-design-64-step2-code Q-2).
+            val zonesOn = com.kidslauncher.mdm.zones.ZoneWatch.zonesOn(context, policy)
+            val anchor = com.kidslauncher.mdm.zones.backstopAnchorMs(
+                zonesOn,
+                com.kidslauncher.mdm.zones.ZoneWatch.lastBeatMs(context),
+                LauncherPreferences.mdm().lastActiveLocationFetchAtMs(),
+            )
+            val sinceLastFix = System.currentTimeMillis() - anchor
             val delay = backstopDelayMs(PushState.sseConnected, locationPolicy, sinceLastFix)
             val target = SystemClock.elapsedRealtime() + delay
             val armed = armedAt

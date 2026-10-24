@@ -1902,6 +1902,85 @@ bridge chain (§6l Part A1's setup); the fakes as their sections say (`fake-audi
     restart with it stored, the library opens on "Favoritter". A tap on the playing run's own entry under "Alle" starts
     that entry (it doesn't unpause the favourites queue).
 
+## 6t. Safe zones on the phone: fences, the crossing's two fixes, the heartbeat (design 64 step 2)
+
+Design 64 §4 and §9 (`docs/design/64-safe-zones.md`), the debug launcher (it takes mock fixes; a release build ignores
+them and counts them in `zone_watch.mock_ignored`), a server of this branch, a zone Home (r = 150 m) on the phone and
+Location Regularly. Logcat: `ZoneWatch` (`Fences: N removed, M of K added`, `Fence of zone 7 (entering=..): CROSSING
+| ECHO | NOT_OURS`, `Passive feed on`), `MdmSyncWorker` (`Location heartbeat: FIX | KEPT | STILL`), `SyncRunner` (`Sync
+for [zone]`, `[zone_confirm]`).
+
+**Two kinds of fix on the emulator** (read from AOSP, not run in the implementer's sitting - confirm in step 1):
+`adb emu geo fix <lon> <lat>` (longitude first) feeds the emulator's GNSS HAL, so the fix comes from the real `gps`
+provider and `Location.isMock()` is **false** - what our crossing's GPS fixes see. A test provider's fix
+(`cmd location providers add-test-provider ...` + `set-test-provider-location`) goes through `MockLocationProvider`,
+which marks it mock: `isMock()` **true** - fine for the debug build, refused (and counted) by a release build. The
+platform fence asks the **fused** provider (a hidden balanced request at most every 30 min - `GeofenceManager`'s
+interval, which a device owner can't change - plus every fused fix any app causes), so the checks drive the fence with
+a fused test provider and `geo fix` the GPS path to the same place. Without the test provider a crossing reaches the
+fence only at its next 30-min poll: waiting that long is also a valid run of step 3.
+
+```sh
+P=me.vibb.launcher.debug
+adb shell appops set com.android.shell android:mock_location allow
+adb shell cmd location providers add-test-provider fused
+adb shell cmd location providers set-test-provider-enabled fused true
+home() { adb shell cmd location providers set-test-provider-location fused --location 59.9139,10.7522 --accuracy 20; adb emu geo fix 10.7522 59.9139; }
+away() { adb shell cmd location providers set-test-provider-location fused --location 59.9229,10.7522 --accuracy 30; adb emu geo fix 10.7522 59.9229; }
+```
+
+1. **The mock flag**: `away`, then Update Location on the Locate page; `adb logcat -d | grep -i mock` shows nothing
+   refused (debug). In `adb shell dumpsys location` the last `gps` location has no `mock` mark and the `fused` one has.
+   Note what you see for both in the report (the finding the brief asked for).
+2. **Registered**: after a sync, `dumpsys location | grep -iA3 geofence` - one geofence of `$P`, the fused request at a
+   30-min interval with our work source; the Locate page's `#zones` footer says "Watching 1 zone on the phone." and
+   "Every" says "30 min while the phone has zones" when the parent's interval is shorter (the select still shows the
+   parent's).
+3. **Inside, silent**: `home` twice, 2 min apart - the first "entering" right after a registration is dropped
+   (`ECHO`) when it comes within 60 s of it; Home's side set, no event in the inbox.
+4. **Leave**: `away` - the fence's exit broadcast (`CROSSING`), `Sync for [zone]` with a balanced fused fix (the fused
+   test provider answers it), and 2 min later `[zone_confirm]` with a precise one (GPS first: the `geo fix` place):
+   "Anna left Home" in the inbox and as a push, timed at the first fix. The Locate page's newest-fix row's title ends in
+   "· fused · test location" for the test provider's fix and "· gps" for the geo fix (migration 0093).
+5. **Straddle**: `set-test-provider-location fused --location 59.9148,10.7522 --accuracy 200` (100 m from the centre)
+   and `geo fix` there - unsure for the server, nothing raised; no report beyond the heartbeat unless the fence fires.
+6. **No flap**: `home` (arrive back, two fixes 2 min apart), then one `away` between two `home` fixes: no "left".
+7. **A policy change re-registers**: the radius 150 -> 250 in the PWA -> `Fences: 1 removed, 1 of 1 added` (never two
+   fences in `dumpsys location`); delete the zone -> `1 removed, none watched`; Only when asked -> none, and the passive
+   feed off.
+8. **A reboot re-registers**: `adb reboot`, unlock -> the first sync logs `Fences: ... 1 of 1 added`;
+   `adb shell dumpsys deviceidle force-idle`, then `away` -> the broadcast still arrives (the fence's broadcast comes with
+   system_server's wake lock; we are on the power-save allowlist, design 19b). `dumpsys deviceidle unforce` after.
+9. **The heartbeat and the queue**: significant motion **can't be faked** - the emulator has no such sensor
+   (`dumpsys sensorservice | grep -i significant` is empty; `zone_watch.motion_sensor` false on the page: "It has no
+   motion sensor, so it takes a location every 30 min."), so the emulator runs the no-sensor fallback: a `FIX` at every
+   due heartbeat. A passive fix: with Maps open on another place for a few seconds, a "Sync now" before the heartbeat
+   is due still reports the old fix (the passive one waits in the kept slot, qa-design-64-step2-code Q-1); the next
+   due heartbeat logs `KEPT` and reports it (no LocationManager call, Android's location indicator stays off). The
+   queue: `adb shell svc wifi disable` and `svc data disable`, `away`, wait for the crossing's two syncs (both reports
+   fail), enable the network: the next report carries the confirm's fix as its `location` and the first fix as
+   `extra_locations`, and the server raises the crossing once. Then the same with the parent switching Location to Off
+   while the network is down: the first report after it carries no `extra_locations` (Q-5).
+   Without zones (delete the zone, Regularly kept): no `Passive feed on`, no `Location heartbeat:` line - every due sync
+   takes today's GPS-first fix (Q-2).
+   The moving series (design 64 §4.5) needs the sensor too, so it **can't run on the emulator** - `ZonePlanTest` covers
+   its rules; the Jelly Star run below checks it (a walk with the screen off: `Moving series: started`, `Series check:
+   KEEP|NEAR_BOUNDARY|SIDE_CHANGED`, `Moving series: ended (STILL)` a few minutes after stopping).
+10. **Un-managed and re-enrolled**: un-manage the phone in the PWA (or enroll it anew from Settings) -> `Fences: 1
+    removed, none watched`, `dumpsys location` lists no geofence of ours, the passive feed is off; after a re-enrollment
+    the first report carries no `extra_locations` of the old row (Q-8).
+11. **Kid Settings** (swipe left on Home): "This phone shares where it is with mum and dad." / nb "Telefonen deler hvor
+    den er med mamma og pappa." under the switches while location is Regularly or Only when asked; gone with Off.
+12. **Battery counts** (§5 of the note): `dumpsys batterystats --reset`, an hour still, `dumpsys batterystats $P`
+    (wake locks, alarms, GPS time); then a scripted trip (`away`/`home` every 10 min). The emulator gives counts, not mAh.
+
+Device checks left for the Jelly Star (design 64 §9): the background-location app op (`appops get $P FINE_LOCATION`
+= allow), the sensor present and armed (`dumpsys sensorservice`), whether the passive listener shows Android's location
+indicator (open question 4) and whether the trigger reaches a UID that holds only a foreground service (open question 5),
+the moving series on a walk, a walk home with the screen off (the push within minutes), a still phone at home keeping
+"Here now" for hours (`zone_watch.still`, Q-3), the battery run, a mock-location app -> `mock_location_ignored` in the
+security log once per rise, with the date on the Locate row.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

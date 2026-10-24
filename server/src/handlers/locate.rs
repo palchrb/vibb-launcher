@@ -104,6 +104,12 @@ struct Locate {
     recent: Recent,
     /// Design 64: the phone's zones (`#zones`).
     zones: ZonesView,
+    /// Design 64 step 2 (the user's decision 3): under "Every", while the phone has zones and
+    /// watches them - "30 min while the phone has zones" (the served interval, never written).
+    interval_note: Option<String>,
+    /// Design 64 step 2 (decision 14): "3 made-up locations ignored" - the phone's running count
+    /// of mock fixes a release build ignored; `None` at 0 or without a watch.
+    mock_ignored: Option<String>,
 }
 
 /// The Locate page's `#zones` (design 64 §3.5, §3.6): a row per zone, Add Zone, the line after a
@@ -120,8 +126,11 @@ struct ZonesView {
     location_unlocked: bool,
     /// The footer under the group.
     footer: &'static str,
-    /// Regularly: "within about two intervals (here 60 min)".
+    /// Regularly: "within about two intervals (here 60 min)" - not for a phone that watches the
+    /// zones itself (design 64 step 2).
     confirm_within: Option<String>,
+    /// Design 64 step 2: what the phone's zone watch says ([watch_line]), with zones and Regularly.
+    watch_line: Option<String>,
 }
 
 /// A zone's row: "Home" over "150 m · arrive and leave", its value ([Presence]), and after its
@@ -186,8 +195,10 @@ fn notify_words(arrive: bool, leave: bool) -> &'static str {
     }
 }
 
-/// The zones' part of the page for `zones` with the location setting (`mode`, `interval`) and
-/// "Keep location on" (`locked`); `flash` is `?zone=`, `flash_zone` `?zone_id=`.
+/// The zones' part of the page for `zones` with the location setting (`mode`, `interval` - the
+/// served one, design 64 step 2) and "Keep location on" (`locked`); `flash` is `?zone=`,
+/// `flash_zone` `?zone_id=`; `newest` the newest fix's time and `seen` the later of it and its
+/// last still re-send (Q-3); `watch` the phone's latest `zone_watch` (step 2).
 #[allow(clippy::too_many_arguments)]
 fn zones_view(
     zones: &[crate::zones::Zone],
@@ -197,10 +208,13 @@ fn zones_view(
     flash: Option<&str>,
     flash_zone: Option<i64>,
     newest: Option<DateTime<Utc>>,
+    seen: Option<DateTime<Utc>>,
+    watch: Option<&crate::zones::ZoneWatch>,
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> ZonesView {
-    let fresh = crate::zones::fresh(newest, mode, interval, now);
+    // "Here now" counts from the newest fix's last still re-send too (Q-3): `seen`.
+    let fresh = crate::zones::fresh(seen, mode, interval, now);
     let row_flash = match flash {
         Some("added") => Some("Added."),
         Some("saved") => Some("Saved."),
@@ -227,9 +241,16 @@ fn zones_view(
         })
         .collect::<Vec<_>>();
     let some = !rows.is_empty();
+    // Design 64 step 2 (§3.6's last rows): a phone whose watch holds fences sends a location as
+    // soon as it notices a crossing, so the "two intervals" timing is an older launcher's.
+    let watched = mode == "interval" && crate::zones::watching(watch);
     let footer = match mode {
         "off" => "Location is off for this phone, so the zones see nothing.",
         "on_request" => "The zones are judged on the locations Update Location brings.",
+        _ if watched => {
+            "The phone watches the zones itself and sends a location as soon as it notices a \
+             crossing. Arrivals and departures show after two locations on the same side."
+        }
         _ => "Arrivals and departures show after two locations on the same side.",
     };
     ZonesView {
@@ -238,9 +259,48 @@ fn zones_view(
         needs_regularly: some && mode == "on_request",
         location_unlocked: some && !locked && mode != "off",
         footer,
-        confirm_within: (mode == "interval").then(|| interval_label(interval * 2)),
+        confirm_within: (mode == "interval" && !watched).then(|| interval_label(interval * 2)),
+        watch_line: watch
+            .filter(|_| some && mode == "interval")
+            .map(|w| watch_line(w, rows.len(), interval)),
         rows,
     }
+}
+
+/// What the phone's zone watch says (design 64 §4.1), under the zones while Regularly: the
+/// fences it holds, or why it can't watch. Counts and switches only, never a place.
+fn watch_line(watch: &crate::zones::ZoneWatch, zones: usize, interval: i64) -> String {
+    if !watch.location_on {
+        return "Location is off on the phone, so it can't watch the zones.".to_string();
+    }
+    if !watch.background_location {
+        return "The phone can't use its location in the background yet, so it can't watch the \
+                zones."
+            .to_string();
+    }
+    if watch.fences == 0 {
+        return "The phone hasn't set up its zones yet; they are judged at each location it \
+                reports."
+            .to_string();
+    }
+    let watching = match watch.fences {
+        1 => "Watching 1 zone on the phone.".to_string(),
+        n => format!("Watching {n} zones on the phone."),
+    };
+    let pending = if (watch.fences as usize) < zones {
+        " The newest zone is set up at its next sync."
+    } else {
+        ""
+    };
+    let motion = if watch.motion_sensor {
+        String::new()
+    } else {
+        format!(
+            " It has no motion sensor, so it takes a location every {}.",
+            interval_label(interval)
+        )
+    };
+    format!("{watching}{pending}{motion}")
 }
 
 /// What `static/locate.js` needs from the page, as `data-` attributes on the map box: the phone,
@@ -883,6 +943,14 @@ async fn locate_view(
         )
     });
     let zone_list = crate::zones::list(&state.db, id).await?;
+    // Design 64 step 2: the phone's watch and the interval it is served (the 30-min floor).
+    let watch = crate::zones::last_zone_watch(&state.db, id).await?;
+    let served_interval = crate::zones::served_interval(
+        &location_mode,
+        location_interval,
+        zone_list.len(),
+        crate::zones::watching(watch.as_ref()),
+    );
 
     let (newest, mut map) = map_data(state, id, span, zone, now).await?;
     // The newest fix's badge (design 64 §3.5): the zones that fix is surely in.
@@ -896,7 +964,7 @@ async fn locate_view(
         FixView {
             age: fix.age(zone, now),
             accuracy,
-            exact: fix.at.map(|t| zone.exact(t)).unwrap_or_default(),
+            exact: fix_title(fix.at.map(|t| zone.exact(t)).unwrap_or_default(), l),
         }
     });
     if let Some(badge) = badge.as_ref().filter(|_| newest.is_some()) {
@@ -931,14 +999,34 @@ async fn locate_view(
     let zones = zones_view(
         &zone_list,
         &location_mode,
-        location_interval,
+        served_interval,
         location_locked,
         zone_flash,
         flash_zone,
         newest.as_ref().and_then(|l| parse_db_utc(&l.captured_at)),
+        newest.as_ref().and_then(DeviceLocation::seen_at),
+        watch.as_ref(),
         zone,
         now,
     );
+    let interval_note = (served_interval != location_interval).then(|| {
+        format!(
+            "{} while the phone has zones",
+            interval_label(served_interval)
+        )
+    });
+    // Q-9: with when the count last rose.
+    let mock_at = crate::zones::mock_logged_at(&state.db, id).await?;
+    let mock_ignored = watch.filter(|w| w.mock_ignored > 0).map(|w| {
+        let count = match w.mock_ignored {
+            1 => "1 made-up location ignored".to_string(),
+            n => format!("{n} made-up locations ignored"),
+        };
+        match mock_at {
+            Some(at) => format!("{count}, the last {}", zone.at(at, now)),
+            None => count,
+        }
+    });
     Ok(Locate {
         device,
         fix,
@@ -976,7 +1064,26 @@ async fn locate_view(
             .collect(),
         recent,
         zones,
+        interval_note,
+        mock_ignored,
     })
+}
+
+/// The newest fix row's title (design 64 step 2, migration 0093): its exact time, then the phone's
+/// provider word and "test location" for a mock fix (only a debug launcher sends one) - "24 Oct
+/// 2026, 08:14:05 · gps · test location". Only the title: the row's words stay as they are.
+fn fix_title(exact: String, fix: &DeviceLocation) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !exact.is_empty() {
+        parts.push(exact);
+    }
+    if let Some(provider) = fix.provider.as_deref() {
+        parts.push(provider.to_string());
+    }
+    if fix.mock == Some(true) {
+        parts.push("test location".to_string());
+    }
+    parts.join(" · ")
 }
 
 /// "At Home" as the popup's tail: "10 min ago · within 40 m · at Home".

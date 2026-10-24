@@ -430,6 +430,18 @@
         <receiver
             android:name=".push.BackstopReceiver"
             android:exported="false" />
+        <!-- Design 64 step 2: the safe zones' platform fences (LocationManager.addProximityAlert)
+             and the crossing's confirming-fix alarm - explicit PendingIntents only (the fences'
+             mutable ones held by system_server alone), never reachable from another app. -->
+        <receiver
+            android:name=".zones.ZoneAlertReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".zones.ZoneConfirmReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".zones.ZoneCheckReceiver"
+            android:exported="false" />
         <!-- Handy step 11: the update fence's backstop check and the self-update window's wake-up -
              our own explicit PendingIntents only. -->
         <receiver

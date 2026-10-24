@@ -25,6 +25,7 @@ import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_RING
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.RING_NOTIFICATION_ID
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.zones.ZoneWatch
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -41,17 +42,25 @@ private const val FRESH_LOCATION_TIMEOUT_MS = 15_000L
 // command ("Update location now") always asks for a fresh fix unless location is off.
 private const val CACHED_LOCATION_PROVIDER = "kid_phone_cached"
 
+// Design 64 step 2 (Q-1): the kept slot - a passive or series fix kept for the next heartbeat or
+// crossing, never the cached (reported) fix. Default prefs, a CachedFix JSON.
+private const val KEPT_FIX_KEY = "zone_kept_fix"
+
 // Android's location-in-use indicator fires on *any* LocationManager query that returns a fix -
 // confirmed live, the passive getLastKnownLocation() fallback below was still triggering it (and
 // still touching LocationManager) on every throttled-skip sync, even after gating the active fetch
 // alone. This app now keeps its own copy of the last fix it obtained instead, so a skipped cycle
 // can hand that back without calling into LocationManager at all.
+// Design 64 step 2: the fix's own provider and mock flag ride along (an older cache has neither:
+// the provider unknown, not mock), so a cached re-send reports where the fix came from.
 @Serializable
 private data class CachedFix(
     val latitude: Double,
     val longitude: Double,
     val accuracy: Float?,
     val timeMs: Long,
+    val provider: String? = null,
+    val mock: Boolean = false,
 )
 
 /**
@@ -131,7 +140,12 @@ object LocateCommands {
         // a due cycle often runs right before checkForTrackedAppUpdates triggers a self-update,
         // which SIGKILLs this process, and an async write can lose the race against that kill.
         saveLastActiveFetchAt(context, System.currentTimeMillis())
-        val fresh = requestFreshFix(context, lm) ?: try {
+        // Design 64 step 2, decision 14: a release build ignores a mock fix (`Location.isMock`)
+        // and counts it - the fresh one and every last-known candidate; the debug build takes it.
+        // Design 64 §4.4: the heartbeat and a crossing's first fix ask the fused provider at
+        // balanced power first (Wi-Fi/cell, no GPS on a GMS phone); GPS when it gives nothing.
+        val balanced = if (action == LocationAction.FRESH_BALANCED) requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } else null
+        val fresh = balanced ?: requestFreshFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } ?: try {
             val providers = mutableListOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 providers.add(LocationManager.FUSED_PROVIDER)
@@ -144,6 +158,7 @@ object LocateCommands {
                         null
                     }
                 }
+                .filter { ZoneWatch.accept(context, it) }
                 .maxByOrNull { it.time }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to read cached location", e)
@@ -156,31 +171,164 @@ object LocateCommands {
         return fresh ?: loadCachedFix()
     }
 
-    private fun loadCachedFix(): Location? {
+    private fun cachedFix(): CachedFix? {
         val raw = LauncherPreferences.mdm().cachedLocationJson() ?: return null
         return try {
-            val cached: CachedFix = ServerJson.decodeFromString(raw)
-            Location(CACHED_LOCATION_PROVIDER).apply {
-                latitude = cached.latitude
-                longitude = cached.longitude
-                cached.accuracy?.let { accuracy = it }
-                time = cached.timeMs
-            }
+            ServerJson.decodeFromString<CachedFix>(raw)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to decode cached location fix", e)
             null
         }
     }
 
+    /** The cached fix as a [Location] with its own provider (the old marker provider for a fix
+     * cached before design 64 step 2) and mock flag. */
+    private fun loadCachedFix(): Location? {
+        val cached = cachedFix() ?: return null
+        return Location(cached.provider ?: CACHED_LOCATION_PROVIDER).apply {
+            latitude = cached.latitude
+            longitude = cached.longitude
+            cached.accuracy?.let { accuracy = it }
+            time = cached.timeMs
+            isMock = cached.mock
+        }
+    }
+
+    /** The cached fix as the zone queue keeps it (`null` without one) - the moving series compares
+     * a check's fix with it. */
+    fun cachedQueued(): com.kidslauncher.mdm.zones.QueuedFix? = cachedFix()?.let {
+        com.kidslauncher.mdm.zones.QueuedFix(it.latitude, it.longitude, it.accuracy, it.timeMs, it.provider, it.mock)
+    }
+
+    /**
+     * Design 64 §4.5: one check of the moving series - a balanced fused fix only (no GPS, no
+     * permission grant, no Location switch: the fences' registration granted what it needs, and
+     * with Location off there is nothing to check), through the mock rule, stamped as our own fix;
+     * the caller keeps it ([keepFix]) or sends it. `null` when there is none.
+     */
+    suspend fun seriesFix(context: Context): Location? {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val fix = requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } ?: return null
+        saveLastActiveFetchAt(context, System.currentTimeMillis())
+        return fix
+    }
+
+    /** A one-shot fused fix at balanced power, bounded like [requestFreshFix]; `null` without the
+     * fused provider, when it is off, or on its timeout. */
+    private suspend fun requestBalancedFix(context: Context, lm: LocationManager): Location? {
+        val provider = LocationManager.FUSED_PROVIDER
+        try {
+            if (!lm.hasProvider(provider) || !lm.isProviderEnabled(provider)) return null
+        } catch (e: Exception) {
+            return null
+        }
+        val request = android.location.LocationRequest.Builder(0L)
+            .setQuality(android.location.LocationRequest.QUALITY_BALANCED_POWER_ACCURACY)
+            .setDurationMillis(FRESH_LOCATION_TIMEOUT_MS)
+            .build()
+        return withTimeoutOrNull(FRESH_LOCATION_TIMEOUT_MS) {
+            suspendCancellableCoroutine { cont ->
+                val cancellationSignal = CancellationSignal()
+                cont.invokeOnCancellation { cancellationSignal.cancel() }
+                try {
+                    lm.getCurrentLocation(provider, request, cancellationSignal, context.mainExecutor) { location ->
+                        if (cont.isActive) cont.resume(location)
+                    }
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Failed to request a balanced fix: ${e.javaClass.simpleName}")
+                    if (cont.isActive) cont.resume(null)
+                }
+            }
+        }
+    }
+
+    /** When the cached (reported) fix was taken (its own time), `null` without one - for the kept
+     * slot's "newer than" checks. */
+    private fun cachedFixTimeMs(): Long? = cachedFix()?.timeMs
+
+    /**
+     * Design 64 step 2 (qa-design-64-step2-code Q-1): a kept fix - a passive fix
+     * [com.kidslauncher.mdm.zones.passiveFixWorth] took, or a series check's that is no crossing
+     * candidate - goes into **its own slot** (`zone_kept_fix`), never the cached fix: every sync
+     * that takes no fresh fix re-sends the cached fix, so a kept fix there would ride on any
+     * backstop, nudge or command sync. Only [promoteKept] moves it into the cached fix - at a due
+     * heartbeat (`KEPT`) or a crossing's sync. Written only when newer than both.
+     */
+    @Synchronized
+    fun keepFix(context: Context, location: Location) {
+        val newest = listOfNotNull(cachedFixTimeMs(), keptFix()?.timeMs).maxOrNull()
+        if (newest != null && location.time <= newest) return
+        val kept = CachedFix(
+            latitude = location.latitude,
+            longitude = location.longitude,
+            accuracy = if (location.hasAccuracy()) location.accuracy else null,
+            timeMs = location.time,
+            provider = providerOf(location),
+            mock = location.isMock,
+        )
+        PreferenceManager.getDefaultSharedPreferences(context).edit()
+            .putString(KEPT_FIX_KEY, ServerJson.encodeToString(kept)).commit()
+    }
+
+    private fun keptRaw(): String? = try {
+        LauncherPreferences.getSharedPreferences().getString(KEPT_FIX_KEY, null)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun keptFix(): CachedFix? = keptRaw()?.let {
+        try {
+            ServerJson.decodeFromString<CachedFix>(it)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** The kept slot's fix when it is newer than the cached (reported) one - not yet reported;
+     * `null` otherwise. */
+    fun keptUnreported(): com.kidslauncher.mdm.zones.QueuedFix? {
+        val kept = keptFix() ?: return null
+        val cached = cachedFixTimeMs()
+        if (cached != null && kept.timeMs <= cached) return null
+        return com.kidslauncher.mdm.zones.QueuedFix(kept.latitude, kept.longitude, kept.accuracy, kept.timeMs, kept.provider, kept.mock)
+    }
+
+    /** The newest fix the phone knows, reported or kept - what the series times its next check by. */
+    fun newestKnown(): com.kidslauncher.mdm.zones.QueuedFix? = keptUnreported() ?: cachedQueued()
+
+    /** A due heartbeat's `KEPT` or a crossing's sync: the kept fix, if newer, becomes the cached
+     * (reported) fix; the slot empties. True when one was promoted. */
+    @Synchronized
+    fun promoteKept(context: Context): Boolean {
+        val raw = keptRaw()
+        val promoted = keptUnreported() != null && raw != null
+        val edit = PreferenceManager.getDefaultSharedPreferences(context).edit()
+        if (promoted) edit.putString(LauncherPreferences.mdm().keys().cachedLocationJson(), raw)
+        edit.remove(KEPT_FIX_KEY).commit()
+        return promoted
+    }
+
+    /** The zone watch went (no zones, unmanaged, a new enrollment): nothing kept waits. */
+    fun clearKept(context: Context) {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        if (prefs.contains(KEPT_FIX_KEY)) prefs.edit().remove(KEPT_FIX_KEY).commit()
+    }
+
+    /** The provider a report names for [location] - its own, never the old cache marker. */
+    fun providerOf(location: Location): String? = location.provider?.takeIf { it != CACHED_LOCATION_PROVIDER }
+
     // Both writes below commit() synchronously rather than going through the generated
     // apply()-based setters - see the call site's comment on why an async write here can lose the
     // race against a same-cycle self-update's SIGKILL.
+    @Synchronized
     private fun saveCachedFix(context: Context, location: Location) {
         val cached = CachedFix(
             latitude = location.latitude,
             longitude = location.longitude,
             accuracy = if (location.hasAccuracy()) location.accuracy else null,
             timeMs = location.time,
+            provider = providerOf(location),
+            mock = location.isMock,
         )
         val key = LauncherPreferences.mdm().keys().cachedLocationJson()
         PreferenceManager.getDefaultSharedPreferences(context)

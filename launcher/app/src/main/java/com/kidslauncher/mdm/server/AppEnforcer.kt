@@ -322,6 +322,9 @@ object AppEnforcer {
         val managedForHardening = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
         val hardening = hardeningPlan(policy?.hardening, managedForHardening)
         clearHardening(context, dpm, admin, hardening)
+        // Design 64 step 2: an unmanaged phone (un-enrolled from the server's side, or never
+        // managed) keeps no zone fence, passive feed, motion series or queued fix. Never throws.
+        if (!managedForHardening) com.kidslauncher.mdm.zones.ZoneWatch.release(context)
         // Android's backup to Google stays off while managed (google-account runbook) - early, so
         // nothing that throws below can skip it. Like the hardening, never lifted by the override
         // or the pause, and nothing ever switches it on. Catches and logs everything itself.

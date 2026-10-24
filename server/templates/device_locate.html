@@ -56,6 +56,12 @@
             {% if view.waiting_for_fix %}
             <p id="fix_wait" class="row row-note" role="status">Waiting for a fresh fix&hellip;</p>
             {% endif %}
+            {#- Design 64 step 2 (decision 14): a release launcher ignores a mock fix and counts it. -#}
+            {% if let Some(mock) = view.mock_ignored %}
+            <div class="row" data-row="mock-ignored">
+                <span class="row-label">{{ mock }}<span class="row-sub">An app on the phone pretended it was somewhere else. Vibb One kept those out of the map and the zones.</span></span>
+            </div>
+            {% endif %}
             <form method="post" action="/devices/{{ view.device.id }}/command/locate#location" class="cell">
                 <button type="submit" class="row row-button">Update Location</button>
             </form>
@@ -110,7 +116,7 @@
             <a class="row row-button" href="/devices/{{ view.device.id }}/zones/new" data-row="add-zone">Add Zone</a>
             {% endif %}
         </div>
-        <p class="group-footer">{% if view.zones.rows.is_empty() %}A zone tells you when the phone arrives or leaves, like Home or School.{% else %}{{ view.zones.footer }}{% if let Some(within) = view.zones.confirm_within %} That is within about two intervals (here {{ within }}).{% endif %}{% endif %}</p>
+        <p class="group-footer">{% if view.zones.rows.is_empty() %}A zone tells you when the phone arrives or leaves, like Home or School.{% else %}{{ view.zones.footer }}{% if let Some(within) = view.zones.confirm_within %} That is within about two intervals (here {{ within }}).{% endif %}{% if let Some(line) = view.zones.watch_line %} <span data-zone-watch>{{ line }}</span>{% endif %}{% endif %}</p>
     </section>
 
     {% if view.location_off %}
@@ -185,7 +191,7 @@
                 </label>
                 {% if view.location_mode == "interval" %}
                 <label class="row">
-                    <span class="row-label">Every</span>
+                    <span class="row-label">Every{% if let Some(note) = view.interval_note %}<span class="row-sub" data-interval-note>{{ note }}</span>{% endif %}</span>
                     <select class="pick" name="interval_minutes" data-autosave>
                         {% for (minutes, label) in view.intervals %}
                         <option value="{{ minutes }}"{% if *minutes == view.location_interval %} selected{% endif %}>{{ label }}</option>

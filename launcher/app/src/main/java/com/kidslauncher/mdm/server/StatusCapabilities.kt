@@ -27,6 +27,8 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     // launcher-v0.36.0-rc.4 (every build its own versionCode); kept for builds tagged before it.
     SAME_CODE_UPDATE_CAPABILITY,
     POWER_CAPABILITY,
+    // Design 64 step 2: the zone watch - fences, the crossing's fixes, `zone_watch` in every report.
+    ZONES_CAPABILITY,
     com.kidslauncher.mdm.music.STORYTEL_JWT_CAPABILITY,
     // Design 59 step 4: claimed only with `set_kid_pin`'s handler (Q59-13) - the server then sends this phone the PIN.
     com.kidslauncher.mdm.lock.ANDROID_KEYGUARD_CAPABILITY,

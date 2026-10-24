@@ -214,6 +214,7 @@ class KidSettingsActivity : UIObjectActivity() {
         }
         this.section = section
         renderControls(section)
+        binding.kidSettingsLocationLine.visibility = if (model.sharesLocation) View.VISIBLE else View.GONE
     }
 
     private fun renderControls(section: ControlsSection) {
@@ -356,7 +357,7 @@ class KidSettingsActivity : UIObjectActivity() {
             binding.kidSettingsControlsHeading, binding.kidSettingsControlsMessage, binding.kidSettingsWifiSwitch,
             binding.kidSettingsBluetoothSwitch, binding.kidSettingsBrightnessLabel, binding.kidSettingsSoundLabel,
             binding.kidSettingsSoundNote, binding.kidSettingsTouchSounds, binding.kidSettingsTouchVibration,
-            binding.kidSettingsTouchReadOnly, binding.kidSettingsTouchKeyboard,
+            binding.kidSettingsTouchReadOnly, binding.kidSettingsTouchKeyboard, binding.kidSettingsLocationLine,
             // The card's links in the ink too: peach on the card over a light or mid-tone ground
             // was ~2:1 (qa-34-s10-code M1). Bold, as before.
             binding.kidSettingsWifiManage, binding.kidSettingsBluetoothManage,

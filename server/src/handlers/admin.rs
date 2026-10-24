@@ -121,6 +121,7 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "zone_added" => "Zone added",
         "zone_changed" => "Zone changed",
         "zone_deleted" => "Zone deleted",
+        "mock_location_ignored" => "Made-up locations ignored",
         "dns_log_changed" => "Blocked Activity log changed",
         "dns_server_changed" => "DNS server changed",
         "lock_screen_text_changed" => "Lock screen text changed",

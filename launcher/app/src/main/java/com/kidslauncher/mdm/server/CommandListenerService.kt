@@ -146,6 +146,12 @@ class CommandListenerService : Service() {
         handler.removeCallbacksAndMessages(null)
         stopSse()
         releaseDropWakeLock()
+        // Design 64 §4.3: the passive feed is the anchor's; the next sync's apply starts it again.
+        try {
+            com.kidslauncher.mdm.zones.PassiveFixes.stop(applicationContext)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't stop the passive feed", e)
+        }
         super.onDestroy()
     }
 

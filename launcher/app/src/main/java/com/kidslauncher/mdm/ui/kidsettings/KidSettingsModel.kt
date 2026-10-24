@@ -74,7 +74,18 @@ data class WallpaperTile(val wallpaper: Wallpaper, val selected: Boolean)
 fun wallpaperTiles(choices: List<Wallpaper>, current: Wallpaper): List<WallpaperTile> =
     if (choices.size < 2) emptyList() else choices.map { WallpaperTile(it, it.id == current.id) }
 
-data class KidSettingsModel(val controls: ControlsSection, val wallpapers: List<WallpaperTile>)
+/**
+ * Design 64 step 2 (the user's decision 6, 2026-10-24): the calm line "This phone shares where it
+ * is with mum and dad." - no control - while the phone shares its location at all: device owner,
+ * an accepted policy, and its location mode isn't "off" (an older server's policy without
+ * `location_policy` is the old every-10-minutes trail, so it shares). Only when asked shares on
+ * request, Regularly and the zones continuously - both are sharing. Never from a corrupt cache or
+ * before the first policy (nothing is shared then).
+ */
+fun sharesLocation(isDeviceOwner: Boolean, cached: CachedPolicy): Boolean =
+    isDeviceOwner && cached is CachedPolicy.Ok && cached.policy.locationPolicy?.mode != "off"
+
+data class KidSettingsModel(val controls: ControlsSection, val wallpapers: List<WallpaperTile>, val sharesLocation: Boolean = false)
 
 /** The whole screen (design 08 §2): the activity only renders this. */
 fun kidSettingsModel(
@@ -82,4 +93,8 @@ fun kidSettingsModel(
     cached: CachedPolicy,
     choices: List<Wallpaper>,
     current: Wallpaper,
-): KidSettingsModel = KidSettingsModel(controlsSection(isDeviceOwner, cached), wallpaperTiles(choices, current))
+): KidSettingsModel = KidSettingsModel(
+    controlsSection(isDeviceOwner, cached),
+    wallpaperTiles(choices, current),
+    sharesLocation(isDeviceOwner, cached),
+)

@@ -28,6 +28,19 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.calls.OngoingCalls
 import com.kidslauncher.mdm.server.dto.LocationPolicy
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
+import com.kidslauncher.mdm.zones.FreshKind
+import com.kidslauncher.mdm.zones.Heartbeat
+import com.kidslauncher.mdm.zones.MotionGate
+import com.kidslauncher.mdm.zones.QueuedFix
+import com.kidslauncher.mdm.zones.ZoneWatch
+import com.kidslauncher.mdm.zones.extraLocations
+import com.kidslauncher.mdm.zones.Motion
+import com.kidslauncher.mdm.zones.freshOwnFix
+import com.kidslauncher.mdm.zones.heartbeatDue
+import com.kidslauncher.mdm.zones.reportStill
+import com.kidslauncher.mdm.zones.syncLocationAction
+import com.kidslauncher.mdm.zones.toQueued
+import com.kidslauncher.mdm.zones.toReport
 import com.kidslauncher.mdm.timerules.key
 import com.kidslauncher.mdm.ui.LockActivity
 import com.kidslauncher.mdm.play.PlayRuntime
@@ -40,7 +53,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.time.Instant
 
 private const val LOG_TAG = "MdmSyncWorker"
 
@@ -172,6 +184,10 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     mdm.lockKey(lock.key())
     // Derives the same lock from the same policy and suspends apps while it's on.
     AppEnforcer.apply(context, decision, fromSync = true)
+    // Design 64 step 2: the zone watch follows the enforced policy - the fences at the first sync of
+    // every process and on every change of the zones, the passive feed and the motion sensor while
+    // Regularly. The pause changes nothing (decision 12). Never throws.
+    ZoneWatch.apply(context, decision.policy)
     // Design 24b: a parent-PIN window that ended (this sync ends an override) locks again now,
     // before the status report, so the report carries the relock.
     try {
@@ -196,9 +212,25 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // push-triggered syncs, and manual "Sync now") follows the parent's location policy instead
     // (off / on request / every N minutes, see locationAction), so location isn't forcing an
     // active fetch (visible location indicator, slower sync) on every single cycle.
-    val forceFreshLocation = ranCommand?.command in setOf("ring", "locate")
+    // Design 64 step 2: a zone fence's crossing and its confirming alarm ask for a fresh fix too.
+    // Design 64 §4.4: which path - the parent's "locate now" and a crossing's confirming fix are
+    // the precise one (GPS first), a crossing's first fix the balanced one.
+    // Everything new of step 2 hangs on the zone watch being on (qa-design-64-step2-code Q-2):
+    // without zones the location step is exactly today's.
+    val zonesOn = ZoneWatch.zonesOn(context, decision.policy)
+    val zoneFix = ZoneWatch.takeFreshWanted()?.takeIf { zonesOn }
+    val commandFix = ranCommand?.command in setOf("ring", "locate")
+    val forceFreshLocation = commandFix || zoneFix != null
+    val preciseFix = commandFix || zoneFix == FreshKind.PRECISE
     val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
-    val location = currentLocationReport(context, dpm, admin, forceFreshLocation, locationPolicy)
+    val location = currentLocationReport(context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, locationPolicy)
+    val locationOff = locationPolicy?.mode == "off"
+    // Location Off, or no zones watched: the queue is emptied before the report, which carries no
+    // extras - nothing kept from before the switch is sent (Q-5).
+    val queueOff = locationOff || !zonesOn
+    if (queueOff) ZoneWatch.clearQueue(context)
+    // The fixes that waited for a report (a crossing's in a tunnel), without this report's own.
+    val extraFixes = if (queueOff) null else extraLocations(ZoneWatch.queue(context), location.fix)
 
     // Catalog downloads (design 13): the list and the queue before the report, so it carries the
     // queue; the downloads themselves run outside the sync (AppDownloads). The switch is the
@@ -207,6 +239,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     checkForTrackedAppUpdates(context, api)
 
     // Best-effort - a failed report must never affect the lock decision above.
+    var zoneQueueDone = false
     try {
         // The current blocks and how many in all (design 24b fix, QA of cmd-expiry Low 2).
         val blocks = WindowRelock.reportBlocks(context)
@@ -267,8 +300,14 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 dnsUpstream = KidVpnService.dnsUpstreamReport(),
                 battery = BatteryStatus.report(context),
                 writeSettingsGranted = WriteSettingsAccess.granted(context),
+                extraLocations = extraFixes?.map { it.toReport() },
+                zoneWatch = ZoneWatch.report(context, still = location.still),
             )
         )
+        // Design 64 step 2: what the server took leaves the queue; a report it didn't take leaves
+        // its fix there for the next one.
+        afterZoneReport(context, extraFixes, location.fix, sent.isSuccessful, queueOff)
+        zoneQueueDone = true
         // Design 59 (qa-59-step4-code N2): the relocks are told only by a report the server took.
         if (sent.isSuccessful) com.kidslauncher.mdm.lock.AndroidLock.relocksReported(lockState.keyguardRelocks)
         // The report just landed, so this doesn't need to stay pending - if it was never used,
@@ -276,6 +315,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         mdm.offlineOverrideUsedPendingReport(false)
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Status report failed", e)
+        if (!zoneQueueDone) afterZoneReport(context, extraFixes, location.fix, accepted = false, locationOff = queueOff)
     }
 
     // `locate` is answered after the report that carries the fix, with the fix's accuracy and age.
@@ -523,38 +563,87 @@ private fun requestFollowUpSync(context: Context) {
 private suspend fun reportCommandResult(context: Context, api: MdmApi, command: PendingCommand, success: Boolean, message: String?) =
     CommandAnswers.result(context, api, command, success, message)
 
-/** What the sync did about location: the report (if any), and for `locate` the fix's details. */
+/** The zone queue after the status report (design 64 step 2, `queueAfterReport`); never throws. */
+private fun afterZoneReport(context: Context, extras: List<QueuedFix>?, fix: QueuedFix?, accepted: Boolean, locationOff: Boolean) {
+    try {
+        ZoneWatch.afterReport(context, extras.orEmpty(), fix, accepted, locationOff)
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Zone queue update failed", e)
+    }
+}
+
+/** What the sync did about location: the report (if any) and its fix as the zone queue keeps it,
+ * for `locate` the fix's details, and [still] - `zone_watch.still` (`reportStill`, Q-3). */
 private class LocationOutcome(
     val action: LocationAction,
-    val report: LocationReport?,
+    val fix: QueuedFix?,
     val accuracyMeters: Float?,
     val ageSeconds: Long?,
-)
+    val still: Boolean = false,
+) {
+    val report: LocationReport? get() = fix?.toReport()
+}
 
-/** [policy] `null` = no policy (a never-managed phone): the old behaviour. */
+/**
+ * [policy] `null` = no policy (a never-managed phone): the old behaviour. The action is the pure
+ * [syncLocationAction]: **without zones** ([zonesOn] false) exactly today's `locationAction` - no
+ * heartbeat, no kept fix, no motion gate, the precise path for every fresh fix
+ * (qa-design-64-step2-code Q-2). With zones (design 64 step 2): Regularly without a command is the
+ * heartbeat ([heartbeatDue]) - a fresh fix only when due, no kept fix not yet reported is younger
+ * than the interval and the motion sensor doesn't say the phone stayed put (at most 4 h of that),
+ * else the cached fix, no LocationManager call; every due call and fresh fix stamps the beat. A
+ * crossing's sync ([crossing], [forceFresh] through `ZoneWatch.takeFreshWanted`) and
+ * `locate`/`ring` always fix - [precise] (`locate`/`ring`, a crossing's confirm) GPS first, a
+ * crossing's first fix and the heartbeat `FRESH_BALANCED`. The kept slot becomes the reported fix
+ * only at a due `KEPT` or a crossing's sync (Q-1); the motion gate arms only after a genuinely
+ * fresh fix (Q-6).
+ */
 private suspend fun currentLocationReport(
     context: Context,
     dpm: DevicePolicyManager,
     admin: ComponentName,
     forceFresh: Boolean,
+    precise: Boolean,
+    crossing: Boolean,
+    zonesOn: Boolean,
     policy: LocationPolicy?,
 ): LocationOutcome {
     if (!dpm.isDeviceOwnerApp(context.packageName)) return LocationOutcome(LocationAction.NONE, null, null, null)
-    val sinceLastFresh = System.currentTimeMillis() - LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
-    val action = locationAction(policy, forceFresh, sinceLastFresh)
+    val now = System.currentTimeMillis()
+    val lastOwnFix = LauncherPreferences.mdm().lastActiveLocationFetchAtMs()
+    val motion = if (zonesOn) MotionGate.motion(context) else Motion.NO_SENSOR
+    val kept = if (zonesOn) LocateCommands.keptUnreported() else null
+    val sync = syncLocationAction(
+        policy = policy,
+        zonesOn = zonesOn,
+        forced = forceFresh,
+        precise = precise,
+        nowMs = now,
+        lastOwnFixMs = lastOwnFix,
+        lastBeatMs = if (zonesOn) ZoneWatch.lastBeatMs(context) else 0L,
+        motion = motion,
+        keptFixAgeMs = kept?.let { now - it.timeMs },
+    )
+    val action = sync.action
+    if (zonesOn) {
+        val beat = sync.beat
+        if (beat != null && beat != Heartbeat.NOT_DUE) Log.i(LOG_TAG, "Location heartbeat: $beat")
+        if (action.fresh || (beat != null && beat != Heartbeat.NOT_DUE)) ZoneWatch.stampBeat(context, now)
+        // The kept fix (passive, a series check's) becomes the reported one only here (Q-1).
+        if (beat == Heartbeat.KEPT || crossing) LocateCommands.promoteKept(context)
+    }
     val location = LocateCommands.currentLocation(context, dpm, admin, action)
         ?: return LocationOutcome(action, null, null, null)
+    // A genuinely fresh fix of our own (not the cached or an old last-known fallback): the motion
+    // sensor counts "moved" from here (Q-6).
+    if (zonesOn && action.fresh && freshOwnFix(location.time, now)) MotionGate.arm(context)
     val accuracy = if (location.hasAccuracy()) location.accuracy else null
     return LocationOutcome(
         action,
-        LocationReport(
-            latitude = location.latitude,
-            longitude = location.longitude,
-            accuracyMeters = accuracy,
-            capturedAt = Instant.ofEpochMilli(location.time).toString(),
-        ),
+        location.toQueued(LocateCommands.providerOf(location)),
         accuracy,
         (System.currentTimeMillis() - location.time) / 1000,
+        still = reportStill(zonesOn, action, motion, now, lastOwnFix),
     )
 }
 

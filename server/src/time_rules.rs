@@ -63,11 +63,13 @@ pub struct TimePolicy {
     pub lifts: Vec<PolicyLift>,
 }
 
-/// `PolicyResponse.location_policy` - always sent.
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+/// `PolicyResponse.location_policy` - always sent. `interval_minutes` is the served one (design
+/// 64 step 2: `zones::served_interval`); `zones` always the key, `[]` unless Regularly with zones.
+#[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct LocationPolicy {
     pub mode: String,
     pub interval_minutes: i64,
+    pub zones: Vec<crate::zones::PolicyZone>,
 }
 
 /// A `time_rules` row.

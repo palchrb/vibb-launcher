@@ -145,11 +145,27 @@ data class KidLock(
 )
 
 /** `PolicyResponse.locationPolicy`: [mode] "off", "on_request" or "interval" (every
- * [intervalMinutes]); see [com.kidslauncher.mdm.server.locationAction]. */
+ * [intervalMinutes]); see [com.kidslauncher.mdm.server.locationAction]. Design 64 step 2: [zones]
+ * the phone's safe zones to watch (the server sends them only with "interval"; `[]` and a missing
+ * key - an older server - mean none), and [intervalMinutes] the served one - at least 30 while the
+ * phone has zones and reports fences ([ZoneWatchReport]). */
 @Serializable
 data class LocationPolicy(
     val mode: String = "on_request",
     val intervalMinutes: Int = 30,
+    val zones: List<PolicyZone> = emptyList(),
+)
+
+/** `LocationPolicy.zones` (design 64 step 2): a zone's id, centre and radius in metres - never its
+ * name, which stays on the server (decision 9). The phone registers one platform fence per zone
+ * ([com.kidslauncher.mdm.zones.ZoneFences]) and only sends fixes; the server judges every arrival
+ * and departure. */
+@Serializable
+data class PolicyZone(
+    val id: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val radiusM: Int,
 )
 
 /** `PolicyResponse.launcherUi` - see kid-phone-server's `LauncherUi`. [language] is "system", "nb"

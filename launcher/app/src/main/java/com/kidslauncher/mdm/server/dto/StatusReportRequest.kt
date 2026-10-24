@@ -104,6 +104,36 @@ data class StatusReportRequest(
      * app-op the touch sounds row and the clock format need ([com.kidslauncher.mdm.server.WriteSettingsAccess]);
      * `null` = unreadable, left out. The server names Settings' row while it is `false`. */
     val writeSettingsGranted: Boolean? = null,
+    /** Design 64 step 2: the fixes taken or kept since the last report the server took and not sent
+     * as [location] (a crossing's fix and its confirming one, a report that didn't get through),
+     * oldest first, at most 20 ([com.kidslauncher.mdm.zones.ZONE_QUEUE_MAX]); `null` = none (left
+     * out). The server stores every one, then judges the zones once. Pinned by
+     * `zone_status_report.json` (`ZoneReportTest`). */
+    val extraLocations: List<LocationReport>? = null,
+    /** Design 64 step 2 (capability `zones_v1`): the phone's zone watch - see [ZoneWatchReport];
+     * `null` = not device owner (left out). */
+    val zoneWatch: ZoneWatchReport? = null,
+)
+
+/**
+ * `StatusReportRequest.zoneWatch` (design 64 step 2; no defaults: every field is always sent): the
+ * platform fences registered now ([fences]; the server's 30-min floor on the Regularly interval
+ * waits for `fences > 0`), whether the phone has a significant-motion sensor (without one the
+ * heartbeat never skips), the system Location switch, the background-location grant, and the
+ * mock fixes a release build ignored since the launcher's data was created - a running count, so a
+ * lost report loses none (the server logs each rise). Counts and switches only, never a place.
+ * [still] (qa-design-64-step2-code Q-3; `false` is left out): this report re-sends the cached fix
+ * while the motion sensor says the phone hasn't moved since it (`reportStill`), so the server
+ * counts "Here now" from this report - the fix's own time stays.
+ */
+@Serializable
+data class ZoneWatchReport(
+    val fences: Int,
+    val motionSensor: Boolean,
+    val locationOn: Boolean,
+    val backgroundLocation: Boolean,
+    val mockIgnored: Long,
+    val still: Boolean = false,
 )
 
 /** `StatusReportRequest.dnsUpstream` (no defaults: every field is always sent): the [rev] of the

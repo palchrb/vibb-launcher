@@ -285,9 +285,29 @@ pub(crate) async fn build_policy(
     ) = legacy;
 
     let time_policy = build_time_policy(state, &policy, global.as_ref()).await?;
+    // Design 64 step 2: the phone's zones (centre and radius, never the name) while Regularly,
+    // and the served interval: at least 30 min while there are zones and the phone's watch holds
+    // fences (the user's decision 3) - computed here, never written.
+    let zones = crate::zones::list(&state.db, device_id).await?;
+    let watch = crate::zones::last_zone_watch(&state.db, device_id).await?;
     let location_policy = LocationPolicy {
         mode: policy.location_mode.clone(),
-        interval_minutes: policy.location_interval_minutes,
+        interval_minutes: crate::zones::served_interval(
+            &policy.location_mode,
+            policy.location_interval_minutes,
+            zones.len(),
+            crate::zones::watching(watch.as_ref()),
+        ),
+        // Q-10: the centres and radii only to a launcher that watches zones itself.
+        zones: if last_capabilities(&state.db, device_id)
+            .await?
+            .iter()
+            .any(|c| c == crate::models::ZONES_CAPABILITY)
+        {
+            crate::zones::policy_zones(&policy.location_mode, &zones)
+        } else {
+            Vec::new()
+        },
     };
 
     // Design 36 §4.1: Custom with a valid pair is the `dns_upstream` object and "cloudflare" for a
@@ -1135,6 +1155,11 @@ pub async fn status(
         .dns_upstream
         .as_ref()
         .and_then(crate::dns_server::sanitize_dns_upstream);
+    // Design 64 step 2: the phone's zone watch, known keys only.
+    let zone_watch_json = report
+        .zone_watch
+        .as_ref()
+        .and_then(crate::zones::sanitize_zone_watch);
 
     // The previous report, in one read (qa-35-s1-code L1: the foreign apps' dedup key and their
     // comparison come from the same row, so two parallel reports agree): for the security log
@@ -1165,8 +1190,8 @@ pub async fn status(
           battery_optimization_exempt, relock_json, unseen_boots_count, unseen_boots_last_at_ms, \
           foreign_access_json, remote_wipe_ready, admin_policies_pending_json, relock_blocks_json, \
           relock_blocks_total, clock_format_applied, battery_level, battery_charging, dns_upstream_json, \
-          write_settings_granted) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          write_settings_granted, zone_watch_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(device.id)
     .bind(&report.lock_reason)
@@ -1221,6 +1246,7 @@ pub async fn status(
     .bind(report.battery.map(|b| b.charging))
     .bind(&dns_upstream_json)
     .bind(report.write_settings_granted)
+    .bind(&zone_watch_json)
     .execute(&state.db)
     .await
     .ok();
@@ -1273,6 +1299,28 @@ pub async fn status(
         if let (Some(phone), Some((count, last_at_ms))) = (&phone, unseen_boots) {
             crate::parent_events::raise_logged(&state, &phone.unseen_boot(count, last_at_ms)).await;
         }
+    }
+    // Design 64 step 2: a release build ignores a mock fix and counts it (decision 14); the line
+    // comes once per rise, against the count last logged (Q-9).
+    match crate::zones::mock_rise(
+        &state.db,
+        device.id,
+        crate::zones::parse_zone_watch(zone_watch_json.as_deref()).as_ref(),
+    )
+    .await
+    {
+        Ok(Some(line)) => {
+            crate::security::record_security_event(
+                &state.db,
+                "mock_location_ignored",
+                None,
+                None,
+                Some(&line),
+            )
+            .await;
+        }
+        Ok(None) => {}
+        Err(err) => tracing::error!(device_id = device.id, %err, "can't compare the mock count"),
     }
     crate::handlers::window_relock::log_relock(
         &state.db,
@@ -1415,18 +1463,25 @@ pub async fn status(
     // normalised, UTC with milliseconds), the coordinates are on Earth and the accuracy isn't
     // negative. Anything else is dropped (and logged); the rest of the report is kept.
     // Design 64: stored once (the launcher re-sends its cached fix in every report), then the
-    // phone's zones judged on it, in one transaction (`zones::intake`).
-    if let Some(loc) = report.location {
-        match crate::models::checked_location(&loc) {
-            Some(captured_at) => {
-                crate::zones::intake(&state, device.id, &loc, &captured_at).await;
-            }
-            None => tracing::warn!(
-                device_id = device.id,
-                "dropped a location that isn't valid (time, coordinates or accuracy)"
-            ),
-        }
+    // phone's zones judged on it (`zones::intake`). Step 2: the report's `extra_locations` (a
+    // crossing's fixes, a report that didn't get through) too - every fix stored first, the
+    // zones judged once after them (code QA N-4).
+    let (fixes, dropped) =
+        crate::zones::report_fixes(&report.extra_locations, report.location.as_ref());
+    if dropped > 0 {
+        tracing::warn!(
+            device_id = device.id,
+            dropped,
+            "dropped locations that aren't valid (time, coordinates or accuracy) or too many"
+        );
     }
+    // Q-3: a `still` report's own fix is current as of now ("Here now" counts from it).
+    let resent = report
+        .location
+        .as_ref()
+        .filter(|_| crate::zones::report_still(report.zone_watch.as_ref()))
+        .and_then(|loc| crate::models::checked_location(loc).map(|at| (loc, at)));
+    crate::zones::intake(&state, device.id, &fixes, resent.as_ref()).await;
 
     StatusCode::NO_CONTENT
 }

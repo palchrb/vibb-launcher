@@ -513,6 +513,8 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     // The queued parent-PIN events were about the old enrollment (design 24).
                     com.kidslauncher.mdm.server.ParentPin.clearEvents(context)
                     com.kidslauncher.mdm.server.CommandAnswers.clear(context)
+                    // The old enrollment's zone watch: fences, queue, kept fix, beat, mock count (design 64 step 2, Q-8).
+                    com.kidslauncher.mdm.zones.ZoneWatch.forget(context)
                     com.kidslauncher.mdm.server.InstallNow.clear(context)
                     // First policy now, not at the next backstop (up to 30 min away).
                     com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "enrolled")
