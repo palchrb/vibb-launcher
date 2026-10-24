@@ -478,6 +478,9 @@ off + `finger touch 1` -> Home with no pad; (b) glance up + `finger touch 1` -> 
 -> unlocked; (c) after a reboot the finger is refused until the PIN. Confirm on the Jelly Star. **RC3-6 (the rc.3
 run):** removing Android's credential by hand (the `OWN_KEYPAD` path) also deletes the enrolled fingerprint (`count:0`),
 and it stays deleted after the next Child PIN sets Android's PIN again - the parent enrols it again during a pause.
+Since 2026-10-24 (branch `write-settings-row`) that is Vibb One's Settings row "Fingerprint" ("Fingeravtrykk", shown
+while Android's credential is ours on a phone with a sensor; `server/FingerprintEnrol.kt`): during a pause it opens
+Android's enrolment, which asks for the Child PIN - no adb.
 
 ### 8.5 Answers to the revision check's guess list (`qa-59d-revision-check.md`)
 

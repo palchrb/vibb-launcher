@@ -292,6 +292,13 @@ object AndroidLock {
         return androidGate(faceOn, owned(app), deviceSecure(app))
     }
 
+    /** We own Android's live credential (CE `keyguard_android` and a secure keyguard): the PIN Android asks before
+     * its fingerprint enrolment is the Child PIN. Settings' "Fingerprint" row ([com.kidslauncher.mdm.server.fingerprintRowShown]). */
+    fun credentialOurs(context: Context): Boolean {
+        val app = context.applicationContext
+        return owned(app) && deviceSecure(app)
+    }
+
     /** CE `keyguard_android`; unreadable = not ours. */
     private fun owned(app: Context): Boolean = try {
         PinLockStore.keyguardAndroid(app)

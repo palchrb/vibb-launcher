@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <Preference
         android:key="@string/settings_apps_hidden_key"
@@ -49,6 +50,13 @@
     <Preference
         android:key="settings_mdm_write_settings"
         android:title="@string/settings_mdm_write_settings" />
+
+    <!-- Android's fingerprint enrolment for the kid (android mode, a phone with a sensor); shown and summarised in
+         code. -->
+    <Preference
+        android:key="settings_mdm_fingerprint"
+        android:title="@string/settings_mdm_fingerprint"
+        app:isPreferenceVisible="false" />
 
     <Preference
         android:key="settings_play_install_mode"

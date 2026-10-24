@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.util.Log
 import android.widget.EditText
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
@@ -32,7 +33,11 @@ import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.RelockTrigger
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.WindowRelock
+import com.kidslauncher.mdm.server.FingerprintAccess
+import com.kidslauncher.mdm.server.FingerprintEnrol
 import com.kidslauncher.mdm.server.WriteSettingsAccess
+import com.kidslauncher.mdm.server.fingerprintAccess
+import com.kidslauncher.mdm.server.fingerprintRowShown
 import com.kidslauncher.mdm.server.WriteSettingsRow
 import com.kidslauncher.mdm.server.writeSettingsRowState
 import com.kidslauncher.mdm.play.InstallModeStart
@@ -54,6 +59,7 @@ import kotlinx.coroutines.withContext
 private const val LOG_TAG = "SettingsFragmentLauncher"
 private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
 private const val WRITE_SETTINGS = "settings_mdm_write_settings"
+private const val FINGERPRINT = "settings_mdm_fingerprint"
 
 /**
  * "Set"/"Not set" alone left no way to tell *which* key is configured, or to notice a stale one
@@ -102,6 +108,12 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "write_settings")
         }
         updateWriteSettingsRow()
+    }
+
+    /** "Fingerprint" (the user, 2026-10-24): every enrolment page threw ActivityNotFoundException on the last tap. */
+    private var fingerprintPageMissing = false
+    private val fingerprintLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        updateFingerprintRow()
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -211,10 +223,21 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                 writeSettingsPageMissing = false
                 if (pages.isNotEmpty()) {
                     writeSettingsBeforePage = false
-                    writeSettingsPageMissing = !openWriteSettingsPage(pages)
+                    writeSettingsPageMissing = !openFirstPage(pages, writeSettingsLauncher)
                 }
             }
             updateWriteSettingsRow()
+            true
+        }
+
+        // Android's fingerprint enrolment for the kid (design 59d §8.4: the parent enrols it again during a pause),
+        // on the same path; Android asks for the Child PIN first. Shown only while Android's credential is ours and
+        // the phone has a sensor ([updateFingerprintRow]).
+        findPreference<Preference>(FINGERPRINT)?.setOnPreferenceClickListener {
+            val pages = FingerprintEnrol.pageIntents(requireContext())
+            fingerprintPageMissing = false
+            if (pages.isNotEmpty()) fingerprintPageMissing = !openFirstPage(pages, fingerprintLauncher)
+            updateFingerprintRow()
             true
         }
 
@@ -296,23 +319,54 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         // Re-read every time: a pause started or ended, or the dialog answered.
         updateBatteryRow()
         updateWriteSettingsRow()
+        updateFingerprintRow()
     }
 
-    /** Starts the first of [pages] that Android finds; false only when every one threw
-     * ActivityNotFoundException (any other failure is logged and counts as tried). */
-    private fun openWriteSettingsPage(pages: List<Intent>): Boolean {
+    /** Starts the first of Android's [pages] that Android finds, through [launcher]; false only when every one
+     * threw ActivityNotFoundException (any other failure is logged and counts as tried). */
+    private fun openFirstPage(pages: List<Intent>, launcher: ActivityResultLauncher<Intent>): Boolean {
         for (page in pages) {
             try {
-                writeSettingsLauncher.launch(page)
+                launcher.launch(page)
                 return true
             } catch (e: ActivityNotFoundException) {
-                Log.w(LOG_TAG, "No \"Modify system settings\" page for this intent, trying the next")
+                Log.w(LOG_TAG, "No page for ${page.action}, trying the next")
             } catch (e: Exception) {
-                Log.w(LOG_TAG, "Couldn't open the \"Modify system settings\" page", e)
+                Log.w(LOG_TAG, "Couldn't open the page for ${page.action}", e)
                 return true
             }
         }
         return false
+    }
+
+    private fun updateFingerprintRow() {
+        val context = context ?: return
+        val row = findPreference<Preference>(FINGERPRINT) ?: return
+        row.isVisible = fingerprintRowShown(
+            com.kidslauncher.mdm.lock.AndroidLock.credentialOurs(context),
+            FingerprintEnrol.hasSensor(context),
+        )
+        if (!row.isVisible) return
+        val access = fingerprintAccess(
+            pageAvailable = FingerprintEnrol.pageIntents(context).isNotEmpty(),
+            windowOpen = RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive(),
+            pageMissing = fingerprintPageMissing,
+        )
+        val state = getString(
+            when (FingerprintEnrol.enrolled(context)) {
+                true -> R.string.settings_mdm_fingerprint_enrolled
+                false -> R.string.settings_mdm_fingerprint_not_enrolled
+                null -> R.string.settings_mdm_fingerprint_unknown
+            },
+        )
+        val action = getString(
+            when (access) {
+                FingerprintAccess.CAN_OPEN -> R.string.settings_mdm_fingerprint_open
+                FingerprintAccess.PAUSE_FIRST -> R.string.settings_mdm_fingerprint_pause_first
+                FingerprintAccess.NO_PAGE -> R.string.settings_mdm_fingerprint_no_page
+            },
+        )
+        row.summary = getString(R.string.settings_mdm_fingerprint_summary, state, action)
     }
 
     private fun updateWriteSettingsRow() {

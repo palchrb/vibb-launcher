@@ -50,11 +50,12 @@ class WriteSettingsAccessTest {
         val row = prefs.indexOf("android:key=\"settings_mdm_write_settings\"")
         assertTrue(batteryRow > 0 && row > batteryRow && row < prefs.indexOf("settings_play_install_mode"))
         val fragment = src("java/com/kidslauncher/mdm/ui/settings/launcher/SettingsFragmentLauncher.kt")
-        val open = fragment.substringAfter("private fun openWriteSettingsPage(").substringBefore("private fun updateWriteSettingsRow")
+        val open = fragment.substringAfter("private fun openFirstPage(").substringBefore("private fun updateFingerprintRow")
         assertTrue("for (page in pages)" in open)
         assertTrue("catch (e: ActivityNotFoundException)" in open)
+        assertTrue("openFirstPage(pages, writeSettingsLauncher)" in fragment)
         // Re-read on every resume, as the battery row.
-        val resume = fragment.substringAfter("override fun onResume()").substringBefore("private fun openWriteSettingsPage")
+        val resume = fragment.substringAfter("override fun onResume()").substringBefore("private fun openFirstPage")
         assertTrue("updateWriteSettingsRow()" in resume)
     }
 

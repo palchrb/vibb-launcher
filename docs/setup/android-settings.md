@@ -37,6 +37,15 @@ adb shell appops set me.vibb.launcher WRITE_SETTINGS allow
 Without it the kid's touch switches are read-only ("Kan ikke endres på denne telefonen ennå") and the PWA warns
 "Clock format not applied" (when the parent chose 24 h or 12 h) and shows "Modify system settings · Not allowed".
 
+## Fingerprint (android mode)
+
+With Android's lock screen as the gate (design 59) the kid's fingerprint is Android's own, enrolled against the Child
+PIN. Vibb One's Settings (the unlock code) -> **"Pause all restrictions"** -> the row **"Fingerprint"**
+("Fingeravtrykk", under "Modify system settings"): tap it, type the Child PIN when Android asks, and follow Android's
+enrolment; then end the pause. The row shows only while Android's PIN is the one Vibb One set and the phone has a
+fingerprint sensor; it says "Registered" / "Not registered" ("Registrert" / "Ikke registrert") when Android can tell.
+No adb is needed. Removing Android's PIN by hand also deletes the fingerprint (design 59d §8.4) - enrol it again here.
+
 ## The lock screen's clock: single line (android mode)
 
 Android's own lock face (seen for a frame at a wake, and before the first unlock after a reboot) shows a large
