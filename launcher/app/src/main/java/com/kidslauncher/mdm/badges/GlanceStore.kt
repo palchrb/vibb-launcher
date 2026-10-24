@@ -143,6 +143,17 @@ object GlanceStore {
         changed()
     }
 
+    /** Design r11 §3.3: every kept key of [conversation] posted up to [upToPostTimeMs] (the row's newest when the kid
+     * dismissed it) - a newer post that came after the release isn't among them. Only clearable ones are kept. */
+    fun keysOf(conversation: GlanceConversation, upToPostTimeMs: Long): List<String> =
+        notices.values
+            .filter { it.packageName == conversation.packageName && it.conversationKey == conversation.conversationKey && it.postTimeMs <= upToPostTimeMs }
+            .map { it.key }
+
+    /** Design r11 §3.3: a row dismissed on the lock - the same in-memory mark as [markOpened], hidden until a post newer
+     * than [upToPostTimeMs], so it stays gone when a cancel is ignored or its removal comes late. */
+    fun hide(conversation: GlanceConversation, upToPostTimeMs: Long) = markOpened(conversation, upToPostTimeMs)
+
     // ---- the policy -------------------------------------------------------------------------------
 
     /**

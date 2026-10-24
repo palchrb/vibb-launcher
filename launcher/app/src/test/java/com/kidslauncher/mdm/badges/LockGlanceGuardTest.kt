@@ -10,7 +10,8 @@ import java.io.File
  * Design 25 §5: what the lock's glance page reads, keeps and does is guarded by source scans (like
  * ElementRoomsTest for ElementDmReader). Part 1 (step 2): the reader reads only the allowlisted
  * fields, text only at [GlanceLevel.TEXT], never an action, remote input or picture; nothing glance
- * cancels, snoozes or marks shown; nothing is logged but package names, counts and exception
+ * snoozes or marks shown, and its one cancel is a row the kid swiped away (design r11 §3: that conversation's kept
+ * keys); nothing is logged but package names, counts and exception
  * classes; nothing is persisted or reaches the sync, the API, a DTO or the crash report; every entry
  * point catches everything (QA Medium 2).
  */
@@ -86,6 +87,9 @@ class LockGlanceGuardTest {
         "contentIntent", "PendingIntent", "EXTRA_MESSAGES", "EXTRA_IS_GROUP_CONVERSATION", "EXTRA_CONVERSATION_TITLE",
         "EXTRA_TITLE", "EXTRA_TEXT", "Bundle", "EMPTY", "Parcelable", "getParcelableArray", "getParcelable",
         "getCharSequence", "getBoolean", "containsKey", "Person", "name",
+        // design r11 §3.3: the one write - a dismissed row's kept keys, cancelled through the listener
+        "canDismiss", "dismiss", "conversation", "GlanceConversation", "upToPostTimeMs", "done", "listener", "keys",
+        "keysOf", "cancelNotifications", "toTypedArray", "hide", "false", "Long",
     )
 
     @Test
@@ -171,13 +175,33 @@ class LockGlanceGuardTest {
 
     // ---- what the glance never does -------------------------------------------------------------
 
+    /** Design r11 §3.5 (the user's ask 3 reverses design 25 §3's "rows can't be swiped away"): the glance's one cancel
+     * is a dismissed row's - exactly one `cancelNotifications(`, in [GlanceReader.dismiss], of the keys
+     * `GlanceStore.keysOf` gives (that conversation's, up to the row's newest post); still no snooze, no single or
+     * all cancel, no "shown" mark. */
     @Test
-    fun `nothing glance cancels, snoozes or marks a notification shown`() {
-        for (name in glanceFiles) {
-            for (call in listOf("cancelNotification", "cancelAllNotifications", "snoozeNotification", "setNotificationsShown", "migrateNotificationFilter")) {
+    fun `the glance's one cancel is a dismissed row's keys - nothing snoozed, marked shown or cancelled otherwise (r11 §3_5)`() {
+        for (name in glanceFiles + "GlancePanel.kt") {
+            for (call in listOf("cancelNotification(", "cancelAllNotifications", "snoozeNotification", "setNotificationsShown", "migrateNotificationFilter")) {
                 assertFalse("$name: $call", code(name).contains(call))
             }
         }
+        val all = glanceFiles + "GlancePanel.kt" + "GlanceOpener.kt"
+        assertEquals(1, all.sumOf { Regex("""cancelNotifications\(""").findAll(code(it)).count() })
+        val dismiss = body(reader, "dismiss")
+        assertTrue(dismiss, dismiss.contains("val listener = service?.get() ?: return@guarded"))
+        assertTrue(dismiss, dismiss.contains("val keys = GlanceStore.keysOf(conversation, upToPostTimeMs)"))
+        assertTrue(dismiss, dismiss.contains("if (keys.isNotEmpty()) listener.cancelNotifications(keys.toTypedArray())"))
+        assertTrue(dismiss, dismiss.contains("GlanceStore.hide(conversation, upToPostTimeMs)"))
+        assertTrue(dismiss, dismiss.contains("guarded(conversation.packageName) {"))
+        // The keys: that conversation's kept ones, posted up to the row's newest - a newer post stays.
+        val store = code("GlanceStore.kt")
+        val keysOf = body(store, "keysOf")
+        assertTrue(keysOf, keysOf.contains("it.packageName == conversation.packageName && it.conversationKey == conversation.conversationKey && it.postTimeMs <= upToPostTimeMs"))
+        // The hide is the opened mark (memory only): hidden until a newer post.
+        assertTrue(store.contains("fun hide(conversation: GlanceConversation, upToPostTimeMs: Long) = markOpened(conversation, upToPostTimeMs)"))
+        // The reader's check before a row slides off.
+        assertTrue(reader.contains("fun canDismiss(): Boolean = service?.get() != null"))
     }
 
     /** A log line in a glance file names a package, a count or an exception class - never a title,
@@ -258,12 +282,56 @@ class LockGlanceGuardTest {
             assertFalse("GlancePanel uses $forbidden", panel.contains(forbidden))
         }
         assertFalse("GlancePanel builds an Intent", Regex("""\bIntent\(""").containsMatchIn(panel))
-        // Rows can't be swiped, long-pressed or dismissed from the lock. The page's one swipe (design 59d step J) is
-        // the unlock's ask, read from the activity's touches - no listener on a row, nothing dismissed.
-        for (forbidden in listOf("setOnLongClickListener", "setOnTouchListener", "ItemTouchHelper", "SwipeDismiss", "onSwiped", "dismiss")) {
+        // Rows can't be long-pressed from the lock. The page's swipes are read from the activity's touches - the unlock's
+        // ask (design 59d step J) and, since r11 §3, a row swiped sideways - no listener on a row.
+        for (forbidden in listOf("setOnLongClickListener", "setOnTouchListener", "ItemTouchHelper", "SwipeDismiss", "onSwiped")) {
             assertFalse("GlancePanel uses $forbidden", panel.contains(forbidden))
         }
         assertEquals(setOf("GlanceSwipe.UNLOCK"), Regex("""GlanceSwipe[.\w]*""").findAll(panel).map { it.value }.toSet())
+    }
+
+    /**
+     * Design r11 §3.3-3.5: what a dismissal may change - the notification(s) of that row through the reader, a
+     * contact's dismissed mark through the notifier, or (the plain row) ours as the phone book's opening does. Each
+     * called exactly once, all inside `commitDismiss`; nothing but a row is dismissable (the drag starts only on a
+     * bound row view, on the GLANCE stage; TalkBack's action is set on the rows only - the timer tile keeps the plain
+     * click label); no `announceForAccessibility` (deprecated in API 36, F8).
+     */
+    @Test
+    fun `a dismissal changes only that row's notifications - nothing else is dismissable (r11 §3)`() {
+        val commit = body(panel, "commitDismiss")
+        for (call in listOf("GlanceReader.dismiss(", "MissedCallNotifier.dismissContact(", "MissedCallNotifier.dismiss(")) {
+            assertEquals(call, 1, Regex(Regex.escape(call)).findAll(panel).count())
+            assertTrue(call, commit.contains(call))
+        }
+        assertTrue(commit, commit.contains("GlanceReader.dismiss(row.conversation, upToPostTimeMs = row.postTimeMs)"))
+        assertTrue(commit, commit.contains("MissedCallNotifier.dismissContact(activity, number, upToMs = row.timeMs)"))
+        assertTrue(commit, commit.contains("if (dismissing !== d) return@guarded"))
+        // Only on a bound row view, on the GLANCE stage, inside the scroller, with no dismissal running.
+        assertTrue(panel.contains("swipeInScroll = hit(scroll, ev)"))
+        assertTrue(panel.contains("dismissRow = if (state.stage == LockStage.GLANCE && dismissing == null && swipeInScroll) rowAt(ev) else null"))
+        val rowAt = body(panel, "rowAt")
+        assertTrue(rowAt, rowAt.contains("rowViews[i].root.visibility == View.VISIBLE && hit(rowViews[i].root, ev)"))
+        // The row is taken only when the axis is horizontal, and then the views get their cancel.
+        val swipe = panel.substringAfter("private fun swipeNow(").substringBefore("private fun swipeReset(")
+        val horizontal = swipe.substringAfter("if (swipeAxis == GlanceAxis.HORIZONTAL) {").substringBefore("if (swipeInScroll) swipeBlocked = true")
+        assertTrue(horizontal, horizontal.contains("swipeMode = SwipeMode.DISMISS") && horizontal.contains("return SwipeTouch.CANCEL_VIEWS"))
+        // A message row needs the listener before it slides off; else it springs back.
+        assertTrue(body(panel, "release").contains("if (drag.row is GlanceMessageRow && !GlanceReader.canDismiss()) {"))
+        // TalkBack's "Fjern" on the rows only; the timer tile keeps openAction.
+        assertEquals(1, Regex("""\browActions\(view\.root""").findAll(panel).count())
+        assertTrue(body(panel, "describe").contains("rowActions(view.root, action, row)"))
+        assertTrue(panel.contains("openAction(glance.lockTimerTile)"))
+        assertEquals(1, Regex("""R\.id\.glance_action_dismiss, activity\.getString\(R\.string\.glance_dismiss_action\)""").findAll(panel).count())
+        assertFalse(panel.contains("announceForAccessibility"))
+        // The deferred rows: a drag or a dismissal holds the rows' rebinding back; a lock-up and a stop settle it.
+        assertTrue(panel.contains("private fun dismissBusy(): Boolean = swipeMode == SwipeMode.DISMISS || dismissing != null"))
+        assertTrue(body(panel, "stop").contains("settleDismiss()"))
+        assertTrue(panel.substringAfter("if (lockStageDue(").substringBefore("renderNow()").contains("settleDismiss()"))
+        // Its log lines are constant words: no package, key, name or number.
+        for (line in Regex("""\bLog\.\w\(LOG_TAG, [^\n]*dismiss[^\n]*""", RegexOption.IGNORE_CASE).findAll(panel).map { it.value }) {
+            assertFalse(line, line.replace("\${e.javaClass.simpleName}", "").contains("$"))
+        }
     }
 
     @Test
@@ -526,8 +594,10 @@ class LockGlanceGuardTest {
     fun `every glance entry point catches everything (QA Medium 2)`() {
         // The reader: every public function is guarded (or only re-sweeps, which is).
         val publicFuns = Regex("""^    fun (\w+)\(""", RegexOption.MULTILINE).findAll(reader).map { it.groupValues[1] }.toList()
-        assertEquals(listOf("connected", "disconnected", "resweep", "posted", "removed", "rankingUpdate"), publicFuns)
-        for (name in publicFuns) {
+        assertEquals(listOf("connected", "disconnected", "resweep", "canDismiss", "dismiss", "posted", "removed", "rankingUpdate"), publicFuns)
+        // r11 §3.3: canDismiss only reads the weak reference - it can't throw.
+        assertTrue(reader.contains("fun canDismiss(): Boolean = service?.get() != null"))
+        for (name in publicFuns - "canDismiss") {
             val b = body(reader, name)
             assertTrue("$name is guarded", b.contains("guarded(") || b.contains("sweep)") || b.contains("sweep(service)"))
         }
@@ -555,7 +625,8 @@ class LockGlanceGuardTest {
         assertTrue(posted, posted.contains("runThenDone(null) {") && posted.contains("if (lastPosted == null) relearn(app)"))
         assertTrue(body(notifier, "relearn").contains("recompute(context, mayPost = false, mayClear = false)"))
         assertTrue(body(notifier, "refreshAtStart").contains("relearn(context)"))
-        assertTrue(notifier.contains("noticeState(CallPolicyStore.state, CallPolicyStore.effectiveState(), relearnOnly = !mayClear)"))
+        // r11 §3.3: a contact dismissed on the lock counts against the rules too.
+        assertTrue(notifier.contains("noticeState(CallPolicyStore.state, CallPolicyStore.effectiveState(), relearnOnly = !mayClear || ownDismiss)"))
         val listener = code("BadgeListenerService.kt")
         assertTrue(listener.contains("MissedCallNotifier.removedFromShade(this)"))
         assertTrue(listener.contains("MissedCallNotifier.postedToShade(this)"))

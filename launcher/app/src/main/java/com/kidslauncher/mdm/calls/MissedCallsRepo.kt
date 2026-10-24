@@ -17,7 +17,10 @@ import androidx.core.content.edit
 object MissedCallsRepo {
     private const val LOG_TAG = "MissedCalls"
     private const val PREFS = "missed_calls_seen"
-    private const val WINDOW_MS = 14L * 24 * 60 * 60 * 1000
+
+    /** Design r11 §3.3: CE prefs of the contacts whose row was dismissed on the lock (number -> up to when). */
+    private const val DISMISSED_PREFS = "missed_call_dismissed"
+    private const val WINDOW_MS = MISSED_CALL_LOG_WINDOW_MS
     private const val MAX_ROWS = 500
 
     /** Missed calls per contact number while calls are managed; empty otherwise. */
@@ -94,7 +97,29 @@ object MissedCallsRepo {
         prefs(context).edit { putLong(number, nowMs) }
     }
 
+    /** Design r11 §3.3: contact number -> the newest missed call its row on the lock was dismissed with. Our
+     * notification counts after it ([noticeMarks]); the badges don't. */
+    fun dismissedMarks(context: Context): Map<String, Long> =
+        dismissedPrefs(context).all.mapNotNull { (key, value) -> (value as? Long)?.let { key to it } }.toMap()
+
+    /**
+     * Design r11 §3.3: [number]'s row was dismissed on the lock with its calls up to [upToMs] - committed (the
+     * notifier's recompute reads it next, on the same thread), the marks pruned to the log's window at each write
+     * ([dismissedMarksAfter]). Never throws (false then: the recompute counts without the new mark).
+     */
+    fun markDismissed(context: Context, number: String, upToMs: Long, nowMs: Long = System.currentTimeMillis()): Boolean = try {
+        val next = dismissedMarksAfter(dismissedMarks(context), number, upToMs, nowMs)
+        val editor = dismissedPrefs(context).edit().clear()
+        for ((key, at) in next) editor.putLong(key, at)
+        editor.commit()
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't keep a dismissed missed call: ${e.javaClass.simpleName}")
+        false
+    }
+
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun dismissedPrefs(context: Context) = context.applicationContext.getSharedPreferences(DISMISSED_PREFS, Context.MODE_PRIVATE)
 
     /** [canKeepMissedCalls]: managed, or our dialer role held (Telecom gives us the duty). */
     private fun missedCallDuty(context: Context): Boolean =

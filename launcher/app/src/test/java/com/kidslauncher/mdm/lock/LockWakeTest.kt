@@ -133,9 +133,11 @@ class LockWakeTest {
 
         val notifier = code("calls/MissedCallNotifier.kt")
         val post = notifier.substringAfter("is NoticeStep.Post -> {").substringBefore("\n    }\n")
-        val wake = "if (step.alert) main.post { com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame() }"
+        val wake = "if (alert) main.post { com.kidslauncher.mdm.lock.PinLockRuntime.noticeCame() }"
         assertTrue(post, post.contains(wake))
-        assertTrue("only after a post that worked", post.indexOf("if (post(context, step.notice, step.alert, unread.newestId)) {") in 0 until post.indexOf(wake))
+        // Design r11 §3.3: the step's alert, never for a dismissal's update (a contact taken out on the lock).
+        assertTrue(post, post.indexOf("val alert = step.alert && !ownDismiss") in 0 until post.indexOf("if (post(context, step.notice, alert, unread.newestId)) {"))
+        assertTrue("only after a post that worked", post.indexOf("if (post(context, step.notice, alert, unread.newestId)) {") in 0 until post.indexOf(wake))
         assertEquals("the one trigger in the notifier", 1, Regex("""noticeCame\(""").findAll(notifier).count())
     }
 

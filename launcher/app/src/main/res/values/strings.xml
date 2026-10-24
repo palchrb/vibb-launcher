@@ -410,6 +410,8 @@
     <string name="glance_yesterday">yesterday</string>
     <string name="glance_open_action">Unlock and open</string>
     <string name="glance_missed_action">Unlock and see missed calls</string>
+    <!-- Design r11 §3.4: TalkBack's action on a glance row - the same as swiping it away. -->
+    <string name="glance_dismiss_action">Remove</string>
     <string name="glance_missed_from">Missed call from %1$s</string>
     <!-- Design 24b: a parent-PIN window that locks again by itself (notification, Home banner). -->
     <string name="notification_channel_window">Opened with the parent code</string>

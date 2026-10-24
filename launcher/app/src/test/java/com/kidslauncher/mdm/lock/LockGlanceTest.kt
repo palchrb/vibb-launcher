@@ -123,6 +123,65 @@ class LockGlanceTest {
         assertTrue(swipe.substringAfter("action == MotionEvent.ACTION_CANCEL) {").substringBefore("}").contains("return SwipeTouch.PASS"))
     }
 
+    /** Design r11 §3.2: the first movement past the touch slop decides the axis; a tie is vertical. */
+    @Test
+    fun `the touch's axis - none within the slop, then the larger movement, a tie vertical (r11 §3_2)`() {
+        val slop = 8f
+        assertEquals(GlanceAxis.NONE, glanceTouchAxis(0f, 0f, slop))
+        assertEquals("within the slop either way", GlanceAxis.NONE, glanceTouchAxis(-8f, 8f, slop))
+        assertEquals(GlanceAxis.HORIZONTAL, glanceTouchAxis(9f, 2f, slop))
+        assertEquals("left counts the same", GlanceAxis.HORIZONTAL, glanceTouchAxis(-12f, -11f, slop))
+        assertEquals(GlanceAxis.VERTICAL, glanceTouchAxis(1f, 9f, slop))
+        assertEquals("down too", GlanceAxis.VERTICAL, glanceTouchAxis(3f, -20f, slop))
+        assertEquals("a tie is vertical", GlanceAxis.VERTICAL, glanceTouchAxis(10f, -10f, slop))
+        assertEquals("a diagonal start goes the way of its larger part", GlanceAxis.HORIZONTAL, glanceTouchAxis(9f, 8.9f, slop))
+    }
+
+    /** Design r11 §3.1: past 40 % of the row's width, or a fling of 500 dp/s in the drag's direction after 16 dp. */
+    @Test
+    fun `the dismiss - 40 percent or a fling, both directions, never before the lift (r11 §3_1)`() {
+        val width = 288f
+        assertEquals("not lifted: it follows", GlanceDismiss.FOLLOW, glanceDismissStep(200f, 3000f, width, lifted = false))
+        assertEquals("39 %", GlanceDismiss.BACK, glanceDismissStep(0.39f * width, 0f, width, lifted = true))
+        assertEquals("40 %", GlanceDismiss.DISMISS, glanceDismissStep(0.4f * width, 0f, width, lifted = true))
+        assertEquals("40 % to the right", GlanceDismiss.DISMISS, glanceDismissStep(-0.4f * width, 0f, width, lifted = true))
+        assertEquals("a fling left", GlanceDismiss.DISMISS, glanceDismissStep(-20f, -500f, width, lifted = true))
+        assertEquals("a fling right", GlanceDismiss.DISMISS, glanceDismissStep(16f, 800f, width, lifted = true))
+        assertEquals("a fling under 16 dp", GlanceDismiss.BACK, glanceDismissStep(15f, 3000f, width, lifted = true))
+        assertEquals("a fling against the drag", GlanceDismiss.BACK, glanceDismissStep(50f, -3000f, width, lifted = true))
+        assertEquals("too slow", GlanceDismiss.BACK, glanceDismissStep(50f, 499f, width, lifted = true))
+        assertEquals("no width: only a fling", GlanceDismiss.BACK, glanceDismissStep(50f, 0f, 0f, lifted = true))
+        assertEquals(0.4f, GLANCE_DISMISS_SHARE)
+        assertEquals(500f, GLANCE_DISMISS_FLING_DPS)
+        assertEquals(16f, GLANCE_DISMISS_FLING_DP)
+    }
+
+    @Test
+    fun `the dragged row fades with the distance (r11 §3_1)`() {
+        assertEquals(1f, glanceDismissAlpha(0f, 288f), 0.001f)
+        assertEquals(0.5f, glanceDismissAlpha(144f, 288f), 0.001f)
+        assertEquals(0.5f, glanceDismissAlpha(-144f, 288f), 0.001f)
+        assertEquals("clamped", 0f, glanceDismissAlpha(400f, 288f), 0.001f)
+        assertEquals("no width", 1f, glanceDismissAlpha(50f, 0f), 0.001f)
+    }
+
+    /** Design r11 §3.3: a dismissed missed-call row stays out until the notifier's notice changes. */
+    @Test
+    fun `the dismissed missed-call rows stay out, every other row is kept (r11 §3_3)`() {
+        val message = com.kidslauncher.mdm.badges.GlanceMessageRow(
+            GlanceConversation("io.element.android.x", "!room:x.org"), "key-1", com.kidslauncher.mdm.badges.GlanceLevel.SENDER,
+            "Anna", null, 1, 300, 300,
+        )
+        val pappa = com.kidslauncher.mdm.badges.GlanceMissedRow("+4790000002", "Pappa", 1, 200)
+        val mamma = com.kidslauncher.mdm.badges.GlanceMissedRow("+4790000001", "Mamma", 2, 100)
+        val plain = com.kidslauncher.mdm.badges.GlanceMissedRow(null, null, 3, 50)
+        val rows = listOf(message, pappa, mamma, plain)
+        assertEquals(rows, withoutDismissed(rows, emptySet(), plain = false))
+        assertEquals(listOf(message, mamma, plain), withoutDismissed(rows, setOf("+4790000002"), plain = false))
+        assertEquals(listOf(message, pappa, mamma), withoutDismissed(rows, emptySet(), plain = true))
+        assertEquals(listOf(message), withoutDismissed(rows, setOf("+4790000002", "+4790000001"), plain = true))
+    }
+
     /** Design 59d §8.13: Android's gesture handle on our glance - the profile's, else Android's defaults. */
     @Test
     fun `the handle - SystemUI's measured on the emulator, else 108 x 4 dp, white at 80 percent, 8 dp off the bottom`() {

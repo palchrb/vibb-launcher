@@ -1,6 +1,8 @@
 package com.kidslauncher.mdm.lock
 
 import com.kidslauncher.mdm.badges.GlanceConversation
+import com.kidslauncher.mdm.badges.GlanceMissedRow
+import com.kidslauncher.mdm.badges.GlanceRow
 import com.kidslauncher.mdm.music.MusicSession
 import com.kidslauncher.mdm.music.clockText
 import java.util.Locale
@@ -17,8 +19,9 @@ import kotlin.math.roundToInt
  * after the right code.
  *
  * It weakens nothing: the page's only actions are the music's play/pause, previous and next, the
- * stage switches and the lock's own emergency call. A row's target is opened only after the kid's
- * PIN or the parent code, from the unlock path (LockGlanceGuardTest).
+ * stage switches, the lock's own emergency call and - since design r11 §3, as on Android's own lock screen - a row
+ * swiped away, which dismisses that row's notification(s) and nothing else. A row's target is opened only after the
+ * kid's PIN or the parent code, from the unlock path (LockGlanceGuardTest).
  */
 
 /** The status report's capability: this launcher has the glance page (the server's notes read it). */
@@ -149,6 +152,72 @@ enum class GlanceSwipe {
  * system takes it (a desync, §8.9) its monitor pilfers the pointer and we get `ACTION_CANCEL`, which asks nothing.
  */
 fun glanceSwipeBlocked(onControl: Boolean, scrollTakes: Boolean): Boolean = onControl || scrollTakes
+
+// ---- a row swiped away (design r11 §3) ------------------------------------------------------------
+
+/** Which way a touch went (r11 §3.2): decided once, by its first movement past the touch slop. */
+enum class GlanceAxis { NONE, HORIZONTAL, VERTICAL }
+
+/**
+ * The touch's axis (r11 §3.2, as Android's shade decides it): [GlanceAxis.NONE] while neither [dxDp] nor [dyDp] (dp
+ * since the down) is past [slopDp] (`ViewConfiguration.scaledTouchSlop`, the slop the `ScrollView` uses, so the two
+ * agree); then horizontal when |dx| > |dy| at that moment, else vertical - a tie is vertical. The decision holds for
+ * the gesture (the glue asks only while it is NONE).
+ */
+fun glanceTouchAxis(dxDp: Float, dyDp: Float, slopDp: Float): GlanceAxis {
+    val x = abs(dxDp)
+    val y = abs(dyDp)
+    return when {
+        maxOf(x, y) <= slopDp -> GlanceAxis.NONE
+        x > y -> GlanceAxis.HORIZONTAL
+        else -> GlanceAxis.VERTICAL
+    }
+}
+
+/** A row is dismissed when it moved past this share of its width (r11 §3.1). */
+const val GLANCE_DISMISS_SHARE = 0.4f
+
+/** ... or on a fling of this speed (dp/s) in the drag's direction ... */
+const val GLANCE_DISMISS_FLING_DPS = 500f
+
+/** ... after at least this much travel (dp). */
+const val GLANCE_DISMISS_FLING_DP = 16f
+
+/** What a row's sideways drag is at a moment (r11 §3.1). */
+enum class GlanceDismiss {
+    /** Still down: the row follows the finger. */
+    FOLLOW,
+
+    /** Lifted past the threshold or flung: it slides off and is dismissed. */
+    DISMISS,
+
+    /** Lifted short of it: it springs back. */
+    BACK,
+}
+
+/**
+ * The drag's verdict (r11 §3.1): [GlanceDismiss.FOLLOW] while not [lifted]; at the lift DISMISS when the row moved
+ * [dxDp] past [GLANCE_DISMISS_SHARE] of its [widthDp], or on a fling of [vxDps] >= [GLANCE_DISMISS_FLING_DPS] in the
+ * drag's direction after at least [GLANCE_DISMISS_FLING_DP]; else BACK. Both directions, as Android's shade.
+ */
+fun glanceDismissStep(dxDp: Float, vxDps: Float, widthDp: Float, lifted: Boolean): GlanceDismiss {
+    if (!lifted) return GlanceDismiss.FOLLOW
+    val far = widthDp > 0f && abs(dxDp) >= GLANCE_DISMISS_SHARE * widthDp
+    val fling = abs(vxDps) >= GLANCE_DISMISS_FLING_DPS && abs(dxDp) >= GLANCE_DISMISS_FLING_DP && (vxDps > 0f) == (dxDp > 0f)
+    return if (far || fling) GlanceDismiss.DISMISS else GlanceDismiss.BACK
+}
+
+/** The dragged row's alpha (r11 §3.1): 1 - |dx| / width, clamped to 0..1 (1 without a width). */
+fun glanceDismissAlpha(dxDp: Float, widthDp: Float): Float =
+    if (widthDp <= 0f) 1f else (1f - abs(dxDp) / widthDp).coerceIn(0f, 1f)
+
+/**
+ * The rows without the missed-call rows the kid just dismissed (r11 §3.3): the missed-call paths are asynchronous, so
+ * until `MissedCallNotifier.current` next changes the panel leaves out the contacts' rows of [numbers] and, when
+ * [plain], the plain row ("N tapte anrop") - so a row doesn't flash back for a frame. Every other row is kept.
+ */
+fun withoutDismissed(rows: List<GlanceRow>, numbers: Set<String>, plain: Boolean): List<GlanceRow> =
+    rows.filterNot { it is GlanceMissedRow && if (it.number == null) plain else it.number in numbers }
 
 // ---- the handle (design 59d §8.13) ----------------------------------------------------------------
 

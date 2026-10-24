@@ -265,6 +265,70 @@ class MissedCallNoticeTest {
         assertNull(missedCallContact("+4790000002", phoneBookView(managed(callsEnabled = false)) { false }))
     }
 
+    /** Design r11 §3.3, the user's decision 3: a contact dismissed on the lock leaves the notification, the phone
+     * book's badge stays. */
+    @Test
+    fun `a contact dismissed on the lock leaves the notice, its badge stays (r11 §3_3)`() {
+        val log = listOf(missed("+4790000002", 300, id = 9), missed("+4790000001", 200, id = 8))
+        val dismissed = mapOf("+4790000002" to 300L)
+        val marks = noticeMarks(seen = emptyMap(), dismissed = dismissed)
+        val result = missedCallNotice(log, view(), "47", marks, Long.MAX_VALUE)!!
+        assertEquals("Pappa's row went, Mamma's stays", listOf("Mamma"), result.names)
+        assertEquals(1, result.count)
+        // The badges count by the seen marks alone: the phone book still shows "Pappa 1".
+        val badges = missedCallSummaries(log, view(), "47", seenMs = emptyMap())
+        assertEquals(MissedSummary(1, 300), badges["+4790000002"])
+        // The last contact dismissed too: nothing to show (the recompute's Clear).
+        assertNull(missedCallNotice(log, view(), "47", noticeMarks(emptyMap(), dismissed + ("+4790000001" to 200L)), Long.MAX_VALUE))
+    }
+
+    @Test
+    fun `a call after the dismissed mark shows again, and the later of both marks counts (r11 §3_3)`() {
+        val dismissed = mapOf("+4790000002" to 300L)
+        val again = listOf(missed("+4790000002", 300, id = 9), missed("+4790000002", 500, id = 11))
+        val result = missedCallNotice(again, view(), "47", noticeMarks(emptyMap(), dismissed), Long.MAX_VALUE)!!
+        assertEquals(listOf(MissedContact("+4790000002", "Pappa", 1, 500)), result.contacts)
+        // Per number the later mark: a seen mark after the dismissal wins, an older one doesn't.
+        assertEquals(mapOf("+4790000002" to 600L, "+4790000001" to 50L), noticeMarks(mapOf("+4790000002" to 600L, "+4790000001" to 50L), dismissed))
+        assertEquals(mapOf("+4790000002" to 300L), noticeMarks(mapOf("+4790000002" to 100L), dismissed))
+        assertEquals(emptyMap<String, Long>(), noticeMarks(emptyMap(), emptyMap()))
+    }
+
+    @Test
+    fun `the dismissed marks are pruned to the log's 14 days at each write (r11 §3_3)`() {
+        val day = 24L * 60 * 60 * 1000
+        assertEquals(14 * day, MISSED_CALL_LOG_WINDOW_MS)
+        val now = 100 * day
+        val marks = mapOf("+4790000001" to now - 15 * day, "+4790000003" to now - 13 * day)
+        assertEquals(
+            mapOf("+4790000003" to now - 13 * day, "+4790000002" to now - day),
+            dismissedMarksAfter(marks, "+4790000002", upToMs = now - day, nowMs = now),
+        )
+        // A later mark already there stays (a dismissal of an older row can't move it back).
+        assertEquals(mapOf("+4790000002" to now), dismissedMarksAfter(mapOf("+4790000002" to now), "+4790000002", upToMs = now - day, nowMs = now))
+        // A mark exactly at the window's edge is kept.
+        assertEquals(setOf("+4790000002"), dismissedMarksAfter(emptyMap(), "+4790000002", upToMs = now - 14 * day, nowMs = now).keys)
+    }
+
+    /** The glue's pins (design r11 §3.3): the notice counts after both marks, the dismissal's pass never posts anew,
+     * never alerts and counts against the rules themselves. */
+    @Test
+    fun `the notifier's dismissal pass (r11 §3_3)`() {
+        val src = listOf("src/main/java", "app/src/main/java").map { java.io.File(it, "com/kidslauncher/mdm/calls/MissedCallNotifier.kt") }.first { it.exists() }.readText()
+        assertTrue(src.contains("noticeMarks(MissedCallsRepo.seenMarks(context), MissedCallsRepo.dismissedMarks(context))"))
+        assertTrue(src.contains("relearnOnly = !mayClear || ownDismiss"))
+        val dismiss = src.substringAfter("fun dismissContact(").substringBefore("\n    }\n")
+        assertTrue(dismiss, dismiss.indexOf("MissedCallsRepo.markDismissed(app, number, upToMs)") in 0 until dismiss.indexOf("recomputeNow(app, mayPost = false, mayClear = true, ownDismiss = true)"))
+        assertTrue(dismiss, dismiss.contains("runThenDone(null) {"))
+        assertTrue(src.contains("val alert = step.alert && !ownDismiss"))
+        val repo = listOf("src/main/java", "app/src/main/java").map { java.io.File(it, "com/kidslauncher/mdm/calls/MissedCallsRepo.kt") }.first { it.exists() }.readText()
+        assertTrue(repo.contains("private const val DISMISSED_PREFS = \"missed_call_dismissed\""))
+        val mark = repo.substringAfter("fun markDismissed(").substringBefore("\n    }\n")
+        assertTrue(mark, mark.contains("dismissedMarksAfter(dismissedMarks(context), number, upToMs, nowMs)") && mark.contains("editor.commit()"))
+        // The badges keep the seen marks alone.
+        assertTrue(repo.contains("missedCallSummaries(recentLog(context, nowMs), rules.contacts, rules.defaultCc, seenMarks(context))"))
+    }
+
     @Test
     fun `call-log intents`() {
         val view = "android.intent.action.VIEW"

@@ -178,12 +178,33 @@ fun noticeStep(
     return NoticeStep.Post(notice, alert = notice.newestId > alerted)
 }
 
+/** How long the call log is read back, and how long a dismissed mark is kept (14 days, [MissedCallsRepo]). */
+const val MISSED_CALL_LOG_WINDOW_MS = 14L * 24 * 60 * 60 * 1000
+
+/**
+ * The marks our notification counts a contact's missed calls after (design r11 §3.3): per number the later of its
+ * [seen] mark (the phone book's own, which the badges count by - [missedCallSummaries] keeps using the seen marks
+ * alone, so the phone book still shows "Pappa 1": the user's decision 3 of 2026-10-24) and its [dismissed] mark (the
+ * contact's row swiped away on the lock). A call after both shows again.
+ */
+fun noticeMarks(seen: Map<String, Long>, dismissed: Map<String, Long>): Map<String, Long> =
+    (seen.keys + dismissed.keys).associateWith { maxOf(seen[it] ?: Long.MIN_VALUE, dismissed[it] ?: Long.MIN_VALUE) }
+
+/**
+ * The dismissed marks after a contact's row was swiped away on the lock (design r11 §3.3): [number] marked up to
+ * [upToMs] (its newest missed call's time; a later mark already there stays), then every mark older than the call log's
+ * window ([MISSED_CALL_LOG_WINDOW_MS] before [nowMs]) dropped - nothing it could still hide is older.
+ */
+fun dismissedMarksAfter(marks: Map<String, Long>, number: String, upToMs: Long, nowMs: Long): Map<String, Long> =
+    (marks + (number to maxOf(upToMs, marks[number] ?: Long.MIN_VALUE))).filterValues { it >= nowMs - MISSED_CALL_LOG_WINDOW_MS }
+
 /**
  * The calls view a recompute counts against (design 25, code QA Low 3): [effective] (the rules with
  * a time rule's call block) - except in a re-learning pass ([relearnOnly]: it never posts anew and
  * never clears), which counts against the rules themselves ([rules]): a notification on screen during
  * a no-calls rule can only have been posted before it, with that view - so it is known again after a
- * restart in the night, and the glance page shows it.
+ * restart in the night, and the glance page shows it. A contact's row dismissed on the lock (design r11 §3.3) counts
+ * against the rules too (the glue's `ownDismiss`), so a no-calls rule can't empty the notification at that pass.
  */
 fun noticeState(rules: CallPolicyState, effective: CallPolicyState, relearnOnly: Boolean): CallPolicyState =
     if (relearnOnly) rules else effective
