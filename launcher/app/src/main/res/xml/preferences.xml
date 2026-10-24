@@ -58,6 +58,12 @@
         android:title="@string/settings_mdm_fingerprint"
         app:isPreferenceVisible="false" />
 
+    <!-- Android's "Show media on lock screen" (its Sound & vibration page; the Media page has no public action);
+         always shown, the summary is set in code. -->
+    <Preference
+        android:key="settings_mdm_media_lock"
+        android:title="@string/settings_mdm_media_lock" />
+
     <Preference
         android:key="settings_play_install_mode"
         android:title="@string/settings_play_install_mode"

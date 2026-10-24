@@ -1131,6 +1131,13 @@ findings, merge to `main`, full suite once.
   Settings is visible); (2) a pause-screen row "Media on the lock screen" opening `ACTION_SOUND_SETTINGS`, the same
   mechanism as the write-settings and fingerprint rows (rc.5). The user confirmed the switch on their emulator
   2026-10-24 ("den fiksen funket"); (1) done the same day in `android-settings.md`; (2) launcher, S; next launcher round.
+  **(2) done 2026-10-24 (branch `home-round`)**: Settings' "Media on the lock screen" ("Medier på låseskjermen") row
+  under "Fingerprint", always shown (`server/MediaLockScreen.kt`, `MediaLockScreenTest`): `ACTION_SOUND_SETTINGS`
+  through the battery row's `systemPageIntent` (so only during the pause on a managed phone; `systemPageAccess`'s
+  states, re-read after the pause's apply); no public action opens the Media sub-page, so the summary names the path
+  ("Lyd og vibrasjon › Medier › Vis medier på låseskjermen av"). Its state line reads
+  `Settings.Secure.getInt("media_controls_lock_screen", 1)`: "På - vises på Androids låseskjerm" / "Av" ("Ukjent"
+  when the read throws); a tap opens the page unless it reads off. `android-settings.md` names the row first.
 - **A black flash behind Home after the Home button** (the user, 2026-10-16, emulator video): from an app
   (Element X), the Home button (the emulator's circle) shows Home's icons on solid black for ~150 ms
   (four frames at 30 fps) while the app slides away, and only then the wallpaper; Back has a clean

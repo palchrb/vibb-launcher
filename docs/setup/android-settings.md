@@ -61,8 +61,16 @@ place and default on the Jelly Star.
 
 Android 13+ puts the media player's card on its own lock face whenever something plays ("Show media on lock screen",
 on by default), whatever the keyguard features say - so the frame before Vibb One's glance shows Android's media card
-instead of the glance's music tile. Switch it off once per phone, by hand, during a pause (Settings is visible then)
-or before enrolling: Settings › Sound & vibration › Media › "Show media on lock screen" off (the Secure setting
-`media_controls_lock_screen` = 0; neither a device owner nor the music app can write it). Confirmed by the user on
-their emulator 2026-10-24 ("den fiksen funket"). A pause-screen row that opens Android's sound settings is planned
-(PLAN.md, "Android's lock screen shows the media card").
+instead of the glance's music tile. Switch it off once per phone (the Secure setting `media_controls_lock_screen` =
+0; neither a device owner nor the music app can write it, but Vibb One can read it):
+
+1. Vibb One's Settings (the unlock code) -> **"Pause all restrictions"** -> the row **"Media on the lock screen"**
+   ("Medier på låseskjermen", under "Modify system settings" and "Fingerprint"). It says "On - shows on Android's
+   lock screen" ("På - vises på Androids låseskjerm") or "Off" ("Av").
+2. Tap it: Android's **Sound & vibration** page opens (Android has no public way to open its Media page directly).
+   There: **Media** -> **"Show media on lock screen"** off ("Lyd og vibrasjon › Medier › Vis medier på låseskjermen"),
+   go back - the row now says "Off" - and end the pause.
+
+Outside a pause the row says to pause first (Android's Settings is hidden while the phone is managed). The manual
+path, before enrolling or on a phone without the row: Settings › Sound & vibration › Media › "Show media on lock
+screen" off. Confirmed by the user on their emulator 2026-10-24 ("den fiksen funket").
