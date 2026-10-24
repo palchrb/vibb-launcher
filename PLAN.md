@@ -1152,6 +1152,16 @@ findings, merge to `main`, full suite once.
   already holds the one decoded photo). Launcher only. A second video (2026-10-16) shows the same black frame
   with a built-in gradient wallpaper (not only a photo), and Back's predictive animation clean; power
   off/on over the PIN lock showed no flash of content (design 32 holds).
+  **Built 2026-10-24 (branch `home-round`; emulator check owed - design 08's last section)**: the cause wasn't
+  measured (no emulator in the round); both candidates - Android's wallpaper not shown under Home yet, or the
+  transition's backdrop (which could take design 32's black task description) - lie below Home's window, so Home now
+  draws its own copy (`WallpaperGround`'s FULL ground: the store's colour, gradient or the one decoded photo, then the
+  scrim - no new memory, Android's placement) after a HOME intent that brings it from behind (the Home button or
+  gesture, every `HomeFront` start), for at least 700 ms and until `onEnterAnimationComplete` plus a frame, at most
+  2.5 s; ended by a pause and the stop; never for Back or Recents, never at a lock-up (the content isn't on the
+  window then; the black snapshot stays). Pure `ui/home/HomeGround.kt` (`homeGroundDue`, `HomeGroundTest`); design
+  59d step B's face leave folded in unchanged. If the recording still shows black, the backdrop/wallpaper timing
+  isn't the cause (look at `TaskDescription` and Shell's transition then).
 
 - **The last app still flashes for one frame at screen-on** (design 32's lock flash isn't gone; the user,
   2026-10-16, three emulator videos read frame by frame): turning the screen on over the PIN lock shows, for

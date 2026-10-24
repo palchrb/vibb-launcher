@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.CallLog
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -76,7 +77,10 @@ import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.NightGround
 import com.kidslauncher.mdm.ui.home.PressFeedback
 import com.kidslauncher.mdm.ui.home.gridColumns
+import com.kidslauncher.mdm.ui.home.HomeGroundState
 import com.kidslauncher.mdm.ui.home.homeArrivalOf
+import com.kidslauncher.mdm.ui.home.homeGroundDue
+import com.kidslauncher.mdm.ui.home.homeGroundRecheckInMs
 import com.kidslauncher.mdm.ui.home.homeGrid
 import com.kidslauncher.mdm.ui.home.homePressToTop
 import com.kidslauncher.mdm.ui.home.homeResetPending
@@ -256,6 +260,8 @@ class HomeActivity : UIObjectActivity() {
         }
         // A new Home starts at the top anyway; read for the rule's sake, never again for a recreation.
         if (savedInstanceState == null) intent?.let(::noteArrival)
+        // PLAN "A black flash behind Home": a HOME intent that creates Home brings it from behind - its own ground first.
+        if (savedInstanceState == null && intent?.hasCategory(Intent.CATEGORY_HOME) == true) groundArrived()
         // Design 16c: the content only when the lock allows it - the night ground otherwise; the
         // lock's edges swap them.
         PinLockRuntime.addModeListener(modeListener)
@@ -470,7 +476,7 @@ class HomeActivity : UIObjectActivity() {
         }
         // Design 59d step B: brought by the face's unanimated leave - Home draws its own ground until it stops (Android's
         // wallpaper window isn't shown yet while the keyguard goes away; the rc.2 recording's 3 black frames).
-        if (HomeFront.takeOwnGroundDue()) ownGround = true
+        if (HomeFront.takeOwnGroundDue()) ground = ground.copy(faceLeave = true)
         startWork()
         PinLockRuntime.onHomeResumed(interactive())
         // Deliberately triggered here, not from Application.onCreate() - see TsnetClient's own
@@ -525,6 +531,11 @@ class HomeActivity : UIObjectActivity() {
         // wait, unless Home is resumed again at once (a re-delivered HOME intent pauses it).
         PinLockRuntime.onHomePaused(isChangingConfigurations)
         resumedNow = false
+        // Leaving the front: an app opening over Home sees Android's wallpaper, not a copy (homeGroundDue).
+        if (ground.arrivedAtMs != null && !ground.leftFront) {
+            ground = ground.copy(leftFront = true)
+            renderWallpaper()
+        }
         night?.stop()
         super.onPause()
     }
@@ -635,6 +646,9 @@ class HomeActivity : UIObjectActivity() {
         val broughtByUs = intent.getBooleanExtra(HomeFront.EXTRA_BROUGHT, false)
         // Why we are shown: the lock left for Home -> back to the top at the resume that follows (resumeContent).
         noteArrival(intent)
+        // PLAN "A black flash behind Home": a HOME intent that brings Home from behind (not a press on Home itself) -
+        // Home draws its own ground while the transition into it can run.
+        if (!contentUp) groundArrived()
         // Design 59d §8.9 (a): the system's Home while LOCKED - the home gesture got through - heals lock task's flags.
         PinLockRuntime.homeIntent(this, broughtByUs)
         val toTop = homePressToTop(
@@ -653,8 +667,10 @@ class HomeActivity : UIObjectActivity() {
     override fun onStop() {
         contentUp = false
         resetDue = false
-        // Design 59d step B: the next start is transparent over Android's wallpaper again.
-        ownGround = false
+        // Design 59d step B and the Home button's transition: the next start is transparent over Android's wallpaper
+        // again, unless a HOME intent brings it.
+        ground = HomeGroundState()
+        refreshHandler.removeCallbacks(groundRecheck)
         // Design 16e: something covers the mark - the boot's wait for it ends.
         PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home stopped")
         started = false
@@ -798,17 +814,41 @@ class HomeActivity : UIObjectActivity() {
         }
     }
 
+    /** Home's own wallpaper copy under the grid ([homeGroundDue]): after a HOME intent from behind while the transition
+     * into Home can run (PLAN "A black flash behind Home after the Home button"), and since the face's leave until Home
+     * stops (design 59d step B, [HomeFront.takeOwnGroundDue]). */
+    private var ground = HomeGroundState()
+
+    /** The copy's floor or cap ended ([homeGroundRecheckInMs]): look again. */
+    private val groundRecheck = Runnable { renderWallpaper() }
+
+    /** A HOME intent brought Home from behind: its own ground from the first frame. */
+    private fun groundArrived() {
+        ground = HomeGroundState(arrivedAtMs = SystemClock.elapsedRealtime(), faceLeave = ground.faceLeave)
+        renderWallpaper()
+    }
+
+    /** The transition into Home ended; the copy goes one frame later (Android's wallpaper shows by then). */
+    override fun onEnterAnimationComplete() {
+        super.onEnterAnimationComplete()
+        if (ground.arrivedAtMs == null) return
+        window.decorView.postOnAnimation {
+            ground = ground.copy(enterDone = true)
+            renderWallpaper()
+        }
+    }
+
     /**
      * The wallpaper behind Home ([WallpaperGround]: transparent over the system wallpaper when it
-     * is ours) and its ink on the labels and status-bar icons (design 08 §3). Cheap: the store
-     * decoded everything in the background.
+     * is ours, Home's own copy while [homeGroundDue]) and its ink on the labels and status-bar icons
+     * (design 08 §3). Cheap: the store decoded everything in the background.
      */
-    /** Design 59d step B: since the face's leave brought Home ([HomeFront.takeOwnGroundDue]) and until Home stops. */
-    private var ownGround = false
-
     private fun renderWallpaper() {
         if (!contentShown) return
-        val state = WallpaperGround.apply(this, binding.root, ownGround = ownGround)
+        val now = SystemClock.elapsedRealtime()
+        val state = WallpaperGround.apply(this, binding.root, ownGround = homeGroundDue(ground, now))
+        refreshHandler.removeCallbacks(groundRecheck)
+        homeGroundRecheckInMs(ground, now)?.let { refreshHandler.postDelayed(groundRecheck, it + 1) }
         if (state.ink != shownInk) {
             shownInk = state.ink
             renderCallParts()

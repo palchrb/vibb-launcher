@@ -278,3 +278,43 @@ tests, fmt and clippy (25 = baseline) clean.
       up over Home, KidSettings and the Wi-Fi subscreen; 112 works.
 - [ ] 10. Slow phone: Home cold start with 20 apps, no frame > 32 ms from icon work
       (`dumpsys gfxinfo`); heap with a photo wallpaper < 15 MB over the colour baseline.
+
+## Home's own ground during a transition into Home (2026-10-24, branch `home-round`)
+
+PLAN "A black flash behind Home after the Home button" (the user's emulator videos 2026-10-16): from an app, the
+Home button showed Home's icons on solid black for ~150 ms (four frames at 30 fps) while the app slid away, then the
+wallpaper - with a photo and with a built-in gradient alike; Back (predictive) was clean. Home's window is transparent
+over Android's wallpaper (`windowShowWallpaper`, §3's "transparent when ours"), and during the app-close transition
+that wallpaper isn't visible under it: either the wallpaper window isn't shown until Home is the wallpaper target, or
+the transition's backdrop (Shell's colour layer on the task display area, above the wallpaper's layer) covers it. Our
+Home isn't the recents provider, so the stock launcher's own go-home animation (which shows the wallpaper itself)
+doesn't run; Shell's default handler does. Which of the two it is wasn't measured (no emulator in this round);
+design 32's black `TaskDescription` could only matter through that backdrop, and it must stay black (it is Home's
+snapshot stand-in at a lock-up). Both causes sit **below Home's window**, so one fix covers both:
+
+- **What is drawn**: `WallpaperGround`'s FULL ground on Home's content root - the store's colour, 160° gradient or
+  the one decoded photo (no new bitmap: the store holds it already), then the ink's scrim - i.e. exactly what Home
+  shows when Android's wallpaper isn't ours, and what design 59d step B draws after the face's leave. Placement: the
+  photo centre-cropped over the whole (edge-to-edge) window and the gradient over its bounds, as `WallpaperApplier`
+  renders the bitmap it sets at the display's size (a gradient at half of it), which Android's `ImageWallpaper`
+  stretches over the display without a crop or a scroll (Home never sets wallpaper offsets) - so the hand-over to the system wallpaper has no seam. Cost: one
+  full-screen bitmap or gradient draw per frame while it is up, no memory.
+- **When** (pure `ui/home/HomeGround.kt`, `homeGroundDue`, `HomeGroundTest`): only after a HOME intent that brings
+  Home from behind - `onNewIntent` while Home's content wasn't up (the Home button or gesture, every `HomeFront`
+  start: the lock leaving, the boot, an update, a relock), or a create by a HOME intent - for at least
+  `HOME_GROUND_MIN_MS` (700 ms), then until `onEnterAnimationComplete` plus one frame (`postOnAnimation`), at most
+  `HOME_GROUND_MAX_MS` (2.5 s) when that callback never comes; ended at once when Home leaves the front (`onPause`:
+  an app opening over Home sees the system wallpaper, never a copy that would move with Home's exit animation) and
+  at `onStop`. Design 59d step B's face leave keeps its rule (the copy until the stop). **Not** for Back or Recents
+  (no intent: Home is revealed, and Back's predictive animation may scale Home's window - a copy would move against
+  the still wallpaper), nor for a press on Home itself. Not drawn always: the steady state stays transparent over
+  Android's wallpaper (59d §8.4 item 3's check), and an always-opaque Home would show a moving copy in Home's own
+  exit and Back animations.
+- **Design 32 holds**: the copy is the content root's background, and the content is never on the window while the
+  lock is LOCKED or at a dark lock-up (16c's night ground, design 32's `homeDarkResume`); Home's snapshot is still the
+  black task description (`setRecentsScreenshotEnabled(false)`). `HomeGroundTest` pins both.
+- **Device check owed** (`docs/testing/emulator.md` style, 24-30 fps screen recording, both navigation modes, kiosk on
+  and off, a photo, a gradient and a colour wallpaper): from an app (Element X), the Home button - no black frame
+  between the app's slide and the wallpaper, and no brightness, crop or position step when the copy goes (~0.7 s after
+  the press, or at the animation's end); Back - unchanged; the lock's leave (own keypad and Android's pad) - no black
+  frame; screen off/on over the PIN lock - the first frame is still the lock or black (design 32).
