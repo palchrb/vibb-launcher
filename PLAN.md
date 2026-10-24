@@ -1137,7 +1137,8 @@ findings, merge to `main`, full suite once.
   Q-1). `evictPackage` skips keys without the quoted package
   name before the decode (Q-4). The emulator run (jelly36): 0 ANRs of ours, but 59 loads in two minutes - the
   enforcer's calls came more than 300 ms apart. **Follow-up done** (branch `appload-hold`): `AppEnforcer.apply` holds
-  the loads for its pass (`AppLoadHold`, `appLoadHeld`, 10 s cap) and one load comes at its end. Emulator check owed.
+  the loads for its pass (`AppLoadHold`, `appLoadHeld`; a burst waits at most 10 s, chained passes included) and one
+  load comes 300 ms after its end, the trailing callbacks with it (qa-appload-hold-code Q-1 to Q-5). Emulator check owed.
 - **An F-Droid repo as a release source; Etar first** (the user, 2026-10-24: Fossify Calendar opens the editor on a
   tap - FossifyOrg/Calendar #171/#693 open - "jeg ønsker etar, og å kunne tracke updates"; Etar's GitHub releases carry
   no APK): a tracked app of source `fdroid` = a repo URL (default `https://f-droid.org/repo`) + package id. Versions
