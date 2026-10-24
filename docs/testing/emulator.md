@@ -1954,15 +1954,21 @@ away() { adb shell cmd location providers set-test-provider-location fused --loc
 9. **The heartbeat and the queue**: significant motion **can't be faked** - the emulator has no such sensor
    (`dumpsys sensorservice | grep -i significant` is empty; `zone_watch.motion_sensor` false on the page: "It has no
    motion sensor, so it takes a location every 30 min."), so the emulator runs the no-sensor fallback: a `FIX` at every
-   due heartbeat. A passive fix: with Maps open on another place for a few seconds, the next due heartbeat logs `KEPT`
-   (no LocationManager call, Android's location indicator stays off). The queue: `adb shell svc wifi disable` and
-   `svc data disable`, `away`, wait for the crossing's two syncs (both reports fail), enable the network: the next report
-   carries both fixes as `extra_locations` and the server raises the crossing once.
+   due heartbeat. A passive fix: with Maps open on another place for a few seconds, a "Sync now" before the heartbeat
+   is due still reports the old fix (the passive one waits in the kept slot, qa-design-64-step2-code Q-1); the next
+   due heartbeat logs `KEPT` and reports it (no LocationManager call, Android's location indicator stays off). The
+   queue: `adb shell svc wifi disable` and `svc data disable`, `away`, wait for the crossing's two syncs (both reports
+   fail), enable the network: the next report carries the confirm's fix as its `location` and the first fix as
+   `extra_locations`, and the server raises the crossing once. Then the same with the parent switching Location to Off
+   while the network is down: the first report after it carries no `extra_locations` (Q-5).
+   Without zones (delete the zone, Regularly kept): no `Passive feed on`, no `Location heartbeat:` line - every due sync
+   takes today's GPS-first fix (Q-2).
    The moving series (design 64 §4.5) needs the sensor too, so it **can't run on the emulator** - `ZonePlanTest` covers
    its rules; the Jelly Star run below checks it (a walk with the screen off: `Moving series: started`, `Series check:
    KEEP|NEAR_BOUNDARY|SIDE_CHANGED`, `Moving series: ended (STILL)` a few minutes after stopping).
 10. **Un-managed and re-enrolled**: un-manage the phone in the PWA (or enroll it anew from Settings) -> `Fences: 1
-    removed, none watched`, `dumpsys location` lists no geofence of ours, the passive feed is off.
+    removed, none watched`, `dumpsys location` lists no geofence of ours, the passive feed is off; after a re-enrollment
+    the first report carries no `extra_locations` of the old row (Q-8).
 11. **Kid Settings** (swipe left on Home): "This phone shares where it is with mum and dad." / nb "Telefonen deler hvor
     den er med mamma og pappa." under the switches while location is Regularly or Only when asked; gone with Off.
 12. **Battery counts** (§5 of the note): `dumpsys batterystats --reset`, an hour still, `dumpsys batterystats $P`
@@ -1971,8 +1977,9 @@ away() { adb shell cmd location providers set-test-provider-location fused --loc
 Device checks left for the Jelly Star (design 64 §9): the background-location app op (`appops get $P FINE_LOCATION`
 = allow), the sensor present and armed (`dumpsys sensorservice`), whether the passive listener shows Android's location
 indicator (open question 4) and whether the trigger reaches a UID that holds only a foreground service (open question 5),
-the moving series on a walk, a walk home with the screen off (the push within minutes), the battery run, a mock-location app ->
-`mock_location_ignored` in the security log.
+the moving series on a walk, a walk home with the screen off (the push within minutes), a still phone at home keeping
+"Here now" for hours (`zone_watch.still`, Q-3), the battery run, a mock-location app -> `mock_location_ignored` in the
+security log once per rise, with the date on the Locate row.
 
 ## 7. Reporting back
 

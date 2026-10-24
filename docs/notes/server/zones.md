@@ -116,7 +116,9 @@ arrival and departure from the stored fixes (decision 1): nothing new comes from
 counts.
 
 - **The policy** (`device_api::build_policy`): `location_policy` always has `zones`, `[{id, latitude, longitude,
-  radius_m}]` while the mode is `interval` and `[]` otherwise (`zones::policy_zones`; **never a name**, decision 9);
+  radius_m}]` while the mode is `interval` **and the phone's latest report since its enrollment claims `zones_v1`**
+  (`models::ZONES_CAPABILITY`, read by `last_capabilities`; qa-design-64-step2-code Q-10: an older launcher can't use
+  the centres, so it isn't sent them), `[]` otherwise (`zones::policy_zones`; **never a name**, decision 9);
   `interval_minutes` is the **served** interval, `zones::served_interval(mode, chosen, zones, watching)` =
   `max(chosen, HEARTBEAT_FLOOR_MINUTES = 30)` only while Regularly, the phone has zones and its latest report since its
   enrollment holds fences (`zones::last_zone_watch`, `zones::watching`: `zone_watch.fences > 0`) - the user's decision
@@ -134,9 +136,13 @@ counts.
   `mock: true`), not part of its identity (the dedupe is unchanged) and shown only in the Locate page's newest-fix row's
   title ("... · gps", "... · fused · test location", `locate::fix_title`). `zone_watch` - `{fences, motion_sensor, location_on, background_location, mock_ignored}`, all five or nothing
   (`zones::sanitize_zone_watch`: types, fences 0..=100, mock 0..=10^9, at most 512 bytes; other keys dropped), stored in
-  `device_status.zone_watch_json` (0092). The launcher also claims `zones_v1`; the server keys nothing on it (the watch
-  says more).
-- **The intake** (code QA N-4; `zones::intake(state, device, fixes)`): every checked fix of the report - the extras,
+  `device_status.zone_watch_json` (0092). The launcher also claims `zones_v1`, which gates only the zones' coordinates
+  in the policy (Q-10); the floor keys on the watch. `zone_watch.still` (Q-3, not stored with the watch -
+  `zones::report_still`, a JSON `true` only): the report re-sends its cached fix while the phone's motion sensor says it
+  hasn't moved since; `intake` then stamps that fix's row `device_locations.resent_at` (0093) with now, and "Here now"
+  (`freshness_inputs`, `DeviceLocation::seen_at` on the Locate page) counts from the later of `captured_at` and it -
+  the fix's own time and the trail are unchanged, a re-send without `still` stamps nothing.
+- **The intake** (code QA N-4; `zones::intake(state, device, fixes, resent)`): every checked fix of the report - the extras,
   then the report's own - is stored first (`store_fix`, each on its own, the dedupe as step 1), then the zones are
   judged **once** (`judge`, one `BEGIN IMMEDIATE`); so a pair inside one report confirms at its first fix whatever the
   order it came in, and nothing is judged twice. A late extra older than a zone's cursor is stored for the trail and
@@ -144,10 +150,13 @@ counts.
   (`zone_watch::two_parallel_reports_raise_one_crossing`).
 - **Mock fixes** (decision 14, the user's 7): a release launcher ignores a fix with `Location.isMock` and counts it;
   `zone_watch.mock_ignored` is the phone's **running** count since its data was created (not "since the last report":
-  a lost report loses nothing). A rise against the previous report (`zones::mock_log_line`; a lower count - the data
-  cleared - starts again silently) writes the security event `mock_location_ignored` ("Made-up locations ignored",
+  a lost report loses nothing; the phone counts a fix once by its time and place, Q-9). A rise against the count last
+  logged (`zones::mock_rise`: `devices.mock_logged`, 0093, written by an UPDATE only a higher count passes, so two
+  parallel reports or a report without `zone_watch` in between log it once; a lower count - the data cleared, a new
+  enrollment - is taken silently) writes the security event `mock_location_ignored` ("Made-up locations ignored",
   "device 3: the phone ignored 2 made-up location(s) - an app pretended to be somewhere else (5 in all)" - never a
-  place); the Locate page shows the running count in the location group.
+  place, `zones::mock_log_line`) and stamps `devices.mock_logged_at`; the Locate page shows the running count in the
+  location group with when it last rose ("4 made-up locations ignored, the last 14:02").
 - **Pages**: Locate's `#zones` footer and the watch's line, the "Every" row's note while the floor applies, the mock row
   - `pwa.md`, "Locate: zones", step 2.
 - Tests: `zones::tests` (`the_served_interval_has_the_floor_only_while_watched`,
@@ -155,6 +164,8 @@ counts.
   `a_reports_fixes_are_checked_capped_and_ordered`, `the_policy_carries_the_zones_only_while_regularly`),
   `src/tests/zone_watch.rs` (the contract file both ways - `the_zone_contract_matches_the_launchers_copy`,
   `a_launcher_report_raises_the_arrival` -, the policy's zones and floor, every extra stored then one judging, two
-  parallel reports, the mock counter and junk watches, the Locate page), `device_api::policy_json_keys_snapshot`,
+  parallel reports, the mock counter and junk watches, the Locate page; the code QA's
+  `a_watch_from_before_a_re_enrollment_gives_no_floor`, `a_location_older_than_its_extra_is_judged_in_order`,
+  `here_now_counts_the_served_interval_and_a_still_re_send`), `device_api::policy_json_keys_snapshot`,
   `time_rules` (the policy's `location_policy` with `zones`), `music_spotify::migrations_73_to_93_in_order`,
   `zone_watch::a_fix_keeps_its_provider_and_mock_flag_in_the_title_only`.

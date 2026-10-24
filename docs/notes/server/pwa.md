@@ -946,10 +946,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   phone can't use its location in the background yet, so it can't watch the zones." / "The phone hasn't set up its
   zones yet; they are judged at each location it reports."); Location Settings' "Every" row gets the sub-line "30 min
   while the phone has zones" (`data-interval-note`) while the served interval is above the parent's choice - the select
-  still shows the choice (decision 3: never written); and the location group a row "3 made-up locations ignored" /
+  still shows the choice (decision 3: never written); and the location group a row "3 made-up locations ignored, the
+  last 14:02" (when the count last rose, `devices.mock_logged_at`, qa-design-64-step2-code Q-9) /
   "An app on the phone pretended it was somewhere else. Vibb One kept those out of the map and the zones."
   (`data-row="mock-ignored"`) while the phone's running count is above 0. The newest fix row's title (the exact time)
   gains the fix's provider and, for a mock fix, "test location" (migration 0093, `locate::fix_title`) - the title only.
+  "Here now" counts from the later of the newest fix's time and its last still re-send (`resent_at`, Q-3).
 - **The fix's badge**: the newest fix's sub-line "Within 40 m · At Home" ("At Home · School" for two), and the marker's
   popup "10 min ago · within 40 m · at Home" (`data-shown-text`, text as before), while **that fix** is surely inside
   the zone (`locate::fix_badge`, `zones::side`; code QA Q-1).

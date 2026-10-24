@@ -853,7 +853,13 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   `ZoneSeries.kt` (GPL, not the MIT directories), log tag `ZoneWatch`. Wire: `LocationPolicy.zones`
   (`PolicyZone(id, latitude, longitude, radiusM)` - never a name; missing = none), `StatusReportRequest.extraLocations`
   and `zoneWatch` (`ZoneWatchReport`), `LocationReport.provider`/`mock`; contract `zone_status_report.json`
-  (`ZoneReportTest`); capability `zones_v1`.
+  (`ZoneReportTest`); capability `zones_v1` (the server sends the zones' centres only to a launcher claiming it).
+- **One gate** (qa-design-64-step2-code Q-2, the coordinator's decision): everything below - the fences, the passive
+  feed, the motion gate, the heartbeat, the backstop counting from the beat, the series, the balanced path, the queue
+  - runs only while `zoneWatchActive` (device owner, managed, Regularly **with zones**; `ZoneWatch.zonesOn`). Without
+  zones the sync's location step is `syncLocationAction`'s first line, today's `locationAction` exactly (`ZonePlanTest`
+  runs every input), the backstop counts from our last own fix (`backstopAnchorMs`), and nothing else of step 2 runs;
+  only the mock rule applies to every phone.
 - **The fences** (`ZoneFences.sync`, from `ZoneWatch.apply` right after every sync's `AppEnforcer.apply`): one
   `LocationManager.addProximityAlert(lat, lng, radius, -1, pi)` per zone (AOSP's `GeofenceManager`, no Play services, no
   cap; the system polls a hidden balanced fused fix at most every 30 min and judges every fused fix any app causes;
@@ -876,46 +882,59 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   QUALITY_BALANCED_POWER_ACCURACY, 15 s)`, GPS only when fused gives nothing - for the heartbeat and a crossing's first
   fix; the series' checks the balanced fix alone (`LocateCommands.seriesFix`, no GPS, no grant, no Location switch).
 - **The moving series** (§4.5, `ZoneSeries`, pure `nextCheckDelay`/`seriesOnMotion`/`seriesEnd`/`seriesAfterCheck`/
-  `checkVerdict`): while the policy has zones `MotionGate` keeps the trigger armed (re-armed at each fire), and a fire
+  `checkVerdict`): while the watch is on `MotionGate` keeps the trigger armed (re-armed at each fire), and a fire
   starts a series (memory only) or tells the running one. Its checks (`ZoneCheckReceiver`, exact while-idle alarm,
   request code 10, a 45 s wake lock) come every `nextCheckDelay`: the cached fix's distance to the nearest boundary
   less its accuracy, at 15 m/s (`CHECK_SPEED_MPS`), less its age, within 3..30 min (`CHECK_MIN_DELAY_MS`,
-  `CHECK_MAX_DELAY_MS`); no zones = no series, no cached fix = 3 min. A check's fix: on the other side of a boundary
-  than the cached fix (plain distance against the radius) -> queued, a sync (`"zone_check"`) and the confirming GPS
-  fix 2 min later; within its accuracy of a boundary -> queued and a sync; else only `keepFix` (the heartbeat's
-  `KEPT`). The fused fix passes the platform fence too. The series ends after `SERIES_MAX_MS` 60 min,
+  `CHECK_MAX_DELAY_MS`), from the newest fix known (`LocateCommands.newestKnown`: the kept one or the reported one); no
+  zones = no series, no fix = 3 min. A check's fix: on the other side of a boundary than the **reported** fix (plain
+  distance against the radius) -> promoted to the reported fix, queued, a sync (`"zone_check"`) and the confirming GPS
+  fix 2 min later; within its accuracy of a boundary -> the same without the confirm; else only the kept slot
+  (`keepFix`, the heartbeat's `KEPT`). The fused fix passes the platform fence too. The series ends after `SERIES_MAX_MS` 60 min,
   `SERIES_MAX_CHECKS` 20, or no fire within twice the last delay (`SeriesEnd.HOUR`/`COUNT`/`STILL`); no zones watched
   stops it (`ZoneSeries.stop`).
 - **The queue** (`queueWith`/`extraLocations`/`queueAfterReport`, CE prefs `zone_watch` `queue_v1`): a report the
   server didn't take (no network, a 5xx, an exception) leaves its `location` queued; the next report sends the queue
   minus its own fix as `extra_locations`, oldest first; a taken report removes what it carried (what was queued
-  meanwhile stays). Each fix once (time and place, the server's key), at most `ZONE_QUEUE_MAX` 20 (the newest), emptied
-  when the policy's mode is Off. Only the reports' fixes are queued - a passive fix never is.
-- **The passive feed** (`PassiveFixes`, while Regularly as device owner; removed when Regularly ends and in the
-  anchor's `onDestroy`): `requestLocationUpdates(PASSIVE_PROVIDER, LocationRequest.Builder(60 s))`. `passiveFixWorth`:
-  not mock in a release build, accuracy <= 200 m (`PASSIVE_ACCURACY_FLOOR_M`), newer than the cached fix - then it
-  **only replaces the cached fix** (`LocateCommands.keepFix`); it reaches the server as the next heartbeat's fix (KEPT
-  below) or a crossing's, never on its own, so the trail stays as dense as the parent's interval (design 64 §4.3).
-- **The heartbeat** (`heartbeatDue`, in `currentLocationReport` for Regularly without a command): due when the served
-  interval passed since the last heartbeat (`ZoneWatch.lastBeatMs`, CE prefs `last_beat_ms`; the clock set back counts
-  as due); due, it reports a kept fix younger than the interval (`KEPT`), or the cached fix while the significant-motion
-  sensor hasn't fired since our last own fix and that fix is under 4 h old (`STILL`, `STILL_SKIP_MAX_MS`), else takes a
-  fresh fix (`FIX`); every due call and every fresh fix stamps the beat, and `BackstopAlarm` counts from it (a skip
-  waits a whole interval, not the 9-minute floor). With zones on a watching phone the server serves at least 30 min
-  (decision 3). `MotionGate`: `TYPE_SIGNIFICANT_MOTION` via `requestTriggerSensor`, armed after each own fix while
-  Regularly (and kept armed while zones are watched, for the series), one-shot (disarms itself when it fires); a new
-  process counts as moved; **no sensor (the emulator) = always fix**, today's behaviour, and no series.
+  meanwhile stays). Each fix once (time and place, the server's key), at most `ZONE_QUEUE_MAX` 20 (the newest). With
+  Location Off or no zones the queue is emptied **before** the report, which then sends no extras (Q-5). Only the
+  reports' fixes and a series' candidates are queued - a passive fix never is.
+- **The passive feed** (`PassiveFixes`, while the watch is on; removed when it ends and in the anchor's `onDestroy`):
+  `requestLocationUpdates(PASSIVE_PROVIDER, LocationRequest.Builder(60 s))`. `passiveFixWorth`: not mock in a release
+  build, accuracy <= 200 m (`PASSIVE_ACCURACY_FLOOR_M`), newer than the newest fix known - then it goes to the **kept
+  slot** (`LocateCommands.keepFix`, default prefs `zone_kept_fix`), **never the cached (reported) fix** (Q-1): every
+  sync between beats re-sends the reported fix as before; only a due heartbeat's `KEPT` or a crossing's sync
+  (`LocateCommands.promoteKept`) makes it the reported fix, so the trail stays as dense as the parent's interval (design
+  64 §4.3).
+- **The heartbeat** (`heartbeatDue` through `syncLocationAction`, in `currentLocationReport` with zones and no
+  command): due when the served interval passed since the last heartbeat (`ZoneWatch.lastBeatMs`, CE prefs
+  `last_beat_ms`; the clock set back counts as due); due, it reports the kept slot's fix when it is not yet reported and
+  younger than the interval (`KEPT`, promoted first; never our own reported fix, Q-4), or the reported fix while the
+  significant-motion sensor hasn't fired since our last own fix and that fix is under 4 h old (`STILL`,
+  `STILL_SKIP_MAX_MS`), else takes a fresh fix (`FIX`); every due call and every fresh fix stamps the beat, and
+  `BackstopAlarm` counts from it (a skip waits a whole interval, not the 9-minute floor). A report that re-sends the
+  cached fix while the sensor says still (`reportStill`) sends `zone_watch.still: true`, so the server's "Here now"
+  counts from it (Q-3). With zones on a watching phone the server serves at least 30 min (decision 3). `MotionGate`:
+  `TYPE_SIGNIFICANT_MOTION` via `requestTriggerSensor`, armed only after a **genuinely fresh** own fix (`freshOwnFix`:
+  taken at the request, less 60 s - never after a fallback to the cached or an old last-known fix, Q-6; `arm` and the
+  fire share one monitor) and kept armed while the watch is on, for the series; one-shot (disarms itself when it
+  fires); a new process counts as moved; **no sensor (the emulator) = always fix**, and no series.
 - **The mock rule** (decision 14): `ZoneWatch.accept` on every fix the phone takes or keeps - the fresh one, each
   last-known candidate, each passive fix: a release build ignores a `Location.isMock()` fix and counts it once per fix
   (`countMock`, CE prefs `mock_ignored`, a running count - `zone_watch.mock_ignored`), the debug build takes it (the
-  emulator's test provider; `LocationReport.mock` then says so). The cached fix keeps its provider and mock flag.
+  emulator's test provider; `LocationReport.mock` then says so). A fix counts once by its time and place
+  (`mockKey`, the last `MOCK_KEYS_KEPT` 8 keys in CE prefs `mock_keys_v1`, Q-9). The cached fix keeps its provider and
+  mock flag.
 - **`zone_watch`** (`ZoneWatch.report`, every report as device owner): `fences` (the record's ids), `motion_sensor`,
-  `location_on`, `background_location` (the self-granted permission, never confirmed on a device), `mock_ignored`.
-- **Un-managed and a new enrollment** (`ZoneWatch.release`): `AppEnforcer.apply` on a phone that isn't managed
-  (`!hardeningManaged`, right after `clearHardening`) and both enrollment paths (`Provisioning`, Settings' enroll, next
-  to `CommandAnswers.clear`) remove every fence of ours, stop the passive feed, the sensor and the series and empty the
-  queue; the zone watch itself also needs a managed policy (`ZoneWatch.apply`). A release before the process's first
-  watching sync doesn't count as its registration (`ZoneFences.registeredHere`).
+  `location_on`, `background_location` (the self-granted permission, never confirmed on a device), `mock_ignored`,
+  `still` (left out when false).
+- **Un-managed and a new enrollment**: `AppEnforcer.apply` on a phone that isn't managed (`!hardeningManaged`, right
+  after `clearHardening`) calls `ZoneWatch.release` - every fence of ours removed, the passive feed, the sensor and the
+  series stopped, the queue and the kept fix emptied; both enrollment paths (`Provisioning`, Settings' enroll, next to
+  `CommandAnswers.clear`) call `ZoneWatch.forget` - the same, and the fence record, the beat's stamp and the mock count
+  (Q-8). A release before the process's first watching sync doesn't count as its registration
+  (`ZoneFences.registeredHere`). The fence record and its stamp are saved **before** the first `addProximityAlert`, so
+  the registration's own "entering" is always inside the echo window; no record reads as within it (Q-7).
 - **The pause and the override change nothing** (decision 12: locating isn't a restriction); "Keep location on" is
   unchanged hardening; Doze: the fence's broadcast comes with system_server's wake lock, our alarms are while-idle on
   the power-save allowlist (design 19b).
