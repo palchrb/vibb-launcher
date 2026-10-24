@@ -1166,6 +1166,11 @@ findings, merge to `main`, full suite once.
   (evaluating 'this._map.layerPointToLatLng')` right after `L.map` (Chromium tolerated it). Reproduced in Playwright's
   WebKit; the fit now uses a pure `zoneBounds(lat, lng, r)` (metres to degrees) with a jstest, `zones.js?v=2`. Lesson:
   a PWA page with Leaflet gets a WebKit pass before release (the Locate page was fine because it sets the view first).
+- **Hold the app-list loads while `AppEnforcer.apply` runs** (2026-10-24, from the debounce's emulator check: 0 ANRs
+  of ours in the provisioning storm, but ~1 load per restricted package - the enforcer's per-package DPM calls are
+  spaced over 300 ms on a loaded phone, so the 300 ms debounce rarely merges them): `apply` tells the app-list
+  consumer "held" at its start and "released" at its end (one load then; a cap of 10 s in case apply hangs), pinned
+  in `HomeRound7Test`; nothing else changes. Launcher, XS; next launcher round.
 - **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
   Settings › Intelligent assistance › App blocker - Boot blocker, Start blocker, Background blocker, Background
   cleanup; on the Jelly Star only found through Settings' search. Design 19b §4 foresaw an OEM manager but had no name.
