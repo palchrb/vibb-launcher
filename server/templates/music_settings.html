@@ -23,14 +23,14 @@
         </label>
         <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
     </form>
-    <div class="group-footer">"Check now" on an entry checks it at once. <details class="info"><summary aria-label="About checking for new episodes"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Every 6 hours is what the Vibb Pi uses (NRK podcasts every 12 hours). More often means more requests to NRK and the podcast sites: about 2&times; the Pi at 3 hours, 6&times; at 1 hour.</p><p>Shows no phone has are checked once a day. Episode pictures are fetched a few at a time, at most 400 a day.</p></div></details></div>
+    <div class="group-footer">"Check now" on an entry checks it at once. <details class="info"><summary aria-label="About checking for new episodes"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Every 6 hours is what the Vibb Pi uses. More often means more requests to NRK and the podcast sites.</p></div></details></div>
 
     <h2 class="group-header">Storytel</h2>
     <div class="group" id="storytel">
         {% if !storytel.key_available %}
         <details class="info cell" data-row="storytel-off">
             <summary class="row"><span class="row-label text-alarm">Storytel is off</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="Why Storytel is off" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-            <div class="info-panel"><p>This server has no key to keep the login safe. It makes one itself (data/keys/music-secret.key) unless MUSIC_SECRET_KEY is set in .env - the server's log says why that failed ("Storytel logins are off: ..."). See DEPLOY.md.</p></div>
+            <div class="info-panel"><p>This server has no key to keep the login safe (data/keys/music-secret.key, or MUSIC_SECRET_KEY in .env). Its log says why; see DEPLOY.md.</p></div>
         </details>
         {% else %}
         {% if storytel.stale %}
@@ -94,7 +94,7 @@
         {% endif %}
     </div>
     {% if storytel.key_available %}
-    <div class="group-footer">One login for the family; it is never shown again. <details class="info"><summary aria-label="About the Storytel login"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Used by the shelf here and by the phones where Storytel is on (each phone's Music page). Kept encrypted on this server, never in a log. Saving checks it with Storytel first.</p><p>Use a password you use only for Storytel: each phone keeps it to log in. Two phones listening at the same time need Storytel Family, which isn't supported yet.</p>{% if let Some(session) = storytel.session %}<p data-row="session">{{ session }}</p>{% endif %}</div></details></div>
+    <div class="group-footer">One login for the family; it is never shown again. <details class="info"><summary aria-label="About the Storytel login"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>The phones never get the password. Two phones listening at the same time need Storytel Family, which isn't supported yet.</p>{% if let Some(session) = storytel.session %}<p data-row="session">{{ session }}</p>{% endif %}</div></details></div>
     {% endif %}
 
     {% include "partials/spotify_setup.html" %}

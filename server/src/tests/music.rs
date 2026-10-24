@@ -1325,7 +1325,6 @@ async fn the_page_shows_two_switches_and_the_limit_and_saves_back_to_music_setti
     let form = settings_form(&page);
     assert!(form.contains("<input type=\"hidden\" name=\"v\" value=\"2\">"));
     assert!(form.contains("Stream on mobile data"));
-    assert!(form.contains("(not for an entry that keeps nothing)"));
     assert!(form.contains("Download on mobile data"));
     assert!(form.contains("Never while roaming. On Wi-Fi both always work"));
     assert!(form.contains("Storage limit"));
@@ -3336,7 +3335,11 @@ async fn the_music_page_scopes_sonos_rooms() {
     let page = music_page(&app, &cookie, device).await;
     let sonos = sonos_group(&page);
     assert!(sonos.contains("No speakers seen yet."));
-    assert!(sonos.contains("Until then the phone may play on any Sonos speaker it finds."));
+    assert!(
+        sonos.contains(
+            "Until then the phone may play on any Sonos speaker it finds, a friend's too."
+        )
+    );
     assert!(!sonos.contains("/music/sonos-rooms"));
     let all = library().await;
     assert_eq!(all["sonos_rooms"], Value::Null);

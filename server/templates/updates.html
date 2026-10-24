@@ -54,7 +54,7 @@
                 <div class="info-panel">
                     <p>Set HANDY_VERSION={{ version }} in .env, then run:</p>
                     <pre><code>docker compose pull &amp;&amp; docker compose up -d</code></pre>
-                    <p>The database is backed up by itself before it changes (data/backups/pre-migrate-*.db).</p>
+                    <p>The database backs itself up first.</p>
                 </div>
             </details>
             {% else %}
@@ -107,7 +107,7 @@
             {% else %}
             <details class="info cell" data-row="os-status">
                 <summary class="row"><span class="row-label row-label-quiet">Couldn't check for updates</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="Why" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>The package list couldn't be read. That is normal when the server doesn't run on a Pi, as during development.</p></div>
+                <div class="info-panel"><p>Normal when the server doesn't run on a Pi.</p></div>
             </details>
             {% endif %}
             {% if os.reboot_required %}

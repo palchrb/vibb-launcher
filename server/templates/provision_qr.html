@@ -23,7 +23,7 @@
         <details class="info cell" data-row="server-setup">
             <summary class="row"><span class="row-label text-alarm">Server setup needed</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="What is missing" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
             <div class="info-panel">
-                {% if missing_checksum %}<p data-missing="checksum">No QR code can be made: the launcher's signing checksum isn't set, so Android couldn't check the app it downloads. Set LAUNCHER_SIGNATURE_CHECKSUM in the server's .env and restart the server (DEPLOY.md, "Launcher provisioning settings").</p>{% endif %}
+                {% if missing_checksum %}<p data-missing="checksum">No QR code without the launcher's signing checksum: set LAUNCHER_SIGNATURE_CHECKSUM in the server's .env and restart it (DEPLOY.md).</p>{% endif %}
                 {% if missing_server_url %}<p data-missing="server-url">No server address yet: set it in <a href="/settings/provisioning">Settings › Phone Setup</a>, or type it on the phone.</p>{% endif %}
             </div>
         </details>
@@ -67,7 +67,7 @@
             {% endif %}
         </div>
         <div class="group-footer">On the phone's welcome screen, tap 6 times in one spot, then scan.
-            <details class="info"><summary aria-label="About the QR code"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>The phone then installs Vibb One and connects by itself, joining the Wi-Fi first if you gave one. It gets the server address and Tailscale key from <a href="/settings/provisioning">Settings › Phone Setup</a>.</p><p>GrapheneOS has no 6-tap setup: make Vibb One the device owner with adb, then scan from Vibb One's Settings › "Scan setup QR".</p><p>The code in it works once, for {{ qr_minutes }} minutes; a new QR code or setup code replaces it.</p></div></details>
+            <details class="info"><summary aria-label="About the QR code"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>It works once, for {{ qr_minutes }} minutes. GrapheneOS has no 6-tap setup: make Vibb One the device owner with adb, then scan from its Settings › "Scan setup QR".</p></div></details>
         </div>
     </section>
 
@@ -85,7 +85,7 @@
             </form>
         </div>
         <div class="group-footer">You type it in Vibb One's settings on the phone.
-            <details class="info"><summary aria-label="About setup codes"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>For a phone where Vibb One is already the device owner, set with adb (docs/testing/emulator.md has the commands).</p><p>The code works once, for {{ code_minutes }} minutes, and is shown only once. It replaces any QR code made before.</p></div></details>
+            <details class="info"><summary aria-label="About setup codes"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>It works once, for {{ code_minutes }} minutes, and replaces any QR code made before.</p></div></details>
         </div>
     </section>
 </main>

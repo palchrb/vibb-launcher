@@ -81,7 +81,7 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
     for name in ["update_fence", "notification_auto_cancel", "boot_cover"] {
         assert_eq!(input_checked(&page, name, "on"), Some(true), "{name}");
     }
-    assert!(page.contains("Test it on this phone first"));
+    assert!(page.contains("Test Update fence and Boot cover on this phone model"));
 
     // The phone's state (qa-16b-code #5): a launcher without the boot cover is told to update; one
     // with it reports a tripped guard, which the card shows as a warning.
@@ -263,7 +263,7 @@ async fn device_page_explains_the_fence_and_the_filter() {
     assert!(html.contains("no notification access"), "{html}");
     assert!(html.contains("com.google.android.gms (nag)"), "{html}");
     assert!(html.contains("1 snoozed for an hour"), "{html}");
-    assert!(html.contains("never its title or text"), "{html}");
+    assert!(html.contains("never reads a notification's text"), "{html}");
     // The warnings sit above the group, the rest in it.
     let warnings = html.matches("data-warning").count();
     assert!(

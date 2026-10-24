@@ -183,7 +183,7 @@ async fn save_probes_then_seals() {
     assert!(page.contains("Storytel accepted the login (12:02)."));
     assert!(page.contains("href=\"/music/storytel\""));
     assert!(page.contains("Storytel Family, which isn't supported yet"));
-    assert!(page.contains("Use a password you use only for Storytel"));
+    assert!(page.contains("The phones never get the password."));
     assert_no_secret(&page, PASSWORD, "/music/settings");
     let again = app
         .get_page("/music/settings", &cookie)
@@ -1574,8 +1574,8 @@ async fn library_gates_storytel() {
         super::input_checked(storytel, "storytel", "on"),
         Some(false)
     );
-    // The downloads switch's ⓘ names the books (design 30).
-    assert!(page.contains("Storytel books download off Wi-Fi too. A Storytel book is often"));
+    // The mobile data ⓘ names the books (design 30).
+    assert!(page.contains("Downloads: a Storytel book is often several hundred MB."));
     // The switch on: in.
     let before = revision(&app).await;
     sqlx::query("UPDATE device_policy SET music_storytel = 1 WHERE device_id = ?")

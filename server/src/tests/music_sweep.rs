@@ -2615,9 +2615,7 @@ async fn the_cards_say_what_the_sweep_knows() {
     // The setting, on Music › Settings (design 31 §3.4): an inline picker, its hints behind ⓘ.
     let settings = app.get_page("/music/settings", &cookie).await.text();
     assert!(settings.contains("Check for new episodes"));
-    assert!(
-        settings.contains("Every 6 hours is what the Vibb Pi uses (NRK podcasts every 12 hours)")
-    );
+    assert!(settings.contains("Every 6 hours is what the Vibb Pi uses."));
     assert!(settings.contains("value=\"6\" selected"));
     assert!(autosaves(&settings, "hours"));
     assert_eq!(
@@ -2625,11 +2623,7 @@ async fn the_cards_say_what_the_sweep_knows() {
         Some("/music/sweep#sweep")
     );
     let page = app.get_page("/music", &cookie).await.text();
-    assert!(
-        page.contains(
-            "A public feed can never send the server or the phones to a private address."
-        )
-    );
+    assert!(page.contains("Feeds on your home network or tailnet work too."));
     // The listed, capped, cut series: its row counts, its page says the rest.
     assert!(page.contains("98 episodes"));
     assert!(page.contains("Checked 2 h ago"));

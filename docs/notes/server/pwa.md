@@ -239,8 +239,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   missed calls", `data-autosave`, `<noscript>` Save) posting `POST /devices/{id}/lock-wake`
   (`lock_glance::save_wake`: `device_policy.lock_wake_on_notification`, migration 0084, off by default; 404 for an
   unknown phone), back to `#lock-wake` (`check_forms`), the phone nudged, a `lock_wake_changed` security-log line when the value changed
-  (`lock_glance::wake_log_line`); sent as `launcher_ui.lock_wake_on_notification`. The group's ⓘ says what it does and
-  that what the lock then shows is seen by anyone near the phone. Tests: `lock_glance::the_wake_switch_saves_logs_nudges_and_reaches_the_policy`,
+  (`lock_glance::wake_log_line`); sent as `launcher_ui.lock_wake_on_notification`. The group's footer says that what
+  the lock shows is seen by anyone near the phone (its ⓘ went in the ⓘ cut, 2026-10-24). Tests: `lock_glance::the_wake_switch_saves_logs_nudges_and_reaches_the_policy`,
   the redirect table in `device_pages`, `policy_json_keys_snapshot`.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
   `/lock?notice=…#child-pin`, `kid-pin/send` → `/lock?notice=…#child-pin`, `kid-lock/keyguard` → its row
@@ -263,9 +263,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   again; without JS the browser asks before posting it again, like any form's answer - the PIN can't go through a
   redirect, so post/redirect/get is out; qa-59-step2-code S2P-5/6; "Hide now" is a link to `?hidden=pin#show-pin`), the state rows and warnings, **Send the Child PIN again** (`POST
   /devices/{id}/kid-pin/send`, back to `?notice=pin_sent|pin_not_sent|pin_not_kept#child-pin`). The footer and its ⓘ
-  follow the parent's choice (Android's lock: the PIN encrypts the data, nothing before the first unlock after a
-  restart, Android's back-off, the Parent PIN doesn't open it, a fingerprint); the Parent PIN's ⓘ drops "the lock's
-  Parent code" with Android's lock. The summary's row reads "PIN on · Android's lock". "Send again" and the reveal's "the
+  follow the parent's choice (Android's lock: nothing can locate, ring or erase it before the first unlock after a
+  restart, the Parent PIN doesn't open it; Vibb One's lock: the back-off, the Parent PIN as "Parent code"). The summary's row reads "PIN on · Android's lock". "Send again" and the reveal's "the
   phone still has" read only a report since the phone's enrolment (`device_pages::since_enrolment`, as the queue rule;
   S2P-4).
 - **Typed (M5):** `kid_lock::LockNote` (+ `Inactive`) replaces the card's `lines`/`warnings` and `inactive_warning`;
@@ -673,7 +672,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   form again, 400, what was typed kept, the reason under the field; the name is trimmed), **Connect**
   (`/devices/{id}/provision`, `provision_qr.html`: two choices, "QR code · New or reset phone" (the Wi-Fi fields and
   Make QR Code, the GrapheneOS/adb detail behind the footer's ⓘ) and "Code · Phone already set up" (New Setup Code,
-  the adb detail behind ⓘ)), then **the QR code** (rendered in the POST's answer inside `#qr`, the form posts there, so
+  its minutes behind ⓘ)), then **the QR code** (rendered in the POST's answer inside `#qr`, the form posts there, so
   it lands on the QR with or without JS; its end local, `Zone::until`) or **the code** (`regenerate-code` →
   `enroll_code.html`, "Setup Code", shown once, `no-store`, its end and the typed-code pause local). Both end on
   **Done** → the phone's page for a phone not set up; for a connected phone both go back to Advanced › Connection and
@@ -848,3 +847,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   through it. `--tab-bar-room` is the bar + 14 px + `--tab-fade-above`, so main's last row (and a focused field,
   `scroll-padding-bottom`) stops above the fade's start. Above that start the side gaps stay sharp. The shell test pins
   the rule, the room and that the fade comes first in the partial.
+
+## The ⓘ cut (2026-10-24, PLAN "PWA ⓘ panels are too wordy")
+
+- **A ⓘ only where the footer can't carry the one fact a parent needs** (a consequence, a number, "needs the phone
+  online"), one or two short sentences in the page's plain words - no internals, no design numbers. A panel that
+  repeated its row or footer is gone with its whole `<details class="info">` (no empty ⓘ); a fact worth keeping moved
+  into the footer in a few words ("Add photos in Settings › Wallpapers", "a friend's too", "(up to 10 MB)"). Panels
+  that hold data (a crash trace, a raw error, a key, a command, the phone's answer, a book list, Spotify's setup steps)
+  stay as they were. A new ⓘ follows the same rule. Of the 83 `info-panel`s in `templates/`, 9 static ones went and
+  the static rest were cut; the tests assert the new words.
