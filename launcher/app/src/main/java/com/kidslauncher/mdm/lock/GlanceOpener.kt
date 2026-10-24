@@ -95,13 +95,29 @@ object GlanceOpener {
     fun usableUnderTimeRule(context: Context, target: GlanceTarget): Boolean =
         glanceUsableUnderLock(TimeRulesRuntime.snapshot(context, currentPolicyDecision().policy).lock, target, CallPolicyStore.state.managed)
 
+    /**
+     * qa-home-round-code Q-3: whether [open] would open something over Home now - the same facts and step, read
+     * synchronously before the lock's leave brings Home, so a target that opens nothing (not installed, suspended,
+     * hidden, no launch intent, the kiosk without lock task) leaves Home reset like a plain unlock. Never throws; an
+     * error counts as "opens" (Home is then left where it was, as before).
+     */
+    fun opens(activity: Activity, pending: PendingOpen): Boolean = try {
+        glanceOpensSomething(glanceOpenStep(facts(activity, pending, GlanceOpenFrom.LOCK, intentOf(pending))))
+    } catch (e: Throwable) {
+        Log.w(LOG_TAG, "Glance: couldn't tell whether the target opens (${e.javaClass.simpleName})")
+        true
+    }
+
+    /** The conversation's newest content intent, else the one captured at the tap (the row's notification may be
+     * gone by now - the room still opens). */
+    private fun intentOf(pending: PendingOpen): PendingIntent? =
+        (pending.target as? GlanceTarget.Conversation)?.let { GlanceStore.contentIntent(it.conversation) ?: pending.captured }
+
     private fun run(activity: Activity, pending: PendingOpen, from: GlanceOpenFrom, homeBelow: Boolean) {
         val target = pending.target
         val conversation = target as? GlanceTarget.Conversation
         val what = target.appPackage ?: "the missed calls"
-        // The conversation's newest content intent, else the one captured at the tap (the row's
-        // notification may be gone by now - the room still opens).
-        val intent = conversation?.let { GlanceStore.contentIntent(it.conversation) ?: pending.captured }
+        val intent = intentOf(pending)
         val facts = facts(activity, pending, from, intent)
         var step = glanceOpenStep(facts)
         if (step.open == GlanceOpen.SEND && intent != null) {

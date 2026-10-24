@@ -36,15 +36,25 @@ fun groundKind(systemShowsOurs: Boolean, scrimAlpha: Int, ownGround: Boolean = f
     else -> GroundKind.SCRIM
 }
 
+/** What a root's ground was last drawn from: the same key draws the same ground (qa-home-round-code Q-8). The bitmap
+ * compares by identity (`Bitmap` keeps `Object.equals`). */
+private data class GroundKey(val kind: GroundKind, val fill: WallpaperFill, val bitmap: android.graphics.Bitmap?, val scrim: Int)
+
 object WallpaperGround {
     fun apply(activity: Activity, root: View, ownGround: Boolean = false): WallpaperStore.State {
         val state = WallpaperStore.state
         // Worked out on the store's thread - no binder call per render (qa-08-code.md #6).
         val scrim = state.ink.scrimArgb
-        root.background = when (groundKind(state.systemShowsOurs, scrim ushr 24, ownGround)) {
-            GroundKind.TRANSPARENT -> ColorDrawable(Color.TRANSPARENT)
-            GroundKind.SCRIM -> WallpaperRender.GroundDrawable(null, state.bitmap, scrim)
-            GroundKind.FULL -> WallpaperRender.GroundDrawable(state.current.fill, state.bitmap, scrim)
+        val kind = groundKind(state.systemShowsOurs, scrim ushr 24, ownGround)
+        val key = GroundKey(kind, state.current.fill, state.bitmap, scrim)
+        // Q-8: an unchanged ground keeps its drawable - no new allocation, no layout request of the root.
+        if (root.getTag(com.kidslauncher.mdm.R.id.wallpaper_ground_key) != key) {
+            root.background = when (kind) {
+                GroundKind.TRANSPARENT -> ColorDrawable(Color.TRANSPARENT)
+                GroundKind.SCRIM -> WallpaperRender.GroundDrawable(null, state.bitmap, scrim)
+                GroundKind.FULL -> WallpaperRender.GroundDrawable(state.current.fill, state.bitmap, scrim)
+            }
+            root.setTag(com.kidslauncher.mdm.R.id.wallpaper_ground_key, key)
         }
         WindowCompat.getInsetsController(activity.window, root).apply {
             isAppearanceLightStatusBars = state.ink.darkInk

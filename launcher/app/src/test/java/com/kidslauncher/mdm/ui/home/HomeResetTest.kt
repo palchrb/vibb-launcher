@@ -72,7 +72,8 @@ class HomeResetTest {
         assertTrue(front.substringAfter("fun intent(").substringBefore("fun bring(").contains(".putExtra(EXTRA_ARRIVAL, arrival.name)"))
         val go = code("lock/PinLockActivity.kt").substringAfter("private fun go(plan: LockLeave)").substringBefore("\n    }")
         val target = go.indexOf("val target = pendingOpen?.takeIf { PinLockRuntime.mode == LockMode.UNLOCKED }")
-        val arrival = go.indexOf("val arrival = lockLeaveArrival(hasTarget = target != null, lockWasRoot = target?.lockWasRoot == true)")
+        // Q-3: a target that opens nothing is Home - asked synchronously before the bring.
+        val arrival = go.indexOf("val arrival = lockLeaveArrival(hasTarget = target != null && GlanceOpener.opens(this, target), lockWasRoot = target?.lockWasRoot == true)")
         val bring = go.indexOf("HomeFront.bring(this, \"the lock left\", noAnimation = AndroidLock.faceOn, arrival = arrival)")
         val open = go.indexOf("target?.let { GlanceOpener.open(this, it, homeBelow = plan.homeFirst) }")
         assertTrue(go, target in 0 until arrival && arrival < bring && bring < open)
@@ -84,6 +85,21 @@ class HomeResetTest {
             .filter { Regex("arrival = (com\\.kidslauncher\\.mdm\\.ui\\.home\\.)?(HomeArrival\\.|arrival\\b)").containsMatchIn(code(it.relativeTo(root).path)) }
             .map { it.name }.sorted().toList()
         assertEquals(listOf("BootHome.kt", "HomeFront.kt", "PinLockActivity.kt"), namers)
+    }
+
+    /** qa-home-round-code Q-3: the opener's own step decides whether a target opens anything over Home. */
+    @Test
+    fun `a target that opens nothing is Home, from the opener's own step`() {
+        for (open in com.kidslauncher.mdm.lock.GlanceOpen.entries) {
+            val step = com.kidslauncher.mdm.lock.GlanceOpenStep(open, "test")
+            assertEquals(open.name, open != com.kidslauncher.mdm.lock.GlanceOpen.NOTHING, com.kidslauncher.mdm.lock.glanceOpensSomething(step))
+        }
+        val opener = code("lock/GlanceOpener.kt")
+        val opens = opener.substringAfter("fun opens(activity: Activity, pending: PendingOpen): Boolean = try {").substringBefore("private fun intentOf(")
+        assertTrue(opens, opens.contains("glanceOpensSomething(glanceOpenStep(facts(activity, pending, GlanceOpenFrom.LOCK, intentOf(pending))))"))
+        assertTrue("an error is today's behaviour (opens)", opens.contains("} catch (e: Throwable) {") && opens.trimEnd().removeSuffix("}").trimEnd().endsWith("true"))
+        // The open reads the same intent as the check.
+        assertTrue(opener.substringAfter("private fun run(").contains("val intent = intentOf(pending)"))
     }
 
     @Test

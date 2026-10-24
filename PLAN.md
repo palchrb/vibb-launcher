@@ -1107,8 +1107,21 @@ findings, merge to `main`, full suite once.
   unlock brings no Home (`lockLeave`), so nothing resets; an unlock on SystemUI's own face or pad (the glance stopped
   under an app, design 59b step 0) brings no Home either. Unchanged: the Home button or Back from an app keeps the
   kid's place (no extra, Home was stopped: `homePressToTop` needs Home up), and the kid's press on Home itself still
-  scrolls smoothly to the top (round 7 §4). Residual: a row's target the opener can't open (not installed, refused
-  send, kiosk on with no lock task) leaves Home where it was.
+  scrolls smoothly to the top (round 7 §4). Fix round (qa-home-round-code Q-3): `go()` asks
+  `GlanceOpener.opens` (the opener's own facts and step, synchronously, before the bring) - a target that opens nothing
+  (not installed, suspended or hidden by then, no launch intent, the kiosk without lock task, the kiosk root) resets
+  Home like a plain unlock; a refused send still falls back to the launch intent, so it counts as an app. Residual:
+  only a target that changes between that check and the open (a few ms) - Home is then left where it was.
+- **Provisioning storm: debounce the app-list reload** (qa-home-round-code Q-4, 2026-10-24; pre-existing, RC3-4
+  family; the coordinator's two "no focused window" ANRs right after `set-device-owner`): the enforcer's hide/suspend
+  storm fires one `LauncherApps` `onPackageChanged` per package on the main thread - each evicts icons (a cache scan),
+  requests a load, checks the clock app and launches an IO coroutine whose `WindowRelock.onPackageInstalled` can run
+  a full `AppEnforcer.apply`; the conflated `appLoads` channel then loads back to back for the whole storm, each load
+  posting a list Home renders on the main thread. Fix: `appLoads`' consumer waits for a quiet period after a receive
+  (drain until 300 ms pass with no request, or 2 s since the first), then loads once (`iconsToEvict` already
+  accumulates the packages); coalesce `WindowRelock.onPackageInstalled` per burst the same way, so a storm can't
+  queue one `apply` per package; pin the quiet period in `HomeRound7Test` next to the conflated-channel pin. Launcher,
+  S; not built yet.
 - **An F-Droid repo as a release source; Etar first** (the user, 2026-10-24: Fossify Calendar opens the editor on a
   tap - FossifyOrg/Calendar #171/#693 open - "jeg ønsker etar, og å kunne tracke updates"; Etar's GitHub releases carry
   no APK): a tracked app of source `fdroid` = a repo URL (default `https://f-droid.org/repo`) + package id. Versions
@@ -1161,9 +1174,10 @@ findings, merge to `main`, full suite once.
   under "Fingerprint", always shown (`server/MediaLockScreen.kt`, `MediaLockScreenTest`): `ACTION_SOUND_SETTINGS`
   through the battery row's `systemPageIntent` (so only during the pause on a managed phone; `systemPageAccess`'s
   states, re-read after the pause's apply); no public action opens the Media sub-page, so the summary names the path
-  ("Lyd og vibrasjon › Medier › Vis medier på låseskjermen av"). Its state line reads
-  `Settings.Secure.getInt("media_controls_lock_screen", 1)`: "På - vises på Androids låseskjerm" / "Av" ("Ukjent"
-  when the read throws); a tap opens the page unless it reads off. `android-settings.md` names the row first.
+  ("Lyd og vibrasjon › Medier › Vis medier på låseskjermen av"). No state line (qa-home-round-code Q-1):
+  `media_controls_lock_screen` has no `@Readable`, so SettingsProvider refuses it to an app targeting S+ (a device
+  owner too) - the summary is the action line alone, a tap always opens the page, and the check is the switch on
+  Android's page. `android-settings.md` names the row first.
 - **A black flash behind Home after the Home button** (the user, 2026-10-16, emulator video): from an app
   (Element X), the Home button (the emulator's circle) shows Home's icons on solid black for ~150 ms
   (four frames at 30 fps) while the app slides away, and only then the wallpaper; Back has a clean
@@ -1178,16 +1192,18 @@ findings, merge to `main`, full suite once.
   already holds the one decoded photo). Launcher only. A second video (2026-10-16) shows the same black frame
   with a built-in gradient wallpaper (not only a photo), and Back's predictive animation clean; power
   off/on over the PIN lock showed no flash of content (design 32 holds).
-  **Built 2026-10-24 (branch `home-round`; emulator check owed - design 08's last section)**: the cause wasn't
-  measured (no emulator in the round); both candidates - Android's wallpaper not shown under Home yet, or the
-  transition's backdrop (which could take design 32's black task description) - lie below Home's window, so Home now
-  draws its own copy (`WallpaperGround`'s FULL ground: the store's colour, gradient or the one decoded photo, then the
-  scrim - no new memory, Android's placement) after a HOME intent that brings it from behind (the Home button or
-  gesture, every `HomeFront` start), for at least 700 ms and until `onEnterAnimationComplete` plus a frame, at most
-  2.5 s; ended by a pause and the stop; never for Back or Recents, never at a lock-up (the content isn't on the
-  window then; the black snapshot stays). Pure `ui/home/HomeGround.kt` (`homeGroundDue`, `HomeGroundTest`); design
-  59d step B's face leave folded in unchanged. If the recording still shows black, the backdrop/wallpaper timing
-  isn't the cause (look at `TaskDescription` and Shell's transition then).
+  **Fixed 2026-10-24 (branch `home-round`, measured on `jelly36`, `docs/testing/2026-10-24-home-round-run.md`)**:
+  the cause is Android's wallpaper not yet shown under Home during the app-close transition - before 2-3 black
+  frames at 30 fps (one fully black), after 0 in three valid runs (a gradient, gesture navigation, kiosk off), Back
+  clean on both, no seam seen when the copy goes. Home draws its own copy (`WallpaperGround`'s FULL ground: the
+  store's colour, gradient or the one decoded photo, then the scrim - no new memory, Android's placement) after a
+  HOME intent that brings it from behind (the Home button or gesture, every `HomeFront` start), for at least 700 ms
+  and until `onEnterAnimationComplete` plus a frame, at most 2.5 s; ended when Home leaves the front (posted, so a
+  second Home press during the transition keeps it - qa-home-round-code Q-2) and at the stop; never for Back, never
+  at a lock-up (the content isn't on the window then; the black snapshot stays). Pure `ui/home/HomeGround.kt`
+  (`homeGroundDue`, `HomeGroundTest`); design 59d step B's face leave folded in unchanged. Still owed (design 08's
+  last section): 3-button navigation (with a photo: no zoom step when the copy goes - Q-7), kiosk on, a photo and a
+  plain colour, the lock's leave on both pads, screen off/on over the lock (design 32).
 
 - **The last app still flashes for one frame at screen-on** (design 32's lock flash isn't gone; the user,
   2026-10-16, three emulator videos read frame by frame): turning the screen on over the PIN lock shows, for

@@ -656,6 +656,11 @@ data class GlanceOpenFacts(
 /** The decision with its reason (the log names the package and the reason only). */
 data class GlanceOpenStep(val open: GlanceOpen, val reason: String)
 
+/** qa-home-round-code Q-3: whether [step] opens something over Home - every step but NOTHING (a hand-over to the
+ * time-rule screen counts: Home redirects there anyway). A refused send falls back to the launch intent, so SEND
+ * counts too. */
+fun glanceOpensSomething(step: GlanceOpenStep): Boolean = step.open != GlanceOpen.NOTHING
+
 /**
  * §1.4's table, with QA Q1 (a time rule hands the target to the time-rule screen), QA Medium 2 (no
  * launch intent: nothing), QA Low 10 (only the app's own intent is sent) and code QA Low 1 (the

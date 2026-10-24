@@ -12,50 +12,23 @@ import com.kidslauncher.mdm.R
  * write the switch. The PIN-gated Settings' "Media on the lock screen" row, under "Fingerprint", opens Android's Sound
  * & vibration page - there is no public action for its Media sub-page, so the summary names the rest of the way - on
  * the battery row's path ([systemPageIntent]): only an unsuspended system page, i.e. during "Pause all restrictions"
- * on a managed phone. The switch itself is readable, so the row says whether it is still on.
+ * on a managed phone.
+ *
+ * Android doesn't let an app read the switch either (qa-home-round-code Q-1): `Settings.Secure.MEDIA_CONTROLS_LOCK_SCREEN`
+ * came in Android 13, after S's bulk `@Readable` annotation, and has none, so SettingsProvider refuses it to any app
+ * targeting S+ that isn't a system app - a device owner included. So the row has no state line: it always opens the
+ * page, and the check is the switch on Android's page.
  */
 
-/** The Secure setting behind Android's "Show media on lock screen" (`Settings.Secure.MEDIA_CONTROLS_LOCK_SCREEN`, a
- * hidden constant): 1 = on, Android's default when unset, 0 = off. */
-const val MEDIA_CONTROLS_LOCK_SCREEN = "media_controls_lock_screen"
-
-/** Android's default for [MEDIA_CONTROLS_LOCK_SCREEN] when it was never set: on. */
-const val MEDIA_CONTROLS_LOCK_SCREEN_DEFAULT = 1
-
-/** Whether Android shows its media card on the lock screen, from the setting's value: anything but 0 is on (as
- * SystemUI reads it); null when it can't be read. */
-fun mediaOnLockScreen(value: Int?): Boolean? = value?.let { it != 0 }
-
-/** The row's state line: on (Android shows the card), off, or unknown. */
-fun mediaLockStateText(shown: Boolean?): Int = when (shown) {
-    true -> R.string.settings_mdm_media_lock_on
-    false -> R.string.settings_mdm_media_lock_off
-    null -> R.string.settings_mdm_media_lock_unknown
+/** The row's summary for [SystemPageAccess]: each names the way to the Media page's switch. */
+fun mediaLockText(access: SystemPageAccess): Int = when (access) {
+    SystemPageAccess.CAN_OPEN -> R.string.settings_mdm_media_lock_open
+    SystemPageAccess.PAUSE_FIRST -> R.string.settings_mdm_media_lock_pause_first
+    SystemPageAccess.WAIT -> R.string.settings_mdm_media_lock_wait
+    SystemPageAccess.NO_PAGE -> R.string.settings_mdm_media_lock_no_page
 }
-
-/** The row's action line for [SystemPageAccess] - none once the switch reads off (nothing left to do). */
-fun mediaLockActionText(shown: Boolean?, access: SystemPageAccess): Int? = if (shown == false) {
-    null
-} else {
-    when (access) {
-        SystemPageAccess.CAN_OPEN -> R.string.settings_mdm_media_lock_open
-        SystemPageAccess.PAUSE_FIRST -> R.string.settings_mdm_media_lock_pause_first
-        SystemPageAccess.WAIT -> R.string.settings_mdm_media_lock_wait
-        SystemPageAccess.NO_PAGE -> R.string.settings_mdm_media_lock_no_page
-    }
-}
-
-/** Whether a tap opens Android's page: unless the switch is known to be off (an unreadable one may still be on). */
-fun mediaLockTapOpens(shown: Boolean?): Boolean = shown != false
 
 object MediaLockScreen {
-    /** [mediaOnLockScreen] of the Secure setting, with Android's default; null when the read throws. */
-    fun shown(context: Context): Boolean? = mediaOnLockScreen(
-        runCatching {
-            Settings.Secure.getInt(context.contentResolver, MEDIA_CONTROLS_LOCK_SCREEN, MEDIA_CONTROLS_LOCK_SCREEN_DEFAULT)
-        }.getOrNull(),
-    )
-
     /** Android's page to try, explicit to a system package ([systemPageIntent]): Sound & vibration (the Media page
      * has no public action). Empty outside a pause on a managed phone. Started without NEW_TASK, from the activity. */
     fun pageIntents(context: Context): List<Intent> = listOfNotNull(

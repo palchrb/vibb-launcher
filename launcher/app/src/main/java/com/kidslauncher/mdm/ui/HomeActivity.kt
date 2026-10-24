@@ -531,11 +531,10 @@ class HomeActivity : UIObjectActivity() {
         // wait, unless Home is resumed again at once (a re-delivered HOME intent pauses it).
         PinLockRuntime.onHomePaused(isChangingConfigurations)
         resumedNow = false
-        // Leaving the front: an app opening over Home sees Android's wallpaper, not a copy (homeGroundDue).
-        if (ground.arrivedAtMs != null && !ground.leftFront) {
-            ground = ground.copy(leftFront = true)
-            renderWallpaper()
-        }
+        // Leaving the front: an app opening over Home sees Android's wallpaper, not a copy (homeGroundDue). Posted
+        // (qa-home-round-code Q-2): a new intent's delivery pauses Home and resumes it in the same transaction, and a
+        // second Home press during the transition must not drop the copy.
+        if (ground.arrivedAtMs != null && !ground.leftFront) refreshHandler.post(groundLeftFront)
         night?.stop()
         super.onPause()
     }
@@ -648,7 +647,7 @@ class HomeActivity : UIObjectActivity() {
         noteArrival(intent)
         // PLAN "A black flash behind Home": a HOME intent that brings Home from behind (not a press on Home itself) -
         // Home draws its own ground while the transition into it can run.
-        if (!contentUp) groundArrived()
+        if (!contentUp && intent.hasCategory(Intent.CATEGORY_HOME)) groundArrived()
         // Design 59d §8.9 (a): the system's Home while LOCKED - the home gesture got through - heals lock task's flags.
         PinLockRuntime.homeIntent(this, broughtByUs)
         val toTop = homePressToTop(
@@ -671,6 +670,8 @@ class HomeActivity : UIObjectActivity() {
         // again, unless a HOME intent brings it.
         ground = HomeGroundState()
         refreshHandler.removeCallbacks(groundRecheck)
+        refreshHandler.removeCallbacks(groundLeftFront)
+        window.decorView.removeCallbacks(groundEnterDone)
         // Design 16e: something covers the mark - the boot's wait for it ends.
         PinLockRuntime.onHomeCovered(this, isChangingConfigurations, "Home stopped")
         started = false
@@ -822,8 +823,24 @@ class HomeActivity : UIObjectActivity() {
     /** The copy's floor or cap ended ([homeGroundRecheckInMs]): look again. */
     private val groundRecheck = Runnable { renderWallpaper() }
 
+    /** onPause's end of the copy, run after the pause's transaction (Q-2): not when Home resumed again in it. */
+    private val groundLeftFront = Runnable {
+        if (!resumedNow && ground.arrivedAtMs != null && !ground.leftFront) {
+            ground = ground.copy(leftFront = true)
+            renderWallpaper()
+        }
+    }
+
+    /** One frame after the enter animation's end ([onEnterAnimationComplete]). */
+    private val groundEnterDone = Runnable {
+        ground = ground.copy(enterDone = true)
+        renderWallpaper()
+    }
+
     /** A HOME intent brought Home from behind: its own ground from the first frame. */
     private fun groundArrived() {
+        // Q-8: a late end of an earlier transition must not end this one's copy.
+        window.decorView.removeCallbacks(groundEnterDone)
         ground = HomeGroundState(arrivedAtMs = SystemClock.elapsedRealtime(), faceLeave = ground.faceLeave)
         renderWallpaper()
     }
@@ -832,10 +849,7 @@ class HomeActivity : UIObjectActivity() {
     override fun onEnterAnimationComplete() {
         super.onEnterAnimationComplete()
         if (ground.arrivedAtMs == null) return
-        window.decorView.postOnAnimation {
-            ground = ground.copy(enterDone = true)
-            renderWallpaper()
-        }
+        window.decorView.postOnAnimation(groundEnterDone)
     }
 
     /**
