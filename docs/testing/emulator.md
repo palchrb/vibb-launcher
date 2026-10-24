@@ -1773,13 +1773,13 @@ check (13 GETs), `--feed 250` in one too (~167 GETs, well under a minute); the s
 counts each, `, M left` when an entry is due again at once. At 320x569 dp, nb and en:
 
 1. `--feed 20`, after one check: the list (Liste) shows a 40 dp picture per row; the channel-picture rows show the
-   series cover with their number over it; the playing row on `selected` with a 2 dp peach ring. Download two
+   plain series cover - no number, no ✓, no scrim (r12 §1); the playing row on `selected` with a 2 dp peach ring. Download two
    episodes on Wi-Fi, play one, open the list and scroll: logcat (`adb logcat | grep -i wantArt`, the launcher's
    bridge log) shows a `wantArt` with an empty `now` and the list's hashes in `later`; after a fling at most 60 extra
    pictures in `files/music/covers/` beyond the want set (`adb shell run-as me.vibb.music.debug ls files/music/covers |
    wc -l` before and after; `files/music/list_art.txt` holds at most 61 lines).
 2. `--feed 250`, the entry's offline choice "Ingen" (none): after the first check every row's picture is there (on
-   Wi-Fi; flipped to oldest first too) - every third row (the channel picture, `same`) stays a numbered cover. The
+   Wi-Fi; flipped to oldest first too) - every third row (the channel picture, `same`) stays the plain series cover. The
    entry page's "N with episode art" is about 167.
 3. A one-picture entry (§6f's plain `fake-audio.py` listing, or an NRK podcast): numbers as before, the button there.
 4. Flip the RSS entry while episode 5 plays: playback goes on, the line says "… · nyeste først" (en "newest first"),

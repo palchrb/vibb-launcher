@@ -218,6 +218,14 @@ fun listRows(shown: List<PlayItem>, currentKey: String?, heard: Set<String>, onP
         ListRow(item, i + 1, item.key == currentKey, item.key in heard && item.key != currentKey, item.key in onPhone, favourites?.let { item.key in it })
     }
 
+/** A row's leading text (design 39 §4, r12 §1): none in a pictured list - a picture, its own or the series cover, is
+ *  never written on; else ✓ for a heard row, else its number. */
+fun rowBadge(row: ListRow, pictures: Boolean): String? = when {
+    pictures -> null
+    row.heard -> "✓"
+    else -> row.number.toString()
+}
+
 /** 754_000 -> "12:34", 3_723_000 -> "1:02:03". */
 fun formatDuration(ms: Long?): String {
     if (ms == null || ms < 0) return ""

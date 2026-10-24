@@ -115,6 +115,15 @@ class LibraryViewTest {
     }
 
     @Test
+    fun `r12 - a pictured list's rows carry no number, own picture or not - a plain list keeps its numbers and ✓`() {
+        // a: heard, its own picture; b: playing, the series cover; c: plain, the series cover (a long feed's unfetched row)
+        val shown = listOf("a", "b", "c").map { PlayItem(1, it, it, "u", false, 60_000, artHash = if (it == "a") "own" else null) }
+        val rows = listRows(shown, "b", setOf("a"), emptySet())
+        assertEquals(listOf(null, null, null), rows.map { rowBadge(it, pictures = true) })
+        assertEquals(listOf("✓", "2", "3"), rows.map { rowBadge(it, pictures = false) })
+    }
+
+    @Test
     fun `durations`() {
         assertEquals("14:10", formatDuration(850_000))
         assertEquals("1:02:03", formatDuration(3_723_000))

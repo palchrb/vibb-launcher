@@ -54,6 +54,7 @@ import me.vibb.music.logic.SearchHit
 import me.vibb.music.logic.formatDuration
 import me.vibb.music.logic.isSpotifyContext
 import me.vibb.music.logic.kindOf
+import me.vibb.music.logic.rowBadge
 import me.vibb.music.model.Category
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
@@ -199,20 +200,16 @@ private fun ListRowView(row: ListRow, entry: Entry, category: Category?, picture
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        val number = if (row.heard) "✓" else row.number.toString()
+        val number = rowBadge(row, pictures)
         if (pictures) {
-            // design 39 §4: the row's own picture (decorative), the playing one ringed; a row without its own yet shows
-            // the series cover with its number over it - decided by the listing's hash, so it never changes as files land
+            // design 39 §4: the row's own picture (decorative), the playing one ringed; a row without its own picture
+            // shows the series cover plain (r12 §1) - nothing is written on a picture, so no cover carries a number
             val own = row.item.artHash
             val ring = if (row.playing) Modifier.border(2.dp, Palette.peach, RoundedCornerShape(10.dp)) else Modifier
-            Cover(own ?: entry.cover, category, 10.dp, 0.dp, ring.size(40.dp), fallback = entry.cover, decodeDp = 40.dp) {
-                if (own == null) {
-                    Box(Modifier.fillMaxSize().background(Palette.scrim), contentAlignment = Alignment.Center) { Line(number, 14, 800, Palette.fg) }
-                }
-            }
+            Cover(own ?: entry.cover, category, 10.dp, 0.dp, ring.size(40.dp), fallback = entry.cover, decodeDp = 40.dp)
         } else {
             Box(Modifier.size(30.dp).clip(CircleShape).background(if (row.playing) Palette.peach else Palette.track), contentAlignment = Alignment.Center) {
-                Line(number, 13, 800, if (row.playing) Palette.bg else Palette.fg)
+                Line(number!!, 13, 800, if (row.playing) Palette.bg else Palette.fg)
             }
         }
         Column(Modifier.weight(1f)) {

@@ -649,8 +649,8 @@ per track through the WebView (`--elsewhere`, `--autoplay`, `--transfer-in`, `--
 - **The episode list's pictures and the kid's order flip** (design 39; **the user's decisions, not vibb's**: vibb's
   list shows own art only in the highlighted row and follows the parent's order only). **Pictures**: `rowPictures` =
   `showsCarousel` over the rows shown (never a Spotify context) - a 40 dp `Cover(..., decodeDp = 40.dp)` per row,
-  the playing one ringed; a row whose `artHash` is null shows the series cover with its number under `Palette.scrim`
-  (by the listing's hash, so it never changes as files land). The list judges the rows it shows, the carousel the queue: on a room's
+  the playing one ringed; a row whose `artHash` is null shows the series cover plain, no number (r12 §1, `rowBadge`; a list
+  without pictures keeps its numbers and ✓) - by the listing's hash, so it never changes as files land. The list judges the rows it shows, the carousel the queue: on a room's
   speaker-playable queue (or a stored queue that lost items) the two may differ (qa-39-code N1). `decodeDp` decodes with `inSampleSize`
   (`thumbSampleSize`) into its own 2 MiB LRU (`thumbs`, `"$hash@$px"`), its own slot; no small session copy. The
   list reports its visible rows (settled 1 s) to `ListArtWants.note`: the held list `filesDir/music/list_art.txt`
