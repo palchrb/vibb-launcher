@@ -19,6 +19,7 @@ import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.CommandListenerService
 import com.kidslauncher.mdm.server.KidVpnService
 import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.preferences.firstLaunchResetDue
 import com.kidslauncher.mdm.preferences.migratePreferencesToNewVersion
 import com.kidslauncher.mdm.preferences.resetPreferences
 import kotlinx.coroutines.CoroutineScope
@@ -317,9 +318,14 @@ class Application : android.app.Application() {
         migratePreferencesToNewVersion(this)
 
         // First time opening the app: set defaults
-        // (the rest of first-launch setup happens in HomeActivity#onStart)
-        if (!LauncherPreferences.internal().started()) {
+        // (the rest of first-launch setup happens in HomeActivity#onStart). Never on a phone that
+        // enrolled before Home's first start - the reset would drop its token and policy (design 59d §8.17).
+        val mdm = LauncherPreferences.mdm()
+        val startedBefore = LauncherPreferences.internal().started()
+        if (firstLaunchResetDue(startedBefore, mdm.enrolled(), mdm.deviceToken())) {
             resetPreferences(this)
+        } else if (!startedBefore) {
+            android.util.Log.i("Application", "Home hasn't started yet, but the phone is enrolled - keeping its preferences")
         }
 
 

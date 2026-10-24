@@ -1128,3 +1128,42 @@ AVD made without a profile to set it and cold boot.
     on the glance, not our keypad, with no `the lock asks for the unlock` line.
 - **Unchanged.** The heal stays, and step M's and 59b's rules are untouched. The "Lås opp" button stays gone: the user
   wants the swipe as the primary way, and its cause here is the AVD, not the phone.
+
+### 8.17 Enrolment before Home's first start (qa-glance-topinset-code Q-3; branch `write-settings-row`, 2026-10-24)
+
+Facts from the code (launcher, `app/src/main/java/com/kidslauncher/mdm/`):
+- **The mark.** `internal.started_before` has one writer: `HomeActivity.startWork` (from `onStart`, or from `onResume`
+  after a dark start), on Home's first interactive start, through the generated setter. Nothing else sets it - not
+  the provisioning activities, not the enrolment.
+- **The reset.** `Application.initRest` runs in every main-process start after the unlock (from `onCreate`,
+  `ensureUnlockedInit` via `KidAppComponentFactory` or `ACTION_USER_UNLOCKED`), before the component's own code. With
+  the mark unset it called `resetPreferences` (`preferences/Preferences.kt`): `LauncherPreferences.clear()` empties the
+  **whole** default preferences file - `mdm.server_url`, `mdm.device_token`, `mdm.tailscale_auth_key`, `mdm.enrolled`,
+  the cached policy, `policy_ever_applied`, `last_enforced_plan` -, keeping only `calls_managed_last`,
+  `last_call_rules` and `time_policy_seen`. So it is a de-enrolment, not only a lost cache: without a token
+  `performMdmSync` returns at once (`MdmSyncWorker.kt`), so no sync brings the policy back until a new enrolment code.
+- **QR provisioning** (`server/ProvisioningActivities.kt`, `server/MdmDeviceAdminReceiver.kt`, `server/Provisioning.kt`):
+  `ProvisioningModeActivity` and `PolicyComplianceActivity` only answer and finish; the QR's enrolment code is applied
+  in `onProfileProvisioningComplete` (`applyProvisioningExtras` under `goAsync`). That receiver's process ran
+  `initRest` first, so the reset of a fresh install (harmless, nothing to lose) comes before the enrolment's writes.
+  Home starts only when Android shows HOME afterwards - after the setup wizard, in Android's order, which nothing in
+  our code fixes. If our process dies between the enrolment and that start (the setup wizard's remaining screens, a
+  low-memory kill, a reboot), the next process start - Home's own, the anchor's, `BootCallReceiver`'s - reset the
+  enrolled phone. **This path can hit it.** Whether Android's broadcast comes before or after Home's first start is a
+  device check; either order was possible as far as the code goes. (Aside: this path asks for no sync after the
+  enrolment, unlike Settings' "Enroll now".)
+- **Settings' "Enroll now" and "Scan setup QR"** (`ui/settings/launcher/SettingsFragmentLauncher.kt`): normally reached
+  from Home's drawer, so Home has started and the mark is set - those can't hit it. Settings is also exported
+  (`APPLICATION_PREFERENCES`: Android's App info gear, or `adb shell am start`), and open before the first policy, so it
+  can enrol a phone whose Home never started - **that path can hit it** (the glance-topinset run: enrolled from
+  Settings, locked, rebooted: no kiosk, no Android lock, navy wallpaper).
+- **adb `dpm set-device-owner` alone** enrols nothing, so it can't.
+
+**The fix**: the first-launch reset skips an enrolled phone - pure `firstLaunchResetDue(startedBefore, enrolled,
+deviceToken)` (`preferences/FirstLaunchReset.kt`, `FirstLaunchResetTest`): it resets only with no mark, no
+`mdm.enrolled` and no device token. Both enrolment paths write the token and `enrolled(true)` together on success,
+and a fresh install has neither, so the reset still runs on a fresh install and never on an enrolled phone. The
+mark stays Home's: marking it at the enrolment instead would also skip Home's first-launch work (the HOME role
+request, the notification permission) on such a phone, and would not cover a phone an older build enrolled. The
+skipped case is logged (`Home hasn't started yet, but the phone is enrolled - keeping its preferences`).
+`docs/testing/emulator.md` §4's "open Home once before enrolling" is no longer needed (not edited in this round).
