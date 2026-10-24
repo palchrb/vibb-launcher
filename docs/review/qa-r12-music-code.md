@@ -449,3 +449,6 @@ Fix:
   `KidPlayer`.
 - **The design note's E-1 text** says "Forrige after 3 s into an item restarts it". `PREV_RESTART_AFTER_MS` is 5 s
   (`logic/Transport.kt:16`), so make that line say 5 s.
+
+**E-1-Q-1 fixed in 99c44949** (`qa-r12-music` rebased onto it). `javap` of `KidCommandsListener.class` lists 37 `on…` methods, the same set as media3-common 1.7.1's `Player.Listener`. Only `onAvailableCommandsChanged` substitutes `commands()`. `onEvents` passes on its `player` argument, which `ForwardingPlayer.ForwardingListener` sets to `KidPlayer`. `KidPlayerTest` passes (5 tests, 0 failures), and its reflection case would fail on the old `by inner` wrapper, as my probe showed.
+**Verdict: E-1 resolved, no open finding from this review.** The emulator should still confirm that the notification, the lock tile and `dumpsys media_session` follow play, pause and item changes.
