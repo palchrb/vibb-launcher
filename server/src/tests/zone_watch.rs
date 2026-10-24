@@ -515,8 +515,13 @@ async fn the_mock_counter_logs_each_rise() {
     post(&app, &token, json!({"zone_watch": watch(0, 1)})).await;
     let logged = lines().await;
     assert_eq!(logged.len(), 2, "{logged:?}");
-    // F-5: two different counts over the logged one, back to back - each line is its own rise
-    // (1 and 1), never one read before the other's write (2).
+    assert!(
+        logged[0].contains("ignored 3 made-up location(s)") && logged[0].contains("(3 in all)")
+    );
+    // F-5: two different counts over the logged one at once. They may be served in either order:
+    // 4 then 5 is two rises of 1; 5 then 4 is one rise of 2 (the 4 is then a lower count, taken
+    // silently). Either way each line is its own real rise - never one read before the other's
+    // write - and the rises add up to 2.
     let w = |n| crate::zones::ZoneWatch {
         fences: 0,
         motion_sensor: true,
@@ -527,17 +532,33 @@ async fn the_mock_counter_logs_each_rise() {
     crate::zones::mock_rise(&app.db, id, Some(&w(3)))
         .await
         .unwrap();
+    let before = lines().await.len();
     let (four, five) = (w(4), w(5));
     let (a, b) = tokio::join!(
         crate::zones::mock_rise(&app.db, id, Some(&four)),
         crate::zones::mock_rise(&app.db, id, Some(&five))
     );
     let rises: Vec<String> = [a.unwrap(), b.unwrap()].into_iter().flatten().collect();
-    assert!(
-        rises.iter().all(|l| l.contains("ignored 1 made-up")),
-        "{rises:?}"
-    );
-    // The same count again: nothing.
+    let rose = |l: &String| -> i64 {
+        l.split("ignored ")
+            .nth(1)
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let mut sizes: Vec<i64> = rises.iter().map(rose).collect();
+    sizes.sort();
+    assert!(sizes == [1, 1] || sizes == [2], "{rises:?}");
+    // Each returned line is the one written, with its counter, in the same transaction.
+    let written = lines().await;
+    assert_eq!(written[before..], rises[..], "{written:?}");
+    // At 5 whichever order they ran in; the same count again: nothing.
+    crate::zones::mock_rise(&app.db, id, Some(&w(5)))
+        .await
+        .unwrap();
     assert_eq!(
         crate::zones::mock_rise(&app.db, id, Some(&w(5)))
             .await
