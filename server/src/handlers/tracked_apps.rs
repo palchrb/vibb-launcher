@@ -438,8 +438,14 @@ fn size_limit_text() -> String {
 
 /// Downloads `asset` to `final_path` (see [stream_to_file]): refused up front when GitHub lists it
 /// over [MAX_ASSET_BYTES]; fails when the server sends no data for [DOWNLOAD_STALL_TIMEOUT]. The
-/// overall cap ([DOWNLOAD_TOTAL_TIMEOUT]) is the caller's.
-async fn download_asset(asset: &ReleaseAsset, final_path: &str) -> Result<Downloaded, Failure> {
+/// overall cap ([DOWNLOAD_TOTAL_TIMEOUT]) is the caller's. An F-Droid repo's APK (`fdroid`) is
+/// fetched without any proxy from the environment (qa-fdroid-source-code Q-2: no proxy in the trust
+/// path, as `music_net` does); a GitHub asset keeps reqwest's default.
+async fn download_asset(
+    asset: &ReleaseAsset,
+    final_path: &str,
+    fdroid: bool,
+) -> Result<Downloaded, Failure> {
     use SyncProblem::{Download, Server};
     let too_big = |bytes: u64| {
         Failure::new(
@@ -455,10 +461,15 @@ async fn download_asset(asset: &ReleaseAsset, final_path: &str) -> Result<Downlo
     if asset.size > MAX_ASSET_BYTES {
         return Err(too_big(asset.size));
     }
-    let client = reqwest::Client::builder()
-        .user_agent("kid-phone-server (self-hosted, github.com)")
+    // A neutral user agent: the same client fetches GitHub's assets and F-Droid's APKs (Q-9).
+    let mut builder = reqwest::Client::builder()
+        .user_agent("kid-phone-server (self-hosted)")
         .connect_timeout(Duration::from_secs(15))
-        .redirect(https_redirects())
+        .redirect(https_redirects());
+    if fdroid {
+        builder = builder.no_proxy();
+    }
+    let client = builder
         .build()
         .map_err(|e| Failure::new(Server, e.to_string()))?;
     let mut response = tokio::time::timeout(
@@ -498,18 +509,36 @@ async fn download_asset(asset: &ReleaseAsset, final_path: &str) -> Result<Downlo
 /// index and the APK come over HTTPS).
 pub(crate) fn https_redirects() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
-        let from_https = attempt
-            .previous()
-            .first()
-            .is_some_and(|first| first.scheme() == "https");
-        if attempt.previous().len() > 5 {
-            attempt.error("more than 5 redirects")
-        } else if from_https && attempt.url().scheme() != "https" {
-            attempt.error("a redirect away from https")
-        } else {
-            attempt.follow()
+        let verdict = match attempt.previous().first() {
+            Some(first) => redirect_verdict(first, attempt.url(), attempt.previous().len()),
+            None => Ok(()),
+        };
+        match verdict {
+            Ok(()) => attempt.follow(),
+            Err(why) => attempt.error(why),
         }
     })
+}
+
+/// The most redirects a download follows.
+const MAX_REDIRECTS: usize = 5;
+
+/// [https_redirects]' rule (qa-fdroid-source-code Q-1): the `hops`-th redirect (reqwest's
+/// `previous()` holds the first URL too, so the first redirect is hop 1) from `first` to `next` is
+/// followed up to [MAX_REDIRECTS], and never from an https start to anything but https; another
+/// host is fine (GitHub's CDN, an F-Droid mirror).
+fn redirect_verdict(
+    first: &reqwest::Url,
+    next: &reqwest::Url,
+    hops: usize,
+) -> Result<(), &'static str> {
+    if hops > MAX_REDIRECTS {
+        Err("more than 5 redirects")
+    } else if first.scheme() == "https" && next.scheme() != "https" {
+        Err("a redirect away from https")
+    } else {
+        Ok(())
+    }
 }
 
 /// Deletes every `<root>/<app id>/*.part`: left by a crash or a power cut mid-download, which
@@ -720,6 +749,34 @@ async fn check_new_package(
             ),
         ));
     }
+    // One package, one catalog row (qa-fdroid-source-code Q-6): another row pinned to it, or an
+    // F-Droid row waiting for it, has it already - the phones would get two rows for one app.
+    let taken: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
+        "SELECT name FROM tracked_apps WHERE (package_name = ?1 OR fdroid_package = ?1) \
+         AND id != ?2 ORDER BY id LIMIT 1",
+    )
+    .bind(package)
+    .bind(app.id)
+    .fetch_optional(&state.db)
+    .await;
+    match taken {
+        Ok(None) => {}
+        Ok(Some(other)) => {
+            return Err(Failure::new(
+                SyncProblem::Taken,
+                format!(
+                    "refused: the release is the Android package {package}, which {other} in the \
+                     catalog already is - one app, one row"
+                ),
+            ));
+        }
+        Err(err) => {
+            return Err(Failure::new(
+                SyncProblem::Server,
+                format!("refused: couldn't check the catalog's packages ({err})"),
+            ));
+        }
+    }
     match foreign_on_a_phone(state, package).await {
         Ok(None) => Ok(()),
         Ok(Some(phone)) => Err(Failure::new(
@@ -830,7 +887,14 @@ struct SyncStatus {
     /// hourly sync doesn't download it again (QA of the security wave, Low 5 - a 326 MB APK every
     /// hour); "Check now" and "Forget" do.
     refused: Option<(String, i64, Failure)>,
+    /// The release (tag, asset id) whose download didn't match the repo's checksum, and how many
+    /// syncs in a row it did: at [MISMATCHES_TO_REFUSE] it becomes [SyncStatus::refused].
+    mismatches: Option<(String, i64, u32)>,
 }
+
+/// Checksum mismatches in a row of one release before the hourly sync stops downloading it
+/// (qa-fdroid-source-code Q-3); "Check Now" still tries.
+const MISMATCHES_TO_REFUSE: u32 = 3;
 
 #[derive(Clone)]
 pub struct SyncFailure {
@@ -871,8 +935,10 @@ pub enum SyncProblem {
     Server,
     /// The app was removed while it synced.
     Removed,
-    /// The F-Droid repo doesn't have the package (its API's 404, or not in its index).
+    /// f-droid.org's API doesn't know the package (its 404).
     FdroidUnknown,
+    /// The repo's index doesn't have the package (any repo; qa-fdroid-source-code Q-9).
+    NotInRepo,
     /// No answer from the F-Droid repo: the network, a timeout, a 5xx.
     RepoUnreachable,
     /// The repo's entry.json, index or API answer can't be used (not an F-Droid repo, too big,
@@ -901,6 +967,7 @@ impl SyncProblem {
             SyncProblem::Server => "Something went wrong",
             SyncProblem::Removed => "The app was removed",
             SyncProblem::FdroidUnknown => "F-Droid doesn't know this package",
+            SyncProblem::NotInRepo => "The repo doesn't have this package",
             SyncProblem::RepoUnreachable => "The repo didn't answer",
             SyncProblem::RepoError => "The repo's answer can't be used",
             SyncProblem::ChecksumMismatch => "Download didn't match the repo's checksum",
@@ -968,6 +1035,24 @@ impl AppSyncs {
 
     fn set_refused(&self, id: i64, refused: Option<(String, i64, Failure)>) {
         self.lock().entry(id).or_default().refused = refused;
+    }
+
+    /// Counts a checksum mismatch of `release` (tag, asset id) and returns how many in a row it
+    /// has had (a mismatch of another release starts again at 1); `None` - a download that
+    /// matched - clears the count and returns 0.
+    fn mismatched(&self, id: i64, release: Option<(String, i64)>) -> u32 {
+        let mut map = self.lock();
+        let status = map.entry(id).or_default();
+        let Some((tag, asset)) = release else {
+            status.mismatches = None;
+            return 0;
+        };
+        let count = match &status.mismatches {
+            Some((t, a, n)) if *t == tag && *a == asset => n + 1,
+            _ => 1,
+        };
+        status.mismatches = Some((tag, asset, count));
+        count
     }
 }
 
@@ -1089,13 +1174,14 @@ async fn sync_fdroid(state: &AppState, app: &TrackedApp, forced: bool) -> Result
         touch_checked(state, app.id).await;
         return Ok(());
     }
-    let index = fdroid::index_file(
+    let versions = fdroid::repo_package(
         &client,
         &repo,
         &state.tracked_apps_dir.join(fdroid::CACHE_DIR),
+        package,
+        forced,
     )
     .await?;
-    let versions = fdroid::read_package(index, package).await?;
     let version = fdroid::pick(&versions, package, from_api.as_ref().map(|(code, _)| *code))?;
     touch_checked(state, app.id).await;
     // The API's name when there is one, so the check above matches next time.
@@ -1206,19 +1292,46 @@ async fn sync_release(
         .to_string_lossy()
         .into_owned();
     // Streamed to disk, never held in memory: Element X's universal APK is 326 MB.
-    let downloaded =
-        tokio::time::timeout(DOWNLOAD_TOTAL_TIMEOUT, download_asset(asset, &file_path))
-            .await
-            .map_err(|_| {
-                Failure::new(
-                    Download,
-                    format!(
-                        "download of {} stopped after {} minutes",
-                        asset.name,
-                        DOWNLOAD_TOTAL_TIMEOUT.as_secs() / 60
-                    ),
-                )
-            })??;
+    let downloaded = tokio::time::timeout(
+        DOWNLOAD_TOTAL_TIMEOUT,
+        download_asset(asset, &file_path, app.source_type == "fdroid"),
+    )
+    .await
+    .map_err(|_| {
+        Failure::new(
+            Download,
+            format!(
+                "download of {} stopped after {} minutes",
+                asset.name,
+                DOWNLOAD_TOTAL_TIMEOUT.as_secs() / 60
+            ),
+        )
+    })?;
+    let downloaded = match downloaded {
+        Ok(downloaded) => {
+            state.app_syncs.mismatched(app.id, None);
+            downloaded
+        }
+        Err(err) if err.problem == ChecksumMismatch => {
+            // Once is a CDN mid-update; MISMATCHES_TO_REFUSE in a row is a mirror or proxy that is
+            // wrong, and isn't downloaded again every hour (qa-fdroid-source-code Q-3).
+            let count = state
+                .app_syncs
+                .mismatched(app.id, Some((tag.to_string(), asset.id)));
+            if count >= MISMATCHES_TO_REFUSE {
+                let refused = Failure::new(
+                    ChecksumMismatch,
+                    format!("{} ({count} checks in a row)", err.detail),
+                );
+                state
+                    .app_syncs
+                    .set_refused(app.id, Some((tag.to_string(), asset.id, refused.clone())));
+                return Err(refused);
+            }
+            return Err(err);
+        }
+        Err(err) => return Err(err),
+    };
     let checked = match apk_identity(&file_path)
         .await
         .map_err(|e| Failure::new(Unreadable, e))
@@ -1273,6 +1386,8 @@ async fn sync_release(
         ));
     }
     store_pins(state, app, &identity).await;
+    // Stored: a refusal remembered before (a mismatch "Check Now" got past) no longer holds.
+    state.app_syncs.set_refused(app.id, None);
     crate::handlers::device_api::nudge_phones_with_app(state, app.id).await;
     Ok(())
 }
@@ -2538,7 +2653,10 @@ pub async fn update_tracked_app(
                 &field("fdroid_package"),
                 Some(app.id),
             )
-            .await,
+            .await
+            .and_then(|(repo, package)| {
+                pinned_fdroid_change(&app, &repo, &package).map(|()| (repo, package))
+            }),
         )
     } else {
         None
@@ -2618,7 +2736,74 @@ pub async fn update_tracked_app(
     .await
     .ok();
 
+    if app.source_type == "fdroid" && fdroid_repo != app.fdroid_repo {
+        remove_unused_fdroid_indexes(&state).await;
+    }
+
     Redirect::to(&format!("/apps/tracked/{id}?open=source#details")).into_response()
+}
+
+/// Once an F-Droid app is pinned, its package and repo stay (qa-fdroid-source-code Q-5): another
+/// package is another app (the next sync would refuse it as `OtherApp`), and another repo may
+/// sign it with another key (`OtherKey`) - a change the phones could only take with a reinstall,
+/// so it is refused at the form with the source change's words. Before the first release both
+/// stay editable.
+fn pinned_fdroid_change(
+    app: &TrackedApp,
+    repo: &str,
+    package: &str,
+) -> Result<(), (String, &'static str)> {
+    let release = if app.latest_release_tag.is_some() {
+        "its release"
+    } else {
+        "its first release"
+    };
+    if !app.package_name.is_empty() && package != app.package_name {
+        return Err((
+            format!(
+                "This app is {} - pinned from {release}: another package is another app. Remove \
+                 this one and add the other. Nothing was saved.",
+                app.package_name
+            ),
+            "fdroid_package",
+        ));
+    }
+    if app.signer_sha256.is_some() && app.fdroid_repo.as_deref() != Some(repo) {
+        return Err((
+            format!(
+                "This app's signing key is pinned from {release} from {}: another repo may sign \
+                 it with another key, and the phones would have to reinstall it. Remove the app \
+                 and add it again with the other repo. Nothing was saved.",
+                source_label(app)
+            ),
+            "fdroid_repo",
+        ));
+    }
+    Ok(())
+}
+
+/// Removes the cached F-Droid indexes of repos no catalog app uses any more
+/// (qa-fdroid-source-code Q-8: f-droid.org's is 67 MB): at startup, after an F-Droid app is
+/// removed or moved to another repo. A database error removes nothing. Best-effort.
+pub async fn remove_unused_fdroid_indexes(state: &AppState) {
+    let repos: Vec<String> = match sqlx::query_scalar(
+        "SELECT DISTINCT fdroid_repo FROM tracked_apps \
+         WHERE source_type = 'fdroid' AND fdroid_repo IS NOT NULL",
+    )
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(repos) => repos,
+        Err(err) => {
+            tracing::warn!(%err, "can't list the F-Droid repos; no cached index removed");
+            return;
+        }
+    };
+    crate::fdroid::remove_unused_indexes(
+        &state.tracked_apps_dir.join(crate::fdroid::CACHE_DIR),
+        &repos,
+    )
+    .await;
 }
 
 /// The launcher's catalog row as [seed_launcher_row] creates it: the name, the asset filter
@@ -2995,6 +3180,9 @@ pub async fn delete_tracked_app(
     tokio::fs::remove_dir_all(state.tracked_apps_dir.join(id.to_string()))
         .await
         .ok();
+    if app.source_type == "fdroid" {
+        remove_unused_fdroid_indexes(&state).await;
+    }
 
     Redirect::to("/apps")
 }
@@ -3432,7 +3620,7 @@ mod tests {
             size: MAX_ASSET_BYTES + 1,
             sha256: None,
         };
-        let err = download_asset(&asset, target.to_str().unwrap())
+        let err = download_asset(&asset, target.to_str().unwrap(), false)
             .await
             .unwrap_err();
         assert_eq!(err.problem, SyncProblem::TooBig);
@@ -3504,6 +3692,7 @@ mod tests {
             Server,
             Removed,
             FdroidUnknown,
+            NotInRepo,
             RepoUnreachable,
             RepoError,
             ChecksumMismatch,
@@ -4066,6 +4255,17 @@ mod tests {
         listed_sha: &str,
         apk: &[u8],
     ) {
+        serve_fixture_named(fake, package, listed_sha, apk, "1.0.57");
+    }
+
+    /// [serve_fixture] with version 57 named `name`.
+    fn serve_fixture_named(
+        fake: &crate::fdroid::tests::FakeRepo,
+        package: &str,
+        listed_sha: &str,
+        apk: &[u8],
+        name: &str,
+    ) {
         let other = |n: u8| format!("{n:02x}").repeat(32);
         let file = |code: i64| format!("{package}_{code}.apk");
         let mut index: serde_json::Value =
@@ -4073,7 +4273,7 @@ mod tests {
                 package,
                 vec![
                     (other(1), 56, "1.0.56", file(56), false),
-                    (listed_sha.to_string(), 57, "1.0.57", file(57), false),
+                    (listed_sha.to_string(), 57, name, file(57), false),
                     (other(2), 58, "1.0.58-beta", file(58), true),
                 ],
             )]))
@@ -4087,7 +4287,7 @@ mod tests {
             format!(
                 r#"{{"packageName":"{package}","suggestedVersionCode":57,"packages":[
                 {{"versionName":"1.0.58-beta","versionCode":58}},
-                {{"versionName":"1.0.57","versionCode":57}}]}}"#
+                {{"versionName":"{name}","versionCode":57}}]}}"#
             ),
         );
     }
@@ -4253,8 +4453,8 @@ mod tests {
         );
     }
 
-    /// The parent's words for what can go wrong: an unknown package (the API's 404, or not in
-    /// another repo's index), a repo that doesn't answer, an APK of another package.
+    /// The parent's words for what can go wrong: an unknown package (f-droid.org's API's 404; not
+    /// in another repo's index), a repo that doesn't answer, an APK of another package.
     #[tokio::test]
     async fn fdroid_sync_problems_have_plain_words() {
         let app = crate::tests::TestApp::new().await;
@@ -4268,14 +4468,11 @@ mod tests {
         let err = sync_one_app(&app.state, unknown, false).await.unwrap_err();
         assert_eq!(err.problem, SyncProblem::FdroidUnknown);
         assert_eq!(err.problem.title(), "F-Droid doesn't know this package");
+        // Another repo isn't "F-Droid" (Q-9).
         let unknown = fdroid_row(&app, &index_repo, "org.nobody.app").await;
-        assert_eq!(
-            sync_one_app(&app.state, unknown, false)
-                .await
-                .unwrap_err()
-                .problem,
-            SyncProblem::FdroidUnknown
-        );
+        let err = sync_one_app(&app.state, unknown, false).await.unwrap_err();
+        assert_eq!(err.problem, SyncProblem::NotInRepo);
+        assert_eq!(err.problem.title(), "The repo doesn't have this package");
 
         let gone = fdroid_row(&app, "http://127.0.0.1:9/repo", "me.vibb.testfixture").await;
         let err = sync_one_app(&app.state, gone, false).await.unwrap_err();
@@ -4301,6 +4498,185 @@ mod tests {
                 .unwrap_err()
                 .problem,
             SyncProblem::RepoError
+        );
+    }
+
+    /// Q-7 (M28): a versionName with a slash and a space is a plain file name in the app's own
+    /// directory.
+    #[tokio::test]
+    async fn an_fdroid_version_name_is_file_safe_in_the_cached_path() {
+        let app = crate::tests::TestApp::new().await;
+        let (repo, fake) = crate::fdroid::tests::fake_repo("localhost").await;
+        let (apk, sha) = fixture_apk();
+        serve_fixture_named(&fake, "me.vibb.testfixture", &sha, &apk, "1.0/57 beta");
+        let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
+        sync_one_app(&app.state, id, false).await.unwrap();
+        let row = row_of(&app, id).await;
+        assert_eq!(row.latest_release_tag.as_deref(), Some("v1.0/57 beta"));
+        let path = std::path::PathBuf::from(row.latest_release_file_path.unwrap());
+        assert_eq!(
+            path,
+            app.state
+                .tracked_apps_dir
+                .join(id.to_string())
+                .join("v1.0_57_beta-57.apk")
+        );
+        assert!(path.exists());
+    }
+
+    /// Q-3: an APK that doesn't match the index three hourly checks in a row isn't downloaded a
+    /// fourth time; "Check Now" still tries, and a matching download clears it all.
+    #[tokio::test]
+    async fn a_repeated_checksum_mismatch_is_remembered() {
+        use crate::fdroid::tests::FakeRepo;
+        let app = crate::tests::TestApp::new().await;
+        let (repo, fake) = crate::fdroid::tests::fake_repo("localhost").await;
+        let (apk, sha) = fixture_apk();
+        let wrong = "ab".repeat(32);
+        serve_fixture(&fake, "me.vibb.testfixture", &wrong, &apk);
+        let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
+        for n in 1..=3 {
+            let err = sync_one_app(&app.state, id, false).await.unwrap_err();
+            assert_eq!(err.problem, SyncProblem::ChecksumMismatch);
+            assert_eq!(FakeRepo::count(&fake.file_gets), n);
+        }
+        let err = sync_one_app(&app.state, id, false).await.unwrap_err();
+        assert_eq!(err.problem, SyncProblem::ChecksumMismatch);
+        assert!(err.detail.contains("3 checks in a row"), "{}", err.detail);
+        assert!(
+            err.detail.contains("not downloaded again"),
+            "{}",
+            err.detail
+        );
+        assert_eq!(
+            FakeRepo::count(&fake.file_gets),
+            3,
+            "the hourly check stops"
+        );
+        // Check Now tries again.
+        sync_one_app(&app.state, id, true).await.unwrap_err();
+        assert_eq!(FakeRepo::count(&fake.file_gets), 4);
+        // The repo fixed: Check Now stores it, and the next hourly check finds it cached.
+        serve_fixture(&fake, "me.vibb.testfixture", &sha, &apk);
+        sync_one_app(&app.state, id, true).await.unwrap();
+        assert_eq!(
+            row_of(&app, id).await.latest_release_sha256.as_deref(),
+            Some(sha.as_str())
+        );
+        sync_one_app(&app.state, id, false).await.unwrap();
+        assert_eq!(FakeRepo::count(&fake.file_gets), 5);
+        // Two mismatches, then a match: the count starts again.
+        let syncs = AppSyncs::default();
+        assert_eq!(syncs.mismatched(1, Some(("v1".into(), 1))), 1);
+        assert_eq!(syncs.mismatched(1, Some(("v1".into(), 1))), 2);
+        assert_eq!(syncs.mismatched(1, None), 0);
+        assert_eq!(syncs.mismatched(1, Some(("v1".into(), 1))), 1);
+        assert_eq!(
+            syncs.mismatched(1, Some(("v2".into(), 2))),
+            1,
+            "another release"
+        );
+    }
+
+    /// Q-6: a first release can't pin a package another catalog row has, or that an F-Droid row
+    /// is waiting for.
+    #[tokio::test]
+    async fn a_first_release_cant_take_another_rows_package() {
+        let app = crate::tests::TestApp::new().await;
+        let identity =
+            crate::apk::read_identity(std::path::Path::new("testdata/apk/fixture-key1.apk"))
+                .unwrap();
+        let insert = |sql: &'static str| {
+            let db = app.db.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(sql)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap()
+            }
+        };
+        let plain = insert(
+            "INSERT INTO tracked_apps (name, package_name, github_repo) \
+             VALUES ('Fixture', '', 'o/r') RETURNING id",
+        )
+        .await;
+        let row = row_of(&app, plain).await;
+        check_new_package(&app.state, &row, &identity)
+            .await
+            .unwrap();
+        // An F-Droid row waits for the package: the other row's first release is refused.
+        let waiting = insert(
+            "INSERT INTO tracked_apps (name, package_name, source_type, github_repo, \
+             fdroid_repo, fdroid_package) VALUES ('Fixture (F-Droid)', '', 'fdroid', '', \
+             'https://f-droid.org/repo', 'me.vibb.testfixture') RETURNING id",
+        )
+        .await;
+        let err = check_new_package(&app.state, &row, &identity)
+            .await
+            .unwrap_err();
+        assert_eq!(err.problem, SyncProblem::Taken);
+        assert!(err.detail.contains("Fixture (F-Droid)"), "{}", err.detail);
+        // The F-Droid row itself may take it: its own fdroid_package is no other row's.
+        let own = row_of(&app, waiting).await;
+        sqlx::query("DELETE FROM tracked_apps WHERE id = ?")
+            .bind(plain)
+            .execute(&app.db)
+            .await
+            .unwrap();
+        check_new_package(&app.state, &own, &identity)
+            .await
+            .unwrap();
+        // Another row pinned to it already.
+        insert(
+            "INSERT INTO tracked_apps (name, package_name, github_repo) \
+             VALUES ('Pinned', 'me.vibb.testfixture', 'o/p') RETURNING id",
+        )
+        .await;
+        let err = check_new_package(&app.state, &own, &identity)
+            .await
+            .unwrap_err();
+        assert_eq!(err.problem, SyncProblem::Taken);
+        assert!(err.detail.contains("Pinned"), "{}", err.detail);
+    }
+
+    /// Q-1: the redirect rule.
+    #[test]
+    fn a_redirect_never_leaves_https_and_stops_after_five() {
+        let url = |u: &str| reqwest::Url::parse(u).unwrap();
+        let start = url("https://github.com/o/r/releases/download/v1/a.apk");
+        let cdn = url("https://release-assets.githubusercontent.com/x");
+        assert_eq!(
+            redirect_verdict(&start, &cdn, 1),
+            Ok(()),
+            "another host, https"
+        );
+        assert_eq!(
+            redirect_verdict(
+                &start,
+                &url("http://release-assets.githubusercontent.com/x"),
+                1
+            ),
+            Err("a redirect away from https")
+        );
+        assert_eq!(
+            redirect_verdict(&start, &url("http://github.com/x"), 3),
+            Err("a redirect away from https")
+        );
+        assert_eq!(
+            redirect_verdict(&start, &cdn, 5),
+            Ok(()),
+            "the 5th is followed"
+        );
+        assert_eq!(
+            redirect_verdict(&start, &cdn, 6),
+            Err("more than 5 redirects"),
+            "the 6th is refused"
+        );
+        let local = url("http://127.0.0.1:9/r/6");
+        assert_eq!(
+            redirect_verdict(&local, &url("http://127.0.0.1:9/r/5"), 1),
+            Ok(()),
+            "http to http (the tests' loopback)"
         );
     }
 

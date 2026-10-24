@@ -1508,8 +1508,20 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
     .fetch_one(&app.db)
     .await
     .unwrap();
-    // A check that is already running answers at once (no GitHub in tests).
+    // An F-Droid app, pinned (qa-fdroid-source-code Q-7): its Details form posts the rendered
+    // repo and package, which a pinned app must keep (Q-5).
+    let fdroid: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, source_type, github_repo, fdroid_repo, \
+         fdroid_package, latest_release_tag, latest_release_asset_id, signer_sha256) \
+         VALUES ('Etar', 'ws.xsoh.etar', 'fdroid', '', 'https://f-droid.org/repo', \
+         'ws.xsoh.etar', 'v1.0.57', 57, 'bb') RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    // A check that is already running answers at once (no GitHub or F-Droid in tests).
     let _running = app.state.app_syncs.start(github).unwrap();
+    let _running_fdroid = app.state.app_syncs.start(fdroid).unwrap();
     let apk = std::fs::read("testdata/apk/fixture-key1.apk").unwrap();
     // A phone has the manual app ticked and Vibb installed its package: the page offers it to
     // confirm (the fixture's own package, so the upload after it still passes the pins).
@@ -1534,9 +1546,24 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
     assert!(res.status.is_success());
     let mut seen = std::collections::HashSet::new();
 
-    for id in [github, manual] {
+    for id in [github, manual, fdroid] {
         let page = format!("/apps/tracked/{id}");
         let html = app.get_page(&page, &cookie).await.text();
+        let rendered = |name: &str| {
+            tags(&html, "input")
+                .into_iter()
+                .find(|tag| tag.attr("name") == Some(name))
+                .and_then(|tag| tag.attr("value"))
+                .unwrap_or_default()
+                .to_string()
+        };
+        let (fdroid_repo, fdroid_package) = (rendered("fdroid_repo"), rendered("fdroid_package"));
+        let fdroid_details = [
+            ("name", "Renamed"),
+            ("source_type", "fdroid"),
+            ("fdroid_repo", fdroid_repo.as_str()),
+            ("fdroid_package", fdroid_package.as_str()),
+        ];
         let actions: Vec<String> = tags(&html, "form")
             .into_iter()
             .filter(|form| form.attr("method") == Some("post"))
@@ -1570,6 +1597,7 @@ async fn every_form_on_the_app_pages_returns_to_its_page() {
             };
             assert_eq!(fragment, group, "{action}");
             let fields: &[(&str, &str)] = match route {
+                "" if id == fdroid => &fdroid_details,
                 "" => &[("name", "Renamed"), ("github_repo", "owner/repo")],
                 "/display" => &[("label", "Chat"), ("icon", "chat"), ("color", "peach")],
                 "/enabled" => &[("enabled", "on")],

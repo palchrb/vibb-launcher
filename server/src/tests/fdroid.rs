@@ -171,6 +171,14 @@ async fn add_app_refuses_a_bad_fdroid_source_by_its_field() {
     .execute(&app.db)
     .await
     .unwrap();
+    // Q-6: an F-Droid row waiting for its first release (no package pinned yet) has its package.
+    fdroid_app(
+        &app,
+        "org.fossify.calendar",
+        "https://f-droid.org/repo",
+        false,
+    )
+    .await;
     let cases = [
         (
             "http://f-droid.org/repo",
@@ -214,6 +222,18 @@ async fn add_app_refuses_a_bad_fdroid_source_by_its_field() {
             "fdroid_package",
             "Etar (GitHub) in the catalog is already ws.xsoh.etar",
         ),
+        (
+            "",
+            "org.fossify.calendar",
+            "fdroid_package",
+            "Etar in the catalog is already org.fossify.calendar",
+        ),
+        (
+            "https://192.168.1.10/fdroid/repo",
+            "org.example.lan",
+            "fdroid_repo",
+            "can't be a private, loopback or link-local IP address",
+        ),
     ];
     for (repo, package, field, reason) in cases {
         let refused = app
@@ -243,7 +263,7 @@ async fn add_app_refuses_a_bad_fdroid_source_by_its_field() {
         );
         assert_eq!(form_action_of(&html, field), Some("/apps/tracked/new"));
     }
-    assert_eq!(app_count(&app).await, 1, "nothing written");
+    assert_eq!(app_count(&app).await, 2, "nothing written");
 }
 
 /// The app's page: "F-Droid · <package>" where a GitHub app shows its repo (linked to the
@@ -612,4 +632,142 @@ async fn the_phone_gets_an_fdroid_app_as_any_other() {
         .await;
     assert_eq!(download.status, StatusCode::OK);
     assert_eq!(download.body, apk);
+}
+
+/// Q-5: once the app is pinned by its first release, Details keeps its package and repo - another
+/// package is another app, another repo may sign with another key; the reasons by the fields.
+/// The name still saves.
+#[tokio::test]
+async fn a_pinned_fdroid_app_keeps_its_package_and_repo() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let id = fdroid_app(&app, "ws.xsoh.etar", "https://f-droid.org/repo", true).await;
+    sqlx::query(
+        "UPDATE tracked_apps SET package_name = 'ws.xsoh.etar', signer_sha256 = 'aa' WHERE id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let edit = |repo: &'static str, package: &'static str| {
+        let app = &app;
+        let cookie = cookie.clone();
+        async move {
+            app.request_form(
+                Method::POST,
+                &format!("/apps/tracked/{id}"),
+                Some(&cookie),
+                &[
+                    ("name", "Etar Calendar"),
+                    ("source_type", "fdroid"),
+                    ("fdroid_repo", repo),
+                    ("fdroid_package", package),
+                ],
+            )
+            .await
+        }
+    };
+    let refused = edit("https://f-droid.org/repo", "org.fossify.calendar").await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    let html = refused.text().replace("&#39;", "'");
+    assert!(
+        html.contains(
+            "This app is ws.xsoh.etar - pinned from its release: another package is another app"
+        ),
+        "{html}"
+    );
+    assert_field_refused(&html, "fdroid_package");
+    let refused = edit("https://apt.izzysoft.de/fdroid/repo", "ws.xsoh.etar").await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    let html = refused.text().replace("&#39;", "'");
+    assert!(
+        html.contains("This app's signing key is pinned from its release from F-Droid"),
+        "{html}"
+    );
+    assert!(html.contains("reinstall"));
+    assert_field_refused(&html, "fdroid_repo");
+    assert_eq!(
+        source_of(&app, id).await,
+        (
+            "fdroid".to_string(),
+            Some("https://f-droid.org/repo".to_string()),
+            Some("ws.xsoh.etar".to_string())
+        ),
+        "nothing written"
+    );
+    // The same repo (as typed with its slash) and package: the name saves.
+    let saved = edit("https://f-droid.org/repo/", "ws.xsoh.etar").await;
+    assert!(saved.status.is_redirection(), "{}", saved.text());
+    let name: String = sqlx::query_scalar("SELECT name FROM tracked_apps WHERE id = ?")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(name, "Etar Calendar");
+}
+
+/// Q-4: Add App says which apps the F-Droid source suits (one APK for every phone); Q-8: removing
+/// an F-Droid app removes its repo's cached index once no other app uses that repo.
+#[tokio::test]
+async fn the_abi_line_and_the_cached_index_goes_with_the_last_app() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let html = app
+        .get_page("/apps/tracked/new", &cookie)
+        .await
+        .text()
+        .replace("&#39;", "'");
+    assert!(html.contains(
+        "For apps with one APK for every phone: for an app the repo builds per processor type \
+         (ABI), the newest build may be one the phone can't install."
+    ));
+
+    let first = fdroid_app(&app, "ws.xsoh.etar", "https://f-droid.org/repo", false).await;
+    let second = fdroid_app(
+        &app,
+        "org.fossify.calendar",
+        "https://f-droid.org/repo",
+        false,
+    )
+    .await;
+    let izzy = fdroid_app(
+        &app,
+        "com.example.izzy",
+        "https://apt.izzysoft.de/fdroid/repo",
+        false,
+    )
+    .await;
+    let cache = app.state.tracked_apps_dir.join(crate::fdroid::CACHE_DIR);
+    std::fs::create_dir_all(&cache).unwrap();
+    let key = |repo: &str| {
+        use sha2::Digest;
+        hex::encode(sha2::Sha256::digest(repo.as_bytes()))[..16].to_string()
+    };
+    let file = |repo: &str| cache.join(format!("{}-{}.json", key(repo), "cd".repeat(32)));
+    let fdroid_org = file("https://f-droid.org/repo");
+    let izzy_file = file("https://apt.izzysoft.de/fdroid/repo");
+    std::fs::write(&fdroid_org, b"{}").unwrap();
+    std::fs::write(&izzy_file, b"{}").unwrap();
+    let delete = |id: i64| {
+        let app = &app;
+        let cookie = cookie.clone();
+        async move {
+            let res = app
+                .request_form(
+                    Method::POST,
+                    &format!("/apps/tracked/{id}/delete"),
+                    Some(&cookie),
+                    &[],
+                )
+                .await;
+            assert!(res.status.is_redirection());
+        }
+    };
+    delete(first).await;
+    assert!(fdroid_org.exists(), "another app still uses f-droid.org");
+    delete(second).await;
+    assert!(!fdroid_org.exists(), "its last app gone");
+    assert!(izzy_file.exists());
+    delete(izzy).await;
+    assert!(!izzy_file.exists());
 }

@@ -218,8 +218,15 @@ async fn a_release_cached_before_the_update_is_pinned_from_its_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cached.apk");
     std::fs::write(&path, fixture("fixture-key1.apk")).unwrap();
+    let other = dir.path().join("other.apk");
+    std::fs::write(&other, fixture("other-package-key1.apk")).unwrap();
     let mut ids = Vec::new();
-    for package in ["", "me.vibb.testfixture", "org.example.wrong"] {
+    for (package, file) in [
+        ("", &other),
+        ("me.vibb.testfixture", &path),
+        ("org.example.wrong", &path),
+        ("", &path),
+    ] {
         ids.push(
             sqlx::query_scalar::<_, i64>(
                 "INSERT INTO tracked_apps (name, package_name, github_repo, latest_release_tag, \
@@ -227,7 +234,7 @@ async fn a_release_cached_before_the_update_is_pinned_from_its_file() {
                  VALUES ('Cached', ?, 'owner/repo', 'v1', ?, 'x') RETURNING id",
             )
             .bind(package)
-            .bind(path.to_str().unwrap())
+            .bind(file.to_str().unwrap())
             .fetch_one(&app.db)
             .await
             .unwrap(),
@@ -236,11 +243,16 @@ async fn a_release_cached_before_the_update_is_pinned_from_its_file() {
     crate::handlers::tracked_apps::backfill_release_hashes(app.state.clone()).await;
     assert_eq!(
         pins(&app, ids[0]).await.0,
-        "me.vibb.testfixture",
+        "me.vibb.otherfixture",
         "an empty package is filled in"
     );
     assert_eq!(pins(&app, ids[0]).await.1.as_deref(), Some(KEY1));
     assert_eq!(pins(&app, ids[1]).await.1.as_deref(), Some(KEY1));
+    // Another row is that package already: one app, one row (qa-fdroid-source-code Q-6).
+    assert_eq!(
+        pins(&app, ids[3]).await,
+        (String::new(), None, Some("v1".to_string()))
+    );
     // A catalog package that isn't the file's: left alone, not pinned (logged).
     assert_eq!(
         pins(&app, ids[2]).await,

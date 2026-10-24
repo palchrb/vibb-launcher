@@ -504,6 +504,8 @@ async fn main() {
     handlers::tracked_apps::ensure_launcher_row(&state).await;
     // Partial downloads a crash left behind - before the scheduled sync can start a new one.
     handlers::tracked_apps::remove_partial_downloads(&state.tracked_apps_dir).await;
+    // Cached F-Droid indexes no app's repo uses any more (qa-fdroid-source-code Q-8).
+    handlers::tracked_apps::remove_unused_fdroid_indexes(&state).await;
     // Hashes for cached files from before migration 0043 (design 13): the phones check them.
     tokio::task::spawn(handlers::tracked_apps::backfill_release_hashes(
         state.clone(),
