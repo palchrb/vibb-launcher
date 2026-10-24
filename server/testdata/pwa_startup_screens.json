@@ -1,0 +1,20 @@
+{
+  "comment": "The PWA's iPhone start-up images (docs/notes/server/pwa.md, 'Start-up splash'): every current iPhone portrait size in CSS px and its device pixel ratio. scripts/pwa-startup-images.py draws one PNG per row into server/static/startup/ and writes head.html's links; the server's shell::every_startup_image_has_its_screens_size checks both. mark_share: the mark's width as a share of the shorter side (the launcher's splash); version: the links' ?v=, bumped when the PNGs change.",
+  "mark_share": 0.43,
+  "version": 1,
+  "screens": [
+    { "name": "iPhone SE (1st)", "width": 320, "height": 568, "ratio": 2 },
+    { "name": "iPhone SE (2nd, 3rd), 8, 7, 6s", "width": 375, "height": 667, "ratio": 2 },
+    { "name": "iPhone 8 Plus, 7 Plus, 6s Plus", "width": 414, "height": 736, "ratio": 3 },
+    { "name": "iPhone X, XS, 11 Pro, 12 mini, 13 mini", "width": 375, "height": 812, "ratio": 3 },
+    { "name": "iPhone XR, 11", "width": 414, "height": 896, "ratio": 2 },
+    { "name": "iPhone XS Max, 11 Pro Max", "width": 414, "height": 896, "ratio": 3 },
+    { "name": "iPhone 12, 12 Pro, 13, 13 Pro, 14, 16e", "width": 390, "height": 844, "ratio": 3 },
+    { "name": "iPhone 12 Pro Max, 13 Pro Max, 14 Plus", "width": 428, "height": 926, "ratio": 3 },
+    { "name": "iPhone 14 Pro, 15, 15 Pro, 16", "width": 393, "height": 852, "ratio": 3 },
+    { "name": "iPhone 14 Pro Max, 15 Plus, 15 Pro Max, 16 Plus", "width": 430, "height": 932, "ratio": 3 },
+    { "name": "iPhone 16 Pro, 17, 17 Pro", "width": 402, "height": 874, "ratio": 3 },
+    { "name": "iPhone Air", "width": 420, "height": 912, "ratio": 3 },
+    { "name": "iPhone 16 Pro Max, 17 Pro Max", "width": 440, "height": 956, "ratio": 3 }
+  ]
+}

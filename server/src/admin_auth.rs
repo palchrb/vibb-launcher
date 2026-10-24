@@ -722,6 +722,7 @@ pub async fn admin_headers(request: Request, next: Next) -> Response {
     if path.starts_with("/api/devices/") {
         return response;
     }
+    let success = response.status().is_success();
     let headers = response.headers_mut();
     let set = |headers: &mut HeaderMap, name: header::HeaderName, value: &'static str| {
         headers.insert(name, HeaderValue::from_static(value));
@@ -754,6 +755,14 @@ pub async fn admin_headers(request: Request, next: Next) -> Response {
         .is_some_and(|t| t.starts_with("text/html"));
     if no_store_path(&path) {
         set(headers, header::CACHE_CONTROL, "no-store");
+    } else if path.starts_with("/static/startup/") && success {
+        // The iPhone start-up images (head.html's links carry `?v=`, bumped when they change):
+        // fetched once, never again.
+        set(
+            headers,
+            header::CACHE_CONTROL,
+            "public, max-age=31536000, immutable",
+        );
     } else if is_html && !headers.contains_key(header::CACHE_CONTROL) {
         // Not no-store: the back-forward cache and the PWA's scroll restore stay.
         set(headers, header::CACHE_CONTROL, "private, no-cache");

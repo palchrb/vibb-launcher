@@ -9,6 +9,23 @@
 <link rel="manifest" href="/static/manifest.webmanifest">
 <link rel="icon" href="/static/icons/icon-192.png">
 <link rel="apple-touch-icon" href="/static/icons/icon-180.png">
+{#- The installed iPhone app's start-up splash (2026-10-24): the Vibb mark on the night ground, one PNG per
+    iPhone portrait size - iOS shows one only when its media query matches the phone exactly. #}
+{#- Start-up images: written by scripts/pwa-startup-images.py from testdata/pwa_startup_screens.json. -#}
+<link rel="apple-touch-startup-image" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/startup/startup-640x1136.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/startup/startup-750x1334.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1242x2208.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1125x2436.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/static/startup/startup-828x1792.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1242x2688.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1170x2532.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1284x2778.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1179x2556.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1290x2796.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1206x2622.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1260x2736.png?v=1">
+<link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/static/startup/startup-1320x2868.png?v=1">
+{#- End of the start-up images. -#}
 {#- Night behind the status bar on every page, in both schemes (the user, 2026-10-22): theme-color for the
     browsers and Android, black-translucent for the installed iPhone app - its page runs under the status bar,
     where style.css's body::before paints the top inset night, and iOS draws the bar's text white. #}

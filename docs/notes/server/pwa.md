@@ -786,7 +786,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (palchrb/vibb, `pi/web/`, branch `pipewire`); `icon-maskable-512.png` is its 512 scaled to 80 % on night, so the
   outer ring (195 px) is inside the 40 % safe zone (205 px). `theme-color` and the manifest's `theme_color` are
   night `#0C0C14` on every page in both schemes since the status-bar night (below; `background_color`, the splash,
-  stays `#F2F2F7`). The shell test checks every icon's size, that the font is local and that the head
+  stayed `#F2F2F7` until the start-up splash, 2026-10-24, made it night too). The shell test checks every icon's size, that the font is local and that the head
   preloads exactly the `@font-face` file. `deploy/generate-icons.ps1` (the old blue phone icons) is deleted: the icons
   come from the vibb repo.
 - **The fix round** (`docs/review/qa-pwa-identity-d-code.md`): a checked plain checkbox in dark has a night tick on
@@ -864,6 +864,38 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   through it. `--tab-bar-room` is the bar + 14 px + `--tab-fade-above`, so main's last row (and a focused field,
   `scroll-padding-bottom`) stops above the fade's start. Above that start the side gaps stay sharp. The shell test pins
   the rule, the room and that the fade comes first in the partial.
+
+## Start-up splash (2026-10-24)
+
+- **The user's pick** ("en forvokst utgave av ikonet ... uten tekst; bare en stor logo og natt bakgrunnen akkurat som
+  ikon logoen vår"; the reference Nextcloud iOS's launch screen, and - the user's addendum - the launcher's own Home
+  splash): one flat night ground `#0C0C14` and the Vibb mark centred, nothing else. The mark is the launcher's
+  `splash_vibb_breathe.xml` at rest (the four rings `#F0A884` at stroke alpha 0.55 scaled 0.94, the cream core
+  `#FBE4DC` scaled 0.9; Vibb mark © palchrb, `NOTICE.md`), drawn from its vector geometry, so every PNG is crisp at
+  its own size - no upscaled bitmap. The night is the launcher's `kid_ground` too (the same `#0C0C14`).
+- **Its size is the launcher's share**: at rest the mark is 169 dp across (its outer edge 0.94 x 90 dp from the centre,
+  `vibb-icon.py`'s 90 dp reach) in the 288 dp splash area, which a phone shows at that size (`activity_home_night.xml`,
+  `wrap_content`; the SplashScreen API's 288 dp icon) - 43 % of a 393 dp wide phone. So the PWA's mark is 43 % of the
+  shorter screen side (`mark_share` 0.43): 275 px on the iPhone SE (1st, 640 px wide), 568 px on the 16/17 Pro Max
+  (1320 px). Being drawn from the vector, no size is capped.
+- **iOS** (`partials/head.html`): one `<link rel="apple-touch-startup-image">` per iPhone portrait size, `media` =
+  `(device-width) and (device-height) and (-webkit-device-pixel-ratio) and (orientation: portrait)` in CSS px - iOS
+  shows an image only when the query matches the phone exactly, else a plain white launch. 13 sizes cover every iPhone
+  from the SE (1st) to the 17 Pro Max (`server/testdata/pwa_startup_screens.json` names each); landscape is left out
+  (a phone PWA opens upright; a landscape launch shows iOS's own blank). The PNGs are `static/startup/startup-<w>x<h>.png`
+  (64-colour palette PNGs, about 240 KB for all 13), linked with `?v=` (the JSON's `version`) and served `public,
+  max-age=31536000, immutable` (`admin_auth::admin_headers`, `/static/startup/` only - the icons have no long caching).
+  The real iPhone check (add to the home screen, cold start) is the user's.
+- **Android**: the manifest's `background_color` is night `#0C0C14` (was `#F2F2F7`): Chrome draws the icon on it and
+  always adds the app's name under it - nothing to do about the name. `theme_color` and the one `<meta
+  name="theme-color">` stay the same night.
+- **Regenerate** (a new iPhone size, a new mark): edit `server/testdata/pwa_startup_screens.json` (a new row; bump
+  `version` when the PNGs change), run `python3 -I scripts/pwa-startup-images.py` (Python 3 + Pillow; it writes the
+  PNGs, removes stale ones and rewrites head.html's links between the two `Start-up images` markers), check with
+  `--selftest`, commit the PNGs, the JSON and head.html. A new mark means new ring data in the script (copied from the
+  launcher's regenerated `splash_vibb_breathe.xml`; the script never reads the launcher's files). Test:
+  `shell::every_startup_image_has_its_screens_size` (the links against the JSON in order, each PNG's exact pixels, the
+  folder holds only those, the caching, under 300 KB, the one night in the manifest and the meta).
 
 ## The ⓘ cut (2026-10-24, PLAN "PWA ⓘ panels are too wordy")
 
