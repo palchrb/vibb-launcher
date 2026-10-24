@@ -9,6 +9,10 @@ favoritt-kategori"; the rewind-after-pause idea declined). Music app, plus the l
 
 ## 1. Decisions
 
+> **Superseded in part by design r12** (`r12-music-favourites-tile.md`, 2026-10-24): §1.1's pair is 15 s both ways
+> (`SKIP_FORWARD_MS`, the number from `skipSeconds`); §1.5's hearts carry their time (Room 8 `favourites.heartedAt`,
+> 0 for a heart set before) and "Favoritter" holds one tile playing every heart in one queue, newest first.
+
 1. **Skip buttons for what resumes.** Which entries get them is design 49 §1.1's `controlSlots(entry)`: `SKIP` for
    `Kind.PODCAST`, `Kind.AUDIOBOOK` and a resuming `Kind.OWN` entry; the others get shuffle/repeat. The two side slots
    are "15 s tilbake" (left) and "30 s fram" (right) - Material Symbols `replay`/`forward_media` glyphs

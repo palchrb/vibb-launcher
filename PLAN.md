@@ -1111,6 +1111,8 @@ findings, merge to `main`, full suite once.
   verdi"); (2) skip 15 s both ways (was 15/30, design 50's pick); (3) one "Favoritter" tile playing every hearted item
   across entries - option B, all sources at once ("vi holder køen selv ... jeg sier vi tar alt i 1"), replacing r8's
   option C; Spotify on a room waits for 54-a2. Music, items 1-2 XS, item 3 L.
+  - **Built** on branch `r12-music` (2026-10-24, the user's three defaults; Room 8: `favourites.heartedAt`,
+    `now_playing.mix`; the note's "As built"); owed: code QA, then emulator.md §6s.
 - **A black flash behind Home after the Home button** (the user, 2026-10-16, emulator video): from an app
   (Element X), the Home button (the emulator's circle) shows Home's icons on solid black for ~150 ms
   (four frames at 30 fps) while the app slides away, and only then the wallpaper; Back has a clean

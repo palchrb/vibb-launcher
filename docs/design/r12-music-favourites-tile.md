@@ -631,3 +631,51 @@ a new emulator.md section **§6s** gets these. Logcat: `VibbSpotify`, `VibbSonos
   switches, the list, the carousel/heart), Room 8 with its schema and test, C's removal (~-150 with its tests), music/CLAUDE.md
   and emulator.md §6s. Roughly 1,300-1,700 lines touched. Two commits on one branch is the natural cut: §1+§2 (shippable
   alone), then §3; one code QA over both.
+
+## As built (branch `r12-music`, on main `6024e396`, 2026-10-24)
+
+The user's §6 defaults are the decisions (2026-10-24): the heart on the card ground, last hearted first, places saved
+but no bookmark moved and nothing cleared at the end, "Favoritt N av M", the side slots following the playing item.
+Spotify on a room stays out until 54-a2 (§3.5's hand-over unchanged). Four commits: §1, §2, §3, the docs.
+
+- **§1 built as written**: `rowBadge` (`logic/LibraryView.kt`), `ListRowView` draws the pictured branch with no
+  content over the cover; `LibraryViewTest`'s r12 case.
+- **§2 built as written**: `SKIP_FORWARD_MS = 15_000L`, `skipSeconds`, both `SkipButton`s, the two strings,
+  `TransportTest`, `FitTest`'s comment, music/CLAUDE.md. No media-session increments exist (none set), so nothing else.
+- **§3 built**, with these differences from the text:
+  1. `mixPlayableFrom(size, from, forward, wrap, origin, playable)` takes `wrap: Boolean`, not the repeat: a step
+     wraps always (as `goTo` did), a run's end and a move-on past a run only with repeat ALL.
+  2. `MixQueue(order, all, shuffled, repeat)` keeps the queue fixed at the tap (`all`, what `now_playing.mix` stores)
+     beside this renderer's view of it (`items`): on a room own files and Spotify leave `items`, and coming home puts
+     them back (§3.5's "the left-out items are back in the phone's view") - one list could not do both. A shuffle
+     toggle re-permutes `all` and keeps `items` its view.
+  3. After a shuffle toggle the run is cut to the following refs of the playing entry the loaded run already holds
+     (`Active.order`, no IO in a toggle); the rest of that entry's consecutive refs is the next run (it starts at its
+     own offset inside the re-formed run).
+  4. A restored or adopted queue's unshuffled view (`order`) isn't stored: unshuffled it is the stored queue, shuffled
+     the hearts' order now kept to the stored refs (a ref unhearted since drops on the next shuffle-off, never the
+     current one).
+  5. Adopt brings the queue back only around the adopted item itself (`restoredMix(...).same`); otherwise the room plays
+     on as that entry's run alone - never a stop because the queue can't be rebuilt.
+  6. `SonosSuspension`'s standalone place writes no bookmark either when the stored row is a favourites row (the note
+     accepted that it might).
+  7. A pick in the favourites list always starts its run (`startRun`, `newChoice`), also inside the run: a new pick
+     from its own place, as an entry's list pick reloads its queue.
+  8. The run held by "Til slutten" starts paused at its first item's own place when its entry resumes (the note's "at
+     its start"), as every run start.
+  9. `Snapshot.heartsListed` and `favouriteEntryKeys` went with option C (no reader left); `Snapshot.favouritesOrder`,
+     `holds` and `entryByKey` are the new seams. `effectiveCategory` keeps "Favoritter" while any heart is listed, also
+     when the hearted entries show nothing in this view (a book not on the phone: the tile counts it, its tap says
+     "Ikke lastet ned").
+  10. `Actions.skipTo` carries the entry key (`ARG_ENTRY_KEY`, a ref is by key); `Actions.playItem` gets the entry key
+      as `inFavourites` for the favourites list (`ARG_IN_FAVOURITES` + `ARG_ENTRY_KEY`).
+  11. The account-line drop is read on the web player's `StateChanged` (`mixSpotifyLine`); the room logs `sonos:
+      favourites - N of M a speaker can't play left out` at the tap and at "Spill av på".
+  12. `PLAY_ITEM`'s pick on a stored (not loaded) favourites queue loads it paused first (`restore`), then picks.
+- **Tests**: `MixTest` (10 cases: §3.10's list); `FavouritesTest` (the chip, the r12 service pins: the run's end before
+  any `clear_state`, the writers' no-bookmark rule, the same-tile rule, `hasNextMediaItem`, the commands in `PLAYS`/
+  `MOVES`, `start`'s `mix = a.mix`, the suspension gates; `flippedNowPlaying` and a heart's time); `UiModelTest` (a live
+  and a stored favourites view, the tile's switch, a step across a run, the pick, the tile's dimming); `Room6Test` (7
+  -> 8); `SpotifyRendererTest` (an unplayable last track with only a pause: no play call); `GuardsTest`, `NowPlayingTest`,
+  `OfflineTest` pins moved with the code. The r8 cases went with option C.
+- **Not done here**: the emulator checks (§4, now docs/testing/emulator.md §6s) - the coordinator's, after code QA.

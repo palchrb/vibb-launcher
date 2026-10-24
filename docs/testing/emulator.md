@@ -1840,6 +1840,60 @@ confirms that main hangs together. So:
 - The agent's run isn't the user's: it reads logcat and frame counts on a debug build with Pixel SystemUI; the
   user sees the release build's transitions on their own AVD. Neither replaces the other.
 
+## 6s. The plain series cover, skip 15/15, the one "Favoritter" tile (design r12)
+
+Design r12 §4 (`docs/design/r12-music-favourites-tile.md`). Debug builds of this branch, the debug feed (§6f) or the
+bridge chain (§6l Part A1's setup); the fakes as their sections say (`fake-audio.py` §6f/§6q, `fake-spotify.py` §6l,
+`fake-storytel.py` §6i, `fake-sonos.py` §6h). Logcat: `VibbSpotify`, `VibbSonos`, the service's lines.
+
+1. **§1**: `scripts/fake-audio.py --feed 20` (§6q): the channel-picture rows and the not-yet-fetched rows show the plain
+   series cover - no number, no ✓, no dark scrim; the playing one ringed; a heard row says "Hørt" in its sub-line. The
+   plain listing (one picture): numbers and ✓ as before.
+2. **§2**: a podcast episode at 1:00: "15" on both buttons; fram -> 1:15, tilbake -> 1:00; TalkBack reads "15 sekunder
+   fram"; 10 s before the end, fram stops 1 s short of it (no next item). On the fake room (§6h): fram is a settled
+   seek +15 s. A Spotify show episode if the fake lists one (`--print-listing` with an episode entry), else skip.
+3. **The tile**: heart, in this order, RSS episode 3 (`--feed 6`), a Spotify track 2 (fake-spotify, list mode,
+   `--track-seconds 20`), an own file 1, RSS episode 5. "Favoritter" shows one tile - the peach heart on the card
+   ground, "4 favoritter" - and no entry tiles under it. Tap: RSS 5 first, then own 1, Spotify 2, RSS 3 (newest heart
+   first). The carousel has 4 pages with their own pictures; "Favoritt 1 av 4"; the header follows each item's entry.
+   "Liste": the four rows pictured, each sub-line "<entry> · 12:34", no order button.
+4. **The switches**: seek near each item's end and let it advance: RSS -> own file (no renderer change), own file ->
+   Spotify (logcat: the web player attached, its page made the first time - note the seconds to the tone), Spotify ->
+   RSS (ExoPlayer back; the page stays), then within 5 minutes back to Spotify by previous (warm: under a second), and
+   once more after 6 minutes on the RSS item (cold again).
+5. **Steps across sources**: next/previous in the player, in the notification, `adb shell input keyevent
+   KEYCODE_MEDIA_NEXT` / `MEDIA_PREVIOUS`, and the launcher's lock tile (debug launcher) - each crosses RSS <-> Spotify;
+   paused, a carousel swipe to the Spotify page shows it at its place and stays paused, play plays it.
+6. **Runs**: heart three tracks of the same Spotify list in a row: they play as one run - logcat shows one play call
+   for the three, not three; shuffle on (on a song): the current plays on, the rest permuted, runs mostly one item;
+   shuffle off: the hearts' order from the current one.
+7. **Can't play**: stream switch off, Wi-Fi off (`adb shell svc wifi disable`, mobile data on): the RSS streams and the
+   Spotify track are skipped with "Ikke lastet ned - trenger Wi-Fi", the own file and a downloaded episode play; the
+   tile dims with "Trenger Wi-Fi" when nothing of it can play. Wi-Fi on, fake-spotify `--not-premium`: the Spotify item
+   shows "Spør en voksen", "Kan ikke spilles nå" once, the queue goes on and later Spotify refs are skipped; a new tap
+   tries again. `--unplayable`: the track is skipped inside its run, or - last in its run - the next run starts.
+8. **Storytel** (fake-storytel §6i): heart book 1 (downloaded) and book 2 (`--no-download`): the tile counts both; on the
+   phone only book 1 plays (from its copy, no mint in the log); on the fake room both play (a mint per book).
+9. **Hearts while it plays**: unheart the playing item - it plays on, the tile says 3; heart a new item - not in this
+   queue; play something else, then the tile: the new heart first. "Alle" -> the RSS entry's tile: it continues where
+   the RSS entry's own bookmark was, not where the favourites left it; the half-heard favourite episode shows its
+   progress in its list.
+10. **"Til slutten"** on the last item of a run: it pauses at the end; the player shows the next favourite at its own
+    place, paused; play plays it. The minute timer across an RSS -> Spotify switch fades on the web player.
+11. **Restart**: pause on the Spotify item, `adb shell am force-stop me.vibb.music.debug`, open: the library opens on
+    "Favoritter", the bar shows the Spotify item paused (no WebView in logcat); Home's RESUME plays it; next goes to the
+    next favourite. Again paused on an RSS item, with the queue shuffled: the order comes back the same.
+12. **The room** (fake-sonos §6h): "Spill av på" the fake room during the favourites queue: the room plays only the RSS
+    and Storytel refs (logcat: `sonos: favourites - N of M a speaker can't play left out`), advances across entries by
+    itself (fake-sonos's log: Stop + `SetAVTransportURI` per run); back to the phone: on at the room's item, the own file
+    and Spotify back in the queue. Only own files and Spotify hearted: the room says "Kan ikke spilles på Sonos", the
+    phone plays on.
+13. **An entry removed** (the debug feed without it) while its favourite plays: plays on; its other favourites are
+    skipped; after the sync the tile's count drops.
+14. **Back and start**: back from the player during the favourites queue lands on "Favoritter" with its tile; after a
+    restart with it stored, the library opens on "Favoritter". A tap on the playing run's own entry under "Alle" starts
+    that entry (it doesn't unpause the favourites queue).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

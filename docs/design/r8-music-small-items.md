@@ -7,6 +7,11 @@ Music app only. No server, launcher, PWA or contract change. Three items, each w
 
 ## 1. Favourites, option C
 
+> **Superseded by design r12** (`r12-music-favourites-tile.md` §3, 2026-10-24): under "Favoritter" one tile now plays
+> every heart of every entry in one queue (option B); option C's cover tap and its scope rules are gone. Its scope
+> plumbing (`Active.favourites`, `now_playing.favourites`) stays and carries a favourites queue's run; an r8 row
+> restores as before. §2-§3 stand.
+
 ### 1.1 Behaviour
 
 - Hearts stay per track/episode/book (Room `favourites`, design 50 §1.5). Nothing changes outside "Favoritter".

@@ -20,6 +20,10 @@ entry sharing the series cover (an NRK podcast): number circles as today, the bu
 
 ## 1. Decisions (given by the user/coordinator; the architect's calls are marked)
 
+> **Rule 1's number and §4's scrim superseded by design r12** (`r12-music-favourites-tile.md` §1, 2026-10-24): in a
+> pictured list a row without its own picture shows the series cover plain - no number, no ✓, no scrim (`rowBadge`);
+> a list without pictures keeps its numbers and ✓.
+
 1. **Pictures only where they say something**: design 27's carousel rule, reused - more than one item and at least
    two different pictures among them, the entry's cover counting as one. An entry with one picture keeps the numbers.
    **A stated deviation from vibb**, whose episode list shows own art only in the highlighted row (design 27 §0) -
