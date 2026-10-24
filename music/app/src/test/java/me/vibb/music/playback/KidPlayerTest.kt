@@ -90,4 +90,43 @@ class KidPlayerTest {
         assertTrue(kid.contains("override fun addListener(listener: Player.Listener) = super.addListener(listeners.wrap(listener))"))
         assertTrue(kid.contains("override fun removeListener(listener: Player.Listener) = super.removeListener(listeners.unwrap(listener))"))
     }
+
+    @Test
+    fun `r12 E-1-Q-1 - the wrapper forwards every Player Listener method, the commands alone replaced`() {
+        // Kotlin's `by` forwards no Java default method: the session's listeners went deaf (play state, items, timeline,
+        // metadata, positions, errors). Every method the interface has now - a Media3 bump's new one too - must arrive.
+        val ours = Player.Commands.Builder().add(Player.COMMAND_SEEK_TO_NEXT).build()
+        val arrived = mutableListOf<Pair<java.lang.reflect.Method, Array<Any?>?>>()
+        lateinit var inner: Player.Listener
+        inner = java.lang.reflect.Proxy.newProxyInstance(javaClass.classLoader, arrayOf(Player.Listener::class.java)) { _, m, args ->
+            when (m.name) {
+                "hashCode" -> System.identityHashCode(inner)
+                "equals" -> args!![0] === inner
+                "toString" -> "inner"
+                else -> {
+                    arrived += m to args
+                    null
+                }
+            }
+        } as Player.Listener
+        val wrapper = KidListeners { ours }.wrap(inner)
+        val methods = Player.Listener::class.java.methods.filter { it.declaringClass == Player.Listener::class.java }
+        assertTrue("Media3 1.7.1's listener has 37 methods", methods.size >= 37)
+        for (m in methods) {
+            val args = m.parameterTypes.map { t ->
+                when (t) {
+                    java.lang.Boolean.TYPE -> true
+                    Integer.TYPE -> 7
+                    java.lang.Long.TYPE -> 7L
+                    java.lang.Float.TYPE -> 0.5f
+                    else -> null
+                }
+            }.toTypedArray<Any?>()
+            arrived.clear()
+            m.invoke(wrapper, *args)
+            assertEquals("${m.name}(${m.parameterTypes.joinToString { it.simpleName }}) reaches the inner listener", listOf(m), arrived.map { it.first })
+            val got = arrived.single().second?.toList().orEmpty()
+            if (m.name == "onAvailableCommandsChanged") assertEquals(listOf<Any?>(ours), got) else assertEquals(args.toList(), got)
+        }
+    }
 }

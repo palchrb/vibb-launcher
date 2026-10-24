@@ -714,6 +714,15 @@ Spotify on a room stays out until 54-a2 (§3.5's hand-over unchanged). Four comm
   `COMMAND_SEEK_TO_NEXT` on a queue's last item. A headset's media button takes the session's own path, so it worked.
   Fix: `KidPlayer` wraps its listeners (`playback/KidCommands.kt`, `KidListeners`) so every controller - the app's
   buttons, the launcher's lock tile, the notification - hears `KidPlayer.getAvailableCommands` (its own additions and
-  refusals). This also fixes the in-app Neste on an entry queue's last item (vibb's wrap to the first). Forrige after
-  3 s into an item restarts it, as everywhere (vibb's rule); within 3 s it goes to the previous favourite. Tests:
+  refusals). This also fixes the in-app Neste on an entry queue's last item (vibb's wrap to the first). Forrige more than
+  5 s into an item (`PREV_RESTART_AFTER_MS`) restarts it, as everywhere (vibb's rule); earlier it goes to the previous
+  favourite. Tests:
   `KidPlayerTest`'s E-1 case, `UiModelTest`'s next at a run's end and previous at a run's start across runs.
+- **E-1-Q-1 (Blocker, the QA's re-review of E-1)**: the first wrapper was a Kotlin `: Player.Listener by inner`, and
+  `by` forwards no Java default method - every `Player.Listener` method is one - so the session's listeners heard only
+  the commands: the notification, the platform session (the launcher's lock tile and Home card), the shade and Bluetooth
+  metadata froze after every attach (the app's own screens read `PlayerHub`). Fix: `playback/KidCommandsListener.java`
+  forwards every method explicitly, as Media3's `ForwardingPlayer.ForwardingListener` does, the commands alone replaced
+  (`KidCommands.kt` keeps `KidListeners`). `KidPlayerTest` invokes every method of `Player.Listener` by reflection
+  against a `Proxy` inner listener and asserts each arrives with its arguments, so a Media3 bump that adds a method
+  fails until it is forwarded.
