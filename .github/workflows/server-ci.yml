@@ -2,7 +2,8 @@ name: Server CI
 
 # The admin server in server/. No `paths:` filter on the triggers (a skipped workflow leaves a
 # required check pending forever): server-changes decides, server-build runs only when server/ or
-# this workflow changed, server-image only when the image's files (Dockerfile, .dockerignore,
+# this workflow changed, server-image-context and server-image (a matrix: amd64 and arm64, each on
+# a runner of its own architecture) only when the image's files (Dockerfile, .dockerignore,
 # deploy/image-smoke.sh) or this workflow changed, and server-ci (always runs) is the check to
 # require.
 # Third-party actions are pinned by commit SHA. Never add a pull_request_target trigger.
@@ -89,9 +90,10 @@ jobs:
       # Reports warnings without failing the build; the existing ones predate the test harness.
       - run: cargo clippy --all-targets --locked
 
-  # The container image (design 22 §6), without pushing: a static amd64 musl build, docker build,
-  # and the same smoke test the release runs before it tags an image.
-  server-image:
+  # The container image (design 22 §6), without pushing, as the release builds it: static musl
+  # binaries for both architectures cross-built here (cross's images are x86_64 only), then
+  # server-image builds and smoke-tests each architecture natively on its own runner.
+  server-image-context:
     needs: server-changes
     if: ${{ needs.server-changes.outputs.image == 'true' }}
     runs-on: ubuntu-24.04
@@ -100,6 +102,8 @@ jobs:
         working-directory: server
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
           # Pinned (security review L9); move it on deliberately, with the clippy count.
@@ -110,37 +114,83 @@ jobs:
           tool: cross@0.2.5
       - name: Build (x86_64-unknown-linux-musl)
         run: cross build --release --locked --target x86_64-unknown-linux-musl
+      - name: Build (aarch64-unknown-linux-musl)
+        run: cross build --release --locked --target aarch64-unknown-linux-musl
       - name: Stage the image context
         run: |
           set -euo pipefail
-          mkdir -p dist/amd64
+          mkdir -p dist/amd64 dist/arm64
           cp target/x86_64-unknown-linux-musl/release/kid_phone_server dist/amd64/
+          cp target/aarch64-unknown-linux-musl/release/kid_phone_server dist/arm64/
           cp -r static dist/static
+      - name: Upload the image context
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: server-image-context
+          path: server/dist
+          if-no-files-found: error
+          retention-days: 3
+
+  # The same smoke test the release runs before it tags an image, natively on each architecture.
+  server-image:
+    needs: server-image-context
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    name: server-image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      ARCH: ${{ matrix.arch }}
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Download the image context
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: server-image-context
+          path: server/dist
+      # Artifacts don't keep the executable bit.
+      - name: Make the binary executable
+        run: chmod 755 "dist/$ARCH/kid_phone_server"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build the image
         run: |
-          docker buildx build --platform linux/amd64 --load \
+          docker buildx build --platform "linux/$ARCH" --load \
             --build-arg VERSION=ci --build-arg REVISION="$GITHUB_SHA" \
-            -t handy-server:ci .
-      - name: Smoke test
-        run: deploy/image-smoke.sh handy-server:ci
+            -t "handy-server:ci-$ARCH" .
+      - name: Smoke test (natively)
+        run: deploy/image-smoke.sh "handy-server:ci-$ARCH" "linux/$ARCH"
 
   # The one check to mark as required in branch protection: it always runs and passes when the
-  # build (and the image job) passed, or were skipped because nothing of theirs changed.
+  # build (and the image jobs) passed, or were skipped because nothing of theirs changed.
   server-ci:
     if: ${{ always() }}
-    needs: [ server-changes, server-build, server-image ]
+    needs: [ server-changes, server-build, server-image-context, server-image ]
     runs-on: ubuntu-24.04
     steps:
-    - name: Check server-build and server-image
+    - name: Check server-build and the image jobs
       env:
         CHANGES: ${{ needs.server-changes.result }}
         CHANGED: ${{ needs.server-changes.outputs.changed }}
         IMAGE_CHANGED: ${{ needs.server-changes.outputs.image }}
         BUILD: ${{ needs.server-build.result }}
+        IMAGE_CONTEXT: ${{ needs.server-image-context.result }}
         IMAGE: ${{ needs.server-image.result }}
       run: |
-        echo "changes: $CHANGES, changed: $CHANGED, build: $BUILD, image changed: $IMAGE_CHANGED, image: $IMAGE"
+        echo "changes: $CHANGES, changed: $CHANGED, build: $BUILD, image changed: $IMAGE_CHANGED, image context: $IMAGE_CONTEXT, image: $IMAGE"
         [ "$CHANGES" = success ] || exit 1
         if [ "$CHANGED" = true ]; then [ "$BUILD" = success ]; else [ "$BUILD" = skipped ]; fi
-        if [ "$IMAGE_CHANGED" = true ]; then [ "$IMAGE" = success ]; else [ "$IMAGE" = skipped ]; fi
+        if [ "$IMAGE_CHANGED" = true ]; then
+          [ "$IMAGE_CONTEXT" = success ] && [ "$IMAGE" = success ]
+        else
+          [ "$IMAGE_CONTEXT" = skipped ] && [ "$IMAGE" = skipped ]
+        fi

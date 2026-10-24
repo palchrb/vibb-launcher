@@ -9,10 +9,12 @@ name: Server release
 #    checks the signatures against the public key pinned in server/deploy/update.sh. No secret, or
 #    no pinned key: the run stops here, before any image is pushed or tagged (server/DEPLOY.md,
 #    "Release signing").
-# 3. server-release-image (design 22 §6): a multi-arch image ghcr.io/<owner>/handy-server, pushed
-#    by digest only, smoke-tested on amd64 natively and on arm64 under QEMU
-#    (server/deploy/image-smoke.sh), only then tagged X.Y.Z (and latest, if X.Y.Z is the highest
-#    server-v* tag - a patch on an older line doesn't take it), with a build provenance attestation.
+# 3. server-release-image (design 22 §6), a matrix: each architecture on a runner of its own
+#    (linux/amd64 on ubuntu-24.04, linux/arm64 on ubuntu-24.04-arm; no QEMU), its single-arch image
+#    pushed by digest only and smoke-tested there natively (server/deploy/image-smoke.sh).
+#    server-release-image-merge then joins the two digests into the multi-arch image
+#    ghcr.io/<owner>/handy-server, tagged X.Y.Z (and latest, if X.Y.Z is the highest server-v* tag -
+#    a patch on an older line doesn't take it), with a build provenance attestation.
 # 4. server-release-publish, last: the GitHub release with the tarball, update.sh and their
 #    signatures, as signed in step 2. server/deploy/install.sh
 #    and update.sh (and the in-app update check) look up the newest server-v* release through the
@@ -21,7 +23,7 @@ name: Server release
 #    announce a version whose image is missing or broken.
 #
 # workflow_dispatch is always a dry run (on a branch or a tag ref): the same build, the image built and
-# smoke-tested on both platforms locally, nothing pushed, tagged or published. Only a tag push
+# smoke-tested locally on each architecture's own runner, nothing pushed, tagged or published. Only a tag push
 # releases.
 #
 # The GHCR package must be public (design 22, U3): after the first image push, the owner sets its
@@ -219,19 +221,33 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # One leg per architecture, each on a runner of that architecture: the build and the smoke test
+  # run natively (no QEMU). A matrix's legs share the job's outputs, so each leg reports its digest
+  # under a name of its own (digest_amd64, digest_arm64) and leaves the other's unset.
   server-release-image:
     needs: [ server-release-build, server-release-sign ]
     # A release only once its files are signed; a workflow_dispatch (no signing) is the dry run.
     if: ${{ !cancelled() && needs.server-release-build.result == 'success' && (needs.server-release-sign.result == 'success' || github.event_name != 'push') }}
-    runs-on: ubuntu-24.04
+    strategy:
+      # Both verdicts in a dry run; a release needs both legs anyway (server-release-image-merge).
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    name: server-release-image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
-      id-token: write
-      attestations: write
+    outputs:
+      digest_amd64: ${{ steps.push.outputs.digest_amd64 }}
+      digest_arm64: ${{ steps.push.outputs.digest_arm64 }}
     env:
+      ARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.server-release-build.outputs.version }}
-      LATEST: ${{ needs.server-release-build.outputs.latest }}
       RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}
     defaults:
       run:
@@ -248,12 +264,8 @@ jobs:
           path: server/dist
 
       # Artifacts don't keep the executable bit.
-      - name: Make the binaries executable
-        run: chmod 755 dist/amd64/kid_phone_server dist/arm64/kid_phone_server
-
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        with:
-          platforms: arm64
+      - name: Make the binary executable
+        run: chmod 755 "dist/$ARCH/kid_phone_server"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -269,7 +281,8 @@ jobs:
         id: name
         run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/handy-server" >> "$GITHUB_OUTPUT"
 
-      # Pushed by digest only: nothing carries X.Y.Z or latest until the smoke tests passed.
+      # This architecture's image, pushed by digest only: nothing carries X.Y.Z or latest until both
+      # legs passed their smoke tests.
       - name: Build and push by digest
         id: push
         if: ${{ env.RELEASE == 'true' }}
@@ -277,7 +290,7 @@ jobs:
           IMAGE: ${{ steps.name.outputs.image }}
         run: |
           set -euo pipefail
-          docker buildx build --platform linux/amd64,linux/arm64 \
+          docker buildx build --platform "linux/$ARCH" \
             --build-arg VERSION="$VERSION" --build-arg REVISION="$GITHUB_SHA" \
             --provenance=false --sbom=false \
             --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true" \
@@ -285,55 +298,88 @@ jobs:
           digest="$(jq -r '."containerimage.digest"' metadata.json)"
           [[ "$digest" == sha256:* ]] || { echo "no digest: $digest" >&2; exit 1; }
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "digest_$ARCH=$digest" >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test the pushed image (amd64 natively, arm64 under QEMU)
+      - name: Smoke test the pushed image (natively)
         if: ${{ env.RELEASE == 'true' }}
         env:
           REF: ${{ steps.name.outputs.image }}@${{ steps.push.outputs.digest }}
         run: |
           set -euo pipefail
-          for platform in linux/amd64 linux/arm64; do
-            # The same digest again for the second platform: newer Docker refuses to pull it over
-            # the first one ("cannot overwrite digest", server-v0.24.0's run), so drop it first.
-            docker image rm -f "$REF" >/dev/null 2>&1 || true
-            docker pull --platform "$platform" "$REF"
-            deploy/image-smoke.sh "$REF" "$platform"
-          done
+          docker pull --platform "linux/$ARCH" "$REF"
+          deploy/image-smoke.sh "$REF" "linux/$ARCH"
 
-      - name: Dry run - build and smoke test locally (amd64 natively, arm64 under QEMU)
+      - name: Dry run - build and smoke test locally (natively)
         if: ${{ env.RELEASE != 'true' }}
         run: |
           set -euo pipefail
-          for arch in amd64 arm64; do
-            docker buildx build --platform "linux/$arch" --load \
-              --build-arg VERSION="$VERSION" --build-arg REVISION="$GITHUB_SHA" \
-              -t "handy-server:dry-$arch" .
-            deploy/image-smoke.sh "handy-server:dry-$arch" "linux/$arch"
-          done
+          docker buildx build --platform "linux/$ARCH" --load \
+            --build-arg VERSION="$VERSION" --build-arg REVISION="$GITHUB_SHA" \
+            -t "handy-server:dry-$ARCH" .
+          deploy/image-smoke.sh "handy-server:dry-$ARCH" "linux/$ARCH"
+
+  # Joins the two smoke-tested digests into the multi-arch image, then tags it. A tag run only: a dry
+  # run pushed nothing.
+  server-release-image-merge:
+    needs: [ server-release-build, server-release-sign, server-release-image ]
+    if: ${{ !cancelled() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') && needs.server-release-build.result == 'success' && needs.server-release-sign.result == 'success' && needs.server-release-image.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.server-release-build.outputs.version }}
+      LATEST: ${{ needs.server-release-build.outputs.latest }}
+      DIGEST_AMD64: ${{ needs.server-release-image.outputs.digest_amd64 }}
+      DIGEST_ARM64: ${{ needs.server-release-image.outputs.digest_arm64 }}
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Name the image
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/handy-server" >> "$GITHUB_OUTPUT"
 
       - name: Tag X.Y.Z (and latest, for the highest release)
-        if: ${{ env.RELEASE == 'true' }}
+        id: merge
         env:
           IMAGE: ${{ steps.name.outputs.image }}
-          DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           set -euo pipefail
+          [[ "$DIGEST_AMD64" == sha256:* ]] || { echo "no digest from the amd64 leg: '$DIGEST_AMD64'" >&2; exit 1; }
+          [[ "$DIGEST_ARM64" == sha256:* ]] || { echo "no digest from the arm64 leg: '$DIGEST_ARM64'" >&2; exit 1; }
+          sources=("$IMAGE@$DIGEST_AMD64" "$IMAGE@$DIGEST_ARM64")
+          # The index must name exactly the two tested platforms before any tag goes on it.
+          platforms="$(docker buildx imagetools create --dry-run "${sources[@]}" \
+            | jq -r '.manifests[].platform | "\(.os)/\(.architecture)"' | sort | paste -sd ' ')"
+          [ "$platforms" = "linux/amd64 linux/arm64" ] || { echo "the index would carry: '$platforms'" >&2; exit 1; }
           tags=(-t "$IMAGE:$VERSION")
           if [ "$LATEST" = true ]; then
             tags+=(-t "$IMAGE:latest")
           fi
-          docker buildx imagetools create "${tags[@]}" "$IMAGE@$DIGEST"
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+          # The index's digest, for the attestation.
+          digest="$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r '.digest')"
+          [[ "$digest" == sha256:* ]] || { echo "no index digest: $digest" >&2; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Attest build provenance
-        if: ${{ env.RELEASE == 'true' }}
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ steps.name.outputs.image }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
 
   server-release-publish:
-    needs: [ server-release-build, server-release-sign, server-release-image ]
+    needs: [ server-release-build, server-release-sign, server-release-image, server-release-image-merge ]
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}
     runs-on: ubuntu-24.04
     permissions:

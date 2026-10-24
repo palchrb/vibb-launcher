@@ -1707,6 +1707,10 @@ findings, merge to `main`, full suite once.
 
 ### Done (not released yet)
 
+- **CI: arm64 image on a native arm runner (the user, 2026-10-24, branch `ci-native-arm64`)**: done - no QEMU; the
+  release and CI image jobs are an amd64/arm64 matrix (`ubuntu-24.04`, `ubuntu-24.04-arm`), each built and smoked
+  natively, then `server-release-image-merge` joins the two digests and tags `X.Y.Z` (and `latest`) as before.
+
 - **Back from Apps › a phone goes back to Apps (2026-10-24, branch `pwa-polish-a`)**: the user: "på apps, om jeg går
   inn på feks Sverre sin tlf og så trykker tilbake - så kommer jeg til device taben for Sverre? Føltes unaturlig". The
   Apps tab's links carry `?from=apps` / `?from=app:<id>`; the phone's Apps page then lights Apps and its back link

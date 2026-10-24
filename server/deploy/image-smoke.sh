@@ -5,7 +5,7 @@
 # no-new-privileges, named volumes for data/ and data/keys/), writes its generated first password
 # to a file (never the log), and reset-2fa runs without a shell.
 #
-# Usage: image-smoke.sh IMAGE [PLATFORM]   (PLATFORM e.g. linux/arm64, under QEMU)
+# Usage: image-smoke.sh IMAGE [PLATFORM]   (PLATFORM e.g. linux/arm64; CI runs it natively on each architecture's own runner)
 set -euo pipefail
 
 image="$1"
