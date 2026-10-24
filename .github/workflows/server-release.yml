@@ -222,8 +222,9 @@ jobs:
           retention-days: 7
 
   # One leg per architecture, each on a runner of that architecture: the build and the smoke test
-  # run natively (no QEMU). A matrix's legs share the job's outputs, so each leg reports its digest
-  # under a name of its own (digest_amd64, digest_arm64) and leaves the other's unset.
+  # run natively (no QEMU). Each leg hands its smoke-tested digest to the merge as an artifact of its
+  # own (server-image-digest-<arch>, one file digest-<arch>), not as a job output: a matrix's legs
+  # share the job's outputs.
   server-release-image:
     needs: [ server-release-build, server-release-sign ]
     # A release only once its files are signed; a workflow_dispatch (no signing) is the dry run.
@@ -242,9 +243,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    outputs:
-      digest_amd64: ${{ steps.push.outputs.digest_amd64 }}
-      digest_arm64: ${{ steps.push.outputs.digest_arm64 }}
     env:
       ARCH: ${{ matrix.arch }}
       VERSION: ${{ needs.server-release-build.outputs.version }}
@@ -298,7 +296,6 @@ jobs:
           digest="$(jq -r '."containerimage.digest"' metadata.json)"
           [[ "$digest" == sha256:* ]] || { echo "no digest: $digest" >&2; exit 1; }
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "digest_$ARCH=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test the pushed image (natively)
         if: ${{ env.RELEASE == 'true' }}
@@ -308,6 +305,25 @@ jobs:
           set -euo pipefail
           docker pull --platform "linux/$ARCH" "$REF"
           deploy/image-smoke.sh "$REF" "linux/$ARCH"
+
+      # Only a digest that passed its smoke test reaches the merge.
+      - name: Write the digest
+        if: ${{ env.RELEASE == 'true' }}
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/digest"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/digest/digest-$ARCH"
+
+      - name: Upload the digest
+        if: ${{ env.RELEASE == 'true' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: server-image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digest/digest-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Dry run - build and smoke test locally (natively)
         if: ${{ env.RELEASE != 'true' }}
@@ -332,9 +348,19 @@ jobs:
     env:
       VERSION: ${{ needs.server-release-build.outputs.version }}
       LATEST: ${{ needs.server-release-build.outputs.latest }}
-      DIGEST_AMD64: ${{ needs.server-release-image.outputs.digest_amd64 }}
-      DIGEST_ARM64: ${{ needs.server-release-image.outputs.digest_arm64 }}
     steps:
+      - name: Download the amd64 digest
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: server-image-digest-amd64
+          path: ${{ runner.temp }}/digests
+
+      - name: Download the arm64 digest
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: server-image-digest-arm64
+          path: ${{ runner.temp }}/digests
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
@@ -354,9 +380,14 @@ jobs:
           IMAGE: ${{ steps.name.outputs.image }}
         run: |
           set -euo pipefail
-          [[ "$DIGEST_AMD64" == sha256:* ]] || { echo "no digest from the amd64 leg: '$DIGEST_AMD64'" >&2; exit 1; }
-          [[ "$DIGEST_ARM64" == sha256:* ]] || { echo "no digest from the arm64 leg: '$DIGEST_ARM64'" >&2; exit 1; }
-          sources=("$IMAGE@$DIGEST_AMD64" "$IMAGE@$DIGEST_ARM64")
+          sources=()
+          for arch in amd64 arm64; do
+            file="$RUNNER_TEMP/digests/digest-$arch"
+            [ -f "$file" ] || { echo "no digest file from the $arch leg" >&2; exit 1; }
+            digest="$(head -n 1 "$file")"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "the $arch leg's digest isn't sha256: '$digest'" >&2; exit 1; }
+            sources+=("$IMAGE@$digest")
+          done
           # The index must name exactly the two tested platforms before any tag goes on it.
           platforms="$(docker buildx imagetools create --dry-run "${sources[@]}" \
             | jq -r '.manifests[].platform | "\(.os)/\(.architecture)"' | sort | paste -sd ' ')"
