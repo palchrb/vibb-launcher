@@ -56,3 +56,13 @@ implementer flagged that; the user checks it on their emulator during a pause.
   until `set-device-owner` and a process restart.
 - The HOME-role dialog ("Set Vibb One as your default home app?") needs the radio picked before "Set as default".
 - Android's lock's 60 s timeout darkens the screen mid-run: wake and unlock before every recording.
+
+## Follow-up: the provisioning storm with the app-list debounce (branch `appload-debounce`, main a11c05a2)
+
+A fresh `jelly36` (wiped), main's debug launcher, `set-device-owner` + the first Home start, logcat watched for 2 min:
+**0 ANRs of ours** (7 system-wide: the stock launcher's notification listener and GMS failing to start - the
+emulator's cold-boot load), Home resumed and in front. "N apps loaded" lines: 6 in the first minute, 59 after two -
+on this loaded emulator the enforcer's per-package DPM calls are spaced more than 300 ms apart, so most packages
+still open their own burst; each load took 90-1700 ms. The ANRs are gone, but the storm still costs ~1 load per
+restricted package. Follow-up (PLAN): hold the app-list loads while `AppEnforcer.apply`'s loop runs (one load at its
+end), which removes the storm's loads altogether.

@@ -33,6 +33,20 @@ import com.kidslauncher.mdm.calls.MissedSummary
 import com.kidslauncher.mdm.calls.RuleContact
 
 /** Drawing helpers shared by Home, the phone book and the contact sheet. */
+/**
+ * Whether the icon cache's [cacheKey] is one of [packageName]'s ([KidAvatars.evictPackage]). A key whose text doesn't
+ * hold the quoted package name (a serialized app key spells it `"<package>"`) is skipped before the decode
+ * (qa-appload-debounce-code Q-4: the provisioning storm asks this of every key once per callback).
+ */
+internal fun iconKeyIsPackage(cacheKey: String, packageName: String): Boolean {
+    if (!cacheKey.contains("\"$packageName\"")) return false
+    return try {
+        (AbstractAppInfo.deserialize(appIconKeyApp(cacheKey)) as? AppInfo)?.packageName == packageName
+    } catch (e: Exception) {
+        false
+    }
+}
+
 object KidAvatars {
 
     fun dp(context: Context, value: Float): Int =
@@ -153,7 +167,7 @@ object KidAvatars {
     fun evictPackage(packageName: String) {
         try {
             iconCache.snapshot().keys
-                .filter { packageOf(appIconKeyApp(it)) == packageName }
+                .filter { iconKeyIsPackage(it, packageName) }
                 .forEach { iconCache.remove(it) }
         } catch (e: Exception) {
             android.util.Log.w("KidAvatars", "Icon eviction failed: ${e.javaClass.simpleName}")

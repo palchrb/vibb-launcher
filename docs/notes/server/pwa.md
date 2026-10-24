@@ -925,6 +925,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 ## Locate: zones (design 64 step 1, `docs/design/64-safe-zones.md` §3.5-§3.6; the rest in `zones.md`)
 
+- **Safari (2026-10-24):** the zone page's map was grey on the iPhone: `fitBounds(circle.getBounds())` before any
+  `setView` throws in WebKit (the circle isn't projected until the map has a view). The fit uses the pure
+  `zoneBounds(lat, lng, r)` now (`zones.js?v=2`, `jstest/zones.test.js`). A Leaflet page gets a WebKit pass (Playwright's
+  `webkit`, see the 2026-10-24 scratch run) before release.
+
 - **`#zones` on Locate** (`locate::zones_view`, right after `#location`): a row per zone ("Home" over "150 m · arrive
   and leave" / "arrive" / "leave" / "no notifications", "Here now" while the phone is in it now - or "Last seen at Home
   14:02" while the newest fix is stale, `zones.md` "What the pages say of the phone" -, a chevron to its page;

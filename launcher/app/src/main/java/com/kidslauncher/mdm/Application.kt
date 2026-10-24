@@ -22,11 +22,11 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.preferences.firstLaunchResetDue
 import com.kidslauncher.mdm.preferences.migratePreferencesToNewVersion
 import com.kidslauncher.mdm.preferences.resetPreferences
+import com.kidslauncher.mdm.ui.home.nextAppLoad
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.consumeEach
 import kotlinx.coroutines.launch
 import kotlin.system.exitProcess
 
@@ -496,11 +496,20 @@ class Application : android.app.Application() {
      * One app-list load at a time (launcher round 7 §4): a request while a load runs is folded into
      * one more load after it (a conflated channel), so a burst of suspend/unsuspend callbacks from
      * `AppEnforcer` can never post an older list last. Started on the first request.
+     *
+     * Once per burst (PLAN "Provisioning storm", qa-home-round-code Q-4): the consumer loads when
+     * [com.kidslauncher.mdm.ui.home.appLoadDue] says so - 300 ms with no new request, at most 2 s after
+     * it took the burst's first (a request made during a load counts from that load's end) - so the enforcer's hide/suspend storm at provisioning is one load and one Home
+     * render, not one per package. The process's first request loads at once (Home's cold start).
      */
     private val appLoads: Channel<Unit> by lazy {
         Channel<Unit>(Channel.CONFLATED).also { requests ->
             CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-                requests.consumeEach {
+                com.kidslauncher.mdm.ui.home.runAppLoads(
+                    next = { timeoutMs -> requests.nextAppLoad(timeoutMs) },
+                    now = { android.os.SystemClock.elapsedRealtime() },
+                    heldSince = { com.kidslauncher.mdm.ui.home.AppLoadHold.heldSince },
+                ) {
                     try {
                         // Once per process, before the first list (it decodes the cached policy -
                         // never on the main thread, qa-14-code #3); later changes come from the
