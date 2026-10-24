@@ -1227,7 +1227,7 @@ fn every_class_a_template_uses_is_in_style_css() {
 #[tokio::test]
 async fn every_page_carries_the_connecting_script_and_its_ping() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/reconnect.js?v=2\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/reconnect.js?v=3\" defer></script>"));
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
@@ -1239,10 +1239,10 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
         "/settings".to_string(),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
-        assert!(html.contains("/static/reconnect.js?v=2"), "{page}");
+        assert!(html.contains("/static/reconnect.js?v=3"), "{page}");
     }
     let signed_out = app.request(Method::GET, "/login", None, None).await;
-    assert!(signed_out.text().contains("/static/reconnect.js?v=2"));
+    assert!(signed_out.text().contains("/static/reconnect.js?v=3"));
 
     let ping = app.get_page("/ping", &cookie).await;
     assert_eq!(ping.status, StatusCode::NO_CONTENT);

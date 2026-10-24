@@ -33,7 +33,8 @@
     var PING_TIMEOUT = 4000;
     var OFFER_AFTER = 20000;
     var STUCK_AFTER = 12000;
-    var AWAY_MS = 10 * 60 * 1000;
+    // 1 minute (the user, 2026-10-24; 10 minutes until then): back from the background after that long = a reload in place.
+    var AWAY_MS = 60 * 1000;
     var PING_URL = "/ping";
     // static/scroll-restore.js's form record (its KEY and NAME_PREFIX).
     var SCROLL_KEY = "handy-scroll";

@@ -724,7 +724,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   was restarted - the network to the server (often over Tailscale) not up yet, and an installed PWA shows no loading
   indicator of its own (the user confirmed: after waiting it reconnected; "En subtil reconnecting hadde vært bra!").
   No service-worker fetch handler was added (the network is never faked).
-- **The script** (ES5, deferred, from `partials/head.html` on every page, `?v=2`): a same-origin link tap (the tab bar,
+- **The script** (ES5, deferred, from `partials/head.html` on every page, `?v=3`): a same-origin link tap (the tab bar,
   any link; not `download`, a `target` other than `_self`, a modified or handled click, a `#fragment` on this page, or
   `data-no-wait`) marks the link (`.is-pending`, `aria-busy`) and shows a thin bar at the top (`.net-progress`) at once.
   Not left after 3 s: a small calm chip "Connecting…" (`.net-chip`, `role=status`; no alarm colour, no modal, the page
@@ -735,7 +735,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   L2: a slow page - `/updates` waits for GitHub - is never restarted for good). "Try again" shows in the chip only
   after 20 s. A save started during a wait (a `submit`, a `data-autosave` change) ends it, so no restart cancels the
   save's POST (L3). A `pagehide` stops the wait's timers; coming back re-arms them (the 5 s pings, "Try again" when
-  due; L5). The chip's words are set when it shows (empty while hidden), so a screen reader announces them (L9). Visible again after more than 10 minutes hidden (or back from the back-forward cache after that long): a ping
+  due; L5). The chip's words are set when it shows (empty while hidden), so a screen reader announces them (L9). Visible again after more than **1 minute** hidden (10 minutes until 2026-10-24; the user: a minute is not too short - under it you were only in another app and back) (or back from the back-forward cache after that long): a ping
   (the chip only if it takes over 3 s); answered, a reload in place through the same machinery, keeping the place -
   scroll-restore.js's form record in sessionStorage and `window.name` (`path`, `y` of `<main>` in the shell, and over
   a `#fragment` its element's screen top in `tops`), as auto-reload.js leaves it; never the top. No reload once a

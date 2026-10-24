@@ -1110,7 +1110,7 @@ findings, merge to `main`, full suite once.
 - **PWA: reload on return after 1 minute, not 10** (the user, 2026-10-24: "blir ett minutt for kort?" - no): the
   return reload in `static/reconnect.js` (pwa.md "Connecting") fires after more than 10 minutes hidden; make it 1
   minute. One constant + `jstest/reconnect.test.js`'s timeline; the save/details/typed-field/POST-answer rules stay.
-  Server, XS; with the next server round.
+  **Done 2026-10-24 on main** (`reconnect.js?v=3`, `AWAY_MS` = 60 s; jstests 25, `shell::` 22).
 - **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
   Settings › Intelligent assistance › App blocker - Boot blocker, Start blocker, Background blocker, Background
   cleanup; on the Jelly Star only found through Settings' search. Design 19b §4 foresaw an OEM manager but had no name.

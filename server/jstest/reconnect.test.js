@@ -332,7 +332,7 @@ test("ignored clicks show nothing", () => {
     assert.strictEqual(win.pings.length, 0);
 });
 
-test("back after more than 10 minutes: a ping, and answered, a reload in place that keeps the place", async () => {
+test("back after more than a minute (AWAY_MS): a ping, and answered, a reload in place that keeps the place", async () => {
     const win = fakeWindow();
     win.install();
     win.hide();
