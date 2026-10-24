@@ -34,9 +34,10 @@ class FirstLaunchResetTest {
         val call = "firstLaunchResetDue(startedBefore, mdm.enrolled(), mdm.deviceToken())"
         assertTrue(call in initRest)
         assertTrue("val startedBefore = LauncherPreferences.internal().started()" in initRest)
-        // The reset is called once, only under the rule.
+        // The reset is called once, only under the rule and nothing else (code QA Q-3: an extra `|| !startedBefore`
+        // would bring the de-enrolment back).
         assertEquals(1, Regex("""resetPreferences\(""").findAll(initRest).count())
-        assertTrue(initRest.indexOf("resetPreferences(this)") > initRest.indexOf(call))
+        assertTrue("        if ($call) {\n            resetPreferences(this)\n        } else if (!startedBefore) {" in initRest)
         // The enrolment's mark: the QR / provisioning path and Settings' "Enroll now" both write the
         // token and the enrolled flag on success, so the next process start keeps them.
         for (path in listOf(

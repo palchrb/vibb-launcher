@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.server
 
+import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
 import java.io.File
 import kotlinx.serialization.json.jsonObject
@@ -13,17 +14,66 @@ class WriteSettingsAccessTest {
     private fun src(path: String) = File(main, path).readText()
 
     @Test
-    fun `every row state`() {
-        assertEquals(WriteSettingsRow.GRANTED, writeSettingsRowState(true, pageAvailable = false, windowOpen = false, pageMissing = false))
-        assertEquals(WriteSettingsRow.GRANTED, writeSettingsRowState(true, pageAvailable = true, windowOpen = true, pageMissing = true))
-        assertEquals(WriteSettingsRow.UNKNOWN, writeSettingsRowState(null, pageAvailable = true, windowOpen = true, pageMissing = false))
-        assertEquals(WriteSettingsRow.CAN_OPEN, writeSettingsRowState(false, pageAvailable = true, windowOpen = true, pageMissing = false))
+    fun `the page access - no page only once the window's plan is applied`() {
+        fun access(available: Boolean, open: Boolean, applied: Boolean, missing: Boolean = false) =
+            systemPageAccess(pageAvailable = available, windowOpen = open, overrideApplied = applied, pageMissing = missing)
+        assertEquals(SystemPageAccess.CAN_OPEN, access(available = true, open = true, applied = true))
+        assertEquals(SystemPageAccess.CAN_OPEN, access(available = true, open = true, applied = false))
         // Managed, no pause: Android's Settings is hidden - pause first, as the battery row says.
-        assertEquals(WriteSettingsRow.PAUSE_FIRST, writeSettingsRowState(false, pageAvailable = false, windowOpen = false, pageMissing = false))
-        // During the pause Settings is shown: nothing resolving means the phone has no such page.
-        assertEquals(WriteSettingsRow.NO_PAGE, writeSettingsRowState(false, pageAvailable = false, windowOpen = true, pageMissing = false))
-        // Both pages resolved but threw ActivityNotFoundException at the tap.
-        assertEquals(WriteSettingsRow.NO_PAGE, writeSettingsRowState(false, pageAvailable = true, windowOpen = true, pageMissing = true))
+        assertEquals(SystemPageAccess.PAUSE_FIRST, access(available = false, open = false, applied = false))
+        assertEquals(SystemPageAccess.PAUSE_FIRST, access(available = false, open = false, applied = true))
+        // The pause has started but its apply hasn't unhidden Settings yet (code QA Q-2): a moment, never "no page".
+        assertEquals(SystemPageAccess.WAIT, access(available = false, open = true, applied = false))
+        // The window's plan is in place and still nothing resolves: the phone has no such page.
+        assertEquals(SystemPageAccess.NO_PAGE, access(available = false, open = true, applied = true))
+        // Every page resolved but threw ActivityNotFoundException at the tap.
+        assertEquals(SystemPageAccess.NO_PAGE, access(available = true, open = true, applied = true, missing = true))
+    }
+
+    @Test
+    fun `every row state and its text`() {
+        for (access in SystemPageAccess.entries) {
+            assertEquals(WriteSettingsRow.GRANTED, writeSettingsRowState(true, access))
+            assertEquals(WriteSettingsRow.UNKNOWN, writeSettingsRowState(null, access))
+        }
+        assertEquals(WriteSettingsRow.CAN_OPEN, writeSettingsRowState(false, SystemPageAccess.CAN_OPEN))
+        assertEquals(WriteSettingsRow.PAUSE_FIRST, writeSettingsRowState(false, SystemPageAccess.PAUSE_FIRST))
+        assertEquals(WriteSettingsRow.WAIT, writeSettingsRowState(false, SystemPageAccess.WAIT))
+        assertEquals(WriteSettingsRow.NO_PAGE, writeSettingsRowState(false, SystemPageAccess.NO_PAGE))
+        // Q-3: each state has its own text.
+        assertEquals(R.string.settings_mdm_write_settings_granted, writeSettingsText(WriteSettingsRow.GRANTED))
+        assertEquals(R.string.settings_mdm_write_settings_unknown, writeSettingsText(WriteSettingsRow.UNKNOWN))
+        assertEquals(R.string.settings_mdm_write_settings_open, writeSettingsText(WriteSettingsRow.CAN_OPEN))
+        assertEquals(R.string.settings_mdm_write_settings_pause_first, writeSettingsText(WriteSettingsRow.PAUSE_FIRST))
+        assertEquals(R.string.settings_mdm_write_settings_wait, writeSettingsText(WriteSettingsRow.WAIT))
+        assertEquals(R.string.settings_mdm_write_settings_no_page, writeSettingsText(WriteSettingsRow.NO_PAGE))
+    }
+
+    /** Q-3: the fragment's glue - the window, the applied plan, the tap guard, the sync on return, the re-reads. */
+    @Test
+    fun `the fragment feeds the rule what the plan says`() {
+        val fragment = src("java/com/kidslauncher/mdm/ui/settings/launcher/SettingsFragmentLauncher.kt")
+        val access = fragment.substringAfter("private fun pageAccess(").substringBefore("\n    )\n")
+        assertTrue("windowOpen = RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive()," in access)
+        assertTrue("overrideApplied = AppEnforcer.lastEnforcedOverride == true," in access)
+        assertEquals(1, Regex("""systemPageAccess\(""").findAll(fragment).count())
+        assertEquals(2, Regex("""pageAccess\((WriteSettingsAccess|FingerprintEnrol)\.pageIntents\(context\)""").findAll(fragment).count())
+        // The tap opens the page only when the grant is known to be missing.
+        assertTrue("if (WriteSettingsAccess.granted(context) == false) {" in fragment)
+        // A change on return is reported at once.
+        val back = fragment.substringAfter("private val writeSettingsLauncher").substringBefore("override fun onCreatePreferences")
+        assertTrue("if (WriteSettingsAccess.granted(context) != writeSettingsBeforePage) {" in back)
+        assertTrue("SyncRunner.request(context.applicationContext, \"write_settings\")" in back)
+        assertTrue("row.summary = getString(writeSettingsText(writeSettingsRowState(WriteSettingsAccess.granted(context), access)))" in fragment)
+        // Q-2: read again after each apply while shown, and when the pause starts.
+        assertTrue("AppEnforcer.addAppliedListener(appliedListener)" in fragment.substringAfter("override fun onResume()"))
+        assertTrue("AppEnforcer.removeAppliedListener(appliedListener)" in fragment.substringAfter("override fun onPause()"))
+        val paused = fragment.substringAfter("restrictionsPaused.isChecked = true").substringBefore("}")
+        assertTrue("updateSystemPageRows()" in paused)
+        val enforcer = src("java/com/kidslauncher/mdm/server/AppEnforcer.kt")
+        val applied = enforcer.indexOf("lastEnforcedOverride = overrideActive")
+        assertTrue(applied > enforcer.indexOf("lastEnforcedPlayState = playState"))
+        assertTrue(enforcer.indexOf("appliedListeners.forEach { it() }", applied) > applied)
     }
 
     @Test
@@ -56,7 +106,7 @@ class WriteSettingsAccessTest {
         assertTrue("openFirstPage(pages, writeSettingsLauncher)" in fragment)
         // Re-read on every resume, as the battery row.
         val resume = fragment.substringAfter("override fun onResume()").substringBefore("private fun openFirstPage")
-        assertTrue("updateWriteSettingsRow()" in resume)
+        assertTrue("updateSystemPageRows()" in resume)
     }
 
     @Test

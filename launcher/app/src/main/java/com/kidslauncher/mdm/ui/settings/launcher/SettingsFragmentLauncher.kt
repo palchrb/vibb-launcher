@@ -33,12 +33,15 @@ import com.kidslauncher.mdm.server.QuickControls
 import com.kidslauncher.mdm.server.RelockTrigger
 import com.kidslauncher.mdm.server.RestrictionsPause
 import com.kidslauncher.mdm.server.WindowRelock
-import com.kidslauncher.mdm.server.FingerprintAccess
+import com.kidslauncher.mdm.server.AppEnforcer
 import com.kidslauncher.mdm.server.FingerprintEnrol
+import com.kidslauncher.mdm.server.SystemPageAccess
 import com.kidslauncher.mdm.server.WriteSettingsAccess
-import com.kidslauncher.mdm.server.fingerprintAccess
+import com.kidslauncher.mdm.server.fingerprintActionText
 import com.kidslauncher.mdm.server.fingerprintRowShown
-import com.kidslauncher.mdm.server.WriteSettingsRow
+import com.kidslauncher.mdm.server.fingerprintStateText
+import com.kidslauncher.mdm.server.systemPageAccess
+import com.kidslauncher.mdm.server.writeSettingsText
 import com.kidslauncher.mdm.server.writeSettingsRowState
 import com.kidslauncher.mdm.play.InstallModeStart
 import com.kidslauncher.mdm.play.PlayRuntime
@@ -257,7 +260,11 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                     ParentPinEntry.PAUSE,
                     title = R.string.settings_mdm_restrictions_paused_pin_title,
                     notConfigured = R.string.toast_mdm_pause_needs_pin,
-                ) { restrictionsPaused.isChecked = true }
+                ) {
+                    restrictionsPaused.isChecked = true
+                    // The window is open now; its apply follows on a background thread (appliedListener).
+                    updateSystemPageRows()
+                }
                 false
             } else {
                 // Design 24b: ending the pause here locks the phone again (and ends an override).
@@ -316,10 +323,14 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
 
     override fun onResume() {
         super.onResume()
-        // Re-read every time: a pause started or ended, or the dialog answered.
-        updateBatteryRow()
-        updateWriteSettingsRow()
-        updateFingerprintRow()
+        // Re-read every time: a pause started or ended, or the dialog answered; and after each apply while shown.
+        AppEnforcer.addAppliedListener(appliedListener)
+        updateSystemPageRows()
+    }
+
+    override fun onPause() {
+        AppEnforcer.removeAppliedListener(appliedListener)
+        super.onPause()
     }
 
     /** Starts the first of Android's [pages] that Android finds, through [launcher]; false only when every one
@@ -339,54 +350,46 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         return false
     }
 
+    /** Whether a row's Android page can open now ([systemPageAccess]): "no page" only once the open window's plan
+     * is applied (code QA Q-2). */
+    private fun pageAccess(pages: List<Intent>, pageMissing: Boolean): SystemPageAccess = systemPageAccess(
+        pageAvailable = pages.isNotEmpty(),
+        windowOpen = RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive(),
+        overrideApplied = AppEnforcer.lastEnforcedOverride == true,
+        pageMissing = pageMissing,
+    )
+
+    /** The three rows that open Android's pages, read again: on resume, after a tap, when the pause starts and
+     * after each apply (the window's apply unhides Android's Settings - code QA Q-2). */
+    private fun updateSystemPageRows() {
+        updateBatteryRow()
+        updateWriteSettingsRow()
+        updateFingerprintRow()
+    }
+
+    private val appliedListener: () -> Unit = { updateSystemPageRows() }
+
     private fun updateFingerprintRow() {
         val context = context ?: return
         val row = findPreference<Preference>(FINGERPRINT) ?: return
         row.isVisible = fingerprintRowShown(
-            com.kidslauncher.mdm.lock.AndroidLock.credentialOurs(context),
+            com.kidslauncher.mdm.lock.AndroidLock.fingerprintLockState(context),
             FingerprintEnrol.hasSensor(context),
         )
         if (!row.isVisible) return
-        val access = fingerprintAccess(
-            pageAvailable = FingerprintEnrol.pageIntents(context).isNotEmpty(),
-            windowOpen = RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive(),
-            pageMissing = fingerprintPageMissing,
+        val access = pageAccess(FingerprintEnrol.pageIntents(context), fingerprintPageMissing)
+        row.summary = getString(
+            R.string.settings_mdm_fingerprint_summary,
+            getString(fingerprintStateText(FingerprintEnrol.enrolled(context))),
+            getString(fingerprintActionText(access)),
         )
-        val state = getString(
-            when (FingerprintEnrol.enrolled(context)) {
-                true -> R.string.settings_mdm_fingerprint_enrolled
-                false -> R.string.settings_mdm_fingerprint_not_enrolled
-                null -> R.string.settings_mdm_fingerprint_unknown
-            },
-        )
-        val action = getString(
-            when (access) {
-                FingerprintAccess.CAN_OPEN -> R.string.settings_mdm_fingerprint_open
-                FingerprintAccess.PAUSE_FIRST -> R.string.settings_mdm_fingerprint_pause_first
-                FingerprintAccess.NO_PAGE -> R.string.settings_mdm_fingerprint_no_page
-            },
-        )
-        row.summary = getString(R.string.settings_mdm_fingerprint_summary, state, action)
     }
 
     private fun updateWriteSettingsRow() {
         val context = context ?: return
         val row = findPreference<Preference>(WRITE_SETTINGS) ?: return
-        val state = writeSettingsRowState(
-            granted = WriteSettingsAccess.granted(context),
-            pageAvailable = WriteSettingsAccess.pageIntents(context).isNotEmpty(),
-            windowOpen = RestrictionsPause.isActive() || com.kidslauncher.mdm.server.OfflineOverride.isActive(),
-            pageMissing = writeSettingsPageMissing,
-        )
-        row.summary = getString(
-            when (state) {
-                WriteSettingsRow.GRANTED -> R.string.settings_mdm_write_settings_granted
-                WriteSettingsRow.CAN_OPEN -> R.string.settings_mdm_write_settings_open
-                WriteSettingsRow.PAUSE_FIRST -> R.string.settings_mdm_write_settings_pause_first
-                WriteSettingsRow.NO_PAGE -> R.string.settings_mdm_write_settings_no_page
-                WriteSettingsRow.UNKNOWN -> R.string.settings_mdm_write_settings_unknown
-            },
-        )
+        val access = pageAccess(WriteSettingsAccess.pageIntents(context), writeSettingsPageMissing)
+        row.summary = getString(writeSettingsText(writeSettingsRowState(WriteSettingsAccess.granted(context), access)))
     }
 
     private fun updateBatteryRow() {

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import com.kidslauncher.mdm.R
 
 /*
  * "Modify system settings" without adb (PLAN "Fix backlog", 2026-10-24): the touch sounds row (design
@@ -17,22 +18,47 @@ import android.provider.Settings
  * names this row while it isn't.
  */
 
-/** The "Modify system settings" row's states. */
-enum class WriteSettingsRow { GRANTED, CAN_OPEN, PAUSE_FIRST, NO_PAGE, UNKNOWN }
+/** Whether a Settings row can open Android's page now (the write-settings and fingerprint rows). */
+enum class SystemPageAccess { CAN_OPEN, PAUSE_FIRST, WAIT, NO_PAGE }
 
 /**
- * [granted]: `Settings.System.canWrite` (null = unreadable); [pageAvailable]: one of
- * [WriteSettingsAccess.pageIntents] resolves now; [windowOpen]: the pause (or the override) is on,
- * so Android's Settings is shown - nothing resolving then means the phone has no such page;
- * [pageMissing]: starting every page threw `ActivityNotFoundException` on the last tap.
+ * [pageAvailable]: one of the row's pages resolves now; [windowOpen]: the pause (or the override) is on;
+ * [overrideApplied]: the last finished `AppEnforcer.apply` enforced the open window's plan
+ * (`AppEnforcer.lastEnforcedOverride`), so Android's Settings is shown - only then does nothing resolving mean the
+ * phone has no such page; before it the window's apply is still on its way (WAIT, code QA Q-2); [pageMissing]:
+ * starting every page threw `ActivityNotFoundException` on the last tap.
  */
-fun writeSettingsRowState(granted: Boolean?, pageAvailable: Boolean, windowOpen: Boolean, pageMissing: Boolean): WriteSettingsRow = when {
+fun systemPageAccess(pageAvailable: Boolean, windowOpen: Boolean, overrideApplied: Boolean, pageMissing: Boolean): SystemPageAccess = when {
+    pageMissing -> SystemPageAccess.NO_PAGE
+    pageAvailable -> SystemPageAccess.CAN_OPEN
+    !windowOpen -> SystemPageAccess.PAUSE_FIRST
+    overrideApplied -> SystemPageAccess.NO_PAGE
+    else -> SystemPageAccess.WAIT
+}
+
+/** The "Modify system settings" row's states: the grant, else [SystemPageAccess]'s. */
+enum class WriteSettingsRow { GRANTED, UNKNOWN, CAN_OPEN, PAUSE_FIRST, WAIT, NO_PAGE }
+
+/** [granted]: `Settings.System.canWrite` (null = unreadable); [access]: [systemPageAccess]. */
+fun writeSettingsRowState(granted: Boolean?, access: SystemPageAccess): WriteSettingsRow = when {
     granted == true -> WriteSettingsRow.GRANTED
     granted == null -> WriteSettingsRow.UNKNOWN
-    pageMissing -> WriteSettingsRow.NO_PAGE
-    pageAvailable -> WriteSettingsRow.CAN_OPEN
-    windowOpen -> WriteSettingsRow.NO_PAGE
-    else -> WriteSettingsRow.PAUSE_FIRST
+    else -> when (access) {
+        SystemPageAccess.CAN_OPEN -> WriteSettingsRow.CAN_OPEN
+        SystemPageAccess.PAUSE_FIRST -> WriteSettingsRow.PAUSE_FIRST
+        SystemPageAccess.WAIT -> WriteSettingsRow.WAIT
+        SystemPageAccess.NO_PAGE -> WriteSettingsRow.NO_PAGE
+    }
+}
+
+/** The row's summary for each state (code QA Q-3: the mapping is pinned by test). */
+fun writeSettingsText(row: WriteSettingsRow): Int = when (row) {
+    WriteSettingsRow.GRANTED -> R.string.settings_mdm_write_settings_granted
+    WriteSettingsRow.UNKNOWN -> R.string.settings_mdm_write_settings_unknown
+    WriteSettingsRow.CAN_OPEN -> R.string.settings_mdm_write_settings_open
+    WriteSettingsRow.PAUSE_FIRST -> R.string.settings_mdm_write_settings_pause_first
+    WriteSettingsRow.WAIT -> R.string.settings_mdm_write_settings_wait
+    WriteSettingsRow.NO_PAGE -> R.string.settings_mdm_write_settings_no_page
 }
 
 /** The data URI of Android's page for one app: `package:` + its applicationId. */
