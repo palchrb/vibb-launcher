@@ -1091,6 +1091,26 @@ findings, merge to `main`, full suite once.
     is what makes the important ones reliable.
   Approved 2026-10-16 (phase 1).
 
+- **Home starts at the top after an unlock** (the user, 2026-10-24: "når jeg slår av og på skjerm og taster pin så
+  tror jeg at jeg vil at home starter på null"): Home's grid scroll resets to the top whenever the lock is left for
+  Home - screen off/on + PIN, the handle swipe, the boot - and never when the unlock's target is an app (a notification
+  row, a call: the app opens, Home isn't shown). Launcher, small; one Home round with the black-flash entry below
+  (same activity, both need the emulator).
+- **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
+  Settings › Intelligent assistance › App blocker - Boot blocker, Start blocker, Background blocker, Background
+  cleanup; on the Jelly Star only found through Settings' search. Design 19b §4 foresaw an OEM manager but had no name.
+  (1) A setup-runbook step before enrolling: switch it off (or untick everything for Vibb One, Play services, Element X,
+  the music app); (2) better, no manual step: find its package on the user's phone (`adb shell pm list packages |
+  grep -iE 'block|unihertz|intelli|dura'`, the user owes the dump) and have the device owner hide/suspend it at
+  enrolment like the relock blocks; re-check after an OTA. A MediaTek DuraSpeed phone (the Bluefox NX1, below) gets
+  the same treatment if it comes. Launcher + docs, S.
+- **Design r12, the music favourites tile + two small items** (the user, 2026-10-24; note
+  `docs/design/r12-music-favourites-tile.md`, branch `r12-music-design`, awaiting the user's three confirmations: the
+  tile's cover, last-hearted-first order, the bookmark rule): (1) a row without its own picture in a pictured list
+  shows the series cover plain, no number (design 39 rule 1 changed: "tallet gir mer usikkerhet enn det tilfører
+  verdi"); (2) skip 15 s both ways (was 15/30, design 50's pick); (3) one "Favoritter" tile playing every hearted item
+  across entries - option B, all sources at once ("vi holder køen selv ... jeg sier vi tar alt i 1"), replacing r8's
+  option C; Spotify on a room waits for 54-a2. Music, items 1-2 XS, item 3 L.
 - **A black flash behind Home after the Home button** (the user, 2026-10-16, emulator video): from an app
   (Element X), the Home button (the emulator's circle) shows Home's icons on solid black for ~150 ms
   (four frames at 30 fps) while the app slides away, and only then the wallpaper; Back has a clean
@@ -1197,6 +1217,21 @@ findings, merge to `main`, full suite once.
 
 ### Parked
 
+- **Release tracking from GitLab / Codeberg (Forgejo) public instances** (the user, 2026-10-24, "vi venter med det"):
+  no token, public HTTPS instances only, the same flow as GitHub (`fetch_latest_release` in `tracked_apps.rs`): GitLab
+  `GET /api/v4/projects/<group%2Fproject>/releases` (tag, `upcoming_release`, `assets.links[].direct_asset_url`),
+  Forgejo `GET /api/v1/repos/{owner}/{repo}/releases`. Wait until a concrete app needs it, then build both behind one
+  interface with GitHub; a self-hosted instance needs a valid certificate (no TLS-skip switch). Kid-relevant apps
+  found there today: FluffyChat (GitLab); Gadgetbridge, Conversations, Fedilab (Codeberg). Nexus (git.federated.nexus,
+  Flutter + gomuks, GPL-3, 1.0.0) was looked at as a Matrix client: no calls at all (no WebRTC/LiveKit, no telecom
+  permissions), UnifiedPush only - Element X stays. Server, S-M.
+- **Aiphor Bluefox NX1 as a second phone** (the user, 2026-10-24, romobil.no, 2 590 kr): 4" 540x1168 LCD, Helio G81,
+  Android 15, 3000 mAh, 4G, no NFC, no fingerprint (PIN/pattern/face); Vipps works per the seller (so Play Integrity
+  passes: Play-certified). Before buying: VoLTE with Telenor/Telia (2G/3G are going; the one deciding question), the
+  ROM's background killer (DuraSpeed), and the density - at 320 dpi it is 270x584 dp, narrower than our 320 dp floor
+  (the Jelly Star is 320x569 dp): read `wm density` first; narrower than 320 dp means a pass over the glance, the pad
+  and the Home grid. Otherwise the Jelly Star's device checklist. RAM: 4 GB is plenty (the emulators run everything
+  on 2-2.5 GB); 128 GB storage is the reason for the bigger variant.
 - **Crash reports group by versionCode only** (qa-rc-to-rc-code R2R-6, 2026-10-23): `crash/CrashReports.kt` records
   `BuildConfig.VERSION_CODE` and the server's `device_crashes.app_version_code` shows it, so rc.1 and rc.2 crashes
   (one code) read as one build on About This Phone. Moot from `launcher-v0.36.0-rc.4` on (every build its own
