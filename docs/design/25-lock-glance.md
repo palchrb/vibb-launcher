@@ -510,7 +510,8 @@ open %s"; `pin_lock_prompt_missed` "Skriv koden for å se tapte anrop" / "Enter 
   screenshot shows it [device].
 - **Nothing runs from the lock**: long-press, swipe and double-tap on rows do nothing; Element X's quick reply never
   appears; the notification is still unread in Element X until the room opens.
-  *Superseded by r11 §3 for the swipe: a row swiped sideways is dismissed (r11 §6 check 4).*
+  *Superseded by r11 §3 for the swipe: a row swiped sideways is dismissed (r11 §6 check 4); and since the user's
+  2026-10-24 ask the "more" line is tappable - the keypad without a target (r11 "As built").*
 
 ## 10. Open questions
 
