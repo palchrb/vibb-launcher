@@ -415,3 +415,203 @@ check for phones without zones fails by design (Q-2), and that needs the user's 
 on zones. Fix Q-1, Q-3, Q-4, Q-5 and Q-6, get Q-2 decided, and take Q-7 to Q-12 in the same round. Then run §6t on the
 emulator, and on the Jelly Star the device checks: the passive listener and the location indicator, the sensor armed
 for a background UID, and a still phone keeping "Here now".
+
+## Follow-up: the fix round and the moving series (efd00f23, 9c37285d, 55a6bf1b)
+
+`qa-design-64-step2` has been rebased onto the branch tip 55a6bf1b. I read `git diff 41510352..55a6bf1b` in full.
+Migration 0093 was amended before release to carry `resent_at`, `mock_logged` and `mock_logged_at`, as the
+coordinator noted; a dev database that ran the old 0093 needs a fresh `data/`.
+
+### Suites (verbatim)
+
+- Launcher: `BUILD SUCCESSFUL in 1m 13s`, `tests=1703 failures=0 errors=0 skipped=0`. The only warnings are kapt's two
+  `RELEASE_11` lines.
+- Server:
+  - `cargo test`: `test result: ok. 1262 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 371.97s`
+  - `cargo fmt --check`: exit 0
+  - `cargo clippy --all-targets`: `generated 13 warnings`, the same 13 known ones. `models.rs:622` is the old `:605`
+    warning, moved down by the new fields.
+
+### The findings, verified
+
+- **Q-1 holds.** A passive fix and a series `KEEP` go only to the kept slot (`zone_kept_fix`). The source pins this:
+  `keepFix` never writes `cachedLocationJson`, and the file writes the cached fix in exactly two places.
+  Re-traced:
+  - A backstop sync that isn't due, a nudge and an on-request sync are `CACHED` and send the reported fix.
+  - A `locate`/`ring` command is a precise `FRESH` and replaces the reported fix; the older kept fix is then never
+    "unreported" again.
+  - Only a due `KEPT`, a crossing's sync and a series candidate call `promoteKept`.
+
+  Nothing passive rides on an ordinary sync any more.
+- **Q-2 holds.** `zoneWatchActive` (owner, managed, Regularly with zones) is the one gate for the passive feed, the
+  motion gate, the series, the heartbeat, the balanced path, the beat stamp, the kept slot, the queue and the
+  backstop anchor. The "without zones" test runs `syncLocationAction` over every policy, both forced/precise values,
+  nine ages, every `Motion`, three kept ages and three beats, and checks it against `locationAction`. Together with
+  `backstopAnchorMs(false, ..)` = the last own fix and `reportStill(false, ..)` = false, the pure side is today's.
+  The glue passes the rest of today's behaviour:
+  - motion `NO_SENSOR` and kept `null` without zones;
+  - no beat stamp, no promotion, no arm;
+  - the precise GPS-first path, because `FRESH_BALANCED` is never chosen;
+  - the queue cleared with no extras.
+
+  The mock rule stays on every phone (`ZoneWatch.accept` in `currentLocation`). Without zones only our own fixes
+  reach it, because the passive feed is off.
+- **Q-4 holds.** `keptFixAgeMs` is the age of the kept slot's *unreported* fix, and there is a row for our own fix 5 s
+  after the beat.
+- **Q-5 holds.** Off, or no zones, clears the queue before the report and sends no extras (pinned).
+- **Q-6 holds.** The gate arms only after `freshOwnFix` (taken at the request, less 60 s). A fire clears `moved` and
+  `listener` in one monitor, the same one `arm` holds.
+- **Q-7 holds.** The record and its stamp are saved before the first add, and no record counts as the echo.
+  `registeredHere` is set only by a watching pass, so a release before the first sync can't skip the
+  re-registration.
+- **Q-8 holds.** `ZoneWatch.forget` runs at both enrollment paths, and `release` when un-managed (`AppEnforcer.apply`).
+- **Q-10 holds.** The zones go only to a launcher whose latest report since enrollment claims `zones_v1`.
+- **Q-11:** S6 and S8 are now caught (`a_watch_from_before_a_re_enrollment_gives_no_floor`,
+  `a_location_older_than_its_extra_is_judged_in_order`). Two gaps remain; see F-6.
+- **Q-3, Q-9:** fixed, with the remainders in F-3 and F-5.
+- **Q-12:** the docs match the code. §6t step 9 now names the `location` and the extra correctly.
+
+### Mutations (follow-up)
+
+| # | Mutation | Caught by |
+|---|---|---|
+| F1 | `nextCheckDelay` without the 3-min floor | `the next check comes by the distance...` |
+| F2 | accuracy not taken off the distance | same |
+| F3 | the fix's age not taken off | same |
+| F4 | no zones gives a delay instead of `null` | same |
+| F5 | `checkVerdict` never says SIDE_CHANGED | `a check's fix is sent only when it could be a crossing` |
+| F6 | NEAR_BOUNDARY at half the accuracy | same |
+| F7 | the hour end exclusive | `a series ends after an hour...` |
+| F8 | no 20-check end | same |
+| F9 | the still end at 3x the delay | same |
+| F10 | a fire doesn't refresh `lastMotionAtMs` | same |
+| F11 | a crossing's sync doesn't promote the kept fix | the glue test |
+| F12 | `promoteKept` promotes a kept fix that isn't newer | **not caught** |
+| F13 | `still` also on a fresh fix | `a re-sent fix is still current only while the sensor says so` |
+| F14 | the 4-h bound accepts a future own fix | the still test, the heartbeat test |
+| F15 | a series NEAR_BOUNDARY isn't sent | the glue test |
+| F16 | the series' re-arm in `finally` removed | **not caught** |
+| F17 | `still` without zones | `without zones the location step is exactly today's...` |
+| S6 | the floor reads a watch from before the enrollment | `a_watch_from_before_a_re_enrollment_gives_no_floor` |
+| S8 | the zones judged after each fix | `a_location_older_than_its_extra_is_judged_in_order` |
+| S12 | `freshness_inputs` in the parent's interval | **not caught** |
+| T1 | the mock UPDATE without its `< ?1` guard | **not caught** |
+| T2 | a still report doesn't stamp `resent_at` | `here_now_counts_the_served_interval_and_a_still_re_send` |
+| T3 | `still` read as true for any value | same |
+
+### New findings
+
+#### F-1 (Medium) - the series sends exactly the fixes the server's rule ignores
+
+`ZonePlan.kt` `checkVerdict`, `ZoneSeries.kt:114-118`.
+
+What's wrong: NEAR_BOUNDARY is `|d - r| <= a`. The server's straddle rule (decision 2) calls a fix *unsure*
+precisely when `|d - r| < a`, and an unsure fix "counts for neither side". So every NEAR_BOUNDARY fix, apart from
+exact equality, is one the server can't use. Sending it buys a sync, a promoted trail point and nothing for the
+judgement.
+
+SIDE_CHANGED compares plain distances, so it also fires for an unsure fix, and for a fix with no accuracy, which the
+server always calls unsure. Each such fix costs a sync and a GPS confirm 2 min later.
+
+The case: a kid playing near the edge of Home (r = 150 m, Wi-Fi fixes at ±30-50 m). Every 3-min check is NEAR_BOUNDARY
+or flips sides. That means a sync and a trail point every 3 min, plus a GPS fix on each flip, for as long as the kid
+moves. The trail is then far denser than the parent's interval (Q-1's promise), and the battery pays for it.
+
+Expected fix: send only a fix the server can use. SIDE_CHANGED only when the new fix is *sure* (`d + a <= r` or
+`d - a >= r`, with an accuracy) and on the other side from the reported fix. A near-boundary fix stays in the kept
+slot; at most it shortens the next check. Add `checkVerdict` rows for an unsure flip and a fix with no accuracy.
+
+#### F-2 (Medium, battery; measure on the Jelly Star) - the series' caps don't cap a moving day
+
+`ZoneSeries.onMotion`, `MotionGate.fired`, `ZonePlan.kt` `nextCheckDelay`.
+
+What's wrong:
+- The trigger is kept armed while zones are watched. After an end for HOUR or COUNT, the next fire starts a new series
+  at once, and while moving the STILL end never comes. So the 60 min and 20 checks bound a series, not a day.
+- The 3-min floor applies to everything within about 2.7 km of any boundary (180 s at 15 m/s, less the accuracy).
+  That is a kid's whole neighbourhood.
+- So a moving kid gets a balanced fix every 3 min, about 20 an hour, each holding a 45-s wake lock for up to 15 s.
+
+Design §5 modelled about 16 moving checks a day. Several hours of walking, playground or bus gives 60-100.
+
+Expected fix: a cooldown after an HOUR/COUNT end (for example, no new series until the next heartbeat) or a daily
+budget of checks. Then put the real counts in §5 after the Jelly Star walk (batterystats: `kidslauncher:zone_check`
+wake locks, fused requests).
+
+#### F-3 (Medium, honesty of `still`) - a fence crossing doesn't count as motion, and the 4-h bound counts attempts
+
+`ZoneWatch.onFence` (no `MotionGate` call), `LocateCommands.kt:142` (`saveLastActiveFetchAt` before the attempt),
+`stillSinceOwnFix`.
+
+What's wrong: with a working sensor, `still` is honest. A failed fix never arms the gate, so a move keeps `moved`
+true and `still` false.
+
+It fails when the sensor misses a move: a smooth car ride, or a trigger not delivered to a background UID (§9's open
+question 5). The trace:
+1. The fence fires an exit, which is evidence the phone moved.
+2. The balanced and GPS fixes fail, and the sync falls back to the old cached fix.
+3. `moved` stays false, so later `CACHED` syncs send `still: true`.
+4. "Here now" at Home stays while the fence has said the kid left.
+
+The failed attempt also stamped `lastActiveLocationFetchAt`, so the 4-h bound, which exists for exactly a sensor that
+doesn't fire, starts again.
+
+Expected fix:
+- A fence `CROSSING` (and a series SIDE_CHANGED) sets `moved = true` (`MotionGate.markMoved`).
+- `stillSinceOwnFix` counts from the last *genuinely fresh* own fix: a stamp written only when `freshOwnFix` holds,
+  not at the attempt.
+- Add a test row for each.
+
+#### F-4 (Low) - the series' state across threads, and `fired()` on the main thread
+
+`ZoneSeries.kt:70-100`, `ZoneSensors.kt` `fired()`.
+
+What's wrong: the state is consistent. Reads and writes go through the object's monitor, a `stop()` during a check
+leaves `series` null so `finally` doesn't re-arm, and a fire during a check only refreshes `lastMotionAtMs`. Two small
+points:
+- A `stop()` followed by a new `onMotion()` while a check runs makes that check's `finally` count a check for the new
+  series and re-arm it with its own delay. This is harmless.
+- `fired()` runs on the sensor callback's main thread. It reads the cached policy, decodes two pref JSONs and makes an
+  alarm binder call there. That is cheap, but it is the one zone path on the main thread.
+
+The re-arm itself (F16) and `promoteKept`'s "newer" condition (F12) are unpinned.
+
+Expected fix: one `contains` pin for `if (still) arm(app, next)` inside `finally`, and one for the `keptUnreported()`
+condition. Optionally post `fired()`'s work to the series' IO scope.
+
+#### F-5 (Low) - the mock count's line and date at the edges
+
+`zones.rs` `mock_rise`.
+
+What's wrong:
+- Two parallel reports with *different* counts (4 and 5 over a logged 3) both pass the guard in turn. The second
+  line's "rose" comes from the stale read: it says 2 when the rise was 1, and the total is right. Equal counts log
+  once, as intended.
+- The parallel test can't tell the guard is there (T1 survives), because the in-process reports serialize before the
+  read.
+- After a re-enrollment, a lower count is taken but `mock_logged_at` is kept, so the Locate row can show the old
+  install's date beside the new install's count.
+
+Expected fix:
+- Compute the line from the row the UPDATE changed: read `mock_logged` inside the same `BEGIN IMMEDIATE`, or take the
+  rise from the UPDATE's own old value.
+- Clear `mock_logged_at` on the lower-count path, or at enrollment.
+- For a test of the guard, call `mock_rise` twice with the same stale `logged`, or drive it from two connections.
+
+#### F-6 (Low, tests) - "Here now" in the served interval is still unpinned
+
+`tests::zone_watch::here_now_counts_the_served_interval_and_a_still_re_send`.
+
+What's wrong: the test reads `freshness_inputs` only after the still re-send, which makes the fix current whatever
+the interval. So S12 (the parent's interval instead of the served one) survives.
+
+Expected fix: assert `fresh(freshness_inputs(..))` once before the re-send, with the 45-min-old fix and the floor on.
+
+### Follow-up verdict
+
+**Q-1 to Q-12 are fixed as described.** The regression check for phones without zones now holds and is pinned. The
+fix round is clean. The new series needs one more round: **F-1 and F-3 before merge** (both small pure-rule changes
+with test rows). F-2 needs a decision on a cooldown or budget, then the Jelly Star measurement. F-4 to F-6 are cheap
+pins and touches, to take in the same round. After that the branch is ready for §6t on the emulator and the device
+checks: the series on a walk, a still phone keeping "Here now" for hours, and whether the trigger reaches a
+foreground-service UID.
