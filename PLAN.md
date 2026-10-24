@@ -949,7 +949,9 @@ findings, merge to `main`, full suite once.
   on it (the user, 2026-10-23): crossings take the fixes that matter; the Regularly timer becomes a long heartbeat
   (30-60 min) for the trail and "last seen"; the passive provider's fixes (any other app's or the system's) feed the
   trail free; the heartbeat's fix is skipped while the significant-motion sensor says the phone hasn't moved. Design
-  64 covers the battery model as its own section.
+  64 covers the battery model as its own section. **Step 1 done 2026-10-24 (branch `design-64-step1`, server only, not merged)**: zones on
+  Locate (list, page, map), each fix stored once and judged once, `zone_*` events as key + params, push while news;
+  the served interval unchanged until step 2 (`docs/notes/server/zones.md`).
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in
   plain CE prefs - design 59 §7, AOSP `DPM:6363-6369` says never store it so) wrapped with a non-exportable AndroidKeyStore key, so a

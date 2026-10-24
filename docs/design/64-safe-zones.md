@@ -504,3 +504,41 @@ Step 1 (1a + 1b) ships as one server release and works with every launcher (zone
 step 1 and ships as a server release before or with the launcher (an older server sends no `zones` key: the launcher
 behaves as today). Roughly: step 1 two implementer sittings, step 2 three (2a one, 2b two), plus the emulator run and
 a fix round each.
+
+## As built: step 1 (2026-10-24, branch `design-64-step1`)
+
+The user's answers to §11 (2026-10-24) are in: radius 100 m - 2 km, default 150 m; 10 zones per phone; no separate
+heartbeat setting - with zones the served Regularly interval becomes `max(chosen, 30 min)` (step 2); zones keep
+watching and pushing during a pause; English words, **stored as a key plus parameters, never prose**; the kid's line
+is step 2's; mock locations ignored and counted (step 2: the status body has no flag today); push only while news.
+Step 1 is server only, as §3 says, with these differences and details (the full account: `docs/notes/server/zones.md`
+and `pwa.md`, "Locate: zones"):
+
+- **The cursor is `(captured_at, fix id)`**, two columns `evaluated_at` + `evaluated_fix_id` instead of §3.1's
+  `evaluated_to`: two fixes with one `captured_at` are told apart, and a fix "after the cursor" is exact.
+- **The intake judges the stored fixes after each zone's cursor**, not only "the fixes actually inserted" (§3.3): the
+  same transaction (`BEGIN IMMEDIATE`: store, evaluate, write the states, raise), but a fix that reached the table any
+  other way is judged at the next report, once - and the cursor makes a re-run harmless. It runs on a duplicate fix
+  too (cheap: one query for the zones, one for the fixes after the oldest cursor, at most 1000).
+- **A new or moved zone starts at the phone's newest fix** (cursor there, side unknown): the history before it is never
+  judged against it. §3.1 left the cursor empty, which would have replayed the whole kept trail into a new zone and
+  could have told "arrived at School" for last week. "Here now" waits for two new locations.
+- **An enrollment** forgets the sides and keeps the cursors (the old phone's fixes are never judged again).
+- **Events carry `params`** (a new `parent_events.params` column in 0091; `title`/`summary` stored empty), worded by
+  `parent_events::told` where they are shown or pushed (the time told at read, "Yesterday 14:02"). §3.4's `Phone::zone`
+  became `parent_events::zone_crossing` + `told`. One switch for both kinds needed `Kind::switches()` (each switch
+  once on Notify Me About).
+- **The distance is compared in whole millimetres** (`d`, `a` and `r` rounded) so `d + a == r` is exact on both sides of
+  the contract; `testdata/zone_vectors.json` has 15 rows including a millimetre each side of both boundaries.
+- **A save lands on the zone's row** (`?zone=added|saved&zone_id=N#zone-N`, the line under the row) rather than §3.5's
+  `#zones`; a delete and Locate Regularly land on `#zones`. A save that changed nothing logs nothing.
+- **The zone page uses the time rule's sticky editor bar** (Back and Add/Save at the top, a refusal's line in it), the
+  map inside the form. Coordinates are stored rounded to 6 decimals, so a form saved unchanged never "moves" the zone.
+- **§3.6's table, step 1's part**: the Off row gains "Zones can't see where the phone is."; Only when asked shows the
+  orange "Zones need Regularly" + Locate Regularly (`back=zones`); Regularly's footer "within about two intervals (here
+  1 hour)"; "Keep location on" off adds the note row to Advanced. All only while the phone has zones. Decision 3's floor
+  and its words come with step 2 (to phones reporting `zones_v1`); until then the served interval is unchanged and the
+  trail as dense as today.
+- **The summary's line is in the header** ("At Home since 15:42", `data-zone-now`), beside the battery and "Off since" -
+  the summary has no "Now" group.
+- Not done in step 1, as planned: the policy, the status report, the launcher, mock locations, the kid's line.
