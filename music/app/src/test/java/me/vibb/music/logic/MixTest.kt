@@ -118,6 +118,17 @@ class MixTest {
     }
 
     @Test
+    fun `qa Q-4 Q-7 - a favourites row stays one when its text is unreadable, a gone entry's ref is found by its item key`() {
+        assertEquals(queue, storedMix(encodeMix(queue), "a", listOf("1")))
+        assertEquals("unreadable: the run's own refs", listOf(MixRef("b", "1"), MixRef("b", "2")), storedMix("junk", "b", listOf("1", "2")))
+        assertNull("an entry's row", storedMix(null, "b", listOf("1")))
+        assertNull("nothing to name", storedMix("junk", null, listOf("1")))
+        assertEquals(MixRef("a", "1"), storedCurrent(queue, "a", "1") { true })
+        assertEquals("the entry gone: its ref by the key", MixRef("b", "1"), storedCurrent(queue, null, "1") { it != "b" })
+        assertNull(storedCurrent(queue, null, null) { true })
+    }
+
+    @Test
     fun `restoredMix - the current ref survived, else the next surviving one from its own place, else nothing`() {
         val held = { r: MixRef -> r.entryKey != "b" }
         val same = restoredMix(queue, queue[0], held)!!

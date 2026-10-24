@@ -117,6 +117,20 @@ class FavouritesTest {
         // a run's step outside it keeps the play state; the next favourite is never started while suspended
         assertTrue(body("private suspend fun mixGoTo(").contains("startRun(m, found, play && playAllowed(suspendedNow())"))
         assertTrue(body("private suspend fun mixMoveOn(").contains("end.play && playAllowed(suspendedNow())"))
+        // qa-r12-music-code Q-1/Q-6: the service's own pauses - a move-on past a run, a run that loads paused - never the
+        // kid's (a USER pause cancels the sleep timer); Q-2: a held run end disarms the renderer's "Til slutten" first
+        assertTrue(body("private fun mixPastRun(").contains("selfPause()"))
+        assertTrue(body("private fun selfPause() {").contains("selfPausing = true\n        renderer.pause()\n        selfPausing = false"))
+        assertTrue(body("private suspend fun startRun(").contains("if (!play && renderer.kind.onPhone && renderer.player.playWhenReady) selfPause()"))
+        assertTrue(ended.indexOf("renderer.pauseAtItemEnd(null)") in 0 until ended.indexOf("sleepAtEndReached()"))
+        // Q-3: a refused start keeps the old run and the move-on passes it; Q-5: RESUME and the tile see a stale run
+        assertTrue(body("private suspend fun startRun(").contains("m.run = oldRun"))
+        assertTrue(body("private suspend fun mixMoveOn(").contains("refused += end.index"))
+        assertTrue(body("private suspend fun resumeLast() {").contains("if (!restartIfStale()) renderer.play()"))
+        assertTrue(body("private suspend fun playFavourites() {").contains("if (!restartIfStale()) renderer.play()"))
+        // Q-4: a favourites row stays one on every rebuild - restore, adopt, "Spill av på"
+        assertEquals(3, Regex("""snap\.storedFavourites\(""").findAll(service).count())
+        assertFalse(service.contains("decodeMix("))
         // option C is gone with its flag; its scope plumbing carries a run now
         assertFalse(service.contains("ARG_FAVOURITES"))
         assertTrue(body("private suspend fun startRun(").contains("queueFor(snap, rows, entry, plan, shuffled = false, queueKind(renderer.kind, entry), run.keys.toSet())"))

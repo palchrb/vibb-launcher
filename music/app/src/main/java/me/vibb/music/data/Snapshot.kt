@@ -12,6 +12,8 @@ import me.vibb.music.logic.ItemPosition
 import me.vibb.music.logic.KeepItem
 import me.vibb.music.logic.MixRef
 import me.vibb.music.logic.mixOrder
+import me.vibb.music.logic.storedCurrent
+import me.vibb.music.logic.storedMix
 import me.vibb.music.logic.NewsItem
 import me.vibb.music.logic.Repeat
 import me.vibb.music.logic.canRepeat
@@ -142,6 +144,17 @@ data class Snapshot(
         val entry = entryByKey(ref.entryKey) ?: return false
         val item = visible(entry).firstOrNull { it.key == ref.itemKey } ?: return false
         return !remote || me.vibb.music.sonos.PlayBodies.speakerPlayable(entry, item)
+    }
+
+    /**
+     * [row]'s favourites queue and its current ref ([storedMix], [storedCurrent]: a gone entry's ref found by its item
+     * key); null for an entry's row. The service's restore, adopt and "Spill av på" and the screens read it alike.
+     */
+    fun storedFavourites(row: NowPlayingRow): Pair<List<MixRef>, MixRef?>? {
+        val key = library?.entries?.firstOrNull { it.id == row.entryId }?.key
+        val keys = row.keys.split('\n').filter { it.isNotEmpty() }
+        val stored = storedMix(row.mix, key, keys) ?: return null
+        return stored to storedCurrent(stored, key, keys.getOrNull(row.index)) { entryByKey(it) != null }
     }
 
     /** The library's entry of [key], if it holds one. */

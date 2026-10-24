@@ -21,7 +21,7 @@ import me.vibb.music.logic.FAVOURITES_CATEGORY
 import me.vibb.music.logic.MIX_KEY
 import me.vibb.music.logic.MixRef
 import me.vibb.music.logic.mixView
-import me.vibb.music.logic.decodeMix
+import me.vibb.music.logic.restoredMix
 import me.vibb.music.logic.hint
 import me.vibb.music.logic.isNew
 import me.vibb.music.logic.isSpotify
@@ -375,12 +375,16 @@ fun nowView(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): NowView?
         return favouritesView(snap, hub.favouritesQueue, hub.favouritesIndex, true, hub.playing, 0, hub.durationMs, hub.favouritesShuffled, hub.favouritesRepeat)
     }
     if (!hub.live && row != null) {
-        decodeMix(row.mix)?.let { stored ->
-            val entry = entries.firstOrNull { it.id == row.entryId } ?: return null
-            val key = row.keys.split('\n').filter { it.isNotEmpty() }.getOrNull(row.index) ?: return null
-            val refs = stored.filter { snap.holds(it) }
-            val view = favouritesView(snap, refs, refs.indexOf(MixRef(entry.key, key)), false, false, row.posMs, row.durationMs, MIX_KEY in snap.shuffle, snap.repeat[MIX_KEY] ?: Repeat.OFF)
-            return view
+        snap.storedFavourites(row)?.let { (stored, current) ->
+            // what RESUME plays (the service's restoreMix): the row's item at its place, else - its item not in this view,
+            // its entry gone - the next favourite at its own place (qa-r12-music-code Q-7), never no bar at all
+            val restored = restoredMix(stored, current) { snap.holds(it) } ?: return null
+            val ref = restored.queue[restored.index]
+            val own = snap.entryByKey(ref.entryKey)?.let { e -> if (e.resume) seekGate(resumeFrom(snap.positions[e.key]?.get(ref.itemKey))) else 0L } ?: 0L
+            return favouritesView(
+                snap, restored.queue, restored.index, false, false, if (restored.same) row.posMs else own, row.durationMs.takeIf { restored.same },
+                MIX_KEY in snap.shuffle, snap.repeat[MIX_KEY] ?: Repeat.OFF,
+            )
         }
     }
     if (hub.live && hub.entryId != null) {

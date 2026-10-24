@@ -107,6 +107,28 @@ fun decodeMix(text: String?): List<MixRef>? {
 private const val MIX_SEP = '\u001F'
 
 /**
+ * A stored row's favourites queue (qa-r12-music-code Q-4): `now_playing.mix` decoded - and a row marked as a favourites
+ * row whose text can't be read is still one: its run's own refs ([entryKey] + [keys]), so it never falls back to an
+ * entry's queue (that would move the entry's bookmark and clear its places at the end). Null: an entry's row (no [mix]),
+ * or nothing left to name.
+ */
+fun storedMix(mix: String?, entryKey: String?, keys: List<String>): List<MixRef>? {
+    mix ?: return null
+    return decodeMix(mix) ?: entryKey?.let { k -> keys.map { MixRef(k, it) }.ifEmpty { null } }
+}
+
+/**
+ * The stored row's current ref (qa-r12-music-code Q-7): its entry's ([entryKey]) item [itemKey]; with the entry gone from
+ * the library ([entryKey] null) the stored ref of that item key whose entry the library no longer holds ([known] false),
+ * so the queue goes on after it ([restoredMix]), never from its top.
+ */
+fun storedCurrent(stored: List<MixRef>, entryKey: String?, itemKey: String?, known: (String) -> Boolean): MixRef? {
+    itemKey ?: return null
+    if (entryKey != null) return MixRef(entryKey, itemKey)
+    return stored.firstOrNull { it.itemKey == itemKey && !known(it.entryKey) }
+}
+
+/**
  * After a restart, a room switch or coming home: [stored] kept to this renderer's view ([holds]); [index] is that of
  * [current] when it survived ([same] true: its stored place stands), else of the next surviving ref after it in
  * [stored] (wrapping; [same] false: its own place) - the first when [current] is unknown; null when nothing survived.

@@ -20,7 +20,6 @@ import me.vibb.music.logic.keepSet
 import me.vibb.music.logic.artSkipsAfter
 import me.vibb.music.logic.skippedArt
 import me.vibb.music.logic.nowArt
-import me.vibb.music.logic.decodeMix
 import me.vibb.music.logic.MixRef
 import me.vibb.music.logic.storytelKeepSet
 import me.vibb.music.logic.storytelWanted
@@ -122,10 +121,8 @@ fun nowQueue(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): Pair<Li
 fun favouritesNow(snap: Snapshot, hub: PlayerHub.State, row: NowPlayingRow?): Pair<List<MixRef>, Int>? {
     if (hub.live) return hub.favouritesQueue?.let { it to hub.favouritesIndex }
     row ?: return null
-    val stored = decodeMix(row.mix) ?: return null
-    val entry = snap.library?.entries?.firstOrNull { it.id == row.entryId }
-    val key = row.keys.split('\n').filter { it.isNotEmpty() }.getOrNull(row.index)
-    return stored to if (entry != null && key != null) stored.indexOf(MixRef(entry.key, key)) else -1
+    val (stored, current) = snap.storedFavourites(row) ?: return null
+    return stored to (current?.let { stored.indexOf(it) } ?: -1)
 }
 
 /**

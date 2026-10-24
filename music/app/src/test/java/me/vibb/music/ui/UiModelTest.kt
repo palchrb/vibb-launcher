@@ -227,6 +227,15 @@ class UiModelTest {
         // stored (after a restart): the row is the run's - e4 of the podcast, its place - and the mix around it
         val row = me.vibb.music.data.NowPlayingRow(0, 3, "e4", 0, 41_000, null, false, 0, favourites = "e4", mix = me.vibb.music.logic.encodeMix(refs))
         val stored = nowView(mixed, PlayerHub.State(), row)!!
+        // qa-r12-music-code Q-8: only a live favourites queue is the same tile; a stored one is a new tap's queue
+        assertTrue(favouritesSwitch(mixed, stored, 1_000) != null)
+        // Q-7: the row's item not in this view (here: dropped from the listing) - the bar shows the next favourite at its
+        // own place, as RESUME plays it; a row whose entry left the library goes on after its own ref, never from the top
+        val dropped = nowView(mixed, PlayerHub.State(), row.copy(keys = "gone", favourites = "gone", mix = me.vibb.music.logic.encodeMix(refs.take(2) + me.vibb.music.logic.MixRef(pod.key, "gone") + refs.drop(2))))!!
+        assertEquals("e4" to 40_000L, dropped.item.key to dropped.storedPosMs)
+        val left = mixed.copy(library = library(listOf(songs)))
+        val goneRow = me.vibb.music.data.NowPlayingRow(0, 3, "e2", 0, 5_000, null, false, 0, mix = me.vibb.music.logic.encodeMix(refs))
+        assertEquals("after the gone e2: t1", "t1", nowView(left, PlayerHub.State(), goneRow)!!.item.key)
         assertEquals(pod, stored.entry)
         assertEquals(3 to 3, playerNumber(mixed, stored))
         assertEquals(41_000L, stored.storedPosMs)
