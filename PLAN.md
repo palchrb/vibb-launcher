@@ -750,7 +750,7 @@ findings, merge to `main`, full suite once.
   tab bar with the peach pill on every page. Scope (agreed): colour tokens (light and dark), bundled Nunito, the tab
   bar partial, the Devices header, the PWA icons/manifest as the vibb rings; then a small round for an uploaded avatar (the user, 2026-10-22: change it by tapping the big avatar on the phone's page - a picker opens (photo library/camera on a phone), saved at once, plus "remove picture"; works without JS via a plain form; the avatar keeps its status dot)
   per phone (reuse `photos.rs`: resize, EXIF stripped). No big redesign. After the Android-lock RC.
-  Implemented 2026-10-22 on branch `pwa-identity-d` (not merged; `docs/notes/server/pwa.md`, "The vibb identity",
+  Implemented 2026-10-22 on branch `pwa-identity-d` (merged; `docs/notes/server/pwa.md`, "The vibb identity",
   browser pass `docs/testing/2026-10-22-pwa-identity-pass.md`); the uploaded avatar round is still to do.
 - **Design 59 RC status (2026-10-22):** steps 1-4 merged (server 0.37.0: e8c9013b, f51d9901; launcher: 2a727685,
   f4972ced), each with code QA and its fixes; the end-to-end emulator run `docs/testing/2026-10-22-d59-rc-run.md`
@@ -778,7 +778,8 @@ findings, merge to `main`, full suite once.
   very top of the phone screen (status bar area, `theme-color` night on that page) through the 44 px title bar - is
   the night ground `#0C0C14` with the brand tile lifted to `#1B1B28`, "vibb" in white, + and bell in peach; the
   heading "Devices" and everything below stay as D. Only Devices ("den skal føles mer som forside"); the other tabs
-  keep the grey top. Server only, small; next server round.
+  keep the grey top. Server only, small; next server round. **Done 2026-10-22** (built and merged in the identity round,
+  `pwa-identity-d`; `docs/notes/server/pwa.md`, "Devices' night band").
 - **Several parent accounts (the user, 2026-10-22: "enkelt opprette multi-admins, mor og far, med egen konto"):** build
   design 62 (`docs/design/62-parent-accounts-assessment.md`) in its simple form. Multi-family (design 63) is parked:
   "vi dropper mer tanker om multifamilie". Steps 1-2 (the latent bugs, 0087, the guarded self-service writes; Name,
@@ -837,7 +838,9 @@ findings, merge to `main`, full suite once.
   - on the Jelly Star, ten handle swipes across a reboot and a screen-off, all refused (`TYPE_RESET_GESTURE`);
   - an own-mode reboot that comes up on the glance, not our keypad (owed).
   Done on `jelly36` (59d §8.16): the 16d override desync with the net, a swipe with no heal on `hw.mainKeys = yes`,
-  and an update's restart that marks no ask.
+  and an update's restart that marks no ask. **The user's result (2026-10-24, `jellystar2`)**: with `hw.mainKeys = no`
+  the handle swipe went straight to the pad ("perfekt"); before, with it still `yes`, the net unlocked after the flash,
+  as designed. The AVD's file was `~/.config/.android/avd/` (`emulator.md` §3 names both places).
 - **The rc.3 run's fix round (branch `rc3-fix`, 2026-10-23, 59d §8.14, `docs/testing/2026-10-23-rc3-fix-run.md`):**
   - **Done** (on the branch):
     - RC3-1: the boot cover asks again for an ask that got no answer, at 3, 6 and 12 s, then every 6 s. SystemUI's
@@ -931,7 +934,8 @@ findings, merge to `main`, full suite once.
   footer above them is usually enough. A pass over every `info-panel` in `server/templates/`: keep the ⓘ only where
   the footer can't carry the one fact a parent needs (a consequence, a number, a "needs the phone online"), cut each
   panel to one or two short sentences, drop the ones that repeat the row's own label. Server, S-M (text only); the
-  wording follows the PWA's register (plain, no jargon).
+  wording follows the PWA's register (plain, no jargon). **Done 2026-10-24 (branch `pwa-polish-a`)**: 83 panels -> 74,
+  9 dropped, the static rest cut (pwa.md, "The ⓘ cut").
 - **Safe zones (the user, 2026-10-23, from Xplora): named circles on the Locate map ("Home", "School"), a parent event +
   push when the phone leaves or enters one.** Design 64 (to write after rc.3). Step 1 server-only: zones per phone
   (centre, radius, name) drawn/edited on the Leaflet map; evaluated on every stored fix; a transition counts after two
@@ -1579,6 +1583,15 @@ findings, merge to `main`, full suite once.
   `systemd-run --user --scope -p MemoryHigh=4G -p MemoryMax=5G` around the emulator.
 
 ### Done (not released yet)
+
+- **Back from Apps › a phone goes back to Apps (2026-10-24, branch `pwa-polish-a`)**: the user: "på apps, om jeg går
+  inn på feks Sverre sin tlf og så trykker tilbake - så kommer jeg til device taben for Sverre? Føltes unaturlig". The
+  Apps tab's links carry `?from=apps` / `?from=app:<id>`; the phone's Apps page then lights Apps and its back link
+  returns there, kept through every save (pwa.md, "Opened from the Apps tab").
+- **The PWA's start-up splash (2026-10-24, branch `pwa-polish-a`)**: the user: "en forvokst utgave av ikonet ... uten
+  tekst; bare en stor logo og natt bakgrunnen". The launcher's resting Vibb mark on night, 13 iPhone portrait PNGs
+  from `scripts/pwa-startup-images.py`; Android's manifest background night (pwa.md, "Start-up splash"). The real
+  iPhone cold start is the user's check.
 
 - **Every release build has its own versionCode (2026-10-23, branch `versioncode-rc`)**: the old rule
   (`X*1_000_000 + Y*1_000 + Z`, an RC one less) gave every RC of a version one code (0.36.0-rc.1..3 are all 35999), so

@@ -66,7 +66,8 @@ eye: the glance's clock twin, the face's frames, the bottom-edge swipe.
 
 ```sh
 avdmanager create avd -n jelly36 -k "system-images;android-36;google_apis_playstore;x86_64" --force   # answer "no"
-# then in ~/.android/avd/jelly36.avd/config.ini (replace these keys, keep the rest):
+# then in the AVD's config.ini (replace these keys, keep the rest): ~/.config/.android/avd/jelly36.avd/config.ini
+# (newer Android Studio on Linux), else ~/.android/avd/jelly36.avd/config.ini:
 hw.lcd.width = 480
 hw.lcd.height = 854
 hw.lcd.density = 240
@@ -89,7 +90,10 @@ emulator -avd jelly36 -port 5556 -wipe-data -no-window -no-audio -gpu swiftshade
 Quickstep still runs gesture navigation, but nothing turns lock task's `DISABLE_HOME`/`DISABLE_RECENT` into its
 `home_disabled`/`overview_disabled` flags, so every bottom-edge swipe over the lock goes through to the system (the
 user's `jellystar2`, 2026-10-23). A real phone without hardware keys - the Jelly Star - has the navigation bar. **On your
-own AVD made without a device profile**: set `hw.mainKeys = no` in its `config.ini` and cold boot it; check with
+own AVD made without a device profile**: set `hw.mainKeys = no` in its `config.ini` and cold boot it. The file is
+`~/.config/.android/avd/<name>.avd/config.ini` with newer Android Studio on Linux (the user's machine), else
+`~/.android/avd/<name>.avd/config.ini`; `emulator -list-avds` names the AVDs and `find ~ -name config.ini -path
+'*avd*'` finds the file. Check with
 `adb shell getprop qemu.hw.mainkeys` (must be `0`) and `adb shell dumpsys statusbar | grep taskbar` (a `taskbar
 mDisabledFlags` line must be there).
 
