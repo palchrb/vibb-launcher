@@ -252,6 +252,25 @@ object AppEnforcer {
     var lastEnforcedPlayState: PlayState? = null
         private set
 
+    /** Whether the last completed [apply] enforced an open window's plan (the pause or the override: Android's
+     * Settings unhidden, no kiosk); `null` until one ran in this process. Settings' system-page rows read it, so
+     * "no page" is said only once the window's plan is in place (code QA Q-2). */
+    @Volatile
+    var lastEnforcedOverride: Boolean? = null
+        private set
+
+    private val appliedListeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+    private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
+
+    /** Called on the main thread after each [apply] that got as far as enforcing its plan. */
+    fun addAppliedListener(listener: () -> Unit) {
+        appliedListeners += listener
+    }
+
+    fun removeAppliedListener(listener: () -> Unit) {
+        appliedListeners -= listener
+    }
+
     /** The packages the last [apply] in this process wanted suspended (`null` = none ran yet) -
      * the PIN lock's camera release never lifts one of these (CameraLock). */
     @Volatile
@@ -440,6 +459,8 @@ object AppEnforcer {
         }
         lastEnforcedLockKey = lock.key()
         lastEnforcedPlayState = playState
+        lastEnforcedOverride = overrideActive
+        if (appliedListeners.isNotEmpty()) mainHandler.post { appliedListeners.forEach { it() } }
         // Design 24b §1.5, after hiding (a hidden package's services leave the enabled lists): the
         // accessibility list while apps are managed (in windows too: QA 24b High 1), the keyboard
         // list and no hotspot or tethering while also no window is open. Setting the tethering

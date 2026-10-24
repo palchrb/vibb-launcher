@@ -1152,6 +1152,8 @@ findings, merge to `main`, full suite once.
   **Done 2026-10-24 (branch `write-settings-row`)**: QR provisioning and an exported-Settings enrolment can hit it (and
   the reset drops the token too - a de-enrolment); the reset now skips a phone with a token or `enrolled`
   (`firstLaunchResetDue`); design 59d §8.17.
+- **QR enrolment asks for no sync** (qa-write-settings-row-code Q-8): `applyProvisioningExtras` succeeding should
+  `SyncRunner.request(.., "enrolled")` as Settings' "Enroll now" does, so the first policy doesn't wait for the backstop. Small.
 
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK - CLOSED 2026-10-20** (the user: a second parent-owned

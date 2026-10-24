@@ -608,7 +608,9 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
             Some(false) => software.push(
                 Row::new("write-settings", "Modify system settings", "Not allowed")
                     .class("row-value-action")
-                    .detail(Some(WRITE_SETTINGS_FIX)),
+                    .detail(Some(format!(
+                        "The touch sounds switches and the clock format need it. {WRITE_SETTINGS_STEPS}"
+                    ))),
             ),
             None => {}
         }
@@ -1246,11 +1248,11 @@ pub(crate) fn notification_access_note(latest: Option<&DeviceStatus>) -> Option<
 
 /// How to grant Vibb One "Modify system settings" (PLAN fix backlog, 2026-10-24): the on-phone
 /// path first - Vibb One's Settings row that opens Android's page -, adb as the shortcut. About
-/// This Phone's row and the clock format's warning.
-const WRITE_SETTINGS_FIX: &str = "The touch sounds switches and the clock format need it. To fix it on \
-     the phone: Vibb One's Settings › Pause all restrictions › Modify system settings › turn on \
-     Allow, then end the pause. Or, with USB debugging allowed: adb shell appops set \
-     me.vibb.launcher WRITE_SETTINGS allow (a debug build: me.vibb.launcher.debug).";
+/// This Phone's row (after a line saying what needs it) and the clock format's warning (code QA Q-9).
+const WRITE_SETTINGS_STEPS: &str = "To fix it on the phone: Vibb One's Settings › Pause all \
+     restrictions › Modify system settings › turn on Allow, then end the pause. Or, with USB \
+     debugging allowed: adb shell appops set me.vibb.launcher WRITE_SETTINGS allow (a debug build: \
+     me.vibb.launcher.debug).";
 
 /// The phone should show the parent's clock format but can't (design 34 P12): the policy asks
 /// for "24" or "12" and the last report says `clock_format_applied` false - no "Modify system
@@ -1270,7 +1272,7 @@ pub(crate) fn clock_format_note(
         detail: Some("The phone can't change its clock format yet.".to_string()),
         fix: Some(format!(
             "Vibb One needs Android's \"Modify system settings\" access, which a device owner can't \
-             grant. {WRITE_SETTINGS_FIX}"
+             grant. {WRITE_SETTINGS_STEPS}"
         )),
     })
 }

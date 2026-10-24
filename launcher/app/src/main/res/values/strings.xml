@@ -241,6 +241,7 @@
     <string name="settings_mdm_write_settings_open">Not allowed - tap, turn on \"Allow modifying system settings\", then come back</string>
     <string name="settings_mdm_write_settings_pause_first">Pause all restrictions first (Android\'s Settings is hidden while the phone is managed), tap here, then end the pause</string>
     <string name="settings_mdm_write_settings_no_page">Not allowed - Android has no page for this on this phone</string>
+    <string name="settings_mdm_write_settings_wait">Not allowed - the pause is starting, a moment…</string>
     <string name="settings_mdm_write_settings_unknown">Unknown</string>
     <string name="settings_mdm_fingerprint">Fingerprint</string>
     <string name="settings_mdm_fingerprint_summary">%1$s - %2$s</string>
@@ -249,6 +250,7 @@
     <string name="settings_mdm_fingerprint_unknown">Unknown</string>
     <string name="settings_mdm_fingerprint_open">tap to add one (Android asks for the Child PIN first)</string>
     <string name="settings_mdm_fingerprint_pause_first">pause all restrictions first (Android\'s Settings is hidden while the phone is managed), tap here, then end the pause</string>
+    <string name="settings_mdm_fingerprint_wait">the pause is starting, a moment…</string>
     <string name="settings_mdm_fingerprint_no_page">Android has no page for this on this phone</string>
     <string name="toast_mdm_sync_done">Sync complete.</string>
     <string name="toast_mdm_sync_failed">Sync failed - couldn\'t reach the server.</string>

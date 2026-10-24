@@ -19,14 +19,14 @@ device owner can't grant it to itself. Turn it on from the phone:
 
 1. Vibb One's Settings (the unlock code) -> **"Pause all restrictions"** ("Sett alle begrensninger på pause") -> the
    unlock code.
-2. The row **"Modify system settings"** ("Endre systeminnstillinger") just above it: tap it. Android's own page for
+2. The row **"Modify system settings"** ("Endre systeminnstillinger") under "Background connection": tap it. Android's own page for
    Vibb One opens (where the phone has no such page for one app, Android's list of apps; then pick Vibb One).
 3. Turn on **"Allow modifying system settings"**, go back - the row now says "Allowed" ("Tillatt") - and switch
    the pause off again.
 
 Outside a pause the row says to pause first (Android's Settings is hidden while the phone is managed); if the phone
 has no such page at all, the row says so. The phone's About This Phone page ("Modify system settings") shows the
-grant, with these steps behind its ⓘ while it is missing.
+grant, with these steps while it is missing.
 
 The shortcut with adb, before USB debugging is blocked:
 
@@ -42,7 +42,7 @@ Without it the kid's touch switches are read-only ("Kan ikke endres på denne te
 With Android's lock screen as the gate (design 59) the kid's fingerprint is Android's own, enrolled against the Child
 PIN. Vibb One's Settings (the unlock code) -> **"Pause all restrictions"** -> the row **"Fingerprint"**
 ("Fingeravtrykk", under "Modify system settings"): tap it, type the Child PIN when Android asks, and follow Android's
-enrolment; then end the pause. The row shows only while Android's PIN is the one Vibb One set and the phone has a
+enrolment; then end the pause. The row shows only while android mode is on, Android's PIN is the Child PIN Vibb One set (not one changed on the phone), and the phone has a
 fingerprint sensor; it says "Registered" / "Not registered" ("Registrert" / "Ikke registrert") when Android can tell.
 No adb is needed. Removing Android's PIN by hand also deletes the fingerprint (design 59d §8.4) - enrol it again here.
 
