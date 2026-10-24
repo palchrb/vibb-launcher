@@ -1163,6 +1163,18 @@ findings, merge to `main`, full suite once.
   certificate is the trust anchor. Verify it and pin the repo's signing certificate per repo (first use, or the known
   fingerprints of f-droid.org and IzzyOnDroid), refusing an entry.json whose signature fails. Not done in the first
   round: a JAR signature verifier in Rust (PKCS#7/CMS over the manifest's digests) is its own piece of work. Server, M.
+- **F-Droid: the signer the index lists at the first pin** (qa-fdroid-source-code N-14, 2026-10-24): index-v2's
+  `manifest.signer.sha256` lists each APK's signing certificate; compare it with the APK's (`ApkIdentity.signer_sha256`)
+  before the first pin and refuse a mismatch. No trust against a tampered index (it could change both), but it catches
+  a mixed-up mirror; a natural part of the `entry.jar` round. Server, S.
+- **F-Droid: the ABI filter** (qa-fdroid-source-code Q-4, 2026-10-24): the pick ignores `manifest.nativecode` and
+  `usesSdk.minSdkVersion`; an app the repo builds per ABI gets one versionCode per ABI, often the highest an x86_64
+  build. Drop versions whose `nativecode` is non-empty without `arm64-v8a` or `armeabi-v7a` (and a minSdk above the
+  phones'). Waits for the first such app; Add App's ⓘ says the source suits apps with one APK for every phone. Server, S.
+- **GitHub asset digests** (qa-fdroid-source-code (e), 2026-10-24): GitHub's Releases API lists `digest:
+  "sha256:<hex>"` on assets (2025). Parse a well-formed one into `ReleaseAsset.sha256` (today `#[serde(skip)]`), so
+  `stream_to_file` checks a GitHub download before the rename as it does F-Droid's; an asset without one (older
+  releases) keeps today's behaviour. Server, S.
 - **PWA: reload on return after 1 minute, not 10** (the user, 2026-10-24: "blir ett minutt for kort?" - no): the
   return reload in `static/reconnect.js` (pwa.md "Connecting") fires after more than 10 minutes hidden; make it 1
   minute. One constant + `jstest/reconnect.test.js`'s timeline; the save/details/typed-field/POST-answer rules stay.

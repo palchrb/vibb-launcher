@@ -86,7 +86,25 @@ pub fn normalize_repo(input: &str) -> Result<String, String> {
     if !plain {
         return Err(refused());
     }
+    if private_literal(&url) {
+        return Err(
+            "The repo can't be a private, loopback or link-local IP address - use the \
+                    repo's name (a LAN or tailnet name with a real certificate is fine). Nothing \
+                    was saved."
+                .to_string(),
+        );
+    }
     Ok(url.as_str().trim_end_matches('/').to_string())
+}
+
+/// The URL's host is an IP literal in a private, loopback, link-local, tailnet or other
+/// non-public range (`music_net::is_private`; qa-fdroid-source-code Q-2). Names stay allowed: a
+/// self-hosted repo on the LAN or the tailnet is a stated use, and no repo has a certificate for
+/// an IP literal anyway.
+fn private_literal(url: &reqwest::Url) -> bool {
+    url.host_str()
+        .and_then(crate::music_net::literal_ip)
+        .is_some_and(crate::music_net::is_private)
 }
 
 /// A package id as typed: an Android package name (`ws.xsoh.etar`). `Err` is the form's sentence.
@@ -121,7 +139,7 @@ impl Repo {
         let loopback_http = cfg!(test)
             && url.scheme() == "http"
             && matches!(host.as_str(), "127.0.0.1" | "localhost");
-        if url.scheme() != "https" && !loopback_http {
+        if (url.scheme() != "https" || private_literal(&url)) && !loopback_http {
             return None;
         }
         let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
@@ -168,10 +186,12 @@ pub fn tag_of(version_name: &str, version_code: i64) -> String {
     }
 }
 
-/// The client for the repo's API, entry.json and index.
+/// The client for the repo's API, entry.json and index: no proxy from the environment in the
+/// trust path (Q-2, as `music_net`).
 pub fn client() -> Result<reqwest::Client, Failure> {
     reqwest::Client::builder()
-        .user_agent("kid-phone-server (self-hosted, F-Droid repo)")
+        .user_agent("kid-phone-server (self-hosted)")
+        .no_proxy()
         .connect_timeout(REQUEST_TIMEOUT)
         .redirect(crate::handlers::tracked_apps::https_redirects())
         .build()
@@ -362,12 +382,14 @@ fn cache_key(repo_url: &str) -> String {
 }
 
 /// The repo's current index on disk: entry.json is fetched every time; the index only when no
-/// cached copy has entry.json's SHA-256 (then downloaded, checked, and the repo's older copies
-/// removed).
+/// cached copy has entry.json's SHA-256 (then downloaded and checked; [repo_package] removes the
+/// repo's older copies after its read). An index that didn't match entry.json
+/// [MISMATCHES_TO_REFUSE] times in a row is downloaded again only when `forced`.
 pub async fn index_file(
     client: &reqwest::Client,
     repo: &Repo,
     cache_dir: &Path,
+    forced: bool,
 ) -> Result<PathBuf, Failure> {
     let entry_url = format!("{}/entry.json", repo.url);
     let (status, body) = get_small(client, &entry_url).await?;
@@ -391,11 +413,21 @@ pub async fn index_file(
     {
         return Ok(path);
     }
+    let mismatch_key = (repo.url.clone(), entry.sha256.clone());
+    if !forced && index_mismatches(&mismatch_key, None) >= MISMATCHES_TO_REFUSE {
+        return Err(Failure::new(
+            SyncProblem::ChecksumMismatch,
+            format!(
+                "the repo's index didn't match entry.json in {MISMATCHES_TO_REFUSE} checks in a row \
+                 - not downloaded again until entry.json changes; \"Check Now\" tries again"
+            ),
+        ));
+    }
     tokio::fs::create_dir_all(cache_dir)
         .await
         .map_err(|e| Failure::new(SyncProblem::Server, e.to_string()))?;
     let index_url = format!("{}/{}", repo.url, entry.name);
-    tokio::time::timeout(
+    let downloaded = tokio::time::timeout(
         INDEX_TOTAL_TIMEOUT,
         download_index(client, &index_url, &path, &entry),
     )
@@ -408,9 +440,74 @@ pub async fn index_file(
                 INDEX_TOTAL_TIMEOUT.as_secs() / 60
             ),
         )
-    })??;
+    })?;
+    match downloaded {
+        Ok(()) => {
+            index_mismatches(&mismatch_key, Some(false));
+            Ok(path)
+        }
+        Err(err) => {
+            if err.problem == SyncProblem::ChecksumMismatch {
+                index_mismatches(&mismatch_key, Some(true));
+            }
+            Err(err)
+        }
+    }
+}
+
+/// An index download that didn't match entry.json this many times in a row (per repo and
+/// entry.json SHA-256) isn't downloaded again by the hourly sync (qa-fdroid-source-code Q-3: 67 MB
+/// an hour for f-droid.org); "Check Now" (`forced`) still tries. The APK's own count is
+/// `tracked_apps`' (`AppSyncs`), with the same number.
+pub const MISMATCHES_TO_REFUSE: u32 = 3;
+
+/// The index mismatches in a row, in memory (a restart forgets them, as `AppSyncs` does): `None`
+/// reads the count, `Some(true)` adds one, `Some(false)` clears it; returns the count.
+fn index_mismatches(key: &(String, String), change: Option<bool>) -> u32 {
+    static COUNTS: std::sync::LazyLock<std::sync::Mutex<HashMap<(String, String), u32>>> =
+        std::sync::LazyLock::new(Default::default);
+    let mut counts = COUNTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match change {
+        None => counts.get(key).copied().unwrap_or(0),
+        Some(true) => {
+            let count = counts.entry(key.clone()).or_insert(0);
+            *count += 1;
+            *count
+        }
+        Some(false) => {
+            counts.remove(key);
+            0
+        }
+    }
+}
+
+/// The package's versions in the repo's current index ([index_file], then [read_package]); then
+/// the repo's older cached copies are removed - after the read, so this sync's copy can't go
+/// under it. A copy another sync of the same repo removed between its resolve and its read
+/// (qa-fdroid-source-code Q-8) is resolved once more.
+pub async fn repo_package(
+    client: &reqwest::Client,
+    repo: &Repo,
+    cache_dir: &Path,
+    package: &str,
+    forced: bool,
+) -> Result<Vec<IndexVersion>, Failure> {
+    let mut path = index_file(client, repo, cache_dir, forced).await?;
+    let mut read = read_package(path.clone(), package).await?;
+    if read.is_none() {
+        path = index_file(client, repo, cache_dir, forced).await?;
+        read = read_package(path.clone(), package).await?;
+    }
+    let versions = read.ok_or_else(|| {
+        Failure::new(
+            SyncProblem::RepoError,
+            "the repo's cached index went away twice while it was read",
+        )
+    })?;
     remove_older_copies(cache_dir, &repo.url, &path).await;
-    Ok(path)
+    Ok(versions)
 }
 
 /// Streams the index to `path` through a temp file, renamed into place only when it has exactly
@@ -663,25 +760,60 @@ pub(crate) fn package_versions(
 }
 
 /// [package_versions] of a cached index file, off the async threads.
-pub async fn read_package(path: PathBuf, package: &str) -> Result<Vec<IndexVersion>, Failure> {
+/// `Ok(None)`: the cached file is gone (another sync of the repo removed it; [repo_package]
+/// resolves it again).
+pub async fn read_package(
+    path: PathBuf,
+    package: &str,
+) -> Result<Option<Vec<IndexVersion>>, Failure> {
     let wanted = package.to_string();
     let read = tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&path)?;
+        let file = match std::fs::File::open(&path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err),
+        };
         package_versions(std::io::BufReader::with_capacity(1 << 16, file), &wanted)
+            .map(Some)
             .map_err(std::io::Error::other)
     })
     .await
     .map_err(|e| Failure::new(SyncProblem::Server, e.to_string()))?;
     match read {
-        Ok(Some(versions)) => Ok(versions),
-        Ok(None) => Err(Failure::new(
-            SyncProblem::FdroidUnknown,
+        Ok(None) => Ok(None),
+        Ok(Some(Some(versions))) => Ok(Some(versions)),
+        Ok(Some(None)) => Err(Failure::new(
+            SyncProblem::NotInRepo,
             format!("the repo's index has no package {package}"),
         )),
         Err(err) => Err(Failure::new(
             SyncProblem::RepoError,
             format!("the repo's index can't be read: {err}"),
         )),
+    }
+}
+
+/// Removes the cached indexes of every repo not in `repos` (qa-fdroid-source-code Q-8: the last
+/// app of a repo removed, or moved to another repo): only files named as [cache_path] names them.
+/// At startup and after a delete or a repo change; best-effort.
+pub async fn remove_unused_indexes(cache_dir: &Path, repos: &[String]) {
+    let keep: std::collections::HashSet<String> = repos.iter().map(|r| cache_key(r)).collect();
+    let Ok(mut files) = tokio::fs::read_dir(cache_dir).await else {
+        return;
+    };
+    while let Ok(Some(file)) = files.next_entry().await {
+        let name = file.file_name().to_string_lossy().into_owned();
+        let Some((key, rest)) = name.split_once('-') else {
+            continue;
+        };
+        let ours = key.len() == 16
+            && key.chars().all(|c| c.is_ascii_hexdigit())
+            && rest
+                .strip_suffix(".json")
+                .is_some_and(|sha| sha256_hex(sha).is_some());
+        if ours && !keep.contains(key) {
+            tokio::fs::remove_file(file.path()).await.ok();
+        }
     }
 }
 
@@ -749,6 +881,31 @@ pub(crate) mod tests {
             assert!(error.ends_with("Nothing was saved."), "{error}");
         }
         assert!(normalize_repo(&format!("https://f-droid.org/{}", "a".repeat(200))).is_err());
+        // Q-2: no private, loopback, link-local or tailnet IP literal; names stay allowed.
+        for refused in [
+            "https://127.0.0.1/repo",
+            "https://[::1]/repo",
+            "https://169.254.169.254/repo",
+            "https://100.100.1.1/repo",
+            "https://192.168.1.10/fdroid/repo",
+            "https://10.0.0.2:8443/repo",
+            "https://[fd00::1]/repo",
+        ] {
+            let error = normalize_repo(refused).unwrap_err();
+            assert!(
+                error.contains("private, loopback or link-local"),
+                "{refused}: {error}"
+            );
+            assert_eq!(Repo::from_stored(refused), None, "{refused}");
+        }
+        for allowed in [
+            "https://nas.local/fdroid/repo",
+            "https://repo.tail1234.ts.net/repo",
+            "https://203.0.113.9/repo",
+        ] {
+            assert!(normalize_repo(allowed).is_ok(), "{allowed}");
+            assert!(Repo::from_stored(allowed).is_some(), "{allowed}");
+        }
         assert_eq!(parse_package(" ws.xsoh.etar ").unwrap(), "ws.xsoh.etar");
         for refused in [
             "etar",
@@ -1026,67 +1183,104 @@ pub(crate) mod tests {
         let repo = Repo::from_stored(&url).unwrap();
         let client = client().unwrap();
 
-        let first = index_file(&client, &repo, &cache).await.unwrap();
+        let names = |paths: &[&PathBuf]| -> Vec<String> {
+            let mut names: Vec<String> = paths
+                .iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+
+        let first = index_file(&client, &repo, &cache, false).await.unwrap();
         assert_eq!(FakeRepo::count(&fake.index_gets), 1);
-        assert_eq!(read_package(first.clone(), "a.b").await.unwrap()[0].code, 1);
+        let read = read_package(first.clone(), "a.b").await.unwrap().unwrap();
+        assert_eq!(read[0].code, 1);
         // Unchanged: entry.json asked again, the index not.
-        let again = index_file(&client, &repo, &cache).await.unwrap();
+        let again = index_file(&client, &repo, &cache, false).await.unwrap();
         assert_eq!(again, first);
         assert_eq!(FakeRepo::count(&fake.entry_gets), 2);
         assert_eq!(FakeRepo::count(&fake.index_gets), 1, "no re-download");
 
-        // A new index: downloaded again, the older copy removed.
+        // A new index: downloaded again; the older copy stays until a read of the new one is
+        // done (Q-8: another sync may still read it), then goes.
         let v2 = index_json(&[(
             "a.b",
             vec![(sha(2), 2, "2", "a.b_2.apk".to_string(), false)],
         )]);
         fake.publish(&v2);
-        let second = index_file(&client, &repo, &cache).await.unwrap();
+        let second = index_file(&client, &repo, &cache, false).await.unwrap();
         assert_ne!(second, first);
         assert_eq!(FakeRepo::count(&fake.index_gets), 2, "re-downloaded");
-        assert_eq!(
-            read_package(second.clone(), "a.b").await.unwrap()[0].code,
-            2
-        );
-        assert_eq!(
-            cached_files(&cache),
-            [second.file_name().unwrap().to_string_lossy().into_owned()]
-        );
+        assert_eq!(cached_files(&cache), names(&[&first, &second]));
+        let versions = repo_package(&client, &repo, &cache, "a.b", false)
+            .await
+            .unwrap();
+        assert_eq!(versions[0].code, 2);
+        assert_eq!(cached_files(&cache), names(&[&second]));
+        assert_eq!(FakeRepo::count(&fake.index_gets), 2, "the cached copy read");
+        // A copy removed between the resolve and the read is resolved again (the race, Q-8).
+        assert_eq!(read_package(first.clone(), "a.b").await.unwrap(), None);
 
         // An index that isn't what entry.json says: refused, nothing kept, the good copy stays.
         let tampered = v2.replace("\"2\"", "\"3\"");
         assert_eq!(tampered.len(), v2.len());
         fake.publish_as(tampered.as_bytes(), &sha(9), tampered.len() as u64);
-        let err = index_file(&client, &repo, &cache).await.unwrap_err();
+        let err = index_file(&client, &repo, &cache, false).await.unwrap_err();
         assert_eq!(err.problem, SyncProblem::ChecksumMismatch, "{}", err.detail);
         assert!(err.detail.contains("entry.json says"), "{}", err.detail);
         assert_eq!(
             cached_files(&cache),
-            [second.file_name().unwrap().to_string_lossy().into_owned()],
+            names(&[&second]),
             "no .part file, no unverified index"
         );
+        // Q-3: three mismatches in a row, then the hourly sync stops downloading it; Check Now
+        // (forced) still tries.
+        for _ in 0..2 {
+            index_file(&client, &repo, &cache, false).await.unwrap_err();
+        }
+        assert_eq!(FakeRepo::count(&fake.index_gets), 5);
+        let err = index_file(&client, &repo, &cache, false).await.unwrap_err();
+        assert_eq!(err.problem, SyncProblem::ChecksumMismatch);
+        assert!(err.detail.contains("3 checks in a row"), "{}", err.detail);
+        assert_eq!(FakeRepo::count(&fake.index_gets), 5, "not downloaded again");
+        index_file(&client, &repo, &cache, true).await.unwrap_err();
+        assert_eq!(FakeRepo::count(&fake.index_gets), 6, "Check Now tries");
         // Longer or shorter than entry.json lists: refused too.
         let real = hex::encode(Sha256::digest(v2.as_bytes()));
         fake.publish_as(v2.as_bytes(), &real, v2.len() as u64 + 5);
-        let err = index_file(&client, &repo, &cache).await.unwrap_err();
+        let err = index_file(&client, &repo, &cache, false).await.unwrap_err();
         assert_eq!(err.problem, SyncProblem::RepoError, "{}", err.detail);
         fake.publish_as(v2.as_bytes(), &real, v2.len() as u64 - 5);
-        let err = index_file(&client, &repo, &cache).await.unwrap_err();
+        let err = index_file(&client, &repo, &cache, false).await.unwrap_err();
         assert_eq!(err.problem, SyncProblem::RepoError, "{}", err.detail);
 
-        // Another repo's copy is its own file.
+        // Another repo's copy is its own file; removing the repos no app uses (Q-8) leaves the
+        // other one's and files that aren't a cached index.
         let (other_url, other) = fake_repo("localhost").await;
         other.publish(&v1);
-        let other_path = index_file(&client, &Repo::from_stored(&other_url).unwrap(), &cache)
-            .await
-            .unwrap();
+        let other_path = index_file(
+            &client,
+            &Repo::from_stored(&other_url).unwrap(),
+            &cache,
+            false,
+        )
+        .await
+        .unwrap();
         assert_ne!(other_path, second);
         assert!(second.exists());
+        std::fs::write(cache.join("notes.txt"), b"x").unwrap();
+        remove_unused_indexes(&cache, std::slice::from_ref(&other_url)).await;
+        assert!(!second.exists());
+        assert!(other_path.exists());
+        assert!(cache.join("notes.txt").exists());
+        remove_unused_indexes(&cache, &[]).await;
+        assert!(!other_path.exists());
 
         // No repo there: "the repo didn't answer"; a page without entry.json: not a repo.
         let gone = Repo::from_stored("http://127.0.0.1:9/repo").unwrap();
         assert_eq!(
-            index_file(&client, &gone, &cache)
+            index_file(&client, &gone, &cache, false)
                 .await
                 .unwrap_err()
                 .problem,
@@ -1094,11 +1288,93 @@ pub(crate) mod tests {
         );
         let not_a_repo = Repo::from_stored(&url.replace("/repo", "/nothing")).unwrap();
         assert_eq!(
-            index_file(&client, &not_a_repo, &cache)
+            index_file(&client, &not_a_repo, &cache, false)
                 .await
                 .unwrap_err()
                 .problem,
             SyncProblem::RepoError
+        );
+    }
+
+    /// Q-7 (M21): entry.json or an API answer over 1 MiB is refused, not read on.
+    #[tokio::test]
+    async fn a_small_document_over_1_mib_is_refused() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (url, fake) = fake_repo("127.0.0.1").await;
+        let client = client().unwrap();
+        let repo = Repo::from_stored(&url).unwrap();
+        let big = format!(
+            r#"{{"packageName":"a.b","suggestedVersionCode":1,"packages":[],"pad":"{}"}}"#,
+            "x".repeat(MAX_SMALL_BYTES)
+        );
+        fake.api
+            .lock()
+            .unwrap()
+            .insert("a.b".to_string(), big.clone());
+        let err = api_version(&client, repo.api.as_deref().unwrap(), "a.b")
+            .await
+            .unwrap_err();
+        assert_eq!(err.problem, SyncProblem::RepoError);
+        assert!(err.detail.contains("is over 1024 KB"), "{}", err.detail);
+        *fake.entry.lock().unwrap() = big;
+        let dir = tempfile::tempdir().unwrap();
+        let err = index_file(&client, &repo, dir.path(), false)
+            .await
+            .unwrap_err();
+        assert_eq!(err.problem, SyncProblem::RepoError);
+        assert!(err.detail.contains("is over 1024 KB"), "{}", err.detail);
+        // Just under the cap is read (and is then just not an answer F-Droid gives).
+        let fits = format!(
+            r#"{{"packageName":"a.b","suggestedVersionCode":1,"packages":[{{"versionName":"1","versionCode":1}}],"pad":"{}"}}"#,
+            "x".repeat(MAX_SMALL_BYTES - 200)
+        );
+        fake.api.lock().unwrap().insert("a.b".to_string(), fits);
+        assert_eq!(
+            api_version(&client, repo.api.as_deref().unwrap(), "a.b")
+                .await
+                .unwrap(),
+            (1, "1".to_string())
+        );
+    }
+
+    /// Q-1: the redirect rule as the downloads use it, on the loopback fake - 5 hops are followed,
+    /// a 6th is refused.
+    #[tokio::test]
+    async fn a_chain_of_six_redirects_is_refused() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let router = axum::Router::new().route(
+            "/r/{n}",
+            axum::routing::get(
+                |axum::extract::Path(n): axum::extract::Path<u32>| async move {
+                    use axum::response::IntoResponse;
+                    if n == 0 {
+                        "here".into_response()
+                    } else {
+                        axum::response::Redirect::temporary(&format!("/r/{}", n - 1))
+                            .into_response()
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let client = client().unwrap();
+        let five = client
+            .get(format!("http://{addr}/r/5"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(five.text().await.unwrap(), "here");
+        let six = client
+            .get(format!("http://{addr}/r/6"))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(six.is_redirect(), "{six:?}");
+        assert!(
+            format!("{six:?}").contains("more than 5 redirects"),
+            "{six:?}"
         );
     }
 
@@ -1171,6 +1447,29 @@ pub(crate) mod tests {
             SyncProblem::RepoError
         );
         assert_eq!(package_versions(index.as_bytes(), "a.b").unwrap(), None);
+        // Q-7 (M26): two APKs of one code - the one named <id>_<code>.apk is picked, whichever
+        // comes first in the list.
+        let two = index_json(&[(
+            "ws.xsoh.etar",
+            vec![
+                (sha(6), 57, "1.0.57", "aaa_57.apk".to_string(), false),
+                (
+                    sha(3),
+                    57,
+                    "1.0.57",
+                    "ws.xsoh.etar_57.apk".to_string(),
+                    false,
+                ),
+            ],
+        )]);
+        let versions = package_versions(two.as_bytes(), "ws.xsoh.etar")
+            .unwrap()
+            .unwrap();
+        assert_eq!(versions[0].file, "aaa_57.apk", "the other file first");
+        assert_eq!(
+            pick(&versions, "ws.xsoh.etar", Some(57)).unwrap().file,
+            "ws.xsoh.etar_57.apk"
+        );
         // A listed file hash that isn't the key: left out.
         let mismatched = index.replace(&format!(r#""sha256":"{}""#, sha(3)), r#""sha256":"00""#);
         let versions = package_versions(mismatched.as_bytes(), "ws.xsoh.etar")
