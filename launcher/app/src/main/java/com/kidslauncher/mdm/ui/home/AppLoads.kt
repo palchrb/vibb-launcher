@@ -50,13 +50,30 @@ const val APP_LOAD_HOLD_CAP_MS = 10_000L
 const val APP_LOAD_HOLD_POLL_MS = 100L
 
 /**
- * Whether an `AppEnforcer.apply` holds the app-list loads now (the provisioning storm's follow-up, the coordinator's
- * jelly36 run: on a loaded emulator the enforcer's per-package calls came more than 300 ms apart, so most packages
- * opened a burst of their own - 59 loads in two minutes). [heldSince] is the apply's start (`null` = no apply runs);
- * a hold ends with the apply, or [capMs] after its start.
+ * Whether an `AppEnforcer.apply` holds the burst that began at [burstSince] now (the provisioning storm's follow-up,
+ * the coordinator's jelly36 run: on a loaded emulator the enforcer's per-package calls came more than 300 ms apart, so
+ * most packages opened a burst of their own - 59 loads in two minutes). [heldSince] is the running apply's start
+ * (`null` = no apply runs). A hold ends with the apply, [capMs] after the apply's start, and - whatever chain of
+ * applies follows one another on `apply`'s lock - [capMs] after the burst's start (qa-appload-hold-code Q-1): a burst
+ * waits at most 10 s.
  */
-fun appLoadHeld(now: Long, heldSince: Long?, capMs: Long = APP_LOAD_HOLD_CAP_MS): Boolean =
-    heldSince != null && now - heldSince < capMs
+fun appLoadHeld(now: Long, heldSince: Long?, burstSince: Long = now, capMs: Long = APP_LOAD_HOLD_CAP_MS): Boolean =
+    heldSince != null && now - heldSince < capMs && now - burstSince < capMs
+
+/**
+ * How long a held burst waits before it looks again ([appLoadHeld]'s pair, as [appLoadWaitMs] is [appLoadDue]'s): at
+ * most [pollMs], never past either cap; 0 when not held - so "held" always means a wait > 0 and the loop never spins.
+ */
+fun appLoadHoldWaitMs(
+    now: Long,
+    heldSince: Long?,
+    burstSince: Long = now,
+    capMs: Long = APP_LOAD_HOLD_CAP_MS,
+    pollMs: Long = APP_LOAD_HOLD_POLL_MS,
+): Long {
+    if (heldSince == null || !appLoadHeld(now, heldSince, burstSince, capMs)) return 0L
+    return minOf(pollMs, heldSince + capMs - now, burstSince + capMs - now)
+}
 
 /**
  * The hold's state: `AppEnforcer.apply` calls [hold] at its start and [release] at its end (in a `finally`). A nested
@@ -101,8 +118,9 @@ suspend fun ReceiveChannel<Unit>.nextAppLoad(timeoutMs: Long?): AppLoadNext {
  * when [appLoadDue] says so, each request inside it moving the quiet period on. [next] waits for a request (see
  * [nextAppLoad]), [now] is elapsed realtime, [load] is the whole load (the same work as before the debounce). While
  * [heldSince] says an `AppEnforcer.apply` runs ([appLoadHeld]) a burst waits for its end - looking again every
- * [APP_LOAD_HOLD_POLL_MS] - and loads at once when the hold ends (released, or its cap). Returns when the channel
- * closes (tests; the app's never does), after loading a burst still pending.
+ * [APP_LOAD_HOLD_POLL_MS] ([appLoadHoldWaitMs]) - and the hold's end counts as a request (qa-appload-hold-code Q-2): the
+ * debounce goes on from there, so the callbacks the apply's last packages send after it ended join the same load - one
+ * load per apply. Returns when the channel closes (tests; the app's never does), after loading a burst still pending.
  */
 suspend fun runAppLoads(
     next: suspend (timeoutMs: Long?) -> AppLoadNext,
@@ -119,19 +137,24 @@ suspend fun runAppLoads(
             continue
         }
         // When the consumer took it: a request sent during the last load waited for that load's end.
-        val firstAt = now()
-        var lastAt = firstAt
+        val burstAt = now()
+        var firstAt = burstAt
+        var lastAt = burstAt
         var wasHeld = false
         while (true) {
             val t = now()
-            val since = heldSince()
-            val held = appLoadHeld(t, since)
-            // A hold that ended (released, or its cap) loads the burst at once.
-            if (!held && (wasHeld || appLoadDue(t, firstAt, lastAt))) break
-            val wait = if (held && since != null) {
+            val holdWait = appLoadHoldWaitMs(t, heldSince(), burstAt)
+            val wait = if (holdWait > 0) {
                 wasHeld = true
-                minOf(APP_LOAD_HOLD_POLL_MS, since + APP_LOAD_HOLD_CAP_MS - t)
+                holdWait
             } else {
+                // The hold's end is a request: the debounce starts over from it (Q-2).
+                if (wasHeld) {
+                    wasHeld = false
+                    firstAt = t
+                    lastAt = t
+                }
+                if (appLoadDue(t, firstAt, lastAt)) break
                 appLoadWaitMs(t, firstAt, lastAt)
             }
             when (next(wait)) {

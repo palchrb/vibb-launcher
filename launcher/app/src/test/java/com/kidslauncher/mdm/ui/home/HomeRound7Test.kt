@@ -264,7 +264,7 @@ class HomeRound7Test {
     // ---- an apply holds the loads until it ends (the jelly36 storm run: 59 loads in two minutes) -----------------
 
     @Test
-    fun `an apply holds the loads, at most 10 s`() {
+    fun `an apply holds the loads, at most 10 s from its start or the burst's`() {
         assertEquals(10_000L, APP_LOAD_HOLD_CAP_MS)
         assertFalse("no apply", appLoadHeld(now = 5_000, heldSince = null))
         assertTrue(appLoadHeld(now = 5_000, heldSince = 5_000))
@@ -283,32 +283,84 @@ class HomeRound7Test {
     }
 
     @Test
-    fun `the hold nests and ends only at the outer release`() {
-        AppLoadHold.hold(1_000)
-        AppLoadHold.hold(2_000)
-        assertEquals(1_000L, AppLoadHold.heldSince)
-        AppLoadHold.release()
-        assertEquals(1_000L, AppLoadHold.heldSince)
-        AppLoadHold.release()
-        assertEquals(null, AppLoadHold.heldSince)
-        AppLoadHold.release()
-        assertEquals("an extra release is harmless", null, AppLoadHold.heldSince)
+    fun `the hold's wait pairs with appLoadHeld - held always waits, never past a cap`() {
+        assertEquals(100L, APP_LOAD_HOLD_POLL_MS)
+        assertEquals(0L, appLoadHoldWaitMs(now = 5_000, heldSince = null))
+        assertEquals(100L, appLoadHoldWaitMs(now = 5_000, heldSince = 5_000))
+        assertEquals("the apply's cap", 40L, appLoadHoldWaitMs(now = 14_960, heldSince = 5_000, burstSince = 14_000))
+        assertEquals("the burst's cap", 30L, appLoadHoldWaitMs(now = 14_970, heldSince = 14_000, burstSince = 5_000))
+        assertFalse("a burst waits at most 10 s whatever apply runs", appLoadHeld(now = 15_000, heldSince = 14_000, burstSince = 5_000))
+        for (now in 5_000L..16_000L step 37) {
+            for (since in 5_000L..now step 211) {
+                for (burst in 5_000L..now step 307) {
+                    assertEquals("$now $since $burst", appLoadHeld(now, since, burst), appLoadHoldWaitMs(now, since, burst) > 0)
+                }
+            }
+        }
     }
 
     @Test
-    fun `a 5 s apply with 50 callbacks is one load, at its release`() {
-        val storm = (0 until 50).map { 10_000L + it * 100 } // 10.0 .. 14.9 s, more than 300 ms apart would not matter
-        val apply: (Long) -> Long? = { t -> if (t in 10_000L until 15_000L) 10_000L else null }
-        assertEquals(listOf(0L, 15_000L), loadsFor(listOf(0L) + storm, held = apply))
+    fun `the hold nests and ends only at the outer release`() {
+        try {
+            AppLoadHold.hold(1_000)
+            AppLoadHold.hold(2_000)
+            assertEquals(1_000L, AppLoadHold.heldSince)
+            AppLoadHold.release()
+            assertEquals(1_000L, AppLoadHold.heldSince)
+            AppLoadHold.release()
+            assertEquals(null, AppLoadHold.heldSince)
+            AppLoadHold.release()
+            assertEquals("an extra release is harmless", null, AppLoadHold.heldSince)
+        } finally {
+            // The real, process-wide object: never leave it held for the rest of the test JVM (Q-5).
+            repeat(3) { AppLoadHold.release() }
+        }
+    }
+
+    private val fiveSecondApply: (Long) -> Long? = { t -> if (t in 10_000L until 15_000L) 10_000L else null }
+
+    @Test
+    fun `a 5 s apply with 50 callbacks is one load, 300 ms after its release`() {
+        val storm = (0 until 50).map { 10_000L + it * 100 } // 10.0 .. 14.9 s
+        assertEquals(listOf(0L, 15_300L), loadsFor(listOf(0L) + storm, held = fiveSecondApply))
         // Callbacks 400 ms apart - each its own burst without the hold - still one load.
         val sparse = (0 until 12).map { 10_000L + it * 400 }
-        assertEquals(listOf(0L, 15_000L), loadsFor(listOf(0L) + sparse, held = apply))
+        assertEquals(listOf(0L, 15_300L), loadsFor(listOf(0L) + sparse, held = fiveSecondApply))
+    }
+
+    @Test
+    fun `the callbacks that trail the release join the same load (Q-2)`() {
+        val storm = (0 until 50).map { 10_000L + it * 100 } + listOf(15_150L, 15_250L)
+        assertEquals(listOf(0L, 15_550L), loadsFor(listOf(0L) + storm, held = fiveSecondApply))
+    }
+
+    @Test
+    fun `a short apply's end is the request the burst loads from (wasHeld, Q-3)`() {
+        // A 500 ms apply, one callback 50 ms before its end: the release (seen at the next poll, 10 550) counts as a
+        // request, 300 ms later the load - not 300 ms after the callback.
+        assertEquals(listOf(0L, 10_850L), loadsFor(listOf(0L, 10_450L), held = { t -> if (t in 10_000L until 10_500L) 10_000L else null }))
     }
 
     @Test
     fun `a hung apply holds the loads 10 s, then one load`() {
         val storm = (0 until 50).map { 10_000L + it * 100 }
-        assertEquals(listOf(0L, 20_000L), loadsFor(listOf(0L) + storm, held = { 10_000L }))
+        assertEquals(listOf(0L, 20_300L), loadsFor(listOf(0L) + storm, held = { 10_000L }))
+    }
+
+    @Test
+    fun `a chain of applies holds a burst 10 s at most, never the whole chain (Q-1)`() {
+        // Three 8 s applies back to back (10-18, 18-26, 26-34 s), a callback every 500 ms through them.
+        val chain: (Long) -> Long? = { t ->
+            when {
+                t < 10_000L -> null
+                t < 18_000L -> 10_000L
+                t < 26_000L -> 18_000L
+                t < 34_000L -> 26_000L
+                else -> null
+            }
+        }
+        val callbacks = (0 until 48).map { 10_000L + it * 500 } // 10.0 .. 33.5 s
+        assertEquals(listOf(0L, 20_300L, 30_800L, 34_300L), loadsFor(listOf(0L) + callbacks, held = chain))
     }
 
     @Test
