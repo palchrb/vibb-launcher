@@ -56,6 +56,8 @@ pub struct Pruned {
 /// - crash reports not reported again for [CRASH_REPORT_DAYS];
 /// - security log entries older than [SECURITY_EVENT_DAYS];
 /// - the phones' parent-PIN events after `parent_pin::PIN_EVENT_DAYS` (by when they arrived);
+/// - a zone's arrivals and departures with the phone's location history (`location_retention_days`,
+///   by when they were stored; design 64 decision 6);
 /// - the parent's events after `parent_events::EVENT_DAYS`, push deliveries and turned-off
 ///   subscriptions after [PUSH_DAYS] (design 35 §2.4);
 /// - commands asked more than [COMMAND_DAYS] ago, except one the phone may still get: never
@@ -134,13 +136,28 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     .execute(db)
     .await?
     .rows_affected();
-    let parent_events = sqlx::query(
-        "DELETE FROM parent_events WHERE created_at < datetime('now', '-' || ? || ' days')",
+    // A zone's arrivals and departures are location records (design 64 decision 6): they go
+    // with the phone's location history, not after the inbox's 90 days.
+    let zone_rows = sqlx::query(
+        "DELETE FROM parent_events WHERE kind IN (?, ?) \
+           AND created_at < datetime('now', '-' || MAX(1, COALESCE( \
+                 (SELECT p.location_retention_days FROM device_policy p \
+                  WHERE p.device_id = parent_events.device_id), ?)) || ' days')",
     )
-    .bind(crate::parent_events::EVENT_DAYS)
+    .bind(crate::parent_events::Kind::ZoneArrived.wire())
+    .bind(crate::parent_events::Kind::ZoneLeft.wire())
+    .bind(DEFAULT_LOCATION_RETENTION_DAYS)
     .execute(db)
     .await?
     .rows_affected();
+    let parent_events = zone_rows
+        + sqlx::query(
+            "DELETE FROM parent_events WHERE created_at < datetime('now', '-' || ? || ' days')",
+        )
+        .bind(crate::parent_events::EVENT_DAYS)
+        .execute(db)
+        .await?
+        .rows_affected();
     let deliveries = sqlx::query(
         "DELETE FROM push_deliveries WHERE created_at < datetime('now', '-' || ? || ' days')",
     )

@@ -402,24 +402,27 @@ struct Due {
     target: String,
 }
 
-type DueRow = (
-    i64,
-    i64,
-    String,
-    i64,
-    String,
-    String,
-    Vec<u8>,
-    Vec<u8>,
-    String,
-    String,
-    String,
-    Option<i64>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-);
+/// A due delivery as [send_due] reads it, with its subscription and event.
+#[derive(sqlx::FromRow)]
+struct DueRow {
+    id: i64,
+    subscription_id: i64,
+    kind: String,
+    attempts: i64,
+    created_at: String,
+    endpoint: String,
+    p256dh: Vec<u8>,
+    auth: Vec<u8>,
+    origin: String,
+    label: String,
+    state: String,
+    event_id: Option<i64>,
+    event_kind: Option<String>,
+    title: Option<String>,
+    summary: Option<String>,
+    target: Option<String>,
+    params: Option<String>,
+}
 
 /// One pass of the sender at `now` (tests drive it directly): every due delivery is sent once,
 /// with more than [FOLD_ABOVE] event pushes for one subscription folded into its newest two and
@@ -442,7 +445,8 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
     .await?;
     let rows: Vec<DueRow> = sqlx::query_as(
         "SELECT d.id, d.subscription_id, d.kind, d.attempts, d.created_at, s.endpoint, s.p256dh, \
-                s.auth, s.origin, s.label, s.state, d.event_id, e.kind, e.title, e.summary, e.target \
+                s.auth, s.origin, s.label, s.state, d.event_id, e.kind AS event_kind, e.title, \
+                e.summary, e.target, e.params \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
          LEFT JOIN parent_events e ON e.id = d.event_id \
          WHERE d.status = 'queued' AND (d.next_try_at IS NULL OR d.next_try_at <= ?) \
@@ -452,11 +456,30 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
     .fetch_all(&state.db)
     .await?;
     let mut due: Vec<Due> = Vec::new();
+    // A kind told from its parameters (design 64's zones) gets its words here, in the Phone Setup
+    // zone at the pass's time.
+    let zone = crate::display_time::Zone::load(&state.db).await;
     for row in rows {
-        let (id, subscription_id, kind, attempts, created_at, endpoint, p256dh, auth) =
-            (row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7);
-        let (origin, label, sub_state, event_id) = (row.8, row.9, row.10, row.11);
-        let what = match (kind.as_str(), row.12.as_deref().and_then(Kind::of)) {
+        let DueRow {
+            id,
+            subscription_id,
+            kind,
+            attempts,
+            created_at,
+            endpoint,
+            p256dh,
+            auth,
+            origin,
+            label,
+            state: sub_state,
+            event_id,
+            event_kind,
+            title,
+            summary,
+            target,
+            params,
+        } = row;
+        let what = match (kind.as_str(), event_kind.as_deref().and_then(Kind::of)) {
             ("event", Some(kind)) => What::Event(kind),
             ("summary", _) => What::Summary,
             ("test", _) => What::Test,
@@ -471,11 +494,17 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
             continue;
         }
         let (title, body, target) = match what {
-            What::Event(_) => (
-                row.13.unwrap_or_default(),
-                row.14.unwrap_or_default(),
-                row.15.unwrap_or_default(),
-            ),
+            What::Event(kind) => {
+                let (title, body) = crate::parent_events::told(
+                    kind.wire(),
+                    title.unwrap_or_default(),
+                    summary.unwrap_or_default(),
+                    params.as_deref(),
+                    &zone,
+                    now,
+                );
+                (title, body, target.unwrap_or_default())
+            }
             What::Summary => (
                 "New notifications".to_string(),
                 "More than 3 at once - open Notifications to see them".to_string(),

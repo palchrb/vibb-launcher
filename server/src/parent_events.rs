@@ -44,10 +44,14 @@ pub enum Kind {
     /// the next boot.
     PhoneOff,
     PhoneOn,
+    /// Design 64: a phone arrived in or left one of its zones (`zones::evaluate`), told from its
+    /// parameters ([NewEvent::params]).
+    ZoneArrived,
+    ZoneLeft,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 8] = [
+    pub const ALL: [Kind; 10] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -55,6 +59,8 @@ impl Kind {
         Kind::UnseenBoot,
         Kind::PhoneOff,
         Kind::PhoneOn,
+        Kind::ZoneArrived,
+        Kind::ZoneLeft,
         Kind::LowBattery,
     ];
 
@@ -68,6 +74,8 @@ impl Kind {
             Kind::LowBattery => "low_battery",
             Kind::PhoneOff => "phone_off",
             Kind::PhoneOn => "phone_on",
+            Kind::ZoneArrived => "zone_arrived",
+            Kind::ZoneLeft => "zone_left",
         }
     }
 
@@ -85,11 +93,12 @@ impl Kind {
     }
 
     /// Seconds the push service keeps the push for an offline device (§4.3): a day for the
-    /// emergency call, an hour for a low battery (later it is charging or flat), else 12 h.
+    /// emergency call, an hour for a low battery (later it is charging or flat) and a zone's
+    /// crossing (later it is old news, design 64 §3.4), else 12 h.
     pub fn ttl(self) -> i64 {
         match self {
             Kind::EmergencyCall => 86_400,
-            Kind::LowBattery => 3_600,
+            Kind::LowBattery | Kind::ZoneArrived | Kind::ZoneLeft => 3_600,
             _ => 43_200,
         }
     }
@@ -111,7 +120,20 @@ impl Kind {
             Kind::LowBattery => Some(("push_low_battery", "Battery low")),
             Kind::PhoneOff => Some(("push_phone_off", "Phone turned off")),
             Kind::PhoneOn => Some(("push_phone_on", "Phone turned on")),
+            // One switch for both directions (design 64 §3.4).
+            Kind::ZoneArrived | Kind::ZoneLeft => Some(("push_zones", "Zones: arrived and left")),
         }
+    }
+
+    /// Notify Me About's switches, each once, in [Kind::ALL]'s order (two kinds may share one).
+    pub fn switches() -> Vec<(&'static str, &'static str)> {
+        let mut switches: Vec<(&'static str, &'static str)> = Vec::new();
+        for switch in Kind::ALL.iter().filter_map(|kind| kind.switch()) {
+            if !switches.contains(&switch) {
+                switches.push(switch);
+            }
+        }
+        switches
     }
 }
 
@@ -162,12 +184,7 @@ impl Phone {
     /// `words` with the phone's name in it, the name cut ("…") so the whole is at most `max`
     /// characters.
     fn named(&self, max: usize, words: impl Fn(&str) -> String) -> String {
-        let room = max.saturating_sub(words("").chars().count());
-        if self.name.chars().count() <= room {
-            return words(&self.name);
-        }
-        let cut: String = self.name.chars().take(room.saturating_sub(1)).collect();
-        words(&format!("{}…", cut.trim_end()))
+        fit_name(&self.name, max, words)
     }
 
     fn event(&self, kind: Kind, dedup_key: String, happened_at: DateTime<Utc>) -> NewEvent {
@@ -179,6 +196,7 @@ impl Phone {
             summary: String::new(),
             target: format!("/devices/{}", self.id),
             detail: None,
+            params: None,
             happened_at,
             push: Push::Now,
         }
@@ -657,6 +675,9 @@ pub struct NewEvent {
     pub target: String,
     /// Inbox only, never pushed.
     pub detail: Option<String>,
+    /// A kind told from parameters (design 64's zones): the JSON the words are made from when
+    /// shown or pushed ([told]); `title` and `summary` stay empty then.
+    pub params: Option<String>,
     pub happened_at: DateTime<Utc>,
     /// Whether and when a new row's push is queued (design 38 §3.2).
     pub push: Push,
@@ -694,8 +715,8 @@ pub async fn raise(
     }
     let id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO parent_events \
-         (device_id, kind, dedup_key, title, summary, target, detail, happened_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+         (device_id, kind, dedup_key, title, summary, target, detail, params, happened_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
          ON CONFLICT (device_id, kind, dedup_key) DO NOTHING RETURNING id",
     )
     .bind(event.device_id)
@@ -705,6 +726,7 @@ pub async fn raise(
     .bind(crate::audit::clip(&event.summary, SUMMARY_MAX))
     .bind(&event.target)
     .bind(&event.detail)
+    .bind(&event.params)
     .bind(instant(event.happened_at))
     .fetch_optional(&mut *conn)
     .await?;
@@ -915,6 +937,95 @@ impl Bell {
             self.unread.to_string()
         }
     }
+}
+
+/// `words` with `name` in it, the name cut ("…") so the whole is at most `max` characters.
+fn fit_name(name: &str, max: usize, words: impl Fn(&str) -> String) -> String {
+    let room = max.saturating_sub(words("").chars().count());
+    if name.chars().count() <= room {
+        return words(name);
+    }
+    let cut: String = name.chars().take(room.saturating_sub(1)).collect();
+    words(&format!("{}…", cut.trim_end()))
+}
+
+/// A zone event's parameters (design 64 §3.4, the user's decision 5): what the words are made of,
+/// stored instead of the words - the zone's and the phone's names as they were when it was
+/// raised, the direction, and when (the first fix of the pair, RFC 3339).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ZoneParams {
+    pub zone_id: i64,
+    pub zone: String,
+    pub phone: String,
+    /// `arrived` or `left`.
+    pub direction: String,
+    pub at: String,
+}
+
+/// A phone's crossing of one of its zones (design 64 §3.4): kind `zone_arrived`/`zone_left`, key
+/// `<zone id>:<inside|outside>:<the first fix's time>` (one crossing is one row however often it
+/// is evaluated), the words left to [told]. Target: the Locate page's map.
+pub fn zone_crossing(
+    device_id: i64,
+    phone: &str,
+    zone_id: i64,
+    zone_name: &str,
+    arrived: bool,
+    at: DateTime<Utc>,
+    push: Push,
+) -> NewEvent {
+    let (kind, side, direction) = if arrived {
+        (Kind::ZoneArrived, "inside", "arrived")
+    } else {
+        (Kind::ZoneLeft, "outside", "left")
+    };
+    let params = ZoneParams {
+        zone_id,
+        zone: zone_name.to_string(),
+        phone: phone.to_string(),
+        direction: direction.to_string(),
+        at: instant(at),
+    };
+    NewEvent {
+        device_id,
+        kind,
+        dedup_key: format!("{zone_id}:{side}:{}", instant(at)),
+        title: String::new(),
+        summary: String::new(),
+        target: format!("/devices/locate?device={device_id}#location"),
+        detail: None,
+        params: Some(serde_json::to_string(&params).expect("strings serialize")),
+        happened_at: at,
+        push,
+    }
+}
+
+/// An event's words as shown and pushed: a kind told from parameters gets them made here, in
+/// English, at `now` in `zone` ("Sverre arrived at Home" / "15:42", "Yesterday 21:14"); any
+/// other row keeps its stored `title` and `summary`. Parameters that don't read leave them too.
+pub fn told(
+    kind: &str,
+    title: String,
+    summary: String,
+    params: Option<&str>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    let Some(kind @ (Kind::ZoneArrived | Kind::ZoneLeft)) = Kind::of(kind) else {
+        return (title, summary);
+    };
+    let Some(p) = params.and_then(|p| serde_json::from_str::<ZoneParams>(p).ok()) else {
+        return (title, summary);
+    };
+    let place = crate::audit::clip(&p.zone, crate::zones::NAME_MAX).to_string();
+    let title = fit_name(&p.phone, TITLE_MAX, |name| match kind {
+        Kind::ZoneArrived => format!("{name} arrived at {place}"),
+        _ => format!("{name} left {place}"),
+    });
+    let summary = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    (crate::audit::clip(&title, TITLE_MAX).to_string(), summary)
 }
 
 /// RFC 3339 with milliseconds, UTC: how an instant is stored and keyed.
@@ -1436,6 +1547,19 @@ mod tests {
                 "14:02 · battery 64 %",
                 "/devices/3",
             ),
+            // Told from their parameters (design 64): nothing stored as words.
+            (
+                zone_crossing(3, "Anna", 5, "Home", true, two, Push::Now),
+                "",
+                "",
+                "/devices/locate?device=3#location",
+            ),
+            (
+                zone_crossing(3, "Anna", 6, "School", false, two, Push::No),
+                "",
+                "",
+                "/devices/locate?device=3#location",
+            ),
             (
                 phone.low_battery(&battery(14, false, true), two),
                 "Battery low on Anna (14 %)",
@@ -1468,7 +1592,86 @@ mod tests {
         assert_eq!(rows[4].0.dedup_key, format!("2:{}", two.timestamp_millis()));
         assert_eq!(rows[5].0.dedup_key, "2026-10-18T12:02:00.000Z");
         assert_eq!(rows[6].0.dedup_key, "boot:2026-10-01 08:00:00:42");
-        assert_eq!(rows[7].0.dedup_key, "2026-10-18T12:02:00.000Z");
+        assert_eq!(rows[7].0.dedup_key, "5:inside:2026-10-18T12:02:00.000Z");
+        assert_eq!(rows[8].0.dedup_key, "6:outside:2026-10-18T12:02:00.000Z");
+        assert_eq!(rows[9].0.dedup_key, "2026-10-18T12:02:00.000Z");
+    }
+
+    #[test]
+    fn a_zone_event_is_told_from_its_parameters() {
+        let phone = anna();
+        let zone = &phone.zone;
+        let two = utc("2026-10-18 12:02:00");
+        let arrived = zone_crossing(3, "Anna", 5, "Home", true, two, Push::Now);
+        let params: ZoneParams = serde_json::from_str(arrived.params.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            params,
+            ZoneParams {
+                zone_id: 5,
+                zone: "Home".to_string(),
+                phone: "Anna".to_string(),
+                direction: "arrived".to_string(),
+                at: "2026-10-18T12:02:00.000Z".to_string(),
+            }
+        );
+        assert_eq!(arrived.push, Push::Now);
+        let told_at = |event: &NewEvent, now| {
+            told(
+                event.kind.wire(),
+                event.title.clone(),
+                event.summary.clone(),
+                event.params.as_deref(),
+                zone,
+                now,
+            )
+        };
+        assert_eq!(
+            told_at(&arrived, phone.now),
+            ("Anna arrived at Home".to_string(), "14:02".to_string())
+        );
+        // The time is told when it is read: the next day it is yesterday's.
+        assert_eq!(
+            told_at(&arrived, utc("2026-10-19 09:00:00")).1,
+            "Yesterday 14:02"
+        );
+        let left = zone_crossing(3, "Anna", 6, "School", false, two, Push::No);
+        assert_eq!(told_at(&left, phone.now).0, "Anna left School");
+        // A long phone name is cut so the title fits; the zone's name stays.
+        let long_name = "Anna-Sofie ".repeat(8);
+        let long = zone_crossing(3, &long_name, 5, "Bestemor", true, two, Push::Now);
+        let (title, _) = told_at(&long, phone.now);
+        assert!(title.chars().count() <= TITLE_MAX, "{title}");
+        assert!(title.ends_with("… arrived at Bestemor"), "{title}");
+        // Another kind keeps its stored words; parameters that don't read too.
+        assert_eq!(
+            told("low_battery", "t".into(), "s".into(), None, zone, phone.now),
+            ("t".to_string(), "s".to_string())
+        );
+        assert_eq!(
+            told(
+                "zone_left",
+                "t".into(),
+                "s".into(),
+                Some("{"),
+                zone,
+                phone.now
+            ),
+            ("t".to_string(), "s".to_string())
+        );
+    }
+
+    #[test]
+    fn two_kinds_share_the_zones_switch() {
+        let switches = Kind::switches();
+        let zones = switches.iter().filter(|(name, _)| *name == "push_zones");
+        assert_eq!(zones.count(), 1);
+        assert_eq!(
+            switches.len(),
+            8,
+            "every switch once; the emergency call has none"
+        );
+        assert_eq!(Kind::ZoneArrived.switch(), Kind::ZoneLeft.switch());
+        assert!(!Kind::ZoneArrived.urgent() && Kind::ZoneLeft.ttl() == 3_600);
     }
 
     #[test]
