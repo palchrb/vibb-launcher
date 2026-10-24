@@ -219,6 +219,18 @@ class UiModelTest {
         assertEquals("the header follows the playing item", songs, live.entry)
         assertEquals(pod, live.entryOf(live.queue[0]))
         assertEquals("Favoritt 2 av 3", 2 to 3, playerNumber(mixed, live))
+        // r12 E-1: the screens' next and previous step over the favourites queue, across its runs - t1 is a run of one
+        val next = skipSwitch(mixed, live, forward = true, posMs = 10_000, atMs = 1_000)!!
+        assertEquals("next at a run's end: the next run's item, its own entry", pod to "e4", next.view.entry to next.view.item.key)
+        val previous = skipSwitch(mixed, live, forward = false, posMs = 0, atMs = 1_000)!!
+        assertEquals("previous at a run's start: the run before", pod to "e2", previous.view.entry to previous.view.item.key)
+        assertNull("previous later in the item restarts it (vibb's rule)", skipSwitch(mixed, live, forward = false, posMs = 30_000, atMs = 1_000))
+        assertEquals("next at the queue's end wraps", "e2", skipSwitch(mixed, next.view, forward = true, posMs = 0, atMs = 1_000)!!.view.item.key)
+        // the screens read the whole favourites queue, never the run's (MusicRoot's skip() -> skipSwitch over now.queue)
+        val root = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/ui/MusicRoot.kt").readText()
+        assertTrue(root.contains("vm.switching = skipSwitch(s, n, forward, position, SystemClock.elapsedRealtime(), onRoom)"))
+        val model = me.vibb.music.Fixtures.moduleFile("src/main/java/me/vibb/music/ui/UiModel.kt").readText()
+        assertTrue(model.contains("return favouritesView(snap, hub.favouritesQueue, hub.favouritesIndex, true,"))
         assertEquals(3, playerNumberOf(mixed, live, live.queue[2]))
         assertEquals("a song: shuffle and repeat, acting on the queue", me.vibb.music.logic.ControlSlots.SHUFFLE_REPEAT, live.slots)
         assertTrue("the queue's shuffle", live.shuffled)

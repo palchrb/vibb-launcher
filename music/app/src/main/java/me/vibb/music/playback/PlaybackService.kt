@@ -553,6 +553,11 @@ class PlaybackService : MediaSessionService() {
             .build()
         override fun isCommandAvailable(command: Int): Boolean = command !in refused && (command in extra || super.isCommandAvailable(command))
 
+        // r12 emulator round E-1: controllers hear these commands, never the wrapped player's (KidCommands.kt)
+        private val listeners = KidListeners { availableCommands }
+        override fun addListener(listener: Player.Listener) = super.addListener(listeners.wrap(listener))
+        override fun removeListener(listener: Player.Listener) = super.removeListener(listeners.unwrap(listener))
+
         // the launcher, Bluetooth, the notification: refused (Commands.SHUFFLE / REPEAT are the app's own)
         override fun setRepeatMode(repeatMode: Int) = Unit
         override fun setShuffleModeEnabled(shuffleModeEnabled: Boolean) = Unit

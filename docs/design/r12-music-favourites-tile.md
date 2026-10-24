@@ -703,3 +703,17 @@ Spotify on a room stays out until 54-a2 (§3.5's hand-over unchanged). Four comm
 - **Q-9/Q-10/Q-11** docs: §6s 10 says the room's "Til slutten" outcome, §6s 13 the gone entry's "Ikke lastet ned"
   (it stays: §3.9's "no toast" is superseded) and the restart after it, §6s 7b and 12b are new; deviation 5 says its end;
   the deviations are twelve. Q-10's cost and clock points are accepted as noted (tens of hearts; the wall clock).
+
+### Emulator fix round (E-1, §6s on jelly36)
+
+- **E-1 (Blocker)**: the player's Neste did nothing at a favourites run's edge (a run of one item), while
+  `KEYCODE_MEDIA_NEXT` worked. The screens were right - `skipSwitch` already counts over the whole favourites queue
+  (`now.queue` is `favouritesView`'s, "Favoritt 1 av 2") - but the app's `MediaController` dropped `seekToNext` before
+  it reached the service: Media3's `ForwardingPlayer` hands listeners the *wrapped* ExoPlayer's commands in
+  `onAvailableCommandsChanged`, the session forwards exactly those to every controller, and ExoPlayer has no
+  `COMMAND_SEEK_TO_NEXT` on a queue's last item. A headset's media button takes the session's own path, so it worked.
+  Fix: `KidPlayer` wraps its listeners (`playback/KidCommands.kt`, `KidListeners`) so every controller - the app's
+  buttons, the launcher's lock tile, the notification - hears `KidPlayer.getAvailableCommands` (its own additions and
+  refusals). This also fixes the in-app Neste on an entry queue's last item (vibb's wrap to the first). Forrige after
+  3 s into an item restarts it, as everywhere (vibb's rule); within 3 s it goes to the previous favourite. Tests:
+  `KidPlayerTest`'s E-1 case, `UiModelTest`'s next at a run's end and previous at a run's start across runs.

@@ -65,4 +65,29 @@ class KidPlayerTest {
         assertEquals(Repeat.ONE, snap.repeatOf(own))
         assertEquals("a podcast has the skip pair, never repeat", Repeat.OFF, snap.repeatOf(podcast))
     }
+
+    @Test
+    fun `r12 E-1 - controllers hear KidPlayer's commands, never the wrapped player's - a run's last item keeps next`() {
+        // ExoPlayer drops seek-to-next on a queue's last item (a favourites run of one); the session forwards the
+        // listener's argument to every controller (the app's buttons, the lock tile, the notification)
+        val ours = Player.Commands.Builder().add(Player.COMMAND_PLAY_PAUSE).add(Player.COMMAND_SEEK_TO_NEXT).add(Player.COMMAND_SEEK_TO_PREVIOUS).build()
+        val heard = mutableListOf<Player.Commands>()
+        val listener = object : Player.Listener {
+            override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
+                heard += availableCommands
+            }
+        }
+        val listeners = KidListeners { ours }
+        val wrapped = listeners.wrap(listener)
+        wrapped.onAvailableCommandsChanged(Player.Commands.Builder().add(Player.COMMAND_PLAY_PAUSE).build())
+        assertEquals(listOf(ours), heard)
+        assertTrue(heard.single().contains(Player.COMMAND_SEEK_TO_NEXT))
+        assertTrue("one wrapper per listener", listeners.wrap(listener) === wrapped)
+        assertTrue("a removal finds the wrapper it added", listeners.unwrap(listener) === wrapped)
+        assertTrue(listeners.unwrap(listener) === listener)
+        val kid = service.substringAfter("private inner class KidPlayer").substringBefore("private val callback")
+        assertTrue(kid.contains("private val listeners = KidListeners { availableCommands }"))
+        assertTrue(kid.contains("override fun addListener(listener: Player.Listener) = super.addListener(listeners.wrap(listener))"))
+        assertTrue(kid.contains("override fun removeListener(listener: Player.Listener) = super.removeListener(listeners.unwrap(listener))"))
+    }
 }
