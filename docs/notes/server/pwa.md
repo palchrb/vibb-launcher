@@ -969,7 +969,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 ## Locate: zones (design 64 step 1, `docs/design/64-safe-zones.md` §3.5-§3.6; the rest in `zones.md`)
 
 - **`#zones` on Locate** (`locate::zones_view`, right after `#location`): a row per zone ("Home" over "150 m · arrive
-  and leave" / "arrive" / "leave" / "no notifications", "Here now" while its side is inside, a chevron to its page;
+  and leave" / "arrive" / "leave" / "no notifications", "Here now" while the phone is in it now - or "Last seen at Home
+  14:02" while the newest fix is stale, `zones.md` "What the pages say of the phone" -, a chevron to its page;
   each row `id="zone-N"`), then **Add Zone** (`/devices/{id}/zones/new`), at 10 zones a note "10 zones is the most"
   instead. The footer: without zones "A zone tells you when the phone arrives or leaves, like Home or School."; with
   them by mode - Regularly "Arrivals and departures show after two locations on the same side. That is within about
@@ -983,12 +984,15 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   see nothing." to `/devices/{id}/advanced#restrictions`. The decision-3 floor (`max(chosen, 30 min)`) is step 2's and
   not said yet.
 - **The fix's badge**: the newest fix's sub-line "Within 40 m · At Home" ("At Home · School" for two), and the marker's
-  popup "10 min ago · within 40 m · at Home" (`data-shown-text`, text as before), while a zone's side is inside.
-- **The map**: the box gets `data-zones` while the phone has any; `static/locate.js` (`?v=3`, both Locate pages) then
+  popup "10 min ago · within 40 m · at Home" (`data-shown-text`, text as before), while **that fix** is surely inside
+  the zone (`locate::fix_badge`, `zones::side`; code QA Q-1).
+- **The map**: the box gets `data-zones` while the phone has any; `static/locate.js` (`?v=4` since the code QA fix round, both Locate pages) then
   fetches `GET /devices/{id}/zones.json` once (`no_store_path`: a child's home is never in a cached answer) and draws
   each as `L.circle` in `--map-zone` (#2F6F62, the same on OSM's light tiles in both schemes, beside `--map-trail`),
-  fill 0.08, its name a tooltip built as a text node; a zone that isn't numbers isn't drawn. A phone without a fix
-  shows its first zone. The span pick doesn't touch the circles.
+  fill 0.08, its name a tooltip built as a text node; a zone that isn't numbers isn't drawn. `zones.json` is asked
+  once the first locations settled (code QA Q-7), and a span without points shows the zones (one zone: its centre at
+  zoom 15; several: their centres fitted) instead of the world; the span pick doesn't touch the circles.
+  `zones.json` is `[{id, name, latitude, longitude, radius_m}]`, a 404 for an unknown phone.
 - **The zone's page** (`handlers::zones`, `device_zone.html`, tab Locate, `no_store_path` `["devices", _, "zones",
   ..]`): one form `#zone-form` with the time rule's sticky editor bar (`.nav-back` "Locate" to
   `/devices/locate?device={id}#zones`, **Add** / **Save** at the right, a refusal's "Not saved. …" in the bar), the
@@ -1006,8 +1010,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   and Save -> `…&zone=saved…#zone-N` (the row, with "Added." / "Saved." as a flash right under it), Delete ->
   `…&zone=deleted#zones` ("Zone deleted." at the group's top), Locate Regularly -> `#zones`. A refusal re-renders the
   page (400) - the form's action ends in `#zone-form`, so the answer opens there - with the field marked
-  (`aria-invalid`, `autofocus`, the reason under it: "Give the zone a name.", "At most 40 characters.", "Letters, digits
-  and spaces - no line breaks.", "This phone has a zone with that name.", "A latitude between -90 and 90.", "A
+  (`aria-invalid`, `autofocus`, the reason under it: "Give the zone a name.", "At most 40 characters.", "No line breaks
+  or invisible characters.", "This phone has a zone with that name.", "A latitude between -90 and 90.", "A
   longitude between -180 and 180.", "Between 100 and 2000 m."), the 11th zone in the bar ("10 zones is the most for one
   phone. Delete one first."), nothing written. An unknown phone, an unknown zone or another phone's zone is a 404; a
   database error a 500 "Nothing was saved".
@@ -1018,11 +1022,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   clamps it into the range; a typed coordinate redraws on `change`; "Use Phone's Location" moves the centre. Every
   change writes both coordinates (6 decimals, a longitude wrapped into -180..180), so Save posts what the map shows.
   Long-press isn't used (a tap is enough; iOS's long-press opens its own menu). `--map-zone` for the circle.
-- **The phone's summary**: the header line "At Home since 15:42" (`data-zone-now`, after the battery and "Off since").
+- **The phone's summary**: the header line "At Home since 15:42" (`data-zone-now`, after the battery and "Off since"),
+  only while the phone is in the zone now (no other side pending, the newest fix fresh).
 - **Notify Me About** gains "Zones: arrived and left" from `Kind::switch()`, once (`Kind::switches()`); no template
   change.
 - CSS under "Design 64" at the end of `style.css` (`?v=50`): `.zone-slider`, the two `[hidden]` rules; the token
   `--map-zone` in `:root`.
 - Tests: `tests::zones` (the pages, the redirects with `assert_lands`, the refusals, the group by mode, the badge, the
-  summary line, the switch once), `admin_auth::tests::no_store_paths`, `tests::locations` (`locate.js?v=3`),
+  summary line, the switch once, "Here now" against a pending or stale fix), the two "every form lands" tests with a
+  zone (code QA Q-3; a zone's delete leaves the page, `settings_pages::leaves_the_page`), `admin_auth::tests::no_store_paths`, `tests::locations` (`locate.js?v=4`),
   `jstest/zones.test.js`, `jstest/locate.test.js`.

@@ -542,3 +542,19 @@ and `pwa.md`, "Locate: zones"):
 - **The summary's line is in the header** ("At Home since 15:42", `data-zone-now`), beside the battery and "Off since" -
   the summary has no "Now" group.
 - Not done in step 1, as planned: the policy, the status report, the launcher, mock locations, the kid's line.
+
+**The code QA's fix round** (`docs/review/qa-design-64-step1-code.md`, Q-1..Q-8, N-8):
+
+- **The intake is two steps**: the fix stored on its own, then the judging in its own `BEGIN IMMEDIATE` transaction.
+  A zone's error (or a crash between) never loses the fix; the cursors didn't move, so the next report judges it,
+  once (Q-6).
+- **What the pages say** (Q-1, Q-2, the coordinator's decision on open question 1): the fix's row and popup from that
+  fix's own side; "Here now" and the summary's line only with no other side pending and a fresh newest fix (2 x the
+  interval, else 1 h); a stale zone's row says "Last seen at Home 14:02", the summary nothing.
+- **A new or moved zone counts a newest fix under 30 min old as its pending side** (open question 2): one more fix
+  sets the side, silently.
+- **Activity's clock-only summary** is dropped, now a rule in `notifications.md` (open question 3).
+- The Locate map applies the zones after the locations, and a span without points shows the zones (Q-7); a zone name
+  refuses Unicode's format characters too, "No line breaks or invisible characters." (Q-8); `zones.json` drops `here`
+  and is a 404 for an unknown phone (N-8); tests for the confirming fix's age (Q-4), the tie at a cursor's instant
+  (Q-5) and the zone forms in both "every form lands" tests (Q-3).
