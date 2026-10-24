@@ -296,9 +296,45 @@ test("a phone's zones are circles with their names as text, fetched only when it
         [[59.9, 10.7], 150, "<b>Home</b>"],
         [[59.95, 10.75], 400, "School"],
     ], "the name is text, never HTML; a zone that isn't numbers isn't drawn");
+    // Asked once the locations settled, whatever answers first (code QA Q-7).
+    assert.deepStrictEqual(page.fetched.slice(0, 2), ["/devices/3/locations.json?since=12", "/devices/3/zones.json"]);
     // Without zones nothing is asked.
     const none = fakePage();
     install(none.win, fakeLeaflet());
     await settle();
     assert.ok(!none.fetched.some((u) => u.includes("zones.json")));
+});
+
+test("a span without points shows the zones, never the world, in either order of the answers", async () => {
+    const zoneLeaflet = () => {
+        const L = fakeLeaflet();
+        L.circle = () => {
+            const c = {};
+            c.addTo = () => c;
+            c.bindTooltip = () => c;
+            return c;
+        };
+        return L;
+    };
+    const zones = [{ id: 1, name: "Home", latitude: 59.9, longitude: 10.7, radius_m: 150 }];
+    // No fix in the span: the zone's view, after the world view the empty trail set first.
+    const L = zoneLeaflet();
+    const page = fakePage({ box: { "data-zones": "" }, answers: { "/devices/3/zones.json": zones } });
+    const api = install(page.win, L);
+    await api.zonesLoaded;
+    const views = L.calls.filter((c) => c[0] === "setView");
+    assert.deepStrictEqual(views[views.length - 1], ["setView", [59.9, 10.7], 15]);
+    // Points in the span: the trail's view stays, the zones don't move it.
+    const L2 = zoneLeaflet();
+    const withPoints = fakePage({
+        box: { "data-zones": "" },
+        answers: { "/devices/3/zones.json": zones, "/devices/3/locations.json?since=12": [point(1, "a"), point(2, "b")] },
+    });
+    await install(withPoints.win, L2).zonesLoaded;
+    assert.ok(!L2.calls.some((c) => c[0] === "setView"), "the trail's fitBounds is the view");
+    // A later span with no points shows the zones again, not the world.
+    page.pick.listeners.click({ target: page.links[1], preventDefault: () => {} });
+    await settle();
+    const later = L.calls.filter((c) => c[0] === "setView");
+    assert.deepStrictEqual(later[later.length - 1], ["setView", [59.9, 10.7], 15]);
 });

@@ -93,7 +93,7 @@
             {% for z in view.zones.rows %}
             <a class="row" id="zone-{{ z.id }}" href="/devices/{{ view.device.id }}/zones/{{ z.id }}" data-zone="{{ z.id }}">
                 <span class="row-label">{{ z.name }}<span class="row-sub">{{ z.sub }}</span></span>
-                {% if z.here %}<span class="row-value" data-here>Here now</span>{% endif %}
+                {% if z.presence.here() %}<span class="row-value" data-here>Here now</span>{% else if let Some(seen) = z.presence.last_seen() %}<span class="row-value" data-last-seen>{{ seen }}</span>{% endif %}
                 <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
             {% if let Some(text) = z.flash %}<p class="flash" role="status" data-flash="zone">{{ text }}</p>{% endif %}
@@ -211,7 +211,7 @@
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>
-    <script src="/static/locate.js?v=3"></script>
+    <script src="/static/locate.js?v=4"></script>
     {%- else %}
     {#- Several phones, none chosen: each with its state, as on Devices. -#}
     <div class="group group-avatars" data-group="phones">

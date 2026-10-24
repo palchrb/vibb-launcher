@@ -92,6 +92,10 @@ fn leaves_the_page(action: &str) -> bool {
             | ["apps", "tracked", n, "delete"]
             | ["music", "entries", n, "delete"]
             | ["schedules", "rules", n, "delete"] if number(n)
+    ) || matches!(
+        path.as_slice(),
+        // A zone's delete lands on Locate's #zones (design 64).
+        ["devices", d, "zones", n, "delete"] if number(d) && number(n)
     )
 }
 

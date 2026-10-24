@@ -124,14 +124,56 @@ struct ZonesView {
     confirm_within: Option<String>,
 }
 
-/// A zone's row: "Home" over "150 m · arrive and leave", "Here now" while the phone is in it,
-/// and after its save the line under it.
+/// A zone's row: "Home" over "150 m · arrive and leave", its value ([Presence]), and after its
+/// save the line under it.
 struct ZoneRow {
     id: i64,
     name: String,
     sub: String,
-    here: bool,
+    presence: Presence,
     flash: Option<&'static str>,
+}
+
+/// What a zone's row says of the phone (code QA Q-1, Q-2).
+enum Presence {
+    /// Nothing: not in it, a crossing pending, or nothing known.
+    None,
+    /// "Here now": inside, no other side pending, the newest fix fresh.
+    Here,
+    /// "Last seen at Home 14:02": inside and nothing pending, but the newest fix (its time) is
+    /// stale.
+    LastSeen(String),
+}
+
+impl Presence {
+    fn here(&self) -> bool {
+        matches!(self, Presence::Here)
+    }
+
+    fn last_seen(&self) -> Option<&str> {
+        match self {
+            Presence::LastSeen(when) => Some(when),
+            _ => None,
+        }
+    }
+}
+
+/// The zones the fix itself is surely inside (`zones::side`), "At Home · School": the fix row's
+/// and the popup's words are that fix's own, never the zones' confirmed sides (code QA Q-1).
+fn fix_badge(zones: &[crate::zones::Zone], fix: &DeviceLocation) -> Option<String> {
+    let inside: Vec<&str> = zones
+        .iter()
+        .filter(|z| {
+            crate::zones::side(
+                &z.circle(),
+                fix.latitude,
+                fix.longitude,
+                fix.accuracy_meters,
+            ) == Some(crate::zones::Side::Inside)
+        })
+        .map(|z| z.name.as_str())
+        .collect();
+    (!inside.is_empty()).then(|| format!("At {}", inside.join(" · ")))
 }
 
 /// What a zone's row says it notifies about.
@@ -146,6 +188,7 @@ fn notify_words(arrive: bool, leave: bool) -> &'static str {
 
 /// The zones' part of the page for `zones` with the location setting (`mode`, `interval`) and
 /// "Keep location on" (`locked`); `flash` is `?zone=`, `flash_zone` `?zone_id=`.
+#[allow(clippy::too_many_arguments)]
 fn zones_view(
     zones: &[crate::zones::Zone],
     mode: &str,
@@ -153,7 +196,11 @@ fn zones_view(
     locked: bool,
     flash: Option<&str>,
     flash_zone: Option<i64>,
+    newest: Option<DateTime<Utc>>,
+    zone: &Zone,
+    now: DateTime<Utc>,
 ) -> ZonesView {
+    let fresh = crate::zones::fresh(newest, mode, interval, now);
     let row_flash = match flash {
         Some("added") => Some("Added."),
         Some("saved") => Some("Saved."),
@@ -169,7 +216,13 @@ fn zones_view(
                 z.radius_m,
                 notify_words(z.notify_arrive, z.notify_leave)
             ),
-            here: z.here(),
+            presence: match newest {
+                _ if z.here_now(fresh) => Presence::Here,
+                Some(at) if z.here_now(true) => {
+                    Presence::LastSeen(format!("Last seen at {} {}", z.name, zone.at(at, now)))
+                }
+                _ => Presence::None,
+            },
             flash: row_flash.filter(|_| flash_zone == Some(z.id)),
         })
         .collect::<Vec<_>>();
@@ -830,15 +883,10 @@ async fn locate_view(
         )
     });
     let zone_list = crate::zones::list(&state.db, id).await?;
-    // The newest fix's badge (design 64 §3.5): the zones the phone is in, "At Home · School".
-    let here: Vec<&str> = zone_list
-        .iter()
-        .filter(|z| z.here())
-        .map(|z| z.name.as_str())
-        .collect();
-    let badge = (!here.is_empty()).then(|| format!("At {}", here.join(" · ")));
 
     let (newest, mut map) = map_data(state, id, span, zone, now).await?;
+    // The newest fix's badge (design 64 §3.5): the zones that fix is surely in.
+    let badge = newest.as_ref().and_then(|l| fix_badge(&zone_list, l));
     let fix = newest.as_ref().map(|l| {
         let fix = Fix::of(&l.captured_at, l.accuracy_meters);
         let accuracy = match &badge {
@@ -887,6 +935,9 @@ async fn locate_view(
         location_locked,
         zone_flash,
         flash_zone,
+        newest.as_ref().and_then(|l| parse_db_utc(&l.captured_at)),
+        zone,
+        now,
     );
     Ok(Locate {
         device,

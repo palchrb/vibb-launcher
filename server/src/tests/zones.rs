@@ -377,8 +377,8 @@ async fn a_moved_zone_forgets_its_side_and_a_rename_keeps_it() {
     assert_eq!(side(&app, home).await, None);
 }
 
-/// A fix stored but not judged (a crash between the two - they are one transaction, so this is
-/// the self-healing for anything else) is judged at the next report, once.
+/// A fix stored but not judged (a crash or an error between the intake's two steps, or any other
+/// path) is judged at the next report, once.
 #[tokio::test]
 async fn a_stored_fix_the_zones_have_not_judged_is_judged_next_time_once() {
     let app = TestApp::new().await;
@@ -546,6 +546,8 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
             "{path}"
         );
     }
+    let unknown = app.get_page("/devices/999/zones.json", &cookie).await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND, "code QA N-8");
     let res = app
         .request_form(
             Method::POST,
@@ -568,7 +570,7 @@ async fn the_zone_page_adds_saves_and_deletes_landing_on_its_row() {
     assert_eq!(
         json.json(),
         json!([{"id": home, "name": "Home", "latitude": 59.9139, "longitude": 10.7522,
-                "radius_m": 150, "here": false}])
+                "radius_m": 150}])
     );
     // Deleted: back to #zones with the line.
     let res = app
@@ -812,4 +814,225 @@ async fn a_zone_needs_a_session() {
         let res = app.request_form(method, &path, None, &[]).await;
         assert_eq!(res.location(), Some("/login"), "{path}");
     }
+}
+
+/// The confirming fix's age alone decides the push (code QA Q-4): in Only when asked the first
+/// fix may be hours old and the second the parent's fresh Update Location.
+#[tokio::test]
+async fn an_old_first_fix_with_a_fresh_confirming_one_is_pushed() {
+    let app = TestApp::new().await;
+    let mamma = two_parents(&app).await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let home = add_home(&app, &mamma, id).await;
+    report(&app, &token, AWAY, &at(300)).await;
+    report(&app, &token, AWAY, &at(290)).await;
+    assert_eq!(side(&app, home).await.as_deref(), Some("outside"));
+    report(&app, &token, NEAR, &at(180)).await;
+    report(&app, &token, NEAR, &at(2)).await;
+    let happened: String = sqlx::query_scalar("SELECT happened_at FROM parent_events")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    let age = Utc::now() - crate::display_time::parse_db_utc(&happened).unwrap();
+    assert!(
+        age > Duration::minutes(170),
+        "told at the first fix, 3 h ago"
+    );
+    assert_eq!(
+        pushed_to(&app).await,
+        [ENDPOINT],
+        "and pushed: the confirming fix is news"
+    );
+}
+
+/// A second fix at a cursor's exact `captured_at` is fetched by its id (code QA Q-5): it moves
+/// the zone's state.
+#[tokio::test]
+async fn a_fix_at_the_cursors_instant_is_judged_by_its_id() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let home = add_home(&app, &cookie, id).await;
+    report(&app, &token, NEAR, &at(50)).await;
+    report(&app, &token, NEAR, &at(45)).await;
+    assert_eq!(side(&app, home).await.as_deref(), Some("inside"));
+    // Two fixes at one instant, two places: the second is another fix, after the cursor.
+    let instant = at(20);
+    report(&app, &token, NEAR, &instant).await;
+    let pending = "SELECT pending_side FROM device_zones";
+    let none: Option<String> = sqlx::query_scalar(pending)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(none, None);
+    report(&app, &token, AWAY, &instant).await;
+    let moved: Option<String> = sqlx::query_scalar(pending)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        moved.as_deref(),
+        Some("outside"),
+        "the tie was fetched and judged"
+    );
+    let cursor: (String, i64) =
+        sqlx::query_as("SELECT evaluated_at, evaluated_fix_id FROM device_zones")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        cursor.1,
+        count(&app, "SELECT MAX(id) FROM device_locations").await
+    );
+}
+
+/// A zone that can't be judged never costs the trail its fix (code QA Q-6); once it can, the fix
+/// is judged, once.
+#[tokio::test]
+async fn a_zone_error_keeps_the_fix_and_judges_it_later() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let home = add_home(&app, &cookie, id).await;
+    report(&app, &token, AWAY, &at(50)).await;
+    report(&app, &token, AWAY, &at(45)).await;
+    // A row that doesn't decode: every judging fails.
+    sqlx::query("UPDATE device_zones SET notify_arrive = 'garbled'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    report(&app, &token, NEAR, &at(20)).await;
+    report(&app, &token, NEAR, &at(15)).await;
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM device_locations").await,
+        4,
+        "stored"
+    );
+    assert_eq!(
+        side(&app, home).await.as_deref(),
+        Some("outside"),
+        "not judged yet"
+    );
+    sqlx::query("UPDATE device_zones SET notify_arrive = 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // The next report (its fix the cached one again) judges both, once.
+    let last = at(10);
+    report(&app, &token, NEAR, &last).await;
+    report(&app, &token, NEAR, &last).await;
+    assert_eq!(side(&app, home).await.as_deref(), Some("inside"));
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM parent_events").await, 1);
+}
+
+/// "Here now", the summary's line and the fix's badge only say what is known now (code QA Q-1,
+/// Q-2): the badge is the newest fix's own side; "Here now" and "At Home since" need no other
+/// side pending and a fresh newest fix; a stale phone's row says when it was last seen there.
+#[tokio::test]
+async fn here_now_needs_the_newest_fix_to_agree_and_be_fresh() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let home = add_home(&app, &cookie, id).await;
+    report(&app, &token, NEAR, &at(30)).await;
+    report(&app, &token, NEAR, &at(25)).await;
+    let locate = format!("/devices/locate?device={id}");
+    let summary = format!("/devices/{id}");
+    assert!(
+        app.get_page(&locate, &cookie)
+            .await
+            .text()
+            .contains("data-here>Here now")
+    );
+    // The first fix outside: pending. Nothing says "at Home" under a fix 1 km away.
+    report(&app, &token, AWAY, &at(5)).await;
+    assert_eq!(side(&app, home).await.as_deref(), Some("inside"));
+    let html = app.get_page(&locate, &cookie).await.text();
+    assert!(!html.contains("At Home"), "no badge for a fix outside");
+    assert!(!html.contains("at Home\""), "nor in the popup");
+    assert!(!html.contains("data-here"));
+    assert!(!html.contains("data-last-seen"));
+    let page = app.get_page(&summary, &cookie).await.text();
+    assert!(!page.contains("data-zone-now"));
+    // Back inside, then the phone goes quiet: two hours later (Only when asked: 1 h) it is stale.
+    report(&app, &token, NEAR, &at(4)).await;
+    assert!(
+        app.get_page(&summary, &cookie)
+            .await
+            .text()
+            .contains("data-zone-now>At Home since")
+    );
+    sqlx::query(
+        "UPDATE device_locations SET captured_at = strftime('%Y-%m-%dT%H:%M:%fZ', captured_at, '-2 hours')",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let html = app.get_page(&locate, &cookie).await.text();
+    assert!(!html.contains("data-here"));
+    assert!(html.contains("data-last-seen>Last seen at Home "), "{html}");
+    assert!(
+        html.contains("Within 20 m · At Home"),
+        "the fix itself is still inside"
+    );
+    assert!(
+        !app.get_page(&summary, &cookie)
+            .await
+            .text()
+            .contains("data-zone-now")
+    );
+    // Regularly every 2 hours: 4 h is fresh.
+    sqlx::query(
+        "UPDATE device_policy SET location_mode = 'interval', location_interval_minutes = 120",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(
+        app.get_page(&locate, &cookie)
+            .await
+            .text()
+            .contains("data-here>Here now")
+    );
+    assert!(
+        app.get_page(&summary, &cookie)
+            .await
+            .text()
+            .contains("data-zone-now")
+    );
+}
+
+/// A new zone takes a fresh newest fix as its pending side (the coordinator's decision on open
+/// question 2): one more fix confirms it, silently; an old fix seeds nothing.
+#[tokio::test]
+async fn a_new_zone_counts_a_fresh_fix_as_pending() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    report(&app, &token, NEAR, &at(10)).await;
+    let home = add_home(&app, &cookie, id).await;
+    let pending: Option<String> = sqlx::query_scalar("SELECT pending_side FROM device_zones")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(pending.as_deref(), Some("inside"));
+    assert_eq!(side(&app, home).await, None);
+    report(&app, &token, NEAR, &at(5)).await;
+    assert_eq!(side(&app, home).await.as_deref(), Some("inside"));
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM parent_events").await,
+        0,
+        "silent"
+    );
+    // A fix 40 minutes old seeds nothing.
+    let (emil, token) = app.enrolled_device("Emil").await;
+    report(&app, &token, NEAR, &at(40)).await;
+    add_home(&app, &cookie, emil).await;
+    let seeded: Option<String> =
+        sqlx::query_scalar("SELECT pending_side FROM device_zones WHERE device_id = ?")
+            .bind(emil)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(seeded, None);
 }

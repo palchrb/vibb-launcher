@@ -293,3 +293,8 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   empty) and worded where shown or pushed by `parent_events::told` (the inbox's and Activity's `inbox_row`, the
   sender's `send_due`); every older kind keeps its stored words. Pushed only while news (the confirming fix under 30
   min old), kept with the phone's location history, not 90 days. All of it in `zones.md`.
+- **A summary that is only the row's own clock is dropped** where the row shows its time anyway (the summary's
+  Activity, `activity::without_own_clock`: "15:42" or "Yesterday 15:42" against the row's `when`), and both row
+  templates leave out an empty summary's " · ". A zone event's summary is just its time; an emergency call or a
+  phone-off on an earlier day now shows only `when` there too. So a later kind must not put anything but its clock
+  in a summary it needs shown in Activity (the code QA's open question 3, kept as a rule).
