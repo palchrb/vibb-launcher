@@ -1231,6 +1231,44 @@ pub struct StatusReportRequest {
     /// report ([lenient_battery]).
     #[serde(default, deserialize_with = "lenient_battery")]
     pub battery: Option<BatteryReport>,
+    /// Design 64 step 2: fixes the phone took or kept since its last report and hasn't sent (a
+    /// crossing's fixes, a report that didn't get through), oldest first, each a
+    /// [LocationReport]. Every one goes through [checked_location]; the newest
+    /// `zones::MAX_EXTRA_LOCATIONS` are stored, all of them before the zones are judged once
+    /// (`zones::intake`). An entry that isn't a fix is dropped, never the report
+    /// ([lenient_locations]). Absent from older launchers. A fix's `provider` and `mock` keys are
+    /// the phone's (a release build never sends a mock fix); the server doesn't store them.
+    #[serde(default, deserialize_with = "lenient_locations")]
+    pub extra_locations: Vec<LocationReport>,
+    /// Design 64 step 2: `{fences, motion_sensor, location_on, background_location,
+    /// mock_ignored}` - the phone's zone watch (`zones::sanitize_zone_watch`, known keys only).
+    /// `fences > 0` is the capability the served interval's floor waits for. Absent from older
+    /// launchers.
+    #[serde(default)]
+    pub zone_watch: Option<serde_json::Value>,
+}
+
+/// `StatusReportRequest.extra_locations`: the entries that are a [LocationReport]; anything else
+/// (not a list, an entry without a time) is dropped and logged, never the report.
+fn lenient_locations<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<LocationReport>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(serde_json::Value::Array(items)) = value else {
+        return Ok(Vec::new());
+    };
+    let total = items.len();
+    let fixes: Vec<LocationReport> = items
+        .into_iter()
+        .filter_map(|item| serde_json::from_value(item).ok())
+        .collect();
+    if fixes.len() < total {
+        tracing::warn!(
+            dropped = total - fixes.len(),
+            "dropped extra locations that aren't fixes"
+        );
+    }
+    Ok(fixes)
 }
 
 /// `StatusReportRequest.battery` (design 35 §2.5): the level in percent, whether the phone charges,

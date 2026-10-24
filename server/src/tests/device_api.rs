@@ -439,15 +439,25 @@ async fn policy_json_keys_snapshot() {
             .is_some_and(|w| !w.is_empty())
     );
 
-    // The launcher's TimePolicy / LocationPolicy DTOs (handy step 6).
+    // The launcher's TimePolicy / LocationPolicy DTOs (handy step 6); design 64 step 2's `zones`
+    // always the key (`[]` unless Regularly with zones; a zone's keys in
+    // `zone_watch::the_policy_serves_the_zones_and_the_floor`).
     let time_policy = object["time_policy"].as_object().unwrap();
     let mut time_keys: Vec<&str> = time_policy.keys().map(String::as_str).collect();
     time_keys.sort_unstable();
     assert_eq!(time_keys, ["daily_budget_minutes", "lifts", "rules"]);
     assert_eq!(
         object["location_policy"],
-        serde_json::json!({"mode": "on_request", "interval_minutes": 30})
+        serde_json::json!({"mode": "on_request", "interval_minutes": 30, "zones": []})
     );
+    let mut location_keys: Vec<&str> = object["location_policy"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    location_keys.sort_unstable();
+    assert_eq!(location_keys, ["interval_minutes", "mode", "zones"]);
 
     // The lock's glance page (design 25): always an object, a fresh phone's default - Element X,
     // the sender only (per app since design 51). The launcher's `lockGlancePolicy` decodes exactly

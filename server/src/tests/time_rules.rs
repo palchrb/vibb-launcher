@@ -35,7 +35,7 @@ async fn fresh_policy_has_no_rules_unlimited_budget_and_on_request_location() {
     );
     assert_eq!(
         p["location_policy"],
-        json!({"mode": "on_request", "interval_minutes": 30})
+        json!({"mode": "on_request", "interval_minutes": 30, "zones": []})
     );
 }
 
@@ -741,7 +741,7 @@ async fn location_policy_form_round_trip() {
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
         policy(&app, &token).await["location_policy"],
-        json!({"mode": "interval", "interval_minutes": 60})
+        json!({"mode": "interval", "interval_minutes": 60, "zones": []})
     );
     // Mode only keeps the interval.
     app.request_form(
@@ -753,7 +753,7 @@ async fn location_policy_form_round_trip() {
     .await;
     assert_eq!(
         policy(&app, &token).await["location_policy"],
-        json!({"mode": "off", "interval_minutes": 60})
+        json!({"mode": "off", "interval_minutes": 60, "zones": []})
     );
     for bad in [
         vec![("mode", "always")],

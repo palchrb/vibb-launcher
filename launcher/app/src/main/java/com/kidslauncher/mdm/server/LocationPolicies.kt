@@ -22,6 +22,10 @@ enum class LocationAction {
 
 const val MIN_LOCATION_INTERVAL_MINUTES = 10
 
+/** Status-report capability (design 64 step 2): this launcher watches the policy's zones itself -
+ * one platform fence per zone, a crossing's fixes sent at once, `zone_watch` in every report. */
+const val ZONES_CAPABILITY = "zones_v1"
+
 /** Before step 6 (no `location_policy` from the server): a fresh fix at most every 10 minutes,
  * the cached one otherwise, on every sync. */
 val LEGACY_LOCATION_POLICY = LocationPolicy(mode = "interval", intervalMinutes = MIN_LOCATION_INTERVAL_MINUTES)

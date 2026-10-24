@@ -995,6 +995,38 @@ class PolicyResponseCompatTest {
         assertEquals("[\"call_policy_v1\",\"time_rules_v1\"]", json["capabilities"].toString())
     }
 
+    /** Design 64 step 2: `location_policy.zones` as the server's `policy_json_keys_snapshot` and
+     * `zone_watch::the_policy_serves_the_zones_and_the_floor` pin it - `{id, latitude, longitude,
+     * radius_m}`, never a name -, `[]`, and an older server's `location_policy` without the key
+     * (no zones), all surviving the cache's round trip. */
+    @Test
+    fun `location_policy zones decode, and a missing key is no zones`() {
+        fun withLocation(location: String) = serverResponse.replace(
+            "\"packages_to_uninstall\"",
+            "\"location_policy\": $location,\n\"packages_to_uninstall\"",
+        )
+        val withZones = withLocation(
+            """{"mode": "interval", "interval_minutes": 30, "zones": [
+                 {"id": 7, "latitude": 59.9139, "longitude": 10.7522, "radius_m": 150},
+                 {"id": 9, "latitude": -33.8688, "longitude": 151.2093, "radius_m": 2000}]}""",
+        )
+        val policy = (decodeCached(withZones) as CachedPolicy.Ok).policy
+        assertEquals(
+            listOf(
+                com.kidslauncher.mdm.server.dto.PolicyZone(7, 59.9139, 10.7522, 150),
+                com.kidslauncher.mdm.server.dto.PolicyZone(9, -33.8688, 151.2093, 2000),
+            ),
+            policy.locationPolicy!!.zones,
+        )
+        val reencoded = ServerJson.encodeToString(PolicyResponse.serializer(), policy)
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(reencoded))
+        val empty = (decodeCached(withLocation("""{"mode": "on_request", "interval_minutes": 30, "zones": []}""")) as CachedPolicy.Ok).policy
+        assertEquals(emptyList<Any>(), empty.locationPolicy!!.zones)
+        val older = (decodeCached(withLocation("""{"mode": "interval", "interval_minutes": 10}""")) as CachedPolicy.Ok).policy
+        assertEquals(com.kidslauncher.mdm.server.dto.LocationPolicy("interval", 10), older.locationPolicy)
+        assertEquals(emptyList<Any>(), older.locationPolicy!!.zones)
+    }
+
     /** Design 36 §4.1: the server's `dns_upstream` (its `custom_server_in_the_policy` shapes) and anything
      * else - nothing in it can fail the policy, and only a whole, valid pair is a custom server. */
     @Test

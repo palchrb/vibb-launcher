@@ -21,6 +21,7 @@
 //!   on, pushed only while news ([NEWS_FOR]) and to the parents whose "Zones" switch is on.
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
 use sqlx::SqliteConnection;
 
 use crate::AppState;
@@ -57,6 +58,17 @@ pub const FRESH_OUTSIDE_REGULARLY: Duration = Duration::hours(1);
 /// At most this many stored fixes are evaluated in one intake; the cursor takes the rest the
 /// next time.
 const EVALUATE_AT_MOST: i64 = 1000;
+/// Design 64 step 2: a status report's `extra_locations` are stored up to this many, the newest
+/// (the phone keeps at most 20 queued).
+pub const MAX_EXTRA_LOCATIONS: usize = 20;
+/// Design 64 step 2 (the user's decision 3, 2026-10-24): with zones on a phone that watches them
+/// itself (`zone_watch.fences > 0`), the served Regularly interval is at least this - the fences
+/// see the crossings, the heartbeat only keeps the trail and "last seen". Computed when the
+/// policy is served ([served_interval]), never written: the parent's choice comes back with the
+/// last zone deleted.
+pub const HEARTBEAT_FLOOR_MINUTES: i64 = 30;
+/// A stored `zone_watch` is at most this long (known keys only, so it never is).
+const ZONE_WATCH_MAX: usize = 512;
 
 /// Which side of a zone a fix is on, when it is sure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -298,7 +310,8 @@ pub fn fresh(
 }
 
 /// The phone's newest fix time and its location setting (`location_mode`,
-/// `location_interval_minutes`; a phone without a policy row reads as a new phone's), for [fresh].
+/// the interval as served - [served_interval_of]; a phone without a policy row reads as a new
+/// phone's), for [fresh].
 pub async fn freshness_inputs(
     db: &sqlx::SqlitePool,
     device_id: i64,
@@ -315,6 +328,8 @@ pub async fn freshness_inputs(
     .fetch_optional(db)
     .await?
     .unwrap_or_else(|| ("on_request".to_string(), 30));
+    // Design 64 step 2: the interval the phone is served (the 30-min floor with zones).
+    let interval = served_interval_of(db, device_id, &mode, interval).await?;
     Ok((newest.as_deref().and_then(parse_db_utc), mode, interval))
 }
 
@@ -435,13 +450,28 @@ async fn store_fix(
 /// A failure in step 2 rolls back step 2 only and is logged: the cursors didn't move, so the next
 /// report's step 2 judges the fix - once. A crash between the two is the same. A parallel report's
 /// step 2 may judge this fix first; the cursors make this one find nothing then.
-pub async fn intake(state: &AppState, device_id: i64, loc: &LocationReport, captured_at: &str) {
-    let stored = async {
-        let mut conn = state.db.acquire().await?;
-        store_fix(&mut conn, device_id, loc, captured_at).await
-    };
-    if let Err(err) = stored.await {
-        tracing::error!(device_id, %err, "can't store the fix");
+///
+/// Design 64 step 2 (code QA N-4): a report's fixes - its `extra_locations` and its `location`,
+/// checked ([report_fixes]) - are **all** stored first, each on its own, and the zones judged
+/// **once** after them, so a crossing's pair that arrives in one report is judged in time order,
+/// and an extra fix is never left unjudged behind a newer one it came with.
+pub async fn intake(state: &AppState, device_id: i64, fixes: &[(&LocationReport, String)]) {
+    if fixes.is_empty() {
+        return;
+    }
+    let mut stored_any = false;
+    match state.db.acquire().await {
+        Ok(mut conn) => {
+            for (loc, captured_at) in fixes {
+                match store_fix(&mut conn, device_id, loc, captured_at).await {
+                    Ok(_) => stored_any = true,
+                    Err(err) => tracing::error!(device_id, %err, "can't store the fix"),
+                }
+            }
+        }
+        Err(err) => tracing::error!(device_id, %err, "can't store the fixes"),
+    }
+    if !stored_any {
         return;
     }
     if let Err(err) = judge(state, device_id, Utc::now()).await {
@@ -568,6 +598,170 @@ pub fn event_of(
         crossing.at,
         push,
     ))
+}
+
+/// A zone as the phone gets it (`location_policy.zones`, design 64 step 2): the centre and the
+/// radius - **never the name** (decision 9: "Home" stays on the server). Pinned by
+/// `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct PolicyZone {
+    pub id: i64,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub radius_m: i64,
+}
+
+/// The zones the policy carries: the phone's zones while the mode is Regularly, none otherwise
+/// (decision 7: Off and Only when asked keep zones stored but unwatched).
+pub fn policy_zones(mode: &str, zones: &[Zone]) -> Vec<PolicyZone> {
+    if mode != "interval" {
+        return Vec::new();
+    }
+    zones
+        .iter()
+        .map(|z| PolicyZone {
+            id: z.id,
+            latitude: z.latitude,
+            longitude: z.longitude,
+            radius_m: z.radius_m,
+        })
+        .collect()
+}
+
+/// The Regularly interval the phone is served (decision 3): `max(chosen, 30)` while the mode is
+/// Regularly, the phone has zones and its watch holds fences (`watching`); the parent's choice
+/// otherwise - an older launcher, no zones, a phone whose fences couldn't be registered.
+pub fn served_interval(mode: &str, chosen: i64, zones: usize, watching: bool) -> i64 {
+    if mode == "interval" && zones > 0 && watching {
+        chosen.max(HEARTBEAT_FLOOR_MINUTES)
+    } else {
+        chosen
+    }
+}
+
+/// `StatusReportRequest.zone_watch` as stored (design 64 step 2): the fences the phone holds,
+/// whether it has a significant-motion sensor (without one it fixes at every heartbeat), the
+/// system Location switch, the background-location grant, and the mock fixes a release build
+/// ignored since the launcher's data was created (a running count, so a lost report loses none).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZoneWatch {
+    pub fences: i64,
+    pub motion_sensor: bool,
+    pub location_on: bool,
+    pub background_location: bool,
+    pub mock_ignored: i64,
+}
+
+/// The phone's `zone_watch` through its known keys (all five, of the right types; at most 100
+/// fences and 10^9 fixes), as stored; `None` for anything else.
+pub fn sanitize_zone_watch(value: &serde_json::Value) -> Option<String> {
+    let count = |key: &str, max: i64| value.get(key)?.as_i64().filter(|n| (0..=max).contains(n));
+    let flag = |key: &str| value.get(key)?.as_bool();
+    let watch = ZoneWatch {
+        fences: count("fences", 100)?,
+        motion_sensor: flag("motion_sensor")?,
+        location_on: flag("location_on")?,
+        background_location: flag("background_location")?,
+        mock_ignored: count("mock_ignored", 1_000_000_000)?,
+    };
+    serde_json::to_string(&watch)
+        .ok()
+        .filter(|json| json.len() <= ZONE_WATCH_MAX)
+}
+
+/// A stored `zone_watch` read back; `None` for nothing or anything [sanitize_zone_watch] didn't
+/// write.
+pub fn parse_zone_watch(stored: Option<&str>) -> Option<ZoneWatch> {
+    serde_json::from_str(stored?).ok()
+}
+
+/// The security log's line when the phone's count of ignored mock fixes rose since its previous
+/// report (`mock_location_ignored`, "Made-up locations ignored"): the phone and the count, never
+/// a place. A lower count (the launcher's data cleared, a new install) starts again silently.
+pub fn mock_log_line(
+    device_id: i64,
+    previous: Option<&ZoneWatch>,
+    now: Option<&ZoneWatch>,
+) -> Option<String> {
+    let count = now?.mock_ignored;
+    let before = previous.map_or(0, |w| w.mock_ignored);
+    let rose = count - before;
+    (rose > 0).then(|| {
+        format!(
+            "device {device_id}: the phone ignored {rose} made-up location(s) - an app pretended \
+             to be somewhere else ({count} in all)"
+        )
+    })
+}
+
+/// The phone's latest `zone_watch` since its enrollment (a phone enrolled into the row anew is
+/// not the install that reported before it); `None` without one.
+pub async fn last_zone_watch(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+) -> Result<Option<ZoneWatch>, sqlx::Error> {
+    let stored: Option<Option<String>> = sqlx::query_scalar(&format!(
+        "SELECT zone_watch_json FROM device_status WHERE device_id = ?1 AND reported_at >= {} \
+         ORDER BY reported_at DESC, id DESC LIMIT 1",
+        crate::models::ENROLLED_AT
+    ))
+    .bind(device_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(parse_zone_watch(stored.flatten().as_deref()))
+}
+
+/// Whether the phone watches its zones itself: its latest report says it holds fences.
+pub fn watching(watch: Option<&ZoneWatch>) -> bool {
+    watch.is_some_and(|w| w.fences > 0)
+}
+
+/// The phone's served Regularly interval, read as the policy serves it ([served_interval]).
+pub async fn served_interval_of(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    mode: &str,
+    chosen: i64,
+) -> Result<i64, sqlx::Error> {
+    if mode != "interval" {
+        return Ok(chosen);
+    }
+    let zones: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_zones WHERE device_id = ?")
+        .bind(device_id)
+        .fetch_one(db)
+        .await?;
+    let watch = last_zone_watch(db, device_id).await?;
+    Ok(served_interval(
+        mode,
+        chosen,
+        zones as usize,
+        watching(watch.as_ref()),
+    ))
+}
+
+/// The fixes of one report to store (design 64 step 2): each of `extra_locations` and `location`
+/// through `models::checked_location` (an invalid one dropped), the newest
+/// [MAX_EXTRA_LOCATIONS] of the extras, then the report's own fix. The checked fixes with their
+/// stored `captured_at`, and how many were dropped.
+pub fn report_fixes<'a>(
+    extra: &'a [LocationReport],
+    location: Option<&'a LocationReport>,
+) -> (Vec<(&'a LocationReport, String)>, usize) {
+    let mut dropped = 0;
+    let mut checked = |loc: &'a LocationReport| match crate::models::checked_location(loc) {
+        Some(at) => Some((loc, at)),
+        None => {
+            dropped += 1;
+            None
+        }
+    };
+    let mut fixes: Vec<(&LocationReport, String)> = extra.iter().filter_map(&mut checked).collect();
+    // The stored form sorts as text in time order; the newest stay.
+    fixes.sort_by(|a, b| a.1.cmp(&b.1));
+    let over = fixes.len().saturating_sub(MAX_EXTRA_LOCATIONS);
+    fixes.drain(..over);
+    fixes.extend(location.and_then(&mut checked));
+    (fixes, dropped + over)
 }
 
 #[cfg(test)]
@@ -939,5 +1133,149 @@ mod tests {
         // Across the antimeridian and across the pole.
         assert!((distance_m(0.0, 179.9995, 0.0, -179.9995) - 111.2).abs() < 0.1);
         assert!((distance_m(89.9995, 0.0, 89.9995, 180.0) - 111.2).abs() < 0.1);
+    }
+
+    /// Design 64 step 2, decision 3: the floor only with Regularly, zones and a watch with fences.
+    #[test]
+    fn the_served_interval_has_the_floor_only_while_watched() {
+        assert_eq!(served_interval("interval", 10, 1, true), 30);
+        assert_eq!(served_interval("interval", 30, 1, true), 30);
+        assert_eq!(served_interval("interval", 120, 10, true), 120);
+        assert_eq!(served_interval("interval", 10, 0, true), 10, "no zones");
+        assert_eq!(served_interval("interval", 10, 1, false), 10, "not watched");
+        assert_eq!(served_interval("on_request", 10, 1, true), 10);
+        assert_eq!(served_interval("off", 10, 1, true), 10);
+        let watch = |fences| ZoneWatch {
+            fences,
+            motion_sensor: true,
+            location_on: true,
+            background_location: true,
+            mock_ignored: 0,
+        };
+        assert!(watching(Some(&watch(1))));
+        assert!(!watching(Some(&watch(0))));
+        assert!(!watching(None));
+    }
+
+    #[test]
+    fn the_zone_watch_keeps_its_five_keys_only() {
+        let whole = serde_json::json!({"fences": 2, "motion_sensor": false, "location_on": true,
+            "background_location": true, "mock_ignored": 7, "where": "59.9,10.7"});
+        let stored = sanitize_zone_watch(&whole).unwrap();
+        assert!(!stored.contains("where"), "{stored}");
+        assert_eq!(
+            parse_zone_watch(Some(&stored)),
+            Some(ZoneWatch {
+                fences: 2,
+                motion_sensor: false,
+                location_on: true,
+                background_location: true,
+                mock_ignored: 7,
+            })
+        );
+        for bad in [
+            serde_json::json!({"fences": 101, "motion_sensor": false, "location_on": true,
+                "background_location": true, "mock_ignored": 0}),
+            serde_json::json!({"fences": 1, "motion_sensor": "no", "location_on": true,
+                "background_location": true, "mock_ignored": 0}),
+            serde_json::json!({"fences": 1, "motion_sensor": true, "location_on": true,
+                "background_location": true}),
+            serde_json::json!([1, 2]),
+        ] {
+            assert_eq!(sanitize_zone_watch(&bad), None, "{bad}");
+        }
+        assert_eq!(parse_zone_watch(Some("{\"fences\":1}")), None);
+    }
+
+    #[test]
+    fn the_mock_line_comes_with_each_rise() {
+        let watch = |mock_ignored| ZoneWatch {
+            fences: 0,
+            motion_sensor: true,
+            location_on: true,
+            background_location: true,
+            mock_ignored,
+        };
+        assert_eq!(mock_log_line(3, None, Some(&watch(0))), None);
+        assert_eq!(
+            mock_log_line(3, None, Some(&watch(2))).as_deref(),
+            Some(
+                "device 3: the phone ignored 2 made-up location(s) - an app pretended to be \
+                 somewhere else (2 in all)"
+            )
+        );
+        assert!(
+            mock_log_line(3, Some(&watch(2)), Some(&watch(5)))
+                .unwrap()
+                .contains("ignored 3 made-up")
+        );
+        assert_eq!(mock_log_line(3, Some(&watch(5)), Some(&watch(5))), None);
+        assert_eq!(
+            mock_log_line(3, Some(&watch(5)), Some(&watch(1))),
+            None,
+            "a reset count"
+        );
+        assert_eq!(mock_log_line(3, Some(&watch(5)), None), None);
+    }
+
+    /// The report's fixes: every extra checked, the newest 20 of them in time order, then the
+    /// report's own fix; the dropped ones counted.
+    #[test]
+    fn a_reports_fixes_are_checked_capped_and_ordered() {
+        let loc = |minute: u32, latitude: f64| LocationReport {
+            latitude,
+            longitude: 10.0,
+            accuracy_meters: Some(20.0),
+            captured_at: format!("2026-10-24T08:{minute:02}:00Z"),
+        };
+        let mut extra: Vec<LocationReport> = (0..25).rev().map(|m| loc(m, 59.0)).collect();
+        extra.push(loc(30, 95.0));
+        let own = loc(40, 59.0);
+        let (fixes, dropped) = report_fixes(&extra, Some(&own));
+        assert_eq!(dropped, 6, "5 over the cap and one off the Earth");
+        assert_eq!(fixes.len(), 21);
+        assert_eq!(fixes[0].1, "2026-10-24T08:05:00.000Z");
+        assert_eq!(fixes[19].1, "2026-10-24T08:24:00.000Z");
+        assert_eq!(fixes[20].1, "2026-10-24T08:40:00.000Z");
+        let (none, dropped) = report_fixes(&[], None);
+        assert!(none.is_empty());
+        assert_eq!(dropped, 0);
+    }
+
+    #[test]
+    fn the_policy_carries_the_zones_only_while_regularly() {
+        let zone = Zone {
+            id: 4,
+            device_id: 1,
+            name: "Home".to_string(),
+            latitude: HOME.latitude,
+            longitude: HOME.longitude,
+            radius_m: 150,
+            notify_arrive: true,
+            notify_leave: true,
+            side: None,
+            side_since: None,
+            pending_side: None,
+            pending_at: None,
+            evaluated_at: None,
+            evaluated_fix_id: None,
+        };
+        let zones = [zone];
+        assert_eq!(
+            policy_zones("interval", &zones),
+            [PolicyZone {
+                id: 4,
+                latitude: HOME.latitude,
+                longitude: HOME.longitude,
+                radius_m: 150,
+            }]
+        );
+        assert!(policy_zones("on_request", &zones).is_empty());
+        assert!(policy_zones("off", &zones).is_empty());
+        let json = serde_json::to_string(&policy_zones("interval", &zones)).unwrap();
+        assert_eq!(
+            json,
+            "[{\"id\":4,\"latitude\":59.9139,\"longitude\":10.7522,\"radius_m\":150}]"
+        );
     }
 }
