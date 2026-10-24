@@ -5,6 +5,7 @@
         {% if !form.package_name.is_empty() %}
         <input type="hidden" name="package_name" value="{{ form.package_name }}">
         {% endif %}
+        {% if let Some(from) = form.from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
         <div class="app-preview">
             <span class="app-tile" data-preview-tile style="background: {{ form.preview_tile }}">
                 {% if let Some(glyph) = form.glyph() %}

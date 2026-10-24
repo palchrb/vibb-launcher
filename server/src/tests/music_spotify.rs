@@ -355,8 +355,7 @@ async fn not_configured_shows_the_steps() {
     // parent's is never logged in - the parent pastes links; a playlist lists only for a
     // child's account that owns it or collaborates on it.
     assert!(page.contains(
-        "your children's Spotify accounts: one account per phone, the child's own. Your own \
-         Spotify account is never logged in here - you paste the links on Add from Spotify."
+        "Your own Spotify account is never logged in here: you paste the links on Add from Spotify."
     ));
     assert!(page.contains(
         "add each child's Spotify account - one per phone, the child's own, never yours - by \
@@ -472,8 +471,7 @@ async fn the_app_setting() {
     assert!(page.contains("<p class=\"flash\" role=\"status\" data-flash=\"app\">Saved.</p>"));
     assert!(page.contains("Log in with Spotify"));
     assert!(page.contains(
-        "Log in each child's own account - one per phone, never yours. Whoever is logged into \
-         Spotify in this browser logs in, so open this page in a private window"
+        "Whoever is logged into Spotify in this browser logs in, so open this page in a private window"
     ));
     assert!(!page.contains("<details id=\"spotify-setup\" open"));
     assert_eq!(
@@ -4104,18 +4102,13 @@ mod entries {
             "no Spotify control before an app"
         );
         // Design 30: the streaming switch (not the downloads one) is the one Spotify obeys.
-        assert!(page.contains(
-            "This includes Spotify, which streams (about 60-150 MB an hour) and is never saved on the phone."
-        ));
-        let streaming = page
-            .find("<p>Streaming:")
-            .expect("the streaming switch's ⓘ");
+        assert!(page.contains("<p>Streaming includes Spotify, about 60-150 MB an hour."));
+        let spotify = page.find("Streaming includes Spotify").unwrap();
         let downloads = page
-            .find("<p>Downloads:")
-            .expect("the downloads switch's ⓘ");
-        let spotify = page.find("This includes Spotify").unwrap();
+            .find("Downloads:")
+            .expect("the downloads switch's line");
         assert!(
-            streaming < spotify && spotify < downloads,
+            spotify < downloads,
             "Spotify's line is the streaming switch's"
         );
         save_app(&app, LOOPBACK_REDIRECT).await;

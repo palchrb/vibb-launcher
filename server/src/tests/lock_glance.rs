@@ -710,8 +710,7 @@ async fn the_page_lists_the_allowed_apps_with_their_ticks() {
         .text();
     assert!(!summary.contains("lock-screen"), "{summary}");
     let section = subsection(&page);
-    assert!(section.contains("Nothing can be answered or dismissed there"));
-    assert!(section.contains("login codes show too"));
+    assert!(section.contains("SMS login codes included"));
     // The footer says what Name only is for a chat and for any other app (the launcher's
     // `glanceLevel`), and what Full text costs.
     assert!(
@@ -907,9 +906,7 @@ async fn the_home_screen_warning_and_the_lock_page_name_the_lock_screen() {
         .text();
     assert!(page.contains("the lock screen shows only missed calls"));
     let lock = app.get_page(&lock_page(id), &cookie).await.text();
-    assert!(lock.contains(
-        "The lock's first page shows the clock, what's playing and the newest notifications."
-    ));
+    assert!(lock.contains("What the lock shows, anyone near the phone can see."));
 }
 
 /// qa-browser-fixes-code L1: a row listed only because it is ticked (here the default Element X on
@@ -991,7 +988,7 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
         "{cell}"
     );
     assert!(!cell.contains(" checked"), "off by default: {cell}");
-    assert!(group.contains("shows to anyone near the phone"), "{group}");
+    assert!(group.contains("anyone near the phone can see"), "{group}");
 
     let mut nudges = app.state.command_notify.subscribe();
     // The second "off" changes nothing: no log line (qa-l7-b-code 6).

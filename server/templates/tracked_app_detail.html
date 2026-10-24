@@ -77,7 +77,7 @@
         </details>
         {% endif %}
         {% else %}
-        <a class="row" href="{{ p.href }}" data-phone="{{ p.id }}">
+        <a class="row" href="{{ p.href }}" id="phone-{{ p.id }}" data-phone="{{ p.id }}">
             <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}</span>
             <span class="row-label">{{ p.name }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -86,7 +86,7 @@
         {% endfor %}
     </div>
     {% if app.is_launcher %}
-    <div class="group-footer" data-install-about>Install Now installs the newest release found by Check Now right away, also on mobile data. It waits only for a call. <details class="info"><summary aria-label="About Install Now"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>The phone restarts Vibb One. For about a minute the child sees the phone's own home screen, and calls aren't filtered for that minute: anyone can ring through. Update fence, under the phone's Advanced, hides the home screen once it is checked on this phone model.</p></div></details></div>
+    <div class="group-footer" data-install-about>Install Now installs the newest release found by Check Now right away, also on mobile data. It waits only for a call. <details class="info"><summary aria-label="About Install Now"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>While Vibb One restarts, the phone shows its own home screen and calls aren't filtered for that minute.</p></div></details></div>
     {% if install_polling %}<script src="/static/install-now.js?v=2" defer></script>{% endif %}
     {% endif %}
     {% endif %}
@@ -114,7 +114,7 @@
             {% endif %}
             <details class="info cell" data-row="package">
                 <summary class="row"><span class="row-label">Package</span><span class="row-value">{% if app.package_name.is_empty() %}Not known yet{% else %}{{ app.package_name }}{% endif %}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="About the package"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>Android's name for the app. It is read from the first release's APK, or confirmed by you - never typed in. A release of another package is refused.</p></div>
+                <div class="info-panel"><p>Read from the first release; a release of another package is refused.</p></div>
             </details>
             {% if app.package_name.is_empty() && !package_candidates.is_empty() %}
             <p class="row row-note">The release didn't say which app it is. Vibb One installed these on a phone that has it - pick the one that is this app.</p>
@@ -131,7 +131,7 @@
             {% endif %}
             <details class="info cell" data-row="signer">
                 <summary class="row"><span class="row-label">Signing key</span><span class="row-value">{% if let Some(short) = signer_short %}{{ short }}{% else %}From the next release{% endif %}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="About the signing key"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel">{% if let Some(signer) = app.signer_sha256 %}<p>SHA-256: <code class="key">{{ signer }}</code></p>{% endif %}<p>Pinned from the first release: a release signed with another key is refused. Phones check both before they install.</p></div>
+                <div class="info-panel">{% if let Some(signer) = app.signer_sha256 %}<p>SHA-256: <code class="key">{{ signer }}</code></p>{% endif %}<p>Pinned from the first release: a release signed with another key is refused.</p></div>
             </details>
             {% if !app.package_name.is_empty() || app.signer_sha256.is_some() %}
             <details class="confirm cell" id="forget">
@@ -160,13 +160,13 @@
             </div>
             <div class="field">
                 <label class="field-label" for="asset_pattern">File name contains</label>
-                <details class="info field-info"><summary aria-label="About the file name filter"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$). Only .apk files are picked. Blank: the first .apk.</p></div></details>
+                <details class="info field-info"><summary aria-label="About the file name filter"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Text the file name must contain, or a regular expression starting with ^ (e.g. ^\d+\.apk$). Blank: the first .apk.</p></div></details>
                 <input type="text" id="asset_pattern" name="asset_pattern" value="{{ details.asset_pattern }}" placeholder="Any .apk"{% if details.error_field == "asset_pattern" %} aria-invalid="true" aria-describedby="asset_pattern-error" autofocus{% endif %}>
                 {% if details.error_field == "asset_pattern" %}{% if let Some(e) = details.error %}<p class="field-error" id="asset_pattern-error">{{ e }}</p>{% endif %}{% endif %}
             </div>
             <div class="field">
                 <label class="field-label" for="release_tag_prefix">Tag starts with</label>
-                <details class="info field-info"><summary aria-label="About the tag prefix"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Only releases whose tag starts with this, for a repo with several apps: launcher-v for the launcher and music-v for the music app in this project's repo.</p><p>Blank: any release but this server's (server-v) and the music app's (music-v).</p></div></details>
+                <details class="info field-info"><summary aria-label="About the tag prefix"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>For a repo with several apps: launcher-v or music-v in this project's repo. Blank: any release but server-v and music-v.</p></div></details>
                 <input type="text" id="release_tag_prefix" name="release_tag_prefix" value="{{ details.release_tag_prefix }}" placeholder="e.g. launcher-v"{% if details.error_field == "release_tag_prefix" %} aria-invalid="true" aria-describedby="release_tag_prefix-error" autofocus{% endif %}>
                 {% if details.error_field == "release_tag_prefix" %}{% if let Some(e) = details.error %}<p class="field-error" id="release_tag_prefix-error">{{ e }}</p>{% endif %}{% endif %}
             </div>
@@ -179,15 +179,11 @@
             {% if app.source_type == "github" %}
             <form method="post" action="/apps/tracked/{{ app.id }}/include-prereleases#updates" class="cell">
                 <label class="row">
-                    <span class="row-label">Include pre-releases</span>
+                    <span class="row-label">Include pre-releases<span class="row-sub">For a repo that publishes only pre-releases</span></span>
                     <input type="checkbox" role="switch" class="sw" name="include_prereleases" value="on"{% if app.include_prereleases %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
                 </label>
                 <noscript><div class="row"><button type="submit" class="button-small">Save</button></div></noscript>
             </form>
-            <details class="info cell">
-                <summary class="row"><span class="row-label row-label-quiet">About pre-releases</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="About pre-releases"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>Needed for a repo that only publishes pre-releases (a rolling build): without it, such a repo never has a release.</p></div>
-            </details>
             {% endif %}
             <form method="post" action="/apps/tracked/{{ app.id }}/enabled#updates" class="cell">
                 <label class="row">
@@ -205,7 +201,7 @@
             </form>
             <details class="info cell">
                 <summary class="row"><span class="row-label row-label-quiet">About these switches</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="About Enabled and the launcher app"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel"><p>Enabled: {% if app.source_type == "github" %}checked for a new release every hour, and{% else %}its uploads go{% endif %} to the phones that have it. Off: phones get nothing new.</p><p>The launcher app is Vibb One itself: on every phone, it can't be turned off there or removed here. Mark exactly one app.</p></div>
+                <div class="info-panel"><p>Off: phones get nothing new. Mark exactly one app as the launcher: Vibb One itself, on every phone.</p></div>
             </details>
         </div>
 

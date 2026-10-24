@@ -112,11 +112,10 @@
             <details class="info">
                 <summary aria-label="About Lock"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>With a Child PIN (Lock Screen &amp; PINs), Lock locks the phone with it and turns the screen off; calls from allowed contacts and emergency calls still work. Without one, it only turns the screen off.</p>
+                    <p>Without a Child PIN, Lock only turns the screen off.</p>
                     {% if view.android_lock %}
-                    <p data-note="android-lock">After a restart, Locate, Ring and Erase wait until the Child PIN is typed on the phone. After Lock, a fingerprint opens it again only once the PIN has been typed.</p>
+                    <p data-note="android-lock">After a restart, Locate, Ring and Erase wait until the Child PIN is typed on the phone.</p>
                     {% endif %}
-                    <p>A request still waiting for the phone can be cancelled under Requests.</p>
                 </div>
             </details>
         </div>
@@ -166,15 +165,7 @@
                 <noscript><button type="submit" class="row row-button">Save History</button></noscript>
             </form>
         </div>
-        <div class="group-footer">Each fix uses some battery; the newest location is always kept.
-            <details class="info">
-                <summary aria-label="About the location settings"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel">
-                    <p>Off switches location off on the phone. Only when asked takes a fix for Update Location and Ring. Regularly also takes one at the interval you pick.</p>
-                    <p>The phone shows its location icon while it takes a fix. Older locations are deleted; the map shows the rest as a trail, and Locations lists them.</p>
-                </div>
-            </details>
-        </div>
+        <p class="group-footer">Each fix uses some battery; the newest location is always kept.</p>
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>

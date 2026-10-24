@@ -1131,6 +1131,10 @@ AVD made without a profile to set it and cold boot.
     on the glance, not our keypad, with no `the lock asks for the unlock` line.
 - **Unchanged.** The heal stays, and step M's and 59b's rules are untouched. The "Lås opp" button stays gone: the user
   wants the swipe as the primary way, and its cause here is the AVD, not the phone.
+- **The user's result (2026-10-24, `jellystar2`).** With `hw.mainKeys = no` (in
+  `~/.config/.android/avd/jellystar2.avd/config.ini`, newer Android Studio on Linux; `emulator.md` §3) the handle
+  swipe went straight to the pad: "perfekt". Before that, with `hw.mainKeys` still `yes`, the safety net did unlock,
+  with the flash before the pad, as designed.
 
 ### 8.17 Enrolment before Home's first start (qa-glance-topinset-code Q-3; branch `write-settings-row`, 2026-10-24)
 

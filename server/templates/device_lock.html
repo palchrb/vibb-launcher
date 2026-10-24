@@ -109,13 +109,9 @@
                 <summary aria-label="About the Child PIN"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel" data-privacy="{% if keyguard_android %}android{% else %}own{% endif %}">
                     {% if keyguard_android %}
-                    <p>Android's own lock: the PIN also encrypts the phone's data, so a thief can't read it without the PIN. Calls from allowed contacts and emergency calls work while locked.</p>
-                    <p>After a restart the phone can't be found, rung or erased until the PIN is typed, and Fossify Clock's alarms may not ring until then. Android waits 30 seconds after 5 wrong PINs and longer after more, up to a day.</p>
-                    <p>The Parent PIN doesn't open Android's lock: type the Child PIN (Show Child PIN above), then the Parent PIN in Settings. A fingerprint works if you add one in Settings while the phone is open (Parent PIN › pause).</p>
-                    <p>Test phase: Vibb One's own lock is still here to switch back to, until Android's lock replaces it.</p>
+                    <p>After a restart the phone can't be located, rung or erased until the Child PIN is typed. The Parent PIN doesn't open this lock.</p>
                     {% else %}
-                    <p>Calls from allowed contacts and emergency calls work while locked. After 5 wrong PINs the phone waits 30 s, then 1, 2, 5 and 15 minutes between tries. It never erases itself. Your Parent PIN ("Parent code" on the lock) always opens it.</p>
-                    <p>This lock keeps people nearby out. It does not protect the phone's data from a thief with forensic tools, and some bank or wallet apps won't work. Android's lock (the Lock row, a test for now) also encrypts the data with the PIN.</p>
+                    <p>After 5 wrong PINs the phone waits 30 s, then longer; it never erases itself. Your Parent PIN ("Parent code" on the lock) always opens it.</p>
                     {% endif %}
                 </div>
             </details>
@@ -167,9 +163,7 @@
             <details class="info">
                 <summary aria-label="About the Parent PIN"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>It opens Vibb One's Settings on the phone (and there, a pause and Play install mode){% if !keyguard_android %} and the lock's "Parent code"{% endif %}. On a time lock, "Enter unlock code" lifts the time rules and app limits for up to two hours. Calls and Restrictions stay.</p>
-                    <p>After 5 wrong tries it waits 15 minutes, then longer each time, up to a day. Saving a new PIN here ends the wait once the phone checks in.</p>
-                    <p>Typed it where your child could see? Change it here.</p>
+                    <p>It never lifts the call limits or Restrictions. If your child saw it typed, change it here.</p>
                 </div>
             </details>
         </div>
@@ -236,17 +230,7 @@
                 <noscript><button type="submit" class="row row-button">Save</button></noscript>
             </form>
         </div>
-        <div class="group-footer">
-            <details class="info">
-                <summary aria-label="About the lock screen"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel">
-                    <p>The lock's first page shows the clock, what's playing and the newest notifications. Tapping one asks for the Child PIN, then opens it. Nothing can be answered or dismissed there, and it can't be screenshotted.</p>
-                    <p>Who wrote always shows, missed calls by their name in the contacts. With an SMS app on Full text, its login codes show too.</p>
-                    <p>The background picks from the wallpapers this phone has. A photo shows to anyone holding it.</p>
-                    <p>With "Wake the screen for a notification" on, a new message from an app shown below or a missed call turns the screen on, on the lock. What the lock shows then (the text too, with Full text) shows to anyone near the phone.</p>
-                </div>
-            </details>
-        </div>
+        <p class="group-footer">What the lock shows, anyone near the phone can see.</p>
     </section>
 
     <section id="notifications" aria-labelledby="notifications-title">
@@ -281,7 +265,7 @@
             {% endfor %}
             {% endif %}
         </div>
-        <p class="group-footer">Name only: the sender's name for chats, otherwise the app's name and how many. Full text: the message too, which anyone holding the phone can read. Missed calls always show.</p>
+        <p class="group-footer">Name only: the sender's name for chats, otherwise the app's name and how many. Full text: the message too, SMS login codes included, which anyone holding the phone can read. Missed calls always show.</p>
     </section>
     {% if reveal_answer %}<script src="/static/reveal.js?v=3"></script>{% endif %}
 </main>

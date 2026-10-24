@@ -17,7 +17,7 @@
     <h2 class="group-header">On phones</h2>
     <div class="group group-avatars group-small" data-group="phones">
         {% for p in phones %}
-        <a class="row" href="{{ p.href }}" data-phone="{{ p.id }}">
+        <a class="row" href="{{ p.href }}" id="phone-{{ p.id }}" data-phone="{{ p.id }}">
             <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}</span>
             <span class="row-label">{{ p.name }}</span>
             <span class="row-value">{{ p.value }}</span>

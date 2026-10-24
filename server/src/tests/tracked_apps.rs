@@ -1298,7 +1298,7 @@ async fn the_apps_tab_lists_the_phones_and_the_catalog() {
     );
     let anna_row = row_of(&html, &format!(r#"data-phone="{anna}""#));
     assert!(
-        anna_row.contains(&format!(r#"href="/devices/{anna}/apps""#)),
+        anna_row.contains(&format!(r#"href="/devices/{anna}/apps?from=apps""#)),
         "{anna_row}"
     );
     assert!(anna_row.contains(">3 allowed<"), "{anna_row}");
@@ -1368,7 +1368,7 @@ async fn the_app_page_shows_its_phones_and_keeps_every_control() {
     let phone = row_of(&html, &format!(r#"data-phone="{anna}""#));
     assert!(
         phone.contains(&format!(
-            r#"href="/devices/{anna}/apps#app-io.element.android.x""#
+            r#"href="/devices/{anna}/apps?from=app:{element}#app-io.element.android.x""#
         )),
         "{phone}"
     );
@@ -1426,7 +1426,7 @@ async fn the_app_page_shows_its_phones_and_keeps_every_control() {
     for phone in [anna, emil] {
         let row = row_of(&html, &format!(r#"data-phone="{phone}""#));
         assert!(
-            row.contains(&format!(r#"href="/devices/{phone}/apps""#)),
+            row.contains(&format!(r#"href="/devices/{phone}/apps?from=app:{none}""#)),
             "{row}"
         );
     }

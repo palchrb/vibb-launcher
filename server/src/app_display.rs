@@ -323,6 +323,9 @@ pub struct AppDisplayForm {
     pub colors: Vec<ColorChoice>,
     /// The preview tile's colour.
     pub preview_tile: String,
+    /// Device › Apps opened from the Apps tab: its `from`, a hidden field the save keeps
+    /// (`device_pages::AppsFrom`); `None` elsewhere.
+    pub from: Option<String>,
 }
 
 /// What a refused save sends back to the form: the entered values and the error.
@@ -396,6 +399,7 @@ impl AppDisplayForm {
             open: entered.is_some(),
             icons,
             colors,
+            from: None,
         }
     }
 

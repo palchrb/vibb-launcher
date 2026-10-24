@@ -169,9 +169,7 @@
             <details class="info">
                 <summary aria-label="About the DNS server"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Cloudflare is 1.1.1.1, Quad9 is 9.9.9.9, both over DNS-over-TLS (on a network that blocks it, over DNS-over-HTTPS to the same provider). Each phone filters by itself, on any network; this is where it asks about everything it lets through.</p>
-                    <p>A custom server: a bare name or IP address means DNS-over-TLS on port 853; for DNS-over-HTTPS type the https:// address. The phone checks the server's certificate, so an IP address works only if the certificate names it. On a network that blocks port 853 a DNS-over-TLS server can't be reached; a DNS-over-HTTPS backup still answers.</p>
-                    <p>The phone reaches your server directly over its mobile data or Wi-Fi, not through Tailscale: a server on your home network works on the home Wi-Fi, and the backup answers elsewhere. An id in the https:// path stays inside the encryption. The phone's own lists still block first.</p>
+                    <p>A custom server: type a name for DNS-over-TLS, or an https:// address for DNS-over-HTTPS. The phone reaches it directly, not through Tailscale, so a server at home works only on the home Wi-Fi.</p>
                 </div>
             </details>
         </div>

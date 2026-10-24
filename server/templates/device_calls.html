@@ -50,8 +50,7 @@
             <details class="info">
                 <summary aria-label="About calls and SMS"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Emergency numbers (112, 110, 113) work without being added. The Parent PIN and a pause don't open other calls. Turning SMS off also hides the Messages app, since it can chat over RCS.</p>
-                    <p>Dial ##004# on the phone once, so rejected calls don't go to voicemail. Don't add the voicemail number or directory services (1881, 1880): they connect any number. A caller can fake a number; the phone rejects calls the network marks as failed verification.</p>
+                    <p>Dial ##004# on the phone once, so rejected calls don't go to voicemail. Don't add the voicemail number or 1881 and 1880: they connect any number.</p>
                 </div>
             </details>
         </div>
@@ -147,18 +146,10 @@
                 </form>
             </details>
         </div>
-        <div class="group-footer">A contact's name and photo are shared by every phone with that number.
-            <details class="info">
-                <summary aria-label="About contacts"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel">
-                    <p>In the phone book: your child can call them. On the home screen: also a call button there.</p>
-                    <p>Photos (JPEG, PNG or WebP, up to 10 MB) are cropped square, made smaller and saved again without hidden information such as where they were taken.</p>
-                </div>
-            </details>
-        </div>
+        <p class="group-footer">A contact's name and photo (up to 10 MB) are shared by every phone with that number.</p>
     </section>
     {% if auto_refresh %}
-    <script src="/static/auto-reload.js?v=3" defer></script>
+    <script src="/static/auto-reload.js?v=4" defer></script>
     {% endif %}
 </main>
 </body>

@@ -4,10 +4,12 @@
 {% include "partials/head.html" %}
 </head>
 <body>
-{% let tab = "devices" %}
+{#- The one page whose tab is a field (`device_pages::Tab`): Apps when opened from the Apps tab
+    (`?from=apps` or `app:<id>`), else Devices. -#}
+{% let tab = nav_tab.name() %}
 {% include "partials/tab_bar.html" %}
 <main class="container">
-    <a class="nav-back" href="/devices/{{ device.id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device.name }}</a>
+    <a class="nav-back" href="{{ back_href }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ back_label }}</a>
     <h1 class="page-title">Apps</h1>
 
     {#- Where the forms return (§5.1): a switch and a Name and icon save to the app's row
@@ -45,9 +47,7 @@
             <details class="info">
                 <summary aria-label="About allowing apps"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>An app from the <a href="/apps">Apps</a> catalog installs when you turn it on.</p>
-                    <p>Only an allowed app's keyboard or accessibility service can be turned on in the phone's settings; an accessibility service not even during a pause, since it could read the Parent PIN.</p>
-                    <p>Name and icon changes how an allowed app shows on this phone. Your child can rename only the apps you haven't named.</p>
+                    <p>Only an allowed app's keyboard or accessibility service can be turned on in the phone's settings. Your child can rename only the apps you haven't named.</p>
                 </div>
             </details>
         </div>
@@ -57,6 +57,7 @@
         <h2 class="group-header" id="downloads-title">Downloads</h2>
         <div class="group">
             <form method="post" action="/devices/{{ device.id }}/app-updates#downloads" class="cell">
+                {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
                 <label class="row">
                     <span class="row-label">Download apps on Wi-Fi only</span>
                     <input type="checkbox" role="switch" class="sw" name="app_updates_wifi_only" value="on"{% if wifi_only %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
@@ -71,7 +72,7 @@
             <details class="info">
                 <summary aria-label="About downloads"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Vibb One's own updates wait up to 3 days for Wi-Fi, then take any network. Nothing downloads while the phone is roaming. Unlocking or pausing on the phone doesn't change this.</p>
+                    <p>Vibb One's own updates wait up to 3 days for Wi-Fi, then take any network. Nothing downloads while roaming.</p>
                 </div>
             </details>
         </div>
@@ -79,7 +80,7 @@
     <script src="/static/app-display.js?v=3" defer></script>
 
     {% if installing %}
-    <script src="/static/auto-reload.js?v=3" defer></script>
+    <script src="/static/auto-reload.js?v=4" defer></script>
     {% endif %}
 </main>
 </body>

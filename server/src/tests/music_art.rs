@@ -1618,7 +1618,10 @@ async fn the_card_counts_episodes_with_art() {
         .text();
     assert!(page.contains("2 episodes · 1 with episode art"), "{page}");
     let settings = app.get_page("/music/settings", &cookie).await.text();
-    assert!(settings.contains("Episode pictures are fetched a few at a time, at most 400 a day."));
+    assert!(
+        !settings.contains("at most 400 a day"),
+        "the ⓘ is cut to the one fact"
+    );
 }
 
 /// The log line's art part.

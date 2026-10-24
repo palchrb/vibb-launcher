@@ -915,6 +915,9 @@ pub async fn save_app_display(
 ) -> Response {
     use crate::app_display::{DisplayValues, Entered, FieldError};
     let field = |name: &str| form.get(name).map(String::as_str).unwrap_or("");
+    let from = form
+        .get("from")
+        .and_then(|f| crate::handlers::device_pages::AppsFrom::parse(f));
     let package = field("package_name").trim().to_string();
     if !crate::app_display::valid_package_name(&package) || crate::play::is_play_core(&package) {
         return (StatusCode::BAD_REQUEST, "Not an app this page can name.").into_response();
@@ -952,6 +955,7 @@ pub async fn save_app_display(
                 id,
                 None,
                 Some((package, entered)),
+                from,
             )
             .await;
             // The page, as a refusal; a page that failed to render keeps its own status.
@@ -1039,7 +1043,13 @@ pub async fn save_app_display(
     match result {
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}/apps#app-{package}")).into_response()
+            Redirect::to(&crate::handlers::device_pages::apps_url(
+                id,
+                "",
+                from,
+                &format!("app-{package}"),
+            ))
+            .into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the app's name and icon");
@@ -1062,6 +1072,9 @@ pub async fn update_app_updates(
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
+    let from = form
+        .get("from")
+        .and_then(|f| crate::handlers::device_pages::AppsFrom::parse(f));
     let result = sqlx::query(
         "UPDATE device_policy SET app_updates_wifi_only = ?, updated_at = datetime('now') \
          WHERE device_id = ?",
@@ -1076,7 +1089,13 @@ pub async fn update_app_updates(
         }
         Ok(_) => {
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/{id}/apps#downloads")).into_response()
+            Redirect::to(&crate::handlers::device_pages::apps_url(
+                id,
+                "",
+                from,
+                "downloads",
+            ))
+            .into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "couldn't save the app update switch");
@@ -1811,7 +1830,13 @@ pub async fn toggle_app(
         Ok(_) => return (StatusCode::BAD_REQUEST, "Vibb One is always on.").into_response(),
         Err(err) => return failed(err),
     }
-    let page = format!("/devices/{id}/apps");
+    // Opened from the Apps tab: every way back to Device › Apps keeps it.
+    let from = form
+        .get("from")
+        .and_then(|f| crate::handlers::device_pages::AppsFrom::parse(f));
+    let page = |params: &str, fragment: &str| {
+        crate::handlers::device_pages::apps_url(id, params, from, fragment)
+    };
     // Device › Music's switch (`back=music`, or an older page's `anchor=music`) returns there: the
     // page on a save, its group with the reason on a refusal (design 31 step 7).
     let music = form
@@ -1823,7 +1848,7 @@ pub async fn toggle_app(
         Redirect::to(&if music {
             format!("/devices/{id}/music?music_notice={code}#music-app")
         } else {
-            format!("{page}?notice={code}&app={anchor}#{anchor}")
+            page(&format!("notice={code}&app={anchor}"), anchor)
         })
         .into_response()
     };
@@ -1844,8 +1869,8 @@ pub async fn toggle_app(
                 Ok(None) => {
                     let to = match (music, checked) {
                         (true, _) => format!("/devices/{id}/music#music-app"),
-                        (false, true) => format!("{page}#not-allowed"),
-                        (false, false) => format!("{page}#allowed"),
+                        (false, true) => page("", "not-allowed"),
+                        (false, false) => page("", "allowed"),
                     };
                     return Redirect::to(&to).into_response();
                 }
@@ -1952,7 +1977,7 @@ pub async fn toggle_app(
     if music {
         return Redirect::to(&format!("/devices/{id}/music#music-app")).into_response();
     }
-    Redirect::to(&format!("{page}#{anchor}")).into_response()
+    Redirect::to(&page("", &anchor)).into_response()
 }
 
 fn allowlist_error_response(

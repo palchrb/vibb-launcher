@@ -105,6 +105,22 @@ fn every_template_with_the_bar_sets_its_tab() {
         with_bar += 1;
         let before = text[..at].trim_end();
         let line = before.lines().last().unwrap_or("").trim();
+        // Device › Apps alone sets it from a field (`device_pages::Tab`, only tab names): Apps when
+        // opened from the Apps tab (`?from=`), else Devices - still the template's choice, never
+        // the path's. Its rendered tabs are pinned by `device_pages::apps_from_the_apps_tab_*`.
+        if file == "device_apps.html" {
+            assert_eq!(line, "{% let tab = nav_tab.name() %}", "{file}");
+            for tab in [
+                crate::handlers::device_pages::Tab::Devices,
+                crate::handlers::device_pages::Tab::Apps,
+            ] {
+                assert!(
+                    ["devices", "apps", "locate", "music", "settings"].contains(&tab.name()),
+                    "{tab:?}"
+                );
+            }
+            continue;
+        }
         let tab = line
             .strip_prefix("{% let tab = \"")
             .and_then(|rest| rest.strip_suffix("\" %}"))
@@ -1318,4 +1334,100 @@ async fn a_posts_own_page_is_marked_so_it_is_never_reloaded() {
         b"<html><body data-post-answer class=\"x\">hi</body></html>"
     );
     assert_eq!(crate::admin_auth::mark_body(b"no page"), b"no page");
+}
+
+/// The installed iPhone app's start-up splash (2026-10-24): head.html links one image per row of
+/// `testdata/pwa_startup_screens.json` (the list `scripts/pwa-startup-images.py` draws from), in
+/// its order, each for exactly its portrait screen; each PNG exists with exactly the pixels its
+/// media query implies, is served with long caching, and nothing else is in the folder. Android's
+/// splash (the manifest's background) and every theme colour are the same night.
+#[tokio::test]
+async fn every_startup_image_has_its_screens_size() {
+    let app = TestApp::new().await;
+    let screens: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string("testdata/pwa_startup_screens.json").unwrap(),
+    )
+    .unwrap();
+    let version = screens["version"].as_i64().unwrap();
+    let screens = screens["screens"].as_array().unwrap();
+    assert!(screens.len() >= 12, "{} screens", screens.len());
+
+    // The rendered head of a page anyone gets (the sign-in page includes the same partial).
+    let html = app.request(Method::GET, "/login", None, None).await.text();
+    let links: Vec<_> = super::tags(&html, "link")
+        .into_iter()
+        .filter(|tag| tag.attr("rel") == Some("apple-touch-startup-image"))
+        .map(|tag| {
+            (
+                tag.attr("media").unwrap().to_string(),
+                tag.attr("href").unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(links.len(), screens.len());
+    let mut files = Vec::new();
+    for ((media, href), screen) in links.iter().zip(screens) {
+        let (w, h, r) = (
+            screen["width"].as_u64().unwrap(),
+            screen["height"].as_u64().unwrap(),
+            screen["ratio"].as_u64().unwrap(),
+        );
+        assert_eq!(
+            *media,
+            format!(
+                "(device-width: {w}px) and (device-height: {h}px) and \
+                 (-webkit-device-pixel-ratio: {r}) and (orientation: portrait)"
+            )
+        );
+        let name = format!("startup-{}x{}.png", w * r, h * r);
+        assert_eq!(*href, format!("/static/startup/{name}?v={version}"));
+        let png = std::fs::read(format!("static/startup/{name}")).unwrap();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n", "{name}");
+        let size = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap()) as u64;
+        assert_eq!((size(16), size(20)), (w * r, h * r), "{name}");
+        let served = app.request(Method::GET, href, None, None).await;
+        assert_eq!(served.status, StatusCode::OK, "{href}");
+        assert_eq!(served.body, png, "{href}");
+        assert_eq!(
+            served
+                .headers
+                .get(axum::http::header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("public, max-age=31536000, immutable"),
+            "{href}"
+        );
+        files.push(name);
+    }
+    let mut on_disk: Vec<String> = std::fs::read_dir("static/startup")
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    on_disk.sort();
+    files.sort();
+    assert_eq!(
+        on_disk, files,
+        "every PNG is linked, every link has its PNG"
+    );
+    let total: u64 = files
+        .iter()
+        .map(|f| {
+            std::fs::metadata(format!("static/startup/{f}"))
+                .unwrap()
+                .len()
+        })
+        .sum();
+    assert!(total < 300 * 1024, "{total} bytes");
+
+    // One night: Android's splash ground, the theme colour, the page's meta.
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string("static/manifest.webmanifest").unwrap())
+            .unwrap();
+    assert_eq!(manifest["background_color"], "#0C0C14");
+    assert_eq!(manifest["theme_color"], "#0C0C14");
+    let themes: Vec<_> = super::tags(&html, "meta")
+        .into_iter()
+        .filter(|tag| tag.attr("name") == Some("theme-color"))
+        .map(|tag| tag.attr("content").unwrap_or(""))
+        .collect();
+    assert_eq!(themes, ["#0C0C14"]);
 }

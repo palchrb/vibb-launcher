@@ -125,6 +125,10 @@ test("a refusal's notice leaves the address once shown, the row's fragment stays
     const quiet = fakeWindow();
     install(quiet);
     assert.deepStrictEqual(quiet.replaced, []);
+    // Opened from the Apps tab: `from` stays, so the tab and the back link stay too.
+    const fromApps = fakeWindow({ search: "?notice=from_play&app=app-org.example.game&from=app:7" });
+    install(fromApps);
+    assert.deepStrictEqual(fromApps.replaced, ["/devices/1/apps?from=app:7#app-org.example.game"]);
 });
 
 // qa-31-s8-code M1: a reload keeps the place. After a scroll-restored save the entry's

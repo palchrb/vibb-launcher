@@ -27,10 +27,9 @@
             <details class="info">
                 <summary aria-label="About the web filter"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>The phone filters by itself, on any network. Your child can't turn it off on the phone. Off, nothing is blocked; everything else works as before.</p>
-                    <p>The lists and domains for every phone are in <a href="/dns">Settings › Web Filter</a>.</p>
+                    <p>It works on any network, and your child can't turn it off. The lists for every phone are in <a href="/dns">Settings › Web Filter</a>.</p>
                     {% if spotify_on %}
-                    <p data-note="spotify-hosts">Spotify's hosts are allowed on this phone while it plays Spotify (its <a href="/devices/{{ device.id }}/music#music-spotify">Music page</a>): a block of spotify.com or scdn.co in a list or a domain doesn't apply to it then - for every app on the phone, not only the music app.</p>
+                    <p data-note="spotify-hosts">Spotify's hosts are allowed on this phone while it plays Spotify, for every app on it (its <a href="/devices/{{ device.id }}/music#music-spotify">Music page</a>).</p>
                     {% if !spotify_global.is_empty() %}
                     <p data-note="spotify-global">Not applied on {{ device.name }} for that reason, from Settings › Web Filter: {{ spotify_global.join(", ") }}.</p>
                     {% endif %}
@@ -128,14 +127,7 @@
             </label>
             <noscript><button type="submit" class="row row-button">Save</button></noscript>
         </form>
-        <div class="group-footer">Kept {{ retention_days }} days. Turning it off deletes this phone's log.
-            <details class="info">
-                <summary aria-label="About the log"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel">
-                    <p>While it is on, the phone reports each blocked domain, at most once per 10 minutes per domain. Filtering works the same either way.</p>
-                </div>
-            </details>
-        </div>
+        <p class="group-footer">Kept {{ retention_days }} days. Turning it off deletes this phone's log.</p>
         {% if log_on %}
         <div class="group" data-group="log-events">
             {% for e in events %}

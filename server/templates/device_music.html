@@ -92,9 +92,7 @@
             <details class="info">
                 <summary aria-label="About mobile data"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>Streaming: what isn't downloaded can play off Wi-Fi too. What plays is saved on the phone as it plays, so it isn't fetched twice (not for an entry that keeps nothing). This includes Spotify, which streams (about 60-150 MB an hour) and is never saved on the phone.</p>
-                    <p>Downloads: the offline episodes and Storytel books download off Wi-Fi too. A Storytel book is often several hundred MB.</p>
-                    <p>What's downloaded plays anywhere.</p>
+                    <p>Streaming includes Spotify, about 60-150 MB an hour. Downloads: a Storytel book is often several hundred MB.</p>
                 </div>
             </details>
         </div>
@@ -127,8 +125,7 @@
             <details class="info">
                 <summary aria-label="About the storage limit and the volume cap"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>The limit counts downloads, Storytel books and what was played. The offline episodes always stay.</p>
-                    <p>The volume cap holds for the speaker and headphones, in every app.</p>
+                    <p>The offline episodes always stay. The volume cap holds in every app.</p>
                 </div>
             </details>
         </div>
@@ -185,14 +182,7 @@
         <h2 class="group-header" id="music-sonos-title">Sonos speakers</h2>
         {% if music.sonos.all && music.sonos.rows.is_empty() %}
         <div class="group"><p class="row row-note" data-row="no-speakers">No speakers seen yet.</p></div>
-        <div class="group-footer">Until then the phone may play on any Sonos speaker it finds.
-            <details class="info">
-                <summary aria-label="About Sonos speakers"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
-                <div class="info-panel">
-                    <p>Once the music app has found Sonos speakers on the home Wi-Fi, they show up here and you can limit the phone to some of them. Until then every room is allowed, on any Wi-Fi: at a friend's house the phone would list their speakers too.</p>
-                </div>
-            </details>
-        </div>
+        <p class="group-footer">Until then the phone may play on any Sonos speaker it finds, a friend's too.</p>
         {% else %}
         <form method="post" action="/devices/{{ device.id }}/music/sonos-rooms#music-sonos" class="group">
             <label class="row">
@@ -220,8 +210,7 @@
             <details class="info">
                 <summary aria-label="About Sonos rooms"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>All rooms: the music app may play on every Sonos speaker it finds, on any Wi-Fi. Off: only on the rooms switched on here.</p>
-                    <p>Speakers the phone finds later aren't allowed until you switch them on, and a group of speakers plays only when every room in it is on.</p>
+                    <p>Speakers found later stay off until you switch them on. A group plays only when every room in it is on.</p>
                 </div>
             </details>
         </div>

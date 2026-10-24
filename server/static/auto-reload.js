@@ -7,8 +7,9 @@
 //   its way (qa-31-s6-code M1);
 // - while a <details> is open (a Name and icon or a contact's form, Add Contact, a confirm, an ⓘ
 //   panel): what was typed or opened would be lost.
-// A refusal's `?notice=` is dropped from the address once shown, so a reload doesn't show it again
-// (N4). Run its tests: node --test jstest/auto-reload.test.js
+// A refusal's `?notice=` (and its `app=`) is dropped from the address once shown, so a reload
+// doesn't show it again (N4); anything else in the address stays (`from=`, Device › Apps opened
+// from the Apps tab). Run its tests: node --test jstest/auto-reload.test.js
 (function (root) {
     "use strict";
 
@@ -40,7 +41,15 @@
         win.addEventListener("pagehide", stop);
 
         if (win.history && win.history.replaceState && /[?&]notice=/.test(win.location.search)) {
-            win.history.replaceState(null, "", win.location.pathname + win.location.hash);
+            var kept = win.location.search.slice(1).split("&").filter(function (part) {
+                var name = part.split("=")[0];
+                return part && name !== "notice" && name !== "app";
+            });
+            win.history.replaceState(
+                null,
+                "",
+                win.location.pathname + (kept.length ? "?" + kept.join("&") : "") + win.location.hash
+            );
         }
 
         function tick() {
