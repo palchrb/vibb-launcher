@@ -393,3 +393,87 @@ async fn the_mock_counter_logs_each_rise() {
             .unwrap();
     assert!(!stored.contains("place"), "{stored}");
 }
+
+/// The Locate page while the phone watches (design 64 §3.6's last row, decision 3): the note under
+/// "Every" while the floor applies, the footer without "two intervals", the watch's line, and the
+/// mock count in the location group.
+#[tokio::test]
+async fn the_locate_page_tells_the_floor_the_watch_and_the_mock_count() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    set_location(&app, id, "interval", 10).await;
+    let page = || async {
+        app.get_page(&format!("/devices/locate?device={id}"), &cookie)
+            .await
+            .text()
+    };
+    // No zones, no watch: the parent's 10 min, no note, no line.
+    let html = page().await;
+    assert!(!html.contains("data-interval-note"), "{html}");
+    assert!(!html.contains("data-zone-watch"));
+    assert!(!html.contains("data-row=\"mock-ignored\""));
+    add_home(&app, id).await;
+    // Zones and an older launcher (no watch): as step 1 - judged at each fix, two intervals.
+    let html = page().await;
+    assert!(!html.contains("data-interval-note"));
+    assert!(
+        html.contains("within about two intervals (here 20 min)"),
+        "{html}"
+    );
+    // The phone watches: the floor's note, the watch's own footer and line.
+    post(&app, &token, json!({"zone_watch": watch(1, 0)})).await;
+    let html = page().await;
+    assert!(
+        html.contains("data-interval-note>30 min while the phone has zones<"),
+        "{html}"
+    );
+    assert!(html.contains("as soon as it notices a"));
+    assert!(!html.contains("within about two intervals"));
+    assert!(
+        html.contains("data-zone-watch>Watching 1 zone on the phone.<"),
+        "{html}"
+    );
+    // The parent's choice is still what the picker shows.
+    assert!(html.contains("<option value=\"10\" selected>"), "{html}");
+    // No motion sensor, Location off, no background grant, no fence yet: each says so.
+    let mut no_sensor = watch(1, 0);
+    no_sensor["motion_sensor"] = json!(false);
+    post(&app, &token, json!({"zone_watch": no_sensor})).await;
+    assert!(
+        page()
+            .await
+            .contains("no motion sensor, so it takes a location every 30 min.")
+    );
+    let mut off = watch(1, 0);
+    off["location_on"] = json!(false);
+    post(&app, &token, json!({"zone_watch": off})).await;
+    assert!(
+        page()
+            .await
+            .contains("Location is off on the phone, so it can&#39;t watch the zones.")
+    );
+    let mut no_grant = watch(1, 0);
+    no_grant["background_location"] = json!(false);
+    post(&app, &token, json!({"zone_watch": no_grant})).await;
+    assert!(
+        page()
+            .await
+            .contains("use its location in the background yet")
+    );
+    post(&app, &token, json!({"zone_watch": watch(0, 0)})).await;
+    let html = page().await;
+    assert!(html.contains("set up its zones yet"));
+    assert!(!html.contains("data-interval-note"), "no fences, no floor");
+    // A longer choice than the floor: no note.
+    post(&app, &token, json!({"zone_watch": watch(1, 0)})).await;
+    set_location(&app, id, "interval", 60).await;
+    assert!(!page().await.contains("data-interval-note"));
+    // The mock count, from the phone's running number.
+    post(&app, &token, json!({"zone_watch": watch(1, 1)})).await;
+    assert!(page().await.contains("1 made-up location ignored<"));
+    post(&app, &token, json!({"zone_watch": watch(1, 4)})).await;
+    let html = page().await;
+    assert!(html.contains("data-row=\"mock-ignored\""));
+    assert!(html.contains("4 made-up locations ignored<"), "{html}");
+}
