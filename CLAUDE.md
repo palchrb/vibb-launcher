@@ -148,7 +148,8 @@ fixtures (the phone never logs in).
   rule must allow `server-v*` tags too; its `SERVER_MINISIGN_KEY` secret; the public key pinned in
   `server/deploy/*.sh`; server/DEPLOY.md, "Release signing") - no secret, no release. The server's update check and `install.sh`/`update.sh` find it by tag.
   Since 0.23.0 (design 22) the same run builds the multi-arch image `ghcr.io/<owner>/handy-server`,
-  pushes it by digest, smoke-tests it (amd64, arm64 under QEMU), then tags `X.Y.Z`, and `latest` when it is
+  each architecture natively on its own runner (`ubuntu-24.04`, `ubuntu-24.04-arm`; no QEMU), pushes it by digest,
+  smoke-tests it there, then joins the two digests and tags `X.Y.Z`, and `latest` when it is
   the highest `server-v*` tag; the GitHub release is published last. The GHCR package must be made public once by
   the owner (server/DEPLOY.md, "Docker"). `workflow_dispatch` is always a dry run, on a tag ref too.
 

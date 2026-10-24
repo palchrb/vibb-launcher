@@ -109,8 +109,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Image: distroless static nonroot (uid 65532) pinned by digest, a busybox stage seeds `data/` and `data/keys/`
   (0700) owned by 65532, `BIND_ADDR=127.0.0.1:3100`, `HEALTHCHECK` = `healthcheck`. CI `server-image` (only when the
   Dockerfile, `.dockerignore`, the smoke script or the workflow change) and the release's `server-release-image`
-  (push by digest, smoke amd64 + arm64 under QEMU, then tag `X.Y.Z`, and `latest` only when X.Y.Z is the highest
-  `server-v*` tag, provenance attestation, release published last; `workflow_dispatch` = dry run, on a tag ref too:
+  (a matrix, each architecture natively on its own runner - `ubuntu-24.04`, `ubuntu-24.04-arm`, no QEMU since
+  2026-10-24: push by digest and smoke; then `server-release-image-merge` joins the two digests and tags `X.Y.Z`, and
+  `latest` only when X.Y.Z is the highest `server-v*` tag, provenance attestation, release published last; `workflow_dispatch` = dry run, on a tag ref too:
   `RELEASE` needs a push event) run `deploy/image-smoke.sh`.
 - Tests: `src/tests/docker.rs` (the pre-migration backup once and 3 kept, from a real older DB; the restore marker
   with a good zip, bad names, a zip without a DB, and a DB that won't open put back; the healthcheck; the Docker

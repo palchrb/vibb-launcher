@@ -312,8 +312,8 @@ as 127.0.0.1, and the admin gate can't tell them from local tools.
 
 **Making the image public (once, for the repo owner)**: after the first `server-v*` release has pushed an image,
 GitHub may have created the package private. Open GitHub > your profile > Packages > `handy-server` > Package
-settings > Change visibility > Public. The release workflow tests every image (amd64 natively, arm64 under QEMU)
-before it gets a version tag, and publishes the GitHub release only after that.
+settings > Change visibility > Public. The release workflow tests every image natively on its own architecture (amd64 on
+`ubuntu-24.04`, arm64 on the `ubuntu-24.04-arm` runner) before the two are joined and get a version tag, and publishes the GitHub release only after that.
 
 ## Updating
 
