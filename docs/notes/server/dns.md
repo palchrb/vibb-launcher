@@ -42,10 +42,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   nothing. A save returns to `/dns?open=custom-server#server` (the row open again), a pick to `/dns#server`. Each hint and the backup prefill follow their own stored value, not the pair's validity, and the picker's 400 names the missing or equal field (`check_custom`, shared with Save). While Custom is in force the footer has one line per set-up phone
   (`dns_filter::phone_line`: "Your server in use", "Backup server since 10:42 - <reason>", "Cloudflare - update Vibb
   One on this phone ..." without the capability, "Waiting for the phone" without a report at the current `rev`, "Web
-  filter off" when the phone's filter switch is off); a stored but no longer valid pair says so instead. The ⓘ says
-  DoT on 853 for a bare name, the certificate check, direct reach (not through Tailscale), the path id, that
-  Cloudflare/Quad9 fall back to the same provider's DoH where DoT is blocked, and that only a DoH backup answers on a
-  network that blocks port 853.
+  filter off" when the phone's filter switch is off); a stored but no longer valid pair says so instead. The ⓘ (cut
+  2026-10-24, pwa.md) says a name means DNS-over-TLS and an https:// address DNS-over-HTTPS, and that the phone reaches
+  the server directly, not through Tailscale, so a server at home works only on the home Wi-Fi.
 - **Security event** `dns_server_changed` ("DNS server changed") on every change of the choice or either address,
   detail `{"server":..,"kind":..,"backup_kind":..}` - kinds only, never a host or path; nothing logs either value.
 - Tests: `dns_server::tests` (every row and refusal, normalized, hint, the wire, the sanitizer), `tests::custom_dns`

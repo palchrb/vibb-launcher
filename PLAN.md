@@ -778,8 +778,8 @@ findings, merge to `main`, full suite once.
   very top of the phone screen (status bar area, `theme-color` night on that page) through the 44 px title bar - is
   the night ground `#0C0C14` with the brand tile lifted to `#1B1B28`, "vibb" in white, + and bell in peach; the
   heading "Devices" and everything below stay as D. Only Devices ("den skal føles mer som forside"); the other tabs
-  keep the grey top. Server only, small; next server round. **Done 2026-10-22** (built and merged in the identity round,
-  `pwa-identity-d`; `docs/notes/server/pwa.md`, "Devices' night band").
+  keep the grey top. Server only, small; next server round. **Done 2026-10-22** (branch `pwa-night-band`, merged a1be85d1;
+  `docs/notes/server/pwa.md`, "Devices' night band").
 - **Several parent accounts (the user, 2026-10-22: "enkelt opprette multi-admins, mor og far, med egen konto"):** build
   design 62 (`docs/design/62-parent-accounts-assessment.md`) in its simple form. Multi-family (design 63) is parked:
   "vi dropper mer tanker om multifamilie". Steps 1-2 (the latent bugs, 0087, the guarded self-service writes; Name,
@@ -1602,7 +1602,6 @@ findings, merge to `main`, full suite once.
   tekst; bare en stor logo og natt bakgrunnen". The launcher's resting Vibb mark on night, 13 iPhone portrait PNGs
   from `scripts/pwa-startup-images.py`; Android's manifest background night (pwa.md, "Start-up splash"). The real
   iPhone cold start is the user's check.
-
 - **Every release build has its own versionCode (2026-10-23, branch `versioncode-rc`)**: the old rule
   (`X*1_000_000 + Y*1_000 + Z`, an RC one less) gave every RC of a version one code (0.36.0-rc.1..3 are all 35999), so
   Android refused rc.2 over rc.1 as the same version and the RC-to-RC fix had to compare versionNames on both sides.

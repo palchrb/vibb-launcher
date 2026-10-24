@@ -1417,6 +1417,26 @@ async fn every_startup_image_has_its_screens_size() {
         })
         .sum();
     assert!(total < 300 * 1024, "{total} bytes");
+    // Only those answers are cached for good: the rest of /static keeps its `?v=` habit, and a
+    // miss under startup/ is never stored (qa-pwa-polish-a Q-8).
+    for (path, status) in [
+        ("/static/style.css", StatusCode::OK),
+        ("/static/manifest.webmanifest", StatusCode::OK),
+        ("/static/icons/icon-192.png", StatusCode::OK),
+        ("/static/startup/startup-1x1.png", StatusCode::NOT_FOUND),
+    ] {
+        let res = app.request(Method::GET, path, None, None).await;
+        assert_eq!(res.status, status, "{path}");
+        let cache = res
+            .headers
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            !cache.contains("immutable") && !cache.contains("max-age"),
+            "{path}: {cache}"
+        );
+    }
 
     // One night: Android's splash ground, the theme colour, the page's meta.
     let manifest: serde_json::Value =

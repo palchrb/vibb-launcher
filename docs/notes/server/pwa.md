@@ -263,8 +263,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   again; without JS the browser asks before posting it again, like any form's answer - the PIN can't go through a
   redirect, so post/redirect/get is out; qa-59-step2-code S2P-5/6; "Hide now" is a link to `?hidden=pin#show-pin`), the state rows and warnings, **Send the Child PIN again** (`POST
   /devices/{id}/kid-pin/send`, back to `?notice=pin_sent|pin_not_sent|pin_not_kept#child-pin`). The footer and its ⓘ
-  follow the parent's choice (Android's lock: nothing can locate, ring or erase it before the first unlock after a
-  restart, the Parent PIN doesn't open it; Vibb One's lock: the back-off, the Parent PIN as "Parent code"). The summary's row reads "PIN on · Android's lock". "Send again" and the reveal's "the
+  follow the parent's choice (Android's lock: nothing can locate, ring or erase it and alarms may not ring before the
+  first unlock after a restart, the Parent PIN doesn't open it - Show Child PIN does; Vibb One's lock: the back-off, the
+  Parent PIN as "Parent code", it doesn't encrypt the data, some bank apps won't work). The Parent PIN's ⓘ: up to two
+  hours on a time lock, never Calls or Restrictions, a new PIN ends a lockout once the phone checks in. The summary's row reads "PIN on · Android's lock". "Send again" and the reveal's "the
   phone still has" read only a report since the phone's enrolment (`device_pages::since_enrolment`, as the queue rule;
   S2P-4).
 - **Typed (M5):** `kid_lock::LockNote` (+ `Inactive`) replaces the card's `lines`/`warnings` and `inactive_warning`;
@@ -360,7 +362,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `#app-<package>` fragment; `tracked_apps::phone_apps_href`). `device_pages::AppsFrom::parse` takes only those two
   shapes (the id a positive number in digits); with one the page lights the Apps tab and `.nav-back` goes to `/apps`
   ("Apps") or `/apps/tracked/<id>` (the app's name) at the phone's row, `#phone-<id>` (both pages give their phone
-  rows that id); a catalog app deleted since is the list; anything else is the phone's own page, as before. Every
+  rows that id) - at `#phones`, the app page's always-rendered group, when that page doesn't list the phone (unticked
+  since; the launcher's page lists every set-up phone; qa-pwa-polish-a Q-10); a catalog app deleted since is the list;
+  anything else is the phone's own page, as before. Every
   form on the page carries a hidden `from` (the switches, Name and icon - `AppDisplayForm::from` -, the Wi-Fi switch)
   and its redirect keeps it before the fragment (`device_pages::apps_url`: `?notice=…&app=…&from=…#row`), the
   refused Name and icon's answer too; `auto-reload.js` (`?v=4`) drops only a shown `notice=`/`app=`, never `from=`.
@@ -368,7 +372,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   from a field, `{% let tab = nav_tab.name() %}`, a `device_pages::Tab` that can only be a tab's name
   (`shell::every_template_with_the_bar_sets_its_tab` pins that line for this file and the literal rule for every
   other). Tests: `device_pages::apps_from_the_apps_tab_go_back_there` (both origins, bad values, a deleted app, every
-  form's redirect, the refusals), `device_pages::tests::apps_from_takes_only_its_two_shapes`,
+  form's redirect, a refusal through `toggle_refusal` keeping `?notice=…&app=…&from=…#row`, the deleted catalog row,
+  the refused Name and icon, Back to `#phones`), `device_pages::tests::apps_from_takes_only_its_two_shapes`,
   `tracked_apps::tests::a_phone_link_says_where_it_came_from`, `jstest/auto-reload.test.js`.
 
 ## Device › Music (design 31 step 7, `docs/design/31-pwa-redesign.md` §3.2, §8)
@@ -884,7 +889,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   from the SE (1st) to the 17 Pro Max (`server/testdata/pwa_startup_screens.json` names each); landscape is left out
   (a phone PWA opens upright; a landscape launch shows iOS's own blank). The PNGs are `static/startup/startup-<w>x<h>.png`
   (64-colour palette PNGs, about 240 KB for all 13), linked with `?v=` (the JSON's `version`) and served `public,
-  max-age=31536000, immutable` (`admin_auth::admin_headers`, `/static/startup/` only - the icons have no long caching).
+  max-age=31536000, immutable` (`admin_auth::admin_headers`, `/static/startup/` and a 2xx only - the icons have no long
+  caching; the test pins that style.css, the manifest, an icon and a 404 under `startup/` don't get it).
   The real iPhone check (add to the home screen, cold start) is the user's.
 - **Android**: the manifest's `background_color` is night `#0C0C14` (was `#F2F2F7`): Chrome draws the icon on it and
   always adds the app's name under it - nothing to do about the name. `theme_color` and the one `<meta
@@ -892,7 +898,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Regenerate** (a new iPhone size, a new mark): edit `server/testdata/pwa_startup_screens.json` (a new row; bump
   `version` when the PNGs change), run `python3 -I scripts/pwa-startup-images.py` (Python 3 + Pillow; it writes the
   PNGs, removes stale ones and rewrites head.html's links between the two `Start-up images` markers), check with
-  `--selftest`, commit the PNGs, the JSON and head.html. A new mark means new ring data in the script (copied from the
+  `--selftest` (it draws every screen again in memory and compares it with the committed PNG pixel for pixel, and
+  with the launcher in the tree compares the copied rings, core, scales, alpha, stroke and colours with its drawable),
+  commit the PNGs, the JSON and head.html. A new mark means new ring data in the script (copied from the
   launcher's regenerated `splash_vibb_breathe.xml`; the script never reads the launcher's files). Test:
   `shell::every_startup_image_has_its_screens_size` (the links against the JSON in order, each PNG's exact pixels, the
   folder holds only those, the caching, under 300 KB, the one night in the manifest and the meta).
@@ -905,4 +913,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   into the footer in a few words ("Add photos in Settings › Wallpapers", "a friend's too", "(up to 10 MB)"). Panels
   that hold data (a crash trace, a raw error, a key, a command, the phone's answer, a book list, Spotify's setup steps)
   stay as they were. A new ⓘ follows the same rule. Of the 83 `info-panel`s in `templates/`, 9 static ones went and
-  the static rest were cut; the tests assert the new words.
+  the static rest were cut; the tests assert the new words. The code QA's fix round (`docs/review/qa-pwa-polish-a-code.md`
+  Q-1..Q-5) put back what a parent acts on, in the fewest words: the alarms after a restart on Android's lock, the
+  Parent PIN's two hours and lockout remedy, what Vibb One's lock doesn't protect, the Storytel password's truth until
+  design 58 step 3 (a phone with an older music app keeps a copy) and the lost-phone remedy, and a clause each where a
+  parent would otherwise be surprised (SMS off hides Messages, a phone with its own rules, the 24 h rule, the Install
+  Now minute and Update fence, safe mode's restrictions, the filter's kept notifications, Locate needs location, Off
+  turns location off, the Tailscale key by hand, what a backup leaves out, the lock's colour without "Also on the lock
+  screen").

@@ -2792,7 +2792,7 @@ fn nav_back(html: &str) -> (String, String) {
 async fn apps_from_the_apps_tab_go_back_there() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
-    let (id, _, element, _) = apps_phone(&app).await;
+    let (id, _, element, notes) = apps_phone(&app).await;
     let page = device_page(id, Section::Apps);
     let get = |query: String| {
         let app = &app;
@@ -2913,6 +2913,16 @@ async fn apps_from_the_apps_tab_go_back_there() {
         posted += 1;
     }
     assert!(posted >= 4, "{posted} forms");
+    // Element X is off on Anna now, so its page doesn't list her: Back goes to its phones' group
+    // (qa-pwa-polish-a Q-10), which is always there.
+    let html = get(format!("?from={from}")).await;
+    let back = format!("/apps/tracked/{element}#phones");
+    assert_eq!(nav_back(&html).0, back);
+    let there = app
+        .get_page(&format!("/apps/tracked/{element}"), &cookie)
+        .await
+        .text();
+    assert!(there.contains("id=\"phones\"") && !there.contains(&format!("id=\"phone-{id}\"")));
 
     // A refused switch and a refused name keep it too: the reason's address, and the answer.
     let res = app
@@ -2930,6 +2940,28 @@ async fn apps_from_the_apps_tab_go_back_there() {
         )
         .await;
     assert_redirect(&res, &format!("{page}?from=apps"), Some("not-allowed"));
+    // A refusal with its reason (`toggle_refusal`): `?notice=…&app=…`, then `from` (Q-7).
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/apps/toggle"),
+            Some(&cookie),
+            &[
+                ("package_name", "Not A Package"),
+                ("tracked_app_id", &notes.to_string()),
+                ("selected", "on"),
+                ("back", "apps"),
+                ("from", &from),
+            ],
+        )
+        .await;
+    let row = format!("catalog-{notes}");
+    assert_redirect(
+        &res,
+        &format!("{page}?notice=not_an_app&app={row}&from={from}"),
+        Some(&row),
+    );
+    app.assert_lands(&res, &cookie).await;
     let res = app
         .request_form(
             Method::POST,

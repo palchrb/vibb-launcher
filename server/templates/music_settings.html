@@ -94,7 +94,7 @@
         {% endif %}
     </div>
     {% if storytel.key_available %}
-    <div class="group-footer">One login for the family; it is never shown again. <details class="info"><summary aria-label="About the Storytel login"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>The phones never get the password. Two phones listening at the same time need Storytel Family, which isn't supported yet.</p>{% if let Some(session) = storytel.session %}<p data-row="session">{{ session }}</p>{% endif %}</div></details></div>
+    <div class="group-footer">One login for the family; it is never shown again. <details class="info"><summary aria-label="About the Storytel login"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>Kept encrypted on this server; a phone with an older music app keeps a copy. Lost a phone? Remove it, then change the password at Storytel and save it here again. Two phones listening at once need Storytel Family, which isn't supported yet.</p>{% if let Some(session) = storytel.session %}<p data-row="session">{{ session }}</p>{% endif %}</div></details></div>
     {% endif %}
 
     {% include "partials/spotify_setup.html" %}

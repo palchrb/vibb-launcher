@@ -115,7 +115,7 @@ async fn install_now_queues_one_command_with_the_tag_and_the_pop_sends_it() {
     assert!(html.contains("1.4.0 not downloaded yet"), "{html}");
     assert!(html.contains(">Install Now</button>"), "{html}");
     assert!(
-        page.contains("calls aren't filtered for that minute"),
+        page.contains("calls aren't filtered. Update fence"),
         "the ⓘ (R-M1)"
     );
     // Every form on the page posts to a fragment that encloses it (the Install Now form its row).
