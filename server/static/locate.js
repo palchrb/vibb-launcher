@@ -12,7 +12,10 @@
 // (the server words and pages the list). Without JS the links do the same with the server's
 // default. A tap on a Locations row brings the map into view and shows that fix on it. After
 // Update Location the page asks every 5 s, for a minute, for a fix newer than the one shown and
-// for the phone's answer. ES5. Run its tests: node --test jstest/locate.test.js
+// for the phone's answer. The phone's zones (design 64, `zones.json`, no-store; `data-zones` on
+// the box while it has any) are circles in
+// `--map-zone` with their names as tooltips (text nodes). ES5. Run its tests:
+// node --test jstest/locate.test.js
 (function (root) {
     "use strict";
 
@@ -21,6 +24,8 @@
     var SPANS = { "12": "12 hours", "24": "24 hours", "168": "7 days", "0": "All kept" };
     // The trail's colour when the page names none: vibb's dark peach.
     var TRAIL = "#A64B25";
+    // A zone's circle when the page names none (`--map-zone`).
+    var ZONE = "#2F6F62";
     var WAIT_EVERY_MS = 5000;
     var WAIT_TRIES = 12;
 
@@ -54,11 +59,34 @@
     // The trail in the page's accent, `--map-trail` (style.css): the tiles are light in both
     // schemes, so it is the light scheme's peach in dark mode too.
     function trailColour(win) {
+        return tokenColour(win, "--map-trail", TRAIL);
+    }
+
+    function tokenColour(win, name, fallback) {
         try {
-            var value = win.getComputedStyle(win.document.documentElement).getPropertyValue("--map-trail");
+            var value = win.getComputedStyle(win.document.documentElement).getPropertyValue(name);
             if (value && value.trim()) return value.trim();
         } catch (e) {}
-        return TRAIL;
+        return fallback;
+    }
+
+    /**
+     * The phone's zones on `map` (design 64): a calm outline per zone in `colour`, its name a
+     * tooltip built as text. Returns how many were drawn.
+     */
+    function drawZones(L, doc, layer, zones, colour) {
+        var drawn = 0;
+        for (var i = 0; i < zones.length; i++) {
+            var z = zones[i];
+            if (typeof z.latitude !== "number" || typeof z.longitude !== "number" || typeof z.radius_m !== "number") continue;
+            var name = doc.createElement("span");
+            name.textContent = String(z.name || "");
+            L.circle([z.latitude, z.longitude], { radius: z.radius_m, color: colour, weight: 2, fillColor: colour, fillOpacity: 0.08 })
+                .addTo(layer)
+                .bindTooltip(name);
+            drawn += 1;
+        }
+        return drawn;
     }
 
     function install(win, L) {
@@ -110,11 +138,14 @@
         // imagePath to its file names (an icon URL of our own would be prefixed twice - a 404).
         L.Icon.Default.imagePath = '/static/leaflet/images/';
         var layer = L.layerGroup().addTo(map);
+        var zoneLayer = L.layerGroup().addTo(map);
         var drawn = false;
+        var hasPoints = false;
         var asked = 0;
 
         function draw(points) {
             layer.clearLayers();
+            hasPoints = points.length > 0;
             if (!points.length) {
                 map.setView([20, 0], 2);
                 return;
@@ -263,11 +294,24 @@
             }, WAIT_EVERY_MS);
         }
 
+        // The zones (`data-zones` while the phone has any), once: they don't change with the span.
+        // A phone with no fix yet shows its first zone.
+        if (box.hasAttribute("data-zones")) {
+            win.fetch("/devices/" + id + "/zones.json", { credentials: "same-origin" })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (zones) {
+                    if (!zones || !zones.length) return;
+                    drawZones(L, doc, zoneLayer, zones, tokenColour(win, "--map-zone", ZONE));
+                    if (!hasPoints) map.setView([zones[0].latitude, zones[0].longitude], 15);
+                })
+                .catch(function () {});
+        }
+
         choose(span);
         return { choose: choose, map: map };
     }
 
-    var api = { install: install, countText: countText, readSpan: readSpan, trailColour: trailColour, SPAN_KEY: SPAN_KEY, SPANS: SPANS };
+    var api = { install: install, countText: countText, readSpan: readSpan, trailColour: trailColour, drawZones: drawZones, SPAN_KEY: SPAN_KEY, SPANS: SPANS };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else if (root.document) {

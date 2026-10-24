@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+<link rel="stylesheet" href="/static/leaflet/leaflet.css">
+</head>
+<body>
+{% let tab = "locate" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    {#- A zone (design 64 §3.5): one form, Add or Save in the sticky top bar as on a time rule's page,
+        so it is in reach after any field and a refusal shows in view. Without JS the fields are the
+        whole feature; static/zones.js adds the map (a tap places the centre, the marker drags, the
+        slider redraws the circle) and writes the fields, so Save posts what the map shows. A save
+        returns to the zone's row on Locate; a refusal renders this page again (400) at #zone-form,
+        as typed, the reason under its field. -#}
+    <form method="post" action="{% if let Some(zid) = zone_id %}/devices/{{ device.id }}/zones/{{ zid }}{% else %}/devices/{{ device.id }}/zones{% endif %}#zone-form" id="zone-form">
+        <div class="editor-bar" data-bar="zone">
+            <div class="title-bar title-bar-split">
+                <a class="nav-back" href="/devices/locate?device={{ device.id }}#zones"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Locate</a>
+                <button type="submit" class="title-action" data-save="zone">{% if zone_id.is_some() %}Save{% else %}Add{% endif %}</button>
+            </div>
+            {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">Not saved. {{ why }}</p>
+            {% else if errors.any() %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">Not saved. Check the marked field.</p>{% endif %}
+        </div>
+        <h1 class="page-title">{{ title }}</h1>
+
+        <section id="zone-map" aria-label="Map">
+            <div class="map-box" data-zone-map data-lat="{{ form.latitude }}" data-lng="{{ form.longitude }}" data-radius="{{ form.radius }}" data-min="{{ radius_min }}" data-max="{{ radius_max }}"{% if let Some((lat, lng)) = phone_fix %} data-phone-lat="{{ lat }}" data-phone-lng="{{ lng }}"{% endif %}><div id="map"></div></div>
+        </section>
+
+        <section id="zone-place" aria-label="{{ device.name }}'s zone">
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">Name</span>
+                    <input type="text" class="row-input row-input-end" name="name" value="{{ form.name }}" maxlength="40" required placeholder="Home" autocomplete="off"{% if errors.name.is_some() %} aria-invalid="true" aria-describedby="name-error" autofocus{% endif %}>
+                </label>
+                {% if let Some(why) = errors.name %}<p class="flash flash-error" id="name-error" data-flash="name">{{ why }}</p>{% endif %}
+                <label class="row">
+                    <span class="row-label">Latitude</span>
+                    <input type="text" class="row-input row-input-end" name="latitude" value="{{ form.latitude }}" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="59.913900" data-zone-lat{% if errors.latitude.is_some() %} aria-invalid="true" aria-describedby="latitude-error" autofocus{% endif %}>
+                </label>
+                {% if let Some(why) = errors.latitude %}<p class="flash flash-error" id="latitude-error" data-flash="latitude">{{ why }}</p>{% endif %}
+                <label class="row">
+                    <span class="row-label">Longitude</span>
+                    <input type="text" class="row-input row-input-end" name="longitude" value="{{ form.longitude }}" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="10.752200" data-zone-lng{% if errors.longitude.is_some() %} aria-invalid="true" aria-describedby="longitude-error" autofocus{% endif %}>
+                </label>
+                {% if let Some(why) = errors.longitude %}<p class="flash flash-error" id="longitude-error" data-flash="longitude">{{ why }}</p>{% endif %}
+                <label class="row">
+                    <span class="row-label">Radius</span>
+                    <input type="number" class="row-num" name="radius_m" value="{{ form.radius }}" min="{{ radius_min }}" max="{{ radius_max }}" step="{{ radius_step }}" inputmode="numeric" required data-zone-radius{% if errors.radius.is_some() %} aria-invalid="true" aria-describedby="radius-error" autofocus{% endif %}><span class="row-unit">&nbsp;m</span>
+                </label>
+                {% if let Some(why) = errors.radius %}<p class="flash flash-error" id="radius-error" data-flash="radius">{{ why }}</p>{% endif %}
+                {#- The slider has no name: the number field is what is posted. Shown by zones.js. -#}
+                <div class="row zone-slider" data-zone-slider-row hidden>
+                    <input type="range" min="{{ radius_min }}" max="{{ radius_max }}" step="{{ radius_step }}" value="{{ form.radius }}" aria-label="Radius in metres" data-zone-slider>
+                </div>
+                {% if let Some((lat, lng)) = phone_fix %}
+                <button type="button" class="row row-button" data-use-phone data-lat="{{ lat }}" data-lng="{{ lng }}" hidden>Use Phone's Location</button>
+                {% endif %}
+            </div>
+            {% if form.latitude.is_empty() && phone_fix.is_none() %}
+            <p class="group-footer" data-note="no-fix">No location yet - type the coordinates or tap the map.</p>
+            {% else %}
+            <p class="group-footer">Tap the map to move the centre. An arrival or a departure counts after two locations on the same side, a minute or more apart.</p>
+            {% endif %}
+        </section>
+
+        <section id="zone-notify" aria-labelledby="zone-notify-title">
+            <h2 class="group-header" id="zone-notify-title">Notifications</h2>
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">Notify When They Arrive</span>
+                    <input type="checkbox" role="switch" class="sw" name="notify_arrive" value="on"{% if form.notify_arrive %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">Notify When They Leave</span>
+                    <input type="checkbox" role="switch" class="sw" name="notify_leave" value="on"{% if form.notify_leave %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                </label>
+            </div>
+            <p class="group-footer">For every parent. Each of you can turn zone pushes off under Notify Me About.</p>
+        </section>
+    </form>
+
+    {% if let Some(zid) = zone_id %}
+    <section id="delete" aria-label="Delete zone">
+        <div class="group">
+            <details class="confirm cell">
+                <summary class="row">Delete Zone&hellip;</summary>
+                <form method="post" action="/devices/{{ device.id }}/zones/{{ zid }}/delete" class="confirm-body">
+                    <p>Delete {{ stored_name }}? Its past arrivals stay in Notifications as long as the location history is kept.</p>
+                    <button type="submit" class="button-destructive">Delete Zone</button>
+                </form>
+            </details>
+        </div>
+    </section>
+    {% endif %}
+
+    <script src="/static/leaflet/leaflet.js"></script>
+    <script src="/static/zones.js?v=1"></script>
+</main>
+</body>
+</html>

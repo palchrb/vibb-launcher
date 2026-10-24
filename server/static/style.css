@@ -100,6 +100,9 @@
     --avatar-text: #0C0C14;
     /* The Locate map's trail (static/locate.js): on OSM's light tiles in both schemes. */
     --map-trail: #A64B25;
+    /* A safe zone's circle (design 64, static/locate.js and zones.js): a calm outline on the same
+       light tiles, in both schemes. */
+    --map-zone: #2F6F62;
 
     /* Old names, still used by inline styles on the pages not redesigned yet. */
     --color-bg: var(--field-bg);
@@ -2375,3 +2378,9 @@ details.app-display[open] > summary .section-chev {
 @media (prefers-reduced-motion: reduce) {
     .splash-holding .splash-hold { transition: none; }
 }
+
+/* ---- Design 64: safe zones (templates/device_zone.html, the Locate page's #zones) ---- */
+/* The radius slider under its number field; shown by static/zones.js (no name: the number posts). */
+.zone-slider { padding-top: 8px; padding-bottom: 8px; }
+.zone-slider input[type="range"] { flex: 1 1 auto; width: 100%; margin: 0; accent-color: var(--tint); }
+[data-zone-slider-row][hidden], [data-use-phone][hidden] { display: none; }

@@ -38,7 +38,7 @@
             <a role="radio" href="/devices/locate?device={{ view.device.id }}&amp;span={{ hours }}#location" data-span="{{ hours }}" aria-checked="{% if hours == view.span %}true{% else %}false{% endif %}">{{ words }}</a>
             {% endfor %}
         </div>
-        <div class="map-box" data-locate="{{ view.map.device_id }}" data-shown="{{ view.map.shown }}" data-shown-text="{{ view.map.shown_text }}" data-newest-age="{{ view.map.newest_age }}" data-span="{{ view.map.span }}"{% if view.waiting_for_fix %} data-waiting{% endif %}><div id="map"></div></div>
+        <div class="map-box" data-locate="{{ view.map.device_id }}" data-shown="{{ view.map.shown }}" data-shown-text="{{ view.map.shown_text }}" data-newest-age="{{ view.map.newest_age }}" data-span="{{ view.map.span }}"{% if view.waiting_for_fix %} data-waiting{% endif %}{% if !view.zones.rows.is_empty() %} data-zones{% endif %}><div id="map"></div></div>
         <div class="group">
             {% if let Some(fix) = view.fix %}
             <div class="row" data-row="fix">
@@ -71,9 +71,51 @@
         <p class="group-footer">The map shows the span picked above. Keep history for, under Location Settings, decides how long locations are kept.</p>
     </section>
 
+    {#- Design 64 §3.5: the phone's zones, each to its page; the map draws them (locate.js, from
+        zones.json). A zone's save lands on its row (#zone-N) with its line, a delete and Locate
+        Regularly here (#zones). What the location setting means for them is said here too. -#}
+    <section id="zones" aria-labelledby="zones-title">
+        <h2 class="group-header" id="zones-title">Zones</h2>
+        {% if view.zones.needs_regularly %}
+        <div class="attention attention-action" data-warning="zones-need-regularly">
+            <span class="attention-text">Zones need Regularly<span class="attention-sub">With Only when asked the phone reports a location only when you tap Update Location.</span></span>
+        </div>
+        <div class="group">
+            <form method="post" action="/devices/{{ view.device.id }}/location-policy#zones" class="cell">
+                <input type="hidden" name="mode" value="interval">
+                <input type="hidden" name="back" value="zones">
+                <button type="submit" class="row row-button">Locate Regularly</button>
+            </form>
+        </div>
+        {% endif %}
+        <div class="group" data-group="zones">
+            {% if let Some(text) = view.zones.flash %}<p class="flash" role="status" data-flash="zones">{{ text }}</p>{% endif %}
+            {% for z in view.zones.rows %}
+            <a class="row" id="zone-{{ z.id }}" href="/devices/{{ view.device.id }}/zones/{{ z.id }}" data-zone="{{ z.id }}">
+                <span class="row-label">{{ z.name }}<span class="row-sub">{{ z.sub }}</span></span>
+                {% if z.here %}<span class="row-value" data-here>Here now</span>{% endif %}
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% if let Some(text) = z.flash %}<p class="flash" role="status" data-flash="zone">{{ text }}</p>{% endif %}
+            {% endfor %}
+            {% if view.zones.location_unlocked %}
+            <a class="row" href="/devices/{{ view.device.id }}/advanced#restrictions" data-note="location-unlocked">
+                <span class="row-label">Your child can turn Location off on the phone; zones then see nothing.<span class="row-sub">Keep location on, under Advanced</span></span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% endif %}
+            {% if view.zones.full %}
+            <p class="row row-note" data-row="zones-full">10 zones is the most</p>
+            {% else %}
+            <a class="row row-button" href="/devices/{{ view.device.id }}/zones/new" data-row="add-zone">Add Zone</a>
+            {% endif %}
+        </div>
+        <p class="group-footer">{% if view.zones.rows.is_empty() %}A zone tells you when the phone arrives or leaves, like Home or School.{% else %}{{ view.zones.footer }}{% if let Some(within) = view.zones.confirm_within %} That is within about two intervals (here {{ within }}).{% endif %}{% endif %}</p>
+    </section>
+
     {% if view.location_off %}
     <div class="attention attention-action" data-warning="location-off">
-        <span class="attention-text">Location is off for this phone<span class="attention-sub">It takes no fix, even when asked. Choose &ldquo;Only when asked&rdquo; under Location Settings.</span></span>
+        <span class="attention-text">Location is off for this phone<span class="attention-sub">It takes no fix, even when asked.{% if !view.zones.rows.is_empty() %} Zones can't see where the phone is.{% endif %} Choose &ldquo;Only when asked&rdquo; under Location Settings.</span></span>
     </div>
     {% endif %}
     {% if view.wipe_not_ready %}
@@ -169,7 +211,7 @@
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>
-    <script src="/static/locate.js?v=2"></script>
+    <script src="/static/locate.js?v=3"></script>
     {%- else %}
     {#- Several phones, none chosen: each with its state, as on Devices. -#}
     <div class="group group-avatars" data-group="phones">

@@ -29,3 +29,4 @@ pub mod tracked_apps;
 pub mod updates;
 pub mod wallpapers;
 pub mod window_relock;
+pub mod zones;

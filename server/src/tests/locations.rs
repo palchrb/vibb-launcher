@@ -337,7 +337,7 @@ async fn the_map_loads_osm_tiles_with_an_origin_only_referer() {
     // The map's script is a file since design 44, loaded by the page.
     assert!(
         page.text()
-            .contains("<script src=\"/static/locate.js?v=2\"></script>")
+            .contains("<script src=\"/static/locate.js?v=3\"></script>")
     );
     let script = std::fs::read_to_string("static/locate.js").unwrap();
     let layer = script

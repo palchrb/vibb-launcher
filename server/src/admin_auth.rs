@@ -657,6 +657,9 @@ pub fn no_store_path(path: &str) -> bool {
         ["devices", _, "locations.json"]
             | ["devices", _, "locations"]
             | ["devices", _, "locate-result.json"]
+            // Design 64: a zone's centre is a child's home or school.
+            | ["devices", _, "zones.json"]
+            | ["devices", _, "zones", ..]
             | ["devices", _, "lock"]
             | ["devices", _, "provision"]
             | ["devices", _, "regenerate-code"]
@@ -881,6 +884,9 @@ mod tests {
             // Every kept fix (design 44 §1.4).
             "/devices/3/locations",
             "/devices/3/locate-result.json",
+            "/devices/3/zones.json",
+            "/devices/3/zones/new",
+            "/devices/3/zones/7",
             // Show Child PIN's answer (design 59 §2.2), and so the page it is rendered into.
             "/devices/3/lock",
             "/devices/3/provision",

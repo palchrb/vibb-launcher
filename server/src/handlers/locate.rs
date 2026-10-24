@@ -102,6 +102,92 @@ struct Locate {
     intervals: Vec<(i64, String)>,
     retention_choices: Vec<(i64, String)>,
     recent: Recent,
+    /// Design 64: the phone's zones (`#zones`).
+    zones: ZonesView,
+}
+
+/// The Locate page's `#zones` (design 64 §3.5, §3.6): a row per zone, Add Zone, the line after a
+/// save or a delete, what the location settings mean for the zones.
+struct ZonesView {
+    rows: Vec<ZoneRow>,
+    /// 10 zones: Add Zone is replaced by a note.
+    full: bool,
+    /// After a delete (`?zone=deleted`): the group's line.
+    flash: Option<&'static str>,
+    /// Only when asked, with zones: the orange row and Locate Regularly.
+    needs_regularly: bool,
+    /// "Keep location on" is off, with zones: the kid can turn Location off.
+    location_unlocked: bool,
+    /// The footer under the group.
+    footer: &'static str,
+    /// Regularly: "within about two intervals (here 60 min)".
+    confirm_within: Option<String>,
+}
+
+/// A zone's row: "Home" over "150 m · arrive and leave", "Here now" while the phone is in it,
+/// and after its save the line under it.
+struct ZoneRow {
+    id: i64,
+    name: String,
+    sub: String,
+    here: bool,
+    flash: Option<&'static str>,
+}
+
+/// What a zone's row says it notifies about.
+fn notify_words(arrive: bool, leave: bool) -> &'static str {
+    match (arrive, leave) {
+        (true, true) => "arrive and leave",
+        (true, false) => "arrive",
+        (false, true) => "leave",
+        (false, false) => "no notifications",
+    }
+}
+
+/// The zones' part of the page for `zones` with the location setting (`mode`, `interval`) and
+/// "Keep location on" (`locked`); `flash` is `?zone=`, `flash_zone` `?zone_id=`.
+fn zones_view(
+    zones: &[crate::zones::Zone],
+    mode: &str,
+    interval: i64,
+    locked: bool,
+    flash: Option<&str>,
+    flash_zone: Option<i64>,
+) -> ZonesView {
+    let row_flash = match flash {
+        Some("added") => Some("Added."),
+        Some("saved") => Some("Saved."),
+        _ => None,
+    };
+    let rows = zones
+        .iter()
+        .map(|z| ZoneRow {
+            id: z.id,
+            name: z.name.clone(),
+            sub: format!(
+                "{} m · {}",
+                z.radius_m,
+                notify_words(z.notify_arrive, z.notify_leave)
+            ),
+            here: z.here(),
+            flash: row_flash.filter(|_| flash_zone == Some(z.id)),
+        })
+        .collect::<Vec<_>>();
+    let some = !rows.is_empty();
+    let footer = match mode {
+        "off" => "Location is off for this phone, so the zones see nothing.",
+        "on_request" => "The zones are judged on the locations Update Location brings.",
+        _ => "Arrivals and departures show after two locations on the same side.",
+    };
+    ZonesView {
+        full: rows.len() as i64 >= crate::zones::MAX_ZONES,
+        flash: (flash == Some("deleted")).then_some("Zone deleted."),
+        needs_regularly: some && mode == "on_request",
+        location_unlocked: some && !locked && mode != "off",
+        footer,
+        confirm_within: (mode == "interval").then(|| interval_label(interval * 2)),
+        rows,
+    }
 }
 
 /// What `static/locate.js` needs from the page, as `data-` attributes on the map box: the phone,
@@ -659,6 +745,9 @@ struct Asked<'a> {
     cancel: Option<&'a str>,
     /// `?span=` ([span_of]).
     span: i64,
+    /// `?zone=added|saved|deleted` and `?zone_id=`: the line after a zone's save (design 64).
+    zone: Option<&'a str>,
+    zone_id: Option<i64>,
 }
 
 /// The page. With one phone it is shown at once; with several and none (or an unknown one)
@@ -708,20 +797,24 @@ async fn locate_view(
         waiting_for_fix,
         cancel,
         span,
+        zone: zone_flash,
+        zone_id: flash_zone,
     } = asked;
     let id = device.id;
     let recent = requests(state, id, cancel, zone, now).await?;
 
     // A phone always has its policy row (`insert_device_with_policy`); a missing one reads as
     // the defaults a new phone gets.
-    let (location_mode, location_interval, location_retention, android_lock): (
+    let (location_mode, location_interval, location_retention, android_lock, location_locked): (
         String,
         i64,
         i64,
         bool,
+        bool,
     ) = sqlx::query_as(
         "SELECT location_mode, location_interval_minutes, location_retention_days, \
-         kid_keyguard = ? AND kid_pin_hash IS NOT NULL FROM device_policy WHERE device_id = ?",
+         kid_keyguard = ? AND kid_pin_hash IS NOT NULL, lock_location \
+         FROM device_policy WHERE device_id = ?",
     )
     .bind(crate::kid_lock::KEYGUARD_ANDROID)
     .bind(id)
@@ -733,18 +826,34 @@ async fn locate_view(
             30,
             crate::retention::DEFAULT_LOCATION_RETENTION_DAYS,
             false,
+            true,
         )
     });
+    let zone_list = crate::zones::list(&state.db, id).await?;
+    // The newest fix's badge (design 64 §3.5): the zones the phone is in, "At Home · School".
+    let here: Vec<&str> = zone_list
+        .iter()
+        .filter(|z| z.here())
+        .map(|z| z.name.as_str())
+        .collect();
+    let badge = (!here.is_empty()).then(|| format!("At {}", here.join(" · ")));
 
-    let (newest, map) = map_data(state, id, span, zone, now).await?;
+    let (newest, mut map) = map_data(state, id, span, zone, now).await?;
     let fix = newest.as_ref().map(|l| {
         let fix = Fix::of(&l.captured_at, l.accuracy_meters);
+        let accuracy = match &badge {
+            Some(badge) => format!("{} · {badge}", fix.accuracy()),
+            None => fix.accuracy(),
+        };
         FixView {
             age: fix.age(zone, now),
-            accuracy: fix.accuracy(),
+            accuracy,
             exact: fix.at.map(|t| zone.exact(t)).unwrap_or_default(),
         }
     });
+    if let Some(badge) = badge.as_ref().filter(|_| newest.is_some()) {
+        map.shown_text = format!("{} · {}", map.shown_text, lowercase_first(badge));
+    }
     let count = count_in_span(state, id, span, now).await?;
     let locations_value = locations_value(
         count,
@@ -771,6 +880,14 @@ async fn locate_view(
     .flatten()
         == Some(false);
 
+    let zones = zones_view(
+        &zone_list,
+        &location_mode,
+        location_interval,
+        location_locked,
+        zone_flash,
+        flash_zone,
+    );
     Ok(Locate {
         device,
         fix,
@@ -807,7 +924,17 @@ async fn locate_view(
             })
             .collect(),
         recent,
+        zones,
     })
+}
+
+/// "At Home" as the popup's tail: "10 min ago · within 40 m · at Home".
+fn lowercase_first(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 /// The phone's newest fix and the map's data for `span`: the popup's words for it ("10 min ago ·
@@ -873,6 +1000,8 @@ pub async fn show_locate(
     let waiting = params.contains_key("requested");
     let cancel = params.get("cancel").map(String::as_str);
     let span = span_of(params.get("span"));
+    let zone = params.get("zone").map(String::as_str);
+    let zone_id = params.get("zone_id").and_then(|s| s.parse::<i64>().ok());
     match render_locate_page(
         &state,
         admin.id,
@@ -882,6 +1011,8 @@ pub async fn show_locate(
             waiting_for_fix: waiting,
             cancel,
             span,
+            zone,
+            zone_id,
         },
     )
     .await
@@ -1369,7 +1500,8 @@ pub async fn update_location_retention(
 /// The location policy: `mode` off / on_request / interval, `interval_minutes` from
 /// `time_rules::LOCATION_INTERVALS` (kept as is when absent: the page sends it only in
 /// "Regularly"). 400 on an unknown value, 404 for an unknown device; nudges the phone. Back to
-/// `#location-settings`, as the history.
+/// `#location-settings`, as the history - or to `#zones` for the zones' Locate Regularly
+/// (`back=zones`, design 64 §3.6; anything else is the settings).
 pub async fn update_location_policy(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -1414,7 +1546,11 @@ pub async fn update_location_policy(
             )
             .await;
             let _ = state.command_notify.send(id);
-            Redirect::to(&format!("/devices/locate?device={id}#location-settings")).into_response()
+            let group = match form.get("back").map(String::as_str) {
+                Some("zones") => "zones",
+                _ => "location-settings",
+            };
+            Redirect::to(&format!("/devices/locate?device={id}#{group}")).into_response()
         }
         Err(err) => {
             tracing::error!(device_id = id, %err, "failed to save the location policy");
@@ -1459,6 +1595,8 @@ pub async fn wipe(
                 waiting_for_fix: false,
                 cancel: None,
                 span: SPANS[0].0,
+                zone: None,
+                zone_id: None,
             },
         )
         .await

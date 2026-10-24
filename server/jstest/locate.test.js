@@ -268,3 +268,37 @@ test("no map box or no Leaflet: nothing happens", () => {
     assert.strictEqual(install(page.win, fakeLeaflet()), null);
     assert.strictEqual(install(fakePage().win, undefined), null);
 });
+
+test("a phone's zones are circles with their names as text, fetched only when it has any", async () => {
+    const L = fakeLeaflet();
+    const circles = [];
+    L.circle = (at, options) => {
+        const c = { kind: "circle" };
+        c.addTo = () => c;
+        c.bindTooltip = (node) => { circles.push([at, options.radius, node.textContent]); return c; };
+        return c;
+    };
+    const page = fakePage({
+        box: { "data-zones": "" },
+        answers: {
+            "/devices/3/zones.json": [
+                { id: 1, name: "<b>Home</b>", latitude: 59.9, longitude: 10.7, radius_m: 150, here: true },
+                { id: 2, name: "School", latitude: 59.95, longitude: 10.75, radius_m: 400, here: false },
+                { id: 3, name: "Broken", latitude: "x", longitude: 10, radius_m: 100 },
+            ],
+        },
+    });
+    install(page.win, L);
+    await settle();
+    await settle();
+    assert.ok(page.fetched.includes("/devices/3/zones.json"));
+    assert.deepStrictEqual(circles, [
+        [[59.9, 10.7], 150, "<b>Home</b>"],
+        [[59.95, 10.75], 400, "School"],
+    ], "the name is text, never HTML; a zone that isn't numbers isn't drawn");
+    // Without zones nothing is asked.
+    const none = fakePage();
+    install(none.win, fakeLeaflet());
+    await settle();
+    assert.ok(!none.fetched.some((u) => u.includes("zones.json")));
+});
