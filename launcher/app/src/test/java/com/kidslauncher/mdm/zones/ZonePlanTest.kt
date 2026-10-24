@@ -168,6 +168,86 @@ class ZonePlanTest {
         assertEquals(200f, PASSIVE_ACCURACY_FLOOR_M)
     }
 
+    /** About [m] metres north of [home]'s centre (a degree of latitude is 111 195 m on the mean sphere). */
+    private fun north(m: Double, accuracy: Float? = 20f, time: Long = 0) =
+        QueuedFix(home.latitude + m / 111_195.08, home.longitude, accuracy, time)
+
+    @Test
+    fun `the distance is haversine, as the server's`() {
+        assertEquals(111_195.08, distanceM(0.0, 0.0, 1.0, 0.0), 0.01)
+        assertEquals(111.2, distanceM(0.0, 179.9995, 0.0, -179.9995), 0.1)
+        assertEquals(1000.0, distanceM(home.latitude, home.longitude, north(1000.0).latitude, home.longitude), 0.01)
+        assertEquals(850.0, boundaryDistanceM(north(1000.0), home), 0.01)
+        assertEquals(120.0, boundaryDistanceM(north(30.0), home), 0.01)
+    }
+
+    @Test
+    fun `the next check comes by the distance to the nearest boundary`() {
+        val now = 1_000_000_000L
+        // No zones: no series at all.
+        assertNull(nextCheckDelay(north(0.0, time = now), emptyList(), now))
+        // No cached fix: the shortest delay.
+        assertEquals(CHECK_MIN_DELAY_MS, nextCheckDelay(null, listOf(home), now))
+        // Near a boundary (inside, 30 m from the centre: 120 m to the edge, less 20 m accuracy): 100 m
+        // at 15 m/s is under 3 min - the floor.
+        assertEquals(CHECK_MIN_DELAY_MS, nextCheckDelay(north(30.0, time = now), listOf(home), now))
+        // 10 km out: 9850 m to the edge less 20 m accuracy, at 15 m/s = 655 s.
+        val tenKm = 9830 / 15.0 * 1000
+        assertEquals(tenKm, nextCheckDelay(north(10_000.0, time = now), listOf(home), now)!!.toDouble(), 2.0)
+        // Far away (100 km): capped at the fence's 30 min.
+        assertEquals(CHECK_MAX_DELAY_MS, nextCheckDelay(north(100_000.0, time = now), listOf(home), now))
+        // The fix's age comes off: the same 10 km fix 5 min old.
+        assertEquals(tenKm - 5 * minute, nextCheckDelay(north(10_000.0, time = now - 5 * minute), listOf(home), now)!!.toDouble(), 2.0)
+        // A poor fix's accuracy comes off the distance: 10 km +- 9.85 km is the floor.
+        assertEquals(CHECK_MIN_DELAY_MS, nextCheckDelay(north(10_000.0, accuracy = 9_850f, time = now), listOf(home), now))
+        // The nearest of two zones counts.
+        val far = PolicyZone(11, home.latitude + 1.0, home.longitude, 150)
+        assertEquals(nextCheckDelay(north(10_000.0, time = now), listOf(home), now), nextCheckDelay(north(10_000.0, time = now), listOf(far, home), now))
+        assertEquals(3 * minute, CHECK_MIN_DELAY_MS)
+        assertEquals(30 * minute, CHECK_MAX_DELAY_MS)
+    }
+
+    @Test
+    fun `a series ends after an hour, twenty checks, or when the motion stops`() {
+        var s = seriesOnMotion(null, 0, 3 * minute)
+        assertEquals(CheckSeries(0, 0, 0, 3 * minute), s)
+        // The first check, 3 min on, no new fire: still within twice the delay - runs.
+        assertNull(seriesEnd(s, 3 * minute))
+        s = seriesAfterCheck(s, 4 * minute)
+        // A new fire keeps it going; none for more than twice the last delay ends it.
+        s = seriesOnMotion(s, 5 * minute, 99)
+        assertEquals(5 * minute, s.lastMotionAtMs)
+        assertEquals(0L, s.startedAtMs)
+        assertNull(seriesEnd(s, 13 * minute))
+        assertEquals(SeriesEnd.STILL, seriesEnd(s, 13 * minute + 1))
+        // An hour after the start, however it moves.
+        val moving = s.copy(lastMotionAtMs = 59 * minute)
+        assertEquals(SeriesEnd.HOUR, seriesEnd(moving, SERIES_MAX_MS))
+        // Twenty checks at most.
+        assertEquals(SeriesEnd.COUNT, seriesEnd(moving.copy(checks = SERIES_MAX_CHECKS), 30 * minute))
+        assertNull(seriesEnd(moving.copy(checks = SERIES_MAX_CHECKS - 1), 59 * minute))
+        assertEquals(60 * minute, SERIES_MAX_MS)
+        assertEquals(20, SERIES_MAX_CHECKS)
+    }
+
+    @Test
+    fun `a check's fix is sent only when it could be a crossing`() {
+        val zones = listOf(home)
+        // Inside before, outside now: another side - sent, and the confirm follows.
+        assertEquals(CheckVerdict.SIDE_CHANGED, checkVerdict(north(30.0), north(1000.0), zones))
+        assertEquals(CheckVerdict.SIDE_CHANGED, checkVerdict(north(1000.0), north(30.0), zones))
+        // Within its accuracy of the boundary: sent (the server may need it in time).
+        assertEquals(CheckVerdict.NEAR_BOUNDARY, checkVerdict(north(1000.0), north(170.0, accuracy = 30f), zones))
+        assertEquals(CheckVerdict.NEAR_BOUNDARY, checkVerdict(null, north(140.0, accuracy = 20f), zones))
+        // Same side, clear of the boundary: kept only.
+        assertEquals(CheckVerdict.KEEP, checkVerdict(north(1000.0), north(2000.0), zones))
+        assertEquals(CheckVerdict.KEEP, checkVerdict(north(10.0), north(40.0), zones))
+        assertEquals(CheckVerdict.KEEP, checkVerdict(null, north(2000.0), zones))
+        // No accuracy: only on the boundary itself.
+        assertEquals(CheckVerdict.KEEP, checkVerdict(north(2000.0), north(160.0, accuracy = null), zones))
+        assertEquals(CheckVerdict.KEEP, checkVerdict(null, north(30.0), emptyList()))
+    }
+
     @Test
     fun `the launcher claims the zone watch`() {
         assertTrue(ZONES_CAPABILITY in STATUS_CAPABILITIES)
@@ -193,7 +273,21 @@ class ZonePlanTest {
         // The sync: the watch after apply(), a crossing's fresh fix, the queue after the report.
         val sync = source("server/MdmSyncWorker.kt")
         assertTrue(Regex("""AppEnforcer\.apply\(context, decision, fromSync = true\)[\s\S]{0,400}ZoneWatch\.apply\(context, decision\.policy\)""").containsMatchIn(sync))
-        assertTrue(sync.contains("val forceFreshLocation = ranCommand?.command in setOf(\"ring\", \"locate\") || zoneFix"))
+        assertTrue(sync.contains("val forceFreshLocation = commandFix || zoneFix != null"))
+        // §4.4's paths: GPS first only for locate/ring and the crossing's confirm, the rest balanced.
+        assertTrue(sync.contains("val preciseFix = commandFix || zoneFix == FreshKind.PRECISE"))
+        assertTrue(sync.contains("if (beat == Heartbeat.FIX) LocationAction.FRESH_BALANCED else LocationAction.CACHED"))
+        assertTrue(sync.contains("if (it == LocationAction.FRESH && !precise) LocationAction.FRESH_BALANCED else it"))
+        // Un-managed and a new enrollment release every fence, the feed, the series and the queue.
+        assertTrue(source("server/AppEnforcer.kt").contains("if (!managedForHardening) com.kidslauncher.mdm.zones.ZoneWatch.release(context)"))
+        assertTrue(source("server/Provisioning.kt").contains("com.kidslauncher.mdm.zones.ZoneWatch.release(context)"))
+        assertTrue(source("ui/settings/launcher/SettingsFragmentLauncher.kt").contains("com.kidslauncher.mdm.zones.ZoneWatch.release(context)"))
+        // A series check is a balanced fused fix only; a candidate is queued and asks for a sync.
+        val series = source("zones/ZoneSeries.kt")
+        assertTrue(series.contains("LocateCommands.seriesFix(context)"))
+        assertTrue(Regex("""ZoneWatch\.enqueue\(context, fix\)\s+SyncRunner\.request\(context, "zone_check"\)""").containsMatchIn(series))
+        assertTrue(series.contains("if (verdict == CheckVerdict.SIDE_CHANGED) ZoneWatch.armConfirm(context)"))
+        assertTrue(Regex("""android:name="\.zones\.ZoneCheckReceiver"\s+android:exported="false"""").containsMatchIn(manifest))
         assertTrue(sync.contains("extraLocations = extraFixes?.map { it.toReport() }"))
         assertTrue(sync.contains("afterZoneReport(context, extraFixes, location.fix, sent.isSuccessful, locationOff)"))
         // A passive fix is never sent on its own: the feed only keeps it as the cached fix.

@@ -48,7 +48,9 @@ object ZoneFences {
     @Synchronized
     fun sync(context: Context, zones: List<PolicyZone>, watching: Boolean) {
         val fresh = !registeredHere
-        registeredHere = true
+        // Only a watching pass counts as this process's registration: an unmanaged phone's release
+        // (`ZoneWatch.release`) before the first sync must not skip the re-registration after it.
+        if (watching) registeredHere = true
         val stored = ZoneWatch.fenceRecord(context)
         val plan = zoneFencePlan(zones, watching, stored, fresh)
         if (plan.isEmpty) return

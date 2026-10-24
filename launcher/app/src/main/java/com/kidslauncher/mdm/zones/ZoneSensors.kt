@@ -91,16 +91,25 @@ object PassiveFixes {
 
 /**
  * The significant-motion sensor (decision 11, §4.5): a one-shot wake-up trigger in the sensor hub
- * that needs no permission - armed after each fix of our own ([arm]), it fires once the phone moves
- * and disarms itself. The heartbeat skips its fix while it hasn't fired ([motion] = STILL; at most
- * 4 h in a row, `heartbeatDue`). No sensor (the emulator) = [Motion.NO_SENSOR]: the heartbeat always
- * fixes, today's behaviour. A new process doesn't know, so it counts as moved until its first fix.
- * The sensor service delivers one-shot sensors only to a UID that isn't idle: the anchor's
- * foreground service keeps ours active.
+ * that needs no permission. It fires once the phone moves and disarms itself.
+ * - **The heartbeat's flag**: armed after each fix of our own ([arm]); the heartbeat skips its fix
+ *   while it hasn't fired ([motion] = STILL; at most 4 h in a row, `heartbeatDue`). A new process
+ *   doesn't know, so it counts as moved until its first fix.
+ * - **The moving series**: while the policy has zones ([watch] with `zones`) the trigger is kept
+ *   armed - re-armed at every fire - and each fire starts or feeds [ZoneSeries].
+ * No sensor (the emulator) = [Motion.NO_SENSOR]: the heartbeat always fixes, today's behaviour,
+ * and there is no series. The sensor service delivers one-shot sensors only to a UID that isn't
+ * idle: the anchor's foreground service keeps ours active.
  */
 object MotionGate {
     @Volatile
     private var moved = true
+
+    @Volatile
+    private var keepArmed = false
+
+    @Volatile
+    private var app: Context? = null
     private var listener: TriggerEventListener? = null
 
     private fun sensor(context: Context): Sensor? =
@@ -114,18 +123,27 @@ object MotionGate {
         else -> Motion.STILL
     }
 
+    /** Regularly as device owner: with [zones] the trigger stays armed for the series. */
+    fun watch(context: Context, zones: Boolean) {
+        keepArmed = zones
+        if (zones) ensureArmed(context)
+    }
+
     /** After a fix of our own while Regularly: still from here until the trigger fires. */
-    @Synchronized
     fun arm(context: Context) {
+        if (sensor(context) == null) return
+        moved = false
+        ensureArmed(context)
+    }
+
+    @Synchronized
+    private fun ensureArmed(context: Context) {
         val manager = context.getSystemService(SensorManager::class.java) ?: return
         val sensor = sensor(context) ?: return
-        moved = false
+        app = context.applicationContext
         if (listener != null) return
         val l = object : TriggerEventListener() {
-            override fun onTrigger(event: TriggerEvent?) {
-                moved = true
-                synchronized(MotionGate) { listener = null }
-            }
+            override fun onTrigger(event: TriggerEvent?) = fired()
         }
         val armed = try {
             manager.requestTriggerSensor(l, sensor)
@@ -136,17 +154,34 @@ object MotionGate {
         if (armed) listener = l else moved = true
     }
 
+    /** The trigger fired (it disarmed itself): moved; with zones the series hears it and the
+     * trigger is armed again. */
+    private fun fired() {
+        moved = true
+        synchronized(this) { listener = null }
+        val context = app ?: return
+        if (!keepArmed) return
+        try {
+            ZoneSeries.onMotion(context)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "The moving series failed to start: ${e.javaClass.simpleName}")
+        }
+        ensureArmed(context)
+    }
+
     /** Regularly ended: disarmed, and unknown again. */
     @Synchronized
     fun stop(context: Context) {
-        val l = listener ?: return
+        keepArmed = false
+        val l = listener
+        listener = null
+        moved = true
+        if (l == null) return
         try {
             val manager = context.getSystemService(SensorManager::class.java)
             sensor(context)?.let { manager?.cancelTriggerSensor(l, it) }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't disarm the motion sensor: ${e.javaClass.simpleName}")
         }
-        listener = null
-        moved = true
     }
 }

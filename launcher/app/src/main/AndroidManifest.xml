@@ -439,6 +439,9 @@
         <receiver
             android:name=".zones.ZoneConfirmReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".zones.ZoneCheckReceiver"
+            android:exported="false" />
         <!-- Handy step 11: the update fence's backstop check and the self-update window's wake-up -
              our own explicit PendingIntents only. -->
         <receiver

@@ -138,7 +138,10 @@ object LocateCommands {
         saveLastActiveFetchAt(context, System.currentTimeMillis())
         // Design 64 step 2, decision 14: a release build ignores a mock fix (`Location.isMock`)
         // and counts it - the fresh one and every last-known candidate; the debug build takes it.
-        val fresh = requestFreshFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } ?: try {
+        // Design 64 §4.4: the heartbeat and a crossing's first fix ask the fused provider at
+        // balanced power first (Wi-Fi/cell, no GPS on a GMS phone); GPS when it gives nothing.
+        val balanced = if (action == LocationAction.FRESH_BALANCED) requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } else null
+        val fresh = balanced ?: requestFreshFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } ?: try {
             val providers = mutableListOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 providers.add(LocationManager.FUSED_PROVIDER)
@@ -184,6 +187,54 @@ object LocateCommands {
             cached.accuracy?.let { accuracy = it }
             time = cached.timeMs
             isMock = cached.mock
+        }
+    }
+
+    /** The cached fix as the zone queue keeps it (`null` without one) - the moving series compares
+     * a check's fix with it. */
+    fun cachedQueued(): com.kidslauncher.mdm.zones.QueuedFix? = cachedFix()?.let {
+        com.kidslauncher.mdm.zones.QueuedFix(it.latitude, it.longitude, it.accuracy, it.timeMs, it.provider, it.mock)
+    }
+
+    /**
+     * Design 64 §4.5: one check of the moving series - a balanced fused fix only (no GPS, no
+     * permission grant, no Location switch: the fences' registration granted what it needs, and
+     * with Location off there is nothing to check), through the mock rule, stamped as our own fix;
+     * the caller keeps it ([keepFix]) or sends it. `null` when there is none.
+     */
+    suspend fun seriesFix(context: Context): Location? {
+        val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val fix = requestBalancedFix(context, lm)?.takeIf { ZoneWatch.accept(context, it) } ?: return null
+        saveLastActiveFetchAt(context, System.currentTimeMillis())
+        return fix
+    }
+
+    /** A one-shot fused fix at balanced power, bounded like [requestFreshFix]; `null` without the
+     * fused provider, when it is off, or on its timeout. */
+    private suspend fun requestBalancedFix(context: Context, lm: LocationManager): Location? {
+        val provider = LocationManager.FUSED_PROVIDER
+        try {
+            if (!lm.hasProvider(provider) || !lm.isProviderEnabled(provider)) return null
+        } catch (e: Exception) {
+            return null
+        }
+        val request = android.location.LocationRequest.Builder(0L)
+            .setQuality(android.location.LocationRequest.QUALITY_BALANCED_POWER_ACCURACY)
+            .setDurationMillis(FRESH_LOCATION_TIMEOUT_MS)
+            .build()
+        return withTimeoutOrNull(FRESH_LOCATION_TIMEOUT_MS) {
+            suspendCancellableCoroutine { cont ->
+                val cancellationSignal = CancellationSignal()
+                cont.invokeOnCancellation { cancellationSignal.cancel() }
+                try {
+                    lm.getCurrentLocation(provider, request, cancellationSignal, context.mainExecutor) { location ->
+                        if (cont.isActive) cont.resume(location)
+                    }
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Failed to request a balanced fix: ${e.javaClass.simpleName}")
+                    if (cont.isActive) cont.resume(null)
+                }
+            }
         }
     }
 

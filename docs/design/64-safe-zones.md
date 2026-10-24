@@ -567,14 +567,21 @@ while news). The full account: `docs/notes/server/zones.md` ("Safe zones, step 2
 ("Locate: zones", step 2), `launcher/CLAUDE.md` ("Safe zones on the phone"); the emulator run is
 `docs/testing/emulator.md` §6t. As §4 says, with these differences:
 
-- **The phone judges nothing, at all** (decision 1 taken to its end, the coordinator's brief): no local side, no
-  `watchStep`, no copy of `zone_vectors.json` in the launcher. A fence broadcast is the only crossing signal: it asks
-  for a fix now (today's fresh path, GPS first) and a confirming one 2 min later, both reported at once. §4.5's moving
-  series (checks at `max(3 min, d / 15 m/s)` after a motion fire) and §4.4's `FRESH_BALANCED` fused fix are **not
-  built**: a crossing seen only by the fence waits for its 30-min poll, another app's fused fix or the heartbeat - up
-  to about 30 min plus the confirm's 2 min, not "within minutes". The footer says only "as soon as it notices a
-  crossing". A later step can add the series without local judging (a motion fire taking fused fixes that the fence
-  itself judges).
+- **The phone decides nothing; distances only time the fixes** (decision 1; the coordinator's correction of
+  2026-10-24): no local side state and no copy of `zone_vectors.json` in the launcher. A fence broadcast asks for a
+  balanced fix now and a precise (GPS first) confirming one 2 min later, both reported at once. **§4.5's moving
+  series is built** (`zones/ZoneSeries.kt`, the pure `nextCheckDelay`/`seriesOnMotion`/`seriesEnd`/`checkVerdict`): a
+  significant-motion fire while the policy has zones starts checks every `max(3 min, d / 15 m/s)` - `d` the haversine
+  distance from the cached fix to the nearest boundary less the fix's accuracy, its age taken off, capped at 30 min -,
+  each a balanced fused fix (no GPS); a check whose fix is on the other side of a boundary than the cached fix (plain
+  distance against the radius, a hint only) is queued and reported now with the confirming GPS fix 2 min later, one
+  within its accuracy of a boundary is queued and reported now, any other only replaces the cached fix. The fused fix
+  also passes the platform fence. The series ends after 60 min, 20 checks, or no motion fire within twice the last
+  delay (the sensor is kept armed while zones are watched). No sensor (the emulator): no series. The `watchStep`
+  bookkeeping of §4.5 (a per-zone side of the last *reported* fix) is replaced by the cached fix.
+- **The paths** (§4.4): `LocationAction.FRESH_BALANCED` (the fused provider at balanced power, 15 s, GPS only when it
+  gives nothing) for the heartbeat and a crossing's first fix; today's precise `FRESH` (GPS first) for `locate`/`ring`
+  and a crossing's confirming fix; the series' checks the balanced fix alone (`LocateCommands.seriesFix`).
 - **The capability is the watch**: the floor waits for `zone_watch.fences > 0` in the phone's latest report since its
   enrollment, not for `zones_v1` (claimed, read by nothing): a phone whose fences were refused keeps the parent's
   interval. `zone_watch` is §4.1's object; `mock_ignored` is a **running** count since the launcher's data was created
@@ -584,10 +591,14 @@ while news). The full account: `docs/notes/server/zones.md` ("Safe zones, step 2
   failure), not every own fix at capture; a passive fix is never queued or sent on its own (§4.3, the trail as dense as
   the parent's interval) - it only replaces the cached fix, which the next due heartbeat reports (`KEPT`). Read
   leniently on the server (a bad entry is dropped, never the report); every one stored before one judging (code QA
-  N-4). Each fix may carry `provider` and `mock`; the server stores neither.
+  N-4). Each fix may carry `provider` and `mock`; the server stores both (migration 0093) and shows them only in the
+  Locate page's newest-fix row's title.
+- **Un-managed and a new enrollment** (the coordinator's decision): `AppEnforcer.apply` on a phone that isn't managed
+  any more, and both enrollment paths (`Provisioning`, Settings' enroll), call `ZoneWatch.release` - every fence of ours
+  removed, the passive feed, the motion sensor and the series stopped, the queue emptied.
 - **The heartbeat** is `heartbeatDue` with a stamp of its own (`last_beat_ms`), so a skipped fix (`STILL`, `KEPT`) waits
   a whole interval and `BackstopAlarm` counts from it; the 4-h cap counts from our last own fix. The fix itself is
-  today's GPS-first path.
+  the balanced fused one (`FRESH_BALANCED`, above).
 - **Names and numbers**: the fences' action `com.kidslauncher.mdm.action.ZONE` (the codebase's prefix, not §4.2's
   `me.vibb.launcher...`), request code 8 for the fences (one per zone by the data URI) and 9 for the confirming fix;
   the record and the queue in CE prefs `zone_watch`. The kid's line uses the app's "mum and dad" / "mamma og pappa"

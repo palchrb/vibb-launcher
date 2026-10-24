@@ -961,7 +961,7 @@ async fn locate_view(
         FixView {
             age: fix.age(zone, now),
             accuracy,
-            exact: fix.at.map(|t| zone.exact(t)).unwrap_or_default(),
+            exact: fix_title(fix.at.map(|t| zone.exact(t)).unwrap_or_default(), l),
         }
     });
     if let Some(badge) = badge.as_ref().filter(|_| newest.is_some()) {
@@ -1057,6 +1057,23 @@ async fn locate_view(
         interval_note,
         mock_ignored,
     })
+}
+
+/// The newest fix row's title (design 64 step 2, migration 0093): its exact time, then the phone's
+/// provider word and "test location" for a mock fix (only a debug launcher sends one) - "24 Oct
+/// 2026, 08:14:05 · gps · test location". Only the title: the row's words stay as they are.
+fn fix_title(exact: String, fix: &DeviceLocation) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !exact.is_empty() {
+        parts.push(exact);
+    }
+    if let Some(provider) = fix.provider.as_deref() {
+        parts.push(provider.to_string());
+    }
+    if fix.mock == Some(true) {
+        parts.push("test location".to_string());
+    }
+    parts.join(" · ")
 }
 
 /// "At Home" as the popup's tail: "10 min ago · within 40 m · at Home".

@@ -180,6 +180,7 @@ async fn a_report_pair_raises_one_arrival_for_the_parents_who_want_it() {
         longitude: NEAR.1,
         accuracy_meters: Some(20.0),
         captured_at: first.clone(),
+        ..Default::default()
     })
     .unwrap();
     assert_eq!(key, &format!("{home}:inside:{stored_first}"));

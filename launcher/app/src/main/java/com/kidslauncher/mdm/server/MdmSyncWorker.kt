@@ -28,6 +28,7 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.calls.OngoingCalls
 import com.kidslauncher.mdm.server.dto.LocationPolicy
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
+import com.kidslauncher.mdm.zones.FreshKind
 import com.kidslauncher.mdm.zones.Heartbeat
 import com.kidslauncher.mdm.zones.MotionGate
 import com.kidslauncher.mdm.zones.QueuedFix
@@ -208,10 +209,14 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     // (off / on request / every N minutes, see locationAction), so location isn't forcing an
     // active fetch (visible location indicator, slower sync) on every single cycle.
     // Design 64 step 2: a zone fence's crossing and its confirming alarm ask for a fresh fix too.
+    // Design 64 §4.4: which path - the parent's "locate now" and a crossing's confirming fix are
+    // the precise one (GPS first), a crossing's first fix the balanced one.
     val zoneFix = ZoneWatch.takeFreshWanted()
-    val forceFreshLocation = ranCommand?.command in setOf("ring", "locate") || zoneFix
+    val commandFix = ranCommand?.command in setOf("ring", "locate")
+    val forceFreshLocation = commandFix || zoneFix != null
+    val preciseFix = commandFix || zoneFix == FreshKind.PRECISE
     val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
-    val location = currentLocationReport(context, dpm, admin, forceFreshLocation, locationPolicy)
+    val location = currentLocationReport(context, dpm, admin, forceFreshLocation, preciseFix, locationPolicy)
     // The fixes that waited for a report (a crossing's in a tunnel), without this report's own.
     val extraFixes = extraLocations(ZoneWatch.queue(context), location.fix)
     val locationOff = locationPolicy?.mode == "off"
@@ -573,12 +578,16 @@ private class LocationOutcome(
  * no kept fix (passive, a crossing's) is younger than the interval and the motion sensor doesn't
  * say the phone stayed put (at most 4 h of that) - else the cached fix, no LocationManager call. A
  * crossing's sync ([forceFresh] through `ZoneWatch.takeFreshWanted`) and `locate`/`ring` always fix.
+ * The path (design 64 §4.4): [precise] (`locate`/`ring`, a crossing's confirming fix) is today's GPS
+ * first; the heartbeat and a crossing's first fix are `FRESH_BALANCED` (the fused provider at
+ * balanced power, GPS only when it gives nothing).
  */
 private suspend fun currentLocationReport(
     context: Context,
     dpm: DevicePolicyManager,
     admin: ComponentName,
     forceFresh: Boolean,
+    precise: Boolean,
     policy: LocationPolicy?,
 ): LocationOutcome {
     if (!dpm.isDeviceOwnerApp(context.packageName)) return LocationOutcome(LocationAction.NONE, null, null, null)
@@ -599,15 +608,17 @@ private suspend fun currentLocationReport(
             ZoneWatch.stampBeat(context, now)
             Log.i(LOG_TAG, "Location heartbeat: $beat")
         }
-        if (beat == Heartbeat.FIX) LocationAction.FRESH else LocationAction.CACHED
+        if (beat == Heartbeat.FIX) LocationAction.FRESH_BALANCED else LocationAction.CACHED
     } else {
-        locationAction(policy, forceFresh, now - lastOwnFix)
+        locationAction(policy, forceFresh, now - lastOwnFix).let {
+            if (it == LocationAction.FRESH && !precise) LocationAction.FRESH_BALANCED else it
+        }
     }
-    if (action == LocationAction.FRESH) ZoneWatch.stampBeat(context, now)
+    if (action.fresh) ZoneWatch.stampBeat(context, now)
     val location = LocateCommands.currentLocation(context, dpm, admin, action)
         ?: return LocationOutcome(action, null, null, null)
     // A fix of our own: the motion sensor counts "moved" from here.
-    if (action == LocationAction.FRESH && regularly) MotionGate.arm(context)
+    if (action.fresh && regularly) MotionGate.arm(context)
     val accuracy = if (location.hasAccuracy()) location.accuracy else null
     return LocationOutcome(
         action,

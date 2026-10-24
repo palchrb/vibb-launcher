@@ -103,6 +103,7 @@ fn stored(captured_at: &str) -> String {
         longitude: 0.0,
         accuracy_meters: None,
         captured_at: captured_at.to_string(),
+        ..Default::default()
     })
     .unwrap()
 }
@@ -476,4 +477,59 @@ async fn the_locate_page_tells_the_floor_the_watch_and_the_mock_count() {
     let html = page().await;
     assert!(html.contains("data-row=\"mock-ignored\""));
     assert!(html.contains("4 made-up locations ignored<"), "{html}");
+}
+
+/// Migration 0093: a fix keeps the phone's provider word (a short lowercase word or nothing) and
+/// its mock flag; the Locate page shows them in the newest fix row's title only.
+#[tokio::test]
+async fn a_fix_keeps_its_provider_and_mock_flag_in_the_title_only() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let mut gps = fix(NEAR, &at(20));
+    gps["provider"] = json!("gps");
+    let mut odd = fix(AWAY, &at(15));
+    odd["provider"] = json!("<b>GPS</b>");
+    let mut mock = fix(NEAR, &at(10));
+    mock["provider"] = json!("fused");
+    mock["mock"] = json!(true);
+    post(
+        &app,
+        &token,
+        json!({"extra_locations": [gps, odd], "location": mock}),
+    )
+    .await;
+    let rows: Vec<(Option<String>, Option<bool>)> =
+        sqlx::query_as("SELECT provider, mock FROM device_locations ORDER BY captured_at")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        [
+            (Some("gps".to_string()), None),
+            (None, None),
+            (Some("fused".to_string()), Some(true)),
+        ]
+    );
+    let html = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await
+        .text();
+    assert!(html.contains(" · fused · test location\">"), "{html}");
+    assert_eq!(html.matches("test location").count(), 1, "the title only");
+    for (given, kept) in [
+        (Some("gps"), Some("gps")),
+        (Some(" network "), Some("network")),
+        (Some("Fused"), None),
+        (Some(""), None),
+        (Some("a-very-long-provider-word"), None),
+        (None, None),
+    ] {
+        assert_eq!(
+            crate::models::location_provider(given).as_deref(),
+            kept,
+            "{given:?}"
+        );
+    }
 }

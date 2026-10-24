@@ -953,7 +953,8 @@ findings, merge to `main`, full suite once.
   Locate (list, page, map), each fix stored once and judged once, `zone_*` events as key + params, push while news;
   the served interval unchanged until step 2 (`docs/notes/server/zones.md`). **Step 2 done 2026-10-24 (branch
   `design-64-step2`, both dirs, not merged)**: `location_policy.zones`, a fence per zone, a crossing's two fixes,
-  `extra_locations`/`zone_watch`, the 30-min floor, the motion-gated heartbeat, the mock rule, Kid Settings' line;
+  `extra_locations`/`zone_watch`, the 30-min floor, the motion-gated heartbeat, the moving series, the balanced/precise
+  paths, `provider`/`mock` stored (0093), the release on un-manage, the mock rule, Kid Settings' line;
   emulator §6t owed (the coordinator's run after code QA).
 - **Keystore for the phone's secrets (approved 2026-10-21, "no-brainer"):** Design r10 (2026-10-22): the user chose TEE-only (not StrongBox) and the "Ny oppsettkode" recovery button "så lenge dette gir god beskyttelse og sikkerhet". The user also confirmed the wrap of the kid PIN hash despite reversing design 24b's QA #7 ("Jeg støtter ditt forslag med innpakning") (1) the device token (and the other
   CE-stored secrets P-L5 names: the kid PIN's hash and salt, and the reset-password token `WindowRelockStore` keeps in

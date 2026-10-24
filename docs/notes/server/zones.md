@@ -106,7 +106,7 @@ at each fix, as below.
   `zones::tests::a_new_zone_is_seeded_from_a_fresh_sure_fix_only` / `here_now_needs_a_fresh_fix`,
   `locate_page::every_form_on_the_locate_page_returns_to_its_group` and
   `shell::every_form_on_every_page_lands_on_its_own_group` (with a zone: Locate Regularly, the zone's two pages),
-  `admin_auth::tests::no_store_paths`, `music_spotify::migrations_73_to_92_in_order`, `jstest/zones.test.js`,
+  `admin_auth::tests::no_store_paths`, `music_spotify::migrations_73_to_93_in_order`, `jstest/zones.test.js`,
   `jstest/locate.test.js` (the circles, their view after the locations).
 
 ## Safe zones, step 2: the phone watches (design 64 §4, migration `0092_zone_watch.sql`)
@@ -129,8 +129,10 @@ counts.
   the server took (a crossing's two in a tunnel, a report that failed), oldest first; read leniently
   (`models::lenient_locations`: not a list, or an entry that isn't a `LocationReport`, is dropped and logged, never the
   report); each through `checked_location`; the newest `MAX_EXTRA_LOCATIONS` (20) kept (`zones::report_fixes`). A fix's
-  `provider` and `mock` keys are the phone's, not stored (only a debug launcher ever sends `mock: true`; serde ignores
-  both). `zone_watch` - `{fences, motion_sensor, location_on, background_location, mock_ignored}`, all five or nothing
+  `provider` and `mock` keys are the phone's, stored on the fix since migration 0093 (`device_locations.provider` -
+  `models::location_provider`: a short lowercase word or nothing - and `mock`; only a debug launcher ever sends
+  `mock: true`), not part of its identity (the dedupe is unchanged) and shown only in the Locate page's newest-fix row's
+  title ("... · gps", "... · fused · test location", `locate::fix_title`). `zone_watch` - `{fences, motion_sensor, location_on, background_location, mock_ignored}`, all five or nothing
   (`zones::sanitize_zone_watch`: types, fences 0..=100, mock 0..=10^9, at most 512 bytes; other keys dropped), stored in
   `device_status.zone_watch_json` (0092). The launcher also claims `zones_v1`; the server keys nothing on it (the watch
   says more).
@@ -154,4 +156,5 @@ counts.
   `src/tests/zone_watch.rs` (the contract file both ways - `the_zone_contract_matches_the_launchers_copy`,
   `a_launcher_report_raises_the_arrival` -, the policy's zones and floor, every extra stored then one judging, two
   parallel reports, the mock counter and junk watches, the Locate page), `device_api::policy_json_keys_snapshot`,
-  `time_rules` (the policy's `location_policy` with `zones`), `music_spotify::migrations_73_to_92_in_order`.
+  `time_rules` (the policy's `location_policy` with `zones`), `music_spotify::migrations_73_to_93_in_order`,
+  `zone_watch::a_fix_keeps_its_provider_and_mock_flag_in_the_title_only`.

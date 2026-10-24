@@ -2,13 +2,19 @@ package com.kidslauncher.mdm.zones
 
 import com.kidslauncher.mdm.server.dto.PolicyZone
 import kotlinx.serialization.Serializable
+import kotlin.math.abs
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /*
  * Safe zones on the phone (design 64 step 2, `docs/design/64-safe-zones.md` §4) - the pure rules,
  * no Android imports, tested in ZonePlanTest. The phone never judges a zone (decision 1): the
  * platform's fences and the significant-motion sensor are only reasons to take or keep a fix, and
- * every fix goes to the server, whose two-fix rule decides "arrived" and "left". So nothing here
- * computes a side or a distance, and the phone keeps no copy of `zone_vectors.json`.
+ * every fix goes to the server, whose two-fix rule decides "arrived" and "left". The distances
+ * here (the moving series, §4.5) only decide *when* to take a fix and whether one is worth sending
+ * now; they never decide a crossing, and the phone keeps no copy of `zone_vectors.json`.
  */
 
 /** At most this many fixes wait for a report ([queueWith]); the server stores at most 20 too. */
@@ -183,3 +189,110 @@ fun fixVerdict(
  * cached fix". */
 fun passiveFixWorth(cachedTimeMs: Long?, isMock: Boolean, accuracyM: Float?, timeMs: Long, acceptMock: Boolean, floorM: Float = PASSIVE_ACCURACY_FLOOR_M): FixVerdict =
     fixVerdict(isMock, acceptMock, requireBetter = true, accuracyM = accuracyM, timeMs = timeMs, cachedTimeMs = cachedTimeMs, floorM = floorM)
+
+// --- The moving series (§4.5): after a significant-motion fire, cheap checks timed by the distance ---
+
+/** The mean Earth radius (IUGG), the server's `zones::EARTH_RADIUS_M`. */
+const val EARTH_RADIUS_M = 6_371_008.8
+
+/** A check comes at least this long after the last (§4.5). */
+const val CHECK_MIN_DELAY_MS = 3 * 60_000L
+
+/** ... and at most this long - the fence's own poll interval. */
+const val CHECK_MAX_DELAY_MS = 30 * 60_000L
+
+/** The speed the next check assumes: a car in town. */
+const val CHECK_SPEED_MPS = 15.0
+
+/** A series ends this long after it began, whatever the motion. */
+const val SERIES_MAX_MS = 60 * 60_000L
+
+/** ... and after this many checks (60 min / 3 min). */
+const val SERIES_MAX_CHECKS = 20
+
+/** The haversine distance in metres - only to time a check and to tell whether a fix is worth
+ * sending now; the server alone decides a crossing (its rule counts accuracy and two fixes). */
+fun distanceM(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+    val p1 = Math.toRadians(lat1)
+    val p2 = Math.toRadians(lat2)
+    val dp = p2 - p1
+    val dl = Math.toRadians(lng2 - lng1)
+    val h = sin(dp / 2) * sin(dp / 2) + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2)
+    return 2 * EARTH_RADIUS_M * asin(sqrt(h).coerceAtMost(1.0))
+}
+
+/** How far [fix] is from [zone]'s boundary, inside or out. */
+fun boundaryDistanceM(fix: QueuedFix, zone: PolicyZone): Double =
+    abs(distanceM(fix.latitude, fix.longitude, zone.latitude, zone.longitude) - zone.radiusM)
+
+/**
+ * When the series' next check is due, from now (§4.5): the time the phone needs at
+ * [CHECK_SPEED_MPS] to reach the nearest zone boundary from the cached fix - the fix's accuracy
+ * taken off the distance (it may be anywhere in its circle) and its age off the time (it may have
+ * moved since) - within [CHECK_MIN_DELAY_MS]..[CHECK_MAX_DELAY_MS]. Far from every zone the checks
+ * slow to the fence's own 30 min, inside a zone they time the way out the same. No zones: `null`,
+ * no series. No cached fix: the shortest delay (where the phone is, is unknown).
+ */
+fun nextCheckDelay(cached: QueuedFix?, zones: List<PolicyZone>, nowMs: Long): Long? {
+    if (zones.isEmpty()) return null
+    if (cached == null) return CHECK_MIN_DELAY_MS
+    val nearest = zones.minOf { boundaryDistanceM(cached, it) }
+    val reach = (nearest - (cached.accuracy ?: 0f).coerceAtLeast(0f)).coerceAtLeast(0.0)
+    val travelMs = (reach / CHECK_SPEED_MPS * 1000).toLong()
+    val ageMs = (nowMs - cached.timeMs).coerceAtLeast(0)
+    return (travelMs - ageMs).coerceIn(CHECK_MIN_DELAY_MS, CHECK_MAX_DELAY_MS)
+}
+
+/** A running series (memory, elapsed realtime): when it began, the last motion fire, the checks
+ * done and the delay the next one was given. */
+data class CheckSeries(val startedAtMs: Long, val lastMotionAtMs: Long, val checks: Int, val lastDelayMs: Long)
+
+/** A motion fire: a new series whose first check is [firstDelayMs] away, or the running one told
+ * the phone still moves. */
+fun seriesOnMotion(series: CheckSeries?, nowMs: Long, firstDelayMs: Long): CheckSeries =
+    series?.copy(lastMotionAtMs = nowMs) ?: CheckSeries(nowMs, nowMs, 0, firstDelayMs)
+
+/** Why a series ends at a check's time - `null` when the check runs. */
+enum class SeriesEnd { HOUR, COUNT, STILL }
+
+/**
+ * At a check's alarm (§4.5): the series ends after [SERIES_MAX_MS], after [SERIES_MAX_CHECKS]
+ * checks, or when motion stopped - no new fire within twice the last delay (the sensor re-arms at
+ * each fire while zones are watched, so a moving phone keeps firing).
+ */
+fun seriesEnd(series: CheckSeries, nowMs: Long): SeriesEnd? = when {
+    nowMs - series.startedAtMs >= SERIES_MAX_MS -> SeriesEnd.HOUR
+    series.checks >= SERIES_MAX_CHECKS -> SeriesEnd.COUNT
+    nowMs - series.lastMotionAtMs > 2 * series.lastDelayMs -> SeriesEnd.STILL
+    else -> null
+}
+
+/** After a check: one more, the next one [nextDelayMs] away. */
+fun seriesAfterCheck(series: CheckSeries, nextDelayMs: Long): CheckSeries =
+    series.copy(checks = series.checks + 1, lastDelayMs = nextDelayMs)
+
+/** What a check's fix is worth now (§4.5, the note's rule). */
+enum class CheckVerdict {
+    /** Nothing changed: kept as the cached fix only (the heartbeat reports it). */
+    KEEP,
+
+    /** Within its accuracy of a boundary: sent now, so the server sees it in time. */
+    NEAR_BOUNDARY,
+
+    /** On the other side of a boundary than [previous]: sent now, and a confirming GPS fix 2 min later. */
+    SIDE_CHANGED,
+}
+
+/**
+ * A check's [fix] against the fix before it ([previous], the cached one; `null` = none): another
+ * side of any zone's boundary (plain distance against the radius - a hint, never the server's
+ * judgement) is [CheckVerdict.SIDE_CHANGED]; within the fix's accuracy of a boundary
+ * [CheckVerdict.NEAR_BOUNDARY]; else [CheckVerdict.KEEP].
+ */
+fun checkVerdict(previous: QueuedFix?, fix: QueuedFix, zones: List<PolicyZone>): CheckVerdict {
+    fun inside(f: QueuedFix, z: PolicyZone) = distanceM(f.latitude, f.longitude, z.latitude, z.longitude) <= z.radiusM
+    if (previous != null && zones.any { inside(previous, it) != inside(fix, it) }) return CheckVerdict.SIDE_CHANGED
+    val accuracy = (fix.accuracy ?: 0f).coerceAtLeast(0f)
+    if (zones.any { boundaryDistanceM(fix, it) <= accuracy }) return CheckVerdict.NEAR_BOUNDARY
+    return CheckVerdict.KEEP
+}

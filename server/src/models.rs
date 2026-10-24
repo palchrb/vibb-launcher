@@ -592,6 +592,9 @@ pub struct DeviceLocation {
     pub accuracy_meters: Option<f64>,
     pub captured_at: String,
     pub received_at: String,
+    /// Design 64 step 2 (0093): the phone's provider word and mock flag; NULL for older rows.
+    pub provider: Option<String>,
+    pub mock: Option<bool>,
 }
 
 /// A queued remote command (ring/lock/wipe/locate, design 24b's window commands) - `delivered_at`
@@ -1237,7 +1240,7 @@ pub struct StatusReportRequest {
     /// `zones::MAX_EXTRA_LOCATIONS` are stored, all of them before the zones are judged once
     /// (`zones::intake`). An entry that isn't a fix is dropped, never the report
     /// ([lenient_locations]). Absent from older launchers. A fix's `provider` and `mock` keys are
-    /// the phone's (a release build never sends a mock fix); the server doesn't store them.
+    /// the phone's (a release build never sends a mock fix); stored since 0093 (`location_provider`).
     #[serde(default, deserialize_with = "lenient_locations")]
     pub extra_locations: Vec<LocationReport>,
     /// Design 64 step 2: `{fences, motion_sensor, location_on, background_location,
@@ -1363,12 +1366,32 @@ pub struct InstallModeReport {
 /// available - on every regular heartbeat, not just after a `locate` command
 /// (see kids-launcher-mdm's `MdmSyncWorker`) - so the trail on the admin map
 /// stays reasonably fresh without needing repeated explicit requests.
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct LocationReport {
     pub latitude: f64,
     pub longitude: f64,
     pub accuracy_meters: Option<f64>,
     pub captured_at: String,
+    /// Design 64 step 2: Android's provider of the fix (`gps`, `network`, `fused`), stored through
+    /// [location_provider] only; absent from older launchers.
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Design 64 step 2: `Location.isMock` - only a debug launcher sends `true` (a release one
+    /// ignores a mock fix); stored as it is, never judged differently.
+    #[serde(default)]
+    pub mock: Option<bool>,
+}
+
+/// A fix's provider as stored (migration 0093): a short lowercase word - 1 to 16 of `a-z`, `0-9`,
+/// `_`, `-` - or nothing. Shown only in the Locate page's newest-fix title.
+pub fn location_provider(provider: Option<&str>) -> Option<String> {
+    let word = provider?.trim();
+    (!word.is_empty()
+        && word.len() <= 16
+        && word
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-'))
+    .then(|| word.to_string())
 }
 
 /// The fix's time as stored (`YYYY-MM-DDTHH:MM:SS.mmmZ`, so text order is time order), or `None`

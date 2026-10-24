@@ -14,14 +14,17 @@ import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.BuildConfig
 import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.server.LEGACY_LOCATION_POLICY
+import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.managed
 import com.kidslauncher.mdm.server.QuickControls
+import com.kidslauncher.mdm.server.hardeningManaged
 import com.kidslauncher.mdm.server.ServerJson
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.server.dto.LocationReport
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.server.dto.ZoneWatchReport
 import java.time.Instant
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.serialization.builtins.ListSerializer
 
 private const val LOG_TAG = "ZoneWatch"
@@ -49,8 +52,18 @@ private const val CONFIRM_REQUEST_CODE = 9
  * the running count of ignored mock fixes and the last heartbeat. Nothing here names a zone - the
  * policy carries none - and nothing but fixes leaves the phone.
  */
+/** Which fresh fix a zone sync asks for (design 64 §4.4): a crossing's first fix is balanced, its
+ * confirming one precise (GPS first). */
+enum class FreshKind { BALANCED, PRECISE }
+
 object ZoneWatch {
-    private val freshWanted = AtomicBoolean(false)
+    /** 0 = none, 1 = [FreshKind.BALANCED], 2 = [FreshKind.PRECISE]; the stronger ask wins. */
+    private val freshWanted = AtomicInteger(0)
+
+    private fun want(kind: FreshKind) {
+        val level = kind.ordinal + 1
+        freshWanted.getAndUpdate { maxOf(it, level) }
+    }
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -64,44 +77,75 @@ object ZoneWatch {
         val app = context.applicationContext
         try {
             val owner = app.getSystemService(DevicePolicyManager::class.java)?.isDeviceOwnerApp(app.packageName) == true
+            CallPolicyStore.ensureLoaded(app)
+            val managed = hardeningManaged(policy?.allowlist, CallPolicyStore.state.managed)
             val location = policy?.locationPolicy ?: LEGACY_LOCATION_POLICY
-            val regularly = owner && location.mode == "interval"
-            ZoneFences.sync(app, policy?.locationPolicy?.zones.orEmpty(), watching = regularly)
+            val regularly = owner && managed && location.mode == "interval"
+            val zones = policy?.locationPolicy?.zones.orEmpty()
+            ZoneFences.sync(app, zones, watching = regularly)
             PassiveFixes.update(app, on = regularly)
-            if (!regularly) MotionGate.stop(app)
+            if (!regularly) MotionGate.stop(app) else MotionGate.watch(app, zones = zones.isNotEmpty())
+            if (!regularly || zones.isEmpty()) ZoneSeries.stop(app)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Zone watch apply failed", e)
         }
     }
+
+    /**
+     * Not managed any more, or a new enrollment (design 64 step 2, the coordinator's decision 3):
+     * every fence of ours removed, the passive feed, the motion sensor and the series stopped, the
+     * queue emptied - nothing of the old setup keeps watching or waits to be sent. Cheap when there
+     * is nothing (no record, nothing running). Never throws.
+     */
+    fun release(context: Context) {
+        val app = context.applicationContext
+        try {
+            ZoneFences.sync(app, emptyList(), watching = false)
+            PassiveFixes.stop(app)
+            MotionGate.stop(app)
+            ZoneSeries.stop(app)
+            clearQueue(app)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Zone watch release failed", e)
+        }
+    }
+
+    /** The zones the enforced policy watches now (Regularly only); none otherwise. */
+    fun watchedZones(): List<com.kidslauncher.mdm.server.dto.PolicyZone> =
+        currentPolicyDecision().policy?.locationPolicy?.takeIf { it.mode == "interval" }?.zones.orEmpty()
 
     /** A fence broadcast ([ZoneAlertReceiver]): a crossing asks for a fix now and another in
      * [CONFIRM_DELAY_MS]; an id the current policy doesn't carry and the registration's echo are
      * dropped (§4.2). */
     fun onFence(context: Context, zoneId: Long, entering: Boolean) {
         val app = context.applicationContext
-        val zones = currentPolicyDecision().policy?.locationPolicy?.takeIf { it.mode == "interval" }?.zones.orEmpty()
+        val zones = watchedZones()
         val record = fenceRecord(app)
         val since = if (record == null) -1L else SystemClock.elapsedRealtime() - record.registeredAtElapsed
         val verdict = fenceVerdict(zoneId, zones, entering, since)
         Log.i(LOG_TAG, "Fence of zone $zoneId (entering=$entering): $verdict")
         if (verdict != FenceVerdict.CROSSING) return
-        freshWanted.set(true)
+        want(FreshKind.BALANCED)
         SyncRunner.request(app, "zone")
         armConfirm(app)
     }
 
-    /** The confirming fix's alarm fired ([ZoneConfirmReceiver]). */
+    /** The confirming fix's alarm fired ([ZoneConfirmReceiver]): the precise path, GPS first. */
     internal fun onConfirm(context: Context) {
-        freshWanted.set(true)
+        want(FreshKind.PRECISE)
         SyncRunner.request(context.applicationContext, "zone_confirm")
     }
 
-    /** Whether this sync takes a fresh fix for a crossing - read once, by the sync's location
-     * step (a sync that runs meanwhile takes it; a run already past that step leaves it for the
-     * coalesced next run). */
-    fun takeFreshWanted(): Boolean = freshWanted.getAndSet(false)
+    /** Which fresh fix this sync takes for a crossing, `null` for none - read once, by the sync's
+     * location step (a sync that runs meanwhile takes it; a run already past that step leaves it
+     * for the coalesced next run). */
+    fun takeFreshWanted(): FreshKind? = when (freshWanted.getAndSet(0)) {
+        1 -> FreshKind.BALANCED
+        2 -> FreshKind.PRECISE
+        else -> null
+    }
 
-    private fun armConfirm(context: Context) {
+    internal fun armConfirm(context: Context) {
         try {
             val alarms = context.getSystemService(AlarmManager::class.java) ?: return
             val pi = PendingIntent.getBroadcast(
@@ -180,6 +224,21 @@ object ZoneWatch {
     } catch (e: Exception) {
         Log.w(LOG_TAG, "Queue unreadable: ${e.javaClass.simpleName}")
         emptyList()
+    }
+
+    /** A series check's crossing candidate (§4.5): waits for the report the caller asks for. */
+    @Synchronized
+    fun enqueue(context: Context, fix: QueuedFix) {
+        val after = queueWith(queue(context), fix)
+        if (!prefs(context).edit().putString(KEY_QUEUE, ServerJson.encodeToString(queueSerializer, after)).commit()) {
+            Log.w(LOG_TAG, "Couldn't save the queue")
+        }
+    }
+
+    @Synchronized
+    private fun clearQueue(context: Context) {
+        val p = prefs(context)
+        if (p.contains(KEY_QUEUE)) p.edit().remove(KEY_QUEUE).commit()
     }
 
     /** After the status report: [queueAfterReport] with what it carried. */

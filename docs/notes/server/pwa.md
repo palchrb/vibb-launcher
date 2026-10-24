@@ -948,7 +948,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   while the phone has zones" (`data-interval-note`) while the served interval is above the parent's choice - the select
   still shows the choice (decision 3: never written); and the location group a row "3 made-up locations ignored" /
   "An app on the phone pretended it was somewhere else. Vibb One kept those out of the map and the zones."
-  (`data-row="mock-ignored"`) while the phone's running count is above 0.
+  (`data-row="mock-ignored"`) while the phone's running count is above 0. The newest fix row's title (the exact time)
+  gains the fix's provider and, for a mock fix, "test location" (migration 0093, `locate::fix_title`) - the title only.
 - **The fix's badge**: the newest fix's sub-line "Within 40 m · At Home" ("At Home · School" for two), and the marker's
   popup "10 min ago · within 40 m · at Home" (`data-shown-text`, text as before), while **that fix** is surely inside
   the zone (`locate::fix_badge`, `zones::side`; code QA Q-1).

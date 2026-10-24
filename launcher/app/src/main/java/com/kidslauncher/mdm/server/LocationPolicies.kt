@@ -16,8 +16,17 @@ enum class LocationAction {
     /** Our own cached last fix (no LocationManager call). */
     CACHED,
 
-    /** A fresh fix now. */
+    /** A fresh fix now - the precise path, GPS first (a `locate`/`ring` command, a crossing's
+     * confirming fix). */
     FRESH,
+
+    /** Design 64 §4.4: a fresh fix now through the fused provider at balanced power (Wi-Fi/cell
+     * before GPS) - the heartbeat and a crossing's first fix; GPS only when fused gives nothing. */
+    FRESH_BALANCED,
+    ;
+
+    /** A LocationManager fix is taken (either path). */
+    val fresh: Boolean get() = this == FRESH || this == FRESH_BALANCED
 }
 
 const val MIN_LOCATION_INTERVAL_MINUTES = 10

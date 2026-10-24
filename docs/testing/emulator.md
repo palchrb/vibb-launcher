@@ -1938,8 +1938,10 @@ away() { adb shell cmd location providers set-test-provider-location fused --loc
    parent's).
 3. **Inside, silent**: `home` twice, 2 min apart - the first "entering" right after a registration is dropped
    (`ECHO`) when it comes within 60 s of it; Home's side set, no event in the inbox.
-4. **Leave**: `away` - the fence's exit broadcast (`CROSSING`), `Sync for [zone]` with a fresh GPS fix, and 2 min later
-   `[zone_confirm]` with another: "Anna left Home" in the inbox and as a push, timed at the first fix.
+4. **Leave**: `away` - the fence's exit broadcast (`CROSSING`), `Sync for [zone]` with a balanced fused fix (the fused
+   test provider answers it), and 2 min later `[zone_confirm]` with a precise one (GPS first: the `geo fix` place):
+   "Anna left Home" in the inbox and as a push, timed at the first fix. The Locate page's newest-fix row's title ends in
+   "· fused · test location" for the test provider's fix and "· gps" for the geo fix (migration 0093).
 5. **Straddle**: `set-test-provider-location fused --location 59.9148,10.7522 --accuracy 200` (100 m from the centre)
    and `geo fix` there - unsure for the server, nothing raised; no report beyond the heartbeat unless the fence fires.
 6. **No flap**: `home` (arrive back, two fixes 2 min apart), then one `away` between two `home` fixes: no "left".
@@ -1956,14 +1958,20 @@ away() { adb shell cmd location providers set-test-provider-location fused --loc
    (no LocationManager call, Android's location indicator stays off). The queue: `adb shell svc wifi disable` and
    `svc data disable`, `away`, wait for the crossing's two syncs (both reports fail), enable the network: the next report
    carries both fixes as `extra_locations` and the server raises the crossing once.
-10. **Kid Settings** (swipe left on Home): "This phone shares where it is with mum and dad." / nb "Telefonen deler hvor
+   The moving series (design 64 §4.5) needs the sensor too, so it **can't run on the emulator** - `ZonePlanTest` covers
+   its rules; the Jelly Star run below checks it (a walk with the screen off: `Moving series: started`, `Series check:
+   KEEP|NEAR_BOUNDARY|SIDE_CHANGED`, `Moving series: ended (STILL)` a few minutes after stopping).
+10. **Un-managed and re-enrolled**: un-manage the phone in the PWA (or enroll it anew from Settings) -> `Fences: 1
+    removed, none watched`, `dumpsys location` lists no geofence of ours, the passive feed is off.
+11. **Kid Settings** (swipe left on Home): "This phone shares where it is with mum and dad." / nb "Telefonen deler hvor
     den er med mamma og pappa." under the switches while location is Regularly or Only when asked; gone with Off.
-11. **Battery counts** (§5 of the note): `dumpsys batterystats --reset`, an hour still, `dumpsys batterystats $P`
+12. **Battery counts** (§5 of the note): `dumpsys batterystats --reset`, an hour still, `dumpsys batterystats $P`
     (wake locks, alarms, GPS time); then a scripted trip (`away`/`home` every 10 min). The emulator gives counts, not mAh.
 
 Device checks left for the Jelly Star (design 64 §9): the background-location app op (`appops get $P FINE_LOCATION`
 = allow), the sensor present and armed (`dumpsys sensorservice`), whether the passive listener shows Android's location
-indicator, a walk home with the screen off (the push within minutes), the battery run, a mock-location app ->
+indicator (open question 4) and whether the trigger reaches a UID that holds only a foreground service (open question 5),
+the moving series on a walk, a walk home with the screen off (the push within minutes), the battery run, a mock-location app ->
 `mock_location_ignored` in the security log.
 
 ## 7. Reporting back

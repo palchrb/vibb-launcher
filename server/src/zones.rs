@@ -426,8 +426,9 @@ async fn store_fix(
     captured_at: &str,
 ) -> Result<Option<i64>, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO device_locations (device_id, latitude, longitude, accuracy_meters, captured_at) \
-         SELECT ?1, ?2, ?3, ?4, ?5 WHERE NOT EXISTS (SELECT 1 FROM device_locations \
+        "INSERT INTO device_locations \
+           (device_id, latitude, longitude, accuracy_meters, captured_at, provider, mock) \
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE NOT EXISTS (SELECT 1 FROM device_locations \
            WHERE device_id = ?1 AND captured_at = ?5 AND latitude = ?2 AND longitude = ?3) \
          RETURNING id",
     )
@@ -436,6 +437,8 @@ async fn store_fix(
     .bind(loc.longitude)
     .bind(loc.accuracy_meters)
     .bind(captured_at)
+    .bind(crate::models::location_provider(loc.provider.as_deref()))
+    .bind(loc.mock)
     .fetch_optional(&mut *conn)
     .await
 }
@@ -1227,6 +1230,7 @@ mod tests {
             longitude: 10.0,
             accuracy_meters: Some(20.0),
             captured_at: format!("2026-10-24T08:{minute:02}:00Z"),
+            ..Default::default()
         };
         let mut extra: Vec<LocationReport> = (0..25).rev().map(|m| loc(m, 59.0)).collect();
         extra.push(loc(30, 95.0));

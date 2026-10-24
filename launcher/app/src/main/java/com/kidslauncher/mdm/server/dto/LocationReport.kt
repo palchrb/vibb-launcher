@@ -10,7 +10,7 @@ import kotlinx.serialization.Serializable
  * Android's provider of the fix (`gps`, `network`, `fused`; `null` = unknown, left out); [mock] is
  * `Location.isMock` - only a debug build ever sends `true` (a release build ignores a mock fix and
  * counts it, [ZoneWatchReport.mockIgnored]); `false` is left out. The
- * server stores neither. Pinned by `zone_status_report.json` (`ZoneReportTest`). */
+ * server stores both (migration 0093, shown only in the Locate fix row's title). Pinned by `zone_status_report.json` (`ZoneReportTest`). */
 @Serializable
 data class LocationReport(
     val latitude: Double,
