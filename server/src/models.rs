@@ -935,6 +935,24 @@ pub struct InstalledApp {
     /// from Play. Absent from older launchers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installer: Option<String>,
+    /// The installed versionCode (2026-10-25, PLAN "Installed versionCode per catalog app in the status
+    /// report"): `app_updated` for every catalog app (`tracked_apps::note_app_updates`). Absent from older
+    /// launchers; anything but a non-negative integer is none, never a refused report. Stored with the list
+    /// in `device_status.installed_apps_json`, so no column of its own.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_version_code"
+    )]
+    pub version_code: Option<i64>,
+    /// The installed versionName, clipped to 60 characters at the intake (`device_api::cap_installed_apps`).
+    /// Absent from older launchers; anything but a string is none.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_text"
+    )]
+    pub version_name: Option<String>,
 }
 
 // ---------------------------------------------------------------------
@@ -1431,6 +1449,15 @@ fn lenient_text<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<String>, D::Error> {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
     Ok(value.and_then(|v| v.as_str().map(str::to_string)))
+}
+
+/// A non-negative integer (an Android versionCode), else `None` - a string, a fraction or a
+/// negative number is no code, never a refused report.
+fn lenient_version_code<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<i64>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| v.as_i64()).filter(|code| *code >= 0))
 }
 
 /// `StatusReportRequest.install_mode`.

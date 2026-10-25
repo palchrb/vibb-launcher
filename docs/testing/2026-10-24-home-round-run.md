@@ -106,3 +106,6 @@ the implementer (no emulator in the round).
    "N apps loaded" lines after the enforcer's passes - expected one or two loads for the stragglers (the 30 s cap),
    not ~30. If most stragglers still open their own burst, check which packages the `PACKAGE_CHANGED` callbacks name:
    only packages a pass suspended or hid count as its trail (`AppLoadHold.touch`).
+5. **Installed versions** (needs the server of the same branch): a catalog app checked for the phone updated by the
+   launcher (or `adb install -r` of a newer build of it whose versionName is the stored tag's version) -> "<app>
+   updated on <phone>" in the inbox; `device_status.installed_apps_json` carries `version_code`/`version_name`.

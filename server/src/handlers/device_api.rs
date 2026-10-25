@@ -735,9 +735,13 @@ pub(crate) fn is_package_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.')
 }
 
+/// The longest installed versionName kept (the launcher sends at most the same).
+pub(crate) const MAX_APP_VERSION_NAME_CHARS: usize = 60;
+
 /// The installed-apps list within limits (security review M7): entries without a real package
 /// name are dropped, and so are duplicates; labels are clipped, an installer that isn't a package
-/// name is dropped, and at most [MAX_INSTALLED_APPS] are kept.
+/// name is dropped, a versionName is trimmed and clipped (a blank one is none), and at most
+/// [MAX_INSTALLED_APPS] are kept.
 fn cap_installed_apps(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
     let reported = apps.len();
     let mut seen = std::collections::HashSet::new();
@@ -749,6 +753,11 @@ fn cap_installed_apps(apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
         .map(|app| InstalledApp {
             label: crate::audit::clip(&app.label, MAX_APP_LABEL_CHARS).to_string(),
             installer: app.installer.filter(|installer| is_package_name(installer)),
+            version_name: app
+                .version_name
+                .as_deref()
+                .map(|name| crate::audit::clip(name.trim(), MAX_APP_VERSION_NAME_CHARS).to_string())
+                .filter(|name| !name.is_empty()),
             ..app
         })
         .collect();
@@ -1276,9 +1285,15 @@ pub async fn status(
         .as_ref()
         .and_then(|p| p.foreign_access_json.clone());
     if let Some(phone) = &phone {
-        // App update notices (2026-10-25): the launcher's or the music app's new release
-        // installed, against the previous report (none: a new phone, nothing).
+        // App update notices (2026-10-25): a catalog app's new release installed - the launcher's,
+        // the music app's, and every other checked app's by the versionCode its `installed_apps`
+        // entry carries - against the previous report (none: a new phone, nothing).
         if let Some(p) = &previous {
+            let previous_apps: Vec<InstalledApp> = p
+                .installed_apps_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str(json).ok())
+                .unwrap_or_default();
             crate::handlers::tracked_apps::note_app_updates(
                 &state,
                 phone,
@@ -1286,11 +1301,13 @@ pub async fn status(
                     p.app_version.as_deref(),
                     p.app_version_code,
                     p.music_state_json.as_deref(),
+                    &previous_apps,
                 ),
                 &installed_codes(
                     report.app_version.as_deref(),
                     report.app_version_code,
                     music_state_json.as_deref(),
+                    report.installed_apps.as_deref().unwrap_or_default(),
                 ),
             )
             .await;
@@ -1510,16 +1527,29 @@ struct PreviousReport {
     music_state_json: Option<String>,
 }
 
-/// The launcher's and the music app's versionCodes a stored report names (app update notices).
+/// The versionCodes a report names (app update notices): the launcher's, the music app's, and
+/// each listed app's that carries one (`installed`; an older launcher's entries carry none).
 fn installed_codes(
     app_version: Option<&str>,
     app_version_code: Option<i64>,
     music_state_json: Option<&str>,
+    installed: &[InstalledApp],
 ) -> crate::handlers::tracked_apps::InstalledCodes {
     crate::handlers::tracked_apps::InstalledCodes {
         launcher: app_version_code,
         launcher_name: app_version.map(str::to_string),
         music: crate::music::parse_music_state(music_state_json).and_then(|m| m.version_code),
+        apps: installed
+            .iter()
+            .filter_map(|app| {
+                let code = app.version_code?;
+                let version = crate::handlers::tracked_apps::InstalledVersion {
+                    code,
+                    name: app.version_name.clone(),
+                };
+                Some((app.package_name.clone(), version))
+            })
+            .collect(),
     }
 }
 

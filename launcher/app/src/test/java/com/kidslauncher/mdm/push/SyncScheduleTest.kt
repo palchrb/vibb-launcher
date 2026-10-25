@@ -122,4 +122,34 @@ class SyncScheduleTest {
         assertEquals("true", json["play_window_active"].toString())
         assertTrue("installer" in json["installed_apps"].toString())
     }
+
+    /** PLAN "Installed versionCode per catalog app in the status report": each listed app's versionCode and
+     * versionName (the server's `app_updated` for every catalog app); both left out when unknown. */
+    @Test
+    fun `an installed app carries its versionCode and versionName, left out when unknown`() {
+        val apps = listOf(
+            InstalledApp("org.example", "Example", false, versionCode = 1_234_567_890_123L, versionName = "7.2.0"),
+            InstalledApp("org.other", "Other", true),
+        )
+        val json = ServerJson.encodeToJsonElement(
+            StatusReportRequest.serializer(),
+            StatusReportRequest(lockReason = "NONE", kioskEngaged = false, installedApps = apps),
+        ).jsonObject
+        val listed = json["installed_apps"].toString()
+        assertTrue(listed, "\"version_code\":1234567890123" in listed)
+        assertTrue(listed, "\"version_name\":\"7.2.0\"" in listed)
+        assertEquals("the second entry has neither", 1, Regex("version_code").findAll(listed).count())
+        assertEquals("7.2.0", com.kidslauncher.mdm.server.dto.installedVersionName("  7.2.0 \n"))
+        assertEquals(null, com.kidslauncher.mdm.server.dto.installedVersionName("   "))
+        assertEquals(null, com.kidslauncher.mdm.server.dto.installedVersionName(null))
+        assertEquals(60, com.kidslauncher.mdm.server.dto.installedVersionName("1".repeat(100))!!.length)
+        val emoji = com.kidslauncher.mdm.server.dto.installedVersionName("😀".repeat(70))!!
+        assertEquals("never half a pair", 60, emoji.codePointCount(0, emoji.length))
+        // The report reads them from PackageManager for the apps it already lists.
+        val worker = listOf("src/main/java/com/kidslauncher/mdm/server/MdmSyncWorker.kt", "app/src/main/java/com/kidslauncher/mdm/server/MdmSyncWorker.kt")
+            .map { java.io.File(it) }.first { it.exists() }.readText()
+        val collect = worker.substringAfter("private fun collectInstalledApps(").substringBefore("\n}\n")
+        assertTrue(collect.contains("versionCode = pkg.longVersionCode,"))
+        assertTrue(collect.contains("versionName = com.kidslauncher.mdm.server.dto.installedVersionName(pkg.versionName),"))
+    }
 }
