@@ -529,6 +529,7 @@ after), never later. Details stay in the entries below.
   - Zone series numbers after the user's Jelly Star day; developer-verification registration (nothing in the repo).
 
 ### Approved for the next fix batch
+- **A last position at shutdown and at low battery** (the user, 2026-10-05, asked again 2026-10-25). **Merged 2026-10-25 (f379971e, branch `last-position`)** after code QA (`docs/review/qa-last-position-code.md`, 0 High / 3 Medium / 4 Low, all fixed): the `off` report carries the newest stored fix (`power_report.json` `off.location`, both copies; CE `power_off_location`, never a mock or a fresh fix, never under "Off"), the server stores it through the zones intake and marks `device_locations.shutdown_at` (migration 0097), Locate shows "Last position before the phone went off" with the device page's "Off since" exclusions, the `phone_off` event's params carry it (no coordinates in any text), retention clears it with the location window; at `ACTION_BATTERY_LOW` one balanced fix per episode (30 s cap, Location on, not "Off", a fix under 2 min old reused), the episode ends at BATTERY_OKAY or a discharging-not-low report. Design 38 "Last position (2026-10-25)"; emulator checks `emulator.md` §6p 5-12 owed. Ships with `server-v0.51.0` + `launcher-v0.37.0-rc.3`.
 
 - **Security and privacy reviews 2026-10-21** (asked for by the user): `docs/review/security-review-2026-10-21-server.md`
   (0 High / 3 Medium / 18 Low), `-launcher.md` (0 High / 5 Medium / 16 Low; Tailscale/tsnet verdict: keep it as is,
