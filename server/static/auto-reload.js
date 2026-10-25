@@ -1,5 +1,6 @@
 // A page that waits for the phone reloads every 3 s: Device › Apps while an app installs (design 31
-// step 6, for the percentage), Calls & Contacts while the phone confirms a change (step 8). No push
+// step 6, for the percentage), Calls & Contacts while the phone confirms a change (step 8), the
+// phone's summary for up to 2 minutes after Lock again or Unlock 2 h... (pwa-fixes-a). No push
 // reaches the page, and the server loads this script only while there is something to wait for,
 // so the reloading stops by itself. It never reloads
 // - once a save has started: a switch saves on `change` (autosave.js calls form.submit(), which

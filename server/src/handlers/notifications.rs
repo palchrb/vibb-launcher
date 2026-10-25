@@ -858,10 +858,12 @@ pub async fn subscribe(
     );
     let stored = async {
         let mut tx = state.db.begin().await?;
-        let others: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM push_subscriptions \
-             WHERE admin_id = ? AND state = 'active' AND endpoint != ?",
-        )
+        // A subscription from a signed-out session counts for nothing (Q-1).
+        let others: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM push_subscriptions s \
+             WHERE s.admin_id = ? AND s.state = 'active' AND s.endpoint != ? AND {}",
+            push::CURRENT_EPOCH
+        ))
         .bind(admin.id)
         .bind(endpoint)
         .fetch_one(&mut *tx)
@@ -871,12 +873,12 @@ pub async fn subscribe(
         }
         sqlx::query(
             "INSERT INTO push_subscriptions \
-             (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp, session_epoch) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT (endpoint) DO UPDATE SET admin_id = excluded.admin_id, \
                p256dh = excluded.p256dh, auth = excluded.auth, origin = excluded.origin, \
-               label = excluded.label, vapid_fp = excluded.vapid_fp, state = 'active', \
-               gone_at = NULL",
+               label = excluded.label, vapid_fp = excluded.vapid_fp, \
+               session_epoch = excluded.session_epoch, state = 'active', gone_at = NULL",
         )
         .bind(admin.id)
         .bind(endpoint)
@@ -885,6 +887,9 @@ pub async fn subscribe(
         .bind(origin)
         .bind(&label)
         .bind(&key.fingerprint)
+        // The session's epoch (security review M1): when the account's moves past it (a new
+        // password, a 2FA reset, Sign Out Everywhere), `push::send_due` deletes this row.
+        .bind(admin.session_epoch)
         .execute(&mut *tx)
         .await?;
         tx.commit().await.map(|()| true)
@@ -948,9 +953,11 @@ pub async fn send_test(
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let active: Result<Option<bool>, sqlx::Error> = sqlx::query_scalar(
-        "SELECT state = 'active' FROM push_subscriptions WHERE id = ? AND admin_id = ?",
-    )
+    let active: Result<Option<bool>, sqlx::Error> = sqlx::query_scalar(&format!(
+        "SELECT s.state = 'active' AND {} FROM push_subscriptions s \
+         WHERE s.id = ? AND s.admin_id = ?",
+        push::CURRENT_EPOCH
+    ))
     .bind(id)
     .bind(admin.id)
     .fetch_optional(&state.db)

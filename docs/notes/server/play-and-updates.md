@@ -309,4 +309,4 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `tests::fdroid` (Add App and its refusals, the page, one source per app, a pinned app's package and repo, the
   launcher switch and the upload, the ABI line, the cached index going with its repo's last app, the phones'
   catalog), `tests::tracked_apps::every_form_on_the_app_pages_returns_to_its_page` (an F-Droid row too),
-  `music_spotify::migrations_73_to_94_in_order`. QA: `docs/review/qa-fdroid-source-code.md` (Q-1..Q-9 fixed).
+  `music_spotify::migrations_73_to_95_in_order`. QA: `docs/review/qa-fdroid-source-code.md` (Q-1..Q-9 fixed).

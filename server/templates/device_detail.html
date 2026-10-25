@@ -349,6 +349,11 @@
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
     </div>
+    {#- Lock again or Unlock 2 h… waits for the phone: reload every 3 s until the newest report
+        shows it, at most 2 minutes after the press (window_relock::waiting_for_phone). -#}
+    {% if relock.wait_for_phone %}
+    <script src="/static/auto-reload.js?v=4" defer></script>
+    {% endif %}
 </main>
 </body>
 </html>

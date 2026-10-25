@@ -483,7 +483,8 @@ next free numbers.
   - after the upgrade, the prefs hold no `override_pin_hash` (`run-as`, debug build);
   - a lockout running before the upgrade continues;
   - deleting the key (debug-only hook) gives "can't be checked until…" while the kid's PIN still opens the lock, and
-    the next sync recovers.
+    the next sync recovers. Since design r10 the kid's PIN opens it only while `secrets_v1` is intact (QA #7 reversed:
+    r10 §5); deleting both keys is r10 §8's check 5.
 - **Check 6 (design 04):** safe mode is refused with `no_safe_boot`. With the switch off, a safe-mode boot followed by
   a normal boot raises `unseen_boots.count` by 1 and shows the warning. A first boot of the S3 build reports 0.
 - **After S4:** new and migrated devices list `no_safe_boot` (`dumpsys user`).

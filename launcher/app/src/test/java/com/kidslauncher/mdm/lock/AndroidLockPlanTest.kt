@@ -164,7 +164,7 @@ class AndroidLockPlanTest {
         // ... and step 4's command, its reset failed, gives back exactly what it wrote ahead (a credential not ours stays not ours).
         assertTrue(body(android, "setFromCommand").contains("PinLockStore.saveAndroid(app, owned = owned, rev = before)"))
         // The policy's request is committed with the hash (saveConfig), the owned flag apart (saveAndroid).
-        assertTrue(body(code("$lock/PinLockRuntime.kt"), "configure").contains("PinLockStore.saveConfig(app, newConfig, active, why, storedRequest)"))
+        assertTrue(body(code("$lock/PinLockRuntime.kt"), "configure").contains("PinLockStore.saveConfig(app, write, active, why, storedRequest)"))
     }
 
     @Test
@@ -186,7 +186,7 @@ class AndroidLockPlanTest {
         assertTrue(configure.contains("val androidHeld = androidKeyguardHeld(owned, deviceSecure, parentChoice)"))
         assertTrue(configure.contains("guard.trippedAtMs != null, requested, androidHeld)"))
         assertTrue(configure.contains("val storedRequest = requestToStore(requested, parentChoice)"))
-        assertTrue(configure.contains("PinLockStore.saveConfig(app, newConfig, active, why, storedRequest)"))
+        assertTrue(configure.contains("PinLockStore.saveConfig(app, write, active, why, storedRequest)"))
         assertTrue(body(code("$lock/AndroidLock.kt"), "configure").contains("if (parentChoice) this.requested = requested"))
         assertTrue(code("$lock/KeyguardCover.kt").contains("androidHeld = i.androidHeld,"))
         // 24b's step 1 is skipped while asked for or ours.
@@ -233,7 +233,9 @@ class AndroidLockPlanTest {
     fun `the keypad migration commits the rev of the hash it checked (Q59-5)`() {
         val runtime = code("$lock/PinLockRuntime.kt")
         assertTrue(body(runtime, "checkPin").contains("PinResult.Ok(cfg.pinRev)"))
-        assertTrue(body(runtime, "configure").contains("KidLockConfig(it.pinHash, it.pinSalt, kidPinLength(it.pinLength), it.pinRev)"))
+        // Design r10: the policy's PIN through kidConfigFor, the rev with the hash it came with.
+        assertTrue(body(runtime, "configure").contains("kidConfigFor(kidLock, config)"))
+        assertTrue(code("$lock/PinLockState.kt").contains("KidLockConfig(kidLock.pinHash, kidLock.pinSalt, length, kidLock.pinRev)"))
         val activity = code("$lock/PinLockActivity.kt")
         assertEquals(1, Regex("AndroidLock\\.migrateIfDue\\(").findAll(activity).count())
         assertTrue(activity.contains("if (it is PinLockRuntime.PinResult.Ok) AndroidLock.migrateIfDue(this@PinLockActivity, pin, it.pinRev)"))

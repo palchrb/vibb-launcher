@@ -133,8 +133,10 @@ fixtures (the phone never logs in).
   `time_request.json`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
-  the workflow changed). The server's Rust (`toolchain: 1.99.0`) and `cross` (`cross@0.2.5`) are pinned in
-  `server-ci.yml` and `server-release.yml` (security review L9) - move them on deliberately, both files at once.
+  the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and
+  `server-release.yml` (security review L9) - move it on deliberately, both files at once. Both build the static musl
+  binaries natively, each architecture on its own runner (`aarch64-unknown-linux-musl` on `ubuntu-24.04-arm`,
+  `x86_64-unknown-linux-musl` on `ubuntu-24.04`; plain `cargo` with `musl-tools`, no `cross`, no QEMU; since 2026-10-25).
   Require the always-running gate jobs `launcher-ci`, `server-ci` and `music-ci` in
   branch protection, not the build jobs.
 - `launcher-vX.Y.Z` (or `launcher-vX.Y.Z-rc.N`, a prerelease) on a `main` commit -> signed APK
@@ -155,12 +157,14 @@ fixtures (the phone never logs in).
   music app's version from its code by that cutover), never "latest". Deploy a server with the music
   catalog row (0.21.0+) before the first stable `music-v*` (design 21 QA #11).
 - `server-vX.Y.Z` (must equal `server/Cargo.toml`'s version) on a `main` commit -> fmt + tests,
-  then the aarch64 tarball and its `.sha256`, never "latest". Since 0.24.0 the tarball and `update.sh` are signed
+  then the aarch64 and x86_64 tarballs and their `.sha256`, never "latest". Since 0.24.0 the tarballs and `update.sh` are signed
   with minisign before any image is pushed (`server-release-sign`, in the `release` environment, whose deployment
   rule must allow `server-v*` tags too; its `SERVER_MINISIGN_KEY` secret; the public key pinned in
-  `server/deploy/*.sh`; server/DEPLOY.md, "Release signing") - no secret, no release. The server's update check and `install.sh`/`update.sh` find it by tag.
+  `server/deploy/*.sh`; server/DEPLOY.md, "Release signing") - no secret, no release. The server's update check and `install.sh`/`update.sh` find it by tag
+  (the scripts take the tarball for `uname -m`; the update check reads only the tag).
   Since 0.23.0 (design 22) the same run builds the multi-arch image `ghcr.io/<owner>/handy-server`,
-  each architecture natively on its own runner (`ubuntu-24.04`, `ubuntu-24.04-arm`; no QEMU), pushes it by digest,
+  each architecture natively on its own runner (`ubuntu-24.04`, `ubuntu-24.04-arm`; no QEMU) from that architecture's
+  tarball, pushes it by digest,
   smoke-tests it there, then joins the two digests and tags `X.Y.Z`, and `latest` when it is
   the highest `server-v*` tag; the GitHub release is published last. The GHCR package must be made public once by
   the owner (server/DEPLOY.md, "Docker"). `workflow_dispatch` is always a dry run, on a tag ref too.

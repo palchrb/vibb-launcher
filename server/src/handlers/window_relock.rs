@@ -26,6 +26,9 @@ pub struct RelockCard {
     pub lock_again: bool,
     /// "Unlock for 2 h…": the launcher takes the commands and no pause is on at the last report.
     pub pause_button: bool,
+    /// The page reloads itself (`static/auto-reload.js`) while the phone hasn't shown what Lock
+    /// again or Unlock 2 h… did, for at most 2 minutes ([window_relock::waiting_for_phone]).
+    pub wait_for_phone: bool,
     /// The flash after a command was queued (`?notice=`): its summary group and text.
     pub notice: Option<(&'static str, &'static str)>,
     /// The last relock's findings, for a week ([window_relock::findings]).
@@ -103,10 +106,15 @@ pub async fn card(
         },
     };
     let paused = latest.is_some_and(|s| s.restrictions_paused);
+    let waited = window_relock::waited_for(&answers, paused, open, now_ms);
     Ok(RelockCard {
         lock_again: capable && open,
         pause_button: capable && !paused,
-        notice: notice.and_then(window_relock::flash),
+        wait_for_phone: window_relock::waiting_for_phone(&answers, paused, open, now_ms),
+        // While it waits, the "Sent." line stays on every reload (Q-2).
+        notice: notice
+            .and_then(window_relock::flash)
+            .or_else(|| waited.and_then(window_relock::waiting_flash)),
         findings: relock
             .as_ref()
             .and_then(|r| window_relock::findings(r, &names, zone, now)),
@@ -119,8 +127,17 @@ pub async fn card(
     })
 }
 
-/// A row of [last_answers]: command, requested_at, acknowledged_at, result, delivered, cancelled.
-type AnswerRow = (String, String, Option<String>, Option<String>, bool, bool);
+/// A row of [last_answers]: command, requested_at, acknowledged_at, result, delivered, cancelled,
+/// succeeded.
+type AnswerRow = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    bool,
+    bool,
+    Option<bool>,
+);
 
 /// The newest of each of this design's commands for [device_id], with the phone's answer.
 async fn last_answers(
@@ -130,7 +147,7 @@ async fn last_answers(
     let [end_windows, allow_blocked, start_pause] = window_relock::OWN_INSERT_COMMANDS;
     let rows: Vec<AnswerRow> = sqlx::query_as(
         "SELECT command, requested_at, acknowledged_at, result, delivered_at IS NOT NULL, \
-         cancelled_at IS NOT NULL FROM device_commands \
+         cancelled_at IS NOT NULL, succeeded FROM device_commands \
          WHERE id IN (SELECT MAX(id) FROM device_commands WHERE device_id = ? \
                       AND command IN (?, ?, ?) GROUP BY command) \
          ORDER BY id",
@@ -150,7 +167,7 @@ async fn last_answers(
     Ok(rows
         .into_iter()
         .filter_map(
-            |(command, requested, acknowledged, result, delivered, cancelled)| {
+            |(command, requested, acknowledged, result, delivered, cancelled, succeeded)| {
                 Some(window_relock::CommandAnswer {
                     command,
                     requested_ms: ms(&requested)?,
@@ -158,6 +175,7 @@ async fn last_answers(
                     result,
                     delivered,
                     cancelled,
+                    succeeded,
                 })
             },
         )

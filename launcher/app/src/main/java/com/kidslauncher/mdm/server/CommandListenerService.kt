@@ -36,6 +36,9 @@ private const val MAX_RECONNECT_DELAY_MS = 60_000L
 private const val NOT_ENROLLED_RETRY_DELAY_MS = 30_000L
 private const val EXTRA_SYNC_REASON = "reason"
 
+/** One background thread for the stream's token reads (design r10, Q-6). */
+private val TOKEN_READER: java.util.concurrent.Executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
 /**
  * The process anchor (handy step 7, design 07 §2 and the decisions after QA review): an always-on
  * foreground service of type `specialUse` ("parental control enforcement" - no 6 h daily cap, and
@@ -160,6 +163,7 @@ class CommandListenerService : Service() {
     }
 
     private fun stopSse() {
+        connectGen++
         handler.removeCallbacks(connectRunnable)
         eventSource?.cancel()
         eventSource = null
@@ -193,14 +197,29 @@ class CommandListenerService : Service() {
         connect()
     }
 
+    /** Bumped by every [connect]: a token read that comes back after a newer connect (or the stop) is dropped. */
+    private var connectGen = 0
+
+    /** The token is read off the main thread (design r10, code QA Q-6: a Keystore open, and while it is unreadable
+     * nothing is memoised - every 30 s retry would be a keystore2 round trip on main), then the stream opens here. */
     private fun connect() {
         if (stopped) return
         eventSource?.cancel()
         eventSource = null
+        val gen = ++connectGen
+        TOKEN_READER.execute {
+            val deviceToken = try {
+                DeviceToken.get()
+            } catch (e: Exception) {
+                null
+            }
+            handler.post { if (gen == connectGen && !stopped) openStream(deviceToken) }
+        }
+    }
 
+    private fun openStream(deviceToken: String?) {
         val mdm = LauncherPreferences.mdm()
         val serverUrl = mdm.serverUrl()
-        val deviceToken = mdm.deviceToken()
         if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) {
             handler.postDelayed(connectRunnable, NOT_ENROLLED_RETRY_DELAY_MS)
             return

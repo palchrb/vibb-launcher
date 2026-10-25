@@ -84,7 +84,7 @@ private val syncMutex = Mutex()
 suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val mdm = LauncherPreferences.mdm()
     val serverUrl = mdm.serverUrl()
-    val deviceToken = mdm.deviceToken()
+    val deviceToken = DeviceToken.get()
     if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) {
         return false
     }
@@ -1126,7 +1126,7 @@ private suspend fun fetchPolicy(api: MdmApi): FreshDecode? {
 private fun storeAcceptedPolicy(context: Context, policy: PolicyResponse): Unit = synchronized(POLICY_CACHE_LOCK) {
     val keys = LauncherPreferences.mdm().keys()
     val editor = PreferenceManager.getDefaultSharedPreferences(context).edit()
-        .putString(keys.kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), cacheablePolicy(policy)))
+        .putString(keys.kidModePolicy(), ServerJson.encodeToString(PolicyResponse.serializer(), policyToCache(policy)))
         .putBoolean(keys.policyEverApplied(), true)
         .putString(keys.lastEnforcedPlan(), LastEnforcedPlan.encode(LastEnforcedPlan.of(policy)))
     if (policy.timePolicy != null) editor.putBoolean(keys.timePolicySeen(), true)

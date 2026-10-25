@@ -46,6 +46,7 @@ object ParentPinDialog {
             .setCancelable(cancelable)
             .setNegativeButton(android.R.string.cancel) { _, _ -> onCancel() }
             .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.re_enrol_button, null)
             .create()
         ParentPinKeypad.secure(dialog)
         dialog.show()
@@ -61,6 +62,8 @@ object ParentPinDialog {
             ok.isEnabled = it.okEnabled
             keypad?.setEnabled(it.okEnabled)
         }
+        // Design r10 §5: "Ny oppsettkode" only in the deadlock, read again after every result.
+        val reEnrol = ReEnrolDialog.bind(dialog, scope) { showError(it) }
         // Set after show() so a wrong PIN keeps the dialog open.
         ok.setOnClickListener {
             val pin = keypad?.pin.orEmpty()
@@ -76,6 +79,7 @@ object ParentPinDialog {
                 showError(resultText(context, result, R.string.lock_unlock_code_wrong, notConfigured, R.string.lock_unlock_code_locked_out))
                 ok.isEnabled = okAfter(result)
                 keypad?.setEnabled(okAfter(result))
+                reEnrol()
             }
         }
         return dialog

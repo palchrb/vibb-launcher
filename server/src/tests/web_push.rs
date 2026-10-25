@@ -1125,6 +1125,274 @@ async fn sign_out_everywhere_reset_2fa_and_backups_hold_no_subscription() {
     );
 }
 
+/// Security review M1: a new password and "Reset two-factor login" on Account delete every
+/// subscription of the account, as Sign Out Everywhere does - one a stolen session made too.
+#[tokio::test]
+async fn a_new_password_and_a_2fa_reset_hold_no_subscription() {
+    const PASSWORD: &str = "correct horse battery staple";
+    const NEW_PASSWORD: &str = "a brand new long password";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let stolen = app.admin_cookie().await;
+    let res = subscribe(&app, &stolen, "https://web.push.apple.com/QK1-fake-stolen").await;
+    assert!(res.location().unwrap().contains("notice=push_on"));
+    subscribe(&app, &cookie, ENDPOINT).await;
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        2
+    );
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/password",
+            Some(&cookie),
+            &[
+                ("current_password", PASSWORD),
+                ("new_password", NEW_PASSWORD),
+                ("confirm_password", NEW_PASSWORD),
+            ],
+        )
+        .await;
+    super::assert_redirect(&res, "/account?changed=password", Some("password"));
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+    let page = app.get_page("/account?changed=password", &cookie).await;
+    assert!(
+        page.text().contains("notifications are off"),
+        "{}",
+        page.text()
+    );
+
+    // This session goes on; it turns notifications on again, then resets two-factor login.
+    let res = subscribe(&app, &cookie, ENDPOINT).await;
+    assert!(res.location().unwrap().contains("notice=push_on"));
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        1
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/reset-2fa",
+            Some(&cookie),
+            &[("current_password", NEW_PASSWORD)],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/auth/setup-2fa"));
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+}
+
+/// Security review M1: a subscription keeps its session's epoch; once the account's moved past it
+/// without the explicit delete (a subscribe in flight while the sessions ended, or a sign-out
+/// whose delete failed - here `bump_epoch` alone), Notification Settings shows it as gone, it
+/// doesn't count toward the cap, and the sender sends it nothing and deletes it
+/// (qa-pwa-fixes-a-code Q-1). A subscription made after the move is sent to.
+#[tokio::test]
+async fn a_subscription_from_a_signed_out_session_is_not_sent_to() {
+    const OLD: &str = "https://web.push.apple.com/QK1-fake-old-session";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, OLD).await;
+    let admin = app.an_admin().await;
+    let epoch = crate::admin_auth::bump_epoch(&app.db, admin.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.get_page("/devices", &cookie).await.location(),
+        Some("/login"),
+        "the old session is signed out"
+    );
+    let cookie = app.admin_cookie().await;
+    let settings = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
+    assert!(!settings.contains("data-subscription="), "{settings}");
+    assert!(
+        !settings.contains(&crate::push::endpoint_hash(OLD)),
+        "This Device shows Off"
+    );
+    // The old row doesn't count toward the cap: as many new browsers as ever still fit.
+    for n in 0..crate::push::MAX_SUBSCRIPTIONS {
+        let res = subscribe(&app, &cookie, &format!("{ENDPOINT}-{n}")).await;
+        assert!(res.location().unwrap().contains("notice=push_on"), "{n}");
+    }
+    sqlx::query("DELETE FROM push_subscriptions WHERE endpoint LIKE '%-fake-endpoint-%'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let stored: Vec<(String, i64)> =
+        sqlx::query_as("SELECT endpoint, session_epoch FROM push_subscriptions ORDER BY id")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored,
+        [(OLD.to_string(), epoch - 1), (ENDPOINT.to_string(), epoch)]
+    );
+
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    let requests = app.pushes.take();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|r| r.endpoint.as_str())
+            .collect::<Vec<_>>(),
+        [ENDPOINT]
+    );
+    let left: Vec<String> = sqlx::query_scalar("SELECT endpoint FROM push_subscriptions")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, [ENDPOINT]);
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM push_deliveries d \
+             LEFT JOIN push_subscriptions s ON s.id = d.subscription_id WHERE s.id IS NULL"
+        )
+        .await,
+        0,
+        "its deliveries went with it"
+    );
+}
+
+/// Sign Out with this browser's endpoint (the user, 2026-10-25; `static/register-sw.js` fills it)
+/// deletes that subscription, only the signed-in parent's; without the field it signs out as
+/// before and every subscription stays.
+#[tokio::test]
+async fn sign_out_removes_this_browsers_subscription_only() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let count = || scalar(&app, "SELECT COUNT(*) FROM push_subscriptions");
+
+    // Another parent's sign-out naming this endpoint: signed out, the row stays.
+    let res = app
+        .request_form(
+            Method::POST,
+            "/logout",
+            Some(&pappa),
+            &[("endpoint", ENDPOINT)],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/login"));
+    assert_eq!(
+        app.get_page("/devices", &pappa).await.location(),
+        Some("/login")
+    );
+    assert_eq!(count().await, 1);
+
+    // No field (no JS, no subscription) or an empty one: as before.
+    for fields in [&[][..], &[("endpoint", "")][..]] {
+        let cookie = app.admin_cookie().await;
+        let res = app
+            .request_form(Method::POST, "/logout", Some(&cookie), fields)
+            .await;
+        assert_eq!(res.location(), Some("/login"));
+        assert_eq!(count().await, 1);
+    }
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/logout",
+            Some(&cookie),
+            &[("endpoint", ENDPOINT)],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/login"));
+    assert_eq!(
+        app.get_page("/devices", &cookie).await.location(),
+        Some("/login")
+    );
+    assert_eq!(count().await, 0);
+}
+
+/// 0095 gives every existing subscription its account's epoch (qa-pwa-fixes-a-code Q-5): without
+/// the backfill a parent who ever changed the password would lose every device at the first pass.
+#[tokio::test]
+async fn migration_0095_keeps_existing_subscriptions() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.path().join("m.db"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    for migration in crate::MIGRATOR.iter().filter(|m| m.version <= 94) {
+        sqlx::raw_sql(&migration.sql).execute(&db).await.unwrap();
+    }
+    sqlx::raw_sql(
+        "INSERT INTO admin_users (id, username, password_hash, session_epoch) \
+           VALUES (1, 'mamma', 'x', 3), (2, 'pappa', 'x', 0); \
+         INSERT INTO push_subscriptions (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp) \
+           VALUES (1, 'https://web.push.apple.com/QK1-fake-mamma', X'00', X'00', 'https://a', 'a', 'f'), \
+                  (2, 'https://web.push.apple.com/QK1-fake-pappa', X'00', X'00', 'https://a', 'a', 'f');",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let last = crate::MIGRATOR.iter().find(|m| m.version == 95).unwrap();
+    sqlx::raw_sql(&last.sql).execute(&db).await.unwrap();
+    crate::push::forget_stale(&db).await.unwrap();
+    let rows: Vec<(i64, i64)> =
+        sqlx::query_as("SELECT admin_id, session_epoch FROM push_subscriptions ORDER BY admin_id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(rows, [(1, 3), (2, 0)]);
+}
+
+/// qa-pwa-fixes-a-code Q-1: three wrong passwords at a form that asks for it again end every
+/// session and every device's notifications at once. After signing in again Notification Settings
+/// shows them off, and the next event is sent to nobody.
+#[tokio::test]
+async fn a_re_auth_lockout_turns_notifications_off_at_once() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    for _ in 0..crate::admin_auth::REAUTH_MAX_WRONG {
+        app.request_form(
+            Method::POST,
+            "/account/reset-2fa",
+            Some(&cookie),
+            &[("current_password", "not the password")],
+        )
+        .await;
+    }
+    assert_eq!(
+        app.get_page("/devices", &cookie).await.location(),
+        Some("/login"),
+        "signed out"
+    );
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+
+    let cookie = app.admin_cookie().await;
+    let settings = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
+    assert!(!settings.contains("data-subscription="), "{settings}");
+    assert!(!settings.contains(&crate::push::endpoint_hash(ENDPOINT)));
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    assert!(app.pushes.take().is_empty());
+}
+
 /// §4.1: the key file is made once, 0600; a damaged one turns push off and stays as it was; a
 /// subscription made for another key is turned off at startup.
 #[tokio::test]

@@ -91,13 +91,27 @@ jobs:
       # Reports warnings without failing the build; the existing ones predate the test harness.
       - run: cargo clippy --all-targets --locked
 
-  # The container image (design 22 §6), without pushing, as the release builds it: static musl
-  # binaries for both architectures cross-built here (cross's images are x86_64 only), then
-  # server-image builds and smoke-tests each architecture natively on its own runner.
+  # The container image (design 22 §6), without pushing, as the release builds it: the static musl
+  # binary built natively on a runner of each architecture (plain cargo, no cross, no QEMU), then
+  # server-image builds and smoke-tests each architecture's image on its own runner.
   server-image-context:
     needs: server-changes
     if: ${{ needs.server-changes.outputs.image == 'true' }}
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    name: server-image-context (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      ARCH: ${{ matrix.arch }}
+      TARGET: ${{ matrix.target }}
     defaults:
       run:
         working-directory: server
@@ -109,28 +123,27 @@ jobs:
         with:
           # Pinned (security review L9); move it on deliberately, with the clippy count.
           toolchain: 1.99.0
-      - name: Install cross
-        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
-        with:
-          tool: cross@0.2.5
-      - name: Build (aarch64-unknown-linux-musl)
-        # aarch64 first, as server-release.yml does: the build scripts in target/release/build are host
-        # artefacts shared by both cross targets, and the aarch64 image's older glibc must be the one they link
-        # against (the other order fails with "symbol gettid version GLIBC_2.30 not defined", 2026-10-24).
-        run: cross build --release --locked --target aarch64-unknown-linux-musl
-      - name: Build (x86_64-unknown-linux-musl)
-        run: cross build --release --locked --target x86_64-unknown-linux-musl
+          targets: ${{ matrix.target }}
+      # As server-release.yml: musl-gcc for the C in ring and the bundled SQLite, named for cc-rs.
+      - name: Install musl-tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq musl-tools
+      - name: Build
+        run: |
+          set -euo pipefail
+          export "CC_${TARGET//-/_}=musl-gcc"
+          cargo build --release --locked --target "$TARGET"
       - name: Stage the image context
         run: |
           set -euo pipefail
-          mkdir -p dist/amd64 dist/arm64
-          cp target/x86_64-unknown-linux-musl/release/kid_phone_server dist/amd64/
-          cp target/aarch64-unknown-linux-musl/release/kid_phone_server dist/arm64/
+          mkdir -p "dist/$ARCH"
+          cp "target/$TARGET/release/kid_phone_server" "dist/$ARCH/"
           cp -r static dist/static
       - name: Upload the image context
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: server-image-context
+          name: server-image-context-${{ matrix.arch }}
           path: server/dist
           if-no-files-found: error
           retention-days: 3
@@ -160,7 +173,7 @@ jobs:
       - name: Download the image context
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: server-image-context
+          name: server-image-context-${{ matrix.arch }}
           path: server/dist
       # Artifacts don't keep the executable bit.
       - name: Make the binary executable

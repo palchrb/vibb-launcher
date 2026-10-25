@@ -183,9 +183,9 @@ async fn binding(app: &TestApp, device: i64) -> Option<i64> {
 /// (was `migrations_73_to_88_in_order`), "Modify system settings" without adb 0090 (was
 /// `migrations_73_to_89_in_order`), design 64's zones 0091 (was `migrations_73_to_90_in_order`), its
 /// step 2 0092 and 0093 (the zone watch, the location provider; was `migrations_73_to_91_in_order`),
-/// the F-Droid source 0094 (was `migrations_73_to_93_in_order`), the extra-time request 0096 (was
-/// `migrations_73_to_95_in_order` on `pwa-fixes-a`, whose `0095_push_session_epoch.sql` takes 0095;
-/// whichever branch merges second renumbers, design r13 D6).
+/// the F-Droid source 0094 (was `migrations_73_to_93_in_order`), the push subscription's session
+/// epoch 0095 (security review M1; was `migrations_73_to_94_in_order`), the extra-time request 0096
+/// (design r13; was `migrations_73_to_95_in_order`).
 #[test]
 fn migrations_73_to_96_in_order() {
     let versions: Vec<(i64, String)> = crate::MIGRATOR
@@ -218,11 +218,12 @@ fn migrations_73_to_96_in_order() {
             (92, "zone watch".to_string()),
             (93, "location provider".to_string()),
             (94, "tracked app fdroid".to_string()),
+            (95, "push session epoch".to_string()),
             (96, "extra time request".to_string())
         ],
         "0073 (design 30), 0074 (Spotify), 0075 (the clock format), 0076 (the softer \
          wallpapers), 0077 (Vibb One), 0078 (design 35), 0079 (the custom DNS server), 0080 \
-         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51), 0084 (launcher round 7 §3), 0085 (design 59), 0086 (design 59 step 2's fix round), 0087 and 0088 (design 62), 0089 (the screen capture switch), 0090 (\"Modify system settings\"), 0091 (design 64's zones), 0092 and 0093 (its step 2), 0094 (the F-Droid source), 0096 (design r13's extra-time request) stay in this order: the backup before \
+         (design 38), 0081 (episode pictures ASAP), 0082 (server round 5), 0083 (design 51), 0084 (launcher round 7 §3), 0085 (design 59), 0086 (design 59 step 2's fix round), 0087 and 0088 (design 62), 0089 (the screen capture switch), 0090 (\"Modify system settings\"), 0091 (design 64's zones), 0092 and 0093 (its step 2), 0094 (the F-Droid source), 0095 (security review M1), 0096 (design r13's extra-time request) stay in this order: the backup before \
          migrating compares only the highest version"
     );
 }

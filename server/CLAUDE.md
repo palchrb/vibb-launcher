@@ -44,7 +44,7 @@ Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the sam
 - **Templating:** Askama (compile-time-checked server-rendered HTML, no JS build step, no frontend framework) - templates are compiled into the binary, so editing one requires a rebuild, not just a file save. A plain `cargo run` dev server (no `cargo watch`) needs to be manually killed and restarted after any template/static change.
 - **Sessions/auth:** `tower-sessions` + `tower-sessions-sqlx-store`, `argon2` for the admin password, mandatory TOTP 2FA
 - **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/tab_bar.html`: each page sets `{% let tab = "..." %}` before including it - Device › Apps alone from a `device_pages::Tab` field, Apps when opened from the Apps tab (`?from=`, `docs/notes/server/pwa.md`) - and the server marks that tab `aria-current="page"`; an app shell (design 43): the document never scrolls, `main.container` does and the bar floats over its bottom, absolute in the body (2026-10-22) - no fixed box - and `static/scroll-restore.js` keeps the place in `main`, on Back and reload too (`docs/notes/server/pwa.md`, "The app shell"); no brand bar since design 31 steps 10 and 15 - a tab's landing page opens on its large title, every other page on its back link and large title; Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
-- **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), `aarch64-unknown-linux-musl` cross-compiled via GitHub Actions on every `server-v*` tag (root `.github/workflows/server-release.yml`, uses `cross`) - `deploy/install.sh` downloads the newest `server-v*` release and sets up a systemd service
+- **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), or any x86_64 Linux box: every `server-v*` tag builds the static `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl` binaries, each natively on a runner of its own architecture (root `.github/workflows/server-release.yml`, plain `cargo build --target`, `musl-tools`; no `cross` since 2026-10-25), and publishes a tarball for each - `deploy/install.sh` downloads the newest `server-v*` release's tarball for `uname -m` and sets up a systemd service
 
 ## About the developer
 
@@ -120,9 +120,11 @@ No prior programming experience - build features directly rather than explaining
   to verify with minisign and its trusted comment to be `NAME TAG`; `download_release` checks the tarball before
   unpacking it, and `action_app_update` takes `update.sh` + `.minisig` from the release assets (never
   raw.githubusercontent) and checks it before running it. `server-release.yml`'s `server-release-sign` job (the
-  `release` environment, before the image job) signs both with that environment's `SERVER_MINISIGN_KEY` and checks
+  `release` environment, before the image job) signs both tarballs and `update.sh` with that environment's `SERVER_MINISIGN_KEY` and checks
   them against the key pinned in `deploy/update.sh` - no secret or no pinned key, nothing is pushed or published. `"not-set"` (the state until the owner pins a key) refuses everything. `tests::deploy_scripts`
-  keeps the six key lines and the four `verify_signed` equal.
+  keeps the six key lines and the four `verify_signed` equal, and install.sh's and update.sh's `case "$(uname -m)"`
+  (`aarch64`/`arm64`, `x86_64`/`amd64`, anything else refused) equal and matching the release's two tarballs
+  (`the_scripts_pick_the_tarball_for_the_machine`).
 - **Root scripts never read `data/` as code (security review H1).** `data/` belongs to the service user, so
   `scheduler.sh` reads `schedule.conf` key by key with `grep` and checks each value against a pattern (a bad one
   falls back to its default and is logged; a symlinked file is ignored), and every form that writes a schedule file
@@ -136,6 +138,13 @@ No prior programming experience - build features directly rather than explaining
   `backup_sync.sh` copies only regular files at the top of `data/backups/` and a regular `live_mirror.db`, with
   `cp -a --remove-destination`, after deleting everything on the drive that isn't a regular file or a directory
   (QA of the security wave, Medium 1: `cp -au` wrote through a link it had copied to the drive the run before).
+  It then prunes the drive's `snapshots/` to the server's counts (security review M2, `pwa-fixes-a`): the newest
+  `RETENTION_COUNT` (backup_schedule.conf, read by grep and checked; unset or invalid: `RETENTION_COUNT_DEFAULT` =
+  `backups::DEFAULT_RETENTION_COUNT`, logged; 0 keeps all - the server's `backups::retention_of` reads it the same
+  way) `backup-*.zip` and the newest `PRE_MIGRATE_KEEP` (`startup::PRE_MIGRATE_KEEP`) `pre-migrate-*.db`, also while
+  the copy is off, `find -xdev -maxdepth 1 -type f -name`, byte order, nothing else
+  (`tests::deploy_scripts::the_backup_sync_keeps_as_many_on_the_drive_as_the_server`, `..._counts_are_the_servers`,
+  `..._reads_backups_to_keep_as_the_server`).
   `tests::deploy_scripts::run_root_script` runs a root heredoc under bash in a sandbox, with stubs.
 - **No admin session leaves the live database (security review M2).** Every copy goes through
   `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, which
@@ -196,10 +205,10 @@ screen capture switch, 2026-10-23: `device_policy.disallow_screen_capture`, defa
 `device_status.zone_watch_json`) follows 0091, and `0093_location_provider.sql` (design 64 step 2:
 `device_locations.provider`/`mock`/`resent_at`, `devices.mock_logged`/`mock_logged_at`) follows 0092, and
 `0094_tracked_app_fdroid.sql` (the F-Droid source, 2026-10-24: `tracked_apps.fdroid_repo`/`fdroid_package`) follows
-0093, and `0096_extra_time_request.sql` (design r13: `notification_prefs.push_extra_time`, default 1) follows 0094
-with a gap: 0095 is `pwa-fixes-a`'s `0095_push_session_epoch.sql` (not merged when r13 was built; whichever of the
-two branches merges second renumbers its file and the order test, `migrations_73_to_96_in_order`; sqlx accepts the
-gap). The next free number is 0097.
+0093, and `0095_push_session_epoch.sql` (security review M1, `pwa-fixes-a`: `push_subscriptions.session_epoch`,
+backfilled with the account's) follows 0094, and `0096_extra_time_request.sql` (design r13:
+`notification_prefs.push_extra_time`, default 1) follows 0095 (`migrations_73_to_96_in_order`). The next free number
+is 0097.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts")
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -216,7 +225,7 @@ gap). The next free number is 0097.
 - `device_lock_glance_apps` (the apps whose messages the PIN lock's first page shows, each with its `show_text` since 0083) - see "The lock's glance page"; `device_policy.lock_glance_text` is unused since 0083's backfill
 - ~~`device_push`~~ - FCM tokens and health (migration `0026`), dropped by `0048` (design 19)
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
-- `parent_events` (kept 90 days; design 38's `phone_off`/`phone_on` too; design 64's `zone_arrived`/`zone_left` go with the phone's location history and are stored as a key plus `params`, worded by `parent_events::told`; design r13's `extra_time_request` too, keyed by the phone's request id), `notification_prefs` (each parent's Notify Me About, no row = all on; was the singleton `notification_settings` until 0088; `push_zones` since 0091, `push_extra_time` since 0096), `parent_event_reads` (each parent's read state, 0088), `push_subscriptions` (`last_opened_at` since 0082), `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
+- `parent_events` (kept 90 days; design 38's `phone_off`/`phone_on` too; design 64's `zone_arrived`/`zone_left` go with the phone's location history and are stored as a key plus `params`, worded by `parent_events::told`; design r13's `extra_time_request` too, keyed by the phone's request id), `notification_prefs` (each parent's Notify Me About, no row = all on; was the singleton `notification_settings` until 0088; `push_zones` since 0091, `push_extra_time` since 0096), `parent_event_reads` (each parent's read state, 0088), `push_subscriptions` (`last_opened_at` since 0082, `session_epoch` since 0095 - older than the account's: gone for every reader, `push::CURRENT_EPOCH`, and deleted by `send_due`), `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b), `device_status.write_settings_granted` (0090, About This Phone's "Modify system settings")
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"; `music_spotify_app`, `music_spotify_accounts` - Spotify's app and logins, see "Vibb music: Spotify on the server"
 - `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)

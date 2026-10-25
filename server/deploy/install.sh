@@ -64,11 +64,14 @@ if [ "$SERVER_SIGNING_PUBKEY" = "not-set" ]; then
     exit 1
 fi
 
+# The release's tarball for this machine: both are static musl binaries, each built natively on a
+# runner of its own architecture. The same text in install.sh and update.sh.
 case "$(uname -m)" in
-    aarch64) TARGET="aarch64-unknown-linux-musl" ;;
+    aarch64 | arm64) TARGET="aarch64-unknown-linux-musl" ;;
+    x86_64 | amd64) TARGET="x86_64-unknown-linux-musl" ;;
     *)
         echo "Unsupported architecture: $(uname -m)" >&2
-        echo "This installer supports 64-bit (aarch64) Pi OS / DietPi only." >&2
+        echo "The server is released for 64-bit Linux on aarch64 or x86_64 only." >&2
         exit 1
         ;;
 esac
@@ -798,6 +801,40 @@ if [ "$EXTERNAL_COPY_ENABLED" = "true" ] && [ -d "$DATA_DIR/backups" ]; then
         while IFS= read -r -d '' file; do
             cp -au --remove-destination -- "$file" "$EXTERNAL_MOUNT/snapshots/" 2>/dev/null || true
         done
+fi
+
+# The drive keeps as many as data/backups/ (security review M2), so the data retention windows
+# hold there too - also while the copy to the drive is off, as long as the drive is mounted: the
+# newest RETENTION_COUNT backup-*.zip (the Backups page's "Backups to keep", 0 keeps them all) and
+# the newest PRE_MIGRATE_KEEP pre-migrate-*.db (startup::PRE_MIGRATE_KEEP). RETENTION_COUNT is 1-4
+# digits, spaces around them allowed; unset or anything else keeps RETENTION_COUNT_DEFAULT
+# (handlers::backups::DEFAULT_RETENTION_COUNT), logged when set - the server's own rule
+# (backups::retention_of; server tests keep the numbers and the rule equal). Only regular files at
+# the top of snapshots/ with those two names are ever deleted; the names sort by time (byte order,
+# as the server sorts them).
+RETENTION_COUNT_DEFAULT=14
+PRE_MIGRATE_KEEP=3
+RETENTION_SETTING="$(timeout 5 grep -m1 '^RETENTION_COUNT=' -- "$BACKUP_CONFIG_FILE" | cut -d= -f2- || true)"
+if [[ "$RETENTION_SETTING" =~ ^[[:space:]]*([0-9]{1,4})[[:space:]]*$ ]]; then
+    RETENTION_COUNT="${BASH_REMATCH[1]}"
+else
+    if [ -n "$RETENTION_SETTING" ]; then
+        echo "backup_sync: ignoring an invalid RETENTION_COUNT in $BACKUP_CONFIG_FILE - keeping $RETENTION_COUNT_DEFAULT" >&2
+    fi
+    RETENTION_COUNT="$RETENTION_COUNT_DEFAULT"
+fi
+# prune_snapshots PATTERN KEEP: deletes all but the newest KEEP files named PATTERN (KEEP 0: none).
+prune_snapshots() {
+    [ "$2" -gt 0 ] || return 0
+    find "$EXTERNAL_MOUNT/snapshots" -xdev -mindepth 1 -maxdepth 1 -type f -name "$1" -printf '%f\0' |
+        LC_ALL=C sort -z -r | tail -z -n +"$(( $2 + 1 ))" |
+        while IFS= read -r -d '' name; do
+            rm -f -- "$EXTERNAL_MOUNT/snapshots/$name"
+        done
+}
+if [ -d "$EXTERNAL_MOUNT/snapshots" ] && [ ! -L "$EXTERNAL_MOUNT/snapshots" ]; then
+    prune_snapshots 'backup-*.zip' "$((10#$RETENTION_COUNT))" || true
+    prune_snapshots 'pre-migrate-*.db' "$PRE_MIGRATE_KEEP" || true
 fi
 
 if [ "$CONTINUOUS_MIRROR_ENABLED" = "true" ] && [ -f "$DATA_DIR/live_mirror.db" ] &&

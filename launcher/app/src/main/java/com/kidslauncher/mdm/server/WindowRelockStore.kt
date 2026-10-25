@@ -17,7 +17,11 @@ import kotlinx.serialization.builtins.serializer
  * a relock decides it is due and finishes inside it, so no relock can see a marker without its
  * window or clear a newer window's marker (QA #2).
  */
-class WindowRelockStore(private val prefs: SharedPreferences) {
+class WindowRelockStore(
+    private val prefs: SharedPreferences,
+    private val sealed: SealedPrefs = Secrets.prefs,
+    private val migrate: () -> Boolean = Secrets::migrateHere,
+) {
 
     companion object {
         /** See the class comment. Taken by nothing else; nothing slow runs under it but the
@@ -34,6 +38,9 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
         private const val REPORT_CURRENT = "report_current"
         private const val REPORT_LAST = "report_last"
         private const val TOKEN = "token"
+
+        /** Design r10: the reset token is sealed under this AAD (`prefs-file/key`). */
+        private const val TOKEN_AAD = "window_relock/token"
         private const val START_MS = "start_ms"
         private const val CATALOG_PINS = "catalog_pins"
         private const val ALLOWED = "allowed"
@@ -173,9 +180,12 @@ class WindowRelockStore(private val prefs: SharedPreferences) {
         !after.pending
     }
 
-    fun token(): String? = prefs.getString(TOKEN, null)
+    /** The reset-password token (hex), sealed on disk (design r10 §3.3); `null` also when it doesn't open - then
+     * `tokenUsable` is false and the next window sets a new one. */
+    fun token(): String? = (sealed.read(prefs, TOKEN_AAD, TOKEN, migrate()) as? Sealed.Value)?.plain
 
-    fun saveToken(hex: String): Boolean = prefs.edit().putString(TOKEN, hex).commit()
+    /** Sealed and committed; false when it couldn't be (then `setResetPasswordToken` isn't called). */
+    fun saveToken(hex: String): Boolean = sealed.edit(prefs) { it.putSealed(TOKEN_AAD, TOKEN, hex) }
 
     private fun putOrRemove(editor: SharedPreferences.Editor, key: String, value: String?) {
         if (value == null) editor.remove(key) else editor.putString(key, value)

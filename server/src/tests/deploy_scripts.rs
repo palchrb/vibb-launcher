@@ -187,8 +187,110 @@ fn root_takes_only_signed_release_files() {
     assert!(release.contains("secrets.SERVER_MINISIGN_KEY"));
     assert!(release.contains(r#"minisign -S -s "$key" -m "$file" -t "$file $TAG""#));
     assert!(release.contains(
-        "kid-phone-server-aarch64-unknown-linux-musl.tar.gz.minisig,update.sh,update.sh.minisig"
+        "for file in kid-phone-server-aarch64-unknown-linux-musl.tar.gz \
+         kid-phone-server-x86_64-unknown-linux-musl.tar.gz update.sh; do"
     ));
+    assert!(release.contains(
+        "kid-phone-server-x86_64-unknown-linux-musl.tar.gz.minisig,update.sh,update.sh.minisig\""
+    ));
+}
+
+/// The scripts' `case "$(uname -m)"`, the same text in install.sh and update.sh.
+fn target_case(script: &str) -> &str {
+    block(script, "# The release's tarball for this machine", "esac")
+}
+
+/// Runs install.sh's `case "$(uname -m)"` with `uname -m` answering `machine`: the TARGET it
+/// picks, or None when it refuses the machine (with the refusal on stderr).
+fn picked_target(machine: &str) -> Option<String> {
+    let sandbox = tempfile::tempdir().unwrap();
+    let uname = sandbox.path().join("uname");
+    std::fs::write(&uname, format!("#!/bin/sh\necho {machine}\n")).unwrap();
+    let mut permissions = std::fs::metadata(&uname).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&uname, permissions).unwrap();
+    let output = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(format!(
+            "set -euo pipefail\n{}\necho \"$TARGET\"\n",
+            target_case(INSTALL)
+        ))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                sandbox.path().display(),
+                std::env::var("PATH").unwrap()
+            ),
+        )
+        .output()
+        .expect("bash runs");
+    if output.status.success() {
+        Some(String::from_utf8(output.stdout).unwrap().trim().to_string())
+    } else {
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains(&format!("Unsupported architecture: {machine}")),
+            "{stderr}"
+        );
+        assert_eq!(output.status.code(), Some(1));
+        None
+    }
+}
+
+/// The release publishes a tarball for aarch64 and one for x86_64 (the user, 2026-10-25): both
+/// scripts pick the one for the machine they run on, refuse any other machine, and the release
+/// builds and publishes, signed, every tarball they can pick.
+#[test]
+fn the_scripts_pick_the_tarball_for_the_machine() {
+    assert_eq!(target_case(INSTALL), target_case(UPDATE));
+    for (machine, target) in [
+        ("aarch64", Some("aarch64-unknown-linux-musl")),
+        ("arm64", Some("aarch64-unknown-linux-musl")),
+        ("x86_64", Some("x86_64-unknown-linux-musl")),
+        ("amd64", Some("x86_64-unknown-linux-musl")),
+        ("armv7l", None),
+        ("i686", None),
+        ("riscv64", None),
+    ] {
+        assert_eq!(picked_target(machine).as_deref(), target, "{machine}");
+    }
+    for script in [INSTALL, UPDATE] {
+        let download = block(script, "download_release() {", "}");
+        assert!(download.contains(r#"asset="kid-phone-server-$TARGET.tar.gz""#));
+    }
+
+    let release = include_str!("../../../.github/workflows/server-release.yml");
+    let published: Vec<&str> = release
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("artifacts: "))
+        .expect("the release's artifacts")
+        .trim_matches('"')
+        .split(',')
+        .collect();
+    let targets: Vec<&str> = target_case(INSTALL)
+        .split("TARGET=\"")
+        .skip(1)
+        .map(|rest| &rest[..rest.find('"').unwrap()])
+        .collect();
+    assert_eq!(
+        targets,
+        ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
+    );
+    for target in targets {
+        assert!(
+            release.contains(&format!("- target: {target}\n")),
+            "{target} isn't built"
+        );
+        for suffix in ["", ".sha256", ".minisig"] {
+            let asset = format!("kid-phone-server-{target}.tar.gz{suffix}");
+            assert!(
+                published.contains(&asset.as_str()),
+                "{asset} isn't published"
+            );
+        }
+    }
+    assert_eq!(published.len(), 8, "{published:?}");
 }
 
 #[tokio::test]
@@ -250,18 +352,36 @@ async fn schedule_times_that_arent_hh_mm_are_refused() {
     assert_eq!(before, after, "a refused form wrote a schedule file");
 }
 
-/// Security review L9: the server's CI and release build with a pinned Rust and cross.
+/// Security review L9: the server's CI and release build with a pinned Rust; since 2026-10-25 each
+/// musl binary natively, on a runner of its own architecture (no cross, no QEMU).
 #[test]
-fn server_workflows_pin_rust_and_cross() {
+fn server_workflows_pin_rust_and_build_natively() {
     for workflow in [
         include_str!("../../../.github/workflows/server-ci.yml"),
         include_str!("../../../.github/workflows/server-release.yml"),
     ] {
         assert!(!workflow.contains("toolchain: stable"));
         assert!(workflow.contains("toolchain: 1."));
-        for line in workflow.lines().filter(|line| line.contains("tool: cross")) {
-            assert!(line.trim().starts_with("tool: cross@0."), "{line}");
+        assert!(!workflow.contains("tool: cross"));
+        assert!(!workflow.contains("cross build"));
+        assert!(!workflow.to_lowercase().contains("qemu-action"));
+        let lines: Vec<&str> = workflow.lines().map(str::trim).collect();
+        let mut legs = 0;
+        for (at, line) in lines.iter().enumerate() {
+            let runner = match line.trim_start_matches("- ") {
+                "target: aarch64-unknown-linux-musl" => "runner: ubuntu-24.04-arm",
+                "target: x86_64-unknown-linux-musl" => "runner: ubuntu-24.04",
+                _ => continue,
+            };
+            let next = lines[at + 1..]
+                .iter()
+                .find(|line| line.starts_with("runner: "))
+                .expect("a runner for the target");
+            assert_eq!(*next, runner, "{line}");
+            legs += 1;
         }
+        assert!(legs >= 2, "no per-architecture matrix");
+        assert!(workflow.contains(r#"cargo build --release --locked --target "$TARGET""#));
     }
 }
 
@@ -401,6 +521,177 @@ fn the_backup_sync_never_follows_or_writes_through_links() {
     }
 }
 
+/// Security review M2: the drive keeps as many `backup-*.zip` as data/backups/ ("Backups to keep",
+/// 0 = all) and as many `pre-migrate-*.db` as the server, the newest by name; nothing else on it is
+/// ever deleted - another name, a directory, a file below snapshots/ or beside it.
+#[test]
+fn the_backup_sync_keeps_as_many_on_the_drive_as_the_server() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let data = root.join("data");
+    let backups = data.join("backups");
+    let drive = root.join("drive");
+    let snapshots = drive.join("snapshots");
+    for dir in [
+        &backups,
+        &snapshots.join("sub"),
+        &snapshots.join("backup-dir.zip"),
+    ] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let zips = [
+        "backup-20261001-020000.zip",
+        "backup-20261002-020000.zip",
+        "backup-20261003-020000-uploaded-1.zip",
+        "backup-20261004-020000.zip",
+    ];
+    for name in zips {
+        std::fs::write(snapshots.join(name), "old").unwrap();
+    }
+    std::fs::write(backups.join("backup-20261005-020000.zip"), "new").unwrap();
+    let dbs = [
+        "pre-migrate-0090-0091.db",
+        "pre-migrate-0091-0093.db",
+        "pre-migrate-0093-0094.db",
+        "pre-migrate-0094-0095.db",
+        "pre-migrate-0095-0096.db",
+    ];
+    for name in dbs {
+        std::fs::write(snapshots.join(name), "db").unwrap();
+    }
+    let kept = [
+        snapshots.join("notes.txt"),
+        snapshots.join("backup-20261001.tar"),
+        snapshots.join("pre-migrate-0001-0002.db.keep"),
+        snapshots.join("sub/backup-20260101-020000.zip"),
+        drive.join("backup-20260101-020000.zip"),
+    ];
+    for path in &kept {
+        std::fs::write(path, "the parent's").unwrap();
+    }
+    let run = |retention: &str| {
+        std::fs::write(
+            data.join("backup_schedule.conf"),
+            format!("EXTERNAL_COPY_ENABLED=true\nRETENTION_COUNT={retention}\n"),
+        )
+        .unwrap();
+        let status = run_root_script(
+            "BACKUP_SYNC_EOF",
+            &[
+                (
+                    "/opt/kid-phone-server/data/backup_schedule.conf",
+                    data.join("backup_schedule.conf").to_str().unwrap(),
+                ),
+                ("/opt/kid-phone-server/data", data.to_str().unwrap()),
+                ("/mnt/kid-phone-server-backup", drive.to_str().unwrap()),
+            ],
+            &[("mountpoint", "exit 0")],
+            root,
+        );
+        assert!(status.success(), "{status:?}");
+    };
+    let present = |names: &[&str]| -> Vec<String> {
+        names
+            .iter()
+            .filter(|name| snapshots.join(name).exists())
+            .map(|name| name.to_string())
+            .collect()
+    };
+
+    // 0 keeps them all, as on the server.
+    run("0");
+    assert_eq!(present(&zips), zips);
+    assert!(snapshots.join("backup-20261005-020000.zip").is_file());
+
+    run("2");
+    assert_eq!(present(&zips), ["backup-20261004-020000.zip"]);
+    assert!(snapshots.join("backup-20261005-020000.zip").is_file());
+    assert_eq!(present(&dbs), &dbs[2..], "the newest PRE_MIGRATE_KEEP");
+    for path in &kept {
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "the parent's",
+            "{path:?}"
+        );
+    }
+    assert!(snapshots.join("backup-dir.zip").is_dir());
+}
+
+/// qa-pwa-fixes-a-code Q-6: the drive reads "Backups to keep" as the server does
+/// (`backups::retention_of`): 1-4 digits with spaces around them, 0 keeps all, anything else the
+/// default 14 - so a hand-edited value keeps as many there as here.
+#[test]
+fn the_backup_sync_reads_backups_to_keep_as_the_server() {
+    const ZIPS: usize = 20;
+    for value in ["abc", " 3 ", "0", "014", "99999", "", "-1", "2 2"] {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path();
+        let data = root.join("data");
+        let snapshots = root.join("drive/snapshots");
+        std::fs::create_dir_all(data.join("backups")).unwrap();
+        std::fs::create_dir_all(&snapshots).unwrap();
+        for n in 0..ZIPS {
+            std::fs::write(
+                snapshots.join(format!("backup-202610{n:02}-020000.zip")),
+                "z",
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            data.join("backup_schedule.conf"),
+            format!("EXTERNAL_COPY_ENABLED=true\nRETENTION_COUNT={value}\n"),
+        )
+        .unwrap();
+        let status = run_root_script(
+            "BACKUP_SYNC_EOF",
+            &[
+                (
+                    "/opt/kid-phone-server/data/backup_schedule.conf",
+                    data.join("backup_schedule.conf").to_str().unwrap(),
+                ),
+                ("/opt/kid-phone-server/data", data.to_str().unwrap()),
+                (
+                    "/mnt/kid-phone-server-backup",
+                    root.join("drive").to_str().unwrap(),
+                ),
+            ],
+            &[("mountpoint", "exit 0")],
+            root,
+        );
+        assert!(status.success(), "{value:?}: {status:?}");
+        let mut left: Vec<String> = std::fs::read_dir(&snapshots)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        left.sort();
+        let keep = crate::handlers::backups::retention_of(value).map_or(ZIPS, |n| n.min(ZIPS));
+        assert_eq!(left.len(), keep, "{value:?}");
+        // The newest are the ones kept.
+        assert_eq!(
+            left.last().map(String::as_str),
+            Some(format!("backup-202610{:02}-020000.zip", ZIPS - 1).as_str()),
+            "{value:?}"
+        );
+    }
+    assert_eq!(crate::handlers::backups::retention_of("abc"), Some(14));
+}
+
+/// The drive's counts are the server's: `backup_sync.sh`'s default "Backups to keep" and its
+/// pre-migration copies to keep.
+#[test]
+fn the_backup_sync_counts_are_the_servers() {
+    let sync = heredoc(INSTALL, "BACKUP_SYNC_EOF");
+    for line in [
+        format!(
+            "RETENTION_COUNT_DEFAULT={}\n",
+            crate::handlers::backups::DEFAULT_RETENTION_COUNT
+        ),
+        format!("PRE_MIGRATE_KEEP={}\n", crate::startup::PRE_MIGRATE_KEEP),
+    ] {
+        assert!(sync.contains(&line), "backup_sync.sh has no {line}");
+    }
+}
+
 /// QA of the security wave, Low 1: a FIFO (or a symlink) at the flag never blocks the root
 /// watcher, and runs nothing; a regular flag still runs its action.
 #[test]
@@ -488,8 +779,12 @@ fn the_release_signs_first_and_in_the_release_environment() {
     assert!(sign.contains("    environment: release\n"), "{sign}");
     assert!(sign.contains("secrets.SERVER_MINISIGN_KEY"));
     assert_eq!(release.matches("secrets.SERVER_MINISIGN_KEY").count(), 1);
+    assert!(sign.contains("needs: [ server-release-test, server-release-build ]"));
+    assert!(sign.contains("pattern: server-tarball-*"));
     let image = job("server-release-image");
-    assert!(image.contains("needs: [ server-release-build, server-release-sign ]"));
+    assert!(
+        image.contains("needs: [ server-release-test, server-release-build, server-release-sign ]")
+    );
     assert!(
         image.contains(
             "needs.server-release-sign.result == 'success' || github.event_name != 'push'"
