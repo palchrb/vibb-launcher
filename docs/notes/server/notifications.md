@@ -487,6 +487,9 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   the SameSite=Strict cookie isn't reliably sent; so `/phone-avatars/<hash>` needs no session (an unguessable
   content hash, only while a phone names it, the admin gate still in front). A same-origin path, resolved by the
   worker against its own origin.
+- **An icon that fails to load** (the picture removed after the push was queued, the parent's phone off the tailnet:
+  a 404 or 403) doesn't fail `showNotification`: Chrome drops a resource that doesn't load and shows the notification
+  without it - without an icon then, not with the app's (code QA Q-7; not tried against a real push service).
 - Tests: `tests::avatars::a_push_about_the_phone_carries_its_picture_as_the_icon`, `push::tests::the_payload_switch`,
   `jstest/sw.test.js` ("a push shows its phone's picture as the icon, never another site's").
 

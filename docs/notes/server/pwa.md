@@ -1092,19 +1092,25 @@ man er inne på en device". Branch `pwa-fixes-b`.
   page, where the SameSite=Strict session cookie isn't reliably sent, and an icon behind the session would come back
   as the login page. The path is the picture's own SHA-256 (256 bits: unguessable without the picture itself), only a
   hash some phone names right now is served (else 404, also for a file still on disk), there is no listing, and the
-  admin gate (loopback/tailnet, `gate::admin_gate`) still applies - the same footing as `/sw.js` and the receipt. The
-  pages use the same URL, so the browser caches one copy.
+  admin gate (loopback/tailnet, `gate::admin_gate`) still applies - the same footing as `/sw.js` and the receipt. With
+  `ADMIN_PUBLIC=on` (exposure b) the gate lets everyone through and **the hash is the only guard** (code QA Q-6):
+  acceptable, since the URL travels only in the signed-in pages, the browser's cache and the end-to-end-encrypted push
+  payload. Never on the phones' listener. The pages use the same URL, so the browser caches one copy.
 - **Backups**: `backups::build_backup_zip` adds `device_avatars/<hash>.jpg`; after a restore `photos::recover_missing`
   takes a missing file back from the newest zip that has it, and forgets a hash no zip has (the letter tile again).
 - Tests: `tests::avatars` (upload -> served square JPEG without EXIF and shown with the dot on every phone row, not in
   the policy; replace and Remove prune and go back to the letter, a deleted phone's file goes; a non-picture, an empty
   file and a broken PNG refused under the avatar with nothing changed; the backup and the restore; the push's icon;
-  the admin gate), `summary::the_quick_actions_follow_the_phone` and `every_form_on_the_summary_returns_to_its_group`
+  the admin gate; since the code QA: `the_picture_route_serves_only_a_named_hash` - a file on disk no phone names, an
+  uppercase, 63- or 65-character hash, `.jpg`, an encoded `../` and a row naming `../secret` all 404 -,
+  `the_upload_takes_a_photo_over_two_megabytes` - the route's 10 MB limit, not axum's 2 MB - and the inbox and an
+  app's page in the rows' loop), `listeners::the_device_router_serves_nothing_but_the_device_api` (`/phone-avatars/`
+  and `/contact-photos/` 404 on the phones' port), `summary::the_quick_actions_follow_the_phone` and `every_form_on_the_summary_returns_to_its_group`
   (the header's picker is the summary's one autosave and its first form), `jstest/sw.test.js` (the icon).
 
 ## Field focus and the filled button (the user's picks A and 3, 2026-10-25, branch `pwa-fixes-c`)
 
-- **The mockup** (https://claude.ai/artifact/CcNPzaNhQsCJitG3RJsmxb, the user: "A og 3 høres bra ut"). `style.css?v=54`.
+- **The mockup** (https://claude.ai/artifact/CcNPzaNhQsCJitG3RJsmxb, the user: "A og 3 høres bra ut"). `style.css?v=54` (`?v=55` since the code QA's fix round).
 - **(A) A focused text field or select** (`input` text/tel/password/time/email/url/number/search, `select`,
   `textarea`; not the borderless ones that are a row's value - `.row-input`, `select.pick`): its own border takes
   `--tint` at 1.5 px (the 1 px border plus `box-shadow: inset 0 0 0 0.5px`, so nothing moves; the day's borderless
@@ -1113,11 +1119,20 @@ man er inne på en device". Branch `pwa-fixes-b`.
   ring**; the keyboard keeps the 2 px `outline`. **CSS alone can't tell those apart for a text field**: a browser
   counts every focus of a text field as `:focus-visible`, a tap too (the spec's heuristic: it takes typing), so the
   existing `:focus` / `:focus:not(:focus-visible)` pair - kept as it was, Safari before 15.4 still shows the ring from
-  `:focus` - can't drop the ring on a tap. `static/focus-mode.js` (`?v=1`, un-deferred in `head.html`, ES5) marks
-  `<html>` `pointer-focus` from a press (mousedown, touchstart, pointerdown) until the next Tab, and
-  `.pointer-focus input:focus` (and select, textarea) drops the outline. Typing in the tapped field keeps the mark
-  (only Tab clears it). Without JS the ring shows as before; a page's `autofocus` on load (a refused save's field)
-  has no press yet, so it shows the ring.
+  `:focus` - can't drop the ring on a tap. `static/focus-mode.js` (`?v=2`, un-deferred in `head.html`, ES5) marks
+  `<html>` `pointer-focus` from a press (mousedown, touchstart, pointerdown) until the keyboard moves, and
+  `.pointer-focus input:focus` (and select, textarea) drops the outline. What clears the mark (code QA Q-2): Tab and
+  Shift+Tab always; the navigation keys (arrows, Home, End, Page Up/Down, Space, Enter) when the focus is not in a
+  field one types into - so arrow keys after a tapped radio, checkbox or select bring the ring back. Not every key:
+  typing and caret moves in a tapped text field keep the calm border (an on-screen keyboard sends keys too, so "any
+  key" would put the ring back the moment a parent types on a phone). The borderless fields that are a row's value
+  (`.row-input`, `select.pick`) have no border to tint: any focus gives them a quiet tinted underline (`box-shadow:
+  inset 0 -1.5px 0 var(--tint)`), a tap's only sign, the keyboard's ring on top (before, a tapped one showed only the
+  caret). Without JS the ring shows as before; a page's `autofocus` on load (a refused save's field) has no press yet,
+  so it shows the ring. Tests: `jstest/focus-mode.test.js` (each press, pointer -> keyboard -> pointer, typing kept,
+  arrows after a radio or select), `shell::the_accent_rules_hold` (the tokens, the three filled rules and their hover
+  with night text, no `--strong`, the no-ring rule, the field's border and the borderless underline, the head's
+  script).
 - **(3) Filled buttons** (the plain `button`, `.button-small`, the summary's `.act-strong` "Lock again"): `--tint-fill`
   `#E8895E` with night text `--on-tint-fill` `#0C0C14` (7.6:1), hover `--tint-fill-hover` `#E07A4C` (6.6:1); dark:
   `--tint-fill` `#F0A884` (today's dark `--tint`) with the same night text (9.9:1, hover `#F6C4AA` 12.4:1). `--strong`
@@ -1128,9 +1143,12 @@ man er inne på en device". Branch `pwa-fixes-b`.
   Add Phone with the field tapped (no ring, tinted border, white fill; dark: peach border, night fill) and reached
   with Tab (the ring), the Next button's colours, the Devices list, a phone's page before and after uploading a
   generated PNG (`/devices/1#avatar`, main's scroll 0, the picture with the dot) and after Remove, a refused file's
-  reason, Notification Settings; no console errors, no failed requests. WebKit without `is_mobile` (a desktop Safari)
-  leaves Notification Settings for `/login` right after it loads (a navigation from the page itself, no 303), and the
-  next screenshot hangs; main's earlier build hung the same way on that page (its `/login` not checked). Nothing this
-  round touched runs there but `focus-mode.js`; with `is_mobile` (as the earlier passes) the page stays. Worth a look
-  on a desktop Safari.
+  reason, Notification Settings; no console errors, no failed requests. **WebKit passes use `is_mobile=True`**: in
+  Playwright's Linux desktop WebKit (no `is_mobile`) Notification Settings and Settings go to `/login` about 0.3 s
+  after loading and the next screenshot hangs. The code QA traced it (`docs/review/qa-pwa-fixes-c-code.md`): that
+  build exposes `PushManager` (its mobile emulation doesn't), and `PushManager.getSubscription()` on a page with a
+  registered worker makes the browser itself navigate - the session stays (the next page loads signed in), and the
+  two pages are exactly the ones that call it (`notifications.js`, `register-sw.js`'s Sign Out lookup). A Playwright
+  artefact, independent of this branch and of main's code; stubbing `getSubscription` in an init script keeps the
+  pages too. Desktop Safari has a real push implementation, so it says nothing about it.
 

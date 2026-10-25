@@ -299,7 +299,7 @@ summary:focus:not(:focus-visible) {
    1.5 px (the 1 px border and a 0.5 px inset shadow, so nothing moves) and its fill --field-focus.
    A tap or a click shows no ring; the keyboard keeps the 2 px ring above. A browser counts every
    focus of a text field as :focus-visible, a tap too, so the rules above can't tell them apart:
-   static/focus-mode.js marks <html> `pointer-focus` from a press until the next Tab. Without it
+   static/focus-mode.js marks <html> `pointer-focus` from a press until the keyboard moves focus. Without it
    (no JS) the ring shows as before; Safari before 15.4 keeps the :focus rule's ring for the keyboard. */
 input[type="text"]:not(.row-input):focus,
 input[type="tel"]:not(.row-input):focus,
@@ -323,6 +323,14 @@ input.row-num:focus {
     background-color: var(--field-focus);
 }
 
+/* A borderless field that is a row's value (a domain to add, a row's picker; code QA Q-2): no border
+   to tint, so a focus shows a quiet tinted underline - a tap's only sign, the keyboard's ring on top. */
+input.row-input:focus,
+select.pick:focus {
+    box-shadow: inset 0 -1.5px 0 var(--tint);
+}
+
+/* A press marks pointer mode until the keyboard moves (static/focus-mode.js): no ring then. */
 .pointer-focus input:focus,
 .pointer-focus select:focus,
 .pointer-focus textarea:focus {

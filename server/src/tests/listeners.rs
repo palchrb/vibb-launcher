@@ -91,6 +91,10 @@ async fn the_device_router_serves_nothing_but_the_device_api() {
         "/static/style.css",
         "/sw.js",
         "/auth/verify-2fa",
+        // The admin's pictures, the phone's own one without a session (server round C, code QA
+        // Q-1): never on the phones' port.
+        "/phone-avatars/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/contact-photos/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     ];
     for path in paths {
         for method in [Method::GET, Method::POST] {

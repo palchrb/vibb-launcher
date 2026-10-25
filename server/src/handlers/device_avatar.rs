@@ -17,7 +17,9 @@
 //! back as the login page. The path is the picture's own SHA-256 (256 bits, unguessable without
 //! the picture itself), only a hash some phone names right now is served (a removed or replaced
 //! picture is gone at once, its file pruned), there is no listing, and the admin gate (tailnet or
-//! loopback) still applies like every route on this listener.
+//! loopback) still applies like every route on this listener. With `ADMIN_PUBLIC=on` (exposure b)
+//! the gate lets everyone through and the hash is the only guard: acceptable, since the URL travels
+//! only in the signed-in pages, the browser's cache and the end-to-end-encrypted push payload.
 
 use axum::extract::{Multipart, Path, State};
 use axum::http::{StatusCode, header};

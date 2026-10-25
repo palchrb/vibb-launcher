@@ -140,12 +140,50 @@ async fn an_uploaded_picture_is_served_and_shown_on_every_phone_row() {
         .text();
     assert!(page.contains(&src), "{page}");
     assert!(page.contains("Remove picture"));
+    // An event for the inbox's row and a catalog app for its page (code QA Q-5).
+    let phone = crate::parent_events::Phone::load(&app.db, id)
+        .await
+        .unwrap();
+    let battery = crate::models::BatteryReport {
+        level: 9,
+        charging: false,
+        low: true,
+    };
+    crate::parent_events::raise_logged(&app.state, &phone.low_battery(&battery, phone.now)).await;
+    let res = app
+        .request_form(
+            Method::POST,
+            "/apps/tracked/new",
+            Some(&cookie),
+            &[("name", "Notes"), ("source_type", "manual")],
+        )
+        .await;
+    let app_page = res
+        .location()
+        .expect("the new app's page")
+        .split('#')
+        .next()
+        .unwrap()
+        .split('?')
+        .next()
+        .unwrap()
+        .to_string();
+    // The app's page lists the phones that have it.
+    let app_id: i64 = app_page.rsplit('/').next().unwrap().parse().unwrap();
+    sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+        .bind(id)
+        .bind(app_id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     for path in [
         "/devices",
         "/devices/locate",
         "/schedules",
         "/apps",
         "/music",
+        "/notifications",
+        app_page.as_str(),
     ] {
         let html = app.get_page(path, &cookie).await.text();
         let at = html
@@ -374,6 +412,81 @@ async fn a_push_about_the_phone_carries_its_picture_as_the_icon() {
     assert_eq!(icons[0].1, format!("/phone-avatars/{hash}"));
     assert!(icons[1].0.starts_with("Emil"), "{icons:?}");
     assert_eq!(icons[1].1, crate::push::APP_ICON);
+}
+
+/// The route without a session serves only a well-formed hash a phone names now (code QA Q-1): not
+/// a file on disk no phone names, not an uppercase or a 65-character copy, not a path - not even
+/// one a row names.
+#[tokio::test]
+async fn the_picture_route_serves_only_a_named_hash() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let (emil, _) = app.enrolled_device("Emil").await;
+    upload(&app, &cookie, id, &png()).await;
+    let hash = avatar_hash(&app, id).await.unwrap();
+    assert_eq!(fetch(&app, &hash).await.status, StatusCode::OK);
+
+    // A valid-looking file no phone names (a prune not run yet, a stray copy).
+    let stray = "d".repeat(64);
+    std::fs::write(app.state.avatar_dir.join(format!("{stray}.jpg")), b"stray").unwrap();
+    // A file outside the store, which only a path that isn't a hash reaches.
+    std::fs::write(app.state.avatar_dir.join("../secret.jpg"), b"not for you").unwrap();
+    // A row naming that path (a corrupt or restored database).
+    sqlx::query("UPDATE devices SET avatar_hash = '../secret' WHERE id = ?")
+        .bind(emil)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for path in [
+        stray.clone(),
+        hash.to_uppercase(),
+        format!("{hash}0"),
+        hash[..63].to_string(),
+        format!("{hash}.jpg"),
+        "..%2Fsecret".to_string(),
+        "%2E%2E%2Fsecret".to_string(),
+    ] {
+        let res = fetch(&app, &path).await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
+        assert!(!res.text().contains("not for you"), "{path}");
+    }
+    // Named, the stray is served: the guard is the name as well as the file.
+    sqlx::query("UPDATE devices SET avatar_hash = ? WHERE id = ?")
+        .bind(&stray)
+        .bind(emil)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(fetch(&app, &stray).await.status, StatusCode::OK);
+}
+
+/// The route takes a phone photo of up to 10 MB, not axum's 2 MB default (code QA Q-4); a body over
+/// the limit is refused under the avatar and changes nothing.
+#[tokio::test]
+async fn the_upload_takes_a_photo_over_two_megabytes() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    // 1000×1000 of noise: a PNG that hardly compresses, about 3 MB.
+    let mut seed: u32 = 12345;
+    let noise = DynamicImage::ImageRgb8(RgbImage::from_fn(1000, 1000, |_, _| {
+        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+        let [a, b, c, _] = seed.to_le_bytes();
+        Rgb([a, b, c])
+    }));
+    let mut out = Cursor::new(Vec::new());
+    noise.write_to(&mut out, ImageFormat::Png).unwrap();
+    let big = out.into_inner();
+    assert!(big.len() > 2 * 1024 * 1024, "{}", big.len());
+    let res = upload(&app, &cookie, id, &big).await;
+    back_to_avatar(&res, id, None);
+    let hash = avatar_hash(&app, id).await.expect("stored");
+
+    // Over 10 MB + the framing: refused, the picture kept.
+    let res = upload(&app, &cookie, id, &vec![0u8; 11 * 1024 * 1024]).await;
+    back_to_avatar(&res, id, Some("too_large"));
+    assert_eq!(avatar_hash(&app, id).await, Some(hash));
 }
 
 /// The admin gate still applies to the route without a session.
