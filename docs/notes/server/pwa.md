@@ -587,15 +587,18 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 
 - **The answer row** (2026-10-25, branch `pwa-fixes-d`; the user: a stale "Found within 5 m · Answer to Update
   Location · 14:29" under a point from 20:41, "Er det viktig informasjon å vise der?" - no): `locate::answer_state`
-  (pure) reads the newest `locate` command and its `CommandStatus` with the newest fix's own time (`captured_at`):
+  (pure) reads the newest `locate` command that wasn't cancelled (a cancelled one never hides the failure before it,
+  as in Requests; qa-pwa-fixes-d Q-9) and its `CommandStatus` with the newest fix's own time (`captured_at`):
   **asking** while it waits, is sent (not yet confirmed, offered again, can't confirm) or is received in time -
-  "Asking the phone…" (`role=status`), left out right after the press (`?requested=1`: the wait's own `#fix_wait` line
+  "Asking the phone…", left out right after the press (`?requested=1`: the wait's own `#fix_wait` line
   says it); **found** - a done answer that isn't one of the launcher's no-fix words (`LOCATE_FAILURES`: location off,
-  no fix, too old) - for `ANSWER_SHOWN_MINUTES` (10) after `acknowledged_at`, "Found within 5 m" with its time
-  ("14:29", exact in `title`; an older launcher's plain "ok" reads "Found"); **failed** - those words or a failed
+  no fix, too old) - for `ANSWER_SHOWN_MINUTES` (10) after `acknowledged_at`, and only while the newest fix is the
+  one it found (taken after the ask, not after the answer: an older fix - an upload that lagged, a mock kept out -
+  would contradict it, a newer one says it itself; Q-8), "Found within 5 m" with its time ("14:29", exact in
+  `title`; an older launcher's plain "ok" reads "Found"); **failed** - those words or a failed
   result ("Location is off on the phone", "The phone couldn't find its location"), never fetched within its hour
   ("No position - the phone is offline", the ask's time), received but never answered or never confirmed ("No
-  position - the phone didn't answer") - until a fix taken after the answer (or the ask); cancelled: nothing.
+  position - the phone didn't answer") - until a fix taken after the answer (or the ask).
   Otherwise no row: the newest point and the time row say it. No "Answer to" line under it any more;
   `data-row="locate-answer"` with `data-state` (`asking`/`found`/`failed`) for tests. Tests:
   `handlers::locate::tests::the_answer_row_comes_and_goes`, `locate_page::the_answer_row_shows_only_while_it_says_something`.
@@ -754,7 +757,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   was restarted - the network to the server (often over Tailscale) not up yet, and an installed PWA shows no loading
   indicator of its own (the user confirmed: after waiting it reconnected; "En subtil reconnecting hadde vært bra!").
   No service-worker fetch handler was added (the network is never faked).
-- **The script** (ES5, deferred, from `partials/head.html` on every page, `?v=5` since the sign-in check below): a same-origin link tap (the tab bar,
+- **The script** (ES5, deferred, from `partials/head.html` on every page, `?v=6` since the sign-in check below): a same-origin link tap (the tab bar,
   any link; not `download`, a `target` other than `_self`, a modified or handled click, a `#fragment` on this page, or
   `data-no-wait`) marks the link (`.is-pending`, `aria-busy`) and shows a thin bar at the top (`.net-progress`) at once.
   Not left after 3 s: a small calm chip "Connecting…" (`.net-chip`, `role=status`; no alarm colour, no modal, the page
@@ -807,27 +810,42 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   password (`admin_auth::signed_out_response`), Sign Out; a sign-in step's own redirect has none: "a sign-in step"),
   the method, the path (no query), whether a session cookie came and the browser's `Sec-Fetch-Site`/`Sec-Fetch-Mode`
   (the cookie is SameSite=Strict: a navigation the browser counts as cross-site doesn't send it). A warning with a
-  session cookie, info without (and for Sign Out); never a cookie's value. The admin gate (`gate::admin_gate`) never
-  redirects - a refused client gets an empty 403 -, so a refusal of a request with a session cookie is a warning line
-  of its own there (the reason, the client, the path). `load_active_admin` returns why (`Result<AdminUser,
+  session cookie, info without (and for Sign Out); never a cookie's value. "A session cookie" is this server's name
+  alone (`AppState::session_cookie`, `security::session_cookie_name`: `__Host-handy`, or `handy` with
+  `INSECURE_COOKIES`; qa-pwa-fixes-d N-1). The admin gate (`gate::admin_gate`) never redirects - a refused client gets
+  an empty 403 -, so a refusal of a request with a session cookie is a warning line of its own there (the reason, the
+  client, the path), at most one a minute per client: only when `EventThrottle::record` opened that client's minute
+  of `admin_refused` (it returns whether it did; Q-4 - a refused client makes up the header). `load_active_admin` returns why (`Result<AdminUser,
   SignInWhy>`); `why_signed_out` tells the cookie cases apart (the session's id before it was read, then
   `tower_sessions` asked whether the row is there but expired). **`GET /api/session`** (`security::session_check`,
   a public route that answers itself; the admin gate applies, the phone listener has no such route): an empty 204
   while the session is a signed-in, onboarded admin's (what `require_full_auth` lets through), else 401, both
-  `no-store`; it writes nothing (the session isn't flushed) and logs each answer with its reason. **PWA**
-  (`reconnect.js?v=5`): every navigation of the script (a tap's, a restart's, the reload in place) remembers its
+  `no-store`; it writes nothing (the session isn't flushed or saved: no `Set-Cookie` but the session layer's own
+  removal of a dead cookie, the row's `expiry_date` unchanged - Q-3) and logs each answer with its reason. **PWA**
+  (`reconnect.js?v=6`): every navigation of the script (a tap's, a restart's, the reload in place) remembers its
   address (`sessionStorage` `handy-wanted`, `{href, t}`); on `/login` (not a POST's answer) the script asks
-  `/api/session` at once (4 s timeout) and, 204 and no sign-in already submitted, `location.replace`s the page
-  `loginReturn` picks - a `next`/`from` in the address, the page wanted in the last 2 minutes (sessionStorage, else
-  the place record a reload in place left in `window.name`), the referrer within the app, else `/` (a signed-in
-  session never needs the sign-in page) -, never another origin, `/login`, `/logout`, `/auth/…` or `/api/…`; within
-  30 s of going back (`handy-login-bounce`) the page stays, so it can never loop. A ping redirected to the login (a
+  `/api/session` at once (4 s timeout; again when the page is shown after being hidden and when it comes back from
+  the back-forward cache, one ask at a time - qa-pwa-fixes-d Q-7) and, 204 and no sign-in already submitted,
+  `location.replace`s the page `loginReturn` picks - the page wanted in the last 2 minutes (the freshest of
+  sessionStorage's record and the place record of a reload in place, which keeps the query in `href`; scroll-restore.js
+  clears window.name before this deferred script runs, so it leaves the record it took as `window.handyPlaceRecord`,
+  `scroll-restore.js?v=6`; Q-6), the referrer within the app, else `/` (a signed-in session never needs the sign-in
+  page). **Never off the origin** (Q-1, High: `/login?next=/.//evil` went to `//evil`): nothing in the sign-in page's
+  own address is read (the server never sets a `next`); `appPath` refuses a raw value starting with `//` or a
+  backslash, resolves against the page's origin and compares `origin`, and refuses a resolved path starting with `//`
+  or `/\` (`/.//evil`, `/%2e//evil`, `/a/..//evil`); never `/login`, `/logout`, `/auth/…` or `/api/…`. Within 30 s
+  of going back (`handy-login-bounce`, in sessionStorage and in window.name as `handy-login-bounce:<ms>` - a prefix
+  scroll-restore.js leaves alone, for an installed app that lost sessionStorage; Q-5) the page stays, so it can
+  never loop. A ping redirected to the login (a
   fetch's `redirected` to `/login`) asks `/api/session` before it counts: its 204 or 401 is an answer (the navigation
   starts again), no answer is none. The sign-in page may show for the moment the check takes. Tests:
   `admin_auth::a_redirect_to_the_sign_in_page_says_why`, `the_session_cookie_is_found_by_its_name_alone`,
-  `the_session_check_answers_204_or_401_and_changes_nothing`; `jstest/reconnect.test.js` (`loginReturn`'s table,
-  the way back from window.name's record and from a tap's, the 401 / no answer / refused password / submit / loop
-  cases, the redirected ping). Owed: the next time it happens, the time and whether the address bar showed
+  `the_session_check_answers_204_or_401_and_changes_nothing`, `the_sign_in_log_lines_hold_no_cookie_value_and_no_query`
+  (the capture subscriber: no cookie value, no query, the gate once a minute and never without the cookie; Q-2);
+  `jstest/reconnect.test.js` (`loginReturn`'s table with the off-origin rows, `appPath`, the way back from the place
+  record (with its query) and from a tap's, the freshest record, the loop guard in window.name, a resumed page, the
+  401 / no answer / refused password / submit / loop cases, the redirected ping), `jstest/scroll-restore.test.js`
+  (`handyPlaceRecord`, the bounce mark left alone). Owed: the next time it happens, the time and whether the address bar showed
   `/login…`, and the server log's line.
 
 ## Pull down to refresh (2026-10-25, `static/pull-refresh.js`)

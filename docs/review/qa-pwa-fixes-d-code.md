@@ -209,3 +209,66 @@ reverted (`git status` clean afterwards).
 
 **18 of 21 caught** (Rust 10/13, JS 8/8). The gap that matters most is not a mutation: the open redirect (Q-1) passes
 every test as the branch stands, because the "never another origin" rows use only a different host.
+
+## Fix round (2026-10-25, branch `pwa-fixes-d`)
+
+Main merged in first (Q-10), then every finding. Suites after the fix round: `cargo test` **1347 passed**, 0 failed;
+`cargo fmt --check` clean; `cargo clippy --all-targets` the 13 known warnings, none new; `node --test jstest/*.test.js`
+**180 passed**, 0 failed.
+
+- **Q-1 (High)**: fixed in ddcb0ad6. `loginReturn` reads nothing from the sign-in page's own address (the
+  `next`/`from` branch is gone). `appPath` refuses a raw value starting with `//` or a backslash, resolves against the
+  page's origin and compares `origin`, and refuses a resolved path starting with `//` or `/\`. New jstest rows
+  (`loginReturn` through the wanted record and the referrer, and `appPath` on its own): `/.//evil.com`, `//evil.com`,
+  `\\evil.com`, `/\evil.com`, `https://evil.com`, `/%2e//evil.com`, `/a/..//evil.com`, `https://<own host>//evil.com`,
+  `javascript:`, `data:` are all refused (`/` or null); `/devices/locate?device=1` is allowed. The measured case
+  `loginReturn("https://admin.example.ts.net/login?next=/.//evil.com/x", …)` now returns `/`.
+- **Q-2 (Medium)**: fixed in b86c03ab. `admin_auth::the_sign_in_log_lines_hold_no_cookie_value_and_no_query` uses the
+  capture subscriber. It sends a cookie that is no session plus other cookies, a request with no cookie, two gate
+  refusals with the session cookie and one without, all with a secret query. Assertions: no line holds a cookie
+  value or the query; the two redirect lines hold the reason, the path and the cookie flag; the gate logs exactly one
+  line.
+- **Q-3 (Medium)**: fixed in b86c03ab. On the 204 and on each 401 there is no `Set-Cookie` and the row's
+  `expiry_date` is unchanged. One exception: a dead cookie gets the session layer's own removal (`Max-Age=0`), as on
+  any page.
+- **Q-4 (Low)**: fixed in b86c03ab. `EventThrottle::record` now returns whether this event opened the client's
+  minute (its own row). The gate warns only then, and only with this server's session cookie: at most one line a
+  minute per client.
+- **Q-5 (Low)**: fixed in ddcb0ad6. The bounce time is also written to `window.name` as `handy-login-bounce:<ms>`
+  (scroll-restore.js leaves that prefix alone), and the newer of the two values counts. Test: the guard holds with
+  sessionStorage throwing.
+- **Q-6 (Low)**: fixed in ddcb0ad6.
+  - The place record keeps the query in `href`; scroll-restore matches on the unchanged `path`.
+  - scroll-restore.js clears `window.name` before the deferred reconnect.js runs. The branch's `window.name`
+    fallback therefore never saw a record in a real browser (it only passed against the fake window). scroll-restore
+    now leaves the record it took as `window.handyPlaceRecord`.
+  - `wanted()` takes the freshest of the sessionStorage record, the `window.name` record and that one.
+  - `scroll-restore.js?v=6`, `reconnect.js?v=6`.
+- **Q-7 (Low)**: fixed in ddcb0ad6. The check runs again on `visibilitychange` to visible and on `pageshow` with
+  `persisted` (both go through `cameBack`), one ask at a time.
+- **Q-8 (Low)**: fixed in eb527365. "Found" shows only while the newest fix is the one it found: taken after the ask
+  and not after the answer. An older fix (a lagging upload, a mock kept out) would contradict it, and a newer one is
+  dropped because the fix row says it. Unit rows: no fix, an older fix, a newer fix; the page test stores the fix.
+- **Q-9 (Low)**: fixed in eb527365. The row reads the newest `locate` with `cancelled_at IS NULL`. Page test: a
+  failure, then a cancelled Update Location, and "Location is off on the phone" stays.
+- **Q-10 (Low)**: fixed in 4042a707 (`git merge main`). PLAN keeps main's layout, and the three notes are in its
+  "In build, `pwa-fixes-d`" lines.
+- **N-1**: fixed in b86c03ab. `AppState::session_cookie` (`security::session_cookie_name`); a leftover cookie of the
+  other name reads as none.
+- **N-2**: fixed in dfe725df. `device_pages::the_lock_state_says_when_it_was_reported` stores yesterday noon, Oslo
+  time, from the zone's own date arithmetic.
+- **N-3**: fixed in eb527365. `role="status"` is gone from the row.
+- **N-4**: kept. The original brief asked that a fetch which gets the login redirect ask `/api/session` first; it
+  costs one round trip.
+- The always-ask `/api/session` on the sign-in page stays, as the QA recommends.
+
+### Mutations re-run
+
+| # | Mutation | Result |
+|---|---|---|
+| R1 | the sign-in warning logs the raw `Cookie` header | caught (`the_sign_in_log_lines_hold_no_cookie_value_and_no_query`) |
+| R2 | the session check calls `session.insert` | caught (`the_session_check_answers_204_or_401_and_changes_nothing`) |
+| R15 | the gate's warning for every refusal, cookie or not | caught (`the_sign_in_log_lines_…`) |
+| R16 | the gate's warning unthrottled (Q-4) | caught (`the_sign_in_log_lines_…`) |
+| Q1 | `appPath` without its `//` and backslash checks | caught (`loginReturn …`, `appPath …`) |
+| Q1b | the `next` branch back in `loginReturn` | caught (`loginReturn …`) |
