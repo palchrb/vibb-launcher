@@ -54,6 +54,13 @@ object ElementRoomStore {
         }
     }
 
+    /** For the lock's glance (main thread): every learned pair, empty when unreadable. Never logged. */
+    fun rooms(context: Context): Map<String, ElementRoom> = try {
+        read(context)
+    } catch (e: Exception) {
+        emptyMap()
+    }
+
     /** For the contact sheet: the learned room of an Element MXID (read once per call). */
     fun lookup(context: Context): (String) -> ElementRoom? {
         val rooms = try {

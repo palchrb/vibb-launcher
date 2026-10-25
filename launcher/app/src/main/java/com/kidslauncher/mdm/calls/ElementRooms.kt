@@ -87,6 +87,28 @@ fun learnElementRoom(packageName: String, facts: ElementDmFacts, state: CallPoli
 }
 
 /**
+ * The lock's glance: whose photo an Element X row shows (2026-10-25, PLAN "Contact photos on the glance's message rows")
+ * - from the same four facts the learning rule reads, nothing more. A DM (`group == false`) is the phone-book contact
+ * whose learned room ([rooms], design 15's link) is the notification's tag, for the same session when the facts name
+ * one; a group (`group == true`) is the contact whose Element MXID is the newest `sender_person`'s key (never the
+ * session's own). Returns the contact's id (`> 0`), else null - managed rules only. Memory only, never stored or logged.
+ */
+fun elementGlanceContact(facts: ElementDmFacts, state: CallPolicyState, rooms: Map<String, ElementRoom>): Long? {
+    val rules = (state as? CallPolicyState.Managed)?.rules ?: return null
+    val mxid = when (facts.group) {
+        false -> {
+            val tag = facts.tag?.takeIf(::isElementRoomId) ?: return null
+            rooms.entries.firstOrNull { (_, room) -> room.room == tag && (facts.selfKey == null || room.session == facts.selfKey) }?.key
+        }
+        true -> facts.senderKeys.lastOrNull()?.takeIf { it != facts.selfKey }
+        null -> null
+    } ?: return null
+    return rules.phoneBook
+        .firstOrNull { it.messageApp == "element" && it.messageAddress == mxid && isMatrixId(mxid) }
+        ?.id?.takeIf { it > 0 }
+}
+
+/**
  * What stays stored after the rules changed (QA #4): with managed rules only the entries of
  * phone-book contacts that still use Element under the same MXID (an entry is keyed by that
  * MXID); unmanaged calls have no phone book, so nothing; unknown rules (fail-closed) leave

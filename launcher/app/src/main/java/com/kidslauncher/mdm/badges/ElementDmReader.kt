@@ -11,6 +11,7 @@ import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.ElementDmFacts
 import com.kidslauncher.mdm.calls.ElementRoomStore
 import com.kidslauncher.mdm.calls.MessagePackages
+import com.kidslauncher.mdm.calls.elementGlanceContact
 import com.kidslauncher.mdm.calls.learnElementRoom
 
 /**
@@ -34,6 +35,20 @@ object ElementDmReader {
         val learned = learnElementRoom(sbn.packageName, facts, CallPolicyStore.state) ?: return
         // The store checks the contact again against the rules it reads under its lock.
         ElementRoomStore.learn(context, learned)
+    }
+
+    /**
+     * The lock's glance (2026-10-25): the phone-book contact an Element X row stands for ([elementGlanceContact]: a DM by
+     * its learned room, a group by its newest sender's key) - the same facts [learn] reads, nothing more. Called by
+     * [GlanceReader] only from the sender level up; null for any other package or user, or on any exception.
+     */
+    fun glanceContact(context: Context, sbn: StatusBarNotification): Long? {
+        if (sbn.packageName != MessagePackages.ELEMENT_X || sbn.user != Process.myUserHandle()) return null
+        return try {
+            elementGlanceContact(facts(sbn), CallPolicyStore.state, ElementRoomStore.rooms(context))
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun facts(sbn: StatusBarNotification): ElementDmFacts {

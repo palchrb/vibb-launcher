@@ -1,7 +1,10 @@
 package com.kidslauncher.mdm.badges
 
+import com.kidslauncher.mdm.calls.CallPolicyState
+import com.kidslauncher.mdm.calls.CallRules
 import com.kidslauncher.mdm.calls.MissedCallNotice
 import com.kidslauncher.mdm.calls.MissedContact
+import com.kidslauncher.mdm.calls.RuleContact
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import org.junit.Assert.assertEquals
@@ -364,7 +367,11 @@ class GlanceRowsTest {
     fun `the kept facts are exactly the ones the design names`() {
         fun fields(type: Class<*>) = type.declaredFields.filterNot { java.lang.reflect.Modifier.isStatic(it.modifiers) }.map { it.name }.toSet()
         assertEquals(
-            setOf("key", "packageName", "conversationKey", "level", "title", "text", "count", "whenMs", "postTimeMs", "suspended", "missedCall"),
+            setOf(
+                "key", "packageName", "conversationKey", "level", "title", "text", "count", "whenMs", "postTimeMs", "suspended", "missedCall",
+                // 2026-10-25: what the title names, the newest sender's name and our own contact's id - never a key or number.
+                "shape", "sender", "contactId",
+            ),
             fields(GlanceNotice::class.java),
         )
         assertEquals(setOf("packageName", "groupSummary", "ongoing", "clearable", "media", "importance", "category"), fields(GlanceCandidateFacts::class.java))
@@ -382,7 +389,123 @@ class GlanceRowsTest {
         assertEquals(GlanceSubtitle.COUNT, glanceSubtitle(GlanceLevel.TEXT, missedCall = false, count = 2, hasText = false))
         assertEquals(GlanceSubtitle.COUNT, glanceSubtitle(GlanceLevel.SENDER, missedCall = false, count = 2, hasText = false))
         val panel = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/lock/GlancePanel.kt") }.first { it.exists() }.readText()
-        // The badge follows the shown kind, not the raw flag.
-        assertTrue(panel.contains("view.glanceRowBadge.visibility = if (missedShown) View.VISIBLE else View.GONE"))
+        // The badge follows the shown kind, not the raw flag: the red phone for a missed call, else the app's mark on a
+        // contact's photo, else none.
+        assertTrue(panel.contains("missedShown -> missedBadge(view)"))
+        assertTrue(panel.contains("contact != null && icon != null -> appMark(view, icon)"))
+        assertTrue(panel.contains("else -> view.glanceRowBadge.visibility = View.GONE"))
+    }
+
+    // ---- 2026-10-25: contact photos, the group's sender, one sender's count -------------------------------------------
+
+    private val whatsapp = "com.whatsapp"
+    private val phoneBook = CallPolicyState.Managed(
+        CallRules(
+            callsEnabled = true,
+            contacts = listOf(
+                RuleContact(7, "Mamma", "+4790000001", inbound = true, outbound = true),
+                RuleContact(8, "Pappa", "+4790000002", inbound = true, outbound = true),
+                // Inbound only: not in the kid's phone book.
+                RuleContact(9, "Lærer", "+4790000003", inbound = true, outbound = false),
+                // A contact without an id (an old cache) never matches.
+                RuleContact(0, "Ukjent", "+4790000004", inbound = true, outbound = true),
+            ),
+        ),
+    )
+
+    @Test
+    fun `the shape - one sender, a named group, or plain`() {
+        assertEquals(GlanceShape.DIRECT, glanceShape(messaging = true, group = false, conversationTitle = null))
+        assertEquals(GlanceShape.DIRECT, glanceShape(messaging = true, group = false, conversationTitle = "Mamma"))
+        assertEquals(GlanceShape.GROUP, glanceShape(messaging = true, group = true, conversationTitle = "Fotballgjengen"))
+        assertEquals("a group without a name is titled by its sender", GlanceShape.PLAIN, glanceShape(messaging = true, group = true, conversationTitle = null))
+        assertEquals(GlanceShape.PLAIN, glanceShape(messaging = false, group = false, conversationTitle = null))
+        assertEquals(GlanceShape.PLAIN, glanceShape(messaging = false, group = true, conversationTitle = "X"))
+    }
+
+    @Test
+    fun `WhatsApp's sender is a contact only by a tel URI, normalised as the phone book's`() {
+        assertEquals(setOf("com.whatsapp", "com.whatsapp.w4b"), GLANCE_TEL_PACKAGES)
+        assertEquals(8L, glanceTelContact("tel:+4790000002", phoneBook))
+        assertEquals("national form, the rules' country code", 8L, glanceTelContact("tel:900 00 002", phoneBook))
+        assertEquals("percent-encoded and with parameters", 7L, glanceTelContact("TEL:%2B47-9000-0001;phone-context=x", phoneBook))
+        assertEquals("00 prefix", 7L, glanceTelContact("tel:004790000001", phoneBook))
+        assertNull("not in the phone book", glanceTelContact("tel:+4790000099", phoneBook))
+        assertNull("inbound only is not the phone book", glanceTelContact("tel:+4790000003", phoneBook))
+        assertNull("a contact without an id", glanceTelContact("tel:+4790000004", phoneBook))
+        for (other in listOf(null, "", "sip:+4790000002@ims.example", "mailto:a@b.c", "+4790000002", "content://contacts/1", "tel:*21#")) {
+            assertNull("$other", glanceTelContact(other, phoneBook))
+        }
+        assertNull(glanceTelContact("tel:+4790000002", CallPolicyState.Unmanaged))
+        assertNull(glanceTelContact("tel:+4790000002", CallPolicyState.UnknownFailClosed))
+    }
+
+    private fun row(
+        level: GlanceLevel = GlanceLevel.SENDER,
+        shape: GlanceShape = GlanceShape.DIRECT,
+        title: String? = "Mamma",
+        text: String? = null,
+        count: Int = 1,
+        sender: String? = null,
+        contactId: Long? = null,
+        missedCall: Boolean = false,
+    ) = GlanceMessageRow(
+        GlanceConversation(whatsapp, "c"), "k", level, title, text, count, 1, 1,
+        missedCall = missedCall, shape = shape, sender = sender, contactId = contactId,
+    )
+
+    @Test
+    fun `a row's photo is its contact's from the phone book now, never at APP_ONLY`() {
+        assertEquals("Pappa", glanceRowContact(row(contactId = 8), phoneBook)?.name)
+        assertEquals("Pappa", glanceRowContact(row(level = GlanceLevel.TEXT, contactId = 8), phoneBook)?.name)
+        assertNull("the app hides who wrote", glanceRowContact(row(level = GlanceLevel.APP_ONLY, contactId = 8), phoneBook))
+        assertNull("left the phone book", glanceRowContact(row(contactId = 9), phoneBook))
+        assertNull(glanceRowContact(row(contactId = 0), phoneBook))
+        assertNull(glanceRowContact(row(contactId = null), phoneBook))
+        assertNull(glanceRowContact(row(contactId = 8), CallPolicyState.Unmanaged))
+    }
+
+    @Test
+    fun `a group in Name only shows its newest sender, Full text keeps the text's sender`() {
+        val group = row(shape = GlanceShape.GROUP, title = "Fotballgjengen", sender = "Pappa", count = 3)
+        assertEquals(GlanceNameSuffix.Sender("Pappa"), glanceNameSuffix(group))
+        assertEquals("Pappa", glanceSpokenGroup(group))
+        val full = group.copy(level = GlanceLevel.TEXT, text = "Pappa: Kommer kl 5")
+        assertNull("Full text: \"Sender: text\" under the name", glanceNameSuffix(full))
+        assertEquals("TalkBack names the group in both", "Pappa", glanceSpokenGroup(full))
+        assertNull("no sender known", glanceNameSuffix(group.copy(sender = null)))
+        assertNull("the sender is the name", glanceNameSuffix(group.copy(sender = "Fotballgjengen")))
+        assertNull(glanceSpokenGroup(group.copy(sender = "Fotballgjengen")))
+        assertNull("a missed call says so itself", glanceNameSuffix(group.copy(missedCall = true)))
+        assertNull(glanceNameSuffix(group.copy(level = GlanceLevel.APP_ONLY, title = null)))
+        assertNull(glanceSpokenGroup(group.copy(level = GlanceLevel.APP_ONLY, title = null)))
+        assertNull("one sender: no group", glanceSpokenGroup(row(sender = "Mamma")))
+    }
+
+    @Test
+    fun `the rows carry the newest's shape, sender and contact - the latter two from SENDER up`() {
+        val policy = GlancePolicy(mapOf(whatsapp to false))
+        val result = rows(
+            notice("k1", pkg = whatsapp, conversation = "g", title = "Fotballgjengen", post = 1)
+                .copy(shape = GlanceShape.GROUP, sender = "Mamma", contactId = 7),
+            notice("k2", pkg = whatsapp, conversation = "g", title = "Fotballgjengen", post = 2)
+                .copy(shape = GlanceShape.GROUP, sender = "Pappa", contactId = 8),
+            policy = policy,
+        ).single() as GlanceMessageRow
+        assertEquals(GlanceShape.GROUP, result.shape)
+        assertEquals("Pappa", result.sender)
+        assertEquals(8L, result.contactId)
+        // One notification at APP_ONLY makes the row APP_ONLY: no sender, no contact.
+        val hidden = rows(
+            notice("k1", pkg = whatsapp, conversation = "g", level = GlanceLevel.APP_ONLY, title = null, post = 1),
+            notice("k2", pkg = whatsapp, conversation = "g", title = "Fotballgjengen", post = 2)
+                .copy(shape = GlanceShape.GROUP, sender = "Pappa", contactId = 8),
+            policy = policy,
+        ).single() as GlanceMessageRow
+        assertNull(hidden.sender)
+        assertNull(hidden.contactId)
+        assertNull(glanceRowContact(hidden, phoneBook))
+        // The suffix's name stays out of a log line.
+        assertFalse(GlanceNameSuffix.Sender("Pappa").toString().contains("Pappa"))
     }
 }

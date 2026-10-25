@@ -37,6 +37,31 @@ class ElementRoomsTest {
 
     private fun learned(contact: String = mamma, room: String = dmRoom) = LearnedElementRoom(contact, ElementRoom(kid, room))
 
+    // ---- 2026-10-25: the glance's contact photo ----------------------------------------------------
+
+    @Test
+    fun `the glance's contact - a DM by its learned room, a group by its newest sender`() {
+        val rooms = mapOf(mamma to ElementRoom(kid, dmRoom))
+        // A DM: the room design 15 learned is Mamma's.
+        assertEquals(1L, elementGlanceContact(dm(senderKeys = listOf(mamma)), managed, rooms))
+        assertEquals("no session named: the room alone", 1L, elementGlanceContact(dm(selfKey = null), managed, rooms))
+        assertNull("another session's room", elementGlanceContact(dm(selfKey = "@other:vibb.me"), managed, rooms))
+        assertNull("no learned room", elementGlanceContact(dm(), managed, emptyMap()))
+        assertNull("a thread tag", elementGlanceContact(dm(tag = "$dmRoom|\$thread"), managed, rooms))
+        assertNull("the room's contact left Element", elementGlanceContact(dm(), managed, mapOf("@bestemor:x.org" to ElementRoom(kid, dmRoom))))
+        // A group: its newest sender, when a phone-book Element contact.
+        val group = dm(tag = "!other:vibb.me", senderKeys = listOf(mamma, pappa), group = true)
+        assertEquals(2L, elementGlanceContact(group, managed, rooms))
+        assertEquals(1L, elementGlanceContact(group.copy(senderKeys = listOf(pappa, mamma)), managed, rooms))
+        assertNull("a stranger", elementGlanceContact(group.copy(senderKeys = listOf(mamma, "@stranger:x.org")), managed, rooms))
+        assertNull("the newest without a key", elementGlanceContact(group.copy(senderKeys = listOf(mamma, null)), managed, rooms))
+        assertNull("the kid's own session", elementGlanceContact(group.copy(senderKeys = listOf(kid), selfKey = kid), managed, rooms))
+        assertNull("not an Element contact", elementGlanceContact(group.copy(senderKeys = listOf("@bestemor:x.org")), managed, rooms))
+        assertNull("no flag", elementGlanceContact(dm(group = null), managed, rooms))
+        assertNull(elementGlanceContact(dm(), CallPolicyState.Unmanaged, rooms))
+        assertNull(elementGlanceContact(dm(), CallPolicyState.UnknownFailClosed, rooms))
+    }
+
     // ---- privacy: exact fields ----------------------------------------------------------------
 
     @Test
@@ -248,6 +273,8 @@ class ElementRoomsTest {
         "ElementDmReader", "learn", "facts", "learned", "context", "sbn", "e", "extras", "messages", "SENDER_PERSON",
         "Context", "Exception", "MessagePackages", "ELEMENT_X", "CallPolicyStore", "state", "ElementRoomStore",
         "learnElementRoom", "ElementDmFacts", "tag", "selfKey", "senderKeys", "group",
+        // 2026-10-25: the glance's contact from the same facts (design 15's link, a group's newest sender)
+        "glanceContact", "elementGlanceContact", "rooms", "Long",
         // the platform: only these members
         "StatusBarNotification", "packageName", "user", "notification", "Process", "myUserHandle",
         "Notification", "EXTRA_MESSAGES", "EXTRA_MESSAGING_PERSON", "EXTRA_IS_GROUP_CONVERSATION",
@@ -264,7 +291,7 @@ class ElementRoomsTest {
                 "android.os.Parcelable", "android.os.Process", "android.service.notification.StatusBarNotification",
                 "com.kidslauncher.mdm.calls.CallPolicyStore", "com.kidslauncher.mdm.calls.ElementDmFacts",
                 "com.kidslauncher.mdm.calls.ElementRoomStore", "com.kidslauncher.mdm.calls.MessagePackages",
-                "com.kidslauncher.mdm.calls.learnElementRoom",
+                "com.kidslauncher.mdm.calls.learnElementRoom", "com.kidslauncher.mdm.calls.elementGlanceContact",
             ),
             imports,
         )

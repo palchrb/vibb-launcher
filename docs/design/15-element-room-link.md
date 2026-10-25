@@ -118,3 +118,11 @@ Device checks (not done here): on the Jelly Star with Element X as the kid, a DM
 Message open that DM; before any DM it opens the profile; a contact removed or moved to another MXID falls back to
 the profile after the next sync; Element X signed out (unknown session) - Element stays on its room list (known,
 QA #4) until the next DM notification replaces the pair.
+
+## 2026-10-25: the learned room on the lock's glance (branch `launcher-glance-b`)
+
+The lock's glance page (design 25) shows a phone-book contact's photo on an Element X row: a DM row whose tag is the
+contact's learned room, or a group row whose newest `sender_person` key is a phone-book contact's Element MXID - pure
+`elementGlanceContact` (ElementRooms.kt, `ElementRoomsTest`), called through `ElementDmReader.glanceContact` with the
+same four facts the learning rule reads and `ElementRoomStore.rooms` (read only). Only the contact's id reaches the
+glance's memory; nothing new is stored, logged or sent.
