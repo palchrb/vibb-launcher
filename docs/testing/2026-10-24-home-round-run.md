@@ -66,3 +66,15 @@ on this loaded emulator the enforcer's per-package DPM calls are spaced more tha
 still open their own burst; each load took 90-1700 ms. The ANRs are gone, but the storm still costs ~1 load per
 restricted package. Follow-up (PLAN): hold the app-list loads while `AppEnforcer.apply`'s loop runs (one load at its
 end), which removes the storm's loads altogether.
+
+## Second follow-up: the storm with the apply hold (branch `appload-hold`, main 1b71c21b, 2026-10-25)
+
+A fresh `jelly36` (wiped), main's debug launcher (AppLoadHold in the dex), `set-device-owner` 07:30:02 + the first Home
+start, logcat watched for 2 min: **0 ANRs** (ours and system-wide), Home resumed and in front. "21 apps loaded" lines:
+**31** (59 in the first follow-up) - one at 07:30:03 (the first load), none while the enforcer's passes ran
+(`AppEnforcer` log 07:30:03-07:30:20: five "PIN lock helpers" passes), then one every 1-3 s from 07:30:31 to 07:31:28
+and three around 07:31:57. Those follow the system's `PACKAGE_CHANGED` broadcasts (`ShortcutService: received package
+broadcast intent` 07:30:15-07:31:30, 1-3 s apart): the loaded emulator delivers the storm's callbacks for a minute after
+the last DPM call, so each straggler opens its own 300 ms burst. Cost: 4-60 ms per load with the icons cached (880 ms
+for the first). The hold does what it was built for; the stragglers are a possible XS follow-up (PLAN, the apply-hold
+entry). Script: `scratchpad/r11/rc8.sh`; log `rc8-full.log`.

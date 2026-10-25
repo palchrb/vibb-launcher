@@ -496,6 +496,35 @@ The running list of fixes and small follow-ups, kept up to date as items come in
 done. Process for each batch: design note where needed, QA, implementation, code QA, fix all
 findings, merge to `main`, full suite once.
 
+### Approved, not built - the queue (kept current; checked against the code 2026-10-25)
+
+One line per approved item that has no code yet. An item leaves this list in the commit that merges it (or the one right
+after), never later. Details stay in the entries below.
+
+- **Launcher**
+  - Keystore wrap of the device token, the kid PIN's hash and salt and the reset token (design r10, design-QA'd) - in build 2026-10-25, branch `r10-keystore-wrap`.
+  - A time rule shows as a card on the glance (design r13 §1, in design 2026-10-25).
+  - Screen time left in the "Vibb One" notification + "Be om mer tid" (design r13 §2, in design 2026-10-25; server part too).
+  - Missed Element X calls on the contact card and the phone book's badge (capture the notification shape on the Jelly Star first).
+  - VoIP small fixes: "Tilbake til samtalen" button, no SOS guess at a VoIP wake, no BlockedAppActivity flash, READ_PHONE_STATE for allowlisted apps; design 57 itself is held (design 59 hybrid).
+  - Browser "secure DNS" bypass: Chrome managed config, DoH-host block category, Firefox canary.
+  - Camera off per app + a permissions row per catalog app in the PWA.
+  - Jelly Star "App blocker" hidden/suspended at enrolment (waits for the user's package dump).
+  - Configurable emergency menu; Immich wallpapers; design 60 (hardware-bound token).
+  - Phase D (own lock removed), design 32b (one stale frame at screen-on), RC3-4 (release-build setup timing), RC3-8, six-inch F3/F4, compact music tile a little lower.
+  - Diagnostics: Web Filter line "upstream can't be reached"; the music app's "no network" text and the real cause in its log.
+  - QR enrolment requests a sync. Trailing package callbacks after an enforcer pass (above).
+- **Server / PWA**
+  - Security review M1 (password change keeps push subscriptions), M2 (external backup copy never pruned), pause/"Lock again" reload - in build 2026-10-25, branch `pwa-fixes-a`.
+  - The security reviews' Low items (server 18, launcher 16, music 9).
+  - Uploaded avatar per phone; the avatar as the push icon.
+  - PWA tab-switch timing (Navigation Timing behind a debug switch, then prefetch).
+  - PWA i18n.
+  - F-Droid follow-ups: entry.jar signature, signer check at the first pin, ABI filter, GitHub asset digests.
+  - Settings saves in the security log; Home Wi-Fi as a trigger; `PHONE_SERVER_URL` in `.env`; Wi-Fi in Phone Setup; notifications phase 2 (ntfy/Matrix); episode pictures on demand.
+  - The Spotify host list marked final (PROVISIONAL still in the three copies and 26c).
+  - Zone series numbers after the user's Jelly Star day; developer-verification registration (nothing in the repo).
+
 ### Approved for the next fix batch
 
 - **Security and privacy reviews 2026-10-21** (asked for by the user): `docs/review/security-review-2026-10-21-server.md`
@@ -1138,7 +1167,11 @@ findings, merge to `main`, full suite once.
   name before the decode (Q-4). The emulator run (jelly36): 0 ANRs of ours, but 59 loads in two minutes - the
   enforcer's calls came more than 300 ms apart. **Follow-up done** (branch `appload-hold`): `AppEnforcer.apply` holds
   the loads for its pass (`AppLoadHold`, `appLoadHeld`; a burst waits at most 10 s, chained passes included) and one
-  load comes 300 ms after its end, the trailing callbacks with it (qa-appload-hold-code Q-1 to Q-5). Emulator check owed.
+  load comes 300 ms after its end, the trailing callbacks with it (qa-appload-hold-code Q-1 to Q-5). **Measured 2026-10-25 on a wiped `jelly36`**
+  (`docs/testing/2026-10-24-home-round-run.md`, second follow-up): 0 ANRs, 31 loads in two minutes (59 before), none during
+  the enforcer's passes (07:30:03-07:30:20) - the rest are the system's PACKAGE_CHANGED broadcasts straggling in for a minute
+  after the last pass (1-3 s apart on the loaded emulator), each 4-60 ms with the icons cached. Goes out with
+  `launcher-v0.36.0-rc.8`.
 - **An F-Droid repo as a release source; Etar first** (the user, 2026-10-24: Fossify Calendar opens the editor on a
   tap - FossifyOrg/Calendar #171/#693 open - "jeg ønsker etar, og å kunne tracke updates"; Etar's GitHub releases carry
   no APK): a tracked app of source `fdroid` = a repo URL (default `https://f-droid.org/repo`) + package id. Versions
@@ -1198,7 +1231,10 @@ findings, merge to `main`, full suite once.
   of ours in the provisioning storm, but ~1 load per restricted package - the enforcer's per-package DPM calls are
   spaced over 300 ms on a loaded phone, so the 300 ms debounce rarely merges them): `apply` tells the app-list
   consumer "held" at its start and "released" at its end (one load then; a cap of 10 s in case apply hangs), pinned
-  in `HomeRound7Test`; nothing else changes. Launcher, XS; next launcher round.
+  in `HomeRound7Test`; nothing else changes. Launcher, XS; next launcher round. **Done** (branch `appload-hold`, merged
+  2026-10-24, measured 2026-10-25 - see the debounce entry above). Follow-up, XS, not ordered: after a release, a longer
+  quiet window (about 3 s quiet / 30 s cap) for callbacks about the packages the pass touched would fold the stragglers
+  into one or two loads.
 - **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
   Settings › Intelligent assistance › App blocker - Boot blocker, Start blocker, Background blocker, Background
   cleanup; on the Jelly Star only found through Settings' search. Design 19b §4 foresaw an OEM manager but had no name.
