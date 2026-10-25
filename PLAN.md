@@ -523,6 +523,7 @@ after), never later. Details stay in the entries below.
   - F-Droid follow-ups: entry.jar signature, signer check at the first pin, ABI filter, GitHub asset digests.
   - Settings saves in the security log; Home Wi-Fi as a trigger; `PHONE_SERVER_URL` in `.env`; Wi-Fi in Phone Setup; notifications phase 2 (ntfy/Matrix); episode pictures on demand.
   - The Spotify host list marked final (PROVISIONAL still in the three copies and 26c).
+  - **App update notices** (the user, 2026-10-25: "sende notifications når apper lagt til via pwa blir oppdatert? Trenger ikke nødvendigvis være push varsel ... kanskje man kan få valget"): two inbox events per tracked app - `app_update_available` when the sweep or Check Now stores a new release (name, old → new version), and `app_updated` when a phone's report shows the new versionCode installed (per phone); always in the inbox, pushed only under a new Notify Me About switch "App updates", **off by default**, per parent (design 62 step 5). Key + params like design 64; one event per release, not per sweep. Server, S.
   - Zone series numbers after the user's Jelly Star day; developer-verification registration (nothing in the repo).
 
 ### Approved for the next fix batch
