@@ -508,7 +508,7 @@ after), never later. Details stay in the entries below.
   - Missed Element X calls on the contact card and the phone book's badge (capture the notification shape on the Jelly Star first).
   - VoIP small fixes: "Tilbake til samtalen" button, no SOS guess at a VoIP wake, no BlockedAppActivity flash, READ_PHONE_STATE for allowlisted apps; design 57 itself is held (design 59 hybrid).
   - Browser "secure DNS" bypass: Chrome managed config, DoH-host block category, Firefox canary.
-  - Camera off per app + a permissions row per catalog app in the PWA.
+  - Camera off per app + a permissions row per catalog app in the PWA. Added 2026-10-25 (the user, Immich: "kunne tenke meg å kunne slå den på for å rydde opp etter lokal opplasting"): the row also lists the special-access app-ops a device owner can't grant - Media management (`MANAGE_MEDIA`, Immich's delete-after-upload), Modify system settings, usage access - each as "approve on the phone" with a pause-screen row that opens the exact page for that app (`Settings.ACTION_REQUEST_MANAGE_MEDIA` + the package, the `systemPageIntent` pattern of the write-settings row), never adb.
   - Jelly Star "App blocker" hidden/suspended at enrolment (waits for the user's package dump).
   - Configurable emergency menu; Immich wallpapers; design 60 (hardware-bound token).
   - Phase D (own lock removed), design 32b (one stale frame at screen-on), RC3-4 (release-build setup timing), RC3-8, six-inch F3/F4, compact music tile a little lower.
