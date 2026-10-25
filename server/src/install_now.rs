@@ -112,7 +112,7 @@ fn tag_code_as_read_by(tag: &str, running: i64) -> Option<i64> {
 /// A release name's order ("0.36.0-rc.2" < "0.36.0-rc.10" < "0.36.0" < "0.36.1-rc.1"): X, Y, Z,
 /// then an RC before its release; `None` for another shape (a local build's name). The launcher's
 /// `launcherVersionOrder`; only [build_ahead]'s legacy same-code rule reads it.
-fn version_order(name: &str) -> Option<[i64; 4]> {
+pub(crate) fn version_order(name: &str) -> Option<[i64; 4]> {
     let (version, rc) = match name.split_once("-rc.") {
         Some((version, n)) => (version, Some(n)),
         None => (name, None),

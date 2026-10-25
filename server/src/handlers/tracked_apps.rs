@@ -1396,10 +1396,41 @@ async fn sync_release(
     Ok(())
 }
 
+/// Whether release `tag` (asset `asset_id`) is ahead of `app`'s stored one (qa-pwa-fixes-b-code
+/// Q-1): a source can go back - "Include prereleases" turned off after an RC, the newest release
+/// deleted, an F-Droid repo dropping its newest build -, and an older release stored over a newer
+/// one is no update. F-Droid: the asset id is the versionCode, higher is newer. GitHub: the
+/// versions when both read as X.Y.Z (an RC before its release, `install_now::version_order`) -
+/// the same version under a new asset id is a rolling tag's new build -, else the asset id, which
+/// GitHub hands out in upload order.
+fn release_ahead(app: &TrackedApp, tag: &str, asset_id: i64) -> bool {
+    let (Some(old_tag), Some(old_asset)) = (
+        app.latest_release_tag.as_deref(),
+        app.latest_release_asset_id,
+    ) else {
+        // Stored before the asset id was: only the versions can tell.
+        let prefix = app.release_tag_prefix.as_deref();
+        return app.latest_release_tag.as_deref().is_some_and(|old| {
+            let order = |t| crate::install_now::version_order(&version_of(t, prefix));
+            matches!((order(tag), order(old)), (Some(new), Some(old)) if new > old)
+        });
+    };
+    if app.source_type == "fdroid" {
+        return asset_id > old_asset;
+    }
+    let prefix = app.release_tag_prefix.as_deref();
+    let order = |t| crate::install_now::version_order(&version_of(t, prefix));
+    match (order(tag), order(old_tag)) {
+        (Some(new), Some(old)) if new != old => new > old,
+        _ => asset_id > old_asset,
+    }
+}
+
 /// The `app_update_available` event for a release just stored over `app`'s previous one (2026-10-25,
-/// `docs/notes/server/notifications.md` "App update notices"): `None` for the app's first release.
-/// Keyed on the release as stored (`tag@asset id`): a sweep or a Check Now that finds it again
-/// raises nothing - one event per release, never per sweep.
+/// `docs/notes/server/notifications.md` "App update notices"): `None` for the app's first release
+/// and for one that isn't ahead of it ([release_ahead]). Keyed on the release as stored (`tag@asset
+/// id`): a sweep or a Check Now that finds it again raises nothing - one event per release, never
+/// per sweep.
 fn update_available_event(
     app: &TrackedApp,
     tag: &str,
@@ -1407,6 +1438,9 @@ fn update_available_event(
     at: chrono::DateTime<chrono::Utc>,
 ) -> Option<crate::parent_events::NewEvent> {
     let old_tag = app.latest_release_tag.as_deref()?;
+    if !release_ahead(app, tag, asset_id) {
+        return None;
+    }
     let prefix = app.release_tag_prefix.as_deref();
     let (from, to) = (version_of(old_tag, prefix), version_of(tag, prefix));
     Some(crate::parent_events::app_update_available(
@@ -4548,6 +4582,86 @@ mod tests {
             ),
             (Some("Etar"), Some("1.0.56"), Some("1.0.57"))
         );
+    }
+
+    /// qa-pwa-fixes-b-code Q-1: a source that goes back stores an older release over a newer one -
+    /// an F-Droid repo dropping its newest build here, through a real sync - and raises nothing.
+    #[tokio::test]
+    async fn an_older_release_stored_over_a_newer_one_is_no_notice() {
+        let app = crate::tests::TestApp::new().await;
+        let (repo, fake) = crate::fdroid::tests::fake_repo("127.0.0.1").await;
+        let (apk, sha) = fixture_apk();
+        serve_fixture(&fake, "me.vibb.testfixture", &sha, &apk);
+        let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
+        // As if 1.0.58 were cached and the repo now offers 1.0.57 only.
+        sqlx::query(
+            "UPDATE tracked_apps SET latest_release_tag = 'v1.0.58', latest_release_asset_id = 58 \
+             WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        sync_one_app(&app.state, id, false).await.unwrap();
+        assert_eq!(
+            row_of(&app, id).await.latest_release_tag.as_deref(),
+            Some("v1.0.57"),
+            "the older release is stored"
+        );
+        let notices: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM parent_events WHERE kind = 'app_update_available'",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(notices, 0);
+    }
+
+    /// Q-1's rule for each source: F-Droid by the versionCode; GitHub by the versions (an RC before
+    /// its release), the same version under a newer asset a rolling tag's new build, names that
+    /// aren't versions by the asset id.
+    #[tokio::test]
+    async fn only_a_release_ahead_is_an_update() {
+        let app = crate::tests::TestApp::new().await;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, release_tag_prefix) \
+             VALUES ('Vibb One', 'me.vibb.launcher', 'a/b', 'launcher-v') RETURNING id",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let mut row = row_of(&app, id).await;
+        let stored = |row: &mut TrackedApp, tag: &str, asset: i64| {
+            row.latest_release_tag = Some(tag.to_string());
+            row.latest_release_asset_id = Some(asset);
+        };
+        let at = chrono::Utc::now();
+        // GitHub, "Include prereleases" turned off after an RC: the older stable release.
+        stored(&mut row, "launcher-v0.36.0-rc.7", 100);
+        assert!(!release_ahead(&row, "launcher-v0.35.0", 90));
+        assert!(update_available_event(&row, "launcher-v0.35.0", 90, at).is_none());
+        // ... and the RC's own release, ahead of it.
+        assert!(release_ahead(&row, "launcher-v0.36.0", 120));
+        assert!(update_available_event(&row, "launcher-v0.36.0", 120, at).is_some());
+        // The newest release deleted on GitHub: the one before it, uploaded earlier.
+        row.release_tag_prefix = None;
+        stored(&mut row, "v7.3.0", 200);
+        assert!(!release_ahead(&row, "v7.2.0", 150));
+        // A version back under a newer asset (a re-upload of an old release) is still behind.
+        assert!(!release_ahead(&row, "v7.2.0", 250));
+        // A rolling tag: the same version, a newer asset.
+        stored(&mut row, "pre-release", 5);
+        assert!(release_ahead(&row, "pre-release", 6));
+        assert!(!release_ahead(&row, "pre-release", 4));
+        // Names that aren't versions: by the asset id.
+        stored(&mut row, "nightly-2026-10-01", 5);
+        assert!(release_ahead(&row, "nightly-2026-10-02", 9));
+        assert!(!release_ahead(&row, "nightly-2026-09-30", 3));
+        // F-Droid: the versionCode (the asset id), whatever the names say.
+        row.source_type = "fdroid".to_string();
+        stored(&mut row, "v1.0.58", 58);
+        assert!(!release_ahead(&row, "v1.0.57", 57));
+        assert!(release_ahead(&row, "v1.0.59", 59));
     }
 
     /// The launcher's release by its tag's versionCode, the music app's by its version.

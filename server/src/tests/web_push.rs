@@ -747,9 +747,8 @@ async fn switches_the_emergency_call_and_a_burst() {
     );
     raise(&app, &anna.emergency_call(anna.now)).await;
     send(&app).await;
-    let pushed: Vec<(String, String)> = app
-        .pushes
-        .take()
+    let requests = app.pushes.take();
+    let pushed: Vec<(String, String)> = requests
         .iter()
         .map(|r| {
             let n = &payload(r)["notification"];
@@ -760,6 +759,15 @@ async fn switches_the_emergency_call_and_a_burst() {
         })
         .collect();
     assert_eq!(pushed.len(), 5, "{pushed:?}");
+    // The summary's short body (the push wording, 2026-10-25; qa-pwa-fixes-b-code Q-3).
+    assert_eq!(crate::push::SUMMARY_BODY, "More in the inbox");
+    let bodies: Vec<String> = requests
+        .iter()
+        .map(|r| payload(r)["notification"].clone())
+        .filter(|n| n["title"] == crate::push::SUMMARY_TITLE)
+        .map(|n| n["body"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(bodies, [crate::push::SUMMARY_BODY]);
     assert_eq!(
         pushed[0].0, "Anna: emergency call",
         "the emergency call first, on its own"

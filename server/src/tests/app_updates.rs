@@ -146,6 +146,12 @@ async fn a_report_with_the_new_release_raises_app_updated_once() {
     // A first report is no update, whatever it runs.
     report(&app, &anna_token, "0.36.0", 360_009, Some(60_009)).await;
     assert!(notices(&app).await.is_empty());
+    // qa-pwa-fixes-b-code Q-2: a phone ahead of the release (0.37.0-rc.1) that goes back to it
+    // is a downgrade, and a report naming the music app after one that didn't is its first: no
+    // event for either.
+    report(&app, &anna_token, "0.37.0-rc.1", 370_001, None).await;
+    report(&app, &anna_token, "0.36.0", 360_009, Some(60_009)).await;
+    assert!(notices(&app).await.is_empty(), "{:?}", notices(&app).await);
     report(&app, &ola_token, "0.35.2", 350_029, Some(50_009)).await;
     // rc.1 of 0.36.0 isn't the stored release.
     report(&app, &ola_token, "0.36.0-rc.1", 360_001, Some(50_009)).await;
