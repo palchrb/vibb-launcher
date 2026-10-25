@@ -872,26 +872,49 @@ pub const WAIT_FOR_PHONE_MS: i64 = 2 * 60 * 1000;
 /// report's `restrictions_paused`) after an Unlock, `open` (a pause or Play install mode) no more
 /// after Lock again. Nothing waits: `false`.
 pub fn waiting_for_phone(answers: &[CommandAnswer], paused: bool, open: bool, now_ms: i64) -> bool {
-    let Some(last) = answers
+    waited_for(answers, paused, open, now_ms).is_some()
+}
+
+/// [waiting_for_phone]'s command: [END_WINDOWS] or [START_PAUSE] while the summary waits for it.
+pub fn waited_for(
+    answers: &[CommandAnswer],
+    paused: bool,
+    open: bool,
+    now_ms: i64,
+) -> Option<&'static str> {
+    let last = answers
         .iter()
         .filter(|a| a.command == END_WINDOWS || a.command == START_PAUSE)
-        .max_by_key(|a| a.requested_ms)
-    else {
-        return false;
-    };
+        .max_by_key(|a| a.requested_ms)?;
     if last.cancelled || now_ms - last.requested_ms >= WAIT_FOR_PHONE_MS {
-        return false;
+        return None;
     }
+    let command = if last.command == START_PAUSE {
+        START_PAUSE
+    } else {
+        END_WINDOWS
+    };
     if last.acknowledged_ms.is_none() {
-        return true;
+        return Some(command);
     }
     if last.succeeded == Some(false) {
-        return false;
+        return None;
     }
-    if last.command == START_PAUSE {
-        !paused
+    let shown = if command == START_PAUSE {
+        paused
     } else {
-        open
+        !open
+    };
+    (!shown).then_some(command)
+}
+
+/// The flash a reloading summary keeps while it waits (qa-pwa-fixes-a-code Q-2): `auto-reload.js`
+/// drops `?notice=` from the address, so the "Sent." line comes from the command itself.
+pub fn waiting_flash(command: &str) -> Option<(&'static str, &'static str)> {
+    match command {
+        START_PAUSE => flash("start_pause_sent"),
+        END_WINDOWS => flash("end_windows_sent"),
+        _ => None,
     }
 }
 
@@ -1291,6 +1314,8 @@ mod tests {
             (vec![answered(pause.clone(), true)], true, true, false),
             (vec![answered(lock.clone(), true)], true, true, true),
             (vec![answered(lock.clone(), true)], false, false, false),
+            // Play install mode still on at the newest report: Lock again still waits (Q-3).
+            (vec![answered(lock.clone(), true)], false, true, true),
             // An older launcher's answer has no flag: as a success.
             (
                 vec![CommandAnswer {
@@ -1352,6 +1377,16 @@ mod tests {
                 "case {i}"
             );
         }
+        // About 2 minutes, as PLAN's item says (qa-pwa-fixes-a-code Q-4).
+        assert_eq!(WAIT_FOR_PHONE_MS, 120_000);
+        // The kept "Sent." line is the command's own (Q-2).
+        assert_eq!(
+            waited_for(&[pause.clone()], false, false, NOW),
+            Some(START_PAUSE)
+        );
+        assert_eq!(waiting_flash(START_PAUSE), flash("start_pause_sent"));
+        assert_eq!(waiting_flash(END_WINDOWS), flash("end_windows_sent"));
+        assert_eq!(waiting_flash(ALLOW_BLOCKED), None);
     }
 
     fn literal_blocks() -> Vec<RelockBlock> {

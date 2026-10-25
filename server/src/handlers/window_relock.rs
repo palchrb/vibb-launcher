@@ -106,11 +106,15 @@ pub async fn card(
         },
     };
     let paused = latest.is_some_and(|s| s.restrictions_paused);
+    let waited = window_relock::waited_for(&answers, paused, open, now_ms);
     Ok(RelockCard {
         lock_again: capable && open,
         pause_button: capable && !paused,
-        wait_for_phone: window_relock::waiting_for_phone(&answers, paused, open, now_ms),
-        notice: notice.and_then(window_relock::flash),
+        wait_for_phone: waited.is_some(),
+        // While it waits, the "Sent." line stays on every reload (Q-2).
+        notice: notice
+            .and_then(window_relock::flash)
+            .or_else(|| waited.and_then(window_relock::waiting_flash)),
         findings: relock
             .as_ref()
             .and_then(|r| window_relock::findings(r, &names, zone, now)),

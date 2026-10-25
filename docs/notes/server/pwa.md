@@ -422,7 +422,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Unlock the summary loads `auto-reload.js` (`?v=4`, every 3 s, the place kept, never once a save started or while a
   `<details>` is open) while the newer of the two is unanswered or answered but not in the newest report yet -
   `restrictions_paused` after Unlock, no pause or Play install mode after Lock again -, never after a refusal or a
-  cancel and never 2 minutes after the press: `window_relock::waiting_for_phone` (`RelockCard::wait_for_phone`;
+  cancel and never 2 minutes after the press; while it waits the "Sent. …" line stays on every reload, from the
+  command itself (`window_relock::waited_for`/`waiting_flash`; `auto-reload.js` drops the `?notice=`,
+  qa-pwa-fixes-a-code Q-2): `window_relock::waiting_for_phone` (`RelockCard::wait_for_phone`;
   `window_relock::tests::the_summary_waits_for_the_phone_after_lock_again_or_unlock`,
   `tests::window_relock::the_summary_reloads_until_the_phone_shows_lock_again_or_unlock`; `pwa-fixes-a`); **Today** (`#today`:
   `lifts::today` - the lifts made since the local midnight and every pause still running - with End now, today's

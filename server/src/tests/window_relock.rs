@@ -414,6 +414,15 @@ async fn the_commands_are_queued_logged_and_kept_by_other_commands() {
         group(&html, "quick").contains("Sent. The phone locks again within seconds"),
         "{html}"
     );
+    // The Lock again just pressed keeps its "Sent." while the summary waits (qa-pwa-fixes-a-code
+    // Q-2): pressed long ago, nothing waits.
+    sqlx::query(
+        "UPDATE device_commands SET requested_at = datetime('now', '-1 hours') WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
     let html = app
         .get_page(&format!("/devices/{id}?notice=%3Cb%3Ex"), &cookie)
         .await
@@ -979,15 +988,30 @@ async fn the_summary_reloads_until_the_phone_shows_lock_again_or_unlock() {
         .await;
     let landing = res.location().unwrap().to_string();
     assert!(reloads(app.get_page(&landing, &cookie).await.text()));
+    // The reload's page has no ?notice= (auto-reload.js drops it): the "Sent." line stays while it
+    // waits (qa-pwa-fixes-a-code Q-2), and goes once the report shows the pause.
+    const UNLOCK_SENT: &str = "Sent. The phone unlocks for 2 hours";
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(reloads(html.clone()), "{html}");
+    assert!(group(&html, "quick").contains(UNLOCK_SENT), "{html}");
     answer_newest(&app, &token, id, true).await;
-    assert!(reloads(app.get_page(&page, &cookie).await.text()));
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(reloads(html.clone()));
+    assert!(group(&html, "quick").contains(UNLOCK_SENT), "{html}");
     post_status(&app, &token, json!({ "restrictions_paused": true })).await;
-    assert!(!reloads(app.get_page(&page, &cookie).await.text()));
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(!reloads(html.clone()));
+    assert!(!html.contains(UNLOCK_SENT), "{html}");
 
     // Lock again: the same, until the report has the pause gone.
     app.request_form(Method::POST, &press("end-windows"), Some(&cookie), &[])
         .await;
-    assert!(reloads(app.get_page(&page, &cookie).await.text()));
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(reloads(html.clone()));
+    assert!(
+        group(&html, "quick").contains("Sent. The phone locks again"),
+        "{html}"
+    );
     answer_newest(&app, &token, id, true).await;
     assert!(reloads(app.get_page(&page, &cookie).await.text()));
     post_status(&app, &token, json!({ "restrictions_paused": false })).await;
@@ -1001,12 +1025,18 @@ async fn the_summary_reloads_until_the_phone_shows_lock_again_or_unlock() {
     app.request_form(Method::POST, &press("start-pause"), Some(&cookie), &[])
         .await;
     assert!(reloads(app.get_page(&page, &cookie).await.text()));
-    sqlx::query(
-        "UPDATE device_commands SET requested_at = datetime('now', '-2 minutes') \
-         WHERE id = (SELECT MAX(id) FROM device_commands)",
-    )
-    .execute(&app.db)
-    .await
-    .unwrap();
+    // Every command of the phone moved back, so the unanswered Unlock stays the newer of the two
+    // (qa-pwa-fixes-a-code Q-4): still waiting a minute after the press, never at two.
+    let back = |minutes: &'static str| {
+        sqlx::query(
+            "UPDATE device_commands SET requested_at = datetime('now', ?) WHERE device_id = ?",
+        )
+        .bind(minutes)
+        .bind(id)
+        .execute(&app.db)
+    };
+    back("-1 minutes").await.unwrap();
+    assert!(reloads(app.get_page(&page, &cookie).await.text()));
+    back("-2 minutes").await.unwrap();
     assert!(!reloads(app.get_page(&page, &cookie).await.text()));
 }
