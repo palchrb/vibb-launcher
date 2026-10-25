@@ -1198,6 +1198,14 @@ class LockGlanceLayoutTest {
             assertEquals("1", text.getAttributeNS(ns, "maxLines"))
             assertEquals("end", text.getAttributeNS(ns, "ellipsize"))
         }
+        // qa-launcher-glance-b-code Q-7: the name line wraps its content; only the name (weight 1) is cut, its suffix
+        // ("· Pappa", "· 3 nye") stays whole after it.
+        val line = row.all().single { it.id() == "glance_row_name_line" }
+        assertEquals(listOf("wrap_content", "horizontal"), listOf(line.getAttributeNS(ns, "layout_width"), line.getAttributeNS(ns, "orientation")))
+        val (name, suffix) = line.kids().let { _ -> (0 until line.childNodes.length).map { line.childNodes.item(it) }.filterIsInstance<org.w3c.dom.Element>() }
+        assertEquals(listOf("glance_row_title", "glance_row_suffix"), listOf(name.id(), suffix.id()))
+        assertEquals(listOf("wrap_content", "1"), listOf(name.getAttributeNS(ns, "layout_width"), name.getAttributeNS(ns, "layout_weight")))
+        assertEquals(listOf("wrap_content", "", "", "1"), listOf("layout_width", "layout_weight", "ellipsize", "maxLines").map { suffix.getAttributeNS(ns, it) })
         // The panel's margin and gone logic is the list's: gone only without any row (N1); the scroller is never gone.
         val panel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
         assertTrue(panel.contains("list.visibility = if (layout.rows > 0) View.VISIBLE else View.GONE"))

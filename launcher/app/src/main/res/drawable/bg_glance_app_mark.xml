@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The app's own icon as a small mark in the corner of a contact's photo on a glance row (2026-10-25, PLAN "Contact
-     photos on the glance's message rows"): the 18 dp corner of the missed-call badge, with the same 2 dp ring in the
-     row's colour so the photo and the mark stay apart. -->
+     photos on the glance's message rows"): the 18 dp corner of the missed-call badge; the panel's 1.5 dp padding over
+     this disc in the row's colour is the ring that keeps the photo and the mark apart. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
     <solid android:color="@color/kid_music_tile" />
 </shape>

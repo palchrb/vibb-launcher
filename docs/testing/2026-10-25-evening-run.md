@@ -31,4 +31,9 @@ phone book with photos):
 | APP_ONLY (the app's lock-screen visibility secret) | App icon and "N nye varsler", no photo, no name |
 | A missed Element Call from a contact | The red phone badge in the corner (not the app mark) |
 | TalkBack on a group row | "…, Gruppe Fotballgjengen, siste fra Pappa, …" (nb) / "Group Fotballgjengen, latest from Pappa" (en) |
-| Provisioning storm again (`-wipe-data`, `set-device-owner`, enrol) | Fewer "apps loaded" lines after `set-device-owner` than the 43 here (the 17 before it stay: no window opens before the launcher is admin); 0 ANRs; Home's list right after the first policy |
+| Provisioning storm again (`-wipe-data`, `set-device-owner`, enrol) | A handful of "apps loaded" lines after `set-device-owner` (baseline 26 here; the 17 before it stay: no window opens before the launcher is admin); 0 ANRs; Home's list right after the first policy. The debug build's "apps loaded" line now ends "; callbacks at <elapsed>ms (<packages>), …": note the gaps, so the 5 s quiet is checked against measured gaps (code QA Q-1) |
+| A group with a 40+ character name in "Name only"; a long DM name in "Full text" with 3 messages | The name is cut, "· Pappa" / "· 3 nye" stays whole after it (Q-7); a group in "Full text" shows "· 5 nye" too (Q-6) |
+| A contact added to the phone book while their WhatsApp row is on the lock | The photo shows after the next message (Q-8, as documented) |
+| WhatsApp's real `sender_person` URI shape, on the test account only | The photo for a phone-book number; the app icon for a `content://` or missing URI. Don't paste `dumpsys notification --noredact` output with real numbers into the docs |
+| After a reboot, before the first unlock | Rows show the app icon, no photo, no crash (the DE rules' contacts have `id = 0`, CE unreadable) |
+| First lock render after a cold start | The photo shows first, then the app mark once the icon job has drawn it |

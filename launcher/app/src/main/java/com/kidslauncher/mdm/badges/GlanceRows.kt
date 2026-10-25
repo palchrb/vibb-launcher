@@ -234,23 +234,76 @@ sealed interface GlanceNameSuffix {
         override fun toString() = "Sender"
     }
 
-    /** "Full text": several messages from one sender folded into the row ("Mamma · 3 nye"). */
+    /** "Full text": several messages folded into the row - one sender's ("Mamma · 3 nye") or a group's
+     * ("Fotballgjengen · 5 nye", qa-launcher-glance-b-code Q-6, the user's decision). */
     data class NewCount(val count: Int) : GlanceNameSuffix
 }
 
 /**
  * A message row's name-line suffix: a [GlanceShape.GROUP] row at [GlanceLevel.SENDER] ("Name only") gets its newest
  * sender (when known and not the name itself) - "Full text" keeps "Sender: text" under the group's name; a
- * [GlanceShape.DIRECT] row at [GlanceLevel.TEXT] showing its text gets the count when more than one message is folded
- * in. Never on a missed-call row (its subtitle says it) or at APP_ONLY.
+ * [GlanceShape.DIRECT] or [GlanceShape.GROUP] row at [GlanceLevel.TEXT] showing its text gets the count when more than
+ * one message is folded in. Never on a missed-call row (its subtitle says it) or at APP_ONLY.
  */
 fun glanceNameSuffix(row: GlanceMessageRow): GlanceNameSuffix? = when {
     row.missedCall || row.title == null -> null
     row.shape == GlanceShape.GROUP && row.level == GlanceLevel.SENDER ->
         row.sender?.takeIf { it != row.title }?.let(GlanceNameSuffix::Sender)
-    row.shape == GlanceShape.DIRECT && row.level == GlanceLevel.TEXT && row.text != null && row.count > 1 ->
+    row.shape != GlanceShape.PLAIN && row.level == GlanceLevel.TEXT && row.text != null && row.count > 1 ->
         GlanceNameSuffix.NewCount(row.count)
     else -> null
+}
+
+/** What the corner of a message row's icon shows (qa-launcher-glance-b-code Q-3). */
+enum class GlanceRowBadge { MISSED, APP_MARK, NONE }
+
+/** The corner: a missed call's red phone always wins; else the app's own icon as the mark on a contact's photo, once
+ * the icon is drawn; else nothing. */
+fun glanceRowBadge(missedShown: Boolean, hasContact: Boolean, hasIcon: Boolean): GlanceRowBadge = when {
+    missedShown -> GlanceRowBadge.MISSED
+    hasContact && hasIcon -> GlanceRowBadge.APP_MARK
+    else -> GlanceRowBadge.NONE
+}
+
+/** One part of what TalkBack reads for a message row (Q-4), in the name line's order; every part with a name or a text
+ * has a redacted `toString`. */
+sealed interface GlanceSpokenPart {
+    data class Name(val name: String) : GlanceSpokenPart {
+        override fun toString() = "Name"
+    }
+
+    /** "Gruppe Fotballgjengen, siste fra Pappa" (`glance_group_spoken`). */
+    data class Group(val name: String, val sender: String) : GlanceSpokenPart {
+        override fun toString() = "Group"
+    }
+
+    /** "3 nye" - the name line's count, in place of [Count]. */
+    data class NewCount(val count: Int) : GlanceSpokenPart
+
+    data class Text(val text: String) : GlanceSpokenPart {
+        override fun toString() = "Text"
+    }
+
+    /** The messages count ("3 meldinger"; "N nye varsler" at APP_ONLY). */
+    data object Count : GlanceSpokenPart
+}
+
+/**
+ * What TalkBack reads for a message row that isn't a missed call, after the app's label and before the time: the name
+ * (a group with its newest sender as [GlanceSpokenPart.Group]), the name line's count, the text at TEXT, and the
+ * messages count unless the name line carries one - the same words the row shows, each once.
+ */
+fun glanceSpokenParts(row: GlanceMessageRow): List<GlanceSpokenPart> {
+    val parts = mutableListOf<GlanceSpokenPart>()
+    val title = row.title
+    val group = glanceSpokenGroup(row)
+    if (title != null) parts += if (group != null) GlanceSpokenPart.Group(title, group) else GlanceSpokenPart.Name(title)
+    val newCount = glanceNameSuffix(row) as? GlanceNameSuffix.NewCount
+    if (newCount != null) parts += GlanceSpokenPart.NewCount(newCount.count)
+    val text = row.text
+    if (row.level == GlanceLevel.TEXT && text != null) parts += GlanceSpokenPart.Text(text)
+    if (newCount == null) parts += GlanceSpokenPart.Count
+    return parts
 }
 
 /** Whether TalkBack names the row as a group ("Gruppe Fotballgjengen, siste fra Pappa"): a group row with its sender. */

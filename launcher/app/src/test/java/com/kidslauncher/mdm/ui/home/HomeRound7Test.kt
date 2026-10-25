@@ -151,11 +151,11 @@ class HomeRound7Test {
         assertTrue(loads.contains("now = { android.os.SystemClock.elapsedRealtime() }"))
         assertFalse("one consumer, through the debounce only", loads.contains("consumeEach"))
         // A failing load is logged and the consumer drains on (qa-appload-debounce-code Q-3).
-        val body = loads.substringAfter("heldSince = { com.kidslauncher.mdm.ui.home.AppLoadHold.heldSince },")
+        val body = loads.substringAfter("trailQuietMs = { com.kidslauncher.mdm.ui.home.AppLoadHold.trailQuietMs(android.os.SystemClock.elapsedRealtime()) },")
         assertTrue(body.trimStart().startsWith(") {\n"))
         assertTrue(body.substringAfter(") {").trimStart().startsWith("try {"))
         assertTrue(body.contains("} catch (e: Exception) {"))
-        assertTrue(loads.contains("val list = getApps(packageManager, applicationContext)"))
+        assertTrue(loads.contains("val list = getApps(packageManager, applicationContext, note)"))
         assertEquals("the list is posted from the one consumer only", 1, Regex("apps\\.postValue\\(").findAll(app).count())
     }
 
@@ -165,7 +165,7 @@ class HomeRound7Test {
         assertTrue(app.substringAfter("private fun evictIcons(").substringBefore("\n    }\n").contains("iconsToEvict += packageName"))
         val loads = app.substringAfter("private val appLoads: Channel<Unit> by lazy {").substringBefore("\n    }\n")
         val snapshot = loads.indexOf("iconsToEvict.toSet()")
-        val load = loads.indexOf("getApps(packageManager, applicationContext)")
+        val load = loads.indexOf("getApps(packageManager, applicationContext, note)")
         val evict = loads.indexOf("evict.forEach { com.kidslauncher.mdm.ui.home.KidAvatars.evictPackage(it) }")
         val post = loads.indexOf("apps.postValue(list)")
         assertTrue(loads, snapshot in 0 until load && load < evict && evict < post)
@@ -200,6 +200,7 @@ class HomeRound7Test {
         closeAfter: Boolean = false,
         held: (Long) -> Long? = { null },
         trail: Set<Long> = emptySet(),
+        trailQuiet: (Long) -> Long = { APP_LOAD_TRAIL_QUIET_MS },
     ): List<Long> {
         var now = 0L
         val pending = ArrayDeque(times.sorted())
@@ -234,6 +235,7 @@ class HomeRound7Test {
                 now = { now },
                 takeNormal = { normal.also { normal = false } },
                 heldSince = { held(now) },
+                trailQuietMs = { trailQuiet(now) },
             ) {
                 loads += now
                 now += loadMs
@@ -448,23 +450,66 @@ class HomeRound7Test {
 
     /** The evening run's timeline (`docs/testing/2026-10-25-evening-run.md`, seconds from `set-device-owner` at
      * 20:08:46): the enforcer's passes 16-22 s, then callbacks about packages they did NOT change 21-110 s (20:09:07 -
-     * 20:10:36), 1-3 s apart. Without the window each folds only by the normal 300 ms: one load each. */
+     * 20:10:36). The run had 26 loads there, one per callback, so its gaps were often over 3 s (qa-launcher-glance-b-code
+     * Q-1): here they vary up to 4 s, one of them 3.2 s - never on a quiet boundary. Inside the window the trail waits
+     * 5 s of quiet (30 s cap); without the window each callback is a load of its own. */
     @Test
     fun `the provisioning storm's untouched callbacks fold into a few loads`() {
         val pass: (Long) -> Long? = { t -> if (t in 16_000L until 22_000L) 16_000L else null }
-        val gaps = listOf(1_000L, 2_000L, 3_000L)
-        val callbacks = generateSequence(21_000L to 0) { (t, i) -> (t + gaps[i % 3]) to i + 1 }
+        val gaps = listOf(1_400L, 3_200L, 2_700L, 4_000L, 900L, 3_600L, 2_100L, 3_900L, 1_800L, 3_300L)
+        val callbacks = generateSequence(21_000L to 0) { (t, i) -> (t + gaps[i % gaps.size]) to i + 1 }
             .map { it.first }.takeWhile { it <= 110_000L }.toList()
+        assertTrue(3_200L in gaps && gaps.max() == 4_000L && callbacks.size >= 30)
         val windowOpen = 0L
-        // Classed as the consumer does: inside the window every one is the trail.
+        // Classed as the consumer does: inside the window every one is the trail, with the window's quiet.
         val trail = callbacks.filter { appLoadTrails(listOf("pkg"), it, emptySet(), null, provisioningSince = windowOpen) }.toSet()
         assertEquals(callbacks.toSet(), trail)
-        val loads = loadsFor(listOf(-1_000L) + callbacks, held = pass, trail = trail)
-        assertTrue("$loads", loads.size <= 5)
+        val quiet: (Long) -> Long = { t -> appLoadTrailQuietMs(t, windowOpen) }
+        val loads = loadsFor(listOf(-1_000L) + callbacks, held = pass, trail = trail, trailQuiet = quiet)
+        assertEquals("the first, the pass's own 300 ms after it, then the 30 s caps and 5 s after the last", listOf(0L, 22_300L, 52_400L, 82_500L, 114_000L), loads)
+        // The trail's 3 s quiet alone wouldn't fold them (the QA's probe: 3.2 s gaps opened a burst each).
+        val threeSeconds = loadsFor(listOf(-1_000L) + callbacks, held = pass, trail = trail)
+        assertTrue("$threeSeconds", threeSeconds.size >= 10)
         val without = loadsFor(listOf(-1_000L) + callbacks, held = pass)
         assertTrue("$without", without.size >= callbacks.size - 3)
-        // After the window (2 min) the same callbacks are normal requests again.
+        // After the window (2 min) the same callbacks are normal requests again, with the trail's own quiet.
         assertFalse(appLoadTrails(listOf("pkg"), 120_000L, emptySet(), null, provisioningSince = windowOpen))
+        assertEquals(APP_LOAD_TRAIL_QUIET_MS, appLoadTrailQuietMs(120_000L, windowOpen))
+    }
+
+    @Test
+    fun `the window's quiet is 5 s, the cap stays 30 s, and the debug line names each callback's time and count`() {
+        assertEquals(5_000L, APP_LOAD_PROVISIONING_QUIET_MS)
+        assertEquals(APP_LOAD_PROVISIONING_QUIET_MS, appLoadTrailQuietMs(1_000, 0))
+        assertEquals(APP_LOAD_TRAIL_QUIET_MS, appLoadTrailQuietMs(1_000, null))
+        assertFalse(appLoadBurstDue(4_999, 0, 0, null, APP_LOAD_PROVISIONING_QUIET_MS))
+        assertTrue(appLoadBurstDue(5_000, 0, 0, null, APP_LOAD_PROVISIONING_QUIET_MS))
+        assertTrue("the cap", appLoadBurstDue(30_000, 0, 29_000, null, APP_LOAD_PROVISIONING_QUIET_MS))
+        assertEquals(5_000L, appLoadBurstWaitMs(0, 0, 0, null, APP_LOAD_PROVISIONING_QUIET_MS))
+        assertEquals("", appLoadCallbacksNote(emptyList()))
+        assertEquals("; callbacks at 21000ms (1), 24200ms (3)", appLoadCallbacksNote(listOf(21_000L to 1, 24_200L to 3)))
+        try {
+            AppLoadHold.resetForTest()
+            AppLoadHold.provisioning(0)
+            assertEquals(APP_LOAD_PROVISIONING_QUIET_MS, AppLoadHold.trailQuietMs(10_000))
+            AppLoadHold.noteRequest(listOf("a", "b"), 10_000)
+            AppLoadHold.noteRequest(null, 11_000)
+            assertEquals("a request not about packages is no callback", listOf(10_000L to 2), AppLoadHold.takeCallbacks())
+            assertEquals(emptyList<Pair<Long, Int>>(), AppLoadHold.takeCallbacks())
+            for (t in 0L until 100L) AppLoadHold.noteRequest(listOf("p"), t)
+            assertEquals("the newest 64", (36L until 100L).map { it to 1 }, AppLoadHold.takeCallbacks())
+        } finally {
+            AppLoadHold.resetForTest()
+        }
+        // The consumer reads the quiet each round, and only the debug build adds the note.
+        val app = code("Application.kt")
+        assertTrue(app.contains("trailQuietMs = { com.kidslauncher.mdm.ui.home.AppLoadHold.trailQuietMs(android.os.SystemClock.elapsedRealtime()) },"))
+        assertTrue(app.contains("val note = if (BuildConfig.DEBUG) com.kidslauncher.mdm.ui.home.appLoadCallbacksNote(callbacks) else \"\""))
+        assertTrue(app.contains("val list = getApps(packageManager, applicationContext, note)"))
+        assertTrue(code("Functions.kt").contains("Log.i(LOG_TAG, \"\${loadList.size} apps loaded (\${end - start}ms)\$note\")"))
+        val loop = code("ui/home/AppLoads.kt").substringAfter("suspend fun runAppLoads(")
+        assertTrue(loop.contains("val quiet = trailQuietMs()"))
+        assertTrue(loop.contains("if (appLoadBurstDue(t, firstAt, lastAt, normalAt, quiet)) break"))
     }
 
     /** qa-launcher-small-a-code Q-2: the pass's own result shows 300 ms after it, as before the trail; only the

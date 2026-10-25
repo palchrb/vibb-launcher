@@ -56,6 +56,12 @@ class ElementRoomsTest {
         assertNull("a stranger", elementGlanceContact(group.copy(senderKeys = listOf(mamma, "@stranger:x.org")), managed, rooms))
         assertNull("the newest without a key", elementGlanceContact(group.copy(senderKeys = listOf(mamma, null)), managed, rooms))
         assertNull("the kid's own session", elementGlanceContact(group.copy(senderKeys = listOf(kid), selfKey = kid), managed, rooms))
+        // Q-11: even when the kid's own MXID is also a phone-book Element contact, the kid's own message is nobody's photo.
+        val selfInBook = CallPolicyState.Managed(
+            CallRules(callsEnabled = true, contacts = contacts + RuleContact(4, "Meg", "+4790000004", inbound = true, outbound = true, messageApp = "element", messageAddress = kid)),
+        )
+        assertEquals(4L, elementGlanceContact(group.copy(senderKeys = listOf(kid), selfKey = "@other:vibb.me"), selfInBook, rooms))
+        assertNull(elementGlanceContact(group.copy(senderKeys = listOf(kid), selfKey = kid), selfInBook, rooms))
         assertNull("not an Element contact", elementGlanceContact(group.copy(senderKeys = listOf("@bestemor:x.org")), managed, rooms))
         assertNull("no flag", elementGlanceContact(dm(group = null), managed, rooms))
         assertNull(elementGlanceContact(dm(), CallPolicyState.Unmanaged, rooms))
@@ -270,7 +276,7 @@ class ElementRoomsTest {
         "object", "fun", "val", "private", "const", "if", "else", "return", "try", "catch", "null", "class", "java", "it",
         "map", "filter", "filterIsInstance", "orEmpty",
         // ours
-        "ElementDmReader", "learn", "facts", "learned", "context", "sbn", "e", "extras", "messages", "SENDER_PERSON",
+        "ElementDmReader", "learn", "facts", "learned", "context", "sbn", "e", "extras", "messages", "SENDER_PERSON", "SENDER",
         "Context", "Exception", "MessagePackages", "ELEMENT_X", "CallPolicyStore", "state", "ElementRoomStore",
         "learnElementRoom", "ElementDmFacts", "tag", "selfKey", "senderKeys", "group",
         // 2026-10-25: the glance's contact from the same facts (design 15's link, a group's newest sender)
@@ -298,7 +304,7 @@ class ElementRoomsTest {
         val body = source.lines().filterNot { it.startsWith("import ") || it.startsWith("package ") }.joinToString("\n")
         // The one string: the message bundle's sender key.
         val literal = Regex(""""[^"]*"""")
-        assertEquals(setOf("\"sender_person\""), literal.findAll(body).map { it.value }.toSet())
+        assertEquals(setOf("\"sender_person\"", "\"sender\""), literal.findAll(body).map { it.value }.toSet())
         val code = body.replace(literal, "\"\"")
         val identifiers = Regex("""[A-Za-z_][A-Za-z0-9_]*""").findAll(code).map { it.value }.toSet()
         assertEquals("not allowlisted", emptySet<String>(), identifiers - readerIdentifiers)
@@ -311,6 +317,7 @@ class ElementRoomsTest {
                 "getParcelable" to "Notification.EXTRA_MESSAGING_PERSON",
                 "getParcelable" to "SENDER_PERSON",
                 "containsKey" to "SENDER_PERSON",
+                "containsKey" to "SENDER",
                 "containsKey" to "Notification.EXTRA_IS_GROUP_CONVERSATION",
                 "getBoolean" to "Notification.EXTRA_IS_GROUP_CONVERSATION",
             ),
@@ -321,12 +328,20 @@ class ElementRoomsTest {
         assertEquals(listOf("?.key", "?.key"), personReads)
         assertEquals(2, Regex("""\bkey\b""").findAll(code).count())
         assertFalse("ElementDmReader logs", "Log" in code)
+        // Q-2: the senders are the glance reader's "from others" - the same bundles, so a group's photo and name come
+        // from the same message; `sender` is only checked for presence.
+        val rule = ".filter { it.containsKey(SENDER_PERSON) || it.containsKey(SENDER) }"
+        assertTrue(code.contains(rule))
+        assertTrue(this.code("GlanceReader.kt").contains("messages.filter { it.containsKey(SENDER_PERSON) || it.containsKey(SENDER) }"))
+        assertFalse(Regex("""getCharSequence|getString""").containsMatchIn(code))
     }
 
     @Test
     fun `learned rooms are never logged or sent to the server`() {
         for (file in listOf("ElementRooms.kt", "ElementRoomStore.kt", "ElementDmReader.kt")) {
             assertFalse("$file logs", Regex("""\bLog\.""").containsMatchIn(code(file)))
+            // qa-launcher-glance-b-code Q-5: nor the standard streams (logcat's W/System.err).
+            assertFalse("$file prints", Regex("""\bprintln\(|\bprint\(|System\.out|System\.err|printStackTrace""").containsMatchIn(code(file)))
         }
         // The sync, the API, the DTOs and the call-state report never see them.
         val offenders = sources.walkTopDown()

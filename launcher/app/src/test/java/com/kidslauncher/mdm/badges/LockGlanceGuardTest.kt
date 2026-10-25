@@ -252,6 +252,10 @@ class LockGlanceGuardTest {
             }
         }
         assertFalse("GlanceRows logs", code("GlanceRows.kt").contains("Log."))
+        // qa-launcher-glance-b-code Q-5: nor the standard streams (they reach logcat as W/System.err).
+        for (name in glanceFiles + "GlancePanel.kt") {
+            assertFalse("$name prints", Regex("""\bprintln\(|\bprint\(|System\.out|System\.err|printStackTrace""").containsMatchIn(code(name)))
+        }
     }
 
     @Test

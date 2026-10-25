@@ -389,11 +389,62 @@ class GlanceRowsTest {
         assertEquals(GlanceSubtitle.COUNT, glanceSubtitle(GlanceLevel.TEXT, missedCall = false, count = 2, hasText = false))
         assertEquals(GlanceSubtitle.COUNT, glanceSubtitle(GlanceLevel.SENDER, missedCall = false, count = 2, hasText = false))
         val panel = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/lock/GlancePanel.kt") }.first { it.exists() }.readText()
-        // The badge follows the shown kind, not the raw flag: the red phone for a missed call, else the app's mark on a
-        // contact's photo, else none.
-        assertTrue(panel.contains("missedShown -> missedBadge(view)"))
-        assertTrue(panel.contains("contact != null && icon != null -> appMark(view, icon)"))
-        assertTrue(panel.contains("else -> view.glanceRowBadge.visibility = View.GONE"))
+        // The badge follows the shown kind, not the raw flag (Q-3: the pure glanceRowBadge, bound in one line).
+        assertTrue(panel.contains("when (glanceRowBadge(missedShown, hasContact = contact != null, hasIcon = icon != null)) {"))
+        assertTrue(panel.contains("GlanceRowBadge.MISSED -> missedBadge(view)"))
+        assertTrue(panel.contains("GlanceRowBadge.APP_MARK -> appMark(view, icon)"))
+        assertTrue(panel.contains("GlanceRowBadge.NONE -> view.glanceRowBadge.visibility = View.GONE"))
+        for (name in listOf("appMark", "missedBadge")) {
+            val body = panel.substringAfter("private fun $name(").substringBefore("\n    }\n")
+            assertTrue(name, body.contains("badge.visibility = View.VISIBLE"))
+        }
+    }
+
+    @Test
+    fun `the corner - a missed call's red phone wins, else the app mark on a contact's photo once drawn`() {
+        for (missed in listOf(true, false)) for (contact in listOf(true, false)) for (icon in listOf(true, false)) {
+            val expected = when {
+                missed -> GlanceRowBadge.MISSED
+                contact && icon -> GlanceRowBadge.APP_MARK
+                else -> GlanceRowBadge.NONE
+            }
+            assertEquals("$missed $contact $icon", expected, glanceRowBadge(missed, contact, icon))
+        }
+    }
+
+    @Test
+    fun `TalkBack reads the row's own words once - a group with its sender, the name line's count`() {
+        val dm = row(shape = GlanceShape.DIRECT, title = "Mamma", count = 3)
+        assertEquals(listOf(GlanceSpokenPart.Name("Mamma"), GlanceSpokenPart.Count), glanceSpokenParts(dm))
+        val dmFull = dm.copy(level = GlanceLevel.TEXT, text = "Kommer snart")
+        assertEquals(
+            listOf(GlanceSpokenPart.Name("Mamma"), GlanceSpokenPart.NewCount(3), GlanceSpokenPart.Text("Kommer snart")),
+            glanceSpokenParts(dmFull),
+        )
+        assertEquals(
+            "one message: the messages count stays",
+            listOf(GlanceSpokenPart.Name("Mamma"), GlanceSpokenPart.Text("Kommer snart"), GlanceSpokenPart.Count),
+            glanceSpokenParts(dmFull.copy(count = 1)),
+        )
+        val group = row(shape = GlanceShape.GROUP, title = "Fotballgjengen", sender = "Pappa", count = 5)
+        assertEquals(listOf(GlanceSpokenPart.Group("Fotballgjengen", "Pappa"), GlanceSpokenPart.Count), glanceSpokenParts(group))
+        assertEquals(
+            listOf(GlanceSpokenPart.Group("Fotballgjengen", "Pappa"), GlanceSpokenPart.NewCount(5), GlanceSpokenPart.Text("Pappa: Hei")),
+            glanceSpokenParts(group.copy(level = GlanceLevel.TEXT, text = "Pappa: Hei")),
+        )
+        assertEquals("no sender: the name", listOf(GlanceSpokenPart.Name("Fotballgjengen"), GlanceSpokenPart.Count), glanceSpokenParts(group.copy(sender = null)))
+        assertEquals("APP_ONLY: the count alone", listOf(GlanceSpokenPart.Count), glanceSpokenParts(group.copy(level = GlanceLevel.APP_ONLY, title = null, sender = null)))
+        for (part in listOf(GlanceSpokenPart.Name("Mamma"), GlanceSpokenPart.Group("Fotballgjengen", "Pappa"), GlanceSpokenPart.Text("Kommer snart"))) {
+            assertFalse(part.toString(), Regex("Mamma|Pappa|Fotballgjengen|Kommer").containsMatchIn(part.toString()))
+        }
+        // The panel maps each part (M13: the group's string), and the strings say it.
+        val panel = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/lock/GlancePanel.kt") }.first { it.exists() }.readText()
+        assertTrue(panel.contains("is GlanceSpokenPart.Group -> activity.getString(R.string.glance_group_spoken, part.name, part.sender)"))
+        assertTrue(panel.contains("is GlanceSpokenPart.NewCount -> activity.resources.getQuantityString(R.plurals.glance_new_count, part.count, part.count)"))
+        assertTrue(panel.contains("else -> listOf(label) + glanceSpokenParts(row).map { part -> spokenPart(part, count) } + time"))
+        fun res(dir: String) = listOf("src/main", "app/src/main").map { java.io.File(it, "res/$dir/strings.xml") }.first { it.exists() }.readText()
+        assertTrue(res("values").contains("<string name=\"glance_group_spoken\">Group %1\$s, latest from %2\$s</string>"))
+        assertTrue(res("values-nb").contains("<string name=\"glance_group_spoken\">Gruppe %1\$s, siste fra %2\$s</string>"))
     }
 
     // ---- 2026-10-25: contact photos, the group's sender, one sender's count -------------------------------------------
@@ -471,7 +522,9 @@ class GlanceRowsTest {
         assertEquals(GlanceNameSuffix.Sender("Pappa"), glanceNameSuffix(group))
         assertEquals("Pappa", glanceSpokenGroup(group))
         val full = group.copy(level = GlanceLevel.TEXT, text = "Pappa: Kommer kl 5")
-        assertNull("Full text: \"Sender: text\" under the name", glanceNameSuffix(full))
+        // Full text: "Sender: text" under the name, and the count (Q-6, the user's decision): "Fotballgjengen · 3 nye".
+        assertEquals(GlanceNameSuffix.NewCount(3), glanceNameSuffix(full))
+        assertNull("one message: the name alone", glanceNameSuffix(full.copy(count = 1)))
         assertEquals("TalkBack names the group in both", "Pappa", glanceSpokenGroup(full))
         assertNull("no sender known", glanceNameSuffix(group.copy(sender = null)))
         assertNull("the sender is the name", glanceNameSuffix(group.copy(sender = "Fotballgjengen")))
@@ -490,7 +543,7 @@ class GlanceRowsTest {
         assertNull("Name only already says \"3 meldinger\"", glanceNameSuffix(full.copy(level = GlanceLevel.SENDER, text = null)))
         assertNull("no text shown", glanceNameSuffix(full.copy(text = null)))
         assertNull("another style's title isn't a sender", glanceNameSuffix(full.copy(shape = GlanceShape.PLAIN)))
-        assertNull("a group's messages aren't one sender's", glanceNameSuffix(full.copy(shape = GlanceShape.GROUP, sender = "Pappa")))
+        assertEquals("a group's too (Q-6)", GlanceNameSuffix.NewCount(3), glanceNameSuffix(full.copy(shape = GlanceShape.GROUP, sender = "Pappa")))
         assertNull(glanceNameSuffix(full.copy(missedCall = true)))
         // The rows add the conversation's counts: three notifications of one DM are "· 3 nye".
         val folded = rows(

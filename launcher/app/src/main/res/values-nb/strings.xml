@@ -363,7 +363,7 @@
     <!-- Design r11 §3.4: TalkBacks handling på en rad på låseskjermen - det samme som å sveipe den bort. -->
     <string name="glance_dismiss_action">Fjern</string>
     <string name="glance_missed_from">Tapt anrop fra %1$s</string>
-    <string name="glance_name_with">%1$s · %2$s</string>
+    <string name="glance_name_suffix">· %1$s</string>
     <plurals name="glance_new_count">
         <item quantity="one">%1$d ny</item>
         <item quantity="other">%1$d nye</item>

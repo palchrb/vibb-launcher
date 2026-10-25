@@ -42,13 +42,16 @@ import com.kidslauncher.mdm.badges.GlanceLevel
 import com.kidslauncher.mdm.badges.GlanceMessageRow
 import com.kidslauncher.mdm.badges.GlanceMissedRow
 import com.kidslauncher.mdm.badges.GlanceNameSuffix
+import com.kidslauncher.mdm.badges.GlanceRowBadge
+import com.kidslauncher.mdm.badges.GlanceSpokenPart
 import com.kidslauncher.mdm.badges.GlanceReader
 import com.kidslauncher.mdm.badges.GlanceRow
 import com.kidslauncher.mdm.badges.GlanceStore
 import com.kidslauncher.mdm.badges.GlanceSubtitle
 import com.kidslauncher.mdm.badges.glanceNameSuffix
 import com.kidslauncher.mdm.badges.glanceRowContact
-import com.kidslauncher.mdm.badges.glanceSpokenGroup
+import com.kidslauncher.mdm.badges.glanceRowBadge
+import com.kidslauncher.mdm.badges.glanceSpokenParts
 import com.kidslauncher.mdm.badges.glanceSubtitle
 import com.kidslauncher.mdm.calls.CallPolicyState
 import com.kidslauncher.mdm.calls.CallPolicyStore
@@ -1395,7 +1398,10 @@ class GlancePanel(
             null -> null
         }
         view.root.visibility = View.VISIBLE
-        view.glanceRowTitle.text = if (suffix != null) activity.getString(R.string.glance_name_with, title, suffix) else title
+        // Q-7: only the name is cut - the suffix is its own view after it ("· 3 nye" stays readable).
+        view.glanceRowTitle.text = title
+        view.glanceRowSuffix.text = suffix?.let { activity.getString(R.string.glance_name_suffix, it) }
+        view.glanceRowSuffix.visibility = if (suffix != null) View.VISIBLE else View.GONE
         view.glanceRowSubtitle.text = subtitle
         view.glanceRowSubtitle.visibility = View.VISIBLE
         view.glanceRowTime.text = time
@@ -1415,23 +1421,17 @@ class GlancePanel(
             }
         }
         // The red phone badge for a missed call, as on a phone call's row; else the app's mark on a contact's photo.
-        when {
-            missedShown -> missedBadge(view)
-            contact != null && icon != null -> appMark(view, icon)
-            else -> view.glanceRowBadge.visibility = View.GONE
+        when (glanceRowBadge(missedShown, hasContact = contact != null, hasIcon = icon != null)) {
+            GlanceRowBadge.MISSED -> missedBadge(view)
+            GlanceRowBadge.APP_MARK -> appMark(view, icon)
+            GlanceRowBadge.NONE -> view.glanceRowBadge.visibility = View.GONE
         }
         val count = if (row.level == GlanceLevel.APP_ONLY) subtitle else messages
-        val group = glanceSpokenGroup(row)
-        val name = when {
-            group != null -> activity.getString(R.string.glance_group_spoken, row.title, group)
-            suffix != null -> "${row.title}, $suffix"
-            else -> row.title
-        }
         val spoken = when {
             missedShown && row.title != null -> listOf(label, activity.getString(R.string.glance_missed_from, row.title), messages.takeIf { row.count > 1 }, time)
             missedShown -> listOf(label, missed, messages.takeIf { row.count > 1 }, time)
-            // The name line's count stands for the messages count (the same words TalkBack reads, once).
-            else -> listOfNotNull(label, name, row.text.takeIf { row.level == GlanceLevel.TEXT }, count.takeIf { glanceNameSuffix(row) !is GlanceNameSuffix.NewCount }, time)
+            // The same words the row shows, each once (Q-4: the pure parts).
+            else -> listOf(label) + glanceSpokenParts(row).map { part -> spokenPart(part, count) } + time
         }
         describe(view, spoken.filterNotNull().distinct().joinToString(", "), activity.getString(R.string.glance_open_action), row)
     }
@@ -1441,6 +1441,7 @@ class GlancePanel(
         val time = timeText(row.timeMs)
         view.root.visibility = View.VISIBLE
         view.glanceRowTime.text = time
+        view.glanceRowSuffix.visibility = View.GONE
         val number = row.number
         if (number == null) {
             // The plain row (fail-closed, or unmanaged with our dialer role): no names.
@@ -1486,6 +1487,15 @@ class GlancePanel(
         view.glanceRowIcon.backgroundTintList = null
     }
 
+    /** One part of a message row's TalkBack text ([glanceSpokenParts]); [count] is the messages count as shown. */
+    private fun spokenPart(part: GlanceSpokenPart, count: String): String = when (part) {
+        is GlanceSpokenPart.Name -> part.name
+        is GlanceSpokenPart.Group -> activity.getString(R.string.glance_group_spoken, part.name, part.sender)
+        is GlanceSpokenPart.NewCount -> activity.resources.getQuantityString(R.plurals.glance_new_count, part.count, part.count)
+        is GlanceSpokenPart.Text -> part.text
+        GlanceSpokenPart.Count -> count
+    }
+
     /** The corner's red phone badge (a missed call) - the layout's own look, put back on a reused view. */
     private fun missedBadge(view: ViewLockGlanceRowBinding) {
         val badge = view.glanceRowBadge
@@ -1498,7 +1508,7 @@ class GlancePanel(
     }
 
     /** 2026-10-25: the app's own (round) icon as the corner mark on a contact's photo, ringed in the row's colour. */
-    private fun appMark(view: ViewLockGlanceRowBinding, icon: android.graphics.Bitmap) {
+    private fun appMark(view: ViewLockGlanceRowBinding, icon: android.graphics.Bitmap?) {
         val badge = view.glanceRowBadge
         badge.setBackgroundResource(R.drawable.bg_glance_app_mark)
         badge.setPadding(dp(1.5f), dp(1.5f), dp(1.5f), dp(1.5f))

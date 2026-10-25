@@ -1160,8 +1160,16 @@ PLAN's queue items "Contact photos on the glance's message rows; the sender in g
 - **The name line** (`glanceShape`: DIRECT - one sender, the title is the sender -, GROUP - a named group -, PLAIN;
   `glanceNameSuffix`): a GROUP row in "Name only" shows "Fotballgjengen · Pappa" (`glance_name_with`; "Full text"
   keeps "Pappa: text" under the name); a DIRECT row in "Full text" with more than one message folded in shows "Mamma
-  · 3 nye" / "Mamma · 3 new" (`glance_new_count`) over the newest text. The dismiss clears them all as before.
+  · 3 nye" / "Mamma · 3 new" (`glance_new_count`) over the newest text - since the code QA (Q-6, the user's decision)
+  a GROUP row in "Full text" too ("Fotballgjengen · 5 nye"). The suffix is a view of its own after the name
+  (`glance_row_suffix`, the name line wraps its content and only the name, weight 1, is cut - Q-7). The dismiss clears
+  them all as before.
+- **When the photo comes** (Q-8): the contact is resolved when the notification is read (a post, a sweep), and the
+  row checks the phone book again when it binds. A contact removed goes at once; a contact added later, an Element
+  room learned later, or the rules arriving after a pre-unlock sweep show from that conversation's next post.
 - **TalkBack**: a group row with its sender is read "Gruppe Fotballgjengen, siste fra Pappa" / "Group Fotballgjengen,
-  latest from Pappa" (`glance_group_spoken`, `glanceSpokenGroup`); the count line "Mamma, 3 nye" in place of the
-  messages count.
+  latest from Pappa" (`glance_group_spoken`), then the name line's count ("3 nye") in place of the messages count,
+  then the text - pure `glanceSpokenParts` (Q-4). The corner is pure `glanceRowBadge` (Q-3). Element X's senders are
+  the glance reader's "from others" bundles (`sender_person` or `sender`; one without a person is a null key, so no
+  photo), so a group's photo and its name come from the same message (Q-2).
 - Emulator checks owed: `docs/testing/2026-10-25-evening-run.md`, "Owed after launcher-glance-b".

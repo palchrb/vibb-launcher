@@ -82,7 +82,10 @@ fun appLoadHoldWaitMs(
  * period each straggler opened a burst of its own (31 loads in the run). A callback about a package the pass touched -
  * the running pass's, or one released within [APP_LOAD_TRAIL_WINDOW_MS] - is the pass's trail and waits
  * [APP_LOAD_TRAIL_QUIET_MS] of quiet, at most [APP_LOAD_TRAIL_MAX_WAIT_MS]: the stragglers fold into one or two loads.
- * Any other request in the burst (an install, a window's edge, another package) keeps 300 ms / 2 s from its own arrival.
+ * Any other request in the burst (an install, a window's edge, another package) keeps 300 ms / 2 s from its own arrival
+ * - except inside the provisioning window ([appLoadProvisioning]), where every callback about packages is the trail, an
+ * install's included: it waits [APP_LOAD_PROVISIONING_QUIET_MS] of quiet then, up to the 30 s cap while the storm goes
+ * on (a request not about packages - a pass's end, a window's edge - still keeps 300 ms / 2 s).
  */
 
 /** A burst of the pass's trail alone ends after this long with no new request. */
@@ -104,9 +107,24 @@ const val APP_LOAD_TRAIL_WINDOW_MS = 120_000L
  */
 const val APP_LOAD_PROVISIONING_WINDOW_MS = 120_000L
 
+/** Inside the provisioning window a trail burst ends after this long with no new request (qa-launcher-glance-b-code
+ * Q-1: the evening run's storm had callbacks more than 3 s apart - 26 loads in 89 s - so the trail's 3 s folded few of
+ * them); the trail's [APP_LOAD_TRAIL_MAX_WAIT_MS] cap stays. */
+const val APP_LOAD_PROVISIONING_QUIET_MS = 5_000L
+
 /** Whether [now] is inside the provisioning window opened at [openedAt] (`null`: none opened in this process). */
 fun appLoadProvisioning(now: Long, openedAt: Long?, windowMs: Long = APP_LOAD_PROVISIONING_WINDOW_MS): Boolean =
     openedAt != null && now - openedAt in 0 until windowMs
+
+/** The quiet a trail burst waits for at [now]: [APP_LOAD_PROVISIONING_QUIET_MS] inside the provisioning window opened at
+ * [openedAt], else [APP_LOAD_TRAIL_QUIET_MS]. */
+fun appLoadTrailQuietMs(now: Long, openedAt: Long?): Long =
+    if (appLoadProvisioning(now, openedAt)) APP_LOAD_PROVISIONING_QUIET_MS else APP_LOAD_TRAIL_QUIET_MS
+
+/** The debug build's note on the "apps loaded" line (Q-1: the next storm run measures the gaps): each `LauncherApps`
+ * callback since the last load as its elapsed time and its package count - never a package name. Empty without any. */
+fun appLoadCallbacksNote(callbacks: List<Pair<Long, Int>>): String =
+    if (callbacks.isEmpty()) "" else callbacks.joinToString(", ", prefix = "; callbacks at ") { (at, count) -> "${at}ms ($count)" }
 
 /** The packages the released passes touched, and when the last of them released its hold (elapsed). */
 data class AppLoadTrail(val packages: Set<String>, val releasedAt: Long)
@@ -148,16 +166,16 @@ fun appLoadTrailAfterRelease(
     return if (all.isEmpty()) null else AppLoadTrail(all, now)
 }
 
-/** Whether the burst loads now: a trail-only burst ([normalAt] null) by [APP_LOAD_TRAIL_QUIET_MS] /
- * [APP_LOAD_TRAIL_MAX_WAIT_MS] from its first request ([firstAt]); once another request joined it at [normalAt], also
- * by [appLoadDue]'s 300 ms / 2 s counted from that one. */
-fun appLoadBurstDue(now: Long, firstAt: Long, lastAt: Long, normalAt: Long?): Boolean =
-    appLoadDue(now, firstAt, lastAt, APP_LOAD_TRAIL_QUIET_MS, APP_LOAD_TRAIL_MAX_WAIT_MS) ||
+/** Whether the burst loads now: a trail-only burst ([normalAt] null) by [trailQuietMs] (the trail's 3 s, the
+ * provisioning window's 5 s - [appLoadTrailQuietMs]) / [APP_LOAD_TRAIL_MAX_WAIT_MS] from its first request ([firstAt]);
+ * once another request joined it at [normalAt], also by [appLoadDue]'s 300 ms / 2 s counted from that one. */
+fun appLoadBurstDue(now: Long, firstAt: Long, lastAt: Long, normalAt: Long?, trailQuietMs: Long = APP_LOAD_TRAIL_QUIET_MS): Boolean =
+    appLoadDue(now, firstAt, lastAt, trailQuietMs, APP_LOAD_TRAIL_MAX_WAIT_MS) ||
         (normalAt != null && appLoadDue(now, normalAt, lastAt))
 
 /** [appLoadBurstDue]'s wait (0 exactly when it is due). */
-fun appLoadBurstWaitMs(now: Long, firstAt: Long, lastAt: Long, normalAt: Long?): Long {
-    val trail = appLoadWaitMs(now, firstAt, lastAt, APP_LOAD_TRAIL_QUIET_MS, APP_LOAD_TRAIL_MAX_WAIT_MS)
+fun appLoadBurstWaitMs(now: Long, firstAt: Long, lastAt: Long, normalAt: Long?, trailQuietMs: Long = APP_LOAD_TRAIL_QUIET_MS): Long {
+    val trail = appLoadWaitMs(now, firstAt, lastAt, trailQuietMs, APP_LOAD_TRAIL_MAX_WAIT_MS)
     return if (normalAt == null) trail else minOf(trail, appLoadWaitMs(now, normalAt, lastAt))
 }
 
@@ -175,6 +193,7 @@ object AppLoadHold {
     private val touchedNow = mutableSetOf<String>()
     private var trail: AppLoadTrail? = null
     private var provisioningSince: Long? = null
+    private val callbacks = ArrayDeque<Pair<Long, Int>>()
     private val normalPending = java.util.concurrent.atomic.AtomicBoolean(false)
 
     @Synchronized
@@ -204,6 +223,14 @@ object AppLoadHold {
         provisioningSince = nowElapsed
     }
 
+    /** The quiet a trail burst waits for now ([appLoadTrailQuietMs]). */
+    @Synchronized
+    fun trailQuietMs(nowElapsed: Long): Long = appLoadTrailQuietMs(nowElapsed, provisioningSince)
+
+    /** The callbacks since the last load ([appLoadCallbacksNote]; at most [CALLBACKS_KEPT], the newest), and forget them. */
+    @Synchronized
+    fun takeCallbacks(): List<Pair<Long, Int>> = callbacks.toList().also { callbacks.clear() }
+
     /** Whether a callback about [packages] at [nowElapsed] is a pass's trail ([appLoadTrails]). */
     @Synchronized
     fun trails(packages: Collection<String>, nowElapsed: Long): Boolean =
@@ -212,10 +239,19 @@ object AppLoadHold {
     /** A load request about [packages] (`null`: not about packages - always a normal request): recorded for the
      * consumer unless it is the trail. Returns whether it trails. */
     fun noteRequest(packages: Collection<String>?, nowElapsed: Long): Boolean {
+        if (packages != null) noteCallback(nowElapsed, packages.size)
         val trails = packages != null && trails(packages, nowElapsed)
         if (!trails) normalPending.set(true)
         return trails
     }
+
+    @Synchronized
+    private fun noteCallback(nowElapsed: Long, count: Int) {
+        callbacks.addLast(nowElapsed to count)
+        while (callbacks.size > CALLBACKS_KEPT) callbacks.removeFirst()
+    }
+
+    private const val CALLBACKS_KEPT = 64
 
     /** The consumer: whether a request other than the trail came since it last asked (and forget it). */
     fun takeNormal(): Boolean = normalPending.getAndSet(false)
@@ -228,6 +264,7 @@ object AppLoadHold {
         touchedNow.clear()
         trail = null
         provisioningSince = null
+        callbacks.clear()
         normalPending.set(false)
     }
 }
@@ -258,7 +295,7 @@ suspend fun ReceiveChannel<Unit>.nextAppLoad(timeoutMs: Long?): AppLoadNext {
  * debounce goes on from there, so the callbacks the apply's last packages send after it ended join the same load - one
  * load per apply, 300 ms after it (the hold's end is a normal request, qa-launcher-small-a-code Q-2). A burst of a
  * pass's trail alone after that ([takeNormal] false for all its requests) waits by
- * [appLoadBurstDue]'s 3 s / 30 s; a request that isn't the trail brings back 300 ms / 2 s from its arrival. Returns when
+ * [appLoadBurstDue]'s 3 s (in the provisioning window [trailQuietMs]'s 5 s) / 30 s; a request that isn't the trail brings back 300 ms / 2 s from its arrival. Returns when
  * the channel closes (tests; the app's never does), after loading a burst still pending.
  */
 suspend fun runAppLoads(
@@ -266,6 +303,7 @@ suspend fun runAppLoads(
     now: () -> Long,
     takeNormal: () -> Boolean = { true },
     heldSince: () -> Long? = { null },
+    trailQuietMs: () -> Long = { APP_LOAD_TRAIL_QUIET_MS },
     load: suspend () -> Unit,
 ) {
     var firstOfProcess = true
@@ -300,8 +338,9 @@ suspend fun runAppLoads(
                     // Home 300 ms after it, as before the trail; only the stragglers that come later wait 3 s.
                     normalAt = t
                 }
-                if (appLoadBurstDue(t, firstAt, lastAt, normalAt)) break
-                appLoadBurstWaitMs(t, firstAt, lastAt, normalAt)
+                val quiet = trailQuietMs()
+                if (appLoadBurstDue(t, firstAt, lastAt, normalAt, quiet)) break
+                appLoadBurstWaitMs(t, firstAt, lastAt, normalAt, quiet)
             }
             when (next(wait)) {
                 AppLoadNext.REQUEST -> {
