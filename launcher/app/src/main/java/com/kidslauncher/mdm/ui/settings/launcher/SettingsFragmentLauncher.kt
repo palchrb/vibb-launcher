@@ -48,8 +48,6 @@ import com.kidslauncher.mdm.server.writeSettingsRowState
 import com.kidslauncher.mdm.play.InstallModeStart
 import com.kidslauncher.mdm.play.PlayRuntime
 import com.kidslauncher.mdm.server.applyProvisioningExtras
-import com.kidslauncher.mdm.server.createMdmApi
-import com.kidslauncher.mdm.server.dto.EnrollRequest
 import com.kidslauncher.mdm.server.dto.ProvisioningExtras
 import com.kidslauncher.mdm.server.performMdmSync
 import com.kidslauncher.mdm.openAppsList
@@ -493,31 +491,14 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             return
         }
 
+        val app = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
-            val outcome = try {
-                val response = createMdmApi(serverUrl).enroll(EnrollRequest(enrollmentCode))
-                val body = response.body()
-                if (response.isSuccessful && body != null) {
-                    Result.success(body)
-                } else {
-                    Result.failure(Exception("HTTP ${response.code()}"))
-                }
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-
+            // Design r10: the token is sealed and committed on IO inside the enrolment (revision check N7).
+            val outcome = com.kidslauncher.mdm.server.Enrollment.enroll(app, serverUrl, enrollmentCode)
             withContext(Dispatchers.Main) {
-                outcome.onSuccess { enrollResponse ->
-                    mdm.deviceToken(enrollResponse.deviceToken)
-                    mdm.enrolled(true)
-                    // The queued parent-PIN events were about the old enrollment (design 24).
-                    com.kidslauncher.mdm.server.ParentPin.clearEvents(context)
-                    com.kidslauncher.mdm.server.CommandAnswers.clear(context)
-                    // The old enrollment's zone watch: fences, queue, kept fix, beat, mock count (design 64 step 2, Q-8).
-                    com.kidslauncher.mdm.zones.ZoneWatch.forget(context)
-                    com.kidslauncher.mdm.server.InstallNow.clear(context)
+                outcome.onSuccess {
                     // First policy now, not at the next backstop (up to 30 min away).
-                    com.kidslauncher.mdm.push.SyncRunner.request(context.applicationContext, "enrolled")
+                    com.kidslauncher.mdm.push.SyncRunner.request(app, "enrolled")
                     Toast.makeText(context, R.string.toast_mdm_enroll_success, Toast.LENGTH_LONG)
                         .show()
                 }.onFailure { e ->
@@ -621,7 +602,8 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
      */
     private fun syncNowWithServer(context: Context) {
         val mdm = LauncherPreferences.mdm()
-        if (mdm.serverUrl().isNullOrBlank() || mdm.deviceToken().isNullOrBlank()) {
+        // Presence only: no Keystore call on the main thread (design r10, code QA Q-6); the sync reads the token itself.
+        if (mdm.serverUrl().isNullOrBlank() || !com.kidslauncher.mdm.server.DeviceToken.present()) {
             Toast.makeText(context, R.string.toast_mdm_enroll_missing_fields, Toast.LENGTH_LONG)
                 .show()
             return

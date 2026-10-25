@@ -502,7 +502,6 @@ One line per approved item that has no code yet. An item leaves this list in the
 after), never later. Details stay in the entries below.
 
 - **Launcher**
-  - Keystore wrap of the device token, the kid PIN's hash and salt and the reset token (design r10, design-QA'd) - in build 2026-10-25, branch `r10-keystore-wrap`.
   - A time rule shows as a card on the glance (design r13 §1; designed and design-QA'd 2026-10-25, `qa-r13-design.md`; awaiting build - step 1).
   - Screen time left in the "Vibb One" notification + "Be om mer tid" (design r13 §2; designed and QA'd 2026-10-25; awaiting build - steps 2 and 3, server part first).
   - Missed Element X calls on the contact card and the phone book's badge (capture the notification shape on the Jelly Star first).
@@ -997,6 +996,9 @@ after), never later. Details stay in the entries below.
   in hardware and the app is our signed launcher) - a stolen token is worthless off the phone; closes the "stolen
   token" root of server L1/L3/L4. Its own design (60), server + launcher in one contract change, after design 59's
   keyguard decision (a real Android PIN would let keys be bound to user authentication).
+  **Built** (item (1), 2026-10-25, branch `r10-keystore-wrap`; code QA `qa-r10-keystore-code.md` fixed): `SealedPrefs`/`DeviceToken`/
+  `Enrollment`, the redacted cache, "Ny oppsettkode" in the deadlock; deviations, the revision check's N4/N5/N8 left
+  for code QA, and the §8 emulator checks owed are in the note's "Implementation status".
 - **The lock's glance page, three things** (the user's emulator screenshot, 2026-10-21, 320x569 dp, music tile full,
   one WhatsApp missed-call row): (1) **bug** - the bottom row ("Nødsamtale" and the torch) is cut off at the screen's
   bottom edge: `glanceFit` didn't keep the page inside the screen (check the 2026-10-21 torch spacing, +12 dp, and

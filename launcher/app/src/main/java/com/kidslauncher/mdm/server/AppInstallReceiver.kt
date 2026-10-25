@@ -155,7 +155,7 @@ class AppInstallReceiver : BroadcastReceiver() {
     private suspend fun reportInstallFailureToServer(context: Context, trackedAppId: Long) {
         val mdm = LauncherPreferences.mdm()
         val serverUrl = mdm.serverUrl()
-        val deviceToken = mdm.deviceToken()
+        val deviceToken = DeviceToken.get()
         if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) return
         try {
             createMdmApi(serverUrl, deviceToken)

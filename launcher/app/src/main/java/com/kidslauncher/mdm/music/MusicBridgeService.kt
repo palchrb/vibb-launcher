@@ -173,7 +173,7 @@ class MusicBridgeService : Service() {
             withTimeout(SPOTIFY_TOKEN_TIMEOUT_MS) {
                 val mdm = LauncherPreferences.mdm()
                 val url = mdm.serverUrl()
-                val token = mdm.deviceToken()
+                val token = com.kidslauncher.mdm.server.DeviceToken.get()
                 if (url == null || token == null) {
                     SpotifyTokenAnswer.LAUNCHER
                 } else {
@@ -205,7 +205,7 @@ class MusicBridgeService : Service() {
             withTimeout(STORYTEL_TOKEN_TIMEOUT_MS) {
                 val mdm = LauncherPreferences.mdm()
                 val url = mdm.serverUrl()
-                val token = mdm.deviceToken()
+                val token = com.kidslauncher.mdm.server.DeviceToken.get()
                 if (url == null || token == null) {
                     StorytelTokenAnswer.LAUNCHER
                 } else {
@@ -270,7 +270,7 @@ class MusicBridgeService : Service() {
             }
             val mdm = LauncherPreferences.mdm()
             val url = mdm.serverUrl() ?: return
-            val token = mdm.deviceToken() ?: return
+            val token = com.kidslauncher.mdm.server.DeviceToken.get() ?: return
             val response = createMusicServer(url, token).storytel()
             when {
                 response.code() == 404 -> {

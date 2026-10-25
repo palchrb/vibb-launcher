@@ -487,8 +487,10 @@ class ZonePlanTest {
         // Un-managed releases every fence, the feed, the series, the queue and the kept fix; a new
         // enrollment forgets the watch's state too (Q-8).
         assertTrue(source("server/AppEnforcer.kt").contains("if (!managedForHardening) com.kidslauncher.mdm.zones.ZoneWatch.release(context)"))
-        assertTrue(source("server/Provisioning.kt").contains("com.kidslauncher.mdm.zones.ZoneWatch.forget(context)"))
-        assertTrue(source("ui/settings/launcher/SettingsFragmentLauncher.kt").contains("com.kidslauncher.mdm.zones.ZoneWatch.forget(context)"))
+        assertTrue(source("server/Enrollment.kt").contains("com.kidslauncher.mdm.zones.ZoneWatch.forget(context)"))
+        // Design r10: both enrollment paths (and the lock's "Ny oppsettkode") go through the one Enrollment.enroll.
+        assertTrue(source("server/Provisioning.kt").contains("Enrollment.enroll(context, extras.serverUrl, extras.enrollmentCode)"))
+        assertTrue(source("ui/settings/launcher/SettingsFragmentLauncher.kt").contains("Enrollment.enroll(app, serverUrl, enrollmentCode)"))
         assertTrue(Regex("""fun forget\(context: Context\) \{[\s\S]{0,200}release\(app\)[\s\S]{0,300}\.remove\(KEY_FENCES\)\.remove\(KEY_QUEUE\)\.remove\(KEY_LAST_BEAT\)""").containsMatchIn(watch))
         // A series check is a balanced fused fix only; a candidate is queued and asks for a sync.
         val series = source("zones/ZoneSeries.kt")

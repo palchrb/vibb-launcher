@@ -63,7 +63,9 @@ fun legacyParentFingerprint(hashHex: String, saltHex: String): String = parentPi
  * TEE - gives nothing to crack; a rooted, running phone can still try every PIN through the key
  * (the salt is in the clear, so PBKDF2 can be precomputed: about an hour for 6 digits).
  *
- * The parent PIN only: the kid's lock keeps its hash and never depends on a key (QA #7). A key that
+ * The parent PIN only. Since design r10 the kid's hash is sealed under its own key (`secrets_v1`, [SealedPrefs]), so
+ * 24b's QA #7 ("the kid's lock never depends on a key") is reversed: a total Keystore loss leaves the lock `BAD_HASH`
+ * and this vault `untilSync`, and "Ny oppsettkode" (design r10 §5) is the way back. A key that
  * fails ([VaultKey.mac] throws twice - one retry for a transient Keystore error) sets
  * `rewrap_needed`: the parent PIN answers "can't be checked until the phone reaches the server",
  * and the next accepted policy makes a new key and wraps again. Used only under [ParentPin]'s lock.

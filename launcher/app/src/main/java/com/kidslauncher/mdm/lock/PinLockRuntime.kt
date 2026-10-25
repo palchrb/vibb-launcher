@@ -355,7 +355,7 @@ object PinLockRuntime {
      * kid PIN is set. Unreadable counts as set. */
     fun pinSetStored(context: Context): Boolean = try {
         val app = context.applicationContext
-        PinLockStore.active(app) || PinLockStore.config(app) != null ||
+        PinLockStore.active(app) || PinLockStore.pinStored(app) ||
             (com.kidslauncher.mdm.server.cachedPolicy() as? com.kidslauncher.mdm.server.CachedPolicy.Ok)?.policy?.kidLock != null
     } catch (e: Exception) {
         true
@@ -1494,7 +1494,9 @@ object PinLockRuntime {
     fun configure(context: Context, dpm: DevicePolicyManager, admin: ComponentName, policy: PolicyResponse?, managed: Boolean, parentChoice: Boolean = false) {
         val app = context.applicationContext
         val kidLock = policy?.kidLock
-        val newConfig = kidLock?.let { KidLockConfig(it.pinHash, it.pinSalt, kidPinLength(it.pinLength), it.pinRev) }
+        // Design r10 §3.2: a cached policy's kid hash is redacted - the PIN then comes from memory or the sealed store,
+        // else the unusable stand-in (BAD_HASH), never "no PIN" (QA R10-1, R10-4).
+        val newConfig = kidConfigFor(kidLock, config) { runCatching { PinLockStore.config(app) }.getOrNull() }
         val requested = androidRequested(kidLock)
         // Design 59 first: the token, the rollback and the owned flag - the keyguard below is written for the
         // credential this leaves (a rollback's clear, then DISABLED).
@@ -1529,18 +1531,24 @@ object PinLockRuntime {
             guardTripped = guard.trippedAtMs != null,
             androidGate = androidGate,
         )
-        // A new PIN from the parent resets the wrong-PIN count and wait (design §5).
-        synchronized(this) {
-            val backoff = PinLockStore.backoff(app)
-            val forHash = backoffForHash(backoff, newConfig?.fingerprint)
-            if (forHash != backoff) PinLockStore.saveBackoff(app, forHash)
+        // A new PIN from the parent resets the wrong-PIN count and wait (design §5) - never the stand-in (r10, QA R10-11).
+        if (backoffStepDue(kidLock, newConfig)) {
+            synchronized(this) {
+                val backoff = PinLockStore.backoff(app)
+                val forHash = backoffForHash(backoff, newConfig?.fingerprint)
+                if (forHash != backoff) PinLockStore.saveBackoff(app, forHash)
+            }
         }
         // S3-1: the request is stored only from a policy with the parent's choice - never from a fallback's missing kid_lock.
         val storedRequest = requestToStore(requested, parentChoice)
+        val write = pinWriteFor(kidLock, newConfig)
+        // Code QA Q-5: a real hash whose seal failed (the fields removed, R10-3) is written again at the next apply,
+        // not only when the PIN changes - else it stays off the disk for the rest of the process.
         if (newConfig != config || active != PinLockStore.active(app) || why != inactive ||
-            (storedRequest != null && storedRequest != PinLockStore.keyguardRequested(app))
+            (storedRequest != null && storedRequest != PinLockStore.keyguardRequested(app)) ||
+            (write is PinWrite.Write && !PinLockStore.pinStored(app))
         ) {
-            PinLockStore.saveConfig(app, newConfig, active, why, storedRequest)
+            PinLockStore.saveConfig(app, write, active, why, storedRequest)
         }
         config = newConfig
         inactive = why
@@ -1557,7 +1565,7 @@ object PinLockRuntime {
         KeyguardCover.guardTripped(app)
         // Design 59 (Q59-2): as Android's face, Android's lock now - SystemUI's face with the PIN, never open.
         AndroidLock.crashGuardTripped(app)
-        PinLockStore.saveConfig(app, config, active = false, inactive = LockInactive.CRASH_GUARD)
+        PinLockStore.saveConfig(app, PinWrite.Keep, active = false, inactive = LockInactive.CRASH_GUARD)
         onMain { dispatch(app, LockEvent.Configured(false)) }
         requestSync(app, "pin_lock_crash_guard")
     }
@@ -1951,7 +1959,8 @@ object PinLockRuntime {
     @Synchronized
     fun checkPin(context: Context, pin: String): PinResult {
         val app = context.applicationContext
-        val cfg = config ?: runCatching { PinLockStore.config(app) }.getOrNull()
+        // Design r10 (QA R10-4): an unusable memory (unreadable at the start, the stand-in) reads the store again.
+        val cfg = config?.takeIf { it.usable } ?: runCatching { PinLockStore.config(app) }.getOrNull()
         if (cfg == null || !cfg.usable) return PinResult.Unusable
         val now = clocks()
         val counted = try {

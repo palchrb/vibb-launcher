@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Design r10 §5: "Ny oppsettkode" - the one text field on the lock, only in the deadlock (the device token and the
+     parent PIN both unusable). The code is one-shot and dead in 15 minutes, so a keyboard is acceptable here; no
+     suggestions, no autofill, no selection or paste menu (ReEnrolDialog), not long-clickable, the dialog FLAG_SECURE. The parent-PIN
+     keypads keep no text field. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="20dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="20dp">
+
+    <TextView
+        android:id="@+id/re_enrol_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/re_enrol_hint"
+        android:textSize="14sp" />
+
+    <EditText
+        android:id="@+id/re_enrol_code"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:hint="@string/re_enrol_field"
+        android:importantForAutofill="no"
+        android:imeOptions="flagNoExtractUi|flagNoPersonalizedLearning|actionDone"
+        android:inputType="textVisiblePassword|textNoSuggestions|textCapCharacters"
+        android:longClickable="false"
+        android:maxLength="16"
+        android:minHeight="48dp"
+        android:singleLine="true" />
+
+    <TextView
+        android:id="@+id/re_enrol_error"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:accessibilityLiveRegion="polite"
+        android:textColor="@color/dialog_error_text"
+        android:textSize="14sp"
+        android:visibility="gone" />
+</LinearLayout>

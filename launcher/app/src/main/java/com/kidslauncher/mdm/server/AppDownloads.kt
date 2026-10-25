@@ -543,7 +543,7 @@ object AppDownloads {
     private suspend fun attempt(app: Context, record: DownloadRecord): Outcome {
         val mdm = LauncherPreferences.mdm()
         val serverUrl = mdm.serverUrl()
-        val token = mdm.deviceToken()
+        val token = DeviceToken.get()
         if (serverUrl.isNullOrBlank() || token.isNullOrBlank()) return Outcome.STOP
         val file = partial(app, record)
         // The install state may have moved since the sync queued this (qa-13-code #3).

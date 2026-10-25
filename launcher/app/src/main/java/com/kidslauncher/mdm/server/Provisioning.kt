@@ -3,7 +3,6 @@ package com.kidslauncher.mdm.server
 import android.content.Context
 import android.util.Log
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.server.dto.EnrollRequest
 import com.kidslauncher.mdm.server.dto.ProvisioningExtras
 
 private const val LOG_TAG = "Provisioning"
@@ -37,25 +36,5 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
         Log.w(LOG_TAG, "Tailnet connection failed or timed out before enroll attempt")
     }
 
-    return try {
-        val response = createMdmApi(extras.serverUrl).enroll(EnrollRequest(extras.enrollmentCode))
-        val body = response.body()
-        if (response.isSuccessful && body != null) {
-            mdm.deviceToken(body.deviceToken)
-            mdm.enrolled(true)
-            // A new enrollment: the queued parent-PIN events were about the old one (design 24).
-            ParentPin.clearEvents(context)
-            // And the commands it ran and the answers it queued (QA of the launcher wave, Medium 1).
-            CommandAnswers.clear(context)
-            // And the old enrollment's zone watch: fences, queue, kept fix, beat, mock count (design 64 step 2, Q-8).
-            com.kidslauncher.mdm.zones.ZoneWatch.forget(context)
-            // And a running Install Now (design 37): its command was the old enrollment's.
-            InstallNow.clear(context)
-            Result.success(Unit)
-        } else {
-            Result.failure(Exception("HTTP ${response.code()}"))
-        }
-    } catch (e: Exception) {
-        Result.failure(e)
-    }
+    return Enrollment.enroll(context, extras.serverUrl, extras.enrollmentCode)
 }

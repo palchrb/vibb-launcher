@@ -322,7 +322,7 @@ class Application : android.app.Application() {
         // enrolled before Home's first start - the reset would drop its token and policy (design 59d §8.17).
         val mdm = LauncherPreferences.mdm()
         val startedBefore = LauncherPreferences.internal().started()
-        if (firstLaunchResetDue(startedBefore, mdm.enrolled(), mdm.deviceToken())) {
+        if (firstLaunchResetDue(startedBefore, mdm.enrolled(), com.kidslauncher.mdm.server.DeviceToken.present())) {
             resetPreferences(this)
         } else if (!startedBefore) {
             android.util.Log.i("Application", "Home hasn't started yet, but the phone is enrolled - keeping its preferences")
@@ -383,6 +383,9 @@ class Application : android.app.Application() {
         // before a Settings visit needs it (QA Low 11).
         val app = this
         CoroutineScope(Dispatchers.IO).launch { com.kidslauncher.mdm.server.ParentPin.prepareVault(app) }
+        // Design r10 §4: the device token, the kid PIN and the reset token sealed at once, off the main thread (a
+        // main-thread read never migrates) - so a reset token isn't left plain until the next window.
+        CoroutineScope(Dispatchers.IO).launch { com.kidslauncher.mdm.server.Secrets.migrateAll(app) }
         // Design 24b's fix round (QA High 1): an app that could read the parent PIN, at every start.
         com.kidslauncher.mdm.server.ForeignAccess.checkInBackground(this)
 

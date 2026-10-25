@@ -320,7 +320,7 @@ object PowerEvents {
     fun prepare(context: Context) {
         try {
             val mdm = LauncherPreferences.mdm()
-            val wanted = clientKeyOf(mdm.serverUrl(), mdm.deviceToken(), TsnetClient.proxyAddress)
+            val wanted = clientKeyOf(mdm.serverUrl(), DeviceToken.get(), TsnetClient.proxyAddress)
             synchronized(this) {
                 if (!rebuildNeeded(prepared?.key, wanted)) return
                 prepared = wanted?.let { Prepared(it, createMdmApi(it.baseUrl, it.token, callTimeoutMs = SHUTDOWN_POST_TIMEOUT_MS)) }

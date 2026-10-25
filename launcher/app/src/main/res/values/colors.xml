@@ -14,5 +14,7 @@
     <color name="lightTheme_background_color">#fff</color>
     <color name="lightTheme_accent_color">#9999ff</color>
     <color name="lightTheme_text_color">#000</color>
+    <!-- The light parent dialogs' error line (design r10's code dialog; about 5.5:1 on white, ReEnrolTest). -->
+    <color name="dialog_error_text">#C92A2A</color>
 </resources>
 
