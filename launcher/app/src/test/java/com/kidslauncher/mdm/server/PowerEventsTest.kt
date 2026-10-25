@@ -1,9 +1,12 @@
 package com.kidslauncher.mdm.server
 
 import com.kidslauncher.mdm.server.dto.BatteryReport
+import com.kidslauncher.mdm.server.dto.LocationPolicy
+import com.kidslauncher.mdm.server.dto.PowerLocation
 import com.kidslauncher.mdm.server.dto.PowerOff
 import com.kidslauncher.mdm.server.dto.PowerOn
 import com.kidslauncher.mdm.server.dto.PowerReport
+import com.kidslauncher.mdm.zones.QueuedFix
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -31,7 +34,10 @@ class PowerEventsTest {
     @Test
     fun `the encoding is exactly the contract`() {
         val report = PowerReport(
-            off = PowerOff(1_760_900_040_000, 41, BatteryReport(3, charging = false, low = true), reboot = false, reason = "userrequested"),
+            off = PowerOff(
+                1_760_900_040_000, 41, BatteryReport(3, charging = false, low = true), reboot = false, reason = "userrequested",
+                location = PowerLocation(lat = 59.9139, lng = 10.7522, accuracyM = 25f, atMs = 1_760_899_800_000, provider = "fused"),
+            ),
             on = PowerOn(1_760_936_520_000, 42, BatteryReport(11, charging = true, low = false), unlockedAtMs = 1_760_937_300_000),
         )
         assertEquals(contract.trimEnd(), ServerJson.encodeToString(PowerReport.serializer(), report))
@@ -153,6 +159,68 @@ class PowerEventsTest {
         assertEquals(setOf(PowerKeys.OFF_AT, PowerKeys.OFF_BOOT, PowerKeys.OFF_SENT), keys)
         // A part without its instant is none; a sent mark without a shutdown is nothing.
         assertEquals(PowerRecord(), decodePowerRecord(mapOf(PowerKeys.OFF_BOOT to 41, PowerKeys.OFF_SENT to true)))
+    }
+
+    /** 2026-10-25: the shutdown carries the newest fix already held - never under "Off", never a mock one. */
+    @Test
+    fun `the shutdown's position is the newest stored fix, or none`() {
+        val fix = QueuedFix(59.9139, 10.7522, 25f, now - 600_000, provider = "fused")
+        val regularly = LocationPolicy(mode = "interval", intervalMinutes = 30)
+        val expected = PowerLocation(lat = 59.9139, lng = 10.7522, accuracyM = 25f, atMs = now - 600_000, provider = "fused")
+        assertEquals(expected, shutdownLocation(fix, regularly))
+        assertEquals(expected, shutdownLocation(fix, LocationPolicy(mode = "on_request", intervalMinutes = 30)))
+        assertNull("no fix held", shutdownLocation(null, regularly))
+        assertNull("location Off", shutdownLocation(fix, LocationPolicy(mode = "off", intervalMinutes = 30)))
+        assertNull("no policy (not managed)", shutdownLocation(fix, null))
+        assertNull("a mock fix (only a debug build keeps one)", shutdownLocation(fix.copy(mock = true), regularly))
+        // Unknowns are left out of the body.
+        assertEquals(
+            """{"at_ms":5,"boot_count":1,"location":{"lat":1.5,"lng":2.5,"at_ms":4}}""",
+            ServerJson.encodeToString(PowerOff.serializer(), PowerOff(5, 1, location = PowerLocation(1.5, 2.5, atMs = 4))),
+        )
+    }
+
+    /** The fix lives in CE storage, joined to its own shutdown only - never in the device-protected record. */
+    @Test
+    fun `the shutdown's fix stays out of the device-protected record`() {
+        val location = PowerLocation(59.9, 10.7, 30f, now - 600_000, "gps")
+        val shutdown = off().copy(location = location)
+        assertEquals(encodePowerRecord(PowerRecord(off = off())), encodePowerRecord(PowerRecord(off = shutdown)))
+        assertNull(decodePowerRecord(encodePowerRecord(PowerRecord(off = shutdown))).off!!.location)
+        // Joined back for the upload, and sent with the next start.
+        val stored = OffLocation(shutdown.atMs, shutdown.bootCount, location)
+        val kept = decodePowerRecord(encodePowerRecord(PowerRecord(off = shutdown, offSent = true, on = on())))
+        val joined = kept.copy(off = withOffLocation(kept.off, stored))
+        assertEquals(location, uploadBody(joined, 42, now, 60_000)!!.off!!.location)
+        // Another shutdown's fix never joins; none stored, none sent.
+        assertNull(withOffLocation(off(atMs = now - 1), stored)!!.location)
+        assertNull(withOffLocation(off(boot = 40), stored)!!.location)
+        assertNull(withOffLocation(off(), null)!!.location)
+        assertNull(withOffLocation(null, stored))
+        // The copy goes with its shutdown.
+        assertTrue(offLocationKept(stored, off()))
+        assertFalse(offLocationKept(stored, null))
+        assertFalse(offLocationKept(stored, off(atMs = now)))
+        assertFalse(offLocationKept(null, off()))
+        // By source: the shutdown reads the stored fix (never a fresh one) and keeps it before the
+        // hold; the upload joins it and prunes the copy.
+        val power = code("PowerEvents.kt")
+        val shutdownCode = body(power, "fun onShutdown(")
+        assertTrue("shutdownLocation(LocateCommands.newestKnown(), locationPolicy)" in shutdownCode)
+        assertFalse("currentLocation(" in power)
+        assertTrue(shutdownCode.indexOf("saveOffLocation(app, off)") in 0 until shutdownCode.indexOf("receiver.goAsync()"))
+        val upload = body(power, "suspend fun upload(")
+        assertTrue("withOffLocation(record.off, stored)" in upload)
+        assertEquals(2, Regex("""pruneOffLocation\(context, stored""").findAll(upload).count())
+        // The sync tells the shutdown which location policy holds; init's cached read never
+        // overwrites it - both under one lock (qa-last-position-code Q-6).
+        assertTrue("PowerEvents.noteLocationPolicy(locationPolicy)" in code("MdmSyncWorker.kt"))
+        for (writer in listOf("fun noteLocationPolicy(", "private fun noteCachedLocationPolicy(")) {
+            assertTrue(writer, "synchronized(locationPolicyLock) {" in body(power, writer))
+        }
+        assertTrue("if (!locationPolicyNoted) locationPolicy = cached" in body(power, "private fun noteCachedLocationPolicy("))
+        assertTrue("noteCachedLocationPolicy(currentPolicyDecision()" in body(power, "fun init("))
+        assertEquals(2, Regex("""locationPolicy = """).findAll(power).count())
     }
 
     /** Design 59 §3.9: the boot's first CE start stamps this boot's start once - "turned on 07:02 · unlocked 07:15". */

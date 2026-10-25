@@ -372,7 +372,9 @@ impl Phone {
     /// A shutdown the phone saw (design 38 §3.2): "Anna was turned off" / "21:14 · battery 2 %,
     /// probably flat". `late`: it reached the server only with the next boot's start (" · told at
     /// the next start", never pushed). Pushed after [OFF_HOLD] (a restart's start drops it), never
-    /// for a restart the phone knew of.
+    /// for a restart the phone knew of. With the phone's last stored fix (2026-10-25) the event's
+    /// parameters carry it (`{"location": ..}`, never the words: the push stays as it is) and the
+    /// inbox's detail says "Last position from 21:10: shown on Locate" - no coordinates in any text.
     pub fn phone_off(&self, off: &PowerOff, at: DateTime<Utc>, late: bool) -> NewEvent {
         let restarting = off.reboot == Some(true);
         let reason = off_reason_words(off.reason.as_deref());
@@ -407,10 +409,24 @@ impl Phone {
         } else {
             Push::Held(self.now + OFF_HOLD)
         };
+        let (detail, params) = match &off.location {
+            Some(location) => (
+                Some(match DateTime::from_timestamp_millis(location.at_ms) {
+                    Some(fix_at) => {
+                        format!("Last position from {}: shown on Locate", self.at(fix_at))
+                    }
+                    None => "Last position: shown on Locate".to_string(),
+                }),
+                serde_json::to_string(&serde_json::json!({ "location": location })).ok(),
+            ),
+            None => (None, None),
+        };
         NewEvent {
             title,
             summary,
             push,
+            detail,
+            params,
             ..self.event(Kind::PhoneOff, instant(at), at)
         }
     }
@@ -641,6 +657,14 @@ pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Pho
     plan
 }
 
+/// A pages' line about a `phone_off` may say it (the device page's "Off since", Locate's "Last
+/// position before the phone went off" - qa-last-position-code Q-5): not for a restart the phone
+/// announced ("Anna is restarting"), not while the off's push is still held ([OFF_HOLD] from its
+/// arrival, `created_at`) - the pages say no more than the pushes.
+pub fn off_said(title: &str, created_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    !title.ends_with(" is restarting") && now - created_at >= OFF_HOLD
+}
+
 /// The device page's header line between a shutdown and the next start (design 38 §3.4): "Off
 /// since 21:14 · battery was 3 %", the battery read from the off's stored words. Nothing for a
 /// restart the phone announced ("Anna is restarting") or while the off's push is still held
@@ -654,7 +678,7 @@ pub fn off_since_line(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Option<String> {
-    if title.ends_with(" is restarting") || now - created_at < OFF_HOLD {
+    if !off_said(title, created_at, now) {
         return None;
     }
     let level = summary.split(" · ").find_map(|part| {
@@ -1272,6 +1296,7 @@ mod tests {
             battery,
             reboot,
             reason: reason.map(str::to_string),
+            location: None,
         }
     }
 
@@ -1473,6 +1498,7 @@ mod tests {
             battery: Some(battery(3, false, true)),
             reboot,
             reason: None,
+            location: None,
         };
         let on_at = |at: &str, boot: i64| PowerOn {
             at_ms: ms(at),

@@ -6,12 +6,17 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.SystemClock
 import android.util.Log
+import androidx.preference.PreferenceManager
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.dto.BatteryReport
+import com.kidslauncher.mdm.server.dto.LocationPolicy
+import com.kidslauncher.mdm.server.dto.PowerLocation
 import com.kidslauncher.mdm.server.dto.PowerOff
 import com.kidslauncher.mdm.server.dto.PowerOn
 import com.kidslauncher.mdm.server.dto.PowerReport
+import com.kidslauncher.mdm.zones.QueuedFix
 import java.util.concurrent.Executors
+import kotlinx.serialization.Serializable
 
 /*
  * The phone turned off and on (design 38, `docs/design/38-phone-off-on.md` §4): the shutdown seen
@@ -60,6 +65,42 @@ fun reasonOf(requested: String?): String? {
     if (requested == null || requested.isEmpty() || requested[0] !in "01") return null
     return requested.substring(1).take(64).takeIf { it.isNotBlank() }
 }
+
+/**
+ * The shutdown's last position (2026-10-25, PLAN "A last position at shutdown and at low
+ * battery"): the newest fix the phone already holds ([newest]: `LocateCommands.newestKnown`, the
+ * kept slot's or the reported one - never a fresh fix, there is no time), as the server takes it.
+ * None without a fix, without a location policy (no policy, not managed), under "Off" (a fix kept
+ * from before the parent turned it off is never sent), and for a mock fix - a release build never
+ * keeps one (design 64's rule counted it when it came), and a debug build's would reach the server
+ * unflagged (the body has no mock word).
+ */
+fun shutdownLocation(newest: QueuedFix?, policy: LocationPolicy?): PowerLocation? {
+    if (newest == null || policy == null || policy.mode == "off" || newest.mock) return null
+    return PowerLocation(
+        lat = newest.latitude,
+        lng = newest.longitude,
+        accuracyM = newest.accuracy,
+        atMs = newest.timeMs,
+        provider = newest.provider,
+    )
+}
+
+/** The shutdown's fix as CE storage keeps it (`OffLocations`): with its shutdown's instant and
+ * boot, so it joins only that shutdown. */
+@Serializable
+data class OffLocation(val offAtMs: Long, val offBootCount: Int, val location: PowerLocation)
+
+/** [off] with its fix from CE storage ([stored]) when that is this shutdown's; else [off] as it is. */
+fun withOffLocation(off: PowerOff?, stored: OffLocation?): PowerOff? {
+    if (off == null || stored == null || off.location != null) return off
+    if (stored.offAtMs != off.atMs || stored.offBootCount != off.bootCount) return off
+    return off.copy(location = stored.location)
+}
+
+/** The CE copy stays only while the record still holds its shutdown. */
+fun offLocationKept(stored: OffLocation?, off: PowerOff?): Boolean =
+    stored != null && off != null && stored.offAtMs == off.atMs && stored.offBootCount == off.bootCount
 
 /**
  * The start to record at a process start (§4.3): only the first start of a boot ([newBoot]) that
@@ -213,7 +254,9 @@ fun decodePowerRecord(values: Map<String, Any?>): PowerRecord {
     return PowerRecord(off = off, offSent = off != null && bool(PowerKeys.OFF_SENT) == true, on = on)
 }
 
-/** The prefs' values for [record] (what [decodePowerRecord] reads back), unknowns left out. */
+/** The prefs' values for [record] (what [decodePowerRecord] reads back), unknowns left out. The
+ * shutdown's [PowerOff.location] is never among them: the record is device-protected storage,
+ * readable before the first unlock; the fix lives in CE storage (`OffLocations`). */
 fun encodePowerRecord(record: PowerRecord): Map<String, Any> = buildMap {
     record.off?.let { off ->
         put(PowerKeys.OFF_AT, off.atMs)
@@ -258,6 +301,62 @@ object PowerEvents {
 
     private class Prepared(val key: ClientKey, val api: MdmApi)
 
+    /** CE default prefs: the shutdown's fix ([OffLocation] JSON), apart from the DE record. */
+    private const val OFF_LOCATION_KEY = "power_off_location"
+
+    /** The enforced policy's location policy as the last sync (or the cache at init) read it -
+     * `null` without a policy; the shutdown reads it, never the policy cache on the main thread. */
+    @Volatile
+    private var locationPolicy: LocationPolicy? = null
+
+    private var locationPolicyNoted = false
+
+    /** The sync's note and `init`'s cached read take it (qa-last-position-code Q-6): the cache never
+     * overwrites a newer policy a sync noted - "Off" included. */
+    private val locationPolicyLock = Any()
+
+    /** From every sync's location step: what [shutdownLocation] goes by. */
+    fun noteLocationPolicy(policy: LocationPolicy?) {
+        synchronized(locationPolicyLock) {
+            locationPolicy = policy
+            locationPolicyNoted = true
+        }
+    }
+
+    /** `init`'s cached policy, only while no sync has noted one. */
+    private fun noteCachedLocationPolicy(cached: LocationPolicy?) {
+        synchronized(locationPolicyLock) {
+            if (!locationPolicyNoted) locationPolicy = cached
+        }
+    }
+
+    private fun loadOffLocation(context: Context): OffLocation? = try {
+        PreferenceManager.getDefaultSharedPreferences(context).getString(OFF_LOCATION_KEY, null)
+            ?.let { ServerJson.decodeFromString<OffLocation>(it) }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** The shutdown's fix into CE storage (`commit()`, write-ahead like the record), or none. */
+    private fun saveOffLocation(context: Context, off: PowerOff) {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        val location = off.location
+        val edit = prefs.edit()
+        if (location == null) {
+            if (!prefs.contains(OFF_LOCATION_KEY)) return
+            edit.remove(OFF_LOCATION_KEY)
+        } else {
+            edit.putString(OFF_LOCATION_KEY, ServerJson.encodeToString(OffLocation(off.atMs, off.bootCount, location)))
+        }
+        if (!edit.commit()) Log.w(LOG_TAG, "Couldn't save the shutdown's position")
+    }
+
+    /** The CE copy goes once the record no longer holds its shutdown. */
+    private fun pruneOffLocation(context: Context, stored: OffLocation?, off: PowerOff?) {
+        if (stored == null || offLocationKept(stored, off)) return
+        PreferenceManager.getDefaultSharedPreferences(context).edit().remove(OFF_LOCATION_KEY).commit()
+    }
+
     /** The client the shutdown receiver uses: built in advance, so nothing is built inside the window. */
     @Volatile
     private var prepared: Prepared? = null
@@ -296,6 +395,14 @@ object PowerEvents {
         try {
             TsnetClient.proxyListener = { prepareAsync(app) }
             prepareAsync(app)
+            // The shutdown's position rule before this process's first sync: the cached policy's.
+            prepareExecutor.execute {
+                try {
+                    noteCachedLocationPolicy(currentPolicyDecision().policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY })
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Couldn't read the location policy: ${e.javaClass.simpleName}")
+                }
+            }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Power events init failed: ${e.javaClass.simpleName}")
         }
@@ -340,14 +447,27 @@ object PowerEvents {
     fun onShutdown(context: Context, intent: Intent, receiver: BroadcastReceiver) {
         val app = context.applicationContext
         val requested = shutdownRequested()
+        // The newest fix already held (2026-10-25), never a fresh one: there is no time.
+        val location = try {
+            shutdownLocation(LocateCommands.newestKnown(), locationPolicy)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "No position for the shutdown: ${e.javaClass.simpleName}")
+            null
+        }
         val off = PowerOff(
             atMs = System.currentTimeMillis(),
             bootCount = BootClock.bootCount(),
             battery = BatteryStatus.report(app),
             reboot = rebootOf(intent.getBooleanExtra(Intent.EXTRA_SHUTDOWN_USERSPACE_ONLY, false), requested),
             reason = reasonOf(requested),
+            location = location,
         )
         update(app) { withShutdown(it, off) }
+        try {
+            saveOffLocation(app, off)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't keep the shutdown's position: ${e.javaClass.simpleName}")
+        }
         val api = prepared?.api ?: return
         val pending = receiver.goAsync()
         try {
@@ -435,7 +555,14 @@ object PowerEvents {
     suspend fun upload(context: Context, api: MdmApi) {
         val now = System.currentTimeMillis()
         val record = update(context) { stale(it, now) }
-        val body = uploadBody(record, BootClock.bootCount(), now, SystemClock.elapsedRealtime()) ?: return
+        // The kept shutdown's fix from CE storage (never in the DE record), sent with it.
+        val stored = loadOffLocation(context)
+        val withFix = record.copy(off = withOffLocation(record.off, stored))
+        val body = uploadBody(withFix, BootClock.bootCount(), now, SystemClock.elapsedRealtime())
+        if (body == null) {
+            pruneOffLocation(context, stored, record.off)
+            return
+        }
         val code = try {
             api.sendPower(body).code()
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -447,6 +574,7 @@ object PowerEvents {
         if (code != null && code !in 200..299 && pinEventsLeaveQueue(code)) {
             Log.w(LOG_TAG, "The server refused the power report (HTTP $code) - dropped")
         }
-        update(context) { afterAnswer(it, body, code) }
+        val after = update(context) { afterAnswer(it, body, code) }
+        pruneOffLocation(context, stored, after.off)
     }
 }

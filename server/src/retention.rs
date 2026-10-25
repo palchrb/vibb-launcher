@@ -150,6 +150,19 @@ pub async fn prune(db: &SqlitePool) -> Result<Pruned, sqlx::Error> {
     .execute(db)
     .await?
     .rows_affected();
+    // The shutdown's last position (2026-10-25) in a `phone_off`'s parameters and detail goes
+    // with the location history too; the event itself stays its 90 days.
+    sqlx::query(
+        "UPDATE parent_events SET params = NULL, detail = NULL WHERE kind = ? \
+           AND params IS NOT NULL \
+           AND created_at < datetime('now', '-' || MAX(1, COALESCE( \
+                 (SELECT p.location_retention_days FROM device_policy p \
+                  WHERE p.device_id = parent_events.device_id), ?)) || ' days')",
+    )
+    .bind(crate::parent_events::Kind::PhoneOff.wire())
+    .bind(DEFAULT_LOCATION_RETENTION_DAYS)
+    .execute(db)
+    .await?;
     let parent_events = zone_rows
         + sqlx::query(
             "DELETE FROM parent_events WHERE created_at < datetime('now', '-' || ? || ' days')",

@@ -223,7 +223,18 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val forceFreshLocation = commandFix || zoneFix != null
     val preciseFix = commandFix || zoneFix == FreshKind.PRECISE
     val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
-    val location = currentLocationReport(context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, locationPolicy)
+    // 2026-10-25: the shutdown's last position goes by this policy (never "Off"), and the battery's
+    // low edge takes one balanced fix in this sync (LowBatteryFix) - or reports a fix of its own
+    // under 2 minutes old (qa-last-position-code Q-7).
+    PowerEvents.noteLocationPolicy(locationPolicy)
+    val lowBatteryFix = LowBatteryFix.take(
+        context,
+        deviceOwner = dpm.isDeviceOwnerApp(context.packageName),
+        policy = locationPolicy,
+        systemLocationOn = QuickControls.isLocationEnabled(context),
+        ownFixAgeMs = LocateCommands.cachedQueued()?.let { System.currentTimeMillis() - it.timeMs },
+    )
+    val location = currentLocationReport(context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, locationPolicy, lowBatteryFix)
     val locationOff = locationPolicy?.mode == "off"
     // Location Off, or no zones watched: the queue is emptied before the report, which carries no
     // extras - nothing kept from before the switch is sent (Q-5).
@@ -298,7 +309,7 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 clockFormatApplied = ClockFormatSetting.report(context, decision.policy),
                 // Design 36 §4.2: only while the VPN runs with the parent's own server.
                 dnsUpstream = KidVpnService.dnsUpstreamReport(),
-                battery = BatteryStatus.report(context),
+                battery = BatteryStatus.report(context).also { LowBatteryFix.observe(context, it) },
                 writeSettingsGranted = WriteSettingsAccess.granted(context),
                 extraLocations = extraFixes?.map { it.toReport() },
                 zoneWatch = ZoneWatch.report(context, still = location.still),
@@ -609,6 +620,7 @@ private suspend fun currentLocationReport(
     crossing: Boolean,
     zonesOn: Boolean,
     policy: LocationPolicy?,
+    lowBatteryFix: LowFix,
 ): LocationOutcome {
     if (!dpm.isDeviceOwnerApp(context.packageName)) return LocationOutcome(LocationAction.NONE, null, null, null)
     val now = System.currentTimeMillis()
@@ -629,7 +641,7 @@ private suspend fun currentLocationReport(
         keptFixAgeMs = kept?.let { now - it.timeMs },
         lastFreshFixMs = lastFreshFix,
     )
-    val action = sync.action
+    val action = withLowBatteryFix(sync.action, lowBatteryFix)
     if (zonesOn) {
         val beat = sync.beat
         if (beat != null && beat != Heartbeat.NOT_DUE) Log.i(LOG_TAG, "Location heartbeat: $beat")

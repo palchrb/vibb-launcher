@@ -1756,6 +1756,34 @@ adb logcat -s PowerEvents BootCover TsnetClient
 The emulator can't show (device checks, design 38 §6): the Jelly Star's power menu (Power off and Restart), a real
 flat battery (whether the broadcast comes, at which level), whether `sys.shutdown.requested` is readable there, and
 Restart timed to the start's arrival on Wi-Fi and on mobile data against the 5-minute hold.
+
+**The last position at shutdown and low battery** (design 38 "Last position", `docs/review/qa-last-position-code.md`).
+The shutdown check needs a non-mock fix: `adb emu geo fix` goes through the GPS HAL; a test provider's fix is mock on
+the debug build, and the shutdown sends none - by design.
+
+5. **Shutdown with a stored fix**: `adb emu geo fix 10.7522 59.9139`, then Update Location, so the phone has a reported
+   fix; `adb shell svc power shutdown`. Logcat shows the POST's 204; after the 5-minute hold Locate's newest fix reads
+   "Last position before the phone went off" (nothing during the hold), with exactly one row in the trail for it; the
+   inbox's off row says "Last position from HH:MM: shown on Locate"; the push "<phone> was turned off · …" has no
+   place in it. Start the AVD: the line is gone after the start's report.
+6. **The kept, unreported fix** (zones on, §6t): with a fence, a passive fix lands in the kept slot unreported; then
+   `svc power shutdown`: a new trail row, marked as the shutdown's.
+7. **Location "Off"** on the phone's Location Settings, after a sync: `svc power shutdown` sends an `off` with no
+   `location` (the server log's body size, no new trail row), and Locate shows no line.
+8. **A known restart**: `svc power reboot`: Locate's line never appears ("is restarting" when the property was
+   readable), nor during the 1-2 minutes before the start's report while the off's push is held.
+9. **Low battery, once per episode**: `adb emu power ac off`, `adb emu power capacity 10` (`am broadcast -a
+   android.intent.action.BATTERY_LOW` is refused to the shell - a protected broadcast): logcat `LowBatteryFix: Battery
+   low: one fix (balanced)`, one new fix on Locate within about 30 s. Then `adb emu power ac on`, `ac off` at the same
+   level: `Battery low: no fix (taken true, …)`, no new fix. Then `adb emu power capacity 30` with `ac on` (OKAY), `ac
+   off`, `capacity 10`: one fix again. Right after an Update Location, the edge reports that fix (`a fix under 2 min
+   old, reported`) and takes none.
+10. **Low battery with Location off** (the quick-settings toggle, "Keep location on" off): the LOW edge gives
+    `no fix (… location false)`, and the switch stays off.
+11. **Low battery under "Off"**: `no fix (… mode off)`.
+12. **Jelly Star** (device): a real LOW edge with Battery Saver auto-on at 15 % - does the balanced fix still get a
+    position with the screen off (Battery Saver's location mode may be foreground-only or no GPS with the screen off)?
+    A real flat-battery shutdown - does it carry the position?
 ## 6q. Pictures in the episode list, the kid's order flip, the art pass for every item (design 39)
 
 Design 39 §6 (`docs/design/39-music-list-pictures-and-order.md`). The whole chain (§6l Part A1's setup: the server,

@@ -92,7 +92,8 @@ versionCode is the shared contract's``, ``the tag codes are identical to the ser
 every `codes` row and compare the copies; the server's `device_pages::tests::music_versions_read_as_the_shared_contract`
 reads the `music_codes` rows (the music app's version from its code), and `scripts/release-version.sh --selftest`
 checks both lists' rows against what the workflows build.
-The launcher's `POST /api/devices/power` body (design 38 §2) is `server/testdata/power_report.json`, byte-identical in
+The launcher's `POST /api/devices/power` body (design 38 §2; since 2026-10-25 its `off` with the shutdown's last stored fix,
+`location`) is `server/testdata/power_report.json`, byte-identical in
 `launcher/app/src/test/resources/`: the launcher's `PowerEventsTest` encodes exactly it, the server's
 `power::a_launcher_report_raises_both` posts it (its instants moved to the last hour), and both compare the copies.
 The launcher's status body with `extra_locations` and `zone_watch` (design 64 step 2) is

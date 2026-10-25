@@ -43,7 +43,8 @@ object BatteryStatus {
     /**
      * From `Application.initRest`, once per process: `ACTION_BATTERY_LOW`/`ACTION_BATTERY_OKAY`
      * (neither reaches a manifest receiver since Android 8; a not-exported receiver still gets the
-     * system's broadcasts) request a sync, whose report carries the new `low`. While the process
+     * system's broadcasts) request a sync, whose report carries the new `low` - and, at the low
+     * edge, one fresh position (`LowBatteryFix`, 2026-10-25). While the process
      * isn't running (killed, or before the first unlock - `initRest` runs after it) the edge is
      * lost, and the next report (the backstop, a nudge, process start) carries the sticky state.
      * Everything is caught: a receiver fault must never take the home process (and the call path)
@@ -52,6 +53,8 @@ object BatteryStatus {
     fun watch(app: Context) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
+                // 2026-10-25: the low edge asks that sync for one fix (LowBatteryFix); it catches.
+                LowBatteryFix.onBatteryEdge(app, intent?.action)
                 try {
                     SyncRunner.request(app, BATTERY_SYNC_REASON)
                 } catch (e: Exception) {

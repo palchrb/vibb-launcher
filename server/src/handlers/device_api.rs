@@ -2138,12 +2138,32 @@ pub async fn power(
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
     body: axum::body::Bytes,
 ) -> StatusCode {
-    let Ok(report) = serde_json::from_slice::<crate::models::PowerReport>(&body) else {
+    let Ok(mut report) = serde_json::from_slice::<crate::models::PowerReport>(&body) else {
         return StatusCode::BAD_REQUEST;
     };
     if report.off.is_none() && report.on.is_none() {
         return StatusCode::BAD_REQUEST;
     }
+    // 2026-10-25: the shutdown's last fix, as a status report's fix is checked (time, place,
+    // accuracy, not ahead); one that isn't valid costs the position only, never the shutdown.
+    let shutdown_fix = report.off.as_mut().and_then(|off| {
+        let fix = off
+            .location
+            .as_ref()
+            .and_then(crate::models::PowerLocation::as_report)
+            .and_then(|loc| crate::models::checked_location(&loc).map(|at| (loc, at)));
+        if fix.is_none() && off.location.take().is_some() {
+            tracing::warn!(
+                device_id = device.id,
+                "dropped a shutdown's location that isn't valid"
+            );
+        }
+        // The event's parameters carry the provider word as the trail stores it (N-3).
+        if let Some(location) = off.location.as_mut() {
+            location.provider = crate::models::location_provider(location.provider.as_deref());
+        }
+        fix
+    });
     let Some(phone) = crate::parent_events::Phone::load(&state.db, device.id).await else {
         return StatusCode::INTERNAL_SERVER_ERROR;
     };
@@ -2231,12 +2251,29 @@ pub async fn power(
                 > 0;
         }
         tx.commit().await?;
-        Ok::<bool, sqlx::Error>(changed)
+        // The shutdown kept (not dropped as too old, ahead or after the start): its last fix is
+        // one of the phone's fixes, stored once and judged by the zones as a report's, then
+        // marked as the shutdown's for Locate's line.
+        let off_at = plan
+            .events
+            .iter()
+            .find(|event| event.kind == crate::parent_events::Kind::PhoneOff)
+            .map(|event| event.happened_at);
+        Ok::<_, sqlx::Error>((changed, off_at))
     };
     match result.await {
-        Ok(changed) => {
+        Ok((changed, off_at)) => {
             if changed {
                 state.push.wake();
+            }
+            if let (Some(off_at), Some((loc, captured_at))) = (off_at, shutdown_fix.as_ref()) {
+                crate::zones::intake(&state, device.id, &[(loc, captured_at.clone())], None).await;
+                if let Err(err) =
+                    crate::zones::mark_shutdown(&state.db, device.id, loc, captured_at, off_at)
+                        .await
+                {
+                    tracing::error!(device_id = device.id, %err, "can't mark the shutdown's fix");
+                }
             }
             StatusCode::NO_CONTENT
         }

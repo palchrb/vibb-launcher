@@ -942,9 +942,23 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   a `finally`, the record's writes `commit()` never `apply()`, the boot cover's synchronous arm in
   `coverAtShutdown` - the code QA's L1 -, the wiring in `Application`, `MdmSyncWorker` and `TsnetClient`),
   `KeyguardCoverPlanTest` (the cover's part is `coverAtShutdown`), `SyncScheduleTest` (`power_v1`). Emulator check: `docs/testing/emulator.md` §6p.
+- **The last position** (2026-10-25, design 38 "Last position"): the shutdown's `off` carries `location` - the newest
+  fix already held (`LocateCommands.newestKnown`, pure `shutdownLocation`: none without a fix or a location policy,
+  under "Off" - `noteLocationPolicy` from every sync, the cache's at `init` -, or for a mock fix), never a fresh one;
+  the fix is kept in CE default prefs `power_off_location` (`OffLocation`, `commit()` before `goAsync`), never in the
+  DE record (`encodePowerRecord` has no location key), and joined back to its own shutdown at the upload
+  (`withOffLocation`, `offLocationKept`). At `ACTION_BATTERY_LOW` `BatteryStatus`' receiver marks the edge
+  (`LowBatteryFix.onBatteryEdge`) before its sync request; that sync's location step takes it (`LowBatteryFix.take`,
+  pure `lowBatteryFixDue`: device owner, a policy not "Off", Location on, none taken in this episode) and takes the
+  balanced path (`withLowBatteryFix` -> `FRESH_BALANCED`, 15 s + 15 s), reported in that report - or, with a fix of
+  its own under 2 min old (`lowFixKind`, `LOW_FIX_RECENT_MS`), reports that one (`LowFix.CACHED`); the episode (CE
+  `battery_low_fix_taken`) is marked first and ends at `ACTION_BATTERY_OKAY` (`lowEpisodeAfterEdge`) or a reading
+  discharging and not low (`lowEpisodeAfterReading`); every step is `LowBatteryEpisode` over a `LowEpisodeFlag`, so the
+  tests drive the drain guard with a field (qa-last-position-code Q-2). `noteLocationPolicy` and `init`'s cached read
+  share one lock (Q-6). Tests: `PowerEventsTest`, `LowBatteryFixTest`.
 - **Not device-tested**: the Jelly Star's power menu (Power off, Restart), a real flat battery (is the broadcast sent,
   at which level), the property read, and Restart timed to the start's arrival on Wi-Fi and on mobile data against
-  the server's 5-minute hold (design 38 §6).
+  the server's 5-minute hold (design 38 §6); the last position's emulator checks (design 38 "Last position").
 
 ## Safe zones on the phone (design 64 step 2, `docs/design/64-safe-zones.md` §4, at the monorepo root)
 

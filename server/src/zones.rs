@@ -522,6 +522,29 @@ async fn mark_resent(
     Ok(())
 }
 
+/// The stored fix (the phone, `captured_at` and the coordinates - [store_fix]'s identity) marked as
+/// the last position before the shutdown at `off_at` (2026-10-25, migration 0097): Locate's line.
+pub async fn mark_shutdown(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    loc: &LocationReport,
+    captured_at: &str,
+    off_at: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE device_locations SET shutdown_at = ? WHERE device_id = ? AND captured_at = ? \
+         AND latitude = ? AND longitude = ?",
+    )
+    .bind(instant(off_at))
+    .bind(device_id)
+    .bind(captured_at)
+    .bind(loc.latitude)
+    .bind(loc.longitude)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 /// The report's `zone_watch.still` (Q-3): `true` only for a JSON `true`.
 pub fn report_still(zone_watch: Option<&serde_json::Value>) -> bool {
     zone_watch
