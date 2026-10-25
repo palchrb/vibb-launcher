@@ -1,35 +1,39 @@
 name: Server release
 
 # For a tag server-vX.Y.Z on a commit that is on master/main:
-# 1. server-release-build: fmt + tests, then static musl binaries for aarch64 (the Pi Zero 2 W
-#    tarball, as before) and x86_64 (the image).
+# 1. server-release-test: the tag checks, then fmt + tests, once. server-release-build, a matrix: the
+#    static musl binary built natively on a runner of its own architecture (aarch64-unknown-linux-musl
+#    on ubuntu-24.04-arm, x86_64-unknown-linux-musl on ubuntu-24.04; plain cargo, no cross, no QEMU)
+#    and packed as kid-phone-server-<target>.tar.gz (the binary and static/ at the top) with its
+#    .sha256: a tarball for each, so the server runs without Docker on either.
 # 2. server-release-sign, in the protected "release" environment (its deployment rule must allow
-#    server-v* tags; the SERVER_MINISIGN_KEY secret lives there, not in the repo): signs the tarball
-#    and update.sh with minisign (security review M5; the trusted comment is "<file> <tag>") and
-#    checks the signatures against the public key pinned in server/deploy/update.sh. No secret, or
-#    no pinned key: the run stops here, before any image is pushed or tagged (server/DEPLOY.md,
+#    server-v* tags; the SERVER_MINISIGN_KEY secret lives there, not in the repo): signs both
+#    tarballs and update.sh with minisign (security review M5; the trusted comment is "<file> <tag>")
+#    and checks the signatures against the public key pinned in server/deploy/update.sh. No secret,
+#    or no pinned key: the run stops here, before any image is pushed or tagged (server/DEPLOY.md,
 #    "Release signing").
 # 3. server-release-image (design 22 §6), a matrix: each architecture on a runner of its own
 #    (linux/amd64 on ubuntu-24.04, linux/arm64 on ubuntu-24.04-arm; no QEMU), its single-arch image
-#    pushed by digest only and smoke-tested there natively (server/deploy/image-smoke.sh).
+#    built from that architecture's tarball, pushed by digest only and smoke-tested there natively
+#    (server/deploy/image-smoke.sh).
 #    server-release-image-merge then joins the two digests into the multi-arch image
 #    ghcr.io/<owner>/handy-server, tagged X.Y.Z (and latest, if X.Y.Z is the highest server-v* tag -
 #    a patch on an older line doesn't take it), with a build provenance attestation.
-# 4. server-release-publish, last: the GitHub release with the tarball, update.sh and their
-#    signatures, as signed in step 2. server/deploy/install.sh
+# 4. server-release-publish, last: the GitHub release with both tarballs, their .sha256, update.sh
+#    and their signatures, as signed in step 2. server/deploy/install.sh
 #    and update.sh (and the in-app update check) look up the newest server-v* release through the
 #    GitHub API - never releases/latest, which in this monorepo belongs to the launcher: a server
 #    release is published with makeLatest false. Publishing last means the update check can't
 #    announce a version whose image is missing or broken.
 #
-# workflow_dispatch is always a dry run (on a branch or a tag ref): the same build, the image built and
-# smoke-tested locally on each architecture's own runner, nothing pushed, tagged or published. Only a tag push
-# releases.
+# workflow_dispatch is always a dry run (on a branch or a tag ref): the same tests and both tarballs,
+# each image built from its tarball and smoke-tested locally on its architecture's own runner, nothing
+# signed, pushed, tagged or published. Only a tag push releases.
 #
 # The GHCR package must be public (design 22, U3): after the first image push, the owner sets its
 # visibility once (GitHub > Packages > handy-server > Package settings > Change visibility).
 #
-# build (read-only token, runs cargo/cross) is kept apart from the jobs that write (packages,
+# test and build (read-only token, run cargo) are kept apart from the jobs that write (packages,
 # contents). Third-party actions are pinned by commit SHA. Never add a pull_request_target
 # trigger.
 
@@ -42,7 +46,7 @@ permissions:
   contents: read
 
 jobs:
-  server-release-build:
+  server-release-test:
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -110,63 +114,111 @@ jobs:
           toolchain: 1.99.0
           components: rustfmt
 
-      # The same gate as server-ci.yml, on exactly the tagged commit: nothing is published from a
-      # commit whose tests fail (clippy stays advisory there, so it isn't repeated here).
+      # The same gate as server-ci.yml, on exactly the tagged commit: nothing is built or published
+      # from a commit whose tests fail (clippy stays advisory there, so it isn't repeated here).
       - name: Test
         run: |
           cargo fmt --check
           cargo test --locked
 
-      - name: Install cross
-        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+  # One leg per architecture, each on a runner of that architecture: a plain cargo build of the
+  # static musl binary (no cross, no QEMU). Each leg hands on one artifact, server-tarball-<target>:
+  # the tarball (the binary and static/ at the top, as before) and its .sha256. The sign job signs
+  # both, and each image leg builds from its own architecture's tarball.
+  server-release-build:
+    needs: server-release-test
+    strategy:
+      # Both verdicts in a dry run; a release needs both legs anyway (server-release-sign).
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+    name: server-release-build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.target }}
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          tool: cross@0.2.5
+          persist-credentials: false
 
-      - name: Build (aarch64-unknown-linux-musl)
-        run: cross build --release --locked --target aarch64-unknown-linux-musl
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          # Pinned (security review L9); move it on deliberately, with the clippy count.
+          toolchain: 1.99.0
+          targets: ${{ matrix.target }}
 
-      - name: Build (x86_64-unknown-linux-musl)
-        run: cross build --release --locked --target x86_64-unknown-linux-musl
+      # musl-gcc compiles the C in ring and the bundled SQLite against musl's headers. cc-rs would
+      # look for aarch64-linux-musl-gcc on the arm runner, which Ubuntu doesn't ship, so CC_<target>
+      # names musl-gcc on both.
+      - name: Install musl-tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq musl-tools
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          export "CC_${TARGET//-/_}=musl-gcc"
+          cargo build --release --locked --target "$TARGET"
+
+      # The tarball must run on any Linux of its architecture: a static binary (no interpreter, no
+      # shared libraries) for the right machine.
+      - name: Check the binary is static and for its architecture
+        run: |
+          set -euo pipefail
+          bin="target/$TARGET/release/kid_phone_server"
+          case "$TARGET" in
+            aarch64-*) machine="AArch64" ;;
+            x86_64-*) machine="Advanced Micro Devices X86-64" ;;
+            *) echo "unknown target $TARGET" >&2; exit 1 ;;
+          esac
+          header="$(readelf -h "$bin")"
+          grep -q "Machine: *$machine$" <<<"$header" || { echo "$header"; echo "$bin isn't $machine" >&2; exit 1; }
+          linking="$(readelf -l -d "$bin")"
+          if grep -qE 'INTERP|\(NEEDED\)' <<<"$linking"; then
+            echo "$linking"
+            echo "$bin is dynamically linked" >&2
+            exit 1
+          fi
+          file "$bin"
+          # It runs here, natively: the usage text, exit status 2.
+          status=0
+          "$bin" no-such-command 2>/dev/null || status=$?
+          [ "$status" = 2 ] || { echo "$bin no-such-command exited $status, not 2" >&2; exit 1; }
 
       - name: Package
         run: |
           set -euo pipefail
-          # The Pi's tarball, laid out as before: the binary and static/ at the top.
+          # Laid out as before: the binary and static/ at the top.
           mkdir -p tarball
-          cp target/aarch64-unknown-linux-musl/release/kid_phone_server tarball/
+          cp "target/$TARGET/release/kid_phone_server" tarball/
           cp -r static tarball/
-          tar -czf kid-phone-server-aarch64-unknown-linux-musl.tar.gz -C tarball .
+          tar -czf "kid-phone-server-$TARGET.tar.gz" -C tarball .
           # install.sh/update.sh download this and refuse a tarball that doesn't match it.
-          sha256sum kid-phone-server-aarch64-unknown-linux-musl.tar.gz \
-            > kid-phone-server-aarch64-unknown-linux-musl.tar.gz.sha256
-          # The image's build context (server/Dockerfile).
-          mkdir -p dist/amd64 dist/arm64
-          cp target/x86_64-unknown-linux-musl/release/kid_phone_server dist/amd64/
-          cp target/aarch64-unknown-linux-musl/release/kid_phone_server dist/arm64/
-          cp -r static dist/static
+          sha256sum "kid-phone-server-$TARGET.tar.gz" > "kid-phone-server-$TARGET.tar.gz.sha256"
 
-      - name: Upload tarball
+      - name: Upload the tarball
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: server-release
+          name: server-tarball-${{ matrix.target }}
           path: |
-            server/kid-phone-server-aarch64-unknown-linux-musl.tar.gz
-            server/kid-phone-server-aarch64-unknown-linux-musl.tar.gz.sha256
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload the image context
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: server-image-context
-          path: server/dist
+            server/kid-phone-server-${{ matrix.target }}.tar.gz
+            server/kid-phone-server-${{ matrix.target }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
 
   # Root on every Pi installs and runs only what this key signed (install.sh, update.sh and
   # actions.sh check it). Nothing from the checkout is executed here; only this job sees the key.
   server-release-sign:
-    needs: server-release-build
+    needs: [ server-release-test, server-release-build ]
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}
     runs-on: ubuntu-24.04
     environment: release
@@ -177,13 +229,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download tarball
+      # Both legs' artifacts (server-tarball-<target>) into one directory.
+      - name: Download the tarballs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: server-release
+          pattern: server-tarball-*
+          merge-multiple: true
           path: signed
 
-      - name: Sign the tarball and update.sh
+      - name: Sign both tarballs and update.sh
         env:
           SIGNING_KEY: ${{ secrets.SERVER_MINISIGN_KEY }}
           TAG: ${{ github.ref_name }}
@@ -205,7 +259,11 @@ jobs:
           printf '%s\n' "$SIGNING_KEY" > "$key"
           cp server/deploy/update.sh signed/update.sh
           cd signed
-          for file in kid-phone-server-aarch64-unknown-linux-musl.tar.gz update.sh; do
+          # Both tarballs, each matching its .sha256, before anything is signed.
+          for target in aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+            sha256sum -c "kid-phone-server-$target.tar.gz.sha256"
+          done
+          for file in kid-phone-server-aarch64-unknown-linux-musl.tar.gz kid-phone-server-x86_64-unknown-linux-musl.tar.gz update.sh; do
             minisign -S -s "$key" -m "$file" -t "$file $TAG"
             # The secret must match the pinned key, or every Pi would refuse the release.
             comment="$(minisign -V -Q -P "$pubkey" -m "$file")"
@@ -222,21 +280,24 @@ jobs:
           retention-days: 7
 
   # One leg per architecture, each on a runner of that architecture: the build and the smoke test
-  # run natively (no QEMU). Each leg hands its smoke-tested digest to the merge as an artifact of its
-  # own (server-image-digest-<arch>, one file digest-<arch>), not as a job output: a matrix's legs
-  # share the job's outputs.
+  # run natively (no QEMU), from the binary in that architecture's tarball (server-release-build's
+  # leg for it). Each leg hands its smoke-tested digest to the merge as an artifact of its own
+  # (server-image-digest-<arch>, one file digest-<arch>), not as a job output: a matrix's legs share
+  # the job's outputs.
   server-release-image:
-    needs: [ server-release-build, server-release-sign ]
+    needs: [ server-release-test, server-release-build, server-release-sign ]
     # A release only once its files are signed; a workflow_dispatch (no signing) is the dry run.
-    if: ${{ !cancelled() && needs.server-release-build.result == 'success' && (needs.server-release-sign.result == 'success' || github.event_name != 'push') }}
+    if: ${{ !cancelled() && needs.server-release-test.result == 'success' && needs.server-release-build.result == 'success' && (needs.server-release-sign.result == 'success' || github.event_name != 'push') }}
     strategy:
       # Both verdicts in a dry run; a release needs both legs anyway (server-release-image-merge).
       fail-fast: false
       matrix:
         include:
           - arch: amd64
+            target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
           - arch: arm64
+            target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
     name: server-release-image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -245,7 +306,8 @@ jobs:
       packages: write
     env:
       ARCH: ${{ matrix.arch }}
-      VERSION: ${{ needs.server-release-build.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.server-release-test.outputs.version }}
       RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}
     defaults:
       run:
@@ -255,15 +317,24 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download the image context
+      - name: Download this architecture's tarball
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: server-image-context
-          path: server/dist
+          name: server-tarball-${{ matrix.target }}
+          path: ${{ runner.temp }}/tarball
 
-      # Artifacts don't keep the executable bit.
-      - name: Make the binary executable
-        run: chmod 755 "dist/$ARCH/kid_phone_server"
+      # The image's build context (server/Dockerfile): dist/<arch>/kid_phone_server and dist/static,
+      # unpacked from the tarball the release publishes (tar keeps the executable bit).
+      - name: Stage the image context
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/tarball"
+          (cd "$tarball" && sha256sum -c "kid-phone-server-$TARGET.tar.gz.sha256")
+          mkdir "$tarball/unpacked"
+          tar -xzf "$tarball/kid-phone-server-$TARGET.tar.gz" -C "$tarball/unpacked"
+          mkdir -p "dist/$ARCH"
+          install -m 755 "$tarball/unpacked/kid_phone_server" "dist/$ARCH/kid_phone_server"
+          cp -r "$tarball/unpacked/static" dist/static
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -337,8 +408,8 @@ jobs:
   # Joins the two smoke-tested digests into the multi-arch image, then tags it. A tag run only: a dry
   # run pushed nothing.
   server-release-image-merge:
-    needs: [ server-release-build, server-release-sign, server-release-image ]
-    if: ${{ !cancelled() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') && needs.server-release-build.result == 'success' && needs.server-release-sign.result == 'success' && needs.server-release-image.result == 'success' }}
+    needs: [ server-release-test, server-release-build, server-release-sign, server-release-image ]
+    if: ${{ !cancelled() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') && needs.server-release-test.result == 'success' && needs.server-release-build.result == 'success' && needs.server-release-sign.result == 'success' && needs.server-release-image.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -346,8 +417,8 @@ jobs:
       id-token: write
       attestations: write
     env:
-      VERSION: ${{ needs.server-release-build.outputs.version }}
-      LATEST: ${{ needs.server-release-build.outputs.latest }}
+      VERSION: ${{ needs.server-release-test.outputs.version }}
+      LATEST: ${{ needs.server-release-test.outputs.latest }}
     steps:
       - name: Download the amd64 digest
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -410,7 +481,7 @@ jobs:
           push-to-registry: true
 
   server-release-publish:
-    needs: [ server-release-build, server-release-sign, server-release-image, server-release-image-merge ]
+    needs: [ server-release-test, server-release-build, server-release-sign, server-release-image, server-release-image-merge ]
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-v') }}
     runs-on: ubuntu-24.04
     permissions:
@@ -440,12 +511,12 @@ jobs:
         uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
         with:
           tag: ${{ github.ref_name }}
-          name: server ${{ needs.server-release-build.outputs.version }}
+          name: server ${{ needs.server-release-test.outputs.version }}
           # releases/latest is the launcher's stable APK URL (provisioning QR) - a server
           # release must never take it over.
           makeLatest: "false"
           generateReleaseNotes: true
           generateReleaseNotesPreviousTag: ${{ steps.prev.outputs.tag }}
-          artifacts: "kid-phone-server-aarch64-unknown-linux-musl.tar.gz,kid-phone-server-aarch64-unknown-linux-musl.tar.gz.sha256,kid-phone-server-aarch64-unknown-linux-musl.tar.gz.minisig,update.sh,update.sh.minisig"
+          artifacts: "kid-phone-server-aarch64-unknown-linux-musl.tar.gz,kid-phone-server-aarch64-unknown-linux-musl.tar.gz.sha256,kid-phone-server-aarch64-unknown-linux-musl.tar.gz.minisig,kid-phone-server-x86_64-unknown-linux-musl.tar.gz,kid-phone-server-x86_64-unknown-linux-musl.tar.gz.sha256,kid-phone-server-x86_64-unknown-linux-musl.tar.gz.minisig,update.sh,update.sh.minisig"
           artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}

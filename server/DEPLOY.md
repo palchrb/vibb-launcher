@@ -1,6 +1,10 @@
 # Deploying to a Raspberry Pi / DietPi
 
-These steps get the Vibb Phone server (the parent app, a PWA) running on a Raspberry Pi Zero 2 W. Only 64-bit (aarch64) is supported.
+These steps get the Vibb Phone server (the parent app, a PWA) running on a Raspberry Pi Zero 2 W. The same
+`install.sh` works on any 64-bit Debian-family Linux with systemd, aarch64 or x86_64 (a home server, a VM, a VPS): every
+server release has a static tarball for each (`kid-phone-server-aarch64-unknown-linux-musl.tar.gz`,
+`kid-phone-server-x86_64-unknown-linux-musl.tar.gz`), and the script takes the one for `uname -m`. Docker is optional
+on both ("Docker" below). Other architectures (32-bit ARM, i686, ...) aren't supported.
 
 ## 1. Install
 
@@ -237,7 +241,8 @@ Funnel), and finally the DNS record. Keep the CAA record as long as you own the 
 ## Docker (server >= 0.23.0)
 
 The server also ships as a multi-arch image (`linux/amd64`, `linux/arm64`): `ghcr.io/palchrb/handy-server:X.Y.Z`
-(and `latest`, the highest release). The Pi Zero 2 W stays with the install script above; the image is for a home server or VPS. It runs
+(and `latest`, the highest release). It is optional: the install script above runs the same server without Docker on
+either architecture, and the Pi Zero 2 W stays with it. The image suits a home server or VPS that runs Docker anyway. It runs
 as uid 65532 with no shell, keeps everything in `/app/data`, and listens on `127.0.0.1:3100` by default.
 
 **Recommended: the host's network, with the host's Tailscale and Caddy.** The proxies' defaults then hold, and Docker
@@ -312,8 +317,10 @@ as 127.0.0.1, and the admin gate can't tell them from local tools.
 
 **Making the image public (once, for the repo owner)**: after the first `server-v*` release has pushed an image,
 GitHub may have created the package private. Open GitHub > your profile > Packages > `handy-server` > Package
-settings > Change visibility > Public. The release workflow tests every image natively on its own architecture (amd64 on
-`ubuntu-24.04`, arm64 on the `ubuntu-24.04-arm` runner) before the two are joined and get a version tag, and publishes the GitHub release only after that.
+settings > Change visibility > Public. The release workflow builds each architecture's binary natively (plain `cargo`,
+`x86_64-unknown-linux-musl` on `ubuntu-24.04`, `aarch64-unknown-linux-musl` on the `ubuntu-24.04-arm` runner; no
+`cross`, no QEMU), builds each image from the binary in that architecture's tarball and tests it natively on its own
+runner before the two are joined and get a version tag, and publishes the GitHub release only after that.
 
 ## Updating
 
@@ -351,10 +358,11 @@ installed one. To go back on purpose (see "Rolling back" below for the database)
 ### Release signing (server >= 0.24.0)
 
 Root on the Pi installs and runs only release files signed with the project's [minisign](https://jedisct1.github.io/minisign/)
-key (security review M5): `install.sh` and `update.sh` check the tarball, and the root-side updater checks `update.sh`
+key (security review M5): `install.sh` and `update.sh` check the tarball for their machine (each of the two has its
+own `.minisig`), and the root-side updater checks `update.sh`
 before it runs it. The public key is pinned in the scripts themselves (`SERVER_SIGNING_PUBKEY`), and each signature's
 trusted comment names the file and the release tag, so a signed file can't be passed off under another name or as
-another release. `server-release.yml` signs both in its `server-release-sign` job, with the `SERVER_MINISIGN_KEY`
+another release. `server-release.yml` signs both tarballs and `update.sh` in its `server-release-sign` job, with the `SERVER_MINISIGN_KEY`
 secret of the protected `release` environment, before any image is pushed or tagged: without the secret, or when it
 doesn't match the pinned key, the run stops there and nothing is pushed or published.
 

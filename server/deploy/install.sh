@@ -64,11 +64,14 @@ if [ "$SERVER_SIGNING_PUBKEY" = "not-set" ]; then
     exit 1
 fi
 
+# The release's tarball for this machine: both are static musl binaries, each built natively on a
+# runner of its own architecture. The same text in install.sh and update.sh.
 case "$(uname -m)" in
-    aarch64) TARGET="aarch64-unknown-linux-musl" ;;
+    aarch64 | arm64) TARGET="aarch64-unknown-linux-musl" ;;
+    x86_64 | amd64) TARGET="x86_64-unknown-linux-musl" ;;
     *)
         echo "Unsupported architecture: $(uname -m)" >&2
-        echo "This installer supports 64-bit (aarch64) Pi OS / DietPi only." >&2
+        echo "The server is released for 64-bit Linux on aarch64 or x86_64 only." >&2
         exit 1
         ;;
 esac
