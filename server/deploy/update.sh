@@ -624,6 +624,35 @@ if [ "$EXTERNAL_COPY_ENABLED" = "true" ] && [ -d "$DATA_DIR/backups" ]; then
         done
 fi
 
+# The drive keeps as many as data/backups/ (security review M2), so the data retention windows
+# hold there too: the newest RETENTION_COUNT backup-*.zip (the Backups page's "Backups to keep",
+# 0 keeps them all; handlers::backups::DEFAULT_RETENTION_COUNT when unset) and the newest
+# PRE_MIGRATE_KEEP pre-migrate-*.db (startup::PRE_MIGRATE_KEEP; a server test keeps both numbers
+# equal). Only regular files at the top of snapshots/ with those two names are ever deleted; the
+# names sort by time (byte order, as the server sorts them).
+RETENTION_COUNT_DEFAULT=14
+PRE_MIGRATE_KEEP=3
+RETENTION_COUNT="$(timeout 5 grep -m1 '^RETENTION_COUNT=' -- "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
+if ! [[ "$RETENTION_COUNT" =~ ^[0-9]{1,4}$ ]]; then
+    if [ -n "$RETENTION_COUNT" ]; then
+        echo "backup_sync: ignoring an invalid RETENTION_COUNT in $BACKUP_CONFIG_FILE" >&2
+    fi
+    RETENTION_COUNT="$RETENTION_COUNT_DEFAULT"
+fi
+# prune_snapshots PATTERN KEEP: deletes all but the newest KEEP files named PATTERN (KEEP 0: none).
+prune_snapshots() {
+    [ "$2" -gt 0 ] || return 0
+    find "$EXTERNAL_MOUNT/snapshots" -xdev -mindepth 1 -maxdepth 1 -type f -name "$1" -printf '%f\0' |
+        LC_ALL=C sort -z -r | tail -z -n +"$(( $2 + 1 ))" |
+        while IFS= read -r -d '' name; do
+            rm -f -- "$EXTERNAL_MOUNT/snapshots/$name"
+        done
+}
+if [ -d "$EXTERNAL_MOUNT/snapshots" ] && [ ! -L "$EXTERNAL_MOUNT/snapshots" ]; then
+    prune_snapshots 'backup-*.zip' "$((10#$RETENTION_COUNT))" || true
+    prune_snapshots 'pre-migrate-*.db' "$PRE_MIGRATE_KEEP" || true
+fi
+
 if [ "$CONTINUOUS_MIRROR_ENABLED" = "true" ] && [ -f "$DATA_DIR/live_mirror.db" ] &&
     [ ! -L "$DATA_DIR/live_mirror.db" ]; then
     install -d -m 700 "$EXTERNAL_MOUNT/live"

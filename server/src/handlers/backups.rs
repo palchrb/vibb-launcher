@@ -24,6 +24,9 @@ use crate::security::{self, CurrentAdmin};
 pub(crate) const BACKUP_DIR: &str = "backups";
 const SCHEDULE_FILE: &str = "backup_schedule.conf";
 const LAST_RUN_FILE: &str = "backup_schedule_last_run";
+/// "Backups to keep" when the schedule file doesn't say; `backup_sync.sh`'s
+/// `RETENTION_COUNT_DEFAULT` for the drive's copies is the same (`tests::deploy_scripts`).
+pub(crate) const DEFAULT_RETENTION_COUNT: usize = 14;
 const EXTERNAL_MOUNT: &str = "/mnt/kid-phone-server-backup";
 const LIVE_MIRROR_DB: &str = "live_mirror.db";
 /// The root helper's request file in `data_dir` (`system_update` and `system_maintenance` write
@@ -57,7 +60,7 @@ impl BackupScheduleConfig {
             day_of_week: "0".to_string(),
             day_of_month: "1".to_string(),
             backup_time: "02:00".to_string(),
-            retention_count: "14".to_string(),
+            retention_count: DEFAULT_RETENTION_COUNT.to_string(),
             external_copy_enabled: false,
             continuous_mirror_enabled: false,
         }
@@ -648,7 +651,7 @@ pub async fn save_backup_schedule(
         .retention_count
         .trim()
         .parse()
-        .unwrap_or(14)
+        .unwrap_or(DEFAULT_RETENTION_COUNT as i64)
         .clamp(0, 3650);
 
     let config = BackupScheduleConfig {

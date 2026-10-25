@@ -136,6 +136,11 @@ No prior programming experience - build features directly rather than explaining
   `backup_sync.sh` copies only regular files at the top of `data/backups/` and a regular `live_mirror.db`, with
   `cp -a --remove-destination`, after deleting everything on the drive that isn't a regular file or a directory
   (QA of the security wave, Medium 1: `cp -au` wrote through a link it had copied to the drive the run before).
+  It then prunes the drive's `snapshots/` to the server's counts (security review M2, `pwa-fixes-a`): the newest
+  `RETENTION_COUNT` (backup_schedule.conf, read by grep and checked; unset or invalid: `RETENTION_COUNT_DEFAULT` =
+  `backups::DEFAULT_RETENTION_COUNT`; 0 keeps all) `backup-*.zip` and the newest `PRE_MIGRATE_KEEP`
+  (`startup::PRE_MIGRATE_KEEP`) `pre-migrate-*.db`, `find -xdev -maxdepth 1 -type f -name`, byte order, nothing else
+  (`tests::deploy_scripts::the_backup_sync_keeps_as_many_on_the_drive_as_the_server`, `..._counts_are_the_servers`).
   `tests::deploy_scripts::run_root_script` runs a root heredoc under bash in a sandbox, with stubs.
 - **No admin session leaves the live database (security review M2).** Every copy goes through
   `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, which
