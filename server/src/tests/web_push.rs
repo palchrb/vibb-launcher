@@ -1068,6 +1068,37 @@ async fn send_a_test_and_remove() {
     assert!(res.location().unwrap().contains("notice=test_gone"));
 }
 
+/// 2026-10-25 (the user's false alarm after adding the app to the Home Screen again): under the
+/// device list, one line says what to do - only once a device is listed.
+#[tokio::test]
+async fn the_device_list_says_what_to_do_after_adding_the_app_again() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    const NOTE: &str = "<span data-note=\"added-again\">Added the app to the Home Screen again? Turn \
+                        notifications on in the new copy and remove the old device here.</span>";
+    let devices = |html: &str| {
+        html.split("id=\"devices\"")
+            .nth(1)
+            .and_then(|rest| rest.split("</section>").next())
+            .unwrap()
+            .to_string()
+    };
+    let none = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
+    assert!(!devices(&none).contains("data-note=\"added-again\""));
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let one = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
+    let list = devices(&one);
+    assert!(list.contains(NOTE), "{list}");
+    // Under the list: after the last device's group.
+    assert!(list.find(NOTE) > list.rfind("data-subscription="));
+}
+
 /// §7: Sign Out Everywhere and `reset-2fa` delete every subscription; a backup's copy holds none.
 #[tokio::test]
 async fn sign_out_everywhere_reset_2fa_and_backups_hold_no_subscription() {

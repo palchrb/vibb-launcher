@@ -510,3 +510,13 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
 - Tests: `tests::avatars::a_push_about_the_phone_carries_its_picture_as_the_icon`, `push::tests::the_payload_switch`,
   `jstest/sw.test.js` ("a push shows its phone's picture as the icon, never another site's").
 
+
+## Adding the app to the Home Screen again (2026-10-25, branch `pwa-fixes-d`)
+
+- **Why**: the user re-added the PWA to the iPhone's Home Screen (for the start-up splash) and took the silence for a
+  fault. A new Home Screen copy is a new web app with no notification permission, while the old copy's subscription
+  lives on at Apple: every push is accepted (201) and none is shown, no receipt.
+- **The line** (`notifications_settings.html`, the "Getting Notifications" footer, only while a device is listed):
+  "Added the app to the Home Screen again? Turn notifications on in the new copy and remove the old device here."
+  The health rule is unchanged: the old row is marked once its pushes go unreceipted, as before.
+- Test: `web_push::the_device_list_says_what_to_do_after_adding_the_app_again`.
