@@ -459,10 +459,15 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   phone (`device_tracked_apps`) other than the launcher's and the music app's (those keep their own paths) through the
   pure `listed_app_updates`: the listed code higher than the previous report's and the row's stored release installed
   (`catalog_release_installed`: an F-Droid row by its asset id - the versionCode -, any other by the versionName, a
-  leading "v" ignored, against `version_of` the tag); `from` the previous versionName. A previous report without codes
-  (an older launcher) raises nothing. Test: `app_updates::every_checked_catalog_app_raises_app_updated_by_its_listed_code`
-  (the status body's contract for the two fields, with the launcher's `SyncScheduleTest`; no shared file pins
-  `installed_apps`).
+  leading "v" ignored, against `version_of` the tag; the rest verbatim, so an app whose versionName spells an RC
+  differently from its tag - "1.2.0-rc1" against "v1.2.0-rc.1" - raises nothing, by design); `from` the previous
+  versionName. A previous report without codes (an older launcher) raises nothing, and neither does the same code again
+  or a lower one (`is.code <= was.code`: a phone already at the release when its launcher starts sending codes, a step
+  back from a beta onto the release; qa-launcher-small-a-code Q-4). Test: `app_updates::every_checked_catalog_app_raises_app_updated_by_its_listed_code`
+  and `an_app_already_at_the_release_or_going_back_to_it_raises_nothing`; the status body is the shared contract
+  `testdata/installed_apps_report.json` (byte-identical in the launcher's test resources: its `SyncScheduleTest`
+  encodes exactly it, `the_installed_apps_contract_raises_app_updated` posts it, both compare the copies; the code QA's
+  Q-5).
 - **The switch** "App updates" (`push_app_updates`, `parent_events::APP_UPDATES_SWITCH`, one for both kinds) is the one
   switch **off by default**: 0099's `DEFAULT 0` for every existing row, and `Kind::switch_default` for a parent with no
   row - `push::queue`'s `COALESCE(p.<switch>, <default>)` and Notify Me About's `read_switches`. Always in the inbox;

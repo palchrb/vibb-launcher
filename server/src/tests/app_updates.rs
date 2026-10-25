@@ -506,3 +506,114 @@ async fn every_checked_catalog_app_raises_app_updated_by_its_listed_code() {
     assert!(stored[1].get("version_code").is_none(), "{stored}");
     assert!(stored[1].get("version_name").is_none(), "{stored}");
 }
+
+/// A catalog row for Signal on `v7.2.0`, checked for `device`; its id.
+async fn checked_signal(app: &TestApp, device: i64) -> i64 {
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo, source_type, \
+         latest_release_tag, latest_release_asset_id) \
+         VALUES ('Signal', 'org.thoughtcrime.securesms', 'o/r', 'github', 'v7.2.0', 41) RETURNING id",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO device_tracked_apps (device_id, tracked_app_id) VALUES (?, ?)")
+        .bind(device)
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    id
+}
+
+/// qa-launcher-small-a-code Q-4: the listed code must be higher than the previous report's. A
+/// phone whose checked app already runs the stored release when it updates to a launcher that
+/// sends codes reports it twice in a row (the first with codes has nothing to compare, the second
+/// the same code): no "updated"; a step back from a higher build onto the release is no update
+/// either.
+#[tokio::test]
+async fn an_app_already_at_the_release_or_going_back_to_it_raises_nothing() {
+    let app = TestApp::new().await;
+    let (anna, token) = app.enrolled_device("Anna").await;
+    checked_signal(&app, anna).await;
+    let signal = |code: i64, name: &str| {
+        json!([{"package_name": "org.thoughtcrime.securesms", "label": "Signal",
+                "preinstalled": false, "version_code": code, "version_name": name}])
+    };
+    // An older launcher's report, then the update's first two reports at the release.
+    report_apps(
+        &app,
+        &token,
+        json!([{"package_name": "org.thoughtcrime.securesms", "label": "Signal", "preinstalled": false}]),
+    )
+    .await;
+    for _ in 0..2 {
+        report_apps(&app, &token, signal(1_500, "7.2.0")).await;
+    }
+    assert!(notices(&app).await.is_empty(), "{:?}", notices(&app).await);
+    // A Play beta above the release, then back down onto it.
+    report_apps(&app, &token, signal(1_600, "7.3.0-beta1")).await;
+    report_apps(&app, &token, signal(1_500, "7.2.0")).await;
+    assert!(notices(&app).await.is_empty(), "{:?}", notices(&app).await);
+}
+
+/// qa-launcher-small-a-code Q-5: the launcher's status body with the installed versions, shared
+/// with its test resources (`SyncScheduleTest` encodes exactly it).
+const INSTALLED_APPS_REPORT: &str = include_str!("../../testdata/installed_apps_report.json");
+
+#[test]
+fn the_installed_apps_contract_matches_the_launchers_copy() {
+    let copy_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../launcher/app/src/test/resources/installed_apps_report.json");
+    let copy = std::fs::read_to_string(&copy_path)
+        .unwrap_or_else(|e| panic!("{}: {e}", copy_path.display()));
+    assert_eq!(
+        copy,
+        INSTALLED_APPS_REPORT,
+        "{} differs",
+        copy_path.display()
+    );
+}
+
+/// The contract posted as is, after a report of the same apps one release back: the checked
+/// app's `app_updated`, with the fields stored as the launcher sent them.
+#[tokio::test]
+async fn the_installed_apps_contract_raises_app_updated() {
+    let app = TestApp::new().await;
+    let (anna, token) = app.enrolled_device("Anna").await;
+    let signal = checked_signal(&app, anna).await;
+    let contract: Value = serde_json::from_str(INSTALLED_APPS_REPORT).unwrap();
+    let mut before = contract.clone();
+    before["installed_apps"][0]["version_code"] = json!(1_400);
+    before["installed_apps"][0]["version_name"] = json!("7.1.4");
+    for body in [before, contract] {
+        let res = app
+            .request(
+                Method::POST,
+                "/api/devices/status",
+                Some(&token),
+                Some(body),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    }
+    let rows = notices(&app).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        (rows[0].0, rows[0].1.as_str(), rows[0].2.clone()),
+        (Some(anna), "app_updated", format!("{signal}:1500"))
+    );
+    assert_eq!(rows[0].3["from"], "7.1.4");
+    assert_eq!(rows[0].3["to"], "7.2.0");
+    let stored: String = sqlx::query_scalar(
+        "SELECT installed_apps_json FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind(anna)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let stored: Value = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored[0]["version_code"], 1_500);
+    assert_eq!(stored[0]["version_name"], "7.2.0");
+    assert!(stored[1].get("version_code").is_none(), "{stored}");
+}

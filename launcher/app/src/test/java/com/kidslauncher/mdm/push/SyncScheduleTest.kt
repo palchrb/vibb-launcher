@@ -123,6 +123,29 @@ class SyncScheduleTest {
         assertTrue("installer" in json["installed_apps"].toString())
     }
 
+    /** qa-launcher-small-a-code Q-5: the status body with the installed versions is the shared contract
+     * `installed_apps_report.json` (byte-identical with `server/testdata/`, which the server's `app_updates` test posts). */
+    @Test
+    fun `the installed versions encode exactly the shared contract, identical to the servers copy`() {
+        val contract = javaClass.classLoader!!.getResource("installed_apps_report.json")!!.readText()
+        val report = StatusReportRequest(
+            lockReason = "NONE",
+            kioskEngaged = true,
+            installedApps = listOf(
+                InstalledApp(
+                    "org.thoughtcrime.securesms", "Signal", false, installer = "me.vibb.launcher",
+                    versionCode = 1_500L, versionName = "7.2.0",
+                ),
+                InstalledApp("org.example.older", "Older", true),
+            ),
+        )
+        assertEquals(contract.trimEnd(), ServerJson.encodeToString(StatusReportRequest.serializer(), report))
+        // Gradle runs unit tests with the module directory (launcher/app/) as the working directory.
+        val serverCopy = java.io.File("../../server/testdata/installed_apps_report.json")
+        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
+        assertEquals("${serverCopy.path} differs from the launcher's copy", serverCopy.readText(), contract)
+    }
+
     /** PLAN "Installed versionCode per catalog app in the status report": each listed app's versionCode and
      * versionName (the server's `app_updated` for every catalog app); both left out when unknown. */
     @Test
