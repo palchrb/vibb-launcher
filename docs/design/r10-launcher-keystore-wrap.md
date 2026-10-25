@@ -255,6 +255,28 @@ The debug hook `PinVaultKeyReceiver` (src/debug, DUMP-guarded) gets `--es key se
    synced, both PINs work; the device page shows one re-enrolment.
 6. **BFU unchanged**: reboot; before the first unlock an allowed number rings and a blocked one is blocked.
 
+Added by the code QA (`docs/review/qa-r10-keystore-code.md`), run by the coordinator:
+
+7. **Boot cost on main.** Upgrade from the previous build, then five cold boots and five unlocks. Log the wall time of
+   `PinLockStore.config` in `PinLockRuntime.init` (temporary) and read `Unlocked setup took N ms` against the previous
+   build. No ANR dialog, no "Skipped frames" above the previous build's. Repeat on the Jelly Star (Q-6).
+8. **The deadlock with the tailnet down** (Q-1). A `*.ts.net` server URL; `key all`, Wi-Fi off, reboot, wait for the
+   lock. Then Wi-Fi on, type a parent code once, and "Ny oppsettkode" with a fresh code: enrolled and synced. With
+   Wi-Fi still off, the dialog says the server couldn't be reached, not that the code didn't work.
+9. **The secrets key lost while running.** `key secrets` without a force-stop: the memo keeps the token and the PIN for
+   this process (a sync works, the kid PIN opens). Then force-stop: the lock is `BAD_HASH`, the device page goes
+   silent, and check 4 follows.
+10. **The reset token after a key loss.** After check 4's re-enrolment, open a window on a phone with no Android
+    credential: `window_relock.xml`'s `token` is a new `ks1:` value, and at the window's end the relock reports no
+    "credential left".
+11. **The migration is crash-safe.** Install over the old build and `am force-stop` within a second of the first unlock
+    (before the background pass). The three files hold each field either plain or `ks1:`, never both and never gone,
+    and no `*.bak` file is left in `shared_prefs/`. The next start seals the rest.
+12. **The re-enrol dialog survives the screen.** Press power during the enrol call (and once rotate, if the lock allows
+    it). The code is either used and the phone enrolled, or unused (Q-8).
+13. **A wrong typed code, a right one in lower case** (the server normalises the case), and a code typed with the
+    keyboard's caps off. All in check 5's flow.
+
 ## Not in scope
 
 - Design 60 (the attested signing token; StrongBox belongs there).
@@ -295,8 +317,9 @@ The debug hook `PinVaultKeyReceiver` (src/debug, DUMP-guarded) gets `--es key se
   (`Application.initRest`'s first-launch reset, design 59d §8.17): it now asks `DeviceToken.present()` (stored at all,
   no Keystore call; `firstLaunchResetDue(startedBefore, enrolled, tokenStored)`), so an unreadable token never
   de-enrols the phone. `SealedPrefsTest` pins the sites file by file, the generated getter/setter in
-  `SealedPrefs.kt` alone, `DeviceToken.set` in `Enrollment.kt` alone, and the PIN/token keys never read or written raw
-  (the revision check's nit).
+  `SealedPrefs.kt` alone and `DeviceToken.set` in `Enrollment.kt` alone; since the fix round (code QA Q-2) it also bans
+  the pref key `mdm.device_token` and the three AADs outside their owner files, and a raw `"token"` read or write in any
+  file that opens `window_relock`, in `src/main`, `src/debug` and `src/release`.
 - `server/Enrollment.kt`: `Enrollment.enroll(context, serverUrl, code)` - the HTTP enrolment, `DeviceToken.set` (on IO,
   revision check N7), `enrolled`, the usual clears; used by `applyProvisioningExtras`, Settings' "Enroll now" (which
   keeps its toast and sync on main) and the lock's code dialog. `showReEnrol(token, parentStatus, url)`.
@@ -330,15 +353,17 @@ The debug hook `PinVaultKeyReceiver` (src/debug, DUMP-guarded) gets `--es key se
 - The stand-in carries the policy's `pin_rev`, so the status report's `lock_state.pin_rev` stays the policy's under
   `BAD_HASH`, as for a bad hash from the server.
 - Kept from the revision check (not in the note): N1 (`PinWrite.Keep`), N2 (re-check after every result), N3 (every PIN
-  removal goes through `SealedPrefs` under `LOCK`; `resetPreferences` runs only on a phone with no token stored, so it
-  can't race a token migration), N6 (a non-migrating read never takes `LOCK`), N7 (the token written on IO), N4's field
+  removal goes through `SealedPrefs` under `LOCK`; `resetPreferences` - the first-launch reset's and
+  `migratePreferencesToNewVersion`'s fallback - runs in `initRest` before the background pass is launched, so it can't
+  race that pass), N6 (a non-migrating read never takes `LOCK`), N7 (the token written on IO), N4's field
   hardening. **Not done, for code QA / the user**: N4's other points and N5 - the button stays in both dialogs as the
   note says; an allowlisted keyboard's own activities (settings, clipboard) can still open over the lock for the
   re-front's seconds, and on the time-rule screen (`LockActivity`, not lock-tasked with the kiosk off) longer. The
   state is not kid-controllable, but a transient Keystore fault that sets the vault's `rewrap_needed` and makes the
   token unreadable at once shows the button until it heals (harmless: the code is the parent's). N8: a `recreate()` in
   `DeviceToken.set` while a window is open with a kid-set credential orphans the reset token, and the relock then
-  reports "credential left" (two seal failures in a row; rare).
+  reports "credential left" - since the fix round only when the key itself is broken (Q-4), not after two transient
+  errors.
 
 **Emulator checks still owed** (§8, debug build, with this build's behaviour):
 1. Upgrade - as written; the cached `kid_lock` shows no `pin_hash` key at all (not `"pin_hash":""`).
@@ -349,3 +374,16 @@ The debug hook `PinVaultKeyReceiver` (src/debug, DUMP-guarded) gets `--es key se
    `Unavailable(untilSync)`), then "Ny oppsettkode" shows; then as written. Add: long-press the field (no menu), and
    with an allowlisted keyboard tap its toolbar keys (N4) - in both kiosk modes, and once from the time-rule screen.
 6. BFU unchanged - as written.
+7.-13. The code QA's checks, added to §8 above.
+
+**Fix round** (code QA `docs/review/qa-r10-keystore-code.md`, every finding, in a35c436a): `Enrollment.enroll`
+brings the tailnet up first and its failure says whether the server refused the code (4xx) or wasn't reached (the
+dialog's two lines); the re-enrol call runs in a process scope; `putRecovering` makes a new key only when
+`SecretBox.keyBroken()` (missing, unrecoverable, `InvalidKeyException`); `configure` writes a real hash again while
+`pinStored` is false; a `Keep` save commits without `LOCK`; `kidConfigFor` takes a stored copy only with the policy's
+`pin_rev` (or rev 0); the Keystore box caches its key handle (dropped on any failure and by `recreate`); the SSE
+connect reads the token on a background thread and Settings' Sync now checks presence only; `KidLock` and
+`KidLockConfig` print no hash; the error colour is a resource. Tests: `SealedGlueTest` (new), more in
+`SealedPrefsTest`, `KidPinSealTest`, `ReEnrolTest`; the suite 1755. The QA's mutations M8b (a raw
+`getString("mdm.device_token", null)` in `PowerEvents`) and M7 (`present()` as `get() != null`) now each fail the suite.
+Q-9 (N4/N5) stays open as documented above.

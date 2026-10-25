@@ -668,17 +668,25 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   write); **a read on the main thread never migrates** (`Secrets.migrateHere()`), and `Secrets.migrateAll` runs once
   per process from `initRest` on IO; the memo is one (stored, plain) pair per AAD, values only. `DeviceToken` is the
   **only** code that names the generated `deviceToken` getter/setter (`get()` - `null` for none or unreadable, so every
-  site's "not enrolled" covers a broken key -, `state()`, `present()`, `set()` with retry-then-`recreate()`); never read
-  the token raw - `Bearer ks1:...` looks like a dead server (`SealedPrefsTest` scans every site).
+  site's "not enrolled" covers a broken key -, `state()`, `present()` - stored at all, `tokenStored`, no Keystore call -,
+  `set()`: one retry, then a new key only when `SecretBox.keyBroken()`); never read the token raw - `Bearer ks1:...`
+  looks like a dead server (`SealedPrefsTest` pins every `DeviceToken.get()` site and bans the key `mdm.device_token`,
+  the AADs and the generated accessor outside their owners in `src/main`, `src/debug` and `src/release`). The
+  Keystore box caches its key handle; no token read on the main thread but `PinLockRuntime.init`'s PIN (the SSE
+  connect reads on a background thread, Settings' Sync now checks presence).
 - **One enrolment** (`server/Enrollment.kt`): the QR's `applyProvisioningExtras`, Settings' "Enroll now" and "Ny
-  oppsettkode" call `Enrollment.enroll`, which seals the token on IO, sets `enrolled` and clears the old enrolment's
-  state (`ParentPin.clearEvents`, `CommandAnswers`, `ZoneWatch.forget`, `InstallNow`).
+  oppsettkode" call `Enrollment.enroll`, which brings the tailnet up first (`TsnetClient.connectFromPreferences`),
+  seals the token on IO, sets `enrolled` and clears the old enrolment's state (`ParentPin.clearEvents`,
+  `CommandAnswers`, `ZoneWatch.forget`, `InstallNow`); its failure is an `EnrollFailure` that says whether the server
+  refused the code (4xx).
 - **The kid PIN, one sealed copy**: `storeAcceptedPolicy` caches `policyToCache` (the kid hash and salt `""`); the sync
   applies the policy with the hash. `configure` takes the pure `kidConfigFor(kidLock, memory, stored)` (`lock/
   PinLockState.kt`): a real hash; redacted -> a usable memory, else the usable sealed store, else the unusable stand-in
   (`true to BAD_HASH`: the lock up, the parent code opens it) - **never `null` while `kid_lock` is there**; the policy's
-  length wins. `saveConfig(PinWrite)`: `Write` only for a real hash (sealed), `Remove` for no `kid_lock`, `Keep` for a
-  redacted/stand-in apply and the crash guard; a failed seal commits `active` and removes the PIN fields. No backoff
+  length wins; a stored copy counts only with the policy's `pin_rev` (or rev 0). `saveConfig(PinWrite)`: `Write` only
+  for a real hash (sealed; written again while `pinStored` is false), `Remove` for no `kid_lock`, `Keep` for a
+  redacted/stand-in apply and the crash guard (a plain commit, no `LOCK`); a failed seal commits `active` and removes
+  the PIN fields. No backoff
   step for the stand-in (`backoffStepDue`); `checkPin` reads the store again when memory is unusable; Home's
   `pinSetStored` checks `PinLockStore.pinStored` (presence, no Keystore).
 - **A lost key** reverses 24b's QA #7: the lock comes up `BAD_HASH`, the next policy re-seals the PIN; an unreadable
@@ -687,10 +695,11 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   (`ui/ReEnrolDialog.kt`, `dialog_re_enrol.xml`): the neutral button of both parent-code dialogs, shown only while the
   pure `showReEnrol` holds (token `Unreadable` and the parent PIN `untilSync` or not set, a server URL stored), read off
   main when the dialog opens and after every result; the one text field on the lock (no suggestions or autofill, no
-  selection/paste menu, `FLAG_SECURE`), the typed setup code from the device page; it enrols and syncs, **never
-  unlocks** (`ReEnrolTest`). The parent-PIN keypads keep no text field (`WindowRelockCallersTest`).
-- Tests: `SealedPrefsTest`, `KidPinSealTest`, `ReEnrolTest`, `PolicyResponseCompatTest` (the redacted cache). Not
-  device-tested: the note's §8 and "Implementation status".
+  selection/paste menu, `FLAG_SECURE`), the typed setup code from the device page; it enrols (in a process scope, so a
+  consumed code isn't lost to the activity) and syncs, **never unlocks**; a refused code and an unreachable server have
+  their own lines (`ReEnrolTest`, `SealedGlueTest`). The parent-PIN keypads keep no text field (`WindowRelockCallersTest`).
+- Tests: `SealedPrefsTest`, `KidPinSealTest`, `ReEnrolTest`, `SealedGlueTest` (the Android glue by source),
+  `PolicyResponseCompatTest` (the redacted cache). Not device-tested: the note's §8 (checks 1-13).
 
 ## Security review, launcher wave (2026-10-11, `docs/review/security-review-2026-10-10.md`, at the monorepo root)
 
