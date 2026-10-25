@@ -267,7 +267,7 @@ async fn the_shutdowns_last_position_is_on_locate() {
     let pushed = app.pushes.take();
     assert_eq!(pushed.len(), 1);
     let push = payload(&pushed[0]);
-    assert_eq!(push["notification"]["title"], "Anna was turned off");
+    assert_eq!(push["notification"]["title"], "Anna: turned off");
     let push_text = push.to_string();
     assert!(
         !push_text.contains("59.9") && !push_text.contains("Locate"),
