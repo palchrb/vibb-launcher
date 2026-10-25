@@ -31,6 +31,8 @@ import kotlinx.coroutines.delay
 import me.vibb.music.R
 import me.vibb.music.data.Snapshot
 import me.vibb.music.logic.SearchHit
+import me.vibb.music.logic.TimeRow
+import me.vibb.music.logic.timeRow
 import me.vibb.music.logic.categoryTiles
 import me.vibb.music.logic.effectiveCategory
 import me.vibb.music.logic.holdEndsAt
@@ -137,8 +139,11 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
                     swipeSwitch(s, n, target, current?.ref, held?.request, SystemClock.elapsedRealtime(), onRoom)?.let { vm.switching = it }
                     actions.skipTo(item.entryId, n.entryOf(item).key, item.key, forward)
                 }
+                // PLAN "Connecting…": from the tap until the room reports PLAYING, a quiet line in the times' place
+                val timeRow = timeRow(onRoom, hub.connecting, held != null && hub.waiting, hub.rendererState)
                 PlayerScreen(
                     n, { item -> playerNumberOf(s, n, item) }, of, position, hub.sleepMinutes, hub.sleepAtEnd, hub.output, hub.rendererState,
+                    connecting = timeRow == TimeRow.CONNECTING,
                     onBack = backToLibrary,
                     onSeek = actions::seekTo,
                     onShuffle = actions::toggleShuffle,

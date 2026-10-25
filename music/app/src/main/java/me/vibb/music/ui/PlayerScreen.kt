@@ -100,6 +100,8 @@ fun PlayerScreen(
     sleepAtEnd: Boolean,
     output: Output,
     rendererState: RendererState?,
+    /** A Sonos room takes our play (PLAN "Connecting…", `logic/HandOver.kt`): "Kobler til høyttaleren…" in the times' place. */
+    connecting: Boolean,
     onBack: () -> Unit,
     onSeek: (Long) -> Unit,
     onShuffle: () -> Unit,
@@ -172,7 +174,7 @@ fun PlayerScreen(
                 }
             }
         }
-        SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), onSeek)
+        SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), if (connecting) stringResource(R.string.connecting_speaker) else null, onSeek)
         // v12's sizes where they fit, v15's compact ones on a 320 dp phone: always round, play centred.
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val row = controlRow(maxWidth.value)

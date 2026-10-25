@@ -274,7 +274,7 @@ fun Cover(
  * gets there (or a second passes). TalkBack sees a slider.
  */
 @Composable
-fun SeekBar(positionMs: Long, durationMs: Long?, label: String, onSeek: (Long) -> Unit) {
+fun SeekBar(positionMs: Long, durationMs: Long?, label: String, status: String? = null, onSeek: (Long) -> Unit) {
     var dragFrac by remember { mutableStateOf<Float?>(null) }
     var released by remember { mutableStateOf<Pair<Long, Long>?>(null) } // (target ms, when)
     val duration = durationMs?.takeIf { it > 0 }
@@ -320,6 +320,11 @@ fun SeekBar(positionMs: Long, durationMs: Long?, label: String, onSeek: (Long) -
             )
         }
         Row(Modifier.fillMaxWidth()) {
+            if (status != null) {
+                // a quiet line in the times' place, in their type, so nothing below moves (PLAN "Connecting…")
+                Line(status, 12, 700, Palette.sub, Modifier.fillMaxWidth(), center = true)
+                return@Row
+            }
             val shown = if (duration != null) (frac * duration).toLong() else positionMs
             Line(formatDuration(shown), 12, 700, Palette.sub)
             Spacer(Modifier.weight(1f))

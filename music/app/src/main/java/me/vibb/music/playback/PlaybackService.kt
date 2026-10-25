@@ -131,6 +131,7 @@ import me.vibb.music.media.MediaCache
 import me.vibb.music.model.Entry
 import me.vibb.music.model.PlayItem
 import me.vibb.music.model.Source
+import me.vibb.music.sonos.HandOverTiming
 import me.vibb.music.sonos.PlayBodies
 import me.vibb.music.sonos.RendererChoice
 import me.vibb.music.sonos.SonosHome
@@ -333,6 +334,7 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         store = Store.get(this)
         home = SonosHome(this)
+        HandOverTiming.sink = SonosHome::handOver
         locks = SonosLocks(this)
         attach(LocalRenderer(this, store, scope, writer) { active }.also { local = it })
         val open = PendingIntent.getActivity(
@@ -629,6 +631,9 @@ class PlaybackService : MediaSessionService() {
             if ((customCommand.customAction in Commands.PLAYS || toRoom) && !playAllowed(suspendedNow())) {
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
+            // the room hand-over's timing (design 54 "Hand-over timing"): a play for a room starts the timeline - measurement only
+            val roomPlay = toRoom || (customCommand.customAction in Commands.PLAYS - Commands.ROOM_JOIN && renderer is SonosRenderer)
+            if (roomPlay) HandOverTiming.tap(customCommand.customAction.substringAfterLast('.'))
             if ((Commands.ALL + Commands.LAUNCHER).none { it.customAction == customCommand.customAction }) {
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
@@ -641,6 +646,7 @@ class PlaybackService : MediaSessionService() {
             scope.launch {
                 rendererReady.await()
                 switching.withLock {
+                    if (roomPlay) HandOverTiming.step("the service runs it (the renderer settled, the switch lock held)")
                     // a room still recorded after an unanswered look: one more look before the phone plays (M1)
                     if (customCommand.customAction in Commands.PLAYS) lookAgainBeforePlaying()
                     when (customCommand.customAction) {
@@ -2343,6 +2349,7 @@ class PlaybackService : MediaSessionService() {
             outputs = outputs,
             output = output,
             rendererState = renderer.rendererState,
+            connecting = sonos?.controller?.connecting(now) == true,
             // only the rooms the parent allows (design 26a §5.5): a group by its coordinator - and our own row with the
             // rooms the kids grouped into it by hand (design 53 §2.8, Q4)
             rooms = allowedRooms(home.rooms.state.value, roomScope, sonos?.uid, sonos?.accepted.orEmpty()),

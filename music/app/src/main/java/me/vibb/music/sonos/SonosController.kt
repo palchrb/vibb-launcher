@@ -515,6 +515,26 @@ class SonosController(
         }
     }
 
+    /**
+     * A play of ours is on its way to the room (PLAN "Connecting…", 2026-10-25): sent and not yet PLAYING - while the kid
+     * wants it playing, the player's phase BUFFERING because of our play: its settle (`pending`, from the tap until a
+     * poll sees our stream or [SETTLE_MS]; not once the early hint showed the new item on the socket), or after the
+     * landing the speaker's TRANSITIONING of our stream within [SETTLE_MS] of the play. Display only - the player's line
+     * in place of the time row; it reads the hand-over's state and changes none of it. A failed or dropped play ends the
+     * settle, and the existing failure line or message takes over; a rebuffer long after our play is not a hand-over.
+     */
+    fun connecting(now: Long): Boolean {
+        if (closed || !session) return false
+        val spec = spec(now)
+        if (spec.phase != PlayPhase.BUFFERING || !spec.playWhenReady) return false
+        if (pending != null) return true
+        val s = snap ?: return false
+        return s.reachable && s.fresh(now) && s.ours && s.transitioning && now - playAnsweredAt <= SETTLE_MS
+    }
+
+    /** When the last play of ours was answered ([connecting]'s window after the landing; display only). */
+    private var playAnsweredAt = FAR_PAST
+
     /** The volume the slider shows: our last set, else the last read; on a group the mean of its rooms (design 53 §2.12). */
     fun deviceVolume(): Int = (groupVolume() ?: volOpt ?: snap?.volume ?: 0).coerceIn(0, 100)
 
@@ -1076,13 +1096,17 @@ class SonosController(
         // while not released and playing is allowed. Asked before the job's work and again right before
         // SetAVTransportURI (inside transport.play); a dropped job is null, with nothing sent.
         val gate: () -> Boolean = if (cid != null) ({ stillWanted(g) }) else ({ !closed && mayPlay() })
+        // the hand-over's timing (design 54 "Hand-over timing"): measurement only
+        HandOverTiming.play("the play queued for the room's actor [$why, ${if (cid != null) "storytel" else body.kind.wire}]")
         work.submit<PlayResult?>({
             if (!gate()) return@submit null
+            HandOverTiming.step("the actor runs the play")
             var b = body
             if (cid != null) {
                 // a job superseded while it queued never mints; one superseded during the mint sends nothing
                 b = body.copy(uri = mintFor(cid), mint = null)
                 if (!gate()) return@submit null
+                HandOverTiming.step("the Storytel URL minted")
             }
             var result = transport.play(b, startCap, room, gate) ?: return@submit null
             if (restore != null) {
@@ -1169,6 +1193,7 @@ class SonosController(
      */
     private fun dropped(idx: Int, startS: Double, deliberate: Boolean) {
         host.log("sonos: a play dropped before SetAVTransportURI - playing isn't allowed now")
+        HandOverTiming.step("the play dropped by its token")
         pending = null
         optTr = null
         index = idx
@@ -1203,6 +1228,7 @@ class SonosController(
         ownsSpeaker = true
         playing = Playing(entry?.id, idx, item.key, res.uri)
         pending = Pending(item.key, now, res.uri)
+        playAnsweredAt = now
         // a pause pressed while the play was in flight went out after it: that intent stands
         if (optTr?.state != TransportState.PAUSED_PLAYBACK) optTr = Opt(TransportState.PLAYING, now)
         val listed = item.durationMs?.let { it / 1000.0 }
@@ -1223,6 +1249,7 @@ class SonosController(
         }
         host.played(item.key, res.uri)
         host.log("sonos: playing [${idx + 1}/${items.size}] ${item.title}")
+        HandOverTiming.step("the play's answer on main - it settles until a poll sees our stream (the seed shows)")
     }
 
     /**
@@ -1234,6 +1261,7 @@ class SonosController(
      */
     private fun failed(why: PlayWhy, e: Throwable) {
         host.log("sonos: play failed (${e.javaClass.simpleName}: ${e.message}) [$why]")
+        HandOverTiming.step("the play failed (${e.javaClass.simpleName})")
         pending = null
         optTr = null
         val ours = ownsSpeaker && snap?.ours == true
@@ -1280,6 +1308,15 @@ class SonosController(
         val p = pending
         if (p != null) {
             val landed = p.uri != null && polled.reachable && polled.ours && normUri(polled.uri) == normUri(p.uri)
+            HandOverTiming.step(
+                "a settle poll: ${if (polled.reachable) polled.transport else "no answer"}${if (polled.transitioning) " (transitioning)" else ""}, " +
+                    when {
+                        p.uri == null -> "the play not answered yet"
+                        landed -> "our stream - landed"
+                        now - p.at > SETTLE_MS -> "not ours - the settle ran out"
+                        else -> "still the old stream"
+                    },
+            )
             if (landed || (p.uri != null && now - p.at > SETTLE_MS)) {
                 pending = null
                 early = null
@@ -1302,6 +1339,13 @@ class SonosController(
         accept(polled)
         confirmed(polled, now)
         val s = snap ?: return
+        // the hand-over's timing: the polls after the landing (the landing poll's line is above), until the first PLAYING
+        // one of our stream
+        if (s.reachable && s.ours && s.transport == TransportState.PLAYING && !s.transitioning) {
+            HandOverTiming.first(POLL_PLAYING, "the first PLAYING poll of our stream")
+        } else if (p == null) {
+            HandOverTiming.until(POLL_PLAYING, "a poll: ${if (s.reachable) s.transport else "no answer"}${if (s.transitioning) " (transitioning)" else ""}, ours: ${s.ours}")
+        }
         optTr?.let { o -> if (s.transport == o.state || now - o.at > SETTLE_MS) optTr = null }
         if (optTr == null) frozen = null
         optPos?.let { o ->
@@ -1370,6 +1414,7 @@ class SonosController(
             return
         }
         if (now - c.at + CONFIRM_EVERY_MS <= CONFIRM_UNTIL_MS) {
+            HandOverTiming.step("a confirm poll (53-d) doesn't show the socket's change yet - another in ${CONFIRM_EVERY_MS} ms")
             work.after(CONFIRM_EVERY_MS) { if (!closed && confirm === c) wake(immediate = false, elapsedMs()) }
         } else {
             confirm = null
@@ -1420,6 +1465,12 @@ class SonosController(
                     // design 53-d: a newer state supersedes a state still being confirmed (ours or not)
                     confirm?.let { c -> if (!c.newItem && e.state != WsPlayback.BUFFERING && e.state.transport != c.state) confirm = null }
                     if (session) {
+                        // the hand-over's timing: the socket's events until its first PLAYING
+                        if (e.state == WsPlayback.PLAYING) {
+                            HandOverTiming.first(WS_PLAYING, "the first PLAYING socket event${if (pending != null) " (parked: the play still settles)" else ""}")
+                        } else {
+                            HandOverTiming.until(WS_PLAYING, "a socket event: ${e.state}")
+                        }
                         wake(immediate = e.state == WsPlayback.IDLE, now)
                         // decided before playback(), which may settle our verb
                         val caused = causedByUs(e, now)
@@ -1438,7 +1489,9 @@ class SonosController(
                     wake(immediate = false, now)
                     groups(e)
                 }
-                is SocketEvent.Health -> if (!e.healthy) {
+                is SocketEvent.Health -> if (e.healthy) {
+                    HandOverTiming.first("ws-healthy", "the event socket healthy")
+                } else {
                     // a socket that went away says nothing more: polling alone, as before it
                     wsState = null
                     wsTr = null
@@ -1522,7 +1575,10 @@ class SonosController(
         val item = e.itemId ?: return
         if (item == h.itemBefore) return
         val pos = e.positionMs ?: return
-        if (!h.applied) host.log("sonos: our DIDL's id on the socket - the bar from its event before UPnP confirms")
+        if (!h.applied) {
+            host.log("sonos: our DIDL's id on the socket - the bar from its event before UPnP confirms")
+            HandOverTiming.step("the early hint: our DIDL's id and the new item on the socket (the player shows ready)")
+        }
         h.applied = true
         measure(pos, e.at, moving = e.state == WsPlayback.PLAYING, poll = false)
     }
@@ -2310,6 +2366,10 @@ class SonosController(
     companion object {
         /** `pending`/`optTr` hold against stale polls until confirmed or this passes (QA A, 4408-4420). */
         const val SETTLE_MS = 8_000L
+
+        /** [HandOverTiming]'s once-lines: the first PLAYING poll and socket event of a hand-over. */
+        private const val POLL_PLAYING = "poll-playing"
+        private const val WS_PLAYING = "ws-playing"
 
         /** `SONOS_SEEK_TOL_S`, `SONOS_SEEK_HOLD_S`, `SONOS_SEEK_SPACING_S`, `SEEK_TAIL_S`. */
         const val SEEK_TOL_S = 6.0
