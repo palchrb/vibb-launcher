@@ -1381,7 +1381,7 @@ mod tests {
         assert_eq!(WAIT_FOR_PHONE_MS, 120_000);
         // The kept "Sent." line is the command's own (Q-2).
         assert_eq!(
-            waited_for(&[pause.clone()], false, false, NOW),
+            waited_for(std::slice::from_ref(&pause), false, false, NOW),
             Some(START_PAUSE)
         );
         assert_eq!(waiting_flash(START_PAUSE), flash("start_pause_sent"));

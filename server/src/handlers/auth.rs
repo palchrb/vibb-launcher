@@ -388,16 +388,15 @@ pub async fn logout(
         .find(|(name, _)| name == "endpoint")
         .map(|(_, value)| value.trim().to_string())
         .filter(|e| !e.is_empty() && e.len() <= 1024);
-    if let Some(endpoint) = endpoint {
-        if let Err(err) =
+    if let Some(endpoint) = endpoint
+        && let Err(err) =
             sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = ? AND admin_id = ?")
                 .bind(&endpoint)
                 .bind(admin.id)
                 .execute(&state.db)
                 .await
-        {
-            tracing::error!(%err, "couldn't delete this browser's notification subscription");
-        }
+    {
+        tracing::error!(%err, "couldn't delete this browser's notification subscription");
     }
     session.flush().await.ok();
     Redirect::to("/login")

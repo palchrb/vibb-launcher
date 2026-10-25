@@ -110,7 +110,7 @@ pub async fn card(
     Ok(RelockCard {
         lock_again: capable && open,
         pause_button: capable && !paused,
-        wait_for_phone: waited.is_some(),
+        wait_for_phone: window_relock::waiting_for_phone(&answers, paused, open, now_ms),
         // While it waits, the "Sent." line stays on every reload (Q-2).
         notice: notice
             .and_then(window_relock::flash)
