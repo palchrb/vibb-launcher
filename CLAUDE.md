@@ -34,7 +34,9 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   silent episodes with Range; `--vary` serves another length per request, design 30's changed-source check; §6f;
   `--feed N` an RSS feed of N items with their own pictures the server judges `own`, `--hls K` item K as HLS, design
   39's list pictures and order flip; §6q), `pwa-startup-images.py` (the PWA's iPhone start-up PNGs and head.html's
-  links from `server/testdata/pwa_startup_screens.json`; `--selftest`; `docs/notes/server/pwa.md`, "Start-up splash").
+  links from `server/testdata/pwa_startup_screens.json`; `--selftest`; `docs/notes/server/pwa.md`, "Start-up splash"),
+  `music-splash.py` (the music app's launch splash drawables: the Vibb mark read from the launcher's Home splash, "vibb
+  music" from Nunito's outlines; `--selftest`).
 - `PLAN.md` - the plan and status, and the fix backlog ("Fix backlog": keep it current as items come in and are done).
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.

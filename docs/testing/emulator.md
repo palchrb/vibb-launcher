@@ -2013,6 +2013,18 @@ the moving series on a walk, a walk home with the screen off (the push within mi
 "Here now" for hours (`zone_watch.still`, Q-3), the battery run, a mock-location app -> `mock_location_ignored` in the
 security log once per rise, with the date on the Locate row.
 
+## 6u. The music app's launch splash (music round r13)
+
+PLAN "Music app" queue, branch `music-r13`. The debug music app with the debug feed (§6f).
+
+1. **The splash, cold**: `adb shell am force-stop me.vibb.music.debug`, then open the app from the launcher's tile, as
+   the kid does (a shell `am start` may get the plain ground without the icon). Record it (`adb shell screenrecord /sdcard/s.mp4`, pull,
+   step it at 24 fps): the rings on the night ground and "vibb music" (cream + peach) at the foot, the system's fade
+   only, then the library's first frame **with no plain dark frame between** (the user's video had ~0.9 s of it).
+   Again with an empty library (no entries in the feed): the empty state follows the splash at once. The cap: with the
+   library slow (a debugger paused at `MusicViewModel`, or simply a feed of 1000 entries) the splash lets go at about
+   3 s, never hangs. Once more at font scale 1.3 and in a 3-button navigation AVD (the wordmark not cut).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

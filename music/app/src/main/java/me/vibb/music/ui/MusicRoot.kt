@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -54,7 +55,7 @@ import me.vibb.music.sync.NewNotifier
 
 /** The screens of `Main.dc.html` v12, drawn edge to edge with the system bars' insets applied once. */
 @Composable
-fun MusicRoot(vm: MusicViewModel, actions: Actions) {
+fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) {
     val snap by vm.snapshot.collectAsStateWithLifecycle()
     val hub by PlayerHub.state.collectAsStateWithLifecycle()
     val row by vm.nowRow.collectAsStateWithLifecycle()
@@ -79,6 +80,8 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions) {
     }
     Box(Modifier.fillMaxSize().background(Palette.bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
         val s = snap ?: return@Box
+        // the first content frame: the launch splash may go now (MainActivity.holdSplash)
+        SideEffect { onContent() }
         // What the player has, else - for a moment after a tap - what the kid asked for (logic/Switch.kt).
         val current = nowView(s, hub, row)
         val switching = vm.switching
