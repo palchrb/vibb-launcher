@@ -801,17 +801,22 @@ if [ "$EXTERNAL_COPY_ENABLED" = "true" ] && [ -d "$DATA_DIR/backups" ]; then
 fi
 
 # The drive keeps as many as data/backups/ (security review M2), so the data retention windows
-# hold there too: the newest RETENTION_COUNT backup-*.zip (the Backups page's "Backups to keep",
-# 0 keeps them all; handlers::backups::DEFAULT_RETENTION_COUNT when unset) and the newest
-# PRE_MIGRATE_KEEP pre-migrate-*.db (startup::PRE_MIGRATE_KEEP; a server test keeps both numbers
-# equal). Only regular files at the top of snapshots/ with those two names are ever deleted; the
-# names sort by time (byte order, as the server sorts them).
+# hold there too - also while the copy to the drive is off, as long as the drive is mounted: the
+# newest RETENTION_COUNT backup-*.zip (the Backups page's "Backups to keep", 0 keeps them all) and
+# the newest PRE_MIGRATE_KEEP pre-migrate-*.db (startup::PRE_MIGRATE_KEEP). RETENTION_COUNT is 1-4
+# digits, spaces around them allowed; unset or anything else keeps RETENTION_COUNT_DEFAULT
+# (handlers::backups::DEFAULT_RETENTION_COUNT), logged when set - the server's own rule
+# (backups::retention_of; server tests keep the numbers and the rule equal). Only regular files at
+# the top of snapshots/ with those two names are ever deleted; the names sort by time (byte order,
+# as the server sorts them).
 RETENTION_COUNT_DEFAULT=14
 PRE_MIGRATE_KEEP=3
-RETENTION_COUNT="$(timeout 5 grep -m1 '^RETENTION_COUNT=' -- "$BACKUP_CONFIG_FILE" | cut -d= -f2 || true)"
-if ! [[ "$RETENTION_COUNT" =~ ^[0-9]{1,4}$ ]]; then
-    if [ -n "$RETENTION_COUNT" ]; then
-        echo "backup_sync: ignoring an invalid RETENTION_COUNT in $BACKUP_CONFIG_FILE" >&2
+RETENTION_SETTING="$(timeout 5 grep -m1 '^RETENTION_COUNT=' -- "$BACKUP_CONFIG_FILE" | cut -d= -f2- || true)"
+if [[ "$RETENTION_SETTING" =~ ^[[:space:]]*([0-9]{1,4})[[:space:]]*$ ]]; then
+    RETENTION_COUNT="${BASH_REMATCH[1]}"
+else
+    if [ -n "$RETENTION_SETTING" ]; then
+        echo "backup_sync: ignoring an invalid RETENTION_COUNT in $BACKUP_CONFIG_FILE - keeping $RETENTION_COUNT_DEFAULT" >&2
     fi
     RETENTION_COUNT="$RETENTION_COUNT_DEFAULT"
 fi

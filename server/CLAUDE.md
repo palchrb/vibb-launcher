@@ -138,9 +138,11 @@ No prior programming experience - build features directly rather than explaining
   (QA of the security wave, Medium 1: `cp -au` wrote through a link it had copied to the drive the run before).
   It then prunes the drive's `snapshots/` to the server's counts (security review M2, `pwa-fixes-a`): the newest
   `RETENTION_COUNT` (backup_schedule.conf, read by grep and checked; unset or invalid: `RETENTION_COUNT_DEFAULT` =
-  `backups::DEFAULT_RETENTION_COUNT`; 0 keeps all) `backup-*.zip` and the newest `PRE_MIGRATE_KEEP`
-  (`startup::PRE_MIGRATE_KEEP`) `pre-migrate-*.db`, `find -xdev -maxdepth 1 -type f -name`, byte order, nothing else
-  (`tests::deploy_scripts::the_backup_sync_keeps_as_many_on_the_drive_as_the_server`, `..._counts_are_the_servers`).
+  `backups::DEFAULT_RETENTION_COUNT`, logged; 0 keeps all - the server's `backups::retention_of` reads it the same
+  way) `backup-*.zip` and the newest `PRE_MIGRATE_KEEP` (`startup::PRE_MIGRATE_KEEP`) `pre-migrate-*.db`, also while
+  the copy is off, `find -xdev -maxdepth 1 -type f -name`, byte order, nothing else
+  (`tests::deploy_scripts::the_backup_sync_keeps_as_many_on_the_drive_as_the_server`, `..._counts_are_the_servers`,
+  `..._reads_backups_to_keep_as_the_server`).
   `tests::deploy_scripts::run_root_script` runs a root heredoc under bash in a sandbox, with stubs.
 - **No admin session leaves the live database (security review M2).** Every copy goes through
   `backups::snapshot(db, scratch, target)`: `VACUUM INTO` a scratch file in `data/` (never `data/backups/`, which

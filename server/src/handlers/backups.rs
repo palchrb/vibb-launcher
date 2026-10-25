@@ -103,13 +103,28 @@ impl BackupScheduleConfig {
         )
     }
 
+    /// How many backups to keep; `None` keeps them all ("0"). A value that isn't 1-4 digits (only
+    /// a hand-edited file has one) keeps [DEFAULT_RETENTION_COUNT] and is logged - the same rule
+    /// as `backup_sync.sh` for the drive's copies (qa-pwa-fixes-a-code Q-6).
     fn retention_count(&self) -> Option<usize> {
-        self.retention_count
-            .trim()
-            .parse::<usize>()
-            .ok()
-            .filter(|n| *n > 0)
+        retention_of(&self.retention_count)
     }
+}
+
+/// [BackupScheduleConfig::retention_count] of the file's `RETENTION_COUNT` value.
+pub(crate) fn retention_of(value: &str) -> Option<usize> {
+    let value = value.trim();
+    let count =
+        if !value.is_empty() && value.len() <= 4 && value.bytes().all(|b| b.is_ascii_digit()) {
+            value.parse::<usize>().unwrap_or(DEFAULT_RETENTION_COUNT)
+        } else {
+            tracing::warn!(
+                "ignoring an invalid RETENTION_COUNT in {SCHEDULE_FILE} - keeping \
+             {DEFAULT_RETENTION_COUNT} backups"
+            );
+            DEFAULT_RETENTION_COUNT
+        };
+    (count > 0).then_some(count)
 }
 
 /// The schedule forms' day choices (Sunday = 0, as the schedule files and the root scheduler

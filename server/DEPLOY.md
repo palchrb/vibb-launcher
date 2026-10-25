@@ -742,7 +742,9 @@ Built in - see Settings › **Backups** in the admin UI. "Back Up Now" makes one
   was made, until the backup itself is deleted - so with 14 daily backups kept, data lives about 14 days past its
   window. The external drive keeps as many as the server: `backup_sync.sh` deletes all but the newest
   "Backups to keep" `backup-*.zip` and the newest 3 `pre-migrate-*.db` in its `snapshots/` (0 keeps them all; nothing
-  else on the drive is touched).
+  else on the drive is touched) - also while the copy to the drive is off, as long as the drive is mounted. A
+  "Backups to keep" that isn't a number (only a hand-edited `data/backup_schedule.conf` has one) keeps 14, on the
+  server and on the drive alike, and is logged.
 - Restoring a backup on the Pi keeps the database it replaces in `/var/backups/kid-phone-server-prerestore/<time>/`
   (root-only, the newest 3).
 - Since 0.23.0 the server also copies the database to `data/backups/pre-migrate-<from>-<to>.db` before an update

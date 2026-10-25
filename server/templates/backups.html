@@ -57,7 +57,7 @@
                 <summary aria-label="About backups"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
                     <p>A backup holds everything, the two-factor secret too: keep it as safe as your password. Your own music files, sign-ins and the phones' Tailscale key aren't in it.</p>
-                    <p>A backup keeps locations, logs and the rest as they were when it was made, until the backup itself is deleted - longer than the times you chose for keeping them.{% if !docker %} The external drive keeps as many backups as this server.{% endif %}</p>
+                    <p>A backup keeps locations, logs and the rest as they were when it was made, until the backup itself is deleted - longer than the times you chose for keeping them.{% if !docker %} The external drive keeps as many backups as this server, also while copying to it is off.{% endif %}</p>
                 </div>
             </details>
         </div>

@@ -497,6 +497,65 @@ fn the_backup_sync_keeps_as_many_on_the_drive_as_the_server() {
     assert!(snapshots.join("backup-dir.zip").is_dir());
 }
 
+/// qa-pwa-fixes-a-code Q-6: the drive reads "Backups to keep" as the server does
+/// (`backups::retention_of`): 1-4 digits with spaces around them, 0 keeps all, anything else the
+/// default 14 - so a hand-edited value keeps as many there as here.
+#[test]
+fn the_backup_sync_reads_backups_to_keep_as_the_server() {
+    const ZIPS: usize = 20;
+    for value in ["abc", " 3 ", "0", "014", "99999", "", "-1", "2 2"] {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path();
+        let data = root.join("data");
+        let snapshots = root.join("drive/snapshots");
+        std::fs::create_dir_all(data.join("backups")).unwrap();
+        std::fs::create_dir_all(&snapshots).unwrap();
+        for n in 0..ZIPS {
+            std::fs::write(
+                snapshots.join(format!("backup-202610{n:02}-020000.zip")),
+                "z",
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            data.join("backup_schedule.conf"),
+            format!("EXTERNAL_COPY_ENABLED=true\nRETENTION_COUNT={value}\n"),
+        )
+        .unwrap();
+        let status = run_root_script(
+            "BACKUP_SYNC_EOF",
+            &[
+                (
+                    "/opt/kid-phone-server/data/backup_schedule.conf",
+                    data.join("backup_schedule.conf").to_str().unwrap(),
+                ),
+                ("/opt/kid-phone-server/data", data.to_str().unwrap()),
+                (
+                    "/mnt/kid-phone-server-backup",
+                    root.join("drive").to_str().unwrap(),
+                ),
+            ],
+            &[("mountpoint", "exit 0")],
+            root,
+        );
+        assert!(status.success(), "{value:?}: {status:?}");
+        let mut left: Vec<String> = std::fs::read_dir(&snapshots)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        left.sort();
+        let keep = crate::handlers::backups::retention_of(value).map_or(ZIPS, |n| n.min(ZIPS));
+        assert_eq!(left.len(), keep, "{value:?}");
+        // The newest are the ones kept.
+        assert_eq!(
+            left.last().map(String::as_str),
+            Some(format!("backup-202610{:02}-020000.zip", ZIPS - 1).as_str()),
+            "{value:?}"
+        );
+    }
+    assert_eq!(crate::handlers::backups::retention_of("abc"), Some(14));
+}
+
 /// The drive's counts are the server's: `backup_sync.sh`'s default "Backups to keep" and its
 /// pre-migration copies to keep.
 #[test]
