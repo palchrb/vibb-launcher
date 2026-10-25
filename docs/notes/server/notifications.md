@@ -277,7 +277,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
 ## Per parent (design 62 step 5, `docs/design/62-parent-accounts.md` §5)
 
 - **Migration 0088** (`0088_parent_reads_and_prefs.sql`): `notification_prefs` (one row per account that saved its
-  switches, `admin_id` primary key, the seven `push_*` columns; no row = every switch on) and `parent_event_reads`
+  switches, `admin_id` primary key, the seven `push_*` columns; no row = every switch on - since 0099 but "App updates", below) and `parent_event_reads`
   (`(admin_id, event_id)`, both `ON DELETE CASCADE`, so retention's delete of an event takes its reads). Both seeded for
   every account that isn't removed, from the family's switches and the old `read_at`; `notification_settings`,
   `parent_events.read_at` and `idx_parent_events_unread` are dropped (a missed reader fails loudly).
@@ -289,7 +289,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   signed-in parent's devices (`delivery_lines(db, admin_id, ..)`, qa-62-step345-code P62b-1). A push's badge (`data.b`, `app_badge`) is the subscription's parent's count. Adding a parent and
   `reset-2fa`'s restore mark every event so far read for them (`read_everything`); Remove deletes their prefs and reads.
 - **The push filter** (`push::queue`): active subscriptions of accounts that aren't removed, with
-  `COALESCE(p.<switch>, 1) = 1` from `notification_prefs`; the emergency call goes to every such parent. Notify Me About
+  `COALESCE(p.<switch>, <its default>) = 1` (1, "App updates" 0 since 0099) from `notification_prefs`; the emergency call goes to every such parent. Notify Me About
   reads and writes the signed-in parent's row (`INSERT … ON CONFLICT (admin_id) DO UPDATE`, only for an account not
   removed); its footer says "Just for you - each parent chooses their own."
 - Tests: `tests::parents::inbox_read_is_per_parent`, `notify_me_about_is_each_parents`,
@@ -350,3 +350,102 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   row until a lift and a lift before the request leaving it), `parent_events::tests` (the words per state, a long name,
   the day after, the state from a report), `activity::tests` (the case-insensitive strip),
   `migrations_73_to_96_in_order`.
+
+## Push wording (2026-10-25)
+
+The user (2026-10-25): "Generelt kunne vi også forenklet web push meldingene? Mindre tekst". Branch `pwa-fixes-b`,
+migration `0098_push_words.sql`. (0097 is branch `last-position`'s, built in parallel.) **To be read by the user before it ships.**
+
+- **The rule**: a push's title is "<name>: <fact>", its body one short clause - the time, then at most one number
+  ("07:02 · battery 64 %"). No second sentence, no "no shutdown seen", "last report …", "unlocked …", "off since …",
+  "probably flat", "Too many wrong tries", where the PIN was used, or what kind of app it was. **The inbox and the
+  phone summary's Activity keep the long words, unchanged** - the push is the short form of the same event.
+  `TITLE_MAX` (60) and `SUMMARY_MAX` (100) stay; a long phone name is cut ("Anna-Sofie Anna…: emergency call").
+- **How**: the stored-words kinds make both forms at raise (`parent_events::Phone::pushed`; `NewEvent.push_title`/
+  `push_body`, stored in `parent_events.push_title`/`push_body`, NULL when empty); the kinds told from parameters
+  (zones, a request for more time, the two app update kinds) are worded short where they are pushed
+  (`parent_events::pushed` -> `told_as(Form::Push, ..)`; `told` is `Form::Inbox`). The sender (`push::send_due`) reads
+  `pushed`; a row from before 0098 has no push words and pushes its inbox words as before. The summary and test
+  pushes' words are `push::SUMMARY_TITLE`/`SUMMARY_BODY`/`TEST_TITLE`.
+- Times are the phone's local time as before: "14:02" today, "Yesterday 19:14", "12 Oct 14:02".
+
+| Kind | Before: title / body (also the inbox, which keeps it) | After: the push's title / body |
+|---|---|---|
+| `emergency_call` | Anna called an emergency number / At 14:02 (another day: Yesterday 19:14) | Anna: emergency call / 14:02 (Yesterday 19:14) |
+| `pin_used` | Parent PIN used on Anna / Pause · 14:02 | Anna: parent PIN used / 14:02 |
+| `pin_lockout` | Parent PIN locked on Anna / Too many wrong tries · until 14:45 | Anna: parent PIN locked / Until 14:45 |
+| `foreign_access` | An app may read the PIN on Anna / 2 apps with device admin or accessibility | Anna: an app may read the PIN / 14:30 · 2 apps |
+| `unseen_boot` | Anna started without Vibb One / Safe mode or a start cut short | Anna: started without Vibb One / 14:02 |
+| `low_battery` | Battery low on Anna (14 %) / Not charging · 14:02 | Anna: battery low / 14:02 · battery 14 % |
+| `phone_off` | Anna was turned off / 14:02 · battery 3 %, probably flat | Anna: turned off / 14:02 · battery 3 % |
+| `phone_off` (Android: battery) | Anna shut down: battery flat / 14:02 · battery 1 % | Anna: battery flat, shut down / 14:02 · battery 1 % |
+| `phone_off` (Android: too hot) | Anna shut down: too hot / 14:02 · battery 64 % | Anna: too hot, shut down / 14:02 |
+| `phone_off` (a restart; never pushed) | Anna is restarting / 14:02 · battery 64 %, charging | Anna: restarting / 14:02 (stored only) |
+| `phone_on` (a restart) | Anna restarted / 14:20 · battery 64 % (· unlocked 14:23) | Anna: restarted / 14:20 · battery 64 % |
+| `phone_on` (after a shutdown) | Anna was turned on / 14:20 · off since yesterday 19:14, battery was 3 % | Anna: turned on / 14:20 · battery 64 % (the battery now; none reported: 14:20) |
+| `phone_on` (no shutdown seen) | Anna was turned on / 14:20 · no shutdown seen · last report 14:00, battery 5 %, probably flat | Anna: turned on / 14:20 (· battery 64 % when the start reported it) |
+| `zone_arrived` | Anna arrived at Home / 14:02 | Anna: arrived at Home / 14:02 |
+| `zone_left` | Anna left School / 14:02 | Anna: left School / 14:02 |
+| `extra_time_request` (used up) | Anna asks for more screen time / 14:02 · Screen time used up | Anna: asks for more time / 14:02 |
+| `extra_time_request` (time left) | Anna asks for more screen time / 14:02 · 1 h 20 min left | Anna: asks for more time / 14:02 · 1 h 20 min left |
+| `extra_time_request` (a rule) | Anna asks for more screen time / 14:02 · Bedtime | Anna: asks for more time / 14:02 |
+| `app_update_available` (new, below) | - (inbox: Signal 7.2.0 is available / 14:02 · 7.1.4 → 7.2.0) | Signal: update available / 14:02 · version 7.2.0 |
+| `app_updated` (new, below) | - (inbox: Vibb One updated on Anna / 14:02 · 0.36.0-rc.7 → 0.36.0) | Anna: Vibb One updated / 14:02 · version 0.36.0 |
+| summary (more than 3 at once) | New notifications / More than 3 at once - open Notifications to see them | New notifications / More in the inbox |
+| test (Send a Test) | Test from Vibb Phone / If you see this, notifications work on iPhone · Safari | Vibb Phone: test / Notifications work on iPhone · Safari |
+
+- Open for the user: the PIN's place (Pause, Lock screen, Time lock) and an extra-time request's rule ("Bedtime")
+  left the push by the "at most one number" rule; either could come back as a word after the time if it is missed.
+- Tests: `parent_events::tests::the_push_words_are_short` (every row of the table, the long name, a pre-0098 row),
+  `tests::power` (the inbox keeps "Anna was turned off", the push says "Anna: turned off"), `tests::web_push`,
+  `tests::zones`, `tests::time_request` (the pushed titles), `migrations_73_to_99_in_order`.
+
+## App update notices (2026-10-25, migration `0099_app_update_notices.sql`)
+
+The user (2026-10-25): "sende notifications når apper lagt til via pwa blir oppdatert? Trenger ikke nødvendigvis være
+push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
+
+- **Two kinds** (`parent_events::Kind::AppUpdateAvailable`/`AppUpdated`, `app_update_available`/`app_updated`, last in
+  `Kind::ALL`; normal urgency, TTL 43200, foldable), stored as a key plus parameters like design 64's zones
+  (`AppUpdateParams {app_id, app, from?, to, at, phone?}`: the catalog name and versions as they were, cut to 40;
+  `title`/`summary` empty), worded by `told`/`pushed` (`app_update_told`). Kept 90 days like every kind.
+- **`app_update_available`** - the catalog's event, **no phone** (`device_id` NULL): raised by
+  `tracked_apps::sync_release` right after a new release is stored (the sweep and Check Now share it; GitHub and
+  F-Droid apps, never a manual upload) over a previous one - an app's first release raises nothing
+  (`update_available_event`). Key `<app id>:<tag>@<asset id>`, the release exactly as the row stores it, so a sweep or a
+  Check Now that finds it again raises nothing: one event per release, never per sweep. `from`/`to` are
+  `tracked_apps::version_of` of the old and new tag ("1.0.56" -> "1.0.57"); a rolling tag's new build has no `from`.
+  Target `/apps/tracked/{id}`. Inbox "Signal 7.2.0 is available" / "14:02 · 7.1.4 → 7.2.0"; push "Signal: update
+  available" / "14:02 · version 7.2.0". In the inbox under every phone only (a `?device=` filter leaves it out), with a
+  grey avatar and the app's letter (`notifications::inbox_row`).
+- **`app_updated`** - per phone and version: `device_api::status` compares the report with the previous one
+  (`PreviousReport` now reads `app_version`, `app_version_code`, `music_state_json`) through
+  `tracked_apps::note_app_updates`: a versionCode higher than the previous report's that is the catalog row's stored
+  release (`release_installed`: the launcher's by its tag's code, `install_now::launcher_tag_version_code`; the music
+  app's by the version its code reads as, `device_pages::version_of_code`, against the tag's). Key `<app id>:<code>`;
+  `from` the previous report's versionName (the launcher) or its code's version (the music app). No previous report (a
+  new phone) raises nothing. Target `/devices/{id}/apps`. Inbox "Vibb One updated on Anna" / "14:02 · 0.36.0-rc.7 →
+  0.36.0" (Activity: "0.36.0-rc.7 → 0.36.0"); push "Anna: Vibb One updated" / "14:02 · version 0.36.0". **Only the
+  launcher and the music app**: the phone's report names no other app's installed version (`installed_apps` carries
+  package, label, installer) - an `app_updated` for every catalog app needs the launcher to report each one's
+  versionCode (a launcher change, both dirs, not built).
+- **The switch** "App updates" (`push_app_updates`, `parent_events::APP_UPDATES_SWITCH`, one for both kinds) is the one
+  switch **off by default**: 0099's `DEFAULT 0` for every existing row, and `Kind::switch_default` for a parent with no
+  row - `push::queue`'s `COALESCE(p.<switch>, <default>)` and Notify Me About's `read_switches`. Always in the inbox;
+  pushed only for a parent who turned it on. Per parent (design 62 step 5).
+- **Migration 0099** also makes `parent_events.device_id` nullable: SQLite can't loosen a NOT NULL, and sqlx runs a
+  migration in a transaction with foreign keys on (no `PRAGMA foreign_keys = OFF`), so `parent_events`,
+  `push_deliveries` and `parent_event_reads` are rebuilt together - each renamed (a child's REFERENCES follow), made
+  anew with today's columns, copied with their ids, the old children dropped before the old events (no ON DELETE runs),
+  every index again under its name, and `sqlite_sequence` kept at the highest id ever given (an event or delivery id is
+  never reused: a push's tag `e<id>`, a receipt's `d`). A catalog event's key is the partial unique index
+  `idx_parent_events_catalog (kind, dedup_key) WHERE device_id IS NULL`; `raise` is `ON CONFLICT DO NOTHING` without a
+  target, so both keys hold. The inbox's and Activity's rows read the phone with a LEFT JOIN (`notifications::Row`'s
+  phone and name are `Option`).
+- Tests: `tests::app_updates` (one event per release over three raises, the inbox and its filter, the target; a
+  phone's report raising `app_updated` once for the launcher and the music app, never for a first report or a code
+  that isn't the release; the switch off by default with no row, the push only once on; 0099 keeping events,
+  deliveries, reads, ids, the counter and the cascades), `handlers::tracked_apps::tests::a_new_release_is_one_notice_never_one_per_sweep`
+  (a real F-Droid sync: none for the first release, one for the next, none for the sweep and the Check Now after),
+  `a_release_is_installed_by_its_versioncode`, `parent_events::tests` (`an_app_update_is_told_from_its_parameters`,
+  the push words, the switches).

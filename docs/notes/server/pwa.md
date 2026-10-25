@@ -777,6 +777,44 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `shell::a_posts_own_page_is_marked_so_it_is_never_reloaded`; the QA's findings each have a jstest (M1, L2-L5, L9). A headless Chromium check against a never-answering
   page showed the bar at once, the chip at 3 s, "Try again" at 20 s and a restart about every 15 s while the server
   answered. Owed: the iPhone (and Android) PWA after being away.
+- **`window.handyReconnect`** (2026-10-25, for pull to refresh below): `mayReload()` - no save on its way, no open
+  `<details>`, nothing typed or picked (`edited`), the return reload's rules - and `reload()`, which is the reload in
+  place a page script asks for: `go(start("load", null, null))`, the bar at once, the chip, the ping and the restart
+  as for a slow navigation, the place record and the GET entry; `false` (nothing done) when `mayReload` says no. A
+  POST's answer may be reloaded when asked (go()'s `replaceState` makes it a GET first). `reconnect.js?v=4`.
+
+## Pull down to refresh (2026-10-25, `static/pull-refresh.js`)
+
+The user (2026-10-25): "update gestures for devices taben? Om man drar ned så refresher den ... Kunne også vært når
+man er inne på en device". Branch `pwa-fixes-b`.
+
+- **Where**: the Devices list (`devices_list.html`) and a phone's summary (`device_detail.html`) only, each loading
+  `pull-refresh.js?v=1` (deferred, after `reconnect.js`); never a page with a Leaflet map (Locate, the history, a zone),
+  never another tab yet ("other tabs later if it feels right"). `shell::pull_down_to_refresh_is_on_devices_and_the_summary_only`
+  pins the two templates.
+- **The gesture** (our own touch tracking, document listeners): a one-finger `touchstart` (passive) with main - the
+  app shell's scroller - at `scrollTop` 0 and `mayReload` true starts tracking; a `touchmove` (`passive: false`) up
+  first, or more sideways than down past 10 px, ends it as the browser's scroll or swipe; past 10 px down it is a
+  pull, and from then every move is `preventDefault`ed and moves the arrow (half the finger past the first 10 px, at
+  most 40 px, fading in over its first 20). Past 70 px of finger travel (`THRESHOLD`) the arrow turns over
+  (`is-armed`); a release there (asked `mayReload` again) shows the spinner (`is-refreshing`) and calls
+  `handyReconnect.reload()` - its `false` puts it away -, without reconnect.js a plain `location.reload()`. A release
+  short of 70 px, a second finger, `touchcancel` or a back-forward-cache `pageshow` put it away. A tap, a scroll and a
+  sideways swipe are never touched. `.container`'s `overscroll-behavior-y: contain` (on every page already) keeps the
+  browser's own pull and chaining out; iOS' rubber band at main's top stays.
+- **Refused** (nothing shown, nothing reloaded): a save on its way (a `submit`, a `data-autosave` change), an open
+  `<details>`, a field with typed text or a changed choice - `handyReconnect.mayReload`; the script's own belt without
+  reconnect.js: the save and `<details>` rules. No PWA save can jump to the top: the pull only reloads, with the place
+  record (the page is at its top anyway).
+- **The look** (`style.css?v=53`, "Pull down to refresh"): a 36 px round of the card's `--surface` with the peach
+  `--tint` arrow and the Connecting chip's soft shadow, `position: absolute` in the body at the safe-area top + 6 px
+  (design 43: never fixed), `pointer-events: none`, `aria-hidden`; the spinner a 2 px ring; under reduced motion no
+  spin and no transitions. Both themes from the tokens.
+- Tests: `jstest/pull-refresh.test.js` (touch timelines with a fake document: the pull and its arrow states, short of
+  70 px and back above it, not at the top, up first, sideways, two fingers, a cancel, refused at the start and at the
+  release, a save with and without reconnect.js, a refused reload, the bfcache, the listeners' passive options, the
+  shift, ES5), `jstest/reconnect.test.js` (`handyReconnect`), the shell test above. Owed: the iPhone PWA and Android
+  Chrome by hand (iOS' rubber band under the pull, the arrow under the Dynamic Island).
 
 ## The vibb identity, direction D (2026-10-22, `docs/testing/2026-10-22-pwa-identity-pass.md`)
 
