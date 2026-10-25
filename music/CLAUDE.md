@@ -93,7 +93,7 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   `res/drawable/splash_vibb_mark.xml` (the launcher's Home splash at rest) and `splash_wordmark.xml` ("vibb music",
   Nunito ExtraBold as paths), both written by `scripts/music-splash.py` (`--selftest`); `MainActivity.holdSplash` keeps
   it until `MusicRoot`'s first content frame - the snapshot in, the stored row read and the carousel on its start tile
-  (`contentReady`) -, at most 3 s (`logic/Splash.kt`). On a room the player's seek line shows
+  (`contentReady`; an empty library's empty state at once) -, at most 3 s, the backstop only (`logic/Splash.kt`). On a room the player's seek line shows
   "Kobler til høyttaleren…" instead of the times from the tap until the room plays, and the phone's web player
   "Kobler til…" until its first playing state (`logic/HandOver.kt` `timeRow`, `PlayerHub.State.connecting` =
   `SonosController.connecting` or `SpotifyRenderer.starting`; no source named).

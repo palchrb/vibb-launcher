@@ -97,10 +97,15 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     val snapshot: StateFlow<Snapshot?> = combine(store.snapshots(), PlayerHub.state.map { it.output.kind == OutputKind.SONOS }.distinctUntilChanged()) { snap, onRoom ->
         snap.forRenderer(onRoom)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-    val nowRow: StateFlow<NowPlayingRow?> = store.db.nowPlayingFlow().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    /** The stored row has been read once ([nowRow]'s null is also "none stored"; the launch splash waits for it, Q-10). */
-    val nowRowKnown: StateFlow<Boolean> = store.db.nowPlayingFlow().map { true }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    /**
+     * The stored row as read ([nowRow]'s null is also "none stored"): null until the first read, then the read - the row
+     * and its "known" in one value, so the launch splash never sees "known" before the row itself (Q-10).
+     */
+    val nowRowRead: StateFlow<RowRead?> = store.db.nowPlayingFlow().map { RowRead(it) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** One read of the stored now-playing row ([row] null: none stored). */
+    data class RowRead(val row: NowPlayingRow?)
 
     /** The carousel's one start on the last played tile has run ([startOn]; the launch splash waits for it, Q-10). */
     var startSettled by mutableStateOf(false)

@@ -23,8 +23,10 @@ fun keepSplash(contentShown: Boolean, sinceCreateMs: Long, capMs: Long = SPLASH_
  * Whether the screens' first frame is the content the kid should see (qa-music-r13-code Q-10): the first [snapshot]
  * in, the stored now-playing row read ([rowKnown]; "no row" is an answer too), and - with a stored row ([rowStored]) -
  * the carousel's one start on the last played tile done ([startSettled], `MusicViewModel.startOn`), so the library
- * never opens on tile 0 and then jumps. Before that `MusicRoot` composes nothing over the night ground (the splash still
- * holds it); [capped] - the splash's cap ran out - lets it compose whatever it has.
+ * never opens on tile 0 and then jumps. A snapshot with no [entries] has no carousel to jump: its empty state is the
+ * content at once (the emulator run of music-r13: an empty library held the splash to the cap). Before that
+ * `MusicRoot` composes nothing over the night ground (the splash still holds it); [capped] - the splash's cap ran out,
+ * the backstop only - lets it compose whatever it has.
  */
-fun contentReady(snapshot: Boolean, rowKnown: Boolean, rowStored: Boolean, startSettled: Boolean, capped: Boolean): Boolean =
-    snapshot && (capped || (rowKnown && (!rowStored || startSettled)))
+fun contentReady(snapshot: Boolean, entries: Boolean, rowKnown: Boolean, rowStored: Boolean, startSettled: Boolean, capped: Boolean): Boolean =
+    snapshot && (capped || !entries || (rowKnown && (!rowStored || startSettled)))
