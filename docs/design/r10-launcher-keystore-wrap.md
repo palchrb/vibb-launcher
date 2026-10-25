@@ -387,3 +387,5 @@ connect reads the token on a background thread and Settings' Sync now checks pre
 `SealedPrefsTest`, `KidPinSealTest`, `ReEnrolTest`; the suite 1755. The QA's mutations M8b (a raw
 `getString("mdm.device_token", null)` in `PowerEvents`) and M7 (`present()` as `get() != null`) now each fail the suite.
 Q-9 (N4/N5) stays open as documented above.
+
+**Emulator run 2026-10-25** (`docs/testing/2026-10-25-r10-keystore-run.md`): checks 1, 2, 5, 7, 9 and 13 passed on `jelly36` in android mode; 3, 6, 8, 10, 11 and 12 are owed (the run doc says what each needs); finding F1 (the UNUSABLE prompt in android mode) is in PLAN's queue.

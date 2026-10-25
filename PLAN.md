@@ -513,6 +513,7 @@ after), never later. Details stay in the entries below.
   - Phase D (own lock removed), design 32b (one stale frame at screen-on), RC3-4 (release-build setup timing), RC3-8, six-inch F3/F4, compact music tile a little lower.
   - Diagnostics: Web Filter line "upstream can't be reached"; the music app's "no network" text and the real cause in its log.
   - QR enrolment requests a sync. Trailing package callbacks after an enforcer pass (above).
+  - r10 run F1: in android mode the glance's UNUSABLE prompt ("Only the parent code works right now") is wrong - the kid PIN still opens Android's pad; gate `GlancePrompt.UNUSABLE` on own mode (`docs/testing/2026-10-25-r10-keystore-run.md`). Launcher, XS.
   - **Screen-size matrix on emulators** (the user, 2026-10-25: "kjøre tester med emulatorer med veldig forskjellig skjermoppløsning og dimensjoner så vi kan sjekke hvordan løsningen vår skalerer på ulike telefoner"): one pass of every launcher screen (Home grid, phone book, keypad, the glance in own and android mode, the time-rule screen, Kid Settings, the pause screen, the music app's library and player) on at least four AVDs - a narrow 4" (540x1168 @ 320 dpi, 270x584 dp, the Bluefox NX1's class), the Jelly Star (480x854 @ 240, 320x569 dp), a 6.1" (1080x2400 @ 420, 411x914 dp - `six35` exists) and a 6.7" tall (1440x3120 @ 560), each at font 1.0 and 1.3, 3-button and gesture navigation; screenshots under `docs/testing/screens/sizes/`, a findings table like `2026-10-23-six-inch-android15.md`. Launcher (+ music), M; the narrow one first since it is below our 320 dp floor.
 - **Server / PWA**
   - The security reviews' Low items (server 18, launcher 16, music 9).
@@ -1013,6 +1014,7 @@ after), never later. Details stay in the entries below.
   **Built** (item (1), 2026-10-25, branch `r10-keystore-wrap`; code QA `qa-r10-keystore-code.md` fixed): `SealedPrefs`/`DeviceToken`/
   `Enrollment`, the redacted cache, "Ny oppsettkode" in the deadlock; deviations, the revision check's N4/N5/N8 left
   for code QA, and the §8 emulator checks owed are in the note's "Implementation status".
+  **Merged 2026-10-25 (74f5faa5) after code QA (`docs/review/qa-r10-keystore-code.md`, 0 High / 3 Medium / 9 Low, all fixed). Emulator run 2026-10-25 (`docs/testing/2026-10-25-r10-keystore-run.md`): the upgrade from rc.8 seals all four fields with the phone enrolled and both PINs working, total key loss → NEW SETUP CODE → re-enrolled with a lower-case code, the boot cost unchanged; checks 3, 6, 8, 10, 11, 12 and F1 owed. Goes out with `launcher-v0.37.0-rc.1`.**
 - **The lock's glance page, three things** (the user's emulator screenshot, 2026-10-21, 320x569 dp, music tile full,
   one WhatsApp missed-call row): (1) **bug** - the bottom row ("Nødsamtale" and the torch) is cut off at the screen's
   bottom edge: `glanceFit` didn't keep the page inside the screen (check the 2026-10-21 torch spacing, +12 dp, and
