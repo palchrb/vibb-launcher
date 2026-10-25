@@ -11,6 +11,10 @@
     <string name="lock_kind_rule">Skjermfri tid</string>
     <string name="lock_title_screen_time">Skjermtiden er brukt opp</string>
     <string name="lock_until">Til %1$s</string>
+    <string name="anchor_time_left">%1$s igjen i dag</string>
+    <string name="anchor_time_used_up">Skjermtiden er brukt opp i dag</string>
+    <string name="anchor_ask_more_time">Be om mer tid</string>
+    <string name="anchor_asked_at">Spurt kl. %1$s</string>
     <string name="lock_calls_emergency_only">Bare nødanrop fungerer nå.</string>
     <string name="lock_calls_allowed">Du kan fortsatt ringe kontaktene dine.</string>
     <string name="lock_budget_allowance">Du har brukt dagens %1$s.</string>

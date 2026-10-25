@@ -330,6 +330,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     ParentPinEvents.upload(context, api)
     // The phone turned off and on (design 38): the start and any kept shutdown, until accepted.
     PowerEvents.upload(context, api)
+    // The kid's request for more time (design r13 §2.4): a pending one, until its 30 minutes are over.
+    com.kidslauncher.mdm.timerules.TimeRequests.upload(context, api)
     // Command receipts and results that didn't get through when they were made (security review L12).
     CommandAnswers.flush(context, api)
     // Retention (cleanup 2026-10-06): blocked calls older than 30 days leave the call log.

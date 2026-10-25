@@ -168,6 +168,17 @@ fun activeLiftIds(records: List<LiftRecord>, lifts: List<Lift>, ledger: ScreenTi
     }.map { it.id }
 }
 
+/** The screen-time checkpoint's usual delay (a process death loses at most this much). */
+const val CHECKPOINT_MS = 60_000L
+
+/**
+ * The checkpoint's next delay (design r13 §2.3): while screen time counts with [remainingMs] left, the next flip of
+ * the shown minute (`leftMinutes` rounds up) plus 200 ms, so the notification's minute changes within 0.2 s of the real
+ * one; otherwise (no budget, used up) the usual [CHECKPOINT_MS].
+ */
+fun checkpointDelayMs(remainingMs: Long?): Long =
+    if (remainingMs != null && remainingMs > 0) ((remainingMs - 1) % 60_000L) + 1 + 200 else CHECKPOINT_MS
+
 /** Our screens whose time is free: the lock screen, the phone book, our in-call screen and
  * Settings. Home is not on the list - other apps can be visible over it (picture-in-picture,
  * overlays), QA step 6 #2. */

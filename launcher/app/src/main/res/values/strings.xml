@@ -17,6 +17,12 @@
     <string name="lock_kind_rule">Screen-free time</string>
     <string name="lock_title_screen_time">Screen time is used up</string>
     <string name="lock_until">Until %1$s</string>
+    <!-- The anchor's notification with a screen-time budget today (design r13 §2.2): the time left as its title, the
+         one action, and the asked line (plain text, never a button). -->
+    <string name="anchor_time_left">%1$s left today</string>
+    <string name="anchor_time_used_up">Screen time is used up today</string>
+    <string name="anchor_ask_more_time">Ask for more time</string>
+    <string name="anchor_asked_at">Asked at %1$s</string>
     <string name="lock_calls_emergency_only">Only emergency calls work now.</string>
     <string name="lock_calls_allowed">You can still call your contacts.</string>
     <!-- %1$s: today's allowance, budget + extra minutes, by durationText ("1 h 30 min"). -->

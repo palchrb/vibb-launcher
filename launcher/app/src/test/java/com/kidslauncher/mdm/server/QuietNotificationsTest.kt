@@ -227,11 +227,13 @@ class QuietNotificationsTest {
             assertEquals(path, "Vibb One", s["notification_listener_title"])
             assertFalse(path, "notification_listener_text" in s)
         }
-        val build = body(source("CommandListenerService.kt"), "private fun buildNotification()")
-        assertTrue(".setContentTitle(getString(R.string.notification_listener_title))" in build)
-        assertFalse("setContentText" in build)
+        // Design r13 §2.2: the builder is AnchorNotice's; the plain notice (no budget) is the title alone.
+        val build = body(source("AnchorNotice.kt"), "fun build(context: Context, notice: TimeLeftNotice)")
+        assertTrue("null -> context.getString(R.string.notification_listener_title)" in build)
+        assertTrue("the asked line is the only body", "is AskPart.Asked -> builder.setContentText(" in build)
+        assertEquals(1, Regex("setContentText").findAll(build).count())
         assertTrue("NOTIFICATION_CHANNEL_LISTENER" in build)
-        assertTrue("startForeground(COMMAND_LISTENER_NOTIFICATION_ID" in source("CommandListenerService.kt"))
+        assertTrue("startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotice.plain(this))" in source("CommandListenerService.kt"))
     }
 
     @Test

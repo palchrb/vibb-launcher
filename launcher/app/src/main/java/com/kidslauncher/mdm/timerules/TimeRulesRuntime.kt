@@ -217,7 +217,11 @@ object TimeRulesRuntime {
      * (design 24b S2: the window locks again then, one alarm for everything). */
     fun nextBoundary(context: Context): Instant? {
         val clocks = clocks()
-        val windowEnds = windowEnds(clocks).map { Instant.ofEpochMilli(it) }
+        // Design r13 §2.3 (R13-8): an open request for more time ends at its stored instant - one more boundary, so
+        // "Spurt" goes on time across a process death or a reboot.
+        val windowEnds = (windowEnds(clocks) + listOfNotNull(TimeRequests.openUntilMs(context)))
+            .filter { it > clocks.wallMs }
+            .map { Instant.ofEpochMilli(it) }
         val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy) ?: return windowEnds.minOrNull()
         val records = liftRecords(context, policy.lifts, clocks)
         return nextBoundary(policy, Instant.ofEpochMilli(clocks.wallMs), zone(), liftExpiries(records, clocks) + windowEnds)
@@ -260,6 +264,12 @@ object TimeRulesRuntime {
                 com.kidslauncher.mdm.lock.KeyguardCover.whenUnlocked(context, "the time-rule screen") {
                     if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && !OngoingCalls.hasLiveCall) LockActivity.start(it)
                 }
+            }
+            // Design r13 §2.3 (R13-3): the anchor's notice from the same snapshot, counting or not.
+            try {
+                com.kidslauncher.mdm.server.AnchorNotice.refresh(context, snap)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Notice refresh failed: ${e.javaClass.simpleName}")
             }
             // The glance's rule card (design r13 §1.4) before the missed calls' re-learn, so the panel's render that
             // `relearn` may fire already has the new card - the page is laid out once.

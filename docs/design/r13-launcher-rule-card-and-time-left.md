@@ -628,3 +628,55 @@ None. The three questions of the first draft and the QA's two (R13-4, R13-7) are
   (§2.5-§2.8).
 - R13-14: `ruleLabel` returns the name or the kind (resolved by the screens), never a string from resources; the card is
   `screenReaderFocusable="true"` (§1.2, §1.3).
+
+## Implementation status (2026-10-25, branch `r13-rule-card`, awaiting code QA)
+
+Built in three steps, each its own commit on `r13-rule-card` (from `main` at 77089563):
+
+1. **Step 1, launcher** - the rule card: `lock/RuleCard.kt` (`ruleCard`, `lockEnd`, `ruleLiftsAt`, `lockEndOf`,
+   `ruleCardOf`, `RuleCardKind.glyph`), `ruleLabel`/`RuleLabel` in `ui/TimeLockModel.kt` (the time-rule screen's title
+   and "Til" line use them, D1/D2; `LockActivity.labelText`/`kindLabelRes`), `liftExpiry` factored out of
+   `liftExpiries`, `lock_rule_card` in `view_lock_glance.xml`, `glanceLayout(.., rule)`, the lock listeners and the
+   one snapshot in `TimeRulesRuntime.recheck` (`reevaluateLockReasonFromCache(context, snapshot)`), `GlancePanel`'s
+   model, listener, `bindRuleCard`, `placeList` and the `try/catch` in `resumeNow`, `glance_rule_card_description`
+   (nb + en). Tests: `RuleCardTest` (7), `LockGlanceTest`'s rule-card layout test, `LockGlanceLayoutTest` (the 82 dp
+   part, the card's attributes, §1.3's table at 473/497 dp, the order).
+2. **Step 2, both directories** - `POST /api/devices/time-request` (`handlers::device_api::time_request`), the kind
+   `extra_time_request` (key + params, `told`), the switch `push_extra_time` (migration
+   `0096_extra_time_request.sql`), the cap, the news rule, `stale`, Device › Time's `data-asked` row
+   (`parent_events::open_extra_time_request`), Activity's case-insensitive clock strip, the contract
+   `server/testdata/time_request.json` + its launcher copy, `dto/TimeRequest.kt`, `MdmApi.sendTimeRequest`,
+   `TimeRequestsTest`'s contract part, both CLAUDE.md lists and the workflows' path filters. Tests:
+   `tests::time_request` (6), `parent_events::tests` (2 new, the words table extended), `activity::tests` (1 new),
+   `migrations_73_to_96_in_order`.
+3. **Step 3, launcher** - `timerules/TimeLeftNotice.kt`, `server/AnchorNotice.kt`, `timerules/TimeAskReceiver.kt`
+   (manifest, not exported), `timerules/TimeRequests.kt` (+ `AnchorRefresh`), `CommandListenerService.isRunning` and
+   its `onCreate` (plain first, then reset and refresh), the refresh in `recheck`, `openUntilMs` in `nextBoundary`,
+   `checkpointDelayMs` and the minute tick in `ScreenTimeTracker.update`, the upload after `PowerEvents.upload`, the
+   strings (nb + en). Tests: `TimeLeftNoticeTest`, the rest of `TimeRequestsTest`, `ScreenTimeTest`'s
+   `checkpointDelayMs`, `QuietNotificationsTest` (the builder moved to `AnchorNotice`).
+
+Test counts at the end: launcher 1742 unit tests (1733 after steps 1-2), server 1298, all green; no jstests touched (no static
+JS changed); clippy's 13 known warnings, no new one.
+
+**Deviations, as built:**
+- **D6 / the migration**: `0096_extra_time_request.sql` with a gap at 0095 (sqlx accepts a gap; the order test filters
+  73..=96 and lists 94 then 96). Whichever of `r13-rule-card` and `pwa-fixes-a` merges second renumbers.
+- **`ExtraTimeParams` has one more field than §2.6 names**: `rule` (the report's `lock_reason`, `SCHOOL`/`BEDTIME`/
+  `RULE`) next to `state: "rule"`, since the words "School"/"Bedtime"/"A time rule" need the kind; never the rule's
+  name. `left_minutes` and `rule` are left out when unused.
+- **`requestState`'s order**: an open record of today (Pending/Asked) comes before Capped, so "Spurt kl. HH:MM" shows
+  after the day's third accepted request too; Capped follows once it is answered or its 30 minutes end (§2.4 lists
+  Capped first; read as the states, not their order).
+- **The Time page's "after a lift"**: a lift whose `created_at` is at or after the request's counts (both
+  `datetime('now')`, one-second resolution): a lift in the same second as the request counts as its answer.
+- **Two more refresh points than §2.3 names**: the pause's start (`RestrictionsPause.reapply`) and the override's
+  (`OfflineOverride.activate`) call `AnchorRefresh.request` - neither runs `recheck`, and the notice must go plain at
+  once. The tracker's minute tick takes a fresh snapshot (`AnchorNotice.refreshNow`) rather than handing its own
+  `BudgetUse` through (the request's state needs the ledger's day and the policy's lifts too).
+- **`ruleCard` also needs the same reason** in the pref and the snapshot (not only both locking): a moment where they
+  disagree on the kind shows no card.
+
+**Owed (not run here):** the emulator checks §1.7 (1-8) and §2.9 (1-8), the server's web-push check for the new kind
+(§2.9 item 3), Android 15/16's silent-section collapse (§2.9 item 2), and the Jelly Star. Release order: the server
+(0.49.0, no `Cargo.toml` bump on this branch) before a launcher with step 3.

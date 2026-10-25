@@ -119,6 +119,31 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   `EXTRA_FOREGROUND`, which `onStartCommand` answers with `startForeground` before anything else (also the
   `IllegalStateException` fallback). Not device-tested: PLAN's checks (one notification in the shade, the filter
   through a night in Doze and a reboot without its notification).
+- **Screen time left in the anchor's notification** (design r13 step 3, `docs/design/r13-launcher-rule-card-and-time-left.md`
+  §2, at the monorepo root): with a budget set today the same notification (id 1002, the MIN channel, its icon) has the
+  time left as its title ("1 t 20 min igjen i dag", `anchor_time_left`; "Skjermtiden er brukt opp i dag") and one
+  action "Be om mer tid"; with no budget today, in the pause or the override it is the plain "Vibb One". Pure
+  `timerules/TimeLeftNotice.kt` (`timeLeftNotice(budget, windowOpen, request)`, `leftMinutes` rounded up;
+  `TimeLeftNoticeTest`); glue `server/AnchorNotice.kt` (`build` - silent, ongoing, no time, only-alert-once; the action
+  `NotificationCompat.Action.Builder(..).setAuthenticationRequired(true)` to the explicit, non-exported
+  `timerules/TimeAskReceiver`; "Spurt kl. 14:02" (`anchor_asked_at`) is the content text, never a button, and there is
+  no action while a request is pending, taken or capped - R13-8). `refresh` posts `notify(1002, ..)` only while the
+  anchor runs (`CommandListenerService.isRunning`) and only a notice or locale other than the last posted
+  (`lastPosted`, reset in the anchor's `onCreate`). `onCreate`: `startForeground` with `AnchorNotice.plain` literally
+  first, then the reset and `refreshNow` (CE prefs only after it). Refreshed from every `TimeRulesRuntime.recheck` with
+  its snapshot (counting or not, R13-3), from `ScreenTimeTracker.update`'s counting branch (the checkpoint's delay is
+  then `checkpointDelayMs(remaining)` - the next minute flip + 200 ms; else `CHECKPOINT_MS`), the tap, the server's
+  answer and the pause/override start (`AnchorRefresh.request`). **The request** (`timerules/TimeRequests.kt`,
+  `TimeRequestsTest`): DE prefs `time_request` (`record_v1`: `TimeRequestRecord(id 32 hex, askedAtMs, openUntilMs
+  +30 min, day = the ledger's, liftIdAtAsk, PENDING|ASKED)`, `count_v1`: `TimeRequestCount(day, accepted)` - the
+  phone's own three a day, D5), one `commit()` under its lock; pure `requestState` (an open record of today first -
+  Pending/Asked -, then Capped at three, else Idle: another day, its 30 minutes over, or a lift newer than the one at
+  the ask), `askStep` (enrolled, a budget today, outside the pause, Idle), `timeRequestAnswer` (§2.4's table: accepted,
+  capped - the count set to three -, stale/other 4xx/unparsable dropped, 404 dropped silently, 401/408/429/5xx/none
+  kept and retried until `openUntilMs`) and `afterTimeRequestAnswer`. `TimeRequests.upload` runs in `performMdmSync`
+  right after `PowerEvents.upload`; the tap asks `SyncRunner.request(.., "time_request")`. The stored `openUntilMs` is
+  one more `TimeRulesRuntime.nextBoundary` instant, so "Spurt" ends on time across a process death. Not
+  emulator-checked yet: design r13 §2.9.
 - **Backstop** (`push/BackstopAlarm.kt`): `setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP)`, request code 7, `backstopDelayMs`: 30 min, 15 while SSE is down (on the up->down edge, and only ever moved earlier then - a flapping stream must not push it out; each reconnect syncs once instead), sooner for an interval location policy, floor 9 min. Its sync request also reconnects a stalled or stale SSE stream (`checkStream`, design 19 below).
 - **Play** (pure `play/PlayPolicy.kt`, `PlayPolicyTest`; `play/PlayRuntime.kt`): Play services + GSF are in `neverRestrict` (other apps' FCM - Element X; ours is gone since design 19). The Play Store is never hidden but **suspended** while apps are managed (also during a lock, also if allowlisted) except in install mode and the nightly update window (02:00-04:00, only while the screen is off - screen-on ends it at once, screen-off resumes it); never pinned or shown on Home/drawer (`AppFilter`, `playPackageLaunchable`) except in install mode **and, in the drawer only, while the override or the pause is open (design 28: `PlayRuntime.storeListable` feeds `AppFilter`; Home's grid drops the store outside install mode with `playPackageOnHome` in `refreshApps`); a window's edges reload the app list** (`Application.initRest`'s `WindowRelock.addListener { loadApps() }` - not Play's suspension edge, which never comes on a GMS phone). Override/pause lift it like any app restriction. `shouldSuspendNewPackage` leaves Play packages to `apply()`; a vending (re)install re-applies. `AppEnforcer.lastEnforcedPlayState` + `PlayState.key()` make `reevaluateLockReasonFromCache` re-apply on install-mode start/end and window edges (screen on/off, `TimeRuleAlarm` also wakes for `PlayRuntime.nextEdge`).
 - **Install mode**: Settings -> "Install from Play" (Settings gate + the PIN again, shared lockout; refused unless managed, with a PIN, no time lock, Play installed - `canStartInstallMode`). 15 min by wall clock, elapsed realtime and boot count (`timedWindowActive`), CE prefs `play_state`; pins only the Play Store, unsuspends it, opens it; ongoing notification with "End now" (`InstallModeReceiver`). Ends on expiry (boundary alarm), "End now", reboot, or a time lock beginning (`apply` cancels it); then Home is brought to front. Reported as `install_mode.until_ms`.
