@@ -502,6 +502,7 @@ One line per approved item that has no code yet. An item leaves this list in the
 after), never later. Details stay in the entries below.
 
 - **Launcher**
+  - **Fingerprint with the screen on, Jelly Star check** (the user, 2026-10-25, emulator: with the screen on the fingerprint unlocks only once SystemUI's pad is up; from screen-off it unlocks at once): expected in the hybrid - the glance occludes the keyguard, and Android listens for fingerprint only while the keyguard is showing and not occluded (design 59); no API lets us dismiss a secure keyguard after our own biometric check. Check on the Jelly Star (side-mounted sensor; some OEMs keep listening while occluded); if it does not work there with the screen on, one line in Kid Settings' help ("press the sensor from a dark screen, or swipe up first"), nothing more. Not a bug.
   - **Design 38 device check, the Jelly Star half** (the emulator half passed 2026-10-25: `svc power reboot` → "is restarting" in the inbox within 2 min, `docs/testing/2026-10-25-r13-run.md`): the power menu's Power off and Restart and a flat battery on the Jelly Star - the user's check.
   - Missed Element X calls on the contact card and the phone book's badge (capture the notification shape on the Jelly Star first).
   - VoIP small fixes: "Tilbake til samtalen" button, no SOS guess at a VoIP wake, no BlockedAppActivity flash, READ_PHONE_STATE for allowlisted apps; design 57 itself is held (design 59 hybrid).
