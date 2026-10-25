@@ -298,3 +298,41 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   templates leave out an empty summary's " · ". A zone event's summary is just its time; an emergency call or a
   phone-off on an earlier day now shows only `when` there too. So a later kind must not put anything but its clock
   in a summary it needs shown in Activity (the code QA's open question 3, kept as a rule).
+
+## Requests for more time (design r13 step 2, `docs/design/r13-launcher-rule-card-and-time-left.md` §2.5-§2.7, migration `0096_extra_time_request.sql`)
+
+- **The route**: `POST /api/devices/time-request` (`handlers::device_api::time_request`, bearer, body at most
+  `TIME_REQUEST_BODY_LIMIT` 1 KiB): `{id, asked_at_ms}` from the launcher's "Be om mer tid" in the anchor's
+  notification. 200 `{"accepted":true}`, `{"accepted":false,"reason":"capped"}` or `{"accepted":false,"reason":"stale"}`
+  (`TimeRequestAnswer`); 400 for a body that doesn't parse, an id that isn't 16-64 lowercase hex
+  (`time_request_id_ok`) or an instant out of range; 500 on a DB error (the phone keeps its request and retries). The
+  shapes are the shared contract `testdata/time_request.json` (byte-identical in the launcher's test resources).
+- **The kind** `Kind::ExtraTimeRequest` (`extra_time_request`, last in `Kind::ALL`; normal urgency, TTL 3600 s,
+  foldable) with its own switch `push_extra_time` "Asks for more time" (Notify Me About lists it from
+  `Kind::switches()`, per parent, on by default for every parent, existing ones included - migration 0096's `DEFAULT 1`,
+  no row = on). Stored as a key plus parameters like the zone events: key = the phone's request id (a retried POST is
+  one row), `params` = `ExtraTimeParams {phone, at, state, left_minutes?, rule?}` with `state` `left`/`used_up`/`rule`/
+  `unknown` (`TimeAsk::of` the phone's own newest report: a rule that locks first - `rule` holds its `lock_reason`,
+  never its name -, then today's screen time from `time_state`; never text from the request). `title`/`summary` empty;
+  `told` words it: "Anna asks for more screen time" (`fit_name` to 60) / "17:21 · Screen time used up",
+  "Yesterday 21:40 · Bedtime", "14:02 · 1 h 20 min left", "School", "A time rule", or the clock alone for `unknown`.
+  Target `/devices/{id}/time#extra`. Kept `EVENT_DAYS` (90) like every kind.
+- **The cap and the news rule** (in one `BEGIN IMMEDIATE` transaction): a request asked before the server zone's today
+  isn't stored (`stale`; a future `asked_at` counts as now); the phone's `extra_time_request` rows of today with another
+  key are counted through `datetime(happened_at)` against `zone.start_of_today` - at `EXTRA_TIME_REQUESTS_A_DAY` (3) the
+  request isn't stored (`capped`, one `tracing::info!`), so a retried third request is taken, never a fourth; else
+  `raise` with `Push::Now` while it is news (asked under `EXTRA_TIME_NEWS_MINUTES` 30 min ago at intake), `Push::No`
+  after (inbox and Activity only). The phone keeps its own count of three too (design r13 D5).
+- **Activity**: `activity::without_own_clock` strips a leading or trailing own clock case-insensitively, so the day
+  after "Yesterday 21:40 · Bedtime" against `when` "yesterday 21:40" shows "Bedtime".
+- **Device › Time** shows "Asked for more time at 17:21" (`data-asked`, a `.group` with one `.row.row-note` at the top
+  of Extra Time Today, above the buttons) while `parent_events::open_extra_time_request` finds one open: the phone's
+  newest request raised in the server zone's today, and no `time_lifts` row for the phone made at or after its
+  `created_at` (both the server's `datetime('now')`, compared through `datetime()`; any lift counts, one in the same
+  second as the request counts as its answer). A lift form already returns to `#extra`, so after +15 min the page lands
+  there with its flash and without the row.
+- Tests: `tests::time_request` (the contract's answers and copies, one row and the push by each parent's switch, the
+  same id twice, a retried third, the fourth capped, 31 min old unpushed, yesterday's stale, bad ids, the Time page's
+  row until a lift and a lift before the request leaving it), `parent_events::tests` (the words per state, a long name,
+  the day after, the state from a report), `activity::tests` (the case-insensitive strip),
+  `migrations_73_to_96_in_order`.

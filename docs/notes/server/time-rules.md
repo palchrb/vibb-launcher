@@ -32,7 +32,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   incoming calls not blocked), **Now** (the Time lock as §3.10's badge - `time_state::lock_badge`, so the end shows
   only when provably right, which needs the phone's `time_state.zone` - sent since design 34 P13 -, today's screen time
   with the extra minutes, the report's age with the exact local time in `title`), **Extra Time Today** (+15 min / +30
-  min / +1 h tiles), **Pause a Rule** (rule and length pickers, only with rules to pause), **Recent** (the 10 newest
+  min / +1 h tiles; above them "Asked for more time at 17:21" while the kid's request is open - design r13,
+  `notifications.md`, "Requests for more time"), **Pause a Rule** (rule and length pickers, only with rules to pause), **Recent** (the 10 newest
   lifts, `lifts::recent`, statuses local - `lifts::LiftState` -, End now), **Rules** (the own-rules switch, its own
   form, and while off a row to everyone's rules), **Own Rules** (rows to the editor, Add Rule), **Own Daily Limit**. A
   phone not set up has the page. Every read is a 500 on a DB error, never an empty list.

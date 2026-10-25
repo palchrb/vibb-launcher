@@ -128,16 +128,16 @@ pub(crate) fn without_own_clock(summary: &str, when: &str) -> String {
     if summary.eq_ignore_ascii_case(clock) || summary.eq_ignore_ascii_case(when) {
         return String::new();
     }
+    // Case-insensitively (design r13 R13-13): an event told the day after says "Yesterday 21:40 · …"
+    // while `when` is "yesterday 21:40".
     for own in [clock, when] {
-        if let Some(rest) = summary
-            .strip_prefix(own)
-            .and_then(|s| s.strip_prefix(" · "))
+        if let Some(rest) =
+            strip_prefix_ignore_case(summary, own).and_then(|s| s.strip_prefix(" · "))
         {
             return rest.to_string();
         }
-        if let Some(rest) = summary
-            .strip_suffix(own)
-            .and_then(|s| s.strip_suffix(" · "))
+        if let Some(rest) =
+            strip_suffix_ignore_case(summary, own).and_then(|s| s.strip_suffix(" · "))
         {
             return rest.to_string();
         }
@@ -145,9 +145,37 @@ pub(crate) fn without_own_clock(summary: &str, when: &str) -> String {
     summary.to_string()
 }
 
+/// `text` without a leading `prefix`, ASCII case ignored.
+fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = text.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &text[prefix.len()..])
+}
+
+/// `text` without a trailing `suffix`, ASCII case ignored.
+fn strip_suffix_ignore_case<'a>(text: &'a str, suffix: &str) -> Option<&'a str> {
+    let start = text.len().checked_sub(suffix.len())?;
+    let tail = text.get(start..)?;
+    tail.eq_ignore_ascii_case(suffix).then(|| &text[..start])
+}
+
 #[cfg(test)]
 mod tests {
     use super::without_own_clock;
+
+    #[test]
+    fn the_own_clock_goes_whatever_its_case() {
+        // Design r13 R13-13: a request told the day after.
+        assert_eq!(
+            without_own_clock("Yesterday 21:40 · Bedtime", "yesterday 21:40"),
+            "Bedtime"
+        );
+        assert_eq!(
+            without_own_clock("Bedtime · YESTERDAY 21:40", "yesterday 21:40"),
+            "Bedtime"
+        );
+        assert_eq!(without_own_clock("Ø · 21:40", "21:40"), "Ø");
+    }
 
     #[test]
     fn a_leading_own_clock_goes() {

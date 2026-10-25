@@ -30,8 +30,8 @@ pub const PAGE: i64 = 100;
 /// (§2.1): an older one was made before the phone reported to this server.
 const FIRST_REPORT_CALL_HOURS: i64 = 24;
 
-/// An event's kind, as stored in `parent_events.kind`. (`app_blocked` and `extra_time_request` are
-/// reserved, design 35 §2.1, and get a variant when something raises them.)
+/// An event's kind, as stored in `parent_events.kind`. (`app_blocked` is reserved, design 35 §2.1,
+/// and gets a variant when something raises it.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     EmergencyCall,
@@ -48,10 +48,13 @@ pub enum Kind {
     /// parameters ([NewEvent::params]).
     ZoneArrived,
     ZoneLeft,
+    /// Design r13 §2.6: the kid tapped "Be om mer tid" in the phone's notification
+    /// (`POST /api/devices/time-request`), told from its parameters ([ExtraTimeParams]).
+    ExtraTimeRequest,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 10] = [
+    pub const ALL: [Kind; 11] = [
         Kind::EmergencyCall,
         Kind::PinUsed,
         Kind::PinLockout,
@@ -62,6 +65,7 @@ impl Kind {
         Kind::ZoneArrived,
         Kind::ZoneLeft,
         Kind::LowBattery,
+        Kind::ExtraTimeRequest,
     ];
 
     pub fn wire(self) -> &'static str {
@@ -76,6 +80,7 @@ impl Kind {
             Kind::PhoneOn => "phone_on",
             Kind::ZoneArrived => "zone_arrived",
             Kind::ZoneLeft => "zone_left",
+            Kind::ExtraTimeRequest => "extra_time_request",
         }
     }
 
@@ -93,12 +98,13 @@ impl Kind {
     }
 
     /// Seconds the push service keeps the push for an offline device (§4.3): a day for the
-    /// emergency call, an hour for a low battery (later it is charging or flat) and a zone's
-    /// crossing (later it is old news, design 64 §3.4), else 12 h.
+    /// emergency call, an hour for a low battery (later it is charging or flat), a zone's
+    /// crossing (later it is old news, design 64 §3.4) and a request for more time (design r13
+    /// §2.6; the inbox keeps it), else 12 h.
     pub fn ttl(self) -> i64 {
         match self {
             Kind::EmergencyCall => 86_400,
-            Kind::LowBattery | Kind::ZoneArrived | Kind::ZoneLeft => 3_600,
+            Kind::LowBattery | Kind::ZoneArrived | Kind::ZoneLeft | Kind::ExtraTimeRequest => 3_600,
             _ => 43_200,
         }
     }
@@ -122,6 +128,8 @@ impl Kind {
             Kind::PhoneOn => Some(("push_phone_on", "Phone turned on")),
             // One switch for both directions (design 64 §3.4).
             Kind::ZoneArrived | Kind::ZoneLeft => Some(("push_zones", "Zones: arrived and left")),
+            // Design r13 §2.6 (the user, 2026-10-25): its own switch, on by default.
+            Kind::ExtraTimeRequest => Some(("push_extra_time", "Asks for more time")),
         }
     }
 
@@ -1000,6 +1008,173 @@ pub fn zone_crossing(
     }
 }
 
+/// Requests a phone may ask for more time a day (design r13 D5, the server's backstop for the
+/// phone's own count): the fourth of the server zone's day is answered `capped` and not stored.
+pub const EXTRA_TIME_REQUESTS_A_DAY: i64 = 3;
+/// A request is news this long after the kid asked: pushed when younger at intake, else only in the
+/// inbox and Activity (design r13 §2.6); the phone stops sending it after the same 30 minutes.
+pub const EXTRA_TIME_NEWS_MINUTES: i64 = 30;
+
+/// Where the phone stood when the kid asked (design r13 §2.6), from the server's own latest report
+/// for it - never from text in the request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TimeAsk {
+    /// Today's screen time has this many minutes left.
+    Left(i64),
+    /// Today's screen time is used up (or the phone can't read its record).
+    UsedUp,
+    /// A time rule locks: its `lock_reason` (`SCHOOL`, `BEDTIME`, `RULE`), never its name.
+    Rule(String),
+    /// No current report says.
+    Unknown,
+}
+
+impl TimeAsk {
+    /// From the phone's newest report (`time_state`, else `lock_reason`): a rule that locks first
+    /// (its kind word, D3), then today's screen time - only a report of the current day counts
+    /// (`time_state::screen_time`).
+    pub fn of(report: &crate::time_state::TimeReport, zone: &Zone, now: DateTime<Utc>) -> TimeAsk {
+        match report.lock_reason.as_str() {
+            reason @ ("SCHOOL" | "BEDTIME" | "RULE") => return TimeAsk::Rule(reason.to_string()),
+            "SCREEN_TIME" => return TimeAsk::UsedUp,
+            _ => {}
+        }
+        if report.ledger_unreadable {
+            return TimeAsk::UsedUp;
+        }
+        match crate::time_state::screen_time(report, zone, now) {
+            Some(crate::time_state::ScreenTime {
+                used,
+                budget: Some(budget),
+                ..
+            }) => {
+                if used >= budget {
+                    TimeAsk::UsedUp
+                } else {
+                    TimeAsk::Left(budget - used)
+                }
+            }
+            _ => TimeAsk::Unknown,
+        }
+    }
+}
+
+/// A request for more time's parameters (design r13 §2.6): the phone's name as it was when it was
+/// raised, when the kid asked (RFC 3339), and where the phone stood - `state` `left`, `used_up`,
+/// `rule` or `unknown`, with `left_minutes` for `left` and `rule` (the rule's `lock_reason`, no
+/// name) for `rule`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExtraTimeParams {
+    pub phone: String,
+    pub at: String,
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_minutes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
+}
+
+/// The kid's request for more screen time (design r13 §2.6): key the phone's own request `id`, so
+/// a retried POST gives one row; the words left to [told]. Target: Device › Time's Extra Time
+/// Today, with the lift buttons in view.
+pub fn extra_time_request(
+    device_id: i64,
+    phone: &str,
+    id: &str,
+    at: DateTime<Utc>,
+    state: &TimeAsk,
+    push: Push,
+) -> NewEvent {
+    let (word, left_minutes, rule) = match state {
+        TimeAsk::Left(minutes) => ("left", Some(*minutes), None),
+        TimeAsk::UsedUp => ("used_up", None, None),
+        TimeAsk::Rule(reason) => ("rule", None, Some(reason.clone())),
+        TimeAsk::Unknown => ("unknown", None, None),
+    };
+    let params = ExtraTimeParams {
+        phone: phone.to_string(),
+        at: instant(at),
+        state: word.to_string(),
+        left_minutes,
+        rule,
+    };
+    NewEvent {
+        device_id,
+        kind: Kind::ExtraTimeRequest,
+        dedup_key: id.to_string(),
+        title: String::new(),
+        summary: String::new(),
+        target: format!("/devices/{device_id}/time#extra"),
+        detail: None,
+        params: Some(serde_json::to_string(&params).expect("strings serialize")),
+        happened_at: at,
+        push,
+    }
+}
+
+/// A request's words (design r13 §2.6): "Anna asks for more screen time" / "17:21 · Screen time
+/// used up", "Yesterday 21:40 · Bedtime", "14:02 · 1 h 20 min left", the clock alone when the
+/// phone's state was unknown.
+fn extra_time_told(p: &ExtraTimeParams, zone: &Zone, now: DateTime<Utc>) -> (String, String) {
+    let title = fit_name(&p.phone, TITLE_MAX, |name| {
+        format!("{name} asks for more screen time")
+    });
+    let at = crate::display_time::parse_db_utc(&p.at)
+        .map(|at| capitalized(&zone.at(at, now)))
+        .unwrap_or_default();
+    let state = match p.state.as_str() {
+        "left" => p
+            .left_minutes
+            .filter(|m| *m > 0)
+            .map(|m| format!("{} left", crate::handlers::lifts::minutes_text(m))),
+        "used_up" => Some("Screen time used up".to_string()),
+        "rule" => Some(
+            match p.rule.as_deref() {
+                Some("SCHOOL") => "School",
+                Some("BEDTIME") => "Bedtime",
+                _ => "A time rule",
+            }
+            .to_string(),
+        ),
+        _ => None,
+    };
+    let summary = match state {
+        Some(state) if !at.is_empty() => format!("{at} · {state}"),
+        Some(state) => state,
+        None => at,
+    };
+    (crate::audit::clip(&title, TITLE_MAX).to_string(), summary)
+}
+
+/// The request still open for Device › Time's "Asked for more time at 17:21" (design r13 §2.7):
+/// when the kid asked, if the phone's newest `extra_time_request` was raised in the server zone's
+/// today and no lift for the phone was made since (`time_lifts.created_at` at or after the
+/// event's `created_at` - both the server's `datetime('now')`, compared through `datetime()`; any
+/// lift counts, and one in the same second as the request counts as its answer).
+pub async fn open_extra_time_request(
+    db: &SqlitePool,
+    device_id: i64,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    let row: Option<String> = sqlx::query_scalar(
+        "SELECT e.happened_at FROM parent_events e \
+         WHERE e.device_id = ?1 AND e.kind = 'extra_time_request' \
+         AND datetime(e.created_at) >= datetime(?2) \
+         AND e.id = (SELECT n.id FROM parent_events n WHERE n.device_id = ?1 \
+                     AND n.kind = 'extra_time_request' ORDER BY datetime(n.created_at) DESC, n.id DESC LIMIT 1) \
+         AND NOT EXISTS (SELECT 1 FROM time_lifts l WHERE l.device_id = ?1 \
+                         AND datetime(l.created_at) >= datetime(e.created_at))",
+    )
+    .bind(device_id)
+    .bind(crate::push::db_time(zone.start_of_today(now)))
+    .fetch_optional(db)
+    .await?;
+    Ok(row
+        .and_then(|at| crate::display_time::parse_db_utc(&at))
+        .map(|at| at.min(now)))
+}
+
 /// An event's words as shown and pushed: a kind told from parameters gets them made here, in
 /// English, at `now` in `zone` ("Sverre arrived at Home" / "15:42", "Yesterday 21:14"); any
 /// other row keeps its stored `title` and `summary`. Parameters that don't read leave them too.
@@ -1011,6 +1186,12 @@ pub fn told(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> (String, String) {
+    if Kind::of(kind) == Some(Kind::ExtraTimeRequest) {
+        return match params.and_then(|p| serde_json::from_str::<ExtraTimeParams>(p).ok()) {
+            Some(p) => extra_time_told(&p, zone, now),
+            None => (title, summary),
+        };
+    }
     let Some(kind @ (Kind::ZoneArrived | Kind::ZoneLeft)) = Kind::of(kind) else {
         return (title, summary);
     };
@@ -1566,6 +1747,13 @@ mod tests {
                 "Not charging · 14:02",
                 "/devices/3",
             ),
+            // Design r13: told from its parameters too.
+            (
+                extra_time_request(3, "Anna", "ab12", two, &TimeAsk::UsedUp, Push::Now),
+                "",
+                "",
+                "/devices/3/time#extra",
+            ),
         ];
         for (event, title, summary, target) in &rows {
             assert_eq!(
@@ -1660,6 +1848,136 @@ mod tests {
         );
     }
 
+    /// Design r13 §2.6: a request for more time is told from its parameters - each state's words,
+    /// a long name cut to 60, the day after; its key is the phone's id, its target `#extra`.
+    #[test]
+    fn a_request_for_more_time_is_told_from_its_parameters() {
+        let phone = anna();
+        let zone = &phone.zone;
+        let at = utc("2026-10-18 15:21:00"); // 17:21 in Oslo
+        let tell = |name: &str, state: TimeAsk, now: DateTime<Utc>| {
+            let event = extra_time_request(3, name, "ab12", at, &state, Push::Now);
+            told(
+                "extra_time_request",
+                event.title,
+                event.summary,
+                event.params.as_deref(),
+                zone,
+                now,
+            )
+        };
+        let later = utc("2026-10-18 15:30:00");
+        assert_eq!(
+            tell("Anna", TimeAsk::UsedUp, later),
+            (
+                "Anna asks for more screen time".to_string(),
+                "17:21 · Screen time used up".to_string()
+            )
+        );
+        assert_eq!(
+            tell("Anna", TimeAsk::Left(80), later).1,
+            "17:21 · 1 h 20 min left"
+        );
+        assert_eq!(
+            tell("Anna", TimeAsk::Left(45), later).1,
+            "17:21 · 45 min left"
+        );
+        assert_eq!(
+            tell("Anna", TimeAsk::Rule("SCHOOL".into()), later).1,
+            "17:21 · School"
+        );
+        assert_eq!(
+            tell("Anna", TimeAsk::Rule("BEDTIME".into()), later).1,
+            "17:21 · Bedtime"
+        );
+        assert_eq!(
+            tell("Anna", TimeAsk::Rule("RULE".into()), later).1,
+            "17:21 · A time rule"
+        );
+        assert_eq!(tell("Anna", TimeAsk::Unknown, later).1, "17:21");
+        // The day after, the clock with its day.
+        assert_eq!(
+            tell(
+                "Anna",
+                TimeAsk::Rule("BEDTIME".into()),
+                utc("2026-10-19 08:00:00")
+            )
+            .1,
+            "Yesterday 17:21 · Bedtime"
+        );
+        // A long name is cut so the title fits 60.
+        let long = "Anna Sofie Margrethe Kristine Olsen-Haugen Nordby";
+        let title = tell(long, TimeAsk::UsedUp, later).0;
+        assert!(title.chars().count() <= TITLE_MAX, "{title}");
+        assert!(title.ends_with("… asks for more screen time"), "{title}");
+        // The event's own parts.
+        let event = extra_time_request(3, "Anna", "ab12", at, &TimeAsk::UsedUp, Push::No);
+        assert_eq!(event.kind, Kind::ExtraTimeRequest);
+        assert_eq!(event.dedup_key, "ab12");
+        assert_eq!(event.target, "/devices/3/time#extra");
+        assert!(event.title.is_empty() && event.summary.is_empty());
+        assert_eq!(Kind::of("extra_time_request"), Some(Kind::ExtraTimeRequest));
+        assert!(!Kind::ExtraTimeRequest.urgent());
+        assert_eq!(Kind::ExtraTimeRequest.ttl(), 3_600);
+        assert_eq!(Kind::ExtraTimeRequest.urgency(), "normal");
+        assert_eq!(
+            Kind::ExtraTimeRequest.switch(),
+            Some(("push_extra_time", "Asks for more time"))
+        );
+        assert_eq!(Kind::ALL.last(), Some(&Kind::ExtraTimeRequest));
+        // Parameters that don't read keep the stored words.
+        assert_eq!(
+            told(
+                "extra_time_request",
+                "t".into(),
+                "s".into(),
+                Some("{"),
+                zone,
+                later
+            ),
+            ("t".to_string(), "s".to_string())
+        );
+    }
+
+    /// Where the phone stood, from its report: a rule first (its kind), then today's screen time.
+    #[test]
+    fn a_requests_state_comes_from_the_report() {
+        use crate::time_state::TimeReport;
+        let phone = anna();
+        let today = phone.zone.today(phone.now);
+        let report = |reason: &str, used: Option<i64>, budget: Option<i64>| TimeReport {
+            lock_reason: reason.to_string(),
+            day: Some(today),
+            used_minutes: used,
+            budget_minutes: budget,
+            ..Default::default()
+        };
+        let of = |r: TimeReport| TimeAsk::of(&r, &phone.zone, phone.now);
+        assert_eq!(of(report("NONE", Some(10), Some(90))), TimeAsk::Left(80));
+        assert_eq!(of(report("NONE", Some(90), Some(90))), TimeAsk::UsedUp);
+        assert_eq!(
+            of(report("SCREEN_TIME", Some(95), Some(90))),
+            TimeAsk::UsedUp
+        );
+        assert_eq!(
+            of(report("BEDTIME", Some(10), Some(90))),
+            TimeAsk::Rule("BEDTIME".into())
+        );
+        assert_eq!(of(report("NONE", Some(10), None)), TimeAsk::Unknown);
+        assert_eq!(of(report("NONE", None, None)), TimeAsk::Unknown);
+        let unreadable = TimeReport {
+            ledger_unreadable: true,
+            ..report("NONE", Some(0), Some(90))
+        };
+        assert_eq!(of(unreadable), TimeAsk::UsedUp);
+        // Yesterday's report says nothing about today's time.
+        let old = TimeReport {
+            day: today.pred_opt(),
+            ..report("NONE", Some(10), Some(90))
+        };
+        assert_eq!(of(old), TimeAsk::Unknown);
+    }
+
     #[test]
     fn two_kinds_share_the_zones_switch() {
         let switches = Kind::switches();
@@ -1667,7 +1985,7 @@ mod tests {
         assert_eq!(zones.count(), 1);
         assert_eq!(
             switches.len(),
-            8,
+            9,
             "every switch once; the emergency call has none"
         );
         assert_eq!(Kind::ZoneArrived.switch(), Kind::ZoneLeft.switch());

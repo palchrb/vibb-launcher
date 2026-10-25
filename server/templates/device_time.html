@@ -36,6 +36,8 @@
 
     <section id="extra" aria-labelledby="extra-title">
         <h2 class="group-header" id="extra-title">Extra Time Today</h2>
+        {#- Design r13 §2.7: the kid's "Be om mer tid" still open (until a lift or the day's end). -#}
+        {% if let Some(at) = asked %}<div class="group"><p class="row row-note" data-asked>Asked for more time at {{ at }}</p></div>{% endif %}
         <div class="act-grid">
             {% for minutes in [15, 30, 60] %}
             <form method="post" action="/devices/{{ device.id }}/lifts#extra">

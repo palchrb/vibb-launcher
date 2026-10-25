@@ -1,0 +1,1 @@
+{"request":{"id":"0123456789abcdef0123456789abcdef","asked_at_ms":1793034120000},"answers":[{"accepted":true},{"accepted":false,"reason":"capped"},{"accepted":false,"reason":"stale"}]}
