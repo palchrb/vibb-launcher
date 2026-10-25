@@ -205,9 +205,21 @@ impl Phone {
             target: format!("/devices/{}", self.id),
             detail: None,
             params: None,
+            push_title: String::new(),
+            push_body: String::new(),
             happened_at,
             push: Push::Now,
         }
+    }
+
+    /// A push's short words (the shorter push texts, 2026-10-25): "Anna: turned on" / "07:02 ·
+    /// battery 64 %" - the fact after the name, then the time and at most one number. The inbox
+    /// keeps the long words in `title`/`summary`.
+    fn pushed(&self, fact: &str, at: DateTime<Utc>, number: Option<String>) -> (String, String) {
+        (
+            self.named(TITLE_MAX, |name| format!("{name}: {fact}")),
+            push_body(&capitalized(&self.at(at)), number),
+        )
     }
 
     /// An emergency call the phone reported (`call_state.last_emergency_call_at`).
@@ -218,12 +230,15 @@ impl Phone {
         } else {
             capitalized(&when)
         };
+        let (push_title, push_body) = self.pushed("emergency call", at, None);
         NewEvent {
             title: self.named(TITLE_MAX, |name| {
                 format!("{name} called an emergency number")
             }),
             summary,
             target: format!("/devices/{}/calls", self.id),
+            push_title,
+            push_body,
             ..self.event(Kind::EmergencyCall, instant(at), at)
         }
     }
@@ -234,7 +249,7 @@ impl Phone {
     pub fn pin_event(&self, event: &crate::parent_pin::PinEvent) -> Option<NewEvent> {
         use crate::parent_pin::{Entry, Kind as PinKind};
         let at = DateTime::from_timestamp_millis(event.occurred_at_ms).unwrap_or(self.now);
-        let (kind, title, summary) = match event.kind {
+        let (kind, title, summary, (push_title, push_body)) = match event.kind {
             PinKind::Wrong => return None,
             PinKind::Unlocked => {
                 let entry = match event.entry {
@@ -248,6 +263,7 @@ impl Phone {
                     Kind::PinUsed,
                     self.named(TITLE_MAX, |name| format!("Parent PIN used on {name}")),
                     format!("{entry} · {}", self.at(at)),
+                    self.pushed("parent PIN used", at, None),
                 )
             }
             PinKind::Lockout => {
@@ -261,12 +277,18 @@ impl Phone {
                     Kind::PinLockout,
                     self.named(TITLE_MAX, |name| format!("Parent PIN locked on {name}")),
                     format!("Too many wrong tries · {until}"),
+                    (
+                        self.named(TITLE_MAX, |name| format!("{name}: parent PIN locked")),
+                        capitalized(&until),
+                    ),
                 )
             }
         };
         Some(NewEvent {
             title,
             summary,
+            push_title,
+            push_body,
             target: format!("/devices/{}/lock#parent-pin", self.id),
             ..self.event(kind, event.event_id.clone(), at)
         })
@@ -315,7 +337,11 @@ impl Phone {
             detail.push(format!("Accessibility: {}.", named(&found.accessibility)));
         }
         let digest = hex::encode(Sha256::digest(stored.as_bytes()));
+        let (push_title, push_body) =
+            self.pushed("an app may read the PIN", self.now, Some(count.clone()));
         NewEvent {
+            push_title,
+            push_body,
             title: self.named(TITLE_MAX, |name| {
                 format!("An app may read the PIN on {name}")
             }),
@@ -336,7 +362,10 @@ impl Phone {
             .and_then(DateTime::from_timestamp_millis)
             .filter(|at| *at <= self.now)
             .unwrap_or(self.now);
+        let (push_title, push_body) = self.pushed("started without Vibb One", at, None);
         NewEvent {
+            push_title,
+            push_body,
             title: self.named(TITLE_MAX, |name| format!("{name} started without Vibb One")),
             summary: "Safe mode or a start cut short".to_string(),
             target: format!("/devices/{}/about#diagnostics", self.id),
@@ -360,7 +389,11 @@ impl Phone {
         } else {
             "Not charging"
         };
+        let (push_title, push_body) =
+            self.pushed("battery low", since, Some(format!("battery {level} %")));
         NewEvent {
+            push_title,
+            push_body,
             title: self.named(TITLE_MAX, |name| {
                 format!("Battery low on {name} ({level} %)")
             }),
@@ -377,22 +410,27 @@ impl Phone {
         let restarting = off.reboot == Some(true);
         let reason = off_reason_words(off.reason.as_deref());
         let level = off.battery.map(|b| format!("battery {} %", b.level));
-        let (title, battery): (String, Option<String>) = match (restarting, reason) {
+        // The push: the fact, the time and the level at most (never "probably flat").
+        let (title, battery, (push_title, push_body)) = match (restarting, reason) {
             (true, _) => (
                 self.named(TITLE_MAX, |name| format!("{name} is restarting")),
                 off.battery.map(|b| battery_words(&b, FLAT_LEVEL)),
+                self.pushed("restarting", at, None),
             ),
             (false, Some(OffReason::Battery)) => (
                 self.named(TITLE_MAX, |name| format!("{name} shut down: battery flat")),
-                level,
+                level.clone(),
+                self.pushed("battery flat, shut down", at, level),
             ),
             (false, Some(OffReason::Thermal)) => (
                 self.named(TITLE_MAX, |name| format!("{name} shut down: too hot")),
                 level,
+                self.pushed("too hot, shut down", at, None),
             ),
             (false, None) => (
                 self.named(TITLE_MAX, |name| format!("{name} was turned off")),
                 off.battery.map(|b| battery_words(&b, FLAT_LEVEL)),
+                self.pushed("turned off", at, level),
             ),
         };
         let mut summary = capitalized(&self.at(at));
@@ -410,6 +448,8 @@ impl Phone {
         NewEvent {
             title,
             summary,
+            push_title,
+            push_body,
             push,
             ..self.event(Kind::PhoneOff, instant(at), at)
         }
@@ -429,6 +469,17 @@ impl Phone {
         {
             when.push_str(&format!(" · unlocked {}", self.at(unlocked)));
         }
+        // The push: the start, its time and the battery now (never the off's, "no shutdown seen",
+        // the last report or the unlock - the inbox keeps those).
+        let fact = match start {
+            Start::Restart => "restarted",
+            _ => "turned on",
+        };
+        let (push_title, push_body) = self.pushed(
+            fact,
+            at,
+            on.battery.map(|b| format!("battery {} %", b.level)),
+        );
         let (title, summary) = match start {
             Start::Restart => (
                 self.named(TITLE_MAX, |name| format!("{name} restarted")),
@@ -474,6 +525,8 @@ impl Phone {
         NewEvent {
             title,
             summary,
+            push_title,
+            push_body,
             ..self.event(
                 Kind::PhoneOn,
                 format!(
@@ -686,6 +739,11 @@ pub struct NewEvent {
     /// A kind told from parameters (design 64's zones): the JSON the words are made from when
     /// shown or pushed ([told]); `title` and `summary` stay empty then.
     pub params: Option<String>,
+    /// The push's own short words (2026-10-25), stored in `push_title`/`push_body` (empty = NULL)
+    /// and sent by [pushed]; the inbox shows `title`/`summary`. A kind told from parameters
+    /// leaves them empty: [pushed] words it.
+    pub push_title: String,
+    pub push_body: String,
     pub happened_at: DateTime<Utc>,
     /// Whether and when a new row's push is queued (design 38 §3.2).
     pub push: Push,
@@ -723,8 +781,9 @@ pub async fn raise(
     }
     let id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO parent_events \
-         (device_id, kind, dedup_key, title, summary, target, detail, params, happened_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+         (device_id, kind, dedup_key, title, summary, target, detail, params, push_title, \
+          push_body, happened_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?) \
          ON CONFLICT (device_id, kind, dedup_key) DO NOTHING RETURNING id",
     )
     .bind(event.device_id)
@@ -735,6 +794,8 @@ pub async fn raise(
     .bind(&event.target)
     .bind(&event.detail)
     .bind(&event.params)
+    .bind(crate::audit::clip(&event.push_title, TITLE_MAX))
+    .bind(crate::audit::clip(&event.push_body, SUMMARY_MAX))
     .bind(instant(event.happened_at))
     .fetch_optional(&mut *conn)
     .await?;
@@ -1003,6 +1064,8 @@ pub fn zone_crossing(
         target: format!("/devices/locate?device={device_id}#location"),
         detail: None,
         params: Some(serde_json::to_string(&params).expect("strings serialize")),
+        push_title: String::new(),
+        push_body: String::new(),
         happened_at: at,
         push,
     }
@@ -1107,6 +1170,8 @@ pub fn extra_time_request(
         target: format!("/devices/{device_id}/time#extra"),
         detail: None,
         params: Some(serde_json::to_string(&params).expect("strings serialize")),
+        push_title: String::new(),
+        push_body: String::new(),
         happened_at: at,
         push,
     }
@@ -1114,19 +1179,36 @@ pub fn extra_time_request(
 
 /// A request's words (design r13 §2.6): "Anna asks for more screen time" / "17:21 · Screen time
 /// used up", "Yesterday 21:40 · Bedtime", "14:02 · 1 h 20 min left", the clock alone when the
-/// phone's state was unknown.
-fn extra_time_told(p: &ExtraTimeParams, zone: &Zone, now: DateTime<Utc>) -> (String, String) {
-    let title = fit_name(&p.phone, TITLE_MAX, |name| {
-        format!("{name} asks for more screen time")
-    });
+/// phone's state was unknown. Pushed (2026-10-25): "Anna: asks for more time" / "17:21", with the
+/// time left its one number ("14:02 · 1 h 20 min left").
+fn extra_time_told(
+    form: Form,
+    p: &ExtraTimeParams,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
     let at = crate::display_time::parse_db_utc(&p.at)
         .map(|at| capitalized(&zone.at(at, now)))
         .unwrap_or_default();
+    let left = || {
+        p.left_minutes
+            .filter(|m| *m > 0 && p.state == "left")
+            .map(|m| format!("{} left", crate::handlers::lifts::minutes_text(m)))
+    };
+    if form == Form::Push {
+        let title = fit_name(&p.phone, TITLE_MAX, |name| {
+            format!("{name}: asks for more time")
+        });
+        return (
+            crate::audit::clip(&title, TITLE_MAX).to_string(),
+            push_body(&at, left()),
+        );
+    }
+    let title = fit_name(&p.phone, TITLE_MAX, |name| {
+        format!("{name} asks for more screen time")
+    });
     let state = match p.state.as_str() {
-        "left" => p
-            .left_minutes
-            .filter(|m| *m > 0)
-            .map(|m| format!("{} left", crate::handlers::lifts::minutes_text(m))),
+        "left" => left(),
         "used_up" => Some("Screen time used up".to_string()),
         "rule" => Some(
             match p.rule.as_deref() {
@@ -1175,10 +1257,60 @@ pub async fn open_extra_time_request(
         .map(|at| at.min(now)))
 }
 
-/// An event's words as shown and pushed: a kind told from parameters gets them made here, in
-/// English, at `now` in `zone` ("Sverre arrived at Home" / "15:42", "Yesterday 21:14"); any
-/// other row keeps its stored `title` and `summary`. Parameters that don't read leave them too.
+/// How an event is worded: the inbox's long form (and Activity's), or the push's short one (the
+/// shorter push texts, 2026-10-25: "<name>: <fact>" / the time and at most one number).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Form {
+    Inbox,
+    Push,
+}
+
+/// A push's body: the time, then at most one number ("07:02 · battery 64 %").
+fn push_body(at: &str, number: Option<String>) -> String {
+    match number {
+        Some(number) if !at.is_empty() => format!("{at} · {number}"),
+        Some(number) => number,
+        None => at.to_string(),
+    }
+}
+
+/// An event's words as shown (the inbox, Activity): a kind told from parameters gets them made
+/// here, in English, at `now` in `zone` ("Sverre arrived at Home" / "15:42", "Yesterday 21:14");
+/// any other row keeps its stored `title` and `summary`. Parameters that don't read leave them
+/// too.
 pub fn told(
+    kind: &str,
+    title: String,
+    summary: String,
+    params: Option<&str>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    told_as(Form::Inbox, kind, title, summary, params, zone, now)
+}
+
+/// An event's words as pushed (2026-10-25): the row's stored push words when it has them (every
+/// stored-words kind raised since migration 0097), else the short form of a kind told from
+/// parameters, else - a row from before 0097 - the inbox's words.
+#[allow(clippy::too_many_arguments)]
+pub fn pushed(
+    kind: &str,
+    title: String,
+    summary: String,
+    push_title: Option<String>,
+    push_body: Option<String>,
+    params: Option<&str>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
+    match push_title.filter(|t| !t.is_empty()) {
+        Some(push_title) => (push_title, push_body.unwrap_or_default()),
+        None => told_as(Form::Push, kind, title, summary, params, zone, now),
+    }
+}
+
+fn told_as(
+    form: Form,
     kind: &str,
     title: String,
     summary: String,
@@ -1188,7 +1320,7 @@ pub fn told(
 ) -> (String, String) {
     if Kind::of(kind) == Some(Kind::ExtraTimeRequest) {
         return match params.and_then(|p| serde_json::from_str::<ExtraTimeParams>(p).ok()) {
-            Some(p) => extra_time_told(&p, zone, now),
+            Some(p) => extra_time_told(form, &p, zone, now),
             None => (title, summary),
         };
     }
@@ -1199,9 +1331,11 @@ pub fn told(
         return (title, summary);
     };
     let place = crate::audit::clip(&p.zone, crate::zones::NAME_MAX).to_string();
-    let title = fit_name(&p.phone, TITLE_MAX, |name| match kind {
-        Kind::ZoneArrived => format!("{name} arrived at {place}"),
-        _ => format!("{name} left {place}"),
+    let title = fit_name(&p.phone, TITLE_MAX, |name| match (kind, form) {
+        (Kind::ZoneArrived, Form::Inbox) => format!("{name} arrived at {place}"),
+        (Kind::ZoneArrived, Form::Push) => format!("{name}: arrived at {place}"),
+        (_, Form::Inbox) => format!("{name} left {place}"),
+        (_, Form::Push) => format!("{name}: left {place}"),
     });
     let summary = crate::display_time::parse_db_utc(&p.at)
         .map(|at| capitalized(&zone.at(at, now)))
@@ -1783,6 +1917,212 @@ mod tests {
         assert_eq!(rows[7].0.dedup_key, "5:inside:2026-10-18T12:02:00.000Z");
         assert_eq!(rows[8].0.dedup_key, "6:outside:2026-10-18T12:02:00.000Z");
         assert_eq!(rows[9].0.dedup_key, "2026-10-18T12:02:00.000Z");
+    }
+
+    /// The shorter push texts (2026-10-25, `docs/notes/server/notifications.md` "Push wording"):
+    /// every kind's push is "<name>: <fact>" / the time and at most one number, while the inbox
+    /// keeps its long words. One row per wording, the note's table.
+    #[test]
+    fn the_push_words_are_short() {
+        let phone = anna();
+        let zone = &phone.zone;
+        let two = utc("2026-10-18 12:02:00");
+        let yesterday = utc("2026-10-17 17:14:00");
+        let b = |level, charging| Some(battery(level, charging, false));
+        let two_apps = ForeignAccess {
+            admins: vec!["org.example.spy".to_string()],
+            accessibility: vec!["org.example.reader".to_string()],
+        };
+        let last = LastReport {
+            at: utc("2026-10-18 12:00:00"),
+            level: Some(5),
+            charging: Some(false),
+        };
+        let mut late_unlock = on(b(64, false));
+        late_unlock.unlocked_at_ms = Some(utc("2026-10-18 12:23:00").timestamp_millis());
+        let pushed_of = |event: &NewEvent| {
+            pushed(
+                event.kind.wire(),
+                event.title.clone(),
+                event.summary.clone(),
+                Some(event.push_title.clone()),
+                Some(event.push_body.clone()),
+                event.params.as_deref(),
+                zone,
+                phone.now,
+            )
+        };
+        let rows = [
+            (phone.emergency_call(two), "Anna: emergency call", "14:02"),
+            (
+                phone.emergency_call(yesterday),
+                "Anna: emergency call",
+                "Yesterday 19:14",
+            ),
+            (
+                phone
+                    .pin_event(&pin(
+                        PinKind::Unlocked,
+                        Entry::Pause,
+                        "2026-10-18 12:02:00",
+                        None,
+                    ))
+                    .unwrap(),
+                "Anna: parent PIN used",
+                "14:02",
+            ),
+            (
+                phone
+                    .pin_event(&pin(
+                        PinKind::Lockout,
+                        Entry::PinLock,
+                        "2026-10-18 12:15:00",
+                        Some("2026-10-18 12:45:00"),
+                    ))
+                    .unwrap(),
+                "Anna: parent PIN locked",
+                "Until 14:45",
+            ),
+            (
+                phone.foreign_access(&two_apps, "{}", 7, &Default::default()),
+                "Anna: an app may read the PIN",
+                "14:30 · 2 apps",
+            ),
+            (
+                phone.unseen_boot(2, Some(two.timestamp_millis())),
+                "Anna: started without Vibb One",
+                "14:02",
+            ),
+            (
+                phone.low_battery(&battery(14, false, true), two),
+                "Anna: battery low",
+                "14:02 · battery 14 %",
+            ),
+            (
+                phone.phone_off(&off(b(3, false), None, None), two, false),
+                "Anna: turned off",
+                "14:02 · battery 3 %",
+            ),
+            (
+                phone.phone_off(&off(b(1, false), None, Some("battery")), two, false),
+                "Anna: battery flat, shut down",
+                "14:02 · battery 1 %",
+            ),
+            (
+                phone.phone_off(&off(b(64, false), None, Some("thermal")), two, false),
+                "Anna: too hot, shut down",
+                "14:02",
+            ),
+            (
+                phone.phone_off(&off(b(64, true), Some(true), None), two, false),
+                "Anna: restarting",
+                "14:02",
+            ),
+            (
+                phone.phone_on(
+                    &on(b(64, false)),
+                    utc("2026-10-18 12:20:00"),
+                    &Start::Restart,
+                ),
+                "Anna: restarted",
+                "14:20 · battery 64 %",
+            ),
+            (
+                phone.phone_on(
+                    &late_unlock,
+                    utc("2026-10-18 12:20:00"),
+                    &Start::AfterOff {
+                        off: off(b(3, false), None, None),
+                        at: yesterday,
+                    },
+                ),
+                "Anna: turned on",
+                "14:20 · battery 64 %",
+            ),
+            (
+                phone.phone_on(
+                    &on(None),
+                    utc("2026-10-18 12:20:00"),
+                    &Start::NoShutdownSeen(Some(last)),
+                ),
+                "Anna: turned on",
+                "14:20",
+            ),
+            (
+                zone_crossing(3, "Anna", 5, "Home", true, two, Push::Now),
+                "Anna: arrived at Home",
+                "14:02",
+            ),
+            (
+                zone_crossing(3, "Anna", 6, "School", false, two, Push::Now),
+                "Anna: left School",
+                "14:02",
+            ),
+            (
+                extra_time_request(3, "Anna", "ab12", two, &TimeAsk::UsedUp, Push::Now),
+                "Anna: asks for more time",
+                "14:02",
+            ),
+            (
+                extra_time_request(3, "Anna", "ab13", two, &TimeAsk::Left(80), Push::Now),
+                "Anna: asks for more time",
+                "14:02 · 1 h 20 min left",
+            ),
+            (
+                extra_time_request(
+                    3,
+                    "Anna",
+                    "ab14",
+                    two,
+                    &TimeAsk::Rule("BEDTIME".into()),
+                    Push::Now,
+                ),
+                "Anna: asks for more time",
+                "14:02",
+            ),
+        ];
+        for (event, title, body) in &rows {
+            let (t, b) = pushed_of(event);
+            assert_eq!(
+                (t.as_str(), b.as_str()),
+                (*title, *body),
+                "{:?}",
+                event.kind
+            );
+            assert!(t.chars().count() <= TITLE_MAX);
+            // The inbox's words are untouched (zones and requests are told there in full).
+            let (inbox, _) = told(
+                event.kind.wire(),
+                event.title.clone(),
+                event.summary.clone(),
+                event.params.as_deref(),
+                zone,
+                phone.now,
+            );
+            assert_ne!(inbox, t, "{:?}", event.kind);
+        }
+        // A long name is cut, the fact stays.
+        let long = Phone {
+            name: "Anna-Sofie ".repeat(8),
+            ..anna()
+        };
+        let (title, _) = pushed_of(&long.emergency_call(two));
+        assert!(title.chars().count() <= TITLE_MAX, "{title}");
+        assert!(title.ends_with("…: emergency call"), "{title}");
+        // A row from before migration 0097 (no push words) pushes its inbox words.
+        assert_eq!(
+            pushed(
+                "low_battery",
+                "t".into(),
+                "s".into(),
+                None,
+                None,
+                None,
+                zone,
+                phone.now
+            ),
+            ("t".to_string(), "s".to_string())
+        );
     }
 
     #[test]

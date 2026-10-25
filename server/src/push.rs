@@ -389,6 +389,11 @@ pub fn db_time(t: DateTime<Utc>) -> String {
     t.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
+/// A summary push's words (more than [FOLD_ABOVE] at once) and a test push's title.
+pub const SUMMARY_TITLE: &str = "New notifications";
+pub const SUMMARY_BODY: &str = "More in the inbox";
+pub const TEST_TITLE: &str = "Vibb Phone: test";
+
 /// What a delivery is: an event's push, a summary of folded ones, or a test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum What {
@@ -454,6 +459,8 @@ struct DueRow {
     summary: Option<String>,
     target: Option<String>,
     params: Option<String>,
+    push_title: Option<String>,
+    push_body: Option<String>,
 }
 
 /// One pass of the sender at `now` (tests drive it directly): every due delivery is sent once,
@@ -480,7 +487,7 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
     let rows: Vec<DueRow> = sqlx::query_as(
         "SELECT d.id, d.subscription_id, d.kind, d.attempts, d.created_at, s.endpoint, s.p256dh, \
                 s.auth, s.origin, s.label, s.state, d.event_id, e.kind AS event_kind, e.title, \
-                e.summary, e.target, e.params \
+                e.summary, e.target, e.params, e.push_title, e.push_body \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
          LEFT JOIN parent_events e ON e.id = d.event_id \
          WHERE d.status = 'queued' AND (d.next_try_at IS NULL OR d.next_try_at <= ?) \
@@ -512,6 +519,8 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
             summary,
             target,
             params,
+            push_title,
+            push_body,
         } = row;
         let what = match (kind.as_str(), event_kind.as_deref().and_then(Kind::of)) {
             ("event", Some(kind)) => What::Event(kind),
@@ -529,10 +538,13 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
         }
         let (title, body, target) = match what {
             What::Event(kind) => {
-                let (title, body) = crate::parent_events::told(
+                // The push's own short words (2026-10-25), the inbox keeps the long ones.
+                let (title, body) = crate::parent_events::pushed(
                     kind.wire(),
                     title.unwrap_or_default(),
                     summary.unwrap_or_default(),
+                    push_title,
+                    push_body,
                     params.as_deref(),
                     &zone,
                     now,
@@ -540,13 +552,13 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
                 (title, body, target.unwrap_or_default())
             }
             What::Summary => (
-                "New notifications".to_string(),
-                "More than 3 at once - open Notifications to see them".to_string(),
+                SUMMARY_TITLE.to_string(),
+                SUMMARY_BODY.to_string(),
                 "/notifications".to_string(),
             ),
             What::Test => (
-                "Test from Vibb Phone".to_string(),
-                format!("If you see this, notifications work on {label}"),
+                TEST_TITLE.to_string(),
+                format!("Notifications work on {label}"),
                 "/notifications/settings#devices".to_string(),
             ),
         };
@@ -638,8 +650,8 @@ async fn fold(state: &AppState, due: Vec<Due>) -> Result<Vec<Due>, sqlx::Error> 
             origin: first.origin.clone(),
             label: first.label.clone(),
             event_id: None,
-            title: "New notifications".to_string(),
-            body: "More than 3 at once - open Notifications to see them".to_string(),
+            title: SUMMARY_TITLE.to_string(),
+            body: SUMMARY_BODY.to_string(),
             target: "/notifications".to_string(),
         });
         sends.extend(newest);

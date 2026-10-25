@@ -532,8 +532,9 @@ async fn a_push_carries_its_headers_and_an_encrypted_payload() {
     // Never `mutable`: iOS 26 displays nothing after the worker ran (0.29.4/0.29.5).
     assert!(message.get("mutable").is_none());
     let n = &message["notification"];
-    assert_eq!(n["title"], "An app may read the PIN on Anna");
-    assert_eq!(n["body"], "1 app with device admin");
+    // The push's own short words (2026-10-25); the inbox keeps "An app may read the PIN on Anna".
+    assert_eq!(n["title"], "Anna: an app may read the PIN");
+    assert!(n["body"].as_str().unwrap().ends_with(" · 1 app"), "{n}");
     assert_eq!(n["lang"], "en");
     assert_eq!(
         n["navigate"],
@@ -760,14 +761,14 @@ async fn switches_the_emergency_call_and_a_burst() {
         .collect();
     assert_eq!(pushed.len(), 5, "{pushed:?}");
     assert_eq!(
-        pushed[0].0, "Anna called an emergency number",
+        pushed[0].0, "Anna: emergency call",
         "the emergency call first, on its own"
     );
     // An urgent kind is never folded (qa-35-s2-code L2): the lockout goes on its own, next.
-    assert_eq!(pushed[1].0, "Parent PIN locked on Anna");
+    assert_eq!(pushed[1].0, "Anna: parent PIN locked");
     let count = |title: &str| pushed.iter().filter(|(t, _)| t == title).count();
     assert_eq!(count("New notifications"), 1);
-    assert_eq!(count("Parent PIN used on Anna"), 2);
+    assert_eq!(count("Anna: parent PIN used"), 2);
     let summary = pushed
         .iter()
         .find(|(t, _)| t == "New notifications")
@@ -1028,11 +1029,8 @@ async fn send_a_test_and_remove() {
     let requests = app.pushes.take();
     assert_eq!(requests.len(), 1);
     let n = &payload(&requests[0])["notification"];
-    assert_eq!(n["title"], "Test from Vibb Phone");
-    assert_eq!(
-        n["body"],
-        "If you see this, notifications work on iPhone · Safari"
-    );
+    assert_eq!(n["title"], "Vibb Phone: test");
+    assert_eq!(n["body"], "Notifications work on iPhone · Safari");
     assert!(n["tag"].as_str().unwrap().starts_with('t'));
     assert_eq!(
         (requests[0].header("TTL"), requests[0].header("Urgency")),

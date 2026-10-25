@@ -218,10 +218,7 @@ async fn a_request_raises_one_event_and_pushes_by_each_parents_switch() {
     let to = pushed(&app).await;
     assert_eq!(
         to,
-        [(
-            ENDPOINT.to_string(),
-            "Anna asks for more screen time".to_string()
-        )],
+        [(ENDPOINT.to_string(), "Anna: asks for more time".to_string())],
         "Mamma's switch is on, Pappa's off"
     );
     // A retried POST of the same id: one row, no second push.
