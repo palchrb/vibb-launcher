@@ -407,6 +407,66 @@ class HomeRound7Test {
         assertEquals(31, loadsFor(listOf(0L) + stragglers, held = pass).size)
     }
 
+    // ---- the provisioning window (2026-10-25, the evening run): every package callback is trail for 2 min ------------
+
+    @Test
+    fun `inside the provisioning window every package callback trails, after it the normal rules`() {
+        assertEquals(120_000L, APP_LOAD_PROVISIONING_WINDOW_MS)
+        assertTrue(appLoadProvisioning(1_000, 1_000))
+        assertTrue(appLoadProvisioning(120_999, 1_000))
+        assertFalse("the window ended", appLoadProvisioning(121_000, 1_000))
+        assertFalse("none opened", appLoadProvisioning(1_000, null))
+        assertFalse("before it opened", appLoadProvisioning(999, 1_000))
+        // A package no pass touched: trail inside the window only.
+        assertTrue(appLoadTrails(listOf("untouched"), 50_000, emptySet(), null, provisioningSince = 1_000))
+        assertFalse(appLoadTrails(listOf("untouched"), 121_000, emptySet(), null, provisioningSince = 1_000))
+        assertFalse("no package is no trail, window or not", appLoadTrails(emptyList(), 50_000, emptySet(), null, provisioningSince = 1_000))
+        try {
+            AppLoadHold.resetForTest()
+            assertFalse(AppLoadHold.noteRequest(listOf("p"), 10_000))
+            assertTrue(AppLoadHold.takeNormal())
+            AppLoadHold.provisioning(10_000)
+            assertTrue(AppLoadHold.noteRequest(listOf("p"), 10_000))
+            assertFalse("the trail alone", AppLoadHold.takeNormal())
+            assertFalse("not about packages stays normal", AppLoadHold.noteRequest(null, 20_000))
+            assertTrue(AppLoadHold.takeNormal())
+            assertFalse("after the window", AppLoadHold.noteRequest(listOf("p"), 130_000))
+            AppLoadHold.provisioning(130_000)
+            assertTrue("opened again (an enrolment after the owner)", AppLoadHold.noteRequest(listOf("p"), 200_000))
+        } finally {
+            AppLoadHold.resetForTest()
+        }
+        // It opens where the launcher becomes device owner (the admin enabled) and where the phone is enrolled.
+        val receiver = code("server/MdmDeviceAdminReceiver.kt")
+        assertTrue(body(receiver, "onEnabled").contains("com.kidslauncher.mdm.ui.home.AppLoadHold.provisioning(android.os.SystemClock.elapsedRealtime())"))
+        val enroll = code("server/Enrollment.kt")
+        assertTrue(enroll.contains("AppLoadHold.provisioning(android.os.SystemClock.elapsedRealtime())\n            Result.success(Unit)"))
+        assertEquals(2, listOf(receiver, enroll).sumOf { Regex("""AppLoadHold\.provisioning\(""").findAll(it).count() })
+    }
+
+    private fun body(code: String, name: String): String = code.substringAfter("fun $name(").substringBefore("\n    }\n")
+
+    /** The evening run's timeline (`docs/testing/2026-10-25-evening-run.md`, seconds from `set-device-owner` at
+     * 20:08:46): the enforcer's passes 16-22 s, then callbacks about packages they did NOT change 21-110 s (20:09:07 -
+     * 20:10:36), 1-3 s apart. Without the window each folds only by the normal 300 ms: one load each. */
+    @Test
+    fun `the provisioning storm's untouched callbacks fold into a few loads`() {
+        val pass: (Long) -> Long? = { t -> if (t in 16_000L until 22_000L) 16_000L else null }
+        val gaps = listOf(1_000L, 2_000L, 3_000L)
+        val callbacks = generateSequence(21_000L to 0) { (t, i) -> (t + gaps[i % 3]) to i + 1 }
+            .map { it.first }.takeWhile { it <= 110_000L }.toList()
+        val windowOpen = 0L
+        // Classed as the consumer does: inside the window every one is the trail.
+        val trail = callbacks.filter { appLoadTrails(listOf("pkg"), it, emptySet(), null, provisioningSince = windowOpen) }.toSet()
+        assertEquals(callbacks.toSet(), trail)
+        val loads = loadsFor(listOf(-1_000L) + callbacks, held = pass, trail = trail)
+        assertTrue("$loads", loads.size <= 5)
+        val without = loadsFor(listOf(-1_000L) + callbacks, held = pass)
+        assertTrue("$without", without.size >= callbacks.size - 3)
+        // After the window (2 min) the same callbacks are normal requests again.
+        assertFalse(appLoadTrails(listOf("pkg"), 120_000L, emptySet(), null, provisioningSince = windowOpen))
+    }
+
     /** qa-launcher-small-a-code Q-2: the pass's own result shows 300 ms after it, as before the trail; only the
      * stragglers that come later wait 3 s quiet / 30 s. */
     @Test

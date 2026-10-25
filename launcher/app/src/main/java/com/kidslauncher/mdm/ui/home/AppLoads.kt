@@ -94,13 +94,28 @@ const val APP_LOAD_TRAIL_MAX_WAIT_MS = 30_000L
 /** How long after a pass's release a callback about a package it touched still counts as its trail. */
 const val APP_LOAD_TRAIL_WINDOW_MS = 120_000L
 
+/**
+ * The provisioning window (2026-10-25, the evening run's finding, `docs/testing/2026-10-25-evening-run.md`: 43 loads in
+ * two minutes with the trail in place - most after callbacks about packages no pass of ours had changed: around
+ * `set-device-owner` and the first policy the system reports package changes for every app). For this long after the
+ * launcher became device owner (the admin enabled - `set-device-owner` or Android's QR provisioning) or the phone was
+ * enrolled, every `LauncherApps` callback about packages counts as a pass's trail ([appLoadTrails]); after it the normal
+ * rules again.
+ */
+const val APP_LOAD_PROVISIONING_WINDOW_MS = 120_000L
+
+/** Whether [now] is inside the provisioning window opened at [openedAt] (`null`: none opened in this process). */
+fun appLoadProvisioning(now: Long, openedAt: Long?, windowMs: Long = APP_LOAD_PROVISIONING_WINDOW_MS): Boolean =
+    openedAt != null && now - openedAt in 0 until windowMs
+
 /** The packages the released passes touched, and when the last of them released its hold (elapsed). */
 data class AppLoadTrail(val packages: Set<String>, val releasedAt: Long)
 
 /**
  * Whether a callback about [packages] at [now] trails a pass: every one of them touched by the running pass
- * ([touchedNow]) or by passes released less than [windowMs] ago ([trail]). No package (a callback about none, or a
- * request not about packages) is no trail.
+ * ([touchedNow]) or by passes released less than [windowMs] ago ([trail]) - or any package at all inside the provisioning
+ * window opened at [provisioningSince] ([appLoadProvisioning]). No package (a callback about none, or a request not about
+ * packages) is no trail.
  */
 fun appLoadTrails(
     packages: Collection<String>,
@@ -108,8 +123,10 @@ fun appLoadTrails(
     touchedNow: Set<String>,
     trail: AppLoadTrail?,
     windowMs: Long = APP_LOAD_TRAIL_WINDOW_MS,
+    provisioningSince: Long? = null,
 ): Boolean {
     if (packages.isEmpty()) return false
+    if (appLoadProvisioning(now, provisioningSince)) return true
     val recent = trail?.takeIf { now - it.releasedAt in 0 until windowMs }?.packages.orEmpty()
     return packages.all { it in touchedNow || it in recent }
 }
@@ -157,6 +174,7 @@ object AppLoadHold {
     private var depth = 0
     private val touchedNow = mutableSetOf<String>()
     private var trail: AppLoadTrail? = null
+    private var provisioningSince: Long? = null
     private val normalPending = java.util.concurrent.atomic.AtomicBoolean(false)
 
     @Synchronized
@@ -179,9 +197,17 @@ object AppLoadHold {
         if (depth > 0) touchedNow += packageName
     }
 
+    /** The launcher became device owner, or the phone was enrolled: the provisioning window opens (again) at
+     * [nowElapsed] ([APP_LOAD_PROVISIONING_WINDOW_MS]; memory only - a process start opens none). */
+    @Synchronized
+    fun provisioning(nowElapsed: Long) {
+        provisioningSince = nowElapsed
+    }
+
     /** Whether a callback about [packages] at [nowElapsed] is a pass's trail ([appLoadTrails]). */
     @Synchronized
-    fun trails(packages: Collection<String>, nowElapsed: Long): Boolean = appLoadTrails(packages, nowElapsed, touchedNow, trail)
+    fun trails(packages: Collection<String>, nowElapsed: Long): Boolean =
+        appLoadTrails(packages, nowElapsed, touchedNow, trail, provisioningSince = provisioningSince)
 
     /** A load request about [packages] (`null`: not about packages - always a normal request): recorded for the
      * consumer unless it is the trail. Returns whether it trails. */
@@ -201,6 +227,7 @@ object AppLoadHold {
         heldSince = null
         touchedNow.clear()
         trail = null
+        provisioningSince = null
         normalPending.set(false)
     }
 }
