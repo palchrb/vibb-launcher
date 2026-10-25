@@ -366,8 +366,12 @@ pub async fn queue(
     not_before: Option<DateTime<Utc>>,
 ) -> Result<(), sqlx::Error> {
     // The column name is compiled in (`Kind::switch`), never input.
+    // No row is the switch's default: on, but "App updates" off (migration 0099).
     let on = match kind.switch() {
-        Some((column, _)) => format!("COALESCE(p.{column}, 1) = 1"),
+        Some((column, _)) => format!(
+            "COALESCE(p.{column}, {}) = 1",
+            i64::from(Kind::switch_default(column))
+        ),
         None => "1".to_string(),
     };
     sqlx::query(&format!(

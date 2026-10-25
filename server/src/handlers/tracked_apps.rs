@@ -1388,8 +1388,127 @@ async fn sync_release(
     store_pins(state, app, &identity).await;
     // Stored: a refusal remembered before (a mismatch "Check Now" got past) no longer holds.
     state.app_syncs.set_refused(app.id, None);
+    // App update notices (2026-10-25): a new release of an app that had one - never its first.
+    if let Some(event) = update_available_event(app, tag, asset.id, chrono::Utc::now()) {
+        crate::parent_events::raise_logged(state, &event).await;
+    }
     crate::handlers::device_api::nudge_phones_with_app(state, app.id).await;
     Ok(())
+}
+
+/// The `app_update_available` event for a release just stored over `app`'s previous one (2026-10-25,
+/// `docs/notes/server/notifications.md` "App update notices"): `None` for the app's first release.
+/// Keyed on the release as stored (`tag@asset id`): a sweep or a Check Now that finds it again
+/// raises nothing - one event per release, never per sweep.
+fn update_available_event(
+    app: &TrackedApp,
+    tag: &str,
+    asset_id: i64,
+    at: chrono::DateTime<chrono::Utc>,
+) -> Option<crate::parent_events::NewEvent> {
+    let old_tag = app.latest_release_tag.as_deref()?;
+    let prefix = app.release_tag_prefix.as_deref();
+    let (from, to) = (version_of(old_tag, prefix), version_of(tag, prefix));
+    Some(crate::parent_events::app_update_available(
+        app.id,
+        &app.name,
+        &format!("{tag}@{asset_id}"),
+        // A rolling tag's new build has the same name: no "from".
+        (from != to).then_some(from.as_str()),
+        &to,
+        at,
+    ))
+}
+
+/// The versionCodes a status report names (2026-10-25): the launcher's own (`app_version_code`,
+/// with its versionName) and the music app's (`music_state.version_code`) - the two catalog apps
+/// whose installed version the server learns. Other catalog apps' versions aren't reported.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct InstalledCodes {
+    pub launcher: Option<i64>,
+    pub launcher_name: Option<String>,
+    pub music: Option<i64>,
+}
+
+/// Whether a phone that runs `code` of `app` (the launcher's row when `launcher`, else the music
+/// app's) has the row's stored release installed: the launcher's by its tag's versionCode
+/// (`install_now::launcher_tag_version_code`), the music app's by the version its code reads as
+/// (`device_pages::version_of_code`) against the tag's.
+pub(crate) fn release_installed(app: &TrackedApp, launcher: bool, code: i64) -> bool {
+    let Some(tag) = app.latest_release_tag.as_deref() else {
+        return false;
+    };
+    if launcher {
+        return crate::install_now::launcher_tag_version_code(tag) == Some(code);
+    }
+    crate::handlers::device_pages::version_of_code(code).as_deref()
+        == Some(version_of(tag, app.release_tag_prefix.as_deref()).as_str())
+}
+
+/// `app_updated` events from a status report (2026-10-25): for the launcher and the music app, a
+/// versionCode higher than the previous report's that is the catalog row's stored release - once
+/// per phone and version (the key). No previous report (a new phone) or no code: nothing.
+pub(crate) async fn note_app_updates(
+    state: &AppState,
+    phone: &crate::parent_events::Phone,
+    before: &InstalledCodes,
+    now: &InstalledCodes,
+) {
+    let read = async {
+        let launcher: Option<TrackedApp> =
+            sqlx::query_as("SELECT * FROM tracked_apps WHERE is_launcher = 1 ORDER BY id LIMIT 1")
+                .fetch_optional(&state.db)
+                .await?;
+        let music = crate::handlers::music::music_app_row(&state.db).await?;
+        Ok::<_, sqlx::Error>((launcher, music))
+    };
+    let (launcher, music) = match read.await {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(device_id = phone.id, %err, "can't read the catalog for app updates");
+            return;
+        }
+    };
+    let cases = [
+        (
+            launcher,
+            true,
+            before.launcher,
+            now.launcher,
+            before.launcher_name.clone(),
+        ),
+        (
+            music.filter(|m| !m.is_launcher),
+            false,
+            before.music,
+            now.music,
+            before
+                .music
+                .and_then(crate::handlers::device_pages::version_of_code),
+        ),
+    ];
+    for (row, is_launcher, was, is, from) in cases {
+        let (Some(app), Some(was), Some(is)) = (row, was, is) else {
+            continue;
+        };
+        if is <= was || !release_installed(&app, is_launcher, is) {
+            continue;
+        }
+        let tag = app.latest_release_tag.as_deref().unwrap_or_default();
+        let to = version_of(tag, app.release_tag_prefix.as_deref());
+        let from = from.filter(|f| !f.trim().is_empty() && *f != to);
+        let event = crate::parent_events::app_updated(
+            phone.id,
+            &phone.name,
+            app.id,
+            &app.name,
+            is,
+            from.as_deref(),
+            &to,
+            phone.now,
+        );
+        crate::parent_events::raise_logged(state, &event).await;
+    }
 }
 
 /// After the row's UPDATE (never before, so a phone never gets a 404 in between and a failed
@@ -4379,6 +4498,81 @@ mod tests {
             (2, 1, 1, 1)
         );
         assert_eq!(row_of(&app, id).await.latest_release_file_path, Some(path));
+    }
+
+    /// App update notices (2026-10-25): a sync that stores a new release over an older one raises
+    /// one `app_update_available` (no phone, old and new version); the next sweep and a Check Now
+    /// that find the same release raise nothing; an app's first release raises nothing.
+    #[tokio::test]
+    async fn a_new_release_is_one_notice_never_one_per_sweep() {
+        let app = crate::tests::TestApp::new().await;
+        let (repo, fake) = crate::fdroid::tests::fake_repo("127.0.0.1").await;
+        let (apk, sha) = fixture_apk();
+        serve_fixture(&fake, "me.vibb.testfixture", &sha, &apk);
+        let id = fdroid_row(&app, &repo, "me.vibb.testfixture").await;
+        sync_one_app(&app.state, id, false).await.unwrap();
+        let notices = || async {
+            sqlx::query_as::<_, (Option<i64>, String, String)>(
+                "SELECT device_id, dedup_key, params FROM parent_events \
+                 WHERE kind = 'app_update_available' ORDER BY id",
+            )
+            .fetch_all(&app.db)
+            .await
+            .unwrap()
+        };
+        assert!(notices().await.is_empty(), "the first release is no update");
+
+        // As if 1.0.56 were the cached release: the next sync stores 1.0.57 over it.
+        sqlx::query(
+            "UPDATE tracked_apps SET latest_release_tag = 'v1.0.56', latest_release_asset_id = 56 \
+             WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+        sync_one_app(&app.state, id, false).await.unwrap();
+        sync_one_app(&app.state, id, false).await.unwrap();
+        sync_one_app(&app.state, id, true).await.unwrap();
+        let rows = notices().await;
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        let (device, key, params) = &rows[0];
+        assert_eq!(*device, None);
+        assert_eq!(key, &format!("{id}:v1.0.57@57"));
+        let params: serde_json::Value = serde_json::from_str(params).unwrap();
+        assert_eq!(
+            (
+                params["app"].as_str(),
+                params["from"].as_str(),
+                params["to"].as_str()
+            ),
+            (Some("Etar"), Some("1.0.56"), Some("1.0.57"))
+        );
+    }
+
+    /// The launcher's release by its tag's versionCode, the music app's by its version.
+    #[tokio::test]
+    async fn a_release_is_installed_by_its_versioncode() {
+        let app = crate::tests::TestApp::new().await;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo, latest_release_tag, \
+             release_tag_prefix) VALUES ('Musikk', 'me.vibb.music', 'a/b', 'music-v0.6.0', \
+             'music-v') RETURNING id",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let mut row = row_of(&app, id).await;
+        assert!(release_installed(&row, false, 60_009));
+        assert!(!release_installed(&row, false, 60_001));
+        row.latest_release_tag = Some("launcher-v0.36.0".to_string());
+        row.release_tag_prefix = Some("launcher-v".to_string());
+        assert!(release_installed(&row, true, 360_009));
+        assert!(!release_installed(&row, true, 360_007));
+        row.latest_release_tag = None;
+        assert!(!release_installed(&row, true, 360_009));
+        // No previous release: no notice.
+        assert!(update_available_event(&row, "launcher-v0.36.0", 1, chrono::Utc::now()).is_none());
     }
 
     /// Another repo's path (no API: `localhost` in the tests): the highest stable versionCode in
