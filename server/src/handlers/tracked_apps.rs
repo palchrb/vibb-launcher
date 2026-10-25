@@ -1455,13 +1455,84 @@ fn update_available_event(
 }
 
 /// The versionCodes a status report names (2026-10-25): the launcher's own (`app_version_code`,
-/// with its versionName) and the music app's (`music_state.version_code`) - the two catalog apps
-/// whose installed version the server learns. Other catalog apps' versions aren't reported.
+/// with its versionName), the music app's (`music_state.version_code`), and - from a launcher that
+/// sends them (PLAN "Installed versionCode per catalog app in the status report") - every listed
+/// app's (`installed_apps[].version_code`/`version_name`), by package.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct InstalledCodes {
     pub launcher: Option<i64>,
     pub launcher_name: Option<String>,
     pub music: Option<i64>,
+    pub apps: std::collections::BTreeMap<String, InstalledVersion>,
+}
+
+/// One listed app's installed version, as the phone reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstalledVersion {
+    pub code: i64,
+    pub name: Option<String>,
+}
+
+/// Whether a phone that runs a catalog app other than the launcher and the music app at `version`
+/// has the row's stored release installed: an F-Droid release by its versionCode (the row's asset
+/// id is it); any other by the reported versionName against the tag's version
+/// ([version_of], "v7.2.0" -> "7.2.0"), a leading "v" on the name ignored too.
+pub(crate) fn catalog_release_installed(app: &TrackedApp, version: &InstalledVersion) -> bool {
+    let Some(tag) = app.latest_release_tag.as_deref() else {
+        return false;
+    };
+    if app.source_type == "fdroid" {
+        return app.latest_release_asset_id == Some(version.code);
+    }
+    let Some(name) = version
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+    else {
+        return false;
+    };
+    let name = name
+        .strip_prefix(['v', 'V'])
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        .unwrap_or(name);
+    name == version_of(tag, app.release_tag_prefix.as_deref())
+}
+
+/// The catalog apps whose `app_updated` comes from the installed list (`before` -> `now`): each of
+/// `apps` (the phone's checked catalog rows, neither the launcher's nor the music app's) whose
+/// package the phone lists at a higher versionCode than the previous report did, which is the
+/// row's stored release ([catalog_release_installed]); with its `from` (the previous versionName,
+/// when it differs from the new version). No previous code (an older launcher's report, or a new
+/// app) is no update.
+pub(crate) fn listed_app_updates<'a>(
+    apps: &'a [TrackedApp],
+    before: &InstalledCodes,
+    now: &InstalledCodes,
+) -> Vec<(&'a TrackedApp, i64, Option<String>, String)> {
+    let mut updates = Vec::new();
+    for app in apps {
+        if app.is_launcher || app.package_name.trim().is_empty() {
+            continue;
+        }
+        let (Some(was), Some(is)) = (
+            before.apps.get(&app.package_name),
+            now.apps.get(&app.package_name),
+        ) else {
+            continue;
+        };
+        if is.code <= was.code || !catalog_release_installed(app, is) {
+            continue;
+        }
+        let tag = app.latest_release_tag.as_deref().unwrap_or_default();
+        let to = version_of(tag, app.release_tag_prefix.as_deref());
+        let from = was
+            .name
+            .clone()
+            .filter(|f| !f.trim().is_empty() && *f != to);
+        updates.push((app, is.code, from, to));
+    }
+    updates
 }
 
 /// Whether a phone that runs `code` of `app` (the launcher's row when `launcher`, else the music
@@ -1479,9 +1550,11 @@ pub(crate) fn release_installed(app: &TrackedApp, launcher: bool, code: i64) -> 
         == Some(version_of(tag, app.release_tag_prefix.as_deref()).as_str())
 }
 
-/// `app_updated` events from a status report (2026-10-25): for the launcher and the music app, a
-/// versionCode higher than the previous report's that is the catalog row's stored release - once
-/// per phone and version (the key). No previous report (a new phone) or no code: nothing.
+/// `app_updated` events from a status report (2026-10-25): for the launcher, the music app and -
+/// by the installed list's versionCodes ([listed_app_updates]) - every other catalog app checked for
+/// the phone, a versionCode higher than the previous report's that is the catalog row's stored
+/// release - once per phone and version (the key). No previous report (a new phone) or no code:
+/// nothing.
 pub(crate) async fn note_app_updates(
     state: &AppState,
     phone: &crate::parent_events::Phone,
@@ -1503,6 +1576,40 @@ pub(crate) async fn note_app_updates(
             return;
         }
     };
+    // Every other catalog app checked for this phone, by its listed versionCode (the music app keeps
+    // its own `music_state` path, so it is never counted twice).
+    if !now.apps.is_empty() && !before.apps.is_empty() {
+        let music_id = music.as_ref().map_or(0, |m| m.id);
+        let checked: Result<Vec<TrackedApp>, sqlx::Error> = sqlx::query_as(
+            "SELECT ta.* FROM tracked_apps ta JOIN device_tracked_apps dta \
+             ON dta.tracked_app_id = ta.id WHERE dta.device_id = ? AND ta.is_launcher = 0 \
+             AND ta.package_name != '' AND ta.id != ? ORDER BY ta.id",
+        )
+        .bind(phone.id)
+        .bind(music_id)
+        .fetch_all(&state.db)
+        .await;
+        match checked {
+            Ok(apps) => {
+                for (app, code, from, to) in listed_app_updates(&apps, before, now) {
+                    let event = crate::parent_events::app_updated(
+                        phone.id,
+                        &phone.name,
+                        app.id,
+                        &app.name,
+                        code,
+                        from.as_deref(),
+                        &to,
+                        phone.now,
+                    );
+                    crate::parent_events::raise_logged(state, &event).await;
+                }
+            }
+            Err(err) => {
+                tracing::error!(device_id = phone.id, %err, "can't read the phone's catalog apps")
+            }
+        }
+    }
     let cases = [
         (
             launcher,

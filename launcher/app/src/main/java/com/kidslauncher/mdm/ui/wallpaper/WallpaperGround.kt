@@ -26,9 +26,11 @@ enum class GroundKind {
 }
 
 /**
- * [systemShowsOurs]: Android's wallpaper is ours and current; [scrimAlpha]: the ink's scrim alpha. Design 59d step B
- * ([ownGround]): Home right after the face's unanimated leave draws the wallpaper itself until it stops - Android's
- * wallpaper window wasn't shown yet under it while the keyguard went away (3 black frames in the user's rc.2 recording).
+ * [systemShowsOurs]: Android's wallpaper is ours and current; [scrimAlpha]: the ink's scrim alpha. [ownGround]: the
+ * screen draws the wallpaper itself, always - Home (`ui/home/HomeGround.kt`: Android's wallpaper window isn't shown under
+ * Home during a transition into it - the black frames - and handing over to it shifted a photo by its wallpaper zoom),
+ * and since qa-launcher-small-a-code Q-1 the phone book and kid Settings too, so switching between them never swaps the
+ * copy for Android's slightly differently scaled render.
  */
 fun groundKind(systemShowsOurs: Boolean, scrimAlpha: Int, ownGround: Boolean = false): GroundKind = when {
     ownGround || !systemShowsOurs -> GroundKind.FULL

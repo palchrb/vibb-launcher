@@ -78,3 +78,43 @@ broadcast intent` 07:30:15-07:31:30, 1-3 s apart): the loaded emulator delivers 
 the last DPM call, so each straggler opens its own 300 ms burst. Cost: 4-60 ms per load with the icons cached (880 ms
 for the first). The hold does what it was built for; the stragglers are a possible XS follow-up (PLAN, the apply-hold
 entry). Script: `scratchpad/r11/rc8.sh`; log `rc8-full.log`.
+
+## Owed after launcher-small-a (2026-10-25, for the coordinator)
+
+Branch `launcher-small-a` (five small launcher items, PLAN "Approved, not built - the queue"); none of these were run by
+the implementer (no emulator in the round).
+
+1. **Home keeps its wallpaper copy** (design 08, "The copy stays"), `jelly36`, a **photo** wallpaper, 24-30 fps
+   recordings read frame by frame:
+   a. the Home button from an app, gesture and 3-button navigation: no black frame and **no zoom step** at any point
+      after Home comes to rest (the user's frames 144-160 case; closes Q-7);
+   b. Back's predictive animation from an app into Home: no seam between Home's (now opaque) window and the wallpaper;
+   c. Home -> phone book and Home -> kid Settings (swipe left) and Back from each: since the code QA's fix round (Q-1)
+      both draw the same copy - no step there either;
+   d. an app opening from Home; the shade pulled over Home (Android's wallpaper zooms with the shade, Home's copy
+      doesn't - cosmetic, note it);
+   e. a lock-up and screen off/on over the lock: the first frame is still the lock or black (design 32); the lock's
+      leave on both pads (own keypad, Android's pad) - no black frame;
+   f. `adb shell dumpsys gfxinfo me.vibb.launcher.debug` over a minute of Home use - no janky-frame jump against main;
+   g. (qa-launcher-small-a-code, after Q-1's fix) Home -> phone book and Home -> Kid Settings and back, read frame by
+      frame: no step and no double image during or after the transition. Record the same once on main (before the
+      fix) too: it tells whether Q-1's step was visible at the transition;
+   h. Back from an app into Home **with** the shade's wallpaper zoom just used (pull the shade on Home, close it, open
+      an app, press Back): Android's wallpaper zoom state differs then - the likeliest case for a seam.
+2. **F1** (`docs/testing/2026-10-25-r10-keystore-run.md`): with the kid hash unreadable in android mode (the r10 run's
+   recipe, `PinVaultKeyReceiver --es key secrets`), the glance/keypad prompt is the normal hint, never "Only the parent
+   code works right now"; in own mode the same recipe still shows it.
+3. **QR enrolment syncs**: provision by the QR (or the in-app scanner) and watch logcat for `SyncRunner: Sync for
+   [enrolled]` right after `Auto-enrolled from provisioning QR` - the first policy within seconds, not at the backstop.
+4. **The pass's trail**: the second follow-up's run again (a wiped `jelly36`, `set-device-owner`, logcat 2 min): count
+   "N apps loaded" lines after the enforcer's passes - expected one or two loads for the stragglers (the 30 s cap),
+   not ~30. If most stragglers still open their own burst, check which packages the `PACKAGE_CHANGED` callbacks name:
+   only packages a pass changed (suspended, unsuspended, hid or unhid) count as its trail (`AppLoadHold.touch`).
+   b. (after Q-2's fix) an "Allow" from the PWA for a blocked app, and a pause started from the PWA: in logcat the time
+      from the pass's end (`AppEnforcer`'s apply done) to the next "N apps loaded" is about 300 ms, and the new tile
+      shows on Home within a second of the pass.
+5. **Installed versions** (needs the server of the same branch): a catalog app checked for the phone updated by the
+   launcher (or `adb install -r` of a newer build of it whose versionName is the stored tag's version) -> "<app>
+   updated on <phone>" in the inbox; `device_status.installed_apps_json` carries `version_code`/`version_name`.
+   b. (server, Q-4's case end to end) a phone whose checked catalog app is already at the stored release, updated to
+      this launcher: two status reports in a row give no "updated" notice.

@@ -567,11 +567,20 @@ fun glancePromptLabel(label: String): String {
 }
 
 /** Which prompt the keypad shows (§1.1): the usual wait/wrong/checking/unusable texts first; else the
- * target's hint; else the plain prompt. */
+ * target's hint; else the plain prompt. UNUSABLE ("Only the parent code works right now": our kid hash can't be used)
+ * only in own mode - as Android's face ([androidFace]) the kid PIN opens Android's pad, which holds its own credential,
+ * so the stand-in shows the normal hint (r10 run F1, `docs/testing/2026-10-25-r10-keystore-run.md`). */
 enum class GlancePrompt { UNUSABLE, WAIT, CHECKING, WRONG, OPEN_APP, SEE_MISSED, PLAIN }
 
-fun glancePrompt(usable: Boolean, waiting: Boolean, checking: Boolean, wrong: Boolean, target: GlanceTarget?): GlancePrompt = when {
-    !usable -> GlancePrompt.UNUSABLE
+fun glancePrompt(
+    usable: Boolean,
+    waiting: Boolean,
+    checking: Boolean,
+    wrong: Boolean,
+    target: GlanceTarget?,
+    androidFace: Boolean,
+): GlancePrompt = when {
+    !usable && !androidFace -> GlancePrompt.UNUSABLE
     waiting -> GlancePrompt.WAIT
     checking -> GlancePrompt.CHECKING
     wrong -> GlancePrompt.WRONG

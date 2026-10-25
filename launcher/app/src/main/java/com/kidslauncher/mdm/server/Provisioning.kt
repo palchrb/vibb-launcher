@@ -36,5 +36,8 @@ suspend fun applyProvisioningExtras(context: Context, extras: ProvisioningExtras
         Log.w(LOG_TAG, "Tailnet connection failed or timed out before enroll attempt")
     }
 
+    // PLAN "QR enrolment requests a sync": the first policy now, not at the next backstop (up to 30 min away) - as
+    // Settings' "Enroll now" does. Both QR paths (Android's provisioning and the in-app scanner) come through here.
     return Enrollment.enroll(context, extras.serverUrl, extras.enrollmentCode)
+        .onSuccess { com.kidslauncher.mdm.push.SyncRunner.request(context, "enrolled") }
 }

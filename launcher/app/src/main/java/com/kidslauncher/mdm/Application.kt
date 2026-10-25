@@ -60,13 +60,13 @@ class Application : android.app.Application() {
     private val launcherAppsCallback = object : LauncherApps.Callback() {
         override fun onPackageRemoved(p0: String?, p1: UserHandle?) {
             evictIcons(p0)
-            loadApps()
+            loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
         }
 
         override fun onPackageAdded(p0: String?, p1: UserHandle?) {
             evictIcons(p0)
-            loadApps()
+            loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
             // Reacts to this specific install immediately (no network round-trip, no waiting on
             // the next sync) - see AppEnforcer.enforceOnNewPackage's own doc comment. Called back
@@ -94,7 +94,7 @@ class Application : android.app.Application() {
 
         override fun onPackageChanged(p0: String?, p1: UserHandle?) {
             evictIcons(p0)
-            loadApps()
+            loadApps(listOfNotNull(p0))
             clockAppChanged(p0)
             // An update (a replaced package) lands here: design 24b's install check (fix round QA
             // Low 3), and a re-apply when it set or cleared a block.
@@ -127,13 +127,13 @@ class Application : android.app.Application() {
             // Vibb music's card and lock view look the app's state up again (design 21 step 4).
             com.kidslauncher.mdm.music.MusicSessions.packagesChanged(packageNames?.toList())
             if (com.kidslauncher.mdm.lock.CameraLock.ownChange(packageNames?.toList())) return
-            loadApps()
+            loadApps(packageNames?.toList().orEmpty())
         }
 
         override fun onPackagesUnsuspended(packageNames: Array<out String>?, user: UserHandle?) {
             com.kidslauncher.mdm.music.MusicSessions.packagesChanged(packageNames?.toList())
             if (com.kidslauncher.mdm.lock.CameraLock.ownChange(packageNames?.toList())) return
-            loadApps()
+            loadApps(packageNames?.toList().orEmpty())
         }
 
         override fun onPackagesUnavailable(p0: Array<out String>?, p1: UserHandle?, p2: Boolean) {
@@ -503,7 +503,9 @@ class Application : android.app.Application() {
      * Once per burst (PLAN "Provisioning storm", qa-home-round-code Q-4): the consumer loads when
      * [com.kidslauncher.mdm.ui.home.appLoadDue] says so - 300 ms with no new request, at most 2 s after
      * it took the burst's first (a request made during a load counts from that load's end) - so the enforcer's hide/suspend storm at provisioning is one load and one Home
-     * render, not one per package. The process's first request loads at once (Home's cold start).
+     * render, not one per package. The process's first request loads at once (Home's cold start). A burst made only of
+     * an `AppEnforcer` pass's trail - callbacks about packages it touched, up to 2 min after it - waits 3 s of quiet, at
+     * most 30 s (`appLoadBurstDue`), so the system's late broadcasts fold into one or two loads.
      */
     private val appLoads: Channel<Unit> by lazy {
         Channel<Unit>(Channel.CONFLATED).also { requests ->
@@ -511,6 +513,7 @@ class Application : android.app.Application() {
                 com.kidslauncher.mdm.ui.home.runAppLoads(
                     next = { timeoutMs -> requests.nextAppLoad(timeoutMs) },
                     now = { android.os.SystemClock.elapsedRealtime() },
+                    takeNormal = { com.kidslauncher.mdm.ui.home.AppLoadHold.takeNormal() },
                     heldSince = { com.kidslauncher.mdm.ui.home.AppLoadHold.heldSince },
                 ) {
                     try {
@@ -535,7 +538,10 @@ class Application : android.app.Application() {
         }
     }
 
-    private fun loadApps() {
+    /** [packages]: what a `LauncherApps` callback is about (`null` for every other request) - a pass's trail when the
+     * pass touched them all ([com.kidslauncher.mdm.ui.home.AppLoadHold.noteRequest]). */
+    private fun loadApps(packages: Collection<String>? = null) {
+        com.kidslauncher.mdm.ui.home.AppLoadHold.noteRequest(packages, android.os.SystemClock.elapsedRealtime())
         appLoads.trySend(Unit)
     }
 }

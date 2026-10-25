@@ -40,4 +40,18 @@ class ProvisioningModeTest {
             assertEquals("", activity.getAttributeNS(ns, "directBootAware"))
         }
     }
+
+    /** PLAN "QR enrolment requests a sync": a QR enrolment that worked asks for the first policy at once, as Settings'
+     * "Enroll now" does - not at the next backstop. */
+    @Test
+    fun `a QR enrolment that worked requests a sync`() {
+        val text = listOf("src/main/java/com/kidslauncher/mdm/server/Provisioning.kt", "app/src/main/java/com/kidslauncher/mdm/server/Provisioning.kt")
+            .map(::File).first { it.exists() }.readText()
+        val body = text.substringAfter("suspend fun applyProvisioningExtras(").replace(Regex("//[^\\n]*"), "")
+        assertTrue(body, body.contains(
+            "return Enrollment.enroll(context, extras.serverUrl, extras.enrollmentCode)\n" +
+                "        .onSuccess { com.kidslauncher.mdm.push.SyncRunner.request(context, \"enrolled\") }",
+        ))
+        assertEquals("only on success", 1, Regex("SyncRunner\\.request\\(").findAll(body).count())
+    }
 }

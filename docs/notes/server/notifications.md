@@ -447,10 +447,27 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   app's by the version its code reads as, `device_pages::version_of_code`, against the tag's). Key `<app id>:<code>`;
   `from` the previous report's versionName (the launcher) or its code's version (the music app). No previous report (a
   new phone) raises nothing. Target `/devices/{id}/apps`. Inbox "Vibb One updated on Anna" / "14:02 · 0.36.0-rc.7 →
-  0.36.0" (Activity: "0.36.0-rc.7 → 0.36.0"); push "Anna: Vibb One updated" / "14:02 · version 0.36.0". **Only the
-  launcher and the music app**: the phone's report names no other app's installed version (`installed_apps` carries
-  package, label, installer) - an `app_updated` for every catalog app needs the launcher to report each one's
-  versionCode (a launcher change, both dirs, not built).
+  0.36.0" (Activity: "0.36.0-rc.7 → 0.36.0"); push "Anna: Vibb One updated" / "14:02 · version 0.36.0".
+- **Every other catalog app** (2026-10-25, branch `launcher-small-a`, PLAN "Installed versionCode per catalog app in
+  the status report"): the launcher's `installed_apps` entries carry `version_code` (`PackageInfo.longVersionCode`) and
+  `version_name` (trimmed, at most 60 characters), both optional - an older launcher sends neither and is taken as
+  before. `models::InstalledApp` reads them leniently (a code that isn't a non-negative integer, a name that isn't
+  text: none) and `cap_installed_apps` trims and clips the name (`MAX_APP_VERSION_NAME_CHARS`); they are stored with
+  the list in `device_status.installed_apps_json` - **no migration**, the column is the list's JSON. `installed_codes`
+  maps each entry with a code by package (`InstalledCodes.apps`), the previous report's from its stored JSON, and
+  `note_app_updates` raises `app_updated` (the same kind, key, words and target) for every catalog row checked for the
+  phone (`device_tracked_apps`) other than the launcher's and the music app's (those keep their own paths) through the
+  pure `listed_app_updates`: the listed code higher than the previous report's and the row's stored release installed
+  (`catalog_release_installed`: an F-Droid row by its asset id - the versionCode -, any other by the versionName, a
+  leading "v" ignored, against `version_of` the tag; the rest verbatim, so an app whose versionName spells an RC
+  differently from its tag - "1.2.0-rc1" against "v1.2.0-rc.1" - raises nothing, by design); `from` the previous
+  versionName. A previous report without codes (an older launcher) raises nothing, and neither does the same code again
+  or a lower one (`is.code <= was.code`: a phone already at the release when its launcher starts sending codes, a step
+  back from a beta onto the release; qa-launcher-small-a-code Q-4). Test: `app_updates::every_checked_catalog_app_raises_app_updated_by_its_listed_code`
+  and `an_app_already_at_the_release_or_going_back_to_it_raises_nothing`; the status body is the shared contract
+  `testdata/installed_apps_report.json` (byte-identical in the launcher's test resources: its `SyncScheduleTest`
+  encodes exactly it, `the_installed_apps_contract_raises_app_updated` posts it, both compare the copies; the code QA's
+  Q-5).
 - **The switch** "App updates" (`push_app_updates`, `parent_events::APP_UPDATES_SWITCH`, one for both kinds) is the one
   switch **off by default**: 0099's `DEFAULT 0` for every existing row, and `Kind::switch_default` for a parent with no
   row - `push::queue`'s `COALESCE(p.<switch>, <default>)` and Notify Me About's `read_switches`. Always in the inbox;

@@ -9,12 +9,6 @@ import com.kidslauncher.mdm.ui.home.HomeArrival
 
 private const val LOG_TAG = "HomeFront"
 
-/** Design 59d R1-4: how long after the face's unanimated Home start its resume still draws its own ground. */
-const val OWN_GROUND_WINDOW_MS = 3_000L
-
-/** Design 59d R1-4: the mark set at [setAtMs] (elapsed; `null` = none) still counts at [nowMs]. */
-fun ownGroundDue(setAtMs: Long?, nowMs: Long): Boolean = setAtMs != null && nowMs - setAtMs in 0..OWN_GROUND_WINDOW_MS
-
 /**
  * Every "bring Home to the front" start (design 16, QA #1): the boot start, the lock leaving
  * through Home, the lock asking Home to root lock task, the update, a role change and the end of
@@ -45,20 +39,6 @@ object HomeFront {
     /** Why we brought Home (a [HomeArrival] name, PLAN "Home starts at the top after an unlock"): Home's grid goes
      * back to the top only when the lock was left for Home or at the boot (`homeResetDue`). */
     const val EXTRA_ARRIVAL = "me.vibb.launcher.extra.HOME_ARRIVAL"
-
-    /**
-     * Design 59d step B (the user's rc.2 recording: Home drawn on black for 3 frames after the pad, then its wallpaper):
-     * the face's unanimated leave brought Home while the keyguard goes away, and Android's wallpaper window isn't shown
-     * yet under Home's transparent window. So Home's next resume draws its own ground until it stops
-     * (`WallpaperGround`'s `ownGround`). Set only by a `noAnimation` start (the face's leave); taken by Home's resume.
-     */
-    @Volatile
-    private var ownGroundSetAt: Long? = null
-
-    /** Home's resume: whether the face's leave just brought it - read once, and only within [OWN_GROUND_WINDOW_MS] of
-     * that start (R1-4: a resume that took the night path, or a start that never came, leaves no stale mark). */
-    fun takeOwnGroundDue(): Boolean =
-        ownGroundDue(ownGroundSetAt, android.os.SystemClock.elapsedRealtime()).also { ownGroundSetAt = null }
 
     fun intent(context: Context, animate: Boolean = true, noAnimation: Boolean = false, arrival: HomeArrival = HomeArrival.OURS): Intent =
         Intent(Intent.ACTION_MAIN)
@@ -105,8 +85,6 @@ object HomeFront {
         } else try {
             if (animate) PinLockRuntime.endDarkLockUp()
             context.startActivity(intent(context, animate, noAnimation, arrival))
-            // Design 59d R1-4: marked only once the start went through.
-            if (noAnimation) ownGroundSetAt = android.os.SystemClock.elapsedRealtime()
             Log.i(LOG_TAG, "Home brought to the front: $why")
             true
         } catch (e: Exception) {
