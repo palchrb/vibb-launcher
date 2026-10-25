@@ -93,7 +93,9 @@
             <p class="row row-note">No device gets notifications yet. Turn them on under This Device, on each device you want them on.</p>
         </div>
         {% endfor %}
-        <div class="group-footer">Shown: the device confirmed it showed the notification.</div>
+        {#- 2026-10-25: a new Home Screen copy is a new web app without the permission, while the old
+            copy's subscription lives on at Apple (accepted, never shown: the health rule marks it). -#}
+        <div class="group-footer">Shown: the device confirmed it showed the notification.{% if !devices.is_empty() %} <span data-note="added-again">Added the app to the Home Screen again? Turn notifications on in the new copy and remove the old device here.</span>{% endif %}</div>
     </section>
 
     {#- One form, the handler writes every switch (a missing one is off). The switches govern the

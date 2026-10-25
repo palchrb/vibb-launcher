@@ -125,7 +125,7 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
                 request.method(),
                 crate::audit::clip(request.uri().path(), 100)
             );
-            state
+            let first_this_minute = state
                 .audit
                 .record(
                     &state.db,
@@ -135,6 +135,23 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
                     &detail,
                 )
                 .await;
+            // A parent's own browser refused (2026-10-25, PLAN "PWA shows the login page after a
+            // Tailscale outage"): the PWA gets an empty 403 here, never the sign-in page - logged
+            // on its own line, beside `security::log_sign_in_redirects`'. Only with this server's
+            // session cookie, and at most once a minute per client - the throttle's own row
+            // (qa-pwa-fixes-d Q-4: a refused client makes up the header). No cookie value, no
+            // query.
+            if first_this_minute
+                && crate::security::has_session_cookie(request.headers(), state.session_cookie)
+            {
+                tracing::warn!(
+                    reason = refusal.as_str(),
+                    client = %ip,
+                    method = %request.method(),
+                    path = crate::audit::clip(request.uri().path(), 100),
+                    "a request with a session cookie refused by the admin gate (403)"
+                );
+            }
             StatusCode::FORBIDDEN.into_response()
         }
     }

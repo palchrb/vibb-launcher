@@ -22,7 +22,11 @@
 //   any reload the entry is made a GET of the address (`replaceState`), so a reload never resends
 //   a form;
 // - clears everything on `pageshow` (a page back from the back-forward cache is never left
-//   "loading").
+//   "loading");
+// - on the sign-in page (2026-10-25: after a Tailscale outage the return reload showed the login
+//   while the session was valid), asks `GET /api/session` (204 / 401) at load, when shown again and
+//   back from the back-forward cache and, signed in, goes back to the page that was wanted
+//   (`loginReturn`; never off this origin); a ping redirected to the login asks it too.
 // No service-worker fetch handler: the network is never faked. ES5, no framework (§5.7: Chrome/
 // WebView 80, iOS Safari 14). Run its tests: node --test jstest/reconnect.test.js
 (function (root) {
@@ -36,6 +40,16 @@
     // 1 minute (the user, 2026-10-24; 10 minutes until then): back from the background after that long = a reload in place.
     var AWAY_MS = 60 * 1000;
     var PING_URL = "/ping";
+    // Is this request's session signed in? 204 / 401, no body (2026-10-25, security::session_check).
+    var SESSION_URL = "/api/session";
+    // The address a navigation of this script was going to (sessionStorage), and when the sign-in
+    // page last went back to one: a page that wanted 2 min ago is still wanted; within 30 s of
+    // going back the sign-in page stays (never a loop).
+    var WANTED_KEY = "handy-wanted";
+    var BOUNCE_KEY = "handy-login-bounce";
+    var BOUNCE_PREFIX = "handy-login-bounce:";
+    var WANTED_MS = 2 * 60 * 1000;
+    var BOUNCE_MS = 30 * 1000;
     // static/scroll-restore.js's form record (its KEY and NAME_PREFIX).
     var SCROLL_KEY = "handy-scroll";
     var NAME_PREFIX = "handy-scroll:";
@@ -78,7 +92,111 @@
         return null;
     }
 
-    /** One ping: `done(true)` for an answer (any status below 500), `done(false)` for none in time. */
+    /**
+     * `raw` as a page of this app to go back to (its path, query and #fragment), or null: anything
+     * that would leave the origin, or a page that is the sign-in itself (`/login`, `/auth/…`,
+     * `/logout`, `/api/…`). Resolved against this page's origin and compared by `origin`; a raw
+     * value starting with `//` or a backslash is refused outright, and so is a resolved path
+     * starting with `//` or `/\` (`/.//evil`, `/%2e//evil`, `/a/..//evil`) - `location.replace`
+     * would read it as a scheme-relative address on another site (qa-pwa-fixes-d Q-1).
+     */
+    function appPath(raw, here) {
+        if (typeof raw !== "string" || !raw) return null;
+        if (raw.indexOf("//") === 0 || raw.charAt(0) === "\\" || raw.indexOf("/\\") === 0) return null;
+        var to, origin;
+        try {
+            origin = new URL(here).origin;
+            to = new URL(raw, origin);
+        } catch (e) {
+            return null;
+        }
+        if (!origin || origin === "null" || to.origin !== origin) return null;
+        var path = to.pathname;
+        if (path.charAt(0) !== "/" || path.charAt(1) === "/" || path.charAt(1) === "\\") return null;
+        if (path === "/login" || path === "/logout" || path.indexOf("/auth/") === 0 || path.indexOf("/api/") === 0) {
+            return null;
+        }
+        return path + to.search + to.hash;
+    }
+
+    /**
+     * The page the sign-in page goes back to once `GET /api/session` says the session lives
+     * (2026-10-25: after a Tailscale outage the return reload landed on the login, while the
+     * session was valid), or null to stay: not the sign-in page, or it went back less than 30 s ago
+     * (`bounceAt`). In order: the page this script's navigation wanted in the last 2 minutes
+     * (`wanted`: {href, t}), the referrer within the app, else `/` (a signed-in session never needs
+     * the sign-in page). Never anything in the sign-in page's own address: the server never puts a
+     * `next` there, so reading one would only be a way to send the parent elsewhere (Q-1).
+     */
+    function loginReturn(here, referrer, wanted, bounceAt, nowMs) {
+        var url;
+        try {
+            url = new URL(here);
+        } catch (e) {
+            return null;
+        }
+        if (url.pathname !== "/login") return null;
+        if (typeof bounceAt === "number" && nowMs - bounceAt >= 0 && nowMs - bounceAt < BOUNCE_MS) return null;
+        if (wanted && typeof wanted.t === "number" && nowMs - wanted.t >= 0 && nowMs - wanted.t < WANTED_MS) {
+            var back = appPath(wanted.href, here);
+            if (back) return back;
+        }
+        return appPath(referrer, here) || "/";
+    }
+
+    /** `GET /api/session`: `done(status)`, `done(0)` for no answer in time. */
+    function askSession(win, done) {
+        var finished = false;
+        var ctrl = null;
+        var timer = null;
+        function finish(status) {
+            if (finished) return;
+            finished = true;
+            if (timer !== null) win.clearTimeout(timer);
+            done(status);
+        }
+        if (typeof win.fetch !== "function") {
+            finish(0);
+            return;
+        }
+        try {
+            ctrl = typeof win.AbortController === "function" ? new win.AbortController() : null;
+        } catch (e) {}
+        timer = win.setTimeout(function () {
+            timer = null;
+            try {
+                if (ctrl) ctrl.abort();
+            } catch (e) {}
+            finish(0);
+        }, PING_TIMEOUT);
+        var options = { credentials: "same-origin", cache: "no-store" };
+        if (ctrl) options.signal = ctrl.signal;
+        try {
+            win.fetch(SESSION_URL, options).then(function (res) {
+                finish(res && res.status ? res.status : 0);
+            }, function () {
+                finish(0);
+            });
+        } catch (e) {
+            finish(0);
+        }
+    }
+
+    /** Whether a fetch's answer is the sign-in page it was redirected to. */
+    function landedOnLogin(res) {
+        if (!res || !res.redirected || !res.url) return false;
+        try {
+            return new URL(res.url).pathname === "/login";
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * One ping: `done(true)` for an answer (any status below 500), `done(false)` for none in time.
+     * A ping redirected to the sign-in page asks `GET /api/session` first (2026-10-25): its answer,
+     * 204 or 401, is the server's; none is none.
+     */
     function ping(win, now, done) {
         var finished = false;
         var ctrl = null;
@@ -107,6 +225,12 @@
         if (ctrl) options.signal = ctrl.signal;
         try {
             win.fetch(PING_URL + "?t=" + now(), options).then(function (res) {
+                if (!finished && landedOnLogin(res)) {
+                    askSession(win, function (status) {
+                        finish(status > 0 && status < 500);
+                    });
+                    return;
+                }
                 finish(!!res && res.status < 500);
             }, function () {
                 finish(false);
@@ -191,7 +315,12 @@
      * iPhone app can lose sessionStorage).
      */
     function placeRecord(win, now) {
-        var record = { path: win.location.pathname, y: scrollTop(win), t: now };
+        var record = {
+            path: win.location.pathname,
+            href: win.location.pathname + (win.location.search || ""),
+            y: scrollTop(win),
+            t: now
+        };
         var hash = win.location.hash;
         if (hash && hash !== "#" && win.document.getElementById) {
             var id = hash.slice(1);
@@ -297,6 +426,96 @@
             try {
                 win.name = NAME_PREFIX + record;
             } catch (e) {}
+        }
+
+        /** The address a navigation is going to, for the sign-in page's way back ([loginReturn]). */
+        function remember(href) {
+            try {
+                win.sessionStorage.setItem(WANTED_KEY, JSON.stringify({ href: href, t: now() }));
+            } catch (e) {}
+        }
+
+        /** A place record ({path, href?, t}) as a wanted address, or null. */
+        function placeWanted(place) {
+            if (!place || typeof place.path !== "string" || typeof place.t !== "number") return null;
+            return { href: typeof place.href === "string" ? place.href : place.path, t: place.t };
+        }
+
+        /**
+         * The address the last navigation wanted: the freshest of sessionStorage's record and the
+         * place record a reload in place left - in window.name if it is still there, else the one
+         * scroll-restore.js took from it at load (`handyPlaceRecord`; it clears window.name before
+         * this deferred script runs). An installed iPhone app can lose sessionStorage, and a stale
+         * record there never hides a fresh place record (Q-6). The place record keeps the query
+         * (`href`), so `?device=2` comes back to the second phone.
+         */
+        function wanted() {
+            var best = null;
+            function consider(record) {
+                if (record && typeof record.href === "string" && typeof record.t === "number" &&
+                        (best === null || record.t > best.t)) {
+                    best = record;
+                }
+            }
+            try {
+                consider(JSON.parse(win.sessionStorage.getItem(WANTED_KEY)));
+            } catch (e) {}
+            try {
+                var name = String(win.name || "");
+                if (name.indexOf(NAME_PREFIX) === 0) consider(placeWanted(JSON.parse(name.slice(NAME_PREFIX.length))));
+            } catch (e) {}
+            consider(placeWanted(win.handyPlaceRecord));
+            return best;
+        }
+
+        /**
+         * When the sign-in page last went back: the newer of sessionStorage's and window.name's
+         * (`handy-login-bounce:<ms>`, a prefix scroll-restore.js leaves alone), so the 30 s guard
+         * holds when the installed app has lost sessionStorage (Q-5).
+         */
+        function bounced() {
+            var at = null;
+            try {
+                var stored = parseInt(win.sessionStorage.getItem(BOUNCE_KEY), 10);
+                if (!isNaN(stored)) at = stored;
+            } catch (e) {}
+            try {
+                var name = String(win.name || "");
+                if (name.indexOf(BOUNCE_PREFIX) === 0) {
+                    var named = parseInt(name.slice(BOUNCE_PREFIX.length), 10);
+                    if (!isNaN(named) && (at === null || named > at)) at = named;
+                }
+            } catch (e) {}
+            return at;
+        }
+
+        /**
+         * On the sign-in page (2026-10-25): ask `GET /api/session` whether the session lives and,
+         * 204, go back to the wanted page ([loginReturn]) - `location.replace`, so Back doesn't
+         * return to the sign-in page. A 401, no answer, a sign-in already being sent (a submit) or
+         * a POST's answer (a refused password) keep the page. Asked at load, and again when the
+         * page is shown after being hidden or comes back from the back-forward cache (Q-7); one
+         * ask at a time.
+         */
+        var signInAsking = false;
+        function checkSignIn() {
+            if (win.location.pathname !== "/login" || signInAsking || postAnswer()) return;
+            var target = loginReturn(win.location.href, doc.referrer || "", wanted(), bounced(), now());
+            if (target === null) return;
+            signInAsking = true;
+            askSession(win, function (status) {
+                signInAsking = false;
+                if (status !== 204 || saving) return;
+                var at = String(now());
+                try {
+                    win.sessionStorage.setItem(BOUNCE_KEY, at);
+                    win.sessionStorage.removeItem(WANTED_KEY);
+                } catch (e) {}
+                try {
+                    win.name = BOUNCE_PREFIX + at;
+                } catch (e) {}
+                win.location.replace(target);
+            });
         }
 
         /** The page is a POST's answer (the server marks its <body>): never reloaded (QA M1). */
@@ -410,6 +629,7 @@
             };
             wait = w;
             if (kind === "load") {
+                remember(href === null ? win.location.href : href);
                 view.mark(link, true);
                 view.bar(true);
             }
@@ -439,6 +659,7 @@
         function cameBack() {
             var away = hiddenAt !== null && now() - hiddenAt > AWAY_MS;
             hiddenAt = null;
+            checkSignIn();
             if (wait) {
                 if (!wait.timers.length) arm(wait);
                 check(wait);
@@ -485,6 +706,8 @@
                 return true;
             }
         };
+
+        checkSignIn();
     }
 
     var api = {
@@ -494,7 +717,11 @@
         placeRecord: placeRecord,
         edited: edited,
         reloadUrl: reloadUrl,
+        appPath: appPath,
+        loginReturn: loginReturn,
         domView: domView,
+        WANTED_MS: WANTED_MS,
+        BOUNCE_MS: BOUNCE_MS,
         CHIP_AFTER: CHIP_AFTER,
         PING_EVERY: PING_EVERY,
         PING_TIMEOUT: PING_TIMEOUT,

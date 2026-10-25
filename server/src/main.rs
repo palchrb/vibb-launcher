@@ -72,6 +72,9 @@ use tower_sessions_sqlx_store::SqliteStore;
 #[derive(Clone)]
 pub struct AppState {
     pub db: SqlitePool,
+    /// The admin session cookie's name (`security::session_cookie_name`, `INSECURE_COOKIES`):
+    /// the sign-in log's "came with a session cookie" asks for this one alone.
+    pub session_cookie: &'static str,
     /// The compiled blocklist every device's on-device filter resolves its own effective list
     /// from - see `dns_engine::CompiledBlocklist`'s doc comment. This server no longer runs a
     /// live DNS server itself (Phase E of the on-device-filtering migration retired it, see
@@ -436,6 +439,7 @@ async fn main() {
     let (command_notify, _) = tokio::sync::broadcast::channel(64);
     let state = AppState {
         db,
+        session_cookie: security::session_cookie_name(insecure_cookies),
         dns_compiled: dns_engine::empty_compiled_blocklist(),
         command_notify,
         config: std::sync::Arc::new(fork_config),
@@ -784,6 +788,10 @@ pub fn build_admin_router(
                 .layer(DefaultBodyLimit::max(SIGNED_OUT_FORM_LIMIT)),
         )
         .route("/sw.js", get(handlers::sw::serve_sw))
+        // Is this request's session signed in? 204 / 401, no body (2026-10-25: the sign-in page
+        // asks before it stays on screen, static/reconnect.js). It answers itself - behind
+        // require_full_auth a 401 would be the login's redirect. The admin gate still applies.
+        .route("/api/session", get(security::session_check))
         // A phone's own picture (server round C): also a push's icon, which the browser fetches
         // for the service worker without the session cookie - so no session, only the picture's
         // own SHA-256 as the path, and only while a phone names it (`handlers::device_avatar`).
@@ -1498,6 +1506,11 @@ pub fn build_admin_router(
         .fallback(not_found)
         .with_state(state.clone())
         .layer(session_layer)
+        // Every answer that sends the browser to /login, logged with why (2026-10-25).
+        .layer(from_fn_with_state(
+            state.clone(),
+            security::log_sign_in_redirects,
+        ))
         // Before the session is read: a cross-site form never acts (design 22 §3.2.5).
         .layer(from_fn_with_state(state.clone(), admin_auth::csrf_guard))
         // A POST's own page is marked so reconnect.js never reloads it (qa-srv-sweep-resume M1).

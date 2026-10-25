@@ -37,7 +37,7 @@
 <script src="/static/register-sw.js?v=4" defer></script>
 <!-- No POST may make the page jump to the top (server/CLAUDE.md): static/scroll-restore.js. Not
      deferred, so form.submit() is hooked before any control can call it. -->
-<script src="/static/scroll-restore.js?v=5"></script>
+<script src="/static/scroll-restore.js?v=6"></script>
 <!-- Controls marked data-autosave save their form on change (design 31 §5.2), through the hooked
      form.submit(). Not deferred either: it only listens on the document, so a switch tapped while a
      long page is still loading saves too (qa-31-s1-code L1). -->
@@ -49,4 +49,4 @@
 <!-- A tap is never "nothing" after being away (2026-10-21): the tapped link marked and a thin bar at
      once, "Connecting…" after 3 s and the same navigation again by itself once the server answers;
      after 10 minutes hidden a ping and a reload in place that keeps the scroll place. -->
-<script src="/static/reconnect.js?v=4" defer></script>
+<script src="/static/reconnect.js?v=6" defer></script>

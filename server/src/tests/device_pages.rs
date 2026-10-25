@@ -798,14 +798,24 @@ async fn the_lock_state_says_when_it_was_reported() {
                 "lock_state": { "active": true, "locked": true } }),
     )
     .await;
-    // The report is from yesterday (local, Phone Setup's Europe/Oslo).
-    sqlx::query(
-        "UPDATE device_status SET reported_at = datetime('now', '-1 day') WHERE device_id = ?",
-    )
-    .bind(id)
-    .execute(&app.db)
-    .await
-    .unwrap();
+    // The report is from yesterday noon, local (Phone Setup's Europe/Oslo), by the zone's own
+    // dates: `datetime('now', '-1 day')` was "today" on the night the clocks went back
+    // (qa-pwa-fixes-d N-2).
+    use chrono::TimeZone;
+    let oslo: chrono_tz::Tz = "Europe/Oslo".parse().unwrap();
+    let yesterday =
+        chrono::Utc::now().with_timezone(&oslo).date_naive() - chrono::Duration::days(1);
+    let noon = oslo
+        .from_local_datetime(&yesterday.and_hms_opt(12, 0, 0).unwrap())
+        .single()
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    sqlx::query("UPDATE device_status SET reported_at = ? WHERE device_id = ?")
+        .bind(noon.format("%Y-%m-%d %H:%M:%S").to_string())
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
     let html = app
         .get_page(&device_page(id, Section::Lock), &cookie)
         .await

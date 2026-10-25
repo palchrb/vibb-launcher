@@ -177,6 +177,7 @@ impl TestApp {
         let pushes = std::sync::Arc::new(web_push::ScriptedPush::default());
         let state = AppState {
             db: db.clone(),
+            session_cookie: crate::security::session_cookie_name(true),
             dns_compiled: dns_engine::empty_compiled_blocklist(),
             command_notify,
             config: std::sync::Arc::new(ForkConfig::for_tests()),
