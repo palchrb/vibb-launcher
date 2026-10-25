@@ -871,12 +871,12 @@ pub async fn subscribe(
         }
         sqlx::query(
             "INSERT INTO push_subscriptions \
-             (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp, session_epoch) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT (endpoint) DO UPDATE SET admin_id = excluded.admin_id, \
                p256dh = excluded.p256dh, auth = excluded.auth, origin = excluded.origin, \
-               label = excluded.label, vapid_fp = excluded.vapid_fp, state = 'active', \
-               gone_at = NULL",
+               label = excluded.label, vapid_fp = excluded.vapid_fp, \
+               session_epoch = excluded.session_epoch, state = 'active', gone_at = NULL",
         )
         .bind(admin.id)
         .bind(endpoint)
@@ -885,6 +885,9 @@ pub async fn subscribe(
         .bind(origin)
         .bind(&label)
         .bind(&key.fingerprint)
+        // The session's epoch (security review M1): when the account's moves past it (a new
+        // password, a 2FA reset, Sign Out Everywhere), `push::send_due` deletes this row.
+        .bind(admin.session_epoch)
         .execute(&mut *tx)
         .await?;
         tx.commit().await.map(|()| true)

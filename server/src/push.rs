@@ -310,8 +310,11 @@ pub async fn forget_other_keys(db: &sqlx::SqlitePool, key: &VapidKey) {
     }
 }
 
-/// Deletes every subscription of an admin: Sign Out Everywhere and `reset-2fa` (§7) - a lost
-/// device stops getting titles.
+/// Deletes every subscription of an admin: Sign Out Everywhere, a new password and "Reset
+/// two-factor login" on Account, and the CLI's `reset-2fa` (§7, security review M1) - a lost
+/// device stops getting titles. Every other move of the account's session epoch (a parent's
+/// Reset, three wrong passwords at a re-auth form) reaches the subscriptions through
+/// [forget_stale]: each keeps the epoch of the session that made it.
 pub async fn forget_subscriptions(db: &sqlx::SqlitePool, admin_id: i64) {
     if let Err(err) = sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
         .bind(admin_id)
@@ -320,6 +323,27 @@ pub async fn forget_subscriptions(db: &sqlx::SqlitePool, admin_id: i64) {
     {
         tracing::error!(%err, "can't delete the notification subscriptions");
     }
+}
+
+/// Deletes every subscription made in a session older than its account's epoch (security review
+/// M1): that session was signed out by a new password, a 2FA reset, Sign Out Everywhere or a
+/// Reset, and its browser gets nothing more. Their deliveries go with them (`ON DELETE CASCADE`).
+/// [send_due] runs it first on every pass.
+pub async fn forget_stale(db: &sqlx::SqlitePool) -> Result<(), sqlx::Error> {
+    let done = sqlx::query(
+        "DELETE FROM push_subscriptions WHERE session_epoch < \
+         (SELECT a.session_epoch FROM admin_users a WHERE a.id = push_subscriptions.admin_id)",
+    )
+    .execute(db)
+    .await?;
+    if done.rows_affected() > 0 {
+        tracing::info!(
+            "{} notification subscription(s) were made in a session that has been signed out \
+             since (a new password, a 2FA reset or Sign Out Everywhere) - deleted",
+            done.rows_affected()
+        );
+    }
+    Ok(())
 }
 
 /// Queues `event`'s push to every active subscription of a parent who isn't removed and has the
@@ -428,11 +452,13 @@ struct DueRow {
 /// with more than [FOLD_ABOVE] event pushes for one subscription folded into its newest two and
 /// one summary (an urgent kind - the emergency call, a PIN lockout, a foreign app - always goes on
 /// its own). Deliveries to a turned-off
-/// subscription or of a pruned event are dropped. Nothing happens without a key.
+/// subscription or of a pruned event are dropped, and a subscription from a signed-out session is
+/// deleted first ([forget_stale]). Nothing happens without a key.
 pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
     let Some(key) = state.push.key.clone() else {
         return Ok(());
     };
+    forget_stale(&state.db).await?;
     // A push the service took although its request looked failed (a network error after the
     // body went): the worker's receipt came before the retry, so it is accepted, never sent
     // again (qa-35-s2-code L3).

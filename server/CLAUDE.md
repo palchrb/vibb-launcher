@@ -173,12 +173,12 @@ the whole file and refuses to start (`VersionMismatch`) when an applied migratio
 this file or the design doc; a dev database that ran an earlier text needs a fresh `data/` (qa-26a-merge27-code L2).
 `0075_clock_format.sql` (design 34 P12) follows 0074, `0076_softer_wallpapers.sql` (design 34 P8) follows 0075,
 `0077_vibb_one.sql` (design 34 P11, the launcher's catalog row named "Vibb One") follows 0076
-(`migrations_73_to_94_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
+(`migrations_73_to_95_in_order`); `0078_parent_events.sql` (design 35, all of it in one file) follows 0077 and
 `0079_custom_dns.sql` (design 36) follows 0078, so 0078 must reach a server before or with 0079, never after (the
 out-of-order hazard above; both merged into `main` on 2026-10-18, so every build from there carries both).
 `0080_phone_power.sql` (design 38, the two power switches) follows 0079, and
 `0081_music_art_more.sql` (2026-10-19, episode pictures ASAP: `music_listings.art_more`) follows 0080
-(`migrations_73_to_94_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
+(`migrations_73_to_95_in_order`), and `0082_art_backfill_and_last_opened.sql` (server round 5: `art_more` set for
 the listings with untried episode pictures, `push_subscriptions.last_opened_at`) follows 0081, and
 `0083_lock_glance_text_per_app.sql` (design 51: `device_lock_glance_apps.show_text`, backfilled from
 `device_policy.lock_glance_text`, which nothing reads after it) follows 0082, and
@@ -196,7 +196,8 @@ screen capture switch, 2026-10-23: `device_policy.disallow_screen_capture`, defa
 `device_status.zone_watch_json`) follows 0091, and `0093_location_provider.sql` (design 64 step 2:
 `device_locations.provider`/`mock`/`resent_at`, `devices.mock_logged`/`mock_logged_at`) follows 0092, and
 `0094_tracked_app_fdroid.sql` (the F-Droid source, 2026-10-24: `tracked_apps.fdroid_repo`/`fdroid_package`) follows
-0093 (`migrations_73_to_94_in_order`). The next free number is 0095.
+0093, and `0095_push_session_epoch.sql` (security review M1, `pwa-fixes-a`: `push_subscriptions.session_epoch`,
+backfilled with the account's) follows 0094 (`migrations_73_to_95_in_order`). The next free number is 0096.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts")
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps
@@ -213,7 +214,7 @@ screen capture switch, 2026-10-23: `device_policy.disallow_screen_capture`, defa
 - `device_lock_glance_apps` (the apps whose messages the PIN lock's first page shows, each with its `show_text` since 0083) - see "The lock's glance page"; `device_policy.lock_glance_text` is unused since 0083's backfill
 - ~~`device_push`~~ - FCM tokens and health (migration `0026`), dropped by `0048` (design 19)
 - `device_crashes` - launcher crash reports per phone and stack-trace hash, see "Crash reports"
-- `parent_events` (kept 90 days; design 38's `phone_off`/`phone_on` too; design 64's `zone_arrived`/`zone_left` go with the phone's location history and are stored as a key plus `params`, worded by `parent_events::told`), `notification_prefs` (each parent's Notify Me About, no row = all on; was the singleton `notification_settings` until 0088; `push_zones` since 0091), `parent_event_reads` (each parent's read state, 0088), `push_subscriptions` (`last_opened_at` since 0082), `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
+- `parent_events` (kept 90 days; design 38's `phone_off`/`phone_on` too; design 64's `zone_arrived`/`zone_left` go with the phone's location history and are stored as a key plus `params`, worded by `parent_events::told`), `notification_prefs` (each parent's Notify Me About, no row = all on; was the singleton `notification_settings` until 0088; `push_zones` since 0091), `parent_event_reads` (each parent's read state, 0088), `push_subscriptions` (`last_opened_at` since 0082, `session_epoch` since 0095 - older than the account's: deleted by `send_due`), `push_deliveries` (empty until design 35 step 2), `devices.battery_low_since`, `device_status.battery_level`/`battery_charging` - see "Notifications to the parent"
 - `device_pin_events` - the phones' parent-PIN events (kept 90 days), see "Parent PIN"; `device_policy.override_pin_easy` (the easy-PIN warning), `device_status.battery_optimization_exempt` (design 19b), `device_status.write_settings_granted` (0090, About This Phone's "Modify system settings")
 - `music_categories`, `music_entries`, `music_files`, `device_music_entries`, `music_storytel` - the Vibb music library, see "Vibb music library"; `music_spotify_app`, `music_spotify_accounts` - Spotify's app and logins, see "Vibb music: Spotify on the server"
 - `music_settings`, `music_check_requests`, `music_listings`, `music_items` - the music sweep, see "Vibb music: the server sweep" (and "Vibb music: episode art" for their `art_*`/`cover_*print` columns)

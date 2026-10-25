@@ -1125,6 +1125,128 @@ async fn sign_out_everywhere_reset_2fa_and_backups_hold_no_subscription() {
     );
 }
 
+/// Security review M1: a new password and "Reset two-factor login" on Account delete every
+/// subscription of the account, as Sign Out Everywhere does - one a stolen session made too.
+#[tokio::test]
+async fn a_new_password_and_a_2fa_reset_hold_no_subscription() {
+    const PASSWORD: &str = "correct horse battery staple";
+    const NEW_PASSWORD: &str = "a brand new long password";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let stolen = app.admin_cookie().await;
+    let res = subscribe(&app, &stolen, "https://web.push.apple.com/QK1-fake-stolen").await;
+    assert!(res.location().unwrap().contains("notice=push_on"));
+    subscribe(&app, &cookie, ENDPOINT).await;
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        2
+    );
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/password",
+            Some(&cookie),
+            &[
+                ("current_password", PASSWORD),
+                ("new_password", NEW_PASSWORD),
+                ("confirm_password", NEW_PASSWORD),
+            ],
+        )
+        .await;
+    super::assert_redirect(&res, "/account?changed=password", Some("password"));
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+    let page = app.get_page("/account?changed=password", &cookie).await;
+    assert!(
+        page.text().contains("notifications are off"),
+        "{}",
+        page.text()
+    );
+
+    // This session goes on; it turns notifications on again, then resets two-factor login.
+    let res = subscribe(&app, &cookie, ENDPOINT).await;
+    assert!(res.location().unwrap().contains("notice=push_on"));
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        1
+    );
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/reset-2fa",
+            Some(&cookie),
+            &[("current_password", NEW_PASSWORD)],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/auth/setup-2fa"));
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+}
+
+/// Security review M1: a subscription keeps its session's epoch; once the account's moved past it
+/// (here as a parent's Reset or three wrong passwords at a re-auth form move it, which delete
+/// nothing themselves), the sender sends it nothing and deletes it. A subscription made after the
+/// move is sent to.
+#[tokio::test]
+async fn a_subscription_from_a_signed_out_session_is_not_sent_to() {
+    const OLD: &str = "https://web.push.apple.com/QK1-fake-old-session";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, OLD).await;
+    let admin = app.an_admin().await;
+    let epoch = crate::admin_auth::bump_epoch(&app.db, admin.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.get_page("/devices", &cookie).await.location(),
+        Some("/login"),
+        "the old session is signed out"
+    );
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let stored: Vec<(String, i64)> =
+        sqlx::query_as("SELECT endpoint, session_epoch FROM push_subscriptions ORDER BY id")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored,
+        [(OLD.to_string(), epoch - 1), (ENDPOINT.to_string(), epoch)]
+    );
+
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    let requests = app.pushes.take();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|r| r.endpoint.as_str())
+            .collect::<Vec<_>>(),
+        [ENDPOINT]
+    );
+    let left: Vec<String> = sqlx::query_scalar("SELECT endpoint FROM push_subscriptions")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, [ENDPOINT]);
+    assert_eq!(
+        scalar(
+            &app,
+            "SELECT COUNT(*) FROM push_deliveries d \
+             LEFT JOIN push_subscriptions s ON s.id = d.subscription_id WHERE s.id IS NULL"
+        )
+        .await,
+        0,
+        "its deliveries went with it"
+    );
+}
+
 /// §4.1: the key file is made once, 0600; a damaged one turns push off and stays as it was; a
 /// subscription made for another key is turned off at startup.
 #[tokio::test]

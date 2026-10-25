@@ -96,7 +96,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   showed every push and confirmed none; the token is the receipt's proof, a cookie lends it nothing): `{d, t, a}`, the token's hash compared in
   constant time, 204 (repeats too) / 404 counted in `limits::ip_failed` (429 while blocked) - except an older token of
   a delivery sent more than once (`push::Receipt::Stale`, not counted); `clicked` marks the event read. A `queued`
-  delivery with a receipt is made `accepted` at the next pass, never sent again (L3). Sign Out Everywhere and `reset-2fa` (`admin_auth::reset_2fa`) delete the admin's subscriptions;
+  delivery with a receipt is made `accepted` at the next pass, never sent again (L3). Sign Out Everywhere, a new password and "Reset Two-Factor Login" on Account (security
+  review M1, `pwa-fixes-a`) and the CLI's `reset-2fa` (`admin_auth::reset_2fa`) delete the admin's subscriptions
+  (`push::forget_subscriptions`), this browser's too; Account says "notifications are off everywhere". Each
+  subscription also keeps the `session_epoch` of the session that turned it on (0095, written at subscribe and on
+  its upsert); every pass of `send_due` first deletes those older than their account's epoch (`push::forget_stale`,
+  one log line), so any other move of the epoch - a parent's Reset, three wrong passwords at a re-auth form - ends
+  them too, their deliveries with them (`tests::web_push::a_new_password_and_a_2fa_reset_hold_no_subscription`,
+  `a_subscription_from_a_signed_out_session_is_not_sent_to`);
   `backups::strip_secrets_in` deletes `push_deliveries` and `push_subscriptions` from every copy.
 - **PWA**: `/notifications` gained the warnings (the clock row, a "may not be showing" row per device to `#devices`),
   This Device (`#this-device`: the form carries `data-key` = the public key and `data-subscribed` = 16-hex SHA-256
@@ -260,7 +267,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   (the contract and its copy, H1's sequence - held, dropped, restarted -, the hold running out, the release before the
   "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
   the claim; since the code QA's fix round a report ending "Off since", a superseded held push, the level range in
-  the route's own test), `music_spotify::migrations_73_to_94_in_order`.
+  the route's own test), `music_spotify::migrations_73_to_95_in_order`.
 
 ## Per parent (design 62 step 5, `docs/design/62-parent-accounts.md` §5)
 
