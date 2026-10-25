@@ -514,8 +514,6 @@ after), never later. Details stay in the entries below.
   - Diagnostics: Web Filter line "upstream can't be reached"; the music app's "no network" text and the real cause in its log.
   - QR enrolment requests a sync. Trailing package callbacks after an enforcer pass (above).
 - **Server / PWA**
-  - Security review M1 (password change keeps push subscriptions), M2 (external backup copy never pruned), pause/"Lock again" reload - built 2026-10-25, branch `pwa-fixes-a`, in code QA.
-  - Log out removes this browser's push subscription (the user, 2026-10-25: "Klarer vi å fjerne push subscriptions ved logout?"): the logout form carries the browser's subscription endpoint (filled by JS from `pushManager.getSubscription()`), the server deletes that one row with the session, and the page calls `unsubscribe()`; a logout without JS keeps today's behaviour (the M1 epoch rule still ends it at the next sign-out-everywhere/password change). Server, XS; goes into `pwa-fixes-a`'s fix round.
   - The security reviews' Low items (server 18, launcher 16, music 9).
   - Uploaded avatar per phone; the avatar as the push icon.
   - PWA tab-switch timing (Navigation Timing behind a debug switch, then prefetch).
