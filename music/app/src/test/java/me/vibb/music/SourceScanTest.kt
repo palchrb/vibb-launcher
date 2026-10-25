@@ -902,4 +902,44 @@ class SourceScanTest {
         assertTrue(legacy.contains("if (!flag.compareAndSet(false, true)) return false"))
         assertTrue(legacy.contains("purgeOnce(done, context.noBackupFilesDir, ::deleteKey)"))
     }
+
+    /**
+     * Music round r13 (qa-music-r13-code Q-5): the room hand-over's `VibbHandover` lines log in a release build too, so
+     * they carry step names, kinds, counts, states and positions only - no call's text interpolates a title, a name, a
+     * uri, a url, a key, an id, a token, a link or a message (the identifiers themselves, or one ending in them).
+     */
+    @Test
+    fun `r13 - the hand-over timing lines never format a title, url, id or token`() {
+        val banned = setOf("title", "name", "uri", "url", "key", "id", "token", "link", "message")
+        val suffixes = listOf("Title", "Uri", "Url", "Key", "Id", "Token", "Link", "Message")
+        val call = Regex("""HandOverTiming\.(tap|play|step|done|first|until)\(""")
+        val interpolation = Regex("""\$\{([^}]*)}|\$([A-Za-z_][A-Za-z0-9_.]*)""")
+        val identifier = Regex("[A-Za-z_][A-Za-z0-9_]*")
+        var calls = 0
+        for (f in sources("src/main/java")) {
+            val text = code(f)
+            for (m in call.findAll(text)) {
+                // the call's arguments: up to its closing parenthesis (the lines' own parentheses are balanced)
+                var depth = 1
+                var i = m.range.last + 1
+                while (depth > 0 && i < text.length) {
+                    when (text[i]) {
+                        '(' -> depth++
+                        ')' -> depth--
+                    }
+                    i++
+                }
+                val args = text.substring(m.range.last + 1, i - 1)
+                calls++
+                for (x in interpolation.findAll(args)) {
+                    val expr = x.groupValues[1].ifEmpty { x.groupValues[2] }
+                    for (id in identifier.findAll(expr).map { it.value }) {
+                        val bad = id.lowercase() in banned || suffixes.any { id.endsWith(it) }
+                        assertFalse("${f.name}: a timing line formats `$id` ($args)", bad)
+                    }
+                }
+            }
+        }
+        assertTrue("the timing calls were found ($calls)", calls >= 20)
+    }
 }

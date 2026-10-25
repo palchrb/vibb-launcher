@@ -99,6 +99,12 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val nowRow: StateFlow<NowPlayingRow?> = store.db.nowPlayingFlow().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    /** The stored row has been read once ([nowRow]'s null is also "none stored"; the launch splash waits for it, Q-10). */
+    val nowRowKnown: StateFlow<Boolean> = store.db.nowPlayingFlow().map { true }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** The carousel's one start on the last played tile has run ([startOn]; the launch splash waits for it, Q-10). */
+    var startSettled by mutableStateOf(false)
+
     /** The phone's last Spotify outcome (design 26c §4.4, §5.8): every Spotify tile's account line reads it. */
     val spotifyOutcome: StateFlow<String?> = store.spotifyOutcomes().map { it?.outcome }.flowOn(Dispatchers.IO)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)

@@ -55,6 +55,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.layout.offset
 import androidx.annotation.DrawableRes
 import me.vibb.music.logic.ControlSlots
+import me.vibb.music.logic.TimeRow
 import me.vibb.music.logic.SKIP_BACK_MS
 import me.vibb.music.logic.SKIP_FORWARD_MS
 import me.vibb.music.logic.skipSeconds
@@ -100,6 +101,8 @@ fun PlayerScreen(
     sleepAtEnd: Boolean,
     output: Output,
     rendererState: RendererState?,
+    /** The times, or the quiet line while a play is on its way (PLAN "Connecting…", `logic/HandOver.kt` `timeRow`). */
+    timeRow: TimeRow,
     onBack: () -> Unit,
     onSeek: (Long) -> Unit,
     onShuffle: () -> Unit,
@@ -172,7 +175,12 @@ fun PlayerScreen(
                 }
             }
         }
-        SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), onSeek)
+        val status = when (timeRow) {
+            TimeRow.TIMES -> null
+            TimeRow.CONNECTING_SPEAKER -> stringResource(R.string.connecting_speaker)
+            TimeRow.CONNECTING -> stringResource(R.string.connecting)
+        }
+        SeekBar(positionMs, now.durationMs, stringResource(R.string.seek), status, onSeek)
         // v12's sizes where they fit, v15's compact ones on a 320 dp phone: always round, play centred.
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val row = controlRow(maxWidth.value)

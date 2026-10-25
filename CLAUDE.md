@@ -34,7 +34,9 @@ imported with full history (`git subtree`), so old commit hashes in the docs sti
   silent episodes with Range; `--vary` serves another length per request, design 30's changed-source check; §6f;
   `--feed N` an RSS feed of N items with their own pictures the server judges `own`, `--hls K` item K as HLS, design
   39's list pictures and order flip; §6q), `pwa-startup-images.py` (the PWA's iPhone start-up PNGs and head.html's
-  links from `server/testdata/pwa_startup_screens.json`; `--selftest`; `docs/notes/server/pwa.md`, "Start-up splash").
+  links from `server/testdata/pwa_startup_screens.json`; `--selftest`; `docs/notes/server/pwa.md`, "Start-up splash"),
+  `music-splash.py` (the music app's launch splash drawables: the Vibb mark read from the launcher's Home splash, "vibb
+  music" from Nunito's outlines; `--selftest`).
 - `PLAN.md` - the plan and status, and the fix backlog ("Fix backlog": keep it current as items come in and are done).
 - `.github/` - CI for both parts (see below).
 - `kids-launcher-mdm/`, `kid-phone-server/` (gitignored, if present) - the old standalone clones.
@@ -126,8 +128,8 @@ fixtures (the phone never logs in).
   `time_request.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`; `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
-  `scripts/fake-storytel.py`, `scripts/fake-spotify.py` and `scripts/fake-audio.py`, whose `--selftest`s it runs
-  after the build, the server's and the launcher's `storytel_token_answers.json` and `server/testdata/storytel/`;
+  `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py` and `scripts/music-splash.py`
+  (with the launcher's `splash_vibb_breathe.xml` it draws from), whose `--selftest`s it runs after the build, the server's and the launcher's `storytel_token_answers.json` and `server/testdata/storytel/`;
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json` and

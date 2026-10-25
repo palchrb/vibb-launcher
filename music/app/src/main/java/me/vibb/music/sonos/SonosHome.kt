@@ -142,5 +142,10 @@ class SonosHome(context: Context) {
         fun log(message: String) {
             Log.i(TAG, message)
         }
+
+        /** The room hand-over's timing lines ([HandOverTiming]: step names, kinds, counts and positions only). */
+        fun handOver(message: String) {
+            Log.i(HandOverTiming.TAG, message)
+        }
     }
 }

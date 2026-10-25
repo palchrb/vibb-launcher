@@ -103,6 +103,8 @@
     <string name="renderer_taken_over">Noen andre bruker høyttaleren</string>
     <string name="renderer_lost_session">Høyttaleren stoppet</string>
     <string name="renderer_unreachable">Får ikke kontakt med høyttaleren</string>
+    <string name="connecting_speaker">Kobler til høyttaleren…</string>
+    <string name="connecting">Kobler til…</string>
     <string name="renderer_spotify_needs_wifi">Trenger Wi-Fi</string>
     <!-- "internett" is bokmål's common noun (lint's Typos check wants it capitalized). -->
     <string name="renderer_spotify_needs_internet" tools:ignore="Typos">Trenger internett</string>

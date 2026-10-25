@@ -105,6 +105,8 @@
     <string name="renderer_taken_over">Someone else is using the speaker</string>
     <string name="renderer_lost_session">The speaker stopped</string>
     <string name="renderer_unreachable">Can\'t reach the speaker</string>
+    <string name="connecting_speaker">Connecting to the speaker…</string>
+    <string name="connecting">Connecting…</string>
     <!-- The web player's quiet line (design 26c §5.8). No source is named on the kid's screens (26c step 8:
          a Spotify entry is a tile like any other), so the line says what is wrong, not whose player it is. -->
     <string name="renderer_spotify_needs_wifi">Needs Wi-Fi</string>

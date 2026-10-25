@@ -181,6 +181,11 @@ object PlayerHub {
          * for the phone's own player.
          */
         val rendererState: RendererState? = null,
+        /**
+         * A play of ours is on its way to the Sonos room (`SonosController.connecting`, PLAN "Connecting…"): the player
+         * shows "Kobler til høyttaleren…" in place of the time row ([me.vibb.music.logic.timeRow]); false on the phone.
+         */
+        val connecting: Boolean = false,
         /** The Sonos rows of "Spill av på", stale and scanning (`RoomDirectory.state`, design 26a §5.1). */
         val rooms: RoomsView = RoomsView(emptyList(), stale = false, scanning = false),
         /**

@@ -501,6 +501,7 @@ internal class SonosRenderer(
     private var lastIndex = -1
     private var lastPwr = false
     private var lastShows = false
+    private var lastConnecting = false
 
     private fun changed() {
         if (released) return
@@ -537,6 +538,12 @@ internal class SonosRenderer(
         if (shows != lastShows) {
             lastShows = shows
             events += RendererEvent.IsPlaying(shows)
+            if (shows) HandOverTiming.first("shows", "the player shows playing (the now-playing update)")
+        }
+        val connecting = controller.connecting(now)
+        if (connecting != lastConnecting) {
+            lastConnecting = connecting
+            HandOverTiming.step(if (connecting) "the connecting line shows" else "the connecting line ends")
         }
         if (ended) events += RendererEvent.Ended
         if (controller.takeLost() != null) events += RendererEvent.Lost

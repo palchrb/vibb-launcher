@@ -930,3 +930,115 @@ clears for a share link only (8); 9 above; the probe's scrub covers `%253a`, `op
 `spotify:user:<name>` (`--selftest`; both committed captures re-scrub byte-identical) (10); `MediaInfo` prints its uri as
 the other holders do, `play()` refuses a share body before it touches the session, music/CLAUDE.md's park line, and the
 "not-ours?" line is vibb's: none for the share kind (11, 12).
+
+## Hand-over timing (2026-10-25, music round r13, branch `music-r13`)
+
+PLAN's music queue (the user, 2026-10-25: a first play on a room "after a while" waits several seconds with nothing
+shown, "så barnet ikke tror den bare henger", and felt slower than the spike `sonos-play-test.py --spotify`). Measure
+first, cut afterwards: this round adds the measurement and the player's quiet line, and **cuts nothing**.
+
+**What can be measured today.** Round 54-a2 (the controller's share-link path) is not built: `speakerDropReason` still
+returns `"spotify"`, so a Spotify tile on a room says "Kan ikke spilles på Sonos" at once and `SonosTransport.playShare`
+is reached only by its tests. What the user saw was therefore either a podcast, NRK or Storytel play on the room (the
+same hand-over machinery: the actor job, `pending`, the landing poll) or the phone's web player starting cold (the
+page, the SDK from `sdk.scdn.co`, the token through the launcher, the Connect device, `PUT /me/player/play` - design
+26c). The user's words name a Spotify playlist and the spike's `--spotify`, so the web player is the likelier one
+(qa-music-r13-code Q-3); the user decided (2026-10-25) that the phone's path gets the same quiet line too (below). The
+timing below measures the room's hand-over today, and logs the share link's own steps already, so 54-a2's first run on
+a real room measures them without another round.
+
+**The step list** (one line per step under the logcat tag `VibbHandover`, `#n +N ms` - the timeline's number and the
+time since its tap (fix round, Q-1: a second tap while the first play runs is `#n+1`, and the first play's job keeps
+printing under `#n`, timed from its own tap; the service marks the tap whose command it runs, the controller's play
+continues only that one, the play job carries its timeline onto the actor); step names, kinds,
+counts, states and positions only - never an id, a uri or a title, so a release build logs them too;
+`sonos/HandOverTiming.kt`):
+
+| # | Line | Where |
+|---|------|-------|
+| 0 | `tap: PLAY_ENTRY` (`PLAY_ITEM`, `PLAY_FAVOURITES`, `RESUME`, `RESTORE`, `SKIP_TO`, `OUTPUT`) - t = 0; a play without a tap (a step, the advance, the play button) starts its own timeline, `(no tap)` | `PlaybackService.onCustomCommand` |
+| 1 | `the service runs it (the renderer settled, the switch lock held)` | the command's coroutine |
+| 2 | `the play queued for the room's actor [START\|STEP\|ADVANCE, url\|nrk_program\|storytel\|spotify_sharelink]` | `SonosController.playIndex` |
+| 3 | `the actor runs the play` (the wait behind a poll, a live read, a mint already queued) | the play job |
+| 3b | `the Storytel URL minted` | the play job |
+| 4 | `the speaker resolved (its description read)` - `speaker(uid, verify = true)` | `SonosTransport.play`/`playShare` |
+| 5 | `hush and cap done` (a start at 5 s or more, or a cap in force) | idem |
+| 6 | url: `RemoveAllTracksFromQueue answered`; share: `SetPlayMode NORMAL answered`, `RemoveAllTracksFromQueue answered`, `the ShareLink request sent (AddURIToQueue, service 2311)`, `the ShareLink request answered: N added (first F, queue L) by service S`, `the start item's page read (Browse): position P` | idem |
+| 7 | url/NRK: `SetAVTransportURI answered`, `Play answered`; share: `SetAVTransportURI (the queue) answered`, `Seek TRACK_NR P answered`, `Play answered` | idem |
+| 8 | `the settled seek done (sought: true)` (a start at 5 s or more); share: `the speaker's sleep timer set or cleared` | idem |
+| 9 | `the play job done, a poll woken` | idem |
+| 10 | `the play's answer on main - it settles until a poll sees our stream (the seed shows)` | `SonosController.played` |
+| 11 | each settle poll: `a settle poll: <state> [(transitioning)], still the old stream \| our stream - landed \| not ours - the settle ran out` | `pollTick` |
+| 12 | after the landing, each poll until the first PLAYING: `a poll: <state> (transitioning), ours: true`; then `the first PLAYING poll of our stream` | `pollTick` |
+| 13 | the socket: `the event socket healthy`, `a socket event: BUFFERING`, `the first PLAYING socket event [(parked: the play still settles)]`, `the early hint: ...` (53-d's `vibb-1`) | `onSocket`, `earlyHint` |
+| 14 | `a confirm poll (53-d) doesn't show the socket's change yet - another in 1000 ms` | `confirmed` |
+| 15 | `the player shows playing (the now-playing update)` - `showsPlaying` turns true (the play button, `setNowPlaying`) | `SonosRenderer.flush` |
+| 16 | `the connecting line shows` / `the connecting line ends` | idem |
+| - | `the play failed (<class>)`, `the play dropped by its token` | `failed`, `dropped` |
+
+A timeline closes 30 s after its tap. Lines 11-12 are the hand-over's "confirm poll rounds": a play of ours never
+opens a 53-d confirm (`causedByUs` while `pending`), so line 14 shows only for a change made outside the app.
+
+**What the spike does** (`sonos-play-test.py --spotify`, `spotify_scenario`): its socket is subscribed and a 1 s UPnP
+poll runs (`upnp_watch`) **before** the transfer; then `SetPlayMode NORMAL`, `RemoveAllTracksFromQueue`,
+`AddURIToQueue` (0.8 s on the user's room, §0.3), `GetMediaInfo` (printed only), `SetAVTransportURI` (the queue), `Seek
+TRACK_NR` to `first + start` (no Browse), `Play` - seven calls; then it sleeps 8 s and reads. No description read, no
+hush, no cap, no Browse, no sleep timer, no settle: what it hears is the speaker itself.
+
+**What the app adds** (today's url/NRK/Storytel path, and 54-a2's share path as `playShare` stands):
+
+1. Before the actor: the service's renderer gate and switch lock, and on an `OUTPUT` the room switch (the phone's
+   hand-off, the look); on a new pick with a measurement older than 15 s, `bookmarkLiveFirst`'s live read
+   (GetPositionInfo + GetTransportInfo) queued ahead of the play (53-d fix 1). Line 3 minus line 2 is that wait.
+2. `speaker(uid, verify = true)`: an HTTP GET of the speaker's device description before every play (line 4).
+3. A start at 5 s or more: the hush (GetMute, SetMute, and SetMute back at the end); a START with a cap: GetVolume
+   (+ SetVolume) on every room of the row.
+4. Share only: the start item's Browse page (100 items) before the Seek - the spike seeks to the formula.
+5. **The settled seek** (a start at 5 s or more - every resume of a bookmarked item): GetTransportInfo every 0.3 s until
+   PLAYING (up to 8 s), then `Seek REL_TIME`, all inside the job: the play's answer reaches main only after the speaker
+   already plays. vibb's own `_seek_settled`, same order.
+6. Share only: `ConfigureSleepTimer` inside the job (step 10b), before the answer.
+7. Share only: `readQueue` (the rest of the queue, up to 10 Browse pages) as the next actor job - **polls are actor
+   jobs too** (`SonosPoller` through `SonosActor`, the transport's mutex), so the landing poll waits behind it.
+8. **The landing**: `pending` holds until a poll reads our TrackURI. The job's end wakes one poll at once; when that
+   poll still reads TRANSITIONING the next comes **5 s later** (`POLL_MS`: both TRANSITIONING and the 30 s verb window
+   poll at 5 s; the 1 s display poll needs the player shown, no healthy socket and a snapshot reading PLAYING - a
+   TRANSITIONING one reads the last real state, STOPPED after a while). The socket's PLAYING wakes a poll
+   within 1 s - but the socket opens only once the session is armed (`socketWanted`), i.e. after this very play on a
+   fresh renderer, so the first play "after a while" (the renderer made anew, or the socket backed off) is likely to
+   wait out the 5 s. The spike polls every second from before the start.
+9. 53-d's confirm polls add nothing to our own play (above); its early hint (`vibb-1` and the new item on the socket)
+   shows READY before UPnP for a direct URI - never for a share link, whose queue items aren't our DIDL.
+
+**Recommendation, once measured** (the coordinator on the emulator with `fake-sonos.py --transition-s 4`, emulator.md
+§6u; the user on the Jelly Star against a real room, a cold and a warm tap; compare lines 9, 10, 12 and 13):
+
+- (a) **The likely cut**: after our play's answer, poll every 1 s (`POLL_PRECISE_MS`) while `pending` or the snapshot is
+  TRANSITIONING, for at most `SETTLE_MS` - the spike's cadence - instead of 5 s; at most 8 extra polls per play. Take it
+  when line 12's first PLAYING poll trails line 13's first PLAYING event (or the speaker's own start) by seconds.
+- (b) When line 4 costs more than ~150 ms: skip the description read when the poller read that uid within the last
+  minute (a poll proves the address).
+- (c) For 54-a2: the sleep timer (6) after the answer, outside the start; `readQueue` (7) after the landing poll, not
+  before it; the start's Browse (4) kept unless line 6's page read proves slow - then Seek to `first + index` at once and
+  correct with one `queuePlay` when the page says otherwise.
+- (d) When the first play's socket comes up late (line 13's `healthy` after line 10): open the socket at the room
+  renderer's attach rather than at arming - design 53's `socketWanted`, so a design note first.
+- (e) The settled seek (5) stays: it is vibb's, and the line covers its wait.
+
+**The player's line** (PLAN item (b); `logic/HandOver.kt` `timeRow`, `HandOverTest`): from the tap until the room
+reports PLAYING, the seek line's times give way to "Kobler til høyttaleren…" ("Connecting to the speaker…") - while the
+service still has the tap's command waiting (`PlayerHub.State.waiting` with the switch held), then while
+`SonosController.connecting`: the play's settle (`pending`; not once the early hint shows the new item), or after the
+landing the speaker's TRANSITIONING of our stream within `SETTLE_MS` of the play's answer, while the kid wants it
+playing. The room's own line (unreachable, grouped away, taken over, lost) wins and the times come back under it; a
+failed start keeps today's "Kan ikke spilles på Sonos" and the phone. No new timeout, no change to the hand-over. **The
+same line for every source**: PLAN asked "Kobler til Spotify…" for a Spotify playlist, but no string may name a source
+(design 26c step 8, the user's decision of 2026-10-14; `SourceScanTest` fails on any string containing "Spotify"), so a
+Spotify hand-over will read "Kobler til høyttaleren…" too until the user says otherwise; "Fikk ikke kontakt med
+Spotify" likewise stays today's failure words. **The phone's web player** (fix round, Q-3, the user's decision): from the
+tap until its first playing state - the start's calls (the page, the SDK, the token, the Connect device, the play call)
+and the tracker's wait for our first state, `SpotifyRenderer.starting` - the same place shows "Kobler til…"
+("Connecting…"; no source named, "høyttaleren" wrong on the phone), its own line ("Trenger internett", "Spør en voksen",
+...) winning: a refused start sets one, the existing failure path. The line ends with the state that drives it, read at
+the renderer's next flush or poll: a room's 8 s window or freshness running out shows at the next poll, up to 5 s
+late while TRANSITIONING - bounded, no timer of its own (Q-12).

@@ -3,7 +3,10 @@ package me.vibb.music.ui
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import android.graphics.Color
+import android.view.View
+import android.view.ViewTreeObserver
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -16,6 +19,7 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import me.vibb.music.bridge.LiveBridge
+import me.vibb.music.logic.keepSplash
 import me.vibb.music.logic.resumeRequested
 import me.vibb.music.playback.Commands
 import me.vibb.music.playback.PlaybackService
@@ -39,6 +43,9 @@ class MainActivity : ComponentActivity() {
     private var controller: MediaController? = null
     private val pending = mutableListOf<(MediaController) -> Unit>()
 
+    /** The first content frame composed (the library or the player, with the first snapshot): the splash may go. */
+    private var contentShown = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // The app is always dark (Palette.bg), so the system bars' icons are always light: the default
         // follows the phone's theme and drew dark icons on the dark background.
@@ -48,7 +55,28 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         open(intent, restored = savedInstanceState != null)
-        setContent { MusicRoot(vm, actions) }
+        setContent { MusicRoot(vm, actions, onContent = { contentShown = true }) }
+        holdSplash()
+    }
+
+    /**
+     * The launch splash (the theme's `windowSplashScreen*`, Android 12+) stays until the first content frame, at most
+     * [me.vibb.music.logic.SPLASH_CAP_MS] ([keepSplash]): no frame is drawn before that - the platform's way, and what
+     * `androidx.core.splashscreen`'s keep-on-screen condition does on API 31+ (minSdk 34: no library needed). A
+     * cancelled draw schedules the next frame, so the condition is read every frame until it lets go.
+     */
+    private fun holdSplash() {
+        val createdAt = SystemClock.elapsedRealtime()
+        val content = findViewById<View>(android.R.id.content)
+        content.viewTreeObserver.addOnPreDrawListener(
+            object : ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    if (keepSplash(contentShown, SystemClock.elapsedRealtime() - createdAt)) return false
+                    content.viewTreeObserver.removeOnPreDrawListener(this)
+                    return true
+                }
+            },
+        )
     }
 
     override fun onNewIntent(intent: Intent) {

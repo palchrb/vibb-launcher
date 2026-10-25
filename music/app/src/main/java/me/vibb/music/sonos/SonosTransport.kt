@@ -169,10 +169,12 @@ class SonosTransport(
         if (body.kind == Kind.SPOTIFY_SHARELINK) throw SonosException("spotify_sharelink plays through playShare")
         session.beginPlay(body.uid, body.kind)
         val spk = speakers.speaker(body.uid, verify = true, budgetMs = null)
+        HandOverTiming.step("the speaker resolved (its description read)")
         val start = body.startS
         val unhush = hush(spk, start)
         val result = try {
             val capped = capRow(spk, body.uid, cap, members)
+            if (start >= 5 || cap != null) HandOverTiming.step("hush and cap done")
             val (uri, built) = when (body.kind) {
                 Kind.URL -> {
                     try {
@@ -181,10 +183,13 @@ class SonosTransport(
                         spk.removeAllTracksFromQueue()
                     } catch (_: Exception) {
                     }
+                    HandOverTiming.step("RemoveAllTracksFromQueue answered")
                     val built = builtDidl(body, body.uri)
                     if (!gate()) return@withLock null
                     spk.setAvTransportUri(body.uri, built)
+                    HandOverTiming.step("SetAVTransportURI answered")
                     spk.play()
+                    HandOverTiming.step("Play answered")
                     body.uri to built
                 }
                 Kind.NRK_PROGRAM -> {
@@ -194,19 +199,22 @@ class SonosTransport(
                     val built = builtDidl(body, uri)
                     if (!gate()) return@withLock null
                     spk.setAvTransportUri(uri, built)
+                    HandOverTiming.step("SetAVTransportURI answered")
                     spk.play()
+                    HandOverTiming.step("Play answered")
                     uri to built
                 }
                 Kind.SPOTIFY_SHARELINK -> throw SonosException("spotify_sharelink plays through playShare") // refused above
             }
             session.played(uri, body.cadenceHintS)
             if (capped != null) session.ownVolume(capped)
-            val sought = if (start >= 5) seekSettled(spk, start) else true
+            val sought = if (start >= 5) seekSettled(spk, start).also { HandOverTiming.step("the settled seek done (sought: $it)") } else true
             PlayResult(body.uid, uri, sought, built, capped)
         } finally {
             unhush()
         }
         wake()
+        HandOverTiming.done("the play job done, a poll woken")
         result
     }
 
@@ -246,16 +254,20 @@ class SonosTransport(
         val link = ShareLink.of(body.uri) ?: throw ShareRefused("not a share link (${body.kind})")
         session.beginPlay(body.uid, Kind.SPOTIFY_SHARELINK)
         val spk = speakers.speaker(body.uid, verify = true, budgetMs = null)
+        HandOverTiming.step("the speaker resolved (its description read)")
         val unhush = hush(spk, body.startS)
         val result = try {
             val capped = capRow(spk, body.uid, cap, members)
+            if (body.startS >= 5 || cap != null) HandOverTiming.step("hush and cap done")
             if (!gate()) return@withLock null
             try {
                 // vibb: "NORMAL kills family shuffle/repeat leftovers AND makes the queue's play order equal its index order"
                 spk.setPlayMode(PLAY_MODE_NORMAL)
             } catch (_: Exception) {
             }
+            HandOverTiming.step("SetPlayMode NORMAL answered")
             spk.removeAllTracksFromQueue()
+            HandOverTiming.step("RemoveAllTracksFromQueue answered")
             val (sn, added) = addShare(spk, link)
             if (added.added == 0 || added.newLength == 0) throw ShareRefused("the link added no tracks")
             // "never assume the queue starts at 1, even after clear_queue"; unparsable -> 1
@@ -263,6 +275,7 @@ class SonosTransport(
             val length = added.newLength ?: spk.queueMeta().childCount ?: (first - 1 + (added.added ?: 0))
             if (length < first) throw ShareRefused("the link added no tracks")
             log("share: ${link.type.wire} added ${added.added ?: "?"} (first $first, queue $length) by service $sn")
+            HandOverTiming.step("the ShareLink request answered: ${added.added ?: "?"} added (first $first, queue $length) by service $sn")
             val idx = body.trackIndex
             val listed = body.listed.orEmpty()
             var read = QueueRead(length, emptyMap(), null)
@@ -271,6 +284,7 @@ class SonosTransport(
                 val (p, r) = findInQueue(spk, listed, idx, first + idx, read)
                 position = p
                 read = r
+                HandOverTiming.step("the start item's page read (Browse): position ${p ?: "not found"}")
             }
             val start = position ?: first
             log(if (position != null) "share: the start item at queue position $start" else "share: the start item isn't in the queue - position $start, no seek")
@@ -285,13 +299,15 @@ class SonosTransport(
             playFromQueue(spk, body.uid, start)
             session.played(queueUri(body.uid), body.cadenceHintS)
             if (capped != null) session.ownVolume(capped)
-            val sought = if (position != null && body.startS >= 5) seekSettled(spk, body.startS) else true
+            val sought = if (position != null && body.startS >= 5) seekSettled(spk, body.startS).also { HandOverTiming.step("the settled seek done (sought: $it)") } else true
             applySleepTimer(spk, body.uid, sleepTimer)
+            HandOverTiming.step("the speaker's sleep timer set or cleared")
             PlayResult(body.uid, queueUri(body.uid), sought, link.metadata(sn), capped, share = ShareStart(first, length, start, position != null, sn, read))
         } finally {
             unhush()
         }
         wake()
+        HandOverTiming.done("the play job done, a poll woken")
         result
     }
 
@@ -300,6 +316,7 @@ class SonosTransport(
         var fault: UpnpFault? = null
         for (sn in SHARE_SERVICES) {
             try {
+                HandOverTiming.step("the ShareLink request sent (AddURIToQueue, service $sn)")
                 return sn to spk.addUriToQueue(link.enqueuedUri, link.metadata(sn))
             } catch (e: UpnpFault) {
                 fault = e
@@ -312,8 +329,11 @@ class SonosTransport(
     /** SoCo's `play_from_queue` (1-based here): the queue as the source, `Seek TRACK_NR`, `Play`. */
     private fun playFromQueue(spk: SpeakerControl, uid: String, position: Int) {
         spk.setAvTransportUri(queueUri(uid), "")
+        HandOverTiming.step("SetAVTransportURI (the queue) answered")
         spk.seekTrack(position)
+        HandOverTiming.step("Seek TRACK_NR $position answered")
         spk.play()
+        HandOverTiming.step("Play answered")
     }
 
     /**
