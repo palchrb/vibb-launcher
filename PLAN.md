@@ -634,6 +634,12 @@ findings, merge to `main`, full suite once.
   **Done on branch `pwa-fixes-a` (2026-10-25, not merged yet):** the summary loads `auto-reload.js` while
   `window_relock::waiting_for_phone` holds (the newer of the two pressed under 2 min ago, not cancelled or refused,
   unanswered or its effect not in the newest report).
+  Code QA `docs/review/qa-pwa-fixes-a-code.md` (0 High / 2 Medium / 5 Low / 1 Nit): Q-1..Q-8 fixed in the fix round
+  on the same branch (2026-10-25).
+- **Log out removes this browser's push subscription** (the user, 2026-10-25: "Klarer vi å fjerne push subscriptions
+  ved logout?"; main's PLAN queue line, Server / PWA). **Done on branch `pwa-fixes-a` (fix round, 2026-10-25):** the
+  Sign Out form's hidden `endpoint`, filled and unsubscribed by `register-sw.js` (at most 300 ms), and `auth::logout`
+  deletes that row when it is the signed-in parent's; without JS or a subscription, as before.
 
 - **No network after the VPN (re)starts** (the user's emulator, 2026-10-19, launcher 0.29.0 release): every upstream
   socket of design 36's DNS engine was refused by `protect()` - Android's `Socket()` has no descriptor until a bind -,

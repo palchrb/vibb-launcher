@@ -270,3 +270,53 @@ Score: 15 of 19 caught. All four survivors are test gaps in otherwise correct co
 - Q-7's clause and Q-8's wording (cheap).
 
 Nothing needs a redesign.
+
+## Fix round (implementer, 2026-10-25, branch `pwa-fixes-a`)
+
+The coordinator's decisions: one epoch, with Q-1 fixed both ways; Q-6 with both sides falling back to 14 and
+logging.
+
+- **Q-1:** Fixed in `475e7e85`.
+  - `record_reauth`'s sign-out calls `push::forget_subscriptions`.
+  - Every reader treats an older epoch as gone (`push::CURRENT_EPOCH`): `subscriptions`, `active_endpoint_hashes`,
+    the 10-device cap, Send a Test and `queue`.
+  - Tests:
+    - `web_push::a_re_auth_lockout_turns_notifications_off_at_once` follows the lockout: sign in again, no device
+      row, no `data-subscribed` hash, the next event sent to nobody.
+    - `a_subscription_from_a_signed_out_session_is_not_sent_to` now also checks the page and that the old row
+      doesn't count toward the cap.
+- **Q-2:** Fixed in `3f55865d`.
+  - While the summary waits, `RelockCard::notice` comes from the pending command (`waited_for`, `waiting_flash`),
+    so a reloaded page without `?notice=` keeps "Sent. …".
+  - The integration test checks the reloaded page while unanswered and while answered, and that the line goes once
+    the report shows the change.
+  - `the_commands_are_queued_…` moves its commands back before the unknown-notice check.
+- **Q-3:** Fixed in `3f55865d`. New case: Lock again answered, Play install mode still on (`paused` false, `open`
+  true), still waits.
+- **Q-4:** Fixed in `3f55865d`.
+  - `WAIT_FOR_PHONE_MS == 120_000` is asserted.
+  - The integration test moves every command of the phone back: at 1 minute it still reloads, at 2 it doesn't.
+- **Q-5:** Fixed in `54b900d5`. `web_push::migration_0095_keeps_existing_subscriptions`: migrations to 94, accounts
+  with epoch 3 and 0, apply 95, `forget_stale`, both rows kept with their epochs.
+- **Q-6:** Fixed in `7dcadb4f`.
+  - One rule on both sides: 1-4 digits, spaces around them allowed, 0 keeps all; anything else keeps 14 and is
+    logged.
+  - Server: `backups::retention_of`. Script: `BASH_REMATCH`, `cut -f2-`.
+  - `deploy_scripts::the_backup_sync_reads_backups_to_keep_as_the_server` runs the script for `abc`, ` 3 `, `0`,
+    `014`, `99999`, empty, `-1` and `2 2` against `retention_of`, with 20 zips.
+- **Q-7:** Fixed in `7dcadb4f`. DEPLOY.md's bullet, the script's comment and the Backups page now say the drive is
+  pruned also while the copy is off. DEPLOY also gives the invalid-value rule.
+- **Q-8:** Fixed in `475e7e85`. `forget_subscriptions`' and `forget_stale`'s docs, the log line,
+  `notifications.md` and the test comment now name the real cases (a subscribe in flight, a failed delete) and say
+  that a parent's Reset or Remove deletes in its own transaction.
+- **New item: Sign Out removes this browser's push subscription.** Done in `a78593c4`.
+  - The `form[data-sign-out]` has a hidden `endpoint`. `register-sw.js` (`?v=4`) fills it from
+    `serviceWorker.ready` → `getSubscription()`, unsubscribes on submit, and sends the form within 300 ms.
+  - `auth::logout` deletes the row only when it is the signed-in parent's.
+  - Tests: `web_push::sign_out_removes_this_browsers_subscription_only` and 3 cases in `jstest/register-sw.test.js`.
+- **Clippy:** `04248cbb` takes the round back to the 13 known warnings.
+- **Suites:**
+  - `cargo test`: 1298 passed.
+  - `cargo fmt --check`: clean.
+  - `cargo clippy --all-targets`: the 13 known warnings, none new.
+  - jstests: 151 passed.
