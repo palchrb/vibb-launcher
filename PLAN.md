@@ -512,7 +512,7 @@ after), never later. Details stay in the entries below.
   - Configurable emergency menu; Immich wallpapers; design 60 (hardware-bound token).
   - Phase D (own lock removed), design 32b (one stale frame at screen-on), RC3-4 (release-build setup timing), RC3-8, six-inch F3/F4, compact music tile a little lower.
   - Diagnostics: Web Filter line "upstream can't be reached"; the music app's "no network" text and the real cause in its log.
-  - QR enrolment requests a sync. Trailing package callbacks after an enforcer pass (above).
+  - QR enrolment requests a sync. **Built, awaiting code QA (branch `launcher-small-a`).** Trailing package callbacks after an enforcer pass (above).
   - **Home's wallpaper copy: a one-frame zoom step at the hand-over** (the user's video, 2026-10-25, 24 fps: after the Home button the app slides away over the photo with no black frame (frames 144-148), Home is still for 11 frames, then at frame 160 the whole photo shifts by a hair - edges of the face and hair move, the icons don't - when the copy `HomeGround` drew is released and Android's own wallpaper shows through; Android renders the photo at a slightly different scale, likely its wallpaper zoom). Fix: Home keeps its own ground permanently (no hand-over at all: the one decoded bitmap is already in memory; `homeGroundDue` becomes "always while Home is on screen"), which also closes design 08's owed 3-button check (Q-7). Launcher, XS; next launcher round. **Built, awaiting code QA (branch `launcher-small-a`).**
   - **Installed versionCode per catalog app in the status report** (follow-up of the app update notices, 2026-10-25): `installed_apps` carries package, label and installer only, so `app_updated` can be raised for Vibb One and the music app alone; add each catalog app's `versionCode` (and `versionName`) to the report (both dirs, the status contract), so "<app> updated on <phone>" works for every tracked app. Launcher + server, S.
   - r10 run F1: in android mode the glance's UNUSABLE prompt ("Only the parent code works right now") is wrong - the kid PIN still opens Android's pad; gate `GlancePrompt.UNUSABLE` on own mode (`docs/testing/2026-10-25-r10-keystore-run.md`). Launcher, XS. **Built, awaiting code QA (branch `launcher-small-a`).**
@@ -1413,6 +1413,9 @@ after), never later. Details stay in the entries below.
   (`firstLaunchResetDue`); design 59d §8.17.
 - **QR enrolment asks for no sync** (qa-write-settings-row-code Q-8): `applyProvisioningExtras` succeeding should
   `SyncRunner.request(.., "enrolled")` as Settings' "Enroll now" does, so the first policy doesn't wait for the backstop. Small.
+  **Built 2026-10-25 (branch `launcher-small-a`, awaiting code QA)**: `applyProvisioningExtras` asks for the sync on
+  the enrolment's success - both QR paths (Android's provisioning and the in-app scanner) come through it;
+  `ProvisioningModeTest` pins it.
 
 ### Before stable `music-v0.4.0`
 - **A context-mode playlist doesn't play on the real SDK - CLOSED 2026-10-20** (the user: a second parent-owned

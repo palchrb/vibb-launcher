@@ -100,3 +100,5 @@ the implementer (no emulator in the round).
 2. **F1** (`docs/testing/2026-10-25-r10-keystore-run.md`): with the kid hash unreadable in android mode (the r10 run's
    recipe, `PinVaultKeyReceiver --es key secrets`), the glance/keypad prompt is the normal hint, never "Only the parent
    code works right now"; in own mode the same recipe still shows it.
+3. **QR enrolment syncs**: provision by the QR (or the in-app scanner) and watch logcat for `SyncRunner: Sync for
+   [enrolled]` right after `Auto-enrolled from provisioning QR` - the first policy within seconds, not at the backstop.

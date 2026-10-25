@@ -707,7 +707,9 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   oppsettkode" call `Enrollment.enroll`, which brings the tailnet up first (`TsnetClient.connectFromPreferences`),
   seals the token on IO, sets `enrolled` and clears the old enrolment's state (`ParentPin.clearEvents`,
   `CommandAnswers`, `ZoneWatch.forget`, `InstallNow`); its failure is an `EnrollFailure` that says whether the server
-  refused the code (4xx).
+  refused the code (4xx). A QR enrolment that worked (`applyProvisioningExtras`: Android's provisioning and the in-app
+  scanner) asks `SyncRunner.request(.., "enrolled")` as Settings' "Enroll now" does - the first policy now, not at the
+  next backstop (2026-10-25, `ProvisioningModeTest`).
 - **The kid PIN, one sealed copy**: `storeAcceptedPolicy` caches `policyToCache` (the kid hash and salt `""`); the sync
   applies the policy with the hash. `configure` takes the pure `kidConfigFor(kidLock, memory, stored)` (`lock/
   PinLockState.kt`): a real hash; redacted -> a usable memory, else the usable sealed store, else the unusable stand-in
