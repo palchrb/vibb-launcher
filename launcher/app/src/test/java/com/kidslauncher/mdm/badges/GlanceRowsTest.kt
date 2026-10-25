@@ -483,6 +483,27 @@ class GlanceRowsTest {
     }
 
     @Test
+    fun `Full text shows the count of one sender's messages when more than one`() {
+        val full = row(level = GlanceLevel.TEXT, text = "Kommer snart", count = 3)
+        assertEquals(GlanceNameSuffix.NewCount(3), glanceNameSuffix(full))
+        assertNull("one message", glanceNameSuffix(full.copy(count = 1)))
+        assertNull("Name only already says \"3 meldinger\"", glanceNameSuffix(full.copy(level = GlanceLevel.SENDER, text = null)))
+        assertNull("no text shown", glanceNameSuffix(full.copy(text = null)))
+        assertNull("another style's title isn't a sender", glanceNameSuffix(full.copy(shape = GlanceShape.PLAIN)))
+        assertNull("a group's messages aren't one sender's", glanceNameSuffix(full.copy(shape = GlanceShape.GROUP, sender = "Pappa")))
+        assertNull(glanceNameSuffix(full.copy(missedCall = true)))
+        // The rows add the conversation's counts: three notifications of one DM are "· 3 nye".
+        val folded = rows(
+            notice("k1", pkg = whatsapp, conversation = "dm", level = GlanceLevel.TEXT, title = "Mamma", text = "a", post = 1).copy(shape = GlanceShape.DIRECT),
+            notice("k2", pkg = whatsapp, conversation = "dm", level = GlanceLevel.TEXT, title = "Mamma", text = "b", post = 2).copy(shape = GlanceShape.DIRECT),
+            notice("k3", pkg = whatsapp, conversation = "dm", level = GlanceLevel.TEXT, title = "Mamma", text = "c", post = 3).copy(shape = GlanceShape.DIRECT),
+            policy = GlancePolicy(mapOf(whatsapp to true)),
+        ).single() as GlanceMessageRow
+        assertEquals("c", folded.text)
+        assertEquals(GlanceNameSuffix.NewCount(3), glanceNameSuffix(folded))
+    }
+
+    @Test
     fun `the rows carry the newest's shape, sender and contact - the latter two from SENDER up`() {
         val policy = GlancePolicy(mapOf(whatsapp to false))
         val result = rows(

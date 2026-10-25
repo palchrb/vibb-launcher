@@ -364,6 +364,10 @@
     <string name="glance_dismiss_action">Fjern</string>
     <string name="glance_missed_from">Tapt anrop fra %1$s</string>
     <string name="glance_name_with">%1$s · %2$s</string>
+    <plurals name="glance_new_count">
+        <item quantity="one">%1$d ny</item>
+        <item quantity="other">%1$d nye</item>
+    </plurals>
     <string name="glance_group_spoken">Gruppe %1$s, siste fra %2$s</string>
     <string name="glance_rule_card_description">%1$s, til %2$s</string>
     <!-- Design 24b: et foreldrekode-vindu som låses igjen av seg selv (varsel, banner på Hjem). -->

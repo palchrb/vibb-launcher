@@ -426,9 +426,13 @@
     <!-- Design r11 §3.4: TalkBack's action on a glance row - the same as swiping it away. -->
     <string name="glance_dismiss_action">Remove</string>
     <string name="glance_missed_from">Missed call from %1$s</string>
-    <!-- 2026-10-25: a message row's name line - a group's newest sender ("Fotballgjengen · Pappa"); TalkBack reads a
-         group as the second string. -->
+    <!-- 2026-10-25: a message row's name line - a group's newest sender ("Fotballgjengen · Pappa"), or the count of
+         new messages from one sender in "Full text" ("Mamma · 3 new"); TalkBack reads a group as the second string. -->
     <string name="glance_name_with">%1$s · %2$s</string>
+    <plurals name="glance_new_count">
+        <item quantity="one">%1$d new</item>
+        <item quantity="other">%1$d new</item>
+    </plurals>
     <string name="glance_group_spoken">Group %1$s, latest from %2$s</string>
     <!-- The glance page's time-rule card for TalkBack (design r13 §1.2): the label, then the certain end. -->
     <string name="glance_rule_card_description">%1$s, until %2$s</string>

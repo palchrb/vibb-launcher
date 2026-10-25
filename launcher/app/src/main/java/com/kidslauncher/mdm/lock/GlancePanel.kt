@@ -1388,9 +1388,10 @@ class GlancePanel(
             GlanceSubtitle.COUNT -> "$label · $messages"
         }
         val time = timeText(row.timeMs)
-        // 2026-10-25: a group's newest sender in "Name only".
+        // 2026-10-25: a group's newest sender in "Name only", the count of one sender's new messages in "Full text".
         val suffix = when (val s = glanceNameSuffix(row)) {
             is GlanceNameSuffix.Sender -> s.name
+            is GlanceNameSuffix.NewCount -> res.getQuantityString(R.plurals.glance_new_count, s.count, s.count)
             null -> null
         }
         view.root.visibility = View.VISIBLE
@@ -1423,12 +1424,14 @@ class GlancePanel(
         val group = glanceSpokenGroup(row)
         val name = when {
             group != null -> activity.getString(R.string.glance_group_spoken, row.title, group)
+            suffix != null -> "${row.title}, $suffix"
             else -> row.title
         }
         val spoken = when {
             missedShown && row.title != null -> listOf(label, activity.getString(R.string.glance_missed_from, row.title), messages.takeIf { row.count > 1 }, time)
             missedShown -> listOf(label, missed, messages.takeIf { row.count > 1 }, time)
-            else -> listOfNotNull(label, name, row.text.takeIf { row.level == GlanceLevel.TEXT }, count, time)
+            // The name line's count stands for the messages count (the same words TalkBack reads, once).
+            else -> listOfNotNull(label, name, row.text.takeIf { row.level == GlanceLevel.TEXT }, count.takeIf { glanceNameSuffix(row) !is GlanceNameSuffix.NewCount }, time)
         }
         describe(view, spoken.filterNotNull().distinct().joinToString(", "), activity.getString(R.string.glance_open_action), row)
     }

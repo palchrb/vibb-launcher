@@ -233,17 +233,23 @@ sealed interface GlanceNameSuffix {
     data class Sender(val name: String) : GlanceNameSuffix {
         override fun toString() = "Sender"
     }
+
+    /** "Full text": several messages from one sender folded into the row ("Mamma · 3 nye"). */
+    data class NewCount(val count: Int) : GlanceNameSuffix
 }
 
 /**
  * A message row's name-line suffix: a [GlanceShape.GROUP] row at [GlanceLevel.SENDER] ("Name only") gets its newest
- * sender (when known and not the name itself) - "Full text" keeps "Sender: text" under the group's name. Never on a
- * missed-call row (its subtitle says it) or at APP_ONLY.
+ * sender (when known and not the name itself) - "Full text" keeps "Sender: text" under the group's name; a
+ * [GlanceShape.DIRECT] row at [GlanceLevel.TEXT] showing its text gets the count when more than one message is folded
+ * in. Never on a missed-call row (its subtitle says it) or at APP_ONLY.
  */
 fun glanceNameSuffix(row: GlanceMessageRow): GlanceNameSuffix? = when {
     row.missedCall || row.title == null -> null
     row.shape == GlanceShape.GROUP && row.level == GlanceLevel.SENDER ->
         row.sender?.takeIf { it != row.title }?.let(GlanceNameSuffix::Sender)
+    row.shape == GlanceShape.DIRECT && row.level == GlanceLevel.TEXT && row.text != null && row.count > 1 ->
+        GlanceNameSuffix.NewCount(row.count)
     else -> null
 }
 
