@@ -461,16 +461,23 @@ pub fn sign_in_redirect(why: SignInWhy) -> Response {
     response
 }
 
-/// Whether the request carries the admin session cookie (`__Host-handy`, or `handy` with
-/// `INSECURE_COOKIES`), whatever its value.
-pub fn has_session_cookie(headers: &axum::http::HeaderMap) -> bool {
+/// The admin session cookie's name ([session_layer]): `__Host-handy`, or `handy` with
+/// `INSECURE_COOKIES`. `AppState::session_cookie` holds the one this server uses.
+pub fn session_cookie_name(insecure: bool) -> &'static str {
+    if insecure { "handy" } else { "__Host-handy" }
+}
+
+/// Whether the request carries the admin session cookie `name` (this server's,
+/// `AppState::session_cookie` - a leftover cookie of the other name reads as none, qa-pwa-fixes-d
+/// N-1), whatever its value.
+pub fn has_session_cookie(headers: &axum::http::HeaderMap, name: &str) -> bool {
     headers
         .get_all(axum::http::header::COOKIE)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(';'))
-        .filter_map(|pair| pair.split_once('=').map(|(name, _)| name.trim()))
-        .any(|name| name == "__Host-handy" || name == "handy")
+        .filter_map(|pair| pair.split_once('=').map(|(cookie, _)| cookie.trim()))
+        .any(|cookie| cookie == name)
 }
 
 /// The signed-in admin, if the session's epoch is still the account's (a password change, a 2FA
@@ -550,7 +557,8 @@ async fn admin_or_why(
     match load_active_admin(state, session).await {
         Ok(admin) => Ok(admin),
         Err(why) => {
-            Err(why_signed_out(state, session, has_session_cookie(headers), cookie_id, why).await)
+            let cookie = has_session_cookie(headers, state.session_cookie);
+            Err(why_signed_out(state, session, cookie, cookie_id, why).await)
         }
     }
 }
@@ -572,8 +580,12 @@ fn header_for_log(headers: &axum::http::HeaderMap, name: &str) -> String {
 /// browser's `Sec-Fetch-Site`/`Sec-Fetch-Mode` (a SameSite=Strict cookie stays home on a
 /// cross-site navigation). Never a cookie's value. A warning when a session cookie came (not for
 /// Sign Out), else info. A layer on the admin router, outside the session layer.
-pub async fn log_sign_in_redirects(request: Request, next: Next) -> Response {
-    let cookie = has_session_cookie(request.headers());
+pub async fn log_sign_in_redirects(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let cookie = has_session_cookie(request.headers(), state.session_cookie);
     let site = header_for_log(request.headers(), "sec-fetch-site");
     let mode = header_for_log(request.headers(), "sec-fetch-mode");
     let method = request.method().clone();
@@ -622,7 +634,7 @@ pub async fn session_check(
     session: Session,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let cookie = has_session_cookie(&headers);
+    let cookie = has_session_cookie(&headers, state.session_cookie);
     let site = header_for_log(&headers, "sec-fetch-site");
     let (status, reason) = match admin_or_why(&state, &session, &headers).await {
         Ok(admin) if !admin.must_change_password && admin.totp_enabled => {
@@ -654,7 +666,7 @@ pub fn session_layer(
     inactivity_days: i64,
 ) -> tower_sessions::SessionManagerLayer<tower_sessions_sqlx_store::SqliteStore> {
     tower_sessions::SessionManagerLayer::new(store)
-        .with_name(if insecure { "handy" } else { "__Host-handy" })
+        .with_name(session_cookie_name(insecure))
         .with_path("/")
         .with_http_only(true)
         .with_same_site(tower_sessions::cookie::SameSite::Strict)

@@ -89,7 +89,8 @@ pub struct EventThrottle {
 
 impl EventThrottle {
     /// Records one event of `event_type` for `key`. `ip` and `detail` go into the row of the
-    /// minute's first event.
+    /// minute's first event. True when this event opened the key's minute (its own row): a caller
+    /// that also logs a line logs it then, one a minute per client (qa-pwa-fixes-d Q-4).
     pub async fn record(
         &self,
         db: &SqlitePool,
@@ -97,7 +98,7 @@ impl EventThrottle {
         key: &str,
         ip: Option<&str>,
         detail: &str,
-    ) {
+    ) -> bool {
         let map_key = (event_type.to_string(), key.to_string());
         let mut old_summary: Option<(i64, String)> = None;
         let plan = {
@@ -155,7 +156,7 @@ impl EventThrottle {
             update_raw(db, row_id, &detail).await;
         }
         match plan {
-            Plan::Counted => {}
+            Plan::Counted => false,
             Plan::Row(finished) => {
                 // The minute before this one, if its count never reached the row.
                 if let Some(old) = finished {
@@ -166,6 +167,7 @@ impl EventThrottle {
                 if let Some(window) = windows.get_mut(&map_key) {
                     window.row_id = row_id;
                 }
+                true
             }
             Plan::Summary(summary) => {
                 let row_id = insert(db, event_type, None, &summary).await;
@@ -173,6 +175,7 @@ impl EventThrottle {
                 if let Some(budget) = budgets.get_mut(event_type) {
                     budget.summary_row = row_id;
                 }
+                false
             }
         }
     }

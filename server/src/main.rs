@@ -72,6 +72,9 @@ use tower_sessions_sqlx_store::SqliteStore;
 #[derive(Clone)]
 pub struct AppState {
     pub db: SqlitePool,
+    /// The admin session cookie's name (`security::session_cookie_name`, `INSECURE_COOKIES`):
+    /// the sign-in log's "came with a session cookie" asks for this one alone.
+    pub session_cookie: &'static str,
     /// The compiled blocklist every device's on-device filter resolves its own effective list
     /// from - see `dns_engine::CompiledBlocklist`'s doc comment. This server no longer runs a
     /// live DNS server itself (Phase E of the on-device-filtering migration retired it, see
@@ -436,6 +439,7 @@ async fn main() {
     let (command_notify, _) = tokio::sync::broadcast::channel(64);
     let state = AppState {
         db,
+        session_cookie: security::session_cookie_name(insecure_cookies),
         dns_compiled: dns_engine::empty_compiled_blocklist(),
         command_notify,
         config: std::sync::Arc::new(fork_config),
@@ -1503,7 +1507,10 @@ pub fn build_admin_router(
         .with_state(state.clone())
         .layer(session_layer)
         // Every answer that sends the browser to /login, logged with why (2026-10-25).
-        .layer(axum::middleware::from_fn(security::log_sign_in_redirects))
+        .layer(from_fn_with_state(
+            state.clone(),
+            security::log_sign_in_redirects,
+        ))
         // Before the session is read: a cross-site form never acts (design 22 §3.2.5).
         .layer(from_fn_with_state(state.clone(), admin_auth::csrf_guard))
         // A POST's own page is marked so reconnect.js never reloads it (qa-srv-sweep-resume M1).
