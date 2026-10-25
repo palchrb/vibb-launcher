@@ -219,8 +219,6 @@ impl Push {
     }
 }
 
-/// `VAPID_SUBJECT` when it is a `mailto:` or `https:` URL; anything else is ignored (logged by
-/// the caller).
 /// The push's payload (design 35 §5.3). `declarative`: Safari 18.4+'s form (`web_push` 8030,
 /// without `mutable`: webpushd shows the notification and sets the badge the moment the push
 /// arrives, no worker involved - the one path iOS 26 displays, 0.29.6; older Safari, Chrome and
@@ -237,6 +235,7 @@ pub fn payload_json(
     delivery_id: i64,
     token_b64: String,
     unread: i64,
+    icon: &str,
 ) -> String {
     let mut payload = serde_json::json!({
         "notification": {
@@ -245,7 +244,10 @@ pub fn payload_json(
             "lang": "en",
             "navigate": navigate,
             "tag": tag,
-            "data": { "d": delivery_id, "t": token_b64, "b": unread },
+            // `icon` in `data`, not the notification's own key: only the worker's legacy path shows
+            // it (Chrome, Firefox); Safari's declarative notification is the app's icon anyway,
+            // and its payload keeps the keys WebKit reads (server round C).
+            "data": { "d": delivery_id, "t": token_b64, "b": unread, "icon": icon },
         },
     });
     if declarative {
@@ -259,6 +261,19 @@ pub fn payload_json(
     payload.to_string()
 }
 
+/// The app's own icon, a notification's when its phone has no picture (`templates/sw.js` shows the
+/// same one for a payload without `icon`).
+pub const APP_ICON: &str = "/static/icons/icon-192.png";
+
+/// A push's icon (server round C): the phone's own picture, served without a session at an
+/// unguessable path (`handlers::device_avatar`), since the browser fetches it for the worker
+/// outside any page; else [APP_ICON]. A same-origin path: the worker resolves it.
+fn icon_of(avatar_hash: Option<&str>) -> String {
+    crate::handlers::device_avatar::src_of(avatar_hash).unwrap_or_else(|| APP_ICON.to_string())
+}
+
+/// `VAPID_SUBJECT` when it is a `mailto:` or `https:` URL; anything else is ignored (logged by
+/// the caller).
 pub fn subject_of(value: Option<&str>) -> Result<Option<String>, String> {
     match value.map(str::trim).filter(|v| !v.is_empty()) {
         None => Ok(None),
@@ -441,6 +456,8 @@ struct Due {
     title: String,
     body: String,
     target: String,
+    /// The notification's icon: the event's phone's own picture, else the app's (server round C).
+    icon: String,
 }
 
 /// A due delivery as [send_due] reads it, with its subscription and event.
@@ -465,6 +482,7 @@ struct DueRow {
     params: Option<String>,
     push_title: Option<String>,
     push_body: Option<String>,
+    avatar_hash: Option<String>,
 }
 
 /// One pass of the sender at `now` (tests drive it directly): every due delivery is sent once,
@@ -491,9 +509,10 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
     let rows: Vec<DueRow> = sqlx::query_as(
         "SELECT d.id, d.subscription_id, d.kind, d.attempts, d.created_at, s.endpoint, s.p256dh, \
                 s.auth, s.origin, s.label, s.state, d.event_id, e.kind AS event_kind, e.title, \
-                e.summary, e.target, e.params, e.push_title, e.push_body \
+                e.summary, e.target, e.params, e.push_title, e.push_body, v.avatar_hash \
          FROM push_deliveries d JOIN push_subscriptions s ON s.id = d.subscription_id \
          LEFT JOIN parent_events e ON e.id = d.event_id \
+         LEFT JOIN devices v ON v.id = e.device_id \
          WHERE d.status = 'queued' AND (d.next_try_at IS NULL OR d.next_try_at <= ?) \
          ORDER BY d.id",
     )
@@ -525,6 +544,7 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
             params,
             push_title,
             push_body,
+            avatar_hash,
         } = row;
         let what = match (kind.as_str(), event_kind.as_deref().and_then(Kind::of)) {
             ("event", Some(kind)) => What::Event(kind),
@@ -581,6 +601,7 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
             title,
             body,
             target,
+            icon: icon_of(avatar_hash.as_deref()),
         });
     }
     let mut sends = fold(state, due).await?;
@@ -657,6 +678,7 @@ async fn fold(state: &AppState, due: Vec<Due>) -> Result<Vec<Due>, sqlx::Error> 
             title: SUMMARY_TITLE.to_string(),
             body: SUMMARY_BODY.to_string(),
             target: "/notifications".to_string(),
+            icon: icon_of(None),
         });
         sends.extend(newest);
     }
@@ -781,6 +803,7 @@ async fn send_one(
         delivery.id,
         B64.encode(token),
         unread,
+        &delivery.icon,
     );
     let body = match webpush::encrypt(
         &ring::rand::SystemRandom::new(),
@@ -1539,6 +1562,7 @@ mod tests {
             7,
             "AA".into(),
             2,
+            APP_ICON,
         ))
         .unwrap();
         assert!(classic.get("web_push").is_none() && classic.get("mutable").is_none());
@@ -1552,6 +1576,7 @@ mod tests {
             7,
             "AA".into(),
             2,
+            APP_ICON,
         ))
         .unwrap();
         assert_eq!(declarative["web_push"], 8030);

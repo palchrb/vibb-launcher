@@ -47,7 +47,7 @@
     <div class="group group-avatars">
         {% for d in devices %}
         <a class="row device-row" href="/devices/{{ d.id }}" data-device="{{ d.id }}">
-            <span class="avatar {{ d.avatar }}" aria-hidden="true">{{ d.initial }}<span class="avatar-dot dot-{{ d.connection.css() }}"></span></span>
+            <span class="avatar {{ d.avatar }}" aria-hidden="true">{{ d.initial }}{% if let Some(src) = d.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ d.connection.css() }}"></span></span>
             <span class="row-label">
                 <span class="device-row-name">{{ d.name }}</span>
                 <span class="row-sub device-line" data-status="{{ d.connection.css() }}"><span class="state-{{ d.connection.css() }}">{{ d.connection.word() }}</span>{% if let Some(detail) = d.detail %} · {% if let Some(exact) = d.detail_title %}<span title="{{ exact }}">{{ detail }}</span>{% else %}{{ detail }}{% endif %}{% endif %}{% if let Some(lock) = d.lock %} · <span class="lock-part" data-lock>{{ lock }}</span>{% endif %}</span>

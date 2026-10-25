@@ -64,7 +64,7 @@
                 <input type="hidden" name="from" value="{{ back.0 }}">
                 {% if let Some(id) = device %}<input type="hidden" name="device" value="{{ id }}">{% endif %}
                 <button type="submit" class="row inbox-row{% if e.unread %} inbox-unread{% endif %}" data-event="{{ e.id }}">
-                    <span class="avatar {{ e.avatar }}" aria-hidden="true">{{ e.initial }}</span>
+                    <span class="avatar {{ e.avatar }}" aria-hidden="true">{{ e.initial }}{% if let Some(src) = e.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span>
                     <span class="row-label"><span class="inbox-title">{% if e.unread %}<span class="unread-dot" aria-hidden="true"></span><span class="visually-hidden">Unread: </span>{% endif %}{{ e.title }}</span><span class="row-sub">{% if !e.summary.is_empty() %}{{ e.summary }} · {% endif %}<span title="{{ e.exact }}">{{ e.when }}</span>{% if let Some(detail) = e.detail %}<br>{{ detail }}{% endif %}</span>{% if let Some(line) = e.delivery %}<span class="row-sub inbox-delivery">{{ line }}</span>{% endif %}</span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>

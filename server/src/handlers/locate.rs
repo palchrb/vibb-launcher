@@ -63,6 +63,7 @@ struct PhoneLink {
     name: String,
     initial: String,
     avatar: &'static str,
+    photo: Option<String>,
     connection: crate::streams::ConnectionState,
     /// "Anna, online".
     aria: String,
@@ -844,7 +845,7 @@ fn phone_links(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Vec<PhoneLink> {
-    use crate::handlers::devices::{avatar_class, connection_of, initial};
+    use crate::handlers::devices::{avatar_class, avatar_photo, connection_of, initial};
     use crate::streams::ConnectionState;
     devices
         .iter()
@@ -865,6 +866,7 @@ fn phone_links(
                 name: device.name.clone(),
                 initial: initial(&device.name),
                 avatar: avatar_class(device),
+                photo: avatar_photo(device),
                 aria: format!("{}, {}", device.name, connection.word().to_lowercase()),
                 connection,
                 seen,

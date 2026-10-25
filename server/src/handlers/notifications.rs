@@ -67,6 +67,8 @@ pub struct InboxRow {
     pub id: i64,
     pub avatar: &'static str,
     pub initial: String,
+    /// The phone's own picture over the letter (server round C).
+    pub photo: Option<String>,
     pub title: String,
     pub summary: String,
     pub detail: Option<String>,
@@ -187,8 +189,9 @@ fn notice_of(code: Option<&str>) -> Option<(bool, &'static str, bool)> {
 }
 
 /// An event as the inbox reads it ([ROW_COLUMNS]): id, phone, title, summary, detail,
-/// `happened_at`, unread, the phone's name and `enrolled_at`, the kind and its parameters. The
-/// phone and its name are `None` for a catalog event (`app_update_available`, migration 0099).
+/// `happened_at`, unread, the phone's name and `enrolled_at`, the kind and its parameters, and the
+/// phone's own picture (migration 0100). The phone and its name are `None` for a catalog event
+/// (`app_update_available`, migration 0099).
 pub(crate) type Row = (
     i64,
     Option<i64>,
@@ -201,11 +204,12 @@ pub(crate) type Row = (
     Option<String>,
     String,
     Option<String>,
+    Option<String>,
 );
 
 /// [Row]'s columns, of [row_from]'s tables.
 pub(crate) const ROW_COLUMNS: &str = "e.id, e.device_id, e.title, e.summary, e.detail, \
-     e.happened_at, r.event_id IS NULL, d.name, d.enrolled_at, e.kind, e.params";
+     e.happened_at, r.event_id IS NULL, d.name, d.enrolled_at, e.kind, e.params, d.avatar_hash";
 
 /// [ROW_COLUMNS]' tables, unread for the admin bound as `?{admin}` (design 62 §5: each parent
 /// reads for themselves).
@@ -225,8 +229,20 @@ pub(crate) fn inbox_row(
     now: chrono::DateTime<chrono::Utc>,
     words: impl Fn(chrono::DateTime<chrono::Utc>) -> String,
 ) -> InboxRow {
-    let (id, _device, title, summary, detail, happened_at, unread, name, enrolled, kind, params) =
-        raw;
+    let (
+        id,
+        _device,
+        title,
+        summary,
+        detail,
+        happened_at,
+        unread,
+        name,
+        enrolled,
+        kind,
+        params,
+        avatar_hash,
+    ) = raw;
     // A zone event is told from its parameters (design 64), every other kind as stored.
     let (title, summary) = parent_events::told(&kind, title, summary, params.as_deref(), zone, now);
     let at = crate::display_time::parse_db_utc(&happened_at);
@@ -245,6 +261,7 @@ pub(crate) fn inbox_row(
         id,
         avatar,
         initial,
+        photo: crate::handlers::device_avatar::src_of(avatar_hash.as_deref()),
         title,
         summary,
         detail,

@@ -229,6 +229,7 @@ struct PhoneRow {
     name: String,
     initial: String,
     avatar: &'static str,
+    photo: Option<String>,
     own: bool,
 }
 
@@ -297,6 +298,7 @@ pub async fn show_schedules(
                     name: d.name.clone(),
                     initial: crate::handlers::devices::initial(&d.name),
                     avatar: crate::handlers::devices::avatar_class(d),
+                    photo: crate::handlers::devices::avatar_photo(d),
                     own: own.contains(&d.id),
                 })
                 .collect(),

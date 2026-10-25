@@ -16,7 +16,26 @@
         flash there: the quick actions and End now to #quick, Allow these apps… to #blocked-apps, a Cancel to #activity (§5.1); each
         action carries the same fragment. -#}
     <header class="summary-head" id="header">
-        <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}<span class="avatar-dot dot-{{ connection.css() }}"></span></span>
+        {#- The phone's own picture (server round C): the avatar is the picker - a picture chosen is saved at once
+            (data-autosave; without JS the <noscript> Save picture), and every form here lands back on #avatar. #}
+        <div class="avatar-edit" id="avatar">
+            <form method="post" action="/devices/{{ device.id }}/avatar#avatar" enctype="multipart/form-data" class="avatar-form">
+                <input class="avatar-input" type="file" id="avatar-file" name="picture" accept="image/*" data-autosave{% if avatar_error.is_some() %} aria-invalid="true" aria-describedby="avatar-error"{% endif %}>
+                <label class="avatar-pick" for="avatar-file">
+                    <span class="avatar avatar-large {{ avatar }}" aria-hidden="true">{{ initial }}{% if let Some(src) = photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ connection.css() }}"></span></span>
+                    <span class="visually-hidden">{% if photo.is_some() %}Change picture{% else %}Add a picture{% endif %} for {{ device.name }}</span>
+                </label>
+                <noscript><button type="submit" class="button-small avatar-save">Save picture</button></noscript>
+            </form>
+            {% if photo.is_some() %}
+            <form method="post" action="/devices/{{ device.id }}/avatar/remove#avatar" class="avatar-form">
+                <button type="submit" class="avatar-remove" data-avatar-remove>Remove picture</button>
+            </form>
+            {% else %}
+            <label class="avatar-add" for="avatar-file" aria-hidden="true">Add picture</label>
+            {% endif %}
+            {% if let Some(error) = avatar_error %}<p class="field-error avatar-error" id="avatar-error" role="alert">{{ error }}</p>{% endif %}
+        </div>
         <h1 class="summary-name">{{ device.name }}</h1>
         <p class="summary-state" data-status="{{ connection.css() }}"><span class="state-{{ connection.css() }}">{{ connection.word() }}</span>
             {%- if let Some((seen, exact)) = seen %} · <span title="{{ exact }}" data-seen>seen {{ seen }}</span>{% endif %}

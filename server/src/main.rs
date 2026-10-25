@@ -100,6 +100,9 @@ pub struct AppState {
     /// Where wallpaper images are stored (`data/wallpapers`; a temp dir in tests) - its own
     /// directory, because `photos::prune` deletes every file there no contact references.
     pub wallpaper_dir: std::sync::Arc<std::path::PathBuf>,
+    /// The phones' own pictures (`data/device_avatars`; a temp dir in tests) - its own store,
+    /// `photos::DEVICE_AVATARS`, backed up like the contact photos.
+    pub avatar_dir: std::sync::Arc<std::path::PathBuf>,
     /// Which phones hold the SSE command stream open right now, in memory only (design 19 Q1):
     /// the device page's "Instant changes" line. See `streams`.
     pub command_streams: std::sync::Arc<streams::CommandStreams>,
@@ -440,6 +443,7 @@ async fn main() {
         photo_dir: std::sync::Arc::new(std::path::PathBuf::from("data/contact_photos")),
         dns_feed_dir: std::sync::Arc::new(std::path::PathBuf::from("data/dns_feeds")),
         wallpaper_dir: std::sync::Arc::new(std::path::PathBuf::from("data/wallpapers")),
+        avatar_dir: std::sync::Arc::new(std::path::PathBuf::from("data/device_avatars")),
         command_streams: Default::default(),
         app_syncs: Default::default(),
         tracked_apps_dir: std::sync::Arc::new(std::path::PathBuf::from(
@@ -780,6 +784,11 @@ pub fn build_admin_router(
                 .layer(DefaultBodyLimit::max(SIGNED_OUT_FORM_LIMIT)),
         )
         .route("/sw.js", get(handlers::sw::serve_sw))
+        // A phone's own picture (server round C): also a push's icon, which the browser fetches
+        // for the service worker without the session cookie - so no session, only the picture's
+        // own SHA-256 as the path, and only while a phone names it (`handlers::device_avatar`).
+        // The admin gate still applies.
+        .route("/phone-avatars/{hash}", get(handlers::device_avatar::view))
         // Spotify's redirect back after a login (design 26c §2.3): the admin cookie is
         // SameSite=Strict, so the browser doesn't send it on this navigation from
         // accounts.spotify.com. It does nothing without a live pending `state` and its
@@ -975,6 +984,16 @@ pub fn build_admin_router(
             post(handlers::calls::remove_photo),
         )
         .route("/contact-photos/{hash}", get(handlers::calls::view_photo))
+        // The phone's own picture (server round C), from its summary's header.
+        .route(
+            "/devices/{id}/avatar",
+            post(handlers::device_avatar::upload)
+                .layer(DefaultBodyLimit::max(photos::MAX_UPLOAD_BYTES + 64 * 1024)),
+        )
+        .route(
+            "/devices/{id}/avatar/remove",
+            post(handlers::device_avatar::remove),
+        )
         .route(
             "/devices/{id}/launcher",
             post(handlers::devices::update_launcher_ui),

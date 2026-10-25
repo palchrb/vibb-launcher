@@ -1599,6 +1599,7 @@ struct PhoneRow {
     name: String,
     initial: String,
     avatar: &'static str,
+    photo: Option<String>,
     /// "14 allowed", "Not set up"; empty on an app's page.
     value: String,
     href: String,
@@ -1613,6 +1614,7 @@ impl PhoneRow {
             name: device.name.clone(),
             initial: crate::handlers::devices::initial(&device.name),
             avatar: crate::handlers::devices::avatar_class(device),
+            photo: crate::handlers::devices::avatar_photo(device),
             value,
             href,
             install: None,

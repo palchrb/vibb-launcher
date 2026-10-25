@@ -15,9 +15,11 @@ use crate::security::{self, CurrentAdmin};
 struct DeviceListRow {
     id: i64,
     name: String,
-    /// The avatar's letter and colour class.
+    /// The avatar's letter and colour class, and the phone's own picture over them (server
+    /// round C).
     initial: String,
     avatar: &'static str,
+    photo: Option<String>,
     connection: crate::streams::ConnectionState,
     /// After the state word: "seen 3 min ago", "access removed".
     detail: Option<String>,
@@ -143,6 +145,7 @@ async fn list_row(
     DeviceListRow {
         initial: initial(&device.name),
         avatar: avatar_class(&device),
+        photo: avatar_photo(&device),
         id: device.id,
         name: device.name,
         connection,
@@ -159,6 +162,11 @@ async fn list_row(
 /// none - every set-up phone has `.avatar`'s peach.
 pub(crate) fn avatar_class(device: &Device) -> &'static str {
     avatar_class_of(device.enrolled_at.is_some())
+}
+
+/// The phone's own picture's URL over its letter tile (server round C), `None` without one.
+pub(crate) fn avatar_photo(device: &Device) -> Option<String> {
+    crate::handlers::device_avatar::src_of(device.avatar_hash.as_deref())
 }
 
 /// [avatar_class] from whether the phone is set up (the inbox's rows).
@@ -727,6 +735,10 @@ struct DeviceDetailTemplate {
     /// with the exact time, what the state means for changes, the lock badge and today's bar.
     avatar: &'static str,
     initial: String,
+    /// The phone's own picture (server round C): the header's avatar is its picker, and a refused
+    /// upload's reason (`?avatar=`) is said under it.
+    photo: Option<String>,
+    avatar_error: Option<&'static str>,
     connection: crate::streams::ConnectionState,
     seen: Option<(String, String)>,
     /// "changes may be delayed" (Away), "changes wait until it's back" (Offline).
@@ -1666,6 +1678,10 @@ async fn render_device(
             title: device.name.clone(),
             avatar: avatar_class(&device),
             initial: initial(&device.name),
+            photo: avatar_photo(&device),
+            avatar_error: crate::handlers::device_avatar::error_text(
+                query.get("avatar").map(String::as_str),
+            ),
             connection,
             seen,
             seen_tail,
@@ -2745,6 +2761,10 @@ pub async fn delete_device(
     .await
     .ok();
     crate::photos::prune(&state).await;
+    // Its own picture went with its row (server round C).
+    crate::photos::DEVICE_AVATARS
+        .prune(&state.db, &state.avatar_dir)
+        .await;
 
     Redirect::to("/devices")
 }

@@ -105,6 +105,20 @@ async function confirmDeclarative(n, via) {
     await badge(data);
 }
 
+// The app's icon, and a payload's own (server round C: the phone's picture, `data.icon`) when it
+// is a path on this server - never another site's picture.
+const APP_ICON = "/static/icons/icon-192.png";
+function iconOf(data) {
+    if (typeof data.icon !== "string") return APP_ICON;
+    try {
+        const url = new URL(data.icon, self.location.origin);
+        if (url.origin === self.location.origin) return url.pathname;
+    } catch (e) {
+        // not a URL
+    }
+    return APP_ICON;
+}
+
 // The legacy path: show (a notification we fail to show isn't shown, so the throw stands), then
 // the badge, then the receipt.
 async function showLegacy(n, via) {
@@ -113,7 +127,7 @@ async function showLegacy(n, via) {
     const options = {
         body: n.body || "",
         lang: n.lang || "en",
-        icon: "/static/icons/icon-192.png",
+        icon: iconOf(data),
         navigate,
         data: { navigate, d: data.d, t: data.t },
     };
