@@ -1,6 +1,7 @@
 # The server's container image (design 22 §6): ghcr.io/<owner>/handy-server, linux/amd64 and
-# linux/arm64. It only COPYs binaries the release job cross-built (static musl) - no compiler and no
-# QEMU here. The build context is server/ with dist/ laid out as:
+# linux/arm64. It only COPYs the binary the release built natively for that architecture (static
+# musl, from its tarball) - no compiler and no QEMU here. The build context is server/ with dist/
+# laid out as (one architecture's binary is enough for a single-platform build):
 #   dist/amd64/kid_phone_server  dist/arm64/kid_phone_server  dist/static/
 # Base images are pinned by digest (multi-arch indexes); bump them deliberately.
 

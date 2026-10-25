@@ -187,8 +187,110 @@ fn root_takes_only_signed_release_files() {
     assert!(release.contains("secrets.SERVER_MINISIGN_KEY"));
     assert!(release.contains(r#"minisign -S -s "$key" -m "$file" -t "$file $TAG""#));
     assert!(release.contains(
-        "kid-phone-server-aarch64-unknown-linux-musl.tar.gz.minisig,update.sh,update.sh.minisig"
+        "for file in kid-phone-server-aarch64-unknown-linux-musl.tar.gz \
+         kid-phone-server-x86_64-unknown-linux-musl.tar.gz update.sh; do"
     ));
+    assert!(release.contains(
+        "kid-phone-server-x86_64-unknown-linux-musl.tar.gz.minisig,update.sh,update.sh.minisig\""
+    ));
+}
+
+/// The scripts' `case "$(uname -m)"`, the same text in install.sh and update.sh.
+fn target_case(script: &str) -> &str {
+    block(script, "# The release's tarball for this machine", "esac")
+}
+
+/// Runs install.sh's `case "$(uname -m)"` with `uname -m` answering `machine`: the TARGET it
+/// picks, or None when it refuses the machine (with the refusal on stderr).
+fn picked_target(machine: &str) -> Option<String> {
+    let sandbox = tempfile::tempdir().unwrap();
+    let uname = sandbox.path().join("uname");
+    std::fs::write(&uname, format!("#!/bin/sh\necho {machine}\n")).unwrap();
+    let mut permissions = std::fs::metadata(&uname).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&uname, permissions).unwrap();
+    let output = std::process::Command::new("bash")
+        .arg("-c")
+        .arg(format!(
+            "set -euo pipefail\n{}\necho \"$TARGET\"\n",
+            target_case(INSTALL)
+        ))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                sandbox.path().display(),
+                std::env::var("PATH").unwrap()
+            ),
+        )
+        .output()
+        .expect("bash runs");
+    if output.status.success() {
+        Some(String::from_utf8(output.stdout).unwrap().trim().to_string())
+    } else {
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains(&format!("Unsupported architecture: {machine}")),
+            "{stderr}"
+        );
+        assert_eq!(output.status.code(), Some(1));
+        None
+    }
+}
+
+/// The release publishes a tarball for aarch64 and one for x86_64 (the user, 2026-10-25): both
+/// scripts pick the one for the machine they run on, refuse any other machine, and the release
+/// builds and publishes, signed, every tarball they can pick.
+#[test]
+fn the_scripts_pick_the_tarball_for_the_machine() {
+    assert_eq!(target_case(INSTALL), target_case(UPDATE));
+    for (machine, target) in [
+        ("aarch64", Some("aarch64-unknown-linux-musl")),
+        ("arm64", Some("aarch64-unknown-linux-musl")),
+        ("x86_64", Some("x86_64-unknown-linux-musl")),
+        ("amd64", Some("x86_64-unknown-linux-musl")),
+        ("armv7l", None),
+        ("i686", None),
+        ("riscv64", None),
+    ] {
+        assert_eq!(picked_target(machine).as_deref(), target, "{machine}");
+    }
+    for script in [INSTALL, UPDATE] {
+        let download = block(script, "download_release() {", "}");
+        assert!(download.contains(r#"asset="kid-phone-server-$TARGET.tar.gz""#));
+    }
+
+    let release = include_str!("../../../.github/workflows/server-release.yml");
+    let published: Vec<&str> = release
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("artifacts: "))
+        .expect("the release's artifacts")
+        .trim_matches('"')
+        .split(',')
+        .collect();
+    let targets: Vec<&str> = target_case(INSTALL)
+        .split("TARGET=\"")
+        .skip(1)
+        .map(|rest| &rest[..rest.find('"').unwrap()])
+        .collect();
+    assert_eq!(
+        targets,
+        ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
+    );
+    for target in targets {
+        assert!(
+            release.contains(&format!("- target: {target}\n")),
+            "{target} isn't built"
+        );
+        for suffix in ["", ".sha256", ".minisig"] {
+            let asset = format!("kid-phone-server-{target}.tar.gz{suffix}");
+            assert!(
+                published.contains(&asset.as_str()),
+                "{asset} isn't published"
+            );
+        }
+    }
+    assert_eq!(published.len(), 8, "{published:?}");
 }
 
 #[tokio::test]
@@ -250,18 +352,36 @@ async fn schedule_times_that_arent_hh_mm_are_refused() {
     assert_eq!(before, after, "a refused form wrote a schedule file");
 }
 
-/// Security review L9: the server's CI and release build with a pinned Rust and cross.
+/// Security review L9: the server's CI and release build with a pinned Rust; since 2026-10-25 each
+/// musl binary natively, on a runner of its own architecture (no cross, no QEMU).
 #[test]
-fn server_workflows_pin_rust_and_cross() {
+fn server_workflows_pin_rust_and_build_natively() {
     for workflow in [
         include_str!("../../../.github/workflows/server-ci.yml"),
         include_str!("../../../.github/workflows/server-release.yml"),
     ] {
         assert!(!workflow.contains("toolchain: stable"));
         assert!(workflow.contains("toolchain: 1."));
-        for line in workflow.lines().filter(|line| line.contains("tool: cross")) {
-            assert!(line.trim().starts_with("tool: cross@0."), "{line}");
+        assert!(!workflow.contains("tool: cross"));
+        assert!(!workflow.contains("cross build"));
+        assert!(!workflow.to_lowercase().contains("qemu-action"));
+        let lines: Vec<&str> = workflow.lines().map(str::trim).collect();
+        let mut legs = 0;
+        for (at, line) in lines.iter().enumerate() {
+            let runner = match line.trim_start_matches("- ") {
+                "target: aarch64-unknown-linux-musl" => "runner: ubuntu-24.04-arm",
+                "target: x86_64-unknown-linux-musl" => "runner: ubuntu-24.04",
+                _ => continue,
+            };
+            let next = lines[at + 1..]
+                .iter()
+                .find(|line| line.starts_with("runner: "))
+                .expect("a runner for the target");
+            assert_eq!(*next, runner, "{line}");
+            legs += 1;
         }
+        assert!(legs >= 2, "no per-architecture matrix");
+        assert!(workflow.contains(r#"cargo build --release --locked --target "$TARGET""#));
     }
 }
 
@@ -659,8 +779,12 @@ fn the_release_signs_first_and_in_the_release_environment() {
     assert!(sign.contains("    environment: release\n"), "{sign}");
     assert!(sign.contains("secrets.SERVER_MINISIGN_KEY"));
     assert_eq!(release.matches("secrets.SERVER_MINISIGN_KEY").count(), 1);
+    assert!(sign.contains("needs: [ server-release-test, server-release-build ]"));
+    assert!(sign.contains("pattern: server-tarball-*"));
     let image = job("server-release-image");
-    assert!(image.contains("needs: [ server-release-build, server-release-sign ]"));
+    assert!(
+        image.contains("needs: [ server-release-test, server-release-build, server-release-sign ]")
+    );
     assert!(
         image.contains(
             "needs.server-release-sign.result == 'success' || github.event_name != 'push'"
