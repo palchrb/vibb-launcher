@@ -407,7 +407,10 @@ async fn the_settings_hub_links_everything_with_cheap_values() {
     }
     // Backups shows the newest file's day when there is one (`hub_values` below); always a link.
     assert!(row("backups").contains("href=\"/backups\""));
-    assert!(html.contains("<form method=\"post\" action=\"/logout\" class=\"group\">"));
+    assert!(
+        html.contains("<form method=\"post\" action=\"/logout\" class=\"group\" data-sign-out>")
+    );
+    assert!(html.contains("<input type=\"hidden\" name=\"endpoint\" value=\"\">"));
     assert!(html.contains(">Sign Out</button>"));
     // Outline icons on tiles, not emoji.
     assert!(!html.contains("&#128"));

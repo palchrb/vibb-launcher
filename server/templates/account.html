@@ -73,7 +73,7 @@
             </form>
             {% if password_field.is_empty() %}{% call group_flash::show(flash, "password") %}{% endcall %}{% endif %}
         </div>
-        <p class="group-footer">A new password signs out every other browser and phone.</p>
+        <p class="group-footer">A new password signs out every other browser and phone and turns notifications off everywhere.</p>
     </section>
 
     <section id="two-factor" aria-labelledby="two-factor-title">
@@ -87,7 +87,7 @@
             <details class="confirm cell" id="reset-2fa"{% if reset_error.is_some() %} open{% endif %}>
                 <summary class="row">Reset Two-Factor Login…</summary>
                 <form method="post" action="/account/reset-2fa#two-factor" class="confirm-body">
-                    <p>For a lost authenticator app: you scan a new QR code next, and every other browser and phone is signed out.</p>
+                    <p>For a lost authenticator app: you scan a new QR code next, every other browser and phone is signed out, and notifications are turned off everywhere.</p>
                     <label class="field-label" for="reset_current_password">Current password</label>
                     <input type="password" id="reset_current_password" name="current_password" autocomplete="current-password" required{% if reset_error.is_some() %} aria-invalid="true" aria-describedby="reset-error" autofocus{% endif %}>
                     {% if let Some(why) = reset_error %}<p class="field-error" id="reset-error">{{ why }}</p>{% endif %}

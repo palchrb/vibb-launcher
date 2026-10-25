@@ -401,6 +401,177 @@ fn the_backup_sync_never_follows_or_writes_through_links() {
     }
 }
 
+/// Security review M2: the drive keeps as many `backup-*.zip` as data/backups/ ("Backups to keep",
+/// 0 = all) and as many `pre-migrate-*.db` as the server, the newest by name; nothing else on it is
+/// ever deleted - another name, a directory, a file below snapshots/ or beside it.
+#[test]
+fn the_backup_sync_keeps_as_many_on_the_drive_as_the_server() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let root = sandbox.path();
+    let data = root.join("data");
+    let backups = data.join("backups");
+    let drive = root.join("drive");
+    let snapshots = drive.join("snapshots");
+    for dir in [
+        &backups,
+        &snapshots.join("sub"),
+        &snapshots.join("backup-dir.zip"),
+    ] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let zips = [
+        "backup-20261001-020000.zip",
+        "backup-20261002-020000.zip",
+        "backup-20261003-020000-uploaded-1.zip",
+        "backup-20261004-020000.zip",
+    ];
+    for name in zips {
+        std::fs::write(snapshots.join(name), "old").unwrap();
+    }
+    std::fs::write(backups.join("backup-20261005-020000.zip"), "new").unwrap();
+    let dbs = [
+        "pre-migrate-0090-0091.db",
+        "pre-migrate-0091-0093.db",
+        "pre-migrate-0093-0094.db",
+        "pre-migrate-0094-0095.db",
+        "pre-migrate-0095-0096.db",
+    ];
+    for name in dbs {
+        std::fs::write(snapshots.join(name), "db").unwrap();
+    }
+    let kept = [
+        snapshots.join("notes.txt"),
+        snapshots.join("backup-20261001.tar"),
+        snapshots.join("pre-migrate-0001-0002.db.keep"),
+        snapshots.join("sub/backup-20260101-020000.zip"),
+        drive.join("backup-20260101-020000.zip"),
+    ];
+    for path in &kept {
+        std::fs::write(path, "the parent's").unwrap();
+    }
+    let run = |retention: &str| {
+        std::fs::write(
+            data.join("backup_schedule.conf"),
+            format!("EXTERNAL_COPY_ENABLED=true\nRETENTION_COUNT={retention}\n"),
+        )
+        .unwrap();
+        let status = run_root_script(
+            "BACKUP_SYNC_EOF",
+            &[
+                (
+                    "/opt/kid-phone-server/data/backup_schedule.conf",
+                    data.join("backup_schedule.conf").to_str().unwrap(),
+                ),
+                ("/opt/kid-phone-server/data", data.to_str().unwrap()),
+                ("/mnt/kid-phone-server-backup", drive.to_str().unwrap()),
+            ],
+            &[("mountpoint", "exit 0")],
+            root,
+        );
+        assert!(status.success(), "{status:?}");
+    };
+    let present = |names: &[&str]| -> Vec<String> {
+        names
+            .iter()
+            .filter(|name| snapshots.join(name).exists())
+            .map(|name| name.to_string())
+            .collect()
+    };
+
+    // 0 keeps them all, as on the server.
+    run("0");
+    assert_eq!(present(&zips), zips);
+    assert!(snapshots.join("backup-20261005-020000.zip").is_file());
+
+    run("2");
+    assert_eq!(present(&zips), ["backup-20261004-020000.zip"]);
+    assert!(snapshots.join("backup-20261005-020000.zip").is_file());
+    assert_eq!(present(&dbs), &dbs[2..], "the newest PRE_MIGRATE_KEEP");
+    for path in &kept {
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "the parent's",
+            "{path:?}"
+        );
+    }
+    assert!(snapshots.join("backup-dir.zip").is_dir());
+}
+
+/// qa-pwa-fixes-a-code Q-6: the drive reads "Backups to keep" as the server does
+/// (`backups::retention_of`): 1-4 digits with spaces around them, 0 keeps all, anything else the
+/// default 14 - so a hand-edited value keeps as many there as here.
+#[test]
+fn the_backup_sync_reads_backups_to_keep_as_the_server() {
+    const ZIPS: usize = 20;
+    for value in ["abc", " 3 ", "0", "014", "99999", "", "-1", "2 2"] {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path();
+        let data = root.join("data");
+        let snapshots = root.join("drive/snapshots");
+        std::fs::create_dir_all(data.join("backups")).unwrap();
+        std::fs::create_dir_all(&snapshots).unwrap();
+        for n in 0..ZIPS {
+            std::fs::write(
+                snapshots.join(format!("backup-202610{n:02}-020000.zip")),
+                "z",
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            data.join("backup_schedule.conf"),
+            format!("EXTERNAL_COPY_ENABLED=true\nRETENTION_COUNT={value}\n"),
+        )
+        .unwrap();
+        let status = run_root_script(
+            "BACKUP_SYNC_EOF",
+            &[
+                (
+                    "/opt/kid-phone-server/data/backup_schedule.conf",
+                    data.join("backup_schedule.conf").to_str().unwrap(),
+                ),
+                ("/opt/kid-phone-server/data", data.to_str().unwrap()),
+                (
+                    "/mnt/kid-phone-server-backup",
+                    root.join("drive").to_str().unwrap(),
+                ),
+            ],
+            &[("mountpoint", "exit 0")],
+            root,
+        );
+        assert!(status.success(), "{value:?}: {status:?}");
+        let mut left: Vec<String> = std::fs::read_dir(&snapshots)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        left.sort();
+        let keep = crate::handlers::backups::retention_of(value).map_or(ZIPS, |n| n.min(ZIPS));
+        assert_eq!(left.len(), keep, "{value:?}");
+        // The newest are the ones kept.
+        assert_eq!(
+            left.last().map(String::as_str),
+            Some(format!("backup-202610{:02}-020000.zip", ZIPS - 1).as_str()),
+            "{value:?}"
+        );
+    }
+    assert_eq!(crate::handlers::backups::retention_of("abc"), Some(14));
+}
+
+/// The drive's counts are the server's: `backup_sync.sh`'s default "Backups to keep" and its
+/// pre-migration copies to keep.
+#[test]
+fn the_backup_sync_counts_are_the_servers() {
+    let sync = heredoc(INSTALL, "BACKUP_SYNC_EOF");
+    for line in [
+        format!(
+            "RETENTION_COUNT_DEFAULT={}\n",
+            crate::handlers::backups::DEFAULT_RETENTION_COUNT
+        ),
+        format!("PRE_MIGRATE_KEEP={}\n", crate::startup::PRE_MIGRATE_KEEP),
+    ] {
+        assert!(sync.contains(&line), "backup_sync.sh has no {line}");
+    }
+}
+
 /// QA of the security wave, Low 1: a FIFO (or a symlink) at the flag never blocks the root
 /// watcher, and runs nothing; a regular flag still runs its action.
 #[test]

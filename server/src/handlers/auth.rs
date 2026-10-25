@@ -374,7 +374,30 @@ pub async fn verify_2fa(
     Redirect::to("/").into_response()
 }
 
-pub async fn logout(session: Session) -> impl IntoResponse {
+/// Settings' Sign Out. The form may carry this browser's push subscription (`endpoint`, filled by
+/// `static/register-sw.js`, which also unsubscribes the browser): that one row goes too, only when
+/// it is the signed-in parent's (the user, 2026-10-25). Without it - no JS, no subscription, an
+/// empty or missing field - the session ends as before and every subscription stays.
+pub async fn logout(
+    State(state): State<AppState>,
+    session: Session,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    let endpoint = form_urlencoded::parse(&body)
+        .find(|(name, _)| name == "endpoint")
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|e| !e.is_empty() && e.len() <= 1024);
+    if let Some(endpoint) = endpoint
+        && let Err(err) =
+            sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = ? AND admin_id = ?")
+                .bind(&endpoint)
+                .bind(admin.id)
+                .execute(&state.db)
+                .await
+    {
+        tracing::error!(%err, "couldn't delete this browser's notification subscription");
+    }
     session.flush().await.ok();
     Redirect::to("/login")
 }
@@ -809,7 +832,8 @@ pub async fn account_page(
     ) {
         (Some("password"), _) => Some(Flash::done(
             "password",
-            "Password changed. Every other browser and phone is signed out.",
+            "Password changed. Every other browser and phone is signed out, and notifications are off \
+             everywhere.",
         )),
         (Some("name"), _) => Some(Flash::done("name", "Name saved.")),
         (_, Some("removed")) => Some(Flash::done(
@@ -836,7 +860,8 @@ pub struct UpdatePasswordForm {
 /// Changes the password. A refusal (too short, the two differ, a wrong current password) writes
 /// nothing and says why under that field (400). Done: the new hash and the session epoch move in
 /// one UPDATE, so either every other session is signed out with it or nothing changed (a DB error
-/// is a 500, never "Password changed").
+/// is a 500, never "Password changed"). Every device's notifications end with it (security review
+/// M1), as with Sign Out Everywhere.
 pub async fn update_account_password(
     State(state): State<AppState>,
     session: Session,
@@ -923,6 +948,9 @@ pub async fn update_account_password(
             .into_response();
     };
     session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
+    // A browser a stolen session turned notifications on in stops getting them too (security
+    // review M1), this one's as well: the parent turns them on again where they want them.
+    crate::push::forget_subscriptions(&state.db, admin.id).await;
     // The warning said to change the password: done.
     session
         .remove::<String>(admin_auth::LOGIN_WARNING_KEY)
@@ -953,7 +981,8 @@ pub struct ResetTotpForm {
 /// admin straight back through mandatory 2FA setup (`require_full_auth`
 /// redirects there for any account with `totp_enabled = false`) with a
 /// brand-new QR code - the recovery path for a lost/uninstalled
-/// authenticator app while still signed in. Every other session ends, in the same UPDATE. (Signed
+/// authenticator app while still signed in. Every other session ends, in the same UPDATE, and
+/// every device's notifications after it (security review M1). (Signed
 /// out and locked out: `kid_phone_server reset-2fa <user>`.)
 ///
 /// It asks for the current password, like a password change (user decision on QA 22 M5): a
@@ -1017,6 +1046,8 @@ pub async fn reset_totp(
             .into_response();
     };
     session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
+    // Every device's notifications end with the other sessions (security review M1).
+    crate::push::forget_subscriptions(&state.db, admin.id).await;
 
     security::record_security_event(
         &state.db,

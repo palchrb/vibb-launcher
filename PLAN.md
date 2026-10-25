@@ -537,6 +537,12 @@ after), never later. Details stay in the entries below.
   phone in plaintext), launcher S-M3 (browser "secure DNS" bypass) and S-M4 (a VoIP call over the PIN lock - the user
   doubts the chats are reachable; device check: lock, ring the phone from another Element X account, answer, try Back
   and the call screen's minimise arrow), music P-L4 (done 2026-10-21: the real first name in the Spotify fixtures is now "Forelder"; "Ella" is not a real name).
+  **Server M1 and M2 done on branch `pwa-fixes-a` (2026-10-25, not merged yet):** M1 - Account's new password and
+  "Reset Two-Factor Login" delete the account's push subscriptions (as Sign Out Everywhere), and each subscription
+  keeps its session's `session_epoch` (migration 0095) so `send_due` deletes one from a signed-out session first
+  (`push::forget_stale`). M2 - `backup_sync.sh` prunes the drive's `snapshots/` to the server's counts ("Backups to
+  keep" `backup-*.zip`, 3 `pre-migrate-*.db`, regular files at the top only); the Backups page and DEPLOY say a backup
+  keeps data past the retention windows. No encryption of the drive's copies (out of scope).
   **S-M4 checked on the emulator 2026-10-21 (Element X): no way to the chats** - Back does nothing in
   `ElementCallActivity`, the minimise arrow does nothing, Home and Recents land on the lock. **WhatsApp (same day):
   its call screen's arrow leads straight into the chats over the lock -> S-M4 stays Medium**; Element X may add such
@@ -654,6 +660,15 @@ after), never later. Details stay in the entries below.
 - **PWA: a pause or "Lock again" from the PWA shows only after a manual reload** (the user, 2026-10-21): the phone
   acts at once (SSE), the page doesn't follow. Load `auto-reload.js` (3 s, design 31's pattern, scroll kept) while a
   `start_pause`/`end_windows` command is unanswered or its window isn't in the newest status yet, at most ~2 min.
+  **Done on branch `pwa-fixes-a` (2026-10-25, not merged yet):** the summary loads `auto-reload.js` while
+  `window_relock::waiting_for_phone` holds (the newer of the two pressed under 2 min ago, not cancelled or refused,
+  unanswered or its effect not in the newest report).
+  Code QA `docs/review/qa-pwa-fixes-a-code.md` (0 High / 2 Medium / 5 Low / 1 Nit): Q-1..Q-8 fixed in the fix round
+  on the same branch (2026-10-25).
+- **Log out removes this browser's push subscription** (the user, 2026-10-25: "Klarer vi å fjerne push subscriptions
+  ved logout?"; main's PLAN queue line, Server / PWA). **Done on branch `pwa-fixes-a` (fix round, 2026-10-25):** the
+  Sign Out form's hidden `endpoint`, filled and unsubscribed by `register-sw.js` (at most 300 ms), and `auth::logout`
+  deletes that row when it is the signed-in parent's; without JS or a subscription, as before.
 
 - **No network after the VPN (re)starts** (the user's emulator, 2026-10-19, launcher 0.29.0 release): every upstream
   socket of design 36's DNS engine was refused by `protect()` - Android's `Socket()` has no descriptor until a bind -,

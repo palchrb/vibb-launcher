@@ -96,7 +96,19 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   showed every push and confirmed none; the token is the receipt's proof, a cookie lends it nothing): `{d, t, a}`, the token's hash compared in
   constant time, 204 (repeats too) / 404 counted in `limits::ip_failed` (429 while blocked) - except an older token of
   a delivery sent more than once (`push::Receipt::Stale`, not counted); `clicked` marks the event read. A `queued`
-  delivery with a receipt is made `accepted` at the next pass, never sent again (L3). Sign Out Everywhere and `reset-2fa` (`admin_auth::reset_2fa`) delete the admin's subscriptions;
+  delivery with a receipt is made `accepted` at the next pass, never sent again (L3). Sign Out Everywhere, a new password and "Reset Two-Factor Login" on Account (security
+  review M1, `pwa-fixes-a`), the re-auth sign-out after three wrong passwords (`admin_auth::record_reauth`,
+  qa-pwa-fixes-a-code Q-1) and the CLI's `reset-2fa` (`admin_auth::reset_2fa`) delete the admin's subscriptions
+  (`push::forget_subscriptions`), this browser's too; Account says "notifications are off everywhere". A parent's
+  Reset and Remove delete them in their own transaction (`parents.rs`). Each subscription also keeps the
+  `session_epoch` of the session that turned it on (0095, written at subscribe and on its upsert): every reader -
+  Notification Settings' device list, This Device's `data-subscribed`, the 10-device cap, Send a Test, `queue` -
+  treats an older one as gone (`push::CURRENT_EPOCH`), and every pass of `send_due` first deletes them
+  (`push::forget_stale`, one log line) - the backstop for a subscribe in flight while the sessions ended, or a
+  sign-out whose delete failed; their deliveries go with them (`tests::web_push::a_new_password_and_a_2fa_reset_hold_no_subscription`,
+  `a_re_auth_lockout_turns_notifications_off_at_once`, `a_subscription_from_a_signed_out_session_is_not_sent_to`);
+  Settings' Sign Out deletes this browser's own row and unsubscribes it (`auth::logout`, `register-sw.js`; pwa.md,
+  "Sign Out takes this browser's notifications");
   `backups::strip_secrets_in` deletes `push_deliveries` and `push_subscriptions` from every copy.
 - **PWA**: `/notifications` gained the warnings (the clock row, a "may not be showing" row per device to `#devices`),
   This Device (`#this-device`: the form carries `data-key` = the public key and `data-subscribed` = 16-hex SHA-256
@@ -260,7 +272,7 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   (the contract and its copy, H1's sequence - held, dropped, restarted -, the hold running out, the release before the
   "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
   the claim; since the code QA's fix round a report ending "Off since", a superseded held push, the level range in
-  the route's own test), `music_spotify::migrations_73_to_94_in_order`.
+  the route's own test), `music_spotify::migrations_73_to_95_in_order`.
 
 ## Per parent (design 62 step 5, `docs/design/62-parent-accounts.md` §5)
 

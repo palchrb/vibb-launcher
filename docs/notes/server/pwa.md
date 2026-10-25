@@ -334,7 +334,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `app_display_form` in a `<details>` under the row ("Name and icon: …"). The footer's ⓘ holds the keyboard and
   accessibility note. **Downloads**: "Download apps on Wi-Fi only" and the phone's network at its last report. No
   search field. While an app installs the page reloads every 3 s (`static/auto-reload.js`, pinned by
-  `jstest/auto-reload.test.js`; Calls & Contacts uses it too): never once a save has started (a `submit`, a `change` on a `data-autosave`
+  `jstest/auto-reload.test.js`; Calls & Contacts and the phone's summary after Lock again or Unlock use it too): never once a save has started (a `submit`, a `change` on a `data-autosave`
   control, `pagehide` - a reload would cancel the POST), never while a Name and icon form is open, never on a refused
   save's page (the answer to a POST); a refusal's `?notice=` is dropped from the address once shown. A phone
   not set up has the page too. Every read is a 500 on a DB error (`app_rows`, the names, the last report), never a
@@ -418,7 +418,15 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   paused - what ends it, also for an older launcher -; +15 min, +30 min, +1 h,
   Pause a rule… as a `<details>` sheet with only the rules that apply, Lock again while a pause or Play install mode
   runs, Unlock for 2 h… behind a `<details>` confirm while no pause is on - both only for a `window_relock_v1`
-  launcher -, Locate as a link to `/devices/locate?device={id}`; an open sheet spans the grid); **Today** (`#today`:
+  launcher -, Locate as a link to `/devices/locate?device={id}`; an open sheet spans the grid; after Lock again or
+  Unlock the summary loads `auto-reload.js` (`?v=4`, every 3 s, the place kept, never once a save started or while a
+  `<details>` is open) while the newer of the two is unanswered or answered but not in the newest report yet -
+  `restrictions_paused` after Unlock, no pause or Play install mode after Lock again -, never after a refusal or a
+  cancel and never 2 minutes after the press; while it waits the "Sent. …" line stays on every reload, from the
+  command itself (`window_relock::waited_for`/`waiting_flash`; `auto-reload.js` drops the `?notice=`,
+  qa-pwa-fixes-a-code Q-2): `window_relock::waiting_for_phone` (`RelockCard::wait_for_phone`;
+  `window_relock::tests::the_summary_waits_for_the_phone_after_lock_again_or_unlock`,
+  `tests::window_relock::the_summary_reloads_until_the_phone_shows_lock_again_or_unlock`; `pwa-fixes-a`); **Today** (`#today`:
   `lifts::today` - the lifts made since the local midnight and every pause still running - with End now, today's
   24b answers and any still waiting, the Parent PIN notices; only when there is something or its flash); **Blocked Apps** (`#blocked-apps`, Allow these apps…);
   **Locked Again** (`#relock`, the last relock's findings); the **Settings** rows (Calls & Contacts, Apps, Music,
@@ -661,6 +669,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the hash or TOTP and the session epoch in one UPDATE (the first-sign-in change too), so another session is signed
   out exactly when the change is
   stored; Sign Out Everywhere answers 500 and keeps this session when the epoch can't move.
+- **Sign Out takes this browser's notifications** (the user, 2026-10-25, `pwa-fixes-a`'s fix round): Settings' Sign
+  Out form (`form[data-sign-out]`) has a hidden `endpoint` that `static/register-sw.js` (`?v=4`, `signOut`) fills from
+  `serviceWorker.ready` → `pushManager.getSubscription()`; on submit the browser unsubscribes first and the form goes
+  when that is done or after 300 ms (`SIGN_OUT_WAIT`), whichever is first. `auth::logout` deletes that one row, only
+  when it is the signed-in parent's, then ends the session as before; no JS, no subscription or an empty field signs
+  out exactly as before (`tests::web_push::sign_out_removes_this_browsers_subscription_only`,
+  `jstest/register-sw.test.js`).
 - **Three wrong passwords end the session** (design 59 step 2, qa-59-design Q59-11): every form that asks a signed-in
   parent for the password again - Account's password change, the first-sign-in change (`/auth/change-password`),
   Reset Two-Factor Login, Lock Screen & PINs' Show Child PIN, and Account's Add Parent and Withdraw (design 62) -

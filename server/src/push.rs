@@ -310,8 +310,12 @@ pub async fn forget_other_keys(db: &sqlx::SqlitePool, key: &VapidKey) {
     }
 }
 
-/// Deletes every subscription of an admin: Sign Out Everywhere and `reset-2fa` (§7) - a lost
-/// device stops getting titles.
+/// Deletes every subscription of an admin: Sign Out Everywhere, a new password and "Reset
+/// two-factor login" on Account, the re-auth sign-out after three wrong passwords
+/// (`admin_auth::record_reauth`) and the CLI's `reset-2fa` (§7, security review M1) - a lost
+/// device stops getting titles. A parent's Reset and Remove delete them in their own transaction
+/// (`parents.rs`). Each subscription also keeps the epoch of the session that made it, for
+/// [forget_stale] and [CURRENT_EPOCH].
 pub async fn forget_subscriptions(db: &sqlx::SqlitePool, admin_id: i64) {
     if let Err(err) = sqlx::query("DELETE FROM push_subscriptions WHERE admin_id = ?")
         .bind(admin_id)
@@ -320,6 +324,34 @@ pub async fn forget_subscriptions(db: &sqlx::SqlitePool, admin_id: i64) {
     {
         tracing::error!(%err, "can't delete the notification subscriptions");
     }
+}
+
+/// The SQL condition "subscription `s` was made in its account's current session epoch": every
+/// reader (the device list, This Device's `data-subscribed`, the device cap, the test send, the
+/// queue) treats an older one as gone before [forget_stale] deletes it (qa-pwa-fixes-a-code Q-1).
+pub const CURRENT_EPOCH: &str =
+    "s.session_epoch >= (SELECT a2.session_epoch FROM admin_users a2 WHERE a2.id = s.admin_id)";
+
+/// Deletes every subscription made in a session older than its account's epoch (security review
+/// M1), the backstop behind the explicit deletes ([forget_subscriptions]): a subscribe that was in
+/// flight while the account's sessions were signed out, or one left by a sign-out whose delete
+/// failed (a database error). Their deliveries go with them (`ON DELETE CASCADE`). [send_due] runs
+/// it first on every pass; until then [CURRENT_EPOCH] hides them.
+pub async fn forget_stale(db: &sqlx::SqlitePool) -> Result<(), sqlx::Error> {
+    let done = sqlx::query(
+        "DELETE FROM push_subscriptions WHERE session_epoch < \
+         (SELECT a.session_epoch FROM admin_users a WHERE a.id = push_subscriptions.admin_id)",
+    )
+    .execute(db)
+    .await?;
+    if done.rows_affected() > 0 {
+        tracing::info!(
+            "{} notification subscription(s) were made in a session that has been signed out \
+             since (turned on while the sessions ended, or left by a failed delete) - deleted",
+            done.rows_affected()
+        );
+    }
+    Ok(())
 }
 
 /// Queues `event`'s push to every active subscription of a parent who isn't removed and has the
@@ -343,7 +375,7 @@ pub async fn queue(
          SELECT s.id, ?, 'event', X'', ? FROM push_subscriptions s \
          JOIN admin_users a ON a.id = s.admin_id \
          LEFT JOIN notification_prefs p ON p.admin_id = s.admin_id \
-         WHERE s.state = 'active' AND a.removed_at IS NULL AND {on}"
+         WHERE s.state = 'active' AND a.removed_at IS NULL AND {CURRENT_EPOCH} AND {on}"
     ))
     .bind(event_id)
     .bind(not_before.map(db_time))
@@ -428,11 +460,13 @@ struct DueRow {
 /// with more than [FOLD_ABOVE] event pushes for one subscription folded into its newest two and
 /// one summary (an urgent kind - the emergency call, a PIN lockout, a foreign app - always goes on
 /// its own). Deliveries to a turned-off
-/// subscription or of a pruned event are dropped. Nothing happens without a key.
+/// subscription or of a pruned event are dropped, and a subscription from a signed-out session is
+/// deleted first ([forget_stale]). Nothing happens without a key.
 pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
     let Some(key) = state.push.key.clone() else {
         return Ok(());
     };
+    forget_stale(&state.db).await?;
     // A push the service took although its request looked failed (a network error after the
     // body went): the worker's receipt came before the retry, so it is accepted, never sent
     // again (qa-35-s2-code L3).
@@ -1131,7 +1165,7 @@ pub async fn subscriptions(
          LEFT JOIN push_deliveries u ON u.subscription_id = s.id AND u.status = 'accepted' \
               AND u.receipt_at IS NULL AND COALESCE(u.reason, '') <> 'declarative' \
               AND u.accepted_at > COALESCE(s.last_receipt_at, '') \
-         WHERE s.admin_id = ? GROUP BY s.id ORDER BY s.id"
+         WHERE s.admin_id = ? AND {CURRENT_EPOCH} GROUP BY s.id ORDER BY s.id"
     ))
     .bind(admin_id)
     .fetch_all(db)
@@ -1185,10 +1219,11 @@ pub async fn subscriptions(
 /// browser's subscription only when no account knows it (qa-35-s2-code L1: two parents on one
 /// family iPad).
 pub async fn active_endpoint_hashes(db: &sqlx::SqlitePool) -> Result<Vec<String>, sqlx::Error> {
-    let endpoints: Vec<String> =
-        sqlx::query_scalar("SELECT endpoint FROM push_subscriptions WHERE state = 'active'")
-            .fetch_all(db)
-            .await?;
+    let endpoints: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT s.endpoint FROM push_subscriptions s WHERE s.state = 'active' AND {CURRENT_EPOCH}"
+    ))
+    .fetch_all(db)
+    .await?;
     Ok(endpoints.iter().map(|e| endpoint_hash(e)).collect())
 }
 
