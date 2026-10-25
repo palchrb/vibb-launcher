@@ -116,6 +116,38 @@ fun timeRequestAnswer(code: Int?, body: String?): TimeRequestVerdict = when {
     else -> TimeRequestVerdict.DROPPED
 }
 
+/** What the sync does with the stored record (qa-r13-rule-card-code Q-3). */
+enum class UploadStep {
+    /** A PENDING record still open: post it. */
+    SEND,
+
+    /** A PENDING record no longer open - its 30 minutes over, another day's, or answered by a lift that came meanwhile
+     * (a lift while offline): dropped unsent, so no stale push and no "Asked" row after the answer. */
+    DROP,
+
+    /** Nothing to send (no record, or one already taken). */
+    NONE,
+}
+
+/** The step for [record] at [nowMs] on the ledger's [day], with [maxLiftId] the policy's largest lift id now. */
+fun uploadStep(record: TimeRequestRecord?, count: TimeRequestCount?, nowMs: Long, day: String?, maxLiftId: Long): UploadStep = when {
+    record == null || record.state != TimeRequestPhase.PENDING -> UploadStep.NONE
+    requestState(record, count, nowMs, day, maxLiftId) == RequestState.Pending -> UploadStep.SEND
+    else -> UploadStep.DROP
+}
+
+/**
+ * What the answer for the record [sentId] writes (mutation L15): `null` - nothing - when the stored record is another
+ * one now (a newer request written while the upload ran) or gone; else [afterTimeRequestAnswer] of it.
+ */
+fun recordAfterUpload(
+    current: TimeRequestRecord?,
+    sentId: String,
+    count: TimeRequestCount?,
+    verdict: TimeRequestVerdict,
+): Pair<TimeRequestRecord?, TimeRequestCount?>? =
+    if (current == null || current.id != sentId) null else afterTimeRequestAnswer(current, count, verdict)
+
 /** The record and the count after [verdict] for [record]. */
 fun afterTimeRequestAnswer(
     record: TimeRequestRecord,
@@ -175,7 +207,11 @@ object TimeRequests {
 
     /** The state for [snap] (its ledger's day, its policy's lifts) at the snapshot's wall clock. */
     fun state(context: Context, snap: TimeRulesRuntime.Snapshot): RequestState =
-        requestState(record(context), count(context), snap.clocks.wallMs, snap.ledger?.day, maxLiftId(snap.policy))
+        state(context, snap.ledger?.day, snap.clocks.wallMs, maxLiftId(snap.policy))
+
+    /** The state on the ledger's [day] at [nowMs], with [maxLiftId] the policy's largest lift id. */
+    fun state(context: Context, day: String?, nowMs: Long, maxLiftId: Long): RequestState =
+        requestState(record(context), count(context), nowMs, day, maxLiftId)
 
     /** When an open request's 30 minutes end, for the boundary alarm (R13-8: a stored instant, no handler). */
     fun openUntilMs(context: Context): Long? = try {
@@ -211,11 +247,20 @@ object TimeRequests {
         val record = record(context) ?: return
         if (record.state != TimeRequestPhase.PENDING) return
         val now = System.currentTimeMillis()
-        if (now >= record.openUntilMs) {
-            // Its 30 minutes are over: nothing sent, the action back.
-            write(context, null, count(context))
-            AnchorRefresh.request(context)
-            return
+        // Q-3: the policy this sync just fetched - a lift that came while the request waited is its answer.
+        val policy = com.kidslauncher.mdm.server.KidModeEnforcer.timePolicyOf(com.kidslauncher.mdm.server.currentPolicyDecision().policy)
+        val day = policy?.let { TimeRulesRuntime.ledger(context, it).day }
+        when (uploadStep(record, count(context), now, day, maxLiftId(policy))) {
+            UploadStep.NONE -> return
+            UploadStep.DROP -> {
+                // Over, another day's, or answered meanwhile: nothing sent, the action back.
+                synchronized(this) {
+                    if (record(context)?.id == record.id) write(context, null, count(context))
+                }
+                changed(context)
+                return
+            }
+            UploadStep.SEND -> {}
         }
         var code: Int? = null
         var body: String? = null
@@ -232,13 +277,17 @@ object TimeRequests {
         Log.i(LOG_TAG, "Request for more time: $verdict${code?.let { " (HTTP $it)" } ?: ""}")
         if (verdict == TimeRequestVerdict.RETRY) return
         synchronized(this) {
-            val current = record(context)
             // Only the record that was sent: a newer one written meanwhile stays.
-            if (current?.id != record.id) return
-            val (next, count) = afterTimeRequestAnswer(current, count(context), verdict)
+            val (next, count) = recordAfterUpload(record(context), record.id, count(context), verdict) ?: return
             write(context, next, count)
         }
+        changed(context)
+    }
+
+    /** The record changed: the notice again, and the boundary alarm for the new `openUntilMs` (Q-4). */
+    private fun changed(context: Context) {
         AnchorRefresh.request(context)
+        TimeRuleAlarm.schedule(context)
     }
 }
 

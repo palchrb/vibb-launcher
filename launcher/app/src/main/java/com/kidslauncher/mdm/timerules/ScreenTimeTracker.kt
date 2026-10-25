@@ -91,13 +91,16 @@ object ScreenTimeTracker {
                 handler.postDelayed(checkpoint, CHECKPOINT_MS)
                 return
             }
-            val remaining = budgetUse(TimeRulesRuntime.ledger(context, policy), policy)?.remainingMs
+            val ledger = TimeRulesRuntime.ledger(context, policy)
+            val budget = budgetUse(ledger, policy)
+            val remaining = budget?.remainingMs
             // Design r13 §2.3: while a budget counts down, the checkpoint lands on the next minute flip, and the anchor's
-            // notice shows the new minute (the refresh posts only a changed notice).
+            // notice shows the new minute (the refresh posts only a changed notice) - from this budget, no snapshot of
+            // its own (qa-r13-rule-card-code Q-5: one snapshot per re-check).
             handler.postDelayed(checkpoint, checkpointDelayMs(remaining))
             if (remaining == null) return
             try {
-                com.kidslauncher.mdm.server.AnchorNotice.refreshNow(context)
+                com.kidslauncher.mdm.server.AnchorNotice.refresh(context, budget, policy, ledger.day, System.currentTimeMillis())
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Notice refresh failed: ${e.javaClass.simpleName}")
             }

@@ -111,7 +111,7 @@ class CommandListenerService : Service() {
         running = this
         // Design r13 §2.3: this instance posted its own; then the time left, read from CE prefs only now (any fault
         // leaves the plain notification).
-        AnchorNotice.reset()
+        AnchorNotice.reset(this)
         try {
             AnchorNotice.refreshNow(this)
         } catch (e: Exception) {

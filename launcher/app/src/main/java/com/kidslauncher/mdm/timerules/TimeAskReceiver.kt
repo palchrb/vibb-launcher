@@ -31,7 +31,11 @@ class TimeAskReceiver : BroadcastReceiver() {
             val windowOpen = OfflineOverride.isActive() || RestrictionsPause.isActive()
             val asked = TimeRequests.ask(app, LauncherPreferences.mdm().enrolled(), windowOpen, snap)
             AnchorNotice.refresh(app, snap)
-            if (asked) SyncRunner.request(app, "time_request")
+            if (asked) {
+                // The 30 minutes' end is a boundary (R13-8): armed now, not only by the sync's re-check (Q-4).
+                TimeRuleAlarm.schedule(app)
+                SyncRunner.request(app, "time_request")
+            }
         } catch (e: Exception) {
             Log.w(LOG_TAG, "The request for more time failed: ${e.javaClass.simpleName}")
         }

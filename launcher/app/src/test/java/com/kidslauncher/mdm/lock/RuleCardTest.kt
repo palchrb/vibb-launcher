@@ -21,6 +21,7 @@ import com.kidslauncher.mdm.ui.RuleLabel
 import com.kidslauncher.mdm.ui.ruleLabel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -41,7 +42,7 @@ class RuleCardTest {
         decideTimeLock(p, at, overrideActive = false, lifts = lifts, budget = budget)
 
     private fun end(p: TimePolicy, at: LocalDateTime, lifts: RuleLifts = RuleLifts(), budget: BudgetUse? = null, zone: ZoneId = oslo) =
-        lockEnd(p, lockAt(p, at, lifts, budget), lifts, budget, at.toLocalDate(), zone)
+        lockEnd(p, lockAt(p, at, lifts, budget), lifts, budget, at.toLocalDate(), zone, at)
 
     private val school = rule(1, KIND_SCHOOL, everyDay(minutes(8), minutes(14, 30)))
 
@@ -106,7 +107,7 @@ class RuleCardTest {
         val p = policy(budget = List(7) { 60 })
         val lock = lockAt(p, monday.atTime(10, 0), budget = budget)
         assertEquals(LockReason.SCREEN_TIME, lock.reason)
-        assertNull(lockEnd(p, lock, RuleLifts(), budget, monday, oslo))
+        assertNull(lockEnd(p, lock, RuleLifts(), budget, monday, oslo, monday.atTime(10, 0)))
     }
 
     @Test
@@ -127,10 +128,10 @@ class RuleCardTest {
         val sunday = LocalDate.of(2026, 3, 29)
         val night = rule(9, KIND_CUSTOM, everyDay(minutes(1), minutes(2, 30)))
         val at = sunday.atTime(1, 30)
-        assertNull(lockEnd(policy(night), lockAt(policy(night), at), RuleLifts(), null, sunday, oslo))
+        assertNull(lockEnd(policy(night), lockAt(policy(night), at), RuleLifts(), null, sunday, oslo, at))
         // The same window a week before ends as usual.
         val before = sunday.minusDays(7)
-        assertEquals(before.atTime(2, 30), lockEnd(policy(night), lockAt(policy(night), before.atTime(1, 30)), RuleLifts(), null, before, oslo))
+        assertEquals(before.atTime(2, 30), lockEnd(policy(night), lockAt(policy(night), before.atTime(1, 30)), RuleLifts(), null, before, oslo, before.atTime(1, 30)))
     }
 
     @Test
@@ -149,11 +150,38 @@ class RuleCardTest {
         assertEquals(listOf(1L), lock.rules.map { it.id })
         val liftsPast = ruleLiftsAt(lastsPast, p.lifts, clocks, endAt)
         assertEquals(now, liftsPast)
-        assertEquals(monday.atTime(14, 30), lockEnd(p, lock, liftsPast, null, monday, oslo))
+        assertEquals(monday.atTime(14, 30), lockEnd(p, lock, liftsPast, null, monday, oslo, at))
         val liftsBefore = ruleLiftsAt(endsBefore, p.lifts, clocks, endAt)
         assertEquals(RuleLifts(), liftsBefore)
-        assertNull(lockEnd(p, lock, liftsBefore, null, monday, oslo))
+        assertNull(lockEnd(p, lock, liftsBefore, null, monday, oslo, at))
         // A lift ending exactly at the end counts.
         assertEquals(now, ruleLiftsAt(listOf(record(endAt.toEpochMilli())), p.lifts, clocks, endAt))
+    }
+
+    /** qa-r13-rule-card-code Q-6: under a rule that leaves an app usable, today's time left must last until the end. */
+    @Test
+    fun `no end when the budget can run out first in the rule's usable apps`() {
+        val withChat = school.copy(exemptApps = listOf("org.example.chat"))
+        val p = policy(withChat, budget = List(7) { 90 })
+        val tenLeft = BudgetUse(80 * 60_000L, 90, 0)
+        assertNull("10 min left, 4.5 h to the end", end(p, monday.atTime(10, 0), budget = tenLeft))
+        assertEquals("10 min left, 5 min to the end", monday.atTime(14, 30), end(p, monday.atTime(14, 25), budget = tenLeft))
+        assertEquals("no usable app: nothing counts", monday.atTime(14, 30), end(policy(school, budget = List(7) { 90 }), monday.atTime(10, 0), budget = tenLeft))
+        assertEquals("no budget today", monday.atTime(14, 30), end(policy(withChat), monday.atTime(10, 0), budget = BudgetUse(80 * 60_000L, null, 0)))
+        // An end on another day starts a fresh budget: bedtime with chat and little left still ends at 07:00.
+        val bedtime = rule(11, KIND_BEDTIME, everyDay(minutes(22), minutes(7))).copy(exemptApps = listOf("org.example.chat"))
+        assertEquals(monday.plusDays(1).atTime(7, 0), end(policy(bedtime, budget = List(7) { 90 }), monday.atTime(22, 30), budget = tenLeft))
+    }
+
+    /** Mutation L11: the glance's listeners run before the missed calls' re-learn in `recheck` (one layout). */
+    @Test
+    fun `the lock listeners run before relearn`() {
+        val runtime = listOf("src/main", "app/src/main").map { java.io.File(it, "java/com/kidslauncher/mdm/timerules/TimeRulesRuntime.kt") }
+            .first { it.exists() }.readText()
+        val recheck = runtime.substringAfter("fun recheck(").substringBefore("TimeRuleAlarm.schedule(context)")
+        val listeners = recheck.indexOf("notifyLockListeners(snap)")
+        val relearn = recheck.indexOf("MissedCallNotifier.relearn(context)")
+        assertTrue(recheck, listeners in 0 until relearn)
+        assertTrue(recheck.indexOf("reevaluateLockReasonFromCache(context, snap)") in 0 until listeners)
     }
 }

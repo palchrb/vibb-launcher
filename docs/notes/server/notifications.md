@@ -324,14 +324,16 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   `Kind::switches()`, per parent, on by default for every parent, existing ones included - migration 0096's `DEFAULT 1`,
   no row = on). Stored as a key plus parameters like the zone events: key = the phone's request id (a retried POST is
   one row), `params` = `ExtraTimeParams {phone, at, state, left_minutes?, rule?}` with `state` `left`/`used_up`/`rule`/
-  `unknown` (`TimeAsk::of` the phone's own newest report: a rule that locks first - `rule` holds its `lock_reason`,
+  `unknown` (`TimeAsk::of` the phone's own newest report, when it is at most 15 minutes old: a rule that locks first - `rule` holds its `lock_reason`,
   never its name -, then today's screen time from `time_state`; never text from the request). `title`/`summary` empty;
   `told` words it: "Anna asks for more screen time" (`fit_name` to 60) / "17:21 · Screen time used up",
   "Yesterday 21:40 · Bedtime", "14:02 · 1 h 20 min left", "School", "A time rule", or the clock alone for `unknown`.
   Target `/devices/{id}/time#extra`. Kept `EVENT_DAYS` (90) like every kind.
-- **The cap and the news rule** (in one `BEGIN IMMEDIATE` transaction): a request asked before the server zone's today
-  isn't stored (`stale`; a future `asked_at` counts as now); the phone's `extra_time_request` rows of today with another
-  key are counted through `datetime(happened_at)` against `zone.start_of_today` - at `EXTRA_TIME_REQUESTS_A_DAY` (3) the
+- **The cap and the news rule** (in one `BEGIN IMMEDIATE` transaction): "today" is the phone's own day
+  (`device_api::extra_time_day_zone`, qa-r13-rule-card-code Q-2: the zone its latest report names in `time_state.zone`,
+  the zone its ledger and its own count of three go by; else Phone Setup's). A request asked before it isn't stored
+  (`stale`; a future `asked_at` counts as now); the phone's `extra_time_request` rows of today with another
+  key are counted through `datetime(happened_at)` against that day's start - at `EXTRA_TIME_REQUESTS_A_DAY` (3) the
   request isn't stored (`capped`, one `tracing::info!`), so a retried third request is taken, never a fourth; else
   `raise` with `Push::Now` while it is news (asked under `EXTRA_TIME_NEWS_MINUTES` 30 min ago at intake), `Push::No`
   after (inbox and Activity only). The phone keeps its own count of three too (design r13 D5).

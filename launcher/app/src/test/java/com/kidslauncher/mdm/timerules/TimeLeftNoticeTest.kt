@@ -73,7 +73,10 @@ class TimeLeftNoticeTest {
         val lines = onCreate.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("//") }
         assertEquals("super.onCreate()", lines[0])
         assertEquals("startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotice.plain(this))", lines[1])
-        assertTrue(onCreate.indexOf("AnchorNotice.reset()") in 0 until onCreate.indexOf("AnchorNotice.refreshNow("))
+        assertTrue(onCreate.indexOf("AnchorNotice.reset(this)") in 0 until onCreate.indexOf("AnchorNotice.refreshNow("))
+        // Q-4: the tap arms the boundary alarm for the request's 30 minutes.
+        val receiver = source("timerules/TimeAskReceiver.kt")
+        assertTrue(receiver.indexOf("TimeRuleAlarm.schedule(app)") in 0 until receiver.indexOf("SyncRunner.request(app, \"time_request\")"))
     }
 
     @Test
@@ -86,7 +89,9 @@ class TimeLeftNoticeTest {
         val tracker = source("timerules/ScreenTimeTracker.kt")
         val update = tracker.substringAfter("fun update(context: Context) {")
         assertTrue(update, update.contains("handler.postDelayed(checkpoint, checkpointDelayMs(remaining))"))
-        assertTrue(update, update.contains("AnchorNotice.refreshNow(context)"))
+        // Q-5: from the budget the tracker computed, never a snapshot of its own.
+        assertTrue(update, update.contains("AnchorNotice.refresh(context, budget, policy, ledger.day, System.currentTimeMillis())"))
+        assertFalse(update, update.contains("refreshNow") || update.contains("snapshot("))
         assertFalse(update.substringBefore("if (!appInUse(context)) return").contains("AnchorNotice"))
         val sync = source("server/MdmSyncWorker.kt")
         assertTrue(sync.indexOf("PowerEvents.upload(context, api)") < sync.indexOf("TimeRequests.upload(context, api)"))

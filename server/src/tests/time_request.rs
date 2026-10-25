@@ -8,6 +8,8 @@ use axum::http::{Method, StatusCode};
 use chrono::{Duration, Utc};
 use serde_json::{Value, json};
 
+use crate::display_time::Zone;
+
 use super::web_push::{ENDPOINT, subscribe};
 use super::{TestApp, assert_redirect};
 
@@ -65,8 +67,31 @@ async fn count(app: &TestApp, device: i64) -> i64 {
     .unwrap()
 }
 
-/// A status report saying how much screen time is left today.
+/// qa-r13-rule-card-code Q-8: a Phone Setup zone whose day began at least an hour ago and ends at
+/// least two hours from now, so "a minute ago" and "31 minutes ago" are today and "26 hours ago"
+/// is before it, at any hour the suite runs (one of three zones 6-8 hours apart always is).
+async fn steady_zone(app: &TestApp) -> Zone {
+    let now = Utc::now();
+    for name in ["Europe/Oslo", "Asia/Tokyo", "America/New_York"] {
+        let zone = Zone::from_setting(name);
+        let into = now - zone.start_of_today(now);
+        if into >= Duration::hours(1) && into <= Duration::hours(22) {
+            sqlx::query("UPDATE provisioning_settings SET time_zone = ? WHERE id = 1")
+                .bind(name)
+                .execute(&app.db)
+                .await
+                .unwrap();
+            assert_eq!(Zone::load(&app.db).await, zone);
+            return zone;
+        }
+    }
+    unreachable!("three zones 6-8 hours apart: one is between 01:00 and 22:00")
+}
+
+/// A status report saying how much screen time is left today: the day is Phone Setup's today
+/// (Q-8: never the UTC date).
 async fn report(app: &TestApp, token: &str, lock_reason: &str, used: i64, budget: i64) {
+    let day = Zone::load(&app.db).await.today(Utc::now());
     let res = app
         .request(
             Method::POST,
@@ -77,7 +102,7 @@ async fn report(app: &TestApp, token: &str, lock_reason: &str, used: i64, budget
                 "kiosk_engaged": true,
                 "capabilities": ["call_policy_v1", "time_rules_v1"],
                 "time_state": {
-                    "day": Utc::now().date_naive().to_string(),
+                    "day": day.to_string(),
                     "used_minutes": used, "budget_minutes": budget, "extra_minutes": 0,
                     "lock_reason": lock_reason, "calls_blocked": false, "lifts_active": [],
                 },
@@ -127,6 +152,7 @@ async fn pushed(app: &TestApp) -> Vec<(String, String)> {
 #[tokio::test]
 async fn the_contract_answers() {
     let app = TestApp::new().await;
+    steady_zone(&app).await;
     let (_, token) = app.enrolled_device("Anna").await;
     let contract = contract();
     let answers = contract["answers"].as_array().unwrap();
@@ -166,7 +192,22 @@ async fn the_contract_answers() {
 #[tokio::test]
 async fn a_request_raises_one_event_and_pushes_by_each_parents_switch() {
     let app = TestApp::new().await;
+    steady_zone(&app).await;
     let mamma = two_parents(&app).await;
+    // Q-7: Mamma saved Notify Me About before the switch existed - a row that names no
+    // `push_extra_time`: its default is on (migration 0096).
+    sqlx::query(
+        "INSERT INTO notification_prefs (admin_id) SELECT id FROM admin_users \
+         WHERE id NOT IN (SELECT admin_id FROM notification_prefs)",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notification_prefs")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 2, "both parents have a row");
     let (id, token) = app.enrolled_device("Anna").await;
     report(&app, &token, "NONE", 10, 90).await;
     assert_eq!(
@@ -247,6 +288,7 @@ async fn three_a_day_and_a_retried_third_is_no_fourth() {
 #[tokio::test]
 async fn news_stale_and_refused_bodies() {
     let app = TestApp::new().await;
+    steady_zone(&app).await;
     let cookie = app.admin_cookie().await;
     subscribe(&app, &cookie, ENDPOINT).await;
     let (id, token) = app.enrolled_device("Anna").await;
@@ -367,4 +409,109 @@ fn request_ids_are_lowercase_hex_of_16_to_64() {
     assert!(!time_request_id_ok(&"a".repeat(65)));
     assert!(!time_request_id_ok("0123456789abcdeG"));
     assert!(!time_request_id_ok(""));
+}
+
+/// Q-7 (mutation S4): a parent whose Notify Me About row was saved before migration 0096 - every
+/// other switch explicit, one off - has "Asks for more time" on after it.
+#[tokio::test]
+async fn a_parent_saved_before_the_migration_has_the_switch_on() {
+    let (db, _dir) = super::cleanup::migrated_before(96).await;
+    let admin: i64 = sqlx::query_scalar(
+        "INSERT INTO admin_users (username, password_hash) VALUES ('mamma', 'x') RETURNING id",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO notification_prefs (admin_id, push_pin_used, push_pin_lockout, \
+         push_foreign_access, push_unseen_boot, push_low_battery, push_phone_off, push_phone_on, \
+         push_zones) VALUES (?, 1, 1, 1, 1, 1, 0, 1, 1)",
+    )
+    .bind(admin)
+    .execute(&db)
+    .await
+    .unwrap();
+    super::cleanup::finish(&db).await;
+    let on: bool =
+        sqlx::query_scalar("SELECT push_extra_time FROM notification_prefs WHERE admin_id = ?")
+            .bind(admin)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert!(on, "on by default for an existing parent (U7)");
+}
+
+/// Q-2: the cap counts the phone's own day - the zone its report names - not Phone Setup's.
+/// Three requests stored in the window where the two days differ: the fourth is judged by the
+/// phone's day (accepted when they were the phone's yesterday, capped when they are its today).
+#[tokio::test]
+async fn the_cap_counts_the_phones_own_day() {
+    let app = TestApp::new().await;
+    let setup = steady_zone(&app).await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let now = Utc::now();
+    let setup_start = setup.start_of_today(now);
+    // A zone 13 hours away from every candidate's: its day starts at least 5 minutes off Phone
+    // Setup's, one way or the other.
+    let (name, phone) = ["Pacific/Kiritimati", "Pacific/Niue"]
+        .into_iter()
+        .map(|name| (name, Zone::from_setting(name)))
+        .find(|(_, zone)| (zone.start_of_today(now) - setup_start).num_minutes().abs() >= 5)
+        .expect("two zones 25 hours apart can't both start their day with Phone Setup's");
+    let phone_start = phone.start_of_today(now);
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(json!({
+                "lock_reason": "NONE",
+                "kiosk_engaged": true,
+                "capabilities": ["call_policy_v1", "time_rules_v1"],
+                "time_state": {
+                    "day": phone.today(now).to_string(), "used_minutes": 10, "budget_minutes": 90,
+                    "lock_reason": "NONE", "zone": name,
+                },
+            })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    // Three requests a minute before the later of the two midnights: today for the zone whose
+    // day began first, yesterday for the other.
+    let at = setup_start.max(phone_start) - Duration::minutes(1);
+    for n in 1..=3 {
+        sqlx::query(
+            "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, \
+             happened_at) VALUES (?, 'extra_time_request', ?, '', '', '/devices', ?)",
+        )
+        .bind(id)
+        .bind(format!("{n:032x}"))
+        .bind(at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let expected = if phone_start > setup_start {
+        json!({"accepted": true})
+    } else {
+        json!({"accepted": false, "reason": "capped"})
+    };
+    assert_eq!(
+        post(&app, &token, body(4, 0)).await.1,
+        expected,
+        "phone {name}"
+    );
+    // Without a zone in the report, Phone Setup's day counts.
+    assert_eq!(
+        crate::handlers::device_api::extra_time_day_zone(None, &setup),
+        setup
+    );
+    let report = crate::time_state::TimeReport {
+        zone: Some("Not/AZone".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        crate::handlers::device_api::extra_time_day_zone(Some(&report), &setup),
+        setup
+    );
 }

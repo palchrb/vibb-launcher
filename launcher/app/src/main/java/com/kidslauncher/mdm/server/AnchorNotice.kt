@@ -12,6 +12,9 @@ import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_LISTENER
 import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.timerules.ACTION_ASK_TIME
 import com.kidslauncher.mdm.timerules.AskPart
+import com.kidslauncher.mdm.timerules.BudgetUse
+import com.kidslauncher.mdm.timerules.TimePolicy
+import com.kidslauncher.mdm.timerules.maxLiftId
 import com.kidslauncher.mdm.timerules.PLAIN_NOTICE
 import com.kidslauncher.mdm.timerules.TimeAskReceiver
 import com.kidslauncher.mdm.timerules.TimeLeftNotice
@@ -34,10 +37,12 @@ object AnchorNotice {
     /** The notice and the locale last posted; `null` after a new anchor's `startForeground`. Main thread. */
     private var lastPosted: Pair<TimeLeftNotice, String>? = null
 
-    /** A new anchor posted its own plain notification (`onCreate`). */
-    fun reset() {
-        lastPosted = null
+    /** A new anchor posted its own plain notification (`onCreate`): that is what is up now (no second post). */
+    fun reset(context: Context) {
+        lastPosted = PLAIN_NOTICE to locale(context)
     }
+
+    private fun locale(context: Context): String = context.resources.configuration.locales[0]?.toLanguageTag().orEmpty()
 
     /** The notification for [notice]: silent, ongoing, no time, the MIN channel; the action asks for the unlock first
      * from Android's keyguard (`setAuthenticationRequired`). "Spurt kl. 14:02" is the content text, never a button. */
@@ -78,15 +83,24 @@ object AnchorNotice {
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-    /** The notice for [snap]: its budget, the pause or the override, the request's state. */
-    fun noticeFor(context: Context, snap: TimeRulesRuntime.Snapshot): TimeLeftNotice =
-        timeLeftNotice(snap.budget, OfflineOverride.isActive() || RestrictionsPause.isActive(), TimeRequests.state(context, snap))
+    /** The notice for [budget] (today's use), [policy] (its lifts), the ledger's [day] at [nowMs]: the pause or the
+     * override, and the request's state from its DE prefs - no snapshot (qa-r13-rule-card-code Q-5). */
+    fun noticeFor(context: Context, budget: BudgetUse?, policy: TimePolicy?, day: String?, nowMs: Long): TimeLeftNotice =
+        timeLeftNotice(
+            budget,
+            OfflineOverride.isActive() || RestrictionsPause.isActive(),
+            TimeRequests.state(context, day, nowMs, maxLiftId(policy)),
+        )
 
-    /** Posts the notice for [snap] (`recheck`'s, the tracker's minute tick's) while the anchor runs and it changed. */
+    /** Posts the notice for [snap] (`recheck`'s, the tap's) while the anchor runs and it changed. */
+    fun refresh(context: Context, snap: TimeRulesRuntime.Snapshot) =
+        refresh(context, snap.budget, snap.policy, snap.ledger?.day, snap.clocks.wallMs)
+
+    /** The same from the parts the screen-time tracker has computed anyway (its minute tick): no snapshot. */
     @Synchronized
-    fun refresh(context: Context, snap: TimeRulesRuntime.Snapshot) {
+    fun refresh(context: Context, budget: BudgetUse?, policy: TimePolicy?, day: String?, nowMs: Long) {
         if (!CommandListenerService.isRunning) return
-        post(context, noticeFor(context, snap))
+        post(context, noticeFor(context, budget, policy, day, nowMs))
     }
 
     /** A fresh snapshot, then [refresh] (the tap, the server's answer, the anchor's start, the pause's start). */
@@ -97,8 +111,7 @@ object AnchorNotice {
 
     @Synchronized
     private fun post(context: Context, notice: TimeLeftNotice) {
-        val locale = context.resources.configuration.locales[0]?.toLanguageTag().orEmpty()
-        val key = notice to locale
+        val key = notice to locale(context)
         if (key == lastPosted) return
         try {
             context.getSystemService(NotificationManager::class.java)?.notify(COMMAND_LISTENER_NOTIFICATION_ID, build(context, notice))

@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -119,5 +120,31 @@ class TimeRequestsTest {
         assertEquals(r, ServerJson.decodeFromString(TimeRequestRecord.serializer(), ServerJson.encodeToString(TimeRequestRecord.serializer(), r)))
         assertEquals(7L, maxLiftId(TimePolicy(lifts = listOf(Lift(id = 3), Lift(id = 7)))))
         assertEquals(0L, maxLiftId(null))
+    }
+
+    /** qa-r13-rule-card-code Q-3: the sync posts only a request still open; one answered by a lift that came while it
+     * waited, another day's or an expired one is dropped unsent. */
+    @Test
+    fun `the upload sends only an open request`() {
+        assertEquals(UploadStep.SEND, uploadStep(record(), null, now + 60_000, day, 7))
+        assertEquals("a lift came while it waited", UploadStep.DROP, uploadStep(record(), null, now + 60_000, day, 8))
+        assertEquals("yesterday's", UploadStep.DROP, uploadStep(record(onDay = "2026-10-25"), null, now, day, 7))
+        assertEquals("its 30 minutes over", UploadStep.DROP, uploadStep(record(), null, now + TIME_REQUEST_OPEN_MS, day, 7))
+        assertEquals("no ledger day", UploadStep.DROP, uploadStep(record(), null, now, null, 7))
+        assertEquals(UploadStep.NONE, uploadStep(null, null, now, day, 7))
+        assertEquals("already taken", UploadStep.NONE, uploadStep(record(TimeRequestPhase.ASKED), null, now, day, 7))
+    }
+
+    /** Mutation L15: the answer never overwrites a newer record written while the upload ran. */
+    @Test
+    fun `the answer writes only the record that was sent`() {
+        val sent = record()
+        val newer = sent.copy(id = "ffffffffffffffffffffffffffffffff", askedAtMs = now + 1)
+        assertNull("a newer record stays", recordAfterUpload(newer, sent.id, null, TimeRequestVerdict.ACCEPTED))
+        assertNull("none left", recordAfterUpload(null, sent.id, null, TimeRequestVerdict.DROPPED))
+        assertEquals(afterTimeRequestAnswer(sent, null, TimeRequestVerdict.ACCEPTED), recordAfterUpload(sent, sent.id, null, TimeRequestVerdict.ACCEPTED))
+        val glue = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/timerules/TimeRequests.kt") }.first { it.exists() }.readText()
+        assertTrue(glue.contains("recordAfterUpload(record(context), record.id, count(context), verdict) ?: return"))
+        assertTrue(glue.contains("when (uploadStep(record, count(context), now, day, maxLiftId(policy)))"))
     }
 }

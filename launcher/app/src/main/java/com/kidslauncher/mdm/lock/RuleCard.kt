@@ -68,11 +68,13 @@ fun ruleCard(reason: LockReason, lock: TimeLock, end: LocalDateTime?): RuleCard?
 }
 
 /**
- * The lock's certain end, or null. [TimeLock.until] (the strongest rule's occurrence end) when all of:
+ * The lock's certain end at [at], or null. [TimeLock.until] (the strongest rule's occurrence end) when all of:
  * - it is a single instant in [zone] (not in a DST gap or overlap);
  * - the decision at `until` is unlocked, with the policy, the rule lifts in force *at* `until` ([liftsAtEnd]) and the
  *   budget of `until`'s own day: today's [budget] when `until.toLocalDate() == ledgerDay`, else a fresh day's
- *   (`budgetMinutesFor`; a budget lift applies to the day the phone first sees it, so the next day starts with none).
+ *   (`budgetMinutesFor`; a budget lift applies to the day the phone first sees it, so the next day starts with none);
+ * - the budget can't run out before it (qa-r13-rule-card-code Q-6): when the end is the ledger's day and the rule
+ *   leaves apps usable - their time counts -, today's time left must last until the end.
  * Null for SCREEN_TIME (the parent may add time; midnight is no promise either).
  */
 fun lockEnd(
@@ -82,11 +84,18 @@ fun lockEnd(
     budget: BudgetUse?,
     ledgerDay: LocalDate?,
     zone: ZoneId,
+    at: LocalDateTime,
 ): LocalDateTime? {
     if (!lock.locked || lock.rules.isEmpty() || lock.reason == LockReason.SCREEN_TIME) return null
     val until = lock.until ?: return null
     if (zone.rules.getValidOffsets(until).size != 1) return null
     val day = until.toLocalDate()
+    val remaining = budget?.remainingMs
+    if (day == ledgerDay && lock.usableApps.isNotEmpty() && remaining != null &&
+        remaining < java.time.Duration.between(at, until).toMillis()
+    ) {
+        return null
+    }
     val budgetAtEnd = if (day == ledgerDay) budget else BudgetUse(0, budgetMinutesFor(policy, day), 0)
     val after = decideTimeLock(policy, until, overrideActive = false, lifts = liftsAtEnd, budget = budgetAtEnd)
     return if (after.locked) null else until
@@ -108,8 +117,9 @@ fun lockEndOf(snap: TimeRulesRuntime.Snapshot): LocalDateTime? {
     val policy = snap.policy ?: return null
     val until = snap.lock.until ?: return null
     val at = until.atZone(snap.zone).toInstant()
+    val now = LocalDateTime.ofInstant(Instant.ofEpochMilli(snap.clocks.wallMs), snap.zone)
     return lockEnd(
-        policy, snap.lock, ruleLiftsAt(snap.records, policy.lifts, snap.clocks, at), snap.budget, snap.ledger?.date(), snap.zone,
+        policy, snap.lock, ruleLiftsAt(snap.records, policy.lifts, snap.clocks, at), snap.budget, snap.ledger?.date(), snap.zone, now,
     )
 }
 

@@ -141,7 +141,11 @@ The server's `call_policy` (always sent by our server with an explicit `managed`
   the ask), `askStep` (enrolled, a budget today, outside the pause, Idle), `timeRequestAnswer` (§2.4's table: accepted,
   capped - the count set to three -, stale/other 4xx/unparsable dropped, 404 dropped silently, 401/408/429/5xx/none
   kept and retried until `openUntilMs`) and `afterTimeRequestAnswer`. `TimeRequests.upload` runs in `performMdmSync`
-  right after `PowerEvents.upload`; the tap asks `SyncRunner.request(.., "time_request")`. The stored `openUntilMs` is
+  right after `PowerEvents.upload` and posts only what the pure `uploadStep` says is still open (a request a lift answered
+  while it waited, another day's or an expired one is dropped unsent, Q-3); the answer writes only the record it sent
+  (`recordAfterUpload`); the tap asks `SyncRunner.request(.., "time_request")` and arms `TimeRuleAlarm` (Q-4). The
+  tracker's minute tick refreshes from the budget it computed (`AnchorNotice.refresh(context, budget, policy, day, now)`,
+  no snapshot, Q-5). The stored `openUntilMs` is
   one more `TimeRulesRuntime.nextBoundary` instant, so "Spurt" ends on time across a process death. Not
   emulator-checked yet: design r13 §2.9.
 - **Backstop** (`push/BackstopAlarm.kt`): `setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP)`, request code 7, `backstopDelayMs`: 30 min, 15 while SSE is down (on the up->down edge, and only ever moved earlier then - a flapping stream must not push it out; each reconnect syncs once instead), sooner for an interval location policy, floor 9 min. Its sync request also reconnects a stalled or stale SSE stream (`checkStream`, design 19 below).
@@ -770,7 +774,8 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   "Skjermfri tid" (or "Skjermtiden er brukt opp"), line 2 "Til 14:30" only with a **certain end** (gone otherwise).
   Pure `lock/RuleCard.kt` (`RuleCardTest`): `ruleCard(reason, lock, end)` - null unless the enforced `lockReason` and
   the snapshot's decision both lock with the same reason -, `lockEnd(policy, lock, liftsAtEnd, budget, ledgerDay,
-  zone)` - `TimeLock.until` only when it is one instant in the zone and `decideTimeLock` at it is unlocked with the rule
+  zone, at)` - `TimeLock.until` only when it is one instant in the zone, not when a rule with usable apps ends today
+  after the budget's time left runs out (qa-r13-rule-card-code Q-6) and `decideTimeLock` at it is unlocked with the rule
   lifts still in force then (`ruleLiftsAt`: a lift expiring before the end doesn't count) and the end day's budget
   (today's use only when the end is the ledger's day, else a fresh day's `budgetMinutesFor`); never for SCREEN_TIME -,
   `lockEndOf(snap)`, `ruleCardOf(reason, snap)`. The label is `ui/TimeLockModel.kt`'s `ruleLabel(kind, name)` ->
