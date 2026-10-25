@@ -523,7 +523,21 @@ after), never later. Details stay in the entries below.
   - F-Droid follow-ups: entry.jar signature, signer check at the first pin, ABI filter, GitHub asset digests.
   - Settings saves in the security log; Home Wi-Fi as a trigger; `PHONE_SERVER_URL` in `.env`; Wi-Fi in Phone Setup; notifications phase 2 (ntfy/Matrix); episode pictures on demand.
   - The Spotify host list marked final (PROVISIONAL still in the three copies and 26c).
-  - **Server binaries for both aarch64 and x86_64, each built natively** (the user, 2026-10-25: "vi bør bygge den både for arm/aarch og amd btw. Folk må jo få velge selv å bruke docker eller ikke"): the release publishes two tarballs (`kid-phone-server-aarch64-unknown-linux-musl.tar.gz`, `kid-phone-server-x86_64-unknown-linux-musl.tar.gz`), each with its `.sha256` and `.minisig`, built with plain `cargo build --target …-musl` on `ubuntu-24.04-arm` and `ubuntu-24.04` (no `cross`, no QEMU); `install.sh`/`update.sh` and the server's own update check pick the asset by `uname -m`; the images take each binary from its own job; DEPLOY.md says Docker is optional on both. CI/server, S-M - in build 2026-10-25, branch `server-two-arch`.
+  - **Server binaries for both aarch64 and x86_64, each built natively** (the user, 2026-10-25: "vi bør bygge den både for arm/aarch og amd btw. Folk må jo få velge selv å bruke docker eller ikke"): the release publishes two tarballs (`kid-phone-server-aarch64-unknown-linux-musl.tar.gz`, `kid-phone-server-x86_64-unknown-linux-musl.tar.gz`), each with its `.sha256` and `.minisig`, built with plain `cargo build --target …-musl` on `ubuntu-24.04-arm` and `ubuntu-24.04` (no `cross`, no QEMU); `install.sh`/`update.sh` and the server's own update check pick the asset by `uname -m`; the images take each binary from its own job; DEPLOY.md says Docker is optional on both. CI/server, S-M - built, awaiting the dry run (branch `server-two-arch`).
+    **Built** (2026-10-25): `server-release.yml` runs fmt + tests once (`server-release-test`, which also keeps the tag
+    checks and the version/latest outputs), then the matrix `server-release-build` (`aarch64-unknown-linux-musl` on
+    `ubuntu-24.04-arm`, `x86_64-unknown-linux-musl` on `ubuntu-24.04`; `rustup` target + `musl-tools`, `CC_<target>=musl-gcc`
+    since cc-rs would look for an `aarch64-linux-musl-gcc` Ubuntu doesn't ship; each binary checked static, for its
+    machine, and run once natively), each leg uploading `server-tarball-<target>` (tarball + `.sha256`).
+    `server-release-sign` checks both `.sha256`s and signs both tarballs and `update.sh`; each `server-release-image` leg
+    builds from its own architecture's tarball (`dist/<arch>/` + `dist/static`); the release lists both tarballs with
+    their `.sha256` and `.minisig`. `server-ci.yml`'s `server-image-context` is the same per-arch matrix
+    (`server-image-context-<arch>`); `cross` is gone from both. `install.sh`/`update.sh` share one `case "$(uname -m)"`
+    (`aarch64`/`arm64`, `x86_64`/`amd64`, else refused), pinned by `deploy_scripts::the_scripts_pick_the_tarball_for_the_machine`
+    (runs it with a stubbed `uname`, and checks the release builds and publishes every tarball it can pick); the server's
+    own update check reads only release tags (`system_update`), so it needed no change. Docs: DEPLOY.md, both CLAUDE.md.
+    Next: the `workflow_dispatch` dry run of `server-release.yml` on the branch, then merge; the first tag with it is the
+    next `server-v*`.
   - **App update notices** (the user, 2026-10-25: "sende notifications når apper lagt til via pwa blir oppdatert? Trenger ikke nødvendigvis være push varsel ... kanskje man kan få valget"): two inbox events per tracked app - `app_update_available` when the sweep or Check Now stores a new release (name, old → new version), and `app_updated` when a phone's report shows the new versionCode installed (per phone); always in the inbox, pushed only under a new Notify Me About switch "App updates", **off by default**, per parent (design 62 step 5). Key + params like design 64; one event per release, not per sweep. Server, S.
   - Zone series numbers after the user's Jelly Star day; developer-verification registration (nothing in the repo).
 
