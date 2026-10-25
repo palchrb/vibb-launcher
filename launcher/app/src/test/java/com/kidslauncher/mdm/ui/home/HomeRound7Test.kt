@@ -347,6 +347,12 @@ class HomeRound7Test {
         assertEquals(AppLoadTrail(setOf("a", "b", "c"), 20_000), chained)
         assertEquals(AppLoadTrail(setOf("c"), 200_000), appLoadTrailAfterRelease(setOf("c"), 200_000, trail))
         assertEquals("nothing touched, nothing kept", null, appLoadTrailAfterRelease(emptySet(), 200_000, trail))
+        // Q-3: a pass that touched nothing keeps the earlier trail as it was - its release time too, so a steady
+        // stream of such passes never keeps a trail alive past its own 2 minutes.
+        assertEquals(trail, appLoadTrailAfterRelease(emptySet(), 100_000, trail))
+        var kept: AppLoadTrail? = trail
+        for (t in 20_000L..200_000L step 20_000) kept = appLoadTrailAfterRelease(emptySet(), t, kept)
+        assertEquals("expired by its own window", null, kept)
         // The burst's rule: due exactly when its wait is 0.
         for (now in 1_000L..40_000L step 97) {
             for (last in 1_000L..now step 433) {
@@ -399,6 +405,17 @@ class HomeRound7Test {
         assertEquals("the first, the 30 s cap, then 3 s after the last", listOf(0L, 48_000L, 79_000L), loads)
         // The same callbacks as normal requests: one load each.
         assertEquals(31, loadsFor(listOf(0L) + stragglers, held = pass).size)
+    }
+
+    /** qa-launcher-small-a-code Q-2: the pass's own result shows 300 ms after it, as before the trail; only the
+     * stragglers that come later wait 3 s quiet / 30 s. */
+    @Test
+    fun `a pass's own load is 300 ms after its release, the later stragglers fold`() {
+        val pass: (Long) -> Long? = { t -> if (t in 10_000L until 15_000L) 10_000L else null }
+        val during = (0 until 50).map { 10_000L + it * 100 } // the pass's callbacks, all its trail
+        val after = (0 until 15).map { 17_000L + it * 2_000 } // 17 .. 45 s, the system's late broadcasts
+        val loads = loadsFor(listOf(0L) + during + after, held = pass, trail = (during + after).toSet())
+        assertEquals("the pass's own load at release + 300 ms, then the stragglers' one (the 30 s cap)", listOf(0L, 15_300L, 47_000L), loads)
     }
 
     @Test

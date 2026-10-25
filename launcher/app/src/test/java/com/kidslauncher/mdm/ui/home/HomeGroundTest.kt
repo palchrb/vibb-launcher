@@ -36,11 +36,21 @@ class HomeGroundTest {
     fun `the copy is WallpaperGround's full ground - the placement the lock's ground and Android's bitmap share`() {
         assertEquals(GroundKind.FULL, groundKind(systemShowsOurs = true, scrimAlpha = 0, ownGround = true))
         assertEquals(GroundKind.FULL, groundKind(systemShowsOurs = true, scrimAlpha = 60, ownGround = true))
-        assertEquals(
-            "the phone book and kid Settings: transparent over Android's wallpaper",
-            GroundKind.TRANSPARENT,
-            groundKind(systemShowsOurs = true, scrimAlpha = 0),
-        )
+        assertEquals("without ownGround: transparent over Android's wallpaper", GroundKind.TRANSPARENT, groundKind(systemShowsOurs = true, scrimAlpha = 0))
+        // qa-launcher-small-a-code Q-1: the phone book and kid Settings draw the same copy, so no switch between them
+        // and Home swaps it for Android's (slightly differently scaled) render.
+        assertTrue(code("calls/PhoneBookActivity.kt").contains("val ink = WallpaperGround.apply(this, binding.root, ownGround = true).ink"))
+        assertTrue(code("ui/kidsettings/KidSettingsActivity.kt").contains("val wallpaper = WallpaperGround.apply(this, binding.root, ownGround = true)"))
+        // ...and they are, with Home, every screen that shows Android's wallpaper.
+        val showsWallpaper = listOf("calls/PhoneBookActivity.kt", "ui/kidsettings/KidSettingsActivity.kt", "ui/HomeActivity.kt")
+        val root = listOf(File("src/main/java/com/kidslauncher/mdm"), File("app/src/main/java/com/kidslauncher/mdm")).first { it.exists() }
+        val found = root.walk().filter { it.isFile && it.name.endsWith(".kt") }
+            .filter { Regex("override fun (showsSystemWallpaper|isHomeScreen)\\(").containsMatchIn(it.readText()) }
+            .map { it.relativeTo(root).path }.sorted().toList()
+        assertEquals(showsWallpaper.sorted(), found)
+        for (path in showsWallpaper) {
+            assertEquals(path, 0, Regex("WallpaperGround\\.apply\\(this, binding\\.root\\)").findAll(code(path)).count())
+        }
         val ground = code("ui/wallpaper/WallpaperGround.kt")
         assertTrue(ground.contains("GroundKind.FULL -> WallpaperRender.GroundDrawable(state.current.fill, state.bitmap, scrim)"))
         val home = code("ui/HomeActivity.kt")

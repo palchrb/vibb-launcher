@@ -156,7 +156,8 @@ class PhoneBookActivity : UIObjectActivity() {
     }
 
     private fun render() {
-        val ink = WallpaperGround.apply(this, binding.root).ink
+        // The same copy of the wallpaper as Home draws (qa-launcher-small-a-code Q-1): no scale step between the two.
+        val ink = WallpaperGround.apply(this, binding.root, ownGround = true).ink
         KidInk.label(binding.phoneBookHeader.kidHeaderTitle, ink)
         KidInk.label(binding.phoneBookInfo, ink, dim = true)
         val state = CallPolicyStore.effectiveState()

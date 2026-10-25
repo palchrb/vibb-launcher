@@ -199,7 +199,8 @@ class KidSettingsActivity : UIObjectActivity() {
     override fun showsSystemWallpaper() = true
 
     private fun render() {
-        val wallpaper = WallpaperGround.apply(this, binding.root)
+        // The same copy of the wallpaper as Home draws (qa-launcher-small-a-code Q-1): no scale step between the two.
+        val wallpaper = WallpaperGround.apply(this, binding.root, ownGround = true)
         val model = kidSettingsModel(
             dpm.isDeviceOwnerApp(packageName), cachedPolicy(), wallpaper.choices, wallpaper.current,
         )

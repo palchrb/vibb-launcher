@@ -116,14 +116,17 @@ fun appLoadTrails(
 
 /** The trail after a pass released at [now] having touched [touched]: joined with an earlier trail still inside its
  * window (a chain of passes - the provisioning storm's five), the window counting from this release; `null` when
- * nothing is left to trail. */
+ * nothing is left to trail. A pass that touched nothing leaves the earlier trail as it was, its window included
+ * (qa-launcher-small-a-code Q-3: steady-state passes must not keep a trail alive for good). */
 fun appLoadTrailAfterRelease(
     touched: Set<String>,
     now: Long,
     previous: AppLoadTrail?,
     windowMs: Long = APP_LOAD_TRAIL_WINDOW_MS,
 ): AppLoadTrail? {
-    val kept = previous?.takeIf { now - it.releasedAt in 0 until windowMs }?.packages.orEmpty()
+    val live = previous?.takeIf { now - it.releasedAt in 0 until windowMs }
+    if (touched.isEmpty()) return live
+    val kept = live?.packages.orEmpty()
     val all = kept + touched
     return if (all.isEmpty()) null else AppLoadTrail(all, now)
 }
@@ -226,7 +229,8 @@ suspend fun ReceiveChannel<Unit>.nextAppLoad(timeoutMs: Long?): AppLoadNext {
  * [heldSince] says an `AppEnforcer.apply` runs ([appLoadHeld]) a burst waits for its end - looking again every
  * [APP_LOAD_HOLD_POLL_MS] ([appLoadHoldWaitMs]) - and the hold's end counts as a request (qa-appload-hold-code Q-2): the
  * debounce goes on from there, so the callbacks the apply's last packages send after it ended join the same load - one
- * load per apply. A burst of the pass's trail alone ([takeNormal] false for all its requests) waits by
+ * load per apply, 300 ms after it (the hold's end is a normal request, qa-launcher-small-a-code Q-2). A burst of a
+ * pass's trail alone after that ([takeNormal] false for all its requests) waits by
  * [appLoadBurstDue]'s 3 s / 30 s; a request that isn't the trail brings back 300 ms / 2 s from its arrival. Returns when
  * the channel closes (tests; the app's never does), after loading a burst still pending.
  */
@@ -265,7 +269,9 @@ suspend fun runAppLoads(
                     wasHeld = false
                     firstAt = t
                     lastAt = t
-                    if (normalAt != null) normalAt = t
+                    // qa-launcher-small-a-code Q-2: the hold's end is a normal request - the pass's own result reaches
+                    // Home 300 ms after it, as before the trail; only the stragglers that come later wait 3 s.
+                    normalAt = t
                 }
                 if (appLoadBurstDue(t, firstAt, lastAt, normalAt)) break
                 appLoadBurstWaitMs(t, firstAt, lastAt, normalAt)
