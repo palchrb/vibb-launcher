@@ -12,6 +12,7 @@ import com.kidslauncher.mdm.server.dto.InstallProgressReport
 import com.kidslauncher.mdm.server.dto.ParentPinEventBatch
 import com.kidslauncher.mdm.server.dto.PowerReport
 import com.kidslauncher.mdm.server.dto.StatusReportRequest
+import com.kidslauncher.mdm.server.dto.TimeRequestBody
 import com.kidslauncher.mdm.server.dto.TrackedAppUpdate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -110,6 +111,11 @@ interface MdmApi {
     /** The phone's shutdown and start (design 38) - see [PowerEvents]. */
     @POST("api/devices/power")
     suspend fun sendPower(@Body report: PowerReport): Response<Unit>
+
+    /** The kid's request for more screen time (design r13 §2.5): the raw answer, read by
+     * `timeRequestAnswer` (an old server's 404 included) - see `timerules/TimeRequests`. */
+    @POST("api/devices/time-request")
+    suspend fun sendTimeRequest(@Body request: TimeRequestBody): Response<ResponseBody>
 }
 
 /** [callTimeoutMs] bounds a whole call (design 38's prepared shutdown client); `null` = none.

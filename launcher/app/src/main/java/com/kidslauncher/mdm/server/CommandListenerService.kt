@@ -1,6 +1,5 @@
 package com.kidslauncher.mdm.server
 
-import android.app.Notification
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -10,11 +9,8 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.COMMAND_LISTENER_NOTIFICATION_ID
-import com.kidslauncher.mdm.NOTIFICATION_CHANNEL_LISTENER
-import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.push.BackstopAlarm
 import com.kidslauncher.mdm.push.LastByteInterceptor
@@ -110,9 +106,17 @@ class CommandListenerService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        // First, unconditionally (ForegroundServiceDidNotStartInTimeException otherwise).
-        startForeground(COMMAND_LISTENER_NOTIFICATION_ID, buildNotification())
+        // First, unconditionally (ForegroundServiceDidNotStartInTimeException otherwise): the plain "Vibb One".
+        startForeground(COMMAND_LISTENER_NOTIFICATION_ID, AnchorNotice.plain(this))
         running = this
+        // Design r13 §2.3: this instance posted its own; then the time left, read from CE prefs only now (any fault
+        // leaves the plain notification).
+        AnchorNotice.reset(this)
+        try {
+            AnchorNotice.refreshNow(this)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't show the time left: ${e.javaClass.simpleName}")
+        }
         // The screen on/off/unlock signals (screen time, time rules, the Play window, handy's PIN
         // lock) live in PinLockRuntime since step 10 - registered for the whole process from
         // Application, not for this service's lifetime (QA 10 #4).
@@ -156,19 +160,6 @@ class CommandListenerService : Service() {
             Log.w(LOG_TAG, "Couldn't stop the passive feed", e)
         }
         super.onDestroy()
-    }
-
-    /** The phone's one standing notification: "Vibb One", no body (PLAN "Fewer persistent
-     * notifications"; the VPN drops its own once the filter is up). Android shows a foreground
-     * service's notification at LOW at least, so its status-bar icon stays while this runs. */
-    private fun buildNotification(): Notification {
-        return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_LISTENER)
-            .setSmallIcon(R.drawable.baseline_settings_24)
-            .setContentTitle(getString(R.string.notification_listener_title))
-            .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setOngoing(true)
-            .setSilent(true)
-            .build()
     }
 
     private fun stopSse() {
@@ -345,6 +336,9 @@ class CommandListenerService : Service() {
         /** The live instance, for [checkStream]. Same process only. */
         @Volatile
         private var running: CommandListenerService? = null
+
+        /** The anchor runs in this process (design r13 §2.3: its notice is posted only then). */
+        val isRunning: Boolean get() = running != null
 
         /**
          * At screen-on/unlock (`PinLockRuntime`'s process-wide receiver, design 19 QA #2d): costs

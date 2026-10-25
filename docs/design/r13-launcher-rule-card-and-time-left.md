@@ -287,6 +287,13 @@ nothing. It stays out of `swipeControls` (`GlancePanel.kt:985`), and `LockMediaG
 6. Font scale 2.0: the page scrolls and nothing is clipped. With the 12 h format: "Til 2:30 PM".
 7. TalkBack: one stop, "Skole, til 14:30", no action announced. The swipe and the handle's "Lås opp" still unlock.
 8. Android mode (Android's PIN set) and own mode: the same card. After the unlock, the time-rule screen as before.
+9. A rule that starts while the used-up budget already locks (SCREEN_TIME, then SCHOOL), with the glance on screen:
+   the hourglass card turns into the book card at the minute (the stricter reason check plus the listener).
+10. A lifted second rule whose pause ends before the first rule's end: no "Til" on the card or on the time-rule screen.
+    With the pause running past the end: "Til HH:MM" on both.
+11. Switch Vibb's language nb <-> en with the glance up, then lock: the card's label and "Til"/"Until" follow.
+12. A rule with an exempt messaging app and 5 minutes of budget left: no "Til" line (Q-6). Use the app for 6 minutes:
+    the phone locks as SCREEN_TIME at the budget's end, as the card no longer promised otherwise.
 
 ## 2. Item 2 - screen time left in the anchor notification
 
@@ -563,13 +570,26 @@ per-app language re-posts. The "last posted" field resets in `onCreate`, because
    "Vibb One". The 2-hour pause: plain "Vibb One".
 8. Android mode: if the notification shows on Android's lock screen at all (a MIN-channel silent notification normally
    doesn't), its action asks for the unlock first.
+9. Tap offline, add +15 min from the PWA, then go online: the phone must not post the old request, and Device › Time
+   must not show "Asked" (Q-3).
+10. Reboot while "Spurt kl. HH:MM" shows: after the unlock it is still there, and it goes at the 30 minutes with the
+    screen left on the time-rule screen.
+11. Three accepted requests, then move the clock past midnight (`adb shell cmd alarm set-time` or a zone change): the
+    action is back at 00:00 with no tap.
+12. Phone Setup's zone unset, the phone in Europe/Oslo: a request between the phone's midnight and UTC midnight after
+    three in the evening is accepted - the server counts the phone's own day (Q-2).
+13. `adb shell dumpsys notification --noredact | grep me.vibb.launcher` after the pause starts and ends and after the
+    offline override: still exactly one record, id 1002, plain during the window.
+14. TalkBack on the shade: the action reads "Be om mer tid, button"; "Spurt kl. HH:MM" reads as text, with no action
+    announced.
+15. Switch Vibb's language with the shade open: the title follows within a minute while counting.
 
 ## 3. Implementation steps
 
 | Step | What | Size |
 |---|---|---|
 | 1 (launcher) | Item 1: `lock/RuleCard.kt` + `RuleCardTest`; `ruleLabel` in `TimeLockModel.kt` (used by `LockActivity` too); `LockActivity.kt:177` on `lockEnd` (D2); `lock_rule_card` in `view_lock_glance.xml`; `glanceLayout(…, rule)` (the compact rule unchanged); `recheck` computes one snapshot, passes it to `reevaluateLockReasonFromCache` and the lock listeners (before `relearn`); `GlancePanel` (model, bind, listener, `placeList`, the try/catch in `resumeNow`); the string; `LockGlanceTest`/`LockGlanceLayoutTest`; launcher/CLAUDE.md's glance paragraph. Emulator §1.7. | S-M |
-| 2 (both directories, one commit for the contract) | Server: `Kind::ExtraTimeRequest` (and its doc comment), `0096_extra_time_request.sql`, `extra_time_request` + `told`, Activity's case-insensitive strip, `handlers::device_api::time_request` with the cap, the news rule and the three answers, the Time page's "Asked" row, `src/tests/time_request.rs` (in `mod.rs`), `migrations_73_to_96_in_order`, `docs/notes/server/notifications.md` and `pwa.md`. Launcher: `server/dto/TimeRequest.kt` (body + answer), `MdmApi.sendTimeRequest`, the contract copy, `TimeRequestsTest`'s contract part. `server/testdata/time_request.json` + its copy; the CI path regexes and `server-ci.yml`'s comment; `CLAUDE.md`'s shared-files paragraph and both "CI and releases" lists. Server release (0.49.0) before the launcher with step 3. | S-M |
+| 2 (both directories, one commit for the contract) | Server: `Kind::ExtraTimeRequest` (and its doc comment), `0096_extra_time_request.sql`, `extra_time_request` + `told`, Activity's case-insensitive strip, `handlers::device_api::time_request` with the cap, the news rule and the three answers, the Time page's "Asked" row, `src/tests/time_request.rs` (in `mod.rs`), `migrations_73_to_96_in_order`, `docs/notes/server/notifications.md` and `time-rules.md`. Launcher: `server/dto/TimeRequest.kt` (body + answer), `MdmApi.sendTimeRequest`, the contract copy, `TimeRequestsTest`'s contract part. `server/testdata/time_request.json` + its copy; the CI path regexes and `server-ci.yml`'s comment; `CLAUDE.md`'s shared-files paragraph and both "CI and releases" lists. Server release (0.50.0) before the launcher with step 3. | S-M |
 | 3 (launcher) | Item 2: `timerules/TimeLeftNotice.kt` + `TimeLeftNoticeTest`; `server/AnchorNotice.kt` (builder, refresh, the locale-keyed cache, reset in `onCreate`); `CommandListenerService.isRunning`, `startForeground` plain first then the refresh; `TimeAskReceiver` (manifest, not exported); `timerules/TimeRequests.kt` (DE record and count, `requestState`, `askStep`, the upload and `timeRequestAnswer`) + the rest of `TimeRequestsTest`; `openUntilMs` in `TimeRulesRuntime.nextBoundary`; the refresh in `recheck`; `ScreenTimeTracker`'s checkpoint delay and its refresh (+ `ScreenTimeTest`); the strings; launcher/CLAUDE.md's "Notifications in the shade" paragraph. Emulator §2.9. | M |
 
 Each step follows the usual process: design QA (done: `qa-r13-design.md`), implementation, code QA, then all of the
@@ -628,3 +648,63 @@ None. The three questions of the first draft and the QA's two (R13-4, R13-7) are
   (§2.5-§2.8).
 - R13-14: `ruleLabel` returns the name or the kind (resolved by the screens), never a string from resources; the card is
   `screenReaderFocusable="true"` (§1.2, §1.3).
+
+## Implementation status (2026-10-25, branch `r13-rule-card`, code-QA'd, fix round done, awaiting merge)
+
+Built in three steps, each its own commit on `r13-rule-card` (from `main` at 77089563):
+
+1. **Step 1, launcher** - the rule card: `lock/RuleCard.kt` (`ruleCard`, `lockEnd`, `ruleLiftsAt`, `lockEndOf`,
+   `ruleCardOf`, `RuleCardKind.glyph`), `ruleLabel`/`RuleLabel` in `ui/TimeLockModel.kt` (the time-rule screen's title
+   and "Til" line use them, D1/D2; `LockActivity.labelText`/`kindLabelRes`), `liftExpiry` factored out of
+   `liftExpiries`, `lock_rule_card` in `view_lock_glance.xml`, `glanceLayout(.., rule)`, the lock listeners and the
+   one snapshot in `TimeRulesRuntime.recheck` (`reevaluateLockReasonFromCache(context, snapshot)`), `GlancePanel`'s
+   model, listener, `bindRuleCard`, `placeList` and the `try/catch` in `resumeNow`, `glance_rule_card_description`
+   (nb + en). Tests: `RuleCardTest` (7), `LockGlanceTest`'s rule-card layout test, `LockGlanceLayoutTest` (the 82 dp
+   part, the card's attributes, §1.3's table at 473/497 dp, the order).
+2. **Step 2, both directories** - `POST /api/devices/time-request` (`handlers::device_api::time_request`), the kind
+   `extra_time_request` (key + params, `told`), the switch `push_extra_time` (migration
+   `0096_extra_time_request.sql`), the cap, the news rule, `stale`, Device › Time's `data-asked` row
+   (`parent_events::open_extra_time_request`), Activity's case-insensitive clock strip, the contract
+   `server/testdata/time_request.json` + its launcher copy, `dto/TimeRequest.kt`, `MdmApi.sendTimeRequest`,
+   `TimeRequestsTest`'s contract part, both CLAUDE.md lists and the workflows' path filters. Tests:
+   `tests::time_request` (7; 9 after the fix round), `parent_events::tests` (2 new, the words table extended), `activity::tests` (1 new),
+   `migrations_73_to_96_in_order`.
+3. **Step 3, launcher** - `timerules/TimeLeftNotice.kt`, `server/AnchorNotice.kt`, `timerules/TimeAskReceiver.kt`
+   (manifest, not exported), `timerules/TimeRequests.kt` (+ `AnchorRefresh`), `CommandListenerService.isRunning` and
+   its `onCreate` (plain first, then reset and refresh), the refresh in `recheck`, `openUntilMs` in `nextBoundary`,
+   `checkpointDelayMs` and the minute tick in `ScreenTimeTracker.update`, the upload after `PowerEvents.upload`, the
+   strings (nb + en). Tests: `TimeLeftNoticeTest`, the rest of `TimeRequestsTest`, `ScreenTimeTest`'s
+   `checkpointDelayMs`, `QuietNotificationsTest` (the builder moved to `AnchorNotice`).
+
+Test counts at the end: launcher 1742 unit tests (1733 after steps 1-2), server 1298, all green; no jstests touched (no static
+JS changed); clippy's 13 known warnings, no new one.
+
+**Deviations, as built:**
+- **D6 / the migration**: `0096_extra_time_request.sql`. Built with a gap at 0095 while `pwa-fixes-a` held it; since
+  the fix round's merge of `main` 0095 is there and `migrations_73_to_96_in_order` lists both - no gap, no renumbering.
+- **`ExtraTimeParams` has one more field than §2.6 names**: `rule` (the report's `lock_reason`, `SCHOOL`/`BEDTIME`/
+  `RULE`) next to `state: "rule"`, since the words "School"/"Bedtime"/"A time rule" need the kind; never the rule's
+  name. `left_minutes` and `rule` are left out when unused.
+- **`requestState`'s order**: an open record of today (Pending/Asked) comes before Capped, so "Spurt kl. HH:MM" shows
+  after the day's third accepted request too; Capped follows once it is answered or its 30 minutes end (§2.4 lists
+  Capped first; read as the states, not their order).
+- **The Time page's "after a lift"**: a lift whose `created_at` is at or after the request's counts (both
+  `datetime('now')`, one-second resolution): a lift in the same second as the request counts as its answer.
+- **Two more refresh points than §2.3 names**: the pause's start (`RestrictionsPause.reapply`) and the override's
+  (`OfflineOverride.activate`) call `AnchorRefresh.request` - neither runs `recheck`, and the notice must go plain at
+  once. Since the fix round (Q-5) the tracker's minute tick hands its own `BudgetUse`, policy and ledger day through
+  (`AnchorNotice.refresh(context, budget, policy, day, now)`), as §2.3 said - no snapshot of its own.
+- **`ruleCard` also needs the same reason** in the pref and the snapshot (not only both locking): a moment where they
+  disagree on the kind shows no card.
+
+**Fix round** (`docs/review/qa-r13-rule-card-code.md`, "Fix round"): `main` merged (0095 on it, no renumbering);
+Q-1 the server part ships as 0.50.0 (`server/Cargo.toml` bumped on this branch); Q-2 the cap and "stale" count the
+phone's own day - the zone its report names, else Phone Setup's (`device_api::extra_time_day_zone`); Q-3 the upload
+drops a request a lift answered meanwhile (`uploadStep`); Q-4 the tap arms the boundary alarm; Q-5 the minute tick
+builds no snapshot; Q-6 `lockEnd` refuses an end the budget can break first under a rule with usable apps; Q-7/S4 the
+switch is on for a parent saved before 0096; Q-8 the server tests pass at any hour (`steady_zone`, the day from the
+zone); L11 and L15 pinned. Test counts after it: launcher 1780, server 1311 (with main merged), all green; clippy 13 known warnings.
+
+**Owed (not run here):** the emulator checks §1.7 (1-12) and §2.9 (1-15), the server's web-push check for the new kind
+(§2.9 item 3), Android 15/16's silent-section collapse (§2.9 item 2), and the Jelly Star. Release order:
+`server-v0.50.0` before the first `launcher-v*` tag with step 3.

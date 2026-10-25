@@ -353,7 +353,28 @@ class LockGlanceTest {
         assertEquals(GlanceTileSize.FULL, glanceLayout(tile = true, rowCount = 2 - 1, timer = false).tile)
         // The panel takes the tile from the rule alone (shownTile), the rows counted as the store gives them.
         val panel = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/lock/GlancePanel.kt") }.first { it.exists() }.readText()
-        assertTrue(panel.contains("private fun shownTile(): GlanceTileSize = glanceLayout(tileUp, rows.size, clockUp).tile"))
+        assertTrue(panel.contains("private fun shownTile(): GlanceTileSize = glanceLayout(tileUp, rows.size, clockUp, ruleCard != null).tile"))
+    }
+
+    /** Design r13 §1.3 (D4): the rule's card is one more part of the page - the compact rule still counts rows alone. */
+    @Test
+    fun `the rule card - kept in the layout, never counted toward the compact tile (r13 D4)`() {
+        for (rows in 0..9) {
+            for (timer in listOf(false, true)) {
+                val without = glanceLayout(tile = true, rowCount = rows, timer = timer)
+                val with = glanceLayout(tile = true, rowCount = rows, timer = timer, rule = true)
+                assertEquals("$rows rows: only the card differs", without.copy(rule = true), with)
+                assertTrue(with.rule)
+                assertFalse(without.rule)
+            }
+        }
+        assertEquals(GlanceTileSize.FULL, glanceLayout(tile = true, rowCount = 1, timer = false, rule = true).tile)
+        assertEquals(GlanceTileSize.COMPACT, glanceLayout(tile = true, rowCount = 2, timer = false, rule = true).tile)
+        assertEquals(GlanceTileSize.NONE, glanceLayout(tile = false, rowCount = 2, timer = false, rule = true).tile)
+        // The panel passes its kept card everywhere it lays out, and the list sits 14 dp under the card.
+        val panel = listOf("src/main", "app/src/main").map { File(it, "java/com/kidslauncher/mdm/lock/GlancePanel.kt") }.first { it.exists() }.readText()
+        assertEquals(3, Regex("glanceLayout\\(tileUp, rows\\.size, clockUp, ruleCard != null\\)").findAll(panel).count())
+        assertTrue(panel.contains("layout.tile == GlanceTileSize.NONE && !layout.timer && !layout.rule) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP"))
     }
 
     @Test
@@ -708,6 +729,7 @@ class LockGlanceLayoutTest {
     private data class Parts(
         val bottom: Float, val clock: Float, val date: Float, val alarm: Float, val tileFull: Float, val tileCompact: Float,
         val timer: Float, val rowsTop: Float, val rowsTopNoTile: Float, val row: Float, val rowGap: Float, val more: Float,
+        val rule: Float,
     )
 
     private val parts by lazy {
@@ -724,6 +746,7 @@ class LockGlanceLayoutTest {
             row = height(row),
             rowGap = 8f,
             more = root.byId("lock_glance_more").let { it.dim("layout_marginTop") + height(it) },
+            rule = withMargins("lock_rule_card"),
         )
     }
 
@@ -737,10 +760,11 @@ class LockGlanceLayoutTest {
         val list = if (layout.rows == 0) {
             0f
         } else {
-            (if (layout.tile == GlanceTileSize.NONE && !layout.timer) p.rowsTopNoTile else p.rowsTop) +
+            (if (layout.tile == GlanceTileSize.NONE && !layout.timer && !layout.rule) p.rowsTopNoTile else p.rowsTop) +
                 layout.rows * p.row + (layout.rows - 1) * p.rowGap + (if (layout.more > 0) p.more else 0f)
         }
-        return p.clock + p.date + (if (alarm) p.alarm else 0f) + tile + (if (layout.timer) p.timer else 0f) + list
+        return p.clock + p.date + (if (alarm) p.alarm else 0f) + (if (layout.rule) p.rule else 0f) + tile +
+            (if (layout.timer) p.timer else 0f) + list
     }
 
     private fun available(navBar: Float) = 569f - 48f - navBar - root.dim("paddingTop") - root.dim("paddingBottom")
@@ -780,6 +804,45 @@ class LockGlanceLayoutTest {
         assertEquals(481f, available(24f), 0.01f)
         assertEquals(401f, scroller(48f), 0.01f)
         assertEquals(425f, scroller(24f), 0.01f)
+        // Design r13 §1.3: the rule's card - 12 + max(40, 21 + 18.2) + 12 = 64 dp, 82 with its 18 dp margin.
+        assertEquals(82f, parts.rule, 0.01f)
+    }
+
+    /** Design r13 §1.3: the card is information only - no tap, one TalkBack stop without a keyboard focus stop. */
+    @Test
+    fun `the rule card - not clickable, one TalkBack stop, the disc, the compact tile's ground (r13 §1_3)`() {
+        val card = root.byId("lock_rule_card")
+        assertEquals("LinearLayout", card.tagName)
+        assertEquals("horizontal", card.getAttributeNS(ns, "orientation"))
+        assertEquals("", card.getAttributeNS(ns, "clickable"))
+        assertEquals("", card.getAttributeNS(ns, "focusable"))
+        assertEquals("yes", card.getAttributeNS(ns, "importantForAccessibility"))
+        assertEquals("true", card.getAttributeNS(ns, "screenReaderFocusable"))
+        assertEquals("gone", card.getAttributeNS(ns, "visibility"))
+        assertEquals("@drawable/bg_glance_compact_tile", card.getAttributeNS(ns, "background"))
+        assertEquals(12f, card.dim("padding"))
+        assertEquals(18f, card.dim("layout_marginTop"))
+        val glyph = root.byId("lock_rule_card_glyph")
+        assertEquals(listOf(40f, 40f), listOf(glyph.dim("layout_width"), glyph.dim("layout_height")))
+        assertEquals("@drawable/bg_lock_kind_disc", glyph.getAttributeNS(ns, "background"))
+        assertEquals("@color/kid_accent", glyph.getAttributeNS(ns, "tint"))
+        assertEquals(9f, glyph.dim("padding"))
+        for (id in listOf("lock_rule_card_glyph", "lock_rule_card_title", "lock_rule_card_until")) {
+            assertEquals(id, "no", root.byId(id).getAttributeNS(ns, "importantForAccessibility"))
+        }
+        for ((id, size) in listOf("lock_rule_card_title" to 15f, "lock_rule_card_until" to 13f)) {
+            val text = root.byId(id)
+            assertEquals(id, size, text.dim("textSize"))
+            assertEquals(id, "1", text.getAttributeNS(ns, "maxLines"))
+            assertEquals(id, "end", text.getAttributeNS(ns, "ellipsize"))
+        }
+        // Nothing in the card is a control.
+        assertTrue(card.all().none { it.getAttributeNS(ns, "clickable") == "true" || it.tagName.endsWith("Button") })
+        // The panel never makes it clickable or sensitive: the label is the parent's own (r13 §1.3).
+        val panel = file("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText()
+        assertFalse(panel.contains("lockRuleCard.setOnClickListener"))
+        assertFalse(panel.contains("sensitive(glance.lockRuleCard"))
+        assertTrue(panel.contains("view.contentDescription = if (until != null) activity.getString(R.string.glance_rule_card_description, label, until) else label"))
     }
 
     @Test
@@ -910,6 +973,27 @@ class LockGlanceLayoutTest {
             assertEquals("$case at 473", at473, maxOf(0f, content - scroller(48f)), 0.01f)
             assertEquals("$case at 497", at497, maxOf(0f, content - scroller(24f)), 0.01f)
         }
+        // Design r13 §1.3's table: the rule's card on the page, with rowsTop under it; how far it scrolls at 473 / 497.
+        fun ruled(tile: Boolean, rows: Int) = content(glanceLayout(tile, rows, timer = false, rule = true))
+        val ruleTable = listOf(
+            Triple("the card alone", ruled(false, 0), 186f to (0f to 0f)),
+            Triple("the card + 1 row", ruled(false, 1), 256f to (0f to 0f)),
+            Triple("the card + 3 rows", ruled(false, 3), 384f to (0f to 0f)),
+            Triple("the card + 4 rows", ruled(false, 4), 448f to (47f to 23f)),
+            Triple("the card + full music", ruled(true, 0), 360.8f to (0f to 0f)),
+            Triple("the card + full music + 1 row", ruled(true, 1), 430.8f to (29.8f to 5.8f)),
+            Triple("the card + compact music + 2 rows", ruled(true, 2), 410f to (9f to 0f)),
+        )
+        for ((case, content, expected) in ruleTable) {
+            val (height, scrolls) = expected
+            assertEquals(case, height, content, 0.01f)
+            assertEquals("$case at 473", scrolls.first, maxOf(0f, content - scroller(48f)), 0.01f)
+            assertEquals("$case at 497", scrolls.second, maxOf(0f, content - scroller(24f)), 0.01f)
+        }
+        val withAlarm = content(glanceLayout(tile = true, rowCount = 1, timer = false, rule = true), alarm = true)
+        assertEquals("frame D + the alarm line", 451f, withAlarm, 0.01f)
+        assertEquals(50f, withAlarm - scroller(48f), 0.01f)
+        assertEquals(26f, withAlarm - scroller(24f), 0.01f)
         // Nine rows and more: eight and the "more" line.
         assertEquals(at(false, 8) + parts.more, at(false, 9), 0.01f)
         assertEquals(at(false, 9), at(false, 30), 0.01f)
@@ -1065,7 +1149,7 @@ class LockGlanceLayoutTest {
     fun `the order - the scroller with the whole top block, then the anchored bottom block (r11 §1_1)`() {
         val ids = root.all().map { it.id() }.filter { it.isNotEmpty() }
         val order = listOf(
-            "lock_glance_scroll", "lock_glance_top", "lock_glance_clock", "lock_glance_date", "lock_glance_alarm", "lock_media_tile",
+            "lock_glance_scroll", "lock_glance_top", "lock_glance_clock", "lock_glance_date", "lock_glance_alarm", "lock_rule_card", "lock_media_tile",
             "lock_media_compact", "lock_timer_tile", "lock_glance_list", "lock_glance_rows", "lock_glance_more",
             "lock_glance_bottom", "lock_glance_emergency", "lock_glance_torch",
         )

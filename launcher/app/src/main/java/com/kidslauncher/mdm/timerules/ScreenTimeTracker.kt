@@ -15,9 +15,6 @@ import com.kidslauncher.mdm.server.currentPolicyDecision
 
 private const val LOG_TAG = "ScreenTimeTracker"
 
-/** While counting, usage is saved this often (a process death loses at most this much). */
-private const val CHECKPOINT_MS = 60_000L
-
 /**
  * Counts screen time (handy step 6): the screen is on and unlocked, unless one of our free screens
  * (lock screen, phone book, our in-call screen, Settings - [FREE_SCREENS]) is in front and not
@@ -89,9 +86,24 @@ object ScreenTimeTracker {
             countingSinceElapsed = null
             if (!appInUse(context)) return
             countingSinceElapsed = now
-            handler.postDelayed(checkpoint, CHECKPOINT_MS)
-            val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy) ?: return
-            val remaining = budgetUse(TimeRulesRuntime.ledger(context, policy), policy)?.remainingMs ?: return
+            val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy)
+            if (policy == null) {
+                handler.postDelayed(checkpoint, CHECKPOINT_MS)
+                return
+            }
+            val ledger = TimeRulesRuntime.ledger(context, policy)
+            val budget = budgetUse(ledger, policy)
+            val remaining = budget?.remainingMs
+            // Design r13 §2.3: while a budget counts down, the checkpoint lands on the next minute flip, and the anchor's
+            // notice shows the new minute (the refresh posts only a changed notice) - from this budget, no snapshot of
+            // its own (qa-r13-rule-card-code Q-5: one snapshot per re-check).
+            handler.postDelayed(checkpoint, checkpointDelayMs(remaining))
+            if (remaining == null) return
+            try {
+                com.kidslauncher.mdm.server.AnchorNotice.refresh(context, budget, policy, ledger.day, System.currentTimeMillis())
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Notice refresh failed: ${e.javaClass.simpleName}")
+            }
             // Already used up: the lock is (being) applied by the re-check that got us here.
             if (remaining > 0) handler.postDelayed(budgetRunsOut, remaining + 1_000L)
         } catch (e: Exception) {

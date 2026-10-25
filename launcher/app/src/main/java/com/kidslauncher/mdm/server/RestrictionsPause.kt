@@ -127,6 +127,8 @@ object RestrictionsPause {
                 AppEnforcer.apply(app, currentPolicyDecision())
                 reevaluateLockReasonFromCache(app)
                 com.kidslauncher.mdm.timerules.TimeRuleAlarm.schedule(app)
+                // Design r13 §2.2: the pause makes the anchor's notice plain "Vibb One" (and its end the time left).
+                com.kidslauncher.mdm.timerules.AnchorRefresh.request(app)
             } catch (e: Exception) {
                 Log.w("RestrictionsPause", "Re-applying after a pause change failed", e)
             }

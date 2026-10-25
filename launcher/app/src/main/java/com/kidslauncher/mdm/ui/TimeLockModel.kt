@@ -1,5 +1,7 @@
 package com.kidslauncher.mdm.ui
 
+import com.kidslauncher.mdm.lock.RuleCardKind
+import com.kidslauncher.mdm.lock.ruleCardKind
 import com.kidslauncher.mdm.timerules.BudgetUse
 import com.kidslauncher.mdm.timerules.KIND_BEDTIME
 import com.kidslauncher.mdm.timerules.KIND_SCHOOL
@@ -21,6 +23,19 @@ fun lockGlyph(ruleKind: String?): LockGlyph = when (ruleKind) {
     KIND_SCHOOL -> LockGlyph.BOOK
     else -> LockGlyph.DOT
 }
+
+/** A screen's line 1 (design r13 D1, R13-14): the rule's own [Named] name, else its kind's label ([Kind]), which the
+ * screens resolve with `getString` - never a string from resources here. */
+sealed interface RuleLabel {
+    data class Named(val name: String) : RuleLabel
+
+    data class Kind(val kind: RuleCardKind) : RuleLabel
+}
+
+/** The time-rule screen's and the glance card's label: [name] when it isn't blank, else [kind]'s (school, bedtime, any
+ * other kind a rule; no rule - `null` - the used-up budget). */
+fun ruleLabel(kind: String?, name: String): RuleLabel =
+    if (kind != null && name.isNotBlank()) RuleLabel.Named(name) else RuleLabel.Kind(ruleCardKind(kind))
 
 /**
  * A length of time in whole minutes as the kid reads it: "45 min", "2 t", "1 t 30 min" (nb) /

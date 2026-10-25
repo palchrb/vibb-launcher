@@ -503,8 +503,8 @@ after), never later. Details stay in the entries below.
 
 - **Launcher**
   - **Design 38 device check still owed** (2026-10-25: the user's "no shutdown seen" came from `adb emu kill`, which ends the emulator without Android's shutdown sequence - no `ACTION_SHUTDOWN`, the correct outcome; not a bug): check with `adb shell svc power reboot` / `svc power shutdown` on the emulator and the power menu on the Jelly Star - the `off` push within seconds, the `on` push "off since …". The coordinator runs the emulator half at the next emulator session. Launcher check, XS.
-  - A time rule shows as a card on the glance (design r13 §1; designed and design-QA'd 2026-10-25, `qa-r13-design.md`; awaiting build - step 1).
-  - Screen time left in the "Vibb One" notification + "Be om mer tid" (design r13 §2; designed and QA'd 2026-10-25; awaiting build - steps 2 and 3, server part first).
+  - A time rule shows as a card on the glance (design r13 §1; designed and design-QA'd 2026-10-25, `qa-r13-design.md`; built, QA'd (`qa-r13-rule-card-code.md`), awaiting merge (branch `r13-rule-card`) - step 1).
+  - Screen time left in the "Vibb One" notification + "Be om mer tid" (design r13 §2; designed and QA'd 2026-10-25; built, QA'd (`qa-r13-rule-card-code.md`), awaiting merge (branch `r13-rule-card`) - steps 2 and 3, the server (0.50.0) before the launcher).
   - Missed Element X calls on the contact card and the phone book's badge (capture the notification shape on the Jelly Star first).
   - VoIP small fixes: "Tilbake til samtalen" button, no SOS guess at a VoIP wake, no BlockedAppActivity flash, READ_PHONE_STATE for allowlisted apps; design 57 itself is held (design 59 hybrid).
   - Browser "secure DNS" bypass: Chrome managed config, DoH-host block category, Firefox canary.
@@ -962,6 +962,11 @@ after), never later. Details stay in the entries below.
   "Vibb One" notification, that same notification carries the time when a budget exists and stays the quiet "Vibb
   One" otherwise - never two. Nothing else goes in the shade from us; the empty Quick Settings area above it is
   SystemUI's and stays empty under lock task. Launcher (+ server for the request), S-M; after rc.3.
+  **Built** 2026-10-25 on `r13-rule-card` (design r13 steps 2 and 3, `docs/design/r13-launcher-rule-card-and-time-left.md`
+  "Implementation status"): `POST /api/devices/time-request`, the `extra_time_request` event with its own switch "Asks
+  for more time" (migration 0096), Device › Time's "Asked for more time at …", the anchor's time-left title and its one
+  action. Code-QA'd (`qa-r13-rule-card-code.md`, fix round done); ships with server 0.50.0; awaiting merge and the
+  emulator checks (§2.9).
 - **Design 59d step M (2026-10-23, six-inch run F1/F6): an unarmed boot must never hang.** Built on `d59d-step-m`
   (59d §8.12): in android mode the boot cover stays enabled (a direct-boot-aware HOME at every boot, also after a crash
   or `adb reboot`), the take-over is a device-protected stamp, and `lock/HomePin` keeps HomeActivity the unlocked HOME
@@ -1358,6 +1363,9 @@ after), never later. Details stay in the entries below.
   reason (school, bedtime, custom rules and the used-up screen time), and the card is **information only** (no
   tap action; TalkBack reads it as text).
   Launcher only; a mockup first, then the usual process.
+  **Built** 2026-10-25 on `r13-rule-card` (design r13 step 1, "Implementation status"): `lock/RuleCard.kt`, the card
+  under the alarm line, the certain end shared with the time-rule screen. Code-QA'd (`qa-r13-rule-card-code.md`, fix
+  round done); awaiting merge and the emulator checks (§1.7).
 - **Enrolment before Home's first start** (glance-topinset run, qa-glance-topinset-code Q-3): a phone enrolled from
   Vibb One's Settings before Home ever started on screen resets its preferences at the next process start
   (`Application.initRest`: `internal.started_before` unset -> `resetPreferences`). The cached policy is dropped, so

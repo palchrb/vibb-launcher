@@ -153,6 +153,28 @@ object TimeRulesRuntime {
         return Snapshot(lock, tp, ledger, budget, records, clocks, zone)
     }
 
+    /** Lock listeners (design r13 §1.4): handed each re-check's snapshot after the lock reason and key are written.
+     * Main thread. */
+    private val lockListeners = java.util.concurrent.CopyOnWriteArrayList<(Snapshot) -> Unit>()
+
+    fun addLockListener(listener: (Snapshot) -> Unit) {
+        lockListeners.addIfAbsent(listener)
+    }
+
+    fun removeLockListener(listener: (Snapshot) -> Unit) {
+        lockListeners.remove(listener)
+    }
+
+    private fun notifyLockListeners(snap: Snapshot) {
+        for (listener in lockListeners) {
+            try {
+                listener(snap)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Lock listener failed: ${e.javaClass.simpleName}")
+            }
+        }
+    }
+
     /** The lock in force now for [policy] (the one being enforced). */
     fun currentLock(context: Context, policy: PolicyResponse?, overrideActive: Boolean): TimeLock =
         snapshot(context, policy, overrideActive).lock
@@ -195,7 +217,11 @@ object TimeRulesRuntime {
      * (design 24b S2: the window locks again then, one alarm for everything). */
     fun nextBoundary(context: Context): Instant? {
         val clocks = clocks()
-        val windowEnds = windowEnds(clocks).map { Instant.ofEpochMilli(it) }
+        // Design r13 §2.3 (R13-8): an open request for more time ends at its stored instant - one more boundary, so
+        // "Spurt" goes on time across a process death or a reboot.
+        val windowEnds = (windowEnds(clocks) + listOfNotNull(TimeRequests.openUntilMs(context)))
+            .filter { it > clocks.wallMs }
+            .map { Instant.ofEpochMilli(it) }
         val policy = KidModeEnforcer.timePolicyOf(currentPolicyDecision().policy) ?: return windowEnds.minOrNull()
         val records = liftRecords(context, policy.lifts, clocks)
         return nextBoundary(policy, Instant.ofEpochMilli(clocks.wallMs), zone(), liftExpiries(records, clocks) + windowEnds)
@@ -228,7 +254,9 @@ object TimeRulesRuntime {
         // decision sees includes it (the budget timer lands here), and re-arm the timers.
         ScreenTimeTracker.update(context)
         try {
-            val changedTo = reevaluateLockReasonFromCache(context)
+            // Design r13 §1.4 (R13-5): one snapshot per re-check, for the lock reason and the listeners.
+            val snap = snapshot(context, currentPolicyDecision().policy)
+            val changedTo = reevaluateLockReasonFromCache(context, snap)
             if (changedTo != null && changedTo != LockReason.NONE && !OngoingCalls.hasLiveCall) {
                 // Design 32 step 2 (M5): not while the keyguard cover is locked (the screen-on's start
                 // under the lock) - it would un-occlude it; at once without the cover.
@@ -237,6 +265,15 @@ object TimeRulesRuntime {
                     if (LauncherPreferences.mdm().lockReason() != LockReason.NONE && !OngoingCalls.hasLiveCall) LockActivity.start(it)
                 }
             }
+            // Design r13 §2.3 (R13-3): the anchor's notice from the same snapshot, counting or not.
+            try {
+                com.kidslauncher.mdm.server.AnchorNotice.refresh(context, snap)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Notice refresh failed: ${e.javaClass.simpleName}")
+            }
+            // The glance's rule card (design r13 §1.4) before the missed calls' re-learn, so the panel's render that
+            // `relearn` may fire already has the new card - the page is laid out once.
+            notifyLockListeners(snap)
             // The lock's glance page shows what our missed-call notification shows: a rule's start or
             // end re-learns it (design 25, code QA Low 3; never posts anew, never clears).
             if (changedTo != null) com.kidslauncher.mdm.calls.MissedCallNotifier.relearn(context)

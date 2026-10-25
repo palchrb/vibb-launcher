@@ -2246,3 +2246,178 @@ pub async fn power(
         }
     }
 }
+
+/// `POST /api/devices/time-request` takes at most this much (design r13 §2.5): an id and an instant.
+pub const TIME_REQUEST_BODY_LIMIT: usize = 1024;
+
+/// The phone's request for more screen time (design r13 §2.5, `server/testdata/time_request.json`'s
+/// `request`): its own `id` (16-64 lowercase hex, the event's key) and when the kid asked.
+#[derive(Debug, serde::Deserialize)]
+pub struct TimeRequestBody {
+    pub id: String,
+    pub asked_at_ms: i64,
+}
+
+/// The answer (`time_request.json`'s `answers`): taken, or not with why - `capped` (the day's
+/// [crate::parent_events::EXTRA_TIME_REQUESTS_A_DAY] were asked already) or `stale` (asked before
+/// the server zone's today).
+#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+pub struct TimeRequestAnswer {
+    pub accepted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<&'static str>,
+}
+
+impl TimeRequestAnswer {
+    pub const ACCEPTED: TimeRequestAnswer = TimeRequestAnswer {
+        accepted: true,
+        reason: None,
+    };
+    pub const CAPPED: TimeRequestAnswer = TimeRequestAnswer {
+        accepted: false,
+        reason: Some("capped"),
+    };
+    pub const STALE: TimeRequestAnswer = TimeRequestAnswer {
+        accepted: false,
+        reason: Some("stale"),
+    };
+}
+
+/// The zone whose day a request for more time is counted in (qa-r13-rule-card-code Q-2): the
+/// phone's own IANA zone from its report (`time_state.zone`), which its ledger - and so its own
+/// count of three - counts the day in; Phone Setup's when the report names none or one that doesn't
+/// read.
+pub fn extra_time_day_zone(
+    report: Option<&crate::time_state::TimeReport>,
+    setup: &crate::display_time::Zone,
+) -> crate::display_time::Zone {
+    report
+        .and_then(|r| r.zone.as_deref())
+        .map(crate::display_time::Zone::from_setting)
+        .filter(|zone| !zone.is_fallback())
+        .unwrap_or(*setup)
+}
+
+/// A request id: 16-64 lowercase hex characters (the phone's 32 from `SecureRandom`).
+pub fn time_request_id_ok(id: &str) -> bool {
+    (16..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// `POST /api/devices/time-request` (design r13 §2.5-2.6): the kid tapped "Be om mer tid" in the
+/// phone's notification. 200 with [TimeRequestAnswer], 400 for a body that doesn't parse or an id
+/// that isn't 16-64 lowercase hex, 413 above [TIME_REQUEST_BODY_LIMIT], 500 on a DB error (the phone
+/// keeps its request and retries). "Today" is the phone's own day ([extra_time_day_zone]: the zone
+/// its report names, else Phone Setup's). A request asked before it isn't stored (`stale`); a
+/// future `asked_at` counts as now. In one `BEGIN IMMEDIATE` transaction: the fourth request of
+/// the day (rows of today other than this id) isn't stored (`capped`, one log line);
+/// else the event `extra_time_request` keyed by the id (a retry is one row, and a retried third
+/// request is no fourth), pushed only while it is news (asked under 30 min ago at intake), to every
+/// parent with "Asks for more time" on. Where the phone stood comes from its own latest report, when
+/// that is at most 15 minutes old.
+pub async fn time_request(
+    State(state): State<AppState>,
+    Extension(AuthedDevice(device)): Extension<AuthedDevice>,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    use crate::parent_events::{self, EXTRA_TIME_NEWS_MINUTES, EXTRA_TIME_REQUESTS_A_DAY, Push};
+    let Ok(request) = serde_json::from_slice::<TimeRequestBody>(&body) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    if !time_request_id_ok(&request.id) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let Some(asked) = chrono::DateTime::from_timestamp_millis(request.asked_at_ms) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let Some(phone) = parent_events::Phone::load(&state.db, device.id).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let now = phone.now;
+    let asked = asked.min(now);
+    let latest: Option<(String, String, Option<String>)> = match sqlx::query_as(
+        "SELECT reported_at, lock_reason, time_state_json FROM device_status \
+         WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
+    )
+    .bind(device.id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        Ok(latest) => latest,
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "couldn't read the last report");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let report = latest.and_then(|(at, reason, json)| {
+        crate::handlers::devices::time_report(&at, &reason, json.as_deref())
+    });
+    // The day the cap and "stale" go by (qa-r13-rule-card-code Q-2): the phone's own, in the zone it
+    // reports (`time_state.zone`, the zone its ledger counts its day in), else Phone Setup's.
+    let day = extra_time_day_zone(report.as_ref().map(|(_, r)| r), &phone.zone);
+    let start_of_day = day.start_of_today(now);
+    if asked < start_of_day {
+        return Json(TimeRequestAnswer::STALE).into_response();
+    }
+    // Where the phone stood, from a report of the last 15 minutes only (Q-9: an older one may say
+    // "School" from the morning); the sync posts its report just before the request.
+    let ask = report
+        .filter(|(at, _)| {
+            now - *at <= chrono::Duration::minutes(crate::time_state::AWAY_STALE_MINUTES)
+        })
+        .map(|(_, report)| parent_events::TimeAsk::of(&report, &phone.zone, now))
+        .unwrap_or(parent_events::TimeAsk::Unknown);
+    let result = async {
+        let mut tx = state.db.begin_with("BEGIN IMMEDIATE").await?;
+        let earlier: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM parent_events WHERE device_id = ? AND kind = 'extra_time_request' \
+             AND dedup_key != ? AND datetime(happened_at) >= datetime(?)",
+        )
+        .bind(device.id)
+        .bind(&request.id)
+        .bind(crate::push::db_time(start_of_day))
+        .fetch_one(&mut *tx)
+        .await?;
+        if earlier >= EXTRA_TIME_REQUESTS_A_DAY {
+            tx.rollback().await?;
+            return Ok::<Option<bool>, sqlx::Error>(None);
+        }
+        let push = if now - asked < chrono::Duration::minutes(EXTRA_TIME_NEWS_MINUTES) {
+            Push::Now
+        } else {
+            Push::No
+        };
+        let event = parent_events::extra_time_request(
+            device.id,
+            &phone.name,
+            &request.id,
+            asked,
+            &ask,
+            push,
+        );
+        let raised = parent_events::raise(&mut tx, &event).await?.is_some();
+        tx.commit().await?;
+        Ok(Some(raised))
+    };
+    match result.await {
+        Ok(None) => {
+            tracing::info!(
+                device_id = device.id,
+                "a request for more time over the day's cap"
+            );
+            Json(TimeRequestAnswer::CAPPED).into_response()
+        }
+        Ok(Some(raised)) => {
+            if raised {
+                state.push.wake();
+            }
+            Json(TimeRequestAnswer::ACCEPTED).into_response()
+        }
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "couldn't store a request for more time");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}

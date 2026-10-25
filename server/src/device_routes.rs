@@ -86,6 +86,12 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
             )),
         )
         .route(
+            "/api/devices/time-request",
+            post(handlers::device_api::time_request).layer(DefaultBodyLimit::max(
+                handlers::device_api::TIME_REQUEST_BODY_LIMIT,
+            )),
+        )
+        .route(
             "/api/devices/music/library",
             get(handlers::music_api::library),
         )

@@ -74,6 +74,8 @@ object OfflineOverride {
                 reevaluateLockReasonFromCache(appContext)
                 // The rules come back when the override ends: that's the next boundary now.
                 com.kidslauncher.mdm.timerules.TimeRuleAlarm.schedule(appContext)
+                // Design r13 §2.2: the override makes the anchor's notice plain "Vibb One".
+                com.kidslauncher.mdm.timerules.AnchorRefresh.request(appContext)
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Applying the offline override failed", e)
             }

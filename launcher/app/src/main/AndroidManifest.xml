@@ -454,6 +454,10 @@
         <receiver
             android:name=".play.InstallModeReceiver"
             android:exported="false" />
+        <!-- "Be om mer tid" on the anchor's notification (design r13 §2.4) - our own PendingIntent only. -->
+        <receiver
+            android:name=".timerules.TimeAskReceiver"
+            android:exported="false" />
         <!-- "Lock again" on a parent-PIN window's notification (design 24b) - our own PendingIntent only. -->
         <receiver
             android:name=".server.WindowRelockReceiver"

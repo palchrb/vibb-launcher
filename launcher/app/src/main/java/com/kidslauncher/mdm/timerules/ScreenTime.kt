@@ -148,11 +148,13 @@ fun activeRuleLifts(records: List<LiftRecord>, lifts: List<Lift>, clocks: Clocks
     return RuleLifts(all = active.any { it.ruleId == null }, ruleIds = active.mapNotNull { it.ruleId }.toSet())
 }
 
+/** The wall-clock instant at which [record]'s lift ends: the earlier of its wall end and now plus the elapsed time left. */
+fun liftExpiry(record: LiftRecord, clocks: Clocks): Instant =
+    Instant.ofEpochMilli(minOf(record.untilWallMs, clocks.wallMs + (record.elapsedStartMs + record.durationMs - clocks.elapsedMs)))
+
 /** Wall-clock instants at which the active rule lifts end (for the boundary alarm). */
 fun liftExpiries(records: List<LiftRecord>, clocks: Clocks): List<Instant> =
-    records.filter { liftRecordActive(it, clocks) }.map {
-        Instant.ofEpochMilli(minOf(it.untilWallMs, clocks.wallMs + (it.elapsedStartMs + it.durationMs - clocks.elapsedMs)))
-    }
+    records.filter { liftRecordActive(it, clocks) }.map { liftExpiry(it, clocks) }
 
 /** The ids of the lifts in force: active rule lifts, and budget lifts applied to today. */
 fun activeLiftIds(records: List<LiftRecord>, lifts: List<Lift>, ledger: ScreenTimeLedger, clocks: Clocks): List<Long> {
@@ -165,6 +167,17 @@ fun activeLiftIds(records: List<LiftRecord>, lifts: List<Lift>, ledger: ScreenTi
         }
     }.map { it.id }
 }
+
+/** The screen-time checkpoint's usual delay (a process death loses at most this much). */
+const val CHECKPOINT_MS = 60_000L
+
+/**
+ * The checkpoint's next delay (design r13 §2.3): while screen time counts with [remainingMs] left, the next flip of
+ * the shown minute (`leftMinutes` rounds up) plus 200 ms, so the notification's minute changes within 0.2 s of the real
+ * one; otherwise (no budget, used up) the usual [CHECKPOINT_MS].
+ */
+fun checkpointDelayMs(remainingMs: Long?): Long =
+    if (remainingMs != null && remainingMs > 0) ((remainingMs - 1) % 60_000L) + 1 + 200 else CHECKPOINT_MS
 
 /** Our screens whose time is free: the lock screen, the phone book, our in-call screen and
  * Settings. Home is not on the list - other apps can be visible over it (picture-in-picture,

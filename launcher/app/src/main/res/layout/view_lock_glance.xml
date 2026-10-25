@@ -84,6 +84,68 @@
                 android:textSize="13sp"
                 android:visibility="gone" />
 
+            <!-- The time rule's card (design r13 §1.3, lock.GlancePanel, pure lock.RuleCard): while a time rule or the
+                 used-up budget locks the phone - the kind's glyph in the time-rule screen's disc, line 1 the rule's own
+                 name or the kind's label, line 2 "Til 14:30" only with a certain end (gone without one). Information
+                 only: never clickable, one TalkBack stop (the panel sets the description), no keyboard focus. The
+                 compact tile's ground, 82 dp with its margin in LockGlanceLayoutTest's model; it doesn't count toward
+                 the compact player (D4). -->
+            <LinearLayout
+                android:id="@+id/lock_rule_card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:background="@drawable/bg_glance_compact_tile"
+                android:gravity="center_vertical"
+                android:importantForAccessibility="yes"
+                android:orientation="horizontal"
+                android:padding="12dp"
+                android:screenReaderFocusable="true"
+                android:visibility="gone">
+
+                <ImageView
+                    android:id="@+id/lock_rule_card_glyph"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@drawable/bg_lock_kind_disc"
+                    android:importantForAccessibility="no"
+                    android:padding="9dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/lock_glyph_hourglass"
+                    android:tint="@color/kid_accent" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:importantForAccessibility="no"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/lock_rule_card_title"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:fontFamily="@font/nunito_extrabold"
+                        android:importantForAccessibility="no"
+                        android:maxLines="1"
+                        android:textColor="@color/kid_ink"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        android:id="@+id/lock_rule_card_until"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:fontFamily="@font/nunito_bold"
+                        android:importantForAccessibility="no"
+                        android:maxLines="1"
+                        android:textColor="@color/kid_core_dim"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </LinearLayout>
+
             <!-- The full tile (r9 §3, the iPhone 16's lock player): a 48 dp cover, the item and the entry on one line
                  each, one progress row - elapsed, the 4 dp bar, the time left with a minus - and previous / play / next
                  as plain glyphs in the ink (48 / 56 / 48 dp targets 28 dp apart, an oval ripple, no discs). The times

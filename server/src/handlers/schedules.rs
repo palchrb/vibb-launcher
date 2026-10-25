@@ -1249,6 +1249,9 @@ struct DeviceTimeTemplate {
     screen: Option<(String, Option<String>)>,
     /// The last report's age and exact time, for the Now group's footer.
     reported: Option<(String, String)>,
+    /// "17:21": the kid's request for more time still open (design r13 §2.7), at the top of Extra
+    /// Time Today until a lift or the day's end.
+    asked: Option<String>,
     /// The rules a pause can name (the phone's effective ones).
     pause_rules: Vec<(i64, String)>,
     lifts: Vec<crate::handlers::lifts::LiftView>,
@@ -1344,6 +1347,11 @@ async fn render_device_time(
             Ok(lifts) => lifts,
             Err(err) => return read_failed(err, "the lifts"),
         };
+    let asked = match crate::parent_events::open_extra_time_request(&state.db, id, &zone, now).await
+    {
+        Ok(asked) => asked.map(|at| zone.clock(at)),
+        Err(err) => return read_failed(err, "the request for more time"),
+    };
 
     // What the phone last said (design 31 §3.10's badge; the end only when provably right).
     let report = latest.as_ref().and_then(|s| {
@@ -1436,6 +1444,7 @@ async fn render_device_time(
             locking,
             screen,
             reported,
+            asked,
             pause_rules: effective.iter().map(|r| (r.id, r.name.clone())).collect(),
             lifts,
             done,

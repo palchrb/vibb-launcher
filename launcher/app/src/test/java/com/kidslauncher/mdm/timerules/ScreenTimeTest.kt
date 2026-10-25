@@ -227,4 +227,19 @@ class ScreenTimeTest {
         assertEquals(0, tomorrow.usedMs)
         assertFalse(tomorrow.unreadable)
     }
+
+    /** Design r13 §2.3: the checkpoint lands on the next minute flip while a budget counts down. */
+    @Test
+    fun `the checkpoint waits for the next minute flip while time is left`() {
+        assertEquals(1_200L, checkpointDelayMs(61_000))
+        assertEquals(60_200L, checkpointDelayMs(60_000))
+        assertEquals(201L, checkpointDelayMs(60_001))
+        assertEquals(201L, checkpointDelayMs(1))
+        assertEquals("no budget", 60_000L, checkpointDelayMs(null))
+        assertEquals("used up", 60_000L, checkpointDelayMs(0))
+        // The shown minute (rounded up) changes right before the tick.
+        val remaining = 61_000L
+        assertEquals(2, leftMinutes(remaining))
+        assertEquals(1, leftMinutes(remaining - (checkpointDelayMs(remaining) - 200)))
+    }
 }
