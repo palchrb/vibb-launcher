@@ -61,7 +61,9 @@ import me.vibb.music.sync.NewNotifier
 fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) {
     val snap by vm.snapshot.collectAsStateWithLifecycle()
     val hub by PlayerHub.state.collectAsStateWithLifecycle()
-    val row by vm.nowRow.collectAsStateWithLifecycle()
+    // the stored row and whether it has been read, as one value (the launch splash's contentReady)
+    val rowRead by vm.nowRowRead.collectAsStateWithLifecycle()
+    val row = rowRead?.row
     val spotifyOutcome by vm.spotifyOutcome.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<PlayerHub.Message?>(null) }
     LaunchedEffect(Unit) {
@@ -84,7 +86,6 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
     }
     // qa-music-r13-code Q-10: the first content frame already on the last played tile (the splash holds until then, at
     // most its cap); once shown, never hidden again
-    val rowKnown by vm.nowRowKnown.collectAsStateWithLifecycle()
     var capped by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         delay(SPLASH_CAP_MS)
@@ -93,7 +94,8 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
     var shown by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(Palette.bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
         val s = snap ?: return@Box
-        if (!shown && !contentReady(true, rowKnown, row != null, vm.startSettled, capped)) return@Box
+        // an empty library's empty state is the content at once: no carousel to wait for (the emulator run of music-r13)
+        if (!shown && !contentReady(true, s.entries.isNotEmpty(), rowRead != null, row != null, vm.startSettled, capped)) return@Box
         // the first content frame: the launch splash may go now (MainActivity.holdSplash)
         SideEffect {
             shown = true

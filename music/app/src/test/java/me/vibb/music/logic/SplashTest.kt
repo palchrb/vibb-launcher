@@ -18,11 +18,22 @@ class SplashTest {
 
     @Test
     fun `the first content frame waits for the stored row and the carousel's start tile (Q-10)`() {
-        assertFalse("no snapshot", contentReady(snapshot = false, rowKnown = true, rowStored = false, startSettled = false, capped = true))
-        assertFalse("the row not read yet", contentReady(snapshot = true, rowKnown = false, rowStored = false, startSettled = false, capped = false))
-        assertTrue("no stored row: the library at tile 0 is right", contentReady(snapshot = true, rowKnown = true, rowStored = false, startSettled = false, capped = false))
-        assertFalse("a stored row before the start tile", contentReady(snapshot = true, rowKnown = true, rowStored = true, startSettled = false, capped = false))
-        assertTrue("on the last played tile", contentReady(snapshot = true, rowKnown = true, rowStored = true, startSettled = true, capped = false))
-        assertTrue("the cap: whatever there is", contentReady(snapshot = true, rowKnown = false, rowStored = false, startSettled = false, capped = true))
+        assertFalse("no snapshot", contentReady(snapshot = false, entries = true, rowKnown = true, rowStored = false, startSettled = false, capped = true))
+        assertFalse("the row not read yet", contentReady(snapshot = true, entries = true, rowKnown = false, rowStored = false, startSettled = false, capped = false))
+        assertFalse("a stored row before the start tile", contentReady(snapshot = true, entries = true, rowKnown = true, rowStored = true, startSettled = false, capped = false))
+        assertTrue("on the last played tile", contentReady(snapshot = true, entries = true, rowKnown = true, rowStored = true, startSettled = true, capped = false))
+        assertTrue("the cap, the backstop: whatever there is", contentReady(snapshot = true, entries = true, rowKnown = false, rowStored = false, startSettled = false, capped = true))
+    }
+
+    @Test
+    fun `an empty library's empty state follows the splash at once, whatever the row (the r13 emulator run)`() {
+        // the run held the splash to the 3 s cap on an empty library: nothing to wait for without a carousel
+        assertTrue("no entries, the row not read yet", contentReady(snapshot = true, entries = false, rowKnown = false, rowStored = false, startSettled = false, capped = false))
+        assertTrue("no entries, a stored row whose start never settles", contentReady(snapshot = true, entries = false, rowKnown = true, rowStored = true, startSettled = false, capped = false))
+    }
+
+    @Test
+    fun `entries but no stored row - the library at tile 0 at once, no start to wait for`() {
+        assertTrue(contentReady(snapshot = true, entries = true, rowKnown = true, rowStored = false, startSettled = false, capped = false))
     }
 }
