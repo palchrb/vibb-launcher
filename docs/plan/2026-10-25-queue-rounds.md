@@ -70,7 +70,7 @@ Asked once, in this order; a default is what the round does if there is no answe
     one line each; 56 is picked up when Android 17 is announced for the Jelly Star.
 15. **Design 15 §1-3/§5** (a parent-set `message_room` per contact, the server fields, PWA help), never built; only
     the learned on-phone map (`ElementRoomStore`) exists. *Default:* drop; the note gets a "learned variant only"
-    banner. (The queue's contact-photo item says "design 15's `message_room`" - see §2's note to `launcher-glance-b`.)
+    banner. (The queue's contact-photo item says "design 15's `message_room`" - see §1.4's note to `launcher-glance-b`.)
 16. **Design 22 S5/L1 (Connection page, policy `connection`, QR v2, direct HTTPS for the phones) and S6+L2 (mode 2)**,
     never built. *Default:* park explicitly with a line in 22 ("the tailnet-only setup is the product"); S7 (CSP
     without `unsafe-inline`) moves into server security round S2 (it is server review L5 too).
