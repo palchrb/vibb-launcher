@@ -16,3 +16,19 @@ luma/diff per frame (`scratchpad/r11/rec.sh`); the lock's windows are secure, so
 | Design 38 §6p: the shutdown's last position | `adb shell svc power shutdown` with a fix 5 min old: the inbox shows **"Testtelefon was turned off 21:34 · battery 100 %, charging · Last position from 21:34: shown on Locate"** within 45 s. Locate's "Last position before the phone went off" line and the device page's "Off since" are absent while the off's push is held (the 5-minute restart merge, Q-5's rule) - re-checked 6 min later: Locate shows **"Last position before the phone went off"** on the newest point and the device page **"Off since 21:34 · battery was 100 %"** - PASS. |
 
 Not run here: §6u 2-4 (the connecting line against `fake-sonos`), the photo wallpaper, 3-button navigation, the Jelly Star.
+
+## Owed after launcher-glance-b (2026-10-25)
+
+The branch's emulator checks (`jelly36`, debug launcher; a WhatsApp or Element X account on the AVD, contacts in the
+phone book with photos):
+
+| Check | What to see |
+|---|---|
+| Element X DM row, a contact's learned room | The contact's photo (or initial) in the row's icon place, Element X's icon as the corner mark; a DM from a stranger keeps Element X's icon |
+| Element X group, newest sender a phone-book contact | That contact's photo with the app mark; "Fotballgjengen · Pappa" in "Name only"; "Pappa: text" under "Fotballgjengen" in "Full text"; a stranger's newest message shows the app icon |
+| WhatsApp DM / group, `tel:` sender in the phone book | The contact's photo; a number not in the phone book the app icon; `adb logcat` shows no number (`GlanceReader`, `GlancePanel`) |
+| "Full text", three messages from Mamma | "Mamma · 3 nye" over the newest text (en "Mamma · 3 new"); the swipe clears all three |
+| APP_ONLY (the app's lock-screen visibility secret) | App icon and "N nye varsler", no photo, no name |
+| A missed Element Call from a contact | The red phone badge in the corner (not the app mark) |
+| TalkBack on a group row | "…, Gruppe Fotballgjengen, siste fra Pappa, …" (nb) / "Group Fotballgjengen, latest from Pappa" (en) |
+| Provisioning storm again (`-wipe-data`, `set-device-owner`, enrol) | Fewer "apps loaded" lines after `set-device-owner` than the 43 here (the 17 before it stay: no window opens before the launcher is admin); 0 ANRs; Home's list right after the first policy |
