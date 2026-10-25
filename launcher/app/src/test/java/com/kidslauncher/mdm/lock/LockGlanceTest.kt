@@ -138,7 +138,7 @@ class LockGlanceTest {
         }
         // The "more" line's tap is a row without a target: the keypad, the plain prompt.
         assertEquals(GlanceStageState(LockStage.KEYPAD, null), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(null)))
-        assertEquals(GlancePrompt.PLAIN, glancePrompt(true, false, false, false, null))
+        assertEquals(GlancePrompt.PLAIN, glancePrompt(true, false, false, false, null, androidFace = false))
     }
 
     /** Design r11 §3.2: the first movement past the touch slop decides the axis; a tie is vertical. */
@@ -380,7 +380,7 @@ class LockGlanceTest {
     @Test
     fun `the timer tile's tap - the keypad with the clock app, its hint, and a time rule's usable apps (design 42)`() {
         assertEquals(GlanceStageState(LockStage.KEYPAD, GlanceTarget.ClockApp), glanceStageStep(GlanceStageState.GLANCE, GlanceStageEvent.Row(GlanceTarget.ClockApp)))
-        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, GlanceTarget.ClockApp))
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, GlanceTarget.ClockApp, androidFace = false))
         assertEquals("org.fossify.clock", GlanceTarget.ClockApp.appPackage)
         val rule = com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.BEDTIME, callsAllowed = true, usableApps = setOf("org.fossify.clock"))
         assertTrue(glanceUsableUnderLock(rule, GlanceTarget.ClockApp, callsManaged = true))
@@ -440,13 +440,25 @@ class LockGlanceTest {
 
     @Test
     fun `the keypad's prompt - the usual texts first, then the target's hint`() {
-        assertEquals(GlancePrompt.UNUSABLE, glancePrompt(usable = false, waiting = true, checking = true, wrong = true, target = conversation))
-        assertEquals(GlancePrompt.WAIT, glancePrompt(true, waiting = true, checking = true, wrong = true, target = conversation))
-        assertEquals(GlancePrompt.CHECKING, glancePrompt(true, false, checking = true, wrong = true, target = conversation))
-        assertEquals(GlancePrompt.WRONG, glancePrompt(true, false, false, wrong = true, target = conversation))
-        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, conversation))
-        assertEquals(GlancePrompt.SEE_MISSED, glancePrompt(true, false, false, false, GlanceTarget.MissedCalls(null)))
-        assertEquals(GlancePrompt.PLAIN, glancePrompt(true, false, false, false, null))
+        assertEquals(GlancePrompt.UNUSABLE, glancePrompt(usable = false, waiting = true, checking = true, wrong = true, target = conversation, androidFace = false))
+        assertEquals(GlancePrompt.WAIT, glancePrompt(true, waiting = true, checking = true, wrong = true, target = conversation, androidFace = false))
+        assertEquals(GlancePrompt.CHECKING, glancePrompt(true, false, checking = true, wrong = true, target = conversation, androidFace = false))
+        assertEquals(GlancePrompt.WRONG, glancePrompt(true, false, false, wrong = true, target = conversation, androidFace = false))
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, conversation, androidFace = false))
+        assertEquals(GlancePrompt.SEE_MISSED, glancePrompt(true, false, false, false, GlanceTarget.MissedCalls(null), androidFace = false))
+        assertEquals(GlancePrompt.PLAIN, glancePrompt(true, false, false, false, null, androidFace = false))
+    }
+
+    /** r10 run F1: as Android's face the kid PIN opens Android's pad, so an unusable kid hash is no "parent code only". */
+    @Test
+    fun `the unusable prompt only in own mode - Android's face shows the normal hint`() {
+        assertEquals(GlancePrompt.PLAIN, glancePrompt(usable = false, waiting = false, checking = false, wrong = false, target = null, androidFace = true))
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(false, false, false, false, conversation, androidFace = true))
+        assertEquals(GlancePrompt.SEE_MISSED, glancePrompt(false, false, false, false, GlanceTarget.MissedCalls(null), androidFace = true))
+        assertEquals("own mode keeps it", GlancePrompt.UNUSABLE, glancePrompt(false, false, false, false, null, androidFace = false))
+        val activity = listOf(File("src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt"), File("app/src/main/java/com/kidslauncher/mdm/lock/PinLockActivity.kt"))
+            .first { it.exists() }.readText()
+        assertTrue(activity.contains("glancePrompt(PinLockRuntime.pinUsable, waitMs > 0L, checking, wrongShown, glance?.state?.target, androidFace = AndroidLock.faceOn)"))
     }
 
     @Test

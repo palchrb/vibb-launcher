@@ -711,7 +711,7 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 - **The kid PIN, one sealed copy**: `storeAcceptedPolicy` caches `policyToCache` (the kid hash and salt `""`); the sync
   applies the policy with the hash. `configure` takes the pure `kidConfigFor(kidLock, memory, stored)` (`lock/
   PinLockState.kt`): a real hash; redacted -> a usable memory, else the usable sealed store, else the unusable stand-in
-  (`true to BAD_HASH`: the lock up, the parent code opens it) - **never `null` while `kid_lock` is there**; the policy's
+  (`true to BAD_HASH`: the lock up, the parent code opens it; the prompt "Only the parent code works right now", `GlancePrompt.UNUSABLE`, only in own mode - as Android's face the kid PIN still opens Android's pad, so the stand-in shows the normal hint: `glancePrompt(.., androidFace)`, r10 run F1, `LockGlanceTest`) - **never `null` while `kid_lock` is there**; the policy's
   length wins; a stored copy counts only with the policy's `pin_rev` (or rev 0). `saveConfig(PinWrite)`: `Write` only
   for a real hash (sealed; written again while `pinStored` is false), `Remove` for no `kid_lock`, `Keep` for a
   redacted/stand-in apply and the crash guard (a plain commit, no `LOCK`); a failed seal commits `active` and removes

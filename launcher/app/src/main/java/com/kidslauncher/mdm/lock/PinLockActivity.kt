@@ -1008,8 +1008,9 @@ class PinLockActivity : AppCompatActivity() {
     private fun render() {
         if (!::binding.isInitialized) return
         val length = PinLockRuntime.pinLength
-        // The usual texts first; else a glance row's hint (design 25 §1.1); else the plain prompt.
-        binding.pinPrompt.text = when (glancePrompt(PinLockRuntime.pinUsable, waitMs > 0L, checking, wrongShown, glance?.state?.target)) {
+        // The usual texts first; else a glance row's hint (design 25 §1.1); else the plain prompt. "Only the parent code"
+        // only in own mode (r10 run F1): as Android's face the kid PIN opens Android's pad.
+        binding.pinPrompt.text = when (glancePrompt(PinLockRuntime.pinUsable, waitMs > 0L, checking, wrongShown, glance?.state?.target, androidFace = AndroidLock.faceOn)) {
             GlancePrompt.UNUSABLE -> getString(R.string.pin_lock_unusable)
             GlancePrompt.WAIT -> getString(R.string.pin_lock_wait, backoffText(waitMs))
             GlancePrompt.CHECKING -> getString(R.string.pin_lock_checking)

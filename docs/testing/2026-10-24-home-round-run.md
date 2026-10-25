@@ -97,3 +97,6 @@ the implementer (no emulator in the round).
    e. a lock-up and screen off/on over the lock: the first frame is still the lock or black (design 32); the lock's
       leave on both pads (own keypad, Android's pad) - no black frame;
    f. `adb shell dumpsys gfxinfo me.vibb.launcher.debug` over a minute of Home use - no janky-frame jump against main.
+2. **F1** (`docs/testing/2026-10-25-r10-keystore-run.md`): with the kid hash unreadable in android mode (the r10 run's
+   recipe, `PinVaultKeyReceiver --es key secrets`), the glance/keypad prompt is the normal hint, never "Only the parent
+   code works right now"; in own mode the same recipe still shows it.
