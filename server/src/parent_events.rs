@@ -657,6 +657,14 @@ pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Pho
     plan
 }
 
+/// A pages' line about a `phone_off` may say it (the device page's "Off since", Locate's "Last
+/// position before the phone went off" - qa-last-position-code Q-5): not for a restart the phone
+/// announced ("Anna is restarting"), not while the off's push is still held ([OFF_HOLD] from its
+/// arrival, `created_at`) - the pages say no more than the pushes.
+pub fn off_said(title: &str, created_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    !title.ends_with(" is restarting") && now - created_at >= OFF_HOLD
+}
+
 /// The device page's header line between a shutdown and the next start (design 38 §3.4): "Off
 /// since 21:14 · battery was 3 %", the battery read from the off's stored words. Nothing for a
 /// restart the phone announced ("Anna is restarting") or while the off's push is still held
@@ -670,7 +678,7 @@ pub fn off_since_line(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Option<String> {
-    if title.ends_with(" is restarting") || now - created_at < OFF_HOLD {
+    if !off_said(title, created_at, now) {
         return None;
     }
     let level = summary.split(" · ").find_map(|part| {

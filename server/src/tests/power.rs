@@ -278,10 +278,36 @@ async fn the_shutdowns_last_position_is_on_locate() {
     assert!(inbox.contains("shown on Locate"), "{inbox}");
     // Locate: the newest fix is the shutdown's, the phone hasn't reported since.
     let path = format!("/devices/locate?device={id}");
+    // Q-5: as the device page's "Off since", nothing while the off's push is still held.
+    let page = app.get_page(&path, &cookie).await.text();
+    assert!(!page.contains("data-fix-before-off"), "held");
+    assert!(page.contains("a sudden power loss or airplane mode leaves nothing"));
+    sqlx::query("UPDATE parent_events SET created_at = datetime('now', '-6 minutes') WHERE kind = 'phone_off'")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let page = app.get_page(&path, &cookie).await.text();
     assert!(page.contains("data-fix-before-off"), "{page}");
     assert!(page.contains("Last position before the phone went off"));
-    assert!(page.contains("a sudden power loss or airplane mode leaves nothing"));
+    // N-2: the line keys off the newest fix - a newer one (no report yet) isn't the shutdown's.
+    let newer: i64 = sqlx::query_scalar(
+        "INSERT INTO device_locations (device_id, latitude, longitude, accuracy_meters, captured_at) \
+         VALUES (?, 59.95, 10.75, 10.0, ?) RETURNING id",
+    )
+    .bind(id)
+    .bind(crate::zones::instant(Utc::now()))
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let page = app.get_page(&path, &cookie).await.text();
+    assert!(!page.contains("data-fix-before-off"), "a newer fix");
+    sqlx::query("DELETE FROM device_locations WHERE id = ?")
+        .bind(newer)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app.get_page(&path, &cookie).await.text();
+    assert!(page.contains("data-fix-before-off"));
     // On again: a report (with the same fix re-sent) ends the line; the fix stays.
     sqlx::query(
         "UPDATE device_status SET reported_at = datetime('now', '+2 minutes') WHERE device_id = ?",
@@ -325,6 +351,95 @@ async fn a_bad_shutdown_position_costs_the_position_only() {
     }
     assert_eq!(events(&app, id).await.len(), 4);
     assert!(shutdown_fixes(&app, id).await.is_empty());
+    // Q-4: a valid position with an off the plan drops (older than 30 days, after its start)
+    // stores no fix.
+    let valid = |at: DateTime<Utc>| json!({ "lat": 59.9139, "lng": 10.7522, "accuracy_m": 25.0, "at_ms": ms(at) });
+    let old = now - Duration::days(31);
+    let body =
+        json!({ "off": off(old, 41, json!({ "location": valid(old - Duration::minutes(1)) })) });
+    assert_eq!(post(&app, &token, body).await, StatusCode::NO_CONTENT);
+    let late_off = now - Duration::minutes(10);
+    let body = json!({
+        "off": off(late_off, 41, json!({ "location": valid(late_off - Duration::minutes(1)) })),
+        "on": on(late_off - Duration::minutes(5), 42),
+    });
+    assert_eq!(post(&app, &token, body).await, StatusCode::NO_CONTENT);
+    assert!(
+        shutdown_fixes(&app, id).await.is_empty(),
+        "a dropped off stores no fix"
+    );
+    // N-3: the provider word is stored as the trail stores it, in the row and in the params.
+    let at = now - Duration::seconds(30);
+    let mut location = valid(at - Duration::minutes(2));
+    location["provider"] = json!("<b>GPS</b>");
+    let body = json!({ "off": off(at, 43, json!({ "location": location })) });
+    assert_eq!(post(&app, &token, body).await, StatusCode::NO_CONTENT);
+    let (params, _) = off_params(&app, id).await;
+    assert_eq!(params["location"]["lat"], 59.9139);
+    assert!(params["location"].get("provider").is_none(), "{params}");
+    let provider: Option<String> =
+        sqlx::query_scalar("SELECT provider FROM device_locations WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(provider, None);
+}
+
+/// Q-5: a restart the phone announced ("Anna is restarting") never says "before the phone went
+/// off", whatever the hold.
+#[tokio::test]
+async fn a_known_restart_says_no_last_position() {
+    let (app, id, token) = setup().await;
+    let now = Utc::now();
+    let location = json!({ "lat": 59.9139, "lng": 10.7522, "accuracy_m": 25.0,
+                           "at_ms": ms(now - Duration::minutes(3)) });
+    let body = json!({ "off": off(now - Duration::seconds(10), 41,
+                                  json!({ "reboot": true, "location": location })) });
+    assert_eq!(post(&app, &token, body).await, StatusCode::NO_CONTENT);
+    assert_eq!(shutdown_fixes(&app, id).await.len(), 1);
+    sqlx::query("UPDATE parent_events SET created_at = datetime('now', '-6 minutes')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let cookie = app.admin_cookie().await;
+    let page = app
+        .get_page(&format!("/devices/locate?device={id}"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("data-row=\"fix\""), "{page}");
+    assert!(!page.contains("data-fix-before-off"), "a known restart");
+}
+
+/// Q-3: the off's position goes with the location retention; the event stays its 90 days.
+#[tokio::test]
+async fn the_shutdowns_position_goes_with_the_location_retention() {
+    let (app, id, token) = setup().await;
+    let now = Utc::now();
+    let location = json!({ "lat": 59.9139, "lng": 10.7522, "accuracy_m": 25.0,
+                           "at_ms": ms(now - Duration::minutes(10)), "provider": "fused" });
+    let body =
+        json!({ "off": off(now - Duration::minutes(1), 41, json!({ "location": location })) });
+    assert_eq!(post(&app, &token, body).await, StatusCode::NO_CONTENT);
+    sqlx::query(
+        "UPDATE parent_events SET created_at = datetime('now', '-8 days') WHERE kind = 'phone_off'",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE device_policy SET location_retention_days = 14")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    crate::retention::prune(&app.db).await.unwrap();
+    assert_eq!(off_params(&app, id).await.0["location"]["lat"], 59.9139);
+    sqlx::query("UPDATE device_policy SET location_retention_days = 7")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    crate::retention::prune(&app.db).await.unwrap();
+    assert_eq!(off_params(&app, id).await, (Value::Null, None));
+    assert_eq!(events(&app, id).await.len(), 1, "the event stays");
 }
 
 /// qa-38-design H1: the shutdown's POST got through, then the next boot's start - within the

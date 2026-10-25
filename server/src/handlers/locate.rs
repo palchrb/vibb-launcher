@@ -336,14 +336,24 @@ struct FixView {
 const BEFORE_OFF_SLACK_SECONDS: i64 = 60;
 
 /// Locate's "Last position before the phone went off" (2026-10-25): the newest fix is a shutdown's
-/// (`shutdown_at`, migration 0097) and no status report came after that shutdown - once the
-/// phone reports again it is on, whatever fix it re-sends.
-fn before_off(shutdown_at: Option<DateTime<Utc>>, last_report: Option<DateTime<Utc>>) -> bool {
+/// (`shutdown_at`, migration 0097), no status report came after that shutdown - once the phone
+/// reports again it is on, whatever fix it re-sends - and the off's event may be said
+/// (`off_row`: its title and arrival; `parent_events::off_said`, the device page's "Off since"
+/// exclusions - not for a known restart, not while its push is held; qa-last-position-code Q-5). An
+/// event gone with the inbox's 90 days leaves the line to the other two.
+fn before_off(
+    shutdown_at: Option<DateTime<Utc>>,
+    last_report: Option<DateTime<Utc>>,
+    off_row: Option<(&str, DateTime<Utc>)>,
+    now: DateTime<Utc>,
+) -> bool {
     let Some(off) = shutdown_at else {
         return false;
     };
-    last_report
-        .is_none_or(|report| report <= off + chrono::Duration::seconds(BEFORE_OFF_SLACK_SECONDS))
+    off_row.is_none_or(|(title, created)| crate::parent_events::off_said(title, created, now))
+        && last_report.is_none_or(|report| {
+            report <= off + chrono::Duration::seconds(BEFORE_OFF_SLACK_SECONDS)
+        })
 }
 
 /// The phone's answer to the newest Update Location, and when it came.
@@ -976,18 +986,36 @@ async fn locate_view(
         .as_ref()
         .and_then(|l| l.shutdown_at.as_deref())
         .and_then(parse_db_utc);
-    let last_report = match shutdown_at {
-        Some(_) => sqlx::query_scalar::<_, Option<String>>(
-            "SELECT MAX(reported_at) FROM device_status WHERE device_id = ?",
-        )
-        .bind(id)
-        .fetch_one(&state.db)
-        .await?
-        .as_deref()
-        .and_then(parse_db_utc),
-        None => None,
+    let (last_report, off_row) = match shutdown_at {
+        Some(off) => {
+            let last = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT MAX(reported_at) FROM device_status WHERE device_id = ?",
+            )
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?
+            .as_deref()
+            .and_then(parse_db_utc);
+            // The off's event by its key (the shutdown's instant, as `shutdown_at` is stored).
+            let row = sqlx::query_as::<_, (String, String)>(
+                "SELECT title, created_at FROM parent_events WHERE device_id = ? \
+                 AND kind = 'phone_off' AND dedup_key = ?",
+            )
+            .bind(id)
+            .bind(crate::zones::instant(off))
+            .fetch_optional(&state.db)
+            .await?
+            .and_then(|(title, created)| Some((title, parse_db_utc(&created)?)));
+            (last, row)
+        }
+        None => (None, None),
     };
-    let fix_before_off = before_off(shutdown_at, last_report);
+    let fix_before_off = before_off(
+        shutdown_at,
+        last_report,
+        off_row.as_ref().map(|(title, at)| (title.as_str(), *at)),
+        now,
+    );
     let fix = newest.as_ref().map(|l| {
         let fix = Fix::of(&l.captured_at, l.accuracy_meters);
         let accuracy = match &badge {
@@ -1808,12 +1836,35 @@ mod tests {
     #[test]
     fn the_last_position_before_the_phone_went_off() {
         let off = crate::display_time::parse_db_utc("2026-10-25 21:14:00").unwrap();
+        let now = off + chrono::Duration::minutes(10);
         let at = |secs: i64| Some(off + chrono::Duration::seconds(secs));
-        assert!(super::before_off(Some(off), None));
-        assert!(super::before_off(Some(off), at(-600)), "a report before it");
-        assert!(super::before_off(Some(off), at(60)), "racing it");
-        assert!(!super::before_off(Some(off), at(61)), "on again");
-        assert!(!super::before_off(None, None), "not a shutdown's fix");
+        let line = |report, event| super::before_off(Some(off), report, event, now);
+        let told = Some(("Anna was turned off", off));
+        assert!(line(None, told));
+        assert!(line(at(-600), told), "a report before it");
+        assert!(line(at(60), told), "racing it");
+        assert!(!line(at(61), told), "on again");
+        assert!(
+            !super::before_off(None, None, told, now),
+            "not a shutdown's fix"
+        );
+        // Q-5: as the device page's "Off since" - not for a known restart, not while held.
+        assert!(
+            !line(None, Some(("Anna is restarting", off))),
+            "a known restart"
+        );
+        let held = off + crate::parent_events::OFF_HOLD - chrono::Duration::seconds(1);
+        assert!(
+            !super::before_off(Some(off), None, told, held),
+            "the push still held"
+        );
+        assert!(super::before_off(
+            Some(off),
+            None,
+            told,
+            off + crate::parent_events::OFF_HOLD
+        ));
+        assert!(line(None, None), "the event gone with the inbox's days");
     }
 
     use super::*;

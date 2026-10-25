@@ -2158,6 +2158,10 @@ pub async fn power(
                 "dropped a shutdown's location that isn't valid"
             );
         }
+        // The event's parameters carry the provider word as the trail stores it (N-3).
+        if let Some(location) = off.location.as_mut() {
+            location.provider = crate::models::location_provider(location.provider.as_deref());
+        }
         fix
     });
     let Some(phone) = crate::parent_events::Phone::load(&state.db, device.id).await else {
