@@ -118,6 +118,18 @@ pub async fn admin_gate(State(state): State<AppState>, request: Request, next: N
         Ok(()) => next.run(request).await,
         Err(refusal) => {
             let ip = client.describe();
+            // A parent's own browser refused (2026-10-25, PLAN "PWA shows the login page after a
+            // Tailscale outage"): the PWA gets an empty 403 here, never the sign-in page - logged
+            // on its own line, beside `security::log_sign_in_redirects`'. No cookie value.
+            if crate::security::has_session_cookie(request.headers()) {
+                tracing::warn!(
+                    reason = refusal.as_str(),
+                    client = %ip,
+                    method = %request.method(),
+                    path = crate::audit::clip(request.uri().path(), 100),
+                    "a request with a session cookie refused by the admin gate (403)"
+                );
+            }
             let detail = format!(
                 "{} (peer {}, {} {})",
                 refusal.as_str(),

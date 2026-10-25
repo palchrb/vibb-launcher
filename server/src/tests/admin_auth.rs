@@ -1081,3 +1081,211 @@ async fn the_sign_in_pages_use_the_new_components() {
     assert!(page.contains("autocomplete=\"one-time-code\""));
     assert!(!page.contains("tab-bar"));
 }
+
+/// A GET's raw answer (its extensions kept) with an optional cookie.
+async fn raw_get(app: &TestApp, uri: &str, cookie: Option<&str>) -> axum::response::Response {
+    let mut builder = Request::builder().uri(uri);
+    if let Some(cookie) = cookie {
+        builder = builder.header(header::COOKIE, cookie);
+    }
+    app.call_via(
+        &app.router,
+        LOOPBACK_PEER,
+        builder.body(Body::empty()).unwrap(),
+    )
+    .await
+}
+
+/// Why a page sent the browser to `/login` (`security::SignInWhy` on its redirect).
+async fn why_signed_out(app: &TestApp, cookie: Option<&str>) -> Option<security::SignInWhy> {
+    let res = raw_get(app, "/devices", cookie).await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        res.headers()
+            .get(header::LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "/login"
+    );
+    res.extensions().get::<security::SignInWhy>().copied()
+}
+
+/// 2026-10-25 (PLAN "PWA shows the login page after a Tailscale outage"): every redirect to the
+/// sign-in page says why, for `security::log_sign_in_redirects`' one log line.
+#[tokio::test]
+async fn a_redirect_to_the_sign_in_page_says_why() {
+    use security::SignInWhy;
+    let app = TestApp::new().await;
+    assert_eq!(why_signed_out(&app, None).await, Some(SignInWhy::NoCookie));
+    assert_eq!(
+        why_signed_out(&app, Some("other=1")).await,
+        Some(SignInWhy::NoCookie),
+        "another cookie isn't the session's"
+    );
+    assert_eq!(
+        why_signed_out(&app, Some("handy=not-a-session-id")).await,
+        Some(SignInWhy::CookieNotASession)
+    );
+
+    // A session whose row is past its expiry, then one whose row is gone.
+    let cookie = app.admin_cookie().await;
+    assert_eq!(
+        app.get_page("/devices", &cookie).await.status,
+        StatusCode::OK
+    );
+    sqlx::query("UPDATE tower_sessions SET expiry_date = '2000-01-01 00:00:00.0 +00:00:00'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        why_signed_out(&app, Some(&cookie)).await,
+        Some(SignInWhy::Expired)
+    );
+    sqlx::query("DELETE FROM tower_sessions")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        why_signed_out(&app, Some(&cookie)).await,
+        Some(SignInWhy::NoSessionRow)
+    );
+
+    // The account's epoch moved on (Sign Out Everywhere, a password change).
+    let cookie = app.admin_cookie().await;
+    sqlx::query("UPDATE admin_users SET session_epoch = session_epoch + 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        why_signed_out(&app, Some(&cookie)).await,
+        Some(SignInWhy::Epoch)
+    );
+
+    // A removed account.
+    let cookie = app.admin_cookie().await;
+    sqlx::query("UPDATE admin_users SET removed_at = datetime('now')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        why_signed_out(&app, Some(&cookie)).await,
+        Some(SignInWhy::AccountGone)
+    );
+    sqlx::query("UPDATE admin_users SET removed_at = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // A sign-in that stopped after the password step: a session without an account.
+    let (_, pending) = password_step(&app, PASSWORD).await;
+    assert_eq!(
+        why_signed_out(&app, Some(&pending.unwrap())).await,
+        Some(SignInWhy::NotSignedIn)
+    );
+
+    // Sign Out, and a re-auth's sign-out (`admin_auth::signed_out_response`).
+    let cookie = app.admin_cookie().await;
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/logout")
+        .header(header::COOKIE, &cookie)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.call_via(&app.router, LOOPBACK_PEER, request).await;
+    assert_eq!(
+        res.extensions().get::<SignInWhy>().copied(),
+        Some(SignInWhy::SignOut)
+    );
+    assert_eq!(
+        crate::admin_auth::signed_out_response()
+            .extensions()
+            .get::<SignInWhy>()
+            .copied(),
+        Some(SignInWhy::Reauth)
+    );
+}
+
+#[test]
+fn the_session_cookie_is_found_by_its_name_alone() {
+    let headers = |value: &str| {
+        let mut map = axum::http::HeaderMap::new();
+        map.append(header::COOKIE, value.parse().unwrap());
+        map
+    };
+    assert!(security::has_session_cookie(&headers("handy=abc")));
+    assert!(security::has_session_cookie(&headers("__Host-handy=abc")));
+    assert!(security::has_session_cookie(&headers("a=1; handy=")));
+    assert!(security::has_session_cookie(&headers(
+        "a=1;  __Host-handy=x; b=2"
+    )));
+    assert!(!security::has_session_cookie(&headers(
+        "handyx=1; spotify_login=2"
+    )));
+    assert!(!security::has_session_cookie(&axum::http::HeaderMap::new()));
+}
+
+/// `GET /api/session` (2026-10-25, static/reconnect.js's sign-in check): 204 with a signed-in,
+/// onboarded session, 401 otherwise - no body, no-store, the session left as it is; the admin
+/// listener's alone.
+#[tokio::test]
+async fn the_session_check_answers_204_or_401_and_changes_nothing() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let res = app.get_page("/api/session", &cookie).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    assert!(res.body.is_empty());
+    assert_eq!(res.headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
+
+    for cookie in [None, Some("handy=not-a-session-id")] {
+        let res = raw_get(&app, "/api/session", cookie).await;
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{cookie:?}");
+        assert!(res.headers().get(header::LOCATION).is_none());
+        assert_eq!(
+            res.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+    }
+
+    // Onboarding not finished: 401, and the session stays (the next page still sends it on).
+    sqlx::query("UPDATE admin_users SET must_change_password = 1")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.get_page("/api/session", &cookie).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    let next = app.get_page("/devices", &cookie).await;
+    assert_eq!(next.location(), Some("/auth/change-password"));
+
+    // A 401 for an old epoch flushes nothing: the row is still there.
+    sqlx::query(
+        "UPDATE admin_users SET must_change_password = 0, session_epoch = session_epoch + 1",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let rows = "SELECT COUNT(*) FROM tower_sessions";
+    let before: i64 = sqlx::query_scalar(rows).fetch_one(&app.db).await.unwrap();
+    assert_eq!(
+        app.get_page("/api/session", &cookie).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    let after: i64 = sqlx::query_scalar(rows).fetch_one(&app.db).await.unwrap();
+    assert_eq!(after, before);
+
+    // The phone listener has no such route.
+    let res = app
+        .send_via(
+            &app.device_router(),
+            LOOPBACK_PEER,
+            Request::builder()
+                .uri("/api/session")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND);
+}

@@ -238,9 +238,10 @@ pub async fn record_reauth(
     .await;
     Reauth::SignedOut
 }
-/// The answer after [Reauth::SignedOut]: the sign-in page.
+/// The answer after [Reauth::SignedOut]: the sign-in page (logged as a re-auth's,
+/// `security::log_sign_in_redirects`).
 pub fn signed_out_response() -> Response {
-    axum::response::Redirect::to("/login").into_response()
+    crate::security::sign_in_redirect(crate::security::SignInWhy::Reauth)
 }
 
 /// The result of a TOTP check.

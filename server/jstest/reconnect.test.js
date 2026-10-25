@@ -69,7 +69,7 @@ test("the link is found from a tap on its icon", () => {
 
 // A fake window: a clock, timers, a fetch the test answers, events fired by hand, a view that
 // records what is shown.
-function fakeWindow({ openForm = false, postAnswer = false } = {}) {
+function fakeWindow({ openForm = false, postAnswer = false, href = "https://pi.example.ts.net/devices/1", referrer = "", stored = {}, name = "" } = {}) {
     let clock = 1000000;
     let timerId = 0;
     const timers = new Map();
@@ -80,8 +80,9 @@ function fakeWindow({ openForm = false, postAnswer = false } = {}) {
         assigned: [],
         reloads: 0,
         openForm,
-        stored: {},
-        name: "",
+        stored: Object.assign({}, stored),
+        name,
+        replaced: [],
         visibility: "visible",
         scrollY: 0,
         main: { scrollTop: 420 },
@@ -91,10 +92,11 @@ function fakeWindow({ openForm = false, postAnswer = false } = {}) {
         steps: [],
         controls: [],
         location: {
-            href: "https://pi.example.ts.net/devices/1",
-            pathname: "/devices/1",
+            href,
+            pathname: new URL(href).pathname,
             hash: "",
-            assign: (href) => win.assigned.push(href),
+            assign: (to) => win.assigned.push(to),
+            replace: (to) => win.replaced.push(to),
             reload: () => {
                 win.reloads += 1;
                 win.steps.push("reload");
@@ -112,6 +114,10 @@ function fakeWindow({ openForm = false, postAnswer = false } = {}) {
             setItem: (key, value) => {
                 win.stored[key] = value;
             },
+            getItem: (key) => (key in win.stored ? win.stored[key] : null),
+            removeItem: (key) => {
+                delete win.stored[key];
+            },
         },
         getComputedStyle: () => ({ overflowY: "auto" }),
         setTimeout: (fn, ms) => {
@@ -128,6 +134,7 @@ function fakeWindow({ openForm = false, postAnswer = false } = {}) {
             (listeners["win:" + type] = listeners["win:" + type] || []).push(fn);
         },
         document: {
+            referrer,
             get visibilityState() {
                 return win.visibility;
             },
@@ -630,4 +637,135 @@ test("the strings and the script are ES5 (§5.7)", () => {
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/^\s*\/\/.*$/gm, "");
     assert.ok(!/=>|\blet\s|\bconst\s|`|\bclass\s/.test(src), "no ES2015 syntax");
+});
+
+// 2026-10-25 (PLAN "PWA shows the login page after a Tailscale outage, though the session is
+// valid"): the sign-in page asks GET /api/session before it stays, and goes back to the wanted page.
+const LOGIN = "https://pi.example.ts.net/login";
+
+test("loginReturn: where the sign-in page goes back to, and when it stays", () => {
+    const { loginReturn, WANTED_MS, BOUNCE_MS } = rc;
+    const t = 5000000;
+    const fresh = (href) => ({ href, t: t - 1000 });
+    // Not the sign-in page: nothing to do.
+    assert.strictEqual(loginReturn("https://pi.example.ts.net/devices", "", null, null, t), null);
+    assert.strictEqual(loginReturn("https://pi.example.ts.net/auth/verify-2fa", "", null, null, t), null);
+    // A next/from in the address first, then the wanted page, then the referrer, then /.
+    assert.strictEqual(loginReturn(LOGIN + "?next=%2Fdevices%2F3%3Ftab%3Dapps", "", null, null, t), "/devices/3?tab=apps");
+    assert.strictEqual(loginReturn(LOGIN + "?from=/music", "", fresh("/apps"), null, t), "/music");
+    assert.strictEqual(
+        loginReturn(LOGIN, "https://pi.example.ts.net/settings", fresh("https://pi.example.ts.net/devices/locate?device=2#location"), null, t),
+        "/devices/locate?device=2#location"
+    );
+    assert.strictEqual(loginReturn(LOGIN, "https://pi.example.ts.net/settings", null, null, t), "/settings");
+    assert.strictEqual(loginReturn(LOGIN, "", null, null, t), "/");
+    // A wanted page from longer ago than 2 minutes doesn't count; the referrer then does.
+    assert.strictEqual(
+        loginReturn(LOGIN, "https://pi.example.ts.net/apps", { href: "/music", t: t - WANTED_MS }, null, t),
+        "/apps"
+    );
+    // Never another origin, never the sign-in pages themselves.
+    assert.strictEqual(loginReturn(LOGIN + "?next=https://evil.example/x", "", null, null, t), "/");
+    assert.strictEqual(loginReturn(LOGIN + "?next=//evil.example/x", "", null, null, t), "/");
+    assert.strictEqual(loginReturn(LOGIN, "https://evil.example/devices", null, null, t), "/");
+    assert.strictEqual(loginReturn(LOGIN, "https://pi.example.ts.net/login", fresh("/logout"), null, t), "/");
+    assert.strictEqual(loginReturn(LOGIN + "?next=/auth/setup-2fa", "", fresh("/api/session"), null, t), "/");
+    // Went back less than 30 s ago: stay (never a loop).
+    assert.strictEqual(loginReturn(LOGIN, "", fresh("/apps"), t - (BOUNCE_MS - 1), t), null);
+    assert.strictEqual(loginReturn(LOGIN, "", fresh("/apps"), t - BOUNCE_MS, t), "/apps");
+});
+
+test("the sign-in page with a live session goes back to the page the return reload wanted", async () => {
+    // The reload in place on the Locate page landed on /login (its place record is in window.name;
+    // sessionStorage lost, as an installed iPhone app can).
+    const now = 1000000;
+    const name = "handy-scroll:" + JSON.stringify({ path: "/devices/locate", y: 300, t: now - 5000 });
+    const win = fakeWindow({ href: LOGIN, name });
+    win.install();
+    assert.strictEqual(win.pings.length, 1, "asked at once");
+    assert.strictEqual(win.pings[0].url, "/api/session");
+    assert.strictEqual(win.pings[0].options.credentials, "same-origin");
+    assert.strictEqual(win.pings[0].options.cache, "no-store");
+    await answer(win, 204);
+    assert.deepStrictEqual(win.replaced, ["/devices/locate"]);
+    assert.strictEqual(win.stored["handy-login-bounce"], String(now), "the way back is remembered");
+});
+
+test("a navigation remembers where it goes; the sign-in page uses it", async () => {
+    const win = fakeWindow();
+    win.install();
+    win.tap(link("/apps?x=1"));
+    const wanted = JSON.parse(win.stored["handy-wanted"]);
+    assert.strictEqual(wanted.href, "https://pi.example.ts.net/apps?x=1");
+    // The tap's page came back as the sign-in page.
+    const login = fakeWindow({ href: LOGIN, stored: win.stored });
+    login.install();
+    await answer(login, 204);
+    assert.deepStrictEqual(login.replaced, ["/apps?x=1"]);
+    assert.strictEqual(login.stored["handy-wanted"], undefined, "used once");
+});
+
+test("the sign-in page stays for a 401, no answer, a refused password and a sign-in on its way", async () => {
+    const signedOut = fakeWindow({ href: LOGIN });
+    signedOut.install();
+    await answer(signedOut, 401);
+    assert.deepStrictEqual(signedOut.replaced, []);
+
+    const silent = fakeWindow({ href: LOGIN });
+    silent.install();
+    silent.advance(PING_TIMEOUT);
+    await settle();
+    await answer(silent, 204); // too late: already given up
+    assert.deepStrictEqual(silent.replaced, []);
+
+    const refused = fakeWindow({ href: LOGIN, postAnswer: true });
+    refused.install();
+    assert.strictEqual(refused.pings.length, 0, "a POST's answer asks nothing");
+
+    const typing = fakeWindow({ href: LOGIN });
+    typing.install();
+    typing.fire("doc", "submit", { type: "submit" });
+    await answer(typing, 204);
+    assert.deepStrictEqual(typing.replaced, [], "the sign-in's POST goes on");
+
+    const looping = fakeWindow({ href: LOGIN, stored: { "handy-login-bounce": String(1000000 - 1000) } });
+    looping.install();
+    assert.strictEqual(looping.pings.length, 0, "went back 1 s ago: stay");
+
+    const elsewhere = fakeWindow();
+    elsewhere.install();
+    assert.strictEqual(elsewhere.pings.length, 0, "only the sign-in page asks");
+});
+
+test("a ping redirected to the sign-in page asks /api/session before it counts", async () => {
+    const win = fakeWindow();
+    win.install();
+    win.tap(link("/apps"));
+    win.advance(CHIP_AFTER);
+    // The first ping (no answer) fails: the network isn't back.
+    win.advance(PING_TIMEOUT);
+    await settle();
+    win.advance(PING_EVERY - 1000);
+    assert.strictEqual(win.pings.length, 2);
+    win.pings[1].resolve({ status: 200, redirected: true, url: LOGIN });
+    await settle();
+    assert.strictEqual(win.pings.length, 3);
+    assert.strictEqual(win.pings[2].url, "/api/session");
+    assert.deepStrictEqual(win.assigned, [], "not yet");
+    await answer(win, 204);
+    assert.deepStrictEqual(win.assigned, ["https://pi.example.ts.net/apps"], "the wanted page again");
+
+    // The session check unanswered: no answer, the wait goes on.
+    const flaky = fakeWindow();
+    flaky.install();
+    flaky.tap(link("/apps"));
+    flaky.advance(CHIP_AFTER);
+    flaky.advance(PING_TIMEOUT);
+    await settle();
+    flaky.advance(PING_EVERY - 1000);
+    flaky.pings[1].resolve({ status: 200, redirected: true, url: LOGIN });
+    await settle();
+    flaky.pings[2].reject(new Error("offline"));
+    await settle();
+    assert.deepStrictEqual(flaky.assigned, []);
 });

@@ -740,7 +740,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   was restarted - the network to the server (often over Tailscale) not up yet, and an installed PWA shows no loading
   indicator of its own (the user confirmed: after waiting it reconnected; "En subtil reconnecting hadde vært bra!").
   No service-worker fetch handler was added (the network is never faked).
-- **The script** (ES5, deferred, from `partials/head.html` on every page, `?v=3`): a same-origin link tap (the tab bar,
+- **The script** (ES5, deferred, from `partials/head.html` on every page, `?v=5` since the sign-in check below): a same-origin link tap (the tab bar,
   any link; not `download`, a `target` other than `_self`, a modified or handled click, a `#fragment` on this page, or
   `data-no-wait`) marks the link (`.is-pending`, `aria-busy`) and shows a thin bar at the top (`.net-progress`) at once.
   Not left after 3 s: a small calm chip "Connecting…" (`.net-chip`, `role=status`; no alarm colour, no modal, the page
@@ -782,6 +782,39 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   place a page script asks for: `go(start("load", null, null))`, the bar at once, the chip, the ping and the restart
   as for a slow navigation, the place record and the GET entry; `false` (nothing done) when `mayReload` says no. A
   POST's answer may be reloaded when asked (go()'s `replaceState` makes it a GET first). `reconnect.js?v=4`.
+- **The sign-in page with a live session** (2026-10-25, branch `pwa-fixes-d`; the user: after Tailscale failed on
+  the phone and came back, the reopened PWA asked for a sign-in, and killing and restarting it showed the app signed
+  in - the session was valid; cause unknown). **Server**: `security::log_sign_in_redirects` (a layer on the admin
+  router, outside the session layer) writes one line for every answer that redirects to `/login` - the reason
+  (`security::SignInWhy`, put on the redirect as a response extension by `sign_in_redirect`: no session cookie, the
+  cookie isn't a session id, no session row (never made, signed out, or expired and deleted - the store deletes
+  expired rows hourly), the session expired, no account in the session (a sign-in not finished), the account removed
+  or its one-time password run out, the epoch moved on, the store or the account unreadable, a re-auth's third wrong
+  password (`admin_auth::signed_out_response`), Sign Out; a sign-in step's own redirect has none: "a sign-in step"),
+  the method, the path (no query), whether a session cookie came and the browser's `Sec-Fetch-Site`/`Sec-Fetch-Mode`
+  (the cookie is SameSite=Strict: a navigation the browser counts as cross-site doesn't send it). A warning with a
+  session cookie, info without (and for Sign Out); never a cookie's value. The admin gate (`gate::admin_gate`) never
+  redirects - a refused client gets an empty 403 -, so a refusal of a request with a session cookie is a warning line
+  of its own there (the reason, the client, the path). `load_active_admin` returns why (`Result<AdminUser,
+  SignInWhy>`); `why_signed_out` tells the cookie cases apart (the session's id before it was read, then
+  `tower_sessions` asked whether the row is there but expired). **`GET /api/session`** (`security::session_check`,
+  a public route that answers itself; the admin gate applies, the phone listener has no such route): an empty 204
+  while the session is a signed-in, onboarded admin's (what `require_full_auth` lets through), else 401, both
+  `no-store`; it writes nothing (the session isn't flushed) and logs each answer with its reason. **PWA**
+  (`reconnect.js?v=5`): every navigation of the script (a tap's, a restart's, the reload in place) remembers its
+  address (`sessionStorage` `handy-wanted`, `{href, t}`); on `/login` (not a POST's answer) the script asks
+  `/api/session` at once (4 s timeout) and, 204 and no sign-in already submitted, `location.replace`s the page
+  `loginReturn` picks - a `next`/`from` in the address, the page wanted in the last 2 minutes (sessionStorage, else
+  the place record a reload in place left in `window.name`), the referrer within the app, else `/` (a signed-in
+  session never needs the sign-in page) -, never another origin, `/login`, `/logout`, `/auth/…` or `/api/…`; within
+  30 s of going back (`handy-login-bounce`) the page stays, so it can never loop. A ping redirected to the login (a
+  fetch's `redirected` to `/login`) asks `/api/session` before it counts: its 204 or 401 is an answer (the navigation
+  starts again), no answer is none. The sign-in page may show for the moment the check takes. Tests:
+  `admin_auth::a_redirect_to_the_sign_in_page_says_why`, `the_session_cookie_is_found_by_its_name_alone`,
+  `the_session_check_answers_204_or_401_and_changes_nothing`; `jstest/reconnect.test.js` (`loginReturn`'s table,
+  the way back from window.name's record and from a tap's, the 401 / no answer / refused password / submit / loop
+  cases, the redirected ping). Owed: the next time it happens, the time and whether the address bar showed
+  `/login…`, and the server log's line.
 
 ## Pull down to refresh (2026-10-25, `static/pull-refresh.js`)
 

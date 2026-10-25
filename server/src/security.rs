@@ -395,27 +395,253 @@ pub async fn bootstrap_admin(db: &sqlx::SqlitePool, data_dir: &std::path::Path) 
 #[derive(Clone)]
 pub struct CurrentAdmin(pub AdminUser);
 
+/// Why a response sends the browser to the sign-in page (2026-10-25, PLAN "PWA shows the login page
+/// after a Tailscale outage, though the session is valid"): put on the redirect as a response
+/// extension ([sign_in_redirect]) and read by [log_sign_in_redirects] for its one log line. The
+/// words never hold a cookie's value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignInWhy {
+    /// The request carried no session cookie at all (a SameSite=Strict cookie isn't sent on a
+    /// navigation the browser counts as cross-site).
+    NoCookie,
+    /// A session cookie whose value isn't a session id.
+    CookieNotASession,
+    /// The cookie's session has no row: never made, flushed, or expired and deleted since (the
+    /// store deletes expired rows hourly).
+    NoSessionRow,
+    /// The cookie's session row is there but past its expiry.
+    Expired,
+    /// The session holds no account: a sign-in that wasn't finished.
+    NotSignedIn,
+    /// The account is removed, or its one-time password's onboarding ran out (design 62 §2).
+    AccountGone,
+    /// The session's epoch isn't the account's: Sign Out Everywhere, a password change, a 2FA
+    /// reset moved it on.
+    Epoch,
+    /// The session store couldn't be read.
+    StoreError,
+    /// The account's row couldn't be read.
+    DbError,
+    /// A form that asks for the password again took its third wrong one in a row
+    /// (`admin_auth::signed_out_response`).
+    Reauth,
+    /// Settings' Sign Out.
+    SignOut,
+}
+
+impl SignInWhy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SignInWhy::NoCookie => "no session cookie",
+            SignInWhy::CookieNotASession => "the cookie isn't a session id",
+            SignInWhy::NoSessionRow => {
+                "no session row (never made, signed out, or expired and deleted)"
+            }
+            SignInWhy::Expired => "the session expired",
+            SignInWhy::NotSignedIn => "the session has no account (a sign-in not finished)",
+            SignInWhy::AccountGone => "the account is removed or its one-time password ran out",
+            SignInWhy::Epoch => {
+                "the session's epoch isn't the account's (signed out everywhere, a password \
+                 change, a 2FA reset)"
+            }
+            SignInWhy::StoreError => "the session store couldn't be read",
+            SignInWhy::DbError => "the account couldn't be read",
+            SignInWhy::Reauth => {
+                "re-auth: the third wrong password in a row signed every session out"
+            }
+            SignInWhy::SignOut => "Sign Out",
+        }
+    }
+}
+
+/// `/login` as a redirect that says why ([SignInWhy], for [log_sign_in_redirects]).
+pub fn sign_in_redirect(why: SignInWhy) -> Response {
+    let mut response = Redirect::to("/login").into_response();
+    response.extensions_mut().insert(why);
+    response
+}
+
+/// Whether the request carries the admin session cookie (`__Host-handy`, or `handy` with
+/// `INSECURE_COOKIES`), whatever its value.
+pub fn has_session_cookie(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .filter_map(|pair| pair.split_once('=').map(|(name, _)| name.trim()))
+        .any(|name| name == "__Host-handy" || name == "handy")
+}
+
 /// The signed-in admin, if the session's epoch is still the account's (a password change, a 2FA
 /// reset or "Sign out everywhere" moved it on - design 22 QA a), the account isn't removed and a
 /// one-time password's onboarding hasn't run out (design 62 §2; the removal is read here too, not
-/// only through its epoch bump - qa-62-revision-check N1).
-async fn load_active_admin(state: &AppState, session: &Session) -> Option<AdminUser> {
-    let admin_id: i64 = session.get("admin_id").await.ok().flatten()?;
+/// only through its epoch bump - qa-62-revision-check N1). Otherwise why not
+/// ([SignInWhy::NotSignedIn] for a session without an account; [why_signed_out] tells the
+/// cookie's cases apart).
+async fn load_active_admin(state: &AppState, session: &Session) -> Result<AdminUser, SignInWhy> {
+    let admin_id: i64 = session
+        .get("admin_id")
+        .await
+        .map_err(|_| SignInWhy::StoreError)?
+        .ok_or(SignInWhy::NotSignedIn)?;
     let epoch: i64 = session
         .get(crate::admin_auth::EPOCH_KEY)
         .await
-        .ok()
-        .flatten()?;
-    sqlx::query_as::<_, AdminUser>(
+        .map_err(|_| SignInWhy::StoreError)?
+        .ok_or(SignInWhy::Epoch)?;
+    let admin = sqlx::query_as::<_, AdminUser>(
         "SELECT * FROM admin_users WHERE id = ? AND removed_at IS NULL \
          AND (invite_expires_at IS NULL OR invite_expires_at > datetime('now'))",
     )
     .bind(admin_id)
     .fetch_optional(&state.db)
     .await
-    .ok()
-    .flatten()
-    .filter(|admin| admin.session_epoch == epoch)
+    .map_err(|_| SignInWhy::DbError)?
+    .ok_or(SignInWhy::AccountGone)?;
+    if admin.session_epoch != epoch {
+        return Err(SignInWhy::Epoch);
+    }
+    Ok(admin)
+}
+
+/// [load_active_admin]'s [SignInWhy::NotSignedIn] told apart by the cookie: none, one that isn't
+/// a session id, one whose row is gone or expired. `cookie_id` is the session's id before it was
+/// read (the session layer drops it when its row isn't found). The id is only looked up, never
+/// logged.
+async fn why_signed_out(
+    state: &AppState,
+    session: &Session,
+    cookie: bool,
+    cookie_id: Option<tower_sessions::session::Id>,
+    why: SignInWhy,
+) -> SignInWhy {
+    if why != SignInWhy::NotSignedIn {
+        return why;
+    }
+    if !cookie {
+        return SignInWhy::NoCookie;
+    }
+    let Some(id) = cookie_id else {
+        return SignInWhy::CookieNotASession;
+    };
+    if session.id().is_some() {
+        return SignInWhy::NotSignedIn;
+    }
+    // The store's load asks for `expiry_date > now`: a row still there is an expired one.
+    match sqlx::query_scalar::<_, i64>("SELECT 1 FROM tower_sessions WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(_)) => SignInWhy::Expired,
+        Ok(None) => SignInWhy::NoSessionRow,
+        Err(_) => SignInWhy::StoreError,
+    }
+}
+
+/// The signed-in admin of a request, or why it is sent to the sign-in page.
+async fn admin_or_why(
+    state: &AppState,
+    session: &Session,
+    headers: &axum::http::HeaderMap,
+) -> Result<AdminUser, SignInWhy> {
+    let cookie_id = session.id();
+    match load_active_admin(state, session).await {
+        Ok(admin) => Ok(admin),
+        Err(why) => {
+            Err(why_signed_out(state, session, has_session_cookie(headers), cookie_id, why).await)
+        }
+    }
+}
+
+/// A request header for the log: at most 20 characters, `-` when absent.
+fn header_for_log(headers: &axum::http::HeaderMap, name: &str) -> String {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map_or_else(
+            || "-".to_string(),
+            |value| crate::audit::clip(value, 20).to_string(),
+        )
+}
+
+/// One log line for every answer that sends the browser to `/login` (2026-10-25, PLAN "PWA shows
+/// the login page after a Tailscale outage"): why ([SignInWhy] on the response; a sign-in step's
+/// own redirect has none), the method and path (no query), whether a session cookie came, and the
+/// browser's `Sec-Fetch-Site`/`Sec-Fetch-Mode` (a SameSite=Strict cookie stays home on a
+/// cross-site navigation). Never a cookie's value. A warning when a session cookie came (not for
+/// Sign Out), else info. A layer on the admin router, outside the session layer.
+pub async fn log_sign_in_redirects(request: Request, next: Next) -> Response {
+    let cookie = has_session_cookie(request.headers());
+    let site = header_for_log(request.headers(), "sec-fetch-site");
+    let mode = header_for_log(request.headers(), "sec-fetch-mode");
+    let method = request.method().clone();
+    let path = crate::audit::clip(request.uri().path(), 100).to_string();
+    let response = next.run(request).await;
+    let to_login = response.status().is_redirection()
+        && response
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|to| to == "/login" || to.starts_with("/login?"));
+    if !to_login {
+        return response;
+    }
+    let why = response.extensions().get::<SignInWhy>().copied();
+    let reason = why.map_or("a sign-in step", SignInWhy::as_str);
+    if cookie && why != Some(SignInWhy::SignOut) {
+        tracing::warn!(
+            reason,
+            %method,
+            path,
+            sec_fetch_site = site,
+            sec_fetch_mode = mode,
+            "sent to the sign-in page with a session cookie"
+        );
+    } else {
+        tracing::info!(
+            reason,
+            %method,
+            path,
+            cookie,
+            sec_fetch_site = site,
+            sec_fetch_mode = mode,
+            "sent to the sign-in page"
+        );
+    }
+    response
+}
+
+/// `GET /api/session` (2026-10-25, `static/reconnect.js`): 204 while the request's session is a
+/// signed-in, onboarded admin's (what [require_full_auth] lets through), else 401 - no body,
+/// `no-store`, nothing written (the session isn't flushed). The sign-in page asks it before it
+/// stays on screen; each answer is logged with its reason.
+pub async fn session_check(
+    State(state): State<AppState>,
+    session: Session,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let cookie = has_session_cookie(&headers);
+    let site = header_for_log(&headers, "sec-fetch-site");
+    let (status, reason) = match admin_or_why(&state, &session, &headers).await {
+        Ok(admin) if !admin.must_change_password && admin.totp_enabled => {
+            (axum::http::StatusCode::NO_CONTENT, "signed in")
+        }
+        Ok(_) => (
+            axum::http::StatusCode::UNAUTHORIZED,
+            "the account's onboarding isn't finished",
+        ),
+        Err(why) => (axum::http::StatusCode::UNAUTHORIZED, why.as_str()),
+    };
+    tracing::info!(
+        status = status.as_u16(),
+        reason,
+        cookie,
+        sec_fetch_site = site,
+        "session check"
+    );
+    (status, [(axum::http::header::CACHE_CONTROL, "no-store")]).into_response()
 }
 
 /// The admin session cookie (design 22 §3.2.2): `__Host-handy` (Secure, `Path=/`, no `Domain`,
@@ -447,14 +673,14 @@ pub async fn require_session(
     mut request: Request,
     next: Next,
 ) -> Response {
-    match load_active_admin(&state, &session).await {
-        Some(admin) => {
+    match admin_or_why(&state, &session, request.headers()).await {
+        Ok(admin) => {
             request.extensions_mut().insert(CurrentAdmin(admin));
             next.run(request).await
         }
-        None => {
+        Err(why) => {
             session.flush().await.ok();
-            Redirect::to("/login").into_response()
+            sign_in_redirect(why)
         }
     }
 }
@@ -467,18 +693,18 @@ pub async fn require_full_auth(
     mut request: Request,
     next: Next,
 ) -> Response {
-    match load_active_admin(&state, &session).await {
-        Some(admin) if admin.must_change_password => {
+    match admin_or_why(&state, &session, request.headers()).await {
+        Ok(admin) if admin.must_change_password => {
             Redirect::to("/auth/change-password").into_response()
         }
-        Some(admin) if !admin.totp_enabled => Redirect::to("/auth/setup-2fa").into_response(),
-        Some(admin) => {
+        Ok(admin) if !admin.totp_enabled => Redirect::to("/auth/setup-2fa").into_response(),
+        Ok(admin) => {
             request.extensions_mut().insert(CurrentAdmin(admin));
             next.run(request).await
         }
-        None => {
+        Err(why) => {
             session.flush().await.ok();
-            Redirect::to("/login").into_response()
+            sign_in_redirect(why)
         }
     }
 }

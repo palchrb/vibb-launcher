@@ -399,7 +399,7 @@ pub async fn logout(
         tracing::error!(%err, "couldn't delete this browser's notification subscription");
     }
     session.flush().await.ok();
-    Redirect::to("/login")
+    security::sign_in_redirect(security::SignInWhy::SignOut)
 }
 
 #[derive(Template)]
