@@ -502,7 +502,7 @@ One line per approved item that has no code yet. An item leaves this list in the
 after), never later. Details stay in the entries below.
 
 - **Launcher**
-  - **Design 38 device check still owed** (2026-10-25: the user's "no shutdown seen" came from `adb emu kill`, which ends the emulator without Android's shutdown sequence - no `ACTION_SHUTDOWN`, the correct outcome; not a bug): check with `adb shell svc power reboot` / `svc power shutdown` on the emulator and the power menu on the Jelly Star - the `off` push within seconds, the `on` push "off since …". The coordinator runs the emulator half at the next emulator session. Launcher check, XS.
+  - **Design 38 device check, the Jelly Star half** (the emulator half passed 2026-10-25: `svc power reboot` → "is restarting" in the inbox within 2 min, `docs/testing/2026-10-25-r13-run.md`): the power menu's Power off and Restart and a flat battery on the Jelly Star - the user's check.
   - Missed Element X calls on the contact card and the phone book's badge (capture the notification shape on the Jelly Star first).
   - VoIP small fixes: "Tilbake til samtalen" button, no SOS guess at a VoIP wake, no BlockedAppActivity flash, READ_PHONE_STATE for allowlisted apps; design 57 itself is held (design 59 hybrid).
   - Browser "secure DNS" bypass: Chrome managed config, DoH-host block category, Firefox canary.
@@ -965,6 +965,7 @@ after), never later. Details stay in the entries below.
   for more time" (migration 0096), Device › Time's "Asked for more time at …", the anchor's time-left title and its one
   action. Code-QA'd (`qa-r13-rule-card-code.md`, fix round done); ships with server 0.50.0; awaiting merge and the
   emulator checks (§2.9).
+  **Merged 2026-10-25 (3eb0c025) after code QA (`docs/review/qa-r13-rule-card-code.md`, 0 High / 1 Medium / 7 Low, all fixed). Emulator run 2026-10-25 (`docs/testing/2026-10-25-r13-run.md`): the card under a school rule, the notification's time left, the request end to end (tap → 200 → inbox + push switch → Time page row → a +15 lift clears it) all PASS. Server part in `server-v0.50.0`; launcher in `launcher-v0.37.0-rc.2`.**
 - **Design 59d step M (2026-10-23, six-inch run F1/F6): an unarmed boot must never hang.** Built on `d59d-step-m`
   (59d §8.12): in android mode the boot cover stays enabled (a direct-boot-aware HOME at every boot, also after a crash
   or `adb reboot`), the take-over is a device-protected stamp, and `lock/HomePin` keeps HomeActivity the unlocked HOME
@@ -1364,6 +1365,7 @@ after), never later. Details stay in the entries below.
   **Built** 2026-10-25 on `r13-rule-card` (design r13 step 1, "Implementation status"): `lock/RuleCard.kt`, the card
   under the alarm line, the certain end shared with the time-rule screen. Code-QA'd (`qa-r13-rule-card-code.md`, fix
   round done); awaiting merge and the emulator checks (§1.7).
+  **Merged 2026-10-25 (3eb0c025) after code QA (`docs/review/qa-r13-rule-card-code.md`, 0 High / 1 Medium / 7 Low, all fixed). Emulator run 2026-10-25 (`docs/testing/2026-10-25-r13-run.md`): the card under a school rule, the notification's time left, the request end to end (tap → 200 → inbox + push switch → Time page row → a +15 lift clears it) all PASS. Server part in `server-v0.50.0`; launcher in `launcher-v0.37.0-rc.2`.**
 - **Enrolment before Home's first start** (glance-topinset run, qa-glance-topinset-code Q-3): a phone enrolled from
   Vibb One's Settings before Home ever started on screen resets its preferences at the next process start
   (`Application.initRest`: `internal.started_before` unset -> `resetPreferences`). The cached policy is dropped, so
