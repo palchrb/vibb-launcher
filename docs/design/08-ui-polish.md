@@ -331,3 +331,32 @@ Home's snapshot stand-in at a lock-up).
   - a photo and a plain colour wallpaper (gesture navigation);
   - the lock's leave on both pads (own keypad and Android's pad) - no black frame;
   - screen off/on over the PIN lock - the first frame is still the lock or black (design 32).
+
+### The copy stays (2026-10-25, branch `launcher-small-a`)
+
+PLAN "Home's wallpaper copy: a one-frame zoom step at the hand-over" (the user's video, 24 fps): after the Home button
+the app slid away over the photo with no black frame, Home was still for 11 frames, then the whole photo shifted by a
+hair (the face's and hair's edges moved, the icons didn't) when the copy went and Android's own wallpaper showed
+through - Android renders the photo at a slightly different scale (its wallpaper zoom, or Q-7's display-metrics crop).
+The decided fix: **Home keeps its own ground permanently** - no hand-over to Android's wallpaper at all.
+
+- `homeGroundDue(contentShown)` is simply "the content is on the window": `renderWallpaper` always passes
+  `ownGround = true` with the content shown, so Home's root is `WallpaperGround`'s FULL ground (the same placement as
+  above; no new memory - the store's one decoded photo; an unchanged ground keeps its drawable, so a render costs
+  nothing). The arrival window (the HOME intent from behind, the 700 ms floor, the 2.5 s cap, the enter animation's
+  end, the posted pause end, the rechecks) is gone, and with it design 59d step B's face-leave mark in `HomeFront`
+  (`takeOwnGroundDue`, `OWN_GROUND_WINDOW_MS`) - the permanent copy covers the face's leave too.
+- Unchanged: never at a lock-up (the content isn't on the window while LOCKED or at a dark lock-up; the snapshot is
+  the black task description); Back has no special case (it reveals Home, whose ground is there already); the phone
+  book and kid Settings stay transparent over Android's wallpaper. Home's window keeps `windowShowWallpaper` (the
+  system still treats it as the wallpaper target in transitions).
+- This closes the "Still owed" 3-button items above as far as Home's own hand-over goes (Q-7: the copy never goes), and
+  the last two (the lock's leave, screen off/on) keep their checks. **New device checks** (24-30 fps recordings, a
+  photo wallpaper): (a) Home button from an app - no black frame and no step, gesture and 3-button; (b) Back's
+  predictive animation into Home - no seam between Home's (now opaque) window and Android's wallpaper; (c) Home ->
+  phone book / kid Settings and back: those screens still show Android's wallpaper, so a scale difference would now
+  show there - if it does, Q-7's fix (render the applier's bitmap at `WindowManager.maximumWindowMetrics`) or the same
+  copy on those two screens; (d) an app opening from Home; (e) pulling the shade over Home (SystemUI zooms Android's
+  wallpaper with the shade; Home's copy doesn't zoom - cosmetic); (f) the GPU cost - one full-screen draw per frame
+  while Home animates (`dumpsys gfxinfo` on the Jelly Star). Listed for the coordinator in
+  `docs/testing/2026-10-24-home-round-run.md`, "Owed after launcher-small-a".

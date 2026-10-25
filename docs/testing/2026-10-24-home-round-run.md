@@ -78,3 +78,22 @@ broadcast intent` 07:30:15-07:31:30, 1-3 s apart): the loaded emulator delivers 
 the last DPM call, so each straggler opens its own 300 ms burst. Cost: 4-60 ms per load with the icons cached (880 ms
 for the first). The hold does what it was built for; the stragglers are a possible XS follow-up (PLAN, the apply-hold
 entry). Script: `scratchpad/r11/rc8.sh`; log `rc8-full.log`.
+
+## Owed after launcher-small-a (2026-10-25, for the coordinator)
+
+Branch `launcher-small-a` (five small launcher items, PLAN "Approved, not built - the queue"); none of these were run by
+the implementer (no emulator in the round).
+
+1. **Home keeps its wallpaper copy** (design 08, "The copy stays"), `jelly36`, a **photo** wallpaper, 24-30 fps
+   recordings read frame by frame:
+   a. the Home button from an app, gesture and 3-button navigation: no black frame and **no zoom step** at any point
+      after Home comes to rest (the user's frames 144-160 case; closes Q-7);
+   b. Back's predictive animation from an app into Home: no seam between Home's (now opaque) window and the wallpaper;
+   c. Home -> phone book and Home -> kid Settings (swipe left) and Back from each: those two screens still show
+      Android's wallpaper, so a scale step would show there now - if it does, note it (Q-7's `maximumWindowMetrics`
+      fix or the copy on those screens is the follow-up);
+   d. an app opening from Home; the shade pulled over Home (Android's wallpaper zooms with the shade, Home's copy
+      doesn't - cosmetic, note it);
+   e. a lock-up and screen off/on over the lock: the first frame is still the lock or black (design 32); the lock's
+      leave on both pads (own keypad, Android's pad) - no black frame;
+   f. `adb shell dumpsys gfxinfo me.vibb.launcher.debug` over a minute of Home use - no janky-frame jump against main.

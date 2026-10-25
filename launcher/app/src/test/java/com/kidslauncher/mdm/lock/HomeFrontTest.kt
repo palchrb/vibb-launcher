@@ -83,32 +83,21 @@ class HomeFrontTest {
         assertTrue("stop (as the root) before Home", go.indexOf("stopLockTaskQuietly") in 0 until home)
     }
 
-    /** Design 59d step B (the rc.2 recording's 3 black Home frames): Home after the face's leave draws its own ground. */
+    /** Design 59d step B (the rc.2 recording's 3 black Home frames): Home after the face's leave draws its own ground -
+     * since 2026-10-25 Home always does (`HomeGroundTest`), so the face's leave needs no mark of its own. */
     @Test
-    fun `Home after the face's leave draws its own ground until it stops`() {
+    fun `Home after the face's leave draws its own ground - the permanent copy`() {
         assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.FULL, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = true, scrimAlpha = 0, ownGround = true))
         assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.TRANSPARENT, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = true, scrimAlpha = 0))
         assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.SCRIM, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = true, scrimAlpha = 40))
         assertEquals(com.kidslauncher.mdm.ui.wallpaper.GroundKind.FULL, com.kidslauncher.mdm.ui.wallpaper.groundKind(systemShowsOurs = false, scrimAlpha = 0))
         val front = code(file("java/com/kidslauncher/mdm/lock/HomeFront.kt"))
-        val bring = front.substringAfter("fun bring(")
-        // R1-4: set only by a noAnimation start that went through, and it expires.
-        val set = bring.indexOf("if (noAnimation) ownGroundSetAt = android.os.SystemClock.elapsedRealtime()")
-        assertTrue("set after the start returned", set > bring.indexOf("context.startActivity(intent(context, animate, noAnimation, arrival))"))
-        assertEquals(1, Regex("ownGroundSetAt = android").findAll(front).count())
-        assertTrue(ownGroundDue(setAtMs = 10_000L, nowMs = 10_000L + OWN_GROUND_WINDOW_MS))
-        assertFalse("a later, unrelated resume", ownGroundDue(setAtMs = 10_000L, nowMs = 10_001L + OWN_GROUND_WINDOW_MS))
-        assertFalse("none set", ownGroundDue(setAtMs = null, nowMs = 10_000L))
-        assertEquals(3_000L, OWN_GROUND_WINDOW_MS)
+        assertFalse("no face-leave mark any more", front.contains("ownGround"))
         // R1-3: the relock's queued Home after the unlock is unanimated as the face too.
         assertTrue(front.contains("KeyguardCover.afterAndroidUnlock(context, \"Home (\$why)\") { bring(it, why, noAnimation = AndroidLock.faceOn) }"))
         val home = code(file("java/com/kidslauncher/mdm/ui/HomeActivity.kt"))
-        assertTrue(home.substringAfter("override fun onResume() {").substringBefore("startWork()").contains("if (HomeFront.takeOwnGroundDue()) ground = ground.copy(faceLeave = true)"))
-        assertTrue(home.substringAfter("override fun onStop() {").substringBefore("\n    }\n").contains("ground = HomeGroundState()"))
-        assertTrue(home.contains("WallpaperGround.apply(this, binding.root, ownGround = homeGroundDue(ground, now))"))
-        // Until the stop, whatever else (the Home button's window is HomeGroundTest's).
-        val faceLeave = com.kidslauncher.mdm.ui.home.HomeGroundState(faceLeave = true, leftFront = true, enterDone = true)
-        assertTrue(com.kidslauncher.mdm.ui.home.homeGroundDue(faceLeave, nowMs = 1_000_000L))
+        assertTrue(home.contains("WallpaperGround.apply(this, binding.root, ownGround = homeGroundDue(contentShown))"))
+        assertTrue(com.kidslauncher.mdm.ui.home.homeGroundDue(contentShown = true))
     }
 
     /** Design 32 (QA M2): the lock-up's Home start has no open animation and is still typed HOME. */
