@@ -376,3 +376,49 @@ To §2.9 (the notification and the request):
 14. TalkBack on the shade: the action reads "Be om mer tid, button"; "Spurt kl. HH:MM" reads as text, with no action
     announced.
 15. Switch Vibb's language with the shade open: the title follows within a minute while counting.
+
+## Fix round (2026-10-25, `r13-rule-card`)
+
+`main` (6e845493: r10, `pwa-fixes-a` with 0095, `server-two-arch`) merged in a8ce85b9, the three conflicts resolved as
+"The merge into today's `main`" says (`migrations_73_to_96_in_order` with 95 and 96; server/CLAUDE.md's 0095 sentence,
+then 0096 with no gap; PLAN's queue). The fixes are in 7090c459.
+
+- **Q-1** - Fixed in 7090c459: `server/Cargo.toml` and `Cargo.lock` at 0.50.0; the note (§3 step 2, "Implementation
+  status") and PLAN say 0.50.0 before the launcher with step 3.
+- **Q-2** - Fixed in 7090c459. Chosen: the server counts per the **phone's reported zone**
+  (`device_api::extra_time_day_zone`: `time_state.zone` from the phone's latest report when it reads as an IANA zone,
+  else Phone Setup's), for both the cap and "stale". Why: the phone's ledger - and so its own count of three - counts
+  its day in exactly that zone (design 34 P13), so the two days are the same day; no contract change, no new field,
+  and an older launcher without a zone keeps Phone Setup's day as before. Test
+  `time_request::the_cap_counts_the_phones_own_day` (a zone 13 h from Phone Setup's, three rows in the window where the
+  days differ: the fourth is accepted or capped by the phone's day; an unknown or missing zone falls back).
+- **Q-3** - Fixed in 7090c459: pure `uploadStep(record, count, now, day, maxLiftId)` - SEND only while `requestState` is
+  Pending with the policy this sync fetched and the ledger's day; DROP (unsent) for one a lift answered meanwhile,
+  another day's or an expired one. `TimeRequestsTest` "the upload sends only an open request".
+- **Q-4** - Fixed in 7090c459: `TimeAskReceiver` calls `TimeRuleAlarm.schedule(app)` after a successful ask (pinned in
+  `TimeLeftNoticeTest`); `TimeRequests.upload` re-arms it after any change to the record.
+- **Q-5** - Fixed in 7090c459: `ScreenTimeTracker.update` refreshes with `AnchorNotice.refresh(context, budget, policy,
+  ledger.day, now)` - the budget it computed, the request's state from its DE prefs, no snapshot (pinned: the update
+  calls neither `refreshNow` nor `snapshot(`). Also Q-9's first nit: `reset(context)` records the plain notice, so
+  the anchor's start posts once.
+- **Q-6** - Fixed in 7090c459: `lockEnd(.., at)` returns null when the end is the ledger's day, the lock leaves apps
+  usable and `budget.remainingMs` is less than the time to the end. `RuleCardTest` "no end when the budget can run out
+  first in the rule's usable apps" (and an end on another day still certain).
+- **Q-7 / S4** - Fixed in 7090c459: `time_request::a_parent_saved_before_the_migration_has_the_switch_on` (a database
+  migrated to 0095, a parent's row with every older switch explicit, then 0096: on), and Mamma's row naming no
+  `push_extra_time` in `a_request_raises_one_event_and_pushes_by_each_parents_switch` still gets her push.
+- **Q-8** - Fixed in 7090c459: the tests' Phone Setup zone is `steady_zone` (one of Oslo, Tokyo and New York whose day
+  is between 1 h and 22 h old now - "a minute ago", "31 minutes ago" are today and "26 hours ago" isn't, at any hour),
+  and the report's day is that zone's today. No faked clock in the harness.
+- **Q-9** - the first nit fixed (above); the report's age: `TimeAsk::of` reads a report of the last 15 minutes only
+  (`AWAY_STALE_MINUTES`), else `Unknown`. The others need nothing, as the review says.
+- **Q-10** - the note's counts and step 2's `time-rules.md` corrected.
+- **L11** - pinned: `RuleCardTest` "the lock listeners run before relearn". **L15** - pinned: pure
+  `recordAfterUpload` (null for a newer or no record) and `TimeRequestsTest` "the answer writes only the record that
+  was sent". **S4** = Q-7.
+- The emulator checks to add are in the note's §1.7 (9-12) and §2.9 (9-15).
+
+Suites after the fix round (the merged tree): launcher `assembleDebug testDebugUnitTest -PwarningsAsErrors=true`
+**1780 tests, 0 failures**; server `cargo test` **1311 passed, 0 failed** (the deploy-script tests from `main`
+included), `cargo fmt --check` clean, `cargo clippy --all-targets` the 13 known warnings, none new; the two
+`time_request.json` copies byte-identical.

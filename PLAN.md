@@ -965,7 +965,8 @@ after), never later. Details stay in the entries below.
   **Built** 2026-10-25 on `r13-rule-card` (design r13 steps 2 and 3, `docs/design/r13-launcher-rule-card-and-time-left.md`
   "Implementation status"): `POST /api/devices/time-request`, the `extra_time_request` event with its own switch "Asks
   for more time" (migration 0096), Device › Time's "Asked for more time at …", the anchor's time-left title and its one
-  action. Awaiting code QA and the emulator checks (§2.9).
+  action. Code-QA'd (`qa-r13-rule-card-code.md`, fix round done); ships with server 0.50.0; awaiting merge and the
+  emulator checks (§2.9).
 - **Design 59d step M (2026-10-23, six-inch run F1/F6): an unarmed boot must never hang.** Built on `d59d-step-m`
   (59d §8.12): in android mode the boot cover stays enabled (a direct-boot-aware HOME at every boot, also after a crash
   or `adb reboot`), the take-over is a device-protected stamp, and `lock/HomePin` keeps HomeActivity the unlocked HOME
@@ -1363,8 +1364,8 @@ after), never later. Details stay in the entries below.
   tap action; TalkBack reads it as text).
   Launcher only; a mockup first, then the usual process.
   **Built** 2026-10-25 on `r13-rule-card` (design r13 step 1, "Implementation status"): `lock/RuleCard.kt`, the card
-  under the alarm line, the certain end shared with the time-rule screen. Awaiting code QA and the emulator checks
-  (§1.7).
+  under the alarm line, the certain end shared with the time-rule screen. Code-QA'd (`qa-r13-rule-card-code.md`, fix
+  round done); awaiting merge and the emulator checks (§1.7).
 - **Enrolment before Home's first start** (glance-topinset run, qa-glance-topinset-code Q-3): a phone enrolled from
   Vibb One's Settings before Home ever started on screen resets its preferences at the next process start
   (`Application.initRest`: `internal.started_before` unset -> `resetPreferences`). The cached policy is dropped, so
