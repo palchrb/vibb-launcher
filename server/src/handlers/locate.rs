@@ -357,11 +357,142 @@ fn before_off(
         })
 }
 
-/// The phone's answer to the newest Update Location, and when it came.
+/// The newest Update Location's row under the fix (2026-10-25, PLAN "Locate: the \"Answer to
+/// Update Location\" row goes"): only while it is being asked, for [ANSWER_SHOWN_MINUTES] after
+/// the phone found itself, and after a failure until the next fix - otherwise no row, the
+/// newest point and its time say it.
 struct AnswerView {
+    /// `asking`, `found` or `failed` (a `data-` hook for tests, never shown).
+    state: &'static str,
     answer: Answer,
     when: String,
     exact: String,
+}
+
+/// How long "Found within 5 m · 14:29" stays after the phone's answer.
+const ANSWER_SHOWN_MINUTES: i64 = 10;
+
+/// The launcher's Update Location answers that say it found nothing (`locateResultMessage`, an
+/// older launcher's): a "done" with these words is a failure all the same.
+const LOCATE_FAILURES: [&str; 3] = [
+    "location is off for this device",
+    "no location fix",
+    "unknown command - update the launcher",
+];
+
+/// The newest Update Location's row ([AnswerView]), or none.
+#[derive(Debug, PartialEq)]
+enum AnswerState {
+    /// Asked; the phone hasn't answered yet.
+    Asking,
+    /// The phone found itself, `at` its answer: shown for [ANSWER_SHOWN_MINUTES].
+    Found { answer: Answer, at: DateTime<Utc> },
+    /// The phone couldn't, or never answered (`at` its answer, else the ask): shown until a fix
+    /// taken after it.
+    Failed {
+        answer: Answer,
+        at: Option<DateTime<Utc>>,
+    },
+}
+
+/// The newest Update Location `command` (its `status` now) as the row under the fix, given the
+/// newest fix's own time `newest_fix` (pure, `tests::the_answer_row_comes_and_goes`).
+fn answer_state(
+    command: &DeviceCommand,
+    status: &CommandStatus,
+    newest_fix: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Option<AnswerState> {
+    let asked = parse_db_utc(&command.requested_at);
+    let answered = command.acknowledged_at.as_deref().and_then(parse_db_utc);
+    let fixed_since = |since: Option<DateTime<Utc>>| matches!((newest_fix, since), (Some(fix), Some(since)) if fix > since);
+    let said = |fallback: &str| {
+        command
+            .result
+            .as_deref()
+            .and_then(answer)
+            .unwrap_or_else(|| Answer {
+                text: fallback.to_string(),
+                raw: None,
+            })
+    };
+    let failed = |answer: Answer, at: Option<DateTime<Utc>>| {
+        (!fixed_since(at.or(asked))).then_some(AnswerState::Failed { answer, at })
+    };
+    match *status {
+        CommandStatus::Waiting { .. }
+        | CommandStatus::Received { overdue: false, .. }
+        | CommandStatus::Sent {
+            unconfirmed: Unconfirmed::NotYet | Unconfirmed::OfferedAgain | Unconfirmed::CantConfirm,
+            ..
+        } => Some(AnswerState::Asking),
+        CommandStatus::Cancelled { .. } | CommandStatus::Erasing { .. } => None,
+        CommandStatus::Done { .. }
+            if !command
+                .result
+                .as_deref()
+                .is_some_and(|r| LOCATE_FAILURES.contains(&r.trim())) =>
+        {
+            let at = answered?;
+            let age = now - at;
+            (age < chrono::Duration::minutes(ANSWER_SHOWN_MINUTES)
+                && age > -chrono::Duration::minutes(1))
+            .then(|| AnswerState::Found {
+                answer: said("Found"),
+                at,
+            })
+        }
+        CommandStatus::Done { .. } | CommandStatus::Failed { .. } => {
+            failed(said("The phone couldn't find its location"), answered)
+        }
+        CommandStatus::Expired => failed(
+            Answer {
+                text: "No position - the phone is offline".to_string(),
+                raw: None,
+            },
+            asked,
+        ),
+        CommandStatus::Received { overdue: true, .. }
+        | CommandStatus::Sent {
+            unconfirmed: Unconfirmed::Lost,
+            ..
+        } => failed(
+            Answer {
+                text: "No position - the phone didn't answer".to_string(),
+                raw: None,
+            },
+            asked,
+        ),
+    }
+}
+
+/// [answer_state] as the page's row, its time in the Phone Setup zone. The asking row is left to
+/// the wait's own line right after Update Location (`waiting_for_fix`).
+fn answer_view(
+    state: AnswerState,
+    waiting_for_fix: bool,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Option<AnswerView> {
+    let (name, answer, at) = match state {
+        AnswerState::Asking if waiting_for_fix => return None,
+        AnswerState::Asking => (
+            "asking",
+            Answer {
+                text: "Asking the phone…".to_string(),
+                raw: None,
+            },
+            None,
+        ),
+        AnswerState::Found { answer, at } => ("found", answer, Some(at)),
+        AnswerState::Failed { answer, at } => ("failed", answer, at),
+    };
+    Some(AnswerView {
+        state: name,
+        answer,
+        when: at.map(|t| zone.when(t, now)).unwrap_or_default(),
+        exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
+    })
 }
 
 /// A command's row (Locate's Requests, the summary's Activity, Install Now's): "Lock · 10:58 ·
@@ -1041,15 +1172,24 @@ async fn locate_view(
         newest.is_some().then_some(map.newest_age.as_str()),
     );
 
-    let answer = latest_locate(state, id).await?.and_then(|(_, result, at)| {
-        let answer = answer(result.as_deref()?)?;
-        let at = at.as_deref().and_then(parse_db_utc);
-        Some(AnswerView {
-            answer,
-            when: at.map(|t| zone.when(t, now)).unwrap_or_default(),
-            exact: at.map(|t| zone.exact(t)).unwrap_or_default(),
-        })
-    });
+    let newest_locate = sqlx::query_as::<_, DeviceCommand>(
+        "SELECT * FROM device_commands WHERE device_id = ? AND command = 'locate' \
+         ORDER BY requested_at DESC, id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?;
+    let answer = match newest_locate {
+        Some(command) => {
+            let receipts =
+                crate::handlers::device_api::sends_command_receipts(&state.db, id).await?;
+            let status = command.status(now.naive_utc(), receipts);
+            let newest_fix = newest.as_ref().and_then(|l| parse_db_utc(&l.captured_at));
+            answer_state(&command, &status, newest_fix, now)
+                .and_then(|state| answer_view(state, waiting_for_fix, zone, now))
+        }
+        None => None,
+    };
     let wipe_not_ready = sqlx::query_scalar::<_, Option<bool>>(
         "SELECT remote_wipe_ready FROM device_status WHERE device_id = ? \
          ORDER BY reported_at DESC, id DESC LIMIT 1",
@@ -1895,6 +2035,171 @@ mod tests {
         let bad = Fix::of("z", Some(f64::NAN));
         assert_eq!(bad.age(&oslo, now), "Time unknown");
         assert_eq!(bad.accuracy(), "Accuracy unknown");
+    }
+
+    /// 2026-10-25 (PLAN "Locate: the \"Answer to Update Location\" row goes"): asked → "Asking the
+    /// phone…"; found → 10 minutes; a failure → until a fix taken after it; else no row.
+    #[test]
+    fn the_answer_row_comes_and_goes() {
+        let oslo = Zone::from_setting("Europe/Oslo");
+        let now = utc("2026-10-25 12:29:00");
+        let command = |result: Option<&str>, answered: Option<&str>| DeviceCommand {
+            id: 1,
+            device_id: 1,
+            command: "locate".to_string(),
+            requested_at: "2026-10-25 12:28:00".to_string(),
+            delivered_at: None,
+            acknowledged_at: answered.map(str::to_string),
+            result: result.map(str::to_string),
+            received_at: None,
+            deliveries: 0,
+            first_delivered_at: None,
+            succeeded: None,
+            cancelled_at: None,
+            cancel_reason: None,
+            requested_by: None,
+        };
+        let state = |cmd: &DeviceCommand, status: CommandStatus, fix: Option<&str>, at: &str| {
+            answer_state(cmd, &status, fix.map(utc), utc(at))
+        };
+        let words = |state: Option<AnswerState>| {
+            state
+                .and_then(|s| answer_view(s, false, &oslo, now))
+                .map(|v| (v.state, v.answer.text, v.when))
+        };
+
+        // Being asked: waiting, sent, received in time.
+        let asked = command(None, None);
+        for status in [
+            CommandStatus::Waiting { expires: None },
+            CommandStatus::Sent {
+                at: None,
+                unconfirmed: Unconfirmed::NotYet,
+            },
+            CommandStatus::Received {
+                at: None,
+                overdue: false,
+            },
+        ] {
+            assert_eq!(
+                state(&asked, status, None, "2026-10-25 12:29:00"),
+                Some(AnswerState::Asking)
+            );
+        }
+        assert_eq!(
+            words(Some(AnswerState::Asking)),
+            Some(("asking", "Asking the phone…".to_string(), String::new()))
+        );
+        // Right after Update Location the wait's own line says it.
+        assert!(answer_view(AnswerState::Asking, true, &oslo, now).is_none());
+
+        // Found: 13:29 local (CET), for 10 minutes after the answer; never "Answer to".
+        let found = command(Some("fix ±5 m, 3 s old"), Some("2026-10-25 12:29:00"));
+        let done = || CommandStatus::Done { at: None };
+        assert_eq!(
+            words(state(
+                &found,
+                done(),
+                Some("2026-10-25 12:28:57"),
+                "2026-10-25 12:29:00"
+            )),
+            Some(("found", "Found within 5 m".to_string(), "13:29".to_string()))
+        );
+        assert!(state(&found, done(), None, "2026-10-25 12:38:59").is_some());
+        assert_eq!(state(&found, done(), None, "2026-10-25 12:39:00"), None);
+        // The user's case: a 14:29 answer under a point from 20:41 - gone.
+        assert_eq!(state(&found, done(), None, "2026-10-25 18:41:00"), None);
+        // An older launcher's plain "ok" counts as found.
+        let ok = command(Some("ok"), Some("2026-10-25 12:29:00"));
+        assert_eq!(
+            words(state(&ok, done(), None, "2026-10-25 12:30:00")).map(|w| w.1),
+            Some("Found".to_string())
+        );
+
+        // A failure stays until a fix taken after it, whatever its age.
+        let off = command(
+            Some("location is off for this device"),
+            Some("2026-10-25 12:29:00"),
+        );
+        for status in [CommandStatus::Failed { at: None }, done()] {
+            let later = "2026-10-26 09:00:00";
+            assert_eq!(
+                words(state(&off, status, Some("2026-10-25 12:00:00"), later)),
+                Some((
+                    "failed",
+                    "Location is off on the phone".to_string(),
+                    "13:29".to_string()
+                ))
+            );
+        }
+        let status = CommandStatus::Failed { at: None };
+        assert_eq!(
+            state(
+                &off,
+                status,
+                Some("2026-10-25 12:30:00"),
+                "2026-10-25 12:31:00"
+            ),
+            None,
+            "a fix after it"
+        );
+        let silent = command(None, Some("2026-10-25 12:29:00"));
+        assert_eq!(
+            words(state(
+                &silent,
+                CommandStatus::Failed { at: None },
+                None,
+                "2026-10-25 13:00:00"
+            ))
+            .map(|w| w.1),
+            Some("The phone couldn't find its location".to_string())
+        );
+
+        // Never fetched within its hour: the phone is offline - until a fix after the ask.
+        assert_eq!(
+            words(state(
+                &asked,
+                CommandStatus::Expired,
+                None,
+                "2026-10-25 14:00:00"
+            )),
+            Some((
+                "failed",
+                "No position - the phone is offline".to_string(),
+                "13:28".to_string()
+            ))
+        );
+        assert_eq!(
+            state(
+                &asked,
+                CommandStatus::Expired,
+                Some("2026-10-25 12:40:00"),
+                "2026-10-25 14:00:00"
+            ),
+            None
+        );
+        for status in [
+            CommandStatus::Received {
+                at: None,
+                overdue: true,
+            },
+            CommandStatus::Sent {
+                at: None,
+                unconfirmed: Unconfirmed::Lost,
+            },
+        ] {
+            assert_eq!(
+                words(state(&asked, status, None, "2026-10-25 14:00:00")).map(|w| w.1),
+                Some("No position - the phone didn't answer".to_string())
+            );
+        }
+
+        // Cancelled: no row.
+        let status = CommandStatus::Cancelled {
+            at: None,
+            by: CancelledBy::Parent,
+        };
+        assert_eq!(state(&asked, status, None, "2026-10-25 12:30:00"), None);
     }
 
     #[test]

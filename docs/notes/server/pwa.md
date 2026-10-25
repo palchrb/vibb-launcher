@@ -560,8 +560,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   state as a dot and in each `aria-label`, "Anna, online"; the chosen one `aria-current="true"` - the tab bar has the
   page's one `"page"`), the **map** (Leaflet, OSM tiles with design 33's origin-only Referer, unchanged) with the
   trail, the **last fix** as age and accuracy in the Phone Setup zone ("10 min ago", "Within 40 m", the exact time in
-  `title`; the marker's popup says the same, built with `textContent`), the phone's **answer** to the newest Update
-  Location (reworded, with when it came), the waiting line and its poll, **Update Location**; the two **warnings** as
+  `title`; the marker's popup says the same, built with `textContent`), the newest Update Location's **answer row**
+  (only while it says something - "The answer row" below), the waiting line and its poll, **Update Location**; the two **warnings** as
   orange rows (location off, erasing not ready); **Ring, Stop Ringing, Lock** as three tiles, **Erase Phone…** as a
   `<details>` confirm with the type-the-name field; the footer with Lock's note behind ⓘ; **Recent** (the 10 newest:
   "Lock" · "10:58 · Done", the line under it, **Cancel** while it waits); **Location Settings** (When to locate +
@@ -585,6 +585,20 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   and the answer, Recent's labels and Cancel, the warnings and pickers, unknown phones and failed reads),
   `handlers::locate::tests`, repointed `locations.rs`, `command_receipts.rs`, `command_expiry.rs`, `time_rules.rs`.
 
+- **The answer row** (2026-10-25, branch `pwa-fixes-d`; the user: a stale "Found within 5 m · Answer to Update
+  Location · 14:29" under a point from 20:41, "Er det viktig informasjon å vise der?" - no): `locate::answer_state`
+  (pure) reads the newest `locate` command and its `CommandStatus` with the newest fix's own time (`captured_at`):
+  **asking** while it waits, is sent (not yet confirmed, offered again, can't confirm) or is received in time -
+  "Asking the phone…" (`role=status`), left out right after the press (`?requested=1`: the wait's own `#fix_wait` line
+  says it); **found** - a done answer that isn't one of the launcher's no-fix words (`LOCATE_FAILURES`: location off,
+  no fix, too old) - for `ANSWER_SHOWN_MINUTES` (10) after `acknowledged_at`, "Found within 5 m" with its time
+  ("14:29", exact in `title`; an older launcher's plain "ok" reads "Found"); **failed** - those words or a failed
+  result ("Location is off on the phone", "The phone couldn't find its location"), never fetched within its hour
+  ("No position - the phone is offline", the ask's time), received but never answered or never confirmed ("No
+  position - the phone didn't answer") - until a fix taken after the answer (or the ask); cancelled: nothing.
+  Otherwise no row: the newest point and the time row say it. No "Answer to" line under it any more;
+  `data-row="locate-answer"` with `data-state` (`asking`/`found`/`failed`) for tests. Tests:
+  `handlers::locate::tests::the_answer_row_comes_and_goes`, `locate_page::the_answer_row_shows_only_while_it_says_something`.
 - **Requests (design 48 §1.4; supersedes Recent below)**: `locate::requests` (section `#recent`, titled by the
   partial's `show(recent, "Requests")`) lists `LOCATE_KINDS` by `CommandStatus` (`in_requests`): in flight at any age
   (`Waiting`, `Sent{NotYet|OfferedAgain|CantConfirm}`, `Received{overdue: false}`, `Erasing`), gone wrong within 24 h

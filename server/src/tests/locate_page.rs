@@ -372,6 +372,64 @@ async fn the_fix_and_the_answer_read_in_local_time() {
     assert!(html.contains(">2 Jan"), "{html}");
 }
 
+/// The answer row (2026-10-25, PLAN "Locate: the \"Answer to Update Location\" row goes"): "Asking
+/// the phone…" while asked (not right after the press: the wait's line says it), "Found within
+/// 5 m" for 10 minutes, then nothing; never "Answer to".
+#[tokio::test]
+async fn the_answer_row_shows_only_while_it_says_something() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let row = |html: &str| {
+        html.split("data-row=\"locate-answer\"")
+            .nth(1)
+            .and_then(|rest| rest.split("</div>").next())
+            .map(str::to_string)
+    };
+    let page = format!("?device={id}");
+    assert_eq!(row(&locate_page(&app, &cookie, &page).await), None);
+
+    let locate = waiting(&app, id, "locate", "datetime('now', '-1 minutes')").await;
+    let html = locate_page(&app, &cookie, &page).await;
+    let asking = row(&html).expect("the asking row");
+    assert!(asking.contains("data-state=\"asking\""), "{asking}");
+    assert!(asking.contains("role=\"status\""), "{asking}");
+    assert!(asking.contains(">Asking the phone…<"), "{asking}");
+    let pressed = locate_page(&app, &cookie, &format!("{page}&requested=1")).await;
+    assert_eq!(row(&pressed), None, "the wait's own line instead");
+    assert!(pressed.contains("id=\"fix_wait\""));
+
+    sqlx::query(
+        "UPDATE device_commands SET delivered_at = datetime('now', '-1 minutes'), \
+         acknowledged_at = datetime('now', '-1 minutes'), result = 'fix ±5 m, 3 s old', \
+         succeeded = 1 WHERE id = ?",
+    )
+    .bind(locate)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let found = row(&locate_page(&app, &cookie, &page).await).expect("the found row");
+    assert!(found.contains("data-state=\"found\""), "{found}");
+    assert!(found.contains(">Found within 5 m<"), "{found}");
+    assert!(found.contains("class=\"row-value\""), "its time: {found}");
+
+    sqlx::query(
+        "UPDATE device_commands SET acknowledged_at = datetime('now', '-11 minutes') WHERE id = ?",
+    )
+    .bind(locate)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let html = locate_page(&app, &cookie, &page).await;
+    assert_eq!(
+        row(&html),
+        None,
+        "10 minutes on: the point and its time say it"
+    );
+    let template = std::fs::read_to_string("templates/device_locate.html").unwrap();
+    assert!(!template.contains("Answer to"));
+}
+
 /// Requests: labels for every command, never its id; times local; Cancel only while it waits; the
 /// line after a Cancel in the group.
 #[tokio::test]

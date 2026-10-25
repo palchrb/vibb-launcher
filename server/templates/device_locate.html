@@ -48,8 +48,9 @@
             <p class="row row-note" data-row="fix">No location reported yet.</p>
             {% endif %}
             {% if let Some(a) = view.answer %}
-            <div class="row" data-row="locate-answer">
-                <span class="row-label"><span{% if let Some(raw) = a.answer.raw %} title="{{ raw }}"{% endif %}>{{ a.answer.text }}</span><span class="row-sub">Answer to Update Location</span></span>
+            {#- 2026-10-25: only while asked, 10 min after a found answer, a failure until the next fix (locate::answer_state). -#}
+            <div class="row" data-row="locate-answer" data-state="{{ a.state }}"{% if a.state == "asking" %} role="status"{% endif %}>
+                <span class="row-label"><span{% if let Some(raw) = a.answer.raw %} title="{{ raw }}"{% endif %}>{{ a.answer.text }}</span></span>
                 {% if !a.when.is_empty() %}<span class="row-value" title="{{ a.exact }}">{{ a.when }}</span>{% endif %}
             </div>
             {% endif %}
