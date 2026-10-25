@@ -214,7 +214,7 @@ class SonosTransport(
             unhush()
         }
         wake()
-        HandOverTiming.step("the play job done, a poll woken")
+        HandOverTiming.done("the play job done, a poll woken")
         result
     }
 
@@ -307,7 +307,7 @@ class SonosTransport(
             unhush()
         }
         wake()
-        HandOverTiming.step("the play job done, a poll woken")
+        HandOverTiming.done("the play job done, a poll woken")
         result
     }
 

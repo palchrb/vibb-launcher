@@ -2041,10 +2041,32 @@ Logcat: `VibbHandover` (the hand-over's steps, each `+N ms` since the tap), `Vib
 4. **Storytel and NRK on the room** (§6i, the NRK fixture): the same line and the same steps (Storytel adds `the
    Storytel URL minted`).
 5. **Spotify on the room** cannot be checked yet: design 54-a2 (the controller's share-link path) isn't built, so a
-   Spotify tile on a room still says "Kan ikke spilles på Sonos" at once (`speakerDropReason`). `fake-spotify.py` (§6l)
-   only checks that nothing changed on the phone's web player. When 54-a2 lands the share-link steps
-   (`SetPlayMode NORMAL answered`, `the ShareLink request sent/answered`, `the start item's page read`, `Seek TRACK_NR
-   answered`, `the speaker's sleep timer set or cleared`) are already logged by `SonosTransport.playShare`.
+   Spotify tile on a room still says "Kan ikke spilles på Sonos" at once (`speakerDropReason`). When 54-a2 lands the
+   share-link steps (`SetPlayMode NORMAL answered`, `the ShareLink request sent/answered`, `the start item's page read`,
+   `Seek TRACK_NR answered`, `the speaker's sleep timer set or cleared`) are already logged by `SonosTransport.playShare`.
+
+The code QA's checks (`docs/review/qa-music-r13-code.md`, "Emulator checks to add"; the fix round's line numbers):
+
+6. **Splash, timed** (Q-6): count the frames from the tap to the first content frame. With a normal library the splash
+   ends well **before** 3 s - a release at about 3 s every time means the content signal never fired (M7). No frame of
+   plain night between the splash's fade and the tiles; the system's exit fade only, the icon at rest for the whole
+   hold (no fade or shrink before the exit).
+7. **The start tile** (Q-10): with a stored now-playing row (play something, force-stop, open), the library's first
+   frame already shows the last played tile, with no jump right after the splash; with no row (a fresh install) tile 0.
+8. **Recreate and warm start**: change the font scale with the app open (no blank flash, no 3 s freeze). Back, then
+   open it from the tile again (the splash, then content). Open it from the media notification (SystemUI: the icon
+   splash). The Home card's resume (`EXTRA_RESUME`): the splash, then the player, and the room or phone plays as before.
+9. **A double tap on a room** (`fake-sonos.py --transition-s 4`, Q-1): tap a tile, and another before the first plays.
+   The `VibbHandover` lines carry two numbers (`#n`, `#n+1`); the first play's `Play answered` and `the play job done`
+   sit under `#n` (timed from its own tap), the second's under `#n+1`. The line shows until the **second** play
+   reaches PLAYING. A carousel swipe on the room starts its own `tap: SKIP_TO` timeline (Q-9).
+10. **TalkBack** on the player while connecting: swiping past the seek bar reads "Kobler til høyttaleren…" in the
+    times' place. It isn't announced by itself, as the room's other lines (none is a live region).
+11. **Spotify on the phone, cold** (`fake-spotify.py --slow-ready`, §6l; Q-3, the user's decision): with the web
+    player's page gone (6 minutes after the last pause, or a fresh process), tap a Spotify tile: the player shows
+    "Kobler til…" in the times' place from the tap until the first playing state (the tone), then the times; a step
+    shows it briefly. `--not-premium` / Wi-Fi off: the line gives way to "Spør en voksen" / "Trenger internett" under the
+    entry name and the times come back - no new wait. Note the seconds from the tap to the tone for the user.
 
 ## 7. Reporting back
 

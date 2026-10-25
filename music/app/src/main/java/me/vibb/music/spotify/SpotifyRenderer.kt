@@ -690,6 +690,14 @@ internal class SpotifyRenderer(
     /** §5.4's table: the intent during a start, held through a 30 s gap; false paused, `null`, foreign or ended. */
     override val showsPlaying: Boolean get() = pwr && !ended
     override val rendererState: RendererState? get() = line?.let { rendererStateOf(it) }
+
+    /**
+     * A start of ours is on its way (qa-music-r13-code Q-3, the user's decision: the player's quiet "Kobler til…" from
+     * the tap until the first playing state): the start's calls (the page, the SDK, the token, the Connect device, the
+     * play call) or the tracker waiting for our first state - while the kid wants it playing and no line says why it
+     * can't (a refused start sets one, the existing failure path). Display only.
+     */
+    val starting: Boolean get() = pwr && !ended && !stopped && line == null && (start != null || tracker.mode == Mode.STARTING)
     override val room: Output? get() = null
 
     override val fadeMs: Long get() = SLEEP_FADE_MS

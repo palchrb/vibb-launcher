@@ -1097,16 +1097,18 @@ class SonosController(
         // SetAVTransportURI (inside transport.play); a dropped job is null, with nothing sent.
         val gate: () -> Boolean = if (cid != null) ({ stillWanted(g) }) else ({ !closed && mayPlay() })
         // the hand-over's timing (design 54 "Hand-over timing"): measurement only
-        HandOverTiming.play("the play queued for the room's actor [$why, ${if (cid != null) "storytel" else body.kind.wire}]")
+        // (qa-music-r13-code Q-1: the job carries its own timeline - a superseded job's lines never read as the next tap's)
+        val timeline = HandOverTiming.play("the play queued for the room's actor [$why, ${if (cid != null) "storytel" else body.kind.wire}]")
         work.submit<PlayResult?>({
             if (!gate()) return@submit null
-            HandOverTiming.step("the actor runs the play")
+            HandOverTiming.enter(timeline)
+            HandOverTiming.step("the actor runs the play", timeline)
             var b = body
             if (cid != null) {
                 // a job superseded while it queued never mints; one superseded during the mint sends nothing
                 b = body.copy(uri = mintFor(cid), mint = null)
                 if (!gate()) return@submit null
-                HandOverTiming.step("the Storytel URL minted")
+                HandOverTiming.step("the Storytel URL minted", timeline)
             }
             var result = transport.play(b, startCap, room, gate) ?: return@submit null
             if (restore != null) {
@@ -1126,6 +1128,7 @@ class SonosController(
                     Unit
                 } else if (g != gen) {
                     // superseded (a newer load, step or play): only what the speaker holds now
+                    HandOverTiming.step("a superseded play's answer on main", timeline)
                     r.onSuccess { res ->
                         if (res == null) return@onSuccess // dropped by its token: nothing went out
                         playing = Playing(entryId, if (entry?.id == entryId) items.indexOfFirst { it.key == item.key } else -1, item.key, res.uri)
@@ -1137,12 +1140,17 @@ class SonosController(
                 } else {
                     r.fold({ res ->
                         if (res == null) {
+                            HandOverTiming.step("the play dropped by its token", timeline)
                             dropped(idx, startS, deliberate)
                         } else {
                             played(idx, item, res, startS, volume, volSet)
+                            HandOverTiming.step("the play's answer on main - it settles until a poll sees our stream (the seed shows)", timeline)
                             if (owes) events.owed(now, elapsedMs())
                         }
-                    }, { failed(why, it) })
+                    }, {
+                        HandOverTiming.step("the play failed (${it.javaClass.simpleName})", timeline)
+                        failed(why, it)
+                    })
                 }
             } catch (t: Exception) {
                 host.log("sonos: play result failed (${t.javaClass.simpleName})")
@@ -1193,9 +1201,9 @@ class SonosController(
      */
     private fun dropped(idx: Int, startS: Double, deliberate: Boolean) {
         host.log("sonos: a play dropped before SetAVTransportURI - playing isn't allowed now")
-        HandOverTiming.step("the play dropped by its token")
         pending = null
         optTr = null
+        playAnsweredAt = FAR_PAST // the connecting line ends with it (qa-music-r13-code Q-2)
         index = idx
         startPosMs = (startS * 1000).toLong()
         deliberateStart = deliberate
@@ -1249,7 +1257,6 @@ class SonosController(
         }
         host.played(item.key, res.uri)
         host.log("sonos: playing [${idx + 1}/${items.size}] ${item.title}")
-        HandOverTiming.step("the play's answer on main - it settles until a poll sees our stream (the seed shows)")
     }
 
     /**
@@ -1261,9 +1268,10 @@ class SonosController(
      */
     private fun failed(why: PlayWhy, e: Throwable) {
         host.log("sonos: play failed (${e.javaClass.simpleName}: ${e.message}) [$why]")
-        HandOverTiming.step("the play failed (${e.javaClass.simpleName})")
         pending = null
         optTr = null
+        // the connecting line ends with it: an earlier play's answer never keeps it for a TRANSITIONING snapshot (Q-2)
+        playAnsweredAt = FAR_PAST
         val ours = ownsSpeaker && snap?.ours == true
         if (why == PlayWhy.START && !ours) {
             endSession()

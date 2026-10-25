@@ -9,7 +9,8 @@ name: Music
 #   fake also server/testdata/spotify/, the Storytel fake server/testdata/storytel/ (design 58), watched
 #   here too; their --selftests run here), Storytel's token answers (the server's and the launcher's
 #   copies, design 58 §8) or
-#   scripts/fake-audio.py (design 30's fake podcast host; its --selftest too) changed, and
+#   scripts/fake-audio.py (design 30's fake podcast host; its --selftest too) or scripts/music-splash.py and the
+#   launcher's splash_vibb_breathe.xml (the launch splash's drawables are drawn from it; its --selftest too) changed, and
 #   uploads the debug APK as a workflow artifact. Nothing is published, no secrets.
 # - A tag music-vX.Y.Z (release) or music-vX.Y.Z-rc.N (release candidate) on a commit that is on
 #   master/main: music-release-build builds the unsigned release APK (no secrets),
@@ -66,7 +67,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/(music_(library|listing|icons|state)|spotify_hosts)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/spotify/|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$|scripts/fake-spotify\.py$|scripts/fake-audio\.py$|server/testdata/storytel_token_answers\.json$|launcher/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel/)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(music/|\.github/workflows/music\.yml$|server/testdata/(music_(library|listing|icons|state)|spotify_hosts)\.json$|launcher/app/src/main/aidl/|launcher/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/spotify/|scripts/fake-sonos\.py$|scripts/fake-storytel\.py$|scripts/fake-spotify\.py$|scripts/fake-audio\.py$|scripts/music-splash\.py$|launcher/app/src/main/res/drawable/splash_vibb_breathe\.xml$|server/testdata/storytel_token_answers\.json$|launcher/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel/)'; then
           changed=true
         else
           changed=false
@@ -124,6 +125,11 @@ jobs:
       # The emulator's fake host for design 30's changed-source check (§8 check 10,
       # docs/testing/emulator.md §6f): Range, 416 past the end, and --vary's length per request. Stdlib only.
       run: python3 -I ../scripts/fake-audio.py --selftest
+    - name: Launch splash drawables selftest
+      # music round r13 (qa-music-r13-code Q-8): splash_vibb_mark.xml copies the launcher's splash_vibb_breathe.xml
+      # rings and splash_wordmark.xml Nunito's outlines - both must still be byte for byte what
+      # scripts/music-splash.py writes from them. Stdlib only.
+      run: python3 -I ../scripts/music-splash.py --selftest
     - name: Upload APK
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:

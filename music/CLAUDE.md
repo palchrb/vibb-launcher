@@ -63,8 +63,9 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   Mutex) and `RoomVolumes` (the members' volumes, latest-wins per room, off the actor); the group's volume rules are
   `logic/GroupVolume.kt`; the scope's and the sheet's belts (`sessionAllowed`, `groupingOffered`, `joinOffered`,
   `leaveOffered`) are in `RoomScope.kt`, the sheet's rows in `ui/OutputRows.kt` (`groupSheet`). `HandOverTiming` logs a
-  room hand-over's steps under `VibbHandover` (`+N ms` since the tap; step names, kinds, counts and positions only -
-  measurement, it decides nothing; design 54 "Hand-over timing (2026-10-25)").
+  room hand-over's steps under `VibbHandover` (`#n +N ms`: each tap's or play's numbered timeline, the play job carrying its own; step names, kinds, counts and positions only -
+  measurement, it decides nothing; `SourceScanTest` bans titles, uris, ids and tokens in its calls; design 54 "Hand-over
+  timing (2026-10-25)").
 - `storytel/` - the phone's Storytel client (26b §4, from vibb `pi/vibb/storytel.py`; the server reads the shelf and
   lists it, the phone never does; since design 58 the phone never logs in either): `StorytelApi` (pure: the asset
   call's 302 captured as a `Mint`, the fake's `/fake/jwt` and `jwtAnswer`), `StorytelSession` (pure: the server's JWT
@@ -91,9 +92,11 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   `scripts/material-symbols.sh`. The launch splash (music round r13): the theme's `windowSplashScreen*` with
   `res/drawable/splash_vibb_mark.xml` (the launcher's Home splash at rest) and `splash_wordmark.xml` ("vibb music",
   Nunito ExtraBold as paths), both written by `scripts/music-splash.py` (`--selftest`); `MainActivity.holdSplash` keeps
-  it until `MusicRoot`'s first content frame, at most 3 s (`logic/Splash.kt`). On a room the player's seek line shows
-  "Kobler til høyttaleren…" instead of the times from the tap until the room plays (`logic/HandOver.kt` `timeRow`,
-  `PlayerHub.State.connecting` = `SonosController.connecting`; one wording for every source).
+  it until `MusicRoot`'s first content frame - the snapshot in, the stored row read and the carousel on its start tile
+  (`contentReady`) -, at most 3 s (`logic/Splash.kt`). On a room the player's seek line shows
+  "Kobler til høyttaleren…" instead of the times from the tap until the room plays, and the phone's web player
+  "Kobler til…" until its first playing state (`logic/HandOver.kt` `timeRow`, `PlayerHub.State.connecting` =
+  `SonosController.connecting` or `SpotifyRenderer.starting`; no source named).
 - `src/debug/` - the debug feed (`DebugFeedReceiver`, docs/testing/emulator.md §6f; `debug-feed/sonos.json` seeds the
   speaker cache with ip and port for the fake speakers, §6h; `DebugStorytel.kt`: `config.json`'s `storytel_base` for the
   fake Storytel (an old `storytel.json` is deleted unread), §6i; `DebugSpotify.kt`: `config.json`'s `spotify_base` for the

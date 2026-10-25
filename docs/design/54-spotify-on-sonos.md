@@ -942,16 +942,21 @@ returns `"spotify"`, so a Spotify tile on a room says "Kan ikke spilles på Sono
 is reached only by its tests. What the user saw was therefore either a podcast, NRK or Storytel play on the room (the
 same hand-over machinery: the actor job, `pending`, the landing poll) or the phone's web player starting cold (the
 page, the SDK from `sdk.scdn.co`, the token through the launcher, the Connect device, `PUT /me/player/play` - design
-26c; the room's line doesn't cover that). The timing below measures the first today, and logs the share link's own
-steps already, so 54-a2's first run on a real room measures them without another round.
+26c). The user's words name a Spotify playlist and the spike's `--spotify`, so the web player is the likelier one
+(qa-music-r13-code Q-3); the user decided (2026-10-25) that the phone's path gets the same quiet line too (below). The
+timing below measures the room's hand-over today, and logs the share link's own steps already, so 54-a2's first run on
+a real room measures them without another round.
 
-**The step list** (one line per step under the logcat tag `VibbHandover`, `+N ms` since the tap; step names, kinds,
+**The step list** (one line per step under the logcat tag `VibbHandover`, `#n +N ms` - the timeline's number and the
+time since its tap (fix round, Q-1: a second tap while the first play runs is `#n+1`, and the first play's job keeps
+printing under `#n`, timed from its own tap; the service marks the tap whose command it runs, the controller's play
+continues only that one, the play job carries its timeline onto the actor); step names, kinds,
 counts, states and positions only - never an id, a uri or a title, so a release build logs them too;
 `sonos/HandOverTiming.kt`):
 
 | # | Line | Where |
 |---|------|-------|
-| 0 | `tap: PLAY_ENTRY` (`PLAY_ITEM`, `PLAY_FAVOURITES`, `RESUME`, `OUTPUT`) - t = 0; a play without a tap (a step, the advance, the play button) starts its own timeline, `(no tap)` | `PlaybackService.onCustomCommand` |
+| 0 | `tap: PLAY_ENTRY` (`PLAY_ITEM`, `PLAY_FAVOURITES`, `RESUME`, `RESTORE`, `SKIP_TO`, `OUTPUT`) - t = 0; a play without a tap (a step, the advance, the play button) starts its own timeline, `(no tap)` | `PlaybackService.onCustomCommand` |
 | 1 | `the service runs it (the renderer settled, the switch lock held)` | the command's coroutine |
 | 2 | `the play queued for the room's actor [START\|STEP\|ADVANCE, url\|nrk_program\|storytel\|spotify_sharelink]` | `SonosController.playIndex` |
 | 3 | `the actor runs the play` (the wait behind a poll, a live read, a mint already queued) | the play job |
@@ -1030,4 +1035,10 @@ failed start keeps today's "Kan ikke spilles på Sonos" and the phone. No new ti
 same line for every source**: PLAN asked "Kobler til Spotify…" for a Spotify playlist, but no string may name a source
 (design 26c step 8, the user's decision of 2026-10-14; `SourceScanTest` fails on any string containing "Spotify"), so a
 Spotify hand-over will read "Kobler til høyttaleren…" too until the user says otherwise; "Fikk ikke kontakt med
-Spotify" likewise stays today's failure words.
+Spotify" likewise stays today's failure words. **The phone's web player** (fix round, Q-3, the user's decision): from the
+tap until its first playing state - the start's calls (the page, the SDK, the token, the Connect device, the play call)
+and the tracker's wait for our first state, `SpotifyRenderer.starting` - the same place shows "Kobler til…"
+("Connecting…"; no source named, "høyttaleren" wrong on the phone), its own line ("Trenger internett", "Spør en voksen",
+...) winning: a refused start sets one, the existing failure path. The line ends with the state that drives it, read at
+the renderer's next flush or poll: a room's 8 s window or freshness running out shows at the next poll, up to 5 s
+late while TRANSITIONING - bounded, no timer of its own (Q-12).

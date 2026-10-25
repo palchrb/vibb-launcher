@@ -632,8 +632,9 @@ class PlaybackService : MediaSessionService() {
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
             // the room hand-over's timing (design 54 "Hand-over timing"): a play for a room starts the timeline - measurement only
-            val roomPlay = toRoom || (customCommand.customAction in Commands.PLAYS - Commands.ROOM_JOIN && renderer is SonosRenderer)
-            if (roomPlay) HandOverTiming.tap(customCommand.customAction.substringAfterLast('.'))
+            // (qa-music-r13-code Q-9: a swipe and a play before the queue loaded too - every command a tap's switch waits for)
+            val roomPlay = toRoom || (customCommand.customAction in Commands.PLAYS + Commands.MOVES - Commands.ROOM_JOIN && renderer is SonosRenderer)
+            val timeline = if (roomPlay) HandOverTiming.tap(customCommand.customAction.substringAfterLast('.')) else null
             if ((Commands.ALL + Commands.LAUNCHER).none { it.customAction == customCommand.customAction }) {
                 return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
             }
@@ -646,7 +647,11 @@ class PlaybackService : MediaSessionService() {
             scope.launch {
                 rendererReady.await()
                 switching.withLock {
-                    if (roomPlay) HandOverTiming.step("the service runs it (the renderer settled, the switch lock held)")
+                    if (timeline != null) {
+                        // the play this command makes continues its tap's timeline (qa-music-r13-code Q-1)
+                        HandOverTiming.running(timeline)
+                        HandOverTiming.step("the service runs it (the renderer settled, the switch lock held)", timeline)
+                    }
                     // a room still recorded after an unanswered look: one more look before the phone plays (M1)
                     if (customCommand.customAction in Commands.PLAYS) lookAgainBeforePlaying()
                     when (customCommand.customAction) {
@@ -682,6 +687,8 @@ class PlaybackService : MediaSessionService() {
                         Commands.CALL_HOLD -> launcherCall(true)
                         Commands.CALL_RELEASE -> launcherCall(false)
                     }
+                    // its play has gone out (or none came): a later play is no longer this tap's (a newer tap's mark stays)
+                    if (timeline != null) HandOverTiming.finished(timeline)
                 }
             }.invokeOnCompletion { if (moves) waitingMoves(-1) }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -2349,7 +2356,8 @@ class PlaybackService : MediaSessionService() {
             outputs = outputs,
             output = output,
             rendererState = renderer.rendererState,
-            connecting = sonos?.controller?.connecting(now) == true,
+            // a room taking our play, or the web player's start on the phone (qa-music-r13-code Q-3)
+            connecting = sonos?.controller?.connecting(now) == true || (renderer === spotify && spotify?.starting == true),
             // only the rooms the parent allows (design 26a §5.5): a group by its coordinator - and our own row with the
             // rooms the kids grouped into it by hand (design 53 §2.8, Q4)
             rooms = allowedRooms(home.rooms.state.value, roomScope, sonos?.uid, sonos?.accepted.orEmpty()),

@@ -31,8 +31,9 @@ import kotlinx.coroutines.delay
 import me.vibb.music.R
 import me.vibb.music.data.Snapshot
 import me.vibb.music.logic.SearchHit
-import me.vibb.music.logic.TimeRow
 import me.vibb.music.logic.timeRow
+import me.vibb.music.logic.SPLASH_CAP_MS
+import me.vibb.music.logic.contentReady
 import me.vibb.music.logic.categoryTiles
 import me.vibb.music.logic.effectiveCategory
 import me.vibb.music.logic.holdEndsAt
@@ -79,11 +80,25 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
         val s0 = snap ?: return@LaunchedEffect
         val r0 = row ?: return@LaunchedEffect
         vm.startOn(s0, r0)
+        vm.startSettled = true
     }
+    // qa-music-r13-code Q-10: the first content frame already on the last played tile (the splash holds until then, at
+    // most its cap); once shown, never hidden again
+    val rowKnown by vm.nowRowKnown.collectAsStateWithLifecycle()
+    var capped by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(SPLASH_CAP_MS)
+        capped = true
+    }
+    var shown by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(Palette.bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
         val s = snap ?: return@Box
+        if (!shown && !contentReady(true, rowKnown, row != null, vm.startSettled, capped)) return@Box
         // the first content frame: the launch splash may go now (MainActivity.holdSplash)
-        SideEffect { onContent() }
+        SideEffect {
+            shown = true
+            onContent()
+        }
         // What the player has, else - for a moment after a tap - what the kid asked for (logic/Switch.kt).
         val current = nowView(s, hub, row)
         val switching = vm.switching
@@ -139,11 +154,11 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
                     swipeSwitch(s, n, target, current?.ref, held?.request, SystemClock.elapsedRealtime(), onRoom)?.let { vm.switching = it }
                     actions.skipTo(item.entryId, n.entryOf(item).key, item.key, forward)
                 }
-                // PLAN "Connecting…": from the tap until the room reports PLAYING, a quiet line in the times' place
-                val timeRow = timeRow(onRoom, hub.connecting, held != null && hub.waiting, hub.rendererState)
+                // PLAN "Connecting…": from the tap until the renderer reports playing, a quiet line in the times' place
+                val timeRow = timeRow(onRoom, hub.connecting, held != null && hub.waiting, isSpotify(n.entry), hub.rendererState)
                 PlayerScreen(
                     n, { item -> playerNumberOf(s, n, item) }, of, position, hub.sleepMinutes, hub.sleepAtEnd, hub.output, hub.rendererState,
-                    connecting = timeRow == TimeRow.CONNECTING,
+                    timeRow = timeRow,
                     onBack = backToLibrary,
                     onSeek = actions::seekTo,
                     onShuffle = actions::toggleShuffle,

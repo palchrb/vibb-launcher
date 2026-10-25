@@ -2790,4 +2790,82 @@ class SonosControllerTest {
         r.work.drain()
         assertEquals(mapOf(r.uid to 55, kitchen to 35), r.c.roomVolumes())
     }
+
+    // -- music round r13: the connecting line (qa-music-r13-code Q-2) --
+
+    /** What the renderer's flush reads: the spec shown (the held playWhenReady), then the line. */
+    private fun ControllerRig.line(): Boolean {
+        c.shown(c.spec(now))
+        return c.connecting(now)
+    }
+
+    @Test
+    fun `r13 the connecting line - from the play until the room reports PLAYING, never after`() {
+        assertFalse("no session yet", r.line())
+        r.start(drain = false)
+        assertTrue("the play queued for the actor", r.line())
+        r.work.drain()
+        assertTrue("answered, settling until a poll sees our stream", r.line())
+        r.advance(1_000)
+        r.speaker("0:00:01")
+        r.poll()
+        assertFalse("the landing poll reads PLAYING: the usual times", r.line())
+    }
+
+    @Test
+    fun `r13 the connecting line - the speaker's TRANSITIONING of our stream keeps it, within 8 s of the answer only`() {
+        r.start()
+        assertTrue(r.line())
+        r.advance(1_000)
+        r.speaker("0:00:00", "TRANSITIONING")
+        r.poll()
+        assertTrue("landed, the speaker still buffering our stream", r.line())
+        r.advance(SonosController.SETTLE_MS)
+        assertFalse("no hand-over 8 s after the answer: a rebuffer isn't one", r.line())
+    }
+
+    @Test
+    fun `r13 the connecting line - the early hint, a failed or dropped play and a pause end it`() {
+        // the early hint: our DIDL's id and the new item's PLAYING on the socket - READY before UPnP
+        val hint = ControllerRig()
+        hint.link.healthy = true
+        hint.event(WsPlayback.IDLE, 0, item = "0")
+        hint.c.load(hint.entry, hint.items, 0, 0)
+        hint.c.playTile()
+        hint.work.drain()
+        hint.advance(300)
+        hint.meta(OUR_OBJECT_ID)
+        hint.event(WsPlayback.PLAYING, 1_186, item = "item-2")
+        assertFalse("the early hint", hint.line())
+        // a failed start
+        val failed = ControllerRig()
+        failed.spk.failOn = mapOf("seturi" to { UpnpFault(714, null) })
+        failed.start()
+        assertFalse("a failed start", failed.line())
+        // a failed step while the snapshot still reads our stream TRANSITIONING within 8 s of the earlier answer
+        r.start()
+        assertTrue(r.line())
+        r.advance(1_000)
+        r.speaker("0:00:00", "TRANSITIONING")
+        r.poll()
+        assertTrue(r.line())
+        r.work.failNext = SpeakerUnreachable("burp")
+        r.c.stepTo(1, 0)
+        r.work.drain()
+        assertFalse("a failed step ends it: the earlier answer doesn't keep it", r.line())
+        // a play its token dropped (playing stopped being allowed while it queued)
+        val dropped = ControllerRig()
+        dropped.c.load(dropped.entry, dropped.items, 0, 0)
+        dropped.c.playTile()
+        dropped.allowed = false
+        dropped.work.drain()
+        assertTrue("nothing went out", dropped.spk.commands.isEmpty())
+        assertFalse("a dropped play", dropped.line())
+        // a pause pressed while the play settles
+        val paused = ControllerRig()
+        paused.start(drain = false)
+        paused.c.pause()
+        paused.work.drain()
+        assertFalse("paused while it settles", paused.line())
+    }
 }
