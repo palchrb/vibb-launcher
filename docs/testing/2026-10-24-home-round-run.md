@@ -102,3 +102,7 @@ the implementer (no emulator in the round).
    code works right now"; in own mode the same recipe still shows it.
 3. **QR enrolment syncs**: provision by the QR (or the in-app scanner) and watch logcat for `SyncRunner: Sync for
    [enrolled]` right after `Auto-enrolled from provisioning QR` - the first policy within seconds, not at the backstop.
+4. **The pass's trail**: the second follow-up's run again (a wiped `jelly36`, `set-device-owner`, logcat 2 min): count
+   "N apps loaded" lines after the enforcer's passes - expected one or two loads for the stragglers (the 30 s cap),
+   not ~30. If most stragglers still open their own burst, check which packages the `PACKAGE_CHANGED` callbacks name:
+   only packages a pass suspended or hid count as its trail (`AppLoadHold.touch`).

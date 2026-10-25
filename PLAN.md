@@ -512,7 +512,7 @@ after), never later. Details stay in the entries below.
   - Configurable emergency menu; Immich wallpapers; design 60 (hardware-bound token).
   - Phase D (own lock removed), design 32b (one stale frame at screen-on), RC3-4 (release-build setup timing), RC3-8, six-inch F3/F4, compact music tile a little lower.
   - Diagnostics: Web Filter line "upstream can't be reached"; the music app's "no network" text and the real cause in its log.
-  - QR enrolment requests a sync. **Built, awaiting code QA (branch `launcher-small-a`).** Trailing package callbacks after an enforcer pass (above).
+  - QR enrolment requests a sync. **Built, awaiting code QA (branch `launcher-small-a`).** Trailing package callbacks after an enforcer pass (above) **Built, awaiting code QA (branch `launcher-small-a`).**
   - **Home's wallpaper copy: a one-frame zoom step at the hand-over** (the user's video, 2026-10-25, 24 fps: after the Home button the app slides away over the photo with no black frame (frames 144-148), Home is still for 11 frames, then at frame 160 the whole photo shifts by a hair - edges of the face and hair move, the icons don't - when the copy `HomeGround` drew is released and Android's own wallpaper shows through; Android renders the photo at a slightly different scale, likely its wallpaper zoom). Fix: Home keeps its own ground permanently (no hand-over at all: the one decoded bitmap is already in memory; `homeGroundDue` becomes "always while Home is on screen"), which also closes design 08's owed 3-button check (Q-7). Launcher, XS; next launcher round. **Built, awaiting code QA (branch `launcher-small-a`).**
   - **Installed versionCode per catalog app in the status report** (follow-up of the app update notices, 2026-10-25): `installed_apps` carries package, label and installer only, so `app_updated` can be raised for Vibb One and the music app alone; add each catalog app's `versionCode` (and `versionName`) to the report (both dirs, the status contract), so "<app> updated on <phone>" works for every tracked app. Launcher + server, S.
   - r10 run F1: in android mode the glance's UNUSABLE prompt ("Only the parent code works right now") is wrong - the kid PIN still opens Android's pad; gate `GlancePrompt.UNUSABLE` on own mode (`docs/testing/2026-10-25-r10-keystore-run.md`). Launcher, XS. **Built, awaiting code QA (branch `launcher-small-a`).**
@@ -1290,6 +1290,13 @@ after), never later. Details stay in the entries below.
   2026-10-24, measured 2026-10-25 - see the debounce entry above). Follow-up, XS, not ordered: after a release, a longer
   quiet window (about 3 s quiet / 30 s cap) for callbacks about the packages the pass touched would fold the stragglers
   into one or two loads.
+  **Follow-up built 2026-10-25 (branch `launcher-small-a`, awaiting code QA)**: the pass names each package it
+  changes (`AppLoadHold.touch`), its release keeps them 2 min (`APP_LOAD_TRAIL_WINDOW_MS`, a chain of passes
+  joined); a `LauncherApps` callback about packages all touched is the trail (`AppLoadHold.noteRequest`, pure
+  `appLoadTrails`), and a burst of the trail alone loads after 3 s of quiet, at most 30 s (`appLoadBurstDue`); any
+  other request in it keeps 300 ms / 2 s from its arrival. `HomeRound7Test` (the jelly36 stragglers: 30 callbacks
+  2 s apart -> 2 loads, 31 before). The storm run again is owed (`docs/testing/2026-10-24-home-round-run.md`,
+  "Owed after launcher-small-a").
 - **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
   Settings › Intelligent assistance › App blocker - Boot blocker, Start blocker, Background blocker, Background
   cleanup; on the Jelly Star only found through Settings' search. Design 19b §4 foresaw an OEM manager but had no name.

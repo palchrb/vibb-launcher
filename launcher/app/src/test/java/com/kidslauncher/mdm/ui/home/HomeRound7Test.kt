@@ -42,7 +42,7 @@ class HomeRound7Test {
         for (callback in listOf("onPackageRemoved", "onPackageAdded", "onPackageChanged")) {
             val body = app.substringAfter("override fun $callback(").substringBefore("override fun ")
             val evict = body.indexOf("evictIcons(p0)")
-            assertTrue(callback, evict >= 0 && evict < body.indexOf("loadApps()"))
+            assertTrue(callback, evict >= 0 && evict < body.indexOf("loadApps(listOfNotNull(p0))"))
         }
         assertTrue(app.contains("KidAvatars.evictPackage(it)"))
         val avatars = code("ui/home/KidAvatars.kt").substringAfter("fun evictPackage(")
@@ -138,8 +138,12 @@ class HomeRound7Test {
     @Test
     fun `loadApps only asks a conflated channel, whose one consumer loads and posts`() {
         val app = code("Application.kt")
-        val load = app.substringAfter("private fun loadApps() {").substringBefore("\n    }\n")
-        assertEquals("appLoads.trySend(Unit)", load.trim())
+        val load = app.substringAfter("private fun loadApps(packages: Collection<String>? = null) {").substringBefore("\n    }\n")
+        assertEquals(
+            "com.kidslauncher.mdm.ui.home.AppLoadHold.noteRequest(packages, android.os.SystemClock.elapsedRealtime())\n" +
+                "        appLoads.trySend(Unit)",
+            load.trim(),
+        )
         val loads = app.substringAfter("private val appLoads: Channel<Unit> by lazy {").substringBefore("\n    }\n")
         assertTrue(loads.contains("Channel<Unit>(Channel.CONFLATED)"))
         assertTrue(loads.contains("com.kidslauncher.mdm.ui.home.runAppLoads("))
@@ -188,20 +192,25 @@ class HomeRound7Test {
         }
     }
 
-    /** The real consumer loop on a virtual clock: requests at [times] (ms), each load taking [loadMs]; the loads' times. */
+    /** The real consumer loop on a virtual clock: requests at [times] (ms), each load taking [loadMs]; the loads' times.
+     * The requests at the times in [trail] are a pass's trail, every other one a normal request. */
     private fun loadsFor(
         times: List<Long>,
         loadMs: Long = 0,
         closeAfter: Boolean = false,
         held: (Long) -> Long? = { null },
+        trail: Set<Long> = emptySet(),
     ): List<Long> {
         var now = 0L
         val pending = ArrayDeque(times.sorted())
         val loads = mutableListOf<Long>()
+        var normal = false
         // The conflated channel: every request already sent comes as one.
         fun take(): Boolean {
             if (pending.isEmpty() || pending.first() > now) return false
-            while (pending.isNotEmpty() && pending.first() <= now) pending.removeFirst()
+            while (pending.isNotEmpty() && pending.first() <= now) {
+                if (pending.removeFirst() !in trail) normal = true
+            }
             return true
         }
         kotlinx.coroutines.runBlocking {
@@ -223,6 +232,7 @@ class HomeRound7Test {
                     }
                 },
                 now = { now },
+                takeNormal = { normal.also { normal = false } },
                 heldSince = { held(now) },
             ) {
                 loads += now
@@ -275,7 +285,7 @@ class HomeRound7Test {
         val apply = enforcer.substringAfter("fun apply(context: Context, policy: PolicyResponse?").substringBefore("\n    }\n")
         val hold = apply.indexOf("AppLoadHold.hold(android.os.SystemClock.elapsedRealtime())")
         val body = apply.indexOf("applyHeld(context, policy, fromSync, parentChoice)")
-        val release = apply.indexOf("} finally {\n            com.kidslauncher.mdm.ui.home.AppLoadHold.release()")
+        val release = apply.indexOf("} finally {\n            com.kidslauncher.mdm.ui.home.AppLoadHold.release(android.os.SystemClock.elapsedRealtime())")
         assertTrue(apply, hold >= 0 && hold < apply.indexOf("try {") && apply.indexOf("try {") < body && body < release)
         assertEquals("the pass itself is applyHeld", 1, Regex("private fun applyHeld\\(").findAll(enforcer).count())
         val loads = code("Application.kt").substringAfter("private val appLoads: Channel<Unit> by lazy {").substringBefore("\n    }\n")
@@ -305,16 +315,100 @@ class HomeRound7Test {
             AppLoadHold.hold(1_000)
             AppLoadHold.hold(2_000)
             assertEquals(1_000L, AppLoadHold.heldSince)
-            AppLoadHold.release()
+            AppLoadHold.release(3_000)
             assertEquals(1_000L, AppLoadHold.heldSince)
-            AppLoadHold.release()
+            AppLoadHold.release(3_000)
             assertEquals(null, AppLoadHold.heldSince)
-            AppLoadHold.release()
+            AppLoadHold.release(3_000)
             assertEquals("an extra release is harmless", null, AppLoadHold.heldSince)
         } finally {
             // The real, process-wide object: never leave it held for the rest of the test JVM (Q-5).
-            repeat(3) { AppLoadHold.release() }
+            AppLoadHold.resetForTest()
         }
+    }
+
+    // ---- the pass's trail: 3 s quiet / 30 s cap for callbacks about the packages it touched -------------------------
+
+    @Test
+    fun `a callback trails a pass only when the pass touched every package, within 2 min of the release`() {
+        assertEquals(3_000L, APP_LOAD_TRAIL_QUIET_MS)
+        assertEquals(30_000L, APP_LOAD_TRAIL_MAX_WAIT_MS)
+        assertEquals(120_000L, APP_LOAD_TRAIL_WINDOW_MS)
+        val trail = AppLoadTrail(setOf("a", "b"), releasedAt = 10_000)
+        assertTrue(appLoadTrails(listOf("a"), 10_000, emptySet(), trail))
+        assertTrue(appLoadTrails(listOf("a", "b"), 129_999, emptySet(), trail))
+        assertFalse("the window ended", appLoadTrails(listOf("a"), 130_000, emptySet(), trail))
+        assertFalse("one package the pass didn't touch", appLoadTrails(listOf("a", "c"), 11_000, emptySet(), trail))
+        assertFalse("no package", appLoadTrails(emptyList(), 11_000, emptySet(), trail))
+        assertFalse("no pass", appLoadTrails(listOf("a"), 11_000, emptySet(), null))
+        assertTrue("the running pass's", appLoadTrails(listOf("c"), 11_000, setOf("c"), trail))
+        // A chain of passes keeps the earlier one's packages while its window runs, counted from the last release.
+        val chained = appLoadTrailAfterRelease(setOf("c"), 20_000, trail)
+        assertEquals(AppLoadTrail(setOf("a", "b", "c"), 20_000), chained)
+        assertEquals(AppLoadTrail(setOf("c"), 200_000), appLoadTrailAfterRelease(setOf("c"), 200_000, trail))
+        assertEquals("nothing touched, nothing kept", null, appLoadTrailAfterRelease(emptySet(), 200_000, trail))
+        // The burst's rule: due exactly when its wait is 0.
+        for (now in 1_000L..40_000L step 97) {
+            for (last in 1_000L..now step 433) {
+                for (normal in listOf(null, 1_000L, last)) {
+                    assertEquals("$now $last $normal", appLoadBurstDue(now, 1_000, last, normal), appLoadBurstWaitMs(now, 1_000, last, normal) == 0L)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `the hold records what the pass touched, and the requests are classed by it`() {
+        try {
+            AppLoadHold.resetForTest()
+            AppLoadHold.touch("outside")
+            assertFalse("no pass, no trail", AppLoadHold.trails(listOf("outside"), 1_000))
+            AppLoadHold.hold(1_000)
+            AppLoadHold.touch("x")
+            assertTrue(AppLoadHold.trails(listOf("x"), 1_500))
+            AppLoadHold.release(2_000)
+            assertFalse(AppLoadHold.takeNormal())
+            assertTrue(AppLoadHold.noteRequest(listOf("x"), 5_000))
+            assertFalse("the trail alone", AppLoadHold.takeNormal())
+            assertFalse(AppLoadHold.noteRequest(listOf("y"), 5_000))
+            assertTrue(AppLoadHold.takeNormal())
+            assertFalse("taken once", AppLoadHold.takeNormal())
+            assertFalse("not about packages: normal", AppLoadHold.noteRequest(null, 5_000))
+            assertTrue(AppLoadHold.takeNormal())
+            assertFalse("after the window", AppLoadHold.noteRequest(listOf("x"), 122_000))
+        } finally {
+            AppLoadHold.resetForTest()
+        }
+        // The pass touches every package it changes, inside the hold.
+        val enforcer = code("server/AppEnforcer.kt")
+        val loop = enforcer.substringAfter("if (shouldBeSuspended == currentlySuspended && shouldBeHidden == currentlyHidden) continue")
+        assertTrue(loop.trimStart().startsWith("com.kidslauncher.mdm.ui.home.AppLoadHold.touch(packageName)"))
+        // Every LauncherApps callback names its packages; the consumer takes the class.
+        val app = code("Application.kt")
+        assertEquals(3, Regex("loadApps\\(listOfNotNull\\(p0\\)\\)").findAll(app).count())
+        assertEquals(2, Regex("loadApps\\(packageNames\\?\\.toList\\(\\)\\.orEmpty\\(\\)\\)").findAll(app).count())
+        assertTrue(app.contains("takeNormal = { com.kidslauncher.mdm.ui.home.AppLoadHold.takeNormal() },"))
+    }
+
+    @Test
+    fun `the stragglers after a pass fold into one or two loads, not one each`() {
+        // The jelly36 run: a pass 10-17 s, then the system's late callbacks 1-3 s apart until 77 s (60 s after it).
+        val pass: (Long) -> Long? = { t -> if (t in 10_000L until 17_000L) 10_000L else null }
+        val stragglers = (0 until 30).map { 18_000L + it * 2_000 } // 18 .. 76 s
+        val loads = loadsFor(listOf(0L) + stragglers, held = pass, trail = stragglers.toSet())
+        assertEquals("the first, the 30 s cap, then 3 s after the last", listOf(0L, 48_000L, 79_000L), loads)
+        // The same callbacks as normal requests: one load each.
+        assertEquals(31, loadsFor(listOf(0L) + stragglers, held = pass).size)
+    }
+
+    @Test
+    fun `another request in a trail burst brings back 300 ms from its arrival`() {
+        val stragglers = (0 until 10).map { 20_000L + it * 1_000 } // 20 .. 29 s, 1 s apart
+        val install = 22_500L
+        val loads = loadsFor(listOf(0L) + stragglers + install, trail = stragglers.toSet())
+        assertEquals("the install's 300 ms, then the trail's 3 s quiet", listOf(0L, 22_800L, 32_000L), loads)
+        // A quiet trail alone: 3 s after its last callback.
+        assertEquals(listOf(0L, 23_000L), loadsFor(listOf(0L, 20_000L), trail = setOf(20_000L)))
     }
 
     private val fiveSecondApply: (Long) -> Long? = { t -> if (t in 10_000L until 15_000L) 10_000L else null }

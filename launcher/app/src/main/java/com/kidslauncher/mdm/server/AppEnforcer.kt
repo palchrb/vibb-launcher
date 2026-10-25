@@ -303,7 +303,7 @@ object AppEnforcer {
         try {
             applyHeld(context, policy, fromSync, parentChoice)
         } finally {
-            com.kidslauncher.mdm.ui.home.AppLoadHold.release()
+            com.kidslauncher.mdm.ui.home.AppLoadHold.release(android.os.SystemClock.elapsedRealtime())
         }
     }
 
@@ -434,6 +434,8 @@ object AppEnforcer {
             // hidden must be released outright.
             val currentlyHidden = isHidden(dpm, admin, packageName)
             if (shouldBeSuspended == currentlySuspended && shouldBeHidden == currentlyHidden) continue
+            // The system's callbacks about this package after the pass are its trail (`AppLoadHold`: 3 s quiet / 30 s).
+            com.kidslauncher.mdm.ui.home.AppLoadHold.touch(packageName)
 
             try {
                 // Both calls can fail *without* throwing - setPackagesSuspended returns the
