@@ -503,8 +503,6 @@ after), never later. Details stay in the entries below.
 
 - **Launcher**
   - **Design 38 device check still owed** (2026-10-25: the user's "no shutdown seen" came from `adb emu kill`, which ends the emulator without Android's shutdown sequence - no `ACTION_SHUTDOWN`, the correct outcome; not a bug): check with `adb shell svc power reboot` / `svc power shutdown` on the emulator and the power menu on the Jelly Star - the `off` push within seconds, the `on` push "off since …". The coordinator runs the emulator half at the next emulator session. Launcher check, XS.
-  - A time rule shows as a card on the glance (design r13 §1; designed and design-QA'd 2026-10-25, `qa-r13-design.md`; built, QA'd (`qa-r13-rule-card-code.md`), awaiting merge (branch `r13-rule-card`) - step 1).
-  - Screen time left in the "Vibb One" notification + "Be om mer tid" (design r13 §2; designed and QA'd 2026-10-25; built, QA'd (`qa-r13-rule-card-code.md`), awaiting merge (branch `r13-rule-card`) - steps 2 and 3, the server (0.50.0) before the launcher).
   - Missed Element X calls on the contact card and the phone book's badge (capture the notification shape on the Jelly Star first).
   - VoIP small fixes: "Tilbake til samtalen" button, no SOS guess at a VoIP wake, no BlockedAppActivity flash, READ_PHONE_STATE for allowlisted apps; design 57 itself is held (design 59 hybrid).
   - Browser "secure DNS" bypass: Chrome managed config, DoH-host block category, Firefox canary.
