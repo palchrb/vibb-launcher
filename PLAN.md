@@ -503,8 +503,8 @@ after), never later. Details stay in the entries below.
 
 - **Launcher**
   - Keystore wrap of the device token, the kid PIN's hash and salt and the reset token (design r10, design-QA'd) - in build 2026-10-25, branch `r10-keystore-wrap`.
-  - A time rule shows as a card on the glance (design r13 §1, in design 2026-10-25).
-  - Screen time left in the "Vibb One" notification + "Be om mer tid" (design r13 §2, in design 2026-10-25; server part too).
+  - A time rule shows as a card on the glance (design r13 §1; designed and design-QA'd 2026-10-25, `qa-r13-design.md`; awaiting build - step 1).
+  - Screen time left in the "Vibb One" notification + "Be om mer tid" (design r13 §2; designed and QA'd 2026-10-25; awaiting build - steps 2 and 3, server part first).
   - Missed Element X calls on the contact card and the phone book's badge (capture the notification shape on the Jelly Star first).
   - VoIP small fixes: "Tilbake til samtalen" button, no SOS guess at a VoIP wake, no BlockedAppActivity flash, READ_PHONE_STATE for allowlisted apps; design 57 itself is held (design 59 hybrid).
   - Browser "secure DNS" bypass: Chrome managed config, DoH-host block category, Firefox canary.

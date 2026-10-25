@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>r13 rule card mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;600;700;800&display=swap">
+<style>
+  /* Design r13 (docs/design/r13-launcher-rule-card-and-time-left.md): the lock's glance page at 320x569 dp with the
+     time rule's card, and the anchor notification with the time left. 1 CSS px = 1 dp. Colours are the launcher's
+     tokens (res/values/colors_kid.xml). */
+  :root {
+    --ground: #0C0C14; --tile: #1B1B28; --control: #2A2A3A; --ink: #FFFFFF; --core: #FBE4DC;
+    --core-dim: rgba(251, 228, 220, 0.78); --accent: #F0A884; --disc: rgba(240, 168, 132, 0.14);
+    --emergency: #FF8A8A; --row-icon: #4A6FA5;
+    --page: #15151c; --label: #9a9aa6;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px 48px; background: var(--page); color: #e8e8ee;
+         font-family: Nunito, system-ui, sans-serif; }
+  h1 { font-size: 20px; font-weight: 800; margin: 0 0 4px; }
+  p.lead { margin: 0 0 24px; color: var(--label); font-size: 14px; max-width: 760px; line-height: 1.45; }
+  h2 { font-size: 15px; font-weight: 800; margin: 32px 0 12px; color: #cfcfd8; }
+  .grid { display: flex; flex-wrap: wrap; gap: 28px; }
+  figure { margin: 0; }
+  figcaption { margin-top: 8px; font-size: 13px; color: var(--label); max-width: 320px; line-height: 1.4; }
+  figcaption b { color: #e8e8ee; font-weight: 700; }
+
+  /* ---- the phone ---- */
+  .phone { position: relative; width: 320px; height: 569px; background: var(--ground); overflow: hidden;
+           border-radius: 18px; box-shadow: 0 0 0 1px #2b2b36; }
+  .bar { position: absolute; left: 0; right: 0; top: 0; height: 24px; display: flex; align-items: center;
+         justify-content: space-between; padding: 0 16px; font-size: 13px; font-weight: 700; color: #fff; }
+  .bar .icons { display: flex; gap: 5px; align-items: center; }
+  .bar .icons i { display: block; width: 10px; height: 10px; background: #fff; border-radius: 2px; opacity: .9; }
+  .clock { position: absolute; left: 28px; top: 59.7px; font-weight: 300; font-size: 86px; line-height: 1;
+           color: #fff; letter-spacing: -1px; }
+  .date { position: absolute; left: 35px; top: 155.4px; font-size: 16px; line-height: 1; font-weight: 600;
+          color: var(--core-dim); }
+  .alarm { position: absolute; left: 35px; top: 178px; font-size: 13px; line-height: 1; font-weight: 600;
+           color: var(--core-dim); }
+  .card, .tile, .compact, .row { position: absolute; left: 16px; width: 288px; background: var(--tile); }
+
+  /* the rule card: 64 dp, 20 dp corners, 12 dp padding, a 40 dp peach disc with a 22 dp glyph */
+  .card { height: 64px; border-radius: 20px; padding: 12px; display: flex; align-items: center; }
+  .disc { width: 40px; height: 40px; border-radius: 50%; background: var(--disc); flex: none;
+          display: flex; align-items: center; justify-content: center; }
+  .disc svg { width: 22px; height: 22px; fill: var(--accent); }
+  .card .text { margin-left: 12px; min-width: 0; }
+  .t15 { font-size: 15px; font-weight: 800; color: var(--ink); line-height: 21px; white-space: nowrap;
+         overflow: hidden; text-overflow: ellipsis; }
+  .t13 { font-size: 13px; font-weight: 700; color: var(--core-dim); line-height: 18px; white-space: nowrap;
+         overflow: hidden; text-overflow: ellipsis; }
+
+  /* the full music tile (r9 §3): 156.8 dp, 24 dp corners */
+  .tile { height: 156.8px; border-radius: 24px; padding: 12px; }
+  .tile .head { display: flex; align-items: center; }
+  .art { width: 48px; height: 48px; border-radius: 10px; background: linear-gradient(135deg, #3a3550, #2a2a3a);
+         display: flex; align-items: center; justify-content: center; flex: none; }
+  .art svg { width: 24px; height: 24px; fill: var(--core); }
+  .tile .head .text { margin-left: 12px; min-width: 0; }
+  .prog { display: flex; align-items: center; margin-top: 10px; font-size: 12px; font-weight: 700;
+          color: var(--core-dim); }
+  .prog .bar4 { flex: 1; height: 4px; border-radius: 2px; background: #33334a; margin: 0 8px; position: relative; }
+  .prog .bar4::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 34%; border-radius: 2px;
+                       background: var(--accent); }
+  .controls { display: flex; justify-content: center; align-items: center; gap: 28px; margin-top: 2px; height: 56px; }
+  .controls svg { fill: #fff; }
+
+  /* the compact tile: 72 dp */
+  .compact { height: 72px; border-radius: 20px; padding: 10px; display: flex; align-items: center; }
+  .compact .art { width: 52px; height: 52px; }
+  .compact .text { margin-left: 12px; flex: 1; min-width: 0; }
+  .compact .bar3 { height: 3px; border-radius: 2px; background: #33334a; margin-top: 6px; position: relative; }
+  .compact .bar3::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 58%;
+                          border-radius: 2px; background: var(--accent); }
+  .play { width: 48px; height: 48px; border-radius: 50%; background: var(--accent); margin-left: 12px; flex: none;
+          display: flex; align-items: center; justify-content: center; }
+  .play svg { width: 22px; height: 22px; fill: var(--ground); }
+
+  /* a notification row (view_lock_glance_row.xml): 56 dp, 16 dp corners */
+  .row { height: 56px; border-radius: 16px; padding: 8px 12px; display: flex; align-items: center; }
+  .row .ico { width: 36px; height: 36px; border-radius: 50%; background: var(--row-icon); flex: none;
+              display: flex; align-items: center; justify-content: center; }
+  .row .ico svg { width: 20px; height: 20px; fill: #fff; }
+  .row .text { margin-left: 14px; flex: 1; min-width: 0; }
+  .row .when { font-size: 12px; font-weight: 700; color: var(--core-dim); align-self: flex-start; margin-top: 2px; }
+
+  /* the scroller's visible part (r11 §1.1): down to 8 dp above the bottom row, a 16 dp fade at the edge with more */
+  .scroller { position: absolute; left: 0; right: 0; top: 0; height: 481px; overflow: hidden;
+              -webkit-mask-image: linear-gradient(#000 0, #000 465px, transparent 481px);
+              mask-image: linear-gradient(#000 0, #000 465px, transparent 481px); }
+  .bottom { position: absolute; left: 16px; right: 16px; top: 489px; height: 48px; }
+  .sos { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--emergency);
+         font-size: 15px; font-weight: 700; }
+  .torch { position: absolute; right: 0; top: 0; width: 48px; height: 48px; border-radius: 50%;
+           background: var(--control); display: flex; align-items: center; justify-content: center; }
+  .torch svg { width: 24px; height: 24px; fill: var(--core); }
+  .handle { position: absolute; left: 106px; bottom: 8px; width: 108px; height: 4px; border-radius: 2px;
+            background: rgba(255, 255, 255, 0.8); }
+
+  /* ---- the shade (item 2) ---- */
+  .shade { position: relative; width: 320px; height: 300px; background: #101016; border-radius: 18px;
+           overflow: hidden; box-shadow: 0 0 0 1px #2b2b36; }
+  .shade .qs { position: absolute; left: 0; right: 0; top: 24px; height: 56px; }
+  .notif { position: absolute; left: 12px; right: 12px; top: 88px; background: #22222c; border-radius: 22px;
+           padding: 14px 16px 6px; }
+  .notif .hdr { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: #b9b9c6; }
+  .notif .hdr .small { width: 18px; height: 18px; border-radius: 50%; background: #3a3a48; display: flex;
+                       align-items: center; justify-content: center; }
+  .notif .hdr .small i { width: 8px; height: 8px; border-radius: 50%; background: #d8d8e2; display: block; }
+  .notif .title { margin-top: 8px; font-size: 15px; font-weight: 700; color: #f2f2f6; }
+  .notif .acts { display: flex; gap: 8px; margin-top: 8px; }
+  .notif .act { font-size: 14px; font-weight: 800; color: var(--accent); padding: 10px 4px; }
+  .notif .body { margin-top: 2px; padding-bottom: 10px; font-size: 14px; font-weight: 600; color: #a9a9b6; }
+  .shade .note { position: absolute; left: 16px; right: 16px; bottom: 14px; font-size: 12px; color: #7d7d8a;
+                 line-height: 1.4; }
+
+  /* ---- the PWA (item 2), English ---- */
+  .pwa { width: 320px; background: #000; border-radius: 18px; padding: 16px; box-shadow: 0 0 0 1px #2b2b36;
+         font-family: -apple-system, system-ui, sans-serif; color: #fff; }
+  .pwa .gh { font-size: 13px; color: #8e8e93; text-transform: uppercase; letter-spacing: .02em; margin: 14px 4px 6px; }
+  .pwa .grp { background: #1c1c1e; border-radius: 12px; overflow: hidden; }
+  .pwa .r { padding: 12px 14px; font-size: 15px; display: flex; justify-content: space-between; }
+  .pwa .r + .r { border-top: 0.5px solid #38383a; }
+  .pwa .r .sub { display: block; font-size: 13px; color: #8e8e93; margin-top: 2px; }
+  .pwa .acts { display: flex; gap: 8px; margin-top: 8px; }
+  .pwa .acts div { flex: 1; background: #1c1c1e; border-radius: 12px; text-align: center; padding: 14px 0;
+                   font-size: 15px; color: #0a84ff; font-weight: 600; }
+  .pwa .foot { font-size: 12px; color: #8e8e93; margin: 6px 4px 0; }
+  .pwa .asked { color: #ffd60a; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- Material Symbols Rounded (Apache-2.0), the repo's converted glyphs: menu_book, bedtime, hourglass_bottom. -->
+    <symbol id="school" viewBox="0 -960 960 960"><path d="M520-278q44-21 88.5-31.5T700-320q36 0 70.5 6t69.5 18v-396q-33-14-68.5-21t-71.5-7q-47 0-93 12t-87 36v394Zm-40 97q-14 0-26.5-3.5T430-194q-39-23-82-34.5T260-240q-42 0-82.5 11T100-198q-21 11-40.5-1T40-234v-482q0-11 5.5-21T62-752q47-23 96.5-35.5T260-800q58 0 113.5 15T480-740q51-30 106.5-45T700-800q52 0 101.5 12.5T898-752q11 5 16.5 15t5.5 21v482q0 23-19.5 35t-40.5 1q-37-20-77.5-31T700-240q-45 0-88 11.5T530-194q-11 6-23.5 9.5T480-181Z"/></symbol>
+    <symbol id="bedtime" viewBox="0 -960 960 960"><path d="M524-40q-84 0-157.5-32t-128-86.5Q184-213 152-286.5T120-444q0-128 72-232t193-146q22-8 41 5.5t18 36.5q-3 85 27 162t90 137q60 60 137 90t162 27q26-1 38.5 17.5T903-305q-44 120-147.5 192.5T524-40Z"/></symbol>
+    <symbol id="hourglass" viewBox="0 -960 960 960"><path d="M480-520q66 0 113-47t47-113v-120H320v120q0 66 47 113t113 47ZM200-80q-17 0-28.5-11.5T160-120q0-17 11.5-28.5T200-160h40v-120q0-61 28.5-114.5T348-480q-51-32-79.5-85.5T240-680v-120h-40q-17 0-28.5-11.5T160-840q0-17 11.5-28.5T200-880h560q17 0 28.5 11.5T800-840q0 17-11.5 28.5T760-800h-40v120q0 61-28.5 114.5T612-480q51 32 79.5 85.5T720-280v120h40q17 0 28.5 11.5T800-120q0 17-11.5 28.5T760-80H200Z"/></symbol>
+    <symbol id="note" viewBox="0 -960 960 960"><path d="M400-120q-66 0-113-47t-47-113q0-66 47-113t113-47q23 0 42.5 5.5T480-418v-382q0-17 11.5-28.5T520-840h160q17 0 28.5 11.5T720-800v80q0 17-11.5 28.5T680-680H560v400q0 66-47 113t-113 47Z"/></symbol>
+    <symbol id="torch" viewBox="0 -960 960 960"><path d="M240-760v-40q0-33 23.5-56.5T320-880h320q33 0 56.5 23.5T720-800v40H240Zm240 420q25 0 42.5-17.5T540-400q0-25-17.5-42.5T480-460q-25 0-42.5 17.5T420-400q0 25 17.5 42.5T480-340ZM320-160v-360l-67-100q-7-10-10-21t-3-23v-16h480v16q0 12-3 23t-10 21l-67 100v360q0 33-23.5 56.5T560-80H400q-33 0-56.5-23.5T320-160Z"/></symbol>
+    <symbol id="pause" viewBox="0 0 24 24"><path d="M7,5h2a1,1 0,0 1,1 1v12a1,1 0,0 1,-1 1h-2a1,1 0,0 1,-1 -1v-12a1,1 0,0 1,1 -1zM15,5h2a1,1 0,0 1,1 1v12a1,1 0,0 1,-1 1h-2a1,1 0,0 1,-1 -1v-12a1,1 0,0 1,1 -1z"/></symbol>
+    <symbol id="prev" viewBox="0 0 24 24"><path d="M6 5h2v14H6zM9.5 12L18 5v14z"/></symbol>
+    <symbol id="next" viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM14.5 12L6 19V5z"/></symbol>
+    <symbol id="chat" viewBox="0 0 24 24"><path d="M12 3c5 0 9 3.4 9 7.6s-4 7.6-9 7.6c-.9 0-1.8-.1-2.6-.3L5 20l1.2-3.7C4.2 14.9 3 12.9 3 10.6 3 6.4 7 3 12 3z"/></symbol>
+  </defs>
+</svg>
+
+<h1>Design r13: the rule card and the time left</h1>
+<p class="lead">The lock's glance page at 320 x 569 dp (the Jelly Star's profile clock, gesture navigation) while a time
+rule locks: one more card in the music tile's style, directly under the date and alarm lines. It's information only:
+it has no tap action, and TalkBack reads it as one line ("Skole, til 14:30"). The end time shows only when it's
+certain. Revised after the design QA: the compact player counts notification rows only (frame D), and "Spurt" is text
+(frame G).
+Below the phones: item 2's anchor notification in the shade, and the PWA's side.</p>
+
+<h2>Item 1: the glance page with the card</h2>
+<div class="grid">
+
+  <!-- A: school, no music, one row -->
+  <figure>
+    <div class="phone">
+      <div class="bar"><span>09:41</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="clock">9:41</div>
+      <div class="date">Man. 26. okt.</div>
+      <div class="card" style="top:192.3px">
+        <div class="disc"><svg><use href="#school"/></svg></div>
+        <div class="text"><div class="t15">Skole</div><div class="t13">Til 14:30</div></div>
+      </div>
+      <div class="row" style="top:270.3px">
+        <div class="ico"><svg><use href="#chat"/></svg></div>
+        <div class="text"><div class="t15">Mamma</div><div class="t13">Husk gymtøy i dag</div></div>
+        <div class="when">09:12</div>
+      </div>
+      <div class="bottom"><span class="sos">Nødsamtale</span><span class="torch"><svg><use href="#torch"/></svg></span></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>A - school, one row.</b> The card sits under the date. The row sits 14 dp under the card, as it
+    would under a tile. The row is there because the messaging app is exempt from the school rule.</figcaption>
+  </figure>
+
+  <!-- B: school + the full music tile -->
+  <figure>
+    <div class="phone">
+      <div class="bar"><span>12:58</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="clock">12:58</div>
+      <div class="date">Man. 26. okt.</div>
+      <div class="card" style="top:192.3px">
+        <div class="disc"><svg><use href="#school"/></svg></div>
+        <div class="text"><div class="t15">Skole</div><div class="t13">Til 14:30</div></div>
+      </div>
+      <div class="tile" style="top:274.3px">
+        <div class="head">
+          <div class="art"><svg><use href="#note"/></svg></div>
+          <div class="text"><div class="t15">Kapittel 4</div><div class="t13">Lydbok</div></div>
+        </div>
+        <div class="prog"><span>0:15</span><span class="bar4"></span><span>−12:30</span></div>
+        <div class="controls">
+          <svg width="26" height="26"><use href="#prev"/></svg>
+          <svg width="34" height="34"><use href="#pause"/></svg>
+          <svg width="26" height="26"><use href="#next"/></svg>
+        </div>
+      </div>
+      <div class="bottom"><span class="sos">Nødsamtale</span><span class="torch"><svg><use href="#torch"/></svg></span></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>B - school with music, no rows.</b> The card plus the full tile come to 360.8 dp, which fits the
+    401 dp scroller (3-button) and the 425 dp one (gestures). The music tile is full, because only notification rows
+    count toward the compact player's two.</figcaption>
+  </figure>
+
+  <!-- C: bedtime, with the alarm line -->
+  <figure>
+    <div class="phone">
+      <div class="bar"><span>21:47</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="clock">21:47</div>
+      <div class="date">Man. 26. okt.</div>
+      <div class="alarm">Alarm 07:00</div>
+      <div class="card" style="top:212.5px">
+        <div class="disc"><svg><use href="#bedtime"/></svg></div>
+        <div class="text"><div class="t15">Leggetid</div><div class="t13">Til 07:00</div></div>
+      </div>
+      <div class="bottom"><span class="sos">Nødsamtale</span><span class="torch"><svg><use href="#torch"/></svg></span></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>C - bedtime, alarm set.</b> The card comes under the alarm line, with the moon glyph. "Til 07:00"
+    shows because nothing locks at 07:00: no rule starts then, and tomorrow's budget isn't 0. Today's screen time being
+    used up doesn't matter, because 07:00 is tomorrow (R13-2).</figcaption>
+  </figure>
+
+  <!-- D: screen time used up, full music, one row - the page scrolls (decision D4) -->
+  <figure>
+    <div class="phone">
+      <div class="bar"><span>17:20</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="scroller">
+        <div class="clock">17:20</div>
+        <div class="date">Man. 26. okt.</div>
+        <div class="card" style="top:192.3px">
+          <div class="disc"><svg><use href="#hourglass"/></svg></div>
+          <div class="text"><div class="t15">Skjermtiden er brukt opp</div></div>
+        </div>
+        <div class="tile" style="top:274.3px">
+          <div class="head">
+            <div class="art"><svg><use href="#note"/></svg></div>
+            <div class="text"><div class="t15">Sommerfuglen</div><div class="t13">Barnesanger</div></div>
+          </div>
+          <div class="prog"><span>1:05</span><span class="bar4"></span><span>−1:58</span></div>
+          <div class="controls">
+            <svg width="26" height="26"><use href="#prev"/></svg>
+            <svg width="34" height="34"><use href="#pause"/></svg>
+            <svg width="26" height="26"><use href="#next"/></svg>
+          </div>
+        </div>
+        <div class="row" style="top:445.1px">
+          <div class="ico"><svg><use href="#chat"/></svg></div>
+          <div class="text"><div class="t15">Pappa</div><div class="t13">Middag om ti minutter</div></div>
+          <div class="when">17:18</div>
+        </div>
+      </div>
+      <div class="bottom"><span class="sos">Nødsamtale</span><span class="torch"><svg><use href="#torch"/></svg></span></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>D - screen time used up, music, one row.</b> The used-up budget has no end line, because the parent
+    may add time. Only notification rows count toward the compact player's two (the user's rule; the card counts no
+    more than the timer tile does). So one row keeps the full tile: 430.8 dp, which scrolls about 30 dp with 3-button
+    navigation and 6 dp with gestures. The row starts at the scroller's fade, which r11 accepted ("no fit at
+    all").</figcaption>
+  </figure>
+
+  <!-- E: school, end not certain (budget also used up) -->
+  <figure>
+    <div class="phone">
+      <div class="bar"><span>13:05</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="clock">13:05</div>
+      <div class="date">Man. 26. okt.</div>
+      <div class="card" style="top:192.3px">
+        <div class="disc"><svg><use href="#school"/></svg></div>
+        <div class="text"><div class="t15">Skole</div></div>
+      </div>
+      <div class="bottom"><span class="sos">Nødsamtale</span><span class="torch"><svg><use href="#torch"/></svg></span></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>E - school, end not certain.</b> At 14:30 something else still locks: the screen time is used up,
+    or another rule starts or overlaps. The card says only "Skole", with no time, so it never promises an end that
+    won't come. A custom rule looks the same, with its own name and the dot glyph.</figcaption>
+  </figure>
+</div>
+
+<h2>Item 2: the anchor notification ("Vibb One") with the time left</h2>
+<div class="grid">
+  <figure>
+    <div class="shade">
+      <div class="bar"><span>15:12</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="notif">
+        <div class="hdr"><span class="small"><i></i></span>Vibb One</div>
+        <div class="title">1 t 20 min igjen i dag</div>
+        <div class="acts"><span class="act">Be om mer tid</span></div>
+      </div>
+      <div class="note">The shade holds one notification, the anchor's: its title is the time left, with one action.
+      It counts down one minute at a time, only while screen time is counting.</div>
+    </div>
+    <figcaption><b>F - a budget today, time left.</b> The rounding is up, so it shows "1 min igjen i dag" until the
+    last second. It never shows "0 min".</figcaption>
+  </figure>
+
+  <figure>
+    <div class="shade">
+      <div class="bar"><span>17:21</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="notif">
+        <div class="hdr"><span class="small"><i></i></span>Vibb One</div>
+        <div class="title">Skjermtiden er brukt opp i dag</div>
+        <div class="body">Spurt kl. 17:21</div>
+      </div>
+      <div class="note">Once the server has taken the request, a plain text line replaces the action, with nothing to
+      tap. It stays until the parent answers with a lift, 30 minutes pass (a stored instant the boundary alarm acts on)
+      or the day ends. After the third request taken in a day, the action is gone until midnight.</div>
+    </div>
+    <figcaption><b>G - used up, already asked ("Spurt" is text, R13-8).</b> On a phone with no budget today, it's the plain "Vibb One" again,
+    with no text and no action. The same goes during the pause or the offline override.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="pwa">
+      <div class="gh" style="margin-top:0">Notifications</div>
+      <div class="grp">
+        <div class="r"><span>Sverre asks for more screen time<span class="sub">17:21 · Screen time used up</span></span></div>
+        <div class="r"><span>Sverre asks for more screen time<span class="sub">15:12 · 1 h 20 min left</span></span></div>
+      </div>
+      <div class="gh">Extra Time Today</div>
+      <div class="grp"><div class="r"><span class="asked">Asked for more time at 17:21</span></div></div>
+      <div class="acts"><div>+15 min</div><div>+30 min</div><div>+1 h</div></div>
+      <div class="foot">Adds to today's screen time on the phone.</div>
+    </div>
+    <figcaption><b>H - the PWA, in English.</b> The inbox event (pushed under Notify Me About, "Asks for more time",
+    on by default) opens Device &rsaquo; Time at <code>#extra</code>. "Asked … at 17:21" stays until a lift or the end
+    of the day. Any lift form returns to its own group, so the page never jumps to the top.</figcaption>
+  </figure>
+</div>
+</body>
+</html>
