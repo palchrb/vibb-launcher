@@ -351,6 +351,23 @@ both("a record in window.name restores when sessionStorage has none, and is clea
     install(other.win, () => 100);
     assert.strictEqual(other.win.name, "their-frame");
     assert.deepStrictEqual(other.scrolls, []);
+    assert.strictEqual(other.win.handyPlaceRecord, undefined);
+});
+
+// qa-pwa-fixes-d Q-6: the record taken is handed to reconnect.js's sign-in check (deferred, it
+// runs after both carriers were cleared here), the query in its `href` kept.
+both("the record taken is left for reconnect.js as handyPlaceRecord", (mode) => {
+    const w = fakeWindow({ mode });
+    const record = { path: "/devices/1", href: "/devices/1?tab=apps", y: 840, t: 0 };
+    w.win.name = NAME_PREFIX + JSON.stringify(record);
+    install(w.win, () => 100);
+    assert.strictEqual(w.win.name, "");
+    assert.deepStrictEqual(w.win.handyPlaceRecord, record);
+    // A sign-in page's bounce mark has another prefix: left alone.
+    const bounce = fakeWindow({ mode });
+    bounce.win.name = "handy-login-bounce:12345";
+    install(bounce.win, () => 100);
+    assert.strictEqual(bounce.win.name, "handy-login-bounce:12345");
 });
 
 // A browser that scrolls to the #fragment after load (iOS) must not win: the place is put back

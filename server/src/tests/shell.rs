@@ -1358,7 +1358,7 @@ async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
 #[tokio::test]
 async fn every_page_carries_the_connecting_script_and_its_ping() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/reconnect.js?v=5\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/reconnect.js?v=6\" defer></script>"));
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
@@ -1370,10 +1370,10 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
         "/settings".to_string(),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
-        assert!(html.contains("/static/reconnect.js?v=5"), "{page}");
+        assert!(html.contains("/static/reconnect.js?v=6"), "{page}");
     }
     let signed_out = app.request(Method::GET, "/login", None, None).await;
-    assert!(signed_out.text().contains("/static/reconnect.js?v=5"));
+    assert!(signed_out.text().contains("/static/reconnect.js?v=6"));
 
     let ping = app.get_page("/ping", &cookie).await;
     assert_eq!(ping.status, StatusCode::NO_CONTENT);

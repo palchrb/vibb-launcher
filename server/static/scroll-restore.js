@@ -230,6 +230,9 @@
                 win.name = "";
             }
         } catch (e) {}
+        // The record taken, for reconnect.js's sign-in check (it runs deferred, after both
+        // carriers were cleared here; qa-pwa-fixes-d Q-6).
+        if (saved) win.handyPlaceRecord = saved;
         var place = null;
         var type = navigationType(win);
         if (storage && (type === "back_forward" || type === "reload")) {

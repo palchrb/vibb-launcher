@@ -94,6 +94,7 @@ function fakeWindow({ openForm = false, postAnswer = false, href = "https://pi.e
         location: {
             href,
             pathname: new URL(href).pathname,
+            search: new URL(href).search,
             hash: "",
             assign: (to) => win.assigned.push(to),
             replace: (to) => win.replaced.push(to),
@@ -362,7 +363,7 @@ test("the reload over a #fragment records where its element is on the screen", (
     const win = fakeWindow();
     win.location.hash = "#apps";
     const record = rc.placeRecord(win, 5);
-    assert.deepStrictEqual(record, { path: "/devices/1", y: 420, t: 5, tops: { apps: 88 } });
+    assert.deepStrictEqual(record, { path: "/devices/1", href: "/devices/1", y: 420, t: 5, tops: { apps: 88 } });
 });
 
 test("back after a short time: nothing", () => {
@@ -650,9 +651,7 @@ test("loginReturn: where the sign-in page goes back to, and when it stays", () =
     // Not the sign-in page: nothing to do.
     assert.strictEqual(loginReturn("https://pi.example.ts.net/devices", "", null, null, t), null);
     assert.strictEqual(loginReturn("https://pi.example.ts.net/auth/verify-2fa", "", null, null, t), null);
-    // A next/from in the address first, then the wanted page, then the referrer, then /.
-    assert.strictEqual(loginReturn(LOGIN + "?next=%2Fdevices%2F3%3Ftab%3Dapps", "", null, null, t), "/devices/3?tab=apps");
-    assert.strictEqual(loginReturn(LOGIN + "?from=/music", "", fresh("/apps"), null, t), "/music");
+    // The wanted page, then the referrer, then /.
     assert.strictEqual(
         loginReturn(LOGIN, "https://pi.example.ts.net/settings", fresh("https://pi.example.ts.net/devices/locate?device=2#location"), null, t),
         "/devices/locate?device=2#location"
@@ -664,31 +663,123 @@ test("loginReturn: where the sign-in page goes back to, and when it stays", () =
         loginReturn(LOGIN, "https://pi.example.ts.net/apps", { href: "/music", t: t - WANTED_MS }, null, t),
         "/apps"
     );
-    // Never another origin, never the sign-in pages themselves.
-    assert.strictEqual(loginReturn(LOGIN + "?next=https://evil.example/x", "", null, null, t), "/");
-    assert.strictEqual(loginReturn(LOGIN + "?next=//evil.example/x", "", null, null, t), "/");
-    assert.strictEqual(loginReturn(LOGIN, "https://evil.example/devices", null, null, t), "/");
+    // Q-1: nothing in the sign-in page's own address is read - the server never sets a next.
+    assert.strictEqual(loginReturn(LOGIN + "?next=%2Fdevices%2F3%3Ftab%3Dapps", "", null, null, t), "/");
+    assert.strictEqual(loginReturn(LOGIN + "?from=/music", "", fresh("/apps"), null, t), "/apps");
+    assert.strictEqual(loginReturn(LOGIN + "?next=/.//evil.com/x", "", null, null, t), "/");
+    assert.strictEqual(loginReturn(LOGIN + "?next=https://pi.example.ts.net//evil.com", "", null, null, t), "/");
+    // Never another origin - not through the wanted record, not through the referrer.
+    for (const evil of ["/.//evil.com", "//evil.com", "\\\\evil.com", "/\\evil.com", "https://evil.com",
+        "/%2e//evil.com", "/a/..//evil.com", "https://pi.example.ts.net//evil.com", "javascript:alert(1)"]) {
+        assert.strictEqual(loginReturn(LOGIN, "", fresh(evil), null, t), "/", "wanted " + evil);
+        assert.strictEqual(loginReturn(LOGIN, evil, null, null, t), "/", "referrer " + evil);
+    }
+    // Never the sign-in pages themselves.
     assert.strictEqual(loginReturn(LOGIN, "https://pi.example.ts.net/login", fresh("/logout"), null, t), "/");
-    assert.strictEqual(loginReturn(LOGIN + "?next=/auth/setup-2fa", "", fresh("/api/session"), null, t), "/");
+    assert.strictEqual(loginReturn(LOGIN, "", fresh("/api/session"), null, t), "/");
     // Went back less than 30 s ago: stay (never a loop).
     assert.strictEqual(loginReturn(LOGIN, "", fresh("/apps"), t - (BOUNCE_MS - 1), t), null);
     assert.strictEqual(loginReturn(LOGIN, "", fresh("/apps"), t - BOUNCE_MS, t), "/apps");
 });
 
+test("appPath: a page of this app, never one that leaves the origin (Q-1)", () => {
+    const here = LOGIN;
+    for (const evil of ["/.//evil.com", "//evil.com", "\\\\evil.com", "\\evil.com", "/\\evil.com", "https://evil.com",
+        "http://pi.example.ts.net/devices", "/%2e//evil.com", "/a/..//evil.com", "https://pi.example.ts.net//evil.com",
+        "javascript:alert(1)", "data:text/html,x", "", null, undefined, 42]) {
+        assert.strictEqual(rc.appPath(evil, here), null, String(evil));
+    }
+    assert.strictEqual(rc.appPath("/devices/locate?device=1", here), "/devices/locate?device=1");
+    assert.strictEqual(rc.appPath("https://pi.example.ts.net/devices/locate?device=1#location", here),
+        "/devices/locate?device=1#location");
+    assert.strictEqual(rc.appPath("/devices/1", here), "/devices/1");
+    // Whatever it returns starts with one slash: location.replace stays on this origin.
+    for (const ok of ["/", "/devices", "/x/./y", "/a/../b?c=//d"]) {
+        const path = rc.appPath(ok, here);
+        assert.ok(path && path.charAt(0) === "/" && path.charAt(1) !== "/" && path.charAt(1) !== "\\", ok + " -> " + path);
+    }
+});
+
 test("the sign-in page with a live session goes back to the page the return reload wanted", async () => {
-    // The reload in place on the Locate page landed on /login (its place record is in window.name;
-    // sessionStorage lost, as an installed iPhone app can).
+    // The reload in place on the second phone's Locate page landed on /login: scroll-restore.js took
+    // its place record from window.name (handyPlaceRecord); sessionStorage lost, as an installed
+    // iPhone app can. The query comes back too (Q-6).
     const now = 1000000;
-    const name = "handy-scroll:" + JSON.stringify({ path: "/devices/locate", y: 300, t: now - 5000 });
-    const win = fakeWindow({ href: LOGIN, name });
+    const win = fakeWindow({ href: LOGIN });
+    win.handyPlaceRecord = { path: "/devices/locate", href: "/devices/locate?device=2", y: 300, t: now - 5000 };
     win.install();
     assert.strictEqual(win.pings.length, 1, "asked at once");
     assert.strictEqual(win.pings[0].url, "/api/session");
     assert.strictEqual(win.pings[0].options.credentials, "same-origin");
     assert.strictEqual(win.pings[0].options.cache, "no-store");
     await answer(win, 204);
-    assert.deepStrictEqual(win.replaced, ["/devices/locate"]);
+    assert.deepStrictEqual(win.replaced, ["/devices/locate?device=2"]);
     assert.strictEqual(win.stored["handy-login-bounce"], String(now), "the way back is remembered");
+    assert.strictEqual(win.name, "handy-login-bounce:" + now, "in window.name too (Q-5)");
+
+    // A place record still in window.name counts as well; an older one without `href` its path.
+    const named = fakeWindow({ href: LOGIN, name: "handy-scroll:" + JSON.stringify({ path: "/apps", y: 0, t: now - 1000 }) });
+    named.install();
+    await answer(named, 204);
+    assert.deepStrictEqual(named.replaced, ["/apps"]);
+});
+
+test("a fresh place record wins over a stale sessionStorage record (Q-6)", async () => {
+    const now = 1000000;
+    const stale = JSON.stringify({ href: "/music", t: now - 60000 });
+    const win = fakeWindow({ href: LOGIN, stored: { "handy-wanted": stale } });
+    win.handyPlaceRecord = { path: "/devices/locate", href: "/devices/locate?device=2", y: 0, t: now - 2000 };
+    win.install();
+    await answer(win, 204);
+    assert.deepStrictEqual(win.replaced, ["/devices/locate?device=2"]);
+    // ... and the other way round: the newer sessionStorage record wins.
+    const newer = fakeWindow({ href: LOGIN, stored: { "handy-wanted": JSON.stringify({ href: "/music", t: now - 1000 }) } });
+    newer.handyPlaceRecord = { path: "/apps", y: 0, t: now - 50000 };
+    newer.install();
+    await answer(newer, 204);
+    assert.deepStrictEqual(newer.replaced, ["/music"]);
+});
+
+test("the loop guard holds in window.name when sessionStorage is lost (Q-5)", () => {
+    const now = 1000000;
+    const win = fakeWindow({ href: LOGIN, name: "handy-login-bounce:" + (now - 1000) });
+    win.sessionStorage.getItem = () => {
+        throw new Error("lost");
+    };
+    win.install();
+    assert.strictEqual(win.pings.length, 0, "went back 1 s ago (window.name): stay");
+    const later = fakeWindow({ href: LOGIN, name: "handy-login-bounce:" + (now - 31000) });
+    later.install();
+    assert.strictEqual(later.pings.length, 1, "31 s ago: asks again");
+});
+
+test("a resumed sign-in page asks again: shown after being hidden, back from the cache (Q-7)", async () => {
+    const win = fakeWindow({ href: LOGIN });
+    win.install();
+    await answer(win, 401);
+    assert.strictEqual(win.pings.length, 1);
+    // Hidden briefly (no reload in place), shown again: asks once more.
+    win.hide();
+    win.advance(5000);
+    win.show();
+    assert.strictEqual(win.pings.length, 2);
+    assert.strictEqual(win.pings[1].url, "/api/session");
+    // A second show while that ask is out asks nothing more.
+    win.hide();
+    win.show();
+    assert.strictEqual(win.pings.length, 2, "one ask at a time");
+    await answer(win, 401);
+    // Back from the back-forward cache: asks again, and a 204 goes back.
+    win.fire("win", "pageshow", { persisted: true });
+    assert.strictEqual(win.pings.length, 3);
+    await answer(win, 204);
+    assert.deepStrictEqual(win.replaced, ["/"]);
+    // Another page never asks on being shown.
+    const elsewhere = fakeWindow();
+    elsewhere.install();
+    elsewhere.hide();
+    elsewhere.show();
+    assert.ok(elsewhere.pings.every((p) => p.url !== "/api/session"));
 });
 
 test("a navigation remembers where it goes; the sign-in page uses it", async () => {
