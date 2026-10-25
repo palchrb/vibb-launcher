@@ -68,15 +68,37 @@
         android:importantForAccessibility="noHideDescendants"
         android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/glance_row_title"
-            android:layout_width="match_parent"
+        <!-- The name line (2026-10-25, qa-launcher-glance-b-code Q-7): the name and its suffix ("· Pappa", "· 3 nye").
+             The line wraps its content, so the name is as wide as it is until the line is full; then only the name
+             (weight 1) gives way and is cut - the suffix stays whole. -->
+        <LinearLayout
+            android:id="@+id/glance_row_name_line"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:fontFamily="@font/nunito_extrabold"
-            android:maxLines="1"
-            android:textColor="@color/kid_ink"
-            android:textSize="15sp" />
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/glance_row_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:fontFamily="@font/nunito_extrabold"
+                android:maxLines="1"
+                android:textColor="@color/kid_ink"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/glance_row_suffix"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:fontFamily="@font/nunito_extrabold"
+                android:maxLines="1"
+                android:textColor="@color/kid_ink"
+                android:textSize="15sp"
+                android:visibility="gone" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/glance_row_subtitle"

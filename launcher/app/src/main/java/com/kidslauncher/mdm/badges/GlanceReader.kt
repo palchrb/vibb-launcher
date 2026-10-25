@@ -9,6 +9,8 @@ import android.os.Process
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import com.kidslauncher.mdm.calls.CallPolicyStore
+import com.kidslauncher.mdm.calls.MessagePackages
 import java.lang.ref.WeakReference
 
 /**
@@ -28,7 +30,11 @@ import java.lang.ref.WeakReference
  * §3.1.5, [alerts] - the notice wake learns only that a row came). Only [readTexts], called only at
  * [GlanceLevel.TEXT], reads a text. Never read: the
  * actions, remote inputs, the delete and full-screen intents, the public version, pictures, icons,
- * a person's key, URI or icon, the big text or text lines. LockGlanceGuardTest scans this file.
+ * a person's key or icon, the big text or text lines - and a person's URI with one exception (2026-10-25, the user's
+ * decision): of a WhatsApp notification ([GLANCE_TEL_PACKAGES]) the newest sender's URI, handed straight to
+ * [glanceTelContact], which uses it only when it is a `tel:` URI and keeps only our phone-book contact's id - the number
+ * is never stored, logged or sent. Element X's contact comes from [ElementDmReader.glanceContact] (design 15's facts,
+ * read there). LockGlanceGuardTest scans this file.
  *
  * Its one write since design r11 §3: [dismiss], a row the kid swiped away on the lock - only that conversation's kept
  * keys, through the listener's `cancelNotifications`.
@@ -160,10 +166,15 @@ object GlanceReader {
         val newest = fromOthers.lastOrNull()
         val group = extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION)
         val sender = if (level >= GlanceLevel.SENDER) newest?.let(::senderOf) else null
+        val conversationTitle = if (level >= GlanceLevel.SENDER) {
+            cleanGlanceText(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE), GLANCE_TITLE_MAX)
+        } else {
+            null
+        }
         val title = if (level >= GlanceLevel.SENDER) {
             glanceTitle(
                 group = group,
-                conversationTitle = cleanGlanceText(extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE), GLANCE_TITLE_MAX),
+                conversationTitle = conversationTitle,
                 newestSender = sender,
                 title = cleanGlanceText(extras.getCharSequence(Notification.EXTRA_TITLE), GLANCE_TITLE_MAX),
             )
@@ -183,8 +194,19 @@ object GlanceReader {
             postTimeMs = sbn.postTime,
             suspended = glanceSuspended(ranked, ranking.isSuspended),
             missedCall = glanceMissedCall(n.category),
+            shape = glanceShape(messaging = messages.isNotEmpty(), group = group, conversationTitle = conversationTitle),
+            sender = sender,
+            contactId = if (level >= GlanceLevel.SENDER) contactOf(service, sbn, newest) else null,
         )
         return notice to n.contentIntent
+    }
+
+    /** The newest sender's phone-book contact (2026-10-25): Element X by design 15's facts ([ElementDmReader]), WhatsApp
+     * by the newest sender person's `tel:` URI ([glanceTelContact] - the one URI read); no other app. */
+    private fun contactOf(service: NotificationListenerService, sbn: StatusBarNotification, newest: Bundle?): Long? = when (sbn.packageName) {
+        MessagePackages.ELEMENT_X -> ElementDmReader.glanceContact(service, sbn)
+        in GLANCE_TEL_PACKAGES -> glanceTelContact(newest?.getParcelable(SENDER_PERSON, Person::class.java)?.uri, CallPolicyStore.state)
+        else -> null
     }
 
     /** A message bundle's sender: `sender_person`'s name, else `sender` - cleaned. */

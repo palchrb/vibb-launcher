@@ -41,6 +41,8 @@ object Enrollment {
             com.kidslauncher.mdm.zones.ZoneWatch.forget(context)
             // And a running Install Now (design 37): its command was the old enrollment's.
             InstallNow.clear(context)
+            // The first policy's storm follows (2026-10-25): its package callbacks fold for 2 min.
+            com.kidslauncher.mdm.ui.home.AppLoadHold.provisioning(android.os.SystemClock.elapsedRealtime())
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)

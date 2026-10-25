@@ -515,6 +515,7 @@ class Application : android.app.Application() {
                     now = { android.os.SystemClock.elapsedRealtime() },
                     takeNormal = { com.kidslauncher.mdm.ui.home.AppLoadHold.takeNormal() },
                     heldSince = { com.kidslauncher.mdm.ui.home.AppLoadHold.heldSince },
+                    trailQuietMs = { com.kidslauncher.mdm.ui.home.AppLoadHold.trailQuietMs(android.os.SystemClock.elapsedRealtime()) },
                 ) {
                     try {
                         // Once per process, before the first list (it decodes the cached policy -
@@ -526,7 +527,11 @@ class Application : android.app.Application() {
                         }
                         // The packages asked for before this load: evicted again once it is done.
                         val evict = synchronized(iconsToEvict) { iconsToEvict.toSet() }
-                        val list = getApps(packageManager, applicationContext)
+                        // The debug build names each callback's time and package count on the "apps loaded" line, so a
+                        // storm run measures the gaps (qa-launcher-glance-b-code Q-1).
+                        val callbacks = com.kidslauncher.mdm.ui.home.AppLoadHold.takeCallbacks()
+                        val note = if (BuildConfig.DEBUG) com.kidslauncher.mdm.ui.home.appLoadCallbacksNote(callbacks) else ""
+                        val list = getApps(packageManager, applicationContext, note)
                         synchronized(iconsToEvict) { iconsToEvict -= evict }
                         evict.forEach { com.kidslauncher.mdm.ui.home.KidAvatars.evictPackage(it) }
                         apps.postValue(list)

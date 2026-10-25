@@ -1139,3 +1139,37 @@ keeps it off - and only where the camera policy is off while the gesture's camer
 Keeping the camera apps unsuspended in those states would let the gesture open the camera (and its gallery) over the
 lock or the rule instead, so they stay suspended. [device] whether the crash happens at all with a suspended (not
 hidden) camera in these states.
+
+## 2026-10-25: contact photos, the group's sender, one sender's count (branch `launcher-glance-b`)
+
+PLAN's queue items "Contact photos on the glance's message rows; the sender in group rows" and "Glance rows in
+\"Full text\": several messages from one sender show the count". Pure rules in `badges/GlanceRows.kt`
+(`GlanceRowsTest`), the panel only binds them.
+- **Whose photo** (`GlanceNotice.contactId`, our own contact's id, memory only, from `GlanceLevel.SENDER` up; never at
+  APP_ONLY): Element X through design 15 (`ElementDmReader.glanceContact` -> pure `elementGlanceContact`: a DM by its
+  learned room, a group by its newest `sender_person` key = a phone-book contact's Element MXID - the reader's own
+  facts, nothing new read); WhatsApp (`GLANCE_TEL_PACKAGES`: `com.whatsapp`, `com.whatsapp.w4b`) through the newest
+  sender person's URI, used only when it is a `tel:` URI (`glanceTelContact`: the number normalised as the phone
+  book's, compared with the outbound contacts in memory, never stored, logged or sent - the status report is
+  unchanged). `LockGlanceGuardTest` allows exactly that one `?.uri` read, on that one line; a person's key and icon
+  stay unread, as does the notification's own picture (`largeIcon`, the shortcut icon). The row (`glanceRowContact`,
+  the phone book now) shows the contact's Home avatar - its photo, else its initial - in the icon's place, with the
+  app's own icon as an 18 dp corner mark ringed in the row's colour (`bg_glance_app_mark`); a missed call keeps the
+  red phone badge there. No contact: the app's icon as before. Groups get the same rule for their newest sender (the
+  app mark tells the app; the name line says the group).
+- **The name line** (`glanceShape`: DIRECT - one sender, the title is the sender -, GROUP - a named group -, PLAIN;
+  `glanceNameSuffix`): a GROUP row in "Name only" shows "Fotballgjengen · Pappa" (`glance_name_with`; "Full text"
+  keeps "Pappa: text" under the name); a DIRECT row in "Full text" with more than one message folded in shows "Mamma
+  · 3 nye" / "Mamma · 3 new" (`glance_new_count`) over the newest text - since the code QA (Q-6, the user's decision)
+  a GROUP row in "Full text" too ("Fotballgjengen · 5 nye"). The suffix is a view of its own after the name
+  (`glance_row_suffix`, the name line wraps its content and only the name, weight 1, is cut - Q-7). The dismiss clears
+  them all as before.
+- **When the photo comes** (Q-8): the contact is resolved when the notification is read (a post, a sweep), and the
+  row checks the phone book again when it binds. A contact removed goes at once; a contact added later, an Element
+  room learned later, or the rules arriving after a pre-unlock sweep show from that conversation's next post.
+- **TalkBack**: a group row with its sender is read "Gruppe Fotballgjengen, siste fra Pappa" / "Group Fotballgjengen,
+  latest from Pappa" (`glance_group_spoken`), then the name line's count ("3 nye") in place of the messages count,
+  then the text - pure `glanceSpokenParts` (Q-4). The corner is pure `glanceRowBadge` (Q-3). Element X's senders are
+  the glance reader's "from others" bundles (`sender_person` or `sender`; one without a person is a null key, so no
+  photo), so a group's photo and its name come from the same message (Q-2).
+- Emulator checks owed: `docs/testing/2026-10-25-evening-run.md`, "Owed after launcher-glance-b".

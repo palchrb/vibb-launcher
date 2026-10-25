@@ -134,7 +134,8 @@ fun openInBrowser(url: String, context: Context) {
  */
 fun getApps(
     packageManager: PackageManager,
-    context: Context
+    context: Context,
+    note: String = "",
 ): MutableList<AbstractDetailedAppInfo> {
     var start = System.currentTimeMillis()
     val loadList = mutableListOf<AbstractDetailedAppInfo>()
@@ -182,7 +183,7 @@ fun getApps(
     loadList.sortBy { it.getCustomLabel(context) }
 
     val end = System.currentTimeMillis()
-    Log.i(LOG_TAG, "${loadList.size} apps loaded (${end - start}ms)")
+    Log.i(LOG_TAG, "${loadList.size} apps loaded (${end - start}ms)$note")
 
     return loadList
 }

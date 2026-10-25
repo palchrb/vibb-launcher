@@ -25,6 +25,8 @@ class MdmDeviceAdminReceiver : DeviceAdminReceiver() {
     override fun onEnabled(context: Context, intent: Intent) {
         super.onEnabled(context, intent)
         Log.i(LOG_TAG, "Device admin enabled")
+        // The provisioning storm (2026-10-25): the system's package callbacks around becoming device owner fold.
+        com.kidslauncher.mdm.ui.home.AppLoadHold.provisioning(android.os.SystemClock.elapsedRealtime())
     }
 
     override fun onDisabled(context: Context, intent: Intent) {

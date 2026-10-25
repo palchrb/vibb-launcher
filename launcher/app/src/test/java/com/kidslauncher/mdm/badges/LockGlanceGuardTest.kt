@@ -51,6 +51,8 @@ class LockGlanceGuardTest {
                 "android.app.Notification", "android.app.PendingIntent", "android.app.Person", "android.os.Bundle",
                 "android.os.Parcelable", "android.os.Process", "android.service.notification.NotificationListenerService",
                 "android.service.notification.StatusBarNotification", "android.util.Log", "java.lang.ref.WeakReference",
+                // 2026-10-25: the contact photo's two inputs - the rules in memory and the package names.
+                "com.kidslauncher.mdm.calls.CallPolicyStore", "com.kidslauncher.mdm.calls.MessagePackages",
             ),
             imports,
         )
@@ -90,6 +92,10 @@ class LockGlanceGuardTest {
         // design r11 §3.3: the one write - a dismissed row's kept keys, cancelled through the listener
         "canDismiss", "dismiss", "conversation", "GlanceConversation", "upToPostTimeMs", "done", "listener", "keys",
         "keysOf", "cancelNotifications", "toTypedArray", "hide", "false", "Long",
+        // 2026-10-25: what the title names, and the newest sender's phone-book contact - Element X's from design 15's
+        // reader, WhatsApp's from the one URI read ([glanceTelContact], tel: only)
+        "shape", "glanceShape", "contactId", "contactOf", "ElementDmReader", "glanceContact", "MessagePackages",
+        "ELEMENT_X", "GLANCE_TEL_PACKAGES", "glanceTelContact", "uri", "CallPolicyStore", "state",
     )
 
     @Test
@@ -121,10 +127,21 @@ class LockGlanceGuardTest {
             ),
             bundleReads,
         )
-        // Of a Person only the name: every Person read ends in `?.name`, and `.name` is read nowhere else.
+        // Of a Person the name - and, the one exception (2026-10-25, the user's decision), WhatsApp's newest sender's URI
+        // handed straight to the tel:-only rule. Every Person read ends in `?.name` or that `?.uri`, each once.
         val personReads = Regex("""Person::class\.java\)(\??\.[A-Za-z_]+)?""").findAll(code).map { it.groupValues[1] }.toList()
-        assertEquals(listOf("?.name"), personReads)
+        assertEquals(listOf("?.name", "?.uri"), personReads.sorted())
         assertEquals(1, Regex("""\.name\b""").findAll(code).count())
+        assertEquals(1, Regex("""\buri\b""", RegexOption.IGNORE_CASE).findAll(code).count())
+        val uriLine = code.lines().single { Regex("""\buri\b""").containsMatchIn(it) }.trim()
+        assertEquals(
+            "in GLANCE_TEL_PACKAGES -> glanceTelContact(newest?.getParcelable(SENDER_PERSON, Person::class.java)?.uri, CallPolicyStore.state)",
+            uriLine,
+        )
+        // Only from the sender level up, and Element X's contact only from design 15's reader.
+        assertTrue(reader.contains("contactId = if (level >= GlanceLevel.SENDER) contactOf(service, sbn, newest) else null,"))
+        assertTrue(reader.contains("MessagePackages.ELEMENT_X -> ElementDmReader.glanceContact(service, sbn)"))
+        assertEquals(1, Regex("""\bcontactOf\(service, sbn, newest\)""").findAll(code).count())
         // `.key` only of the StatusBarNotification (the notification key - never a Person's).
         assertTrue(Regex("""(\w+)\??\.key\b""").findAll(code).all { it.groupValues[1] == "sbn" })
     }
@@ -164,7 +181,7 @@ class LockGlanceGuardTest {
     fun `none of the never-read members`() {
         for (member in listOf(
             "actions", "RemoteInput", "remoteInputs", "deleteIntent", "fullScreenIntent", "publicVersion", "EXTRA_PICTURE",
-            "largeIcon", "smallIcon", "getLargeIcon", "getSmallIcon", "icon", "uri", "EXTRA_BIG_TEXT", "EXTRA_TEXT_LINES",
+            "largeIcon", "smallIcon", "getLargeIcon", "getSmallIcon", "icon", "EXTRA_BIG_TEXT", "EXTRA_TEXT_LINES",
             "EXTRA_SUB_TEXT", "EXTRA_SUMMARY_TEXT", "EXTRA_INFO_TEXT", "tickerText", "EXTRA_MESSAGING_PERSON",
             "EXTRA_HISTORIC_MESSAGES", "EXTRA_PEOPLE_LIST", "extractMessagingStyleFromNotification", "MessagingStyle",
             "keySet", "getString", "bubbleMetadata", "getIntent", "creatorPackage",
@@ -235,6 +252,10 @@ class LockGlanceGuardTest {
             }
         }
         assertFalse("GlanceRows logs", code("GlanceRows.kt").contains("Log."))
+        // qa-launcher-glance-b-code Q-5: nor the standard streams (they reach logcat as W/System.err).
+        for (name in glanceFiles + "GlancePanel.kt") {
+            assertFalse("$name prints", Regex("""\bprintln\(|\bprint\(|System\.out|System\.err|printStackTrace""").containsMatchIn(code(name)))
+        }
     }
 
     @Test

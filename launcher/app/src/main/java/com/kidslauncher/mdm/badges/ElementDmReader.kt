@@ -11,6 +11,7 @@ import com.kidslauncher.mdm.calls.CallPolicyStore
 import com.kidslauncher.mdm.calls.ElementDmFacts
 import com.kidslauncher.mdm.calls.ElementRoomStore
 import com.kidslauncher.mdm.calls.MessagePackages
+import com.kidslauncher.mdm.calls.elementGlanceContact
 import com.kidslauncher.mdm.calls.learnElementRoom
 
 /**
@@ -20,6 +21,11 @@ import com.kidslauncher.mdm.calls.learnElementRoom
  * the messaging person's key, each message bundle's `sender_person` key and the group flag, never
  * a title, name or message body (ElementRoomsTest scans this file). Nothing here is logged or
  * reported; the pair goes to [ElementRoomStore] (CE prefs) only.
+ *
+ * Since 2026-10-25 the same facts also serve the lock's glance ([glanceContact]): a DM's tag is looked up among the
+ * learned rooms, and a group's newest `sender_person` key - read here all along, for every Element X notification, groups
+ * included - is now also matched in memory against the phone book's Element MXIDs. Only our own contact's id goes on, to
+ * the glance's memory ([GlanceStore]); nothing new is read, and nothing is stored, logged or sent.
  */
 object ElementDmReader {
 
@@ -36,6 +42,20 @@ object ElementDmReader {
         ElementRoomStore.learn(context, learned)
     }
 
+    /**
+     * The lock's glance (2026-10-25): the phone-book contact an Element X row stands for ([elementGlanceContact]: a DM by
+     * its learned room, a group by its newest sender's key) - the same facts [learn] reads, nothing more. Called by
+     * [GlanceReader] only from the sender level up; null for any other package or user, or on any exception.
+     */
+    fun glanceContact(context: Context, sbn: StatusBarNotification): Long? {
+        if (sbn.packageName != MessagePackages.ELEMENT_X || sbn.user != Process.myUserHandle()) return null
+        return try {
+            elementGlanceContact(facts(sbn), CallPolicyStore.state, ElementRoomStore.rooms(context))
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun facts(sbn: StatusBarNotification): ElementDmFacts {
         val extras = sbn.notification.extras
         val messages = extras.getParcelableArray(Notification.EXTRA_MESSAGES, Parcelable::class.java).orEmpty()
@@ -43,10 +63,12 @@ object ElementDmReader {
             tag = sbn.tag,
             selfKey = extras.getParcelable(Notification.EXTRA_MESSAGING_PERSON, Person::class.java)?.key,
             // Only each bundle's sender person - not MessagingStyle's parser, which copies the body.
-            // A bundle without one (the kid's own message) is skipped; one without a key stays null
-            // (the rule then learns nothing).
+            // The bundles are the glance's "from others" (qa-launcher-glance-b-code Q-2: the same rule as
+            // GlanceReader, so a group's photo and its name come from the same message): a bundle with
+            // neither key (the kid's own message) is skipped; one without a sender person or its key
+            // stays null (the rule then learns nothing, the glance shows the app's icon).
             senderKeys = messages.filterIsInstance<Bundle>()
-                .filter { it.containsKey(SENDER_PERSON) }
+                .filter { it.containsKey(SENDER_PERSON) || it.containsKey(SENDER) }
                 .map { it.getParcelable(SENDER_PERSON, Person::class.java)?.key },
             group = if (extras.containsKey(Notification.EXTRA_IS_GROUP_CONVERSATION)) {
                 extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION)
@@ -56,6 +78,8 @@ object ElementDmReader {
         )
     }
 
-    /** `Notification.MessagingStyle.Message`'s bundle key for the sender (hidden constant). */
+    /** `Notification.MessagingStyle.Message`'s bundle keys for the sender (hidden constants): the
+     * person, and the older plain name ([SENDER] only checked for presence, never read). */
     private const val SENDER_PERSON = "sender_person"
+    private const val SENDER = "sender"
 }

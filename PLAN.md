@@ -506,8 +506,6 @@ separators, one item per bullet, so each sits in its round; the words are unchan
 
 - **Launcher**
   - **In build, `launcher-glance-b`** (not a planned round):
-    - **Contact photos on the glance's message rows; the sender in group rows** (the user, 2026-10-25): (1) a row from Element X whose room is a phone-book contact's linked room (design 15's `message_room`) shows that contact's photo from our phone book in place of the app's icon (our own data; nothing new read from the notification - the guard test's rule stands: no person key/URI/icon); (2) a group row in "Name only" adds the latest sender after the group's name ("Fotballgjengen · Pappa"); "Full text" keeps "Sender: text"; (3) WhatsApp: DECIDED (the user, 2026-10-25: "vi kan gjøre det for whatsapp og") - match through the person's `tel:` URI: the number only, normalised as the phone book's, in memory, never stored or logged; a row whose number matches a contact shows that contact's photo, else the app icon. `badges/GlanceRows.kt`, `GlanceReader.kt`, pure tests; the guard test updated only for the option chosen. Launcher, S.
-    - **Glance rows in "Full text": several messages from one sender show the count** (the user, 2026-10-25): "Name only" already folds to "3 meldinger fra Mamma"; "Full text" shows one row with the latest text and no count. Add the count to the name line when it is more than one - "Mamma · 3 nye" over the latest text (en: "Mamma · 3 new"), TalkBack reads the same; the dismiss clears all of them as today. `badges/GlanceRows.kt`, a pure test. Launcher, XS.
   - **Round L1 - glance and Home layout** (`launcher-glance-c`, after `launcher-glance-b` merges):
     - RC3-8
     - six-inch F3/F4
