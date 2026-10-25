@@ -118,3 +118,5 @@ the implementer (no emulator in the round).
    updated on <phone>" in the inbox; `device_status.installed_apps_json` carries `version_code`/`version_name`.
    b. (server, Q-4's case end to end) a phone whose checked catalog app is already at the stored release, updated to
       this launcher: two status reports in a row give no "updated" notice.
+
+**Run 2026-10-25 evening** (`docs/testing/2026-10-25-evening-run.md`): Home ↔ phone book and Clock → Home are clean on the gradient wallpaper (no black frame, no late step); the storm count is 43 with the trail window (the provisioning window follow-up in PLAN). The photo wallpaper, 3-button navigation and the shade's zoom stay owed on the Jelly Star.
