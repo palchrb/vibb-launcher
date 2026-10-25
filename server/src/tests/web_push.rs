@@ -1266,6 +1266,40 @@ async fn a_subscription_from_a_signed_out_session_is_not_sent_to() {
     );
 }
 
+/// 0095 gives every existing subscription its account's epoch (qa-pwa-fixes-a-code Q-5): without
+/// the backfill a parent who ever changed the password would lose every device at the first pass.
+#[tokio::test]
+async fn migration_0095_keeps_existing_subscriptions() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(dir.path().join("m.db"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let db = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    for migration in crate::MIGRATOR.iter().filter(|m| m.version <= 94) {
+        sqlx::raw_sql(&migration.sql).execute(&db).await.unwrap();
+    }
+    sqlx::raw_sql(
+        "INSERT INTO admin_users (id, username, password_hash, session_epoch) \
+           VALUES (1, 'mamma', 'x', 3), (2, 'pappa', 'x', 0); \
+         INSERT INTO push_subscriptions (admin_id, endpoint, p256dh, auth, origin, label, vapid_fp) \
+           VALUES (1, 'https://web.push.apple.com/QK1-fake-mamma', X'00', X'00', 'https://a', 'a', 'f'), \
+                  (2, 'https://web.push.apple.com/QK1-fake-pappa', X'00', X'00', 'https://a', 'a', 'f');",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let last = crate::MIGRATOR.iter().find(|m| m.version == 95).unwrap();
+    sqlx::raw_sql(&last.sql).execute(&db).await.unwrap();
+    crate::push::forget_stale(&db).await.unwrap();
+    let rows: Vec<(i64, i64)> =
+        sqlx::query_as("SELECT admin_id, session_epoch FROM push_subscriptions ORDER BY admin_id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(rows, [(1, 3), (2, 0)]);
+}
+
 /// qa-pwa-fixes-a-code Q-1: three wrong passwords at a form that asks for it again end every
 /// session and every device's notifications at once. After signing in again Notification Settings
 /// shows them off, and the next event is sent to nobody.
