@@ -2379,6 +2379,25 @@ details.app-display[open] > summary .section-chev {
     .net-progress::before { width: 100%; opacity: 0.5; }
 }
 
+/* ---- Pull down to refresh (static/pull-refresh.js, 2026-10-25): Devices and a phone's summary ---- */
+/* A small round arrow in the title bar's area, calm: the card's surface, the peach tint, the
+   Connecting chip's soft shadow; it never takes a tap. It follows the finger (the script sets the
+   shift and the fade), turns over once a release would reload, and becomes a spinner then. Absolute
+   in the body, as the chip (design 43: never fixed). main's overscroll-behavior-y: contain (.container)
+   keeps the browser's own pull and chaining out. */
+.pull-refresh { position: absolute; z-index: 1900; top: calc(env(safe-area-inset-top, 0px) + 6px); left: 50%; width: 36px; height: 36px; margin-left: -18px; border-radius: 50%; background: var(--surface); color: var(--tint); box-shadow: 0 1px 8px rgba(0, 0, 0, 0.16); display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; transform: translateY(-20px); transition: opacity 0.15s ease, transform 0.15s ease; }
+.pull-refresh.is-pulling { transition: none; }
+.pull-refresh svg { width: 20px; height: 20px; transition: transform 0.15s ease; }
+.pull-refresh.is-armed svg { transform: rotate(180deg); }
+.pull-spinner { display: none; box-sizing: border-box; width: 18px; height: 18px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: pull-spin 0.8s linear infinite; }
+.pull-refresh.is-refreshing svg { display: none; }
+.pull-refresh.is-refreshing .pull-spinner { display: block; }
+@keyframes pull-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    .pull-refresh, .pull-refresh svg { transition: none; }
+    .pull-spinner { animation: none; border-right-color: currentColor; opacity: 0.6; }
+}
+
 /* ---- Design 64: safe zones (templates/device_zone.html, the Locate page's #zones) ---- */
 /* The radius slider under its number field; shown by static/zones.js (no name: the number posts). */
 .zone-slider { padding-top: 8px; padding-bottom: 8px; }

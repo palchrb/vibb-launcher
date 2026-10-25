@@ -415,6 +415,42 @@ test("no reload in place while a <details> is open or after a save started", asy
     assert.strictEqual(submitted.reloads, 0, "a save that started during the ping");
 });
 
+test("handyReconnect: a reload asked for (pull-refresh.js) is the reload in place, under the same rules", async () => {
+    const win = fakeWindow();
+    win.install();
+    assert.strictEqual(win.handyReconnect.mayReload(), true);
+    assert.strictEqual(win.handyReconnect.reload(), true);
+    assert.deepStrictEqual(win.steps, ["replace https://pi.example.ts.net/devices/1", "reload"]);
+    assert.strictEqual(win.view.bar, true, "the bar while it comes");
+    assert.strictEqual(JSON.parse(win.stored["handy-scroll"]).y, 420, "the place kept");
+    // Slow: the chip after 3 s, the ping, the same reload again once the server answers after a miss.
+    win.advance(CHIP_AFTER);
+    assert.strictEqual(win.view.chip, true);
+    assert.strictEqual(win.pings.length, 1);
+
+    const typed = fakeWindow();
+    typed.controls = [{ tagName: "INPUT", type: "text", value: "Ella", defaultValue: "" }];
+    typed.install();
+    assert.strictEqual(typed.handyReconnect.reload(), false, "a typed field");
+    assert.strictEqual(typed.reloads, 0);
+
+    const open = fakeWindow({ openForm: true });
+    open.install();
+    assert.strictEqual(open.handyReconnect.mayReload(), false, "an open <details>");
+
+    const saved = fakeWindow();
+    saved.install();
+    saved.fire("doc", "submit", { target: {} });
+    assert.strictEqual(saved.handyReconnect.reload(), false, "a save on its way");
+    assert.strictEqual(saved.reloads, 0);
+
+    // A POST's answer may be reloaded when asked: the entry is a GET first.
+    const answered = fakeWindow({ postAnswer: true });
+    answered.install();
+    assert.strictEqual(answered.handyReconnect.reload(), true);
+    assert.strictEqual(answered.steps[0], "replace https://pi.example.ts.net/devices/1");
+});
+
 test("back from the back-forward cache after long: the same ping", async () => {
     const win = fakeWindow();
     win.install();

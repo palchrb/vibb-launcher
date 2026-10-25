@@ -1239,6 +1239,38 @@ fn every_class_a_template_uses_is_in_style_css() {
     assert!(!css.contains("card"));
 }
 
+/// Pull down to refresh (2026-10-25): `static/pull-refresh.js` on the Devices list and a phone's
+/// summary only - no template with a Leaflet map loads it, nor any other tab page.
+#[tokio::test]
+async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
+    const SCRIPT: &str = "<script src=\"/static/pull-refresh.js?v=1\" defer></script>";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    for page in ["/devices".to_string(), device_page(id, Section::Summary)] {
+        let html = app.get_page(&page, &cookie).await.text();
+        assert_eq!(html.matches(SCRIPT).count(), 1, "{page}");
+    }
+    for page in ["/apps", "/music", "/settings", "/devices/locate"] {
+        let html = app.get_page(page, &cookie).await.text();
+        assert!(!html.contains("pull-refresh.js"), "{page}");
+    }
+    for entry in std::fs::read_dir("templates").unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "html") {
+            let text = std::fs::read_to_string(&path).unwrap();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            let loads = text.contains("pull-refresh.js");
+            assert!(!(loads && text.contains("leaflet")), "{name}: a map page");
+            assert_eq!(
+                loads,
+                name == "devices_list.html" || name == "device_detail.html",
+                "{name}"
+            );
+        }
+    }
+}
+
 /// 2026-10-21, a tap after being away never "does nothing": every page carries
 /// `static/reconnect.js` (deferred, from the head partial), and its ping `GET /ping` is an empty
 /// 204 that is never cached with a session and the login's redirect without one. The backup
@@ -1246,7 +1278,7 @@ fn every_class_a_template_uses_is_in_style_css() {
 #[tokio::test]
 async fn every_page_carries_the_connecting_script_and_its_ping() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
-    assert!(head.contains("<script src=\"/static/reconnect.js?v=3\" defer></script>"));
+    assert!(head.contains("<script src=\"/static/reconnect.js?v=4\" defer></script>"));
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
@@ -1258,10 +1290,10 @@ async fn every_page_carries_the_connecting_script_and_its_ping() {
         "/settings".to_string(),
     ] {
         let html = app.get_page(&page, &cookie).await.text();
-        assert!(html.contains("/static/reconnect.js?v=3"), "{page}");
+        assert!(html.contains("/static/reconnect.js?v=4"), "{page}");
     }
     let signed_out = app.request(Method::GET, "/login", None, None).await;
-    assert!(signed_out.text().contains("/static/reconnect.js?v=3"));
+    assert!(signed_out.text().contains("/static/reconnect.js?v=4"));
 
     let ping = app.get_page("/ping", &cookie).await;
     assert_eq!(ping.status, StatusCode::NO_CONTENT);

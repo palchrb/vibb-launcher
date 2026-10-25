@@ -522,14 +522,34 @@ after), never later. Details stay in the entries below.
   - PWA i18n.
   - F-Droid follow-ups: entry.jar signature, signer check at the first pin, ABI filter, GitHub asset digests.
   - Settings saves in the security log; Home Wi-Fi as a trigger; `PHONE_SERVER_URL` in `.env`; Wi-Fi in Phone Setup; notifications phase 2 (ntfy/Matrix); episode pictures on demand.
-  - **Shorter web push texts** (the user, 2026-10-25: "Generelt kunne vi også forenklet web push meldingene? Mindre tekst"): every push's title and body in `parent_events.rs` cut to the fact and the time - title "<name>: turned on" / body "07:02 · battery 64 %"; drop "no shutdown seen" / "last report …" from the body (that detail stays in the inbox row's details), one clause per body, no second sentence; the inbox keeps the long form. A table of before/after for every kind in the note, the user reads it before it ships. Server, S.
-  - **Pull down to refresh on Devices and a phone's summary** (the user, 2026-10-25: "update gestures for devices taben? Om man drar ned så refresher den ... Kunne også vært når man er inne på en device"): a `pull-refresh.js` on the Devices list and `device_detail` only (no page with a Leaflet map): with the page at the very top, a downward touch drag past ~70 px shows a small arrow in the title bar area that turns into a spinner, release reloads (the same reload as `reconnect.js`, scroll and the connecting logic kept); refused while a field has typed text or a details panel is open (auto-reload's rules); our own touch tracking, not iOS' rubber band (`overscroll-behavior-y: contain` on those pages); a jstest with a touch timeline; other tabs later if it feels right. Server/PWA, S; same round as the shorter push texts.
   - **PWA accent: field focus A, primary button 3** (the user, 2026-10-25, after the mockup https://claude.ai/artifact/CcNPzaNhQsCJitG3RJsmxb: "A og 3 høres bra ut"): (A) a text field that is tapped shows no outer ring - its own border takes `--tint` (1.5 px) and its fill goes white; the 2 px `outline` ring stays only for keyboard focus (`:focus-visible` with the existing Safari fallback rule in `style.css` ~260-290, so a touch/mouse focus gets the border, a keyboard focus the ring); selects likewise. (3) filled primary buttons (`.button-primary` / the "Next"/"Save" fills - grep the class) take a new token `--tint-fill: #E8895E` with night text `#0C0C14` (7.6:1), hover `#E07A4C`; links, tabs, text and icons keep `--tint` (#A64B25); dark mode: `--tint-fill` = the peach `#F0A884` with night text as today's dark tint. Destructive buttons unchanged. A pass over every page (the Playwright scripts in `scratchpad/pw/`, Chromium + WebKit) before release. Server/PWA, XS-S; next server round (after `pwa-fixes-b`).
-  - **App update notices** (the user, 2026-10-25: "sende notifications når apper lagt til via pwa blir oppdatert? Trenger ikke nødvendigvis være push varsel ... kanskje man kan få valget"): two inbox events per tracked app - `app_update_available` when the sweep or Check Now stores a new release (name, old → new version), and `app_updated` when a phone's report shows the new versionCode installed (per phone); always in the inbox, pushed only under a new Notify Me About switch "App updates", **off by default**, per parent (design 62 step 5). Key + params like design 64; one event per release, not per sweep. Server, S.
   - Zone series numbers after the user's Jelly Star day; developer-verification registration (nothing in the repo).
 
 ### Approved for the next fix batch
 - **A last position at shutdown and at low battery** (the user, 2026-10-05, asked again 2026-10-25). **Merged 2026-10-25 (f379971e, branch `last-position`)** after code QA (`docs/review/qa-last-position-code.md`, 0 High / 3 Medium / 4 Low, all fixed): the `off` report carries the newest stored fix (`power_report.json` `off.location`, both copies; CE `power_off_location`, never a mock or a fresh fix, never under "Off"), the server stores it through the zones intake and marks `device_locations.shutdown_at` (migration 0097), Locate shows "Last position before the phone went off" with the device page's "Off since" exclusions, the `phone_off` event's params carry it (no coordinates in any text), retention clears it with the location window; at `ACTION_BATTERY_LOW` one balanced fix per episode (30 s cap, Location on, not "Off", a fix under 2 min old reused), the episode ends at BATTERY_OKAY or a discharging-not-low report. Design 38 "Last position (2026-10-25)"; emulator checks `emulator.md` §6p 5-12 owed. Ships with `server-v0.51.0` + `launcher-v0.37.0-rc.3`.
+
+- **Shorter web push texts** (the user, 2026-10-25, queue above). **Built** (2026-10-25, branch `pwa-fixes-b`, not
+  merged): every push "<name>: <fact>" / the time and at most one number ("Anna: turned on" / "07:02 · battery 64 %");
+  the inbox and Activity keep the long words. Stored-words kinds keep both forms (`parent_events.push_title`/
+  `push_body`, migration 0098 - 0097 is `last-position`'s), the parameter kinds are worded short where pushed
+  (`parent_events::pushed`); summary and test pushes shorter too. The before/after table for every kind is
+  `docs/notes/server/notifications.md` "Push wording (2026-10-25)" - **the user reads it before it ships**; open there:
+  whether the PIN's place and a request's rule should come back as a word.
+- **App update notices** (the user, 2026-10-25, queue above). **Built** (2026-10-25, branch `pwa-fixes-b`, not merged):
+  `app_update_available` (the catalog's, no phone, one per release: key `<app id>:<tag>@<asset id>`, raised where the
+  sweep and Check Now store a release over a previous one) and `app_updated` (per phone and version, from the status
+  report: a higher versionCode that is the catalog's stored release), key + params like design 64; always in the inbox,
+  pushed only under Notify Me About's new "App updates", off by default per parent (migration 0099, which also makes
+  `parent_events.device_id` nullable by rebuilding it with its two children). Left out: `app_updated` for catalog apps
+  other than Vibb One and the music app - the phone's report names no other app's installed versionCode (a launcher
+  change in both dirs, not built). `docs/notes/server/notifications.md` "App update notices".
+- **Pull down to refresh on Devices and a phone's summary** (the user, 2026-10-25, queue above). **Built** (2026-10-25,
+  branch `pwa-fixes-b`, not merged): `static/pull-refresh.js` on `devices_list.html` and `device_detail.html` only; at
+  the very top a downward drag shows a small peach arrow in the title bar's area, past 70 px it turns over, the release
+  spins and reloads through reconnect.js's reload in place (the new `window.handyReconnect`: the bar, the chip, the
+  ping, the kept place); refused while a save is on its way, a `<details>` is open or a field holds typed text (the
+  shared `handyReconnect.mayReload`). Owed: the iPhone and Android PWA by hand. `docs/notes/server/pwa.md` "Pull down
+  to refresh".
 
 - **Security and privacy reviews 2026-10-21** (asked for by the user): `docs/review/security-review-2026-10-21-server.md`
   (0 High / 3 Medium / 18 Low), `-launcher.md` (0 High / 5 Medium / 16 Low; Tailscale/tsnet verdict: keep it as is,

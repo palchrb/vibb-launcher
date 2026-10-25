@@ -1167,7 +1167,8 @@ pub async fn status(
     // events (design 35 §2.1: its emergency call, its id for foreign access).
     let previous: Option<PreviousReport> = sqlx::query_as(
         "SELECT id, installed_apps_json, install_mode_until_ms, call_state_json, \
-                foreign_access_json, unseen_boots_count FROM device_status \
+                foreign_access_json, unseen_boots_count, app_version, app_version_code, \
+                music_state_json FROM device_status \
          WHERE device_id = ? ORDER BY reported_at DESC, id DESC LIMIT 1",
     )
     .bind(device.id)
@@ -1275,6 +1276,25 @@ pub async fn status(
         .as_ref()
         .and_then(|p| p.foreign_access_json.clone());
     if let Some(phone) = &phone {
+        // App update notices (2026-10-25): the launcher's or the music app's new release
+        // installed, against the previous report (none: a new phone, nothing).
+        if let Some(p) = &previous {
+            crate::handlers::tracked_apps::note_app_updates(
+                &state,
+                phone,
+                &installed_codes(
+                    p.app_version.as_deref(),
+                    p.app_version_code,
+                    p.music_state_json.as_deref(),
+                ),
+                &installed_codes(
+                    report.app_version.as_deref(),
+                    report.app_version_code,
+                    music_state_json.as_deref(),
+                ),
+            )
+            .await;
+        }
         let previous_call = previous
             .as_ref()
             .and_then(|p| emergency_call_at(p.call_state_json.as_deref()));
@@ -1485,6 +1505,22 @@ struct PreviousReport {
     call_state_json: Option<String>,
     foreign_access_json: Option<String>,
     unseen_boots_count: Option<i64>,
+    app_version: Option<String>,
+    app_version_code: Option<i64>,
+    music_state_json: Option<String>,
+}
+
+/// The launcher's and the music app's versionCodes a stored report names (app update notices).
+fn installed_codes(
+    app_version: Option<&str>,
+    app_version_code: Option<i64>,
+    music_state_json: Option<&str>,
+) -> crate::handlers::tracked_apps::InstalledCodes {
+    crate::handlers::tracked_apps::InstalledCodes {
+        launcher: app_version_code,
+        launcher_name: app_version.map(str::to_string),
+        music: crate::music::parse_music_state(music_state_json).and_then(|m| m.version_code),
+    }
 }
 
 /// A stored `call_state`'s last emergency call (`last_emergency_call_at`, RFC 3339, read as the

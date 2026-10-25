@@ -145,7 +145,7 @@ async fn a_launcher_report_raises_both() {
     assert!(rows[1].2.contains("off since"), "{rows:?}");
     assert!(rows[1].2.ends_with(", battery was 3 %"), "{rows:?}");
     assert!(deliveries(&app, "phone_off").await.is_empty());
-    assert_eq!(send_at(&app, Utc::now()).await, ["Anna was turned on"]);
+    assert_eq!(send_at(&app, Utc::now()).await, ["Anna: turned on"]);
     // The off's last position: one of the phone's fixes, marked as the shutdown's, and in the
     // event's parameters.
     let fixes = shutdown_fixes(&app, id).await;
@@ -483,7 +483,7 @@ async fn a_restart_drops_the_held_off_push() {
     assert!(rows[1].2.ends_with(" · battery 60 %"), "{rows:?}");
     assert_eq!(
         send_at(&app, now + Duration::minutes(6)).await,
-        ["Anna restarted"]
+        ["Anna: restarted"]
     );
     // The off row has no delivery line (not "Not sent"): only the start's.
     let inbox = app.get_page("/notifications", &cookie).await.text();
@@ -508,13 +508,13 @@ async fn an_off_without_a_quick_start_is_pushed_after_the_hold() {
     post(&app, &token, json!({ "off": off(shutdown, 41, json!({})) })).await;
     assert_eq!(
         send_at(&app, now + Duration::minutes(5) + Duration::seconds(3)).await,
-        ["Anna was turned off"]
+        ["Anna: turned off"]
     );
     let body = json!({ "off": off(shutdown, 41, json!({})), "on": on(now, 42) });
     post(&app, &token, body).await;
     assert_eq!(
         send_at(&app, now + Duration::minutes(6)).await,
-        ["Anna was turned on"]
+        ["Anna: turned on"]
     );
     let rows = events(&app, id).await;
     assert_eq!(rows.len(), 2);
@@ -534,7 +534,7 @@ async fn a_quick_start_after_a_power_off_sends_the_off_first() {
     post(&app, &token, body).await;
     assert_eq!(
         send_at(&app, now).await,
-        ["Anna was turned off", "Anna was turned on"]
+        ["Anna: turned off", "Anna: turned on"]
     );
 }
 
@@ -553,7 +553,7 @@ async fn a_known_restart_pushes_only_the_start() {
     assert!(deliveries(&app, "phone_off").await.is_empty());
     let body = json!({ "off": restarting, "on": on(now, 42) });
     post(&app, &token, body).await;
-    assert_eq!(send_at(&app, now).await, ["Anna restarted"]);
+    assert_eq!(send_at(&app, now).await, ["Anna: restarted"]);
 }
 
 /// A start with no shutdown seen says the last report before the boot; a switch off stores the
@@ -776,7 +776,7 @@ async fn a_newer_shutdown_supersedes_an_older_held_push() {
     assert_eq!(held[1].0, "queued");
     assert_eq!(
         send_at(&app, now + Duration::minutes(6)).await,
-        ["Anna was turned off"]
+        ["Anna: turned off"]
     );
     // The older off arriving again (resent) supersedes nothing.
     post(

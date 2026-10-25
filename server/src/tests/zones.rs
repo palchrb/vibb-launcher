@@ -223,7 +223,7 @@ async fn a_report_pair_raises_one_arrival_for_the_parents_who_want_it() {
         assert_eq!(sent.len(), 1);
         super::web_push::payload(&sent[0])
     };
-    assert_eq!(push["notification"]["title"], "Anna left Home", "{push}");
+    assert_eq!(push["notification"]["title"], "Anna: left Home", "{push}");
 }
 
 #[tokio::test]

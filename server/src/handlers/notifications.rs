@@ -187,16 +187,17 @@ fn notice_of(code: Option<&str>) -> Option<(bool, &'static str, bool)> {
 }
 
 /// An event as the inbox reads it ([ROW_COLUMNS]): id, phone, title, summary, detail,
-/// `happened_at`, unread, the phone's name and `enrolled_at`, the kind and its parameters.
+/// `happened_at`, unread, the phone's name and `enrolled_at`, the kind and its parameters. The
+/// phone and its name are `None` for a catalog event (`app_update_available`, migration 0099).
 pub(crate) type Row = (
     i64,
-    i64,
+    Option<i64>,
     String,
     String,
     Option<String>,
     String,
     bool,
-    String,
+    Option<String>,
     Option<String>,
     String,
     Option<String>,
@@ -210,7 +211,7 @@ pub(crate) const ROW_COLUMNS: &str = "e.id, e.device_id, e.title, e.summary, e.d
 /// reads for themselves).
 pub(crate) fn row_from(admin: usize) -> String {
     format!(
-        "parent_events e JOIN devices d ON d.id = e.device_id \
+        "parent_events e LEFT JOIN devices d ON d.id = e.device_id \
          LEFT JOIN parent_event_reads r ON r.event_id = e.id AND r.admin_id = ?{admin}"
     )
 }
@@ -229,10 +230,21 @@ pub(crate) fn inbox_row(
     // A zone event is told from its parameters (design 64), every other kind as stored.
     let (title, summary) = parent_events::told(&kind, title, summary, params.as_deref(), zone, now);
     let at = crate::display_time::parse_db_utc(&happened_at);
+    // A catalog event has no phone: a grey avatar with the app's letter (its title starts with it).
+    let (avatar, initial) = match &name {
+        Some(name) => (
+            crate::handlers::devices::avatar_class_of(enrolled.is_some()),
+            crate::handlers::devices::initial(name),
+        ),
+        None => (
+            crate::handlers::devices::avatar_class_of(false),
+            crate::handlers::devices::initial(&title),
+        ),
+    };
     InboxRow {
         id,
-        avatar: crate::handlers::devices::avatar_class_of(enrolled.is_some()),
-        initial: crate::handlers::devices::initial(&name),
+        avatar,
+        initial,
         title,
         summary,
         detail,
@@ -498,7 +510,7 @@ async fn read_page(
 }
 
 /// `admin_id`'s Notify Me About switches, in [Kind::ALL]'s order (design 62 §5: no row = every
-/// switch on).
+/// switch's default - on, but "App updates" off, `Kind::switch_default`).
 async fn read_switches(db: &sqlx::SqlitePool, admin_id: i64) -> Result<Vec<bool>, sqlx::Error> {
     let names = switch_names();
     let settings = sqlx::query(&format!(
@@ -512,7 +524,10 @@ async fn read_switches(db: &sqlx::SqlitePool, admin_id: i64) -> Result<Vec<bool>
         Some(settings) => (0..names.len())
             .map(|i| settings.try_get::<bool, _>(i))
             .collect(),
-        None => Ok(vec![true; names.len()]),
+        None => Ok(names
+            .iter()
+            .map(|name| Kind::switch_default(name))
+            .collect()),
     }
 }
 
