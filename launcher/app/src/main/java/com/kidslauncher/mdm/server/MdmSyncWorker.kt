@@ -224,13 +224,15 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val preciseFix = commandFix || zoneFix == FreshKind.PRECISE
     val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
     // 2026-10-25: the shutdown's last position goes by this policy (never "Off"), and the battery's
-    // low edge takes one balanced fix in this sync (LowBatteryFix).
+    // low edge takes one balanced fix in this sync (LowBatteryFix) - or reports a fix of its own
+    // under 2 minutes old (qa-last-position-code Q-7).
     PowerEvents.noteLocationPolicy(locationPolicy)
     val lowBatteryFix = LowBatteryFix.take(
         context,
         deviceOwner = dpm.isDeviceOwnerApp(context.packageName),
         policy = locationPolicy,
         systemLocationOn = QuickControls.isLocationEnabled(context),
+        ownFixAgeMs = LocateCommands.cachedQueued()?.let { System.currentTimeMillis() - it.timeMs },
     )
     val location = currentLocationReport(context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, locationPolicy, lowBatteryFix)
     val locationOff = locationPolicy?.mode == "off"
@@ -618,7 +620,7 @@ private suspend fun currentLocationReport(
     crossing: Boolean,
     zonesOn: Boolean,
     policy: LocationPolicy?,
-    lowBatteryFix: Boolean,
+    lowBatteryFix: LowFix,
 ): LocationOutcome {
     if (!dpm.isDeviceOwnerApp(context.packageName)) return LocationOutcome(LocationAction.NONE, null, null, null)
     val now = System.currentTimeMillis()

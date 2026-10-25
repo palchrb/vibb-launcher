@@ -309,13 +309,25 @@ object PowerEvents {
     @Volatile
     private var locationPolicy: LocationPolicy? = null
 
-    @Volatile
     private var locationPolicyNoted = false
+
+    /** The sync's note and `init`'s cached read take it (qa-last-position-code Q-6): the cache never
+     * overwrites a newer policy a sync noted - "Off" included. */
+    private val locationPolicyLock = Any()
 
     /** From every sync's location step: what [shutdownLocation] goes by. */
     fun noteLocationPolicy(policy: LocationPolicy?) {
-        locationPolicy = policy
-        locationPolicyNoted = true
+        synchronized(locationPolicyLock) {
+            locationPolicy = policy
+            locationPolicyNoted = true
+        }
+    }
+
+    /** `init`'s cached policy, only while no sync has noted one. */
+    private fun noteCachedLocationPolicy(cached: LocationPolicy?) {
+        synchronized(locationPolicyLock) {
+            if (!locationPolicyNoted) locationPolicy = cached
+        }
     }
 
     private fun loadOffLocation(context: Context): OffLocation? = try {
@@ -386,9 +398,7 @@ object PowerEvents {
             // The shutdown's position rule before this process's first sync: the cached policy's.
             prepareExecutor.execute {
                 try {
-                    if (!locationPolicyNoted) {
-                        locationPolicy = currentPolicyDecision().policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
-                    }
+                    noteCachedLocationPolicy(currentPolicyDecision().policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY })
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Couldn't read the location policy: ${e.javaClass.simpleName}")
                 }

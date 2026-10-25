@@ -15,13 +15,22 @@ import java.util.concurrent.atomic.AtomicBoolean
  * the fused provider at balanced power for at most 15 s, GPS for at most 15 s when it gives
  * nothing, so 30 s at most), through design 64's mock rule like every fix - in the sync that edge
  * asks for, and reports it in that sync's status report, so a dying phone leaves a fresh position.
- * One per low-battery episode: not again until the battery was charged above Android's low level
- * (`ACTION_BATTERY_OKAY`, or a report's reading discharging and not low). Never under location
- * "Off", never with the phone's Location switch off (this fix doesn't switch it on), only as the
- * device owner. No policy key, no event: the battery event stays as it is.
+ * One per low-battery episode: not again until the battery was charged up to Android's okay level
+ * (`ACTION_BATTERY_OKAY`, or a report's reading discharging and not low). A fix of the phone's own
+ * younger than [LOW_FIX_RECENT_MS] is reported instead of a new one (qa-last-position-code Q-7).
+ * Never under location "Off", never with the phone's Location switch off (this fix doesn't switch
+ * it on), only as the device owner. No policy key, no event: the battery event stays as it is.
  */
 
 private const val LOG_TAG = "LowBatteryFix"
+
+/** A fix of the phone's own younger than this makes the low edge report it rather than take a new
+ * one (Q-7: a heartbeat or a series check a minute before the edge). */
+const val LOW_FIX_RECENT_MS = 2 * 60_000L
+
+/** What the low edge's sync does about location: nothing, a new balanced fix, or the recent fix it
+ * holds reported as it is. */
+enum class LowFix { NONE, FIX, CACHED }
 
 /** This sync takes the low-battery fix: the edge came, none was taken in this episode, the phone
  * is the device owner with a location policy that isn't "Off" ([policy] `null` = no policy), and
@@ -34,72 +43,138 @@ fun lowBatteryFixDue(
     systemLocationOn: Boolean,
 ): Boolean = edgeSeen && !episodeTaken && deviceOwner && policy != null && policy.mode != "off" && systemLocationOn
 
-/** The sync's location step with the low-battery fix: the balanced path, unless the sync takes a
- * fix anyway (a `locate` keeps its precise one). */
-fun withLowBatteryFix(action: LocationAction, due: Boolean): LocationAction =
-    if (due && !action.fresh) LocationAction.FRESH_BALANCED else action
+/** A due low edge: [LowFix.CACHED] when the phone's own newest fix is younger than
+ * [LOW_FIX_RECENT_MS] ([ownFixAgeMs] `null` = none; negative - the clock went back - is not
+ * recent), else [LowFix.FIX]. */
+fun lowFixKind(ownFixAgeMs: Long?): LowFix =
+    if (ownFixAgeMs != null && ownFixAgeMs in 0 until LOW_FIX_RECENT_MS) LowFix.CACHED else LowFix.FIX
 
-/** The episode after a report's battery reading: over once the phone discharges and Android says
- * it isn't low - it was charged above the low level (while charging Android never says low). */
+/** The sync's location step with the low edge: the balanced path for [LowFix.FIX] unless the sync
+ * takes a fix anyway (a `locate` keeps its precise one); [LowFix.CACHED] reports the held fix where
+ * the policy alone would report none ("Only when asked"). */
+fun withLowBatteryFix(action: LocationAction, low: LowFix): LocationAction = when {
+    low == LowFix.FIX && !action.fresh -> LocationAction.FRESH_BALANCED
+    low == LowFix.CACHED && action == LocationAction.NONE -> LocationAction.CACHED
+    else -> action
+}
+
+/** The episode after a report's battery reading: over once the phone discharges and Android no
+ * longer says low - it was charged up to its okay level (`EXTRA_BATTERY_LOW` stays set while
+ * charging until `ACTION_BATTERY_OKAY`, at the low level + 5 %). */
 fun lowEpisodeAfterReading(taken: Boolean, battery: BatteryReport?): Boolean =
     taken && !(battery != null && !battery.low && !battery.charging)
 
-/** The glue: the edge in memory (the sync it requests takes it), the episode in CE default prefs
- * (`commit()`), written before the fix is asked for. */
+/** The episode after a battery broadcast: `ACTION_BATTERY_OKAY` ends it, anything else keeps it. */
+fun lowEpisodeAfterEdge(action: String?, taken: Boolean): Boolean =
+    taken && action != Intent.ACTION_BATTERY_OKAY
+
+/** Where the episode is kept: CE default prefs in the app, a field in tests. */
+interface LowEpisodeFlag {
+    fun taken(): Boolean
+
+    fun set(taken: Boolean)
+}
+
+/**
+ * The episode's steps over [flag] - the edge in memory (the sync it requests takes it), the
+ * episode in [flag], written before the fix is asked for (Q-2: every read and write of the flag
+ * goes through the pure rules here, tested with a field).
+ */
+class LowBatteryEpisode(private val flag: LowEpisodeFlag) {
+    private val edge = AtomicBoolean(false)
+
+    /** A battery broadcast: LOW marks the edge, OKAY ends the episode (and any edge). */
+    fun onEdge(action: String?) {
+        when (action) {
+            Intent.ACTION_BATTERY_LOW -> edge.set(true)
+            Intent.ACTION_BATTERY_OKAY -> edge.set(false)
+        }
+        val taken = flag.taken()
+        val after = lowEpisodeAfterEdge(action, taken)
+        if (after != taken) flag.set(after)
+    }
+
+    /** The sync's location step: takes the edge; a due one marks the episode first and is a new
+     * fix or, with a recent one held ([ownFixAgeMs]), that one ([lowFixKind]). */
+    fun take(
+        deviceOwner: Boolean,
+        policy: LocationPolicy?,
+        systemLocationOn: Boolean,
+        ownFixAgeMs: Long?,
+        log: (String) -> Unit = {},
+    ): LowFix {
+        if (!edge.getAndSet(false)) return LowFix.NONE
+        val taken = flag.taken()
+        if (!lowBatteryFixDue(true, taken, deviceOwner, policy, systemLocationOn)) {
+            log("Battery low: no fix (taken $taken, owner $deviceOwner, mode ${policy?.mode}, location $systemLocationOn)")
+            return LowFix.NONE
+        }
+        flag.set(true)
+        val kind = lowFixKind(ownFixAgeMs)
+        log(if (kind == LowFix.FIX) "Battery low: one fix (balanced)" else "Battery low: a fix under 2 min old, reported")
+        return kind
+    }
+
+    /** Every status report's battery reading ([lowEpisodeAfterReading]). */
+    fun observe(battery: BatteryReport?) {
+        val taken = flag.taken()
+        val after = lowEpisodeAfterReading(taken, battery)
+        if (after != taken) flag.set(after)
+    }
+}
+
+/** The glue: one [LowBatteryEpisode] over CE default prefs (`commit()`); every entry caught. */
 object LowBatteryFix {
     private const val TAKEN_KEY = "battery_low_fix_taken"
 
-    private val edge = AtomicBoolean(false)
+    @Volatile
+    private var app: Context? = null
 
-    /** `BatteryStatus`' receiver, before its sync request: LOW marks the edge, OKAY ends the
-     * episode. Never throws. */
+    private val episode = LowBatteryEpisode(
+        object : LowEpisodeFlag {
+            override fun taken(): Boolean = app?.let { prefs(it).getBoolean(TAKEN_KEY, false) } ?: false
+
+            override fun set(taken: Boolean) {
+                val context = app ?: return
+                val edit = prefs(context).edit()
+                if (taken) edit.putBoolean(TAKEN_KEY, true) else edit.remove(TAKEN_KEY)
+                if (!edit.commit()) Log.w(LOG_TAG, "Couldn't save the low-battery episode")
+            }
+        },
+    )
+
+    private fun prefs(context: Context) = PreferenceManager.getDefaultSharedPreferences(context)
+
+    private fun bind(context: Context) {
+        if (app == null) app = context.applicationContext
+    }
+
+    /** `BatteryStatus`' receiver, before its sync request. Never throws. */
     fun onBatteryEdge(context: Context, action: String?) {
         try {
-            when (action) {
-                Intent.ACTION_BATTERY_LOW -> edge.set(true)
-                Intent.ACTION_BATTERY_OKAY -> {
-                    edge.set(false)
-                    endEpisode(context)
-                }
-            }
+            bind(context)
+            episode.onEdge(action)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't note the battery edge: ${e.javaClass.simpleName}")
         }
     }
 
-    /**
-     * The sync's location step (off the main thread): takes the edge and answers whether this sync
-     * takes the fix ([lowBatteryFixDue]); the episode is marked first, so a crash or a failed fix
-     * never asks again in it. Never throws.
-     */
-    fun take(context: Context, deviceOwner: Boolean, policy: LocationPolicy?, systemLocationOn: Boolean): Boolean {
-        if (!edge.getAndSet(false)) return false
-        return try {
-            val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-            val taken = prefs.getBoolean(TAKEN_KEY, false)
-            val due = lowBatteryFixDue(true, taken, deviceOwner, policy, systemLocationOn)
-            if (due) prefs.edit().putBoolean(TAKEN_KEY, true).commit()
-            Log.i(LOG_TAG, if (due) "Battery low: one fix (balanced)" else "Battery low: no fix (taken $taken, owner $deviceOwner, mode ${policy?.mode}, location $systemLocationOn)")
-            due
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't decide the low-battery fix: ${e.javaClass.simpleName}")
-            false
-        }
+    /** The sync's location step (off the main thread): what it does about location. Never throws. */
+    fun take(context: Context, deviceOwner: Boolean, policy: LocationPolicy?, systemLocationOn: Boolean, ownFixAgeMs: Long?): LowFix = try {
+        bind(context)
+        episode.take(deviceOwner, policy, systemLocationOn, ownFixAgeMs) { Log.i(LOG_TAG, it) }
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't decide the low-battery fix: ${e.javaClass.simpleName}")
+        LowFix.NONE
     }
 
-    /** Every status report's battery reading ([lowEpisodeAfterReading]). Never throws. */
+    /** Every status report's battery reading. Never throws. */
     fun observe(context: Context, battery: BatteryReport?) {
         try {
-            val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-            val taken = prefs.getBoolean(TAKEN_KEY, false)
-            if (taken && !lowEpisodeAfterReading(taken, battery)) endEpisode(context)
+            bind(context)
+            episode.observe(battery)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't read the low-battery episode: ${e.javaClass.simpleName}")
         }
-    }
-
-    private fun endEpisode(context: Context) {
-        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-        if (prefs.contains(TAKEN_KEY)) prefs.edit().remove(TAKEN_KEY).commit()
     }
 }

@@ -212,8 +212,15 @@ class PowerEventsTest {
         val upload = body(power, "suspend fun upload(")
         assertTrue("withOffLocation(record.off, stored)" in upload)
         assertEquals(2, Regex("""pruneOffLocation\(context, stored""").findAll(upload).count())
-        // The sync tells the shutdown which location policy holds.
+        // The sync tells the shutdown which location policy holds; init's cached read never
+        // overwrites it - both under one lock (qa-last-position-code Q-6).
         assertTrue("PowerEvents.noteLocationPolicy(locationPolicy)" in code("MdmSyncWorker.kt"))
+        for (writer in listOf("fun noteLocationPolicy(", "private fun noteCachedLocationPolicy(")) {
+            assertTrue(writer, "synchronized(locationPolicyLock) {" in body(power, writer))
+        }
+        assertTrue("if (!locationPolicyNoted) locationPolicy = cached" in body(power, "private fun noteCachedLocationPolicy("))
+        assertTrue("noteCachedLocationPolicy(currentPolicyDecision()" in body(power, "fun init("))
+        assertEquals(2, Regex("""locationPolicy = """).findAll(power).count())
     }
 
     /** Design 59 §3.9: the boot's first CE start stamps this boot's start once - "turned on 07:02 · unlocked 07:15". */
