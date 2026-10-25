@@ -372,7 +372,9 @@ impl Phone {
     /// A shutdown the phone saw (design 38 §3.2): "Anna was turned off" / "21:14 · battery 2 %,
     /// probably flat". `late`: it reached the server only with the next boot's start (" · told at
     /// the next start", never pushed). Pushed after [OFF_HOLD] (a restart's start drops it), never
-    /// for a restart the phone knew of.
+    /// for a restart the phone knew of. With the phone's last stored fix (2026-10-25) the event's
+    /// parameters carry it (`{"location": ..}`, never the words: the push stays as it is) and the
+    /// inbox's detail says "Last position from 21:10: shown on Locate" - no coordinates in any text.
     pub fn phone_off(&self, off: &PowerOff, at: DateTime<Utc>, late: bool) -> NewEvent {
         let restarting = off.reboot == Some(true);
         let reason = off_reason_words(off.reason.as_deref());
@@ -407,10 +409,24 @@ impl Phone {
         } else {
             Push::Held(self.now + OFF_HOLD)
         };
+        let (detail, params) = match &off.location {
+            Some(location) => (
+                Some(match DateTime::from_timestamp_millis(location.at_ms) {
+                    Some(fix_at) => {
+                        format!("Last position from {}: shown on Locate", self.at(fix_at))
+                    }
+                    None => "Last position: shown on Locate".to_string(),
+                }),
+                serde_json::to_string(&serde_json::json!({ "location": location })).ok(),
+            ),
+            None => (None, None),
+        };
         NewEvent {
             title,
             summary,
             push,
+            detail,
+            params,
             ..self.event(Kind::PhoneOff, instant(at), at)
         }
     }
@@ -1272,6 +1288,7 @@ mod tests {
             battery,
             reboot,
             reason: reason.map(str::to_string),
+            location: None,
         }
     }
 
@@ -1473,6 +1490,7 @@ mod tests {
             battery: Some(battery(3, false, true)),
             reboot,
             reason: None,
+            location: None,
         };
         let on_at = |at: &str, boot: i64| PowerOn {
             at_ms: ms(at),

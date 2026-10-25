@@ -327,6 +327,23 @@ struct FixView {
     age: String,
     accuracy: String,
     exact: String,
+    /// "Last position before the phone went off" ([before_off]).
+    before_off: bool,
+}
+
+/// How long after a shutdown a report may come and its fix still be the last before the phone went
+/// off: a report racing the shutdown, the phone's clock (the device page's "Off since" minute).
+const BEFORE_OFF_SLACK_SECONDS: i64 = 60;
+
+/// Locate's "Last position before the phone went off" (2026-10-25): the newest fix is a shutdown's
+/// (`shutdown_at`, migration 0097) and no status report came after that shutdown - once the
+/// phone reports again it is on, whatever fix it re-sends.
+fn before_off(shutdown_at: Option<DateTime<Utc>>, last_report: Option<DateTime<Utc>>) -> bool {
+    let Some(off) = shutdown_at else {
+        return false;
+    };
+    last_report
+        .is_none_or(|report| report <= off + chrono::Duration::seconds(BEFORE_OFF_SLACK_SECONDS))
 }
 
 /// The phone's answer to the newest Update Location, and when it came.
@@ -955,6 +972,22 @@ async fn locate_view(
     let (newest, mut map) = map_data(state, id, span, zone, now).await?;
     // The newest fix's badge (design 64 §3.5): the zones that fix is surely in.
     let badge = newest.as_ref().and_then(|l| fix_badge(&zone_list, l));
+    let shutdown_at = newest
+        .as_ref()
+        .and_then(|l| l.shutdown_at.as_deref())
+        .and_then(parse_db_utc);
+    let last_report = match shutdown_at {
+        Some(_) => sqlx::query_scalar::<_, Option<String>>(
+            "SELECT MAX(reported_at) FROM device_status WHERE device_id = ?",
+        )
+        .bind(id)
+        .fetch_one(&state.db)
+        .await?
+        .as_deref()
+        .and_then(parse_db_utc),
+        None => None,
+    };
+    let fix_before_off = before_off(shutdown_at, last_report);
     let fix = newest.as_ref().map(|l| {
         let fix = Fix::of(&l.captured_at, l.accuracy_meters);
         let accuracy = match &badge {
@@ -965,6 +998,7 @@ async fn locate_view(
             age: fix.age(zone, now),
             accuracy,
             exact: fix_title(fix.at.map(|t| zone.exact(t)).unwrap_or_default(), l),
+            before_off: fix_before_off,
         }
     });
     if let Some(badge) = badge.as_ref().filter(|_| newest.is_some()) {
@@ -1769,6 +1803,19 @@ pub async fn wipe(
 
 #[cfg(test)]
 mod tests {
+    /// 2026-10-25: the line holds while the newest fix is a shutdown's and the phone hasn't
+    /// reported since (a minute's slack for a report racing the shutdown).
+    #[test]
+    fn the_last_position_before_the_phone_went_off() {
+        let off = crate::display_time::parse_db_utc("2026-10-25 21:14:00").unwrap();
+        let at = |secs: i64| Some(off + chrono::Duration::seconds(secs));
+        assert!(super::before_off(Some(off), None));
+        assert!(super::before_off(Some(off), at(-600)), "a report before it");
+        assert!(super::before_off(Some(off), at(60)), "racing it");
+        assert!(!super::before_off(Some(off), at(61)), "on again");
+        assert!(!super::before_off(None, None), "not a shutdown's fix");
+    }
+
     use super::*;
 
     fn utc(text: &str) -> DateTime<Utc> {

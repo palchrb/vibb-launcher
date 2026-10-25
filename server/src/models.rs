@@ -602,6 +602,8 @@ pub struct DeviceLocation {
     pub mock: Option<bool>,
     /// When the phone last re-sent the fix as still current (0093, Q-3); NULL = never.
     pub resent_at: Option<String>,
+    /// The shutdown whose last position this fix was (0097, RFC 3339); NULL = none.
+    pub shutdown_at: Option<String>,
 }
 
 impl DeviceLocation {
@@ -1350,6 +1352,58 @@ pub struct PowerOff {
     /// but a string is no reason.
     #[serde(default, deserialize_with = "lenient_text")]
     pub reason: Option<String>,
+    /// 2026-10-25: the newest fix the phone already held at the shutdown (never a fresh one).
+    /// Anything that isn't one is no position, never a refused body.
+    #[serde(default, deserialize_with = "lenient_power_location")]
+    pub location: Option<PowerLocation>,
+}
+
+/// The shutdown's last fix as the phone sends it: where, how sure, when it was taken, Android's
+/// provider word. Stored as a fix of the phone (`device_api::power`, through
+/// [checked_location]) and carried in the `phone_off` event's parameters - never in its words.
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+pub struct PowerLocation {
+    pub lat: f64,
+    pub lng: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accuracy_m: Option<f64>,
+    pub at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+}
+
+/// Compared only in tests and plans; the coordinates are never NaN once checked.
+impl Eq for PowerLocation {}
+
+impl PowerLocation {
+    /// As a status report's fix, for [checked_location] and the store: `captured_at` is the
+    /// instant in RFC 3339 (an instant out of range is none).
+    pub fn as_report(&self) -> Option<LocationReport> {
+        let at = chrono::DateTime::from_timestamp_millis(self.at_ms)?;
+        Some(LocationReport {
+            latitude: self.lat,
+            longitude: self.lng,
+            accuracy_meters: self.accuracy_m,
+            captured_at: at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            provider: self.provider.clone(),
+            mock: None,
+        })
+    }
+}
+
+/// The shutdown's `location` when it reads as one, else `None` (logged): a bad position costs the
+/// position, not the shutdown.
+fn lenient_power_location<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<PowerLocation>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.filter(|v| !v.is_null()).and_then(|v| {
+        let location = serde_json::from_value::<PowerLocation>(v).ok();
+        if location.is_none() {
+            tracing::warn!("dropped a shutdown's location that isn't one");
+        }
+        location
+    }))
 }
 
 /// The boot the launcher's first process start of it saw.

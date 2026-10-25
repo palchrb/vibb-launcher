@@ -103,10 +103,14 @@ async fn a_launcher_report_raises_both() {
     // Design 59 §1: when the PIN was typed after the boot (step 2 words it).
     let unlocked_after =
         body["on"]["unlocked_at_ms"].as_i64().unwrap() - body["on"]["at_ms"].as_i64().unwrap();
+    // 2026-10-25: the shutdown's last stored fix, taken this long before it.
+    let fix_before =
+        body["off"]["at_ms"].as_i64().unwrap() - body["off"]["location"]["at_ms"].as_i64().unwrap();
     let on_at = Utc::now() - Duration::minutes(20);
     body["on"]["at_ms"] = json!(ms(on_at));
     body["on"]["unlocked_at_ms"] = json!(ms(on_at) + unlocked_after);
     body["off"]["at_ms"] = json!(ms(on_at) - gap);
+    body["off"]["location"]["at_ms"] = json!(ms(on_at) - gap - fix_before);
     let parsed: crate::models::PowerReport = serde_json::from_value(body.clone()).unwrap();
     assert_eq!(
         parsed.on.unwrap().unlocked_at_ms,
@@ -142,11 +146,185 @@ async fn a_launcher_report_raises_both() {
     assert!(rows[1].2.ends_with(", battery was 3 %"), "{rows:?}");
     assert!(deliveries(&app, "phone_off").await.is_empty());
     assert_eq!(send_at(&app, Utc::now()).await, ["Anna was turned on"]);
+    // The off's last position: one of the phone's fixes, marked as the shutdown's, and in the
+    // event's parameters.
+    let fixes = shutdown_fixes(&app, id).await;
+    assert_eq!(fixes.len(), 1, "{fixes:?}");
+    assert_eq!((fixes[0].0, fixes[0].1), (59.9139, 10.7522));
+    let off_at = DateTime::from_timestamp_millis(ms(on_at) - gap).unwrap();
+    assert_eq!(
+        fixes[0].2.as_deref(),
+        Some(crate::zones::instant(off_at).as_str())
+    );
+    let (params, _) = off_params(&app, id).await;
+    assert_eq!(params["location"]["provider"], "fused");
+    assert_eq!(params["location"]["accuracy_m"], 25.0);
 
     // The same body again: nothing new (the kept off is resent with every later start's on).
     assert_eq!(post(&app, &token, body).await, StatusCode::NO_CONTENT);
     assert_eq!(events(&app, id).await.len(), 2);
     assert!(send_at(&app, Utc::now()).await.is_empty());
+}
+
+/// The phone's fixes marked as a shutdown's: `(latitude, longitude, shutdown_at)`.
+async fn shutdown_fixes(app: &TestApp, device: i64) -> Vec<(f64, f64, Option<String>)> {
+    sqlx::query_as(
+        "SELECT latitude, longitude, shutdown_at FROM device_locations WHERE device_id = ? \
+         ORDER BY id",
+    )
+    .bind(device)
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+}
+
+/// The newest `phone_off`'s parameters (`Value::Null` without) and inbox detail.
+async fn off_params(app: &TestApp, device: i64) -> (Value, Option<String>) {
+    let (params, detail): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT params, detail FROM parent_events WHERE device_id = ? AND kind = 'phone_off' \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(device)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let params = params.map_or(Value::Null, |p| serde_json::from_str(&p).unwrap());
+    (params, detail)
+}
+
+/// 2026-10-25 (PLAN "A last position at shutdown and at low battery"): the shutdown's last stored
+/// fix is stored once as a fix of the phone (the row it had reported is marked, not copied), Locate
+/// says it is the last position before the phone went off until the phone reports again, the
+/// event's parameters carry it, the inbox says where to see it - and no text, the push's included,
+/// has a coordinate.
+#[tokio::test]
+async fn the_shutdowns_last_position_is_on_locate() {
+    let (app, id, token) = setup().await;
+    let now = Utc::now();
+    let fix_at = now - Duration::minutes(10);
+    let captured_at = fix_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    // The phone had reported this fix already.
+    let status = |extra: Value| {
+        let mut body = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        body
+    };
+    let report = status(
+        json!({ "location": { "latitude": 59.9139, "longitude": 10.7522,
+        "accuracy_meters": 25.0, "captured_at": captured_at, "provider": "fused" } }),
+    );
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(report),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let shutdown = Utc::now() + Duration::seconds(1);
+    let location = json!({ "lat": 59.9139, "lng": 10.7522, "accuracy_m": 25.0,
+                           "at_ms": ms(fix_at), "provider": "fused" });
+    assert_eq!(
+        post(
+            &app,
+            &token,
+            json!({ "off": off(shutdown, 41, json!({ "location": location })) })
+        )
+        .await,
+        StatusCode::NO_CONTENT
+    );
+    let fixes = shutdown_fixes(&app, id).await;
+    assert_eq!(
+        fixes.len(),
+        1,
+        "the reported row is marked, not copied: {fixes:?}"
+    );
+    assert_eq!(
+        fixes[0].2.as_deref(),
+        Some(crate::zones::instant(shutdown).as_str())
+    );
+    // The event: its words as before (no coordinates, the push unchanged), the position in its
+    // parameters, the inbox's detail without a place.
+    let (params, detail) = off_params(&app, id).await;
+    assert_eq!(params["location"]["lat"], 59.9139);
+    assert_eq!(params["location"]["at_ms"], ms(fix_at));
+    let detail = detail.unwrap();
+    assert!(
+        detail.starts_with("Last position from ") && detail.ends_with(": shown on Locate"),
+        "{detail}"
+    );
+    let rows = events(&app, id).await;
+    assert_eq!(rows[0].1, "Anna was turned off");
+    for text in [&rows[0].2, &detail] {
+        assert!(!text.contains("59.") && !text.contains("10.75"), "{text}");
+    }
+    crate::push::send_due(&app.state, now + Duration::minutes(6))
+        .await
+        .unwrap();
+    let pushed = app.pushes.take();
+    assert_eq!(pushed.len(), 1);
+    let push = payload(&pushed[0]);
+    assert_eq!(push["notification"]["title"], "Anna was turned off");
+    let push_text = push.to_string();
+    assert!(
+        !push_text.contains("59.9") && !push_text.contains("Locate"),
+        "{push_text}"
+    );
+    let cookie = app.admin_cookie().await;
+    let inbox = app.get_page("/notifications", &cookie).await.text();
+    assert!(inbox.contains("shown on Locate"), "{inbox}");
+    // Locate: the newest fix is the shutdown's, the phone hasn't reported since.
+    let path = format!("/devices/locate?device={id}");
+    let page = app.get_page(&path, &cookie).await.text();
+    assert!(page.contains("data-fix-before-off"), "{page}");
+    assert!(page.contains("Last position before the phone went off"));
+    assert!(page.contains("a sudden power loss or airplane mode leaves nothing"));
+    // On again: a report (with the same fix re-sent) ends the line; the fix stays.
+    sqlx::query(
+        "UPDATE device_status SET reported_at = datetime('now', '+2 minutes') WHERE device_id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let page = app.get_page(&path, &cookie).await.text();
+    assert!(!page.contains("data-fix-before-off"), "on again");
+    assert_eq!(shutdown_fixes(&app, id).await.len(), 1);
+}
+
+/// A shutdown's position that isn't one costs the position only: the off is stored and told,
+/// nothing reaches the fixes, the event has no parameters.
+#[tokio::test]
+async fn a_bad_shutdown_position_costs_the_position_only() {
+    let (app, id, token) = setup().await;
+    let now = Utc::now();
+    for (n, location) in [
+        json!({ "lat": 200.0, "lng": 10.7, "at_ms": ms(now - Duration::minutes(5)) }),
+        json!({ "lat": 59.9, "lng": 10.7, "at_ms": ms(now + Duration::hours(1)) }),
+        json!({ "lat": "north", "lng": 10.7, "at_ms": 1 }),
+        json!("here"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = now - Duration::minutes(n as i64);
+        assert_eq!(
+            post(
+                &app,
+                &token,
+                json!({ "off": off(at, 41, json!({ "location": location })) })
+            )
+            .await,
+            StatusCode::NO_CONTENT,
+            "{n}"
+        );
+        assert_eq!(off_params(&app, id).await, (Value::Null, None), "{n}");
+    }
+    assert_eq!(events(&app, id).await.len(), 4);
+    assert!(shutdown_fixes(&app, id).await.is_empty());
 }
 
 /// qa-38-design H1: the shutdown's POST got through, then the next boot's start - within the

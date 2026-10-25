@@ -223,6 +223,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
     val forceFreshLocation = commandFix || zoneFix != null
     val preciseFix = commandFix || zoneFix == FreshKind.PRECISE
     val locationPolicy = decision.policy?.let { it.locationPolicy ?: LEGACY_LOCATION_POLICY }
+    // 2026-10-25: the shutdown's last position goes by this policy (never "Off").
+    PowerEvents.noteLocationPolicy(locationPolicy)
     val location = currentLocationReport(context, dpm, admin, forceFreshLocation, preciseFix, zoneFix != null, zonesOn, locationPolicy)
     val locationOff = locationPolicy?.mode == "off"
     // Location Off, or no zones watched: the queue is emptied before the report, which carries no
