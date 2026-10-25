@@ -469,6 +469,22 @@
             saving = false;
             cameBack();
         });
+
+        // The reload in place another script asks for (pull-refresh.js, 2026-10-25): the same rules
+        // as the return's - no save on its way, no open <details>, nothing typed or picked - and the
+        // same way: the "load" wait (the bar, the chip after 3 s, the ping and the restart) over
+        // go()'s kept place and GET entry. A POST's answer may be reloaded when asked: go() makes
+        // the entry a GET first, so nothing is sent again.
+        win.handyReconnect = {
+            mayReload: function () {
+                return !saving && !(doc.querySelector && doc.querySelector("details[open]")) && !edited(doc);
+            },
+            reload: function () {
+                if (!this.mayReload()) return false;
+                go(start("load", null, null));
+                return true;
+            }
+        };
     }
 
     var api = {
