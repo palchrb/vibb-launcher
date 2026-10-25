@@ -430,5 +430,12 @@
     <!-- Design 24b §1.8: the parent PIN's own keypad (no keyboard). -->
     <string name="parent_pin_keypad_dots">%1$d digits typed</string>
     <string name="parent_pin_until_sync">The code can\'t be checked until the phone reaches the server.</string>
+    <!-- Design r10 §5: "New setup code", only when the token and the parent PIN can't be used (the deadlock). -->
+    <string name="re_enrol_button">New setup code</string>
+    <string name="re_enrol_title">New setup code</string>
+    <string name="re_enrol_hint">Type the setup code from the phone\'s page in the parent app (Advanced › New Setup Code). It connects the phone to the server again; it doesn\'t unlock anything.</string>
+    <string name="re_enrol_field">Setup code</string>
+    <string name="re_enrol_failed">That code didn\'t work. Check it and try again, or make a new one.</string>
+    <string name="re_enrol_done">The phone is connected again. Try the parent code once it has synced.</string>
     <string name="parent_pin_foreign_access">An app the parent hasn\'t allowed can control this phone or read its screen, so the parent code can\'t be typed here. Use the parent app: its Status card shows what to do.</string>
 </resources>

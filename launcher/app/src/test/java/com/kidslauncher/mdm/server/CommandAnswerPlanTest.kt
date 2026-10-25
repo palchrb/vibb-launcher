@@ -132,10 +132,15 @@ class CommandAnswerPlanTest {
     @Test
     fun `an enrollment clears the command answers`() {
         val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
+        // Design r10: the QR, Settings and the lock's "Ny oppsettkode" all enroll through Enrollment.enroll.
         for (path in listOf(
             "main/java/com/kidslauncher/mdm/server/Provisioning.kt",
             "main/java/com/kidslauncher/mdm/ui/settings/launcher/SettingsFragmentLauncher.kt",
+            "main/java/com/kidslauncher/mdm/ui/ReEnrolDialog.kt",
         )) {
+            assertTrue(path, "Enrollment.enroll(" in File(src, path).readText())
+        }
+        for (path in listOf("main/java/com/kidslauncher/mdm/server/Enrollment.kt")) {
             val text = File(src, path).readText()
             val clearEvents = text.indexOf("ParentPin.clearEvents(context)")
             val clearAnswers = text.indexOf("CommandAnswers.clear(context)")

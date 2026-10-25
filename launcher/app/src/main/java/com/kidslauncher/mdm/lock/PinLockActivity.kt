@@ -1060,6 +1060,7 @@ class PinLockActivity : AppCompatActivity() {
             .setView(view)
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.re_enrol_button, null)
             .create()
         com.kidslauncher.mdm.ui.ParentPinKeypad.secure(dialog)
         dialog.show()
@@ -1070,6 +1071,8 @@ class PinLockActivity : AppCompatActivity() {
             ok.isEnabled = it.okEnabled
             keypad.setEnabled(it.okEnabled)
         }
+        // Design r10 §5: "Ny oppsettkode" only in the deadlock (never unlocks), read again after every result.
+        val reEnrol = com.kidslauncher.mdm.ui.ReEnrolDialog.bind(dialog, lifecycleScope, ::trackDialog) { showError(it) }
         // Set after show() so a wrong code keeps the dialog open.
         ok.setOnClickListener {
             val code = keypad.pin
@@ -1094,6 +1097,7 @@ class PinLockActivity : AppCompatActivity() {
                 )
                 ok.isEnabled = ParentPinDialog.okAfter(result)
                 keypad.setEnabled(ParentPinDialog.okAfter(result))
+                reEnrol()
             }
         }
     }

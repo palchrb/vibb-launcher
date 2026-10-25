@@ -634,6 +634,20 @@ class PolicyResponseCompatTest {
         assertNull((decodeCached(withNull) as CachedPolicy.Ok).policy.kidLock)
     }
 
+    /** Design r10 §3.2: the cache holds the kid PIN redacted (`""`, not encoded); the policy passed on keeps it. */
+    @Test
+    fun `the cached policy holds no kid PIN hash or salt (r10)`() {
+        val hash = "ab".repeat(32)
+        val withLock = serverResponse.replaceFirst("{", """{"kid_lock":{"pin_hash":"$hash","pin_salt":"cdcd","pin_length":6,"pin_rev":7},""")
+        val policy = (decodeFresh(withLock) as FreshDecode.Ok).policy
+        val cached = ServerJson.encodeToString(PolicyResponse.serializer(), policyToCache(policy))
+        assertFalse(cached, hash in cached || "cdcd" in cached)
+        val back = (decodeCached(cached) as CachedPolicy.Ok).policy.kidLock!!
+        assertEquals(KidLock("", "", 6, pinRev = 7), back)
+        assertEquals(hash, policy.kidLock?.pinHash)
+        assertTrue(policyToCache(policy.copy(kidLock = null)).kidLock == null)
+    }
+
     /**
      * Design 59 §1: `kid_lock.keyguard`/`pin_rev` decode (an older server's missing keys are Vibb One's
      * lock and rev 0), and `set_kid_pin`'s `pin` decodes but never reaches the cache, a `toString` or
@@ -672,7 +686,7 @@ class PolicyResponseCompatTest {
         val src = listOf("src", "app/src").map(::File).first { File(it, "main/java").isDirectory }
         val worker = File(src, "main/java/com/kidslauncher/mdm/server/MdmSyncWorker.kt").readText()
         val store = worker.substringAfter("private fun storeAcceptedPolicy(").substringBefore("\n}\n")
-        assertTrue(store, "ServerJson.encodeToString(PolicyResponse.serializer(), cacheablePolicy(policy))" in store)
+        assertTrue(store, "ServerJson.encodeToString(PolicyResponse.serializer(), policyToCache(policy))" in store)
         val afterDispatch = worker.substringAfter("ranCommand = dispatchPendingCommand(").substringBefore("val decision = choosePolicy(")
         assertTrue("freshPolicy = cacheablePolicy(freshPolicy)" in afterDispatch)
     }

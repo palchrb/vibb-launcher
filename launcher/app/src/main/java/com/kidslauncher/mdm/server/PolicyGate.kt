@@ -44,6 +44,13 @@ fun decodeCached(json: String?): CachedPolicy {
 fun cacheablePolicy(policy: PolicyResponse): PolicyResponse =
     policy.pendingCommand?.takeIf { it.pin != null }?.let { policy.copy(pendingCommand = it.copy(pin = null)) } ?: policy
 
+/** What `storeAcceptedPolicy` writes (design r10 §3.2): [cacheablePolicy] with the kid PIN's hash and salt `""`
+ * (redacted, as the parent PIN's, [redactedPolicy]) - the sealed `pin_lock_state` copy is the only one on disk. Only
+ * the cache: the sync applies the policy with the hash, so `configure` seals it from that apply. */
+fun policyToCache(policy: PolicyResponse): PolicyResponse = cacheablePolicy(policy).let { cacheable ->
+    cacheable.kidLock?.let { cacheable.copy(kidLock = it.copy(pinHash = "", pinSalt = "")) } ?: cacheable
+}
+
 /** The outcome of decoding a 2xx `GET /api/devices/policy` body. */
 sealed interface FreshDecode {
     data class Ok(val policy: PolicyResponse) : FreshDecode

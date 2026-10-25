@@ -369,5 +369,12 @@
     <!-- Design 24b §1.8: foreldrekodens eget tastatur. -->
     <string name="parent_pin_keypad_dots">%1$d sifre tastet</string>
     <string name="parent_pin_until_sync">Koden kan ikke sjekkes før telefonen når serveren.</string>
+    <!-- Design r10 §5: "Ny oppsettkode", bare når tokenet og foreldrekoden ikke kan brukes (vranglåsen). -->
+    <string name="re_enrol_button">Ny oppsettkode</string>
+    <string name="re_enrol_title">Ny oppsettkode</string>
+    <string name="re_enrol_hint">Skriv oppsettkoden fra telefonens side i foreldreappen (Advanced › New Setup Code). Den kobler telefonen til serveren igjen; den låser ikke opp noe.</string>
+    <string name="re_enrol_field">Oppsettkode</string>
+    <string name="re_enrol_failed">Koden virket ikke. Sjekk den og prøv igjen, eller lag en ny.</string>
+    <string name="re_enrol_done">Telefonen er koblet til igjen. Prøv foreldrekoden når den har synkronisert.</string>
     <string name="parent_pin_foreign_access">En app foreldrene ikke har tillatt kan styre telefonen eller lese skjermen, så foreldrekoden kan ikke skrives her. Bruk foreldreappen: Status-kortet der viser hva du skal gjøre.</string>
 </resources>

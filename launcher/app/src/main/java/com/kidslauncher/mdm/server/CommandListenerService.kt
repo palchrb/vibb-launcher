@@ -209,7 +209,7 @@ class CommandListenerService : Service() {
 
         val mdm = LauncherPreferences.mdm()
         val serverUrl = mdm.serverUrl()
-        val deviceToken = mdm.deviceToken()
+        val deviceToken = DeviceToken.get()
         if (serverUrl.isNullOrBlank() || deviceToken.isNullOrBlank()) {
             handler.postDelayed(connectRunnable, NOT_ENROLLED_RETRY_DELAY_MS)
             return

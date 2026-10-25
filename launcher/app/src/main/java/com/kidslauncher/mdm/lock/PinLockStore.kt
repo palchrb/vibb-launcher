@@ -2,6 +2,9 @@ package com.kidslauncher.mdm.lock
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.kidslauncher.mdm.server.Sealed
+import com.kidslauncher.mdm.server.SealedPrefs
+import com.kidslauncher.mdm.server.Secrets
 import java.security.MessageDigest
 
 /**
@@ -10,6 +13,9 @@ import java.security.MessageDigest
  * excluded from backup and device transfer - `allowBackup="false"` plus the backup rules). Every
  * write is a synchronous `commit()`: a wrong PIN counted just before a kill or reboot must stay
  * counted (QA 10 #3).
+ *
+ * Design r10: the kid PIN's hash and salt are on disk only sealed ([SealedPrefs], AAD `pin_lock_state/<key>`), the
+ * one copy (the cached policy's is redacted); a plaintext left by an older build is sealed at its first background read.
  *
  * No unlock time and no "unlocked" flag is ever stored: a new process starts LOCKED - except, with Android's lock as
  * the gate (design 59 §3.1), the boot's first CE start, which only the typed Child PIN can bring.
@@ -21,6 +27,8 @@ object PinLockStore {
     private const val INACTIVE = "inactive"
     private const val PIN_HASH = "pin_hash"
     private const val PIN_SALT = "pin_salt"
+    private const val HASH_AAD = "pin_lock_state/pin_hash"
+    private const val SALT_AAD = "pin_lock_state/pin_salt"
     private const val PIN_LENGTH = "pin_length"
     private const val FAILURES = "failures"
     private const val HASH_FP = "hash_fingerprint"
@@ -47,12 +55,22 @@ object PinLockStore {
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** The kid PIN as the last apply saw it ([KidLockConfig.usable] may be false: bad hash). */
-    fun config(context: Context): KidLockConfig? {
-        val p = prefs(context)
-        val hash = p.getString(PIN_HASH, null) ?: return null
-        return KidLockConfig(hash, p.getString(PIN_SALT, null).orEmpty(), kidPinLength(p.getInt(PIN_LENGTH, 4)), p.getLong(PIN_REV, 0L))
+    /** The kid PIN as the last apply saw it ([KidLockConfig.usable] may be false: bad hash); `null` when none is
+     * stored or it doesn't open (design r10: unreadable). Main thread: opens, never migrates (QA R10-7). */
+    fun config(context: Context): KidLockConfig? = configFrom(prefs(context), Secrets.prefs, Secrets.migrateHere())
+
+    internal fun configFrom(p: SharedPreferences, sealed: SealedPrefs, migrate: Boolean): KidLockConfig? {
+        val hash = sealed.read(p, HASH_AAD, PIN_HASH, migrate) as? Sealed.Value ?: return null
+        val salt = when (val read = sealed.read(p, SALT_AAD, PIN_SALT, migrate)) {
+            is Sealed.Value -> read.plain
+            Sealed.Absent -> ""
+            Sealed.Unreadable -> return null
+        }
+        return KidLockConfig(hash.plain, salt, kidPinLength(p.getInt(PIN_LENGTH, 4)), p.getLong(PIN_REV, 0L))
     }
+
+    /** A kid PIN is stored (sealed or not, readable or not) - no Keystore call (Home's pre-check, QA R10-7). */
+    fun pinStored(context: Context): Boolean = prefs(context).contains(PIN_HASH)
 
     fun active(context: Context): Boolean = prefs(context).getBoolean(ACTIVE, false)
 
@@ -61,20 +79,48 @@ object PinLockStore {
     /** Design 59: the policy asks for Android's lock (`kid_lock.keyguard`, committed with the hash by [saveConfig]). */
     fun keyguardRequested(context: Context): Boolean = prefs(context).getBoolean(KEYGUARD_REQUESTED, false)
 
-    /** The hash, its `pin_rev`, `active` and - design 59 - [requested] in one commit (Q59-5: every rev names the hash
-     * it came with). [requested] `null` keeps the stored value (the crash guard's save). */
-    fun saveConfig(context: Context, config: KidLockConfig?, active: Boolean, inactive: LockInactive?, requested: Boolean? = null) {
-        val editor = prefs(context).edit()
-            .putBoolean(ACTIVE, active)
-            .putString(INACTIVE, inactive?.wire)
-        if (requested != null) editor.putBoolean(KEYGUARD_REQUESTED, requested)
-        if (config == null) {
-            editor.remove(PIN_HASH).remove(PIN_SALT).remove(PIN_LENGTH).remove(PIN_REV)
-        } else {
-            editor.putString(PIN_HASH, config.hashHex).putString(PIN_SALT, config.saltHex).putInt(PIN_LENGTH, config.length)
-                .putLong(PIN_REV, config.pinRev)
+    /** [write]'s PIN fields, `active`/`inactive` and - design 59 - [requested] in one commit (Q59-5: every rev names
+     * the hash it came with). [requested] `null` keeps the stored value (the crash guard's save). */
+    fun saveConfig(context: Context, write: PinWrite, active: Boolean, inactive: LockInactive?, requested: Boolean? = null): Boolean =
+        saveConfigTo(prefs(context), Secrets.prefs, write, active, inactive, requested)
+
+    /**
+     * Design r10 §3.2: [PinWrite.Write] seals the hash and salt; [PinWrite.Remove] removes the fields; [PinWrite.Keep]
+     * writes `active`/`inactive` only. A failed seal (QA R10-3) commits `active`/`inactive` and **removes** the PIN
+     * fields - never keeps the old ones (a changed PIN may be the leaked one): the next start is `BAD_HASH` until a sync.
+     */
+    internal fun saveConfigTo(
+        p: SharedPreferences,
+        sealed: SealedPrefs,
+        write: PinWrite,
+        active: Boolean,
+        inactive: LockInactive?,
+        requested: Boolean?,
+    ): Boolean {
+        fun base(e: SealedPrefs.Editor) {
+            e.raw.putBoolean(ACTIVE, active).putString(INACTIVE, inactive?.wire)
+            if (requested != null) e.raw.putBoolean(KEYGUARD_REQUESTED, requested)
         }
-        editor.commit()
+        fun removePin(e: SealedPrefs.Editor) {
+            e.remove(HASH_AAD, PIN_HASH).remove(SALT_AAD, PIN_SALT)
+            e.raw.remove(PIN_LENGTH).remove(PIN_REV)
+        }
+        val ok = sealed.edit(p) { e ->
+            base(e)
+            when (write) {
+                is PinWrite.Write -> {
+                    e.putSealed(HASH_AAD, PIN_HASH, write.config.hashHex).putSealed(SALT_AAD, PIN_SALT, write.config.saltHex)
+                    e.raw.putInt(PIN_LENGTH, write.config.length).putLong(PIN_REV, write.config.pinRev)
+                }
+                PinWrite.Remove -> removePin(e)
+                PinWrite.Keep -> Unit
+            }
+        }
+        if (ok || write !is PinWrite.Write) return ok
+        return sealed.edit(p) { e ->
+            base(e)
+            removePin(e)
+        }
     }
 
     /** Design 59 (M-1): we own Android's credential - set before a reset, cleared only once no credential is left. */

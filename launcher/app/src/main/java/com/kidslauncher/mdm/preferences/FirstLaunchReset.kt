@@ -9,8 +9,9 @@ package com.kidslauncher.mdm.preferences
  * `onProfileProvisioningComplete`, or Settings opened without Home) lost its enrolment at its next
  * process start. So the reset runs only on a phone that has neither started Home nor enrolled:
  * both enrolment paths write `mdm.enrolled` and `mdm.device_token` together, and a fresh install
- * has neither. `started_before` itself stays Home's to set, with its first-launch work (the HOME
+ * has neither. [tokenStored]: a token is stored, sealed or not (`DeviceToken.present`, design r10 - an unreadable one
+ * still marks an enrolled phone). `started_before` itself stays Home's to set, with its first-launch work (the HOME
  * role request, the notification permission).
  */
-fun firstLaunchResetDue(startedBefore: Boolean, enrolled: Boolean, deviceToken: String?): Boolean =
-    !startedBefore && !enrolled && deviceToken.isNullOrBlank()
+fun firstLaunchResetDue(startedBefore: Boolean, enrolled: Boolean, tokenStored: Boolean): Boolean =
+    !startedBefore && !enrolled && !tokenStored

@@ -214,7 +214,7 @@ object MusicCourier {
     private suspend fun fetchAll(app: Context, music: MusicPolicy): Boolean {
         val mdm = LauncherPreferences.mdm()
         val url = mdm.serverUrl()
-        val token = mdm.deviceToken()
+        val token = com.kidslauncher.mdm.server.DeviceToken.get()
         if (url.isNullOrBlank() || token.isNullOrBlank()) return false
         val server = createMusicServer(url, token)
         var changed = false
@@ -356,7 +356,7 @@ object MusicCourier {
     suspend fun fetchNowArt(app: Context, music: MusicPolicy): Boolean {
         val mdm = LauncherPreferences.mdm()
         val url = mdm.serverUrl()
-        val token = mdm.deviceToken()
+        val token = com.kidslauncher.mdm.server.DeviceToken.get()
         if (url.isNullOrBlank() || token.isNullOrBlank()) return false
         val hashes = nowArtToFetch(MusicStore.wantArt(app), MusicStore.coversDir(app).list().orEmpty().toSet(), MusicStore.artFailures(app), AppDownloads.currentCaps(app), music, System.currentTimeMillis())
         if (hashes.isEmpty()) return false

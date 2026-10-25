@@ -301,6 +301,45 @@ fun lockActivation(
 /** Kid PINs are 4-6 digits; anything else from the server means 4 (the keypad's dots). */
 fun kidPinLength(length: Int?): Int = if (length != null && length in 4..6) length else 4
 
+/**
+ * The kid PIN [PinLockRuntime.configure] applies (design r10 §3.2): **never `null` while [kidLock] is there** (QA
+ * R10-1). No `kid_lock` -> `null` (no PIN); a real hash -> it; redacted (`""`, the cached policy's form) -> [memory]
+ * when usable, else the [stored] copy when usable (QA R10-4: an unusable memory never sticks), else the unusable
+ * stand-in, which [lockActivation] makes `true to BAD_HASH` - the lock up, the parent code opens it. The policy's
+ * `pin_length` wins in every case. [stored] is read only when needed (a Keystore call).
+ */
+fun kidConfigFor(kidLock: com.kidslauncher.mdm.server.dto.KidLock?, memory: KidLockConfig?, stored: () -> KidLockConfig?): KidLockConfig? {
+    if (kidLock == null) return null
+    val length = kidPinLength(kidLock.pinLength)
+    if (kidLock.pinHash.isNotEmpty()) return KidLockConfig(kidLock.pinHash, kidLock.pinSalt, length, kidLock.pinRev)
+    val known = memory?.takeIf { it.usable } ?: stored()?.takeIf { it.usable }
+    return known?.copy(length = length) ?: KidLockConfig("", "", length, kidLock.pinRev)
+}
+
+/** What [PinLockStore.saveConfig] does with the PIN fields (design r10 §3.2, revision check N1). */
+sealed interface PinWrite {
+    /** A policy's real hash: sealed, with its length and rev. */
+    class Write(val config: KidLockConfig) : PinWrite
+
+    /** No `kid_lock`: the fields go. */
+    data object Remove : PinWrite
+
+    /** A redacted policy, the stand-in, the crash guard: `active`/`inactive` only, the fields as they are (QA R10-11). */
+    data object Keep : PinWrite
+}
+
+/** The write for an apply of [kidLock], whose PIN [kidConfigFor] made [config]. */
+fun pinWriteFor(kidLock: com.kidslauncher.mdm.server.dto.KidLock?, config: KidLockConfig?): PinWrite = when {
+    kidLock == null -> PinWrite.Remove
+    kidLock.pinHash.isNotEmpty() && config != null -> PinWrite.Write(config)
+    else -> PinWrite.Keep
+}
+
+/** The stand-in (an unusable PIN of a redacted policy) takes no backoff step: its fingerprint means only
+ * "unreadable", so the kid's wrong-PIN count isn't reset by it (QA R10-11). */
+fun backoffStepDue(kidLock: com.kidslauncher.mdm.server.dto.KidLock?, config: KidLockConfig?): Boolean =
+    kidLock == null || kidLock.pinHash.isNotEmpty() || config?.usable == true
+
 /** The entered digits after a key: digits only, never longer than [length]. */
 fun appendDigit(entered: String, digit: Char, length: Int): String =
     if (digit in '0'..'9' && entered.length < length) entered + digit else entered
