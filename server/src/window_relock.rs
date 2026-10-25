@@ -856,6 +856,43 @@ pub struct CommandAnswer {
     pub delivered: bool,
     /// Cancelled before it reached the phone (by the parent, or by an enrollment).
     pub cancelled: bool,
+    /// The answer's success flag (`device_commands.succeeded`; `None` before an answer).
+    pub succeeded: Option<bool>,
+}
+
+/// How long the phone's summary reloads itself after "Lock again" or "Unlock 2 h…" was pressed
+/// ([waiting_for_phone]), from the press.
+pub const WAIT_FOR_PHONE_MS: i64 = 2 * 60 * 1000;
+
+/// Whether the phone's summary reloads itself every 3 s (`static/auto-reload.js`) to show what
+/// "Lock again" (`end_windows`) or "Unlock 2 h…" (`start_pause`) did: the phone acts at once (the
+/// SSE nudge), but no push reaches the page. The newer of the two in [answers] (the newest of each
+/// command), pressed less than [WAIT_FOR_PHONE_MS] before `now_ms`, not cancelled and not refused,
+/// while the phone hasn't answered it or the newest report doesn't show it yet: `paused` (the
+/// report's `restrictions_paused`) after an Unlock, `open` (a pause or Play install mode) no more
+/// after Lock again. Nothing waits: `false`.
+pub fn waiting_for_phone(answers: &[CommandAnswer], paused: bool, open: bool, now_ms: i64) -> bool {
+    let Some(last) = answers
+        .iter()
+        .filter(|a| a.command == END_WINDOWS || a.command == START_PAUSE)
+        .max_by_key(|a| a.requested_ms)
+    else {
+        return false;
+    };
+    if last.cancelled || now_ms - last.requested_ms >= WAIT_FOR_PHONE_MS {
+        return false;
+    }
+    if last.acknowledged_ms.is_none() {
+        return true;
+    }
+    if last.succeeded == Some(false) {
+        return false;
+    }
+    if last.command == START_PAUSE {
+        !paused
+    } else {
+        open
+    }
 }
 
 /// "Allow these apps" stays only until the phone has answered one pressed after the relock - the
@@ -1204,6 +1241,7 @@ mod tests {
             result: Some("allowed: 1 apps".to_string()),
             delivered: true,
             cancelled: false,
+            succeeded: Some(true),
         };
         assert!(allowed_since_relock(
             Some(&allowed),
@@ -1216,6 +1254,104 @@ mod tests {
         };
         assert!(!allowed_since_relock(Some(&unanswered), 0));
         assert!(!allowed_since_relock(None, 0));
+    }
+
+    /// The summary waits for the phone (reloads) after Lock again or Unlock 2 h…: unanswered, or
+    /// answered but not in the newest report yet; never past 2 minutes, after a cancel or a
+    /// refusal, or for another command.
+    #[test]
+    fn the_summary_waits_for_the_phone_after_lock_again_or_unlock() {
+        let pressed = |command: &str, ago_ms: i64| CommandAnswer {
+            command: command.to_string(),
+            requested_ms: NOW - ago_ms,
+            acknowledged_ms: None,
+            result: None,
+            delivered: false,
+            cancelled: false,
+            succeeded: None,
+        };
+        let answered = |a: CommandAnswer, ok: bool| CommandAnswer {
+            acknowledged_ms: Some(NOW),
+            delivered: true,
+            succeeded: Some(ok),
+            ..a
+        };
+        // (answers, paused, open) -> waits.
+        let pause = pressed(START_PAUSE, 10_000);
+        let lock = pressed(END_WINDOWS, 10_000);
+        let cases: Vec<(Vec<CommandAnswer>, bool, bool, bool)> = vec![
+            (vec![], false, false, false),
+            (vec![pressed(ALLOW_BLOCKED, 10_000)], false, false, false),
+            // Unanswered: waits, whatever the report says.
+            (vec![pause.clone()], false, false, true),
+            (vec![lock.clone()], true, true, true),
+            (vec![lock.clone()], false, false, true),
+            // Answered: until the newest report shows it.
+            (vec![answered(pause.clone(), true)], false, false, true),
+            (vec![answered(pause.clone(), true)], true, true, false),
+            (vec![answered(lock.clone(), true)], true, true, true),
+            (vec![answered(lock.clone(), true)], false, false, false),
+            // An older launcher's answer has no flag: as a success.
+            (
+                vec![CommandAnswer {
+                    succeeded: None,
+                    ..answered(pause.clone(), true)
+                }],
+                false,
+                false,
+                true,
+            ),
+            // Refused or cancelled: nothing to wait for.
+            (vec![answered(pause.clone(), false)], false, false, false),
+            (
+                vec![CommandAnswer {
+                    cancelled: true,
+                    ..pause.clone()
+                }],
+                false,
+                false,
+                false,
+            ),
+            // About 2 minutes after the press it stops.
+            (
+                vec![pressed(START_PAUSE, WAIT_FOR_PHONE_MS - 1000)],
+                false,
+                false,
+                true,
+            ),
+            (
+                vec![pressed(START_PAUSE, WAIT_FOR_PHONE_MS)],
+                false,
+                false,
+                false,
+            ),
+            // The newer of the two counts: Lock again after an Unlock waits for the lock.
+            (
+                vec![
+                    answered(pressed(START_PAUSE, 60_000), true),
+                    answered(lock.clone(), true),
+                ],
+                true,
+                true,
+                true,
+            ),
+            (
+                vec![
+                    answered(pressed(START_PAUSE, 60_000), true),
+                    answered(lock.clone(), true),
+                ],
+                false,
+                false,
+                false,
+            ),
+        ];
+        for (i, (answers, paused, open, waits)) in cases.into_iter().enumerate() {
+            assert_eq!(
+                waiting_for_phone(&answers, paused, open, NOW),
+                waits,
+                "case {i}"
+            );
+        }
     }
 
     fn literal_blocks() -> Vec<RelockBlock> {

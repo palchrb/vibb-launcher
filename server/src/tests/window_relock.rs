@@ -938,3 +938,75 @@ async fn do_not_disturb_is_an_alarm_that_links_to_about() {
         "{about}"
     );
 }
+
+/// The phone answers its newest command, as the launcher does after running it.
+async fn answer_newest(app: &TestApp, token: &str, id: i64, success: bool) {
+    let command: i64 =
+        sqlx::query_scalar("SELECT MAX(id) FROM device_commands WHERE device_id = ?")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/command-result",
+            Some(token),
+            Some(json!({ "command_id": command, "success": success, "message": "done" })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+}
+
+/// PLAN's fix backlog (pwa-fixes-a): after Lock again or Unlock 2 h… the summary loads
+/// `auto-reload.js` until the newest report shows what the phone did - unanswered, or answered but
+/// not reported yet - and never 2 minutes after the press; with nothing pending it loads nothing.
+#[tokio::test]
+async fn the_summary_reloads_until_the_phone_shows_lock_again_or_unlock() {
+    const SCRIPT: &str = "<script src=\"/static/auto-reload.js?v=4\" defer></script>";
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    post_status(&app, &token, json!({})).await;
+    let page = format!("/devices/{id}");
+    let press = |path: &'static str| format!("/devices/{id}/{path}");
+    let reloads = |html: String| html.contains(SCRIPT);
+    assert!(!reloads(app.get_page(&page, &cookie).await.text()));
+
+    // Unlock: unanswered, then answered but not in a report, then reported.
+    let res = app
+        .request_form(Method::POST, &press("start-pause"), Some(&cookie), &[])
+        .await;
+    let landing = res.location().unwrap().to_string();
+    assert!(reloads(app.get_page(&landing, &cookie).await.text()));
+    answer_newest(&app, &token, id, true).await;
+    assert!(reloads(app.get_page(&page, &cookie).await.text()));
+    post_status(&app, &token, json!({ "restrictions_paused": true })).await;
+    assert!(!reloads(app.get_page(&page, &cookie).await.text()));
+
+    // Lock again: the same, until the report has the pause gone.
+    app.request_form(Method::POST, &press("end-windows"), Some(&cookie), &[])
+        .await;
+    assert!(reloads(app.get_page(&page, &cookie).await.text()));
+    answer_newest(&app, &token, id, true).await;
+    assert!(reloads(app.get_page(&page, &cookie).await.text()));
+    post_status(&app, &token, json!({ "restrictions_paused": false })).await;
+    assert!(!reloads(app.get_page(&page, &cookie).await.text()));
+
+    // A refusal ends the wait; so do 2 minutes without an answer.
+    app.request_form(Method::POST, &press("start-pause"), Some(&cookie), &[])
+        .await;
+    answer_newest(&app, &token, id, false).await;
+    assert!(!reloads(app.get_page(&page, &cookie).await.text()));
+    app.request_form(Method::POST, &press("start-pause"), Some(&cookie), &[])
+        .await;
+    assert!(reloads(app.get_page(&page, &cookie).await.text()));
+    sqlx::query(
+        "UPDATE device_commands SET requested_at = datetime('now', '-2 minutes') \
+         WHERE id = (SELECT MAX(id) FROM device_commands)",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(!reloads(app.get_page(&page, &cookie).await.text()));
+}
