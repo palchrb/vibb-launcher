@@ -85,7 +85,10 @@
         </a>
     </div>
 
-    <form method="post" action="/logout" class="group">
+    {#- static/register-sw.js fills endpoint with this browser's push subscription and unsubscribes it
+        before the form goes (at most 300 ms): Sign Out turns this browser's notifications off. -#}
+    <form method="post" action="/logout" class="group" data-sign-out>
+        <input type="hidden" name="endpoint" value="">
         <button type="submit" class="row row-button row-danger">Sign Out</button>
     </form>
 </main>

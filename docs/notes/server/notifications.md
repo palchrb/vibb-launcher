@@ -107,6 +107,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`push::forget_stale`, one log line) - the backstop for a subscribe in flight while the sessions ended, or a
   sign-out whose delete failed; their deliveries go with them (`tests::web_push::a_new_password_and_a_2fa_reset_hold_no_subscription`,
   `a_re_auth_lockout_turns_notifications_off_at_once`, `a_subscription_from_a_signed_out_session_is_not_sent_to`);
+  Settings' Sign Out deletes this browser's own row and unsubscribes it (`auth::logout`, `register-sw.js`; pwa.md,
+  "Sign Out takes this browser's notifications");
   `backups::strip_secrets_in` deletes `push_deliveries` and `push_subscriptions` from every copy.
 - **PWA**: `/notifications` gained the warnings (the clock row, a "may not be showing" row per device to `#devices`),
   This Device (`#this-device`: the form carries `data-key` = the public key and `data-subscribed` = 16-hex SHA-256

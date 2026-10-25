@@ -374,7 +374,31 @@ pub async fn verify_2fa(
     Redirect::to("/").into_response()
 }
 
-pub async fn logout(session: Session) -> impl IntoResponse {
+/// Settings' Sign Out. The form may carry this browser's push subscription (`endpoint`, filled by
+/// `static/register-sw.js`, which also unsubscribes the browser): that one row goes too, only when
+/// it is the signed-in parent's (the user, 2026-10-25). Without it - no JS, no subscription, an
+/// empty or missing field - the session ends as before and every subscription stays.
+pub async fn logout(
+    State(state): State<AppState>,
+    session: Session,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    let endpoint = form_urlencoded::parse(&body)
+        .find(|(name, _)| name == "endpoint")
+        .map(|(_, value)| value.trim().to_string())
+        .filter(|e| !e.is_empty() && e.len() <= 1024);
+    if let Some(endpoint) = endpoint {
+        if let Err(err) =
+            sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = ? AND admin_id = ?")
+                .bind(&endpoint)
+                .bind(admin.id)
+                .execute(&state.db)
+                .await
+        {
+            tracing::error!(%err, "couldn't delete this browser's notification subscription");
+        }
+    }
     session.flush().await.ok();
     Redirect::to("/login")
 }

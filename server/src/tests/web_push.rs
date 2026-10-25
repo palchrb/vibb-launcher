@@ -1266,6 +1266,59 @@ async fn a_subscription_from_a_signed_out_session_is_not_sent_to() {
     );
 }
 
+/// Sign Out with this browser's endpoint (the user, 2026-10-25; `static/register-sw.js` fills it)
+/// deletes that subscription, only the signed-in parent's; without the field it signs out as
+/// before and every subscription stays.
+#[tokio::test]
+async fn sign_out_removes_this_browsers_subscription_only() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    let count = || scalar(&app, "SELECT COUNT(*) FROM push_subscriptions");
+
+    // Another parent's sign-out naming this endpoint: signed out, the row stays.
+    let res = app
+        .request_form(
+            Method::POST,
+            "/logout",
+            Some(&pappa),
+            &[("endpoint", ENDPOINT)],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/login"));
+    assert_eq!(
+        app.get_page("/devices", &pappa).await.location(),
+        Some("/login")
+    );
+    assert_eq!(count().await, 1);
+
+    // No field (no JS, no subscription) or an empty one: as before.
+    for fields in [&[][..], &[("endpoint", "")][..]] {
+        let cookie = app.admin_cookie().await;
+        let res = app
+            .request_form(Method::POST, "/logout", Some(&cookie), fields)
+            .await;
+        assert_eq!(res.location(), Some("/login"));
+        assert_eq!(count().await, 1);
+    }
+
+    let res = app
+        .request_form(
+            Method::POST,
+            "/logout",
+            Some(&cookie),
+            &[("endpoint", ENDPOINT)],
+        )
+        .await;
+    assert_eq!(res.location(), Some("/login"));
+    assert_eq!(
+        app.get_page("/devices", &cookie).await.location(),
+        Some("/login")
+    );
+    assert_eq!(count().await, 0);
+}
+
 /// 0095 gives every existing subscription its account's epoch (qa-pwa-fixes-a-code Q-5): without
 /// the backfill a parent who ever changed the password would lose every device at the first pass.
 #[tokio::test]

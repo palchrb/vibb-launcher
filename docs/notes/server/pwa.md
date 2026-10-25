@@ -669,6 +669,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the hash or TOTP and the session epoch in one UPDATE (the first-sign-in change too), so another session is signed
   out exactly when the change is
   stored; Sign Out Everywhere answers 500 and keeps this session when the epoch can't move.
+- **Sign Out takes this browser's notifications** (the user, 2026-10-25, `pwa-fixes-a`'s fix round): Settings' Sign
+  Out form (`form[data-sign-out]`) has a hidden `endpoint` that `static/register-sw.js` (`?v=4`, `signOut`) fills from
+  `serviceWorker.ready` → `pushManager.getSubscription()`; on submit the browser unsubscribes first and the form goes
+  when that is done or after 300 ms (`SIGN_OUT_WAIT`), whichever is first. `auth::logout` deletes that one row, only
+  when it is the signed-in parent's, then ends the session as before; no JS, no subscription or an empty field signs
+  out exactly as before (`tests::web_push::sign_out_removes_this_browsers_subscription_only`,
+  `jstest/register-sw.test.js`).
 - **Three wrong passwords end the session** (design 59 step 2, qa-59-design Q59-11): every form that asks a signed-in
   parent for the password again - Account's password change, the first-sign-in change (`/auth/change-password`),
   Reset Two-Factor Login, Lock Screen & PINs' Show Child PIN, and Account's Add Parent and Withdraw (design 62) -
