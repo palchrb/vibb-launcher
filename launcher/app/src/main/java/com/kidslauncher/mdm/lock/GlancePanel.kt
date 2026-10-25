@@ -57,6 +57,8 @@ import com.kidslauncher.mdm.music.MusicLockPanel
 import com.kidslauncher.mdm.torch.Torch
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.LockReason
+import com.kidslauncher.mdm.server.currentPolicyDecision
+import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.home.AppIconLoader
@@ -187,6 +189,23 @@ class GlancePanel(
 
     /** A timer runs (design 42): the timer tile shows. */
     private var clockUp = false
+
+    /** The time rule's card (design r13 §1.4), kept from the last re-check's snapshot or the last resume's own; null =
+     * no card. [renderNow] binds only from this - a notification's render never computes a snapshot. */
+    private var ruleCard: RuleCard? = null
+
+    /** `TimeRulesRuntime.recheck`'s snapshot (main thread, between start and stop): a changed card re-renders. */
+    private val lockListener: (TimeRulesRuntime.Snapshot) -> Unit = { snap ->
+        guarded("rule card") {
+            if (started) {
+                val card = ruleCardOf(LauncherPreferences.mdm().lockReason(), snap)
+                if (card != ruleCard) {
+                    ruleCard = card
+                    renderNow()
+                }
+            }
+        }
+    }
     private var rows: List<GlanceRow> = emptyList()
     private val rowViews = mutableListOf<ViewLockGlanceRowBinding>()
 
@@ -366,6 +385,7 @@ class GlancePanel(
             started = true
             GlanceStore.addListener(changed)
             MissedCallNotifier.addListener(changed)
+            TimeRulesRuntime.addLockListener(lockListener)
             torch?.addListener(torchChanged)
             music.start()
             clock.start()
@@ -414,7 +434,38 @@ class GlancePanel(
             // is the face again - from the top.
             backToTop()
         }
+        ruleCard = currentRuleCard()
         renderNow()
+    }
+
+    /** The card for now (design r13 §1.4): its own snapshot - the time-rule screen's call - only while a rule or the
+     * budget locks (one pref read otherwise). Its own catch, as the rows have in [renderNow]: a fault is no card, never a
+     * skipped stage decision or render; logged by its class only. A boundary passed while the screen was off lands here. */
+    private fun currentRuleCard(): RuleCard? = try {
+        val reason = LauncherPreferences.mdm().lockReason()
+        if (reason == LockReason.NONE) null else ruleCardOf(reason, TimeRulesRuntime.snapshot(activity, currentPolicyDecision().policy))
+    } catch (e: Throwable) {
+        Log.w(LOG_TAG, "Glance rule card failed: ${e.javaClass.simpleName}")
+        null
+    }
+
+    /** The card from the kept model: the kind's glyph, line 1 the rule's name or the kind's label, line 2 "Til 14:30"
+     * only with a certain end; TalkBack reads one text ("Skole, til 14:30"). No tap, no action. */
+    private fun bindRuleCard() {
+        val view = glance.lockRuleCard
+        val card = ruleCard
+        if (card == null) {
+            view.visibility = View.GONE
+            return
+        }
+        val label = com.kidslauncher.mdm.ui.LockActivity.labelText(activity, card.label)
+        val until = card.until?.let { ClockFormat.formatUntil(activity, it) }
+        glance.lockRuleCardGlyph.setImageResource(com.kidslauncher.mdm.ui.LockActivity.glyphRes(card.kind.glyph()))
+        glance.lockRuleCardTitle.text = label
+        glance.lockRuleCardUntil.visibility = if (until != null) View.VISIBLE else View.GONE
+        if (until != null) glance.lockRuleCardUntil.text = activity.getString(R.string.lock_until, until)
+        view.contentDescription = if (until != null) activity.getString(R.string.glance_rule_card_description, label, until) else label
+        view.visibility = View.VISIBLE
     }
 
     /**
@@ -459,6 +510,7 @@ class GlancePanel(
         started = false
         GlanceStore.removeListener(changed)
         MissedCallNotifier.removeListener(changed)
+        TimeRulesRuntime.removeLockListener(lockListener)
         torch?.removeListener(torchChanged)
         ClockFormat.unwatch(activity, clockWatch)
         clockWatch = null
@@ -1151,7 +1203,7 @@ class GlancePanel(
             clockUp = clock.up
             clock.show(shownClock(), page)
         }
-        val layout = glanceLayout(tileUp, rows.size, clockUp)
+        val layout = glanceLayout(tileUp, rows.size, clockUp, ruleCard != null)
         placeList(layout)
         // qa-r11-glance-code Q-10: a tile coming or going is a new layout - logged now, not at the next render.
         if (layout != laidOut) {
@@ -1164,7 +1216,7 @@ class GlancePanel(
     private fun shownClock(): Boolean = clockUp
 
     /** The music tile by the rule ([glanceLayout]): none without a session. */
-    private fun shownTile(): GlanceTileSize = glanceLayout(tileUp, rows.size, clockUp).tile
+    private fun shownTile(): GlanceTileSize = glanceLayout(tileUp, rows.size, clockUp, ruleCard != null).tile
 
     /** The page's content width - the top block's, less its side padding (r11 §1.1) - once it is laid out and shown,
      * else null. */
@@ -1243,6 +1295,7 @@ class GlancePanel(
         }
         bindTorch()
         bindAlarm()
+        bindRuleCard()
         // The tiles by the rule, then the layout (and the profile's placement once the page has its room).
         music.show(shownTile(), page = shown)
         clock.show(shownClock(), page = shown)
@@ -1487,7 +1540,7 @@ class GlancePanel(
         } else {
             clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, CLOCK_BIG_SP)
         }
-        val layout = glanceLayout(tileUp, rows.size, clockUp)
+        val layout = glanceLayout(tileUp, rows.size, clockUp, ruleCard != null)
         if (layout != laidOut || room != loggedFor) logLayout(layout, room)
         if (layout != laidOut || moved) refitPending = true
         laidOut = layout
@@ -1515,11 +1568,12 @@ class GlancePanel(
         if (layout.more > 0) more.text = activity.resources.getQuantityString(R.plurals.glance_more, layout.more, layout.more)
     }
 
-    /** The list (the rows and the "more" line): gone only without a row; 22 dp under the date without a tile, else 14. */
+    /** The list (the rows and the "more" line): gone only without a row; 22 dp under the date without a tile, the timer
+     * or the rule's card (design r13 §1.3), else 14. */
     private fun placeList(layout: GlanceLayout) {
         val list = glance.lockGlanceList
         list.visibility = if (layout.rows > 0) View.VISIBLE else View.GONE
-        val top = dp(if (layout.tile == GlanceTileSize.NONE && !layout.timer) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)
+        val top = dp(if (layout.tile == GlanceTileSize.NONE && !layout.timer && !layout.rule) ROWS_TOP_NO_TILE_DP else ROWS_TOP_DP)
         (list.layoutParams as ViewGroup.MarginLayoutParams).let {
             if (it.topMargin != top) list.layoutParams = it.apply { topMargin = top }
         }

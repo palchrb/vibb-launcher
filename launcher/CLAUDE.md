@@ -688,6 +688,29 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   line in step J; the page's bottom padding stays 8 dp), and `LockGlanceLayoutTest` pins what scrolls at 473/497 dp
   over it; the button stays the music controls' dark disc (`bg_music_control`, `kid_core` glyph, about 11.6:1) while off and
   peach only while lit (`KidPaletteTest`).
+- **The time rule's card** (design r13 step 1, `docs/design/r13-launcher-rule-card-and-time-left.md` §1, at the
+  monorepo root): while a time rule or the used-up budget locks, one more card in the compact tile's style
+  (`lock_rule_card`, `bg_glance_compact_tile`, 12 dp padding, 18 dp margin, 82 dp in `LockGlanceLayoutTest`'s model)
+  right under the alarm line, before the music tile: the kind's glyph in the time-rule screen's 40 dp disc
+  (`RuleCardKind.glyph`, the `lock_glyph_*` drawables), line 1 the rule's own name else "Skole"/"Leggetid"/
+  "Skjermfri tid" (or "Skjermtiden er brukt opp"), line 2 "Til 14:30" only with a **certain end** (gone otherwise).
+  Pure `lock/RuleCard.kt` (`RuleCardTest`): `ruleCard(reason, lock, end)` - null unless the enforced `lockReason` and
+  the snapshot's decision both lock with the same reason -, `lockEnd(policy, lock, liftsAtEnd, budget, ledgerDay,
+  zone)` - `TimeLock.until` only when it is one instant in the zone and `decideTimeLock` at it is unlocked with the rule
+  lifts still in force then (`ruleLiftsAt`: a lift expiring before the end doesn't count) and the end day's budget
+  (today's use only when the end is the ledger's day, else a fresh day's `budgetMinutesFor`); never for SCREEN_TIME -,
+  `lockEndOf(snap)`, `ruleCardOf(reason, snap)`. The label is `ui/TimeLockModel.kt`'s `ruleLabel(kind, name)` ->
+  `RuleLabel.Named`/`Kind`, resolved by `LockActivity.labelText` for both screens; the time-rule screen's "Til" line
+  uses `lockEndOf` too (D2). **One snapshot per re-check**: `TimeRulesRuntime.recheck` computes it, hands it to
+  `reevaluateLockReasonFromCache(context, snap)` and then to the lock listeners (`addLockListener`/
+  `removeLockListener`, main thread) **before** `MissedCallNotifier.relearn`, so the panel lays the page out once. The
+  panel listens between `start` and `stop`, keeps the model (`ruleCard`) and re-renders only when it changed;
+  `resumeNow` computes its own snapshot only while `lockReason != NONE`, inside its own `try/catch` (a fault is no card,
+  logged by class). `renderNow` binds only from the kept model. Layout: `glanceLayout(tile, rowCount, timer, rule)` -
+  the card never counts toward the compact player (D4: rows only, like the timer tile); `placeList` puts the list
+  14 dp under the card. Information only: never clickable, `screenReaderFocusable`, one TalkBack text ("Skole, til
+  14:30", `glance_rule_card_description`), not data-sensitive, not dismissable, out of `swipeControls`. Not
+  emulator-checked yet: design r13 §1.7.
 - **The clock as Android's small clock** (design 59d step L, §8.8/§8.11): on a phone with a clock profile - pure
   `glanceClockProfile(model, manufacturer, density, widthDp)` -> `ClockGeometry?` (`LockGlance.kt`): `EMULATOR_PIXEL_CLOCK`
   for the emulator's `sdk_gphone*` by Google, `JELLY_STAR_CLOCK` (the pure AOSP emulator image's numbers, `AOSP_EMULATOR_CLOCK` - measured at the

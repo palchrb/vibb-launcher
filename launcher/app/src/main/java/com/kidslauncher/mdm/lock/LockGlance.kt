@@ -527,8 +527,9 @@ const val GLANCE_COMPACT_FROM_ROWS = 2
 enum class GlanceTileSize { NONE, FULL, COMPACT }
 
 /** What the page shows (r11 §1.2): [tile] the music tile's size, [rows] the rows bound, [more] the "more" line's count,
- * [timer] the timer tile (design 42). Nothing is measured: the page scrolls when it doesn't fit. */
-data class GlanceLayout(val tile: GlanceTileSize, val rows: Int, val more: Int, val timer: Boolean)
+ * [timer] the timer tile (design 42), [rule] the time rule's card (design r13 §1.3). Nothing is measured: the page
+ * scrolls when it doesn't fit. */
+data class GlanceLayout(val tile: GlanceTileSize, val rows: Int, val more: Int, val timer: Boolean, val rule: Boolean = false)
 
 /**
  * The page's sizes are rules, not a fit (r11 §1.2): the big clock, the date and the alarm line always; the timer tile
@@ -537,9 +538,10 @@ data class GlanceLayout(val tile: GlanceTileSize, val rows: Int, val more: Int, 
  * [GLANCE_COMPACT_FROM_ROWS]** - counted on the rows the page binds (the "more" line is no row; a missed-call row is
  * one), with no hysteresis (a row's coming or going is a deliberate re-render) and whatever the bar, the navigation
  * mode or the clock profile. An overflow is a scroll, never a clipped or shrunk part - at 320x569 dp and at font scale
- * 2.0 alike.
+ * 2.0 alike. The time rule's card ([rule], design r13 §1.3) shows whenever a rule or the used-up budget locks; like the
+ * timer tile it never counts toward the compact player (D4: only rows do).
  */
-fun glanceLayout(tile: Boolean, rowCount: Int, timer: Boolean): GlanceLayout {
+fun glanceLayout(tile: Boolean, rowCount: Int, timer: Boolean, rule: Boolean = false): GlanceLayout {
     val n = rowCount.coerceAtLeast(0)
     val rows = minOf(n, GLANCE_MAX_ROWS)
     val size = when {
@@ -547,7 +549,7 @@ fun glanceLayout(tile: Boolean, rowCount: Int, timer: Boolean): GlanceLayout {
         rows < GLANCE_COMPACT_FROM_ROWS -> GlanceTileSize.FULL
         else -> GlanceTileSize.COMPACT
     }
-    return GlanceLayout(size, rows, n - rows, timer)
+    return GlanceLayout(size, rows, n - rows, timer, rule)
 }
 
 // ---- the keypad's prompt -------------------------------------------------------------------------

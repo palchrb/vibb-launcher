@@ -148,11 +148,13 @@ fun activeRuleLifts(records: List<LiftRecord>, lifts: List<Lift>, clocks: Clocks
     return RuleLifts(all = active.any { it.ruleId == null }, ruleIds = active.mapNotNull { it.ruleId }.toSet())
 }
 
+/** The wall-clock instant at which [record]'s lift ends: the earlier of its wall end and now plus the elapsed time left. */
+fun liftExpiry(record: LiftRecord, clocks: Clocks): Instant =
+    Instant.ofEpochMilli(minOf(record.untilWallMs, clocks.wallMs + (record.elapsedStartMs + record.durationMs - clocks.elapsedMs)))
+
 /** Wall-clock instants at which the active rule lifts end (for the boundary alarm). */
 fun liftExpiries(records: List<LiftRecord>, clocks: Clocks): List<Instant> =
-    records.filter { liftRecordActive(it, clocks) }.map {
-        Instant.ofEpochMilli(minOf(it.untilWallMs, clocks.wallMs + (it.elapsedStartMs + it.durationMs - clocks.elapsedMs)))
-    }
+    records.filter { liftRecordActive(it, clocks) }.map { liftExpiry(it, clocks) }
 
 /** The ids of the lifts in force: active rule lifts, and budget lifts applied to today. */
 fun activeLiftIds(records: List<LiftRecord>, lifts: List<Lift>, ledger: ScreenTimeLedger, clocks: Clocks): List<Long> {

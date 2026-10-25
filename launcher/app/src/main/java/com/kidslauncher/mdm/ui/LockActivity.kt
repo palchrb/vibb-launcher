@@ -29,9 +29,6 @@ import com.kidslauncher.mdm.server.ParentPinEntry
 import com.kidslauncher.mdm.server.reevaluateLockReasonFromCache
 import com.kidslauncher.mdm.server.currentPolicyDecision
 import com.kidslauncher.mdm.preferences.LauncherPreferences
-import com.kidslauncher.mdm.timerules.KIND_BEDTIME
-import com.kidslauncher.mdm.timerules.KIND_SCHOOL
-import com.kidslauncher.mdm.timerules.TimeRule
 import com.kidslauncher.mdm.timerules.TimeRulesRuntime
 import com.kidslauncher.mdm.ui.home.AppIconLoader
 import com.kidslauncher.mdm.ui.home.KidAvatars
@@ -128,14 +125,6 @@ class LockActivity : UIObjectActivity() {
         super.onStop()
     }
 
-    private fun kindLabel(rule: TimeRule): String = rule.name.takeIf { it.isNotBlank() } ?: getString(
-        when (rule.kind) {
-            KIND_SCHOOL -> R.string.lock_kind_school
-            KIND_BEDTIME -> R.string.lock_kind_bedtime
-            else -> R.string.lock_kind_rule
-        }
-    )
-
     private fun render() {
         if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) {
             finish()
@@ -149,10 +138,8 @@ class LockActivity : UIObjectActivity() {
         }
         val lock = snap?.lock
         val rule = lock?.rules?.firstOrNull()
-        binding.lockTitle.text = when {
-            rule != null -> kindLabel(rule)
-            else -> getString(R.string.lock_title_screen_time)
-        }
+        // Design r13 D1: the glance card's line 1 is this title (one rule, `ruleLabel`).
+        binding.lockTitle.text = labelText(this, ruleLabel(rule?.kind, rule?.name.orEmpty()))
         binding.lockKindIcon.setImageResource(glyphRes(lockGlyph(rule?.kind)))
         // Emergency call is shown in every state (QA step 4 #1, qa-34-s7-code L1): set on every render,
         // and the only line that touches its visibility (TimeLockModelTest).
@@ -174,7 +161,15 @@ class LockActivity : UIObjectActivity() {
         } else if (callsManaged) {
             sentences += getString(R.string.lock_calls_allowed)
         }
-        val until = lock?.until?.let { getString(R.string.lock_until, ClockFormat.formatUntil(this, it)) }
+        // Design r13 D2: the certain end only, as the glance card's (`lockEnd`) - never an end the next rule, the budget
+        // or the clock would break.
+        val end = try {
+            snap?.let { com.kidslauncher.mdm.lock.lockEndOf(it) }
+        } catch (e: Exception) {
+            Log.w("LockActivity", "Couldn't work out the rule's end: ${e.javaClass.simpleName}")
+            null
+        }
+        val until = end?.let { getString(R.string.lock_until, ClockFormat.formatUntil(this, it)) }
         binding.lockMessage.text = listOfNotNull(until, sentences.joinToString(" ").takeIf { it.isNotEmpty() })
             .joinToString("\n")
         renderRows(timeLockRows(callsManaged, lock?.callsAllowed != false, getString(R.string.calls_phone_book), openableApps(lock?.usableApps.orEmpty())))
@@ -272,6 +267,20 @@ class LockActivity : UIObjectActivity() {
     companion object {
         /** The rows' tone icons, as the mockup's 34 dp. */
         const val ROW_ICON_DP = 34f
+
+        /** A [RuleLabel] as the kid reads it: the rule's own name, else its kind's label (design r13 D1). */
+        fun labelText(context: Context, label: RuleLabel): String = when (label) {
+            is RuleLabel.Named -> label.name
+            is RuleLabel.Kind -> context.getString(kindLabelRes(label.kind))
+        }
+
+        /** The kind's fallback label: "Skole", "Leggetid", "Skjermfri tid", or the used-up budget's title. */
+        fun kindLabelRes(kind: com.kidslauncher.mdm.lock.RuleCardKind): Int = when (kind) {
+            com.kidslauncher.mdm.lock.RuleCardKind.SCHOOL -> R.string.lock_kind_school
+            com.kidslauncher.mdm.lock.RuleCardKind.BEDTIME -> R.string.lock_kind_bedtime
+            com.kidslauncher.mdm.lock.RuleCardKind.RULE -> R.string.lock_kind_rule
+            com.kidslauncher.mdm.lock.RuleCardKind.SCREEN_TIME -> R.string.lock_title_screen_time
+        }
 
         /** The kind's icon (design 34 P6): the two new converted Material Symbols, the book, a dot. */
         fun glyphRes(glyph: LockGlyph): Int = when (glyph) {

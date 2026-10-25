@@ -1197,12 +1197,12 @@ private val scheduleScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
  * lock's usable apps, and its end releases them (qa-security P0 #3). Returns the new reason if it
  * changed, `null` otherwise.
  */
-fun reevaluateLockReasonFromCache(context: Context): LockReason? {
+fun reevaluateLockReasonFromCache(context: Context, snapshot: TimeRulesRuntime.Snapshot? = null): LockReason? {
     val mdm = LauncherPreferences.mdm()
-    val decision = currentPolicyDecision()
-    val lock = TimeRulesRuntime.currentLock(
+    // Design r13 §1.4: `recheck` hands in its one snapshot (the same policy and override state); everyone else gets one here.
+    val lock = snapshot?.lock ?: TimeRulesRuntime.currentLock(
         context,
-        decision.policy,
+        currentPolicyDecision().policy,
         OfflineOverride.isActive() || RestrictionsPause.isActive(),
     )
     val reason = lock.reason
