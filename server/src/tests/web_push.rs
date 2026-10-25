@@ -1189,9 +1189,10 @@ async fn a_new_password_and_a_2fa_reset_hold_no_subscription() {
 }
 
 /// Security review M1: a subscription keeps its session's epoch; once the account's moved past it
-/// (here as a parent's Reset or three wrong passwords at a re-auth form move it, which delete
-/// nothing themselves), the sender sends it nothing and deletes it. A subscription made after the
-/// move is sent to.
+/// without the explicit delete (a subscribe in flight while the sessions ended, or a sign-out
+/// whose delete failed - here `bump_epoch` alone), Notification Settings shows it as gone, it
+/// doesn't count toward the cap, and the sender sends it nothing and deletes it
+/// (qa-pwa-fixes-a-code Q-1). A subscription made after the move is sent to.
 #[tokio::test]
 async fn a_subscription_from_a_signed_out_session_is_not_sent_to() {
     const OLD: &str = "https://web.push.apple.com/QK1-fake-old-session";
@@ -1208,6 +1209,24 @@ async fn a_subscription_from_a_signed_out_session_is_not_sent_to() {
         "the old session is signed out"
     );
     let cookie = app.admin_cookie().await;
+    let settings = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
+    assert!(!settings.contains("data-subscription="), "{settings}");
+    assert!(
+        !settings.contains(&crate::push::endpoint_hash(OLD)),
+        "This Device shows Off"
+    );
+    // The old row doesn't count toward the cap: as many new browsers as ever still fit.
+    for n in 0..crate::push::MAX_SUBSCRIPTIONS {
+        let res = subscribe(&app, &cookie, &format!("{ENDPOINT}-{n}")).await;
+        assert!(res.location().unwrap().contains("notice=push_on"), "{n}");
+    }
+    sqlx::query("DELETE FROM push_subscriptions WHERE endpoint LIKE '%-fake-endpoint-%'")
+        .execute(&app.db)
+        .await
+        .unwrap();
     subscribe(&app, &cookie, ENDPOINT).await;
     let stored: Vec<(String, i64)> =
         sqlx::query_as("SELECT endpoint, session_epoch FROM push_subscriptions ORDER BY id")
@@ -1245,6 +1264,46 @@ async fn a_subscription_from_a_signed_out_session_is_not_sent_to() {
         0,
         "its deliveries went with it"
     );
+}
+
+/// qa-pwa-fixes-a-code Q-1: three wrong passwords at a form that asks for it again end every
+/// session and every device's notifications at once. After signing in again Notification Settings
+/// shows them off, and the next event is sent to nobody.
+#[tokio::test]
+async fn a_re_auth_lockout_turns_notifications_off_at_once() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    subscribe(&app, &cookie, ENDPOINT).await;
+    for _ in 0..crate::admin_auth::REAUTH_MAX_WRONG {
+        app.request_form(
+            Method::POST,
+            "/account/reset-2fa",
+            Some(&cookie),
+            &[("current_password", "not the password")],
+        )
+        .await;
+    }
+    assert_eq!(
+        app.get_page("/devices", &cookie).await.location(),
+        Some("/login"),
+        "signed out"
+    );
+    assert_eq!(
+        scalar(&app, "SELECT COUNT(*) FROM push_subscriptions").await,
+        0
+    );
+
+    let cookie = app.admin_cookie().await;
+    let settings = app
+        .get_page("/notifications/settings", &cookie)
+        .await
+        .text();
+    assert!(!settings.contains("data-subscription="), "{settings}");
+    assert!(!settings.contains(&crate::push::endpoint_hash(ENDPOINT)));
+    let anna = phone(&app, "Anna").await;
+    raise(&app, &anna.unseen_boot(1, None)).await;
+    send(&app).await;
+    assert!(app.pushes.take().is_empty());
 }
 
 /// §4.1: the key file is made once, 0600; a damaged one turns push off and stays as it was; a

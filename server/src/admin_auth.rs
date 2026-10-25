@@ -222,6 +222,9 @@ pub async fn record_reauth(
             }
         }
     }
+    // Every device's notifications end with the sessions, at once (security review M1,
+    // qa-pwa-fixes-a-code Q-1): whoever guessed may have turned them on in their own browser.
+    crate::push::forget_subscriptions(db, admin.id).await;
     session.flush().await.ok();
     crate::security::record_security_event(
         db,

@@ -858,10 +858,12 @@ pub async fn subscribe(
     );
     let stored = async {
         let mut tx = state.db.begin().await?;
-        let others: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM push_subscriptions \
-             WHERE admin_id = ? AND state = 'active' AND endpoint != ?",
-        )
+        // A subscription from a signed-out session counts for nothing (Q-1).
+        let others: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM push_subscriptions s \
+             WHERE s.admin_id = ? AND s.state = 'active' AND s.endpoint != ? AND {}",
+            push::CURRENT_EPOCH
+        ))
         .bind(admin.id)
         .bind(endpoint)
         .fetch_one(&mut *tx)
@@ -951,9 +953,11 @@ pub async fn send_test(
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let active: Result<Option<bool>, sqlx::Error> = sqlx::query_scalar(
-        "SELECT state = 'active' FROM push_subscriptions WHERE id = ? AND admin_id = ?",
-    )
+    let active: Result<Option<bool>, sqlx::Error> = sqlx::query_scalar(&format!(
+        "SELECT s.state = 'active' AND {} FROM push_subscriptions s \
+         WHERE s.id = ? AND s.admin_id = ?",
+        push::CURRENT_EPOCH
+    ))
     .bind(id)
     .bind(admin.id)
     .fetch_optional(&state.db)
