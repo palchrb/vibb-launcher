@@ -278,13 +278,18 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   one is no position, never a refused body); `device_api::power` checks it as a report's fix
   (`models::checked_location`, a failure logged and the position dropped), and when the plan keeps the off stores it
   with `zones::intake` and marks the row `device_locations.shutdown_at` (`zones::mark_shutdown`). Locate's fix row
-  says "Last position before the phone went off" (`data-fix-before-off`) while that row is the newest fix and no
-  status report came after the shutdown (+60 s, `locate::before_off`). `Phone::phone_off` puts `{"location": ..}` in
+  says "Last position before the phone went off" (`data-fix-before-off`) while that row is the newest fix, no
+  status report came after the shutdown (+60 s) and the off's event (by its dedup key, the shutdown's instant) may be
+  said - `parent_events::off_said`, the device page's "Off since" exclusions: not for "… is restarting", not while its
+  push is held (`locate::before_off`, qa-last-position-code Q-5). The `params`' provider is `models::location_provider`'s
+  word (N-3). `Phone::phone_off` puts `{"location": ..}` in
   the event's `params` and "Last position from 21:10: shown on Locate" in its inbox-only `detail`; title, summary and
   push unchanged (`told` keeps a `phone_off`'s stored words). `retention::prune` clears a `phone_off`'s params and
   detail after the phone's location retention. Location Settings' footer: a sudden power loss or airplane mode
-  leaves nothing. Tests: `power::the_shutdowns_last_position_is_on_locate`,
-  `power::a_bad_shutdown_position_costs_the_position_only`, the contract test, `locate::tests::the_last_position_before_the_phone_went_off`.
+  leaves nothing. Tests: `power::the_shutdowns_last_position_is_on_locate` (the hold, a newer fix, a report),
+  `power::a_bad_shutdown_position_costs_the_position_only` (a dropped off stores no fix, the provider word),
+  `power::a_known_restart_says_no_last_position`, `power::the_shutdowns_position_goes_with_the_location_retention`,
+  the contract test, `locate::tests::the_last_position_before_the_phone_went_off`.
 
 ## Per parent (design 62 step 5, `docs/design/62-parent-accounts.md` §5)
 

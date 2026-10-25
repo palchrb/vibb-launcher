@@ -352,7 +352,9 @@ one commit with the contract.
   `zones::intake` (once - the row the phone had reported is the same row - and judged by the zones like any fix) and
   marked `device_locations.shutdown_at` = the shutdown's instant (migration `0097_shutdown_fix.sql`,
   `zones::mark_shutdown`). Locate's fix row adds "Last position before the phone went off" while the newest fix is a
-  shutdown's and no status report came after that shutdown (60 s slack; `locate::before_off`). The `phone_off`
+  shutdown's, no status report came after that shutdown (60 s slack) and the off's event may be said - not for a
+  restart the phone announced, not while its push is held, as the device page's "Off since" (`locate::before_off`,
+  `parent_events::off_said`; qa-last-position-code Q-5). The `phone_off`
   event's `params` carry `{"location": ..}` and its inbox `detail` says "Last position from 21:10: shown on Locate" -
   no coordinates in any text; the title, the summary and the push are unchanged (`told` ignores a `phone_off`'s
   params). `retention::prune` clears a `phone_off`'s params and detail after the phone's location retention (the event
@@ -362,7 +364,10 @@ one commit with the contract.
   device owner, a location policy that isn't "Off", the phone's Location switch on - this fix never switches it on -,
   and none taken in this episode) and turns its action into the balanced path (`withLowBatteryFix`: `FRESH_BALANCED`
   - fused at balanced power for at most 15 s, GPS for at most 15 s when it gives nothing: the 30 s cap - unless the
-  sync takes a fix anyway; the mock rule as every fix), reported in that same status report. The episode
+  sync takes a fix anyway; the mock rule as every fix), reported in that same status report. With a fix of its own
+  under 2 minutes old (`LocateCommands.cachedQueued`, `LOW_FIX_RECENT_MS`) the edge reports that one instead
+  (`LowFix.CACHED`: the held fix even under "Only when asked") and still marks the episode (Q-7). The episode's steps
+  are `LowBatteryEpisode` over a flag (`LowEpisodeFlag`, CE prefs in the app, a field in the tests, Q-2). The episode
   (`battery_low_fix_taken`, CE default prefs) is marked before the fix is asked for and ends at
   `ACTION_BATTERY_OKAY` or a report's reading that discharges and isn't low (`lowEpisodeAfterReading`; Android never
   says low while charging), so unplugging again at 14 % takes no second fix. No policy key, no event.
@@ -377,7 +382,10 @@ one commit with the contract.
   `power::the_shutdowns_last_position_is_on_locate`, `power::a_bad_shutdown_position_costs_the_position_only`, the
   contract test's fix, `locate::tests::the_last_position_before_the_phone_went_off`,
   `music_spotify::migrations_73_to_97_in_order`.
-- **Owed on the emulator** (`docs/testing/emulator.md` §6p): with a stored fix (`adb emu geo fix 10.7522 59.9139`, an
+- **Code QA** (`docs/review/qa-last-position-code.md`): every finding taken - see its "Fix round". The event's
+  `params` carry the provider word as the trail stores it (`models::location_provider`, N-3); `PowerEvents`' cached
+  location policy at `init` never overwrites a sync's (one lock, Q-6).
+- **Owed on the emulator** (`docs/testing/emulator.md` §6p, checks 5-12): with a stored fix (`adb emu geo fix 10.7522 59.9139`, an
   Update Location), `adb shell svc power shutdown` -> Locate's newest fix reads "Last position before the phone went
   off" and the inbox's off row "Last position from ..: shown on Locate", gone after the next start's report; and
   `adb shell am broadcast -a android.intent.action.BATTERY_LOW` is refused to the shell (a protected broadcast) - use
