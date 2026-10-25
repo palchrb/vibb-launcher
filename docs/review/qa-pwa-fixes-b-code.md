@@ -276,3 +276,31 @@ back byte for byte. For migration breaks, `src/main.rs` was touched so `sqlx::mi
 
 **Score: 15 of 19 caught, or 15 of 18 counting only mutations that change behaviour.** All three survivors are the
 test gaps in Q-2 and Q-3.
+
+## Fix round (2026-10-25, the implementer)
+
+- **Q-1: fixed in 446b85c4.** `tracked_apps::release_ahead` gates `update_available_event`. F-Droid compares
+  versionCodes (the asset id): only a higher one counts. GitHub compares the versions when both read as
+  X.Y.Z[-rc.N] (`install_now::version_order`, now `pub(crate)`; an RC sorts before its release). Two other rules:
+  - The same version under a newer asset id is a rolling tag's new build, as before.
+  - Names that aren't versions fall back to the asset id, since GitHub hands those out in upload order.
+
+  `system_update::is_newer` isn't used. It reads only plain X.Y.Z, so the launcher's RC-to-release step (0.36.0-rc.7 →
+  0.36.0) would never raise a notice. Two new tests:
+  - `an_older_release_stored_over_a_newer_one_is_no_notice`: a real F-Droid sync stores 1.0.57 over a cached 1.0.58
+    and raises nothing.
+  - `only_a_release_ahead_is_an_update` covers prereleases turned off after an RC, a deleted newest release, a
+    re-upload of an old version under a newer asset, a rolling tag, non-version names and F-Droid by versionCode.
+- **Q-2: fixed in 446b85c4.** `a_report_with_the_new_release_raises_app_updated_once` adds a phone on 0.37.0-rc.1
+  (370001) going back to the stored 0.36.0 (360009), and a report naming the music app after one that didn't. M9
+  (`is == was`) and M18 (a missing music code read as 0) were reapplied, and each now fails this test.
+- **Q-3: fixed in 446b85c4.** `switches_the_emergency_call_and_a_burst` asserts that `push::SUMMARY_BODY` is "More in
+  the inbox" and that the summary push's body equals it, so M10 now fails it.
+- **Q-4**: as instructed, 0098/0099 stay and `last-position` (0097) merges first.
+- **Q-5 to Q-9**: information only, nothing changed.
+- **Q-10 (trailers)**: not rewritten here. See the implementer's report for why.
+- Suites after the round:
+  - `cargo test`: 1322 passed, 0 failed.
+  - `cargo fmt --check`: clean.
+  - `cargo clippy --all-targets`: the known 13 warnings, none new.
+  - `node --test jstest/*.test.js`: 163/163.

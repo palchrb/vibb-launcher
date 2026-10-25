@@ -412,7 +412,12 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
 - **`app_update_available`** - the catalog's event, **no phone** (`device_id` NULL): raised by
   `tracked_apps::sync_release` right after a new release is stored (the sweep and Check Now share it; GitHub and
   F-Droid apps, never a manual upload) over a previous one - an app's first release raises nothing
-  (`update_available_event`). Key `<app id>:<tag>@<asset id>`, the release exactly as the row stores it, so a sweep or a
+  (`update_available_event`) - and only when it is **ahead** of it (`release_ahead`, qa-pwa-fixes-b-code Q-1: a source
+  that goes back - prereleases turned off after an RC, the newest release deleted, an F-Droid repo dropping its newest
+  build - stores an older release, which is no update): F-Droid by the versionCode (the asset id); GitHub by the
+  versions when both read as X.Y.Z with an optional `-rc.N` (`install_now::version_order`, an RC before its release),
+  the same version under a newer asset id being a rolling tag's new build, else by the asset id (GitHub's upload
+  order). Key `<app id>:<tag>@<asset id>`, the release exactly as the row stores it, so a sweep or a
   Check Now that finds it again raises nothing: one event per release, never per sweep. `from`/`to` are
   `tracked_apps::version_of` of the old and new tag ("1.0.56" -> "1.0.57"); a rolling tag's new build has no `from`.
   Target `/apps/tracked/{id}`. Inbox "Signal 7.2.0 is available" / "14:02 · 7.1.4 → 7.2.0"; push "Signal: update
@@ -447,5 +452,5 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   that isn't the release; the switch off by default with no row, the push only once on; 0099 keeping events,
   deliveries, reads, ids, the counter and the cascades), `handlers::tracked_apps::tests::a_new_release_is_one_notice_never_one_per_sweep`
   (a real F-Droid sync: none for the first release, one for the next, none for the sweep and the Check Now after),
-  `a_release_is_installed_by_its_versioncode`, `parent_events::tests` (`an_app_update_is_told_from_its_parameters`,
+  `a_release_is_installed_by_its_versioncode`, `an_older_release_stored_over_a_newer_one_is_no_notice` and `only_a_release_ahead_is_an_update` (Q-1), `parent_events::tests` (`an_app_update_is_told_from_its_parameters`,
   the push words, the switches).
