@@ -385,7 +385,9 @@ const LOCATE_FAILURES: [&str; 3] = [
 enum AnswerState {
     /// Asked; the phone hasn't answered yet.
     Asking,
-    /// The phone found itself, `at` its answer: shown for [ANSWER_SHOWN_MINUTES].
+    /// The phone found itself, `at` its answer: shown for [ANSWER_SHOWN_MINUTES], and only while
+    /// the newest fix is the one it found - taken after the ask, not after the answer
+    /// (qa-pwa-fixes-d Q-8: an older fix would contradict it, a newer one says it itself).
     Found { answer: Answer, at: DateTime<Utc> },
     /// The phone couldn't, or never answered (`at` its answer, else the ask): shown until a fix
     /// taken after it.
@@ -435,7 +437,9 @@ fn answer_state(
         {
             let at = answered?;
             let age = now - at;
-            (age < chrono::Duration::minutes(ANSWER_SHOWN_MINUTES)
+            let its_fix = fixed_since(asked) && !fixed_since(Some(at));
+            (its_fix
+                && age < chrono::Duration::minutes(ANSWER_SHOWN_MINUTES)
                 && age > -chrono::Duration::minutes(1))
             .then(|| AnswerState::Found {
                 answer: said("Found"),
@@ -1173,8 +1177,9 @@ async fn locate_view(
     );
 
     let newest_locate = sqlx::query_as::<_, DeviceCommand>(
+        // A cancelled request never hides the one before it (qa-pwa-fixes-d Q-9, as Requests).
         "SELECT * FROM device_commands WHERE device_id = ? AND command = 'locate' \
-         ORDER BY requested_at DESC, id DESC LIMIT 1",
+         AND cancelled_at IS NULL ORDER BY requested_at DESC, id DESC LIMIT 1",
     )
     .bind(id)
     .fetch_optional(&state.db)
@@ -2105,14 +2110,22 @@ mod tests {
             )),
             Some(("found", "Found within 5 m".to_string(), "13:29".to_string()))
         );
-        assert!(state(&found, done(), None, "2026-10-25 12:38:59").is_some());
-        assert_eq!(state(&found, done(), None, "2026-10-25 12:39:00"), None);
-        // The user's case: a 14:29 answer under a point from 20:41 - gone.
-        assert_eq!(state(&found, done(), None, "2026-10-25 18:41:00"), None);
+        let its_fix = Some("2026-10-25 12:28:57");
+        assert!(state(&found, done(), its_fix, "2026-10-25 12:38:59").is_some());
+        assert_eq!(state(&found, done(), its_fix, "2026-10-25 12:39:00"), None);
+        // Q-8: only while the newest fix is the one it found - not with none, not with one older
+        // than the ask (its upload lagged: "40 min ago" over "Found within 5 m"), and not once a
+        // fix newer than the answer came (the fix row says it; the user's case, a 14:29 answer
+        // under a point from 20:41, too).
+        assert_eq!(state(&found, done(), None, "2026-10-25 12:30:00"), None);
+        let older = Some("2026-10-25 11:49:00");
+        assert_eq!(state(&found, done(), older, "2026-10-25 12:30:00"), None);
+        let newer = Some("2026-10-25 12:29:30");
+        assert_eq!(state(&found, done(), newer, "2026-10-25 12:30:00"), None);
         // An older launcher's plain "ok" counts as found.
         let ok = command(Some("ok"), Some("2026-10-25 12:29:00"));
         assert_eq!(
-            words(state(&ok, done(), None, "2026-10-25 12:30:00")).map(|w| w.1),
+            words(state(&ok, done(), its_fix, "2026-10-25 12:30:00")).map(|w| w.1),
             Some("Found".to_string())
         );
 
