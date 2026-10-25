@@ -273,6 +273,18 @@ Notifications on it). `docs/design/45-notifications-inbox-first.md`, `docs/desig
   "turned on", a known restart, the last report, the switch, re-enrollment, the 4xx answers, the device page's line,
   the claim; since the code QA's fix round a report ending "Off since", a superseded held push, the level range in
   the route's own test), `music_spotify::migrations_73_to_95_in_order`.
+- **The shutdown's last position** (2026-10-25, design 38 "Last position", migration `0097_shutdown_fix.sql`): the
+  `off` may carry `location {lat, lng, accuracy_m, at_ms, provider}` (`models::PowerLocation`, read leniently - a bad
+  one is no position, never a refused body); `device_api::power` checks it as a report's fix
+  (`models::checked_location`, a failure logged and the position dropped), and when the plan keeps the off stores it
+  with `zones::intake` and marks the row `device_locations.shutdown_at` (`zones::mark_shutdown`). Locate's fix row
+  says "Last position before the phone went off" (`data-fix-before-off`) while that row is the newest fix and no
+  status report came after the shutdown (+60 s, `locate::before_off`). `Phone::phone_off` puts `{"location": ..}` in
+  the event's `params` and "Last position from 21:10: shown on Locate" in its inbox-only `detail`; title, summary and
+  push unchanged (`told` keeps a `phone_off`'s stored words). `retention::prune` clears a `phone_off`'s params and
+  detail after the phone's location retention. Location Settings' footer: a sudden power loss or airplane mode
+  leaves nothing. Tests: `power::the_shutdowns_last_position_is_on_locate`,
+  `power::a_bad_shutdown_position_costs_the_position_only`, the contract test, `locate::tests::the_last_position_before_the_phone_went_off`.
 
 ## Per parent (design 62 step 5, `docs/design/62-parent-accounts.md` §5)
 
