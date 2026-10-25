@@ -1064,6 +1064,86 @@ fn the_app_shell_scrolls_main_not_the_document() {
     }
 }
 
+/// The user's picks A and 3 (server round C, code QA Q-3): the filled buttons are the light peach with
+/// night text (white on it was 2.6:1), `--strong` is gone, a tapped field drops the ring under
+/// `pointer-focus` while its border takes the tint, a borderless one shows its underline, and every
+/// page loads `focus-mode.js`.
+#[test]
+fn the_accent_rules_hold() {
+    let mut css = std::fs::read_to_string("static/style.css").unwrap();
+    while let Some(start) = css.find("/*") {
+        let end = css[start..].find("*/").map_or(css.len(), |e| start + e + 2);
+        css.replace_range(start..end, " ");
+    }
+    // The declarations of the first top-level rule whose selector list starts with `first`.
+    let block = |first: &str| -> String {
+        let at = css
+            .find(&format!("\n{first}"))
+            .unwrap_or_else(|| panic!("no rule {first}"));
+        let open = css[at..].find('{').unwrap() + at + 1;
+        let end = css[open..].find('}').unwrap() + open;
+        css[open..end]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let root = block(":root {");
+    for token in [
+        "--tint: #A64B25;",
+        "--tint-fill: #E8895E;",
+        "--tint-fill-hover: #E07A4C;",
+        "--on-tint-fill: #0C0C14;",
+        "--field-focus: #FFFFFF;",
+    ] {
+        assert!(root.contains(token), ":root: {token}");
+    }
+    assert!(!css.contains("--strong"), "--strong is gone");
+    for selector in ["button {", ".button-small {", ".act-strong {"] {
+        let rule = block(selector);
+        assert!(
+            rule.contains("background: var(--tint-fill);")
+                && rule.contains("color: var(--on-tint-fill);"),
+            "{selector} {rule}"
+        );
+    }
+    for selector in [
+        "button:hover {",
+        ".button-small:hover {",
+        ".act-strong:hover {",
+    ] {
+        let rule = block(selector);
+        assert!(
+            rule.contains("background: var(--tint-fill-hover);")
+                && rule.contains("color: var(--on-tint-fill);"),
+            "{selector} {rule}"
+        );
+    }
+    assert_eq!(
+        block(".pointer-focus input:focus,"),
+        "outline: none;",
+        "a tapped field shows no ring"
+    );
+    let field = block("input[type=\"text\"]:not(.row-input):focus,");
+    for part in [
+        "border-color: var(--tint);",
+        "box-shadow: inset 0 0 0 0.5px var(--tint);",
+        "background-color: var(--field-focus);",
+    ] {
+        assert!(field.contains(part), "{part} in {field}");
+    }
+    assert!(
+        block("input.row-input:focus,").contains("box-shadow: inset 0 -1.5px 0 var(--tint);"),
+        "a borderless field's underline"
+    );
+    // The keyboard keeps the ring: the :focus outline and the Safari-fallback reset stay.
+    assert!(block("a:focus,").contains("outline: 2px solid var(--tint);"));
+    let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
+    assert!(
+        head.contains("<script src=\"/static/focus-mode.js?v="),
+        "every page loads focus-mode.js"
+    );
+}
+
 /// "dvh only after a vh fallback" (style.css's header; iOS 14, the floor, drops a `dvh` declaration
 /// whole): every declaration with `dvh` follows the same property with `vh` in the same block.
 #[test]

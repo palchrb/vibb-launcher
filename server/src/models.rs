@@ -46,6 +46,10 @@ pub struct Device {
     pub token_hash: Option<String>,
     pub enrolled_at: Option<String>,
     pub last_seen_at: Option<String>,
+    /// The phone's own picture (`photos::DEVICE_AVATARS`, migration 0100), `None` for the letter
+    /// tile. The PWA's alone: never sent to the phone.
+    #[sqlx(default)]
+    pub avatar_hash: Option<String>,
 }
 
 #[derive(sqlx::FromRow, Clone, Default)]

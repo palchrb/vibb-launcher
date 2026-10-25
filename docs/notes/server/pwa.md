@@ -820,7 +820,7 @@ man er inne på en device". Branch `pwa-fixes-b`.
 
 - **The approved mockup** (artboard "D · B + flytende fanelinje", https://claude.ai/artifact/PKc1u9Qo3wdxKUk1Gkh6iX):
   the iOS grey ground and white cards stay (cards 16 px radius), the accent is vibb's dark peach `#A64B25` (hover
-  `#7E3517`; links, + and the bell, filled buttons in both themes - white on it 5.8:1), headings in Nunito, the tab bar
+  `#7E3517`; links, + and the bell, filled buttons in both themes - white on it 5.8:1; *the filled buttons are `--tint-fill` since 2026-10-25, below*), headings in Nunito, the tab bar
   floats. Tokens only, in `style.css`'s `:root` (`--tint`, `--strong`, `--bar`, `--bar-shadow`, `--tab-on`,
   `--tab-off`, `--tab-pill`, `--font-display`, `--brand-word` (`--brand-tile` until the mark became the app icon, below), `--avatar-bg`, `--avatar-text`).
 - **Dark mode is vibb's night**: ground `#0C0C14`, cards `#1B1B28`, text cream `#F6E7E0` / `#A89C96`, accent peach
@@ -1060,3 +1060,95 @@ man er inne på en device". Branch `pwa-fixes-b`.
   summary line, the switch once, "Here now" against a pending or stale fix), the two "every form lands" tests with a
   zone (code QA Q-3; a zone's delete leaves the page, `settings_pages::leaves_the_page`), `admin_auth::tests::no_store_paths`, `tests::locations` (`locate.js?v=4`),
   `jstest/zones.test.js`, `jstest/locate.test.js`.
+
+## A phone's own picture (server round C, 2026-10-25, branch `pwa-fixes-c`, migration `0100_device_avatar.sql`)
+
+- **The user** (2026-10-25: "Når kommer muligheten til å sette avatar?"): a phone can have its own picture instead of
+  the letter tile. `devices.avatar_hash`, `photos::DEVICE_AVATARS` (its own store, lock and directory
+  `data/device_avatars/`, `AppState.avatar_dir`), `handlers::device_avatar`.
+- **Setting it**: on the phone's summary the large avatar is the picker - a hidden `<input type="file" name="picture"
+  accept="image/*" data-autosave>` (focusable; its ring drawn round the avatar) behind a `<label>` around the avatar,
+  "Add picture" under it (another label for the same input) or "Remove picture" (a form) once there is one. **No
+  `capture` attribute**: with it Android and iOS open the camera straight away; without it a phone offers the photo
+  library and the camera (the brief's intent). Chosen, the picture saves at once (`autosave.js` submits through the
+  hooked `form.submit()`, so `scroll-restore.js` keeps the place); without JS a `<noscript>` "Save picture". Every form
+  posts to `/devices/{id}/avatar` or `/avatar/remove` and comes back to `/devices/{id}#avatar` (`.avatar-edit`
+  `id="avatar"` in the header): never the top.
+- **The pipeline is the contact photos'** (`photos::process`, `Shape::Square`): decoded from the bytes (JPEG, PNG or
+  WebP), turned upright from EXIF, cut to the centre square, at most 512 px (the brief said "e.g. 256": the shared
+  pipeline's size was kept rather than a second one), re-encoded as JPEG - no EXIF, GPS or anything but pixels -
+  and named by its SHA-256. 10 MB at most (the route's body limit is 10 MB + 64 KiB). A refused file changes nothing
+  and comes back as `?avatar=<code>#avatar` with `photos::PhotoError`'s text under the picture (`role="alert"`, the
+  input `aria-describedby` it): `empty`, `too_large`, `type`, `pixels`, `unreadable`, `failed` (a write error); any
+  other code shows nothing (never echoed). A new picture or Remove prunes the old file; a deleted phone's goes too.
+- **Where it shows**: over the letter on every phone avatar - the Devices list, the summary's header, Locate's phone
+  list, Time Rules, the Apps tab and an app's page, the Music tab and an entry's page, the inbox's rows
+  (`<img class="avatar-img">` absolutely inside `.avatar`, `object-fit: cover`, the circle; the status dot comes after
+  it in the markup, so it stays on top, and the letter stays under it for a picture that doesn't load). Not on
+  Locate's map (Leaflet's own marker). Never sent to a phone (the policy has no field for it).
+- **Served without a session** at `GET /phone-avatars/{hash}` (`Content-Type: image/jpeg`, `Cache-Control: private,
+  max-age=31536000, immutable`; content-addressed, so a new picture is a new URL), because it is also a push's icon
+  (`notifications.md`, "The push icon"): the browser fetches a notification's icon for the service worker outside any
+  page, where the SameSite=Strict session cookie isn't reliably sent, and an icon behind the session would come back
+  as the login page. The path is the picture's own SHA-256 (256 bits: unguessable without the picture itself), only a
+  hash some phone names right now is served (else 404, also for a file still on disk), there is no listing, and the
+  admin gate (loopback/tailnet, `gate::admin_gate`) still applies - the same footing as `/sw.js` and the receipt. With
+  `ADMIN_PUBLIC=on` (exposure b) the gate lets everyone through and **the hash is the only guard** (code QA Q-6):
+  acceptable, since the URL travels only in the signed-in pages, the browser's cache and the end-to-end-encrypted push
+  payload. Never on the phones' listener. The pages use the same URL, so the browser caches one copy.
+- **Backups**: `backups::build_backup_zip` adds `device_avatars/<hash>.jpg`; after a restore `photos::recover_missing`
+  takes a missing file back from the newest zip that has it, and forgets a hash no zip has (the letter tile again).
+- Tests: `tests::avatars` (upload -> served square JPEG without EXIF and shown with the dot on every phone row, not in
+  the policy; replace and Remove prune and go back to the letter, a deleted phone's file goes; a non-picture, an empty
+  file and a broken PNG refused under the avatar with nothing changed; the backup and the restore; the push's icon;
+  the admin gate; since the code QA: `the_picture_route_serves_only_a_named_hash` - a file on disk no phone names, an
+  uppercase, 63- or 65-character hash, `.jpg`, an encoded `../` and a row naming `../secret` all 404 -,
+  `the_upload_takes_a_photo_over_two_megabytes` - the route's 10 MB limit, not axum's 2 MB - and the inbox and an
+  app's page in the rows' loop), `listeners::the_device_router_serves_nothing_but_the_device_api` (`/phone-avatars/`
+  and `/contact-photos/` 404 on the phones' port), `summary::the_quick_actions_follow_the_phone` and `every_form_on_the_summary_returns_to_its_group`
+  (the header's picker is the summary's one autosave and its first form), `jstest/sw.test.js` (the icon).
+
+## Field focus and the filled button (the user's picks A and 3, 2026-10-25, branch `pwa-fixes-c`)
+
+- **The mockup** (https://claude.ai/artifact/CcNPzaNhQsCJitG3RJsmxb, the user: "A og 3 høres bra ut"). `style.css?v=54` (`?v=55` since the code QA's fix round).
+- **(A) A focused text field or select** (`input` text/tel/password/time/email/url/number/search, `select`,
+  `textarea`; not the borderless ones that are a row's value - `.row-input`, `select.pick`): its own border takes
+  `--tint` at 1.5 px (the 1 px border plus `box-shadow: inset 0 0 0 0.5px`, so nothing moves; the day's borderless
+  `.row-time`/`.row-num` get the whole 1.5 px as an inset shadow) and its fill `--field-focus` - white; in dark the
+  field keeps its night fill (`#0C0C14`) and the peach border says it is focused. A tap or a click shows **no outer
+  ring**; the keyboard keeps the 2 px `outline`. **CSS alone can't tell those apart for a text field**: a browser
+  counts every focus of a text field as `:focus-visible`, a tap too (the spec's heuristic: it takes typing), so the
+  existing `:focus` / `:focus:not(:focus-visible)` pair - kept as it was, Safari before 15.4 still shows the ring from
+  `:focus` - can't drop the ring on a tap. `static/focus-mode.js` (`?v=2`, un-deferred in `head.html`, ES5) marks
+  `<html>` `pointer-focus` from a press (mousedown, touchstart, pointerdown) until the keyboard moves, and
+  `.pointer-focus input:focus` (and select, textarea) drops the outline. What clears the mark (code QA Q-2): Tab and
+  Shift+Tab always; the navigation keys (arrows, Home, End, Page Up/Down, Space, Enter) when the focus is not in a
+  field one types into - so arrow keys after a tapped radio, checkbox or select bring the ring back. Not every key:
+  typing and caret moves in a tapped text field keep the calm border (an on-screen keyboard sends keys too, so "any
+  key" would put the ring back the moment a parent types on a phone). The borderless fields that are a row's value
+  (`.row-input`, `select.pick`) have no border to tint: any focus gives them a quiet tinted underline (`box-shadow:
+  inset 0 -1.5px 0 var(--tint)`), a tap's only sign, the keyboard's ring on top (before, a tapped one showed only the
+  caret). Without JS the ring shows as before; a page's `autofocus` on load (a refused save's field) has no press yet,
+  so it shows the ring. Tests: `jstest/focus-mode.test.js` (each press, pointer -> keyboard -> pointer, typing kept,
+  arrows after a radio or select), `shell::the_accent_rules_hold` (the tokens, the three filled rules and their hover
+  with night text, no `--strong`, the no-ring rule, the field's border and the borderless underline, the head's
+  script).
+- **(3) Filled buttons** (the plain `button`, `.button-small`, the summary's `.act-strong` "Lock again"): `--tint-fill`
+  `#E8895E` with night text `--on-tint-fill` `#0C0C14` (7.6:1), hover `--tint-fill-hover` `#E07A4C` (6.6:1); dark:
+  `--tint-fill` `#F0A884` (today's dark `--tint`) with the same night text (9.9:1, hover `#F6C4AA` 12.4:1). `--strong`
+  / `--strong-hover` (#A64B25 with white) are gone. Links, tabs, icons, the secondary buttons and text keep `--tint`
+  (#A64B25, dark #F0A884); destructive buttons (`--destructive`) are unchanged. The light fill is 2.6:1 against the
+  white card: the button is told by its night label (WCAG 1.4.11 asks nothing more of a labelled button).
+- **The browser pass** (Chromium and WebKit, 390 px, light and dark, `pwa-fixes-c` on port 3170 with a fresh data dir):
+  Add Phone with the field tapped (no ring, tinted border, white fill; dark: peach border, night fill) and reached
+  with Tab (the ring), the Next button's colours, the Devices list, a phone's page before and after uploading a
+  generated PNG (`/devices/1#avatar`, main's scroll 0, the picture with the dot) and after Remove, a refused file's
+  reason, Notification Settings; no console errors, no failed requests. **WebKit passes use `is_mobile=True`**: in
+  Playwright's Linux desktop WebKit (no `is_mobile`) Notification Settings and Settings go to `/login` about 0.3 s
+  after loading and the next screenshot hangs. The code QA traced it (`docs/review/qa-pwa-fixes-c-code.md`): that
+  build exposes `PushManager` (its mobile emulation doesn't), and `PushManager.getSubscription()` on a page with a
+  registered worker makes the browser itself navigate - the session stays (the next page loads signed in), and the
+  two pages are exactly the ones that call it (`notifications.js`, `register-sw.js`'s Sign Out lookup). A Playwright
+  artefact, independent of this branch and of main's code; stubbing `getSubscription` in an init script keeps the
+  pages too. Desktop Safari has a real push implementation, so it says nothing about it.
+

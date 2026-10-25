@@ -52,6 +52,8 @@ static WALLPAPER_FILES: Mutex<()> = Mutex::const_new(());
 static MUSIC_COVER_FILES: Mutex<()> = Mutex::const_new(());
 /// The same for episode art (design 27).
 static MUSIC_ART_FILES: Mutex<()> = Mutex::const_new(());
+/// The same for the phones' own pictures (server round C).
+static DEVICE_AVATAR_FILES: Mutex<()> = Mutex::const_new(());
 
 /// One content-addressed image store: its lock, which hashes the database references, what a
 /// lost file does to the database, its backup zip prefix and its size limit.
@@ -120,6 +122,19 @@ pub static MUSIC_ART: Store = Store {
     ],
     // Never written (`backups.rs` doesn't add this store): a restore finds nothing under it.
     zip_prefix: "music_art",
+    max_stored_bytes: MAX_STORED_BYTES,
+};
+
+/// A phone's own picture (`AppState.avatar_dir`, `devices.avatar_hash`, migration 0100): the
+/// parent's PWA shows it instead of the letter tile and a push about the phone carries it as its
+/// icon; never sent to a phone. A square JPEG of at most [MAX_SIDE] ([Shape::Square], the contact
+/// photos' processing). Backed up; a lost one is forgotten (the letter tile again).
+pub static DEVICE_AVATARS: Store = Store {
+    what: "phone picture",
+    lock: &DEVICE_AVATAR_FILES,
+    referenced_sql: "SELECT DISTINCT avatar_hash FROM devices WHERE avatar_hash IS NOT NULL",
+    forget_sql: &["UPDATE devices SET avatar_hash = NULL WHERE avatar_hash = ?"],
+    zip_prefix: "device_avatars",
     max_stored_bytes: MAX_STORED_BYTES,
 };
 
@@ -397,6 +412,9 @@ pub async fn recover_missing(state: &crate::AppState, backup_dir: &Path) {
         .await;
     MUSIC_COVERS
         .recover_missing(&state.db, &state.music_cover_dir, backup_dir)
+        .await;
+    DEVICE_AVATARS
+        .recover_missing(&state.db, &state.avatar_dir, backup_dir)
         .await;
     let forgotten = MUSIC_ART
         .recover_missing(&state.db, &state.music_art_dir, backup_dir)

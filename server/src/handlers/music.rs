@@ -191,6 +191,7 @@ pub struct PhoneRow {
     pub name: String,
     pub initial: String,
     pub avatar: &'static str,
+    pub photo: Option<String>,
     /// "6 of 9" on the tab; the phone's line on an entry's page.
     pub value: String,
     pub href: String,
@@ -204,6 +205,7 @@ impl PhoneRow {
             name: device.name.clone(),
             initial: crate::handlers::devices::initial(&device.name),
             avatar: crate::handlers::devices::avatar_class(device),
+            photo: crate::handlers::devices::avatar_photo(device),
             value,
             href: phone_music_href(device.id, entry),
         }

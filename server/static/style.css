@@ -26,9 +26,13 @@
     /* vibb's dark peach: 5.2:1 on --bg, 5.8:1 on --surface, 4.7:1 on --tab-pill. */
     --tint: #A64B25;
     --tint-hover: #7E3517;
-    /* The filled button: #A64B25 in both themes (white on it 5.8:1; §5.4, L3). */
-    --strong: #A64B25;
-    --strong-hover: #7E3517;
+    /* The filled button (the user's pick 3, 2026-10-25): a lighter peach with night text, 7.6:1
+       (hover 6.6:1); links, tabs, icons and text keep --tint. It was #A64B25 with white text. */
+    --tint-fill: #E8895E;
+    --tint-fill-hover: #E07A4C;
+    --on-tint-fill: #0C0C14;
+    /* A focused text field's fill (the user's pick A): white, its border --tint. */
+    --field-focus: #FFFFFF;
     --destructive: #D70015;
     --destructive-hover: #B0001A;
 
@@ -135,8 +139,12 @@
 
         --tint: #F0A884;
         --tint-hover: #F6C4AA;
-        --strong: #A64B25;
-        --strong-hover: #7E3517;
+        /* Dark: the peach of --tint itself with night text (9.9:1, hover 12.4:1). */
+        --tint-fill: #F0A884;
+        --tint-fill-hover: #F6C4AA;
+        --on-tint-fill: #0C0C14;
+        /* The field keeps its night fill; the peach border says it is focused. */
+        --field-focus: #0C0C14;
         --destructive: #D70015;
         --destructive-hover: #E5172B;
 
@@ -284,6 +292,49 @@ summary:focus:not(:focus-visible) {
 .group summary:focus,
 .group .cell > button:focus {
     outline-offset: -2px;
+}
+
+/* A focused text field or select (the user's pick A, 2026-10-25; not the borderless ones that are
+   a row's value - .row-input, select.pick): its own border takes the tint at
+   1.5 px (the 1 px border and a 0.5 px inset shadow, so nothing moves) and its fill --field-focus.
+   A tap or a click shows no ring; the keyboard keeps the 2 px ring above. A browser counts every
+   focus of a text field as :focus-visible, a tap too, so the rules above can't tell them apart:
+   static/focus-mode.js marks <html> `pointer-focus` from a press until the keyboard moves focus. Without it
+   (no JS) the ring shows as before; Safari before 15.4 keeps the :focus rule's ring for the keyboard. */
+input[type="text"]:not(.row-input):focus,
+input[type="tel"]:not(.row-input):focus,
+input[type="password"]:not(.row-input):focus,
+input[type="time"]:not(.row-time):focus,
+input[type="email"]:not(.row-input):focus,
+input[type="url"]:not(.row-input):focus,
+input[type="number"]:not(.row-num):not(.row-input):focus,
+input[type="search"]:not(.row-input):focus,
+select:not(.pick):focus,
+textarea:focus {
+    border-color: var(--tint);
+    box-shadow: inset 0 0 0 0.5px var(--tint);
+    background-color: var(--field-focus);
+}
+
+/* The day's small fields have no border of their own: the 1.5 px is all shadow. */
+input.row-time:focus,
+input.row-num:focus {
+    box-shadow: inset 0 0 0 1.5px var(--tint);
+    background-color: var(--field-focus);
+}
+
+/* A borderless field that is a row's value (a domain to add, a row's picker; code QA Q-2): no border
+   to tint, so a focus shows a quiet tinted underline - a tap's only sign, the keyboard's ring on top. */
+input.row-input:focus,
+select.pick:focus {
+    box-shadow: inset 0 -1.5px 0 var(--tint);
+}
+
+/* A press marks pointer mode until the keyboard moves (static/focus-mode.js): no ring then. */
+.pointer-focus input:focus,
+.pointer-focus select:focus,
+.pointer-focus textarea:focus {
+    outline: none;
 }
 
 input[type="checkbox"],
@@ -1100,8 +1151,8 @@ textarea {
 
 button {
     display: inline-block;
-    background: var(--strong);
-    color: #FFFFFF;
+    background: var(--tint-fill);
+    color: var(--on-tint-fill);
     border: none;
     padding: 10px 18px;
     border-radius: 10px;
@@ -1113,8 +1164,8 @@ button {
 }
 
 button:hover {
-    background: var(--strong-hover);
-    color: #FFFFFF;
+    background: var(--tint-fill-hover);
+    color: var(--on-tint-fill);
 }
 
 .button-secondary,
@@ -1130,8 +1181,8 @@ button:hover {
 
 .button-small {
     display: inline-block;
-    background: var(--strong);
-    color: #FFFFFF;
+    background: var(--tint-fill);
+    color: var(--on-tint-fill);
     border: none;
     padding: 7px 12px;
     border-radius: 8px;
@@ -1143,8 +1194,8 @@ button:hover {
 }
 
 .button-small:hover {
-    background: var(--strong-hover);
-    color: #FFFFFF;
+    background: var(--tint-fill-hover);
+    color: var(--on-tint-fill);
 }
 
 .button-small.button-secondary,
@@ -1295,6 +1346,18 @@ th {
 .dot-online { background: var(--dot-green); }
 .dot-away { background: var(--dot-orange); }
 .dot-offline { background: var(--dot-grey); }
+
+/* A phone's own picture (server round C) over its letter: the same circle, the dot (after it) on
+   top. The letter stays under it, so a picture that doesn't load shows the tile. */
+.avatar-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+}
 
 /* The Devices and Apps lists: one grouped list of rows. */
 
@@ -2186,6 +2249,18 @@ input.row-num { width: 6.5em; text-align: right; }
 .summary-head { display: flex; flex-direction: column; align-items: center; margin: 4px 0 20px; text-align: center; }
 .avatar-large { width: 76px; height: 76px; font-size: 2.125rem; }
 .avatar-large .avatar-dot { width: 16px; height: 16px; border-width: 3px; right: 1px; bottom: 1px; border-color: var(--bg); }
+/* The header's avatar is the picture's picker (server round C): the file field is hidden but stays
+   focusable, its ring drawn round the avatar; "Add picture" or "Remove picture" under it. */
+.avatar-edit { position: relative; display: flex; flex-direction: column; align-items: center; }
+.avatar-form { margin: 0; }
+.avatar-pick { display: block; margin: 0; border-radius: 50%; font-weight: inherit; cursor: pointer; }
+.avatar-input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; padding: 0; border: 0; opacity: 0; overflow: hidden; }
+.avatar-input:focus + .avatar-pick { outline: 2px solid var(--tint); outline-offset: 2px; }
+.avatar-input:focus:not(:focus-visible) + .avatar-pick { outline: none; }
+.avatar-add, .avatar-remove, .avatar-remove:hover { display: inline-block; margin: 2px 0 0; padding: 6px 8px; border: 0; border-radius: 8px; background: none; color: var(--tint); font: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; }
+.avatar-remove:hover, .avatar-add:hover { color: var(--tint-hover); }
+.avatar-save { margin-top: 8px; }
+.avatar-error { margin: 4px 0 0; }
 .summary-name { margin: 10px 0 0; font-family: var(--font-display); font-size: 1.75rem; font-weight: 800; line-height: 1.2; word-break: break-word; overflow-wrap: anywhere; }
 .summary-state { margin: 3px 0 0; color: var(--label-2); font-size: 0.9375rem; line-height: 1.35; }
 .summary-link { display: inline-block; margin-top: 4px; padding: 10px 8px; font-size: 0.9375rem; text-decoration: none; }
@@ -2195,7 +2270,8 @@ input.row-num { width: 6.5em; text-align: right; }
 .summary-screen { margin-top: 6px; color: var(--label-2); font-size: 0.8125rem; }
 /* A tile that is a link (Locate) or a sheet's summary looks like the button tiles. */
 a.act, a.act:hover { text-decoration: none; }
-.act-strong, .act-strong:hover { background: var(--strong); color: #FFFFFF; }
+.act-strong { background: var(--tint-fill); color: var(--on-tint-fill); }
+.act-strong:hover { background: var(--tint-fill-hover); color: var(--on-tint-fill); }
 /* Pause a rule… and Unlock for 2 h…: a tile that opens its sheet under it, across the grid. */
 .act-sheet { margin: 0; }
 .act-sheet[open] { grid-column: 1 / -1; }
@@ -2340,7 +2416,7 @@ details.app-display[open] > summary .section-chev {
 /* The inbox: a row is a form's button; unread is bold with a blue dot. */
 .inbox-row { cursor: pointer; }
 /* A hovered inbox row (a desktop pointer) is a row, not a filled button: the generic button:hover
-   would paint it --strong-hover with the grey .row-sub unreadable on it (the user, 2026-10-23). */
+   would paint it --tint-fill-hover with the grey .row-sub unreadable on it (the user, 2026-10-23). */
 .inbox-row:hover { background: var(--row-active); color: var(--label); }
 .inbox-unread .inbox-title { font-weight: 600; }
 .unread-dot { display: inline-block; width: 8px; height: 8px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--tint); vertical-align: middle; }

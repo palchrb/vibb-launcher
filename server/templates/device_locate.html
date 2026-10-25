@@ -223,7 +223,7 @@
     <div class="group group-avatars" data-group="phones">
         {% for p in phones %}
         <a class="row device-row" href="/devices/locate?device={{ p.id }}">
-            <span class="avatar {{ p.avatar }}" aria-hidden="true">{{ p.initial }}<span class="avatar-dot dot-{{ p.connection.css() }}"></span></span>
+            <span class="avatar {{ p.avatar }}" aria-hidden="true">{{ p.initial }}{% if let Some(src) = p.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}<span class="avatar-dot dot-{{ p.connection.css() }}"></span></span>
             <span class="row-label">
                 <span class="device-row-name">{{ p.name }}</span>
                 <span class="row-sub device-line"><span class="state-{{ p.connection.css() }}">{{ p.connection.word() }}</span>{% if let Some(seen) = p.seen %} · {% if let Some(exact) = p.seen_exact %}<span title="{{ exact }}">{{ seen }}</span>{% else %}{{ seen }}{% endif %}{% endif %}</span>

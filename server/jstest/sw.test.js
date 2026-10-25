@@ -131,6 +131,25 @@ test("a push shows its notification, then the badge, then posts the receipt", as
     assert.deepStrictEqual(failing.log.map((e) => e[0]), ["show"]);
 });
 
+// Server round C: the phone's own picture is the icon (`data.icon`, a path here), else the app's.
+test("a push shows its phone's picture as the icon, never another site's", async () => {
+    const icons = [];
+    for (const icon of [undefined, "/phone-avatars/" + "a".repeat(64), "https://evil.example/x.png", "/\\evil.example/x.png", 7]) {
+        const w = fakeWorker({ badge: false });
+        const message = JSON.parse(JSON.stringify(MESSAGE));
+        if (icon !== undefined) message.notification.data.icon = icon;
+        await w.fire("push", pushOf(message));
+        icons.push(w.log[0][2].icon);
+    }
+    assert.deepStrictEqual(icons, [
+        "/static/icons/icon-192.png",
+        "/phone-avatars/" + "a".repeat(64),
+        "/static/icons/icon-192.png",
+        "/static/icons/icon-192.png",
+        "/static/icons/icon-192.png",
+    ]);
+});
+
 // Safari reads a mutable declarative push itself and fires `push` with `data` null and its
 // proposed Notification on the event (WWDC25 session 235; WebKit's PushEvent.idl). The worker
 // posts the receipt and sets the badge from it and shows NOTHING: Safari shows its proposed

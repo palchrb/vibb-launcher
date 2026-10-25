@@ -2697,6 +2697,7 @@ async fn covers_are_uploaded_processed_backed_up_and_pruned() {
         &app.state.photo_dir,
         &app.state.wallpaper_dir,
         &app.state.music_cover_dir,
+        &app.state.avatar_dir,
     )
     .unwrap();
     let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();

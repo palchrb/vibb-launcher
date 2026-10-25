@@ -60,7 +60,7 @@
         {% for p in phones %}
         {% if let Some(i) = p.install %}
         <div class="row" id="phone-{{ p.id }}" data-phone="{{ p.id }}" data-install-state="{{ i.state }}">
-            <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}</span>
+            <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}{% if let Some(src) = p.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span>
             <span class="row-label"><a class="phone-link" href="{{ p.href }}">{{ p.name }}</a><span class="row-sub" data-install-sub>{{ i.sub }}</span></span>
             {% if let Some(v) = i.value %}<span class="row-value row-value-keep">{{ v }}</span>{% endif %}
             {% if i.install %}
@@ -78,7 +78,7 @@
         {% endif %}
         {% else %}
         <a class="row" href="{{ p.href }}" id="phone-{{ p.id }}" data-phone="{{ p.id }}">
-            <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}</span>
+            <span class="avatar avatar-small {{ p.avatar }}" aria-hidden="true">{{ p.initial }}{% if let Some(src) = p.photo %}<img class="avatar-img" src="{{ src }}" alt="" decoding="async">{% endif %}</span>
             <span class="row-label">{{ p.name }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>

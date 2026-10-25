@@ -523,12 +523,12 @@ after), never later. Details stay in the entries below.
 - **Server / PWA**
   - **PWA shows the login page after a Tailscale outage, though the session is valid** (the user, 2026-10-25: "etter at tailscale har feilet på min tlf ... når jeg reconnecter og åpner vibb phone på nytt så ber den om innlogging. Dreper jeg pwa og starter de på nytt så er jeg logget inn igjen"): cause unknown. (1) Server: one log line whenever a request carrying a session cookie is answered with a redirect to `/login`, with the reason (no cookie / expired / epoch / source address refused by the admin listener's tailnet-or-loopback rule / re-auth) and the path - no cookie values; (2) PWA: when `reconnect.js`'s return reload or retry lands on `/login` (or a fetch gets its redirect), first ask a tiny authenticated endpoint (`GET /api/session` → 204/401) whether the session lives; if it does, reload the page instead of showing the login; (3) ask the user for the time and whether the address bar showed `/login?next=…` next time, and read the server log. Server/PWA, S. In the next server round.
   - The security reviews' Low items (server 18, launcher 16, music 9).
-  - Uploaded avatar per phone; the avatar as the push icon - **next: server round C** with the PWA accent item below (asked again by the user 2026-10-25: "Når kommer muligheten til å sette avatar?"); starts when round B or the last-position QA frees a building slot.
+  - Uploaded avatar per phone; the avatar as the push icon - **merged 2026-10-25 (branch `pwa-fixes-c`; `docs/review/qa-pwa-fixes-c-code.md`, all fixed)**, with the PWA accent item below (asked again by the user 2026-10-25: "Når kommer muligheten til å sette avatar?"); "Approved for the next fix batch" below.
   - PWA tab-switch timing (Navigation Timing behind a debug switch, then prefetch).
   - PWA i18n.
   - F-Droid follow-ups: entry.jar signature, signer check at the first pin, ABI filter, GitHub asset digests.
   - Settings saves in the security log; Home Wi-Fi as a trigger; `PHONE_SERVER_URL` in `.env`; Wi-Fi in Phone Setup; notifications phase 2 (ntfy/Matrix); episode pictures on demand.
-  - **PWA accent: field focus A, primary button 3** (the user, 2026-10-25, after the mockup https://claude.ai/artifact/CcNPzaNhQsCJitG3RJsmxb: "A og 3 høres bra ut"): (A) a text field that is tapped shows no outer ring - its own border takes `--tint` (1.5 px) and its fill goes white; the 2 px `outline` ring stays only for keyboard focus (`:focus-visible` with the existing Safari fallback rule in `style.css` ~260-290, so a touch/mouse focus gets the border, a keyboard focus the ring); selects likewise. (3) filled primary buttons (`.button-primary` / the "Next"/"Save" fills - grep the class) take a new token `--tint-fill: #E8895E` with night text `#0C0C14` (7.6:1), hover `#E07A4C`; links, tabs, text and icons keep `--tint` (#A64B25); dark mode: `--tint-fill` = the peach `#F0A884` with night text as today's dark tint. Destructive buttons unchanged. A pass over every page (the Playwright scripts in `scratchpad/pw/`, Chromium + WebKit) before release. Server/PWA, XS-S; next server round (after `pwa-fixes-b`).
+  - **PWA accent: field focus A, primary button 3** (the user, 2026-10-25, after the mockup https://claude.ai/artifact/CcNPzaNhQsCJitG3RJsmxb: "A og 3 høres bra ut"): (A) a text field that is tapped shows no outer ring - its own border takes `--tint` (1.5 px) and its fill goes white; the 2 px `outline` ring stays only for keyboard focus (`:focus-visible` with the existing Safari fallback rule in `style.css` ~260-290, so a touch/mouse focus gets the border, a keyboard focus the ring); selects likewise. (3) filled primary buttons (`.button-primary` / the "Next"/"Save" fills - grep the class) take a new token `--tint-fill: #E8895E` with night text `#0C0C14` (7.6:1), hover `#E07A4C`; links, tabs, text and icons keep `--tint` (#A64B25); dark mode: `--tint-fill` = the peach `#F0A884` with night text as today's dark tint. Destructive buttons unchanged. A pass over every page (the Playwright scripts in `scratchpad/pw/`, Chromium + WebKit) before release. Server/PWA, XS-S; **merged 2026-10-25 (branch `pwa-fixes-c`; `docs/review/qa-pwa-fixes-c-code.md`, all fixed)**.
   - Zone series numbers after the user's Jelly Star day; developer-verification registration (nothing in the repo).
 
 ### Approved for the next fix batch
@@ -556,6 +556,22 @@ after), never later. Details stay in the entries below.
   ping, the kept place); refused while a save is on its way, a `<details>` is open or a field holds typed text (the
   shared `handyReconnect.mayReload`). Owed: the iPhone and Android PWA by hand. `docs/notes/server/pwa.md` "Pull down
   to refresh".
+- **Uploaded avatar per phone; the avatar as the push icon** (the user, 2026-10-25, queue above). **Built** (2026-10-25,
+  branch `pwa-fixes-c`, not merged; code QA `qa-pwa-fixes-c-code.md`, 0 High / 1 Medium / 6 Low, all fixed): the summary's big avatar is the picker (`accept="image/*"`, no
+  `capture`, so a phone offers the library and the camera), saved at once back to `#avatar`, through the contact
+  photos' pipeline (square JPEG <= 512 px, no EXIF), `devices.avatar_hash` (migration 0100), `data/device_avatars/`
+  in the backups; shown with the dot on every phone row; Remove goes back to the letter. Served without a session at
+  `/phone-avatars/<hash>` (an unguessable content hash, only while a phone names it, behind the admin gate) because a
+  push's icon is fetched for the service worker without the cookie; the push carries it as `data.icon` (legacy path;
+  Safari shows the app icon anyway). Never sent to a phone. `docs/notes/server/pwa.md` "A phone's own picture",
+  `notifications.md` "The push icon".
+- **PWA accent: field focus A, primary button 3** (the user, 2026-10-25, queue above). **Built** (2026-10-25, branch
+  `pwa-fixes-c`, not merged; code QA `qa-pwa-fixes-c-code.md`, all fixed; the fix round added the borderless fields' underline and the navigation keys): a focused field's own border in `--tint` 1.5 px and a white fill (dark:
+  peach border, night fill), no ring for a tap or click - `static/focus-mode.js` marks `<html>` from a press until the
+  next Tab, since a browser counts a tapped text field as `:focus-visible` too; the keyboard keeps the ring. Filled
+  buttons `--tint-fill` (#E8895E / dark #F0A884) with night text; `--strong` gone; `style.css?v=54`. Chromium + WebKit
+  pass on the pages the round touched (not every page yet). `docs/notes/server/pwa.md` "Field focus and the filled
+  button".
 
 - **Security and privacy reviews 2026-10-21** (asked for by the user): `docs/review/security-review-2026-10-21-server.md`
   (0 High / 3 Medium / 18 Low), `-launcher.md` (0 High / 5 Medium / 16 Low; Tailscale/tsnet verdict: keep it as is,

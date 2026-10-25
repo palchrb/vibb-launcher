@@ -198,7 +198,8 @@ pub async fn prune_old_backups(dir: &std::path::Path, retention_count: usize) {
 }
 
 /// The database snapshot plus every contact photo (`contact_photos/<hash>.jpg`), wallpaper image
-/// (`wallpapers/<hash>.jpg`) and music cover (`music_covers/<hash>.jpg`). Never the parent's own
+/// (`wallpapers/<hash>.jpg`), music cover (`music_covers/<hash>.jpg`) and phone picture
+/// (`device_avatars/<hash>.jpg`, server round C). Never the parent's own
 /// music files (design 21: too big; a restore lists them as missing), nor episode art (design 27:
 /// `photos::MUSIC_ART` is fetched again by the sweep). A restore swaps in only the
 /// database (deploy/install.sh); the server puts back missing files from the backups at startup
@@ -209,6 +210,7 @@ pub(crate) fn build_backup_zip(
     photo_dir: &std::path::Path,
     wallpaper_dir: &std::path::Path,
     music_cover_dir: &std::path::Path,
+    avatar_dir: &std::path::Path,
 ) -> std::io::Result<()> {
     let file = std::fs::File::create(zip_path)?;
     let mut writer = zip::ZipWriter::new(file);
@@ -220,6 +222,7 @@ pub(crate) fn build_backup_zip(
     crate::photos::add_to_zip(&mut writer, photo_dir)?;
     crate::photos::WALLPAPERS.add_to_zip(&mut writer, wallpaper_dir)?;
     crate::photos::MUSIC_COVERS.add_to_zip(&mut writer, music_cover_dir)?;
+    crate::photos::DEVICE_AVATARS.add_to_zip(&mut writer, avatar_dir)?;
 
     writer.finish()?;
     Ok(())
@@ -335,6 +338,7 @@ pub async fn perform_backup(state: &AppState) -> Result<String, String> {
     let photo_dir = state.photo_dir.as_path().to_path_buf();
     let wallpaper_dir = state.wallpaper_dir.as_path().to_path_buf();
     let music_cover_dir = state.music_cover_dir.as_path().to_path_buf();
+    let avatar_dir = state.avatar_dir.as_path().to_path_buf();
     let zip_result = tokio::task::spawn_blocking(move || {
         build_backup_zip(
             &snapshot_path_for_zip,
@@ -342,6 +346,7 @@ pub async fn perform_backup(state: &AppState) -> Result<String, String> {
             &photo_dir,
             &wallpaper_dir,
             &music_cover_dir,
+            &avatar_dir,
         )
     })
     .await;

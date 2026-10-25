@@ -471,3 +471,25 @@ push varsel ... kanskje man kan få valget". Branch `pwa-fixes-b`.
   (a real F-Droid sync: none for the first release, one for the next, none for the sweep and the Check Now after),
   `a_release_is_installed_by_its_versioncode`, `an_older_release_stored_over_a_newer_one_is_no_notice` and `only_a_release_ahead_is_an_update` (Q-1), `parent_events::tests` (`an_app_update_is_told_from_its_parameters`,
   the push words, the switches).
+
+## The push icon (server round C, 2026-10-25, branch `pwa-fixes-c`)
+
+- A push about a phone carries the phone's own picture as its icon (`pwa.md`, "A phone's own picture"), else the
+  app's: `push::send_due` reads the event's phone's `devices.avatar_hash` (`LEFT JOIN devices` on
+  `parent_events.device_id`) and `payload_json` puts `notification.data.icon` = `/phone-avatars/<hash>` or
+  `push::APP_ICON` (`/static/icons/icon-192.png`); a summary, a test and a catalog event (no phone) take the app's.
+- **In `data`, not as the notification's own `icon`**: only the worker's legacy path shows an icon we choose (Chrome,
+  Firefox: `templates/sw.js` `iconOf(data)` - a path on this server, else the app's icon; another site's picture is
+  never shown, `jstest/sw.test.js`). Safari's declarative notification is shown by webpushd itself with the app's own
+  icon whatever the payload says, so the declarative payload keeps to the keys WebKit reads - a new top-level
+  notification key was not worth the risk on the one path iOS 26 displays (0.29.6).
+- **Fetched without the session**: the browser loads a notification's icon for the worker, outside any page, where
+  the SameSite=Strict cookie isn't reliably sent; so `/phone-avatars/<hash>` needs no session (an unguessable
+  content hash, only while a phone names it, the admin gate still in front). A same-origin path, resolved by the
+  worker against its own origin.
+- **An icon that fails to load** (the picture removed after the push was queued, the parent's phone off the tailnet:
+  a 404 or 403) doesn't fail `showNotification`: Chrome drops a resource that doesn't load and shows the notification
+  without it - without an icon then, not with the app's (code QA Q-7; not tried against a real push service).
+- Tests: `tests::avatars::a_push_about_the_phone_carries_its_picture_as_the_icon`, `push::tests::the_payload_switch`,
+  `jstest/sw.test.js` ("a push shows its phone's picture as the icon, never another site's").
+

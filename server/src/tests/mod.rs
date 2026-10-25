@@ -7,6 +7,7 @@ mod android_lock_page;
 mod app_display;
 mod app_updates;
 mod attention;
+mod avatars;
 mod backup_secrets;
 mod calls;
 mod catalog_pins;
@@ -183,6 +184,7 @@ impl TestApp {
             photo_dir: std::sync::Arc::new(dir.path().join("contact_photos")),
             dns_feed_dir: std::sync::Arc::new(dir.path().join("dns_feeds")),
             wallpaper_dir: std::sync::Arc::new(dir.path().join("wallpapers")),
+            avatar_dir: std::sync::Arc::new(dir.path().join("device_avatars")),
             command_streams: Default::default(),
             app_syncs: Default::default(),
             tracked_apps_dir: std::sync::Arc::new(dir.path().join("tracked_apps")),

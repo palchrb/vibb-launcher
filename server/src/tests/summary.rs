@@ -176,7 +176,8 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
 }
 
 /// §3.2 item 3: the tiles, Pause a rule… only with rules that apply, Unlock for 2 h… behind its
-/// confirm only for a launcher that takes it, Locate a link; no auto-saving form on the page.
+/// confirm only for a launcher that takes it, Locate a link; no auto-saving form on the page but
+/// the header's picture (server round C).
 #[tokio::test]
 async fn the_quick_actions_follow_the_phone() {
     let app = TestApp::new().await;
@@ -199,8 +200,13 @@ async fn the_quick_actions_follow_the_phone() {
     );
     assert!(!quick.contains("pause-rule"), "no rule applies: {quick}");
     assert!(!quick.contains("start-pause"), "no report yet: {quick}");
+    // The header's picture picker saves itself (server round C, `tests::avatars`); nothing else.
     let main = &html[html.find("<main").unwrap()..];
-    assert!(!main.contains("data-autosave"), "{main}");
+    assert_eq!(main.matches("data-autosave").count(), 1, "{main}");
+    assert!(
+        main.contains("name=\"picture\" accept=\"image/*\" data-autosave"),
+        "{main}"
+    );
 
     add_rule(&app, "Skole <i>").await;
     post_status(
@@ -312,7 +318,9 @@ async fn every_form_on_the_summary_returns_to_its_group() {
             "blocked-apps",
         ),
     ];
-    let found = forms(&html);
+    let mut found = forms(&html);
+    // The header's picture comes first: a multipart upload, `tests::avatars`.
+    assert_eq!(found.remove(0).0, format!("/devices/{id}/avatar#avatar"));
     assert_eq!(
         found.iter().map(|(a, _)| a.as_str()).collect::<Vec<_>>(),
         table.iter().map(|(a, ..)| a.as_str()).collect::<Vec<_>>(),
