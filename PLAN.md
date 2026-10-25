@@ -512,10 +512,10 @@ after), never later. Details stay in the entries below.
   - Configurable emergency menu; Immich wallpapers; design 60 (hardware-bound token).
   - Phase D (own lock removed), design 32b (one stale frame at screen-on), RC3-4 (release-build setup timing), RC3-8, six-inch F3/F4, compact music tile a little lower.
   - Diagnostics: Web Filter line "upstream can't be reached"; the music app's "no network" text and the real cause in its log.
-  - QR enrolment requests a sync. **Built, awaiting code QA (branch `launcher-small-a`).** Trailing package callbacks after an enforcer pass (above) **Built, awaiting code QA (branch `launcher-small-a`).**
-  - **Home's wallpaper copy: a one-frame zoom step at the hand-over** (the user's video, 2026-10-25, 24 fps: after the Home button the app slides away over the photo with no black frame (frames 144-148), Home is still for 11 frames, then at frame 160 the whole photo shifts by a hair - edges of the face and hair move, the icons don't - when the copy `HomeGround` drew is released and Android's own wallpaper shows through; Android renders the photo at a slightly different scale, likely its wallpaper zoom). Fix: Home keeps its own ground permanently (no hand-over at all: the one decoded bitmap is already in memory; `homeGroundDue` becomes "always while Home is on screen"), which also closes design 08's owed 3-button check (Q-7). Launcher, XS; next launcher round. **Built, awaiting code QA (branch `launcher-small-a`).**
-  - **Installed versionCode per catalog app in the status report** (follow-up of the app update notices, 2026-10-25): `installed_apps` carries package, label and installer only, so `app_updated` can be raised for Vibb One and the music app alone; add each catalog app's `versionCode` (and `versionName`) to the report (both dirs, the status contract), so "<app> updated on <phone>" works for every tracked app. Launcher + server, S. **Built, awaiting code QA (branch `launcher-small-a`).**
-  - r10 run F1: in android mode the glance's UNUSABLE prompt ("Only the parent code works right now") is wrong - the kid PIN still opens Android's pad; gate `GlancePrompt.UNUSABLE` on own mode (`docs/testing/2026-10-25-r10-keystore-run.md`). Launcher, XS. **Built, awaiting code QA (branch `launcher-small-a`).**
+  - QR enrolment requests a sync. **Built, QA'd, awaiting merge (branch `launcher-small-a`, `docs/review/qa-launcher-small-a-code.md` and its fix round).** Trailing package callbacks after an enforcer pass (above) **Built, QA'd, awaiting merge (branch `launcher-small-a`, `docs/review/qa-launcher-small-a-code.md` and its fix round).**
+  - **Home's wallpaper copy: a one-frame zoom step at the hand-over** (the user's video, 2026-10-25, 24 fps: after the Home button the app slides away over the photo with no black frame (frames 144-148), Home is still for 11 frames, then at frame 160 the whole photo shifts by a hair - edges of the face and hair move, the icons don't - when the copy `HomeGround` drew is released and Android's own wallpaper shows through; Android renders the photo at a slightly different scale, likely its wallpaper zoom). Fix: Home keeps its own ground permanently (no hand-over at all: the one decoded bitmap is already in memory; `homeGroundDue` becomes "always while Home is on screen"), which also closes design 08's owed 3-button check (Q-7). Launcher, XS; next launcher round. **Built, QA'd, awaiting merge (branch `launcher-small-a`, `docs/review/qa-launcher-small-a-code.md` and its fix round).**
+  - **Installed versionCode per catalog app in the status report** (follow-up of the app update notices, 2026-10-25): `installed_apps` carries package, label and installer only, so `app_updated` can be raised for Vibb One and the music app alone; add each catalog app's `versionCode` (and `versionName`) to the report (both dirs, the status contract), so "<app> updated on <phone>" works for every tracked app. Launcher + server, S. **Built, QA'd, awaiting merge (branch `launcher-small-a`, `docs/review/qa-launcher-small-a-code.md` and its fix round).**
+  - r10 run F1: in android mode the glance's UNUSABLE prompt ("Only the parent code works right now") is wrong - the kid PIN still opens Android's pad; gate `GlancePrompt.UNUSABLE` on own mode (`docs/testing/2026-10-25-r10-keystore-run.md`). Launcher, XS. **Built, QA'd, awaiting merge (branch `launcher-small-a`, `docs/review/qa-launcher-small-a-code.md` and its fix round).**
   - **Screen-size matrix on emulators** (the user, 2026-10-25: "kjøre tester med emulatorer med veldig forskjellig skjermoppløsning og dimensjoner så vi kan sjekke hvordan løsningen vår skalerer på ulike telefoner"): one pass of every launcher screen (Home grid, phone book, keypad, the glance in own and android mode, the time-rule screen, Kid Settings, the pause screen, the music app's library and player) on at least four AVDs - a narrow 4" (540x1168 @ 320 dpi, 270x584 dp, the Bluefox NX1's class), the Jelly Star (480x854 @ 240, 320x569 dp), a 6.1" (1080x2400 @ 420, 411x914 dp - `six35` exists) and a 6.7" tall (1440x3120 @ 560), each at font 1.0 and 1.3, 3-button and gesture navigation; screenshots under `docs/testing/screens/sizes/`, a findings table like `2026-10-23-six-inch-android15.md`. Launcher (+ music), M; the narrow one first since it is below our 320 dp floor.
 - **Music app**
   - **Splash with the vibb logo and "vibb music" under it** (the user, 2026-10-25: "kunne vi heller laget en splash screen med vibb logoen som sier vibb music under istedet?"): Android 12+'s splash (`windowSplashScreenAnimatedIcon`/`windowSplashScreenBackground` in the theme) shows the rings logo on the night ground and, as the branding image at the bottom (`windowSplashScreenBrandingImage`, allowed on API 31+), the wordmark "vibb music" in Nunito; the same look as the PWA's start-up splash (`scripts/pwa-startup-images.py`'s art). Calm, no animation beyond the system's. Also measured 2026-10-25 (the user's video): the splash icon fades out about 0.9 s before the first content frame, leaving a plain dark screen (frames 60-81 of 24 fps) - keep the splash on screen until the library has its first frame (`SplashScreen.setKeepOnScreenCondition`). Music, XS-S.
@@ -549,12 +549,14 @@ after), never later. Details stay in the entries below.
   `parent_events.device_id` nullable by rebuilding it with its two children). Left out: `app_updated` for catalog apps
   other than Vibb One and the music app - the phone's report names no other app's installed versionCode (a launcher
   change in both dirs, not built). `docs/notes/server/notifications.md` "App update notices".
-  **That follow-up built 2026-10-25 (branch `launcher-small-a`, awaiting code QA)**: `installed_apps` entries carry
+  **That follow-up built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, awaiting merge)**: `installed_apps` entries carry
   `version_code`/`version_name` (optional; the name trimmed, at most 60), stored with the list's JSON (no migration:
   `device_status.installed_apps_json` holds it), and `note_app_updates` raises `app_updated` for every catalog app
   checked for the phone by its listed code (`listed_app_updates`, `catalog_release_installed`: F-Droid by the
-  versionCode, else the versionName against the tag's version). No shared file pins `installed_apps`: the
-  launcher's `SyncScheduleTest` and the server's `app_updates::every_checked_catalog_app_raises_app_updated_by_its_listed_code`.
+  versionCode, else the versionName against the tag's version - an RC spelled differently from the tag raises
+  nothing). The status body is the shared contract `server/testdata/installed_apps_report.json` (code QA Q-5; the
+  launcher's `SyncScheduleTest`, the server's `app_updates` tests, root CLAUDE.md's "Shared" paragraph, both CI
+  filters).
 - **Pull down to refresh on Devices and a phone's summary** (the user, 2026-10-25, queue above). **Built** (2026-10-25,
   branch `pwa-fixes-b`, not merged): `static/pull-refresh.js` on `devices_list.html` and `device_detail.html` only; at
   the very top a downward drag shows a small peach arrow in the title bar's area, past 70 px it turns over, the release
@@ -1056,7 +1058,7 @@ after), never later. Details stay in the entries below.
   **Built** (item (1), 2026-10-25, branch `r10-keystore-wrap`; code QA `qa-r10-keystore-code.md` fixed): `SealedPrefs`/`DeviceToken`/
   `Enrollment`, the redacted cache, "Ny oppsettkode" in the deadlock; deviations, the revision check's N4/N5/N8 left
   for code QA, and the §8 emulator checks owed are in the note's "Implementation status".
-  **Merged 2026-10-25 (74f5faa5) after code QA (`docs/review/qa-r10-keystore-code.md`, 0 High / 3 Medium / 9 Low, all fixed). Emulator run 2026-10-25 (`docs/testing/2026-10-25-r10-keystore-run.md`): the upgrade from rc.8 seals all four fields with the phone enrolled and both PINs working, total key loss → NEW SETUP CODE → re-enrolled with a lower-case code, the boot cost unchanged; checks 3, 6, 8, 10, 11, 12 and F1 owed. Goes out with `launcher-v0.37.0-rc.1`.** **F1 built 2026-10-25 (branch `launcher-small-a`, awaiting code QA)**: `glancePrompt(.., androidFace)` - UNUSABLE only in own mode, as Android's face (`AndroidLock.faceOn`) the stand-in shows the normal hint (`LockGlanceTest`); its emulator check is in `docs/testing/2026-10-24-home-round-run.md`, "Owed after launcher-small-a".
+  **Merged 2026-10-25 (74f5faa5) after code QA (`docs/review/qa-r10-keystore-code.md`, 0 High / 3 Medium / 9 Low, all fixed). Emulator run 2026-10-25 (`docs/testing/2026-10-25-r10-keystore-run.md`): the upgrade from rc.8 seals all four fields with the phone enrolled and both PINs working, total key loss → NEW SETUP CODE → re-enrolled with a lower-case code, the boot cost unchanged; checks 3, 6, 8, 10, 11, 12 and F1 owed. Goes out with `launcher-v0.37.0-rc.1`.** **F1 built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, awaiting merge)**: `glancePrompt(.., androidFace)` - UNUSABLE only in own mode, as Android's face (`AndroidLock.faceOn`) the stand-in shows the normal hint (`LockGlanceTest`); its emulator check is in `docs/testing/2026-10-24-home-round-run.md`, "Owed after launcher-small-a".
 - **The lock's glance page, three things** (the user's emulator screenshot, 2026-10-21, 320x569 dp, music tile full,
   one WhatsApp missed-call row): (1) **bug** - the bottom row ("Nødsamtale" and the torch) is cut off at the screen's
   bottom edge: `glanceFit` didn't keep the page inside the screen (check the 2026-10-21 torch spacing, +12 dp, and
@@ -1296,11 +1298,12 @@ after), never later. Details stay in the entries below.
   2026-10-24, measured 2026-10-25 - see the debounce entry above). Follow-up, XS, not ordered: after a release, a longer
   quiet window (about 3 s quiet / 30 s cap) for callbacks about the packages the pass touched would fold the stragglers
   into one or two loads.
-  **Follow-up built 2026-10-25 (branch `launcher-small-a`, awaiting code QA)**: the pass names each package it
+  **Follow-up built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, awaiting merge)**: the pass names each package it
   changes (`AppLoadHold.touch`), its release keeps them 2 min (`APP_LOAD_TRAIL_WINDOW_MS`, a chain of passes
   joined); a `LauncherApps` callback about packages all touched is the trail (`AppLoadHold.noteRequest`, pure
   `appLoadTrails`), and a burst of the trail alone loads after 3 s of quiet, at most 30 s (`appLoadBurstDue`); any
-  other request in it keeps 300 ms / 2 s from its arrival. `HomeRound7Test` (the jelly36 stragglers: 30 callbacks
+  other request in it keeps 300 ms / 2 s from its arrival, and the hold's end is one (code QA Q-2: the pass's own load
+  stays 300 ms after it); a pass that touched nothing leaves the trail's window as it was (Q-3). `HomeRound7Test` (the jelly36 stragglers: 30 callbacks
   2 s apart -> 2 loads, 31 before). The storm run again is owed (`docs/testing/2026-10-24-home-round-run.md`,
   "Owed after launcher-small-a").
 - **Jelly Star "App blocker"** (the user, 2026-10-24, dontkillmyapp.com/unihertz; two of three on the site's scale):
@@ -1361,13 +1364,13 @@ after), never later. Details stay in the entries below.
   (`homeGroundDue`, `HomeGroundTest`); design 59d step B's face leave folded in unchanged. Still owed (design 08's
   last section): 3-button navigation (with a photo: no zoom step when the copy goes - Q-7), kiosk on, a photo and a
   plain colour, the lock's leave on both pads, screen off/on over the lock (design 32).
-  **Follow-up built 2026-10-25 (branch `launcher-small-a`, awaiting code QA)** - the one-frame zoom step at the
+  **Follow-up built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, awaiting merge)** - the one-frame zoom step at the
   hand-over (queue above): Home keeps its copy permanently, `homeGroundDue(contentShown)` (the content on the window,
   so never at a lock-up); the 2026-10-24 arrival window (700 ms floor, 2.5 s cap, the enter animation's end, the
   posted pause end, the rechecks) and design 59d step B's face-leave mark in `HomeFront` are gone (both covered).
-  Back has no special case; the phone book and kid Settings stay transparent over Android's wallpaper. Design 08's
-  "The copy stays"; `HomeGroundTest`, `HomeFrontTest`. Emulator checks owed (Back's seam, Home -> phone book/kid
-  Settings now showing any scale step, gfxinfo): `docs/testing/2026-10-24-home-round-run.md`, "Owed after
+  Back has no special case; since the code QA's fix round (Q-1) the phone book and kid Settings draw the same copy.
+  Design 08's "The copy stays"; `HomeGroundTest`, `HomeFrontTest`. Emulator checks owed (Back's seam, Home -> phone
+  book/kid Settings with no step, gfxinfo): `docs/testing/2026-10-24-home-round-run.md`, "Owed after
   launcher-small-a".
 
 - **The last app still flashes for one frame at screen-on** (design 32's lock flash isn't gone; the user,
@@ -1426,7 +1429,7 @@ after), never later. Details stay in the entries below.
   (`firstLaunchResetDue`); design 59d §8.17.
 - **QR enrolment asks for no sync** (qa-write-settings-row-code Q-8): `applyProvisioningExtras` succeeding should
   `SyncRunner.request(.., "enrolled")` as Settings' "Enroll now" does, so the first policy doesn't wait for the backstop. Small.
-  **Built 2026-10-25 (branch `launcher-small-a`, awaiting code QA)**: `applyProvisioningExtras` asks for the sync on
+  **Built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, awaiting merge)**: `applyProvisioningExtras` asks for the sync on
   the enrolment's success - both QR paths (Android's provisioning and the in-app scanner) come through it;
   `ProvisioningModeTest` pins it.
 
