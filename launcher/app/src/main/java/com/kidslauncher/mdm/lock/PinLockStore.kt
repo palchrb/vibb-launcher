@@ -97,16 +97,24 @@ object PinLockStore {
         inactive: LockInactive?,
         requested: Boolean?,
     ): Boolean {
-        fun base(e: SealedPrefs.Editor) {
-            e.raw.putBoolean(ACTIVE, active).putString(INACTIVE, inactive?.wire)
-            if (requested != null) e.raw.putBoolean(KEYGUARD_REQUESTED, requested)
+        fun base(e: SharedPreferences.Editor) {
+            e.putBoolean(ACTIVE, active).putString(INACTIVE, inactive?.wire)
+            if (requested != null) e.putBoolean(KEYGUARD_REQUESTED, requested)
+        }
+        // Code QA Q-7: a Keep touches no sealed key, so it commits a plain editor without SealedPrefs' LOCK - the crash
+        // guard's save on the main thread never waits for a migration's keygen (N6). It can't race the migration's
+        // commit: that one writes only its own key.
+        if (write == PinWrite.Keep) {
+            val editor = p.edit()
+            base(editor)
+            return editor.commit()
         }
         fun removePin(e: SealedPrefs.Editor) {
             e.remove(HASH_AAD, PIN_HASH).remove(SALT_AAD, PIN_SALT)
             e.raw.remove(PIN_LENGTH).remove(PIN_REV)
         }
         val ok = sealed.edit(p) { e ->
-            base(e)
+            base(e.raw)
             when (write) {
                 is PinWrite.Write -> {
                     e.putSealed(HASH_AAD, PIN_HASH, write.config.hashHex).putSealed(SALT_AAD, PIN_SALT, write.config.saltHex)
@@ -118,7 +126,7 @@ object PinLockStore {
         }
         if (ok || write !is PinWrite.Write) return ok
         return sealed.edit(p) { e ->
-            base(e)
+            base(e.raw)
             removePin(e)
         }
     }
@@ -223,6 +231,9 @@ object PinLockStore {
 
 /** `PolicyResponse.kidLock` as the lock uses it. */
 data class KidLockConfig(val hashHex: String, val saltHex: String, val length: Int, val pinRev: Long = 0) {
+    /** Never the hash or the salt (code QA N-c). */
+    override fun toString() = "KidLockConfig(length=$length, pinRev=$pinRev, usable=$usable)"
+
     val usable: Boolean get() = com.kidslauncher.mdm.server.PinHash.usable(hashHex, saltHex)
 
     /** Identifies this PIN for the backoff reset without keeping a second copy of the hash. */

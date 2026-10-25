@@ -37,6 +37,10 @@ interface SecretBox {
 
     fun open(aad: String, blob: ByteArray): ByteArray
 
+    /** The key itself is the fault (missing, or the Keystore refuses it as a key) - not a transient error (code QA
+     * Q-4): only then does [SealedPrefs.putRecovering] make a new one. Never throws. */
+    fun keyBroken(): Boolean
+
     /** Deletes the key and makes a new one. */
     fun recreate()
 }
@@ -132,12 +136,18 @@ class SealedPrefs(private val box: SecretBox, private val log: (String, Throwabl
 
     /**
      * The device token's write rule (QA R10-9): a failed seal is retried once; failing again, the key is made anew
-     * under [LOCK] (the memo cleared) and sealed once more; false then, nothing written. Only for a field that is
-     * being replaced anyway - the other fields' blobs the old key leaves behind come back by their own paths.
+     * under [LOCK] (the memo cleared) and sealed once more - **only when the key itself is broken** ([SecretBox.
+     * keyBroken], code QA Q-4: two transient errors must not cost a key that still opens the kid PIN and the reset
+     * token); false otherwise, and false when the last seal fails, nothing written. Only for a field that is being
+     * replaced anyway - the other fields' blobs a new key orphans come back by their own paths.
      */
     fun putRecovering(prefs: SharedPreferences, aad: String, key: String, plain: String): Boolean = synchronized(LOCK) {
         val write: (Editor) -> Unit = { it.putSealed(aad, key, plain) }
         repeat(2) { tryEdit(prefs, write)?.let { return@synchronized it } }
+        if (!box.keyBroken()) {
+            log("Sealing failed twice with a usable key - nothing written, the key kept", null)
+            return@synchronized false
+        }
         try {
             box.recreate()
         } catch (e: Exception) {
@@ -203,12 +213,16 @@ object DeviceToken {
     /** The token, or `null` - none, blank or [Sealed.Unreadable]: every site's "not enrolled, skip" covers a broken key. */
     fun get(): String? = (state() as? Sealed.Value)?.plain?.takeIf { it.isNotBlank() }
 
-    /** Something is stored (sealed or not), no Keystore call: the first-launch reset's "enrolled" half. */
-    fun present(): Boolean = !prefs().getString(key(), null).isNullOrBlank()
+    /** Something is stored (sealed or not, readable or not), no Keystore call: the first-launch reset's "enrolled"
+     * half - an unreadable token never de-enrols (code QA Q-3). */
+    fun present(): Boolean = tokenStored(prefs().getString(key(), null))
 
     /** Sealed and committed synchronously; false when it couldn't be sealed or written. Off the main thread. */
     fun set(token: String): Boolean = Secrets.prefs.putRecovering(prefs(), AAD, key(), token)
 }
+
+/** [DeviceToken.present]'s rule on the stored string: anything not blank - a `ks1:` blob no key opens included. */
+fun tokenStored(raw: String?): Boolean = !raw.isNullOrBlank()
 
 /** AES-256-GCM in the AndroidKeyStore: not exportable, the TEE (not StrongBox, the user's choice), no user
  * authentication and no `UnlockedDeviceRequired` - the sync, the stream and the relock use the secrets while the
@@ -232,29 +246,61 @@ private object KeystoreSecretBox : SecretBox {
         return generator.generateKey()
     }
 
-    private fun key(): SecretKey? = keyStore().getKey(SECRETS_KEY_ALIAS, null) as? SecretKey
+    /** The key's handle, kept so a read doesn't reload the KeyStore and fetch the key every time (code QA Q-6);
+     * dropped on any failure and by [recreate]. */
+    @Volatile
+    private var cached: SecretKey? = null
 
-    override fun seal(aad: String, plain: ByteArray): ByteArray {
+    private fun key(): SecretKey? = cached ?: (keyStore().getKey(SECRETS_KEY_ALIAS, null) as? SecretKey)?.also { cached = it }
+
+    private inline fun <T> dropOnFailure(block: () -> T): T = try {
+        block()
+    } catch (e: Exception) {
+        cached = null
+        throw e
+    }
+
+    override fun seal(aad: String, plain: ByteArray): ByteArray = dropOnFailure {
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, key() ?: create())
+        cipher.init(Cipher.ENCRYPT_MODE, key() ?: create().also { cached = it })
         cipher.updateAAD(aad.toByteArray(Charsets.UTF_8))
         val sealed = cipher.doFinal(plain)
         val iv = cipher.iv
         check(iv.size == IV_BYTES) { "unexpected IV length" }
-        return iv + sealed
+        iv + sealed
     }
 
-    override fun open(aad: String, blob: ByteArray): ByteArray {
+    override fun open(aad: String, blob: ByteArray): ByteArray = dropOnFailure {
         require(blob.size > IV_BYTES) { "short blob" }
         val key = key() ?: throw IllegalStateException("no secrets key")
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, blob, 0, IV_BYTES))
         cipher.updateAAD(aad.toByteArray(Charsets.UTF_8))
-        return cipher.doFinal(blob, IV_BYTES, blob.size - IV_BYTES)
+        cipher.doFinal(blob, IV_BYTES, blob.size - IV_BYTES)
+    }
+
+    /** Missing, unrecoverable, or refused by `Cipher.init` (`InvalidKeyException`, which covers a permanently
+     * invalidated key); anything else (busy, a provider error) is transient. */
+    override fun keyBroken(): Boolean {
+        cached = null
+        return try {
+            val key = keyStore().getKey(SECRETS_KEY_ALIAS, null) as? SecretKey ?: return true
+            Cipher.getInstance(TRANSFORMATION).init(Cipher.ENCRYPT_MODE, key)
+            false
+        } catch (e: java.security.UnrecoverableKeyException) {
+            true
+        } catch (e: java.security.KeyStoreException) {
+            true
+        } catch (e: java.security.InvalidKeyException) {
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     override fun recreate() {
+        cached = null
         keyStore().deleteEntry(SECRETS_KEY_ALIAS)
-        create()
+        cached = create()
     }
 }

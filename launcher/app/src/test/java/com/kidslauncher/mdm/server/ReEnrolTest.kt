@@ -40,4 +40,16 @@ class ReEnrolTest {
         for (never in listOf("unlock(", "ParentPin.check(", "checkParentCode(", "LockEvent.")) assertFalse(never, never in dialog)
         assertTrue("SyncRunner.request(app, \"re_enrolled\")" in dialog)
     }
+
+    /** Code QA N-e: the code dialog's error line is a colour resource, readable on the light dialog (white). */
+    @Test
+    fun `the error line's colour is a resource with at least 4,5 to 1 on white`() {
+        val main = listOf("src/main", "app/src/main").map(::File).first { it.isDirectory }
+        assertTrue("@color/dialog_error_text" in File(main, "res/layout/dialog_re_enrol.xml").readText())
+        val hex = Regex("""<color name="dialog_error_text">#([0-9A-Fa-f]{6})</color>""")
+            .find(File(main, "res/values/colors.xml").readText())!!.groupValues[1]
+        fun channel(i: Int) = (hex.substring(i, i + 2).toInt(16) / 255.0).let { if (it <= 0.03928) it / 12.92 else Math.pow((it + 0.055) / 1.055, 2.4) }
+        val luminance = 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4)
+        assertTrue((1.05 / (luminance + 0.05)) >= 4.5)
+    }
 }

@@ -17,9 +17,11 @@ import com.kidslauncher.mdm.push.SyncRunner
 import com.kidslauncher.mdm.server.DeviceToken
 import com.kidslauncher.mdm.server.Enrollment
 import com.kidslauncher.mdm.server.ParentPin
+import com.kidslauncher.mdm.server.enrolFailureRefused
 import com.kidslauncher.mdm.server.showReEnrol
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -31,6 +33,9 @@ import kotlinx.coroutines.withContext
  * [Enrollment] and a sync - it never unlocks; the lock opens only by the kid or parent PIN, as always.
  */
 object ReEnrolDialog {
+
+    /** The enrolments' scope: the process's, not an activity's (Q-8). */
+    private val ENROL_SCOPE = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * After `dialog.show()`, for a dialog built with `setNeutralButton(R.string.re_enrol_button, null)`. [track]: the
@@ -49,7 +54,7 @@ object ReEnrolDialog {
             }
         }
         button?.setOnClickListener {
-            open(context, scope, track) { line ->
+            open(context, track) { line ->
                 showLine(line)
                 recheck()
             }
@@ -65,7 +70,7 @@ object ReEnrolDialog {
         false
     }
 
-    private fun open(context: Context, scope: CoroutineScope, track: (Dialog) -> Unit, done: (String) -> Unit) {
+    private fun open(context: Context, track: (Dialog) -> Unit, done: (String) -> Unit) {
         val app = context.applicationContext
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_re_enrol, null)
         val field = view.findViewById<EditText>(R.id.re_enrol_code)
@@ -91,17 +96,24 @@ object ReEnrolDialog {
             val url = LauncherPreferences.mdm().serverUrl()
             if (code.isEmpty() || url.isNullOrBlank()) return@setOnClickListener
             ok.isEnabled = false
-            scope.launch {
+            // Code QA Q-8: the enrolment runs in the process's scope - a one-shot code the server consumed must not be
+            // lost to the activity going away mid-call; the dialog hears the result only while it still shows.
+            ENROL_SCOPE.launch {
                 val result = Enrollment.enroll(app, url, code)
-                if (result.isSuccess) {
-                    SyncRunner.request(app, "re_enrolled")
-                    hideIme(field)
-                    dialog.dismiss()
-                    done(context.getString(R.string.re_enrol_done))
-                } else {
-                    error.text = context.getString(R.string.re_enrol_failed)
-                    error.visibility = View.VISIBLE
-                    ok.isEnabled = true
+                if (result.isSuccess) SyncRunner.request(app, "re_enrolled")
+                withContext(Dispatchers.Main) {
+                    if (!dialog.isShowing) return@withContext
+                    if (result.isSuccess) {
+                        hideIme(field)
+                        dialog.dismiss()
+                        done(context.getString(R.string.re_enrol_done))
+                    } else {
+                        // Q-1: only a refused code is "that code didn't work".
+                        val line = if (enrolFailureRefused(result.exceptionOrNull())) R.string.re_enrol_failed else R.string.re_enrol_unreachable
+                        error.text = context.getString(line)
+                        error.visibility = View.VISIBLE
+                        ok.isEnabled = true
+                    }
                 }
             }
         }

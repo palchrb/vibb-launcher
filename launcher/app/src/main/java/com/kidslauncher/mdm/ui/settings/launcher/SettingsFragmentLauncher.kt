@@ -602,7 +602,8 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
      */
     private fun syncNowWithServer(context: Context) {
         val mdm = LauncherPreferences.mdm()
-        if (mdm.serverUrl().isNullOrBlank() || com.kidslauncher.mdm.server.DeviceToken.get().isNullOrBlank()) {
+        // Presence only: no Keystore call on the main thread (design r10, code QA Q-6); the sync reads the token itself.
+        if (mdm.serverUrl().isNullOrBlank() || !com.kidslauncher.mdm.server.DeviceToken.present()) {
             Toast.makeText(context, R.string.toast_mdm_enroll_missing_fields, Toast.LENGTH_LONG)
                 .show()
             return

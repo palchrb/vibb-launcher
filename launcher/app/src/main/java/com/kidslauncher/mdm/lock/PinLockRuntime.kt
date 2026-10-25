@@ -1541,10 +1541,14 @@ object PinLockRuntime {
         }
         // S3-1: the request is stored only from a policy with the parent's choice - never from a fallback's missing kid_lock.
         val storedRequest = requestToStore(requested, parentChoice)
+        val write = pinWriteFor(kidLock, newConfig)
+        // Code QA Q-5: a real hash whose seal failed (the fields removed, R10-3) is written again at the next apply,
+        // not only when the PIN changes - else it stays off the disk for the rest of the process.
         if (newConfig != config || active != PinLockStore.active(app) || why != inactive ||
-            (storedRequest != null && storedRequest != PinLockStore.keyguardRequested(app))
+            (storedRequest != null && storedRequest != PinLockStore.keyguardRequested(app)) ||
+            (write is PinWrite.Write && !PinLockStore.pinStored(app))
         ) {
-            PinLockStore.saveConfig(app, pinWriteFor(kidLock, newConfig), active, why, storedRequest)
+            PinLockStore.saveConfig(app, write, active, why, storedRequest)
         }
         config = newConfig
         inactive = why

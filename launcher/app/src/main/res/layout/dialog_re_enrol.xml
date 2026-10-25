@@ -37,7 +37,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:accessibilityLiveRegion="polite"
-        android:textColor="#C92A2A"
+        android:textColor="@color/dialog_error_text"
         android:textSize="14sp"
         android:visibility="gone" />
 </LinearLayout>

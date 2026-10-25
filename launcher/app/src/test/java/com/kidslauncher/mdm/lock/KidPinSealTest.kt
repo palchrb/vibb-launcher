@@ -14,7 +14,7 @@ import org.junit.Test
 class KidPinSealTest {
     private val hash = "aa".repeat(32)
     private val salt = "00112233445566778899aabbccddeeff"
-    private val other = KidLockConfig("bb".repeat(32), salt, 4, pinRev = 3)
+    private val other = KidLockConfig("bb".repeat(32), salt, 4, pinRev = 7)
     private val real = KidLock(hash, salt, pinLength = 6, pinRev = 7)
     private val redacted = real.copy(pinHash = "", pinSalt = "")
 
@@ -45,6 +45,13 @@ class KidPinSealTest {
         assertEquals(other.copy(length = 6), kidConfigFor(redacted, null) { other })
         // QA R10-4: an unusable memory (the stand-in, a bad hash) falls through to the store.
         assertEquals(other.copy(length = 6), kidConfigFor(redacted, KidLockConfig("", "", 4)) { other })
+        // Code QA Q-12: a stored copy of another rev is an older PIN - the stand-in; rev 0 (an older server) isn't checked.
+        val older = other.copy(pinRev = 6)
+        assertFalse(kidConfigFor(redacted, null) { older }!!.usable)
+        assertEquals(true to LockInactive.BAD_HASH, activation(kidConfigFor(redacted, null) { older }))
+        assertEquals(older.copy(length = 6), kidConfigFor(redacted.copy(pinRev = 0), null) { older })
+        // Memory is the last applied: no rev check.
+        assertEquals(older.copy(length = 6), kidConfigFor(redacted, older, ::noRead))
     }
 
     @Test
@@ -93,6 +100,20 @@ class KidPinSealTest {
         assertEquals(pin, prefs.map.filterKeys { it.startsWith("pin_") })
         assertTrue(save(PinWrite.Remove))
         assertTrue(prefs.map.keys.none { it.startsWith("pin_") })
+    }
+
+    @Test
+    fun `a Keep commits without the sealed lock (Q-7), and the PIN's toString shows no hash (N-c)`() {
+        save(PinWrite.Write(written))
+        val holder = Thread { synchronized(sealed.LOCK) { Thread.sleep(2_000) } }.apply { start() }
+        while (holder.state != Thread.State.TIMED_WAITING) Thread.sleep(1)
+        val started = System.nanoTime()
+        assertTrue(save(PinWrite.Keep, active = false))
+        assertTrue("Keep waited for the lock", System.nanoTime() - started < 1_000_000_000L)
+        holder.join()
+        assertEquals(false, prefs.map["active"])
+        assertFalse(hash in written.toString() || salt in written.toString())
+        assertFalse(hash in real.toString() || salt in real.toString())
     }
 
     @Test

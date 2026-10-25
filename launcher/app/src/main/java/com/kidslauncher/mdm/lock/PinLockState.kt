@@ -312,7 +312,10 @@ fun kidConfigFor(kidLock: com.kidslauncher.mdm.server.dto.KidLock?, memory: KidL
     if (kidLock == null) return null
     val length = kidPinLength(kidLock.pinLength)
     if (kidLock.pinHash.isNotEmpty()) return KidLockConfig(kidLock.pinHash, kidLock.pinSalt, length, kidLock.pinRev)
-    val known = memory?.takeIf { it.usable } ?: stored()?.takeIf { it.usable }
+    // Code QA Q-12: a stored copy of another rev is an older PIN (a crash between the cache write and the apply after
+    // a PIN change) - the stand-in instead; the next sync brings the new hash. Rev 0 is an older server: no check.
+    val known = memory?.takeIf { it.usable }
+        ?: stored()?.takeIf { it.usable && (kidLock.pinRev == 0L || it.pinRev == kidLock.pinRev) }
     return known?.copy(length = length) ?: KidLockConfig("", "", length, kidLock.pinRev)
 }
 

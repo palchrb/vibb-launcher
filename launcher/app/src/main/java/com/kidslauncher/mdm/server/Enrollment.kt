@@ -6,20 +6,32 @@ import com.kidslauncher.mdm.server.dto.EnrollRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** Why an enrolment failed (code QA Q-1): [refused] - the server answered 4xx (a wrong, used or expired code); else
+ * the server wasn't reached, answered 5xx, or the token couldn't be stored. */
+class EnrollFailure(val refused: Boolean, message: String) : Exception(message)
+
+/** An HTTP status's failure: only a 4xx is the code's fault. */
+fun enrollFailureOf(httpCode: Int): EnrollFailure = EnrollFailure(refused = httpCode in 400..499, "HTTP $httpCode")
+
 /**
  * The one enrolment (design r10 §5): `POST /api/devices/enroll` with a one-shot code, the new device token sealed
  * and committed ([DeviceToken.set], on IO - revision check N7), `enrolled`, and the old enrolment's state cleared.
  * Used by the QR's [applyProvisioningExtras], Settings' "Enroll now" and the lock's "Ny oppsettkode"; the callers
- * that want the first policy at once ask for the sync themselves.
+ * that want the first policy at once ask for the sync themselves. The tailnet comes up first (code QA Q-1: a
+ * `*.ts.net` server resolves only through it, and in the deadlock no sync or stream retries it).
  */
 object Enrollment {
     suspend fun enroll(context: Context, serverUrl: String, code: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            // No-ops when connected or when no key is set.
+            TsnetClient.connectFromPreferences(context)
             val response = createMdmApi(serverUrl).enroll(EnrollRequest(code))
             val body = response.body()
-            if (!response.isSuccessful || body == null) return@withContext Result.failure(Exception("HTTP ${response.code()}"))
+            if (!response.isSuccessful || body == null) return@withContext Result.failure(enrollFailureOf(response.code()))
             val mdm = LauncherPreferences.mdm()
-            if (!DeviceToken.set(body.deviceToken)) return@withContext Result.failure(Exception("the token couldn't be stored"))
+            if (!DeviceToken.set(body.deviceToken)) {
+                return@withContext Result.failure(EnrollFailure(refused = false, "the token couldn't be stored"))
+            }
             mdm.enrolled(true)
             // A new enrollment: the queued parent-PIN events were about the old one (design 24).
             ParentPin.clearEvents(context)
@@ -43,3 +55,6 @@ object Enrollment {
  */
 fun showReEnrol(token: Sealed, parent: ParentPinStatus, serverUrl: String?): Boolean =
     token == Sealed.Unreadable && (parent.untilSync || !parent.configured) && !serverUrl.isNullOrBlank()
+
+/** The code dialog's line for a failed enrolment: only a refused code says "that code didn't work" (Q-1). */
+fun enrolFailureRefused(error: Throwable?): Boolean = (error as? EnrollFailure)?.refused == true

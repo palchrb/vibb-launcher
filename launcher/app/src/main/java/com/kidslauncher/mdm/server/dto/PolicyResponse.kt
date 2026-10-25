@@ -142,7 +142,10 @@ data class KidLock(
     val pinLength: Int = 4,
     val keyguard: String? = null,
     val pinRev: Long = 0,
-)
+) {
+    /** Never the hash or the salt (design r10, code QA N-c). */
+    override fun toString() = "KidLock(pinLength=$pinLength, keyguard=$keyguard, pinRev=$pinRev)"
+}
 
 /** `PolicyResponse.locationPolicy`: [mode] "off", "on_request" or "interval" (every
  * [intervalMinutes]); see [com.kidslauncher.mdm.server.locationAction]. Design 64 step 2: [zones]
