@@ -1602,6 +1602,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
 - **Design 56, Android 13 and 17** (assessment, `docs/design/56-android-13-and-17.md`): parked until Android 17 is
   announced for the Jelly Star, then the API 37 emulator round plus §3.4's four items.
 - **Design 61, vibb boxes** (assessment, `docs/design/61-vibb-boxes-assessment.md`): option (c), parked.
+- **FluffyChat instead of Element X** (the user, 2026-10-26): assessed against the code, `docs/review/fluffychat-vs-element-x-2026-10-26.md` - stay on Element X for now (the cryptography no weaker, the stability and defaults are: skippable backup/verification, open key-backup bugs; MatrixRTC calls three weeks old with open audio/hang-up bugs; its call runs inside the chat-list activity, so only variant E of S-M4 could keep the kid out of the chats; per-room nick/avatar works there, not in Element X). Revisit about January 2027 with a Jelly Star test.
 - **Design 09 part A, an SMS allowlist** (`docs/design/09-sms-and-fixes.md`): postponed since step 9; no code exists.
 - **Design 22 S5/L1 and S6/L2, and the Tailscale-app mode 2 (design 03)**: parked - "the tailnet-only setup is the
   product" (S7, the CSP, moves to server round S2). L3 (the strict network-security config) is not built and has no
