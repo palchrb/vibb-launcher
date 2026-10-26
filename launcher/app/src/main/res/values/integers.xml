@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The lock glance row's text line (view_lock_glance_row.xml, glance_row_subtitle): one line; two on a tall screen
+         (values-h720dp, six-inch F4). The title is always one line. -->
+    <integer name="glance_row_text_lines">1</integer>
+</resources>

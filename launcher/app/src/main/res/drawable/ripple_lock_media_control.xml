@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The lock's music player controls' press (code QA L-2 of launcher-glance-c): Android's borderless ripple in its
+     highlight colour, but 28 dp, so on the 56 dp play button and the 48 dp previous/next it stays inside the tile's
+     4 dp bottom padding instead of being cut flat at the tile's rounded edge (selectableItemBackgroundBorderless draws
+     half the diagonal, 39.6 dp). No mask and no content: unbounded, projected onto the tile like the attribute's. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="?android:attr/colorControlHighlight"
+    android:radius="28dp" />

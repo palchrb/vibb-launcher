@@ -1003,6 +1003,20 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     other two rows sit out of sight in the scroll with no hint (the "more" line counts only rows beyond three). At font
     1.3 the compact tile shows the next row under the fade. Options: a fade or "more" hint whenever a row is out of
     sight, or candidate 4 (the compact tile) before 3 once a row would be hidden. Launcher, S.
+    **Built** (2026-10-26, branch `launcher-glance-c`): no code change was needed, verified against the code - r11
+    (merged 2026-10-24, after the rc.3 run) replaced the fit and its candidates with a rule: the compact tile from two
+    rows (`glanceLayout`), so music + 3 rows at font 1.0 is the compact tile and all three rows, every row at least
+    partly in sight. On the Jelly Star (and `jelly36`) the page runs the profile clock in both lock modes (code QA M-1):
+    414.4 dp - with gesture navigation it fits (425 dp scroller), with 3-button navigation (401) row 3 shows 42.6 dp with
+    its bottom 13.4 dp under the fade; with an alarm set row 3 shows 22.4 dp (3-button) / 46.4 dp (gestures). Without a
+    clock profile it is 392 dp and fits either bar. The whole page scrolls with the ScrollView's own fade at an edge
+    with more, since the fix round Home's bottom fade, 32 dp (it was 16: when the fold falls in the gap above a wholly
+    hidden row, 16 dp faded only the gap and the card's empty padding - code QA M-2). The hint is that fade, not the
+    "more" line: the "more" line is the list's last child, so it is below the fold exactly when rows are, and counts
+    only the rows beyond the eight bound. Pinned in `LockGlanceLayoutTest` (`music + 3 rows at font 1_0 ... (RC3-8)`:
+    the layout chosen, both clocks, the fade = `FADE_BOTTOM_DP` and longer than a row's gap + bottom padding + half
+    its text line, the "more" count). Emulator check: `docs/testing/2026-10-25-evening-run.md` "Owed after
+    launcher-glance-c".
 - **6-inch / Android 15 check (2026-10-23, `docs/testing/2026-10-23-six-inch-android15.md`, AVD six35 = pixel_7 411x914 dp,
   API 35):** every screen fits at font 1.0 and 1.3, nothing broken or oversized, just more empty space. Findings: **F1
   (High, M)** an UNARMED reboot (a crash, `adb reboot`) never finishes booting on an image whose stock launcher isn't
@@ -1015,6 +1029,23 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   screens; F6 (check) Android 15 logs it removed our pinned Home preference at every locked boot and at the cover's
   hand-over - Home still came up; check on a phone (step M's run looks); F7 (note) 4-21 black frames at a wake on 15,
   no leak. Not done there: the timer tile, the blocked/Play screens, QR provisioning.
+  **F3 built** (2026-10-26, branch `launcher-glance-c`): `contact_name` has 4 dp `paddingStart`/`paddingEnd` inside
+  its cell (Home's `maxWidth = itemPx` is the cell), so two neighbours' names are at least 8 dp apart; the line is
+  88 dp on the Jelly Star's 96 dp cells (Home and the phone book alike), so at font 1.0 a name up to ~88 dp fits as
+  before, a single word between 88 and 96 dp now takes a step smaller (code QA N-4; at 1.3 "Kristoffer" does - the
+  intended trade). Pinned in `HomeEdgesTest` (`neighbouring contact names are at least 8 dp apart`) and
+  `WholeWordsTest` (the names' line is the cell less the label's sides; the phone book's 88 dp line, code QA L-4).
+  **F4 built** (2026-10-26, branch `launcher-glance-c`): a glance row's text (`glance_row_subtitle`) is
+  `maxLines="@integer/glance_row_text_lines"` - 1 in `values/`, 2 in `values-h720dp/`; the title stays one line. 720 dp
+  is the first round screen height where the compact tile and three two-line rows still fit the scroller at font 1.3
+  with a 48 dp status bar and 3-button navigation (533.2 dp, from 701.2 dp tall); the Jelly Star (569 dp) keeps one
+  line, the six-inch (914 dp) gets two. The qualifier reads `screenHeightDp` (code QA N-1): with `targetSdk` 36 on
+  Android 15+ the whole window, bars included (what the derivation assumes); on Android 14 the height less both bars,
+  so two lines need about 816 dp of screen there - stricter, the fit still holds. In a two-line row the icon sits at
+  the top beside the title, where centring put it in a one-line row (code QA N-2). Since r11 nothing measures (no fit copies to count the lines); the page scrolls,
+  and `LockGlanceLayoutTest`'s model counts the two lines (a two-line row 73.4 dp at 1.0). Pinned in
+  `LockGlanceLayoutTest` (`a row's text takes two lines only from a 720 dp tall screen`, and the order test's title 1 /
+  text by the integer); the Jelly Star's pins are unchanged.
 - **Screen capture switch (the user, 2026-10-23, approved for after rc.3) - the switch DONE 2026-10-23, branch
   `screen-capture` (policy key `hardening.disallow_screen_capture`, default off, migration 0089; emulator check
   `docs/testing/2026-10-23-screen-capture.md`); the per-app camera and permissions rows below stay open:** one hardening switch on Advanced, "Screenshots
@@ -1151,6 +1182,15 @@ separators, one item per bullet, so each sits in its round; the words are unchan
 - **Lock glance: the compact music tile could be a little lower** (the user, 2026-10-22, after r9: "fin - jeg tror du
   kunne latt den være enda litt lavere, men er greit"): trim its vertical padding/gaps (174.8 dp now) on the next
   glance round; `LockGlanceLayoutTest`'s pins move with it. Small, not urgent.
+  **Built** (2026-10-26, branch `launcher-glance-c`): the tile the user saw after r9 is r9's player, `lock_media_tile`
+  (the code calls it the full tile; 174.8 dp is its number, the one-row compact tile is 90 dp and unchanged). 12 dp
+  lower, **162.8 dp** with its margin: the bottom padding 12 -> 4 dp (the controls' own targets keep 11-15 dp under
+  their glyphs) and the gap above the progress row 10 -> 6 dp; the cover, texts, bar and 48/56/48 dp controls
+  untouched. `LockGlanceLayoutTest`'s tables moved with it (full tile alone 266.8, music + 1 row 336.8, the rule card +
+  full music 348.8 / + 1 row 418.8 - scrolls 17.8 / 0 dp -, with the alarm line 439 - 38 / 14 dp). The three controls'
+  press is a 28 dp borderless ripple (`ripple_lock_media_control.xml`), so it stays inside the tile's 4 dp bottom
+  padding instead of being cut flat at the tile's edge (Android's borderless one is half the diagonal, 39.6 dp on the
+  56 dp play - code QA L-2).
 - **Music: what a heart means** (the user, 2026-10-21): the heart is per track/episode, but "Favoritter" only filters
   the carousel to entries holding a heart and a cover tap plays the whole entry - so in practice it marks the tile.
   Options put to the user: (A) the heart on the tile/entry instead of per track; (C) keep per-track hearts, and under

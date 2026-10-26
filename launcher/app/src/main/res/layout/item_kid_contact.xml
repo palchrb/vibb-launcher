@@ -68,7 +68,9 @@
             app:drawableStartCompat="@drawable/ic_kid_missed_call" />
     </FrameLayout>
 
-    <!-- A name is never cut between letters ("Mamm/a" at 2.0, N7): WholeWordTextView. -->
+    <!-- A name is never cut between letters ("Mamm/a" at 2.0, N7): WholeWordTextView. Its 4 dp sides keep the text
+         inside the cell (Home sets maxWidth to the cell), so two neighbours' names are at least 8 dp apart and never
+         read as one word (six-inch F3: "Bestemor" / "Kristoffer" at font 1.3). -->
     <com.kidslauncher.mdm.ui.WholeWordTextView
         android:id="@+id/contact_name"
         android:layout_width="wrap_content"
@@ -79,6 +81,8 @@
         android:gravity="center"
         android:maxWidth="104dp"
         android:maxLines="2"
+        android:paddingStart="4dp"
+        android:paddingEnd="4dp"
         android:textColor="@color/kid_ink"
         android:textSize="15sp"
         android:textStyle="bold" />

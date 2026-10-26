@@ -131,6 +131,10 @@ navigation; available 457 / 481 dp; scroller = available - the 56 dp bottom bloc
 | no music, 5 rows | 438 | scrolls 37 | scrolls 13 |
 | the user's case: profile clock (113.7 + date 12.7), alarm 20.2, music + 2 rows | 370.6 | fits | fits |
 
+As built 2026-10-26 (branch `launcher-glance-c`): the full tile is 162.8 dp (12 dp lower), so the full tile alone is
+266.8 and music + 1 row 336.8; the other rows are unchanged. The scroller's fade is 32 dp (Home's bottom fade), not 16;
+a row's text takes two lines from a 720 dp tall screen (`values-h720dp`), one below it.
+
 ### 1.3 The cap: eight rows
 
 `GLANCE_MAX_ROWS` goes from 3 to **8**, and "+ N varsler til" counts the rest.
