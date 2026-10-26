@@ -113,6 +113,23 @@
   .dagen .detail .tm { font-size: 14px; font-weight: 800; color: var(--accent); margin-top: 6px; font-variant-numeric: tabular-nums; }
   .dagen .detail .cal { font-size: 13px; font-weight: 700; color: var(--core-dim); margin-top: 2px; }
   .dagen .detail .body { font-size: 14px; font-weight: 600; color: var(--core); line-height: 21px; margin-top: 14px; }
+  .dagen .fab { position: absolute; right: 16px; bottom: 28px; width: 52px; height: 52px; border-radius: 50%;
+                background: var(--accent); color: var(--ground); font-size: 30px; font-weight: 600; line-height: 52px;
+                text-align: center; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+  .dagen .form { position: absolute; left: 16px; right: 16px; top: 104px; display: flex; flex-direction: column; gap: 10px; }
+  .dagen .field { background: var(--tile); border-radius: 16px; padding: 10px 14px; }
+  .dagen .field .lb { font-size: 12px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--core-dim); }
+  .dagen .field .vl { font-size: 16px; font-weight: 700; color: var(--ink); line-height: 24px; margin-top: 2px; }
+  .dagen .field .vl.ph { color: var(--core-dim); font-weight: 600; }
+  .dagen .row2 { display: flex; gap: 10px; } .dagen .row2 .field { flex: 1; }
+  .dagen .save { position: absolute; left: 16px; right: 16px; bottom: 28px; height: 48px; border-radius: 24px;
+                 background: var(--accent); color: var(--ground); font-size: 16px; font-weight: 800; line-height: 48px;
+                 text-align: center; }
+  .dagen .topbar { position: absolute; left: 12px; right: 12px; top: 40px; display: flex; justify-content: space-between;
+                   align-items: center; }
+  .dagen .topbar .ttl { font-size: 22px; font-weight: 800; color: var(--ink); }
+  .dagen .topbar .x { font-size: 15px; font-weight: 700; color: var(--core-dim); }
+  .dagen .ev.mine .tm { color: #9fd3a8; }
   /* the PWA (light, iOS grouped lists; the Vibb identity D) */
   .pwa { position: relative; width: 320px; max-width: 100%; height: 569px; background: var(--pwa-bg);
          color: var(--pwa-ink); border-radius: 18px; overflow: hidden; box-shadow: 0 0 0 1px var(--hair);
@@ -216,6 +233,49 @@ titler, en fotballfeed, og en delt familiekalender.</p>
     </div>
     <figcaption><b>Uten regler.</b> Slik ser feedene ut rett fra kilden. Sammenlign med første skjerm: tre regler gjør
     «Gruppe 2 skoleåret 2026/27 – 5B – …» til «Skole», «SFO Solbakken avd. 3:» til «SFO:» og «Vibb IL G2017 –» til «Fotball:».</figcaption>
+  </figure>
+</div>
+
+
+<h2>1b. Steg 3: barnets egne avtaler</h2>
+<p class="note">Bare når forelderen har valgt én skrivbar kalender som barnets (lokal, eller en delt familiekalender via DAVx5).
+Da får Dagen en «+», og barnet kan legge inn, endre og slette <b>sine egne</b> avtaler; alt annet er urørlig som før.</p>
+<div class="grid">
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">Lørdag<small>31. oktober</small></div><div class="today-btn">← I dag</div></div>
+      <div class="list">
+        <div class="ev mine"><div class="tm">14:00<small>16:00</small></div><div class="tx"><div class="ti">Besøk hos Ola</div><div class="wh">Min kalender</div></div></div>
+      </div>
+      <div class="peek l"></div><div class="peek r"></div>
+      <div class="fab">+</div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>Med «+».</b> Den runde knappen nederst til høyre finnes bare når en skrivbar kalender er valgt. Barnets egne
+    avtaler har kalenderens navn som andrelinje og en grønnere tid, så de skiller seg fra skolen og familien.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="topbar"><span class="x">Avbryt</span><span class="ttl">Ny avtale</span><span class="x" style="visibility:hidden">Avbryt</span></div>
+      <div class="form">
+        <div class="field"><div class="lb">Hva</div><div class="vl">Besøk hos Ola</div></div>
+        <div class="field"><div class="lb">Dag</div><div class="vl">Lørdag 31. oktober</div></div>
+        <div class="row2">
+          <div class="field"><div class="lb">Fra</div><div class="vl">14:00</div></div>
+          <div class="field"><div class="lb">Varighet</div><div class="vl">2 timer</div></div>
+        </div>
+        <div class="field"><div class="lb">Sted (valgfritt)</div><div class="vl ph">Hos Ola</div></div>
+      </div>
+      <div class="save">Lagre</div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>Ny avtale.</b> Fire felt og Lagre: hva, dag (forhåndsutfylt med dagen du sto på), fra, varighet, og et valgfritt sted.
+    Ingen gjester, ingen gjentakelse, ingen påminnelsesvalg (de følger kalenderens regel). Det samme skjemaet åpner for «Endre»
+    på barnets egne avtaler; «Slett» ligger på detaljsiden deres, og bare der.</figcaption>
   </figure>
 </div>
 
