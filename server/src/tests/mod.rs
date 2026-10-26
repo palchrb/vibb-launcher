@@ -44,6 +44,7 @@ mod parents;
 mod play;
 mod power;
 mod provisioning;
+mod settings_log;
 pub(crate) mod settings_pages;
 mod shell;
 mod sound_mode;

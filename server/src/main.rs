@@ -41,6 +41,7 @@ mod play;
 mod push;
 mod retention;
 mod security;
+mod settings_log;
 mod sound_mode;
 mod spotify;
 mod startup;
@@ -1425,6 +1426,9 @@ pub fn build_admin_router(
             state.clone(),
             handlers::notifications::push_marker,
         ))
+        // A save (a POST answered with a 303 back to its page) in the security log, coalesced per
+        // parent and page (Q29); inside require_full_auth too, for its `CurrentAdmin`.
+        .layer(from_fn_with_state(state.clone(), settings_log::log_saves))
         .layer(from_fn_with_state(
             state.clone(),
             security::require_full_auth,
@@ -1470,6 +1474,7 @@ pub fn build_admin_router(
             "/backups/format-drive",
             post(handlers::backups::format_drive),
         )
+        .layer(from_fn_with_state(state.clone(), settings_log::log_saves))
         .layer(from_fn_with_state(
             state.clone(),
             security::require_full_auth,
