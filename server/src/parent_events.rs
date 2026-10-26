@@ -817,8 +817,9 @@ pub fn local_target(target: &str) -> bool {
 /// stored (logged) - a leaked token or a rooted phone can't bury the inbox (security review L1).
 pub const EVENTS_AN_HOUR: i64 = 20;
 /// Of an urgent kind, a phone's first this many in a rolling hour are pushed; the rest of the hour's
-/// are stored without a push of their own (L1: the parent has had that many "Emergency call" or
-/// "PIN locked" pushes; the inbox has the rest).
+/// are stored without a push of their own (L1: the parent has had that many "PIN locked" or
+/// "another app has control" pushes; the inbox has the rest). Never the emergency call (QA L-b):
+/// every one stored is pushed, so at most [EVENTS_AN_HOUR] an hour.
 pub const URGENT_PUSHES_AN_HOUR: i64 = 3;
 
 /// Stores `event` once: the new row's id, or `None` when it was there already (the same phone,
@@ -855,7 +856,10 @@ pub async fn raise(
             );
             return Ok(None);
         }
-        if event.kind.urgent() && this_hour >= URGENT_PUSHES_AN_HOUR {
+        if event.kind.urgent()
+            && event.kind != Kind::EmergencyCall
+            && this_hour >= URGENT_PUSHES_AN_HOUR
+        {
             push = Push::No;
         }
     }
@@ -915,12 +919,10 @@ pub fn new_emergency_call(
     previous: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
 ) -> Option<DateTime<Utc>> {
-    let at = reported?;
-    // A call dated past the server's clock is no news (security review L1: a phone could raise one
-    // with every report).
-    if at > now + chrono::Duration::minutes(5) {
-        return None;
-    }
+    // A call dated past the server's clock (a phone clock that runs fast) is announced at the
+    // server's now (QA L-b: dropped, it would never be news later - the previous report already
+    // holds its time); `EVENTS_AN_HOUR` bounds a phone that sends a new one with every report.
+    let at = reported?.min(now);
     match previous {
         Some(before) => (at > before).then_some(at),
         None => (now - at <= chrono::Duration::hours(FIRST_REPORT_CALL_HOURS)).then_some(at),
@@ -2746,11 +2748,10 @@ mod tests {
         let now = utc("2026-10-18 12:00:00");
         let call = Some(utc("2026-10-18 11:00:00"));
         assert_eq!(new_emergency_call(call, call, now), None);
-        // A call past the server's clock (more than 5 minutes) is never news (security review L1).
+        // A call past the server's clock is announced at the server's now (QA L-b).
         let ahead = Some(utc("2026-10-18 12:06:00"));
-        assert_eq!(new_emergency_call(ahead, call, now), None);
-        let soon = Some(utc("2026-10-18 12:04:00"));
-        assert_eq!(new_emergency_call(soon, call, now), soon);
+        assert_eq!(new_emergency_call(ahead, call, now), Some(now));
+        assert_eq!(new_emergency_call(ahead, None, now), Some(now));
         assert_eq!(
             new_emergency_call(call, Some(utc("2026-10-17 11:00:00")), now),
             call

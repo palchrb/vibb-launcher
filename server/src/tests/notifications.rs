@@ -785,3 +785,31 @@ async fn a_target_off_this_server_is_refused() {
         None
     );
 }
+
+/// QA L-b: an emergency call is never silent - past the urgent kinds' 3 pushes an hour every one is
+/// still pushed, and one dated past the server's clock is announced at once (at the server's now).
+#[tokio::test]
+async fn every_emergency_call_is_pushed() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    super::web_push::subscribe(&app, &cookie, "https://web.push.apple.com/calls").await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let minutes_ago = |m: i64| {
+        (chrono::Utc::now() - chrono::Duration::minutes(m))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    };
+    for m in [50, 40, 30, 20, 10] {
+        app.post_status(&token, call_state(&minutes_ago(m))).await;
+    }
+    app.post_status(&token, call_state(&minutes_ago(-30))).await;
+    assert_eq!(
+        kinds(&app, id).await,
+        vec!["emergency_call"; 6],
+        "the fast clock's call too"
+    );
+    let pushes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM push_deliveries")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(pushes, 6);
+}
