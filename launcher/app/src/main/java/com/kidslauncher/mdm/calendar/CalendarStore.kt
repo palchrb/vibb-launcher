@@ -424,8 +424,11 @@ object CalendarStore {
         val app = context.applicationContext
         worker.execute {
             val policy = policy()
-            if (!policy.usable || !policy.kidAdds || policy.kidCalendarKey != null) return@execute
-            if (state.calendars.any { it.vibbLocal } || !canWrite(app)) return@execute
+            if (!policy.usable || !policy.kidAdds || policy.kidCalendarKey != null || !canWrite(app)) return@execute
+            // Read again: the kept list may predate the permission, and a second "Min kalender" must never be made.
+            val current = readCalendars(app)
+            state = current
+            if (!current.readable || current.calendars.any { it.vibbLocal }) return@execute
             try {
                 val uri = Calendars.CONTENT_URI.buildUpon()
                     .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
