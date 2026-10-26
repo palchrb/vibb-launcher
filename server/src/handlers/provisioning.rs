@@ -25,6 +25,19 @@ pub(crate) struct AdminExtras {
     pub(crate) enrollment_code: String,
 }
 
+/// The phones' server address for the setup QR: the one saved on Settings › Phone Setup, else
+/// `.env`'s `PHONE_SERVER_URL` (`ForkConfig::phone_server_url`); "" when neither is set.
+pub(crate) fn server_url<'a>(
+    settings: &'a ProvisioningSettings,
+    config: &'a ForkConfig,
+) -> &'a str {
+    if settings.server_url.is_empty() {
+        config.phone_server_url.as_deref().unwrap_or("")
+    } else {
+        &settings.server_url
+    }
+}
+
 #[derive(Serialize)]
 struct ProvisioningPayload {
     #[serde(rename = "android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME")]
@@ -137,7 +150,7 @@ impl ProvisionQrTemplate {
             enrolled: device.enrolled_at.is_some(),
             device,
             qr_svg: String::new(),
-            missing_server_url: settings.server_url.is_empty(),
+            missing_server_url: server_url(settings, &state.config).is_empty(),
             missing_checksum: state.config.launcher_signature_checksum.is_none(),
             wifi_ssid: String::new(),
             until: None,
@@ -279,7 +292,7 @@ pub async fn provision_qr(
         provisioning_payload(
             &state.config,
             AdminExtras {
-                server_url: settings.server_url.clone(),
+                server_url: server_url(&settings, &state.config).to_string(),
                 tailscale_auth_key: settings.tailscale_auth_key.clone(),
                 enrollment_code: code,
             },
