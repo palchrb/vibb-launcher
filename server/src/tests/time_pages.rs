@@ -1086,3 +1086,74 @@ async fn the_time_row_says_when_the_rules_cant_be_read() {
         "{row}"
     );
 }
+
+/// Design 66 §3.3: the rule editor never handles a phone's bedtime row. Its old link goes to the
+/// Bedtime page (303), a save or delete through the editor is a 404 with nothing written, and
+/// neither list of rules shows it.
+#[tokio::test]
+async fn the_bedtime_row_is_never_a_day_rule() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let bedtime: i64 = sqlx::query_scalar(
+        "INSERT INTO time_rules (device_id, name, kind, calls_allowed, days_json, bedtime) \
+         VALUES (?, 'Bedtime', 'bedtime', 1, ?, 1) RETURNING id",
+    )
+    .bind(id)
+    .bind(r#"[{"start":1260,"end":420},{"start":1260,"end":420},{"start":1260,"end":420},{"start":1260,"end":420},{"start":1350,"end":540},{"start":1350,"end":540},{"start":1260,"end":420}]"#)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let stored = || async {
+        sqlx::query_as::<_, (String, String)>("SELECT name, days_json FROM time_rules WHERE id = ?")
+            .bind(bedtime)
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    let before = stored().await;
+
+    let res = app
+        .get_page(&format!("/schedules/rules/{bedtime}"), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{id}/bedtime").as_str())
+    );
+    let scope = id.to_string();
+    for (path, fields) in [
+        (
+            format!("/schedules/rules/{bedtime}"),
+            vec![
+                ("scope", scope.as_str()),
+                ("name", "Dag"),
+                ("kind", "custom"),
+                ("d0_start", "08:00"),
+                ("d0_end", "09:00"),
+            ],
+        ),
+        (
+            format!("/schedules/rules/{bedtime}/delete"),
+            vec![("scope", scope.as_str())],
+        ),
+    ] {
+        let res = app
+            .request_form(Method::POST, &path, Some(&cookie), &fields)
+            .await;
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
+    }
+    assert_eq!(stored().await, before);
+    for page in ["/schedules".to_string(), device_page(id, Section::Time)] {
+        let html = app.get_page(&page, &cookie).await.text();
+        assert!(
+            !html.contains(&format!("href=\"/schedules/rules/{bedtime}\"")),
+            "{page} lists the bedtime as a rule"
+        );
+    }
+}
