@@ -3519,3 +3519,14 @@ redirect table and by `tests::shell::every_form_on_every_page_lands_on_its_own_g
 `#A85400` (4.5:1), styled checks, pickers and file buttons, Name and icon as a disclosure row that returns open
 (`?open=`), the 2FA key in blocks of 4; `style.css?v=26`, `scroll-restore.js?v=2`. The fix round's table, with the
 before/after save positions, is at the end of the pass's doc.
+
+## Status 2026-10-26 (main 8d8ba426)
+
+Done in code: all 15 steps are on `main` (steps 1-15 merged 2026-10-13 and 2026-10-14, the last step 15 as
+`5584772f`, the CSS clean-up as `bd57cafb`), each with its code QA fix round. The "browser pass owed" and "not checked
+here" lines in steps 7-10 and 15 are stale: the 390 px light/dark/no-JS pass ran on 2026-10-14
+(`docs/testing/2026-10-14-pwa-browser-pass.md`, on `bd57cafb`) and its fix round is the section above. The
+`time_state.zone` deferral (step 9, QA M1: "no end time shows today") is closed by design 34 step 13 (`7f5825a9`,
+2026-10-14: the launcher reports its zone, the lock badge says until when). Still owed: the iPhone checks (iOS Safari
+14 / Chrome 80) of steps 1-2 and the later steps, with the next server browser pass (S1 in
+`docs/plan/2026-10-25-queue-rounds.md`).

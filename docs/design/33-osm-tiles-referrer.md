@@ -73,3 +73,10 @@ never shipped, so no install has a `data/tiles` to clean up.
 - `server/CLAUDE.md` (the Find My Device bullet), `server/DEPLOY.md` (one line).
 - Everything the proxy added (`src/tiles.rs`, its route, `AppState.tiles`, the pruning hook, its tests, the shared
   resolver) is gone. The server is as `main` had it, apart from the lines above.
+
+## Status 2026-10-26 (main 8d8ba426)
+
+Built and merged: the rework (tiles straight from the browser with an origin-only Referer, no tile proxy) merged as
+`b7946fa2` on 2026-10-13, server side only. The tile layer has since moved out of `device_locate.html` into
+`server/static/locate.js` (and `zones.js` for the safe-zone map, design 64); both still set the `referrerPolicy`, and
+`tests::locations::the_map_loads_osm_tiles_with_an_origin_only_referer` is still the guard.

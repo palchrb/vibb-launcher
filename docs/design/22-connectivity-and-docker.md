@@ -2,6 +2,16 @@
 
 Status: design, 2026-10-09. Revised after QA's design review and the user's answers (both at the end).
 
+> **Status 2026-10-26 (main 8d8ba426): partly built; S5-S7, L1-L3 are not.** Built and shipped: S0-S4 and D1 (server
+> 0.24.0, `server-v0.24.0`; see "Server implementation status" at the end), i.e. the two listeners with the admin gate, the edge,
+> enrolment, admin auth and the Docker image. **Not built: S5 (the Connection page, policy `connection`, QR v2, the
+> direct-HTTPS mode for phones), L1 (`ConnectionPlan`, `ServerConnection`), L3 (the strict network-security config)
+> and S6 + L2 (mode 2, the Tailscale app).** S5/L1 and S6/L2 are parked: *the tailnet-only setup is the
+> product* (decision 16 of `docs/plan/2026-10-25-queue-rounds.md`; L3 has no queue entry yet). S7 (the CSP without
+> `unsafe-inline`) moves to the server security round S2 (it is server security review L5 as well). So §4 describes
+> launcher code that does not exist, and the sections on `connection`, QR v2 and `tailscale_app` are history; the phones
+> use the embedded tsnet only.
+
 **What the user asked for (2026-10-09).** The admin chooses how the server is exposed:
 - (a) tailnet only;
 - (b) all public;
@@ -327,6 +337,10 @@ private IP: an untrusted proxy, or Docker hiding the client.
 
 ### 4.1 Modes (wire values `tsnet`, `tailscale_app`, `direct`)
 
+> **Not built (2026-10-26, main 8d8ba426); parked.** Only tsnet exists on the phone; there is no mode field, no
+> `direct` or `tailscale_app` anywhere in `launcher/` or `server/`, and the "DB's CHECK" below was never written
+> (no migration has a `connection` column; grep). Parked with S5/L1 and S6/L2: the tailnet-only setup is the product.
+
 | | 1 tsnet (today) | 2 Tailscale app (**L2, later**) | 3 direct |
 |---|---|---|---|
 | URL (always https for a new endpoint) | tailnet URL | tailnet URL | public URL |
@@ -340,6 +354,10 @@ Until L2, only `tsnet` and `direct` can be chosen. The DB's CHECK already lists 
 SQLite CHECK later means rebuilding the table.
 
 ### 4.2 Choosing, storing and switching: pure `L/server/ConnectionPlan.kt`
+
+> **Not built (2026-10-26, main 8d8ba426); parked.** There is no `ConnectionPlan.kt`, `ServerConnection` or
+> `EndpointPolicy.kt` in the launcher (grep); every request still goes through `MdmApi` and tsnet as before. The text
+> below is a design that is not planned, not a description of the code.
 
 **State.**
 - An `Endpoint` is `(mode, url)`.

@@ -469,7 +469,9 @@ to the top.
   - The sweep setting, the cards, Check now, the offline select and the in-place status.
   - `quick-xml` (with `encoding`) and reqwest's `gzip`.
   - NOTICE.md (vibb, MIT); the root and server CLAUDE.md; `music.rs`'s module doc.
-  - **Checks on the Pi**:
+  - **Checks on the Pi** (2026-10-26, main 8d8ba426: the server runs on a Proxmox VM, not a Pi, so read "the Pi" as
+    that VM; no run of this list is recorded anywhere, so it is owed there with real feeds, or to be recorded as
+    skipped):
     - entries: a real NRK podkast, an NRK serie of more than 100 episodes, a `serie/<slug>/<programId>`, two RSS feeds
       (one oldest first, one with a rolling window) and a LAN feed;
     - for those: the first fill, the logged request counts and the 304s;

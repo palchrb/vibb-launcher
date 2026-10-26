@@ -1,5 +1,14 @@
 # 26c handover: merging and releasing `music-3-spotify` (Spotify, Vibb music phase 3)
 
+> **Done; history since 2026-10-14. Status 2026-10-26 (main 8d8ba426).** The branch was merged into `main` as `36cabb48`
+> (2026-10-14, "Merge design 26c", after a last merge of `main` into the branch, `9a1a4a4d`) and shipped in `music-v0.4.0-rc.1` (2026-10-14). The "Not verified anywhere" list in §3 is out of date:
+> `docs/testing/emulator.md` §6l **part A** ran on 2026-10-14 (`docs/testing/2026-10-14-spotify-6l-a.md`, then the
+> re-run in `docs/testing/2026-10-14-emulator-round.md`: 59 pass, 7 fail, 8 blocked over §6l and design 34).
+> **The DNS capture is dropped** (the user, 2026-10-16: list-mode playback works with every blocklist on; 2026-10-25:
+> "Glem spotify vertslisten"): the host list stays as it is, "provisional" wording included. Still open, and parked
+> with Spotify since 2026-10-25: §6l part B (the real SDK, the kid's Premium account), 26c's QA checklist on the Jelly
+> Star, the 2.5-hour Doze run. Nothing below is an instruction any more.
+
 For the agent that merges this branch into `main` and releases it. Self-contained; the details live in
 `docs/design/26c-spotify.md` (the design, its §14 open points, its **Release** section and one status section per step).
 Written 2026-10-14 at branch head `102745b`, plus this document's own commit; brought up to date at the docs commit

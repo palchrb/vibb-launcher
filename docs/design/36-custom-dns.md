@@ -528,7 +528,7 @@ the cache, `DohMessageTest`, `CustomUpstreamPrefTest` with the log scan).
 **Device checks owed** (`docs/testing/emulator.md` §6m covers the emulator part): a real DoH and a real DoT server
 (by name and by IP) through the protected sockets, `NO_PROXY` and the bootstrap; a LAN server on the home Wi-Fi, then
 away on mobile data (backup, `connect`), then back home (the network reset tries it at once); a network that blocks
-853 (a DoT primary goes to the backup; step 3 is not built); the canary against AdGuard Home's REFUSED - a
+853 (a DoT primary goes to the backup; [2026-10-26: step 3 is built, merged `da91e1d5` on 2026-10-18 - see "Step 3 implementation status"]); the canary against AdGuard Home's REFUSED - a
 REFUSED-mode block stays blocked, an id removed from "Allowed clients" is `refused`; the id in AdGuard Home's query
 log; Wi-Fi/mobile switches on the Jelly Star.
 

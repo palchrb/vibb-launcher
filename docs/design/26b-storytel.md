@@ -1,5 +1,15 @@
 # 26b - Vibb music phase 2: Storytel (buildable spec)
 
+> **Status 2026-10-26 (main 8d8ba426): built and merged; the phone's own login is superseded by design 58.** Steps 1-5
+> are on `main` since `36cabb48` (2026-10-14, with 26c; first tag `music-v0.4.0-rc.1`). The sections that have the music
+> app log in to Storytel itself (§4.1-§4.2, the login the launcher hands the phone through `GET
+> /api/devices/music/storytel`, the bridge's `getStorytelLogin`, the phone-side login fixtures and checks) describe a
+> flow that has not run since design 58 step 2 (`9bc2f198`, 2026-10-22; `music-v0.5.0-rc.3`): the music app now takes
+> a JWT the server mints (`POST /api/devices/music/storytel/token`) and never sees the password. Design 58 step 3
+> (removing the old route, `storytel_login_sent` and `getStorytelLogin`, all still in the code) is not built (round B3).
+> Not run yet: `docs/testing/emulator.md` §6i parts A and B, and the Device checks below (J1/J2 in
+> `docs/plan/2026-10-25-queue-rounds.md`; the "own login" checks in them are moot).
+
 Architect draft (2026-10-12), the first step of design 26's phase 2. Inputs: design 26 (the brief: "### 2 - Storytel",
 "How to work", "Coordination with the main session", review item 4 **decided: option A** with its "Accounts and
 sessions" paragraph, item 5), design 20 (its decision sections win: "Storytel and the source fetching", "Outputs", "New
@@ -2460,7 +2470,7 @@ no code comment changed and no suite needed a run.
 - **`launcher/CLAUDE.md`**: one bullet - Storytel listings ride the courier unchanged, book covers through the same
   `syncArt`, the login through phase 1's `getStorytelLogin`, the server's gate decides.
 - **Root `CLAUDE.md`**: `scripts/fake-storytel.py` in the scripts list; `music.yml`'s paths (`bridge_contract.json`,
-  both fakes) and both selftests. Nothing about the spike (it lives on `spotify-spike`, whose root `CLAUDE.md` adds the
+  both fakes) and both selftests. Nothing about the spike (it lives on `spotify-spike`, archived as tag `archive/spotify-spike`, whose root `CLAUDE.md` adds the
   `spike/` line; leaving it out here avoids a second edit of those lines). The root names no migration numbers.
 - **`NOTICE.md`**: a Storytel paragraph - the ports of `storytel.py` (server and phone), the Storytel parts of
   `library.py`, `content.py` and `daemon.py` (`_sonos_body`'s late mint, the duration lookup, adopt by

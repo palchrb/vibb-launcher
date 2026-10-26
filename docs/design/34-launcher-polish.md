@@ -1,5 +1,14 @@
 # 34 - A quiet polish of the launcher and the music app
 
+> **Status 2026-10-26 (main 8d8ba426): built and merged; the "proposal ... not built" line below is history.** All steps
+> 0-13 merged on 2026-10-14 (the design with its QA `a64c15a2`; step 12, Vibb One, the last: `843bf172`; step 13,
+> `time_state.zone`: `7f5825a9`), each with its code QA fix round; the status sections at the end say what was built.
+> The emulator round (`docs/testing/2026-10-14-emulator-round.md`, merged `a9ff636f`) checked design 34 with 19 pass,
+> 2 fail, 6 blocked; its findings are in "Fixes after the emulator round". **Still owed** (E1/E2 in
+> `docs/plan/2026-10-25-queue-rounds.md`): the blocked rows (glance rows with notifications, the N6 icon, the sheet's
+> photo and outgoing call, the Wi-Fi dialog, the library without the bar, the 112 path), step 9's check, R4's English VPN
+> name, and the Jelly Star. The `palette-ktx` dependency is unused (removal is in round 0b).
+
 Status: proposal (2026-10-14), revised with the user's answers (§6) and the design QA (§7), not built. Visual only: no behaviour, rule, gesture or policy change except where a
 proposal says so (flags in §3). Mockups: `docs/design/34-mockups/` (`NN-<screen>-before.png` is the emulator,
 `NN-<screen>-after.png` the proposal, both 480×854 = 320×569 dp at 1.5×, the Jelly Star).

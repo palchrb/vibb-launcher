@@ -1,5 +1,13 @@
 # 57 - Only the call's own screen over the PIN lock (usage access), and five small lock fixes
 
+> **Status 2026-10-26 (main 8d8ba426): superseded by design 59 (the hybrid); never merged, held on purpose.** Nothing of
+> this design is on `main`: no usage-access rule and no `voip_usage_v1` in `launcher/` or `server/` (grep). The prep
+> and its QA were built on the branch `worktree-agent-a689b601f638554b8` (archived as tag `archive/design-57-prep`),
+> which is not merged. In android mode the platform keyguard answers S-M4 (only `showWhenLocked` windows over the
+> lock). The own-mode leftovers are moot with phase D (`59-android-keyguard-design.md` §5); only the small fixes that
+> §5 names as mode-independent stay in the queue (PLAN, "VoIP over the lock, small launcher fixes"; decision 3 of
+> `docs/plan/2026-10-25-queue-rounds.md`).
+
 Asked 2026-10-21 after the user's emulator run (S-M4 confirmed Medium: WhatsApp's call screen has an arrow
 straight into the chats over the lock) and the security review `docs/review/security-review-2026-10-21-launcher.md`
 S-M4. Builds on design 17/17b (`docs/design/17-voip-calls-over-lock.md`) and round 7 §1

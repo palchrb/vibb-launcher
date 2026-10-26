@@ -1,5 +1,13 @@
 # 20 - Vibb music on the phone
 
+> **Status 2026-10-26 (main 8d8ba426): the architect draft of 2026-10-09; built as designs 21, 21a, 21b and 26a/b/c,
+> parts superseded.** Where this note and a later one differ, the later one wins: Spotify through a hidden Spotify app
+> and App Remote (option A, `vibb-spotify-options.md`) became the Web Playback SDK in a headless WebView in the music
+> app (26c, merged `36cabb48`, 2026-10-14; Spotify is parked since 2026-10-25); Sonos is 26a and 53; Storytel is 26b,
+> and since design 58 step 2 (`9bc2f198`, 2026-10-22) the music app never logs in to Storytel (the server mints the
+> JWT; the old login route and bridge call are retired by 58 step 3, not built). The phase-1 Jelly Star checks are
+> design 21's lists (owed, J1 in `docs/plan/2026-10-25-queue-rounds.md`), not this note's.
+
 Architect draft (2026-10-09). Inputs: PLAN.md "Vibb integration", `vibb-spotify-options.md` (decision: option A),
 palchrb/vibb `main` (README, SPEC*, docs, pipod, `pi/vibb/{library,content,storytel,bookmarks}.py`). There is no
 `PLAN-android.md` on any of vibb's six branches (GitHub API), so this doc takes its place. User decision 2026-10-09: the

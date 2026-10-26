@@ -1,5 +1,12 @@
 # Step 10: own PIN lock screen + redesigned incoming/in-call screens
 
+> **Status 2026-10-26 (main 8d8ba426): built 2026-10-05, being superseded by design 59.** The own lock described here
+> is still in the code and is still what a phone runs unless its switch says `kid_lock.keyguard = "android"` (design 59
+> steps 1-4, merged 2026-10-22: `e8c9013b`, `f51d9901`, `2a727685`, `f4972ced`). Phase D, which deletes the own lock,
+> is not built (`59-android-keyguard-design.md` §5); until then both modes ship. Gate, face, over-the-lock rules and
+> glance are 25 / 59 / 59b / 59d in android mode. The device checklists at the end were never recorded as run on the
+> Jelly Star (owed: J1 in `docs/plan/2026-10-25-queue-rounds.md`; the emulator list is `docs/testing/emulator.md` §6c).
+
 PLAN.md:213-221. S = kid-phone-server, L = kids-launcher-mdm (branch `handy`, paths under `app/src/main/java/com/kidslauncher/mdm/`).
 01-09 guarantees stay (fail closed, emergency always works, override/pause never lift call rules). AOSP = `android14-release`
 on android.googlesource.com, read 2026-10-05: DPM = `DevicePolicyManager.java`, UC = `am/UserController.java`, LTC = `wm/LockTaskController.java`.

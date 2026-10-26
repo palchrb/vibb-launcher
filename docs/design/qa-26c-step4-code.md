@@ -7,7 +7,7 @@ SpotifyEndpoints,SpotifyHosts,SpotifyHttp,SpotifyTracker,TokenCache,WebPolicy}.k
 design 26c (§0.4, §1.1, §4, §5.1-§5.5, §5.8, §5.9, §6.2, §7.2, §9, §10's music rows, §11 step 4, the design QA fix
 round and every status section to "Step 4 implementation status" with its 9 deviations and 6 spec findings),
 `qa-26c-step3-code.md`, `qa-26b-step2a-code.md`/`qa-26b-step2b-code.md` (the template), `spotify-spike.md` §7b and the
-spike's `web-playback.html`/`WebPlayer.kt` (branch `spotify-spike`). Line numbers are `a10e7fe`'s.
+spike's `web-playback.html`/`WebPlayer.kt` (branch `spotify-spike`, archived as tag `archive/spotify-spike`). Line numbers are `a10e7fe`'s.
 
 Sources read today (2026-10-13), developer.spotify.com: the Web Playback SDK reference (`WebPlaybackState`: `context.uri`
 "can be null", `disallows`, `paused`, `position`, `repeat_mode` 0/1/2, `shuffle`, `track_window` with `current_track`,

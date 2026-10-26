@@ -1,6 +1,6 @@
 # QA 59 - design (`docs/design/59-android-keyguard-design.md`)
 
-Design QA, 2026-10-22, on `proto-59-qa`, checked against the assessment, PLAN's design 59 entry (the user's answers),
+Design QA, 2026-10-22, on `proto-59-qa` (archived as tag `archive/proto-59-qa`), checked against the assessment, PLAN's design 59 entry (the user's answers),
 the prototype (`fa33001d..46cf0fa5`), its code QA (`fb6df128:docs/review/qa-59-prototype-code.md`, "P59-n"), the
 Recents review and r10. Every reference below was read in the code. **0 High, 8 Medium, 6 Low, 4 Nit.**
 

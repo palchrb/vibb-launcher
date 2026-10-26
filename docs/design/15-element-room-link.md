@@ -1,5 +1,12 @@
 # 15 - Element X: the Message button opens the chat, not the profile
 
+> **Status 2026-10-26 (main 8d8ba426): the learned variant only.** Built 2026-10-06 (`19d7e8bf`, fix round `1ab3ea06`):
+> the launcher learns `contact -> (session, room)` from Element X's own DM notifications (`calls/ElementRooms.kt`,
+> `ElementRoomStore.kt`). **§1-3 and §5 below (a parent-set `message_room` per contact, `own_matrix_id`, the server and
+> policy fields, the PWA help) were dropped by the QA decision and are not built and will not be** (decision 15 of
+> `docs/plan/2026-10-25-queue-rounds.md`); no `message_room` exists in the code. Read "Decisions after QA review" and
+> "Implementation status" first. The Jelly Star checks (at "Device checks (not done here)") were never recorded as run.
+
 Found live (2026-10-06): `matrix:u/<mxid>?action=chat` opens the person's **profile**. In Element X (develop),
 `DefaultPermalinkParser` makes every user link a `UserLink` (profile + "Message"); `action=chat` is ignored, and
 no "open DM" intent exists. Room links (`matrix:roomid/…?via=`, `matrix:r/…`, matrix.to `!…`/`#…`,

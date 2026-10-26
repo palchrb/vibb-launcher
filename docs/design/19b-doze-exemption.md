@@ -254,6 +254,10 @@ Two phases ("Ok ift ditt forslag"):
   - the `adb shell dumpsys deviceidle whitelist +me.vibb.launcher` line in the setup docs;
   - the row in the PIN-gated Settings during the existing pause.
 - **Phase 2, the prompt inside QR provisioning:** only if the Jelly Star run shows a difference, or the phone has an OEM battery manager.
+  *Settled 2026-10-26 (main 8d8ba426), decision 18 of `docs/plan/2026-10-25-queue-rounds.md`: no prompt will be built.*
+  The condition was met (the Jelly Star has an OEM "App blocker" that stops background apps); the answer is not a
+  prompt but to hide that app with the device owner at enrolment, which is an item in the PLAN queue (after the user's
+  package dump of the phone). §4's "switch it off in the setup runbook" stays the manual fallback.
 - Open questions 1-4: the architect's recommendations stand.
 
 **Phase 1 status (2026-10-10):** built with design 24 step 1b - see "Implementation status" in
