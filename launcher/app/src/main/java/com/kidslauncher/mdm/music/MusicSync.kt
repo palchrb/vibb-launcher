@@ -11,6 +11,7 @@ import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.AppDownloads
 import com.kidslauncher.mdm.server.MdmDeviceAdminReceiver
 import com.kidslauncher.mdm.server.currentPolicyDecision
+import com.kidslauncher.mdm.server.sameBundle
 import com.kidslauncher.mdm.server.dto.PolicyResponse
 import com.kidslauncher.mdm.ui.resolveLauncherLocale
 import kotlinx.coroutines.CancellationException
@@ -141,10 +142,6 @@ object MusicSync {
             }
         }
     }
-
-    @Suppress("DEPRECATION") // Bundle.get: the values are plain booleans, numbers and strings
-    private fun sameBundle(a: Bundle, b: Bundle): Boolean =
-        a.keySet() == b.keySet() && a.keySet().all { a.get(it) == b.get(it) }
 
     /** The cached policy's music object, read (null = none, refused or unreadable): what [ownFileGate] gets. */
     fun cachedMusicPolicy(): MusicPolicy? = try {
