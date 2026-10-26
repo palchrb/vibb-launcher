@@ -943,6 +943,105 @@ async fn a_dead_host_is_not_due_again_at_once() {
     );
 }
 
+/// Q26 (the r5 investigation): one bad picture never fails the check or raises the listing's
+/// `failures` - a 404 is one failed try, the rest are fetched. The hold was the dead-host rule:
+/// three pictures on a dead host (the newest, so first) ended the pass for every other host's
+/// pictures and, with no picture in yet, sent the entry to its regular check. Now only that host
+/// waits.
+#[tokio::test]
+async fn a_bad_picture_or_a_dead_host_holds_no_other_picture() {
+    let app = TestApp::new().await;
+    let feed = "https://example.org/mixed.rss";
+    let id = rss_entry(&app, feed).await;
+    let good: Vec<String> = (0..4)
+        .map(|n| format!("https://img.example.org/{n}.jpg"))
+        .collect();
+    let dead: Vec<String> = (0..3)
+        .map(|n| format!("https://old-cdn.example.org/{n}.jpg"))
+        .collect();
+    let bad = "https://img.example.org/gone.jpg";
+    // Oldest first: the good ones, the 404, then the three newest on the dead host.
+    let mut urls: Vec<&str> = good.iter().map(String::as_str).collect();
+    urls.push(bad);
+    urls.extend(dead.iter().map(String::as_str));
+    let guids: Vec<String> = (0..urls.len()).map(|n| format!("m{n}")).collect();
+    let feed_items: Vec<(&str, Option<&str>)> = guids
+        .iter()
+        .zip(&urls)
+        .map(|(g, u)| (g.as_str(), Some(*u)))
+        .collect();
+    app.fetch.answer(feed, 200, art_feed(None, &feed_items));
+    for (n, url) in good.iter().enumerate() {
+        app.fetch.answer(url, 200, png(1 << n, 300, 300));
+    }
+    app.fetch.answer(bad, 404, "");
+    for url in &dead {
+        app.fetch.fail(
+            url,
+            crate::music_net::FetchError::Network("down".to_string()),
+        );
+    }
+    let report = check(&app, id, t0()).await;
+    assert_eq!(report.error, None);
+    let list = items(&app, id).await;
+    assert!(
+        list[..4]
+            .iter()
+            .all(|i| i.art_state.as_deref() == Some("own")),
+        "{:?}",
+        art_states(&list)
+    );
+    assert_eq!(
+        (list[4].art_state.as_deref(), list[4].art_fails),
+        (Some("failed"), 1)
+    );
+    assert!(
+        list[5..]
+            .iter()
+            .all(|i| i.art_state.is_none() && i.art_fails == 0)
+    );
+    assert_eq!(calls_starting(&app, "https://old-cdn.example.org/"), 3);
+    let stored = listing(&app, id).await;
+    assert_eq!((stored.failures, stored.art_more), (0, 0));
+    // The dead host never answered: it waits for the regular check, not again at once.
+    assert!(
+        sweep::due(&app.db, t0() + TimeDelta::seconds(5))
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.entry_id != id)
+    );
+}
+
+/// A host that answered in this pass and then failed three times in a row (a blip) leaves its
+/// other pictures untried and brings the entry back at once (code QA M2's rule, per host).
+#[tokio::test]
+async fn a_host_that_blips_brings_the_entry_back_at_once() {
+    let app = TestApp::new().await;
+    let feed = "https://example.org/blip.rss";
+    let id = rss_entry(&app, feed).await;
+    let pairs = long_feed(&app, feed, "b", 6);
+    // Newest first: b005 answers, b004-b002 fail, b001 and b000 are left.
+    app.fetch
+        .answer(&pairs[5].1, 200, png(0b0011_0101, 300, 300));
+    for (_, url) in &pairs[2..5] {
+        app.fetch.fail(
+            url,
+            crate::music_net::FetchError::Network("blip".to_string()),
+        );
+    }
+    check(&app, id, t0()).await;
+    assert_eq!(calls_starting(&app, "https://img.example.org/"), 4);
+    assert_eq!(listing(&app, id).await.art_more, 2);
+    let due = sweep::due(&app.db, t0() + TimeDelta::seconds(5))
+        .await
+        .unwrap();
+    assert_eq!(
+        due.iter().find(|s| s.entry_id == id).map(|s| s.why),
+        Some(sweep::Why::Art)
+    );
+}
+
 /// qa-art-asap-code L3: a check whose listing spent the whole request budget sent no picture
 /// request, so it doesn't come back at once only to spend it on the listing again.
 #[tokio::test]
