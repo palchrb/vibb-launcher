@@ -81,6 +81,18 @@ class WholeWordsTest {
         "nb" to listOf("Telefonbok", "Innstillinger", "Meldinger", "Kalender", "Kamera", "Klokke", "Chrome", "Gmail", "YouTube", "Musikk", "Bilder", "Kalkulator", "Kart"),
         "en" to listOf("Phone book", "Settings", "Meldinger", "Chrome", "Gmail", "YouTube", "Calendar", "Camera", "Clock", "Calculator", "Messages", "Maps", "Photos"),
     )
+
+    /** A contact name's line: its cell less the label's own sides (4 dp each, six-inch F3). */
+    private val nameSides by lazy {
+        val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }.newDocumentBuilder()
+            .parse(File(main, "res/layout/item_kid_contact.xml"))
+        val all = doc.getElementsByTagName("*")
+        val name = (0 until all.length).map { all.item(it) as Element }.single { it.getAttributeNS(ns, "id") == "@+id/contact_name" }
+        listOf("paddingStart", "paddingEnd").sumOf { name.getAttributeNS(ns, it).removeSuffix("dp").toDouble() }.toFloat()
+    }
+
+    private fun nameLine(cellDp: Float) = cellDp - nameSides
+
     private val names = listOf("Mamma", "Pappa", "Mormor", "Morfar", "Bestemor", "Bestefar", "Oline", "Emergency call", "Nødsamtale", "Kristoffer", "Anne-Marie")
     private val scales = listOf(1.0f, 1.3f, 2.0f)
 
@@ -119,7 +131,7 @@ class WholeWordsTest {
                 assertEquals(label, m.labelSp to label, shown(label, m.labelSp, m.cellWidthDp - 4f))
             }
         }
-        val item = contactItemDp(contactRow(3, 288f), 3, 288f)
+        val item = nameLine(contactItemDp(contactRow(3, 288f), 3, 288f))
         for (name in names) assertEquals(name, 15f to name, shown(name, 15f, item))
     }
 
@@ -128,7 +140,7 @@ class WholeWordsTest {
         for (content in listOf(288f, 320f, 360f)) {
             for (count in 1..5) {
                 val row = contactRow(count, content)
-                val item = if (row.scrolls) row.itemDp.toFloat() else contactItemDp(row, count, content)
+                val item = nameLine(if (row.scrolls) row.itemDp.toFloat() else contactItemDp(row, count, content))
                 for (scale in scales) {
                     for (name in names) {
                         val (size, display) = shown(name, 15f * scale, item)
@@ -137,18 +149,19 @@ class WholeWordsTest {
                 }
             }
         }
-        // The Jelly Star (288 dp, three contacts, 96 dp items) at 2.0: the short names stay whole, only smaller.
-        val item = contactItemDp(contactRow(3, 288f), 3, 288f)
+        // The Jelly Star (288 dp, three contacts, 96 dp items, an 88 dp line) at 2.0: the short names stay whole, only
+        // smaller.
+        val item = nameLine(contactItemDp(contactRow(3, 288f), 3, 288f))
         for (name in listOf("Mamma", "Pappa", "Mormor", "Morfar")) {
             val (size, display) = shown(name, 30f, item)
             assertEquals(name, display)
-            // The two the emulator showed cut ("Mamm/a", "Mormo/r") shrink; the others fit as they are.
+            // The two the emulator showed cut ("Mamm/a", "Mormo/r") shrink.
             if (name == "Mamma" || name == "Mormor") assertTrue("$name shrinks at 2.0", size < 30f)
         }
         // The phone book: 14 sp names in 104 dp.
         for (scale in scales) for (name in names) {
-            val (size, display) = shown(name, 14f * scale, 104f)
-            assertNoCut("phone book ${scale}x '$name'", size, display, 104f)
+            val (size, display) = shown(name, 14f * scale, nameLine(104f))
+            assertNoCut("phone book ${scale}x '$name'", size, display, nameLine(104f))
         }
     }
 
