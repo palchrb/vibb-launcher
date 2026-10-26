@@ -5,6 +5,7 @@ import android.media.AudioDeviceInfo
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -27,6 +28,8 @@ import me.vibb.music.logic.HLS_MAX_BITRATE
 import me.vibb.music.logic.SLEEP_FADE_MS
 import me.vibb.music.logic.atEndGain
 import me.vibb.music.logic.atEndNextLookMs
+import me.vibb.music.logic.failureLine
+import me.vibb.music.logic.noNetwork
 import me.vibb.music.logic.itemRemaining
 import me.vibb.music.logic.save
 import me.vibb.music.logic.showsPlaying
@@ -129,7 +132,11 @@ internal class LocalRenderer(
 
         override fun onIsPlayingChanged(isPlaying: Boolean) = emit(RendererEvent.IsPlaying(isPlaying))
 
-        override fun onPlayerError(error: PlaybackException) = emit(RendererEvent.Error(MediaCache.errorCode(error), MediaCache.gated(error)))
+        override fun onPlayerError(error: PlaybackException) {
+            // the real cause: Media3's own line says "UnknownHostException (no network)" for any name failure
+            Log.w(LOG_TAG, failureLine(error.errorCodeName, error.errorCode, error))
+            emit(RendererEvent.Error(MediaCache.errorCode(error), MediaCache.gated(error), noNetwork(error)))
+        }
 
         override fun onEvents(player: Player, events: Player.Events) = emit(RendererEvent.StateChanged)
     }
@@ -267,6 +274,7 @@ internal class LocalRenderer(
 
     private companion object {
         const val FADE_STEP_MS = 250L
+        const val LOG_TAG = "VibbPlayer"
     }
 }
 

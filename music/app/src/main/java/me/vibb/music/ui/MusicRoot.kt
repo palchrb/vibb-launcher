@@ -96,7 +96,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
         val s = snap ?: return@Box
         // an empty library's empty state is the content at once: no carousel to wait for (the emulator run of music-r13)
         if (!shown && !contentReady(true, s.entries.isNotEmpty(), rowRead != null, row != null, vm.startSettled, capped)) return@Box
-        // the first content frame: the launch splash may go now (MainActivity.holdSplash)
+        // the first content frame: the app's launch splash fades over it now (MainActivity, LaunchSplash)
         SideEffect {
             shown = true
             onContent()
@@ -286,6 +286,7 @@ fun MusicRoot(vm: MusicViewModel, actions: Actions, onContent: () -> Unit = {}) 
                 val text = when (m) {
                     PlayerHub.Message.CANT_PLAY -> R.string.cant_play
                     PlayerHub.Message.NOT_DOWNLOADED -> R.string.not_downloaded
+                    PlayerHub.Message.NO_NETWORK -> R.string.no_network
                     PlayerHub.Message.CANT_PLAY_ON_SONOS -> R.string.cant_play_on_sonos
                     PlayerHub.Message.ROOM_NOT_ALLOWED -> R.string.room_not_allowed
                     PlayerHub.Message.HEADSET_NO_CONTACT -> R.string.headset_no_contact

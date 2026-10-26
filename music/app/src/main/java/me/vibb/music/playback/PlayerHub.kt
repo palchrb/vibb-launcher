@@ -209,8 +209,8 @@ object PlayerHub {
     )
 
     /**
-     * NOT_DOWNLOADED: not on the phone and no network to stream it; CANT_PLAY: it failed anyway;
-     * CANT_PLAY_ON_SONOS: nothing of it a speaker can play, or the speaker refused (design 26a §4.2);
+     * NOT_DOWNLOADED: not on the phone and no network to stream it; NO_NETWORK: its host's name couldn't be looked up
+     * (`logic/PlayFailure.kt`); CANT_PLAY: it failed anyway; CANT_PLAY_ON_SONOS: nothing of it a speaker can play, or the speaker refused (design 26a §4.2);
      * ROOM_NOT_ALLOWED: the parent's room scope doesn't (any longer) allow the room or a room grouped
      * with it - the session came home, or the pick was refused (§5.5).
      */
@@ -224,7 +224,7 @@ object PlayerHub {
      * [HEADSET_NO_CONTACT] (design 52 decision 3): a "Koble til" in "Spill av på" failed after the kid closed the sheet
      * - the enum has no payload, so its line names no device. Sent by the screens' view model, not the service.
      */
-    enum class Message { NOT_DOWNLOADED, CANT_PLAY, CANT_PLAY_ON_SONOS, ROOM_NOT_ALLOWED, STAYED, HEADSET_NO_CONTACT }
+    enum class Message { NOT_DOWNLOADED, NO_NETWORK, CANT_PLAY, CANT_PLAY_ON_SONOS, ROOM_NOT_ALLOWED, STAYED, HEADSET_NO_CONTACT }
 
     internal val mutableState = MutableStateFlow(State())
     val state: StateFlow<State> = mutableState
