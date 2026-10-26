@@ -139,6 +139,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         com.kidslauncher.mdm.appdisplay.AppDisplay.refresh(context)
         // The lock's glance page (design 25): which apps' messages it shows, and whether with text.
         com.kidslauncher.mdm.badges.GlanceStore.refreshPolicy(freshPolicy.lockGlance, fresh = true)
+        // Dagen (design 69): the rules and the calendars' settings apply to the shown day at once.
+        com.kidslauncher.mdm.calendar.CalendarStore.policyChanged()
         // Round 7 §3: the parent's "Wake the screen for a notification" (memory, read by the lock).
         com.kidslauncher.mdm.lock.PinLockRuntime.noticeWakeSwitch(freshPolicy.launcherUi)
         // Real server contact just succeeded - the offline override's whole job (bridging the gap
@@ -313,6 +315,12 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
                 writeSettingsGranted = WriteSettingsAccess.granted(context),
                 extraLocations = extraFixes?.map { it.toReport() },
                 zoneWatch = ZoneWatch.report(context, still = location.still),
+                calendar = try {
+                    com.kidslauncher.mdm.calendar.CalendarStore.report(context)
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Calendar report failed: ${e.javaClass.simpleName}")
+                    null
+                },
             )
         )
         // Design 64 step 2: what the server took leaves the queue; a report it didn't take leaves

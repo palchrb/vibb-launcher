@@ -373,4 +373,22 @@
     <string name="re_enrol_unreachable">Fikk ikke kontakt med serveren. Sjekk tilkoblingen og prøv igjen.</string>
     <string name="re_enrol_done">Telefonen er koblet til igjen. Prøv foreldrekoden når den har synkronisert.</string>
     <string name="parent_pin_foreign_access">En app foreldrene ikke har tillatt kan styre telefonen eller lese skjermen, så foreldrekoden kan ikke skrives her. Bruk foreldreappen: Status-kortet der viser hva du skal gjøre.</string>
+    <!-- Dagen (design 69): barnets dag. -->
+    <string name="day_title">Dagen</string>
+    <string name="day_jump_back">← I dag</string>
+    <string name="day_jump_forward">I dag →</string>
+    <string name="day_all_day">Hele dagen</string>
+    <string name="day_ongoing">Pågår nå</string>
+    <string name="day_ongoing_with">Pågår nå · %1$s</string>
+    <string name="day_continues">→</string>
+    <string name="day_more">›</string>
+    <string name="day_empty">Ingenting i kalenderen.</string>
+    <string name="day_open_event">Åpne hendelsen</string>
+    <string name="day_spoken_time">%1$s til %2$s</string>
+    <string name="day_kid_calendar_name">Min kalender</string>
+    <string name="day_add">Ny avtale</string>
+    <string name="event_time_range">%1$s - %2$s</string>
+    <string name="event_gone">Denne hendelsen er ikke i kalenderen lenger.</string>
+    <string name="event_change">Endre</string>
+    <string name="event_delete">Slett</string>
 </resources>

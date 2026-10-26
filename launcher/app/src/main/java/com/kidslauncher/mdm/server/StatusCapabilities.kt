@@ -34,4 +34,6 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     com.kidslauncher.mdm.music.STORYTEL_JWT_CAPABILITY,
     // Design 59 step 4: claimed only with `set_kid_pin`'s handler (Q59-13) - the server then sends this phone the PIN.
     com.kidslauncher.mdm.lock.ANDROID_KEYGUARD_CAPABILITY,
+    // Design 69: Dagen - the policy's `calendar`, `calendar` in every report.
+    com.kidslauncher.mdm.day.CALENDAR_CAPABILITY,
 )

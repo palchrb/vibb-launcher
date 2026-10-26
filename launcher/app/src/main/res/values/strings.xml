@@ -440,4 +440,22 @@
     <string name="re_enrol_unreachable">Couldn\'t reach the server. Check the connection and try again.</string>
     <string name="re_enrol_done">The phone is connected again. Try the parent code once it has synced.</string>
     <string name="parent_pin_foreign_access">An app the parent hasn\'t allowed can control this phone or read its screen, so the parent code can\'t be typed here. Use the parent app: its Status card shows what to do.</string>
+    <!-- Dagen (design 69): the kid's day. -->
+    <string name="day_title">My day</string>
+    <string name="day_jump_back">← Today</string>
+    <string name="day_jump_forward">Today →</string>
+    <string name="day_all_day">All day</string>
+    <string name="day_ongoing">Happening now</string>
+    <string name="day_ongoing_with">Happening now · %1$s</string>
+    <string name="day_continues">→</string>
+    <string name="day_more">›</string>
+    <string name="day_empty">Nothing in the calendar.</string>
+    <string name="day_open_event">Open the event</string>
+    <string name="day_spoken_time">%1$s to %2$s</string>
+    <string name="day_kid_calendar_name">My calendar</string>
+    <string name="day_add">New event</string>
+    <string name="event_time_range">%1$s - %2$s</string>
+    <string name="event_gone">This event is no longer in the calendar.</string>
+    <string name="event_change">Change</string>
+    <string name="event_delete">Delete</string>
 </resources>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dagen's "+" (design 69 §1b): a peach disc, the one accent; the plus in the night ink (9.9:1). -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33000000">
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@color/kid_accent" />
+        </shape>
+    </item>
+</ripple>

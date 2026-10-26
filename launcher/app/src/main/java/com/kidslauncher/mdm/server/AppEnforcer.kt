@@ -341,6 +341,8 @@ object AppEnforcer {
         // nothing that throws below can skip it. Like the hardening, never lifted by the override
         // or the pause, and nothing ever switches it on. Catches and logs everything itself.
         BackupService.enforce(dpm, admin, managedForHardening)
+        // Dagen (design 69 §2.4): Vibb One reads (and writes the kid's own events into) the calendar provider.
+        if (managedForHardening) com.kidslauncher.mdm.calendar.CalendarStore.grantPermissions(context, dpm, admin)
 
         // Calls: never lifted by an override or pause. The dialer role first - whether our dialer
         // is in place decides the outgoing-call restriction below.

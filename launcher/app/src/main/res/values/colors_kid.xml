@@ -46,6 +46,10 @@
     <!-- Home's flashlight tile (design 41): the indigo tone while dark (IconTones TONE_INDIGO; white
          5.3:1), the filled peach disc with the night glyph while lit (kid_accent / kid_ground, 9.9:1). -->
     <color name="kid_torch_tile">#6065A9</color>
+    <!-- Home's Dagen tile (design 69 §2.2): the blue tone (IconTones TONE_BLUE; white 5.6:1). The kid's own events'
+         start time in Dagen (§1b): a soft green, 9.6:1 on the tile. -->
+    <color name="kid_day_tile">#496C9C</color>
+    <color name="kid_day_mine">#9FD3A8</color>
     <color name="kid_switch_on">@color/kid_accent</color>
     <color name="kid_slider">@color/kid_accent</color>
     <color name="kid_divider">#1AFFFFFF</color>

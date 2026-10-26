@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An event's own page (design 69 §2.3, mockup dagen.html §5 "Hele teksten"): the shown title, the time, the
+     location, the calendar's name and the whole description - read-only, links not tappable (kiosk). The kid's own
+     event has Change and Delete (step 3). -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/event_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/kid_ground"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="16dp">
+
+        <include
+            android:id="@+id/event_header"
+            layout="@layout/include_kid_header" />
+
+        <LinearLayout
+            android:id="@+id/event_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_day_event"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/event_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:accessibilityHeading="true"
+                android:fontFamily="@font/nunito_extrabold"
+                android:textColor="@color/kid_ink"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/event_time"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:fontFamily="@font/nunito_extrabold"
+                android:textColor="@color/kid_accent"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/event_location"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:fontFamily="@font/nunito_bold"
+                android:textColor="@color/kid_core"
+                android:textSize="14sp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/event_calendar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:fontFamily="@font/nunito_bold"
+                android:textColor="@color/kid_core_dim"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/event_description"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:autoLink="none"
+                android:fontFamily="@font/nunito_semibold"
+                android:lineSpacingMultiplier="1.15"
+                android:linksClickable="false"
+                android:textColor="@color/kid_core"
+                android:textIsSelectable="false"
+                android:textSize="14sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/event_own_actions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/event_change"
+                style="@style/KidManageLink"
+                android:text="@string/event_change" />
+
+            <TextView
+                android:id="@+id/event_delete"
+                style="@style/KidManageLink"
+                android:text="@string/event_delete"
+                android:textColor="@color/kid_missed_text" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

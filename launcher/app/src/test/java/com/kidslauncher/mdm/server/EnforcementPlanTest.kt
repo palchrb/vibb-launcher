@@ -56,6 +56,21 @@ class EnforcementPlanTest {
         assertTrue(recents in computeEnforcementPlan(listOf("org.example.game"), true, 0, false, withIcon, OWN, DIALER).hide)
     }
 
+    /** Design 69 §4.4: a time rule's lock suspends the other allowed apps but not an allowed calendar sync app, which
+     * keeps the school feed current; one that isn't allowed is hidden and suspended as any. */
+    @Test
+    fun `a time rule spares the allowed calendar sync apps`() {
+        val withSync = controllable + CALENDAR_SYNC_APPS
+        val plan = computeEnforcementPlan(
+            listOf("org.example.game", "at.bitfire.icsdroid"), true, 0, false, withSync, OWN, DIALER, scheduleLocked = true,
+        )
+        assertTrue("org.example.game" in plan.suspend)
+        assertFalse("at.bitfire.icsdroid" in plan.suspend)
+        assertFalse("at.bitfire.icsdroid" in plan.hide)
+        assertTrue("at.bitfire.davdroid" in plan.hide && "at.bitfire.davdroid" in plan.suspend)
+        assertEquals(setOf("at.bitfire.icsdroid", "at.bitfire.davdroid"), CALENDAR_SYNC_APPS)
+    }
+
     @Test
     fun `the WebView provider is never hidden or suspended - allowlist, SMS off, time-rule lock (26c §6_3)`() {
         val webView = "com.google.android.webview"

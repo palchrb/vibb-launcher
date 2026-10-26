@@ -172,6 +172,8 @@ class HomeActivity : UIObjectActivity() {
 
     /** The flashlight's state changed (design 41; its callback, main thread): the tile follows. */
     private val torchListener: () -> Unit = { renderGrid() }
+    /** Dagen's tile follows the calendars and the policy (design 69 §2.2). */
+    private val calendarListener: () -> Unit = { renderGrid() }
     private val badgeListener: () -> Unit = {
         refreshHandler.removeCallbacks(badgeRender)
         refreshHandler.postDelayed(badgeRender, BADGE_DEBOUNCE_MS)
@@ -446,6 +448,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.calls.OngoingCalls.addListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.addListener(windowListener)
         com.kidslauncher.mdm.torch.Torch.addListener(torchListener)
+        com.kidslauncher.mdm.calendar.CalendarStore.addListener(calendarListener)
         started = true
         renderCallCard()
         renderMusicCard()
@@ -660,6 +663,7 @@ class HomeActivity : UIObjectActivity() {
         com.kidslauncher.mdm.calls.OngoingCalls.removeListener(callsListener)
         com.kidslauncher.mdm.server.WindowRelock.removeListener(windowListener)
         com.kidslauncher.mdm.torch.Torch.removeListener(torchListener)
+        com.kidslauncher.mdm.calendar.CalendarStore.removeListener(calendarListener)
         refreshHandler.removeCallbacks(callTicker)
         ContactPhotos.removeListener(photoListener)
         WallpaperStore.removeListener(wallpaperListener)
@@ -815,7 +819,10 @@ class HomeActivity : UIObjectActivity() {
         if (!contentShown) return
         val data = gridData
         gridAdapter.submit(
-            homeGrid(data.apps, showPhoneBook, BadgeStore.counts, com.kidslauncher.mdm.torch.Torch.state),
+            homeGrid(
+                data.apps, showPhoneBook, BadgeStore.counts, com.kidslauncher.mdm.torch.Torch.state,
+                showDay = com.kidslauncher.mdm.calendar.CalendarStore.tileShown(),
+            ),
             data.infos,
             data.icons,
             data.metrics,

@@ -355,6 +355,7 @@ dependencies {
     implementation(libs.androidx.gridlayout)
     implementation(libs.androidx.preference.ktx)
     implementation(libs.androidx.recyclerview)
+    implementation(libs.androidx.viewpager2)
     implementation(libs.google.material)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.squareup.retrofit)
