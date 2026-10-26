@@ -1159,11 +1159,13 @@ pub async fn status(
         .unseen_boots
         .as_ref()
         .and_then(crate::boot_witness::sanitize);
-    // Design 36 §4.2: which of the parent's DNS servers the phone uses, known words only.
+    // Design 36 §4.2: which of the parent's DNS servers the phone uses, known words only; design
+    // 67: no time ahead of the report's arrival.
+    let arrived_ms = chrono::Utc::now().timestamp_millis();
     let dns_upstream_json = report
         .dns_upstream
         .as_ref()
-        .and_then(crate::dns_server::sanitize_dns_upstream);
+        .and_then(|value| crate::dns_server::sanitize_dns_upstream(value, arrived_ms));
     // Design 64 step 2: the phone's zone watch, known keys only.
     let zone_watch_json = report
         .zone_watch

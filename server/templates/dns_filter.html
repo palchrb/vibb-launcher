@@ -100,8 +100,9 @@
                 </div>
             </form>
             {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
+            {% if let Some(host) = doh_allowed %}<p class="flash" role="status" data-flash="doh-allowed">{{ host }} is a secure-DNS server and stays blocked.</p>{% endif %}
         </div>
-        <p class="group-footer">Let through even when a list blocks it.</p>
+        <p class="group-footer">Let through even when a list blocks it - not the secure-DNS servers built into Vibb One, which stay blocked.</p>
     </section>
 
     {#- Design 31 step 5: a phone's own lists, domains and log are on its Web Filter page. -#}

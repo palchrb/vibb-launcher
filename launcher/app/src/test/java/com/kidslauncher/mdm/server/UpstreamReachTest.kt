@@ -20,6 +20,7 @@ class UpstreamReachTest {
     @Test
     fun `at least 3 failures over at least 30 s, dated from the first`() {
         assertNull(fail(ReachState(), 0, 10_000).downSinceMs)
+        assertNull("2 failures over 30 s", fail(ReachState(), 0, 30_000).downSinceMs)
         assertNull("3 within 29 s", fail(ReachState(), 0, 10_000, 29_000).downSinceMs)
         assertEquals(1_000L, fail(ReachState(), 1_000, 11_000, 31_000).downSinceMs)
         // Failures 20 s apart still count; the next failure keeps the outage as it is.

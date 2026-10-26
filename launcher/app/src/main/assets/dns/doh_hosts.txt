@@ -1,4 +1,4 @@
-# The secure-DNS servers the phone never resolves for an app (design 67 §2.2, category "Secure DNS bypass").
+# The secure-DNS servers the phone never resolves for an app (design 67 §2.2, category "Secure DNS server").
 # One lowercase name per line; each also covers every name under it (a suffix, as the server's lists).
 # Built into Vibb One: in force before the first sync, the parent can't lift it, a server feed can't empty it.
 # Never our own upstreams: they are IP literals, or looked up by BootstrapDns, never through the tunnel.

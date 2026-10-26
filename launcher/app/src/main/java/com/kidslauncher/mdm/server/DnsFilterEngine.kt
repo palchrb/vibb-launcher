@@ -18,7 +18,7 @@ private const val BLOCKLIST_FILE = "dns_blocklist.tsv"
 private const val VERSION_FILE = "dns_blocklist_version.txt"
 
 /** The category of the built-in secure-DNS hosts (design 67 §2.2, [DOH_HOSTS_ASSET]). */
-const val DOH_BYPASS_CATEGORY = "Secure DNS bypass"
+const val DOH_BYPASS_CATEGORY = "Secure DNS server"
 
 /** The built-in list's asset, under `assets/`. */
 const val DOH_HOSTS_ASSET = "dns/doh_hosts.txt"
@@ -28,6 +28,12 @@ const val FIREFOX_CANARY = "use-application-dns.net"
 
 /** [domainRaw] is Firefox's canary, in any case, with or without its trailing dot. */
 fun isFirefoxCanary(domainRaw: String): Boolean = domainRaw.trimEnd('.').lowercase() == FIREFOX_CANARY
+
+/** Discovery of Designated Resolvers (RFC 9462): answered NODATA, never relayed, so no client looks
+ * for an encrypted resolver behind ours (qa-67-code N4; one would also need a certificate for 192.0.2.2). */
+const val DDR_NAME = "_dns.resolver.arpa"
+
+fun isDdrQuery(domainRaw: String): Boolean = domainRaw.trimEnd('.').lowercase() == DDR_NAME
 
 /** The built-in list's names ([DOH_HOSTS_ASSET]): one per line, `#` starts a comment. */
 fun parseDohHosts(text: String): Set<String> =

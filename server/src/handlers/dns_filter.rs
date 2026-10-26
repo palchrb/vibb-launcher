@@ -25,6 +25,7 @@ use crate::dns_engine;
 use crate::dns_server::{self, DnsServer, Refusal};
 use crate::models::{Device, DnsBlocklist, DnsCustomDomain, DnsFilterSettings};
 use crate::security::CurrentAdmin;
+use crate::streams::ConnectionState;
 
 /// A feed on the page: its switch, a sub-line (its size, or its problem in a few words), and when
 /// a download failed the whole story behind its ⓘ (security review M6: a feed that fails keeps
@@ -145,6 +146,8 @@ struct DnsFilterTemplate {
     typed: String,
     typed_name: String,
     typed_url: String,
+    /// An allowed host the phone blocks anyway ([doh_allowed_notice]).
+    doh_allowed: Option<String>,
     /// The DNS Server group (`#server`, design 36 §6).
     server: ServerGroup,
     /// The Each Phone group's lines ([bypass_lines], `data-bypass-phone` = the phone's id).
@@ -242,6 +245,9 @@ fn backup_reason_text(reason: &str) -> Option<&'static str> {
 struct LastReport<'a> {
     capabilities: Option<&'a str>,
     dns_upstream: Option<&'a str>,
+    /// When it came, while the phone is Offline or Disconnected (the Attention rows' rule):
+    /// what it says may be over.
+    stale_since: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl LastReport<'_> {
@@ -261,7 +267,9 @@ enum Lookups<'a> {
 
 /// The browsers that ignore the managed config (design 67 §2.4): allowed on a phone, its Each
 /// Phone line says what to do. Server only, no contract.
-pub(crate) const DOH_IGNORING_BROWSERS: [(&str, &str); 2] = [
+/// Opera (a Chromium fork) also gets the managed config (`BROWSER_DOH_PACKAGES`), but whether it
+/// reads it is not checked yet (E3), so it keeps its line until then.
+pub(crate) const DOH_IGNORING_BROWSERS: [(&str, &str); 7] = [
     (
         "org.cromite.cromite",
         "Cromite: set its Secure DNS to Off on the phone, or it won't load pages",
@@ -270,10 +278,33 @@ pub(crate) const DOH_IGNORING_BROWSERS: [(&str, &str); 2] = [
         "org.mozilla.firefox",
         "Firefox: its own secure DNS can get around the filter",
     ),
+    (
+        "org.mozilla.firefox_beta",
+        "Firefox Beta: its own secure DNS can get around the filter",
+    ),
+    (
+        "org.mozilla.fenix",
+        "Firefox Nightly: its own secure DNS can get around the filter",
+    ),
+    (
+        "org.mozilla.fennec_fdroid",
+        "Fennec: its own secure DNS can get around the filter",
+    ),
+    (
+        "org.ironfoxoss.ironfox",
+        "IronFox: its own secure DNS can get around the filter",
+    ),
+    (
+        "com.opera.browser",
+        "Opera: its own secure DNS may get around the filter",
+    ),
 ];
 
 /// How long an ended outage stays on the page (design 67 §6, answered: 24 h, or until the next).
 const ENDED_OUTAGE_SHOWN: chrono::TimeDelta = chrono::TimeDelta::hours(24);
+/// An ended outage shorter than this isn't shown (qa-67-code M1): Android keeps a fading Wi-Fi or
+/// a cellular dead spot VALIDATED for a while, so a walk out of the door can look like one.
+const MIN_ENDED_OUTAGE: chrono::TimeDelta = chrono::TimeDelta::minutes(5);
 
 fn at(ms: Option<i64>) -> Option<chrono::DateTime<chrono::Utc>> {
     ms.and_then(chrono::DateTime::from_timestamp_millis)
@@ -287,7 +318,8 @@ fn outage_since(state: &dns_server::DnsUpstreamState) -> Option<chrono::DateTime
     }
 }
 
-/// The last ended outage, "couldn't be reached 10:42-11:05", while it ended within 24 h.
+/// The last ended outage, "couldn't be reached 10:42-11:05", while it ended within 24 h and only
+/// when it lasted at least [MIN_ENDED_OUTAGE].
 fn ended_outage(
     state: &dns_server::DnsUpstreamState,
     zone: &Zone,
@@ -295,7 +327,7 @@ fn ended_outage(
 ) -> Option<String> {
     let since = at(state.unreachable_since_ms)?;
     let until = at(state.unreachable_until_ms)?;
-    (now - until < ENDED_OUTAGE_SHOWN).then(|| {
+    (now - until < ENDED_OUTAGE_SHOWN && until - since >= MIN_ENDED_OUTAGE).then(|| {
         format!(
             "couldn't be reached {}-{}",
             zone.when(since, now),
@@ -325,6 +357,13 @@ fn phone_line(
         .as_ref()
         .and_then(|report| dns_server::parse_dns_upstream(report.dns_upstream));
     let when = |t| zone.when(t, now);
+    // An ongoing outage from a phone that is Offline (or Disconnected) is only what it last said
+    // (qa-67-code L4, the Attention rows' "at last report").
+    let at_last_report = report
+        .as_ref()
+        .and_then(|report| report.stale_since)
+        .map(|t| format!(" · at last report ({})", zone.relative(t, now)))
+        .unwrap_or_default();
     let what = match lookups {
         Lookups::Provider(provider) => state
             .as_ref()
@@ -332,7 +371,7 @@ fn phone_line(
             .and_then(outage_since)
             .map(|t| {
                 format!(
-                    "DNS can't be reached since {} - {provider} doesn't answer from where the phone is",
+                    "DNS can't be reached since {} - {provider} doesn't answer from where the phone is{at_last_report}",
                     when(t)
                 )
             }),
@@ -344,7 +383,7 @@ fn phone_line(
             (Some(_), Some(state)) if state.rev == rev && state.in_use != "provider" => {
                 match outage_since(state) {
                     Some(t) => format!(
-                        "DNS can't be reached since {} - neither your server nor the backup answers",
+                        "DNS can't be reached since {} - neither your server nor the backup answers{at_last_report}",
                         when(t)
                     ),
                     None if state.in_use == "custom" => "Your server in use".to_string(),
@@ -410,19 +449,20 @@ fn bypass_lines(
 async fn phone_lines(
     state: &AppState,
     lookups: Lookups<'_>,
+    devices: &[Device],
 ) -> Result<(Vec<(i64, String)>, Vec<(i64, String)>), sqlx::Error> {
     type Row = (
         i64,
         String,
         bool,
-        Option<i64>,
+        Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
     );
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT d.id, d.name, COALESCE(p.vpn_filter_enabled, 1), s.id, s.capabilities_json, \
-                s.dns_upstream_json, p.allowlist_json \
+        "SELECT d.id, d.name, COALESCE(p.vpn_filter_enabled, 1), s.reported_at, \
+                s.capabilities_json, s.dns_upstream_json, p.allowlist_json \
          FROM devices d \
          LEFT JOIN device_policy p ON p.device_id = d.id \
          LEFT JOIN device_status s ON s.id = (SELECT id FROM device_status \
@@ -435,10 +475,17 @@ async fn phone_lines(
     let zone = Zone::load(&state.db).await;
     let now = chrono::Utc::now();
     let (mut server, mut bypass) = (Vec::new(), Vec::new());
-    for (id, name, filter_on, report, caps, upstream, allowlist) in &rows {
-        let report = report.map(|_| LastReport {
+    for (id, name, filter_on, reported_at, caps, upstream, allowlist) in &rows {
+        let stale = devices.iter().find(|d| d.id == *id).is_some_and(|device| {
+            matches!(
+                crate::handlers::devices::connection_of(state, device, now),
+                ConnectionState::Offline { .. } | ConnectionState::Disconnected
+            )
+        });
+        let report = reported_at.as_deref().map(|at| LastReport {
             capabilities: caps.as_deref(),
             dns_upstream: upstream.as_deref(),
+            stale_since: crate::display_time::parse_db_utc(at).filter(|_| stale),
         });
         let lines = bypass_lines(name, *filter_on, report.as_ref(), allowlist.as_deref());
         bypass.extend(lines.into_iter().map(|line| (*id, line)));
@@ -571,7 +618,7 @@ async fn render_page(
         // Cloudflare, also for a stored Custom without a valid pair (the phones use it then).
         _ => Lookups::Provider("Cloudflare"),
     };
-    let (phones, bypass) = match phone_lines(state, lookups).await {
+    let (phones, bypass) = match phone_lines(state, lookups, &devices).await {
         Ok(lines) => lines,
         Err(err) => return read_failed(err),
     };
@@ -619,6 +666,7 @@ async fn render_page(
         typed: typed("typed"),
         typed_name: typed("name"),
         typed_url: typed("url"),
+        doh_allowed: doh_allowed_notice(params),
         server,
         bypass,
     }
@@ -959,7 +1007,28 @@ pub async fn create_custom_domain(
     }
     dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
     nudge(&state, device_id).await;
-    Redirect::to(&back_to(&form, device_id, group)).into_response()
+    let back = back_to(&form, device_id, group);
+    if list_type == "allow" && dns_server::is_builtin_doh_host(&domain) {
+        // Kept (it lifts nothing), with a notice: the phone blocks it whatever the lists say
+        // (design 67 §6 answer 1, qa-67-code L1).
+        let (path, fragment) = back.split_once('#').unwrap_or((back.as_str(), group));
+        let domain: String = form_urlencoded::byte_serialize(domain.as_bytes()).collect();
+        return Redirect::to(&format!(
+            "{path}?notice=doh_allowed&domain={domain}#{fragment}"
+        ))
+        .into_response();
+    }
+    Redirect::to(&back).into_response()
+}
+
+/// After an Allowed Domains save the built-in secure-DNS hosts cover (`?notice=doh_allowed`):
+/// the host for "… is a secure-DNS server and stays blocked", checked again (never other text).
+pub(crate) fn doh_allowed_notice(params: &HashMap<String, String>) -> Option<String> {
+    if params.get("notice").map(String::as_str) != Some("doh_allowed") {
+        return None;
+    }
+    let domain = params.get("domain")?.trim().to_lowercase();
+    dns_server::is_builtin_doh_host(&domain).then_some(domain)
 }
 
 /// One phone's setting for one blocklist: `setting` = `default` (no override: the list as it is

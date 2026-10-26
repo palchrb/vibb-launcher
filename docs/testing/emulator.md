@@ -1552,9 +1552,10 @@ server refuses the same server twice, and one alone isn't enough: the backup ans
    Record whether it shows "managed by your organization" (Chromium's owned-device default). Then this branch's
    build: `chrome://policy` lists `DnsOverHttpsMode` = `off`, source Platform; the switch is managed and off. Record
    the result in launcher/CLAUDE.md's browser table.
-10. On main's build, set Chrome's secure DNS to Google (or in a fork that still shows the switch): a name on the
-    phone's lists still doesn't load. Then `adb shell ping -c1 dns.google` and `ping -c1 chrome.cloudflare-dns.com`:
-    unknown host. With the phone's log on, the phone's Blocked Activity has "Secure DNS bypass".
+10. On main's build, set Chrome's secure DNS to Google (or in a fork that still shows the switch). Then install this
+    branch's build over it: a name on the phone's lists doesn't load, and `adb shell ping -c1 dns.google` and
+    `ping -c1 chrome.cloudflare-dns.com` say unknown host (on main's build they resolve). With the phone's log on, the
+    phone's Blocked Activity has "Secure DNS server".
 11. Firefox (Play): `adb shell ping -c1 use-application-dns.net` -> unknown host (NXDOMAIN; nothing in the log).
     Firefox Settings › Privacy › DNS over HTTPS (if present): Default -> filtered; Increased with Cloudflare ->
     filtered (falls back); Max -> pages fail (the host is blocked). Record which modes exist on Android and fix the
@@ -1573,8 +1574,9 @@ server refuses the same server twice, and one alone isn't enough: the backup ans
 15. Provider mode with 853 and `1.1.1.1:443` blocked (step 7's host iptables, `-d 1.1.1.1 --dport 443` and `--dport
     853`; no guest root): "DNS can't be reached since ... - Cloudflare doesn't answer from where the phone is" - the
     only phone line in provider mode.
-16. Edge, Brave, Vivaldi from Play, allowlisted: `edge://policy` / `brave://policy` / `vivaldi://policy` show
-    `DnsOverHttpsMode`; fill launcher/CLAUDE.md's browser table. Element X still connects with the built-in list in
+16. Edge, Brave, Vivaldi and Opera from Play, allowlisted: `edge://policy` / `brave://policy` / `vivaldi://policy` /
+    `opera://policy` show `DnsOverHttpsMode`; fill launcher/CLAUDE.md's browser table (an Opera that reads it loses
+    its Each Phone line in `DOH_IGNORING_BROWSERS`). Element X still connects with the built-in list in
     force (WhatsApp: a device check).
 17. Cromite allowlisted for the phone: the Each Phone footer names it ("Cromite: set its Secure DNS to Off ...");
     with its Secure DNS on, pages don't load; Off -> filtered. The Web filter switched off for the phone: the line

@@ -1,0 +1,67 @@
+# The secure-DNS servers the phone never resolves for an app (design 67 §2.2, category "Secure DNS server").
+# One lowercase name per line; each also covers every name under it (a suffix, as the server's lists).
+# Built into Vibb One: in force before the first sync, the parent can't lift it, a server feed can't empty it.
+# Never our own upstreams: they are IP literals, or looked up by BootstrapDns, never through the tunnel.
+# Listed one by one - no first-label rule ("doh.", "dns."): doh.wa.gov and doh.gov.ph are health departments.
+# A best-effort backstop for the best-known public resolvers, not every resolver that exists.
+
+# Chromium's DoH provider list (net/dns/public/doh_provider_entry.cc), with each provider's DoT name.
+cloudflare-dns.com
+one.one.one.one
+dns.google
+dns.google.com
+8888.google
+dns.quad9.net
+dns9.quad9.net
+dns10.quad9.net
+dns11.quad9.net
+dns12.quad9.net
+dns.nextdns.io
+dns.sb
+doh.opendns.com
+doh.familyshield.opendns.com
+doh.sandbox.opendns.com
+doh.cleanbrowsing.org
+odvr.nic.cz
+public.dns.iij.jp
+dns.switch.ch
+doh.xfinity.com
+doh-01.spectrum.com
+doh-02.spectrum.com
+dnsnl.alekberg.net
+doh.quickline.ch
+canadianshield.cira.ca
+
+# Firefox's own resolvers (TRR) not above.
+wikimedia-dns.org
+
+# The common public resolvers' DoH and DoT names.
+dns.adguard-dns.com
+unfiltered.adguard-dns.com
+family.adguard-dns.com
+d.adguard-dns.com
+dns.adguard.com
+dns-family.adguard.com
+dns-unfiltered.adguard.com
+dns.mullvad.net
+doh.mullvad.net
+freedns.controld.com
+dns.controld.com
+family-filter-dns.cleanbrowsing.org
+adult-filter-dns.cleanbrowsing.org
+security-filter-dns.cleanbrowsing.org
+dns1.nextdns.io
+dns2.nextdns.io
+dns0.eu
+ordns.he.net
+doh.libredns.gr
+doh.applied-privacy.net
+dns.digitale-gesellschaft.ch
+doh.ffmuc.net
+dns.twnic.tw
+dns.alidns.com
+doh.pub
+doh.360.cn
+common.dot.dns.yandex.net
+safe.dot.dns.yandex.net
+family.dot.dns.yandex.net

@@ -30,6 +30,8 @@ val BROWSER_DOH_PACKAGES: List<String> = listOf(
     "com.vivaldi.browser",
     "com.sec.android.app.sbrowser",
     "com.kiwibrowser.browser",
+    // Chromium-based with its own DoH setting; whether it reads the policy is E3's (qa-67-code L6).
+    "com.opera.browser",
 )
 
 /**
@@ -50,6 +52,8 @@ internal fun sameBundle(a: Bundle, b: Bundle): Boolean =
 /** [browserDohPlan]'s glue, from `AppEnforcer.apply` right after the VPN's own restrictions. */
 object BrowserDoh {
     fun apply(context: Context, dpm: DevicePolicyManager, admin: ComponentName, filterOn: Boolean) {
+        // Only the device owner writes a managed config: nothing to do (and nothing to log) otherwise.
+        if (!dpm.isDeviceOwnerApp(context.packageName)) return
         // Hidden (unallowed) browsers count: MATCH_UNINSTALLED_PACKAGES sees them.
         val installed = BROWSER_DOH_PACKAGES.filter { pkg ->
             try {

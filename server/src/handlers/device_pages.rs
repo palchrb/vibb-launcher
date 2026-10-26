@@ -1375,6 +1375,8 @@ pub struct LogRow {
 #[template(path = "device_filter.html")]
 struct FilterTemplate {
     title: String,
+    /// An allowed host the phone blocks anyway (`dns_filter::doh_allowed_notice`, design 67).
+    doh_allowed: Option<String>,
     device: Device,
     filter_on: bool,
     lists: Vec<FilterList>,
@@ -1531,6 +1533,7 @@ pub async fn view_filter(
         FilterTemplate {
             title: format!("Web Filter · {}", device.name),
             refused,
+            doh_allowed: crate::handlers::dns_filter::doh_allowed_notice(&query),
             filter_on: policy.vpn_filter_enabled,
             spotify_on,
             spotify_overridden,

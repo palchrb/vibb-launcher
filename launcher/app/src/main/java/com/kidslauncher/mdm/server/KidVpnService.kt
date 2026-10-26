@@ -326,6 +326,7 @@ class KidVpnService : VpnService() {
             // Firefox's canary (design 67 §2.3): NXDOMAIN turns off the DoH it enabled by default.
             // Firefox's own probe, not the kid's doing: never forwarded, logged or counted.
             if (isFirefoxCanary(domain)) return reply(nxdomainResponse(message))
+            if (isDdrQuery(domain)) return reply(blockedResponse(message))
 
             // The phone's lists first, always: nothing reaches any resolver before them.
             val category = DnsFilterEngine.classify(domain)

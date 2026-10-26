@@ -90,6 +90,10 @@ class DnsFilterEngineTest {
         for (name in names) assertTrue(name, Regex("$label(\\.$label)+").matches(name))
         assertEquals("no repeats", names.size, names.toSet().size)
         for (name in names) assertNull("$name is under another entry", classifyDomain(emptyMap(), name, false, doh - name))
+        // The server's copy (its Allowed Domains notice, qa-67-code L1) is byte-identical.
+        val serverCopy = File("../../server/testdata/doh_hosts.txt")
+        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
+        assertEquals("${serverCopy.path} differs from the asset", dohFile.readText(), serverCopy.readText())
     }
 
     @Test
@@ -113,7 +117,8 @@ class DnsFilterEngineTest {
     }
 }
 
-/** Design 67 §2.3: Firefox's canary and its answer. */
+/** Design 67 §2.3: Firefox's canary and its answer. That it is answered in `handlePacket` before the
+ * lists and never forwarded is CustomDnsGuardsTest's (qa-67-code N3). */
 class NxdomainTest {
     @Test
     fun `the canary is the exact name, answered NXDOMAIN with the SOA, the ID and RD echoed`() {
@@ -121,6 +126,9 @@ class NxdomainTest {
         assertTrue(isFirefoxCanary("Use-Application-DNS.net."))
         assertFalse(isFirefoxCanary("x.use-application-dns.net"))
         assertFalse(isFirefoxCanary("use-application-dns.net.example"))
+        // DDR's name (qa-67-code N4), exact too.
+        assertTrue(isDdrQuery("_DNS.resolver.arpa."))
+        assertFalse(isDdrQuery("_dns.example.resolver.arpa"))
         for (rd in listOf(true, false)) {
             val request = Message.newQuery(Record.newRecord(Name.fromString("use-application-dns.net."), Type.A, DClass.IN))
             if (!rd) request.header.unsetFlag(Flags.RD.toInt())
