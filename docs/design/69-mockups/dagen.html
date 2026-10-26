@@ -105,6 +105,12 @@
   .dagen .peek.l { left: 0; background: linear-gradient(90deg, rgba(27,27,40,.9), transparent); }
   .dagen .peek.r { right: 0; background: linear-gradient(270deg, rgba(27,27,40,.9), transparent); }
 
+  .dagen .detail { position: absolute; left: 16px; right: 16px; top: 118px; background: var(--tile); border-radius: 18px;
+                   padding: 16px; }
+  .dagen .detail .ti { font-size: 18px; font-weight: 800; color: var(--ink); line-height: 24px; }
+  .dagen .detail .tm { font-size: 14px; font-weight: 800; color: var(--accent); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .dagen .detail .cal { font-size: 13px; font-weight: 700; color: var(--core-dim); margin-top: 2px; }
+  .dagen .detail .body { font-size: 14px; font-weight: 600; color: var(--core); line-height: 21px; margin-top: 14px; }
   /* the PWA (light, iOS grouped lists; the Vibb identity D) */
   .pwa { position: relative; width: 320px; max-width: 100%; height: 569px; background: var(--pwa-bg);
          color: var(--pwa-ink); border-radius: 18px; overflow: hidden; box-shadow: 0 0 0 1px var(--hair);
@@ -384,6 +390,25 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
     «Skole: Språk: Ordtak» får første del av den lange beskrivelsen; hele teksten ligger bak et trykk.</figcaption>
   </figure>
 
+
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">Onsdag<small>28. oktober</small></div></div>
+      <div class="detail">
+        <div class="ti">Skole: Språk: Ordtak</div>
+        <div class="tm">13:00 - 14:30</div>
+        <div class="cal">itslearning</div>
+        <div class="body">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen
+        kjente ordspråk og talemåter kommer fra. Som ferske eksperter forsøker vi å sortere de ordtakene vi har jobbet med, pluss
+        andre, og sammenligner med ordtak på andre språk.</div>
+      </div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>Hele teksten.</b> Et trykk på hendelsen åpner den: tittel (etter reglene), tid, sted når det finnes, kalenderens
+    navn, og hele beskrivelsen. Ingenting å redigere; tilbake med pilen eller et sveip.</figcaption>
+  </figure>
   <figure>
     <div class="pwa">
       <div class="top"><span class="bk">‹ Calendar</span><span class="sv">Save</span></div>
