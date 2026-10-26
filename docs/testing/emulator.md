@@ -2068,6 +2068,31 @@ The code QA's checks (`docs/review/qa-music-r13-code.md`, "Emulator checks to ad
     shows it briefly. `--not-premium` / Wi-Fi off: the line gives way to "Spør en voksen" / "Trenger internett" under the
     entry name and the times come back - no new wait. Note the seconds from the tap to the tone for the user.
 
+Round M1 (`music-splash-b`; PLAN "Round M1"): the system splash shows the rings alone, the app's first frame adds "vibb
+music" 24 dp under them, and a failed stream's real cause is logged. These replace step 1's "at the foot" and step 6's
+"the system's exit fade only"; the rest of steps 1 and 6-8 stands.
+
+12. **The hand-over, frame by frame** (cold, from the launcher's tile, recorded as in step 1, stepped at 24 fps): the
+    rings on the night ground alone, then "vibb music" (cream + peach) fading in right under them while the rings
+    **don't move a pixel** - no slide, no scale step, no shift by the status bar (compare the rings' top edge in the
+    frames before and after the fade; at most a sharpness change, the system splash's icon being a scaled bitmap) - then
+    the library fading in over the splash, no plain night frame anywhere. Nothing is cut: the wordmark sits about 109 dp
+    under the screen's centre. Note the frames from the tap to the wordmark and to the library.
+13. **Empty library** (no entries in the feed): the same hand-over, then the empty state at once (not at 3 s).
+14. **Font scale 1.3** (`adb shell settings put system font_scale 1.3`, cold start): the splash identical to 1.0 (both
+    images are paths in dp). With the app open, change the font scale back: the screens come back with **no splash** over
+    them (a recreated instance shows none) and no blank flash.
+15. **3-button navigation** (an AVD with `hw.mainKeys = no` and 3-button navigation, or `adb shell cmd overlay enable
+    com.android.internal.systemui.navbar.threebutton`): the rings still don't move at the hand-over (the system splash
+    and the app's both cover the whole screen, bars included); the wordmark is well above the navigation bar.
+16. **The no-network words and the log** (`fake-audio.py` for an RSS entry): with Wi-Fi on, make the host's name fail -
+    the launcher's Web Filter on a custom DNS server that doesn't answer (§6m), or a listing whose enclosure host doesn't
+    exist (`fake-audio.py --advertise nohost.invalid --print-listing ENTRY` into the debug feed) - and tap the tile: the line reads "Trenger internett" / "Needs the
+    internet", not "Kan ikke spilles nå"; `adb logcat -s VibbPlayer` shows "Playback failed: ERROR_CODE_IO_... (200x):
+    ... <- java.net.UnknownHostException: Unable to resolve host ..." with the real host and no query string. Stop
+    `fake-audio.py` instead (a refused connect): today's "Kan ikke spilles nå", and the log names the
+    `ConnectException`. Wi-Fi and mobile data both off: still "Ikke lastet ned - trenger Wi-Fi" (the streaming gate first).
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:
