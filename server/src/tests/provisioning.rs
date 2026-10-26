@@ -747,6 +747,17 @@ async fn the_env_server_url_loses_to_the_saved_one() {
         "https://saved.example"
     );
     assert_eq!(provisioning::server_url(&saved(""), &app.state.config), "");
+    // The QR's own payload (code QA L4): the env address with nothing saved, the saved one else.
+    let qr_url = |settings: &crate::models::ProvisioningSettings| {
+        provisioning::setup_payload(&state.config, settings, None, "ABC123".to_string()).unwrap()
+            ["android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE"]["server_url"]
+            .clone()
+    };
+    assert_eq!(qr_url(&saved("")), env);
+    assert_eq!(
+        qr_url(&saved("https://saved.example")),
+        "https://saved.example"
+    );
 
     let phone_setup = |state: AppState| async move {
         let response = crate::handlers::settings::provisioning_settings_form(
