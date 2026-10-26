@@ -2061,6 +2061,57 @@ policy change).
     (if one can be made, e.g. from inside the app's own task) holds the app splash about 0.5 s with the content ready
     (the 400 ms hold and the 500 ms hand-over wait run concurrently from its first frame, not 0.9 s).
 
+## 6v. Dagen: the day view, the title rules, the glance's line and reminder row, the kid's own events (design 69)
+
+Branch `day-view`; `wm density 240` (§3b). Logcat: `CalendarStore`, `GlancePanel`. Nothing below needs adb for the
+feature itself - the seed is a test shortcut; the real path is ICSx5 from the catalog (step 5).
+
+1. **Seed the provider** (quote each command whole for the device shell; if the shell's uid lacks the calendar
+   permission, skip to step 5's feed):
+   ```
+   adb shell "content insert --uri 'content://com.android.calendar/calendars?caller_is_syncadapter=true&account_name=dagen&account_type=LOCAL' --bind account_name:s:dagen --bind account_type:s:LOCAL --bind name:s:Skolen --bind calendar_displayName:s:Skolen --bind ownerAccount:s:dagen --bind calendar_access_level:i:700 --bind sync_events:i:1 --bind visible:i:1"
+   adb shell "content query --uri content://com.android.calendar/calendars --projection _id:name"
+   adb shell "content insert --uri content://com.android.calendar/events --bind calendar_id:i:<id> --bind title:s:'Gruppe 2- skoleåret 2026/2027: Matte' --bind description:s:'Viktig at man er klar 08.30. Ta med gymtøy.' --bind dtstart:l:<ms> --bind dtend:l:<ms> --bind eventTimezone:s:Europe/Oslo"
+   ```
+   A weekly one: `--bind rrule:s:'FREQ=WEEKLY;BYDAY=MO' --bind duration:s:PT6H15M` instead of `dtend`; all-day:
+   `allDay:i:1`, `eventTimezone:s:UTC`, UTC midnights. `date +%s000` gives now in ms.
+2. **The tile and the page**: after a sync Home has "Dagen" right after the phone book (the blue tile); the PWA's Device ›
+   Calendar lists "Skolen · Phone" (the report) and the local "Min kalender" once Dagen was opened (the kid may add events
+   by default). Dagen: the heading is the weekday over the date on every page, today too; "← I dag" on a later day,
+   "I dag →" on an earlier one, none on today; swipe a year out and back (endless both ways, a 10 dp peek of the
+   neighbours); "Pågår nå" and the peach ring on an ongoing event; "Ingenting i kalenderen." on an empty day; a far-future
+   day (2040) is an empty day, no error.
+3. **Caps and "›"** at font 1.0 and 1.3 (§3b): a long title and a long description wrap to two lines each with "…", and
+   only those rows show the small "›"; a row whose text fits has none. A tap opens the event's page with the whole
+   description; a URL in it is not a link. TalkBack: one node per row, "Pågår nå, 14:45 til 15:30, …", action "Åpne
+   hendelsen".
+4. **Rules from the PWA**: add "Starts with «Gruppe 2- skoleåret 2026/2027:» · Skole: + the rest"; the preview shows
+   "Skole: Matte" while typing (no page jump, no `settings_saved` line); after the next sync Dagen shows "Skole: Matte";
+   a "Contains" hide on the description ("gymtøy") hides the event.
+5. **The real path**: ICSx5 from the catalog's F-Droid source, ticked for this phone, On Home off under Apps (it stays
+   allowed, gone from Home and the drawer; in a pause it shows); in a pause add a feed from the host (`python3 -m
+   http.server 8088`, `http://10.0.2.2:8088/dagen.ics`) with a weekly series with an `EXDATE` and a moved instance, an
+   all-day event, a weekend camp, a UTC RRULE across 2026-10-25, a `VALARM` of 15 min, and the itslearning shapes ("R
+   omerriket", long descriptions, "5. trinn"). Check the [verify] items: the calendar's NAME is the feed URL (the key
+   stays across a rename of the display name), its account type `at.bitfire.icsdroid`, access level 200; with a time
+   rule on, ICSx5 is not suspended (`dumpsys package at.bitfire.icsdroid | grep suspended`) and still syncs; Dagen's
+   open asks a sync (`dumpsys content` shows a manual sync of the account); `DISALLOW_MODIFY_ACCOUNTS` doesn't stop
+   ICSx5 adding its account.
+6. **The glance** (lock the phone): with both lock switches off, nothing of the calendar on the glance. "Next event line"
+   on: "Neste: Skole: Matte 10:00" under the alarm line in its style; with music + 3 message rows and 3-button
+   navigation it yields (row 3 stays partly in sight). Reminders "The calm row" and the calendar's reminder "15 min
+   before": 15 minutes before the event the row comes first ("… om 15 min", the start under it), silent - no sound, no
+   vibration, no heads-up, nothing in the shade, the screen stays dark until pressed; it counts down to "nå" and is gone
+   at the start; a swipe sideways doesn't take it, TalkBack has no "Fjern"; its tap asks the keypad ("Skriv koden for å
+   åpne Dagen") and the code opens Dagen on that day; under a time rule the tap gives the plain keypad. The master
+   switch off removes it whatever the calendar says; the "Neste" line yields while the row is up. "own": a `VALARM` of
+   15 min gives the row at 15, a day-before alarm none. Dagen open while a reminder is up shows it under the header.
+7. **The kid's own events**: the "+" is there from day one (the local "Min kalender"); "Ny avtale" with what, day (the
+   shown day), from, length, place → Lagre → the row with a green start and "Min kalender" as its second line; its page
+   has Endre and Slett; a feed's event has neither. In the PWA pick a DAVx5 calendar the kid may write to (a CalDAV test
+   server, e.g. Radicale): the new event uploads with its `vibb-` UID, comes back on the next sync and can still be
+   changed; "Nowhere (no +)" removes the "+".
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

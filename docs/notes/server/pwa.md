@@ -1245,3 +1245,17 @@ man er inne på en device". Branch `pwa-fixes-b`.
   artefact, independent of this branch and of main's code; stubbing `getSubscription` in an init script keeps the
   pages too. Desktop Safari has a real push implementation, so it says nothing about it.
 
+
+## Words: the i18n layer (design 69, 2026-10-26; the rest of the PWA in round S-i18n)
+
+- `src/i18n.rs`: `Lang { En, Nb }`, an axum extractor resolved per request from `Accept-Language` (its q-values; `nb`, `nn`
+  and `no` are Norwegian, anything else English) - `admin_users` has no language of its own yet, so nothing in the schema;
+  `t(lang, key)` and `t_params(lang, key, &[("name", value)])` (`{name}` in the text) over `src/i18n/en.json` and
+  `src/i18n/nb.json`, flat objects compiled in. A key missing from both reads `?` (logged); the tests keep that from
+  happening: `i18n::tests` checks that both catalogs have every key with the same parameters, that every key the
+  templates and handlers name (`self.t("…")`, `t(lang, "…")`, `t_params(lang, "…"`, and every quoted `calendar.`/`common.`
+  key) exists, and the header's parsing.
+- A page that uses it: its template struct has `lang: Lang` and `fn t(&self, key: &str) -> &'static str`; the template
+  sets `<html lang="{{ lang.code() }}">` and says `{{ self.t("…") }}`; a handler takes `lang: Lang` as an extractor. Device ›
+  Calendar, its rule editor, the preview fragment and the summary's Calendar row are the first (`calendar.md`); the older
+  pages stay English until round S-i18n. **No new user-facing word is hardcoded** (the user, 2026-10-26).

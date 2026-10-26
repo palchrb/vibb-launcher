@@ -1338,6 +1338,61 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   and no "Kids Launcher", "Kids Device MDM" or "Kid Phone Filter" left in `src/main`'s res, java and manifest or
   anywhere in `src/debug`).
 
+## Dagen: the kid's day, the parent's title rules (design 69, `docs/design/69-dagen.md`, at the monorepo root)
+
+- **What**: a day view in Vibb One over Android's calendar provider, which ICSx5 (subscribed feeds) and DAVx5 (CalDAV)
+  feed; one day as a list, swiped endlessly from day to day, an event's own page with the whole description; the
+  parent's title rules applied wherever a title shows; on the lock the "Neste" line and the calm reminder row; the kid's
+  own events in their calendar. **No event, title, description, count or time ever leaves the phone**: the status
+  report's `calendar` names calendars only. Mockup `docs/design/69-mockups/dagen.html` (§1, §1b, §3 A and C, §5).
+- **Pure** (`day/`, no Android imports): `TitleRules.kt` (cleaning - control/bidi out, whitespace runs one space, NFC,
+  200/2000 code points - and matching that ignores case per code point and whitespace; replace / prefix with the
+  separators trimmed / hide; the first rule that applies wins; the server's `calendar.rs` is the same code, both run
+  the shared `calendar_title_rules.json`, `TitleRulesTest`), `CalendarPolicy.kt` (`calendarPolicy`: the policy's
+  `calendar` field by field - missing = an older server, everything shown and nothing on the lock; anything but an
+  object = `UNKNOWN`, Dagen off; a rule it can't use is dropped and its id reported; `CalendarPolicyTest`),
+  `CalendarKey.kt` (the key = 16 hex of SHA-256 over account type NUL account name NUL `Calendars.NAME`; the source =
+  only the host of an http(s)/webcal NAME), `DayModel.kt` (`dayView`: all-day on its UTC dates, timed on the local ones,
+  multi-day first/middle/last, cancelled/declined/hidden/rule-hidden out, two copies one row, the order, "now";
+  `DayModelTest` with the DST days), `RowText.kt` (the second line: the location, else the description's first
+  sentence - a "." after a digit or `ca kl nr osv bl.a f.eks` ends nothing - at most 120 code points; `cut` = the row's
+  "›"; `FirstSentenceTest`), `DayPager.kt` (`DAY_CENTER`, `dayAt`/`positionOf`, `todayJump`: "← I dag" on a later day,
+  "I dag →" on an earlier one; `DayPagerTest`), `Reminders.kt` (§5: `reminderStart` off / before N / own - the earliest
+  alarm at most 120 min before, `MINUTES_DEFAULT` none -, `reminderNow` only under the master switch and Dagen on Home,
+  `glanceNext`, `nextReminderBoundary`; `RemindersTest`), `KidEvent.kt` (step 3: the form's input, `kidMayEdit` -
+  Vibb One's by the `vibb-` UID or our package, in the kid's calendar; `KidEventTest`).
+- **`calendar/CalendarStore`** (one worker thread; every provider call): the calendars that sync events, a day's
+  instances (`Instances.CONTENT_BY_DAY_URI` for the day and its neighbours, filtered by the model), an LRU of 9 days, the
+  events' own reminders, an event by id; the provider's change notification debounced to one reload a second; the
+  report; `tileShown`; the kid's calendar (`kidCalendar`: the parent's writable pick, else the local "Min kalender" it
+  makes at Dagen's open while the kid may add events - `ACCOUNT_TYPE_LOCAL` through the sync-adapter URI, NAME
+  `vibb-kid-calendar`); `requestSyncIfDue` (Dagen's open, at most every 30 min); the kid's three guarded writes (insert,
+  and update/delete only of an event still theirs - the provider's only writes, `KidEventTest`). `READ_CALENDAR` and
+  `WRITE_CALENDAR` are self-granted by `AppEnforcer.apply` while managed and at the store's start as device owner.
+- **UI** (`ui/day/`): `DayActivity` (KidHeader's second line: the weekday over the date, always; the jump back off today;
+  `ViewPager2` over `Int.MAX_VALUE` days, a 10 dp peek; a page shows nothing until its day is read; a date/time/zone
+  change keeps the page's date; a minute tick; a reminder that is up under the header; the "+" while the kid may add
+  events), `DayListAdapter` (two lines of title and second line, the "›" only when cut - `cutByRule` or an ellipsis after
+  layout -, the ongoing ring and "Pågår nå", one TalkBack node "Pågår nå, 14:45 til 15:30, SFO: Leksehjelp" with
+  "Åpne hendelsen"), `EventActivity` (read again by id, rules applied, the whole description in a plain TextView, no
+  links; Change and Delete only for the kid's own), `EventEditActivity` ("Ny avtale": what, day, from, length, place).
+  Home: `GridTile.Day` right after the phone book (`tileShown`: Dagen on Home, a readable provider, a calendar shown or
+  the kid's own to come). `KidScreensEscapeTest` scans `ui/day` and `calendar`.
+- **The glance** (step 2, `lock/GlanceCalendar`, `GlancePanel`): today read off the main thread at the page's start and on
+  every provider or policy change, one main-thread callback at the next boundary - no alarm, no notification, no wake.
+  C: `GlanceCalendarRow` first in the list (the calendar glyph in the peach disc, "Fotball om 15 min" / "… nå", the
+  start; never dismissable; the tap is `GlanceTarget.Day` through the keypad, `GlanceOpen.DAY`, none under a time rule).
+  A: `lock_glance_next` under the alarm line in its style, yielding while C is up and when `glanceNextFits` (the third
+  row keeps 16 dp in sight) says no - read from the laid-out page with the line taken out.
+- **Enforcement and Home**: `CALENDAR_SYNC_APPS` (ICSx5, DAVx5) are never suspended by a time rule while allowed
+  (`EnforcementPlan`), and an app with `app_display.on_home: false` is off Home and the drawer except while the pause or
+  the override is open (`onHomeListable` in `AppFilter`).
+- **Contracts**: the policy's `calendar` (`PolicyResponseCompatTest`), the report's `calendar` (`CalendarReport`,
+  `calendar_status_report.json`, `CalendarReportTest`), capability `calendar_v1`.
+- **Not device-tested**: design 69 §7 (`docs/testing/emulator.md` §6v): ICSx5's and DAVx5's NAME/account type/access
+  level, the local calendar's insert as a plain app, the two-line caps and "›" at font 1.0 and 1.3, the glance
+  geometry, DAVx5's round trip of the `vibb-` UID, `requestSync`, a far-future day.
+
 ## Building without tsnet.aar
 
 `libs/tsnet.aar` only exists where the Go + NDK toolchain ran (CI, x86_64). When it's missing, `app/build.gradle.kts` compiles `app/src/tsnetStub/java/tsembed/` into the **debug** variant instead - same API as the gomobile binding, every connect fails - so `./gradlew assembleDebug testDebugUnitTest` works on any machine; Gradle logs a warning when the stub is used. A **release** build never gets the stub, whatever the flags (security review L13): `checkReleaseHasTsnet` (a dependency of `preReleaseBuild`) fails it without the aar, and the stub isn't in the release source set anyway. CI also passes `-PrequireTsnet=true`, which fails any build without the aar. To build a release locally without Go (an APK that is never for a phone), pack the stub's classes into a throwaway `libs/tsnet.aar` (gitignored). If `mobile/tsembed`'s exported API changes, update the stub to match.
