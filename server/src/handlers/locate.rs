@@ -1848,9 +1848,8 @@ pub async fn update_location_retention(
                 Some(&format!("device {id}: {days} days")),
             )
             .await;
-            if let Err(err) = crate::retention::prune(&state.db).await {
-                tracing::error!(%err, "pruning after a retention change failed");
-            }
+            // A failing table is logged by the pass itself (security review L9).
+            crate::retention::prune(&state.db).await;
             Redirect::to(&format!("/devices/locate?device={id}#location-settings")).into_response()
         }
         Err(err) => {

@@ -451,14 +451,14 @@ async fn zone_events_go_with_the_location_history() {
         .execute(&app.db)
         .await
         .unwrap();
-    crate::retention::prune(&app.db).await.unwrap();
+    crate::retention::prune(&app.db).await;
     assert_eq!(count(&app, "SELECT COUNT(*) FROM parent_events").await, 3);
     // 7 days: the zone events go, the other kind keeps its 90 days.
     sqlx::query("UPDATE device_policy SET location_retention_days = 7")
         .execute(&app.db)
         .await
         .unwrap();
-    let pruned = crate::retention::prune(&app.db).await.unwrap();
+    let pruned = crate::retention::prune(&app.db).await;
     assert_eq!(pruned.parent_events, 2);
     let left: Vec<String> = sqlx::query_scalar("SELECT kind FROM parent_events")
         .fetch_all(&app.db)

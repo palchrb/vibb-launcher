@@ -24,7 +24,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `allow_blocked` or `install_update` waits at any age (a lost phone back weeks later is still locked or wiped); a
   cancelled or answered one goes like the rest. The summary's Activity week is a query filter, not retention.
 - `retention::run_pruning` (spawned from `main` only) runs `prune` at startup and hourly - it replaced the old
-  `run_dns_event_pruning` (60 days) and `run_location_pruning` (30 days). Connections use `secure_delete`.
+  `run_dns_event_pruning` (60 days) and `run_location_pruning` (30 days). Connections use `secure_delete`. Since
+  0.55.0 (security review L9) every statement of the pass runs on its own: one that fails is logged with its table
+  and named in `Pruned.failed`, the rest are pruned all the same (`prune` returns `Pruned`, no error;
+  `cleanup::a_failing_table_leaves_the_rest_of_the_pass`).
 - Tests: `src/tests/cleanup.rs`.
 
 ## Crash reports (cleanup 2026-10-06, `src/crashes.rs`, migration `0040_device_crashes.sql`)

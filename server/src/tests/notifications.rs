@@ -733,7 +733,7 @@ async fn events_go_with_their_phone_and_after_90_days() {
         .await
         .unwrap();
     }
-    let pruned = crate::retention::prune(&app.db).await.unwrap();
+    let pruned = crate::retention::prune(&app.db).await;
     assert_eq!((pruned.parent_events, pruned.push_rows), (1, 2));
     assert_eq!(events(&app, ola).await.len(), 1);
     let left: (i64, i64) = sqlx::query_as(

@@ -691,7 +691,7 @@ async fn the_security_log_is_pruned_after_180_days() {
         .await
         .unwrap();
     }
-    let pruned = crate::retention::prune(&app.db).await.unwrap();
+    let pruned = crate::retention::prune(&app.db).await;
     assert_eq!(pruned.security_events, 1);
     let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM security_events")
         .fetch_one(&app.db)

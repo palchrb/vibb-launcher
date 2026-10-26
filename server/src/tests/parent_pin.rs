@@ -721,7 +721,7 @@ async fn old_events_are_pruned_after_90_days() {
     .execute(&app.db)
     .await
     .unwrap();
-    let pruned = crate::retention::prune(&app.db).await.unwrap();
+    let pruned = crate::retention::prune(&app.db).await;
     assert_eq!(pruned.pin_events, 1);
     assert_eq!(stored_events(&app, id).await.len(), 1);
 }
