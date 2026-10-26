@@ -2069,6 +2069,13 @@ async fn a_lan_feed_is_judged_at_every_check_and_its_art_stays_home() {
     let report = check(&app, lan, t0() + TimeDelta::hours(12)).await;
     assert_eq!(report.error.as_deref(), Some("network"));
     assert_eq!(listing(&app, lan).await.lan, Some(false));
+    // A parent's Check now judges it afresh (QA L-g): LAN again.
+    sweep::request_check(&app.db, lan, t0() + TimeDelta::hours(13))
+        .await
+        .unwrap();
+    let report = check(&app, lan, t0() + TimeDelta::hours(13)).await;
+    assert_eq!(report.error, None);
+    assert_eq!(listing(&app, lan).await.lan, Some(true));
 }
 
 // ------------------------------------------------------------------------------------------------

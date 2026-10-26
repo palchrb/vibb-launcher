@@ -1701,7 +1701,9 @@ async fn run_check(
             .and_then(parse_stamp)
             .is_none_or(|at| at <= now - hours(24));
     let result = match link {
-        Link::Rss { url } => rss_check(&mut job, &mut plan, url, old, any_flag).await,
+        Link::Rss { url } => {
+            rss_check(&mut job, &mut plan, url, old, any_flag, mode.requested).await
+        }
         Link::NrkPodcast { slug } => {
             nrk_check(
                 &mut job, &mut plan, link, slug, "podcast", play_order, mode, whole,
@@ -2470,13 +2472,16 @@ async fn rss_check(
     url: &str,
     old: &Listing,
     recheck: bool,
+    requested: bool,
 ) -> Result<(), CheckError> {
     // Where the target lives (§2.7). Public stays public for good (a host that later answers a
     // private address is refused, never turned LAN); LAN is judged again at every check and
     // becomes public for good the first time the host answers otherwise (security review L2: one
     // private answer - a rebinding, a blocker's - never makes a feed LAN for good).
+    // A parent's Check now judges it afresh (QA L-g): the way back for a NAS name that once
+    // answered a public address (split-horizon DNS, a blocker's restart).
     plan.lan_addrs = match plan.lan {
-        Some(false) => Vec::new(),
+        Some(false) if !requested => Vec::new(),
         _ => lan_addresses(job.source, url).await?.unwrap_or_default(),
     };
     let lan = !plan.lan_addrs.is_empty();

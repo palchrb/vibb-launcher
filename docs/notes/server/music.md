@@ -114,7 +114,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   them; `Reach::Any` only for a LAN/tailnet feed the parent entered. Since 0.55.0 (security review L2): LAN means
   every answer private and none "this host" (`music_net::is_lan`: never `0.0.0.0/8` or `::`, what a DNS blocker answers);
   a LAN feed is judged again at every check (`rss_check`) and is public for good the first time its host answers
-  otherwise (public never turns LAN: a later private answer is refused); its cover and episode pictures go with
+  otherwise (public never turns LAN by itself: a later private answer is refused - only a parent's Check now judges it
+  afresh, the way back for a NAS name that once answered publicly, QA L-g); its cover and episode pictures go with
   `Reach::Any` only from the feed's own host and port (`music_sweep::lan_art`), every other picture as a public one
   (`tests::music_sweep::a_lan_feed_is_judged_at_every_check_and_its_art_stays_home`). Every request to a LAN feed
   (the add check, the feed, its own pictures) is pinned to the addresses that check judged (`SourceRequest::pinned_to`,
