@@ -24,6 +24,9 @@ class CustomDnsGuardsTest {
         val packet = source("KidVpnService.kt").substringAfter("private fun handlePacket(").substringBefore("\n    }\n")
         val classify = packet.indexOf("val category = DnsFilterEngine.classify(domain)\n")
         assertTrue("the plain classify line", classify >= 0)
+        // Firefox's canary only before them (design 67 §2.3): answered here, never forwarded or logged.
+        assertTrue(packet.indexOf("if (isFirefoxCanary(domain)) return reply(nxdomainResponse(message))") in 0 until classify)
+        assertTrue(packet.indexOf("if (isDdrQuery(domain)) return reply(blockedResponse(message))") in 0 until classify)
         val blocked = packet.indexOf("val responseBytes = if (category != null) {")
         val custom = packet.indexOf("custom.resolve(")
         val provider = packet.indexOf("resolveProvider(")
@@ -69,12 +72,13 @@ class CustomDnsGuardsTest {
         val locked = stop.substringAfter("synchronized(this) {").substringBefore("\n        }")
         // The stop is marked first (VpnTunnelState.stop: a volatile flag syncCustom reads under the
         // monitor), then live is cleared under it (qa-lfix-notifs-code #3).
-        assertTrue("live cleared under the service's monitor", "live = null" in locked)
+        assertTrue("live cleared under the service's monitor", "if (live === this) live = null" in locked)
         assertTrue(stop.indexOf("state.stop()") in 0 until stop.indexOf("synchronized(this) {"))
         assertTrue("wanted.takeUnless { state.stopped }" in vpn)
-        assertTrue(Regex("""fun dnsUpstreamReport\(\): DnsUpstreamReport\? = live\?\.report\(\)""").containsMatchIn(vpn))
-        // Set only where the custom server is (re)built, after the VPN is up.
-        assertEquals(1, Regex("""\blive = custom\b""").findAll(vpn).count())
+        assertTrue(Regex("""fun dnsUpstreamReport\(\): DnsUpstreamReport\? = live\?\.upstreamReport\(\)""").containsMatchIn(vpn))
+        // Design 67 §3.2 (S-M2): the field only while the tunnel is up - a dead read loop sends none.
+        val report = vpn.substringAfter("private fun upstreamReport(): DnsUpstreamReport? {").substringBefore("\n    }\n")
+        assertTrue(report.trimStart().startsWith("if (state.stopped || state.tunnel == null) return null"))
         assertTrue(vpn.indexOf("state.established(established") in 0 until vpn.indexOf("syncCustom()"))
     }
 }

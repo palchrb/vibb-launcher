@@ -116,13 +116,19 @@ enum class OddAnswer { BLOCKED, SERVFAIL }
 fun oddAnswer(kind: OddKind): OddAnswer = if (kind == OddKind.REFUSED) OddAnswer.BLOCKED else OddAnswer.SERVFAIL
 
 /** The status report's `dns_upstream` (§4.2): [ChooserState.sinceMs] (elapsed realtime) turned into
- * wall clock with the two clocks read now; the reason with `backup` only. Never an address. */
-fun upstreamReport(s: ChooserState, rev: Long, elapsedNow: Long, wallNow: Long): DnsUpstreamReport = DnsUpstreamReport(
-    rev = rev,
-    inUse = if (s.backup) "backup" else "custom",
-    sinceMs = wallNow - (elapsedNow - s.sinceMs),
-    reason = if (s.backup) s.reason?.wire else null,
-)
+ * wall clock with the two clocks read now; the reason with `backup` only; the outage from [reach]
+ * (design 67, [outageTimes]). Never an address. */
+fun upstreamReport(s: ChooserState, rev: Long, reach: ReachState, elapsedNow: Long, wallNow: Long): DnsUpstreamReport {
+    val (unreachableSince, unreachableUntil) = outageTimes(reach, elapsedNow, wallNow)
+    return DnsUpstreamReport(
+        rev = rev,
+        inUse = if (s.backup) "backup" else "custom",
+        sinceMs = wallNow - (elapsedNow - s.sinceMs),
+        reason = if (s.backup) s.reason?.wire else null,
+        unreachableSinceMs = unreachableSince,
+        unreachableUntilMs = unreachableUntil,
+    )
+}
 
 /** The phone's best non-VPN network, as the network callback sees it. */
 data class NetworkSnapshot(val handle: Long, val validated: Boolean)

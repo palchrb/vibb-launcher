@@ -117,6 +117,7 @@ class SyncScheduleTest {
         assertTrue("play_policy_v1" in json["capabilities"].toString())
         assertTrue("battery_v1" in json["capabilities"].toString()) // design 35 step 3
         assertTrue("power_v1" in json["capabilities"].toString()) // design 38
+        assertTrue("dns_bypass_v1" in json["capabilities"].toString()) // design 67
         assertFalse(STATUS_CAPABILITIES.any { "fcm" in it })
         assertEquals("99", json["install_mode"]!!.jsonObject["until_ms"].toString())
         assertEquals("true", json["play_window_active"].toString())

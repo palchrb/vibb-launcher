@@ -121,6 +121,10 @@ and all three compare the copies (`MusicPlanTest`, `ContractFilesTest`); a chang
 `aes_vectors.json`, `bookshelf.json`; the server's `fake_login_fixtures_match`) and answers its `/fake/jwt` (the phone
 alone, design 58 §5.6) from `storytel_token_answers.json`'s rows; since design 58 step 2 the music app has no login
 fixtures (the phone never logs in).
+The launcher's built-in secure-DNS hosts `launcher/app/src/main/assets/dns/doh_hosts.txt` (design 67 §2.2) are
+byte-identical in `server/testdata/doh_hosts.txt`, which the server compiles in for the Allowed Domains notice
+(`dns_server::is_builtin_doh_host`): the server's `dns_server::tests::doh_hosts_match_the_launchers_asset` and the
+launcher's `DnsFilterEngineTest` compare the copies; a change goes into both in one commit.
 
 ## CI and releases
 
@@ -129,7 +133,7 @@ fixtures (the phone never logs in).
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json` and `installed_apps_report.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`; `music.yml` also on the shared
+  `time_request.json` and `installed_apps_report.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`; `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py` and `scripts/music-splash.py`
@@ -137,7 +141,7 @@ fixtures (the phone never logs in).
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json` and `installed_apps_report.json`;
+  `time_request.json` and `installed_apps_report.json`, and the launcher's `assets/dns/doh_hosts.txt`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and

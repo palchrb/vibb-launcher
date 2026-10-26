@@ -81,7 +81,11 @@ class KidVpnService : VpnService() {
      * this service's protected sockets, no proxy - [buildDohClient], never tsnet. */
     private val providerDoh = lazy { buildDohClient(IP_LITERAL_DNS, ::protect) }
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    /** Read by every query (design 67 §3.1: a failure counts only on a validated network). */
+    @Volatile
     private var lastNetwork: NetworkSnapshot? = null
+    /** "DNS can't be reached" (design 67 §3.1), for this instance: a restart starts afresh. */
+    private val reach = ReachTracker()
     private val main = Handler(Looper.getMainLooper())
 
     /** One retry chain at most: every post replaces the pending one. */
@@ -95,6 +99,7 @@ class KidVpnService : VpnService() {
         startForeground(VPN_FILTER_NOTIFICATION_ID, buildNotification())
         state.enteredForeground()
         running = state
+        live = this
         DnsFilterEngine.loadFromDisk(applicationContext)
         startVpn()
     }
@@ -188,7 +193,8 @@ class KidVpnService : VpnService() {
         if (!BootstrapDiskCache.keptFor(wanted)) cacheFile.delete()
         if (!changed) return
         custom = config?.let { CustomDns(it, ::protect, scope, cacheFile = cacheFile).also(CustomDns::start) }
-        live = custom
+        // Other servers: an ongoing outage ends now, into the report's last one (design 67 §3.1).
+        reach.rekey(reachKey(config, LauncherPreferences.mdm().dnsUpstreamProvider()))
         Log.i(LOG_TAG, "Custom DNS server: ${config?.primary?.kind ?: "none"}")
     }
 
@@ -220,6 +226,8 @@ class KidVpnService : VpnService() {
 
     private fun onNetwork(snapshot: NetworkSnapshot?) {
         val changed = networkChanged(lastNetwork, snapshot)
+        // Offline is no outage (design 67 §3.1): one going on ends with the validated network.
+        if (validatedLost(lastNetwork, snapshot)) reach.networkLost()
         lastNetwork = snapshot
         if (changed) {
             PublicResolvers.reset()
@@ -308,6 +316,18 @@ class KidVpnService : VpnService() {
             val question = message.question ?: return
             val domain = question.name.toString(true)
 
+            fun reply(responseBytes: ByteArray) {
+                val responsePacket = buildResponsePacket(ipPacket, udpPacket, responseBytes)
+                synchronized(writeLock) {
+                    output.write(responsePacket.rawData)
+                }
+            }
+
+            // Firefox's canary (design 67 §2.3): NXDOMAIN turns off the DoH it enabled by default.
+            // Firefox's own probe, not the kid's doing: never forwarded, logged or counted.
+            if (isFirefoxCanary(domain)) return reply(nxdomainResponse(message))
+            if (isDdrQuery(domain)) return reply(blockedResponse(message))
+
             // The phone's lists first, always: nothing reaches any resolver before them.
             val category = DnsFilterEngine.classify(domain)
             val custom = custom
@@ -316,16 +336,14 @@ class KidVpnService : VpnService() {
                 blockedResponse(message)
             } else if (custom != null) {
                 custom.resolve(query, message)
+                    .also { reach.after(it, reachKey(custom.config, null), lastNetwork?.validated == true) }.bytes
             } else {
                 val upstream = LauncherPreferences.mdm().dnsUpstreamProvider() ?: "cloudflare"
                 DnsFilterEngine.resolveProvider(query, upstream, ::protect) { providerDoh.value }
+                    .also { reach.after(it, reachKey(null, upstream), lastNetwork?.validated == true) }.bytes
             }
             if (responseBytes == null) return
-
-            val responsePacket = buildResponsePacket(ipPacket, udpPacket, responseBytes)
-            synchronized(writeLock) {
-                output.write(responsePacket.rawData)
-            }
+            reply(responseBytes)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to handle a DNS packet: ${e.javaClass.simpleName}")
         }
@@ -387,7 +405,7 @@ class KidVpnService : VpnService() {
         synchronized(this) {
             custom?.close()
             custom = null
-            live = null
+            if (live === this) live = null
         }
         scope.cancel()
         evictProviderDoh()
@@ -398,6 +416,13 @@ class KidVpnService : VpnService() {
         }
     }
 
+    /** [dnsUpstreamReport]'s: `null` unless the tunnel is up (S-M2) - the read loop dead, a stop. */
+    private fun upstreamReport(): DnsUpstreamReport? {
+        if (state.stopped || state.tunnel == null) return null
+        val reach = reach.get()
+        return custom?.report(reach) ?: providerReport(reach, SystemClock.elapsedRealtime(), System.currentTimeMillis())
+    }
+
     companion object {
         /** A `startForegroundService` start: onStartCommand calls startForeground first. */
         const val EXTRA_FOREGROUND = "com.kidslauncher.mdm.vpn.FOREGROUND"
@@ -406,13 +431,15 @@ class KidVpnService : VpnService() {
         @Volatile
         private var running: VpnTunnelState<*>? = null
 
-        /** The running service's [CustomDns], for the status report. */
+        /** The running service, for the status report. */
         @Volatile
-        private var live: CustomDns? = null
+        private var live: KidVpnService? = null
 
-        /** The status report's `dns_upstream` (design 36 §4.2): only while the VPN runs with the
-         * parent's own server; `null` (left out) otherwise. */
-        fun dnsUpstreamReport(): DnsUpstreamReport? = live?.report()
+        /** The status report's `dns_upstream` (design 36 §4.2, design 67 §3.2): the parent's servers
+         * or the provider, with "DNS can't be reached" - only while the tunnel is up; `null` (left
+         * out) otherwise. */
+        fun dnsUpstreamReport(): DnsUpstreamReport? = live?.upstreamReport()
+
 
         /**
          * Call once at app startup - safe to call repeatedly, Android no-ops a redundant start

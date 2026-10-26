@@ -547,6 +547,9 @@ async fn dns_upstream_status_contract() {
     let mut sneaky = report.clone();
     sneaky["dns_upstream"]["host"] = json!("abc123.dns.example");
     sneaky["dns_upstream"]["reason"] = json!("https://abc123.dns.example");
+    // Design 67: the outage's times are numbers or nothing.
+    sneaky["dns_upstream"]["unreachable_since_ms"] = json!("abc123.dns.example");
+    sneaky["dns_upstream"]["unreachable_until_ms"] = json!("10:42");
     app.request(
         Method::POST,
         "/api/devices/status",
@@ -557,6 +560,8 @@ async fn dns_upstream_status_contract() {
     let stored = kept().await.unwrap();
     assert!(!stored.to_string().contains("example"), "{stored}");
     assert_eq!(stored["reason"], Value::Null);
+    assert_eq!(stored["unreachable_since_ms"], Value::Null);
+    assert_eq!(stored["unreachable_until_ms"], Value::Null);
     for junk in [
         json!("backup"),
         json!({"rev": "4", "in_use": "custom"}),
@@ -704,7 +709,7 @@ async fn the_footer_says_per_phone_which_server_is_in_use() {
     let page = app.get_page("/dns", &cookie).await.text();
     assert_eq!(line(&page, ola), "Ola · Backup server");
 
-    // Only while Custom is chosen.
+    // Only while Custom is chosen (with a provider only an outage gives a line, design 67).
     store(
         &app,
         "quad9",
@@ -715,4 +720,319 @@ async fn the_footer_says_per_phone_which_server_is_in_use() {
     .await;
     let page = app.get_page("/dns", &cookie).await.text();
     assert!(!page.contains("data-dns-phone"));
+}
+
+/// The lines with a `data-` attribute naming phone `id`, in order, quotes unescaped.
+fn lines_of(html: &str, attr: &str, id: i64) -> Vec<String> {
+    let marker = format!("{attr}=\"{id}\">");
+    html.match_indices(&marker)
+        .map(|(at, _)| {
+            let rest = &html[at + marker.len()..];
+            rest[..rest.find("</li>").unwrap()].replace("&#39;", "'")
+        })
+        .collect()
+}
+
+async fn post_status(app: &TestApp, token: &str, body: Value) {
+    let res = app
+        .request(Method::POST, "/api/devices/status", Some(token), Some(body))
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+}
+
+async fn filter_off(app: &TestApp, id: i64) {
+    sqlx::query("UPDATE device_policy SET vpn_filter_enabled = 0 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
+/// Design 67 §3.3: "DNS can't be reached" on the phones' lines, in both modes.
+#[tokio::test]
+async fn the_lines_say_when_dns_cant_be_reached() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    store(
+        &app,
+        "custom",
+        "https://dns.example/dns-query",
+        "tls://1.1.1.3",
+        0,
+    )
+    .await;
+    let report = |token: String, upstream: Value| {
+        let app = &app;
+        async move {
+            let body = json!({"lock_reason": "NONE", "kiosk_engaged": true,
+                "capabilities": ["dns_custom_v1", "dns_bypass_v1"], "dns_upstream": upstream});
+            post_status(app, &token, body).await;
+        }
+    };
+    let now = chrono::Utc::now();
+    let ms = |minutes: i64| (now - chrono::Duration::minutes(minutes)).timestamp_millis();
+    let zone = Zone::load(&app.db).await;
+    let when = |minutes: i64| zone.when(now - chrono::Duration::minutes(minutes), now);
+    let (anna, t) = app.enrolled_device("Anna").await;
+    report(
+        t,
+        json!({"rev": 0, "in_use": "backup", "since_ms": ms(9), "reason": "tls",
+            "unreachable_since_ms": ms(5), "unreachable_until_ms": null}),
+    )
+    .await;
+    let (ola, ola_token) = app.enrolled_device("Ola").await;
+    report(
+        ola_token.clone(),
+        json!({"rev": 0, "in_use": "custom", "since_ms": ms(60),
+            "unreachable_since_ms": ms(50), "unreachable_until_ms": ms(30)}),
+    )
+    .await;
+    // An ended outage shows at an old rev too (the fixed servers bumped it).
+    let (kari, t) = app.enrolled_device("Kari").await;
+    report(
+        t,
+        json!({"rev": 7, "in_use": "custom",
+            "unreachable_since_ms": ms(50), "unreachable_until_ms": ms(30)}),
+    )
+    .await;
+    // A provider report at rev 0 while Custom is in force at rev 0: never the backup.
+    let (per, per_token) = app.enrolled_device("Per").await;
+    report(per_token.clone(), json!({"rev": 0, "in_use": "provider"})).await;
+    let (liv, t) = app.enrolled_device("Liv").await;
+    report(
+        t,
+        json!({"rev": 0, "in_use": "custom", "unreachable_since_ms": ms(5)}),
+    )
+    .await;
+    filter_off(&app, liv).await;
+
+    let line = |html: &str, id: i64| lines_of(html, "data-dns-phone", id).join(" | ");
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert_eq!(
+        line(&page, anna),
+        format!(
+            "Anna · DNS can't be reached since {} - neither your server nor the backup answers",
+            when(5)
+        )
+    );
+    let ended = format!("couldn't be reached {}-{}", when(50), when(30));
+    assert_eq!(
+        line(&page, ola),
+        format!("Ola · Your server in use · {ended}")
+    );
+    assert_eq!(
+        line(&page, kari),
+        format!("Kari · Waiting for the phone · {ended}")
+    );
+    assert_eq!(line(&page, per), "Per · Waiting for the phone");
+    assert_eq!(line(&page, liv), "Liv · Web filter off");
+
+    // 24 h after its end an outage is gone (the next one would replace it); one shorter than
+    // 5 min never shows (qa-67-code M1: a walk out of the door on a Wi-Fi still VALIDATED).
+    for (since, until) in [(25 * 60, 24 * 60 + 1), (12, 10)] {
+        report(
+            ola_token.clone(),
+            json!({"rev": 0, "in_use": "custom",
+                "unreachable_since_ms": ms(since), "unreachable_until_ms": ms(until)}),
+        )
+        .await;
+        let page = app.get_page("/dns", &cookie).await.text();
+        assert_eq!(line(&page, ola), "Ola · Your server in use", "{since}");
+    }
+
+    // An ongoing outage from a phone gone Offline is what it last said (qa-67-code L4).
+    let (ulf, _) = app.enrolled_device("Ulf").await;
+    sqlx::query(
+        "INSERT INTO device_status (device_id, capabilities_json, dns_upstream_json, reported_at) \
+         VALUES (?, '[\"dns_custom_v1\"]', ?, datetime('now', '-2 hours'))",
+    )
+    .bind(ulf)
+    .bind(
+        json!({"rev": 0, "in_use": "custom", "since_ms": null, "reason": null,
+            "unreachable_since_ms": ms(150), "unreachable_until_ms": null})
+        .to_string(),
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-2 hours') WHERE id = ?")
+        .bind(ulf)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert_eq!(
+        line(&page, ulf),
+        format!(
+            "Ulf · DNS can't be reached since {} - neither your server nor the backup answers \
+             · at last report ({})",
+            when(150),
+            zone.relative(now - chrono::Duration::hours(2), chrono::Utc::now())
+        )
+    );
+
+    // With a provider only the phones with an outage have a line: ongoing with the provider's
+    // name, ended alone; never one whose filter is off.
+    store(&app, "quad9", "", "", 0).await;
+    report(
+        per_token,
+        json!({"rev": 0, "in_use": "provider", "unreachable_since_ms": ms(5)}),
+    )
+    .await;
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert_eq!(
+        line(&page, per),
+        format!(
+            "Per · DNS can't be reached since {} - Quad9 doesn't answer from where the phone is",
+            when(5)
+        )
+    );
+    assert_eq!(line(&page, kari), format!("Kari · DNS {ended}"));
+    // Anna's and Ulf's outages are their custom servers', not the provider's; Ola's lasted
+    // 2 min; Liv's filter is off.
+    for id in [anna, ola, liv, ulf] {
+        assert_eq!(line(&page, id), "", "{id}");
+    }
+    store(&app, "cloudflare", "", "", 0).await;
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert!(line(&page, per).contains("- Cloudflare doesn't answer"));
+}
+
+/// Design 67 §2.4: the built-in row, the honest footer and the Each Phone lines.
+#[tokio::test]
+async fn the_secure_dns_bypass_on_the_page() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let phone = |name: &'static str, caps: Value, allowlist: Value| {
+        let app = &app;
+        async move {
+            let (id, token) = app.enrolled_device(name).await;
+            let body = json!({"lock_reason": "NONE", "kiosk_engaged": true, "capabilities": caps});
+            post_status(app, &token, body).await;
+            sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+                .bind(allowlist.to_string())
+                .bind(id)
+                .execute(&app.db)
+                .await
+                .unwrap();
+            id
+        }
+    };
+    let both = json!(["dns_custom_v1", "dns_bypass_v1"]);
+    let anna = phone(
+        "Anna",
+        json!(["dns_custom_v1"]),
+        json!(["org.mozilla.firefox", "com.android.chrome"]),
+    )
+    .await;
+    let ola = phone(
+        "Ola",
+        both.clone(),
+        json!(["org.cromite.cromite", "org.ironfoxoss.ironfox"]),
+    )
+    .await;
+    let per = phone("Per", both, json!(["com.android.chrome"])).await;
+    let liv = phone("Liv", json!([]), json!(["org.cromite.cromite"])).await;
+    filter_off(&app, liv).await;
+    let (mia, _) = app.enrolled_device("Mia").await;
+
+    let page = app.get_page("/dns", &cookie).await.text();
+    let lines = |id: i64| lines_of(&page, "data-bypass-phone", id);
+    assert_eq!(
+        lines(anna),
+        [
+            "Anna · Update Vibb One to close the secure-DNS bypass",
+            "Anna · Firefox: its own secure DNS can get around the filter",
+        ]
+    );
+    assert_eq!(
+        lines(ola),
+        [
+            "Ola · Cromite: set its Secure DNS to Off on the phone, or it won't load pages",
+            "Ola · IronFox: its own secure DNS can get around the filter",
+        ]
+    );
+    // Nothing owed, the filter off, or no report yet: no line.
+    for id in [per, liv, mia] {
+        assert!(lines(id).is_empty(), "{id}");
+    }
+    let page = page.replace("&#39;", "'");
+    let lists = part(&page, "<section id=\"lists\"", "</section>");
+    assert!(lists.contains(
+        "Secure DNS servers<span class=\"row-sub\">Built into Vibb One, on with the filter</span>"
+    ));
+    assert!(lists.contains(
+        "Chrome's own secure DNS is turned off, and the best-known public secure-DNS servers are \
+         blocked. Firefox and Cromite can still be set to another secure-DNS server by hand."
+    ));
+}
+
+/// qa-67-code L1: an allowed host the phone blocks anyway is kept, with a notice on that save, on
+/// either page; the footer says so; the notice never shows other text.
+#[tokio::test]
+async fn an_allowed_secure_dns_host_says_it_stays_blocked() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    let allow = |domain: &'static str, device: Option<i64>| {
+        let (app, cookie) = (&app, cookie.clone());
+        async move {
+            let device = device.map(|id| id.to_string()).unwrap_or_default();
+            let mut fields = vec![("domain", domain), ("list_type", "allow")];
+            if !device.is_empty() {
+                fields.extend([("device_id", device.as_str()), ("back", "filter")]);
+            }
+            app.request_form(Method::POST, "/dns/domains/new", Some(&cookie), &fields)
+                .await
+        }
+    };
+    let res = allow("Chrome.Cloudflare-DNS.com.", None).await;
+    assert_redirect(
+        &res,
+        "/dns?notice=doh_allowed&domain=chrome.cloudflare-dns.com",
+        Some("allowed"),
+    );
+    let res = allow("dns.google", Some(anna)).await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{anna}/filter?notice=doh_allowed&domain=dns.google"),
+        Some("allowed"),
+    );
+    // Kept: the server's lists take it as any other entry.
+    let kept: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM dns_custom_domains WHERE list_type = 'allow'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(kept, 2);
+    // Any other host: the plain way back, no notice.
+    assert_redirect(&allow("example.com", None).await, "/dns", Some("allowed"));
+
+    let notice = "is a secure-DNS server and stays blocked.";
+    for (page, domain, shown) in [
+        ("/dns", "chrome.cloudflare-dns.com", true),
+        (
+            &format!("/devices/{anna}/filter") as &str,
+            "dns.google",
+            true,
+        ),
+        ("/dns", "example.com", false),
+    ] {
+        let html = app
+            .get_page(
+                &format!("{page}?notice=doh_allowed&domain={domain}"),
+                &cookie,
+            )
+            .await
+            .text();
+        assert_eq!(
+            html.contains(&format!("{domain} {notice}")),
+            shown,
+            "{page} {domain}"
+        );
+        assert!(html.contains(
+            "Let through even when a list blocks it - not the secure-DNS servers built into Vibb \
+             One, which stay blocked."
+        ));
+    }
 }

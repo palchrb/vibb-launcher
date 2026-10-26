@@ -21,6 +21,8 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     COMMAND_RECEIPT_CAPABILITY,
     com.kidslauncher.mdm.lock.LOCK_GLANCE_CAPABILITY,
     DNS_CUSTOM_CAPABILITY,
+    // Design 67: the browsers' managed config, the built-in secure-DNS hosts and Firefox's canary.
+    DNS_BYPASS_CAPABILITY,
     BATTERY_CAPABILITY,
     INSTALL_NOW_CAPABILITY,
     // The RC-to-RC fix: a same-code release under a newer name installs (launcherBuildAhead). Legacy since

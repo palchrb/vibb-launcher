@@ -1,9 +1,18 @@
 package com.kidslauncher.mdm.server
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.xbill.DNS.DClass
+import org.xbill.DNS.Flags
+import org.xbill.DNS.Message
+import org.xbill.DNS.Name
+import org.xbill.DNS.Rcode
+import org.xbill.DNS.Record
+import org.xbill.DNS.Section
+import org.xbill.DNS.Type
 import java.io.File
 
 /** The on-device filter's decision ([classifyDomain]): the suffix walk, FCM's global exemption and
@@ -62,9 +71,75 @@ class DnsFilterEngineTest {
         assertTrue("the sync sets it", set >= 0)
         assertTrue("before the list is refetched", set < refresh)
         val engine = source("DnsFilterEngine.kt")
-        val load = engine.substringAfter("fun loadFromDisk(context: Context) {").substringBefore("try {")
+        val load = engine.substringAfter("fun loadFromDisk(context: Context) {").substringBefore("val listFile")
         assertTrue(load, Regex("spotifyOn = runCatching \\{\\s*com\\.kidslauncher\\.mdm\\.music\\.musicSpotify\\(\\(cachedPolicy\\(\\) as\\? CachedPolicy\\.Ok\\)\\?\\.policy\\?\\.music\\)").containsMatchIn(load))
         assertTrue(engine.contains("fun setSpotify(on: Boolean) {\n        spotifyOn = on"))
-        assertTrue(engine.contains("fun classify(domainRaw: String): String? = classifyDomain(blockedDomains, domainRaw, spotifyOn)"))
+        assertTrue(engine.contains("fun classify(domainRaw: String): String? = classifyDomain(blockedDomains, domainRaw, spotifyOn, dohHosts)"))
+    }
+
+    // Design 67 §2.2: the built-in secure-DNS hosts.
+
+    private val dohFile = listOf(File("src/main/assets/$DOH_HOSTS_ASSET"), File("app/src/main/assets/$DOH_HOSTS_ASSET")).first { it.exists() }
+    private val doh = parseDohHosts(dohFile.readText())
+
+    @Test
+    fun `every built-in secure-DNS host is a lowercase LDH name, once, under no other`() {
+        val label = "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+        val names = dohFile.readLines().map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }
+        assertTrue(names.size > 30)
+        for (name in names) assertTrue(name, Regex("$label(\\.$label)+").matches(name))
+        assertEquals("no repeats", names.size, names.toSet().size)
+        for (name in names) assertNull("$name is under another entry", classifyDomain(emptyMap(), name, false, doh - name))
+        // The server's copy (its Allowed Domains notice, qa-67-code L1) is byte-identical.
+        val serverCopy = File("../../server/testdata/doh_hosts.txt")
+        assertTrue("${serverCopy.absolutePath} not found", serverCopy.isFile)
+        assertEquals("${serverCopy.path} differs from the asset", dohFile.readText(), serverCopy.readText())
+    }
+
+    @Test
+    fun `the built-in hosts block by suffix, before the server's lists, after FCM`() {
+        for (hit in listOf("chrome.cloudflare-dns.com", "dns.google.", "DoH.OpenDNS.com", "family.cloudflare-dns.com")) {
+            assertEquals(hit, DOH_BYPASS_CATEGORY, classifyDomain(blocked, hit, spotify = false, dohHosts = doh))
+        }
+        for (miss in listOf("example.com", "dohmain.com", "doh.com", "notdns.google.com", "doh.wa.gov", "doh.gov.ph", "doh.gov.ae", "google")) {
+            assertNull(miss, classifyDomain(emptyMap(), miss, spotify = false, dohHosts = doh))
+        }
+        // Before a server list that has the same name; FCM's hosts still pass whatever the set holds.
+        assertEquals(DOH_BYPASS_CATEGORY, classifyDomain(mapOf("dns.google" to "Ads"), "dns.google", false, doh))
+        assertNull(classifyDomain(blocked, "mtalk.google.com", spotify = false, dohHosts = setOf("google.com")))
+    }
+
+    @Test
+    fun `the built-in hosts load before the list's early return, so they hold before the first sync`() {
+        val load = source("DnsFilterEngine.kt").substringAfter("fun loadFromDisk(context: Context) {")
+        val read = load.indexOf("dohHosts = parseDohHosts(context.assets.open(DOH_HOSTS_ASSET)")
+        assertTrue(read >= 0 && read < load.indexOf("if (!listFile.exists()) return"))
+    }
+}
+
+/** Design 67 §2.3: Firefox's canary and its answer. That it is answered in `handlePacket` before the
+ * lists and never forwarded is CustomDnsGuardsTest's (qa-67-code N3). */
+class NxdomainTest {
+    @Test
+    fun `the canary is the exact name, answered NXDOMAIN with the SOA, the ID and RD echoed`() {
+        assertTrue(isFirefoxCanary("use-application-dns.net"))
+        assertTrue(isFirefoxCanary("Use-Application-DNS.net."))
+        assertFalse(isFirefoxCanary("x.use-application-dns.net"))
+        assertFalse(isFirefoxCanary("use-application-dns.net.example"))
+        // DDR's name (qa-67-code N4), exact too.
+        assertTrue(isDdrQuery("_DNS.resolver.arpa."))
+        assertFalse(isDdrQuery("_dns.example.resolver.arpa"))
+        for (rd in listOf(true, false)) {
+            val request = Message.newQuery(Record.newRecord(Name.fromString("use-application-dns.net."), Type.A, DClass.IN))
+            if (!rd) request.header.unsetFlag(Flags.RD.toInt())
+            val answer = Message(nxdomainResponse(request))
+            assertEquals(Rcode.NXDOMAIN, answer.rcode)
+            assertEquals(request.header.id, answer.header.id)
+            assertEquals(rd, answer.header.getFlag(Flags.RD.toInt()))
+            assertTrue(answer.header.getFlag(Flags.QR.toInt()) && answer.header.getFlag(Flags.RA.toInt()))
+            assertEquals(request.question, answer.question)
+            assertTrue(answer.getSection(Section.ANSWER).isEmpty())
+            assertEquals(Type.SOA, answer.getSection(Section.AUTHORITY).single().type)
+        }
     }
 }

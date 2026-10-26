@@ -33,6 +33,10 @@
             {% else %}
             <p class="row row-note">No lists yet.</p>
             {% endfor %}
+            {#- Design 67 §2.2: built into the phone, no switch - the Web Filter switch lifts it. -#}
+            <div class="row" data-list="builtin-doh">
+                <span class="row-label">Secure DNS servers<span class="row-sub">Built into Vibb One, on with the filter</span></span>
+            </div>
             <details class="disclosure cell" id="add-list"{% if refused == "lists" %} open{% endif %}>
                 <summary class="row row-button">Add a List…</summary>
                 <form method="post" action="/dns/blocklists/new#lists" class="form-group">
@@ -49,7 +53,7 @@
                 </form>
             </details>
         </div>
-        <p class="group-footer">On here, a list is on for every phone; a phone's own page can turn it off.</p>
+        <p class="group-footer">On here, a list is on for every phone; a phone's own page can turn it off. Chrome's own secure DNS is turned off, and the best-known public secure-DNS servers are blocked. Firefox and Cromite can still be set to another secure-DNS server by hand.</p>
     </section>
 
     <section id="blocked" aria-labelledby="blocked-title">
@@ -96,8 +100,9 @@
                 </div>
             </form>
             {% if refused == "allowed" %}<p class="flash flash-error" role="status" data-flash="allowed">That isn't a domain name, like example.com. Nothing was added.</p>{% endif %}
+            {% if let Some(host) = doh_allowed %}<p class="flash" role="status" data-flash="doh-allowed">{{ host }} is a secure-DNS server and stays blocked.</p>{% endif %}
         </div>
-        <p class="group-footer">Let through even when a list blocks it.</p>
+        <p class="group-footer">Let through even when a list blocks it - not the secure-DNS servers built into Vibb One, which stay blocked.</p>
     </section>
 
     {#- Design 31 step 5: a phone's own lists, domains and log are on its Web Filter page. -#}
@@ -112,7 +117,13 @@
             </a>
             {% endfor %}
         </div>
-        <p class="group-footer">A list off for one phone, its own domains, and its log.</p>
+        <div class="group-footer">A list off for one phone, its own domains, and its log.
+            {% if !bypass.is_empty() %}
+            <ul class="phone-lines">
+                {% for (id, line) in bypass %}<li data-bypass-phone="{{ id }}">{{ line }}</li>{% endfor %}
+            </ul>
+            {% endif %}
+        </div>
     </section>
     {% endif %}
 

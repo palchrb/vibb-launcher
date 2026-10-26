@@ -94,8 +94,9 @@ data class StatusReportRequest(
      * `null` (left out) for "Follow the phone" or no policy ([com.kidslauncher.mdm.server.ClockFormatSetting.report]). */
     val clockFormatApplied: Boolean? = null,
     /** Design 36 §4.2 (capability `dns_custom_v1`): which of the parent's DNS servers the phone
-     * forwards to - see [DnsUpstreamReport]; `null` (left out) while the Web filter is off or no
-     * custom server is configured (`KidVpnService.dnsUpstreamReport`). */
+     * forwards to, and since design 67 whether DNS can be reached (provider mode too) - see
+     * [DnsUpstreamReport]; `null` (left out) unless the filter's tunnel is up
+     * (`KidVpnService.dnsUpstreamReport`). */
     val dnsUpstream: DnsUpstreamReport? = null,
     /** Design 35 §2.5: the battery, for the parent's "Battery low" event and the PWA's battery
      * line - see [BatteryReport] (`BatteryStatus.report`); `null` = unreadable, left out. */
@@ -138,14 +139,19 @@ data class ZoneWatchReport(
 
 /** `StatusReportRequest.dnsUpstream` (no defaults: every field is always sent): the [rev] of the
  * servers in use, [inUse] `custom` or `backup`, since when (wall clock), and with `backup` why:
- * `bootstrap`, `connect`, `tls`, `http`, `refused` or `timeout`. Never an address. Pinned by
- * `dns_upstream_status.json`, byte-identical with the server's `testdata/`. */
+ * `bootstrap`, `connect`, `tls`, `http`, `refused` or `timeout`; in provider mode `rev` 0,
+ * `provider`, no since and no reason (design 67 §3.2). In both, "DNS can't be reached" (wall
+ * clock): ongoing [unreachableSinceMs] with no until, the last ended one both, none neither
+ * ([outageTimes]). Never an address. Pinned by `dns_upstream_status.json`, byte-identical with
+ * the server's `testdata/`. */
 @Serializable
 data class DnsUpstreamReport(
     val rev: Long,
     val inUse: String,
     val sinceMs: Long?,
     val reason: String?,
+    val unreachableSinceMs: Long?,
+    val unreachableUntilMs: Long?,
 )
 
 /**

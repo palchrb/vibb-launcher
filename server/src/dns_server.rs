@@ -194,6 +194,10 @@ pub fn event_detail(upstream: &str, server: &str, backup: &str) -> String {
 /// The launcher capability that reports [DnsUpstreamState] (design 36 §4.2).
 pub const DNS_CUSTOM_CAPABILITY: &str = "dns_custom_v1";
 
+/// The launcher capability for design 67's bypass fixes: the browsers' managed config, the
+/// built-in secure-DNS hosts and Firefox's canary.
+pub const DNS_BYPASS_CAPABILITY: &str = "dns_bypass_v1";
+
 /// Why a phone is on the backup (design 36 §4.2's words).
 pub const BACKUP_REASONS: [&str; 6] = ["bootstrap", "connect", "tls", "http", "refused", "timeout"];
 
@@ -202,39 +206,83 @@ pub const BACKUP_REASONS: [&str; 6] = ["bootstrap", "connect", "tls", "http", "r
 pub struct DnsUpstreamState {
     /// The `custom_rev` of the servers the phone forwards to.
     pub rev: i64,
-    /// `custom` or `backup`.
+    /// `custom`, `backup` or (design 67) `provider`.
     pub in_use: String,
     /// Since when (the phone's wall clock, ms); `None` when implausible.
     pub since_ms: Option<i64>,
     /// With `backup` only: one of [BACKUP_REASONS], or `None`.
     pub reason: Option<String>,
+    /// "DNS can't be reached" since (design 67 §3.2, the phone's wall clock): with no
+    /// [Self::unreachable_until_ms] it goes on, with one it is the last ended outage.
+    pub unreachable_since_ms: Option<i64>,
+    /// The last outage's end; only with a kept `unreachable_since_ms`, never before it.
+    pub unreachable_until_ms: Option<i64>,
 }
 
+/// The secure-DNS hosts the phone blocks whatever the lists say (design 67 §2.2): the launcher's
+/// `assets/dns/doh_hosts.txt`, byte-identical in `testdata/` (`doh_hosts_match_the_launchers_asset`).
+const BUILTIN_DOH_HOSTS: &str = include_str!("../testdata/doh_hosts.txt");
+
+/// `domain` (lowercase, no trailing dot) is a built-in secure-DNS host or under one: an Allowed
+/// Domains entry for it changes nothing on the phone (qa-67-code L1).
+pub fn is_builtin_doh_host(domain: &str) -> bool {
+    static HOSTS: std::sync::LazyLock<std::collections::HashSet<&'static str>> =
+        std::sync::LazyLock::new(|| {
+            BUILTIN_DOH_HOSTS
+                .lines()
+                .map(|line| line.split('#').next().unwrap_or_default().trim())
+                .filter(|name| !name.is_empty())
+                .collect()
+        });
+    std::iter::successors(Some(domain), |d| {
+        d.split_once('.').map(|(_, parent)| parent)
+    })
+    .any(|suffix| HOSTS.contains(suffix))
+}
+
+/// How far ahead of this server's clock a phone's time may be and still be kept (5 min).
+pub const CLOCK_SLACK_MS: i64 = 5 * 60_000;
+
 /// The status report's `dns_upstream`, stored through the known words only: an integer `rev` and
-/// `in_use` are needed, `since_ms` is kept when plausible (2000..2100), `reason` when it is a known
-/// word on a `backup` report. Never an address, whatever a launcher sends.
-pub fn sanitize_dns_upstream(value: &serde_json::Value) -> Option<String> {
+/// `in_use` are needed, a time is kept when plausible (2000 up to [CLOCK_SLACK_MS] after [now_ms],
+/// the report's arrival), `reason` when it is a known word on a `backup` report;
+/// `unreachable_until_ms` only with `unreachable_since_ms`, and neither when it ends before it
+/// starts (design 67). Never an address, whatever a launcher sends.
+pub fn sanitize_dns_upstream(value: &serde_json::Value, now_ms: i64) -> Option<String> {
     const MIN_MS: i64 = 946_684_800_000; // 2000-01-01
-    const MAX_MS: i64 = 4_102_444_800_000; // 2100-01-01
+    // A phone clock ahead of ours (qa-67-code L2): no time later than the report's arrival + 5 min.
+    let max_ms = now_ms.saturating_add(CLOCK_SLACK_MS);
+    let plausible = |key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_i64)
+            .filter(|ms| (MIN_MS..=max_ms).contains(ms))
+    };
     let rev = value.get("rev")?.as_i64()?;
     let in_use = value.get("in_use")?.as_str()?;
-    if !matches!(in_use, "custom" | "backup") {
+    if !matches!(in_use, "custom" | "backup" | "provider") {
         return None;
     }
-    let since_ms = value
-        .get("since_ms")
-        .and_then(serde_json::Value::as_i64)
-        .filter(|ms| (MIN_MS..MAX_MS).contains(ms));
     let reason = value
         .get("reason")
         .and_then(serde_json::Value::as_str)
         .filter(|word| in_use == "backup" && BACKUP_REASONS.contains(word))
         .map(str::to_string);
+    // An end before its start is no outage at all (qa-67-code L3: never an ongoing one).
+    let (unreachable_since_ms, unreachable_until_ms) = match (
+        plausible("unreachable_since_ms"),
+        plausible("unreachable_until_ms"),
+    ) {
+        (Some(since), Some(until)) if until < since => (None, None),
+        (since, until) => (since, until.filter(|_| since.is_some())),
+    };
     let state = DnsUpstreamState {
         rev,
         in_use: in_use.to_string(),
-        since_ms,
+        since_ms: plausible("since_ms"),
         reason,
+        unreachable_since_ms,
+        unreachable_until_ms,
     };
     serde_json::to_string(&state).ok()
 }
@@ -760,15 +808,41 @@ mod tests {
     }
 
     #[test]
+    fn doh_hosts_match_the_launchers_asset() {
+        let asset = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../launcher/app/src/main/assets/dns/doh_hosts.txt");
+        let asset =
+            std::fs::read_to_string(&asset).unwrap_or_else(|e| panic!("{}: {e}", asset.display()));
+        assert_eq!(asset, BUILTIN_DOH_HOSTS, "testdata/doh_hosts.txt differs");
+        for host in ["dns.google", "chrome.cloudflare-dns.com", "doh.opendns.com"] {
+            assert!(is_builtin_doh_host(host), "{host}");
+        }
+        for host in [
+            "google",
+            "notdns.google.com",
+            "doh.wa.gov",
+            "example.com",
+            "",
+        ] {
+            assert!(!is_builtin_doh_host(host), "{host}");
+        }
+    }
+
+    #[test]
     fn sanitize_dns_upstream_keeps_known_words_only() {
         use serde_json::json;
-        let kept =
-            |value: serde_json::Value| parse_dns_upstream(sanitize_dns_upstream(&value).as_deref());
+        // The report arrives a minute after the contract's times.
+        let now = 1_792_312_460_000_i64;
+        let kept = |value: serde_json::Value| {
+            parse_dns_upstream(sanitize_dns_upstream(&value, now).as_deref())
+        };
         let state = |rev, in_use: &str, since_ms, reason: Option<&str>| DnsUpstreamState {
             rev,
             in_use: in_use.to_string(),
             since_ms,
             reason: reason.map(str::to_string),
+            unreachable_since_ms: None,
+            unreachable_until_ms: None,
         };
         assert_eq!(
             kept(
@@ -779,7 +853,8 @@ mod tests {
         );
         assert!(
             !sanitize_dns_upstream(
-                &json!({"rev": 1, "in_use": "custom", "url": "https://x.example"})
+                &json!({"rev": 1, "in_use": "custom", "url": "https://x.example"}),
+                now
             )
             .unwrap()
             .contains("example")
@@ -795,6 +870,43 @@ mod tests {
             ),
             Some(state(2, "backup", None, None))
         );
+        // Design 67: provider mode (its reason dropped) and the outage's two times - an end only
+        // with a kept start, neither when it ends before it starts (L3), none later than the
+        // arrival + 5 min (L2: a phone clock ahead).
+        let outage = |since, until| DnsUpstreamState {
+            unreachable_since_ms: since,
+            unreachable_until_ms: until,
+            ..state(0, "provider", None, None)
+        };
+        let t = 1_792_312_400_000_i64;
+        for (sent, stored) in [
+            (json!([t, t + 60_000]), outage(Some(t), Some(t + 60_000))),
+            (json!([t, null]), outage(Some(t), None)),
+            (json!([t, t - 1]), outage(None, None)),
+            (
+                json!([t, now + CLOCK_SLACK_MS]),
+                outage(Some(t), Some(now + CLOCK_SLACK_MS)),
+            ),
+            (json!([t, now + CLOCK_SLACK_MS + 1]), outage(Some(t), None)),
+            (json!([now + 3 * 3_600_000, null]), outage(None, None)),
+            (json!([5, t]), outage(None, None)),
+            (json!([null, t]), outage(None, None)),
+            (json!(["10:42", "11:05"]), outage(None, None)),
+        ] {
+            assert_eq!(
+                kept(json!({"rev": 0, "in_use": "provider", "reason": "tls",
+                    "unreachable_since_ms": sent[0], "unreachable_until_ms": sent[1]})),
+                Some(stored),
+                "{sent}"
+            );
+        }
+        // A report stored before design 67 reads back without them.
+        assert_eq!(
+            parse_dns_upstream(Some(
+                r#"{"rev":2,"in_use":"custom","since_ms":null,"reason":null}"#
+            )),
+            Some(state(2, "custom", None, None))
+        );
         for junk in [
             json!({"in_use": "custom"}),
             json!({"rev": "4", "in_use": "custom"}),
@@ -804,7 +916,7 @@ mod tests {
             json!("custom"),
             json!(null),
         ] {
-            assert_eq!(sanitize_dns_upstream(&junk), None, "{junk}");
+            assert_eq!(sanitize_dns_upstream(&junk, now), None, "{junk}");
         }
         assert_eq!(parse_dns_upstream(Some("{\"rev\":1}")), None);
         assert_eq!(parse_dns_upstream(None), None);

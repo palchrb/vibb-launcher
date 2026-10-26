@@ -83,13 +83,13 @@ class CustomDnsTest {
         val calls = Calls()
         val d = dns(calls = calls) { _, _ -> Attempt.Unprotected }
         val before = d.state()
-        repeat(3) { assertNull(d.resolve(query, request)) }
+        repeat(3) { assertNull(d.resolve(query, request).bytes) }
         assertEquals(before, d.state())
         assertEquals(List(3) { primaryDoh }, calls.targets)
         // The canary: no verdict, so an odd answer's own outcome stands and nothing is counted.
         val odd = dns { _, m -> if (m.isCanary()) Attempt.Unprotected else Attempt.Odd(OddKind.SERVFAIL, null) }
         val start = odd.state()
-        assertEquals(Rcode.SERVFAIL, Message(odd.resolve(query, request)!!).rcode)
+        assertEquals(Rcode.SERVFAIL, Message(odd.resolve(query, request).bytes!!).rcode)
         assertEquals(start, odd.state())
     }
 
@@ -98,7 +98,7 @@ class CustomDnsTest {
         val calls = Calls()
         val relayed = answer(Rcode.NXDOMAIN)
         val d = dns(calls = calls) { _, _ -> Attempt.Answer(relayed) }
-        assertArrayEquals(relayed, d.resolve(query, request))
+        assertArrayEquals(relayed, d.resolve(query, request).bytes)
         assertEquals(listOf<UpstreamTarget>(primaryDoh), calls.targets)
     }
 
@@ -107,24 +107,38 @@ class CustomDnsTest {
         for (backup in listOf(backupDot, UpstreamTarget.Doh("https://[2001:db8::20]/dns-query"))) {
             val calls = Calls()
             var backupWorks = true
-            val d = dns(backup = backup, calls = calls) { target, _ ->
+            var now = 1_000L
+            val d = dns(backup = backup, calls = calls, clock = { now }) { target, _ ->
                 when {
                     target == primaryDoh -> Attempt.Transport(BackupReason.CONNECT)
                     backupWorks -> Attempt.Answer(backupAnswer)
                     else -> Attempt.Transport(BackupReason.TLS)
                 }
             }
-            assertArrayEquals(backupAnswer, d.resolve(query, request))
+            val first = d.resolve(query, request)
+            assertArrayEquals(backupAnswer, first.bytes)
+            assertEquals(ReachKind.ANSWERED, reachKind(first))
             assertEquals(listOf(primaryDoh, backup), calls.targets)
             val period = d.state()
             assertTrue(period.backup)
             assertEquals(BackupReason.CONNECT, period.reason)
-            // In the period the backup answers alone; when it fails too, the query is dropped.
+            // In the period the backup answers alone; when it fails too, the query is dropped: both
+            // failed, an outage's query (design 67 §3.1).
             backupWorks = false
-            assertNull(d.resolve(query, request))
+            assertEquals(ReachKind.FAILED, reachKind(d.resolve(query, request)))
             assertEquals(listOf(primaryDoh, backup, backup), calls.targets)
             assertEquals(period, d.state())
+            // The back-off's probe fails and so does the backup: the same.
+            now += UpstreamChooser.BACKOFF_BASE_MS
+            assertEquals(ReachKind.FAILED, reachKind(d.resolve(query, request)))
+            assertEquals(listOf(primaryDoh, backup, backup, primaryDoh, backup), calls.targets)
         }
+    }
+
+    @Test
+    fun `an exception in our code drops the query as a failure`() {
+        val d = dns { _, _ -> throw IllegalStateException("a bug") }
+        assertEquals(ReachKind.FAILED, reachKind(d.resolve(query, request)))
     }
 
     @Test
@@ -133,7 +147,10 @@ class CustomDnsTest {
         val d = dns(calls = calls) { _, m ->
             if (m.isCanary()) Attempt.Answer(answer(Rcode.NOERROR)) else Attempt.Odd(OddKind.REFUSED, answer(Rcode.REFUSED))
         }
-        val blocked = Message(d.resolve(query, request)!!)
+        val resolved = d.resolve(query, request)
+        // The healthy canary proved the server alive (design 67 §3.1).
+        assertEquals(ReachKind.ANSWERED, reachKind(resolved))
+        val blocked = Message(resolved.bytes!!)
         assertEquals(Rcode.NOERROR, blocked.rcode)
         assertEquals(request.header.id, blocked.header.id)
         assertEquals(0, blocked.getSection(Section.ANSWER).size)
@@ -149,12 +166,12 @@ class CustomDnsTest {
         val d = dns(calls = calls, clock = { now }) { _, m ->
             if (m.isCanary()) Attempt.Answer(answer(Rcode.NOERROR)) else Attempt.Odd(OddKind.TIMEOUT, null)
         }
-        assertEquals(Rcode.SERVFAIL, Message(d.resolve(query, request)!!).rcode)
+        assertEquals(Rcode.SERVFAIL, Message(d.resolve(query, request).bytes!!).rcode)
         now += 59_000
-        assertEquals(Rcode.SERVFAIL, Message(d.resolve(query, request)!!).rcode)
+        assertEquals(Rcode.SERVFAIL, Message(d.resolve(query, request).bytes!!).rcode)
         assertEquals(1, calls.canaries)
         now += 1_000
-        d.resolve(query, request)
+        d.resolve(query, request).bytes
         assertEquals(2, calls.canaries)
         assertEquals(listOf(primaryDoh, primaryDoh, primaryDoh), calls.targets)
         assertFalse(d.state().backup)
@@ -166,11 +183,11 @@ class CustomDnsTest {
         val d = dns(calls = calls) { target, _ ->
             if (target == primaryDoh) Attempt.Odd(OddKind.REFUSED, answer(Rcode.REFUSED)) else Attempt.Answer(backupAnswer)
         }
-        assertArrayEquals(backupAnswer, d.resolve(query, request))
+        assertArrayEquals(backupAnswer, d.resolve(query, request).bytes)
         assertEquals(listOf(primaryDoh, backupDot), calls.targets)
         assertEquals(BackupReason.REFUSED, d.state().reason)
-        assertEquals("backup", d.report().inUse)
-        assertEquals("refused", d.report().reason)
+        assertEquals("backup", d.report(ReachState()).inUse)
+        assertEquals("refused", d.report(ReachState()).reason)
     }
 
     @Test
@@ -186,10 +203,13 @@ class CustomDnsTest {
                 Attempt.Odd(OddKind.REFUSED, answer(Rcode.REFUSED))
             }
         }
-        val first = thread { d.resolve(query, request) }
+        val first = thread { d.resolve(query, request).bytes }
         assertTrue(canaryStarted.await(5, TimeUnit.SECONDS))
         // The second query waits at most its canary budget + 0.5 s, then answers its own REFUSED as NODATA.
-        val waited = Message(d.resolve(query, request)!!)
+        val gaveUp = d.resolve(query, request)
+        // Our own answer, which proves nothing about the server (design 67 §3.1).
+        assertEquals(ReachKind.NEITHER, reachKind(gaveUp))
+        val waited = Message(gaveUp.bytes!!)
         assertEquals(Rcode.NOERROR, waited.rcode)
         assertEquals(1, waited.getSection(Section.AUTHORITY).size)
         assertFalse(d.state().backup)
@@ -206,11 +226,11 @@ class CustomDnsTest {
         val d = dns(calls = calls) { target, _ ->
             if (target == primaryDoh && !primaryUp) Attempt.Transport(BackupReason.CONNECT) else Attempt.Answer(backupAnswer)
         }
-        d.resolve(query, request)
+        d.resolve(query, request).bytes
         assertTrue(d.state().backup)
         primaryUp = true
         d.networkReset()
-        d.resolve(query, request)
+        d.resolve(query, request).bytes
         assertEquals(listOf(primaryDoh, backupDot, primaryDoh), calls.targets)
         assertFalse(d.state().backup)
         d.close()
@@ -234,7 +254,7 @@ class CustomDnsTest {
             listOf(homeDot to Type.A, CLOUDFLARE_BOOTSTRAP to Type.A, CLOUDFLARE_BOOTSTRAP to Type.AAAA),
             calls.lookups("family.dns.example"),
         )
-        assertArrayEquals(backupAnswer, d.resolve(query, request))
+        assertArrayEquals(backupAnswer, d.resolve(query, request).bytes)
         assertEquals(listOf(homeDot, familyDoh), calls.targets)
         assertEquals(BackupReason.CONNECT, d.state().reason)
     }
@@ -275,16 +295,16 @@ class CustomDnsTest {
         )
         assertEquals(BackupReason.BOOTSTRAP, d.state().reason)
         val failures = d.state().failures
-        assertArrayEquals(backupAnswer, d.resolve(query, request))
+        assertArrayEquals(backupAnswer, d.resolve(query, request).bytes)
         // The back-off ends; the probe finds no address: the look-up runs again (30 s passed), the
         // query goes to the backup, the probe slot is given back and the period doesn't step.
         now += 61_000
         lookupsWork = true
-        assertArrayEquals(backupAnswer, d.resolve(query, request))
+        assertArrayEquals(backupAnswer, d.resolve(query, request).bytes)
         assertFalse(d.state().probing)
         assertEquals(failures, d.state().failures)
         // Now the address is in hand: the next query probes the primary and ends the period.
-        assertArrayEquals(answer(Rcode.NOERROR), d.resolve(query, request))
+        assertArrayEquals(answer(Rcode.NOERROR), d.resolve(query, request).bytes)
         assertFalse(d.state().backup)
         assertEquals(listOf(backupDot, backupDot, named), calls.targets)
     }
@@ -310,7 +330,7 @@ class CustomDnsTest {
             calls.lookups("family.dns.example"),
         )
         // The backup's address came over 443: it answers.
-        assertArrayEquals(backupAnswer, d.resolve(query, request))
+        assertArrayEquals(backupAnswer, d.resolve(query, request).bytes)
     }
 
     @Test
@@ -379,7 +399,7 @@ class CustomDnsTest {
             }
         }
         d.start()
-        assertNull(d.resolve(query, request))
+        assertNull(d.resolve(query, request).bytes)
         assertEquals(listOf<UpstreamTarget>(primaryDoh), calls.targets)
         assertEquals(BackupReason.TLS, d.state().reason)
     }

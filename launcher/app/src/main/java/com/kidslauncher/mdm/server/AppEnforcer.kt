@@ -548,6 +548,8 @@ object AppEnforcer {
         // to respect.
         val vpnFilterEnabled = if (overrideActive) false else (policy?.vpnFilterEnabled ?: true)
         applyVpnRestrictions(context, dpm, admin, vpnFilterEnabled)
+        // The browsers' own secure DNS off with the filter (design 67 §2.1), lifted with it.
+        BrowserDoh.apply(context, dpm, admin, vpnFilterEnabled)
 
         applyPrivateDnsLock(dpm, admin)
 

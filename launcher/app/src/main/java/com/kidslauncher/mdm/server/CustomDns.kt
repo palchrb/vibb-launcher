@@ -68,15 +68,16 @@ class CustomDns(
         bootstrap.addresses(config.backup.serverHost)
     }
 
-    /** The answer to relay for an allowed query, or `null` to drop it. Never throws. */
-    fun resolve(query: ByteArray, request: Message): ByteArray? = try {
+    /** The answer to relay for an allowed query (`bytes` `null` to drop it) and whether a server
+     * answered ([Resolved], design 67 §3.1). Never throws. */
+    fun resolve(query: ByteArray, request: Message): Resolved = try {
         resolveChecked(query, request)
     } catch (e: Exception) {
         log("Query failed: ${e.javaClass.simpleName}")
-        null
+        Resolved(null, answered = false)
     }
 
-    private fun resolveChecked(query: ByteArray, request: Message): ByteArray? {
+    private fun resolveChecked(query: ByteArray, request: Message): Resolved {
         val startedAt = elapsed()
         // One deadline for the whole query (design 36 §5.4): an answer inside the stub's first ~5 s try.
         val deadline = startedAt + QUERY_DEADLINE_MS
@@ -95,7 +96,7 @@ class CustomDns(
                 is Attempt.Answer -> {
                     update { UpstreamChooser.afterAnswer(it, gen, elapsed()) }
                     settled = true
-                    return outcome.bytes
+                    return relayed(outcome)
                 }
                 is Attempt.Transport -> {
                     update { UpstreamChooser.afterTransport(it, gen, elapsed(), outcome.reason) }
@@ -103,7 +104,7 @@ class CustomDns(
                     return backup(query, deadline)
                 }
                 // Our own VPN refused the socket: nothing counted, a probe given back (finally), dropped.
-                Attempt.Unprotected -> return null
+                Attempt.Unprotected -> return relayed(outcome)
                 is Attempt.Odd -> {
                     val verdict = canary(addresses, canaryBudget(deadline - elapsed()))
                     if (verdict != null) {
@@ -112,11 +113,13 @@ class CustomDns(
                         if (!verdict.ok) return backup(query, deadline)
                     }
                     // A healthy canary - or one this query gave up waiting for, which changes nothing:
-                    // the name's own outcome stands, never the backup.
-                    return when (oddAnswer(outcome.kind)) {
+                    // the name's own outcome stands, never the backup. Only a healthy one proves the
+                    // server alive (design 67 §3.1).
+                    val bytes = when (oddAnswer(outcome.kind)) {
                         OddAnswer.BLOCKED -> blockedResponse(request)
                         OddAnswer.SERVFAIL -> servfailResponse(request)
                     }
+                    return Resolved(bytes, answered = verdict != null)
                 }
             }
         } finally {
@@ -126,14 +129,10 @@ class CustomDns(
 
     /** The backup's answer relayed as is (REFUSED/SERVFAIL included), within what is left of the
      * query's [deadline]; a failure drops the query. */
-    private fun backup(query: ByteArray, deadline: Long): ByteArray? {
+    private fun backup(query: ByteArray, deadline: Long): Resolved {
         val addresses = bootstrap.addresses(config.backup.serverHost)
-        if (addresses.isEmpty()) return null
-        return when (val outcome = transport(config.backup, addresses, query, backupBudget(deadline - elapsed()))) {
-            is Attempt.Answer -> outcome.bytes
-            is Attempt.Odd -> outcome.bytes
-            is Attempt.Transport, Attempt.Unprotected -> null
-        }
+        if (addresses.isEmpty()) return Resolved(null, answered = false)
+        return relayed(transport(config.backup, addresses, query, backupBudget(deadline - elapsed())))
     }
 
     /**
@@ -280,8 +279,8 @@ class CustomDns(
         thread(name = "dns-evict") { client.connectionPool.evictAll() }
     }
 
-    /** The status report's `dns_upstream` (§4.2). */
-    fun report(): DnsUpstreamReport = upstreamReport(state.get(), config.rev, elapsed(), System.currentTimeMillis())
+    /** The status report's `dns_upstream` (§4.2), with the service's outage state [reach] (design 67). */
+    fun report(reach: ReachState): DnsUpstreamReport = upstreamReport(state.get(), config.rev, reach, elapsed(), System.currentTimeMillis())
 
     fun close() {
         synchronized(this) { closed = true }
