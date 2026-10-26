@@ -497,8 +497,8 @@ Order, if this server ever had FCM configured:
 1. Release and install the server first (`server-v0.20.0` or later, `update.sh`). Migration 0048 drops the stored FCM
    installation IDs. A phone that was using FCM gets no nudges from this update until its next check-in (at most
    30 minutes), then switches to the stream by itself; "Sync now" in its Settings or a reboot shortens that.
-2. Remove `FCM_SERVICE_ACCOUNT_FILE` from `/opt/kid-phone-server/.env` (while it is set, the server logs one warning at
-   startup and ignores it), delete the key file (`sudo rm /etc/kid-phone-server/fcm-service-account.json`) and every
+2. Remove `FCM_SERVICE_ACCOUNT_FILE` from `/opt/kid-phone-server/.env` (the server ignores it; 0.20.0-0.53.x
+   also logged a warning at startup), delete the key file (`sudo rm /etc/kid-phone-server/fcm-service-account.json`) and every
    other copy, and **revoke the key**: delete the service account (or its key) in Google Cloud IAM - that is what makes
    the stored IDs and any old backup useless. Then delete the Firebase project.
 3. Then the launcher (a `launcher-v*` tag on design 19's launcher commits or later). Only after that tag's release

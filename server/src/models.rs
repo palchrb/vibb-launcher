@@ -330,24 +330,19 @@ pub struct DeviceContactRow {
 /// `device_policy.custom_schedule_enabled` override. See `handlers::schedules`.
 #[derive(sqlx::FromRow, Clone, Default)]
 pub struct GlobalSchedule {
-    pub id: i64,
     pub weekday_start_minutes: Option<i64>,
     pub weekday_end_minutes: Option<i64>,
     pub weekend_start_minutes: Option<i64>,
     pub weekend_end_minutes: Option<i64>,
     pub bedtime_start_minutes: Option<i64>,
     pub bedtime_end_minutes: Option<i64>,
-    pub updated_at: String,
     /// The global daily screen-time budget (migrations/0025), see `DevicePolicy.daily_budget_json`.
     pub daily_budget_json: String,
 }
 
 #[derive(sqlx::FromRow, Clone, Default)]
 pub struct DeviceStatus {
-    pub id: i64,
-    pub device_id: i64,
     pub lock_reason: String,
-    pub kiosk_engaged: bool,
     pub installed_apps_json: Option<String>,
     pub app_version: Option<String>,
     pub app_version_code: Option<i64>,
@@ -470,7 +465,6 @@ pub struct TrackedApp {
     pub latest_release_asset_id: Option<i64>,
     pub latest_release_file_path: Option<String>,
     pub last_checked_at: Option<String>,
-    pub created_at: String,
     /// See migrations/0013_device_tracked_apps.sql - marks the one row that
     /// is the launcher itself, which can't be deleted or deselected on any
     /// device.
@@ -515,11 +509,9 @@ impl TrackedApp {
 /// Singleton row (id always 1) - see migrations/0009_dns_filter.sql.
 #[derive(sqlx::FromRow, Clone)]
 pub struct DnsFilterSettings {
-    pub id: i64,
     /// `cloudflare`, `quad9` or `custom` (design 36; `custom` counts only with a valid pair, else
     /// it reads as `cloudflare` - `dns_server::valid_pair`).
     pub upstream: String,
-    pub updated_at: String,
     /// The custom server and its backup, stored normalized (`dns_server::DnsServer::normalized`),
     /// '' = not set; write-only in the PWA (migration 0079).
     pub custom_server: String,
@@ -533,10 +525,8 @@ pub struct DnsFilterSettings {
 /// key the parent replaces before each phone's setup (security review M12, DEPLOY.md).
 #[derive(sqlx::FromRow, Clone, Default)]
 pub struct ProvisioningSettings {
-    pub id: i64,
     pub server_url: String,
     pub tailscale_auth_key: String,
-    pub updated_at: String,
     /// `android.app.extra.PROVISIONING_LOCALE` in the setup QR, "xx_YY" (migrations/0034,
     /// default "nb_NO"); empty = not sent.
     pub locale: String,
@@ -551,7 +541,6 @@ pub struct DnsBlocklist {
     pub name: String,
     pub url: String,
     pub enabled: bool,
-    pub created_at: String,
 }
 
 #[derive(sqlx::FromRow, Clone)]
@@ -559,21 +548,6 @@ pub struct DnsCustomDomain {
     pub id: i64,
     pub domain: String,
     pub list_type: String,
-    /// NULL = applies to all devices, set = this device only. See
-    /// migrations/0011_client_side_dns_filtering.sql.
-    pub device_id: Option<i64>,
-    pub created_at: String,
-}
-
-/// Per-device on/off override for a curated blocklist feed - absence of a
-/// row for a given device means "use `DnsBlocklist.enabled`". See
-/// migrations/0011_client_side_dns_filtering.sql.
-#[derive(sqlx::FromRow, Clone)]
-pub struct DeviceBlocklistOverride {
-    pub device_id: i64,
-    pub blocklist_id: i64,
-    pub enabled: bool,
-    pub updated_at: String,
 }
 
 /// One blocked-domain event, self-reported by the device's on-device filter -
@@ -630,7 +604,6 @@ impl DeviceLocation {
 #[derive(sqlx::FromRow, Clone)]
 pub struct DeviceCommand {
     pub id: i64,
-    pub device_id: i64,
     pub command: String,
     pub requested_at: String,
     pub delivered_at: Option<String>,

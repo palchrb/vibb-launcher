@@ -820,7 +820,6 @@ pub async fn load_items(
 
 /// One `music_listings` row (the defaults before the first check), every column as stored.
 #[derive(sqlx::FromRow, Debug, Clone, Default)]
-#[allow(dead_code)] // `checked_at` and `requests` are for the log and the tests
 pub struct Listing {
     pub entry_id: i64,
     pub title: Option<String>,
@@ -848,6 +847,8 @@ pub struct Listing {
     pub error_at: Option<String>,
     pub failing_since: Option<String>,
     pub failures: i64,
+    /// The last check's requests: for the tests (the log has the check's own count).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub requests: i64,
     /// Episode art (design 27 §1.2, QA M2/M3).
     pub cover_print: Option<i64>,

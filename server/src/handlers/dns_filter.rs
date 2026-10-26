@@ -774,20 +774,6 @@ pub async fn toggle_blocklist(
     Redirect::to("/dns#lists").into_response()
 }
 
-/// Deletes a shared list (no page offers it today; kept for the route). Back to `#lists`.
-pub async fn delete_blocklist(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
-    let result = sqlx::query("DELETE FROM dns_blocklists WHERE id = ?")
-        .bind(id)
-        .execute(&state.db)
-        .await;
-    if let Err(err) = result {
-        return write_failed(err);
-    }
-    dns_engine::compile_blocklist(&state, &state.dns_compiled).await;
-    nudge(&state, None).await;
-    Redirect::to("/dns#lists").into_response()
-}
-
 /// Adds a blocked or allowed domain, for every phone or (`device_id`) one. Absent or empty
 /// `device_id` = every phone (device_id NULL, migrations/0011); anything else that isn't a number
 /// is a 400, never a silent "every phone". A name that isn't a domain (`dns_engine`'s check) adds

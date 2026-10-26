@@ -49,8 +49,8 @@ pub const MAX_FEED_BYTES: usize = 32 * 1024 * 1024;
 /// global (device_id IS NULL) custom block domains, minus global custom
 /// allow domains. A specific device's actual effective list is resolved from
 /// this cheaply at request time (global `enabled` flags + this device's
-/// `device_blocklist_overrides`/scoped `dns_custom_domains`, applied on top)
-/// - see `handlers::device_api::dns_blocklist` - rather than precomputed per
+/// `device_blocklist_overrides`/scoped `dns_custom_domains`, applied on top;
+/// see `handlers::device_api::dns_blocklist`) rather than precomputed per
 /// device, since this base rarely changes and per-device overrides are
 /// small.
 pub struct CompiledBlocklist {

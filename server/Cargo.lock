@@ -1337,7 +1337,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
- "tokio-util",
  "totp-rs",
  "tower",
  "tower-http 0.7.0",

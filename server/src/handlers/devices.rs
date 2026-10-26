@@ -1333,7 +1333,7 @@ pub(crate) async fn app_rows(
         });
     }
 
-    apps.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    apps.sort_by_key(|a| a.label.to_lowercase());
 
     // The launcher's own row is pinned first rather than sorted alphabetically with everything
     // else - it's not really "one app among many" the way the rest of this list is, it's the

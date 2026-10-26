@@ -2050,7 +2050,6 @@ mod tests {
         let now = utc("2026-10-25 12:29:00");
         let command = |result: Option<&str>, answered: Option<&str>| DeviceCommand {
             id: 1,
-            device_id: 1,
             command: "locate".to_string(),
             requested_at: "2026-10-25 12:28:00".to_string(),
             delivered_at: None,

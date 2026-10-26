@@ -8,7 +8,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the status `push` (an old launcher still sends it: accepted with 204, stored nowhere - no `deny_unknown_fields`;
   `fcm_push_v1` in `capabilities` is stored as reported and read by nothing), the card's FCM lines, the direct deps
   `base64`/`ring`, the dev-dep `tokio/test-util` and the fixture PEM. No vestigial `push` key: every shipped launcher
-  treats a missing key like `fcm_enabled: false` (SSE). `FCM_SERVICE_ACCOUNT_FILE` still set = one startup warning.
+  treats a missing key like `fcm_enabled: false` (SSE). `FCM_SERVICE_ACCOUNT_FILE` is ignored (its startup warning went in 0.54.0).
 - **Migration `0048_remove_fcm.sql`**: `DROP TABLE device_push` (the installation IDs were credentials to message a
   phone), `device_status.push_state_json` set to NULL (column kept, unused). Revoking the service-account key is what
   makes stored IDs (freed pages, backups) useless (DEPLOY.md, "Removing FCM"). 0.19 refuses a database with 0048:

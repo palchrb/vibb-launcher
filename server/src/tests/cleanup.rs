@@ -129,18 +129,6 @@ async fn journal_and_history_routes_are_gone() {
     assert!(!page.text().contains("browser-history"));
 }
 
-#[tokio::test]
-async fn journal_media_is_deleted_once() {
-    let dir = tempfile::tempdir().unwrap();
-    let media = dir.path().join("journal_media");
-    std::fs::create_dir_all(media.join("1")).unwrap();
-    std::fs::write(media.join("1").join("5.jpg"), b"photo").unwrap();
-    assert!(crate::retention::remove_journal_media(&media).await);
-    assert!(!media.exists());
-    // Nothing there any more: a no-op at every later start.
-    assert!(!crate::retention::remove_journal_media(&media).await);
-}
-
 async fn count(db: &SqlitePool, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(db).await.unwrap()
 }
