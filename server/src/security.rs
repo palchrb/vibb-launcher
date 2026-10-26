@@ -145,6 +145,64 @@ pub async fn record_security_event(
     .ok();
 }
 
+/// The security-log lines one phone's reports may write in a rolling hour (security review L1).
+pub const PHONE_LINES_AN_HOUR: i64 = 60;
+
+/// A line a phone's report raised - a PIN use, a start without the launcher, an app installed, a
+/// relock's findings -, within [PHONE_LINES_AN_HOUR] a rolling hour per phone (security review L1:
+/// a leaked token or a rooted phone can't bury the sign-ins under rows kept 180 days). `line`
+/// starts with `device {device_id}:` or `device {device_id},`, as every phone line does, which is
+/// what the hour's count matches. The line over the budget is one `phone_lines_dropped` row; the
+/// rest of that hour's lines are not written (the phone's own pages keep what they show). On the
+/// caller's connection, so a caller's transaction holds it.
+pub async fn record_phone_event(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: i64,
+    event_type: &str,
+    line: &str,
+) -> Result<(), sqlx::Error> {
+    let written: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE created_at > datetime('now', '-1 hour') \
+         AND (detail LIKE ?1 || ':%' OR detail LIKE ?1 || ',%')",
+    )
+    .bind(format!("device {device_id}"))
+    .fetch_one(&mut *conn)
+    .await?;
+    let (event_type, line) = match written {
+        n if n < PHONE_LINES_AN_HOUR => (event_type, line.to_string()),
+        n if n == PHONE_LINES_AN_HOUR => (
+            "phone_lines_dropped",
+            format!(
+                "device {device_id}: more lines from this phone in this hour are not logged (at \
+                 most {PHONE_LINES_AN_HOUR} an hour)"
+            ),
+        ),
+        _ => return Ok(()),
+    };
+    sqlx::query("INSERT INTO security_events (event_type, detail) VALUES (?, ?)")
+        .bind(event_type)
+        .bind(line)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// [record_phone_event] on its own connection; a failure is logged.
+pub async fn record_phone_event_logged(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    event_type: &str,
+    line: &str,
+) {
+    let written = match db.acquire().await {
+        Ok(mut conn) => record_phone_event(&mut conn, device_id, event_type, line).await,
+        Err(err) => Err(err),
+    };
+    if let Err(err) = written {
+        tracing::error!(device_id, event_type, %err, "can't write a phone's security-log line");
+    }
+}
+
 pub async fn is_ip_banned(db: &sqlx::SqlitePool, ip: &str) -> bool {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM banned_ips WHERE ip_address = ? AND banned_until > datetime('now'))",

@@ -1331,7 +1331,7 @@ pub async fn status(
         previous_unseen,
         unseen_boots.map(|(count, _)| count),
     ) {
-        crate::security::record_security_event(&state.db, "boot_unseen", None, None, Some(&line))
+        crate::security::record_phone_event_logged(&state.db, device.id, "boot_unseen", &line)
             .await;
         if let (Some(phone), Some((count, last_at_ms))) = (&phone, unseen_boots) {
             crate::parent_events::raise_logged(&state, &phone.unseen_boot(count, last_at_ms)).await;
@@ -1578,14 +1578,11 @@ async fn log_play_events(
         let until = chrono::DateTime::from_timestamp_millis(mode.until_ms)
             .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
             .unwrap_or_else(|| mode.until_ms.to_string());
-        crate::security::record_security_event(
+        crate::security::record_phone_event_logged(
             &state.db,
+            device_id,
             "play_install_mode",
-            None,
-            None,
-            Some(&format!(
-                "device {device_id}: Play install mode until {until}"
-            )),
+            &format!("device {device_id}: Play install mode until {until}"),
         )
         .await;
     }
@@ -1608,16 +1605,15 @@ async fn log_play_events(
         .take(20)
     {
         let source = app.installer.as_deref().unwrap_or("unknown source");
-        crate::security::record_security_event(
+        crate::security::record_phone_event_logged(
             &state.db,
+            device_id,
             "app_installed",
-            None,
-            None,
-            Some(&format!(
+            &format!(
                 "device {device_id}: {} ({}) installed from {source}",
                 app.label.chars().take(80).collect::<String>(),
                 app.package_name.chars().take(200).collect::<String>()
-            )),
+            ),
         )
         .await;
     }

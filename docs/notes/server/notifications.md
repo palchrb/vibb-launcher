@@ -7,10 +7,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Events** (`src/parent_events.rs`): one row per event in `parent_events`, stored by `parent_events::raise(conn,
   &NewEvent)` (`INSERT ... ON CONFLICT (device_id, kind, dedup_key) DO NOTHING RETURNING id`, on the caller's
   connection, so `pin_events`' transaction holds it; a target that isn't a local path - `local_target`: one leading `/`,
-  never `//` or `/\` - is refused). The words are made at raise by `Phone` (name, battery latch, Phone Setup zone, now;
+  never `//` or `/\` - is refused; since 0.55.0, security review L1, a phone's events of one kind past
+  `EVENTS_AN_HOUR` (20) in a rolling hour are not stored, logged, and of an urgent kind only the first
+  `URGENT_PUSHES_AN_HOUR` (3) an hour are pushed - the rest are stored without a push of their own,
+  `tests::parent_pin::a_flood_of_lockouts_is_bounded`). The words are made at raise by `Phone` (name, battery latch, Phone Setup zone, now;
   `Phone::load`) from typed values, cut to 60/100 characters (a long phone name gets "…", the rest stays), local times:
   `emergency_call` (`device_api::status`, `parent_events::new_emergency_call`: newer than the previous report's
-  `call_state.last_emergency_call_at`; when that report named none - or there is none - at most 24 h old), `pin_lockout`/`pin_used`
+  `call_state.last_emergency_call_at`; when that report named none - or there is none - at most 24 h old; never one
+  more than 5 minutes past the server's clock, L1), `pin_lockout`/`pin_used`
   (`handlers::parent_pin::pin_events`, a newly stored `lockout`/`unlocked`, in its transaction), `foreign_access`
   (`handlers::window_relock::log_foreign_access`, now on `&AppState`: the set changed and isn't empty; key = previous
   report id + 16 hex of the stored set's SHA-256, both from the intake's one read of the previous report,

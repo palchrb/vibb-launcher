@@ -106,6 +106,7 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "phone_relock_findings" => "Phone locked again: findings",
         "phone_app_blocked" => "App blocked on phone",
         "boot_unseen" => "Phone started without Vibb One",
+        "phone_lines_dropped" => "Too many lines from a phone",
         "push_subscribed" => "Notifications turned on on a device",
         "push_subscription_gone" => "Notifications turned off on a device",
         "app_installed" => "App installed on phone",
@@ -412,7 +413,7 @@ mod tests {
     #[test]
     fn every_written_event_has_a_label() {
         let writer = regex::Regex::new(
-            r"record_security_event\(|log_event\(|log_change\(|\.record\(|request_action\(|INSERT INTO security_events",
+            r"record_security_event\(|record_phone_event(?:_logged)?\(|log_event\(|log_change\(|\.record\(|request_action\(|INSERT INTO security_events",
         )
         .unwrap();
         let picker = regex::Regex::new(r"let \(?[a-z_, ]*event").unwrap();

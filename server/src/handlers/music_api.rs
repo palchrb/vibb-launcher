@@ -273,12 +273,11 @@ pub async fn storytel(
         );
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    crate::security::record_security_event(
+    crate::security::record_phone_event_logged(
         &state.db,
+        device.id,
         "storytel_login_sent",
-        None,
-        None,
-        Some(&format!("device {}: generation {generation}", device.id)),
+        &format!("device {}: generation {generation}", device.id),
     )
     .await;
     (
