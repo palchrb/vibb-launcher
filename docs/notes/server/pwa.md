@@ -414,8 +414,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   while Offline, "Disconnected · access removed" with "Connect again ›" to Advanced › Connection, "Not seen yet",
   "Not set up"; the lock badge only while a rule locks - `devices::badge_and_screen`, the Devices list's rules, so no
   end unless the phone reports Phone Setup's zone -; today's bar); **Attention** (`attention::items`, the list's count); the
-  **foreign-app warning** with its steps (`#foreign-access`); **Quick Actions** (`#quick`: a red "Unlocked on the phone" first while the last report has the restrictions
-  paused - what ends it, also for an older launcher -; +15 min, +30 min, +1 h,
+  **foreign-app warning** with its steps (`#foreign-access`); **Quick Actions** (`#quick`: while the last report has the restrictions paused, one plain line first,
+  `.quick-note` - "The pause ends by itself, or tap Lock again to end it now.", an older launcher's own words; no red
+  since 2026-10-26: the Attention row "Restrictions paused ›" that lands here is the one red alert -; +15 min, +30 min, +1 h,
   Pause a rule… as a `<details>` sheet with only the rules that apply, Lock again while a pause or Play install mode
   runs, Unlock for 2 h… behind a `<details>` confirm while no pause is on - both only for a `window_relock_v1`
   launcher -, Locate as a link to `/devices/locate?device={id}`; an open sheet spans the grid; after Lock again or
