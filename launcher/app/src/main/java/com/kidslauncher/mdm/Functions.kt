@@ -11,13 +11,11 @@ import android.content.Intent
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.Bundle
 import android.os.UserHandle
 import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
-import androidx.core.net.toUri
 import com.kidslauncher.mdm.apps.AbstractAppInfo.Companion.INVALID_USER
 import com.kidslauncher.mdm.apps.AbstractDetailedAppInfo
 import com.kidslauncher.mdm.apps.AppFilter
@@ -87,7 +85,6 @@ fun openSettings(context: Context) {
 fun openAppsList(
     context: Context,
     hidden: Boolean = false,
-    excludePinned: Boolean = false
 ) {
     val intent = Intent(context, AppListActivity::class.java)
     intent.putExtra(
@@ -96,14 +93,6 @@ fun openAppsList(
             AppFilter.Companion.AppSetVisibility.EXCLUSIVE
         } else {
             AppFilter.Companion.AppSetVisibility.HIDDEN
-        }
-    )
-    intent.putExtra(
-        AbstractListActivity.KEY_PINNED_VISIBILITY,
-        if (excludePinned) {
-            AppFilter.Companion.AppSetVisibility.HIDDEN
-        } else {
-            AppFilter.Companion.AppSetVisibility.VISIBLE
         }
     )
 
@@ -117,16 +106,6 @@ fun getUserFromId(userId: Int?, context: Context): UserHandle {
     val userManager = context.getSystemService(Service.USER_SERVICE) as UserManager
     val profiles = userManager.userProfiles
     return profiles.firstOrNull { it.hashCode() == userId } ?: profiles[0]
-}
-
-fun openInBrowser(url: String, context: Context) {
-    val intent = Intent(Intent.ACTION_VIEW, url.toUri())
-    intent.putExtras(Bundle().apply { putBoolean("new_window", true) })
-    try {
-        context.startActivity(intent)
-    } catch (_: ActivityNotFoundException) {
-        Toast.makeText(context, R.string.toast_activity_not_found_browser, Toast.LENGTH_LONG).show()
-    }
 }
 
 /**

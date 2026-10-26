@@ -761,8 +761,7 @@ object PinLockRuntime {
     }
 
     /**
-     * Design 32 step 1: the screen-off's lock-up, planned by [lockUpStarts] (the debug build's H2
-     * experiment may re-start a lock on top, [LockUpDebug]) and carried out by [lockUp]. A call is
+     * Design 32 step 1: the screen-off's lock-up, planned by [lockUpStarts] and carried out by [lockUp]. A call is
      * ours, Telecom's (the event's reads, no new binder calls before the start) or VoIP.
      */
     private fun lockUpAtScreenOff(context: Context, event: LockEvent.ScreenOff, result: LockStep) {
@@ -778,7 +777,7 @@ object PinLockRuntime {
         // the wait for USER_PRESENT is the longer one (a fingerprint from dark).
         if (kg && AndroidLock.faceOn) AndroidLock.sawLocked(screenOffs)
         // Design 59d step C: as the face the lock alone whatever kg read (kg still feeds sawLocked above).
-        val start = LockUpDebug.adjust(lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn), result.showLock)
+        val start = lockUpStarts(result.showLock, lockOnTop, callLive, interactive, cover && kg, face = AndroidLock.faceOn)
         lockUp(context, start, lockAsk(event))
         AndroidLock.note(context, "screen-off, lock-up $start")
         if (result.mode == LockMode.LOCKED) Log.i(LOG_TAG, "Lock-up at screen-off: $start (call=$callLive, interactive=$interactive, cover=$cover, kg=$kg)")

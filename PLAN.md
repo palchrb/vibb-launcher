@@ -374,8 +374,8 @@ is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the desi
 - **Provisioning (2026-10-06)**: QR carries locale/time zone (`nb_NO`/`Europe/Oslo`), the
   launcher has the Android 12+ provisioning-mode/compliance activities, system language locked
   while managed. QR on the Jelly Star: [needs device test], adb stays the fallback.
-- **Pending user decision**: drop the top-left back buttons on full pages
-  (`KidHeader.SHOW_BACK_BUTTON`).
+- **Back buttons on full pages** (was "Pending user decision" since 2026-10-06): decided 2026-10-26 (the plan's decision 6) -
+  the buttons stay, the `KidHeader.SHOW_BACK_BUTTON` flag is gone (round 0b, merged 0a43ed3d).
 - **Cleanup: remove monitoring and unused upstream features** (user, 2026-10-06) - **done
   2026-10-06** (plus the applicationId `me.vibb.launcher`): journal, browser history, UnifiedPush relay
   and MollySocket removed (migration 0038), DNS log opt-in with 7 days, locations 7 days by default
@@ -510,6 +510,8 @@ after), never later. Details stay in the entries below.
 Rounds and waves: `docs/plan/2026-10-25-queue-rounds.md` (2026-10-25). Combined lines are split at their own
 separators, one item per bullet, so each sits in its round; the words are unchanged.
 
+- **Cleanup**
+  - **Round 0b - dead code in the apps** (`cleanup-apps`, launcher + music; `docs/plan/2026-10-25-queue-rounds.md` Round 0b; **merged 2026-10-26**, 0a43ed3d, code QA `docs/review/qa-0b-cleanup-code.md` 0/0/3/3 + fix round; 41 files, -940 lines; `color/kid_icon_fallback` kept - it gained callers; the COVER glue stays for design 59 phase D): design 32's debug experiments (`LockUpDebug`, `KeyguardCoverDebug` + receivers, the §6k text), `palette-ktx`, the dead-code review's launcher list, D3's `FirebaseCleanup`/`FirebaseLeftovers`, D5's minimalist leftovers, `KidHeader.SHOW_BACK_BUTTON` (decision 6: the buttons stay, the flag goes), music `SpeakerCache.scanNow`. Deletions only; ships in the next launcher/music RC.
 - **Launcher**
   - **Round L1 - glance and Home layout** (merged 2026-10-26, `launcher-glance-c`; RC3-8 pinned, six-inch F3/F4 and the lower music tile built; only Q5 is left):
     - **Fingerprint with the screen on, Jelly Star check** (the user, 2026-10-25, emulator: with the screen on the fingerprint unlocks only once SystemUI's pad is up; from screen-off it unlocks at once): expected in the hybrid - the glance occludes the keyguard, and Android listens for fingerprint only while the keyguard is showing and not occluded (design 59); no API lets us dismiss a secure keyguard after our own biometric check. Check on the Jelly Star (side-mounted sensor; some OEMs keep listening while occluded); if it does not work there with the screen on, one line in Kid Settings' help ("press the sensor from a dark screen, or swipe up first"), nothing more. Not a bug.
@@ -525,7 +527,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   - **Round B2 - emergency menu** (`emergency-menu`, launcher + server, mockup + design note first):
     - Configurable emergency menu
   - **Round L4 - the launcher's security Lows** (`launcher-sec-lows`; the shared line is under Server / PWA, Rounds S2 + S3).
-  - **Round L6 - the time-rule screen** (`rule-screen`, launcher + server; the user, 2026-10-26, Jelly Star screenshots of school mode; scope questions below):
+  - **Round L6 - the time-rule screen** (`rule-screen`, launcher + server; the user, 2026-10-26, Jelly Star screenshots of school mode; the bedtime design note `docs/design/66-bedtime.md` written, QA'd and revised 2026-10-26 (01d67bff) - **in build since 2026-10-26**, branch `bedtime` off 2aed5880 (the user answered §6 2026-10-26: per phone always, no holiday calendar, converted rules named Leggetid); the two screen items wait for it):
     - **The rule screen looks dated next to the glance**: the screen the kid reaches by unlocking during a locking rule ("Skole · Til 14:34 · Bare nødanrop fungerer nå", the night ground, a small icon, the old clock) should take the lock glance's look - the same clock face and size, the date and alarm lines, the rule card's typography (`lock/RuleCard.kt`), the Emergency row - so the two screens read as one design.
     - **No code entry on the rule screen** (the user, 2026-10-26: "ta vekk muligheten til å skrive inn opplåsingskode på låst modus"; decided 2026-10-26: **PWA only** - the parent lifts a rule from the PWA, no hidden path on the phone): drop the "Skriv inn opplåsingskode" prompt from the rule screen; the Emergency row stays.
     - **Bedtime as its own setting; day rules inside one day** (the user, 2026-10-26: "Start må være før slutt" and "burde leggetid være en egen input-greie ... leggetid som 1 faktor, ikke 7"): a short design note first. Proposed shape: one "Leggetid" setting per phone with an evening time and a morning time (and, proposed, a second pair for nights before a free day), stored and enforced as one rule that may cross midnight; the ordinary day rules then stay within one day (the form refuses end <= start, `00:00`-`23:59` the widest) and the help "An end before the start ends the next morning ..." goes. Existing rules that cross midnight migrate into the bedtime setting (or are refused until edited - the note decides). Both sides (the server's rules + the launcher's time_state), the policy contract pinned on both.
@@ -536,7 +538,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   - **Waits on the user / the Jelly Star / phase D** (no round yet):
     - **Design 38 device check, the Jelly Star half** (the emulator half passed 2026-10-25: `svc power reboot` → "is restarting" in the inbox within 2 min, `docs/testing/2026-10-25-r13-run.md`): the power menu's Power off and Restart and a flat battery on the Jelly Star - the user's check.
     - Phase D (own lock removed)
-    - design 32b (one stale frame at screen-on)
+    - **Design 32b, now the screen-on hand-over in android mode** (the user, 2026-10-26, `jellystar2` screen recording of three power-button cycles, read frame by frame: "Er en slags resizing tidvis av bakgrunnen ved power button cycles her; er dette noe vi kan addressere?"): at every screen-on the stock keyguard is on screen for 1-4 frames (40-170 ms) before the glance - once with SystemUI's own clock, once as the bare wallpaper - and in one cycle the glance's STALE page (the old clock, 12:04) showed first for 4 frames; in those stock frames the system wallpaper is at SystemUI's wake-up zoom-out (1.0), while the glance's own opaque ground (design 25's copy) is at the wallpaper's resting scale (`config_wallpaperMaxScale` 1.10) - so the ground steps 10 % when the glance covers them (the same step Home solved 2026-10-25 by keeping its copy). Decision 4's premise ("own mode only") is wrong: the stale frame exists in android mode too, so 32b stays. Fix direction (a design note first, emulator-measured, `screenrecord` + `vidsum.py`): the glance's window must be the first frame at screen-on (why does our window drop out for a frame after it was there with stale content - the keyguard's re-occlude transition? `setTurnScreenOn`/`showWhenLocked` timing?), the page's content blanked at the lock-up so a stale frame can't show (design 32's ground rule), and if a stock frame remains, the glance's ground may start at the wake-up's zoom-out and settle with SystemUI's own zoom so no step is visible. Launcher, S-M; after L2.
     - RC3-4 (release-build setup timing)
     - Immich wallpapers
     - design 60 (hardware-bound token)
@@ -546,7 +548,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     **Built** (2026-10-26, branch `music-splash-c`): `logic/Splash.kt` `SPLASH_HOLD_MS` 400 and `splashHoldEnd(system, goneAtMs)` - the hold's end in ms since the app splash's first frame: the system splash GONE at t -> t + 400, but never past the 3 s cap (from the first frame; GONE with no instant known -> the cap); FADING -> none yet; never handed over -> max(500 ms wait, 400 ms hold) = 500 ms, the two running concurrently from the first frame, not in sequence. `splashFadeDue(contentShown, system, goneAtMs, nowMs)` = the content shown and `nowMs` past that end (pure, the time a parameter); `ui/LaunchSplash.kt` feeds it ms since its first frame (`SystemClock.uptimeMillis`, the GONE instant read in the composition that first sees GONE, one delay to the hold's end - no ticking), and latches the fade once due (a hand-over later than the 500 ms wait no longer brings the splash back). `contentReady` and the 3 s cap unchanged; no new dependency or string. `SplashTest` pins the hold (content at once + GONE at 300 ms: no fade at 699, fade at 700; content late at 1.5 s: fade then), the concurrent wait (500 ms, not 900; not at 400) and the cap (GONE at 2.8 s: the fade at 3 s). Emulator check: emulator.md §6u steps 12 and 18 ("at full strength at least 400 ms").
   - **Round M2 - the music app's security Lows** (`music-sec-lows`; the shared line is under Server / PWA, Rounds S2 + S3).
 - **Server / PWA**
-  - **Round S1 - server small items** (`server-small-e`):
+  - **Round S1 - server small items** (`server-small-e`; **built 2026-10-26, in code QA** - branch `server-small-e` off 380fc2c8, 10 commits to 5ae9cc34, 0.54.0 bumped; decisions 5 (D3, D4) and 10 on their defaults):
     - `PHONE_SERVER_URL` in `.env`
     - episode pictures on demand
     - GitHub asset digests
@@ -1596,7 +1598,8 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   in English before the language arrives from the server. Not yet checked (time-box): Home in en
   with 4 columns, the phone book, the keypad after a font-scale change, the time-rule
   "Til … p.m.", the PWA's About row, a VoIP ring while paused.
-- **Remove the unused androidx `palette` dependency** (unused since design 34 step 1), with its
+- **Remove the unused androidx `palette` dependency** - **done 2026-10-26** (round 0b, 0a43ed3d).
+  Was: **Remove the unused androidx `palette` dependency** (unused since design 34 step 1), with its
   verification-metadata entries.
 - **Design 46's queue view: a context entry's list shows the playing track and the next 20 from Spotify's queue**
   (the user, 2026-10-20: "Legg køvisning for neste 20 på longlisten vår, så husker vi på den til senere"). Designed and

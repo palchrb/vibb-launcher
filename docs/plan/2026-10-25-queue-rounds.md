@@ -94,7 +94,9 @@ power menu's Power off / Restart, fingerprint with the screen on through the emu
 simulated routes), the Jelly Star-only items later (the App blocker dump, the real sensor, a flat battery, safe mode,
 the release build's timing, real speakers); 13 - done (six `archive/*` tags pushed, 76 branches and 14 worktrees
 deleted 2026-10-26; `proto-59-run` archived too). New: round L6's bedtime setting (PLAN) replaces "rules inside one
-day" as the shape; the rule screen's code entry goes with PWA-only lifting.
+day" as the shape; the rule screen's code entry goes with PWA-only lifting. Decision 4 is overturned by the user's
+`jellystar2` recording of 2026-10-26: the stale frame and a 1-4 frame stock-keyguard hand-over exist in android mode (PLAN, design 32b's
+line) - 32b stays, as the screen-on hand-over item.
 
 ## 1. Half-done: the inventory
 

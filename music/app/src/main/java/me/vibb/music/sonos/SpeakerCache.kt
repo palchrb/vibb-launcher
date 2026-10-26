@@ -155,7 +155,7 @@ class SpeakerCache(private val file: File, private val wallS: () -> Double = { S
  * one round in flight. Only on Wi-Fi ([onWifi]); without it the cache is served stale and no round
  * starts (the cabin case, §6.4). [state] is what the sheet shows, published on every refresh and when
  * a round starts and ends ("the rows refresh when it ends", qa-26a-step1-code L3). Blocking: call
- * [refresh], [refreshTopology] and [scanNow] off the main thread.
+ * [refresh] and [refreshTopology] off the main thread.
  */
 class RoomDirectory(
     private val cache: SpeakerCache,
@@ -295,15 +295,9 @@ class RoomDirectory(
     }
 
     /**
-     * `rescan`: SSDP for the speakers on this network, then the household from the first one whose
-     * topology answers (SSDP alone learns neither uids nor groups). Merges into the cache.
+     * One round: SSDP for the speakers on this network, then the household from the first one whose
+     * topology answers (SSDP alone learns neither uids nor groups), merged into the cache. True when one did.
      */
-    fun scanNow(): SpeakerDoc {
-        round()
-        return cache.load()
-    }
-
-    /** One round; true when a household answered and was merged in. */
     private fun round(): Boolean {
         for (hit in ssdp()) {
             try {
