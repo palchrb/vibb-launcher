@@ -248,6 +248,19 @@
     <string name="settings_mdm_write_settings_no_page">Not allowed - Android has no page for this on this phone</string>
     <string name="settings_mdm_write_settings_wait">Not allowed - the pause is starting, a moment…</string>
     <string name="settings_mdm_write_settings_unknown">Unknown</string>
+    <!-- Design 68 §4.2: the PIN-gated Settings' "App access" rows (Android's page per app and access, in a pause). -->
+    <string name="app_access_category">App access</string>
+    <string name="app_access_row_title">%1$s: %2$s</string>
+    <string name="app_access_manage_media">Media management</string>
+    <string name="app_access_exact_alarm">Alarms &amp; reminders</string>
+    <string name="app_access_usage_access">Usage access</string>
+    <string name="app_access_full_screen">Full-screen notifications</string>
+    <string name="app_access_approved">Approved - tap to change</string>
+    <string name="app_access_approved_pause_first">Approved - pause first to change it</string>
+    <string name="app_access_open">Not approved - tap, turn on %1$s\'s switch, then come back</string>
+    <string name="app_access_unknown">Can\'t be read here - tap to open the page</string>
+    <string name="app_access_wait">Not approved - the pause is starting, a moment…</string>
+    <string name="app_access_no_page">Not approved - Android has no page for this on this phone</string>
     <string name="settings_mdm_fingerprint">Fingerprint</string>
     <string name="settings_mdm_fingerprint_summary">%1$s - %2$s</string>
     <string name="settings_mdm_fingerprint_enrolled">Registered</string>

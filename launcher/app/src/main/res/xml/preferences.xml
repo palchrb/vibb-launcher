@@ -75,4 +75,11 @@
         android:title="@string/settings_mdm_restrictions_paused"
         android:summary="@string/settings_mdm_restrictions_paused_summary" />
 
+    <!-- Design 68 §4.2: one row per allowed app and special access it declares (Android's page for it, in a pause),
+         filled in code; hidden while empty. Last, so no other row falls under its header. -->
+    <PreferenceCategory
+        android:key="settings_mdm_app_access"
+        android:title="@string/app_access_category"
+        app:isPreferenceVisible="false" />
+
 </PreferenceScreen>

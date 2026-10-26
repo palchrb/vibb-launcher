@@ -64,6 +64,7 @@ private const val BACKGROUND_CONNECTION = "settings_mdm_background_connection"
 private const val WRITE_SETTINGS = "settings_mdm_write_settings"
 private const val FINGERPRINT = "settings_mdm_fingerprint"
 private const val MEDIA_LOCK = "settings_mdm_media_lock"
+private const val APP_ACCESS = "settings_mdm_app_access"
 
 /**
  * "Set"/"Not set" alone left no way to tell *which* key is configured, or to notice a stale one
@@ -125,6 +126,22 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     private var mediaLockPageMissing = false
     private val mediaLockLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         updateMediaLockRow()
+    }
+
+    /** Design 68 §4.2, "App access": the row tapped and its access before Android's page opened - a change on return is
+     * reported at once, so the PWA's line follows. */
+    private var appAccessTapped: Pair<com.kidslauncher.mdm.server.AccessRow, com.kidslauncher.mdm.server.AccessState>? = null
+    /** Rows whose every page threw ActivityNotFoundException on the last tap. */
+    private val appAccessPageMissing = mutableSetOf<String>()
+    private val appAccessLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val app = context?.applicationContext ?: return@registerForActivityResult
+        val (row, before) = appAccessTapped ?: return@registerForActivityResult
+        appAccessTapped = null
+        lifecycleScope.launch {
+            val now = withContext(Dispatchers.IO) { com.kidslauncher.mdm.server.AppAccessReader.stateNow(app, row) }
+            if (now != before) com.kidslauncher.mdm.push.SyncRunner.request(app, "app_access")
+            updateAccessRows()
+        }
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -385,6 +402,41 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
         updateWriteSettingsRow()
         updateFingerprintRow()
         updateMediaLockRow()
+        updateAccessRows()
+    }
+
+    /** "App access" (design 68 §4.2): read off the main thread, then the category's rows replaced; hidden while empty.
+     * A row opens Android's page for its app and access only while one resolves (the pause or the override). */
+    private fun updateAccessRows() {
+        val app = context?.applicationContext ?: return
+        val missing = appAccessPageMissing.toSet()
+        lifecycleScope.launch {
+            val rows = withContext(Dispatchers.IO) { com.kidslauncher.mdm.server.AppAccessReader.rows(app, missing) }
+            val context = context ?: return@launch
+            val category = findPreference<androidx.preference.PreferenceCategory>(APP_ACCESS) ?: return@launch
+            category.removeAll()
+            for (model in rows) {
+                val row = model.row
+                category.addPreference(
+                    Preference(context).apply {
+                        key = row.key
+                        isPersistent = false
+                        title = getString(R.string.app_access_row_title, row.label, getString(com.kidslauncher.mdm.server.accessNameRes(row.kind)))
+                        summary = getString(com.kidslauncher.mdm.server.accessRowTextRes(model.text), row.label)
+                        setOnPreferenceClickListener {
+                            appAccessPageMissing -= row.key
+                            if (model.pages.isNotEmpty()) {
+                                appAccessTapped = row to row.state
+                                if (!openFirstPage(model.pages, appAccessLauncher)) appAccessPageMissing += row.key
+                            }
+                            updateAccessRows()
+                            true
+                        }
+                    },
+                )
+            }
+            category.isVisible = rows.isNotEmpty()
+        }
     }
 
     private val appliedListener: () -> Unit = { updateSystemPageRows() }

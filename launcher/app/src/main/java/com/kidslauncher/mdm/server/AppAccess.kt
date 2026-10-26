@@ -69,6 +69,74 @@ fun appAccessReport(camera: String?, states: List<Pair<SpecialAccess, AccessStat
     return report.takeIf { it.isNotEmpty() }
 }
 
+// ---- the PIN-gated Settings' "App access" rows (§4.2) ---------------------------------------------------------------
+
+/**
+ * Whether an app gets "App access" rows: an allowed app - in the effective allowlist ([allowed]: relock blocks out), every
+ * third-party app while apps are unmanaged (`null`) -, not ours, and not suspended by the last plan ([suspended]).
+ */
+fun accessEligible(packageName: String, system: Boolean, allowed: Collection<String>?, suspended: Set<String>, ownPackage: String): Boolean =
+    packageName != ownPackage && packageName !in suspended && (if (allowed == null) !system else packageName in allowed)
+
+/** One row: an app and one access it declares, in any state (so the parent can take an approval back). */
+data class AccessRow(val packageName: String, val label: String, val kind: SpecialAccess, val state: AccessState) {
+    val key: String get() = "app_access:$packageName:${kind.key}"
+}
+
+/** The rows: by the app's name, then the accesses in [SpecialAccess]' order; every state kept. */
+fun accessRows(apps: List<Pair<String, String>>, states: Map<String, List<Pair<SpecialAccess, AccessState>>>): List<AccessRow> =
+    apps.sortedBy { (_, label) -> label.lowercase() }.flatMap { (pkg, label) ->
+        states[pkg].orEmpty().sortedBy { it.first.ordinal }.map { (kind, state) -> AccessRow(pkg, label, kind, state) }
+    }
+
+/** Android's pages for one app's access, in order: the app's own page (`package:` data), then the plain action (the
+ * list of apps). Each is made explicit to an unsuspended system page by `systemPageIntent`, so neither resolves
+ * outside a pause on a managed phone. `(action, data)`. */
+fun accessPageActions(kind: SpecialAccess, packageName: String): List<Pair<String, String?>> {
+    val action = when (kind) {
+        SpecialAccess.MANAGE_MEDIA -> "android.settings.REQUEST_MANAGE_MEDIA"
+        SpecialAccess.EXACT_ALARM -> "android.settings.REQUEST_SCHEDULE_EXACT_ALARM"
+        SpecialAccess.WRITE_SETTINGS -> "android.settings.action.MANAGE_WRITE_SETTINGS"
+        // The SDK says "Input: Nothing"; Settings' AppUsageAccessSettingsActivity takes `package:`.
+        SpecialAccess.USAGE_ACCESS -> "android.settings.USAGE_ACCESS_SETTINGS"
+        SpecialAccess.FULL_SCREEN -> "android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT"
+    }
+    return listOf(action to "package:$packageName", action to null)
+}
+
+/** A row's summary. */
+enum class AccessRowText { APPROVED, APPROVED_PAUSE_FIRST, OPEN, UNKNOWN_OPEN, PAUSE_FIRST, WAIT, NO_PAGE }
+
+/** [state] as read, [access] = `systemPageAccess` for the row's pages: an approval says how to change it, anything else
+ * says how to get to the page (the write-settings row's states). */
+fun accessRowText(state: AccessState, access: SystemPageAccess): AccessRowText = when {
+    state == AccessState.GRANTED -> if (access == SystemPageAccess.CAN_OPEN) AccessRowText.APPROVED else AccessRowText.APPROVED_PAUSE_FIRST
+    access == SystemPageAccess.CAN_OPEN -> if (state == AccessState.UNKNOWN) AccessRowText.UNKNOWN_OPEN else AccessRowText.OPEN
+    access == SystemPageAccess.PAUSE_FIRST -> AccessRowText.PAUSE_FIRST
+    access == SystemPageAccess.WAIT -> AccessRowText.WAIT
+    else -> AccessRowText.NO_PAGE
+}
+
+/** The summary's string (pinned by test). [AccessRowText.OPEN] takes the app's name. */
+fun accessRowTextRes(text: AccessRowText): Int = when (text) {
+    AccessRowText.APPROVED -> com.kidslauncher.mdm.R.string.app_access_approved
+    AccessRowText.APPROVED_PAUSE_FIRST -> com.kidslauncher.mdm.R.string.app_access_approved_pause_first
+    AccessRowText.OPEN -> com.kidslauncher.mdm.R.string.app_access_open
+    AccessRowText.UNKNOWN_OPEN -> com.kidslauncher.mdm.R.string.app_access_unknown
+    AccessRowText.PAUSE_FIRST -> com.kidslauncher.mdm.R.string.settings_mdm_write_settings_pause_first
+    AccessRowText.WAIT -> com.kidslauncher.mdm.R.string.app_access_wait
+    AccessRowText.NO_PAGE -> com.kidslauncher.mdm.R.string.app_access_no_page
+}
+
+/** The access's name in a row's title ("Immich: Media management"). */
+fun accessNameRes(kind: SpecialAccess): Int = when (kind) {
+    SpecialAccess.MANAGE_MEDIA -> com.kidslauncher.mdm.R.string.app_access_manage_media
+    SpecialAccess.EXACT_ALARM -> com.kidslauncher.mdm.R.string.app_access_exact_alarm
+    SpecialAccess.WRITE_SETTINGS -> com.kidslauncher.mdm.R.string.settings_mdm_write_settings
+    SpecialAccess.USAGE_ACCESS -> com.kidslauncher.mdm.R.string.app_access_usage_access
+    SpecialAccess.FULL_SCREEN -> com.kidslauncher.mdm.R.string.app_access_full_screen
+}
+
 object AppAccessReader {
     /** Each access [info] (read with `GET_PERMISSIONS`) declares, read now; a reading that throws is unknown. The raw
      * read is deprecated in API 36 (every by-name variant is), still fine on 34-36 (§2.3). */
@@ -109,5 +177,43 @@ object AppAccessReader {
             null
         }
         return appAccessReport(camera, states(context, info))
+    }
+
+    /** A row as shown: its access read now, its pages, whether they open ([systemPageAccess]). */
+    class RowModel(val row: AccessRow, val pages: List<android.content.Intent>, val text: AccessRowText)
+
+    /** The "App access" rows now: the allowed apps' declared accesses ([accessEligible], [accessRows]), each with its
+     * pages and summary. [pageMissing]: rows whose every page threw ActivityNotFoundException on the last tap. Off the
+     * main thread; never throws (nothing readable = no rows). */
+    fun rows(context: Context, pageMissing: Set<String>): List<RowModel> = try {
+        val pm = context.packageManager
+        val allowed = effectiveAllowlist(currentPolicyDecision().policy?.allowlist, WindowRelock.blockedPackages(context))
+        val suspended = AppEnforcer.lastPlanSuspend.orEmpty()
+        val infos = pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()))
+            .filter {
+                val system = (it.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM != 0
+                accessEligible(it.packageName, system, allowed, suspended, context.packageName) &&
+                    declaredAccesses(it.requestedPermissions.orEmpty().toList()).isNotEmpty()
+            }
+        val labels = infos.map { it.packageName to (it.applicationInfo?.let { app -> pm.getApplicationLabel(app).toString() } ?: it.packageName) }
+        val windowOpen = RestrictionsPause.isActive() || OfflineOverride.isActive()
+        accessRows(labels, infos.associate { it.packageName to states(context, it) }).map { row ->
+            val pages = accessPageActions(row.kind, row.packageName).mapNotNull { (action, data) ->
+                systemPageIntent(context, android.content.Intent(action).apply { data?.let { setData(android.net.Uri.parse(it)) } })
+            }
+            val access = systemPageAccess(pages.isNotEmpty(), windowOpen, AppEnforcer.lastEnforcedOverride == true, row.key in pageMissing)
+            RowModel(row, pages, accessRowText(row.state, access))
+        }
+    } catch (e: Exception) {
+        android.util.Log.w("AppAccess", "Couldn't read the app access rows", e)
+        emptyList()
+    }
+
+    /** One row's access read again (on return from Android's page). */
+    fun stateNow(context: Context, row: AccessRow): AccessState? = try {
+        val info = context.packageManager.getPackageInfo(row.packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()))
+        states(context, info).firstOrNull { it.first == row.kind }?.second
+    } catch (e: Exception) {
+        null
     }
 }
