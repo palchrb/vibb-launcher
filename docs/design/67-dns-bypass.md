@@ -308,6 +308,9 @@ server refuses the same server twice, and one alone isn't enough: the backup ans
 
 ## 6. Open questions for the user
 
+**Answered 2026-10-26 (the user, "Enig i dine forslag på dns"): all three on their defaults** - the built-in list can't be lifted, an
+ended outage stays on the page 24 h or until the next, no push for an outage (S-M2's "filter down" event is the place).
+
 1. May the parent lift the built-in category (an Allowed Domains entry such as `dns.google` wins)? **Default: no.** It
    is the bypass itself; a parent who wants a browser on its own DoH turns the Web Filter off for that phone.
 2. How long does an ended outage stay on the page? **Default: 24 h**, or until the next one.

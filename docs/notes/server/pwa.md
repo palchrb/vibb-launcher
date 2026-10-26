@@ -866,7 +866,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 ## Tab-switch timing (Q28 step 1, 0.54.0, `static/nav-timing.js`)
 
 - **Off until switched on in a browser**: any page with `?timing=1` (remembered in localStorage `handy-timing`;
-  `?timing=0` clears it), or **Settings › About › Diagnostics › Page timing** (`/updates#timing`, a plain link to
+  `?timing=0` clears it), or **Settings › Software Updates › Diagnostics › Page timing** (`/updates#timing`, a plain link to
   `?timing=1` / `?timing=0` that the script shows as On/Off - the installed iPhone app has no address bar and its
   own storage; code QA M2). Then every load prints one line to the console (`[timing] <path> ...`) and shows it at the
   top of the page (`.timing-line`, no taps): `tap` (the tapped link's time, sessionStorage `handy-timing-tap`, to this
