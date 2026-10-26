@@ -94,6 +94,10 @@
                    -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .dagen .ev .wh { font-size: 13px; font-weight: 600; color: var(--core-dim); line-height: 18px; display: -webkit-box;
                    -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .dagen .ev.more::after { content: '›'; position: absolute; right: 12px; top: 50%; transform: translateY(-55%);
+                           font-size: 20px; font-weight: 700; color: var(--core-dim); }
+  .dagen .ev { position: relative; }
+  .dagen .ev.more .tx { padding-right: 14px; }
   .dagen .ev.now { box-shadow: inset 0 0 0 1.5px var(--accent); }
   .dagen .ev.all .tm { color: var(--core-dim); }
   .dagen .empty { position: absolute; left: 16px; right: 16px; top: 118px; background: var(--tile);
@@ -165,7 +169,8 @@ titler, en fotballfeed, og en delt familiekalender.</p>
     <figcaption><b>I dag.</b> Én dag som en liste: tid til venstre, tittel og sted til høyre, heldagshendelser øverst, den som pågår
     har en tynn fersken-ramme. Sveip til siden for neste eller forrige dag, uten ende begge veier; de smale kantene antyder
     flere dager. «I dag»-knappen vises bare når du har sveipet bort og tar deg rett tilbake. Tittel og andrelinje får inntil to
-    linjer hver, resten kuttes med «…» og ligger bak et trykk. Ingen redigering, ingen menyer.</figcaption>
+    linjer hver; er noe kuttet, viser kortet «…» og en liten pil «›» i høyre kant, og trykket åpner alt. Kort der alt fikk plass
+    har ingen pil. Ingen redigering, ingen menyer.</figcaption>
   </figure>
 
   <figure>
@@ -202,7 +207,7 @@ titler, en fotballfeed, og en delt familiekalender.</p>
       <div class="back">‹</div>
       <div class="head"><div class="day">I dag<small>Mandag 26. oktober</small></div><div class="today-btn">I dag</div></div>
       <div class="list">
-        <div class="ev"><div class="tm">08:15<small>14:30</small></div><div class="tx"><div class="ti">Gruppe 2 skoleåret 2026/27 – 5B – Matte, norsk, gym</div><div class="wh">Rom 204</div></div></div>
+        <div class="ev more"><div class="tm">08:15<small>14:30</small></div><div class="tx"><div class="ti">Gruppe 2 skoleåret 2026/27 – 5B – Matte, norsk, gym</div><div class="wh">Rom 204</div></div></div>
         <div class="ev"><div class="tm">14:45<small>15:30</small></div><div class="tx"><div class="ti">SFO Solbakken avd. 3: Leksehjelp</div><div class="wh"></div></div></div>
         <div class="ev"><div class="tm">17:30<small>18:45</small></div><div class="tx"><div class="ti">Vibb IL G2017 – Trening</div><div class="wh">Kunstgresset</div></div></div>
       </div>
@@ -340,7 +345,7 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
       <div class="back">‹</div>
       <div class="head"><div class="day">Torsdag<small>15. oktober</small></div><div class="today-btn">I dag</div></div>
       <div class="list">
-        <div class="ev"><div class="tm">10:45<small>11:30</small></div><div class="tx"><div class="ti">Skole: Litteraturhuset - Det kuleste fra R omerriket</div><div class="wh">Vi deler gruppa i to og tar buss 08.56 og 09.11. Viktig at man er klar på skolen 08.30.</div></div></div>
+        <div class="ev more"><div class="tm">10:45<small>11:30</small></div><div class="tx"><div class="ti">Skole: Litteraturhuset - Det kuleste fra R omerriket</div><div class="wh">Vi deler gruppa i to og tar buss 08.56 og 09.11. Viktig at man er klar på skolen 08.30.</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
       <div class="handle"></div>
@@ -356,7 +361,7 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
       <div class="back">‹</div>
       <div class="head"><div class="day">Tirsdag<small>20. oktober</small></div><div class="today-btn">I dag</div></div>
       <div class="list">
-        <div class="ev"><div class="tm">09:00<small>13:15</small></div><div class="tx"><div class="ti">Skole: Girl Tech Fest</div><div class="wh">Jentene på 5. trinn, hentes med buss fra VoMo klokka 0900. Retur med buss, tilbake på skolen ca. 13.15</div></div></div>
+        <div class="ev more"><div class="tm">09:00<small>13:15</small></div><div class="tx"><div class="ti">Skole: Girl Tech Fest</div><div class="wh">Jentene på 5. trinn, hentes med buss fra VoMo klokka 0900. Retur med buss, tilbake på skolen ca. 13.15</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
       <div class="handle"></div>
@@ -373,7 +378,7 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
       <div class="head"><div class="day">Onsdag<small>28. oktober</small></div><div class="today-btn">I dag</div></div>
       <div class="list">
         <div class="ev"><div class="tm">10:00<small>11:30</small></div><div class="tx"><div class="ti">Skole: Gym for 4. eller 5. trinn</div><div class="wh"></div></div></div>
-        <div class="ev"><div class="tm">13:00<small>14:30</small></div><div class="tx"><div class="ti">Skole: Språk: Ordtak</div><div class="wh">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen kjente ordspråk og talemåter kommer fra.</div></div></div>
+        <div class="ev more"><div class="tm">13:00<small>14:30</small></div><div class="tx"><div class="ti">Skole: Språk: Ordtak</div><div class="wh">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen kjente ordspråk og talemåter kommer fra.</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
       <div class="handle"></div>
