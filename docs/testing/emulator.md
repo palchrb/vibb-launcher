@@ -373,6 +373,12 @@ adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.andr
 10. Camera in front of Home (B2): power double-press / lock-screen camera with kiosk on; if a
     camera appears, collect `adb shell dumpsys activity activities | grep -B2 -A8 camera`
     (launchedFromPackage) and `adb shell dumpsys device_policy | grep -A3 lockTask`.
+11. Design 57 (d), calls managed, WhatsApp installed and allowlisted: `adb shell dumpsys package com.whatsapp | grep
+    -E "READ_PHONE_STATE|CALL_PHONE"` shows READ_PHONE_STATE `granted=true` with `POLICY_FIXED` and CALL_PHONE
+    `granted=false` with `POLICY_FIXED`; take WhatsApp off the allowlist, or switch calls to unmanaged: after the sync
+    READ_PHONE_STATE has no `POLICY_FIXED` (the grant itself stays until revoked in Settings). A pause changes
+    neither. After a pause's end the re-suspended apps stay in `adb shell dumpsys meminfo` as cached processes: expected
+    (no device-owner API ends another app's process on API 34+, `launcher/CLAUDE.md` "Non-obvious gotchas").
 
 Then the full checklists in `docs/design/01`–`07`, `09`, `10` and `11` (§6d below).
 
