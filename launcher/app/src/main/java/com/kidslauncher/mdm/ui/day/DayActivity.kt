@@ -46,10 +46,14 @@ class DayActivity : UIObjectActivity() {
     private val minute = object : Runnable {
         override fun run() {
             adapter.refreshBound()
+            renderReminder()
             tick.postDelayed(this, 60_000L - System.currentTimeMillis() % 60_000L + 200)
         }
     }
-    private val calendarListener: () -> Unit = { adapter.refreshBound() }
+    private val calendarListener: () -> Unit = {
+        adapter.refreshBound()
+        renderReminder()
+    }
     private val dateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) = moveAnchor()
     }
@@ -110,6 +114,7 @@ class DayActivity : UIObjectActivity() {
         super.onResume()
         CalendarStore.requestSyncIfDue()
         adapter.refreshBound()
+        renderReminder()
         tick.removeCallbacks(minute)
         tick.postDelayed(minute, 60_000L - System.currentTimeMillis() % 60_000L + 200)
     }
@@ -155,6 +160,24 @@ class DayActivity : UIObjectActivity() {
     }
 
     private fun headerTexts(day: LocalDate): Pair<String, String> = dayTexts(this, day, anchor)
+
+    private class Today(val today: com.kidslauncher.mdm.day.TodayCalendar?)
+
+    /** A reminder that is up shows under the header (design 69 §2.1) - the glance row's words, not tappable: the only
+     * place a reminder reaches the kid while the phone is unlocked. */
+    private fun renderReminder() {
+        val app = applicationContext
+        CalendarStore.run({ Today(CalendarStore.todayBlocking(app)) }) { loaded ->
+            if (isDestroyed) return@run
+            val up = loaded.today?.let { com.kidslauncher.mdm.day.reminderNow(it, CalendarStore.policy(), System.currentTimeMillis()) }
+            binding.dayReminder.visibility = if (up == null) android.view.View.GONE else android.view.View.VISIBLE
+            if (up != null) {
+                val line = if (up.minutesLeft <= 1) getString(R.string.glance_reminder_now, up.title)
+                else getString(R.string.glance_reminder_in, up.title, up.minutesLeft)
+                binding.dayReminder.text = getString(R.string.day_reminder_line, line, com.kidslauncher.mdm.ui.ClockFormat.formatTime(this, up.beginMs))
+            }
+        }
+    }
 
     companion object {
         /** The day to open on (epoch day), e.g. a reminder's. */

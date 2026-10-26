@@ -531,7 +531,7 @@ class LockGlanceGuardTest {
             assertFalse("ClockLockPanel uses $forbidden", tile.contains(forbidden))
         }
         // The clock app opens only through the opener's existing launch, after the code.
-        assertEquals(2, Regex("""\bstartActivity\(""").findAll(code("GlanceOpener.kt")).count())
+        assertEquals(3, Regex("""\bstartActivity\(""").findAll(code("GlanceOpener.kt")).count())
     }
 
     @Test
@@ -603,7 +603,8 @@ class LockGlanceGuardTest {
     fun `the opener has one send and two starts, from the visible sender`() {
         assertEquals(1, Regex("""\.send\(""").findAll(opener).count())
         assertTrue(opener.contains("intent.send(activity, 0, null, null, null, null, VisibleSender.options())"))
-        assertEquals(2, Regex("""\bstartActivity\(""").findAll(opener).count())
+        assertEquals(3, Regex("""\bstartActivity\(""").findAll(opener).count())
+        assertTrue(opener.contains("activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(activity, day))"))
         assertTrue(opener.contains("activity.startActivity(PhoneBookActivity.missedCallsIntent(activity, number))"))
         assertTrue(opener.contains("activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))"))
         // Only the app's own content intent - never an action, a reply or a delete intent.

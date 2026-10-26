@@ -27,6 +27,8 @@ import com.kidslauncher.mdm.day.CalendarInfo
 import com.kidslauncher.mdm.day.CalendarPolicy
 import com.kidslauncher.mdm.day.DayView
 import com.kidslauncher.mdm.day.InstanceRow
+import com.kidslauncher.mdm.day.TodayCalendar
+import com.kidslauncher.mdm.day.ownReminderEvents
 import com.kidslauncher.mdm.day.calendarKey
 import com.kidslauncher.mdm.day.calendarPolicy
 import com.kidslauncher.mdm.day.calendarShown
@@ -267,6 +269,15 @@ object CalendarStore {
     fun dayBlocking(context: Context, day: LocalDate, now: Long = System.currentTimeMillis()): DayView? {
         val list = rowsBlocking(context, day) ?: return null
         return dayView(list, state.byId, policy(), day, ZoneId.systemDefault(), now, context.packageName)
+    }
+
+    /** Today for the lock's glance (design 69 §5): the day, and the own reminder minutes of the events whose calendar
+     * reminds by its own alarms; `null` without a usable policy with Dagen on Home, or an unreadable provider. */
+    fun todayBlocking(context: Context, day: LocalDate = LocalDate.now()): TodayCalendar? {
+        val policy = policy()
+        if (!policy.usable || !policy.onHome) return null
+        val view = dayBlocking(context, day) ?: return null
+        return TodayCalendar(view, remindersBlocking(context, ownReminderEvents(view, policy)))
     }
 
     /** [dayBlocking] on the worker, answered on the main thread. */

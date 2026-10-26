@@ -391,4 +391,15 @@
     <string name="event_gone">Denne hendelsen er ikke i kalenderen lenger.</string>
     <string name="event_change">Endre</string>
     <string name="event_delete">Slett</string>
+    <string name="glance_next">Neste: %1$s %2$s</string>
+    <string name="glance_reminder_in">%1$s om %2$d min</string>
+    <string name="glance_reminder_now">%1$s nå</string>
+    <string name="glance_reminder_now_spoken">nå</string>
+    <string name="glance_reminder_spoken">Påminnelse: %1$s, %2$s, %3$s</string>
+    <string name="glance_reminder_action">Lås opp og åpne Dagen</string>
+    <plurals name="glance_reminder_minutes">
+        <item quantity="one">om %d minutt</item>
+        <item quantity="other">om %d minutter</item>
+    </plurals>
+    <string name="day_reminder_line">%1$s · %2$s</string>
 </resources>

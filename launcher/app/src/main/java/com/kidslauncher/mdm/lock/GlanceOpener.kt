@@ -116,7 +116,7 @@ object GlanceOpener {
     private fun run(activity: Activity, pending: PendingOpen, from: GlanceOpenFrom, homeBelow: Boolean) {
         val target = pending.target
         val conversation = target as? GlanceTarget.Conversation
-        val what = target.appPackage ?: "the missed calls"
+        val what = target.appPackage ?: if (target is GlanceTarget.Day) "Dagen" else "the missed calls"
         val intent = intentOf(pending)
         val facts = facts(activity, pending, from, intent)
         var step = glanceOpenStep(facts)
@@ -136,6 +136,11 @@ object GlanceOpener {
                 Log.i(LOG_TAG, "Glance: opened $what")
             }
             GlanceOpen.SEND -> Log.i(LOG_TAG, "Glance: sent the intent of $what")
+            GlanceOpen.DAY -> {
+                val day = (target as? GlanceTarget.Day)?.epochDay?.let(java.time.LocalDate::ofEpochDay)
+                activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(activity, day))
+                Log.i(LOG_TAG, "Glance: opened Dagen")
+            }
             GlanceOpen.LAUNCH -> launch(activity, what, conversation)
         }
     }
@@ -252,6 +257,7 @@ object GlanceOpener {
         return GlanceOpenFacts(
             from = from,
             missedCalls = target is GlanceTarget.MissedCalls,
+            day = target is GlanceTarget.Day,
             timeRule = LauncherPreferences.mdm().lockReason() != LockReason.NONE,
             usableUnderRule = from == GlanceOpenFrom.TIME_RULE_SCREEN && usableUnderTimeRule(context, target),
             lockWasRoot = pending.lockWasRoot,

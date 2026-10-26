@@ -39,6 +39,7 @@ import com.kidslauncher.mdm.R
 import com.kidslauncher.mdm.appdisplay.AppDisplay
 import com.kidslauncher.mdm.badges.ClockReader
 import com.kidslauncher.mdm.badges.GlanceLevel
+import com.kidslauncher.mdm.badges.GlanceCalendarRow
 import com.kidslauncher.mdm.badges.GlanceMessageRow
 import com.kidslauncher.mdm.badges.GlanceMissedRow
 import com.kidslauncher.mdm.badges.GlanceNameSuffix
@@ -236,6 +237,8 @@ class GlancePanel(
     /** Home's icons for the rows, shared with the time-rule screen (qa-34-s7-code N4). */
     private val icons = AppIconLoader(activity, KidAvatars.dp(activity, 36f), LOG_TAG)
     private val changed: () -> Unit = { render() }
+    /** Dagen on the page (design 69 §5): the reminder row and the "Neste" line. */
+    private val calendar = GlanceCalendar(activity) { render() }
     private val torchChanged: () -> Unit = { activity.runOnUiThread { guarded("torch") { bindTorch() } } }
 
     /** The phone's clock format changed (design 34 P12): the clock and the rows' times again. */
@@ -255,6 +258,8 @@ class GlancePanel(
         // The user (2026-10-24): the "more" line leads to the keypad as a row without a target does (Home after the
         // code) - a way to see the rest. It is no row: never dismissable, nothing captured.
         glance.lockGlanceMore.setOnClickListener { tapMore() }
+        // Design 69 §5.1: the "Neste" line yields when the laid-out page leaves the third row too little room.
+        glance.lockGlanceTop.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> guarded("next") { fitNext() } }
         openAction(glance.lockGlanceMore, activity.getString(R.string.lock_media_unlock))
         glance.lockTimerStop.setOnClickListener { ClockActions.stop(activity, ClockReader.stopIntent) }
         openAction(glance.lockTimerTile)
@@ -288,11 +293,12 @@ class GlancePanel(
         val date = glance.lockGlanceDate
         date.transformationMethod = FirstCapital(locale)
         date.setTextSize(TypedValue.COMPLEX_UNIT_SP, p.dateSp)
-        for (view in listOf(clock, date, glance.lockGlanceAlarm)) {
+        for (view in listOf(clock, date, glance.lockGlanceAlarm, glance.lockGlanceNext)) {
             (view.layoutParams as LinearLayout.LayoutParams).let { view.layoutParams = it.apply { gravity = Gravity.START } }
         }
         date.gravity = Gravity.START
         glance.lockGlanceAlarm.gravity = Gravity.START
+        glance.lockGlanceNext.gravity = Gravity.START
         // The first digit's ink keeps its place when the hour's first digit changes (its side bearing does).
         clock.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
@@ -358,6 +364,8 @@ class GlancePanel(
             Log.i(LOG_TAG, "Glance clock: keyguard status bar ${bar.roundToInt()} px, the clock's baseline at ${clockTarget.roundToInt()} px, the date's at ${dateTarget.roundToInt()} px")
         }
         val alarm = glance.lockGlanceAlarm
+        val next = glance.lockGlanceNext
+        moved = margins(next, dateStart, (next.layoutParams as ViewGroup.MarginLayoutParams).topMargin) || moved
         return margins(alarm, dateStart, (alarm.layoutParams as ViewGroup.MarginLayoutParams).topMargin) || moved
     }
 
@@ -392,6 +400,7 @@ class GlancePanel(
             started = true
             GlanceStore.addListener(changed)
             MissedCallNotifier.addListener(changed)
+            calendar.start()
             TimeRulesRuntime.addLockListener(lockListener)
             torch?.addListener(torchChanged)
             music.start()
@@ -517,6 +526,7 @@ class GlancePanel(
         started = false
         GlanceStore.removeListener(changed)
         MissedCallNotifier.removeListener(changed)
+        calendar.stop()
         TimeRulesRuntime.removeLockListener(lockListener)
         torch?.removeListener(torchChanged)
         ClockFormat.unwatch(activity, clockWatch)
@@ -773,7 +783,7 @@ class GlancePanel(
     private fun boundRows(): Int = minOf(rows.size, GLANCE_MAX_ROWS)
 
     private fun dragOf(index: Int, slopDp: Float): Dragged? =
-        rows.getOrNull(index)?.takeIf { index < boundRows() }?.let { Dragged(index, rowViews[index].root, it, slopDp) }
+        rows.getOrNull(index)?.takeIf { index < boundRows() && it !is GlanceCalendarRow }?.let { Dragged(index, rowViews[index].root, it, slopDp) }
 
     /** The drag's travel past the slop it was taken after (Q-9, as Android's shade): 0 within it. */
     private fun slopped(dxDp: Float, slopDp: Float): Float =
@@ -946,6 +956,8 @@ class GlancePanel(
                     Log.i(LOG_TAG, if (number != null) "Glance: a row dismissed (missed call)" else "Glance: a row dismissed (missed calls)")
                     true
                 }
+                // Dagen's reminder row is never dismissed (design 69 §5.2); it goes at the event's start.
+                is GlanceCalendarRow -> false
             }
         }
         // The reader's own change (GlanceStore.hide) may have rendered already; else render now (or at the lift).
@@ -1027,7 +1039,7 @@ class GlancePanel(
     private fun removeByAction(view: View, row: GlanceRow): Boolean = try {
         val index = rowViews.indexOfFirst { it.root === view }
         val free = started && !leaving && !cardUp && state.stage == LockStage.GLANCE && !rowsHeld() && index in 0 until boundRows()
-        if (!free || (row is GlanceMessageRow && !GlanceReader.canDismiss())) {
+        if (!free || row is GlanceCalendarRow || (row is GlanceMessageRow && !GlanceReader.canDismiss())) {
             false
         } else {
             val d = Dismissal(index, view, row)
@@ -1163,12 +1175,14 @@ class GlancePanel(
         val target = when (row) {
             is GlanceMessageRow -> GlanceTarget.Conversation(row.conversation, row.notificationKey, row.postTimeMs)
             is GlanceMissedRow -> GlanceTarget.MissedCalls(row.number)
+            is GlanceCalendarRow -> GlanceTarget.Day(row.epochDay)
         }
         val timeRule = LauncherPreferences.mdm().lockReason() != LockReason.NONE
         val taken = glanceTargetTaken(timeRule, timeRule && GlanceOpener.usableUnderTimeRule(activity, target))
         val message = row as? GlanceMessageRow
         captured = message?.takeIf { taken }?.let { GlanceStore.contentIntent(it.notificationKey) }
         promptLabel = message?.takeIf { taken }?.let { glancePromptLabel(label(it.packageName)) }
+            ?: activity.getString(R.string.day_title).takeIf { taken && row is GlanceCalendarRow }
         step(GlanceStageEvent.Row(target.takeIf { taken }))
     }
 
@@ -1249,6 +1263,71 @@ class GlancePanel(
         view.visibility = if (alarm != null) View.VISIBLE else View.GONE
     }
 
+    /** Dagen's "Neste" line (design 69 §5.1): the parent's switch, the next timed event today with its shown title; it
+     * yields while a reminder row is up (C names the event already) and when it doesn't fit ([fitNext]). */
+    private var nextWanted: String? = null
+
+    private fun bindNext() {
+        val next = calendar.next()
+        nextWanted = next?.takeIf { rows.none { it is GlanceCalendarRow } }?.let { (title, begin) ->
+            activity.getString(R.string.glance_next, title, ClockFormat.formatTime(activity, begin))
+        }
+        glance.lockGlanceNext.text = nextWanted
+        fitNext()
+    }
+
+    /** The line shows when wanted and [glanceNextFits]: the third row keeps enough in sight with it. Read from the
+     * laid-out page with the line taken out, so showing it can't flip the answer (no oscillation). */
+    private fun fitNext() {
+        val line = glance.lockGlanceNext
+        val wanted = nextWanted
+        val show = wanted != null && run {
+            val third = rowViews.getOrNull(2)?.root?.takeIf { it.visibility == View.VISIBLE && it.height > 0 }
+            val lineHeight = if (line.visibility == View.VISIBLE) line.height.toFloat() else measured(line, pageWidth() ?: line.width)
+            val lineDp = (lineHeight + (line.layoutParams as ViewGroup.MarginLayoutParams).topMargin) / activity.resources.displayMetrics.density
+            val thirdTop = third?.let {
+                var top = 0
+                var view: View = it
+                while (view !== glance.lockGlanceTop) {
+                    top += view.top
+                    view = view.parent as? View ?: break
+                }
+                val shown = if (line.visibility == View.VISIBLE) line.height + (line.layoutParams as ViewGroup.MarginLayoutParams).topMargin else 0
+                (top - shown) / activity.resources.displayMetrics.density
+            }
+            glanceNextFits(glance.lockGlanceScroll.height / activity.resources.displayMetrics.density, thirdTop, lineDp)
+        }
+        val wantedVisibility = if (show) View.VISIBLE else View.GONE
+        if (line.visibility != wantedVisibility) line.visibility = wantedVisibility
+    }
+
+    /** Dagen's reminder row (design 69 §5.2): the calendar glyph in a peach disc, "Fotball om 15 min" ("… nå" in the
+     * last minute), the start time; TalkBack "Påminnelse: Fotball, om 15 minutter, 17:30". Never dismissable. */
+    private fun bindCalendar(view: ViewLockGlanceRowBinding, row: GlanceCalendarRow) {
+        val res = activity.resources
+        val time = ClockFormat.formatTime(activity, row.beginMs)
+        view.root.visibility = View.VISIBLE
+        view.glanceRowTitle.text = if (row.minutesLeft <= 1) {
+            activity.getString(R.string.glance_reminder_now, row.title)
+        } else {
+            activity.getString(R.string.glance_reminder_in, row.title, row.minutesLeft)
+        }
+        view.glanceRowSuffix.visibility = View.GONE
+        view.glanceRowSubtitle.text = time
+        view.glanceRowSubtitle.visibility = View.VISIBLE
+        view.glanceRowTime.text = ""
+        view.glanceRowInitial.visibility = View.GONE
+        view.glanceRowBadge.visibility = View.GONE
+        view.glanceRowIcon.scaleType = ImageView.ScaleType.CENTER
+        view.glanceRowIcon.backgroundTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_lock_kind_disc))
+        view.glanceRowIcon.imageTintList = ColorStateList.valueOf(activity.getColor(R.color.kid_accent))
+        view.glanceRowIcon.setImageResource(R.drawable.app_glyph_calendar_month)
+        val left = if (row.minutesLeft <= 1) activity.getString(R.string.glance_reminder_now_spoken)
+        else res.getQuantityString(R.plurals.glance_reminder_minutes, row.minutesLeft, row.minutesLeft)
+        view.root.contentDescription = activity.getString(R.string.glance_reminder_spoken, row.title, left, time)
+        openAction(view.root, activity.getString(R.string.glance_reminder_action))
+    }
+
     private fun alarmText(alarm: GlanceAlarm): String {
         val time = ClockFormat.formatUntil(activity, alarm.atMs)
         if (!alarm.withWeekday) return time
@@ -1302,6 +1381,8 @@ class GlancePanel(
         }
         bindTorch()
         bindAlarm()
+        bindNext()
+        calendar.armBoundary()
         bindRuleCard()
         // The tiles by the rule, then the layout (and the profile's placement once the page has its room).
         music.show(shownTile(), page = shown)
@@ -1311,10 +1392,12 @@ class GlancePanel(
         layoutNow()
     }
 
-    /** The store's rows, less the missed-call rows dismissed and not yet answered by the notifier (r11 §3.3, Q-5). */
+    /** The store's rows, less the missed-call rows dismissed and not yet answered by the notifier (r11 §3.3, Q-5); Dagen's
+     * reminder row first while one is up (design 69 §5.2: the one row with a deadline). */
     private fun shownRows(): List<GlanceRow> {
         val all = GlanceStore.rows(MissedCallNotifier.current)
-        return if (hiddenNumbers.isEmpty() && hiddenPlain == 0) all else withoutDismissed(all, hiddenNumbers.keys, hiddenPlain > 0)
+        val kept = if (hiddenNumbers.isEmpty() && hiddenPlain == 0) all else withoutDismissed(all, hiddenNumbers.keys, hiddenPlain > 0)
+        return listOfNotNull(calendar.reminderRow()) + kept
     }
 
     // ---- rows -----------------------------------------------------------------------------------
@@ -1338,6 +1421,7 @@ class GlancePanel(
                 when (row) {
                     is GlanceMessageRow -> bindMessage(view, row)
                     is GlanceMissedRow -> bindMissed(view, row)
+                    is GlanceCalendarRow -> bindCalendar(view, row)
                 }
                 view.root.setOnClickListener { tap(row) }
             }

@@ -458,4 +458,15 @@
     <string name="event_gone">This event is no longer in the calendar.</string>
     <string name="event_change">Change</string>
     <string name="event_delete">Delete</string>
+    <string name="glance_next">Next: %1$s %2$s</string>
+    <string name="glance_reminder_in">%1$s in %2$d min</string>
+    <string name="glance_reminder_now">%1$s now</string>
+    <string name="glance_reminder_now_spoken">now</string>
+    <string name="glance_reminder_spoken">Reminder: %1$s, %2$s, %3$s</string>
+    <string name="glance_reminder_action">Unlock and open My day</string>
+    <plurals name="glance_reminder_minutes">
+        <item quantity="one">in %d minute</item>
+        <item quantity="other">in %d minutes</item>
+    </plurals>
+    <string name="day_reminder_line">%1$s · %2$s</string>
 </resources>

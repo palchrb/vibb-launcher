@@ -418,6 +418,21 @@ data class GlanceMessageRow(
     override fun toString() = "GlanceRow($packageName)"
 }
 
+/** Dagen's reminder row (design 69 §5.2): the one row with a deadline, first in the list - the event's shown title
+ * (the rules applied), its start, the minutes left ([minutesLeft] 1 = "nå"). Never dismissable; its tap is Dagen
+ * through the keypad. */
+data class GlanceCalendarRow(
+    val eventId: Long,
+    val title: String,
+    val beginMs: Long,
+    val minutesLeft: Int,
+    val epochDay: Long,
+) : GlanceRow {
+    override val timeMs: Long get() = beginMs
+
+    override fun toString() = "GlanceCalendarRow"
+}
+
 /** A missed-call row: one per contact ([number] and its phone-book [name]), or the plain one
  * ([number] `null`: "N tapte anrop", no names - fail-closed or unmanaged with our dialer role). */
 data class GlanceMissedRow(
