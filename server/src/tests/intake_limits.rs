@@ -58,11 +58,8 @@ async fn a_status_report_is_stored_within_limits() {
     assert_eq!(app_version.chars().count(), 64);
 }
 
-/// Launcher round 7 §2 (the battery state) was removed on 2026-10-20, but launcher 0.32.0 still sends
-/// `installed_apps[].battery_exempt`: the report is accepted, the field is dropped (never stored), and the
-/// Apps page says nothing about the background.
 /// Security review L3: a blocked domain is stored only as a hostname, its category short and its
-/// time near the server's.
+/// time within the log's days.
 #[tokio::test]
 async fn dns_events_are_stored_checked() {
     let app = TestApp::new().await;
@@ -368,6 +365,9 @@ fn the_field_tables_keep_every_contract_key() {
     assert!(checked >= 1, "time_status_report.json carries a time_state");
 }
 
+/// Launcher round 7 §2 (the battery state) was removed on 2026-10-20, but launcher 0.32.0 still sends
+/// `installed_apps[].battery_exempt`: the report is accepted, the field is dropped (never stored), and the
+/// Apps page says nothing about the background.
 #[tokio::test]
 async fn an_older_launchers_battery_exempt_is_accepted_and_dropped() {
     let app = TestApp::new().await;

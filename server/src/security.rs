@@ -719,7 +719,8 @@ pub async fn log_sign_in_redirects(
 
 /// `GET /api/session` (2026-10-25, `static/reconnect.js`): 204 while the request's session is a
 /// signed-in, onboarded admin's (what [require_full_auth] lets through), else 401 - no body,
-/// `no-store`, nothing written (the session isn't flushed). The sign-in page asks it before it
+/// `no-store`, nothing written but a session from before 0.55.0's first sign-in time
+/// (`load_active_admin`, security review L6; the session isn't flushed). The sign-in page asks it before it
 /// stays on screen; each answer is logged with its reason.
 pub async fn session_check(
     State(state): State<AppState>,

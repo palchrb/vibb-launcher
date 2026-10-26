@@ -1490,7 +1490,11 @@ async fn a_session_ends_after_its_absolute_lifetime() {
 #[test]
 fn no_template_has_inline_script() {
     fn inline_scripts(html: &str) -> Vec<String> {
-        let lower = html.to_ascii_lowercase();
+        // `onclick = "x"` is `onclick="x"` to a browser (QA nit): no spaces around `=`.
+        let mut lower = html.to_ascii_lowercase();
+        while lower.contains(" =") || lower.contains("= ") {
+            lower = lower.replace(" =", "=").replace("= ", "=");
+        }
         let mut found = Vec::new();
         if lower.contains("javascript:") {
             found.push("javascript: link".to_string());
@@ -1517,9 +1521,11 @@ fn no_template_has_inline_script() {
         found
     }
     assert_eq!(
-        inline_scripts(r#"<select onchange="x()"><script>y()</script><a href="javascript:z">"#)
-            .len(),
-        3
+        inline_scripts(
+            r#"<select onchange="x()"><script>y()</script><a href="javascript:z"><b onclick = "w">"#
+        )
+        .len(),
+        4
     );
     assert!(inline_scripts(r#"<script src="/static/a.js" defer></script><p>on=1</p>"#).is_empty());
     let mut bad = Vec::new();
