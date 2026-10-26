@@ -151,18 +151,21 @@ pub const PHONE_LINES_AN_HOUR: i64 = 60;
 /// A line a phone's report raised - a PIN use, a start without the launcher, an app installed, a
 /// relock's findings -, within [PHONE_LINES_AN_HOUR] a rolling hour per phone (security review L1:
 /// a leaked token or a rooted phone can't bury the sign-ins under rows kept 180 days). `line`
-/// starts with `device {device_id}:` or `device {device_id},`, as every phone line does, which is
-/// what the hour's count matches. The line over the budget is one `phone_lines_dropped` row; the
-/// rest of that hour's lines are not written (the phone's own pages keep what they show). On the
-/// caller's connection, so a caller's transaction holds it.
+/// starts with `device {device_id}:` or `device {device_id},`, as every phone line does, and has
+/// neither a username nor an address - what the hour's count matches, so a parent's lines about
+/// the phone (which carry the parent's name) never use up its budget (QA L-a). The line over the
+/// budget is one `phone_lines_dropped` row; the rest of that hour's lines are not written (the
+/// phone's own pages keep what they show). `true` when `line` itself was written. On the caller's
+/// connection, so a caller's transaction holds it.
 pub async fn record_phone_event(
     conn: &mut sqlx::SqliteConnection,
     device_id: i64,
     event_type: &str,
     line: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let written: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM security_events WHERE created_at > datetime('now', '-1 hour') \
+         AND username IS NULL AND ip_address IS NULL \
          AND (detail LIKE ?1 || ':%' OR detail LIKE ?1 || ',%')",
     )
     .bind(format!("device {device_id}"))
@@ -177,14 +180,15 @@ pub async fn record_phone_event(
                  most {PHONE_LINES_AN_HOUR} an hour)"
             ),
         ),
-        _ => return Ok(()),
+        _ => return Ok(false),
     };
+    let own = event_type != "phone_lines_dropped";
     sqlx::query("INSERT INTO security_events (event_type, detail) VALUES (?, ?)")
         .bind(event_type)
         .bind(line)
         .execute(&mut *conn)
         .await?;
-    Ok(())
+    Ok(own)
 }
 
 /// [record_phone_event] on its own connection; a failure is logged.

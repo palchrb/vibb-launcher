@@ -776,3 +776,54 @@ async fn a_fix_keeps_its_provider_and_mock_flag_in_the_title_only() {
         );
     }
 }
+
+/// QA M2: a mock count that goes 1, 0, 1, 0 writes its line within the phone's hourly budget -
+/// 60 lines and one saying the rest weren't logged; a parent's lines about the phone don't count
+/// (QA L-a).
+#[tokio::test]
+async fn alternating_mock_counts_stay_within_the_line_budget() {
+    let app = TestApp::new().await;
+    let (id, _) = app.enrolled_device("phone").await;
+    for _ in 0..30 {
+        sqlx::query(
+            "INSERT INTO security_events (event_type, username, detail) VALUES ('zone_added', 'mamma', ?)",
+        )
+        .bind(format!("device {id}: a zone"))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let w = |n| crate::zones::ZoneWatch {
+        fences: 0,
+        motion_sensor: true,
+        location_on: true,
+        background_location: true,
+        mock_ignored: n,
+    };
+    let mut returned = 0;
+    for _ in 0..70 {
+        if crate::zones::mock_rise(&app.db, id, Some(&w(1)))
+            .await
+            .unwrap()
+            .is_some()
+        {
+            returned += 1;
+        }
+        crate::zones::mock_rise(&app.db, id, Some(&w(0)))
+            .await
+            .unwrap();
+    }
+    let count = |kind: &'static str| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM security_events WHERE event_type = ?")
+                .bind(kind)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(count("mock_location_ignored").await, 60);
+    assert_eq!(count("phone_lines_dropped").await, 1);
+    assert_eq!(returned, 60, "a line is returned only when it was written");
+}

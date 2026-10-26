@@ -810,17 +810,19 @@ pub async fn mock_rise(
             .bind(device_id)
             .execute(&mut *tx)
             .await?;
-        let line = mock_log_line(device_id, logged, count);
-        if let Some(line) = &line {
-            sqlx::query(
-                "INSERT INTO security_events (event_type, username, ip_address, detail) \
-                 VALUES ('mock_location_ignored', NULL, NULL, ?)",
+        // Within the phone's hourly line budget (QA M2: a count that goes 1, 0, 1, 0 would
+        // otherwise write a line on every other report).
+        match mock_log_line(device_id, logged, count) {
+            Some(line) => crate::security::record_phone_event(
+                &mut tx,
+                device_id,
+                "mock_location_ignored",
+                &line,
             )
-            .bind(line)
-            .execute(&mut *tx)
-            .await?;
+            .await?
+            .then_some(line),
+            None => None,
         }
-        line
     } else {
         None
     };

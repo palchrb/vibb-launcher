@@ -307,7 +307,8 @@ pub async fn pin_events(
                     event_type,
                     &parent_pin::log_line(device.id, &event),
                 )
-                .await;
+                .await
+                .map(|_| ());
                 match phone.as_ref().and_then(|phone| phone.pin_event(&event)) {
                     Some(new) if logged.is_ok() => crate::parent_events::raise(&mut tx, &new)
                         .await
