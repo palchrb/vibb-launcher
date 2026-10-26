@@ -64,13 +64,46 @@ class SplashTest {
 
     @Test
     fun `the app splash fades only after the system splash's fade, or with none handed over (Q-3)`() {
-        for (system in SystemSplash.entries) for (wait in listOf(false, true)) {
-            assertFalse("no content, no fade", splashFadeDue(contentShown = false, system, wait))
+        for (system in SystemSplash.entries) for (now in listOf(0L, 600L, SPLASH_CAP_MS, 10_000L)) {
+            assertFalse("no content, no fade", splashFadeDue(contentShown = false, system, goneAtMs = 100L, now))
         }
-        assertFalse("the system splash still fading: the wordmark stays whole", splashFadeDue(true, SystemSplash.FADING, handOverWaitOver = true))
-        assertTrue("its fade over", splashFadeDue(true, SystemSplash.GONE, handOverWaitOver = false))
-        assertFalse("a hand-over may still come", splashFadeDue(true, SystemSplash.UNKNOWN, handOverWaitOver = false))
-        assertTrue("none came: a start without a system splash", splashFadeDue(true, SystemSplash.UNKNOWN, handOverWaitOver = true))
+        assertFalse("the system splash still fading: the wordmark stays whole", splashFadeDue(true, SystemSplash.FADING, null, nowMs = 10_000L))
+        assertTrue("its fade over, and the hold", splashFadeDue(true, SystemSplash.GONE, goneAtMs = 100L, nowMs = 500L))
+        assertFalse("a hand-over may still come", splashFadeDue(true, SystemSplash.UNKNOWN, null, nowMs = 499L))
+        assertTrue("none came: a start without a system splash", splashFadeDue(true, SystemSplash.UNKNOWN, null, nowMs = 500L))
+    }
+
+    @Test
+    fun `the wordmark stands whole 400 ms after the system splash's fade ended (round M1b)`() {
+        assertEquals(400L, SPLASH_HOLD_MS)
+        // the content ready at once (the empty state, a library from the snapshot), the system splash gone at 300 ms
+        assertFalse("not before 300 + 400", splashFadeDue(true, SystemSplash.GONE, goneAtMs = 300L, nowMs = 699L))
+        assertTrue("at 300 + 400", splashFadeDue(true, SystemSplash.GONE, goneAtMs = 300L, nowMs = 700L))
+        assertEquals(700L, splashHoldEnd(SystemSplash.GONE, goneAtMs = 300L))
+        // the content late: the fade when it is shown, the hold long since over
+        assertFalse("the content not shown yet", splashFadeDue(false, SystemSplash.GONE, goneAtMs = 300L, nowMs = 1_500L))
+        assertTrue("shown at 1.5 s", splashFadeDue(true, SystemSplash.GONE, goneAtMs = 300L, nowMs = 1_500L))
+    }
+
+    @Test
+    fun `without a system splash the hold and the hand-over wait run concurrently, not in sequence (round M1b)`() {
+        // both count from the app splash's first frame: the later of the two, never 500 + 400
+        assertEquals(maxOf(SPLASH_HANDOVER_WAIT_MS, SPLASH_HOLD_MS), splashHoldEnd(SystemSplash.UNKNOWN, null))
+        assertEquals(500L, splashHoldEnd(SystemSplash.UNKNOWN, null))
+        assertFalse("400 ms: a hand-over may still come", splashFadeDue(true, SystemSplash.UNKNOWN, null, nowMs = 400L))
+        assertTrue("500 ms, not 900", splashFadeDue(true, SystemSplash.UNKNOWN, null, nowMs = 500L))
+        // the system splash fading has no end of the hold yet
+        assertEquals(null, splashHoldEnd(SystemSplash.FADING, null))
+    }
+
+    @Test
+    fun `the 3 s cap counts from the first frame and wins over the hold (round M1b)`() {
+        // gone at 2.8 s: 400 ms later would pass the cap
+        assertEquals(SPLASH_CAP_MS, splashHoldEnd(SystemSplash.GONE, goneAtMs = 2_800L))
+        assertFalse(splashFadeDue(true, SystemSplash.GONE, goneAtMs = 2_800L, nowMs = SPLASH_CAP_MS - 1))
+        assertTrue(splashFadeDue(true, SystemSplash.GONE, goneAtMs = 2_800L, nowMs = SPLASH_CAP_MS))
+        // gone with no instant known: the cap alone, never a hang
+        assertEquals(SPLASH_CAP_MS, splashHoldEnd(SystemSplash.GONE, goneAtMs = null))
     }
 
     @Test
@@ -105,7 +138,11 @@ class SplashTest {
         assertFalse("the whole window, as the system splash", splash.contains("windowInsets") || splash.contains("Padding"))
         assertTrue(splash.contains("Image(painterResource(R.drawable.splash_vibb_mark), null, Modifier.align(Alignment.Center).requiredSize(SPLASH_MARK_DP.dp))"))
         assertTrue(splash.contains("Image(painterResource(R.drawable.splash_wordmark), null, Modifier.align(Alignment.Center).offset(y = SPLASH_WORDMARK_BELOW_DP.dp))"))
-        assertTrue(splash.contains("val fade = splashFadeDue(contentShown, system, waitOver)"))
+        // round M1b: the clock from the first frame, the GONE instant, the fade latched once due
+        assertTrue(splash.contains("val start = remember { SystemClock.uptimeMillis() }"))
+        assertTrue(splash.contains("val goneAt = remember(system == SystemSplash.GONE)"))
+        assertTrue(splash.contains("val fade = faded || splashFadeDue(contentShown, system, goneAt, now)"))
+        assertFalse("no fixed wait of its own: the hold's end is splashHoldEnd's", splash.contains("delay(SPLASH_"))
     }
 
     @Test
