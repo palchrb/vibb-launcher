@@ -192,7 +192,11 @@ pub fn server_url_refusal(value: &str) -> Option<&'static str> {
         .ok()
         .filter(|_| !value.chars().any(char::is_whitespace))
         // The parser makes `https:///path` a host "path"; the text must name one.
-        .filter(|_| value.split_once("://").is_some_and(|(_, rest)| !rest.starts_with('/')))
+        .filter(|_| {
+            value
+                .split_once("://")
+                .is_some_and(|(_, rest)| !rest.starts_with('/'))
+        })
         .filter(|url| url.host_str().is_some_and(|host| !host.is_empty()));
     let Some(url) = parsed else {
         return Some("Use an address like https://vibb.your-tailnet.ts.net. Nothing was saved.");
@@ -270,7 +274,10 @@ mod tests {
             Some("https://vibb.example.ts.net")
         );
         // Plain http only to a tailnet address (security review L8).
-        let config = ForkConfig::from_vars(&vars(&[("PHONE_SERVER_URL", "http://100.101.102.103:3100")]));
+        let config = ForkConfig::from_vars(&vars(&[(
+            "PHONE_SERVER_URL",
+            "http://100.101.102.103:3100",
+        )]));
         assert_eq!(
             config.phone_server_url.as_deref(),
             Some("http://100.101.102.103:3100")

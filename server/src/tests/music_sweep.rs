@@ -2038,9 +2038,14 @@ async fn a_lan_feed_is_judged_at_every_check_and_its_art_stays_home() {
     check(&app, lan, t0()).await;
     assert_eq!(listing(&app, lan).await.lan, Some(true));
     let calls = app.fetch.calls.lock().unwrap().clone();
-    assert!(calls.iter().any(|u| u == "http://nas.home/cover.jpg"), "{calls:?}");
     assert!(
-        !calls.iter().any(|u| u.contains("192.168.1.1/") || u.contains(":8080")),
+        calls.iter().any(|u| u == "http://nas.home/cover.jpg"),
+        "{calls:?}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|u| u.contains("192.168.1.1/") || u.contains(":8080")),
         "another LAN host's picture is never fetched: {calls:?}"
     );
 

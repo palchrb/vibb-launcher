@@ -262,7 +262,11 @@ async fn a_plain_http_server_address_is_refused_outside_the_tailnet() {
             .await
             .unwrap()
     };
-    for bad in ["http://192.168.1.5:3100", "http://vibb.example.ts.net", "vibb.example"] {
+    for bad in [
+        "http://192.168.1.5:3100",
+        "http://vibb.example.ts.net",
+        "vibb.example",
+    ] {
         let res = save(bad).await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad}");
         let page = res.text();

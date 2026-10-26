@@ -1569,7 +1569,11 @@ impl DnsEventReport {
         &self,
         received: chrono::DateTime<chrono::Utc>,
     ) -> Option<(String, String, String)> {
-        let domain = self.domain.trim().trim_end_matches('.').to_ascii_lowercase();
+        let domain = self
+            .domain
+            .trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
         let label_ok = |label: &str| {
             (1..=63).contains(&label.len())
                 && label
@@ -1590,7 +1594,10 @@ impl DnsEventReport {
             .collect();
         let day = chrono::Duration::days(1);
         let blocked_at = chrono::DateTime::parse_from_rfc3339(self.blocked_at.trim())
-            .map(|t| t.with_timezone(&chrono::Utc).clamp(received - day, received + day))
+            .map(|t| {
+                t.with_timezone(&chrono::Utc)
+                    .clamp(received - day, received + day)
+            })
             .unwrap_or(received);
         Some((
             domain,

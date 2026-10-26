@@ -308,8 +308,11 @@ impl NetConfig {
                 }
             },
         };
-        let session_inactivity_days =
-            days("SESSION_INACTIVITY_DAYS", DEFAULT_SESSION_INACTIVITY_DAYS, 365);
+        let session_inactivity_days = days(
+            "SESSION_INACTIVITY_DAYS",
+            DEFAULT_SESSION_INACTIVITY_DAYS,
+            365,
+        );
         let session_max_days = days("SESSION_MAX_DAYS", DEFAULT_SESSION_MAX_DAYS, 3650);
         let deploy_kind = match get("DEPLOY_KIND").as_deref() {
             None | Some("systemd") => DeployKind::Systemd,

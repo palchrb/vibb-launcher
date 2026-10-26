@@ -302,7 +302,7 @@ pub async fn pin_events(
                 };
                 // Within the phone's hourly budget of security lines (security review L1).
                 let logged = crate::security::record_phone_event(
-                    &mut *tx,
+                    &mut tx,
                     device.id,
                     event_type,
                     &parent_pin::log_line(device.id, &event),

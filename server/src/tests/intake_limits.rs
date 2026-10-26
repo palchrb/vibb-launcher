@@ -72,9 +72,7 @@ async fn dns_events_are_stored_checked() {
         .execute(&app.db)
         .await
         .unwrap();
-    let event = |domain: &str, category: &str, at: &str| {
-        serde_json::json!({ "domain": domain, "category": category, "blocked_at": at })
-    };
+    let event = |domain: &str, category: &str, at: &str| serde_json::json!({ "domain": domain, "category": category, "blocked_at": at });
     let now = chrono::Utc::now();
     let res = app
         .request(
@@ -85,9 +83,17 @@ async fn dns_events_are_stored_checked() {
                 event("Ads.Example.COM.", "Ads & tracking", &now.to_rfc3339()),
                 event("<b>bad</b>.example", "Ads", &now.to_rfc3339()),
                 event(&"a".repeat(64), "Ads", &now.to_rfc3339()),
-                event(&format!("{}.example", "a.".repeat(130)), "Ads", &now.to_rfc3339()),
+                event(
+                    &format!("{}.example", "a.".repeat(130)),
+                    "Ads",
+                    &now.to_rfc3339()
+                ),
                 event("x..example", "Ads", &now.to_rfc3339()),
-                event("far.example", &format!("\u{7}{}", "C".repeat(100)), "2001-01-01T00:00:00Z"),
+                event(
+                    "far.example",
+                    &format!("\u{7}{}", "C".repeat(100)),
+                    "2001-01-01T00:00:00Z"
+                ),
                 event("garbled.example", "Custom", "yesterday"),
             ])),
         )
@@ -101,14 +107,26 @@ async fn dns_events_are_stored_checked() {
     .await
     .unwrap();
     let domains: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
-    assert_eq!(domains, ["ads.example.com", "far.example", "garbled.example"]);
+    assert_eq!(
+        domains,
+        ["ads.example.com", "far.example", "garbled.example"]
+    );
     assert_eq!(rows[0].1, "Ads & tracking");
     assert_eq!(rows[1].1, "C".repeat(64));
     let at = |text: &str| chrono::DateTime::parse_from_rfc3339(text).unwrap();
     let day = chrono::Duration::days(1);
-    assert!(at(&rows[1].2) >= now - day - chrono::Duration::seconds(5), "{rows:?}");
-    assert!(at(&rows[2].2) >= now - chrono::Duration::seconds(5), "{rows:?}");
-    assert!(rows.iter().all(|r| r.2.ends_with('Z') && r.2.len() == 24), "{rows:?}");
+    assert!(
+        at(&rows[1].2) >= now - day - chrono::Duration::seconds(5),
+        "{rows:?}"
+    );
+    assert!(
+        at(&rows[2].2) >= now - chrono::Duration::seconds(5),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().all(|r| r.2.ends_with('Z') && r.2.len() == 24),
+        "{rows:?}"
+    );
 }
 
 /// Security review L10: `call_state` and `time_state` are stored through their known keys - an
@@ -213,8 +231,10 @@ async fn a_phones_storage_has_a_budget() {
                 Method::POST,
                 "/api/devices/status",
                 Some(&token),
-                Some(serde_json::json!({ "lock_reason": "NONE", "kiosk_engaged": true,
-                                         "location": location })),
+                Some(
+                    serde_json::json!({ "lock_reason": "NONE", "kiosk_engaged": true,
+                                         "location": location }),
+                ),
             )
             .await;
         assert_eq!(res.status, StatusCode::NO_CONTENT);
@@ -224,10 +244,8 @@ async fn a_phones_storage_has_a_budget() {
         200
     );
     assert_eq!(
-        count(
-            "SELECT COUNT(*) FROM device_status WHERE device_id = ? AND lock_reason = 'NONE'"
-        )
-        .await,
+        count("SELECT COUNT(*) FROM device_status WHERE device_id = ? AND lock_reason = 'NONE'")
+            .await,
         1,
         "the newest report is the latest"
     );
@@ -250,13 +268,22 @@ async fn a_phones_storage_has_a_budget() {
     )
     .await;
     let events: Vec<serde_json::Value> = (0..5)
-        .map(|_| serde_json::json!({ "domain": "new.example", "category": "Ads", "blocked_at": "" }))
+        .map(
+            |_| serde_json::json!({ "domain": "new.example", "category": "Ads", "blocked_at": "" }),
+        )
         .collect();
-    app.request(Method::POST, "/api/devices/dns-events", Some(&token), Some(events.into()))
-        .await;
+    app.request(
+        Method::POST,
+        "/api/devices/dns-events",
+        Some(&token),
+        Some(events.into()),
+    )
+    .await;
     assert_eq!(
-        count("SELECT COUNT(*) FROM device_dns_events WHERE device_id = ? AND domain = 'new.example'")
-            .await,
+        count(
+            "SELECT COUNT(*) FROM device_dns_events WHERE device_id = ? AND domain = 'new.example'"
+        )
+        .await,
         1
     );
 
@@ -284,8 +311,10 @@ async fn a_phones_storage_has_a_budget() {
         50
     );
     assert_eq!(
-        count("SELECT COUNT(*) FROM device_crashes WHERE device_id = ? AND hash = '0000000000000000'")
-            .await,
+        count(
+            "SELECT COUNT(*) FROM device_crashes WHERE device_id = ? AND hash = '0000000000000000'"
+        )
+        .await,
         0,
         "the oldest went"
     );
