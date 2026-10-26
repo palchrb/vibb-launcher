@@ -1042,11 +1042,12 @@ pub async fn dns_events(
     // Each field checked (security review L3): a hostname, a short category, a time near now;
     // within the phone's daily budget (L4).
     let left = match state.db.acquire().await {
-        Ok(mut conn) => crate::retention::Budget::DnsEvents
-            .left_today(&mut conn, device.id)
-            .await
-            .unwrap_or(0),
-        Err(_) => 0,
+        Ok(mut conn) => {
+            crate::retention::Budget::DnsEvents
+                .left_today(&mut conn, device.id)
+                .await
+        }
+        Err(_) => usize::MAX,
     };
     let received = chrono::Utc::now();
     for (domain, category, blocked_at) in events

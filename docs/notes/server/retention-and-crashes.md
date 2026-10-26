@@ -31,14 +31,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - `retention::run_pruning` (spawned from `main` only) runs `prune` at startup and hourly - it replaced the old
   `run_dns_event_pruning` (60 days) and `run_location_pruning` (30 days). Connections use `secure_delete`. Since
   0.55.0 (security review L9) every statement of the pass runs on its own: one that fails is logged with its table
-  and named in `Pruned.failed`, the rest are pruned all the same (`prune` returns `Pruned`, no error;
+  and named in `Pruned.failed` (the log only, no page shows it), the rest are pruned all the same (`prune` returns `Pruned`, no error;
   `cleanup::a_failing_table_leaves_the_rest_of_the_pass`).
 - **A phone's storage budget** (0.55.0, security review L4, `retention::Budget`, `STATUS_ROWS_A_DAY`, `CRASH_HASHES`):
-  what one token can add in a rolling day, far above what a phone sends. Past 200 status reports a day each new one
+  what one token can add in a rolling day, far above what a phone sends. Past 500 status reports a day (the shortest location interval alone is 144; QA L-c) each new one
   replaces the one before it (`replace_over_budget`: the newest stays current, never the newest report with
   `call_policy_v1`); past 3000 fixes (`zones::intake`, the newest of a report that fit), 10 000 blocked domains or 500
   parent-PIN events a day the new ones aren't stored (logged); at most 50 crash hashes per phone, the oldest reported
-  going first. Security-log lines and inbox events have their own hourly budgets (L1). `intake_limits::a_phones_storage_has_a_budget`.
+  going first. A count that can't be read is logged and drops nothing. Security-log lines and inbox events have their own hourly budgets (L1). `intake_limits::a_phones_storage_has_a_budget`.
 - Tests: `src/tests/cleanup.rs`.
 
 ## Crash reports (cleanup 2026-10-06, `src/crashes.rs`, migration `0040_device_crashes.sql`)

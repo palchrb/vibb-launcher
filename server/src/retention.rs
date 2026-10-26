@@ -31,9 +31,10 @@ const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// A phone's storage budget (security review L4): what one token can add in a rolling day, so a
 /// leaked token or a rooted phone can't fill the disk at the device API's rate limit. Far above
-/// what a phone sends: a report every few minutes, a fix a minute while it moves, the blocked-
-/// domain log's 10-minute dedup per domain.
-pub const STATUS_ROWS_A_DAY: i64 = 200;
+/// what a phone sends: reports (every 10 minutes at the shortest location interval, 144 a day,
+/// plus every nudge, zone crossing and request - QA L-c), fixes, the blocked-domain log's
+/// 10-minute dedup per domain.
+pub const STATUS_ROWS_A_DAY: i64 = 500;
 /// Distinct crash hashes kept per phone; past it the oldest reported goes.
 pub const CRASH_HASHES: i64 = 50;
 
@@ -72,21 +73,26 @@ impl Budget {
         }
     }
 
-    /// How many rows `device_id` may still add today; past the budget, logged.
-    pub async fn left_today(
-        self,
-        conn: &mut sqlx::SqliteConnection,
-        device_id: i64,
-    ) -> Result<usize, sqlx::Error> {
-        let today: i64 = sqlx::query_scalar(self.count_sql())
+    /// How many rows `device_id` may still add today; past the budget, logged. A count that can't
+    /// be read is logged and drops nothing (QA nit: a passing database error never costs a
+    /// phone its fixes).
+    pub async fn left_today(self, conn: &mut sqlx::SqliteConnection, device_id: i64) -> usize {
+        let today: i64 = match sqlx::query_scalar(self.count_sql())
             .bind(device_id)
             .fetch_one(&mut *conn)
-            .await?;
+            .await
+        {
+            Ok(today) => today,
+            Err(err) => {
+                tracing::error!(device_id, table = ?self, %err, "can't count a phone's rows today");
+                return usize::MAX;
+            }
+        };
         let left = (self.rows_a_day() - today).max(0);
         if left == 0 {
             tracing::warn!(device_id, table = ?self, "a phone's daily storage budget is spent");
         }
-        Ok(usize::try_from(left).unwrap_or(0))
+        usize::try_from(left).unwrap_or(0)
     }
 }
 

@@ -181,7 +181,7 @@ async fn call_and_time_state_keep_their_known_keys() {
     );
 }
 
-/// Security review L4: one token's storage has a daily budget - past 200 reports a day each new one
+/// Security review L4: one token's storage has a daily budget - past 500 reports a day each new one
 /// replaces the last (the newest stays current), past the day's fixes and blocked domains new ones
 /// aren't stored, and at most 50 crash hashes are kept, the oldest reported going first.
 #[tokio::test]
@@ -213,7 +213,7 @@ async fn a_phones_storage_has_a_budget() {
         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?1) \
          INSERT INTO device_status (device_id, lock_reason, kiosk_engaged, reported_at) \
          SELECT ?2, 'OLD', 1, datetime('now', '-1 hour') FROM n",
-        200,
+        crate::retention::STATUS_ROWS_A_DAY,
     )
     .await;
     fill(
@@ -241,7 +241,7 @@ async fn a_phones_storage_has_a_budget() {
     }
     assert_eq!(
         count("SELECT COUNT(*) FROM device_status WHERE device_id = ?").await,
-        200
+        crate::retention::STATUS_ROWS_A_DAY
     );
     assert_eq!(
         count("SELECT COUNT(*) FROM device_status WHERE device_id = ? AND lock_reason = 'NONE'")
@@ -253,6 +253,28 @@ async fn a_phones_storage_has_a_budget() {
         count("SELECT COUNT(*) FROM device_locations WHERE device_id = ? AND latitude > 60").await,
         0,
         "no fix past the day's budget"
+    );
+    // Never the newest report that said it enforces calls (QA L-c): it stays when a report
+    // without the capability replaces the reports after it.
+    for caps in [vec!["call_policy_v1"], vec![], vec![]] {
+        let res = app
+            .request(
+                Method::POST,
+                "/api/devices/status",
+                Some(&token),
+                Some(serde_json::json!({ "lock_reason": "CAPS", "kiosk_engaged": true,
+                                         "capabilities": caps })),
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::NO_CONTENT);
+    }
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM device_status WHERE device_id = ? \
+             AND capabilities_json LIKE '%call_policy_v1%'"
+        )
+        .await,
+        1
     );
 
     sqlx::query("UPDATE device_policy SET dns_log_enabled = 1 WHERE device_id = ?")
