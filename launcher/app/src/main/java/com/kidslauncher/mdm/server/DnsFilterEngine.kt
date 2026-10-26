@@ -17,28 +17,53 @@ private const val LOG_TAG = "DnsFilterEngine"
 private const val BLOCKLIST_FILE = "dns_blocklist.tsv"
 private const val VERSION_FILE = "dns_blocklist_version.txt"
 
-/** Walks label suffixes (same technique the server's own `is_blocked` uses in `dns_engine.rs`)
- * so a block entry for "example.com" also matches "ads.example.com" - returns the matched
- * category in [blocked], or null if not blocked: always for the FCM hosts
- * ([com.kidslauncher.mdm.push.isFcmHost]), and for Spotify's hosts
- * ([com.kidslauncher.mdm.music.isSpotifyHost]) while [spotify] - the cached policy's
- * `music.spotify` - is true (design 26c §6.2: per phone, not global like FCM). Both exemptions come
- * before the suffix walk, so a blocked parent (`google.com`, `akamaized.net`) never blocks them.
- * Pure; DnsFilterEngineTest. */
-internal fun classifyDomain(blocked: Map<String, String>, domainRaw: String, spotify: Boolean): String? {
-    val domain = domainRaw.trimEnd('.').lowercase()
-    // FCM's own hosts are never blocked (handy step 7, QA #10): a blocklist entry for them or
-    // a parent (google.com, googleapis.com) would silently stop other apps' FCM (Element X).
-    if (com.kidslauncher.mdm.push.isFcmHost(domain)) return null
-    if (spotify && com.kidslauncher.mdm.music.isSpotifyHost(domain)) return null
+/** The category of the built-in secure-DNS hosts (design 67 §2.2, [DOH_HOSTS_ASSET]). */
+const val DOH_BYPASS_CATEGORY = "Secure DNS bypass"
+
+/** The built-in list's asset, under `assets/`. */
+const val DOH_HOSTS_ASSET = "dns/doh_hosts.txt"
+
+/** Firefox's canary domain (design 67 §2.3): the exact name, never a subdomain. */
+const val FIREFOX_CANARY = "use-application-dns.net"
+
+/** [domainRaw] is Firefox's canary, in any case, with or without its trailing dot. */
+fun isFirefoxCanary(domainRaw: String): Boolean = domainRaw.trimEnd('.').lowercase() == FIREFOX_CANARY
+
+/** The built-in list's names ([DOH_HOSTS_ASSET]): one per line, `#` starts a comment. */
+fun parseDohHosts(text: String): Set<String> =
+    text.lineSequence().map { it.substringBefore('#').trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+
+/** The first of [domain]'s label suffixes (itself, then each parent) [lookup] gives a value for -
+ * the technique of the server's own `is_blocked` (`dns_engine.rs`): "example.com" matches "ads.example.com". */
+private inline fun <T : Any> firstSuffix(domain: String, lookup: (String) -> T?): T? {
     var start = 0
     while (start < domain.length) {
-        blocked[domain.substring(start)]?.let { return it }
+        lookup(domain.substring(start))?.let { return it }
         val dot = domain.indexOf('.', start)
         if (dot < 0) break
         start = dot + 1
     }
     return null
+}
+
+/** The category [domainRaw] is blocked by (a label-suffix match), or null if not blocked: always for
+ * the FCM hosts ([com.kidslauncher.mdm.push.isFcmHost]), and for Spotify's hosts
+ * ([com.kidslauncher.mdm.music.isSpotifyHost]) while [spotify] - the cached policy's
+ * `music.spotify` - is true (design 26c §6.2: per phone, not global like FCM). Both exemptions come
+ * before the suffix walk, so a blocked parent (`google.com`, `akamaized.net`) never blocks them.
+ * Then the built-in secure-DNS hosts [dohHosts] ([DOH_BYPASS_CATEGORY], design 67 §2.2), then the
+ * server's lists [blocked]. Asked only for a query that came through the tunnel
+ * ([KidVpnService.handlePacket]): the launcher's own upstream look-ups never arrive there (IP
+ * literals, [BootstrapDns] on protected sockets), so a parent's backup by such a name still works.
+ * Pure; DnsFilterEngineTest. */
+internal fun classifyDomain(blocked: Map<String, String>, domainRaw: String, spotify: Boolean, dohHosts: Set<String> = emptySet()): String? {
+    val domain = domainRaw.trimEnd('.').lowercase()
+    // FCM's own hosts are never blocked (handy step 7, QA #10): a blocklist entry for them or
+    // a parent (google.com, googleapis.com) would silently stop other apps' FCM (Element X).
+    if (com.kidslauncher.mdm.push.isFcmHost(domain)) return null
+    if (spotify && com.kidslauncher.mdm.music.isSpotifyHost(domain)) return null
+    if (firstSuffix(domain) { it.takeIf(dohHosts::contains) } != null) return DOH_BYPASS_CATEGORY
+    return firstSuffix(domain) { blocked[it] }
 }
 
 /**
@@ -61,6 +86,10 @@ object DnsFilterEngine {
 
     @Volatile
     private var loadedVersion: String? = null
+
+    /** The built-in secure-DNS hosts (design 67 §2.2), read from the APK at every VPN start. */
+    @Volatile
+    private var dohHosts: Set<String> = emptySet()
 
     /** The cached policy's `music.spotify` (design 26c §6.2): this phone plays Spotify, so its hosts
      * pass ([classifyDomain]). Set by every sync ([setSpotify]) and from the cached policy when the
@@ -98,6 +127,12 @@ object DnsFilterEngine {
      * project's established policy-cache-miss handling elsewhere (fails open on missing data, not
      * closed, since there is no safe "assume blocked" default without a real list to check against). */
     fun loadFromDisk(context: Context) {
+        // First, before the list's early return: in force on a phone that never synced a list.
+        try {
+            dohHosts = parseDohHosts(context.assets.open(DOH_HOSTS_ASSET).bufferedReader().use { it.readText() })
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't load the built-in secure-DNS hosts: ${e.javaClass.simpleName}")
+        }
         spotifyOn = runCatching {
             com.kidslauncher.mdm.music.musicSpotify((cachedPolicy() as? CachedPolicy.Ok)?.policy?.music)
         }.getOrDefault(false)
@@ -155,9 +190,9 @@ object DnsFilterEngine {
         }
     }
 
-    /** The category [domainRaw] is blocked by, or null ([classifyDomain] over the loaded list, with
-     * Spotify's hosts exempt while this phone plays Spotify). */
-    fun classify(domainRaw: String): String? = classifyDomain(blockedDomains, domainRaw, spotifyOn)
+    /** The category [domainRaw] is blocked by, or null ([classifyDomain] over the built-in secure-DNS
+     * hosts and the loaded list, with Spotify's hosts exempt while this phone plays Spotify). */
+    fun classify(domainRaw: String): String? = classifyDomain(blockedDomains, domainRaw, spotifyOn, dohHosts)
 
     /**
      * Forwards an allowed DNS query to the admin-configured public resolver (Cloudflare or Quad9,
@@ -178,8 +213,15 @@ object DnsFilterEngine {
 /** The phone's block answer: NODATA (NOERROR, empty answer, a negative-cache SOA in the authority
  * section) - well handled by every client, without the retry storms NXDOMAIN sometimes provokes.
  * Also what a healthy custom server's REFUSED becomes (design 36 §5.4). */
-internal fun blockedResponse(request: Message): ByteArray {
-    val response = answerTo(request, Rcode.NOERROR)
+internal fun blockedResponse(request: Message): ByteArray = negativeResponse(request, Rcode.NOERROR)
+
+/** NXDOMAIN for [request], with [blockedResponse]'s SOA: Firefox's canary (design 67 §2.3) - any
+ * RCODE but NOERROR turns off the DoH that Firefox enabled by default. */
+internal fun nxdomainResponse(request: Message): ByteArray = negativeResponse(request, Rcode.NXDOMAIN)
+
+/** [rcode], the question echoed, and a negative-cache SOA (RFC 2308) in the authority section. */
+private fun negativeResponse(request: Message, rcode: Int): ByteArray {
+    val response = answerTo(request, rcode)
     response.addRecord(
         SOARecord(
             request.question.name, DClass.IN, 300L,

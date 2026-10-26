@@ -308,6 +308,17 @@ class KidVpnService : VpnService() {
             val question = message.question ?: return
             val domain = question.name.toString(true)
 
+            fun reply(responseBytes: ByteArray) {
+                val responsePacket = buildResponsePacket(ipPacket, udpPacket, responseBytes)
+                synchronized(writeLock) {
+                    output.write(responsePacket.rawData)
+                }
+            }
+
+            // Firefox's canary (design 67 §2.3): NXDOMAIN turns off the DoH it enabled by default.
+            // Firefox's own probe, not the kid's doing: never forwarded, logged or counted.
+            if (isFirefoxCanary(domain)) return reply(nxdomainResponse(message))
+
             // The phone's lists first, always: nothing reaches any resolver before them.
             val category = DnsFilterEngine.classify(domain)
             val custom = custom
@@ -321,11 +332,7 @@ class KidVpnService : VpnService() {
                 DnsFilterEngine.resolveProvider(query, upstream, ::protect) { providerDoh.value }
             }
             if (responseBytes == null) return
-
-            val responsePacket = buildResponsePacket(ipPacket, udpPacket, responseBytes)
-            synchronized(writeLock) {
-                output.write(responsePacket.rawData)
-            }
+            reply(responseBytes)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Failed to handle a DNS packet: ${e.javaClass.simpleName}")
         }

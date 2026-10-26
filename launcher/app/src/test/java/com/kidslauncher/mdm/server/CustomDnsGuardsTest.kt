@@ -24,6 +24,8 @@ class CustomDnsGuardsTest {
         val packet = source("KidVpnService.kt").substringAfter("private fun handlePacket(").substringBefore("\n    }\n")
         val classify = packet.indexOf("val category = DnsFilterEngine.classify(domain)\n")
         assertTrue("the plain classify line", classify >= 0)
+        // Firefox's canary only before them (design 67 §2.3): answered here, never forwarded or logged.
+        assertTrue(packet.indexOf("if (isFirefoxCanary(domain)) return reply(nxdomainResponse(message))") in 0 until classify)
         val blocked = packet.indexOf("val responseBytes = if (category != null) {")
         val custom = packet.indexOf("custom.resolve(")
         val provider = packet.indexOf("resolveProvider(")
