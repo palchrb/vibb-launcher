@@ -80,7 +80,10 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`NetConfig`, default 30). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
   bumps the epoch and replaces the password with a new one in `data/initial-admin-password-<id>` (QA 22 M4; one file per
   account since design 62, which also restores a removed account and clears a one-time password's expiry). `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
-  CSP phase 1 (`ADMIN_CSP`, inline JS still allowed until S7); HTML `private, no-cache`, `no_store_path` (locations
+  CSP (`ADMIN_CSP`; phase 2 since 0.55.0, design 22 S7 and security review L5: `script-src 'self'`, no
+  `'unsafe-inline'` - the last inline handler, the rule editor's Type, is `static/rule-kind.js`;
+  `tests::admin_auth::no_template_has_inline_script` fails on an inline `<script>`, an `on*=` attribute or a
+  `javascript:` link in any template, partials too; inline styles stay allowed); HTML `private, no-cache`, `no_store_path` (locations
   JSON, backups, provision, the code page, provisioning settings, account, auth; since design 35 the inbox) `no-store`. `csrf_guard` (unsafe
   methods, not `/api/devices/`, not `/notifications/receipt` - the push receipt's token is its proof): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
   `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.

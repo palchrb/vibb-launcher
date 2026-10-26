@@ -1431,3 +1431,67 @@ async fn the_sign_in_log_lines_hold_no_cookie_value_and_no_query() {
         gate[0]
     );
 }
+
+/// The CSP allows no inline script (security review L5, design 22 S7): no template - partials
+/// included - has an inline `<script>`, an `on*=` handler or a `javascript:` link, and the policy
+/// says `script-src 'self'` alone.
+#[test]
+fn no_template_has_inline_script() {
+    fn inline_scripts(html: &str) -> Vec<String> {
+        let lower = html.to_ascii_lowercase();
+        let mut found = Vec::new();
+        if lower.contains("javascript:") {
+            found.push("javascript: link".to_string());
+        }
+        for (at, _) in lower.match_indices('<') {
+            let tag = &lower[at + 1..];
+            if !tag.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                continue;
+            }
+            let tag = &tag[..tag.find('>').unwrap_or(tag.len())];
+            if tag.starts_with("script") && !tag.contains("src=") {
+                found.push(format!("<{tag}>"));
+            }
+            for word in tag.split(|c: char| c.is_whitespace() || c == '}') {
+                if let Some((name, _)) = word.split_once('=')
+                    && name.len() > 2
+                    && name.starts_with("on")
+                    && name.chars().all(|c| c.is_ascii_alphabetic())
+                {
+                    found.push(format!("{name}= in <{tag}>"));
+                }
+            }
+        }
+        found
+    }
+    assert_eq!(
+        inline_scripts(r#"<select onchange="x()"><script>y()</script><a href="javascript:z">"#)
+            .len(),
+        3
+    );
+    assert!(inline_scripts(r#"<script src="/static/a.js" defer></script><p>on=1</p>"#).is_empty());
+    let mut bad = Vec::new();
+    let mut dirs = vec![std::path::PathBuf::from("templates")];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "html") {
+                let html = std::fs::read_to_string(&path).unwrap();
+                bad.extend(
+                    inline_scripts(&html)
+                        .into_iter()
+                        .map(|what| format!("{}: {what}", path.display())),
+                );
+            }
+        }
+    }
+    assert!(bad.is_empty(), "inline script the CSP blocks: {bad:#?}");
+    let script_src: Vec<&str> = crate::admin_auth::ADMIN_CSP
+        .split(';')
+        .map(str::trim)
+        .filter(|directive| directive.starts_with("script-src"))
+        .collect();
+    assert_eq!(script_src, ["script-src 'self'"]);
+}
