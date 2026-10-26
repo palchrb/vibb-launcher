@@ -930,6 +930,15 @@ pub struct InstalledApp {
         deserialize_with = "lenient_text"
     )]
     pub version_name: Option<String>,
+    /// The app's camera and special accesses as the phone reads them (design 68 §3.3): only the keys the app
+    /// declares, known keys and values only (`app_permissions::AppAccess::of`) - a newer launcher's key is dropped,
+    /// never a refused report. Absent from older launchers and for an app with nothing to say.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::app_permissions::lenient_access"
+    )]
+    pub access: Option<crate::app_permissions::AppAccess>,
 }
 
 // ---------------------------------------------------------------------
@@ -1042,6 +1051,10 @@ pub struct PolicyResponse {
     /// with whether its text shows too (design 51). A failing query sends `apps: []` (fewer rows, never a 500). An older
     /// launcher ignores it; an older server's missing key means Element X, sender only.
     pub lock_glance: crate::lock_glance::LockGlancePolicy,
+    /// Per-app permissions (design 68), always a list: `[{package_name, camera: "deny"}]` - the packages the parent
+    /// switched away from the default on this phone. A failing query is a 500 for the whole policy (fail closed): a
+    /// lost list would hand the camera back. An older launcher ignores it.
+    pub app_permissions: Vec<crate::app_permissions::AppPermission>,
 }
 
 /// `PolicyResponse.kid_lock`.

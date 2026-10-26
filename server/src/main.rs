@@ -3,6 +3,7 @@ mod apk;
 mod app_display;
 mod app_downloads;
 mod app_icons;
+mod app_permissions;
 mod attention;
 mod audit;
 mod boot_witness;

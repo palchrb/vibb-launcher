@@ -301,3 +301,19 @@ fun phoneStateGrants(
             if (pkg in targets && (allowlist == null || pkg in allowlist)) GRANT_STATE_GRANTED else GRANT_STATE_DEFAULT
         }
 }
+
+/**
+ * The policy's `app_permissions` (design 68 §3.1), read field by field: the packages whose camera the parent switched
+ * off on this phone. An entry without a valid package is dropped; any `camera` but `"deny"` is the default. `null` -
+ * the key missing or not a list (an older server, a `Fallback`'s plan) - means "touch nothing" ([cameraGrants]).
+ */
+fun appPermissionsOf(element: kotlinx.serialization.json.JsonElement?): Set<String>? {
+    val list = element as? kotlinx.serialization.json.JsonArray ?: return null
+    return list.mapNotNull { item ->
+        val entry = item as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+        fun string(key: String) = (entry[key] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+        string("package_name")?.takeIf {
+            com.kidslauncher.mdm.appdisplay.isValidPackageName(it) && string("camera") == "deny"
+        }
+    }.toSet()
+}
