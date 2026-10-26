@@ -41,6 +41,9 @@ pub const PENDING_SECS: i64 = 5 * 60;
 pub const PENDING_ID_KEY: &str = "pending_admin_id";
 pub const PENDING_AT_KEY: &str = "pending_at";
 pub const EPOCH_KEY: &str = "session_epoch";
+/// When the session's sign-in finished (Unix seconds): its absolute lifetime counts from here
+/// (security review L6, `NetConfig::session_max_days`).
+pub const SIGNED_IN_AT_KEY: &str = "signed_in_at";
 /// The banner text after a complete login that followed failed 2FA attempts.
 pub const LOGIN_WARNING_KEY: &str = "login_warning";
 

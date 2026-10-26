@@ -41,6 +41,7 @@ pages and the phones' API can be exposed differently:
 | `TRUSTED_PROXIES` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` is believed: exact proxy addresses (a range only if every address in it is one of your proxies). Your proxy on the same box needs nothing here. |
 | `ADMIN_TAILSCALE_USERS` | unset | Only behind `tailscale serve`: the admin pages also need one of these Tailscale logins (comma list). Tagged phones carry no login, so a phone node can't open the admin even if a serve rule points it there. |
 | `SESSION_INACTIVITY_DAYS` | `30` | How long an admin session lasts without use. |
+| `SESSION_MAX_DAYS` | `90` | How long an admin session lasts after its sign-in, however often it is used (1-3650): the installed PWA signs in again once in that time. |
 
 The admin gate is on by default: a proxy rule meant for the phones, or a typo in a Caddyfile, can't put the PWA on the
 internet - it answers 403 to anything that isn't loopback or tailnet. `/healthz` (says `ok`) always answers.

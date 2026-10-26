@@ -191,6 +191,10 @@ pub async fn login(
         .await;
         session.insert("admin_id", admin.id).await.ok();
         session
+            .insert(admin_auth::SIGNED_IN_AT_KEY, admin_auth::now_secs())
+            .await
+            .ok();
+        session
             .insert(admin_auth::EPOCH_KEY, admin.session_epoch)
             .await
             .ok();
@@ -361,6 +365,10 @@ pub async fn verify_2fa(
     session.remove::<i64>(admin_auth::PENDING_ID_KEY).await.ok();
     session.remove::<u64>(admin_auth::PENDING_AT_KEY).await.ok();
     session.insert("admin_id", admin.id).await.ok();
+    session
+        .insert(admin_auth::SIGNED_IN_AT_KEY, admin_auth::now_secs())
+        .await
+        .ok();
     session
         .insert(admin_auth::EPOCH_KEY, admin.session_epoch)
         .await

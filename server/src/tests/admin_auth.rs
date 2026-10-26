@@ -1432,6 +1432,45 @@ async fn the_sign_in_log_lines_hold_no_cookie_value_and_no_query() {
     );
 }
 
+/// Security review L6: a session ends `SESSION_MAX_DAYS` (90) after its sign-in however often it is
+/// used; one from before the cap (no sign-in time) starts its clock at its next request, so an
+/// upgrade signs nobody out. A real sign-in sets the time.
+#[tokio::test]
+async fn a_session_ends_after_its_absolute_lifetime() {
+    use crate::admin_auth::{EPOCH_KEY, SIGNED_IN_AT_KEY, now_secs};
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    assert_eq!(app.get_page("/devices", &cookie).await.status, StatusCode::OK);
+    let (admin_id, epoch): (i64, i64) =
+        sqlx::query_as("SELECT id, session_epoch FROM admin_users LIMIT 1")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let store = std::sync::Arc::new(tower_sessions_sqlx_store::SqliteStore::new(app.db.clone()));
+    let session = tower_sessions::Session::new(None, store, None);
+    session.insert("admin_id", admin_id).await.unwrap();
+    session.insert(EPOCH_KEY, epoch).await.unwrap();
+    assert!(security::load_active_admin(&app.state, &session).await.is_ok());
+    let started: Option<u64> = session.get(SIGNED_IN_AT_KEY).await.unwrap();
+    assert!(started.is_some_and(|at| at.abs_diff(now_secs()) < 60));
+    let day = 86_400;
+    session
+        .insert(SIGNED_IN_AT_KEY, now_secs() - 89 * day)
+        .await
+        .unwrap();
+    assert!(security::load_active_admin(&app.state, &session).await.is_ok());
+    session
+        .insert(SIGNED_IN_AT_KEY, now_secs() - 91 * day)
+        .await
+        .unwrap();
+    assert_eq!(
+        security::load_active_admin(&app.state, &session).await.err(),
+        Some(security::SignInWhy::TooOld)
+    );
+    assert!(!security::session_too_old(1_000, 1_000 + 90 * day, 90));
+    assert!(security::session_too_old(1_000, 1_001 + 90 * day, 90));
+}
+
 /// The CSP allows no inline script (security review L5, design 22 S7): no template - partials
 /// included - has an inline `<script>`, an `on*=` handler or a `javascript:` link, and the policy
 /// says `script-src 'self'` alone.
