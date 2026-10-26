@@ -92,7 +92,7 @@ fn rows(
 pub async fn prune(db: &SqlitePool) -> Pruned {
     let mut failed = Vec::new();
     let failed = &mut failed;
-    let dns_events = rows(
+    let dns = rows(
         failed,
         "device_dns_events",
         sqlx::query(
@@ -163,7 +163,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         .execute(db)
         .await,
     );
-    let security_events = rows(
+    let security = rows(
         failed,
         "security_events",
         sqlx::query(
@@ -173,7 +173,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         .execute(db)
         .await,
     );
-    let pin_events = rows(failed, "device_pin_events", sqlx::query(
+    let pins = rows(failed, "device_pin_events", sqlx::query(
         "DELETE FROM device_pin_events WHERE received_at < datetime('now', '-' || ? || ' days')",
     )
     .bind(crate::parent_pin::PIN_EVENT_DAYS)
@@ -213,7 +213,7 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         .execute(db)
         .await,
     );
-    let parent_events = zone_rows
+    let inbox = zone_rows
         + rows(
             failed,
             "parent_events",
@@ -258,14 +258,16 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
             .execute(db)
             .await,
     );
+    // (No local is named `*_events`: `admin::every_written_event_has_a_label` reads the table names
+    // next to such a `let` as event ids.)
     Pruned {
-        dns_events,
+        dns_events: dns,
         locations,
         status_reports,
         crashes,
-        security_events,
-        pin_events,
-        parent_events,
+        security_events: security,
+        pin_events: pins,
+        parent_events: inbox,
         push_rows: deliveries + gone,
         commands,
         failed: std::mem::take(failed),
