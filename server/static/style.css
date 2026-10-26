@@ -2002,6 +2002,8 @@ details.category-block[open] > summary .section-chev { -webkit-transform: rotate
 /* Ring, Stop Ringing, Lock: three tiles, as the mockup draws them. */
 .act-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-gap: 10px; gap: 10px; margin: 0 0 12px; }
 .act-grid form { margin: 0; }
+/* One plain line over the quick actions: how a pause of the restrictions ends (its alarm is the Attention row). */
+.quick-note { margin: 0 16px 10px; font-size: 0.8125rem; line-height: 1.38; color: var(--label-2); }
 .act { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; min-height: 68px; margin: 0; padding: 8px 4px; border: 0; border-radius: 14px; background: var(--surface); color: var(--tint); font: inherit; font-size: 0.875rem; font-weight: 600; line-height: 1.2; text-align: center; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* One line per tile (white-space above), so every tile is its 68px and every row the same (the user, 2026-10-20:
    "Hurtigknappene ... burde vel være samme dimensjon?"); a label longer than the tile ends in "…". */
@@ -2479,3 +2481,6 @@ details.app-display[open] > summary .section-chev {
 .zone-slider { padding-top: 8px; padding-bottom: 8px; }
 .zone-slider input[type="range"] { flex: 1 1 auto; width: 100%; margin: 0; accent-color: var(--tint); }
 [data-zone-slider-row][hidden], [data-use-phone][hidden] { display: none; }
+
+/* ---- The tab-switch timing line (static/nav-timing.js, only after ?timing=1): debug, never in the way ---- */
+.timing-line { position: absolute; z-index: 1999; top: calc(env(safe-area-inset-top, 0px) + 3px); left: 8px; right: 8px; padding: 2px 6px; border-radius: 6px; background: var(--surface); color: var(--label-2); font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; opacity: 0.92; }

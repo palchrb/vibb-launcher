@@ -8,17 +8,6 @@ use serde_json::{Value, json};
 use super::{TestApp, tags};
 use crate::display_time::{Zone, parse_db_utc};
 
-async fn report(app: &TestApp, token: &str, extra: Value) {
-    let mut body = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
-    for (key, value) in extra.as_object().unwrap() {
-        body[key] = value.clone();
-    }
-    let res = app
-        .request(Method::POST, "/api/devices/status", Some(token), Some(body))
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
-}
-
 /// One phone's row on the list: from its link to the link's end.
 fn row(html: &str, id: i64) -> &str {
     let start = html
@@ -61,11 +50,11 @@ async fn each_phone_shows_its_connection() {
 
     // Online: a stream open and a fresh report.
     let (anna, anna_token) = app.enrolled_device("Anna").await;
-    report(&app, &anna_token, json!({})).await;
+    app.post_status(&anna_token, json!({})).await;
     let _stream = app.state.command_streams.open(anna);
     // Away: a fresh report, no stream.
     let (ella, ella_token) = app.enrolled_device("Ella").await;
-    report(&app, &ella_token, json!({})).await;
+    app.post_status(&ella_token, json!({})).await;
     // Offline: last seen 3 hours ago (before a server restart: nothing in memory).
     let (emil, _) = app.enrolled_device("Emil").await;
     sqlx::query("UPDATE devices SET last_seen_at = datetime('now', '-3 hours') WHERE id = ?")
@@ -187,7 +176,8 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
             }
         })
     };
-    report(&app, &token, time_state(today, Some("Europe/Oslo"))).await;
+    app.post_status(&token, time_state(today, Some("Europe/Oslo")))
+        .await;
 
     let html = app.get_page("/devices", &cookie).await.text();
     let anna_row = row(&html, anna);
@@ -219,7 +209,7 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
         .unwrap();
 
     // A phone that doesn't say its zone (a launcher from before design 34 P13): no end.
-    report(&app, &token, time_state(today, None)).await;
+    app.post_status(&token, time_state(today, None)).await;
     let html = app.get_page("/devices", &cookie).await.text();
     assert!(
         row(&html, anna).contains("data-lock>Skole · calls off</span>"),
@@ -247,8 +237,7 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     );
 
     // A report from yesterday: no end, no bar, "at last report".
-    report(
-        &app,
+    app.post_status(
         &token,
         time_state(today.pred_opt().unwrap(), Some("Europe/Oslo")),
     )
@@ -263,7 +252,8 @@ async fn a_locking_rule_and_todays_screen_time_show_on_the_row() {
     assert!(!anna_row.contains("meter"));
 
     // No rule locking: no lock part.
-    report(&app, &token, json!({"capabilities": ["time_rules_v1"]})).await;
+    app.post_status(&token, json!({"capabilities": ["time_rules_v1"]}))
+        .await;
     let html = app.get_page("/devices", &cookie).await.text();
     assert!(!row(&html, anna).contains("data-lock"));
 }
@@ -275,8 +265,7 @@ async fn the_badge_counts_the_device_pages_attention_rows() {
     // Do Not Disturb, Backup to Google, no Parent PIN (the first report allows the safe
     // defaults: a managed phone) and a launcher without time rules.
     let (anna, token) = app.enrolled_device("Anna").await;
-    report(
-        &app,
+    app.post_status(
         &token,
         json!({
             "interruption_filter": "priority",

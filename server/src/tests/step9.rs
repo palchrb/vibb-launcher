@@ -2,33 +2,9 @@
 //! "manage calls" changes, the kiosk app block switch and `play_store_suspendable`.
 
 use axum::http::{Method, StatusCode};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::TestApp;
-
-async fn policy(app: &TestApp, token: &str) -> Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK);
-    res.json()
-}
-
-async fn post_status(app: &TestApp, token: &str, extra: Value) {
-    let mut report = json!({ "lock_reason": "none", "kiosk_engaged": true });
-    for (key, value) in extra.as_object().unwrap() {
-        report[key] = value.clone();
-    }
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(token),
-            Some(report),
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
-}
 
 async fn page(app: &TestApp, cookie: &str, uri: &str) -> String {
     let res = app.get_page(uri, cookie).await;
@@ -97,7 +73,7 @@ async fn role_warnings_wait_for_a_newer_report_but_not_forever() {
         "call_log_readable": true,
     });
     let report = json!({ "capabilities": ["call_policy_v1"], "call_state": state });
-    post_status(&app, &token, report.clone()).await;
+    app.post_status(&token, report.clone()).await;
     let uri = format!("/devices/{id}/calls");
 
     // The report predates a change made just now: waiting, no role warning, the page reloads.
@@ -145,7 +121,7 @@ async fn role_warnings_wait_for_a_newer_report_but_not_forever() {
         id,
     )
     .await;
-    post_status(&app, &token, report).await;
+    app.post_status(&token, report).await;
     let html = page(&app, &cookie, &uri).await;
     assert!(!html.contains("Waiting for the phone"));
     assert!(html.contains("Anyone can call this phone"));
@@ -163,7 +139,7 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
         id,
     )
     .await;
-    let p = policy(&app, &token).await;
+    let p = app.policy(&token).await;
     assert_eq!(p["block_activity_start"], json!(true));
     assert_eq!(p["lock_task_features"], json!(63));
 
@@ -184,7 +160,7 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
     );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
-        policy(&app, &token).await["block_activity_start"],
+        app.policy(&token).await["block_activity_start"],
         json!(false)
     );
     let res = app
@@ -207,11 +183,12 @@ async fn kiosk_block_switch_and_play_not_suspendable() {
         .await;
     assert!(res.status.is_redirection());
     assert_eq!(
-        policy(&app, &token).await["block_activity_start"],
+        app.policy(&token).await["block_activity_start"],
         json!(false)
     );
 
-    post_status(&app, &token, json!({ "play_store_suspendable": false })).await;
+    app.post_status(&token, json!({ "play_store_suspendable": false }))
+        .await;
     let stored: Option<bool> =
         sqlx::query_scalar("SELECT play_store_suspendable FROM device_status WHERE device_id = ?")
             .bind(id)
@@ -245,7 +222,8 @@ async fn an_error_page_never_reloads_itself() {
         id,
     )
     .await;
-    post_status(&app, &token, json!({ "capabilities": ["call_policy_v1"] })).await;
+    app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
+        .await;
     sql(
         &app,
         "UPDATE device_status SET reported_at = datetime('now', '-1 minute') WHERE device_id = ?",

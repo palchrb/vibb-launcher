@@ -342,7 +342,7 @@ pub async fn reset(
             render_account(&state, &session, &actor, StatusCode::OK, answer).await
         }
         Ok(crate::parents::Reset::Gone) => {
-            Redirect::to("/account?parents=gone#parents").into_response()
+            crate::settings_log::refused(Redirect::to("/account?parents=gone#parents"))
         }
         Ok(crate::parents::Reset::Yourself) => {
             let answer = AccountAnswer {
@@ -430,7 +430,9 @@ pub async fn remove(
             }
             Redirect::to("/account?parents=removed#parents").into_response()
         }
-        Ok(Removed::Gone) => Redirect::to("/account?parents=gone#parents").into_response(),
+        Ok(Removed::Gone) => {
+            crate::settings_log::refused(Redirect::to("/account?parents=gone#parents"))
+        }
         Ok(Removed::LastReady) => {
             // Only reachable for yourself (a waiting target never counts, and the actor is ready):
             // said in the group, since your own row has no form.

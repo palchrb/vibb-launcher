@@ -65,6 +65,9 @@ struct Entered {
 struct ProvisioningSettingsTemplate {
     title: String,
     entered: Entered,
+    /// `.env`'s `PHONE_SERVER_URL`: the QR's address while none is saved here, and the field's
+    /// hint says where the address comes from (Q25).
+    env_server_url: Option<String>,
     /// The Tailscale key is write-only (design 22 §3.2.6): only "Set (tskey-auth-...abcd)".
     tailscale_key_hint: Option<String>,
     /// `?saved=1`: the flash under the Save button (`#saved`).
@@ -137,6 +140,7 @@ fn read_failed() -> Response {
 }
 
 fn render(
+    state: &AppState,
     status: StatusCode,
     settings: &ProvisioningSettings,
     entered: Entered,
@@ -147,6 +151,7 @@ fn render(
     let page = ProvisioningSettingsTemplate {
         title: "Phone Setup".to_string(),
         entered,
+        env_server_url: state.config.phone_server_url.clone(),
         tailscale_key_hint: key_hint(&settings.tailscale_auth_key),
         saved,
         error,
@@ -174,6 +179,7 @@ pub async fn provisioning_settings_form(
         error: None,
     };
     render(
+        &state,
         StatusCode::OK,
         &settings,
         stored(&settings),
@@ -241,6 +247,7 @@ pub async fn update_provisioning_settings(
             error: None,
         };
         return render(
+            &state,
             StatusCode::BAD_REQUEST,
             &settings,
             entered,
@@ -301,6 +308,7 @@ pub async fn save_country_code(
             error: Some("Use 1 to 3 digits, like 47. Nothing was saved."),
         };
         return render(
+            &state,
             StatusCode::BAD_REQUEST,
             &settings,
             stored(&settings),

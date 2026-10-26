@@ -896,10 +896,16 @@ fn contact_row(id: i64, contact_id: i64) -> String {
     format!("/devices/{id}/calls?open={contact_id}#contact-{contact_id}")
 }
 
-/// The Contacts group, for a contact that is gone: `gone` says nothing was saved.
+/// The Contacts group, for a contact that is gone: `gone` says nothing was saved (a refusal,
+/// [crate::settings_log::Refused]).
 fn contacts_group(id: i64, gone: bool) -> Response {
     let notice = if gone { "?notice=contact_gone" } else { "" };
-    Redirect::to(&format!("/devices/{id}/calls{notice}#contacts")).into_response()
+    let back = Redirect::to(&format!("/devices/{id}/calls{notice}#contacts"));
+    if gone {
+        crate::settings_log::refused(back)
+    } else {
+        back.into_response()
+    }
 }
 
 fn bad_request(message: &str) -> Response {
@@ -1174,7 +1180,7 @@ pub async fn update_contact(
 async fn gone(state: &AppState, id: i64, contact_id: i64, said: bool) -> Response {
     match contact_on_device(state, id, contact_id).await {
         Ok(None) => not_found(),
-        Ok(Some(_)) => contacts_group(id, said),
+        Ok(Some(_)) => crate::settings_log::refused(contacts_group(id, said)),
         Err(err) => db_error(id, err),
     }
 }

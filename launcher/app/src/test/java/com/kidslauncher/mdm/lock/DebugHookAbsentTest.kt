@@ -11,11 +11,7 @@ import java.io.File
  * src/main or src/release names it, the main manifest doesn't declare its receiver, and the
  * release `LockTaskDebug` passes the computed setting through. The built release APK is checked
  * too (`checkReleaseHasNoDebugHook`, a dependency of assembleRelease). The same for design 24b's
- * vault-key receiver, design 28's fake headset, design 32's lock-up toggle (its release
- * `LockUpDebug` passes the plan through; only the receiver's name is banned - the release class
- * carries the object's name) and design 32 step 2's keyguard cover switch (the receiver and its prefs
- * file are banned by those exact strings, never the bare object name - QA L5; the release switch is
- * always off).
+ * vault-key receiver and design 28's fake headset. The debug manifest declares exactly these receivers.
  */
 class DebugHookAbsentTest {
     private fun dir(path: String) = listOf("src/$path", "app/src/$path").map(::File).first { it.exists() }
@@ -33,7 +29,7 @@ class DebugHookAbsentTest {
         assertTrue(outside.size > 100)
         for (f in outside) {
             // Raw text, comments included: a KDoc naming a hook fails too (design 28 QA L3).
-            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver", "LockUpDebugReceiver", "KeyguardCoverDebugReceiver", "keyguard_cover_debug")) {
+            for (banned in listOf("LockTaskOverride", "lock_task_debug_override", "extra_lock_task_packages", "PinVaultKeyReceiver", "HeadsetDebugReceiver")) {
                 assertFalse("${f.path} names $banned", f.readText().contains(banned))
             }
         }
@@ -43,7 +39,10 @@ class DebugHookAbsentTest {
     fun `only the debug manifest declares the receivers, guarded by DUMP`() {
         val main = dir("main/AndroidManifest.xml").readText()
         val debug = code(dir("debug/AndroidManifest.xml"))
-        for ((pkg, name) in listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver", "lock" to "LockUpDebugReceiver", "lock" to "KeyguardCoverDebugReceiver")) {
+        val receivers = listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver")
+        // No other hook (no other component of any kind): a new one is listed here (and in checkReleaseHasNoDebugHook) first.
+        assertEquals(receivers.size, Regex("<(receiver|activity|activity-alias|service|provider)\\b").findAll(debug).count())
+        for ((pkg, name) in receivers) {
             assertFalse(name, main.contains(name))
             val receiver = debug.substringAfter("android:name=\"com.kidslauncher.mdm.$pkg.$name\"", "").substringBefore("/>")
             assertTrue(name, receiver.contains("android:exported=\"true\""))
@@ -69,46 +68,5 @@ class DebugHookAbsentTest {
         val callers = sources("main").filter { code(it).contains("LockTaskDebug") }.map { it.name }
         assertEquals(listOf("LockTaskChrome.kt"), callers)
         assertEquals(1, Regex("LockTaskDebug\\.adjust\\(context, computed\\)").findAll(code(dir("main/java/com/kidslauncher/mdm/lock/LockTaskChrome.kt"))).count())
-    }
-
-    @Test
-    fun `release LockUpDebug passes the lock-up plan through, and the screen-off's lock-up is its only caller`() {
-        // Design 32 step 1 item 4: the H2 experiment's toggle exists only in the debug build.
-        val release = code(dir("release/java/com/kidslauncher/mdm/lock/LockUpDebug.kt"))
-        assertEquals(1, Regex("\\bfun ").findAll(release).count())
-        assertTrue(release, release.contains("fun adjust(start: LockUpStart, showLock: Boolean): LockUpStart = start\n"))
-        assertFalse(release.contains("var "))
-        val callers = sources("main").filter { code(it).contains("LockUpDebug") }.map { it.name }
-        assertEquals(listOf("PinLockRuntime.kt"), callers)
-        val runtime = code(dir("main/java/com/kidslauncher/mdm/lock/PinLockRuntime.kt"))
-        assertEquals(1, Regex("LockUpDebug\\.adjust\\(lockUpStarts\\(").findAll(runtime).count())
-        // The debug version only turns a skipped lock on top back into the lock's start.
-        val debug = code(dir("debug/java/com/kidslauncher/mdm/lock/LockUpDebug.kt"))
-        assertTrue(debug.contains("if (!skipRestart && showLock && start == LockUpStart.NONE) LockUpStart.LOCK else start"))
-    }
-
-    @Test
-    fun `release KeyguardCoverDebug is always off, and only the cover's apply and its cache read it`() {
-        // Design 32 step 2 (L5): exactly one fun, `= false`; src/main reads the cached value only.
-        val release = code(dir("release/java/com/kidslauncher/mdm/lock/KeyguardCoverDebug.kt"))
-        assertEquals(1, Regex("\\bfun ").findAll(release).count())
-        assertTrue(release, release.contains("fun enabled(context: Context): Boolean = false\n"))
-        assertFalse(release.contains("var ") || release.contains("val "))
-        val callers = sources("main").filter { code(it).contains("KeyguardCoverDebug") }.map { it.name }
-        assertEquals(listOf("KeyguardCover.kt"), callers)
-        val cover = code(dir("main/java/com/kidslauncher/mdm/lock/KeyguardCover.kt"))
-        assertEquals(2, Regex("KeyguardCoverDebug\\.enabled\\(").findAll(cover).count())
-        for (fn in listOf("fun atProcessStart(", "fun configure(")) {
-            val body = cover.substringAfter(fn).substringBefore("\n    }\n")
-            assertTrue(fn, body.contains("KeyguardCoverDebug.enabled("))
-        }
-        // The cached value, @Volatile, set nowhere else.
-        assertTrue(cover.contains("@Volatile\n    var switchOn = false\n        private set"))
-        assertEquals(2, Regex("switchOn = try \\{").findAll(cover).count())
-        // The debug switch stores its own prefs file and runs a full apply.
-        val receiver = code(dir("debug/java/com/kidslauncher/mdm/lock/KeyguardCoverDebugReceiver.kt"))
-        assertTrue(receiver.contains("KeyguardCoverDebug.store(app, it)"))
-        assertTrue(receiver.contains("AppEnforcer.apply(app, currentPolicyDecision().policy)"))
-        assertTrue(code(dir("debug/java/com/kidslauncher/mdm/lock/KeyguardCoverDebug.kt")).contains("private const val PREFS = \"keyguard_cover_debug\""))
     }
 }

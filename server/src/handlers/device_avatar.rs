@@ -62,12 +62,14 @@ pub fn error_text(code: Option<&str>) -> Option<&'static str> {
     Some(err.message())
 }
 
+/// Back to the picture: a `code` is a refusal (nothing changed, [crate::settings_log::Refused]).
 fn back(id: i64, code: Option<&str>) -> Response {
     match code {
-        Some(code) => Redirect::to(&format!("/devices/{id}?avatar={code}#avatar")),
-        None => Redirect::to(&format!("/devices/{id}#avatar")),
+        Some(code) => crate::settings_log::refused(Redirect::to(&format!(
+            "/devices/{id}?avatar={code}#avatar"
+        ))),
+        None => Redirect::to(&format!("/devices/{id}#avatar")).into_response(),
     }
-    .into_response()
 }
 
 /// The answer when phone `id` isn't there (404, or 500 for a database error); `None` when it is.

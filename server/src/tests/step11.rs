@@ -8,30 +8,6 @@ use serde_json::{Value, json};
 
 use super::{Section, TestApp, assert_redirect, device_page, input_checked};
 
-async fn policy(app: &TestApp, token: &str) -> Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK);
-    res.json()
-}
-
-async fn post_status(app: &TestApp, token: &str, extra: Value) {
-    let mut report = json!({ "lock_reason": "none", "kiosk_engaged": true });
-    for (key, value) in extra.as_object().unwrap() {
-        report[key] = value.clone();
-    }
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(token),
-            Some(report),
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
-}
-
 async fn stored(app: &TestApp, column: &str, id: i64) -> Option<String> {
     sqlx::query_scalar::<_, Option<String>>(&format!(
         "SELECT {column} FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 1"
@@ -47,7 +23,7 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let p = policy(&app, &token).await;
+    let p = app.policy(&token).await;
     assert_eq!(p["update_fence"], json!(false));
     assert_eq!(p["notification_auto_cancel"], json!(false));
     assert_eq!(p["boot_cover"], json!(false), "design 16b: off by default");
@@ -68,7 +44,7 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
     // Back to its group on Advanced (§5.1.4): scroll-restore.js keeps the position, never a jump.
     assert_redirect(&res, &device_page(id, Section::Advanced), Some("updates"));
     assert_eq!(nudges.try_recv().ok(), Some(id));
-    let p = policy(&app, &token).await;
+    let p = app.policy(&token).await;
     assert_eq!(p["update_fence"], json!(true));
     assert_eq!(p["notification_auto_cancel"], json!(true));
     assert_eq!(p["boot_cover"], json!(true));
@@ -89,19 +65,14 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
 
     // The phone's state (qa-16b-code #5): a launcher without the boot cover is told to update; one
     // with it reports a tripped guard, which the card shows as a warning.
-    post_status(
-        &app,
-        &token,
-        json!({ "capabilities": ["kiosk_escapes_v1"] }),
-    )
-    .await;
+    app.post_status(&token, json!({ "capabilities": ["kiosk_escapes_v1"] }))
+        .await;
     let page = advanced().await;
     assert!(
         page.contains("Update Vibb One for the boot cover"),
         "{page}"
     );
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "capabilities": ["kiosk_escapes_v1", "boot_cover_v1"],
                 "boot_cover": { "wanted": true, "tripped": true, "last_handover": "nope" } }),
@@ -122,7 +93,7 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
         &[("notification_auto_cancel", "on")],
     )
     .await;
-    let p = policy(&app, &token).await;
+    let p = app.policy(&token).await;
     assert_eq!(p["update_fence"], json!(false));
     assert_eq!(p["notification_auto_cancel"], json!(true));
     assert_eq!(p["boot_cover"], json!(false));
@@ -146,7 +117,7 @@ async fn switches_default_off_are_always_sent_and_saved_from_the_device_page() {
         )
         .await;
     assert!(res.status.is_redirection());
-    assert_eq!(policy(&app, &token).await["update_fence"], json!(false));
+    assert_eq!(app.policy(&token).await["update_fence"], json!(false));
 }
 
 #[tokio::test]
@@ -164,9 +135,7 @@ async fn update_fence_and_notification_cancels_are_stored_sanitized_and_capped()
             })
         })
         .collect();
-    post_status(
-        &app,
-        &token,
+    app.post_status(&token,
         json!({
             "update_fence": {
                 "enabled": true, "state": "fenced", "unsuspendable": ["com.oem.home"],
@@ -195,8 +164,7 @@ async fn update_fence_and_notification_cancels_are_stored_sanitized_and_capped()
     assert!(cancels.get("text").is_none());
 
     // Not an object: nothing stored.
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "update_fence": "fenced", "notification_cancels": [1] }),
     )
@@ -216,7 +184,8 @@ async fn device_page_explains_the_fence_and_the_filter() {
             .text()
     };
     // A launcher without the capability.
-    post_status(&app, &token, json!({ "capabilities": ["pin_lock_v1"] })).await;
+    app.post_status(&token, json!({ "capabilities": ["pin_lock_v1"] }))
+        .await;
     let html = advanced().await;
     assert!(html.contains("Updates &amp; notifications"), "{html}");
     assert!(
@@ -241,9 +210,7 @@ async fn device_page_explains_the_fence_and_the_filter() {
         &[("update_fence", "on"), ("notification_auto_cancel", "on")],
     )
     .await;
-    post_status(
-        &app,
-        &token,
+    app.post_status(&token,
         json!({
             "capabilities": ["kiosk_escapes_v1"],
             "notification_listener_enabled": false,

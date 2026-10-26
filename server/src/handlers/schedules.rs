@@ -1134,7 +1134,7 @@ pub async fn update_rule(
     };
     let stored = match rule_in_scope(&state, rule_id, scope.id()).await {
         Ok(Some(row)) => row,
-        Ok(None) => return to_list(&scope, "gone_unsaved"),
+        Ok(None) => return crate::settings_log::refused(to_list(&scope, "gone_unsaved")),
         Err(response) => return *response,
     };
     let input = match parse_rule_form(&fields) {
@@ -1156,7 +1156,9 @@ pub async fn update_rule(
     .await;
     match result {
         // Deleted between the check and the write.
-        Ok(done) if done.rows_affected() == 0 => return to_list(&scope, "gone_unsaved"),
+        Ok(done) if done.rows_affected() == 0 => {
+            return crate::settings_log::refused(to_list(&scope, "gone_unsaved"));
+        }
         Ok(_) => {}
         Err(err) => return server_error(err, "failed to save a time rule"),
     }
@@ -1180,7 +1182,7 @@ pub async fn delete_rule(
     };
     let rule = match rule_in_scope(&state, rule_id, scope.id()).await {
         Ok(Some(rule)) => rule,
-        Ok(None) => return to_list(&scope, "gone"),
+        Ok(None) => return crate::settings_log::refused(to_list(&scope, "gone")),
         Err(response) => return *response,
     };
     if let Err(err) =

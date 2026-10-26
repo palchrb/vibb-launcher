@@ -374,8 +374,8 @@ is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the desi
 - **Provisioning (2026-10-06)**: QR carries locale/time zone (`nb_NO`/`Europe/Oslo`), the
   launcher has the Android 12+ provisioning-mode/compliance activities, system language locked
   while managed. QR on the Jelly Star: [needs device test], adb stays the fallback.
-- **Pending user decision**: drop the top-left back buttons on full pages
-  (`KidHeader.SHOW_BACK_BUTTON`).
+- **Back buttons on full pages** (was "Pending user decision" since 2026-10-06): decided 2026-10-26 (the plan's decision 6) -
+  the buttons stay, the `KidHeader.SHOW_BACK_BUTTON` flag is gone (round 0b, merged 0a43ed3d).
 - **Cleanup: remove monitoring and unused upstream features** (user, 2026-10-06) - **done
   2026-10-06** (plus the applicationId `me.vibb.launcher`): journal, browser history, UnifiedPush relay
   and MollySocket removed (migration 0038), DNS log opt-in with 7 days, locations 7 days by default
@@ -511,7 +511,7 @@ Rounds and waves: `docs/plan/2026-10-25-queue-rounds.md` (2026-10-25). Combined 
 separators, one item per bullet, so each sits in its round; the words are unchanged.
 
 - **Cleanup**
-  - **Round 0b - dead code in the apps** (`cleanup-apps`, launcher + music; `docs/plan/2026-10-25-queue-rounds.md` Round 0b; **in build since 2026-10-26**, branch `cleanup-apps` off 380fc2c8): design 32's debug experiments (`LockUpDebug`, `KeyguardCoverDebug` + receivers, the §6k text), `palette-ktx`, the dead-code review's launcher list, D3's `FirebaseCleanup`/`FirebaseLeftovers`, D5's minimalist leftovers, `KidHeader.SHOW_BACK_BUTTON` (decision 6: the buttons stay, the flag goes), music `SpeakerCache.scanNow`. Deletions only; ships in the next launcher/music RC.
+  - **Round 0b - dead code in the apps** (`cleanup-apps`, launcher + music; `docs/plan/2026-10-25-queue-rounds.md` Round 0b; **merged 2026-10-26**, 0a43ed3d, code QA `docs/review/qa-0b-cleanup-code.md` 0/0/3/3 + fix round; 41 files, -940 lines; `color/kid_icon_fallback` kept - it gained callers; the COVER glue stays for design 59 phase D): design 32's debug experiments (`LockUpDebug`, `KeyguardCoverDebug` + receivers, the §6k text), `palette-ktx`, the dead-code review's launcher list, D3's `FirebaseCleanup`/`FirebaseLeftovers`, D5's minimalist leftovers, `KidHeader.SHOW_BACK_BUTTON` (decision 6: the buttons stay, the flag goes), music `SpeakerCache.scanNow`. Deletions only; ships in the next launcher/music RC.
 - **Launcher**
   - **Round L1 - glance and Home layout** (merged 2026-10-26, `launcher-glance-c`; RC3-8 pinned, six-inch F3/F4 and the lower music tile built; only Q5 is left):
     - **Fingerprint with the screen on, Jelly Star check** (the user, 2026-10-25, emulator: with the screen on the fingerprint unlocks only once SystemUI's pad is up; from screen-off it unlocks at once): expected in the hybrid - the glance occludes the keyguard, and Android listens for fingerprint only while the keyguard is showing and not occluded (design 59); no API lets us dismiss a secure keyguard after our own biometric check. Check on the Jelly Star (side-mounted sensor; some OEMs keep listening while occluded); if it does not work there with the screen on, one line in Kid Settings' help ("press the sensor from a dark screen, or swipe up first"), nothing more. Not a bug.
@@ -527,7 +527,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   - **Round B2 - emergency menu** (`emergency-menu`, launcher + server, mockup + design note first):
     - Configurable emergency menu
   - **Round L4 - the launcher's security Lows** (`launcher-sec-lows`; the shared line is under Server / PWA, Rounds S2 + S3).
-  - **Round L6 - the time-rule screen** (`rule-screen`, launcher + server; the user, 2026-10-26, Jelly Star screenshots of school mode; the bedtime design note `docs/design/66-bedtime.md` written, QA'd and revised 2026-10-26 (01d67bff) - **ready to build** once a build slot is free (the user answered §6 2026-10-26: per phone always, no holiday calendar, converted rules named Leggetid); the two screen items wait for it):
+  - **Round L6 - the time-rule screen** (`rule-screen`, launcher + server; the user, 2026-10-26, Jelly Star screenshots of school mode; the bedtime design note `docs/design/66-bedtime.md` written, QA'd and revised 2026-10-26 (01d67bff) - **built 2026-10-26, in code QA** (branch `bedtime` off 2aed5880, 50381989 + 0b5c9c24: migration 0101, `migrate_crossing`, the Bedtime page; the user answered §6 2026-10-26: per phone always, no holiday calendar, converted rules named Leggetid); the two screen items wait for it):
     - **The rule screen looks dated next to the glance**: the screen the kid reaches by unlocking during a locking rule ("Skole · Til 14:34 · Bare nødanrop fungerer nå", the night ground, a small icon, the old clock) should take the lock glance's look - the same clock face and size, the date and alarm lines, the rule card's typography (`lock/RuleCard.kt`), the Emergency row - so the two screens read as one design.
     - **No code entry on the rule screen** (the user, 2026-10-26: "ta vekk muligheten til å skrive inn opplåsingskode på låst modus"; decided 2026-10-26: **PWA only** - the parent lifts a rule from the PWA, no hidden path on the phone): drop the "Skriv inn opplåsingskode" prompt from the rule screen; the Emergency row stays.
     - **Bedtime as its own setting; day rules inside one day** (the user, 2026-10-26: "Start må være før slutt" and "burde leggetid være en egen input-greie ... leggetid som 1 faktor, ikke 7"): a short design note first. Proposed shape: one "Leggetid" setting per phone with an evening time and a morning time (and, proposed, a second pair for nights before a free day), stored and enforced as one rule that may cross midnight; the ordinary day rules then stay within one day (the form refuses end <= start, `00:00`-`23:59` the widest) and the help "An end before the start ends the next morning ..." goes. Existing rules that cross midnight migrate into the bedtime setting (or are refused until edited - the note decides). Both sides (the server's rules + the launcher's time_state), the policy contract pinned on both.
@@ -548,13 +548,8 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     **Built** (2026-10-26, branch `music-splash-c`): `logic/Splash.kt` `SPLASH_HOLD_MS` 400 and `splashHoldEnd(system, goneAtMs)` - the hold's end in ms since the app splash's first frame: the system splash GONE at t -> t + 400, but never past the 3 s cap (from the first frame; GONE with no instant known -> the cap); FADING -> none yet; never handed over -> max(500 ms wait, 400 ms hold) = 500 ms, the two running concurrently from the first frame, not in sequence. `splashFadeDue(contentShown, system, goneAtMs, nowMs)` = the content shown and `nowMs` past that end (pure, the time a parameter); `ui/LaunchSplash.kt` feeds it ms since its first frame (`SystemClock.uptimeMillis`, the GONE instant read in the composition that first sees GONE, one delay to the hold's end - no ticking), and latches the fade once due (a hand-over later than the 500 ms wait no longer brings the splash back). `contentReady` and the 3 s cap unchanged; no new dependency or string. `SplashTest` pins the hold (content at once + GONE at 300 ms: no fade at 699, fade at 700; content late at 1.5 s: fade then), the concurrent wait (500 ms, not 900; not at 400) and the cap (GONE at 2.8 s: the fade at 3 s). Emulator check: emulator.md §6u steps 12 and 18 ("at full strength at least 400 ms").
   - **Round M2 - the music app's security Lows** (`music-sec-lows`; the shared line is under Server / PWA, Rounds S2 + S3).
 - **Server / PWA**
-  - **Round S1 - server small items** (`server-small-e`; **in build since 2026-10-26**, branch `server-small-e` off 380fc2c8; decisions 5 (D3, D4) and 10 on their defaults):
-    - `PHONE_SERVER_URL` in `.env`
-    - episode pictures on demand
-    - GitHub asset digests
-    - PWA tab-switch timing (Navigation Timing behind a debug switch, then prefetch).
-    - Settings saves in the security log
-    - **One red alert while restrictions are paused, not two** (the user, 2026-10-26, iPhone PWA screenshot of a phone's summary: "unødvendig med to røde alerts her?"): the Attention row "Restrictions paused ›" and the Quick actions card "Unlocked on the phone - Restrictions are paused (...)" say the same thing in the same red. Keep one: the Attention row stays (it links to the detail), and the quick-actions card drops its red tint and shrinks to its one useful line (how it ends: "It ends by itself, or tap Lock again") or goes. Server/PWA, XS; a browser pass on the summary in light and dark.
+  - **Round S1 - server small items** (`server-small-e`; **merged 2026-10-26**, f20cc7f5, code QA `docs/review/qa-s1-server-small-e-code.md` 0/2/5/4 + fix round; server 0.54.0, tag after design 66 lands or on its own if that waits): `PHONE_SERVER_URL` in `.env` (DB wins; QR + Connect page; `deploy/env.example`, `install.sh`); episode pictures: the r5 finding was a per-host hold (three failures on one dead host ended the whole art pass) - now per host, plus a pass-wide cap of 6 while no host answered; GitHub asset `digest` into `ReleaseAsset.sha256`, a mismatch refused (catalog APKs; tarballs keep minisign); page timing (`static/nav-timing.js`, `?timing=1`, About › Diagnostics › Page timing row - step 1 only, the prefetch step stays below); settings saves in the security log (`settings_log::log_saves` inside `require_full_auth`: a 303 back to a page = a save, refusals-by-redirect carry `settings_log::Refused`, a handler that wrote its own event gets no second row, 10-min coalescing per parent and page, `NOT_SAVES` list); one red alert while paused (the Attention row stays, the Quick actions card is one plain line; browser pass light/dark done); the dead-code review's server list, D3's server half, D4's route. **Owed to the user:** the iPhone tab-switch numbers through About › Page timing after the tag; WebKit pass of the summary.
+    - PWA tab-switch timing step 2: prefetch after the measurement (waits for the iPhone numbers).
   - **Rounds S2 + S3 - security Lows, the server half** (`server-sec-lows-a`, `-b`; the launcher half is L4, the music half M2):
     - The security reviews' Low items (server 18, launcher 16, music 9).
   - **Round S4 - F-Droid trust** (`fdroid-trust`):
@@ -928,7 +923,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   Parents, Add with the one-time password, Withdraw) merged `b27316a8`; steps 3-5 (Reset/Remove, "by <name>", per-parent
   Notify Me About and inbox reads, migration 0088) merged `e4ed9877` (both 2026-10-22, code QA'd with their fixes); all
   five ship in one `server-v*`.
-- Settings saves in the security log (design 62's old step 6, qa-62-design Q62-13): one admin middleware writing a coalesced `settings_saved` event (actor, matched route + ids, merged per page within 10 min) - first decide what counts as saved (a 200 can be a refusal) and keep `/music` in; S.
+- Settings saves in the security log (design 62's old step 6, qa-62-design Q62-13) - **done 2026-10-26** (round S1, f20cc7f5): one admin middleware writing a coalesced `settings_saved` event (actor, matched route + ids, merged per page within 10 min) - first decide what counts as saved (a 200 can be a refusal) and keep `/music` in; S.
 - **Android mode, kiosk off: the glance's own lock task vs a helper app (rc.2 run R2):** an unlock on SystemUI's pad
   into a lock-task helper (DeskClock) finishes it, because `lockLeave` stops lock task from the root and no API ends
   the glance's lock task without clearing the helper's task. Decision 2026-10-22: as the face with the kiosk off and
@@ -1367,7 +1362,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   `usesSdk.minSdkVersion`; an app the repo builds per ABI gets one versionCode per ABI, often the highest an x86_64
   build. Drop versions whose `nativecode` is non-empty without `arm64-v8a` or `armeabi-v7a` (and a minSdk above the
   phones'). Waits for the first such app; Add App's ⓘ says the source suits apps with one APK for every phone. Server, S.
-- **GitHub asset digests** (qa-fdroid-source-code (e), 2026-10-24): GitHub's Releases API lists `digest:
+- **GitHub asset digests** (qa-fdroid-source-code (e), 2026-10-24) - **done 2026-10-26** (round S1, f20cc7f5): GitHub's Releases API lists `digest:
   "sha256:<hex>"` on assets (2025). Parse a well-formed one into `ReleaseAsset.sha256` (today `#[serde(skip)]`), so
   `stream_to_file` checks a GitHub download before the rename as it does F-Droid's; an asset without one (older
   releases) keeps today's behaviour. Server, S.
@@ -1598,7 +1593,8 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   in English before the language arrives from the server. Not yet checked (time-box): Home in en
   with 4 columns, the phone book, the keypad after a font-scale change, the time-rule
   "Til … p.m.", the PWA's About row, a VoIP ring while paused.
-- **Remove the unused androidx `palette` dependency** (unused since design 34 step 1), with its
+- **Remove the unused androidx `palette` dependency** - **done 2026-10-26** (round 0b, 0a43ed3d).
+  Was: **Remove the unused androidx `palette` dependency** (unused since design 34 step 1), with its
   verification-metadata entries.
 - **Design 46's queue view: a context entry's list shows the playing track and the next 20 from Spotify's queue**
   (the user, 2026-10-20: "Legg køvisning for neste 20 på longlisten vår, så husker vi på den til senere"). Designed and
@@ -1742,7 +1738,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   "never yours" rewritten to "your own account too, as a reader, if you want your playlists listed in full - it plays
   on no phone" (design 47's "Plays on" picker shows it as "Plays on no phone"). The user decides whether to log their
   account in; 46 (the queue's next 20) stays the answer for lists nobody logged in can read.
-- **Investigate: does one bad episode picture URL hold a listing's other pictures?** (from qa-r5-design.md r5-3,
+- **Investigate: does one bad episode picture URL hold a listing's other pictures?** **done 2026-10-26** (round S1, f20cc7f5). (from qa-r5-design.md r5-3,
   2026-10-20: the proposed `Why::Art` failures rule changed nothing, because with `failures > 0` the regular time already
   is the backoff). Find out whether a single picture's failure raises the listing's `failures` at all, or whether the
   hold is `art_due`'s one-day retry / `ART_MAX_FAILS`; then decide the rule with a test that reproduces the case
@@ -1947,7 +1943,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   own photos as wallpaper" (off = no share target: the activity alias disabled). The share sheet is already a
   kiosk helper. To check first: what Immich's share sends for a photo that is only on the server (a file
   after a download, or a link). Launcher mostly, plus the switch on the server. Scope not settled yet.
-- **`PHONE_SERVER_URL` in `.env`**: the phones' server address as an env default; the DB value
+- **`PHONE_SERVER_URL` in `.env`** - **done 2026-10-26** (round S1, f20cc7f5). Was: the phones' server address as an env default; the DB value
   (Phone Setup) wins when set, the page says "from .env", a startup warning when it isn't https.
 - **Wi-Fi in Phone Setup**, one of: (A) remember the Wi-Fi for the setup QR (write-only like the
   Tailscale key, left out of backups) - small; or (B) push the family's Wi-Fi networks to every

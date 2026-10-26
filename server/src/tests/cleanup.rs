@@ -129,18 +129,6 @@ async fn journal_and_history_routes_are_gone() {
     assert!(!page.text().contains("browser-history"));
 }
 
-#[tokio::test]
-async fn journal_media_is_deleted_once() {
-    let dir = tempfile::tempdir().unwrap();
-    let media = dir.path().join("journal_media");
-    std::fs::create_dir_all(media.join("1")).unwrap();
-    std::fs::write(media.join("1").join("5.jpg"), b"photo").unwrap();
-    assert!(crate::retention::remove_journal_media(&media).await);
-    assert!(!media.exists());
-    // Nothing there any more: a no-op at every later start.
-    assert!(!crate::retention::remove_journal_media(&media).await);
-}
-
 async fn count(db: &SqlitePool, sql: &str) -> i64 {
     sqlx::query_scalar(sql).fetch_one(db).await.unwrap()
 }
@@ -181,23 +169,12 @@ async fn retention_migration_deletes_the_old_dns_log_and_defaults() {
     assert_eq!(days, 7);
 }
 
-async fn policy(app: &super::TestApp, token: &str) -> serde_json::Value {
-    app.request(
-        axum::http::Method::GET,
-        "/api/devices/policy",
-        Some(token),
-        None,
-    )
-    .await
-    .json()
-}
-
 #[tokio::test]
 async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
     use axum::http::{Method, StatusCode};
     let app = super::TestApp::new().await;
     let (id, token) = app.enrolled_device("kid").await;
-    assert_eq!(policy(&app, &token).await["dns_log_enabled"], false);
+    assert_eq!(app.policy(&token).await["dns_log_enabled"], false);
     let events = serde_json::json!([
         { "domain": "ads.example", "category": "Ads", "blocked_at": "2026-10-06T10:00:00Z" }
     ]);
@@ -228,7 +205,7 @@ async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
     // Not signed in: sent to the login page, nothing written.
     let filter = super::device_page(id, super::Section::Filter);
     assert_ne!(res.location(), Some(filter.as_str()));
-    assert_eq!(policy(&app, &token).await["dns_log_enabled"], false);
+    assert_eq!(app.policy(&token).await["dns_log_enabled"], false);
 
     let cookie = app.admin_cookie().await;
     let res = app
@@ -241,7 +218,7 @@ async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
         .await;
     // Back to its group on the phone's Web Filter page (design 31 §5.1.4).
     super::assert_redirect(&res, &filter, Some("log"));
-    assert_eq!(policy(&app, &token).await["dns_log_enabled"], true);
+    assert_eq!(app.policy(&token).await["dns_log_enabled"], true);
     app.request(
         Method::POST,
         "/api/devices/dns-events",
@@ -268,7 +245,7 @@ async fn dns_log_is_off_by_default_and_opt_in_per_phone() {
         count(&app.db, "SELECT COUNT(*) FROM device_dns_events").await,
         0
     );
-    assert_eq!(policy(&app, &token).await["dns_log_enabled"], false);
+    assert_eq!(app.policy(&token).await["dns_log_enabled"], false);
     let res = app
         .request_form(
             Method::POST,

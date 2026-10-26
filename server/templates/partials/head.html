@@ -2,7 +2,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>{{ title }} · Vibb Phone</title>
 <meta name="color-scheme" content="light dark">
-<link rel="stylesheet" href="/static/style.css?v=55">
+<link rel="stylesheet" href="/static/style.css?v=57">
 <!-- The headings' Nunito, from this server only (style.css's @font-face). -->
 <link rel="preload" href="/static/fonts/nunito-latin-wght.woff2" as="font" type="font/woff2" crossorigin>
 
@@ -50,3 +50,6 @@
      once, "Connecting…" after 3 s and the same navigation again by itself once the server answers;
      after 10 minutes hidden a ping and a reload in place that keeps the scroll place. -->
 <script src="/static/reconnect.js?v=6" defer></script>
+<!-- What a tab switch costs (Navigation Timing), shown only after ?timing=1 in this browser;
+     ?timing=0 turns it off. Reads timings, sends nothing. -->
+<script src="/static/nav-timing.js?v=2" defer></script>

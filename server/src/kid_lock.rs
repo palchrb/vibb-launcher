@@ -1793,7 +1793,6 @@ mod tests {
     ) -> crate::models::DeviceCommand {
         crate::models::DeviceCommand {
             id: 1,
-            device_id: 1,
             command: SET_KID_PIN.to_string(),
             requested_at: "2026-10-20 12:00:00".to_string(),
             delivered_at: delivered.then(|| "2026-10-20 12:02:00".to_string()),

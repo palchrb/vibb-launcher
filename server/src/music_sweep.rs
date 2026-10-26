@@ -123,9 +123,15 @@ pub const ART_MAX_FAILS: i64 = 3;
 pub const ART_BACKLOG_SAME: i64 = 5;
 /// ... until this many days later (QA L1 e: a carousel the entry would have isn't hidden for good).
 pub const ART_BACKLOG_RETRY_DAYS: i64 = 30;
-/// Network errors in a row (or 5xx answers) from image hosts that end a check's art pass (code QA
-/// M2, like [MANIFEST_NETWORK_FAILURES]): a dead host costs 3 requests, not the check's 10 minutes.
+/// Network errors in a row (or 5xx answers) from one image host that end its part of a check's art
+/// pass (code QA M2, like [MANIFEST_NETWORK_FAILURES]): a dead host costs 3 requests, not the
+/// check's 10 minutes. Counted per host since 0.54.0 (Q26): a dead host no longer holds the
+/// pictures on the entry's other hosts.
 pub const ART_NETWORK_FAILURES: u32 = 3;
+/// Host troubles in one art pass, over all hosts, that end it while no host has answered in it
+/// (code QA of round S1, L3): a DNS or uplink fault after a good listing doesn't ask every host
+/// three times.
+pub const ART_PASS_FAILURES: u32 = 2 * ART_NETWORK_FAILURES;
 /// A judged picture whose URL moved to another path is fetched again at most this often (code QA
 /// M1: a feed that renames its pictures at every fetch). A change in the query alone keeps the
 /// result with no request.
@@ -820,7 +826,6 @@ pub async fn load_items(
 
 /// One `music_listings` row (the defaults before the first check), every column as stored.
 #[derive(sqlx::FromRow, Debug, Clone, Default)]
-#[allow(dead_code)] // `checked_at` and `requests` are for the log and the tests
 pub struct Listing {
     pub entry_id: i64,
     pub title: Option<String>,
@@ -848,6 +853,8 @@ pub struct Listing {
     pub error_at: Option<String>,
     pub failing_since: Option<String>,
     pub failures: i64,
+    /// The last check's requests: for the tests (the log has the check's own count).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub requests: i64,
     /// Episode art (design 27 §1.2, QA M2/M3).
     pub cover_print: Option<i64>,
@@ -3518,9 +3525,9 @@ fn rejudge(plan: &mut Plan, refs: &[i64]) {
 /// check's new items first, until done - no picture budget since 2026-10-19 (`gets` is the tests'
 /// cap, else `u32::MAX`). The check's own budget or a host's trouble may cut it short: the items
 /// left stay untried (QA L1 b) and are counted in `plan.art.more`, which makes the entry due again
-/// at once ([Why::Art]) - only when the pass sent a picture request, and after a host's trouble
-/// only when a picture came in this pass, so a dead host waits for the regular check. Never fails the check: a failed picture shows the series
-/// cover.
+/// at once ([Why::Art]) - only when the pass sent a picture request, and behind a host in trouble
+/// only when that host answered in this pass, so a dead host waits for the regular check while the
+/// entry's other hosts go on. Never fails the check: a failed picture shows the series cover.
 async fn art_pass(
     db: &sqlx::SqlitePool,
     job: &mut Job<'_>,
@@ -3632,8 +3639,22 @@ async fn art_pass(
         .collect();
     let lan = plan.lan == Some(true) && matches!(link, Link::Rss { .. });
     let reach = if lan { Reach::Any } else { Reach::Public };
-    // Network errors (and 5xx answers) in a row: an image host that is down (code QA M2).
-    let mut unreachable = 0;
+    // Per image host: network errors (and 5xx answers) in a row, and whether it answered in this
+    // pass (code QA M2; per host since Q26). A host at [ART_NETWORK_FAILURES] is down for the rest
+    // of the pass: its pictures wait untried, the other hosts' go on.
+    let mut hosts: HashMap<String, (u32, bool)> = HashMap::new();
+    let down = |hosts: &HashMap<String, (u32, bool)>, url: &str| {
+        let host = music_net::host_of(url).unwrap_or_default();
+        hosts
+            .get(&host)
+            .filter(|(failures, _)| *failures >= ART_NETWORK_FAILURES)
+            .map(|(_, answered)| *answered)
+    };
+    // Pictures left behind a host that answered in this pass and then went down (a blip): due
+    // again at once. Behind a host that never answered they wait for the regular check.
+    let mut blipped = 0;
+    // Host troubles in this pass over all hosts ([ART_PASS_FAILURES]).
+    let mut troubles = 0;
     // The pass's memo of URLs it sent a request for and got no picture from (design 26c §3.5: a
     // playlist repeats its albums' pictures): the next item naming one costs no request. A URL
     // judged in this pass is found again by step 2 (this entry's items first).
@@ -3641,7 +3662,6 @@ async fn art_pass(
     // Untried candidates the pass leaves: held by the tests' cap, or the rest after a cut.
     let mut held = 0;
     let mut cut_at: Option<usize> = None;
-    let mut came = false;
     // Whether the pass sent a picture request at all (qa-art-asap-code L3): a check whose listing
     // spent its whole budget doesn't come back at once only to spend it again.
     let mut requested = false;
@@ -3694,7 +3714,12 @@ async fn art_pass(
             }
             continue;
         }
-        // 3. One request (the tests' cap aside, no picture budget: 2026-10-19).
+        // 3. One request (the tests' cap aside, no picture budget: 2026-10-19), unless its host
+        // is down in this pass.
+        if let Some(answered) = down(&hosts, &url) {
+            blipped += usize::from(answered);
+            continue;
+        }
         if gets == 0 {
             held += 1;
             continue;
@@ -3726,25 +3751,25 @@ async fn art_pass(
             Got::Answer(answer) => answer.status >= 500,
             Got::Skipped => false,
         };
+        let host = hosts
+            .entry(music_net::host_of(&url).unwrap_or_default())
+            .or_default();
         if host_trouble {
+            host.0 += 1;
             tried.insert(url.clone(), true);
             let item = &mut plan.items[index];
             item.art_at = Some(stamp(now));
             if item.art_state.is_none() {
                 item.art_from = Some(url);
             }
-            unreachable += 1;
-            if unreachable >= ART_NETWORK_FAILURES {
-                // Back at once only when the host answered in this pass (a blip, not an outage).
-                if came {
-                    cut_at = Some(step + 1);
-                }
+            troubles += 1;
+            if troubles >= ART_PASS_FAILURES && !hosts.values().any(|(_, answered)| *answered) {
+                // No host answers: the rest wait for the regular check, untried.
                 break;
             }
             continue;
         }
-        unreachable = 0;
-        came = true;
+        *host = (0, true);
         let photo = match got {
             Got::Answer(answer) if answer.status == 200 && !answer.truncated => {
                 crate::photos::process_limited(answer.body.into(), crate::photos::Shape::Square)
@@ -3790,10 +3815,17 @@ async fn art_pass(
     let rest = cut_at.filter(|_| requested).map_or(0, |at| {
         candidates[at..]
             .iter()
-            .filter(|&&i| art_due(&plan.items[i], now))
+            .filter(|&&i| {
+                let item = &plan.items[i];
+                art_due(item, now)
+                    && item
+                        .art_url
+                        .as_deref()
+                        .is_none_or(|url| down(&hosts, url) != Some(false))
+            })
             .count()
     });
-    plan.art.more = rest + if capped { held } else { 0 };
+    plan.art.more = rest + blipped + if capped { held } else { 0 };
     // An entry whose pictures are all the series picture: only new items from now on (§1.4).
     if plan.art.backlog
         && plan.art.same_run >= ART_BACKLOG_SAME

@@ -8,12 +8,18 @@ use super::*;
 const KEY1: &str = "0796f1809e476a2ce724f1341bcb32d03185b7a202c3469787c5775d65ef4be3";
 const KEY2: &str = "7639db09b107ba0392d32bf2e80aebc4e728c8ea06c091a0d4330fddaaddd434";
 
-fn fixture(name: &str) -> Vec<u8> {
+pub(super) fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(format!("testdata/apk/{name}")).unwrap()
 }
 
 /// "Upload a release" on the app's page.
-async fn upload(app: &TestApp, cookie: &str, id: i64, label: &str, bytes: &[u8]) -> TestResponse {
+pub(super) async fn upload(
+    app: &TestApp,
+    cookie: &str,
+    id: i64,
+    label: &str,
+    bytes: &[u8],
+) -> TestResponse {
     let boundary = "XBOUNDARYX";
     let mut body = Vec::new();
     body.extend_from_slice(
@@ -71,7 +77,7 @@ async fn allowed(app: &TestApp, token: &str, package: &str) -> bool {
         .is_some_and(|list| list.contains(&serde_json::json!(package)))
 }
 
-async fn manual_app(app: &TestApp, name: &str) -> i64 {
+pub(super) async fn manual_app(app: &TestApp, name: &str) -> i64 {
     sqlx::query_scalar(
         "INSERT INTO tracked_apps (name, package_name, github_repo, source_type) \
          VALUES (?, '', '', 'manual') RETURNING id",

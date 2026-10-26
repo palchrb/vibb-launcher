@@ -16,10 +16,11 @@ import java.util.concurrent.Executors
 private const val LOG_TAG = "KeyguardCover"
 
 /**
- * Design 32 step 2 (docs/design/32-lock-flash.md §8 step 2): the keyguard cover - a device experiment
- * behind `KeyguardCoverDebug`'s switch (debug builds only; the release one is always false, and then
- * everything here writes exactly what step 1 wrote and waits for nothing). The decisions are pure
- * ([keyguardMode], [writeKeyguard], [dismissDue] ... in KeyguardCoverPlan.kt); this is the glue.
+ * Design 32 step 2 (docs/design/32-lock-flash.md §8 step 2): the keyguard cover - a device experiment whose
+ * debug switch is gone (round 0b), so [switchOn] is never true: everything here writes exactly what step 1
+ * wrote and waits for nothing, besides design 59's ANDROID mode. The COVER mode itself goes with design 59
+ * phase D. The decisions are pure ([keyguardMode], [writeKeyguard], [dismissDue] ... in KeyguardCoverPlan.kt);
+ * this is the glue.
  *
  * **The one keyguard writer** (H2, M6): `setKeyguardDisabled`, `setKeyguardDisabledFeatures` and
  * `setMaximumTimeToLock` are called only here - from [configure] (every apply), [rewrite] (the VoIP
@@ -32,10 +33,8 @@ private const val LOG_TAG = "KeyguardCover"
  */
 object KeyguardCover {
 
-    /** The debug switch, cached by [configure] and [atProcessStart] - never read from prefs on the main thread (L5). */
-    @Volatile
-    var switchOn = false
-        private set
+    /** The cover's switch: never on since its debug switch went (round 0b). */
+    val switchOn = false
 
     /** COVER is in force: the features, T and `setKeyguardDisabled(false)` all held. */
     @Volatile
@@ -56,10 +55,6 @@ object KeyguardCover {
 
     /** T (`setMaximumTimeToLock`) follows the screen timeout: under the cover (H1) or Android's lock (59 §3.2). */
     val timeToLockFollows: Boolean get() = coverOn || androidOn
-
-    /** The debug receiver's dismissal knob ([DismissTest]); nothing else sets it. */
-    @Volatile
-    var dismissTest = DismissTest.NONE
 
     /** [configure]'s last inputs (`null` before the first apply in this process). [androidRequested]: design 59's switch. */
     private data class Inputs(val managed: Boolean, val hasKidPin: Boolean, val deviceSecure: Boolean, val guardTripped: Boolean, val androidRequested: Boolean = false, val androidHeld: Boolean = false)
@@ -83,10 +78,6 @@ object KeyguardCover {
     @Volatile
     private var wakePending = false
 
-    /** The last write, for the debug receiver's report. */
-    @Volatile
-    private var last: KeyguardWritten? = null
-
     /** `ACTION_SHUTDOWN` came: every later write is the cover off, and nothing re-arms (M2.4). Monitor. */
     @Volatile
     private var shuttingDown = false
@@ -101,7 +92,7 @@ object KeyguardCover {
     // ---- the writer ----------------------------------------------------------------------------
 
     /**
-     * Off the main thread at the process start ([PinLockRuntime.init]): the debug switch, and (M2) a cover
+     * Off the main thread at the process start ([PinLockRuntime.init]): (M2) a cover
      * an earlier process or boot left in the device policy goes off at once - [processStartWrite]:
      * DISABLED (`setKeyguardDisabled(true)` dismisses a Swipe screen a reboot without `ACTION_SHUTDOWN`
      * left up), the cover's bits and T out, unless an apply already wrote in this process. The cover
@@ -109,11 +100,6 @@ object KeyguardCover {
      */
     fun atProcessStart(context: Context) {
         val app = context.applicationContext
-        switchOn = try {
-            KeyguardCoverDebug.enabled(app)
-        } catch (e: Exception) {
-            false
-        }
         try {
             synchronized(this) {
                 if (!processStartWrite(coverWritten(app), configured = inputs != null)) return
@@ -144,11 +130,6 @@ object KeyguardCover {
         androidHeld: Boolean = false,
     ): Boolean {
         val app = context.applicationContext
-        switchOn = try {
-            KeyguardCoverDebug.enabled(app)
-        } catch (e: Exception) {
-            false
-        }
         inputs = Inputs(managed, hasKidPin, deviceSecure, guardTripped, androidRequested, androidHeld)
         val (wanted, forManaged) = wantedNow()
         return write(app, dpm, admin, "apply", wanted, forManaged).lockMayRun
@@ -201,7 +182,6 @@ object KeyguardCover {
         coverOn = written.mode == KeyguardMode.COVER
         androidOn = written.mode == KeyguardMode.ANDROID
         androidCameraGuard = androidOn && secureCameraHeld(managed, written.features)
-        last = written
         // Release (the switch never on) logs nothing new - except what threw (qa-32-s2-code nit 2).
         for ((what, e) in written.errors) Log.w(LOG_TAG, what, e)
         if (androidOn != wasAndroid || androidOn) {
@@ -243,9 +223,6 @@ object KeyguardCover {
                     if (ok) storeWritten(app, false)
                     coverOn = false
                     armed = false
-                    last = (last ?: KeyguardWritten(KeyguardMode.DISABLED, ok)).copy(
-                        mode = KeyguardMode.DISABLED, lockMayRun = ok, coverFailed = null, disabled = true, errors = emptyList(),
-                    )
                     Log.i(LOG_TAG, "disabled now ($why): setKeyguardDisabled(true)=$ok")
                 }
             } catch (e: Exception) {
@@ -307,13 +284,6 @@ object KeyguardCover {
         }
     }
 
-    /** What is in force now - the debug receiver's report. */
-    fun describe(): String {
-        val w = last ?: return "no keyguard write in this process yet"
-        return "mode=${w.mode} features=${w.features?.let { "0x" + Integer.toHexString(it) }} maxTimeToLock=${w.maxTimeToLockMs} " +
-            "disabled=${w.disabled}${w.coverFailed?.let { " coverFailed=$it" } ?: ""} armed=$armed dismissTest=$dismissTest"
-    }
-
     // ---- the lock's side (main thread) ---------------------------------------------------------------
 
     /** Failures in a row ([dismissFailed]) and the open request (elapsed ms). Main thread. */
@@ -354,13 +324,13 @@ object KeyguardCover {
 
     /** M7: the lock asks now - the first frame since its resume ([dismissDue]). */
     fun dismissDueNow(context: Context, resumed: Boolean, drawnSinceResume: Boolean, triedThisResume: Boolean): Boolean =
-        coverOn && dismissTest != DismissTest.SKIP &&
-            dismissDue(coverOn, resumed, interactive(context), keyguardLocked(context), drawnSinceResume, triedThisResume)
+        coverOn && dismissDue(coverOn, resumed, interactive(context), keyguardLocked(context), drawnSinceResume, triedThisResume)
 
-    /** The lock asked (or, with [DismissTest.FAIL], pretends to). Returns whether to really call. */
+    /** The lock asks: the state check times the request from now. Always true (call) since the debug knobs went
+     * (round 0b) - it goes with the cover's dismissal in design 59 phase D. */
     fun dismissRequested(): Boolean {
         requestedAtMs = SystemClock.elapsedRealtime()
-        return dismissTest == DismissTest.NONE
+        return true
     }
 
     /**
@@ -392,7 +362,7 @@ object KeyguardCover {
                 return false
             }
         }
-        return requestedAtMs == null && resumed && drawnSinceResume && dismissTest != DismissTest.SKIP && interactive(context)
+        return requestedAtMs == null && resumed && drawnSinceResume && interactive(context)
     }
 
     /** The dismissal's callbacks: logged only (M7) - a success lets the waiting screens go at once. */

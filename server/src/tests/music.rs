@@ -3558,7 +3558,8 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
     assert!(!tick_form_of(&off, entry).contains("On the phone:"));
     tick(&app, &cookie, device, entry, true).await;
     // The report's age under the group, in Phone Setup's zone, the exact local time in its
-    // `title` (qa-31-s7-code L2): yesterday 10:00 UTC is 12:00 in Oslo in October.
+    // `title` (qa-31-s7-code L2): yesterday 10:00 UTC in Oslo's own time (12:00 in summer, 11:00
+    // in winter).
     sqlx::query("UPDATE provisioning_settings SET time_zone = 'Europe/Oslo'")
         .execute(&app.db)
         .await
@@ -3588,7 +3589,12 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
         )),
         "{on_phone}"
     );
-    assert!(oslo.exact(reported_at).contains("12:00:00"));
+    let local = reported_at
+        .with_timezone(&chrono_tz::Europe::Oslo)
+        .format("%H:%M:%S")
+        .to_string();
+    assert_ne!(local, "10:00:00", "Oslo is never UTC");
+    assert!(oslo.exact(reported_at).contains(&local), "{local}");
 
     // The phone's library is older, or not there yet.
     for (applied, value) in [

@@ -176,6 +176,7 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "music_phone_entry" => "Music on a phone changed",
         "music_phone_settings" => "Phone's music settings changed",
         "music_sonos_rooms_changed" => "Sonos rooms changed",
+        "settings_saved" => "Settings saved",
         _ => return None,
     })
 }

@@ -41,6 +41,7 @@ mod play;
 mod push;
 mod retention;
 mod security;
+mod settings_log;
 mod sound_mode;
 mod spotify;
 mod startup;
@@ -344,16 +345,6 @@ async fn main() {
         );
     }
 
-    // FCM is gone (design 19): the SSE stream is the only nudge. A key left configured is
-    // ignored - say so once, so it gets removed and revoked (DEPLOY.md, "Removing FCM").
-    if std::env::var("FCM_SERVICE_ACCOUNT_FILE").is_ok_and(|v| !v.trim().is_empty()) {
-        tracing::warn!(
-            "FCM_SERVICE_ACCOUNT_FILE is set but FCM was removed in 0.20.0 - it is ignored. \
-             Remove it from .env, delete the key file and revoke the key (DEPLOY.md, \
-             \"Removing FCM\")"
-        );
-    }
-
     // The Storytel login's key (design 21, QA #10): .env's MUSIC_SECRET_KEY, else our own key file
     // in data/keys/ (the only place the unit lets us write; no backup copies it), made on the first
     // start.
@@ -495,8 +486,6 @@ async fn main() {
     // QA #3), and an upload a crash interrupted leaves no temp file.
     music::remove_partial_uploads(&state.music_files_dir).await;
     music::flag_missing_files(&state.db, &state.music_files_dir).await;
-    // The conversation journal is gone (migration 0038); so are its media files.
-    retention::remove_journal_media(std::path::Path::new(retention::JOURNAL_MEDIA_DIR)).await;
 
     tokio::task::spawn(handlers::backups::run_scheduled_backups(state.clone()));
     // The live mirror feeds an external drive and the app-update schedule a root helper - neither
@@ -1327,10 +1316,6 @@ pub fn build_admin_router(
             post(handlers::dns_filter::toggle_blocklist),
         )
         .route(
-            "/dns/blocklists/{id}/delete",
-            post(handlers::dns_filter::delete_blocklist),
-        )
-        .route(
             "/dns/domains/new",
             post(handlers::dns_filter::create_custom_domain),
         )
@@ -1449,6 +1434,9 @@ pub fn build_admin_router(
             state.clone(),
             handlers::notifications::push_marker,
         ))
+        // A save (a POST answered with a 303 back to its page) in the security log, coalesced per
+        // parent and page (Q29); inside require_full_auth too, for its `CurrentAdmin`.
+        .layer(from_fn_with_state(state.clone(), settings_log::log_saves))
         .layer(from_fn_with_state(
             state.clone(),
             security::require_full_auth,
@@ -1494,6 +1482,7 @@ pub fn build_admin_router(
             "/backups/format-drive",
             post(handlers::backups::format_drive),
         )
+        .layer(from_fn_with_state(state.clone(), settings_log::log_saves))
         .layer(from_fn_with_state(
             state.clone(),
             security::require_full_auth,

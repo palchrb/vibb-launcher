@@ -11,14 +11,6 @@ use crate::lock_glance::ELEMENT_X;
 /// The migration that adds the table, the switch and the default (renumbered at a rebase: here only).
 const MIGRATION: i64 = 66;
 
-async fn policy(app: &TestApp, token: &str) -> Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    res.json()
-}
-
 async fn ticks(app: &TestApp, id: i64) -> Vec<String> {
     sqlx::query_scalar(
         "SELECT package_name FROM device_lock_glance_apps WHERE device_id = ? ORDER BY package_name",
@@ -249,7 +241,7 @@ async fn the_policy_carries_the_sorted_valid_apps_each_with_its_text() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
     assert_eq!(
-        policy(&app, &token).await["lock_glance"],
+        app.policy(&token).await["lock_glance"],
         json!({ "apps": [{ "package": ELEMENT_X, "show_text": false }] })
     );
     for (package, text) in [
@@ -270,7 +262,7 @@ async fn the_policy_carries_the_sorted_valid_apps_each_with_its_text() {
         .unwrap();
     }
     assert_eq!(
-        policy(&app, &token).await["lock_glance"],
+        app.policy(&token).await["lock_glance"],
         json!({
             "apps": [
                 { "package": "com.a.chat", "show_text": false },
@@ -282,7 +274,7 @@ async fn the_policy_carries_the_sorted_valid_apps_each_with_its_text() {
     // Another phone's ticks are its own.
     let (_, other) = app.enrolled_device("other").await;
     assert_eq!(
-        policy(&app, &other).await["lock_glance"]["apps"],
+        app.policy(&other).await["lock_glance"]["apps"],
         json!([{ "package": ELEMENT_X, "show_text": false }])
     );
 }
@@ -291,7 +283,7 @@ async fn the_policy_carries_the_sorted_valid_apps_each_with_its_text() {
 async fn an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    let before = policy(&app, &token).await;
+    let before = app.policy(&token).await;
     // The trigger names the table, so it goes first.
     sqlx::query("DROP TRIGGER devices_get_lock_glance_default")
         .execute(&app.db)
@@ -301,7 +293,7 @@ async fn an_unreadable_table_sends_no_apps_and_the_rest_of_the_policy() {
         .execute(&app.db)
         .await
         .unwrap();
-    let after = policy(&app, &token).await;
+    let after = app.policy(&token).await;
     assert_eq!(after["lock_glance"], json!({ "apps": [] }));
     let strip = |mut v: Value| {
         v.as_object_mut().unwrap().remove("lock_glance");
@@ -340,7 +332,7 @@ async fn ticking_and_unticking_an_app_is_idempotent_logged_and_nudges() {
         [ELEMENT_X, "org.thoughtcrime.securesms"]
     );
     assert_eq!(
-        policy(&app, &token).await["lock_glance"]["apps"],
+        app.policy(&token).await["lock_glance"]["apps"],
         json!([
             { "package": ELEMENT_X, "show_text": false },
             { "package": "org.thoughtcrime.securesms", "show_text": false },
@@ -398,7 +390,7 @@ async fn an_apps_text_switch_saves_logs_nudges_and_a_retick_resets_it() {
         );
     }
     assert_eq!(
-        policy(&app, &token).await["lock_glance"]["apps"],
+        app.policy(&token).await["lock_glance"]["apps"],
         json!([
             { "package": ELEMENT_X, "show_text": false },
             { "package": signal, "show_text": true },
@@ -452,7 +444,7 @@ async fn each_move_of_the_select_is_stored_as_the_lock_shows_it() {
             .find(|(p, _)| p == signal)
             .map(|(_, text)| text);
         assert_eq!(row, stored(value), "{before} -> {value}");
-        let apps = policy(&app, &token).await["lock_glance"]["apps"].clone();
+        let apps = app.policy(&token).await["lock_glance"]["apps"].clone();
         let listed = apps
             .as_array()
             .unwrap()
@@ -976,7 +968,7 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     assert_eq!(
-        policy(&app, &token).await["launcher_ui"]["lock_wake_on_notification"],
+        app.policy(&token).await["launcher_ui"]["lock_wake_on_notification"],
         json!(false)
     );
     let html = app.get_page(&lock_page(id), &cookie).await.text();
@@ -1011,7 +1003,7 @@ async fn the_wake_switch_saves_logs_nudges_and_reaches_the_policy() {
         app.assert_lands(&res, &cookie).await;
         assert_eq!(nudges.try_recv().ok(), Some(id));
         assert_eq!(
-            policy(&app, &token).await["launcher_ui"]["lock_wake_on_notification"],
+            app.policy(&token).await["launcher_ui"]["lock_wake_on_notification"],
             json!(on)
         );
     }

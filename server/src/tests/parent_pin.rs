@@ -6,14 +6,6 @@ use serde_json::Value;
 
 use super::{Section, TestApp, device_page};
 
-async fn policy(app: &TestApp, token: &str) -> Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK);
-    res.json()
-}
-
 /// `(hash, salt, easy)` as stored.
 async fn stored(app: &TestApp, id: i64) -> (Option<String>, Option<String>, Option<bool>) {
     sqlx::query_as(
@@ -80,7 +72,7 @@ async fn a_pin_is_saved_hashed_and_sent_with_a_nudge() {
     assert_eq!(row.2, Some(false));
     assert_eq!(events(&app, "override_pin_changed").await, 1);
     assert_eq!(nudges.try_recv().ok(), Some(id));
-    let policy = policy(&app, &token).await;
+    let policy = app.policy(&token).await;
     assert_eq!(policy["override_pin_hash"].as_str(), row.0.as_deref());
     // The policy JSON has no new key.
     assert!(policy.get("override_pin_easy").is_none());
@@ -200,7 +192,7 @@ async fn clearing_works_unless_the_kids_lock_needs_it() {
     assert!(location.contains("notice=parent_pin_cleared"), "{location}");
     assert_eq!(stored(&app, id).await, (None, None, None));
     assert_eq!(events(&app, "override_pin_cleared").await, 1);
-    assert!(policy(&app, &token).await["override_pin_hash"].is_null());
+    assert!(app.policy(&token).await["override_pin_hash"].is_null());
 }
 
 #[tokio::test]

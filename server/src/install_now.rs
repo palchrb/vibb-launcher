@@ -539,7 +539,6 @@ mod tests {
     fn command(status: &str) -> DeviceCommand {
         let mut c = DeviceCommand {
             id: 9,
-            device_id: 1,
             command: COMMAND.to_string(),
             requested_at: "2026-10-19 12:00:00".to_string(),
             delivered_at: None,

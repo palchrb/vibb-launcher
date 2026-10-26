@@ -141,7 +141,7 @@ pub fn encrypt_password(password: &str) -> String {
     data.extend(std::iter::repeat_n(pad as u8, pad));
     let mut previous = AES_IV;
     let mut out = String::with_capacity(data.len() * 2);
-    for chunk in data.chunks_exact(16) {
+    for chunk in data.as_chunks::<16>().0 {
         let mut block = aes::Block::default();
         for (i, byte) in block.iter_mut().enumerate() {
             *byte = chunk[i] ^ previous[i];
