@@ -511,11 +511,7 @@ Rounds and waves: `docs/plan/2026-10-25-queue-rounds.md` (2026-10-25). Combined 
 separators, one item per bullet, so each sits in its round; the words are unchanged.
 
 - **Launcher**
-  - **In build, `launcher-glance-b`** (not a planned round):
-  - **Round L1 - glance and Home layout** (`launcher-glance-c`, after `launcher-glance-b` merges):
-    - RC3-8
-    - six-inch F3/F4
-    - compact music tile a little lower
+  - **Round L1 - glance and Home layout** (merged 2026-10-26, `launcher-glance-c`; RC3-8 pinned, six-inch F3/F4 and the lower music tile built; only Q5 is left):
     - **Fingerprint with the screen on, Jelly Star check** (the user, 2026-10-25, emulator: with the screen on the fingerprint unlocks only once SystemUI's pad is up; from screen-off it unlocks at once): expected in the hybrid - the glance occludes the keyguard, and Android listens for fingerprint only while the keyguard is showing and not occluded (design 59); no API lets us dismiss a secure keyguard after our own biometric check. Check on the Jelly Star (side-mounted sensor; some OEMs keep listening while occluded); if it does not work there with the screen on, one line in Kid Settings' help ("press the sensor from a dark screen, or swipe up first"), nothing more. Not a bug.
   - **Round L2 - pause end and enforcement** (`launcher-enforce`):
     - **End of a pause: end the background processes of the apps that get blocked again** (the user, 2026-10-25, emulator `dumpsys meminfo` after a pause: Immich 150 MB, Element X 122, WhatsApp 118, Fossify calendar/clock 90+88 still resident - suspending keeps the process): when `AppEnforcer.apply` re-suspends or re-hides a package at a pause's end (and at a time rule's start), call `ActivityManager.killBackgroundProcesses(pkg)` (a normal permission) for exactly those packages - never for an app allowed outside the pause (Element X with calls), never for our own or the music app; log a count. Measure before/after on the emulator (the same dumpsys). The one-hour PSS measurement of `me.vibb.launcher` is done (2026-10-25: PSS 140 → 137 MB, Views 210 → 210, AppContexts 47 → 18, Activities 2 → 2): no leak. Launcher, S.
@@ -548,8 +544,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     - the music app's "no network" text and the real cause in its log
   - **Round M2 - the music app's security Lows** (`music-sec-lows`; the shared line is under Server / PWA, Rounds S2 + S3).
 - **Server / PWA**
-  - **In build, `pwa-fixes-d`** (not a planned round):
-        - **Round S1 - server small items** (`server-small-e`):
+  - **Round S1 - server small items** (`server-small-e`):
     - `PHONE_SERVER_URL` in `.env`
     - episode pictures on demand
     - GitHub asset digests
