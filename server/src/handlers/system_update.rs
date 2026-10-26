@@ -101,7 +101,7 @@ async fn update_blocked_reason(state: &AppState) -> Option<String> {
 /// `repo` is `config::ForkConfig::server_release_repo` (`owner/repo`).
 async fn latest_release_tag(config: &crate::config::ForkConfig) -> Option<String> {
     let client = reqwest::Client::builder()
-        .user_agent("kid-phone-server (self-hosted, github.com)")
+        .user_agent(crate::net::USER_AGENT)
         .timeout(Duration::from_secs(8))
         .build()
         .ok()?;

@@ -311,3 +311,67 @@ fun phoneStateGrants(
             if (pkg in targets && (allowlist == null || pkg in allowlist)) GRANT_STATE_GRANTED else GRANT_STATE_DEFAULT
         }
 }
+
+/** The runtime permission [cameraGrants] denies (design 68 §2.1). */
+const val CAMERA_PERMISSION = "android.permission.CAMERA"
+
+/** [cameraGrants]' answer: the grant states to write (only where they differ), and whether a denial waits for a call's end. */
+data class CameraPlan(val writes: Map<String, Int>, val deferred: Boolean)
+
+/**
+ * Design 68 §3.2: "camera off" per app. Targets: every package in [requested] (third-party only, mapped to their requested
+ * permissions) but ours that requests [CAMERA_PERMISSION]. Each is [GRANT_STATE_DENIED] when in [denied] and no window is open
+ * ([windowOpen]: the pause or the override lift it, the relock's apply denies again), else [GRANT_STATE_DEFAULT] - the policy
+ * fix cleared, the kid's dialog decides; we never GRANT a sensor. Revoking a granted permission kills the app, so while
+ * [callLive] a target going to DENIED from another state that holds the camera now ([held]) is left out and the plan is
+ * [CameraPlan.deferred]; one that doesn't hold it is denied at once. [denied] `null` (no `app_permissions` - an older server, a
+ * `Fallback`) writes nothing, except in a window: every target reading DENIED goes to DEFAULT (we are the only admin, so a
+ * `Fallback` phone's pause still lifts it). [current] is each target's grant state now; writes only where it differs ([grantWrite]).
+ */
+fun cameraGrants(
+    requested: Map<String, Collection<String>>,
+    ownPackage: String,
+    denied: Set<String>?,
+    windowOpen: Boolean,
+    callLive: Boolean,
+    held: Set<String>,
+    current: Map<String, Int>,
+): CameraPlan {
+    val writes = LinkedHashMap<String, Int>()
+    var deferred = false
+    for ((pkg, perms) in requested) {
+        if (pkg == ownPackage || CAMERA_PERMISSION !in perms) continue
+        val now = current[pkg] ?: GRANT_STATE_DEFAULT
+        val wanted = when {
+            denied == null -> if (windowOpen && now == GRANT_STATE_DENIED) GRANT_STATE_DEFAULT else continue
+            pkg in denied && !windowOpen -> GRANT_STATE_DENIED
+            else -> GRANT_STATE_DEFAULT
+        }
+        if (wanted == GRANT_STATE_DENIED && now != GRANT_STATE_DENIED && callLive && pkg in held) {
+            deferred = true
+            continue
+        }
+        grantWrite(now, wanted)?.let { writes[pkg] = it }
+    }
+    return CameraPlan(writes, deferred)
+}
+
+/** Design 68 §3.2: the call-end wake applies again only when a denial waits ([deferred]) and no call is live now -
+ * [callLive] is read only then (a Telecom binder call). */
+fun deferredCameraApplyDue(deferred: Boolean, callLive: () -> Boolean): Boolean = deferred && !callLive()
+
+/**
+ * The policy's `app_permissions` (design 68 §3.1), read field by field: the packages whose camera the parent switched
+ * off on this phone. An entry without a valid package is dropped; any `camera` but `"deny"` is the default. `null` -
+ * the key missing or not a list (an older server, a `Fallback`'s plan) - means "touch nothing" ([cameraGrants]).
+ */
+fun appPermissionsOf(element: kotlinx.serialization.json.JsonElement?): Set<String>? {
+    val list = element as? kotlinx.serialization.json.JsonArray ?: return null
+    return list.mapNotNull { item ->
+        val entry = item as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+        fun string(key: String) = (entry[key] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+        string("package_name")?.takeIf {
+            com.kidslauncher.mdm.appdisplay.isValidPackageName(it) && string("camera") == "deny"
+        }
+    }.toSet()
+}

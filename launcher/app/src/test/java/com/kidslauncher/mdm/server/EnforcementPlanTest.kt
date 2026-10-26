@@ -314,6 +314,48 @@ class EnforcementPlanTest {
         assertEquals(android.app.admin.DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT, d)
     }
 
+    /** Design 68 §3.2: camera off per app - DENIED in [denied] outside a window, else DEFAULT; never our own package; a
+     * denial that would kill an app holding the camera waits for the call's end. */
+    @Test
+    fun `cameraGrants denies, lifts in a window, waits for a call and leaves our own package alone`() {
+        val cam = listOf(CAMERA_PERMISSION)
+        val requested = mapOf("com.whatsapp" to cam, "io.element.android.x" to cam, "org.example.nocam" to listOf("x"), OWN to cam)
+        val dflt = mapOf("com.whatsapp" to GRANT_STATE_DEFAULT, "io.element.android.x" to GRANT_STATE_DEFAULT)
+        fun plan(denied: Set<String>?, window: Boolean = false, call: Boolean = false, held: Set<String> = emptySet(), current: Map<String, Int> = dflt) =
+            cameraGrants(requested, OWN, denied, window, call, held, current)
+        // Deny: written only for the denied target; the other already DEFAULT.
+        assertEquals(CameraPlan(mapOf("com.whatsapp" to GRANT_STATE_DENIED), false), plan(setOf("com.whatsapp")))
+        // Back to default: the switch off again clears the fix.
+        val wasDenied = mapOf("com.whatsapp" to GRANT_STATE_DENIED, "io.element.android.x" to GRANT_STATE_DEFAULT)
+        assertEquals(CameraPlan(mapOf("com.whatsapp" to GRANT_STATE_DEFAULT), false), plan(emptySet(), current = wasDenied))
+        // Already denied: nothing written.
+        assertEquals(CameraPlan(emptyMap(), false), plan(setOf("com.whatsapp"), current = wasDenied))
+        // A window lifts it, the next apply outside denies again.
+        assertEquals(CameraPlan(mapOf("com.whatsapp" to GRANT_STATE_DEFAULT), false), plan(setOf("com.whatsapp"), window = true, current = wasDenied))
+        // No app_permissions (an older server, a Fallback): touch nothing, except a window lifts every DENIED.
+        assertEquals(CameraPlan(emptyMap(), false), plan(null, current = wasDenied))
+        assertEquals(CameraPlan(mapOf("com.whatsapp" to GRANT_STATE_DEFAULT), false), plan(null, window = true, current = wasDenied))
+        // A live call: a target holding the camera waits, one that doesn't is denied at once.
+        val both = setOf("com.whatsapp", "io.element.android.x")
+        assertEquals(
+            CameraPlan(mapOf("io.element.android.x" to GRANT_STATE_DENIED), true),
+            plan(both, call = true, held = setOf("com.whatsapp")),
+        )
+        assertEquals(CameraPlan(mapOf("com.whatsapp" to GRANT_STATE_DENIED), false), plan(setOf("com.whatsapp"), held = setOf("com.whatsapp")))
+        // Our own package is never a target, even when listed; DENIED is the platform's value.
+        assertEquals(CameraPlan(emptyMap(), false), plan(setOf(OWN)))
+        assertEquals(android.app.admin.DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED, GRANT_STATE_DENIED)
+    }
+
+    /** The code QA's L5: the call-end wake applies only for a waiting denial with no call live, and reads the call
+     * only then. */
+    @Test
+    fun `the call-end wake applies a deferred camera denial once no call is live`() {
+        assertTrue(deferredCameraApplyDue(deferred = true) { false })
+        assertFalse(deferredCameraApplyDue(deferred = true) { true })
+        assertFalse(deferredCameraApplyDue(deferred = false) { error("no call read without a deferral") })
+    }
+
     @Test
     fun `a grant state is written only when it differs`() {
         assertNull(grantWrite(GRANT_STATE_GRANTED, GRANT_STATE_GRANTED))

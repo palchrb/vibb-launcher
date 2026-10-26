@@ -24,6 +24,11 @@ data class InstalledApp(
     /** `PackageInfo.versionName`, trimmed and cut to [INSTALLED_VERSION_NAME_MAX] characters ([installedVersionName]);
      * `null` (left out) when there is none. */
     val versionName: String? = null,
+    /** The app's camera and special accesses (design 68 §3.3, [com.kidslauncher.mdm.server.appAccessReport]): only
+     * the keys it declares - `camera` (`requested` | `admin_denied`, only for the denial's targets) and each of
+     * `manage_media`, `exact_alarm`, `write_settings`, `usage_access`, `full_screen` (`granted` | `denied` |
+     * `unknown`). `null` (left out) when there is nothing to say. */
+    val access: Map<String, String>? = null,
 )
 
 /** The longest versionName a report carries (the server clips to the same). */

@@ -1075,10 +1075,11 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
                 // throws NameNotFoundException for a hidden package just like it gets silently
                 // excluded from getInstalledApplications(0), which would otherwise drop any
                 // currently-unchecked app right back out of this report.
-                // One read for the app and its version (2026-10-25: the installed versionCode per catalog app).
+                // One read for the app, its version (2026-10-25: the installed versionCode per catalog app) and its
+                // requested permissions (design 68 §3.3: the camera and special accesses it declares).
                 val pkg = pm.getPackageInfo(
                     packageName,
-                    PackageManager.PackageInfoFlags.of(PackageManager.MATCH_UNINSTALLED_PACKAGES.toLong()),
+                    PackageManager.PackageInfoFlags.of((PackageManager.MATCH_UNINSTALLED_PACKAGES or PackageManager.GET_PERMISSIONS).toLong()),
                 )
                 val info = pkg.applicationInfo
                     ?: pm.getApplicationInfo(packageName, PackageManager.MATCH_UNINSTALLED_PACKAGES)
@@ -1089,6 +1090,7 @@ private fun collectInstalledApps(context: Context): List<InstalledApp> {
                     installer = installerOf(pm, packageName),
                     versionCode = pkg.longVersionCode,
                     versionName = com.kidslauncher.mdm.server.dto.installedVersionName(pkg.versionName),
+                    access = AppAccessReader.report(context, pkg),
                 )
             } catch (e: PackageManager.NameNotFoundException) {
                 null

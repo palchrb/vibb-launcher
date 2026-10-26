@@ -376,6 +376,40 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the refused Name and icon, Back to `#phones`), `device_pages::tests::apps_from_takes_only_its_two_shapes`,
   `tracked_apps::tests::a_phone_link_says_where_it_came_from`, `jstest/auto-reload.test.js`.
 
+## Device › Apps: Permissions (design 68, `docs/design/68-app-permissions.md` §4.1, migration `0102_app_permissions.sql`)
+
+- **What the parent sees**: an allowed app the phone reports something about (`installed_apps[].access`, launcher
+  `app_permissions_v1`; third-party apps only, the phone reports none for a system app) gets a second sub-line under
+  its row with only what needs a look - "Camera off" (a stored row and the report reads `admin_denied`; "Camera off ·
+  waiting for the phone" while it still reads `requested`, "Camera off · back on while restrictions are paused" while
+  the last report says paused - the pause lifts it), then each declared access "<name>: not approved / unknown" (an
+  approval stays out of the line and is shown in the details; the code QA's L2) -, and a `<details>` "Permissions"
+  next to "Name and icon"
+  (`partials/app_permissions_form.html`, `app_permissions::PermsView`): the **camera switch only when the report has
+  `access.camera`** (third-party apps that ask for the camera; a preinstalled camera or Google app has none), with its
+  help ("Off: <app> can't use the camera - a video call or a QR scan stops working. Turning it off closes <app> if it was
+  allowed the camera."), and one line per declared access with the way to approve it while it isn't ("On the phone:
+  Settings (parent code) › Pause all restrictions › App access › <app>: <access>"). A stored row for an app that no
+  longer asks is inert (no switch, no word). While the phone has reported its apps without `app_permissions_v1`, one
+  `row-note` "Update Vibb One to manage apps' permissions" sits above the Allowed list.
+- **Every word is in one table**, `app_permissions::words` (the refusals too, through `devices::toggle_refusal`'s
+  `perms`/`perms_full`), marked `// i18n: moves to i18n.rs (design 69)`; the templates print fields only.
+- **The form** (`POST /devices/{id}/apps/permissions`, `devices::save_app_permissions`): `package_name`, the checkbox
+  `camera=default` (checked = the camera allowed; the field missing = off, an auto-saving checkbox; an explicit
+  `deny` works too), the hidden `from`. It writes `device_app_permissions` (no row = the default; at most
+  `MAX_ROWS_PER_DEVICE` 200 a phone, else `?notice=perms_full` at the row), nudges the phone and returns to its own
+  details **open**: `apps_url("perms=<package>", from, "perms-<package>")`, and `view_apps` renders that package's
+  `<details>` with `open` (`?perms=`) - a save never lands at the top and never closes the details. Refused at the
+  row (`?notice=perms&app=app-<package>`, `settings_log::refused`): Play's core and Vibb; a 400 for another `camera`
+  value or a package outside the launcher's grammar (`app_display::valid_package_name`; no row has one); 404 an
+  unknown phone; a DB error 500. The report's `access` rides on the row (`UnifiedAppRow.access`, one parse).
+- **The policy**: `app_permissions` (`[{package_name, camera: "deny"}]`, always a list) from the same table; a failing
+  read is a 500 for the whole policy (`device_api::db_error_is_500_not_default`), never `[]`. The report's `access` is
+  kept with known keys and values only (`AppAccess::of`, a `lenient_*`-style deserializer).
+- Tests: `device_pages::the_permissions_form_returns_to_its_open_details` (with the nudge and a signed-out POST),
+  `device_pages::the_permissions_cap_refuses_the_201st_app`, `app_permissions::tests`,
+  `device_api::policy_json_keys_snapshot`, `app_updates::the_installed_apps_contract_raises_app_updated`.
+
 ## Device › Music (design 31 step 7, `docs/design/31-pwa-redesign.md` §3.2, §8)
 
 - **The page** (`GET /devices/{id}/music`, chained with the settings form's POST; `device_pages::view_music`,
@@ -560,13 +594,20 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   as on Devices); one phone is shown at once. A chosen phone: the **phone switcher** (plain links to `?device=`, the
   state as a dot and in each `aria-label`, "Anna, online"; the chosen one `aria-current="true"` - the tab bar has the
   page's one `"page"`), the **map** (Leaflet, OSM tiles with design 33's origin-only Referer, unchanged) with the
-  trail, the **last fix** as age and accuracy in the Phone Setup zone ("10 min ago", "Within 40 m", the exact time in
+  trail, the **last fix** (kept past the window while location is on, with "Last seen 9 days ago"; "No position yet." without one, "No position kept while location is off." under Off, which erases them - security review P1, M1 of round S3) as age and accuracy in the Phone Setup zone ("10 min ago", "Within 40 m", the exact time in
   `title`; the marker's popup says the same, built with `textContent`), the newest Update Location's **answer row**
   (only while it says something - "The answer row" below), the waiting line and its poll, **Update Location**; the two **warnings** as
   orange rows (location off, erasing not ready); **Ring, Stop Ringing, Lock** as three tiles, **Erase Phone…** as a
   `<details>` confirm with the type-the-name field; the footer with Lock's note behind ⓘ; **Recent** (the 10 newest:
   "Lock" · "10:58 · Done", the line under it, **Cancel** while it waits); **Location Settings** (When to locate +
   Every as one form - `location-policy` needs the mode on every post -, Keep history for, both auto-saving).
+- **What OpenStreetMap sees** (security review P8, re-checked 2026-10-26, accepted - design 33): the tiles are
+  `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, no query string, so the request carries the area looked at (z/x/y),
+  the parent's IP and browser User-Agent, and `Referer: <the PWA's origin>/` (the tailnet host name; never a path or
+  a `?device=`). `no-referrer` isn't an option: OSM answers a browser tile request without a Referer with "403 Access
+  blocked", and its tile policy forbids stripping it and discourages a proxy (design 33's two options). No
+  `crossorigin`: the tiles are plain images, sent without CORS, and no OSM cookie reaches `tile.`. A self-hosted tile
+  source stays out of scope.
 - **Where the forms return** (§5.1, `tests::locate_page::every_form_on_the_locate_page_returns_to_its_group`, built
   from the rendered forms): Update Location → `?device={id}&requested=1#location` (the map and the wait in view; the
   poll's reload goes to `#location` too), Ring / Stop Ringing / Lock / Erase → `#actions` (Recent right under it),

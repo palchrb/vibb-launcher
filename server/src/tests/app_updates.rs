@@ -586,6 +586,9 @@ async fn the_installed_apps_contract_raises_app_updated() {
     let mut before = contract.clone();
     before["installed_apps"][0]["version_code"] = json!(1_400);
     before["installed_apps"][0]["version_name"] = json!("7.1.4");
+    // Design 68: a newer launcher's access key or value is dropped, never a refused report.
+    before["installed_apps"][0]["access"]["location"] = json!("granted");
+    before["installed_apps"][0]["access"]["camera"] = json!("revoked");
     for body in [before, contract] {
         let res = app
             .request(
@@ -616,4 +619,22 @@ async fn the_installed_apps_contract_raises_app_updated() {
     assert_eq!(stored[0]["version_code"], 1_500);
     assert_eq!(stored[0]["version_name"], "7.2.0");
     assert!(stored[1].get("version_code").is_none(), "{stored}");
+    // Design 68 §3.3: the access as the launcher sent it; an app with none has no key.
+    assert_eq!(
+        stored[0]["access"],
+        json!({"camera": "admin_denied", "exact_alarm": "denied", "full_screen": "granted"})
+    );
+    assert!(stored[1].get("access").is_none(), "{stored}");
+    let first: String = sqlx::query_scalar(
+        "SELECT installed_apps_json FROM device_status WHERE device_id = ? ORDER BY id LIMIT 1",
+    )
+    .bind(anna)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let first: Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(
+        first[0]["access"],
+        json!({"exact_alarm": "denied", "full_screen": "granted"})
+    );
 }

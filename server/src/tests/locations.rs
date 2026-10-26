@@ -100,6 +100,40 @@ async fn only_real_fixes_are_stored() {
     );
 }
 
+/// Security review P1: while the phone's location is Off no fix is stored - neither the report's
+/// own nor its `extra_locations` - and the rest of the report is; "Only when asked" takes them.
+#[tokio::test]
+async fn no_fix_is_stored_while_location_is_off() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let mode = |mode: &'static str| {
+        sqlx::query("UPDATE device_policy SET location_mode = ? WHERE device_id = ?")
+            .bind(mode)
+            .bind(id)
+            .execute(&app.db)
+    };
+    let fix = |minutes: i64| {
+        json!({"latitude": 59.9, "longitude": 10.7, "accuracy_meters": 5.0,
+               "captured_at": (chrono::Utc::now() - chrono::Duration::minutes(minutes)).to_rfc3339()})
+    };
+    mode("off").await.unwrap();
+    app.post_status(
+        &token,
+        json!({ "location": fix(1), "extra_locations": [fix(3), fix(2)] }),
+    )
+    .await;
+    assert!(stored(&app, id).await.is_empty());
+    let reports: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_status WHERE device_id = ?")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(reports, 1);
+    mode("on_request").await.unwrap();
+    report(&app, &token, fix(1)).await;
+    assert_eq!(stored(&app, id).await.len(), 1);
+}
+
 #[tokio::test]
 async fn the_locate_page_builds_no_html_from_stored_values() {
     let app = TestApp::new().await;

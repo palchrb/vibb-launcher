@@ -3,6 +3,7 @@ mod apk;
 mod app_display;
 mod app_downloads;
 mod app_icons;
+mod app_permissions;
 mod attention;
 mod audit;
 mod boot_witness;
@@ -948,7 +949,8 @@ pub fn build_admin_router(
             "/devices/{id}/lock",
             get(handlers::device_pages::view_lock).post(handlers::device_pages::lock_action),
         )
-        // Step 6: Device › Apps (its forms: `/apps/toggle`, `/app-updates`, `/apps/display`).
+        // Step 6: Device › Apps (its forms: `/apps/toggle`, `/app-updates`, `/apps/display`,
+        // `/apps/permissions`).
         .route("/devices/{id}/apps", get(handlers::device_pages::view_apps))
         // Step 5: Home Screen and Web Filter.
         .route("/devices/{id}/home", get(handlers::device_pages::view_home))
@@ -1190,6 +1192,11 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/apps/display",
             post(handlers::devices::save_app_display),
+        )
+        // Design 68: an app's camera off or back on (its Permissions under the row).
+        .route(
+            "/devices/{id}/apps/permissions",
+            post(handlers::devices::save_app_permissions),
         )
         // The lock's glance page (design 25): the apps it shows and, per app, the text (design 51)
         // - one three-way select per app since 2026-10-21.

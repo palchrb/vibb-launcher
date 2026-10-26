@@ -20,6 +20,10 @@
     {% include "partials/note_warning.html" %}
     {% endif %}
 
+    {% if let Some(note) = update_note %}
+    <p class="row row-note" data-row="update-note">{{ note }}</p>
+    {% endif %}
+
     <section id="allowed" aria-labelledby="allowed-title">
         <h2 class="group-header" id="allowed-title">Allowed</h2>
         <div class="group group-avatars group-small group-apps">

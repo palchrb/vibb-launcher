@@ -291,16 +291,16 @@ pub async fn pin_events(
             (Ok(done), parent_pin::Kind::Unlocked | parent_pin::Kind::Lockout)
                 if done.rows_affected() == 1 =>
             {
-                let event_type = if event.kind == parent_pin::Kind::Unlocked {
-                    "parent_pin_used"
+                let kind = if event.kind == parent_pin::Kind::Unlocked {
+                    crate::security::PhoneLine::ParentPinUsed
                 } else {
-                    "parent_pin_lockout"
+                    crate::security::PhoneLine::ParentPinLockout
                 };
                 // Within the phone's hourly budget of security lines (security review L1).
                 let logged = crate::security::record_phone_event(
                     &mut tx,
                     device.id,
-                    event_type,
+                    kind,
                     &parent_pin::log_line(device.id, &event),
                 )
                 .await

@@ -81,6 +81,20 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   neither a label nor an icon; the launcher keeps the app off Home and the drawer except in a pause or the override - a
   sync app (ICSx5, DAVx5) that must stay allowed. `app_display::on_home_off_keeps_an_app_off_home`; `docs/notes/server/calendar.md`.
 
+## Per-app permissions (design 68, `docs/design/68-app-permissions.md`, migration `0102_app_permissions.sql`)
+
+- **The policy's `app_permissions`** (`app_permissions::policy_app_permissions`, from `device_app_permissions`): one
+  `{package_name, camera: "deny"}` per app the parent switched the camera off for on this phone; always a list, a
+  failing read a 500 (fail closed - a lost list would hand the camera back). The launcher denies such an app's
+  `CAMERA` (`setPermissionGrantState` DENIED, never GRANTED) outside the pause and the override, waits for a call's
+  end when the app holds the camera, and works out the special accesses each app wants from its own manifest - the
+  server sends none of them.
+- **The report's `installed_apps[].access`** (`app_permissions::AppAccess`): `camera` (`requested` | `admin_denied`,
+  only for third-party apps that ask for it) and `manage_media`, `exact_alarm`, `write_settings`, `usage_access`,
+  `full_screen` (`granted` | `denied` | `unknown`), only the keys the app declares; anything else is dropped at the
+  intake. The contract is `testdata/installed_apps_report.json` (byte-identical with the launcher's). Capability
+  `app_permissions_v1` (`models::APP_PERMISSIONS_CAPABILITY`). The PWA's part: `pwa.md`, "Device › Apps: Permissions".
+
 ## The launcher is "Vibb One" (design 34 step 12, P11, `docs/design/34-launcher-polish.md`)
 
 - **Every PWA text that names the launcher says "Vibb One"** (About This Phone's "Vibb One" row and the device page's

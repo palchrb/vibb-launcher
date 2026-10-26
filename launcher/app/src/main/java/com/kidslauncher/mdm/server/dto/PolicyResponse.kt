@@ -133,6 +133,12 @@ data class PolicyResponse(
      * older server) = every calendar shown, no rules, nothing on the lock. Not in
      * [com.kidslauncher.mdm.server.LastEnforcedPlan]: without a usable cache Dagen is off. */
     val calendar: kotlinx.serialization.json.JsonElement? = null,
+    /** Per-app permissions (design 68 §3.1): `[{package_name, camera: "deny"}]`, the packages the parent switched
+     * away from the default on this phone. Raw JSON read field by field by
+     * [com.kidslauncher.mdm.server.appPermissionsOf], so nothing in it can fail the policy; missing or not a list
+     * (an older server, a `Fallback`) means "touch nothing". Not in `LastEnforcedPlan`: a denial lives in Android's
+     * grant state. */
+    val appPermissions: kotlinx.serialization.json.JsonElement? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

@@ -306,7 +306,25 @@ async fn the_fix_and_the_answer_read_in_local_time() {
         .unwrap();
     let (id, _) = app.enrolled_device("Anna").await;
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
-    assert!(html.contains("No location reported yet."));
+    // QA N1 of round S3: the newest fix is kept while location is on, so none means none yet.
+    assert!(html.contains("No position yet."), "{html}");
+    assert!(!html.contains("data-fix-aged"), "{html}");
+    // The owner's decision on M1 of round S3: a fix kept past the window says how old it is.
+    let nine_days_ago = chrono::Utc::now() - chrono::Duration::days(9) - chrono::Duration::hours(1);
+    sqlx::query(
+        "INSERT INTO device_locations (device_id, latitude, longitude, accuracy_meters, captured_at) \
+         VALUES (?, 59.9, 10.7, 20.0, ?)",
+    )
+    .bind(id)
+    .bind(crate::zones::instant(nine_days_ago))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
+    assert!(
+        html.contains("<span class=\"row-sub\" data-fix-aged>Last seen 9 days ago</span>"),
+        "{html}"
+    );
 
     let ten_min_ago = chrono::Utc::now() - chrono::Duration::minutes(10);
     sqlx::query(

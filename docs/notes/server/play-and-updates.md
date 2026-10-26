@@ -260,7 +260,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   package that another catalog row has as `package_name` or `fdroid_package` (Q-6, every source). Redirects may not
   leave https and stop after 5 (`tracked_apps::https_redirects`, the rule a pure `redirect_verdict`; GitHub's downloads
   use it too; Q-1). The F-Droid clients ignore proxies from the environment (`no_proxy`, the index and the APK; Q-2)
-  and say `kid-phone-server (self-hosted)`, as GitHub's downloads now do (Q-9). The cached file's name is
+  and say `net::USER_AGENT` (`vibb/1.0` since 0.57.0, security review P5), as GitHub's downloads do (Q-9). The cached file's name is
   `file_safe(tag)-<code>.apk`.
 - **The ABI** (Q-4): the pick ignores `manifest.nativecode` and `usesSdk` - fine for an app with one APK for every
   phone (Etar), not for one the repo builds per ABI (the highest code may be an x86_64 build). Add App's ⓘ by the

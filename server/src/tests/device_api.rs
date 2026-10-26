@@ -188,6 +188,8 @@ async fn db_error_is_500_not_default() {
         "dns_filter_settings",
         "global_schedule",
         "device_pending_uninstalls",
+        // Design 68: a lost list would hand the camera back.
+        "device_app_permissions",
     ] {
         let app = TestApp::new().await;
         let (_, token) = app.enrolled_device("phone").await;
@@ -292,7 +294,7 @@ async fn empty_allowlist_is_served_as_empty_not_null() {
 #[tokio::test]
 async fn policy_json_keys_snapshot() {
     let app = TestApp::new().await;
-    let (_, token) = app.enrolled_device("phone").await;
+    let (device_id, token) = app.enrolled_device("phone").await;
     let policy = app
         .request(Method::GET, "/api/devices/policy", Some(&token), None)
         .await
@@ -305,6 +307,7 @@ async fn policy_json_keys_snapshot() {
         keys,
         [
             "allowlist",
+            "app_permissions",
             "app_updates_wifi_only",
             "bedtime_end_minutes",
             "bedtime_start_minutes",
@@ -342,6 +345,7 @@ async fn policy_json_keys_snapshot() {
     );
 
     for non_null in [
+        "app_permissions",
         "app_updates_wifi_only",
         "block_activity_start",
         "calendar",
@@ -502,6 +506,24 @@ async fn policy_json_keys_snapshot() {
             "storytel_generation": 0,
             "spotify": false
         })
+    );
+
+    // Design 68: always a list (`[]` for a fresh phone), each entry the launcher's `appPermissionsOf` shape.
+    assert_eq!(object["app_permissions"], serde_json::json!([]));
+    sqlx::query(
+        "INSERT INTO device_app_permissions (device_id, package_name, camera) VALUES (?, 'com.whatsapp', 'deny')",
+    )
+    .bind(device_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let denied = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    assert_eq!(
+        denied["app_permissions"],
+        serde_json::json!([{"package_name": "com.whatsapp", "camera": "deny"}])
     );
 }
 

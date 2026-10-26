@@ -507,9 +507,16 @@ async fn a_push_carries_its_headers_and_an_encrypted_payload() {
     let (jwt, claims, k) = vapid(first);
     assert_eq!(k, app.state.push.key.as_ref().unwrap().public);
     assert_eq!(claims["aud"], "https://web.push.apple.com");
+    // Security review P4: never the subscription's origin (the tailnet name), one neutral value.
     assert_eq!(
-        claims["sub"], ORIGIN,
-        "no VAPID_SUBJECT: the subscription's origin"
+        claims["sub"],
+        crate::push::DEFAULT_SUBJECT,
+        "no VAPID_SUBJECT: the same contact for every server"
+    );
+    assert!(
+        !claims
+            .to_string()
+            .contains(ORIGIN.trim_start_matches("https://"))
     );
     let exp = claims["exp"].as_i64().unwrap();
     let now = chrono::Utc::now().timestamp();
@@ -1578,7 +1585,8 @@ async fn a_receipt_before_the_retry_ends_it() {
 }
 
 /// qa-35-s2-code N3: an `http://` Origin (a dev install on 127.0.0.1) is never the JWT's `sub` -
-/// RFC 8292 takes `mailto:` or `https:` only; the push still goes, without one.
+/// RFC 8292 takes `mailto:` or `https:` only. Since security review P4 no origin is: the push goes
+/// with the neutral default.
 #[tokio::test]
 async fn an_http_origin_is_no_jwt_subject() {
     let app = TestApp::new().await;
@@ -1600,7 +1608,7 @@ async fn an_http_origin_is_no_jwt_subject() {
     send(&app).await;
     let requests = app.pushes.take();
     let (_, claims, _) = vapid(&requests[0]);
-    assert!(claims.get("sub").is_none(), "{claims}");
+    assert_eq!(claims["sub"], crate::push::DEFAULT_SUBJECT, "{claims}");
     assert_eq!(claims["aud"], "https://web.push.apple.com");
 }
 

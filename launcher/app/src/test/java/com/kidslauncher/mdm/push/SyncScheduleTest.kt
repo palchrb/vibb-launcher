@@ -118,6 +118,7 @@ class SyncScheduleTest {
         assertTrue("battery_v1" in json["capabilities"].toString()) // design 35 step 3
         assertTrue("power_v1" in json["capabilities"].toString()) // design 38
         assertTrue("dns_bypass_v1" in json["capabilities"].toString()) // design 67
+        assertTrue("app_permissions_v1" in json["capabilities"].toString()) // design 68
         assertFalse(STATUS_CAPABILITIES.any { "fcm" in it })
         assertEquals("99", json["install_mode"]!!.jsonObject["until_ms"].toString())
         assertEquals("true", json["play_window_active"].toString())
@@ -136,6 +137,8 @@ class SyncScheduleTest {
                 InstalledApp(
                     "org.thoughtcrime.securesms", "Signal", false, installer = "me.vibb.launcher",
                     versionCode = 1_500L, versionName = "7.2.0",
+                    // Design 68 §3.3: the camera of a denial target and two declared special accesses.
+                    access = mapOf("camera" to "admin_denied", "exact_alarm" to "denied", "full_screen" to "granted"),
                 ),
                 InstalledApp("org.example.older", "Older", true),
             ),
