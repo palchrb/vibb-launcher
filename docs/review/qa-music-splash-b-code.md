@@ -250,3 +250,46 @@ BUILD SUCCESSFUL, 1225 tests, 0 failures, 0 errors, 0 skipped. `python3 -I scrip
 - **Step 15** (Q-7): `cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton`, and the
   bottom 48 dp of the frames before and after the hand-over compared (the navigation bar's ground unchanged).
 - **Step 12** (Q-8, Q-12): at 240 dpi allow a pixel on the rings' top edge, and note the softer rings before the fade.
+
+## Fix round (2026-10-26, the implementer)
+
+Every finding fixed; nothing skipped. Full music suite `testDebugUnitTest -PwarningsAsErrors=true`: 1229 tests, 0
+failures, 0 skipped (1225 + 4 new tests). `python3 -I scripts/music-splash.py --selftest`: ok.
+
+- **Q-1** -> `MusicViewModel.contentShown` (set by `onContent`) decides: `MainActivity` reads `val splashOwed =
+  !vm.contentShown` before `setContent` and draws `LaunchSplash` only then. A configuration change keeps the view model
+  (no splash); a restored task after a process death, or a new activity, has a new one (the splash again). No
+  `savedInstanceState` in it (`open(..., restored)` keeps its own). `music/CLAUDE.md` and the KDoc follow; pinned by
+  `SplashTest`'s glue test; emulator §6u step 17.
+- **Q-2** -> `noNetwork` excludes `MediaCache.PrivateAddressException` (the app's only other `UnknownHostException`
+  subclass); `PlayFailureTest` row (`IOException(PrivateAddressException("nas.local"))` keeps `CANT_PLAY`); KDoc and
+  PLAN's note; step 16's public-entry case.
+- **Q-3** -> option (a): `logic/Splash.kt` `SystemSplash` (UNKNOWN/FADING/GONE) and the pure `splashFadeDue(contentShown,
+  system, handOverWaitOver)`: the app splash fades only once the content is shown **and** the system splash's own fade
+  has ended, or no hand-over came within `SPLASH_HANDOVER_WAIT_MS` (500 ms from the app splash's first composition).
+  "At once" for a start without a system splash isn't knowable: the hand-over comes asynchronously a few frames after
+  the first draw, so 500 ms is the shortest wait that doesn't misread a late hand-over (such starts are rare: every cold
+  or warm start with a new activity gets the splash). `SplashTest` pins the table; step 18.
+- **Q-4** -> the accepted residual in one line each in `PlayFailure.kt`'s KDoc, `music/CLAUDE.md` and PLAN's Built note.
+- **Q-5** -> the listener's body is the pure `systemSplashExit(fade, remove, state)`: FADING, the fade, then at its end
+  (a cancel's too) always `remove()` and GONE in a `finally`; `SplashTest` drives it (also a `remove` that throws).
+  A source pin: `fadeSystemSplash()` before `setContent {`, the listener calling `systemSplashExit` with
+  `ObjectAnimator.ofFloat(view, View.ALPHA, 0f)`, `doOnEnd { onEnd() }`, `remove = view::remove`; `LaunchSplash` on
+  `fillMaxSize()` with no insets or padding, the mark at `requiredSize(SPLASH_MARK_DP.dp)` and the wordmark at
+  `offset(y = SPLASH_WORDMARK_BELOW_DP.dp)`, both `align(Alignment.Center)`, the fade from `splashFadeDue`. Mutations
+  8-11 now break it.
+- **Q-6** -> step 16: both the primary and the backup unreachable (`tls://192.0.2.1`), the `.invalid` way kept.
+- **Q-7** -> step 15: `cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton`, then
+  `settings get secure navigation_mode` = 0, and the bottom 48 dp compared.
+- **Q-8** -> `SPLASH_MARK_DP`'s KDoc: the device's icon mask, the 108 dp bitmap drawn 1.78x (the fade sharpens the rings,
+  not a scale step); `SPLASH_RINGS_RADIUS_DP`'s: inside every AOSP mask (pebble's 92 dp). The clip check in `SplashTest`
+  is now `< 92 dp`.
+- **Q-9** -> measured from the lowest point: new `SPLASH_RINGS_BOTTOM_DP` 83.24 (the outer ring's max y 25.02 plus half
+  the stroke, x 0.94 x 3.3645), and `SPLASH_WORDMARK_BELOW_DP` = it + 24 + ink/2 (the ink now starts 107.2 dp under the
+  centre, was 108.6); `SplashTest` reads both the radius (clip) and the lowest point (the gap) from the drawable and says
+  which is which. PLAN, CLAUDE and step 12 follow.
+- **Q-10** -> one `causes(e)` (`take(8)`) for `noNetwork` and `failureLine`; `PlayFailureTest` "a cause cycle ends the
+  walk" (A -> B -> A: false, and an 8-cause line).
+- **Q-11** -> `GuardsTest` pins `Log.w(LOG_TAG, failureLine(error.errorCodeName, error.errorCode, error))` and that it is
+  `LocalRenderer.kt`'s only `Log.` call (mutation 12 breaks it).
+- **Q-12** -> step 12 allows a pixel (the 240/440 dpi truncation) and names the sharpening.

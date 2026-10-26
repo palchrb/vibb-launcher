@@ -26,6 +26,8 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import me.vibb.music.bridge.LiveBridge
 import me.vibb.music.logic.SPLASH_FADE_MS
+import me.vibb.music.logic.SystemSplash
+import me.vibb.music.logic.systemSplashExit
 import me.vibb.music.logic.resumeRequested
 import me.vibb.music.playback.Commands
 import me.vibb.music.playback.PlaybackService
@@ -49,11 +51,8 @@ class MainActivity : ComponentActivity() {
     private var controller: MediaController? = null
     private val pending = mutableListOf<(MediaController) -> Unit>()
 
-    /**
-     * The first content frame composed (the library or the player, with the first snapshot): the app's launch splash
-     * fades. A recreated instance (a font-scale change) has its screens at once - no splash over them.
-     */
-    private var contentShown by mutableStateOf(false)
+    /** The system splash's state, for the app splash's fade (logic/Splash.kt `splashFadeDue`). */
+    private var systemSplash by mutableStateOf(SystemSplash.UNKNOWN)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // The app is always dark (Palette.bg), so the system bars' icons are always light: the default
@@ -63,13 +62,15 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
-        contentShown = savedInstanceState != null
         fadeSystemSplash()
         open(intent, restored = savedInstanceState != null)
+        // the launch splash only until the view model's first content frame: a configuration change doesn't show it
+        // again, a new process or activity does (qa-music-splash-b Q-1)
+        val splashOwed = !vm.contentShown
         setContent {
             Box(Modifier.fillMaxSize()) {
-                MusicRoot(vm, actions, onContent = { contentShown = true })
-                LaunchSplash(contentShown)
+                MusicRoot(vm, actions, onContent = { vm.contentShown = true })
+                if (splashOwed) LaunchSplash(vm.contentShown, systemSplash)
             }
         }
     }
@@ -79,15 +80,21 @@ class MainActivity : ComponentActivity() {
      * own splash (logic/Splash.kt). Its exit is ours, a plain fade, so the app's window never moves: the shell's default
      * (`starting_window_exit_animation_type` 0, a radial reveal) slides the app's window up 20 dp
      * (`starting_surface_exit_animation_window_shift_length`), and the rings would jump. [View.ALPHA] goes through
-     * `SplashScreenView.setAlpha`, which fades its icon too.
+     * `SplashScreenView.setAlpha`, which fades its icon too; [systemSplashExit] always removes the view at the end.
      */
     private fun fadeSystemSplash() {
         splashScreen.setOnExitAnimationListener { view ->
-            ObjectAnimator.ofFloat(view, View.ALPHA, 0f).apply {
-                duration = SPLASH_FADE_MS
-                doOnEnd { view.remove() }
-                start()
-            }
+            systemSplashExit(
+                fade = { onEnd ->
+                    ObjectAnimator.ofFloat(view, View.ALPHA, 0f).apply {
+                        duration = SPLASH_FADE_MS
+                        doOnEnd { onEnd() }
+                        start()
+                    }
+                },
+                remove = view::remove,
+                state = { systemSplash = it },
+            )
         }
     }
 

@@ -94,15 +94,19 @@ Kotlin, one Gradle module (`app/`), the launcher's AGP 8.13 / Kotlin 2.1.20, min
   to the screen's foot - and goes at the app's first frame, which is the app's own splash (`ui/LaunchSplash.kt`, the
   whole window, no insets): the night ground, the same drawable at the splash's place and size (`SPLASH_MARK_DP` 288 dp
   centred: WMShell's 192 dp icon view, its drawable drawn 1.5x) and `splash_wordmark.xml` ("vibb music", Nunito
-  ExtraBold as paths) 24 dp under the rings' edge (`SPLASH_RINGS_RADIUS_DP` 84.6) - `logic/Splash.kt`, `SplashTest`
-  reads both drawables; both written by `scripts/music-splash.py` (`--selftest`). `MainActivity` fades the system splash
-  itself (`setOnExitAnimationListener`, 250 ms: the shell's default exit slides the app's window up 20 dp); the app's
-  splash covers the screens until `MusicRoot`'s first content frame - the snapshot in, the stored row read and the
-  carousel on its start tile (`contentReady`; an empty library's empty state at once; 3 s cap, the backstop only) - and
-  fades over it; a recreated instance shows none. The rings are still (the launcher's breathe AVD is one inhale; a loop
-  would snap back each breath). A failed item's real cause is logged (`VibbPlayer`, `logic/PlayFailure.kt`'s
-  `failureLine`: Media3 and `Log` hide an `UnknownHostException`), and a name that can't be looked up says "Trenger
-  internett" instead of "Kan ikke spilles nå" (`noNetwork`, `failureMessage`). On a room the player's seek line shows
+  ExtraBold as paths) 24 dp under the rings' lowest ink (`SPLASH_RINGS_BOTTOM_DP` 83.24) - `logic/Splash.kt`,
+  `SplashTest` reads both drawables; both written by `scripts/music-splash.py` (`--selftest`). `MainActivity` fades the
+  system splash itself (`setOnExitAnimationListener` -> `systemSplashExit`, 250 ms, always `remove()`: the shell's
+  default exit slides the app's window up 20 dp); the app's splash covers the screens until `MusicRoot`'s first content
+  frame - the snapshot in, the stored row read and the carousel on its start tile (`contentReady`; an empty library's
+  empty state at once; 3 s cap, the backstop only) - **and** the system splash's fade has ended (none handed over within
+  500 ms: a start without one), then fades over it (`splashFadeDue`), so the wordmark is seen whole. Whether it is owed is
+  `MusicViewModel.contentShown`: a configuration change shows none, a restored task after a process death shows it again.
+  The rings are still (the launcher's breathe AVD is one inhale; a loop would snap back each breath). A failed item's
+  real cause is logged (`VibbPlayer`, `logic/PlayFailure.kt`'s `failureLine`: Media3 and `Log` hide an
+  `UnknownHostException`), and a name that can't be looked up says "Trenger internett" instead of "Kan ikke spilles nå"
+  (`noNetwork`, `failureMessage`; never the guard's `PrivateAddressException`). Accepted residual: a host the parent's Web
+  Filter blocks fails the same way, so it says "Trenger internett" too. On a room the player's seek line shows
   "Kobler til høyttaleren…" instead of the times from the tap until the room plays, and the phone's web player
   "Kobler til…" until its first playing state (`logic/HandOver.kt` `timeRow`, `PlayerHub.State.connecting` =
   `SonosController.connecting` or `SpotifyRenderer.starting`; no source named).

@@ -2073,25 +2073,42 @@ music" 24 dp under them, and a failed stream's real cause is logged. These repla
 "the system's exit fade only"; the rest of steps 1 and 6-8 stands.
 
 12. **The hand-over, frame by frame** (cold, from the launcher's tile, recorded as in step 1, stepped at 24 fps): the
-    rings on the night ground alone, then "vibb music" (cream + peach) fading in right under them while the rings
-    **don't move a pixel** - no slide, no scale step, no shift by the status bar (compare the rings' top edge in the
-    frames before and after the fade; at most a sharpness change, the system splash's icon being a scaled bitmap) - then
-    the library fading in over the splash, no plain night frame anywhere. Nothing is cut: the wordmark sits about 109 dp
-    under the screen's centre. Note the frames from the tap to the wordmark and to the library.
-13. **Empty library** (no entries in the feed): the same hand-over, then the empty state at once (not at 3 s).
+    rings on the night ground alone, then "vibb music" (cream + peach) fading in right under them while the rings don't
+    move - **at most a pixel** (the shell truncates the icon's bounds: at 240 dpi the canvas is drawn 430.2 px instead of
+    432, at 440 dpi also 0.9 px up and left), no slide, no scale step, no shift by the status bar (compare the rings' top
+    edge in the frames before and after the fade). The rings sharpen as the system splash fades (its icon is a 108 dp
+    bitmap scaled 1.78x) - not a scale step. Then the wordmark **held whole** (at full strength at least one frame)
+    before the library fades in over the splash; no plain night frame anywhere. Nothing is cut: the wordmark's ink starts
+    about 107 dp under the screen's centre. Note the frames from the tap to the wordmark and to the library.
+13. **Empty library** (no entries in the feed): the same hand-over, then the empty state right after the system splash's
+    fade (not at 3 s).
 14. **Font scale 1.3** (`adb shell settings put system font_scale 1.3`, cold start): the splash identical to 1.0 (both
     images are paths in dp). With the app open, change the font scale back: the screens come back with **no splash** over
-    them (a recreated instance shows none) and no blank flash.
-15. **3-button navigation** (an AVD with `hw.mainKeys = no` and 3-button navigation, or `adb shell cmd overlay enable
-    com.android.internal.systemui.navbar.threebutton`): the rings still don't move at the hand-over (the system splash
-    and the app's both cover the whole screen, bars included); the wordmark is well above the navigation bar.
+    them (a configuration change keeps the view model, which says the content was shown) and no blank flash.
+15. **3-button navigation** (an AVD with `hw.mainKeys = no` and 3-button navigation, or `adb shell cmd overlay
+    enable-exclusive --category com.android.internal.systemui.navbar.threebutton`, then check `adb shell settings get
+    secure navigation_mode` reads 0): the rings still don't move at the hand-over (the system splash and the app's both
+    cover the whole screen, bars included); compare the bottom 48 dp of the frames before and after the hand-over (the
+    navigation bar's ground unchanged); the wordmark is well above the navigation bar.
 16. **The no-network words and the log** (`fake-audio.py` for an RSS entry): with Wi-Fi on, make the host's name fail -
-    the launcher's Web Filter on a custom DNS server that doesn't answer (§6m), or a listing whose enclosure host doesn't
-    exist (`fake-audio.py --advertise nohost.invalid --print-listing ENTRY` into the debug feed) - and tap the tile: the line reads "Trenger internett" / "Needs the
-    internet", not "Kan ikke spilles nå"; `adb logcat -s VibbPlayer` shows "Playback failed: ERROR_CODE_IO_... (200x):
-    ... <- java.net.UnknownHostException: Unable to resolve host ..." with the real host and no query string. Stop
-    `fake-audio.py` instead (a refused connect): today's "Kan ikke spilles nå", and the log names the
-    `ConnectException`. Wi-Fi and mobile data both off: still "Ikke lastet ned - trenger Wi-Fi" (the streaming gate first).
+    the launcher's Web Filter on a custom DNS server with **both** the primary and the backup unreachable (e.g.
+    `tls://192.0.2.1` for both, TEST-NET-1, never routed; one alone isn't enough - the backup answers, §6m), or a
+    listing whose enclosure host doesn't exist (`fake-audio.py --advertise nohost.invalid --print-listing ENTRY` into the
+    debug feed) - and tap the tile: the line reads "Trenger internett" / "Needs the internet", not "Kan ikke spilles nå";
+    `adb logcat -s VibbPlayer` shows "Playback failed: ERROR_CODE_IO_... (200x): ... <- java.net.UnknownHostException:
+    Unable to resolve host ..." with the real host and no query string. Stop `fake-audio.py` instead (a refused
+    connect): today's "Kan ikke spilles nå", and the log names the `ConnectException`. A **public** RSS entry (not `lan`)
+    pointing at fake-audio on 10.0.2.2: "Kan ikke spilles nå" (the guard's refusal, not the network), and the log's
+    `PrivateAddressException`. Wi-Fi and mobile data both off: still "Ikke lastet ned - trenger Wi-Fi" (the streaming
+    gate first).
+17. **A restored task** (qa-music-splash-b Q-1): open the player, Home, `adb shell am kill me.vibb.music.debug` (a
+    background kill keeps the task and its saved state), tap the tile: the system splash's rings, then "vibb music" under
+    them, then the library fading in - no plain night frame (record at 24 fps as step 12). The same with "Don't keep
+    activities" on and the music paused in the service (a warm process, a new activity).
+18. **A warm start's two fades** (Q-3): with music paused (the service alive) and "Don't keep activities" on, tap the
+    tile and step the recording: the system splash fades, the wordmark is then held at full strength, and only then the
+    library fades in - never a faint wordmark flash. A start with no system splash at all (if one can be made, e.g. from
+    inside the app's own task) holds the app splash at most 0.5 s.
 
 ## 7. Reporting back
 

@@ -3,6 +3,7 @@ package me.vibb.music.logic
 import androidx.media3.common.ParserException
 import androidx.media3.common.PlaybackException
 import androidx.media3.datasource.HttpDataSource
+import me.vibb.music.media.MediaCache
 import me.vibb.music.playback.PlayerHub.Message
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -41,6 +42,19 @@ class PlayFailureTest {
         assertEquals(Message.CANT_PLAY, words(PlaybackException("x", ParserException.createForMalformedContainer("not audio", null), PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED)))
         assertFalse("refused: the server, not the network", noNetwork(ConnectException("Failed to connect")))
         assertFalse("slow: the server or the network", noNetwork(SocketTimeoutException("timeout")))
+        // Q-2: the guard's refusal of a public entry on a private address is about the item, not the network
+        val nas = PlaybackException("x", IOException(MediaCache.PrivateAddressException("nas.local")), PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
+        assertEquals(Message.CANT_PLAY, words(nas))
+    }
+
+    @Test
+    fun `a cause cycle ends the walk (Q-10)`() {
+        val a = IOException("a")
+        val b = IOException("b")
+        a.initCause(b)
+        b.initCause(a)
+        assertFalse(noNetwork(a))
+        assertEquals(8, failureLine("X", 0, a).split(" <- ").size)
     }
 
     @Test

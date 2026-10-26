@@ -39,16 +39,19 @@ class SplashTest {
         val mark = res("drawable/splash_vibb_mark.xml")
         // the mark's group (3.3645), then each ring's own (0.94)
         val (scale, ring) = Regex("""android:scaleX="([\d.]+)"""").findAll(mark).map { it.groupValues[1].toFloat() }.take(2).toList()
-        val points = Regex("""[ML](-?[\d.]+) (-?[\d.]+)""").findAll(mark).map { hypot(it.groupValues[1].toFloat(), it.groupValues[2].toFloat()) }
+        val points = Regex("""[ML](-?[\d.]+) (-?[\d.]+)""").findAll(mark).map { it.groupValues[1].toFloat() to it.groupValues[2].toFloat() }.toList()
         val stroke = attr(mark, "android:strokeWidth").toFloat()
-        val edge = (points.max() + stroke / 2) * ring * scale
+        val edge = (points.maxOf { (x, y) -> hypot(x, y) } + stroke / 2) * ring * scale
         assertEquals(SPLASH_RINGS_RADIUS_DP, edge, 0.05f)
-        // nothing reaches the 192 dp view's circle, so the app's unclipped drawing is what the splash shows
-        assertTrue(edge < 160f * 1.2f / 2)
+        // nothing reaches the smallest AOSP icon mask (pebble's 92 dp), so the app's unclipped drawing is the splash's
+        assertTrue(edge < 92f)
+        // Q-9: "under the rings" is from the rings' lowest ink (y down), not their widest radius
+        val bottom = (points.maxOf { it.second } + stroke / 2) * ring * scale
+        assertEquals(SPLASH_RINGS_BOTTOM_DP, bottom, 0.05f)
     }
 
     @Test
-    fun `vibb music sits 24 dp under the rings, its ink centred in its box`() {
+    fun `vibb music sits 24 dp under the rings' lowest ink, its ink centred in its box`() {
         val word = res("drawable/splash_wordmark.xml")
         val ys = Regex("""(-?[\d.]+),(-?[\d.]+)""").findAll(word).map { it.groupValues[2].toFloat() }.toList()
         val box = attr(word, "android:viewportHeight").toFloat()
@@ -56,7 +59,53 @@ class SplashTest {
         assertEquals("the ink centred in the box", box / 2, (ys.max() + ys.min()) / 2, 0.02f)
         // the box's centre is placed SPLASH_WORDMARK_BELOW_DP under the window's centre = the rings' centre
         val inkTop = SPLASH_WORDMARK_BELOW_DP - SPLASH_WORDMARK_INK_DP / 2
-        assertEquals(24f, inkTop - SPLASH_RINGS_RADIUS_DP, 0.001f)
+        assertEquals(24f, inkTop - SPLASH_RINGS_BOTTOM_DP, 0.001f)
+    }
+
+    @Test
+    fun `the app splash fades only after the system splash's fade, or with none handed over (Q-3)`() {
+        for (system in SystemSplash.entries) for (wait in listOf(false, true)) {
+            assertFalse("no content, no fade", splashFadeDue(contentShown = false, system, wait))
+        }
+        assertFalse("the system splash still fading: the wordmark stays whole", splashFadeDue(true, SystemSplash.FADING, handOverWaitOver = true))
+        assertTrue("its fade over", splashFadeDue(true, SystemSplash.GONE, handOverWaitOver = false))
+        assertFalse("a hand-over may still come", splashFadeDue(true, SystemSplash.UNKNOWN, handOverWaitOver = false))
+        assertTrue("none came: a start without a system splash", splashFadeDue(true, SystemSplash.UNKNOWN, handOverWaitOver = true))
+    }
+
+    @Test
+    fun `the system splash's exit always removes the view, then says gone (Q-5)`() {
+        val log = mutableListOf<String>()
+        var end: (() -> Unit)? = null
+        systemSplashExit(fade = { end = it; log += "fade" }, remove = { log += "remove" }, state = { log += it.name })
+        assertEquals(listOf("FADING", "fade"), log)
+        end!!() // the animator's end - a cancel's too
+        assertEquals(listOf("FADING", "fade", "remove", "GONE"), log)
+        // a remove that throws still lets the app splash fade
+        val states = mutableListOf<SystemSplash>()
+        runCatching { systemSplashExit(fade = { it() }, remove = { error("gone") }, state = { states += it }) }
+        assertEquals(listOf(SystemSplash.FADING, SystemSplash.GONE), states)
+    }
+
+    @Test
+    fun `the glue - the listener before the first frame, the splash owed by the view model, the geometry's constants (Q-1, Q-5)`() {
+        val main = moduleFile("src/main/java/me/vibb/music/ui/MainActivity.kt").readText()
+        val create = main.substringAfter("override fun onCreate(").substringBefore("\n    }\n")
+        assertTrue(create.indexOf("fadeSystemSplash()") in 0 until create.indexOf("setContent {"))
+        assertTrue(create.contains("val splashOwed = !vm.contentShown"))
+        assertTrue(create.contains("MusicRoot(vm, actions, onContent = { vm.contentShown = true })"))
+        assertTrue(create.contains("if (splashOwed) LaunchSplash(vm.contentShown, systemSplash)"))
+        assertFalse("not by the saved state: a process death restores it too", create.substringAfter("splashOwed").contains("savedInstanceState"))
+        val listener = main.substringAfter("private fun fadeSystemSplash() {").substringBefore("\n    }\n")
+        assertTrue(listener.contains("splashScreen.setOnExitAnimationListener { view ->\n            systemSplashExit("))
+        assertTrue(listener.contains("ObjectAnimator.ofFloat(view, View.ALPHA, 0f)") && listener.contains("doOnEnd { onEnd() }"))
+        assertTrue(listener.contains("remove = view::remove,") && listener.contains("state = { systemSplash = it },"))
+        val splash = moduleFile("src/main/java/me/vibb/music/ui/LaunchSplash.kt").readText()
+        assertTrue(splash.contains("Box(Modifier.fillMaxSize().graphicsLayer"))
+        assertFalse("the whole window, as the system splash", splash.contains("windowInsets") || splash.contains("Padding"))
+        assertTrue(splash.contains("Image(painterResource(R.drawable.splash_vibb_mark), null, Modifier.align(Alignment.Center).requiredSize(SPLASH_MARK_DP.dp))"))
+        assertTrue(splash.contains("Image(painterResource(R.drawable.splash_wordmark), null, Modifier.align(Alignment.Center).offset(y = SPLASH_WORDMARK_BELOW_DP.dp))"))
+        assertTrue(splash.contains("val fade = splashFadeDue(contentShown, system, waitOver)"))
     }
 
     @Test

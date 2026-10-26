@@ -21,29 +21,69 @@ const val SPLASH_CAP_MS = 3_000L
 const val SPLASH_FADE_MS = 250L
 
 /**
+ * How long after the app splash's first frame a system splash may still be handed over (ms): the hand-over (our exit
+ * listener) comes a few frames after that frame, through the shell; none by then means the start had no system splash.
+ */
+const val SPLASH_HANDOVER_WAIT_MS = 500L
+
+/** The system splash, as the app sees it: not handed over (yet, or ever), fading (our exit listener), gone. */
+enum class SystemSplash { UNKNOWN, FADING, GONE }
+
+/**
+ * Whether the app splash fades now (qa-music-splash-b Q-3): the content is shown, and the system splash's own fade has
+ * ended - so "vibb music" is seen whole between the two fades, never as a faint flash -, or no system splash was handed
+ * over within [SPLASH_HANDOVER_WAIT_MS] ([handOverWaitOver]: a start without one).
+ */
+fun splashFadeDue(contentShown: Boolean, system: SystemSplash, handOverWaitOver: Boolean): Boolean =
+    contentShown && (system == SystemSplash.GONE || system == SystemSplash.UNKNOWN && handOverWaitOver)
+
+/**
+ * The system splash's exit, Android aside (MainActivity's listener; qa-music-splash-b Q-5): [state] FADING, [fade], and
+ * at its end - a cancel's too - always [remove] (it frees the copied view's icon bitmap), then GONE whatever remove did.
+ */
+fun systemSplashExit(fade: (onEnd: () -> Unit) -> Unit, remove: () -> Unit, state: (SystemSplash) -> Unit) {
+    state(SystemSplash.FADING)
+    fade {
+        try {
+            remove()
+        } finally {
+            state(SystemSplash.GONE)
+        }
+    }
+}
+
+/**
  * The system splash's icon box (dp), centred on the window: an icon with no icon background (WMShell's
  * `SplashscreenContentDrawer`) gets the 160 dp `starting_surface_icon_size` x 1.2 (`splash_icon_no_background_scale_factor`)
- * = a 192 dp view, whose drawable is drawn 1.5 x that (`AdaptiveForegroundDrawable`'s 1/4 extra inset a side) and clipped
- * to the view's circle - so splash_vibb_mark.xml's 288 dp canvas, unscaled. The app's splash draws the same drawable at
- * this size, centred on the same full window.
+ * = a 192 dp view, whose drawable is laid out 1.5 x that (`AdaptiveForegroundDrawable`'s 1/4 extra inset a side) and
+ * clipped to the device's icon mask - so splash_vibb_mark.xml's 288 dp canvas is the geometry. The pixels are softer:
+ * the shell rasterises the icon into a 108 dp bitmap (`starting_surface_default_icon_size`) and draws it scaled 192/108
+ * = 1.78 x, so the hand-over's cross-fade sharpens the rings - not a scale step. The app's splash draws the same
+ * drawable at this size as a vector, centred on the same full window.
  */
 const val SPLASH_MARK_DP = 160f * 1.2f * 1.5f
 
 /**
- * The rings' outer edge from the mark's centre (dp): splash_vibb_mark.xml's outer ring (radius up to 25.45) x 3.3645 x
- * 0.94, plus half its 2.6 stroke - inside the 96 dp clip circle, so the unclipped drawing is the splash's. `SplashTest`
- * reads it from the drawable.
+ * The rings' outer radius from the mark's centre (dp): splash_vibb_mark.xml's outer ring (radius up to 25.46) x 3.3645
+ * x 0.94, plus half its 2.6 stroke - inside every AOSP icon mask (the smallest inner radius, pebble's, is 92 dp), so the
+ * unclipped drawing is the splash's. `SplashTest` reads it from the drawable.
  */
 const val SPLASH_RINGS_RADIUS_DP = 84.6f
 
-/** From the rings' outer edge to the wordmark's ink (dp; the user: "vibb music" right under the logo). */
+/**
+ * The rings' lowest ink below the mark's centre (dp; qa-music-splash-b Q-9): the hand-drawn outer ring's lowest point
+ * (y 25.02) plus half the stroke, x 0.94 x 3.3645 - what "under the rings" is measured from. `SplashTest` reads it too.
+ */
+const val SPLASH_RINGS_BOTTOM_DP = 83.24f
+
+/** From the rings' lowest ink to the wordmark's ink (dp; the user: "vibb music" right under the logo). */
 const val SPLASH_WORDMARK_GAP_DP = 24f
 
 /** The wordmark's ink height (dp), centred in splash_wordmark.xml's box by scripts/music-splash.py. */
 const val SPLASH_WORDMARK_INK_DP = 22.29f
 
 /** How far below the window's centre the wordmark's box is centred (dp). */
-const val SPLASH_WORDMARK_BELOW_DP = SPLASH_RINGS_RADIUS_DP + SPLASH_WORDMARK_GAP_DP + SPLASH_WORDMARK_INK_DP / 2
+const val SPLASH_WORDMARK_BELOW_DP = SPLASH_RINGS_BOTTOM_DP + SPLASH_WORDMARK_GAP_DP + SPLASH_WORDMARK_INK_DP / 2
 
 /**
  * Whether the screens' first frame is the content the kid should see (qa-music-r13-code Q-10): the first [snapshot]

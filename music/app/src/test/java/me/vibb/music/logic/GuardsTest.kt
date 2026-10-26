@@ -1099,6 +1099,9 @@ class GuardsTest {
         assertTrue(local.contains(".setMaxAudioBitrate(HLS_MAX_BITRATE)\n                .setForceHighestSupportedBitrate(true)"))
         // The gate's refusal: "Ikke lastet ned", no item error.
         assertTrue(local.contains("emit(RendererEvent.Error(MediaCache.errorCode(error), MediaCache.gated(error), noNetwork(error)))"))
+        // qa-music-splash-b Q-11: the failure's one log line is failureLine's (URLs cut), never the raw exception
+        assertTrue(local.contains("Log.w(LOG_TAG, failureLine(error.errorCodeName, error.errorCode, error))"))
+        assertEquals(listOf("Log.w(LOG_TAG, failureLine("), Regex("""Log\.\w\([^\n]*""").findAll(local).map { it.value.substringBefore("error.") }.toList())
         assertTrue(service.contains("is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork)"))
         val onError = body(service, "private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false) {")
         assertTrue(onError.contains("item.fileId != null || gated -> Unit"))
