@@ -2072,6 +2072,10 @@ Round M1 (`music-splash-b`; PLAN "Round M1"): the system splash shows the rings 
 music" 24 dp under them, and a failed stream's real cause is logged. These replace step 1's "at the foot" and step 6's
 "the system's exit fade only"; the rest of steps 1 and 6-8 stands.
 
+**Run 2026-10-26** (`docs/testing/2026-10-26-e1-run.md`): steps 1, 6, 12-16 passed on `jelly36`; 17 needs a real kill (a
+media foreground service survives `am kill`), 18 showed no wordmark on a warm start (the 400 ms hold of round M1b covers
+it), 2-4 and 9-10 not run (the fake room needs SSDP from the emulator).
+
 12. **The hand-over, frame by frame** (cold, from the launcher's tile, recorded as in step 1, stepped at 24 fps): the
     rings on the night ground alone, then "vibb music" (cream + peach) fading in right under them while the rings don't
     move - **at most a pixel** (the shell truncates the icon's bounds: at 240 dpi the canvas is drawn 430.2 px instead of

@@ -19,6 +19,10 @@ Not run here: §6u 2-4 (the connecting line against `fake-sonos`), the photo wal
 
 ## Owed after launcher-glance-b (2026-10-25)
 
+**Run 2026-10-26 (`docs/testing/2026-10-26-e1-run.md`):** the provisioning storm (9 loads, 0 ANRs) and the Full-text count
+passed on `jelly36`; the contact-photo, Element X / WhatsApp, TalkBack, reboot-before-unlock and cold-start rows need
+accounts and a device: the Jelly Star (J1).
+
 The branch's emulator checks (`jelly36`, debug launcher; a WhatsApp or Element X account on the AVD, contacts in the
 phone book with photos):
 
@@ -39,6 +43,10 @@ phone book with photos):
 | First lock render after a cold start | The photo shows first, then the app mark once the icon job has drawn it |
 
 ## Owed after launcher-glance-c (2026-10-26)
+
+**Run 2026-10-26 (`docs/testing/2026-10-26-e1-run.md`):** every `jelly36` row passed in both lock modes (gesture, 3-button,
+alarm, font 1.3, the full tile, the long message); the ripple and the fold's look are visual (secure window: Jelly Star);
+`six35` rows wait for E2.
 
 The branch's emulator checks (debug launcher, music playing in the music app, three conversations on the lock's glance;
 screenshots through the emulator console, the lock is `FLAG_SECURE`):
