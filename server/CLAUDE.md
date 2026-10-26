@@ -55,8 +55,9 @@ No prior programming experience - build features directly rather than explaining
 
 - **A status report is stored within limits (security review M7).** `device_api::cap_installed_apps`: real package
   names only (`is_package_name`), no duplicates, labels clipped to 100 chars, an installer that isn't a package name
-  dropped, at most `MAX_INSTALLED_APPS` (1500); `lock_reason` 32 chars, `app_version` 64; every JSON blob already
-  goes through its own `sanitize_*`. An older launcher's `battery_exempt` (round 7 §2, removed 2026-10-20) is ignored and never stored
+  dropped, at most `MAX_INSTALLED_APPS` (1500); `lock_reason` 32 chars, `app_version` 64; every JSON blob goes
+  through its own `sanitize_*` (`call_state`/`time_state` through `device_api::known_fields` since 0.55.0, security
+  review L10). An older launcher's `battery_exempt` (round 7 §2, removed 2026-10-20) is ignored and never stored
   (`intake_limits::an_older_launchers_battery_exempt_is_accepted_and_dropped`). `/security` pages back 200 events at a time (`?before=<id>`), so a flood can't
   hide a sign-in attempt.
 - **A catalog app is pinned to its package and signing key (security review M10, server part).** `src/apk.rs` reads

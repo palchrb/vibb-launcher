@@ -1062,6 +1062,87 @@ pub async fn dns_events(
     StatusCode::NO_CONTENT
 }
 
+/// What one known key of a phone's `time_state` or `call_state` may hold (security review L10).
+#[derive(Clone, Copy)]
+enum Field {
+    /// Free text, clipped to this many characters.
+    Text(usize),
+    /// A name, a time or a package: dropped when longer than this.
+    Word(usize),
+    Int,
+    Bool,
+    /// Integers, at most this many.
+    Ints(usize),
+}
+
+/// The launcher's `TimeState` (`StatusReportRequest.kt`), every key it sends.
+const TIME_STATE_FIELDS: &[(&str, Field)] = &[
+    ("day", Field::Word(10)),
+    ("used_minutes", Field::Int),
+    ("budget_minutes", Field::Int),
+    ("extra_minutes", Field::Int),
+    ("active_rule_id", Field::Int),
+    ("active_rule_name", Field::Text(100)),
+    ("calls_blocked", Field::Bool),
+    ("lock_reason", Field::Word(32)),
+    ("lifts_active", Field::Ints(100)),
+    ("ledger_unreadable", Field::Bool),
+    ("zone", Field::Word(64)),
+];
+
+/// The launcher's `CallState` (`StatusReportRequest.kt`), every key it sends.
+const CALL_STATE_FIELDS: &[(&str, Field)] = &[
+    ("state", Field::Word(32)),
+    ("dialer_role_held", Field::Bool),
+    ("redirection_role_held", Field::Bool),
+    ("screening_role_held", Field::Bool),
+    ("default_dialer", Field::Word(255)),
+    ("system_dialer", Field::Word(255)),
+    ("sms_restricted", Field::Bool),
+    ("outgoing_restricted", Field::Bool),
+    ("default_sms_package", Field::Word(255)),
+    ("last_error", Field::Text(100)),
+    ("last_emergency_call_at", Field::Word(64)),
+    ("callback_window_until", Field::Word(64)),
+    ("call_log_readable", Field::Bool),
+    ("boot_policy", Field::Word(32)),
+    ("in_call_ui_failed_at", Field::Word(64)),
+];
+
+/// A phone's JSON object through `fields` (security review L10): each known key kept only with a
+/// value of its shape (or `null`, the launcher's "none"), every other key dropped; `None` when
+/// `value` isn't an object or none of its keys is kept. A key the launcher adds later is stored
+/// once it is listed here, when the server starts reading it.
+fn known_fields(value: &serde_json::Value, fields: &[(&str, Field)]) -> Option<String> {
+    use serde_json::Value;
+    let object = value.as_object()?;
+    let mut kept = serde_json::Map::new();
+    for (key, field) in fields {
+        let Some(found) = object.get(*key) else {
+            continue;
+        };
+        let value = match (field, found) {
+            (_, Value::Null) => Value::Null,
+            (Field::Text(max), Value::String(text)) => {
+                Value::String(crate::audit::clip(text, *max).to_string())
+            }
+            (Field::Word(max), Value::String(word)) if word.chars().count() <= *max => {
+                found.clone()
+            }
+            (Field::Int, Value::Number(n)) if n.is_i64() => found.clone(),
+            (Field::Bool, Value::Bool(_)) => found.clone(),
+            (Field::Ints(max), Value::Array(list))
+                if list.len() <= *max && list.iter().all(Value::is_i64) =>
+            {
+                found.clone()
+            }
+            _ => continue,
+        };
+        kept.insert(key.to_string(), value);
+    }
+    (!kept.is_empty()).then(|| Value::Object(kept).to_string())
+}
+
 pub async fn status(
     State(state): State<AppState>,
     Extension(AuthedDevice(device)): Extension<AuthedDevice>,
@@ -1092,18 +1173,15 @@ pub async fn status(
         .filter(|caps| !caps.is_empty())
         .and_then(|caps| serde_json::to_string(caps).ok())
         .filter(|json| json.len() <= 4096);
+    // Through their known keys (security review L10), like every other blob.
     let time_state_json = report
         .time_state
         .as_ref()
-        .filter(|state| state.is_object())
-        .map(|state| state.to_string())
-        .filter(|json| json.len() <= 4096);
+        .and_then(|state| known_fields(state, TIME_STATE_FIELDS));
     let call_state_json = report
         .call_state
         .as_ref()
-        .filter(|state| state.is_object())
-        .map(|state| state.to_string())
-        .filter(|json| json.len() <= 4096);
+        .and_then(|state| known_fields(state, CALL_STATE_FIELDS));
 
     let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
     // Handy's lock (step 10): what the phone says about it - only the known fields are kept, so

@@ -111,6 +111,58 @@ async fn dns_events_are_stored_checked() {
     assert!(rows.iter().all(|r| r.2.ends_with('Z') && r.2.len() == 24), "{rows:?}");
 }
 
+/// Security review L10: `call_state` and `time_state` are stored through their known keys - an
+/// unknown key dropped, a value of the wrong shape dropped, `last_error` clipped to 100.
+#[tokio::test]
+async fn call_and_time_state_keep_their_known_keys() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/status",
+            Some(&token),
+            Some(serde_json::json!({
+                "lock_reason": "NONE",
+                "kiosk_engaged": true,
+                "call_state": {
+                    "state": "managed", "dialer_role_held": true, "last_error": "E".repeat(500),
+                    "default_dialer": "d".repeat(300), "sms_restricted": "yes",
+                    "last_emergency_call_at": null, "html": "<script>x</script>"
+                },
+                "time_state": {
+                    "day": "2026-10-26", "used_minutes": 3, "lifts_active": [1, 2],
+                    "active_rule_name": "Skole", "extra": {"nested": true}, "budget_minutes": 1.5
+                }
+            })),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let (call, time): (String, String) = sqlx::query_as(
+        "SELECT call_state_json, time_state_json FROM device_status WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let call: serde_json::Value = serde_json::from_str(&call).unwrap();
+    assert_eq!(
+        call,
+        serde_json::json!({
+            "state": "managed", "dialer_role_held": true, "last_error": "E".repeat(100),
+            "last_emergency_call_at": null
+        })
+    );
+    let time: serde_json::Value = serde_json::from_str(&time).unwrap();
+    assert_eq!(
+        time,
+        serde_json::json!({
+            "day": "2026-10-26", "used_minutes": 3, "lifts_active": [1, 2],
+            "active_rule_name": "Skole"
+        })
+    );
+}
+
 #[tokio::test]
 async fn an_older_launchers_battery_exempt_is_accepted_and_dropped() {
     let app = TestApp::new().await;
