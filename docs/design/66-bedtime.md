@@ -261,6 +261,10 @@ everyone's rules, so the global "Bedtime" and "Outside allowed hours" are split 
 
 ## 6. Open questions for the user
 
+**Answered 2026-10-26 (the user): all three on their defaults** - per phone always ("enig i leggetid per telefon alltid"), no
+holiday calendar ("ferier er irrelevant, da får man gå inn og oppdatere"), a converted rule is "Leggetid" on the phone ("ok").
+Nothing is open; the steps in §5 build as written.
+
 1. **Per phone, or with the rule set like the Daily Limit?** Default: **per phone, always** (the user's "per phone";
    children's bedtimes differ by age). The cost: a new phone starts with none, and there is no one bedtime for all.
 2. **Holidays.** Friday and Saturday are the only free-day nights; nothing knows about vinterferie, juleferie or a
