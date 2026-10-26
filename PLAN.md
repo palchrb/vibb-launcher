@@ -98,25 +98,29 @@ repo (draft `PLAN-android.md` there); it runs vibb itself, like the Pi box.
   and the library the parent edits in the PWA,
 - includes it in schedules (e.g. allowed at bedtime for audiobooks).
 
-**Status (2026-10-12)**: the player is the Vibb music app in this repo (`music/`, designs 20/21/21b, ported from
-vibb). Phase 1 (NRK, RSS, own files, the launcher bridge, Home card, lock view, volume cap) is on `main`, released as
+**Status (2026-10-12; corrected 2026-10-26: phases 1b, 2 and 3 are merged)**: phases 1b (Sonos), 2 (Storytel) and 3
+(Spotify) went to `main` in one `--no-ff` merge, `36cabb48` (2026-10-14), and were released as `music-v0.4.0-rc.1`
+(2026-10-14) and the stable `music-v0.4.0` (2026-10-20). The release plans below for server 0.24-0.26 and
+`music-v0.2.0`/`music-v0.3.0` were never used as written (the music tags go from `music-v0.0.2` to `music-v0.4.0-rc.1`;
+there is no `server-v0.25.0` tag); the text stays as history. The player is the Vibb music app in this repo (`music/`,
+designs 20/21/21b, ported from vibb). Phase 1 (NRK, RSS, own files, the launcher bridge, Home card, lock view, volume cap) is on `main`, released as
 `music-v0.0.2` (`music-v0.0.1` before it); its Jelly Star checks still to come. **Phase 1b, Sonos** (design 26a: rooms in "Spill av på", the phone as
 UPnP controller, adopt after a restart, bedtime stops the speaker, calls pause it, the parent's volume cap and room
-scope) is built and QA'd on branch `music-1b-sonos`, main merged in (last 2026-10-12, `620e578`: design 27's
+scope) was built and QA'd on branch `music-1b-sonos` (merged with phase 3, `36cabb48`), main merged in (last 2026-10-12, `620e578`: design 27's
 episode art and carousel, the swipe routed through the renderer; before it `444ca58`, main's instant switch adapted
 to the rooms); owed: the emulator checks against
 `scripts/fake-sonos.py` and the device checks with real speakers. Release after the user's merge: server (migration
 0071, in 0.24.0 unless that is tagged first), a launcher release, then `music-v0.2.0-rc.1` on the merge commit
 (26a "Release"). **Phase 2, Storytel** (design 26b: the server reads the shelf and lists it, the phone logs in,
-mints and downloads, a book's own cover through design 27's art pass, Storytel on Sonos) is built and QA'd on branch
-`music-2-storytel` (steps 1-5 done, 2026-10-12; music-1b-sonos with main and design 27 merged in, so merging
+mints and downloads, a book's own cover through design 27's art pass, Storytel on Sonos) was built and QA'd on branch
+`music-2-storytel` (merged with phase 3, `36cabb48`; steps 1-5 done, 2026-10-12; music-1b-sonos with main and design 27 merged in, so merging
 `music-2-storytel` brings 1b too); owed: the emulator checks against `scripts/fake-storytel.py` (with the fake
 speakers) and the device checks with the family's Storytel account. Its server migration is **0072**
 (`0072_music_storytel.sql`, after design 27's 0070 and 1b's 0071, applied in that order). Release after the user's
 merge (26b "Release"): the server (a version bump past 0.24.0 if that is tagged first), the launcher, then
 `music-v0.3.0-rc.1` (versionCode 2999) on the merge commit - instead of 1b's `music-v0.2.0-rc.1` when both land
 together. **Phase 3, Spotify** (design 26c, `docs/design/26c-spotify.md`, architect draft 2026-10-13 on branch
-`music-3-spotify`): the spike (`docs/testing/spotify-spike.md`, branch `spotify-spike`) passed item 10 on the emulator,
+`music-3-spotify`, merged `36cabb48`, 2026-10-14): the spike (`docs/testing/spotify-spike.md`, branch `spotify-spike`, archived as tag `archive/spotify-spike`) passed item 10 on the emulator,
 and the user chose the WebView route - Spotify's Web Playback SDK in a headless WebView in the music app, no Spotify
 app on the phone. The parent adds a share link in the PWA with per-phone ticks; the server lists it like an RSS feed
 with the family's own developer app (bring your own client ID, PKCE logins in the parent's browser, refresh tokens
@@ -128,11 +132,10 @@ like any other ("Musikk"/"Podkast", plain lines); the attribution Spotify's Deve
 only - a stated deviation (26c §7.3). **Built** (2026-10-13; step 8 2026-10-14): steps 1-8, each
 code step with QA's code review and its fix round, main merged in at `571f86f` (design 30; Spotify's migration is
 0074, after design 30's 0073) and at `5584772` (design 31 steps 4-15: Spotify's "Plays as" on Device › Music, "From
-Spotify ›" the Music tab's fifth Add row). Owed: the DNS capture that replaces the provisional host list (one commit of the
-list, the constants and the comment - the three `spotify_hosts.json` copies, the six constants -, before any tag of
-this release), `docs/testing/emulator.md` §6l
-(parts A1/A2 never ran; part B with the user's account), the Jelly Star checks (26c's QA checklist, the 2.5-hour Doze
-run). Release after the user's merge (`--no-ff`; 26c "Release"): the launcher (`launcher-v0.26.0`, above
+Spotify ›" the Music tab's fifth Add row). The DNS capture that was owed for the provisional host list was dropped
+(2026-10-25, "Glem spotify vertslisten"; see "Parked"). `docs/testing/emulator.md` §6l part A ran 2026-10-14; part B
+(the user's account) and the Jelly Star checks (26c's QA checklist, the 2.5-hour Doze run) are parked with Spotify
+(see "Parked"). Release after the user's merge (`--no-ff`; 26c "Release"): the launcher (`launcher-v0.26.0`, above
 `launcher-v0.25.0-rc.1`, unless `main` tags a launcher first), `music-v0.4.0-rc.1` (versionCode 3999), then the
 server - design 30's 0073 as 0.25.0 first (or in the same release), Spotify as **0.26.0** with 0074 (the bump a
 commit on `main` after the merge), never before 0073; the stable `music-v0.4.0` after the owed checks. `server-v0.24.0`
@@ -143,17 +146,17 @@ pair whose public key is pinned), then re-run the failed `server-release-sign` j
 the merge of main `5584772` - "From Spotify ›" is the Music tab's fifth Add row, and `/music/spotify/callback` (and
 `/done`) never move: it is the redirect URI every family registered at Spotify (26c "Release", open point 8).
 **Design 29** (a new entry is Nytt news: one item per entry the phone never knew, once a play has been
-stored; reused ids reset; own-file copies re-fetched after an id reuse) is built on branch `design-29-impl`
-(2026-10-13, music app only, Room 3); owed: its emulator checks (`docs/testing/emulator.md` §6f) and a
+stored; reused ids reset; own-file copies re-fetched after an id reuse) was built on branch `design-29-impl`
+(2026-10-13, music app only, Room 3; merged `5c1f40f6`, 2026-10-13); owed: its emulator checks (`docs/testing/emulator.md` §6f) and a
 `music-v*` release. **Design 30** (two mobile-data switches, streaming and downloads; a stream saved to the cache as
 it plays; played extras kept within a per-phone "Music storage limit" and a free floor) is built in four steps,
 each on its own branch (`design-30-s1` server, `design-30-s2` launcher, `design-30-s3a` the music app's switches and
-the report fields, `design-30-s3b` cache-through, extras and the limit, Room 4; 2026-10-13); owed: its code QA of
-3b, the emulator and device checks (design 30 §8, `docs/testing/emulator.md` §6f, `scripts/fake-audio.py`), and the
+the report fields, `design-30-s3b` cache-through, extras and the limit, Room 4; 2026-10-13); merged 2026-10-13 with
+their QA fix rounds (steps 1-2 `584f260a`, step 3 `d4f1732e`); owed: the emulator and device checks (design 30 §8, `docs/testing/emulator.md` §6f, `scripts/fake-audio.py`), and the
 release order of its step 1 status (no `server-v*` with step 1 before the `launcher-v*` and `music-v*` that read
 the two switches).
-Phase 3 (Spotify) is design 26c above (branch `music-3-spotify`, steps 1-8 built, which merged this main at
-`5584772` on 2026-10-14 - its migration is `0074_music_spotify.sql`, after design 30's 0073).
+Phase 3 (Spotify) is design 26c above (branch `music-3-spotify`, steps 1-8 built, merged to `main` as `36cabb48`
+on 2026-10-14, after it merged this main at `5584772` - its migration is `0074_music_spotify.sql`, after design 30's 0073).
 
 ## Repos
 
@@ -212,9 +215,12 @@ Phase 3 (Spotify) is design 26c above (branch `music-3-spotify`, steps 1-8 built
 Done in code (`launcher/` and `server/`, QA-reviewed): own build and release
 signing, fail-closed policy, calls/phone book/message buttons, direct boot,
 hardening. Not frozen: remaining features continue in parallel with device
-testing on the Jelly Star. Not built yet: full Tailscale (design in
-`docs/design/03-tailscale.md`), Vibb integration, AdGuard Home, launcher UI
-redesign. Play account: decided 2026-10-05 to start WITHOUT one (apps via the
+testing on the Jelly Star. Not built yet (as of 2026-10-05; updated
+2026-10-26): full Tailscale - the Tailscale-app mode 2 (design 03 / design 22 S6) is parked, "the tailnet-only setup is
+the product" (see "Parked"); Vibb integration - built since, the Vibb music app (`music/`); AdGuard Home - not built
+and not planned as a component, the server has its own DNS filter and a parent-set custom upstream (design 36: a
+DoH/DoT address such as a parent's own AdGuard Home, `server/src/dns_server.rs`); the launcher UI redesign - built
+(design 34). Play account: decided 2026-10-05 to start WITHOUT one (apps via the
 server catalog); add later only if Play-only apps are needed. First likely
 case: Vipps (Vipps for children 7-15 exists). Vipps' own support page states it
 requires Play Integrity and Play services and must be installed via the Play
@@ -234,7 +240,7 @@ install an app, after which the parent allowlists it in the PWA as today;
 Play auto-updates on. Device test: Play updates in the background while not
 launchable.
 
-**Server 0.24.0 (2026-10-11, not tagged yet)**: design 22's server side (two listeners, the admin gate, hashed
+**Server 0.24.0 (2026-10-11; tagged `server-v0.24.0` 2026-10-13)**: design 22's server side (two listeners, the admin gate, hashed
 enrollment codes, the Docker image), QA 22's fixes, and the server part of the security review 2026-10-10 (its
 "Server security wave status" lists each finding). Before tagging it, the repo owner creates the release signing key
 (`server/DEPLOY.md`, "Release signing"): root on the Pi takes only signed releases from 0.24.0 on.
@@ -566,14 +572,14 @@ separators, one item per bullet, so each sits in its round; the words are unchan
 ### Approved for the next fix batch
 - **A last position at shutdown and at low battery** (the user, 2026-10-05, asked again 2026-10-25). **Merged 2026-10-25 (f379971e, branch `last-position`)** after code QA (`docs/review/qa-last-position-code.md`, 0 High / 3 Medium / 4 Low, all fixed): the `off` report carries the newest stored fix (`power_report.json` `off.location`, both copies; CE `power_off_location`, never a mock or a fresh fix, never under "Off"), the server stores it through the zones intake and marks `device_locations.shutdown_at` (migration 0097), Locate shows "Last position before the phone went off" with the device page's "Off since" exclusions, the `phone_off` event's params carry it (no coordinates in any text), retention clears it with the location window; at `ACTION_BATTERY_LOW` one balanced fix per episode (30 s cap, Location on, not "Off", a fix under 2 min old reused), the episode ends at BATTERY_OKAY or a discharging-not-low report. Design 38 "Last position (2026-10-25)"; emulator checks §6p 5-12 done 2026-10-25 (`docs/testing/2026-10-25-evening-run.md`: one fix per episode, the shutdown's position in the inbox, Locate's line and "Off since" after the hold); the Jelly Star half stays the user's. Ships with `server-v0.51.0` + `launcher-v0.37.0-rc.3`.
 
-- **Shorter web push texts** (the user, 2026-10-25, queue above). **Built** (2026-10-25, branch `pwa-fixes-b`, not
-  merged): every push "<name>: <fact>" / the time and at most one number ("Anna: turned on" / "07:02 · battery 64 %");
+- **Shorter web push texts** (the user, 2026-10-25, queue above). **Built** (2026-10-25, branch `pwa-fixes-b`,
+  merged `f074d842`, server 0.51.0, 2026-10-25): every push "<name>: <fact>" / the time and at most one number ("Anna: turned on" / "07:02 · battery 64 %");
   the inbox and Activity keep the long words. Stored-words kinds keep both forms (`parent_events.push_title`/
   `push_body`, migration 0098 - 0097 is `last-position`'s), the parameter kinds are worded short where pushed
   (`parent_events::pushed`); summary and test pushes shorter too. The before/after table for every kind is
   `docs/notes/server/notifications.md` "Push wording (2026-10-25)" - **the user reads it before it ships**; open there:
   whether the PIN's place and a request's rule should come back as a word.
-- **App update notices** (the user, 2026-10-25, queue above). **Built** (2026-10-25, branch `pwa-fixes-b`, not merged):
+- **App update notices** (the user, 2026-10-25, queue above). **Built** (2026-10-25, branch `pwa-fixes-b`, merged `f074d842`, server 0.51.0, 2026-10-25):
   `app_update_available` (the catalog's, no phone, one per release: key `<app id>:<tag>@<asset id>`, raised where the
   sweep and Check Now store a release over a previous one) and `app_updated` (per phone and version, from the status
   report: a higher versionCode that is the catalog's stored release), key + params like design 64; always in the inbox,
@@ -581,7 +587,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   `parent_events.device_id` nullable by rebuilding it with its two children). Left out: `app_updated` for catalog apps
   other than Vibb One and the music app - the phone's report names no other app's installed versionCode (a launcher
   change in both dirs, not built). `docs/notes/server/notifications.md` "App update notices".
-  **That follow-up built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, awaiting merge)**: `installed_apps` entries carry
+  **That follow-up built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, merged `04b56192`, 2026-10-25)**: `installed_apps` entries carry
   `version_code`/`version_name` (optional; the name trimmed, at most 60), stored with the list's JSON (no migration:
   `device_status.installed_apps_json` holds it), and `note_app_updates` raises `app_updated` for every catalog app
   checked for the phone by its listed code (`listed_app_updates`, `catalog_release_installed`: F-Droid by the
@@ -590,14 +596,14 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   launcher's `SyncScheduleTest`, the server's `app_updates` tests, root CLAUDE.md's "Shared" paragraph, both CI
   filters).
 - **Pull down to refresh on Devices and a phone's summary** (the user, 2026-10-25, queue above). **Built** (2026-10-25,
-  branch `pwa-fixes-b`, not merged): `static/pull-refresh.js` on `devices_list.html` and `device_detail.html` only; at
+  branch `pwa-fixes-b`, merged `f074d842`, server 0.51.0, 2026-10-25): `static/pull-refresh.js` on `devices_list.html` and `device_detail.html` only; at
   the very top a downward drag shows a small peach arrow in the title bar's area, past 70 px it turns over, the release
   spins and reloads through reconnect.js's reload in place (the new `window.handyReconnect`: the bar, the chip, the
   ping, the kept place); refused while a save is on its way, a `<details>` is open or a field holds typed text (the
   shared `handyReconnect.mayReload`). Owed: the iPhone and Android PWA by hand. `docs/notes/server/pwa.md` "Pull down
   to refresh".
 - **Uploaded avatar per phone; the avatar as the push icon** (the user, 2026-10-25, queue above). **Built** (2026-10-25,
-  branch `pwa-fixes-c`, not merged; code QA `qa-pwa-fixes-c-code.md`, 0 High / 1 Medium / 6 Low, all fixed): the summary's big avatar is the picker (`accept="image/*"`, no
+  branch `pwa-fixes-c`, merged `3acf4f85`, server 0.52.0, 2026-10-25; code QA `qa-pwa-fixes-c-code.md`, 0 High / 1 Medium / 6 Low, all fixed): the summary's big avatar is the picker (`accept="image/*"`, no
   `capture`, so a phone offers the library and the camera), saved at once back to `#avatar`, through the contact
   photos' pipeline (square JPEG <= 512 px, no EXIF), `devices.avatar_hash` (migration 0100), `data/device_avatars/`
   in the backups; shown with the dot on every phone row; Remove goes back to the letter. Served without a session at
@@ -606,7 +612,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   Safari shows the app icon anyway). Never sent to a phone. `docs/notes/server/pwa.md` "A phone's own picture",
   `notifications.md` "The push icon".
 - **PWA accent: field focus A, primary button 3** (the user, 2026-10-25, queue above). **Built** (2026-10-25, branch
-  `pwa-fixes-c`, not merged; code QA `qa-pwa-fixes-c-code.md`, all fixed; the fix round added the borderless fields' underline and the navigation keys): a focused field's own border in `--tint` 1.5 px and a white fill (dark:
+  `pwa-fixes-c`, merged `3acf4f85`, server 0.52.0, 2026-10-25; code QA `qa-pwa-fixes-c-code.md`, all fixed; the fix round added the borderless fields' underline and the navigation keys): a focused field's own border in `--tint` 1.5 px and a white fill (dark:
   peach border, night fill), no ring for a tap or click - `static/focus-mode.js` marks `<html>` from a press until the
   next Tab, since a browser counts a tapped text field as `:focus-visible` too; the keyboard keeps the ring. Filled
   buttons `--tint-fill` (#E8895E / dark #F0A884) with night text; `--strong` gone; `style.css?v=54`. Chromium + WebKit
@@ -623,7 +629,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   phone in plaintext), launcher S-M3 (browser "secure DNS" bypass) and S-M4 (a VoIP call over the PIN lock - the user
   doubts the chats are reachable; device check: lock, ring the phone from another Element X account, answer, try Back
   and the call screen's minimise arrow), music P-L4 (done 2026-10-21: the real first name in the Spotify fixtures is now "Forelder"; "Ella" is not a real name).
-  **Server M1 and M2 done on branch `pwa-fixes-a` (2026-10-25, not merged yet):** M1 - Account's new password and
+  **Server M1 and M2 done on branch `pwa-fixes-a` (2026-10-25, merged `a502bd58`, 2026-10-25):** M1 - Account's new password and
   "Reset Two-Factor Login" delete the account's push subscriptions (as Sign Out Everywhere), and each subscription
   keeps its session's `session_epoch` (migration 0095) so `send_due` deletes one from a signed-out session first
   (`push::forget_stale`). M2 - `backup_sync.sh` prunes the drive's `snapshots/` to the server's counts ("Backups to
@@ -746,7 +752,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
 - **PWA: a pause or "Lock again" from the PWA shows only after a manual reload** (the user, 2026-10-21): the phone
   acts at once (SSE), the page doesn't follow. Load `auto-reload.js` (3 s, design 31's pattern, scroll kept) while a
   `start_pause`/`end_windows` command is unanswered or its window isn't in the newest status yet, at most ~2 min.
-  **Done on branch `pwa-fixes-a` (2026-10-25, not merged yet):** the summary loads `auto-reload.js` while
+  **Done on branch `pwa-fixes-a` (2026-10-25, merged `a502bd58`, 2026-10-25):** the summary loads `auto-reload.js` while
   `window_relock::waiting_for_phone` holds (the newer of the two pressed under 2 min ago, not cancelled or refused,
   unanswered or its effect not in the newest report).
   Code QA `docs/review/qa-pwa-fixes-a-code.md` (0 High / 2 Medium / 5 Low / 1 Nit): Q-1..Q-8 fixed in the fix round
@@ -848,7 +854,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
 - **Design 59, Android's own lock screen (assessment, 2026-10-21):** recommends the hybrid - a real Android PIN as
   the gate, our glance page as a `showWhenLocked` face over it, Android's lock-screen notifications off
   (`KEYGUARD_DISABLE_SECURE_NOTIFICATIONS`), "Lås opp" -> Android's PIN pad; prototype behind a debug switch first. It
-  would make design 57 unnecessary, so **design 57's prep release (branch `worktree-agent-a689b601f638554b8`) is held
+  would make design 57 unnecessary, so **design 57's prep release (branch `worktree-agent-a689b601f638554b8`, archived as tag `archive/design-57-prep`) is held
   unmerged** until the user decides (it would ask parents for usage access). Five questions to the user (note §10).
   Its code QA (`docs/review/qa-57-prep-code.md`, on that branch, `a8750fb6`): 0 High / 0 Medium / 3 Low / 5 Nit,
   mutations 21/25 - the Lows (Android 14's unfixable Attention row, the Settings row can't revoke, three untested
@@ -913,9 +919,9 @@ separators, one item per bullet, so each sits in its round; the words are unchan
 - **Several parent accounts (the user, 2026-10-22: "enkelt opprette multi-admins, mor og far, med egen konto"):** build
   design 62 (`docs/design/62-parent-accounts-assessment.md`) in its simple form. Multi-family (design 63) is parked:
   "vi dropper mer tanker om multifamilie". Steps 1-2 (the latent bugs, 0087, the guarded self-service writes; Name,
-  Parents, Add with the one-time password, Withdraw) merged; steps 3-5 (Reset/Remove, "by <name>", per-parent Notify
-  Me About and inbox reads, migration 0088) built on `design-62-step345`, awaiting code QA; all five ship in one
-  `server-v*`.
+  Parents, Add with the one-time password, Withdraw) merged `b27316a8`; steps 3-5 (Reset/Remove, "by <name>", per-parent
+  Notify Me About and inbox reads, migration 0088) merged `e4ed9877` (both 2026-10-22, code QA'd with their fixes); all
+  five ship in one `server-v*`.
 - Settings saves in the security log (design 62's old step 6, qa-62-design Q62-13): one admin middleware writing a coalesced `settings_saved` event (actor, matched route + ids, merged per page within 10 min) - first decide what counts as saved (a 200 can be a refusal) and keep `/music` in; S.
 - **Android mode, kiosk off: the glance's own lock task vs a helper app (rc.2 run R2):** an unlock on SystemUI's pad
   into a lock-task helper (DeskClock) finishes it, because `lockLeave` stops lock task from the root and no API ends
@@ -937,7 +943,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   Home after "Lås opp" as design 32 decision 2, except while a call is live (telephony or VoIP) - then no Home start,
   the call's UI stays; Q2 (E) no `lockNow` at the notice wake's end in android mode. Q3 stays open for phase D. Design
   QA on §8 first, then one implementer and one code QA, then `launcher-v0.36.0-rc.3` for the user's emulator. The
-  plain lock with the small clock forced was re-measured first (`proto-plain-lock` 13d32d7d, 59c §7): Android already
+  plain lock with the small clock forced was re-measured first (`proto-plain-lock` 13d32d7d, archived as tag `archive/proto-plain-lock`, 59c §7): Android already
   uses the small clock whenever a row or a media session is on the lock, so the room is unchanged - one row at 240
   dpi, no media player; the hybrid stays. Round 1 built (branch `d59d-round1`, 59d §8.10): C, N1, H, B (ASK; the page
   under the pad, hidden only at the leave; Home unanimated on its own ground), E, and K (added by the user: Android's
@@ -1046,8 +1052,8 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   **Built** 2026-10-25 on `r13-rule-card` (design r13 steps 2 and 3, `docs/design/r13-launcher-rule-card-and-time-left.md`
   "Implementation status"): `POST /api/devices/time-request`, the `extra_time_request` event with its own switch "Asks
   for more time" (migration 0096), Device › Time's "Asked for more time at …", the anchor's time-left title and its one
-  action. Code-QA'd (`qa-r13-rule-card-code.md`, fix round done); ships with server 0.50.0; awaiting merge and the
-  emulator checks (§2.9).
+  action. Code-QA'd (`qa-r13-rule-card-code.md`, fix round done); ships with server 0.50.0; merged `3eb0c025` (launcher; the music app's part `85cc9dc7`), 2026-10-25, the
+  emulator checks (§2.9) ran (below).
   **Merged 2026-10-25 (3eb0c025) after code QA (`docs/review/qa-r13-rule-card-code.md`, 0 High / 1 Medium / 7 Low, all fixed). Emulator run 2026-10-25 (`docs/testing/2026-10-25-r13-run.md`): the card under a school rule, the notification's time left, the request end to end (tap → 200 → inbox + push switch → Time page row → a +15 lift clears it) all PASS. Server part in `server-v0.50.0`; launcher in `launcher-v0.37.0-rc.2`.**
 - **Design 59d step M (2026-10-23, six-inch run F1/F6): an unarmed boot must never hang.** Built on `d59d-step-m`
   (59d §8.12): in android mode the boot cover stays enabled (a direct-boot-aware HOME at every boot, also after a crash
@@ -1085,10 +1091,10 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   on it (the user, 2026-10-23): crossings take the fixes that matter; the Regularly timer becomes a long heartbeat
   (30-60 min) for the trail and "last seen"; the passive provider's fixes (any other app's or the system's) feed the
   trail free; the heartbeat's fix is skipped while the significant-motion sensor says the phone hasn't moved. Design
-  64 covers the battery model as its own section. **Step 1 done 2026-10-24 (branch `design-64-step1`, server only, not merged)**: zones on
+  64 covers the battery model as its own section. **Step 1 done 2026-10-24 (branch `design-64-step1`, server only, merged `70b6b32c`, 2026-10-24)**: zones on
   Locate (list, page, map), each fix stored once and judged once, `zone_*` events as key + params, push while news;
   the served interval unchanged until step 2 (`docs/notes/server/zones.md`). **Step 2 done 2026-10-24 (branch
-  `design-64-step2`, both dirs, not merged)**: `location_policy.zones`, a fence per zone, a crossing's two fixes,
+  `design-64-step2`, both dirs, merged `e91aa0db`, 2026-10-24)**: `location_policy.zones`, a fence per zone, a crossing's two fixes,
   `extra_locations`/`zone_watch`, the 30-min floor, the motion-gated heartbeat, the moving series, the balanced/precise
   paths, `provider`/`mock` stored (0093), the release on un-manage, the mock rule, Kid Settings' line; the code QA's
   fix round (Q-1..Q-12: everything gated on zones, the kept slot, `zone_watch.still` + `resent_at` for "Here now",
@@ -1106,7 +1112,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   **Built** (item (1), 2026-10-25, branch `r10-keystore-wrap`; code QA `qa-r10-keystore-code.md` fixed): `SealedPrefs`/`DeviceToken`/
   `Enrollment`, the redacted cache, "Ny oppsettkode" in the deadlock; deviations, the revision check's N4/N5/N8 left
   for code QA, and the §8 emulator checks owed are in the note's "Implementation status".
-  **Merged 2026-10-25 (74f5faa5) after code QA (`docs/review/qa-r10-keystore-code.md`, 0 High / 3 Medium / 9 Low, all fixed). Emulator run 2026-10-25 (`docs/testing/2026-10-25-r10-keystore-run.md`): the upgrade from rc.8 seals all four fields with the phone enrolled and both PINs working, total key loss → NEW SETUP CODE → re-enrolled with a lower-case code, the boot cost unchanged; checks 3, 6, 8, 10, 11, 12 and F1 owed. Goes out with `launcher-v0.37.0-rc.1`.** **F1 built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, awaiting merge)**: `glancePrompt(.., androidFace)` - UNUSABLE only in own mode, as Android's face (`AndroidLock.faceOn`) the stand-in shows the normal hint (`LockGlanceTest`); its emulator check is in `docs/testing/2026-10-24-home-round-run.md`, "Owed after launcher-small-a".
+  **Merged 2026-10-25 (74f5faa5) after code QA (`docs/review/qa-r10-keystore-code.md`, 0 High / 3 Medium / 9 Low, all fixed). Emulator run 2026-10-25 (`docs/testing/2026-10-25-r10-keystore-run.md`): the upgrade from rc.8 seals all four fields with the phone enrolled and both PINs working, total key loss → NEW SETUP CODE → re-enrolled with a lower-case code, the boot cost unchanged; checks 3, 6, 8, 10, 11, 12 and F1 owed. Goes out with `launcher-v0.37.0-rc.1`.** **F1 built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, merged `04b56192`, 2026-10-25)**: `glancePrompt(.., androidFace)` - UNUSABLE only in own mode, as Android's face (`AndroidLock.faceOn`) the stand-in shows the normal hint (`LockGlanceTest`); its emulator check is in `docs/testing/2026-10-24-home-round-run.md`, "Owed after launcher-small-a".
 - **The lock's glance page, three things** (the user's emulator screenshot, 2026-10-21, 320x569 dp, music tile full,
   one WhatsApp missed-call row): (1) **bug** - the bottom row ("Nødsamtale" and the torch) is cut off at the screen's
   bottom edge: `glanceFit` didn't keep the page inside the screen (check the 2026-10-21 torch spacing, +12 dp, and
@@ -1120,7 +1126,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   wrap); one progress row "elapsed - bar - remaining" (`1:13 ━━━━── −1:50`, replacing (3)'s separate line); the
   controls as plain glyphs on one row without the big discs (each still a >= 48 dp target, play a little larger).
   Saves roughly a third of the tile's height, which also helps (1)-(2). No output/AirPlay button (the lock opens
-  nothing). Mockup first. **Done 2026-10-22 (7ddc80a6, branch `r9-glance`; design r9 §1-3, not merged yet)**: (1) the
+  nothing). Mockup first. **Done 2026-10-22 (7ddc80a6, branch `r9-glance`; design r9 §1-3, merged `ae92be18`, 2026-10-22)**: (1) the
   fit is keyed on the available height (the bars arrive as padding at the same height); (2) the bottom block is
   measured whole, the top block clips, the rows scroll (glanceFit: every row or one visible, never folded; candidate 7
   the "more" line; the timer now outlives the date); (3)+(4) the compact player (174.8 dp, was 233.8). Device checks:
@@ -1182,7 +1188,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   keys (the PIN lock, the phone book) follow the system switches. A Quick controls bit like design 18's
   sound row (the parent decides whether the row shows); never on the PIN lock. Launcher + the server's
   switch. Approved 2026-10-16; the user asked for it again 2026-10-21 ("tastelyd" on Kid Settings). **Done
-  2026-10-22 (7ddc80a6, branch `r9-glance`; design r9 §4, not merged yet)**: bit 16, off on a new phone (the parent
+  2026-10-22 (7ddc80a6, branch `r9-glance`; design r9 §4, merged `ae92be18`, 2026-10-22)**: bit 16, off on a new phone (the parent
   grants the app-op first), sounds + vibration only (`DTMF_TONE_WHEN_DIALING` left alone), read-only without the
   app-op; Touch feedback stays on in Android's Settings (`docs/setup/android-settings.md`). Device check: §5 check 4.
 
@@ -1346,7 +1352,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   2026-10-24, measured 2026-10-25 - see the debounce entry above). Follow-up, XS, not ordered: after a release, a longer
   quiet window (about 3 s quiet / 30 s cap) for callbacks about the packages the pass touched would fold the stragglers
   into one or two loads.
-  **Follow-up built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, awaiting merge)**: the pass names each package it
+  **Follow-up built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, merged `04b56192`, 2026-10-25)**: the pass names each package it
   changes (`AppLoadHold.touch`), its release keeps them 2 min (`APP_LOAD_TRAIL_WINDOW_MS`, a chain of passes
   joined); a `LauncherApps` callback about packages all touched is the trail (`AppLoadHold.noteRequest`, pure
   `appLoadTrails`), and a burst of the trail alone loads after 3 s of quiet, at most 30 s (`appLoadBurstDue`); any
@@ -1363,7 +1369,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   enrolment like the relock blocks; re-check after an OTA. A MediaTek DuraSpeed phone (the Bluefox NX1, below) gets
   the same treatment if it comes. Launcher + docs, S.
 - **Design r12, the music favourites tile + two small items** (the user, 2026-10-24; note
-  `docs/design/r12-music-favourites-tile.md`, branch `r12-music-design`, awaiting the user's three confirmations: the
+  `docs/design/r12-music-favourites-tile.md`, branch `r12-music-design`; the user's three confirmations were taken as the defaults 2026-10-24, built below: the
   tile's cover, last-hearted-first order, the bookmark rule): (1) a row without its own picture in a pictured list
   shows the series cover plain, no number (design 39 rule 1 changed: "tallet gir mer usikkerhet enn det tilfører
   verdi"); (2) skip 15 s both ways (was 15/30, design 50's pick); (3) one "Favoritter" tile playing every hearted item
@@ -1412,7 +1418,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   (`homeGroundDue`, `HomeGroundTest`); design 59d step B's face leave folded in unchanged. Still owed (design 08's
   last section): 3-button navigation (with a photo: no zoom step when the copy goes - Q-7), kiosk on, a photo and a
   plain colour, the lock's leave on both pads, screen off/on over the lock (design 32).
-  **Follow-up built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, awaiting merge)** - the one-frame zoom step at the
+  **Follow-up built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, merged `04b56192`, 2026-10-25)** - the one-frame zoom step at the
   hand-over (queue above): Home keeps its copy permanently, `homeGroundDue(contentShown)` (the content on the window,
   so never at a lock-up); the 2026-10-24 arrival window (700 ms floor, 2.5 s cap, the enter animation's end, the
   posted pause end, the rechecks) and design 59d step B's face-leave mark in `HomeFront` are gone (both covered).
@@ -1463,7 +1469,8 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   Launcher only; a mockup first, then the usual process.
   **Built** 2026-10-25 on `r13-rule-card` (design r13 step 1, "Implementation status"): `lock/RuleCard.kt`, the card
   under the alarm line, the certain end shared with the time-rule screen. Code-QA'd (`qa-r13-rule-card-code.md`, fix
-  round done); awaiting merge and the emulator checks (§1.7).
+  round done); merged `3eb0c025` (launcher; the music app's part `85cc9dc7`), 2026-10-25, the emulator checks (§1.7)
+  ran (below).
   **Merged 2026-10-25 (3eb0c025) after code QA (`docs/review/qa-r13-rule-card-code.md`, 0 High / 1 Medium / 7 Low, all fixed). Emulator run 2026-10-25 (`docs/testing/2026-10-25-r13-run.md`): the card under a school rule, the notification's time left, the request end to end (tap → 200 → inbox + push switch → Time page row → a +15 lift clears it) all PASS. Server part in `server-v0.50.0`; launcher in `launcher-v0.37.0-rc.2`.**
 - **Enrolment before Home's first start** (glance-topinset run, qa-glance-topinset-code Q-3): a phone enrolled from
   Vibb One's Settings before Home ever started on screen resets its preferences at the next process start
@@ -1477,7 +1484,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   (`firstLaunchResetDue`); design 59d §8.17.
 - **QR enrolment asks for no sync** (qa-write-settings-row-code Q-8): `applyProvisioningExtras` succeeding should
   `SyncRunner.request(.., "enrolled")` as Settings' "Enroll now" does, so the first policy doesn't wait for the backstop. Small.
-  **Built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, awaiting merge)**: `applyProvisioningExtras` asks for the sync on
+  **Built 2026-10-25 (branch `launcher-small-a`, code QA'd and fixed, merged `04b56192`, 2026-10-25)**: `applyProvisioningExtras` asks for the sync on
   the enrolment's success - both QR paths (Android's provisioning and the in-app scanner) come through it;
   `ProvisioningModeTest` pins it.
 
@@ -1553,6 +1560,14 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   adds the scope `user-read-playback-state`, every Spotify account logs in again, the music app reads
   `GET /me/player/queue` after each start/track change, a tap on a playlist/album row starts there. Only worth it for
   playlists no logged-in account owns, and for artists; 46b (a reader account) covers the family's own lists.
+
+- **Design 56, Android 13 and 17** (assessment, `docs/design/56-android-13-and-17.md`): parked until Android 17 is
+  announced for the Jelly Star, then the API 37 emulator round plus §3.4's four items.
+- **Design 61, vibb boxes** (assessment, `docs/design/61-vibb-boxes-assessment.md`): option (c), parked.
+- **Design 09 part A, an SMS allowlist** (`docs/design/09-sms-and-fixes.md`): postponed since step 9; no code exists.
+- **Design 22 S5/L1 and S6/L2, and the Tailscale-app mode 2 (design 03)**: parked - "the tailnet-only setup is the
+  product" (S7, the CSP, moves to server round S2). L3 (the strict network-security config) is not built and has no
+  entry: parked too (no decision yet).
 
 ### Asked for, scope not settled yet
 
@@ -2069,7 +2084,9 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   the alarm exemption widened by it, a next-alarm line ("Alarm tor 07:00"), a timer tile counting down from its
   notification's title and a stopwatch tile counting up, "Tiden er ute" with one Stopp button firing Fossify's own
   Dismiss broadcast (background starts denied), nothing for any other channel, the tap = keypad then Fossify, the
-  lock never steps aside for a timer (`42-lock-clock.md`, Fossify's source read). **Device checks owed (the
+  lock never steps aside for a timer (`42-lock-clock.md`, Fossify's source read; FossifyOrg/Clock's receivers and services
+  are not exported and its only exported entry is an activity, `SplashActivity`, so no pause/lap/reset is reachable
+  from the lock, checked 2026-10-21). **Device checks owed (the
   user)**: emulator - a parent-PIN use/wrong/lockout reaches the inbox within seconds and a correct entry uploads no
   `wrong`; a 2-minute Fossify timer ending with the screen LOCKED rings, the tile says "Tiden er ute" with Stopp,
   Stopp silences it, the lock never moved; the stopwatch counting up on the lock; an alarm 2 minutes ahead with the
@@ -2272,24 +2289,6 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   `POST /devices/{id}/lock-screen/apps` takes `show`, the `/text` route is gone; stored data and policy unchanged.
 - **A quiet NRK/RSS entry is checked daily** (approved 2026-10-21). **Done (branch `srv-sweep-resume`)**: no new item
   in 30 days -> once a day instead of the interval, back on it as soon as a check finds a new item.
-- **Design 55 (to write): controls on the lock's clock tile** (the user, 2026-10-21, iPhone-like): stopwatch running -
-  pause and lap; paused - play and X (stop, reset, the notification goes); timer running - pause and X; paused - play
-  and X; ended - restart and X. Needs research of what Fossify Clock exposes (today: only the ended timer's single
-  Dismiss broadcast, design 42) - its receivers/intents for pause, resume, reset, lap, restart - and what the lock may
-  send without unlocking (broadcasts only, never an activity). **Fossify checked 2026-10-21** (FossifyOrg/Clock
-  `AndroidManifest.xml`): the only exported entry is `SplashActivity` (the app's UI) for `TOGGLE_STOPWATCH`,
-  `SET_TIMER`, `DISMISS_TIMER` and the alarm actions - an activity, so never from the lock; `TimerService`,
-  `StopwatchService` and `HideTimerReceiver` are not exported; the running timer's and the stopwatch's notifications
-  carry no actions (the user's dumpsys: only the ended timer's Dismiss). So no pause/resume/reset/lap/restart is
-  reachable from the lock today. Options: (a) a contribution to Fossify adding notification actions as broadcast
-  PendingIntents (stopwatch: pause/resume/lap/reset; timer: pause/resume/stop; ended: restart/dismiss) - the lock then
-  sends them like today's Stopp; (b) Vibb One's own timer/stopwatch on the lock (alarms stay Fossify's); (c) as today,
-  the tile opens Fossify after the unlock. **Parked** (the user, 2026-10-21: "da får vi bare vente"): Fossify already
-  has the requests open - FossifyOrg/Clock #245 (stopwatch: pause/resume, lap, reset) and #246 (timer: pause/resume,
-  reset), since 2025-07, labels "feature request"/"needs triage"; their rules allow AI contributions but take PRs only
-  for issues labelled `help wanted` and ask for a 👍 instead of "+1" comments. When either gets `help wanted` or ships,
-  pick this up (the lock reads the actions as it reads today's Stopp; ask for an action extra to tell them apart).
-
 - **Design 54's measuring run done early** (the user's Pi, 2026-10-21, `sonos-play-test.py --spotify` + the probe's
   `--save`; raw files in the session scratchpad, to be scrubbed into fixtures by 54-a1): sn 2311 took the ShareLink in
   0.8 s (first=1, 30 added, NrTracks 30; TrackURIs carry `sn=6`); TRACK_NR jumps work playing and paused; the speaker's
