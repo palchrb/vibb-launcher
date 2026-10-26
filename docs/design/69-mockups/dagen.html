@@ -90,14 +90,12 @@
                    line-height: 20px; font-variant-numeric: tabular-nums; }
   .dagen .ev .tm small { display: block; font-size: 12px; font-weight: 700; color: var(--core-dim); }
   .dagen .ev .tx { min-width: 0; }
-  .dagen .ev .ti { font-size: 15px; font-weight: 800; color: var(--ink); line-height: 20px; }
-  .dagen .ev .wh { font-size: 13px; font-weight: 600; color: var(--core-dim); line-height: 18px; }
+  .dagen .ev .ti { font-size: 15px; font-weight: 800; color: var(--ink); line-height: 20px; display: -webkit-box;
+                   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .dagen .ev .wh { font-size: 13px; font-weight: 600; color: var(--core-dim); line-height: 18px; display: -webkit-box;
+                   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .dagen .ev.now { box-shadow: inset 0 0 0 1.5px var(--accent); }
   .dagen .ev.all .tm { color: var(--core-dim); }
-  .dagen .dots { position: absolute; left: 0; right: 0; bottom: 30px; display: flex; justify-content: center;
-                 gap: 6px; }
-  .dagen .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--control); }
-  .dagen .dots i.on { background: var(--accent); }
   .dagen .empty { position: absolute; left: 16px; right: 16px; top: 118px; background: var(--tile);
                   border-radius: 18px; padding: 22px 16px; text-align: center; color: var(--core-dim);
                   font-size: 14px; font-weight: 700; line-height: 1.45; }
@@ -162,12 +160,12 @@ titler, en fotballfeed, og en delt familiekalender.</p>
         <div class="ev"><div class="tm">17:30<small>18:45</small></div><div class="tx"><div class="ti">Fotball: Trening</div><div class="wh">Kunstgresset</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i class="on"></i><i></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>I dag.</b> Én dag som en liste: tid til venstre, tittel og sted til høyre, heldagshendelser øverst, den som pågår
-    har en tynn fersken-ramme. Sveip til siden for neste eller forrige dag; prikkene viser hvor du er i forhold til i dag, og de smale kantene antyder
-    flere dager. «I dag»-knappen vises bare når du har sveipet bort. Ingen redigering, ingen menyer.</figcaption>
+    har en tynn fersken-ramme. Sveip til siden for neste eller forrige dag, uten ende begge veier; de smale kantene antyder
+    flere dager. «I dag»-knappen vises bare når du har sveipet bort og tar deg rett tilbake. Tittel og andrelinje får inntil to
+    linjer hver, resten kuttes med «…» og ligger bak et trykk. Ingen redigering, ingen menyer.</figcaption>
   </figure>
 
   <figure>
@@ -180,7 +178,6 @@ titler, en fotballfeed, og en delt familiekalender.</p>
         <div class="ev"><div class="tm">16:00<small>17:00</small></div><div class="tx"><div class="ti">Tannlege</div><div class="wh">Mamma henter 15:30</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>I morgen.</b> Samme liste, neste dag. Overskriften sier ukedagen; «I dag»-knappen tar deg tilbake uansett hvor
@@ -194,7 +191,6 @@ titler, en fotballfeed, og en delt familiekalender.</p>
       <div class="head"><div class="day">Lørdag<small>31. oktober</small></div><div class="today-btn">I dag</div></div>
       <div class="empty">Ingenting i kalenderen i dag.</div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i></i><i></i><i class="on"></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>Tom dag.</b> En rolig tom tilstand med faste ord, ikke et tomt rutenett.</figcaption>
@@ -211,7 +207,6 @@ titler, en fotballfeed, og en delt familiekalender.</p>
         <div class="ev"><div class="tm">17:30<small>18:45</small></div><div class="tx"><div class="ti">Vibb IL G2017 – Trening</div><div class="wh">Kunstgresset</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i class="on"></i><i></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>Uten regler.</b> Slik ser feedene ut rett fra kilden. Sammenlign med første skjerm: tre regler gjør
@@ -348,7 +343,6 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
         <div class="ev"><div class="tm">10:45<small>11:30</small></div><div class="tx"><div class="ti">Skole: Litteraturhuset - Det kuleste fra R omerriket</div><div class="wh">Vi deler gruppa i to og tar buss 08.56 og 09.11. Viktig at man er klar på skolen 08.30.</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>15. oktober.</b> «Gruppe 2- skoleåret 2026/2027: Litteraturhuset - Det kuleste fra R omerriket» blir «Skole: Litteraturhuset -
@@ -365,7 +359,6 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
         <div class="ev"><div class="tm">09:00<small>13:15</small></div><div class="tx"><div class="ti">Skole: Girl Tech Fest</div><div class="wh">Jentene på 5. trinn, hentes med buss fra VoMo klokka 0900. Retur med buss, tilbake på skolen ca. 13.15</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>20. oktober.</b> Feeden har to hendelser denne dagen: Girl Tech Fest og «Frankenstein- for 6. og 7. trinn»
@@ -383,7 +376,6 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
         <div class="ev"><div class="tm">13:00<small>14:30</small></div><div class="tx"><div class="ti">Skole: Språk: Ordtak</div><div class="wh">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen kjente ordspråk og talemåter kommer fra.</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>28. oktober</b>, etter vintertid: 09:00Z blir 10:00. Gym-hendelsen har tom beskrivelse, så bare tittelen.
