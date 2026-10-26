@@ -1626,7 +1626,7 @@ parent's switch) and claimed together as capability `dns_bypass_v1` (`DNS_BYPASS
 
   | Package | Browser | Reads `DnsOverHttpsMode`? |
   |---|---|---|
-  | `com.android.chrome`, `com.chrome.beta`, `.dev`, `.canary` | Chrome | yes (documented, Android 85+); E3 check 9 |
+  | `com.android.chrome`, `com.chrome.beta`, `.dev`, `.canary` | Chrome | yes (documented, Android 85+); E3 2026-10-26: the launcher sets it (`BrowserDoh` log), `chrome://policy` still a device check (Chrome draws nothing on the swiftshader emulator) |
   | `com.microsoft.emmx` | Edge | not checked yet (`edge://policy`) |
   | `com.brave.browser`, `_beta`, `_nightly` | Brave | not checked yet (`brave://policy`) |
   | `com.vivaldi.browser` | Vivaldi | not checked yet (`vivaldi://policy`) |

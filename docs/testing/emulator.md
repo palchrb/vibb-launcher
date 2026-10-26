@@ -2015,6 +2015,12 @@ music" 24 dp under them, and a failed stream's real cause is logged. These repla
 media foreground service survives `am kill`), 18 showed no wordmark on a warm start (the 400 ms hold of round M1b covers
 it), 2-4 and 9-10 not run (the fake room needs SSDP from the emulator).
 
+**Run 2026-10-26, E3** (`docs/testing/2026-10-26-e3-run.md`): §6m checks 10, 12-15 passed on `jelly36`; 9 is set by the
+launcher (log) but `chrome://policy` and every browser screen (11's DoH modes, 16, 17) are device checks - Chrome and Fennec
+draw nothing under swiftshader; L2's READ_PHONE_STATE needs WhatsApp (device). Offline there needs `svc wifi disable` and
+`svc data disable`; the phone reports `dns_upstream` and its blocked events only with a status report (nudge with a real
+policy change).
+
 12. **The hand-over, frame by frame** (cold, from the launcher's tile, recorded as in step 1, stepped at 24 fps): the
     rings on the night ground alone, then "vibb music" (cream + peach) fading in right under them while the rings don't
     move - **at most a pixel** (the shell truncates the icon's bounds: at 240 dpi the canvas is drawn 430.2 px instead of
