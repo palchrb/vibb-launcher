@@ -374,8 +374,8 @@ is `FLAG_SECURE`. Server migration 0066; the Jelly Star checklist is in the desi
 - **Provisioning (2026-10-06)**: QR carries locale/time zone (`nb_NO`/`Europe/Oslo`), the
   launcher has the Android 12+ provisioning-mode/compliance activities, system language locked
   while managed. QR on the Jelly Star: [needs device test], adb stays the fallback.
-- **Pending user decision**: drop the top-left back buttons on full pages
-  (`KidHeader.SHOW_BACK_BUTTON`).
+- **Back buttons on full pages** (was "Pending user decision" since 2026-10-06): decided 2026-10-26 (the plan's decision 6) -
+  the buttons stay, the `KidHeader.SHOW_BACK_BUTTON` flag is gone (round 0b, merged 0a43ed3d).
 - **Cleanup: remove monitoring and unused upstream features** (user, 2026-10-06) - **done
   2026-10-06** (plus the applicationId `me.vibb.launcher`): journal, browser history, UnifiedPush relay
   and MollySocket removed (migration 0038), DNS log opt-in with 7 days, locations 7 days by default
@@ -511,7 +511,7 @@ Rounds and waves: `docs/plan/2026-10-25-queue-rounds.md` (2026-10-25). Combined 
 separators, one item per bullet, so each sits in its round; the words are unchanged.
 
 - **Cleanup**
-  - **Round 0b - dead code in the apps** (`cleanup-apps`, launcher + music; `docs/plan/2026-10-25-queue-rounds.md` Round 0b; **in build since 2026-10-26**, branch `cleanup-apps` off 380fc2c8): design 32's debug experiments (`LockUpDebug`, `KeyguardCoverDebug` + receivers, the §6k text), `palette-ktx`, the dead-code review's launcher list, D3's `FirebaseCleanup`/`FirebaseLeftovers`, D5's minimalist leftovers, `KidHeader.SHOW_BACK_BUTTON` (decision 6: the buttons stay, the flag goes), music `SpeakerCache.scanNow`. Deletions only; ships in the next launcher/music RC.
+  - **Round 0b - dead code in the apps** (`cleanup-apps`, launcher + music; `docs/plan/2026-10-25-queue-rounds.md` Round 0b; **merged 2026-10-26**, 0a43ed3d, code QA `docs/review/qa-0b-cleanup-code.md` 0/0/3/3 + fix round; 41 files, -940 lines; `color/kid_icon_fallback` kept - it gained callers; the COVER glue stays for design 59 phase D): design 32's debug experiments (`LockUpDebug`, `KeyguardCoverDebug` + receivers, the §6k text), `palette-ktx`, the dead-code review's launcher list, D3's `FirebaseCleanup`/`FirebaseLeftovers`, D5's minimalist leftovers, `KidHeader.SHOW_BACK_BUTTON` (decision 6: the buttons stay, the flag goes), music `SpeakerCache.scanNow`. Deletions only; ships in the next launcher/music RC.
 - **Launcher**
   - **Round L1 - glance and Home layout** (merged 2026-10-26, `launcher-glance-c`; RC3-8 pinned, six-inch F3/F4 and the lower music tile built; only Q5 is left):
     - **Fingerprint with the screen on, Jelly Star check** (the user, 2026-10-25, emulator: with the screen on the fingerprint unlocks only once SystemUI's pad is up; from screen-off it unlocks at once): expected in the hybrid - the glance occludes the keyguard, and Android listens for fingerprint only while the keyguard is showing and not occluded (design 59); no API lets us dismiss a secure keyguard after our own biometric check. Check on the Jelly Star (side-mounted sensor; some OEMs keep listening while occluded); if it does not work there with the screen on, one line in Kid Settings' help ("press the sensor from a dark screen, or swipe up first"), nothing more. Not a bug.
@@ -1598,7 +1598,8 @@ separators, one item per bullet, so each sits in its round; the words are unchan
   in English before the language arrives from the server. Not yet checked (time-box): Home in en
   with 4 columns, the phone book, the keypad after a font-scale change, the time-rule
   "Til … p.m.", the PWA's About row, a VoIP ring while paused.
-- **Remove the unused androidx `palette` dependency** (unused since design 34 step 1), with its
+- **Remove the unused androidx `palette` dependency** - **done 2026-10-26** (round 0b, 0a43ed3d).
+  Was: **Remove the unused androidx `palette` dependency** (unused since design 34 step 1), with its
   verification-metadata entries.
 - **Design 46's queue view: a context entry's list shows the playing track and the next 20 from Spotify's queue**
   (the user, 2026-10-20: "Legg køvisning for neste 20 på longlisten vår, så husker vi på den til senere"). Designed and
