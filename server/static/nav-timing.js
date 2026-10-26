@@ -1,7 +1,8 @@
 // What a tab switch costs, measured in the parent's own browser (PLAN "PWA tab switches feel slow
 // at times", step 1: the measurement; prefetch comes after the numbers). Off unless switched on:
 // open any page with `?timing=1` (this browser remembers it, localStorage `handy-timing`) and
-// `?timing=0` to stop. While on, every page load prints one line to the console and shows it in a
+// `?timing=0` to stop - or tap Settings › About › Page timing (the installed iPhone app has no
+// address bar and storage of its own), whose state this script shows. While on, every page load prints one line to the console and shows it in a
 // small line at the top of the page:
 //   tap 840 · wait 120 · dns 0 · connect 310 · ttfb 95 · download 12 · dom 60 · load 610 · navigate · assets 1/9
 // - tap: from the tap on the previous page (the link's click, kept in sessionStorage) to this
@@ -124,12 +125,31 @@
         }
     }
 
-    function show(doc, text) {
-        var el = doc.createElement("div");
-        el.className = "timing-line";
-        el.setAttribute("aria-hidden", "true");
-        el.textContent = text;
-        doc.body.appendChild(el);
+    /** A `show(text)` for `doc`: one line per page, a back-forward cache restore replaces its text. */
+    function shower(doc) {
+        var el = null;
+        return function (text) {
+            if (!el) {
+                el = doc.createElement("div");
+                el.className = "timing-line";
+                el.setAttribute("aria-hidden", "true");
+                doc.body.appendChild(el);
+            }
+            el.textContent = text;
+        };
+    }
+
+    /** About's "Page timing" row, once the page has loaded: its state, and a link to the other one. */
+    function toggle(doc, on) {
+        function mark() {
+            var row = doc.querySelector && doc.querySelector("[data-timing-toggle]");
+            if (!row) return;
+            row.setAttribute("href", "/updates?timing=" + (on ? "0" : "1") + "#timing");
+            var state = row.querySelector("[data-timing-state]");
+            if (state) state.textContent = on ? "On" : "Off";
+        }
+        if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", mark);
+        else mark();
     }
 
     function install(win) {
@@ -142,7 +162,10 @@
         } catch (e) {
             // Storage blocked: the switch can't be remembered; `?timing=1` still works per page.
         }
-        if (!enabled(win.location.search, local)) return;
+        var on = enabled(win.location.search, local);
+        toggle(doc, on);
+        if (!on) return;
+        var show = shower(doc);
         doc.addEventListener("click", function (ev) {
             var href = tapped(ev, win.location.href);
             if (href) write(session, TAP_KEY, JSON.stringify({ href: href, t: Date.now() }));
@@ -168,7 +191,7 @@
             var here = win.location.href.split("#")[0];
             var text = line(p, origin, tap, here, perf.getEntriesByType ? perf.getEntriesByType("resource") : null);
             if (win.console && win.console.info) win.console.info("[timing] " + win.location.pathname + " " + text);
-            show(doc, text);
+            show(text);
         }
         // loadEventEnd is set once the load event's handlers have run: report on the next turn.
         win.addEventListener("load", function () {
@@ -176,11 +199,11 @@
         });
         // Back from the back-forward cache: no navigation was timed.
         win.addEventListener("pageshow", function (ev) {
-            if (ev.persisted) show(doc, "back-forward cache: no request");
+            if (ev.persisted) show("back-forward cache: no request");
         });
     }
 
-    var api = { enabled: enabled, phases: phases, line: line, assets: assets, tapped: tapped, install: install };
+    var api = { enabled: enabled, phases: phases, line: line, assets: assets, tapped: tapped, toggle: toggle, install: install };
     if (typeof module !== "undefined" && module.exports) {
         module.exports = api;
     } else if (root.document) {

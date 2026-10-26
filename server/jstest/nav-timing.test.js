@@ -4,7 +4,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { enabled, phases, line, assets, tapped, install } = require("../static/nav-timing.js");
+const { enabled, phases, line, assets, tapped, toggle, install } = require("../static/nav-timing.js");
 
 function memoryStorage(initial) {
     const map = new Map(Object.entries(initial || {}));
@@ -171,7 +171,28 @@ test("switched on: a tap is kept, and the next load prints and shows its line", 
     assert.strictEqual(f.appended[0].className, "timing-line");
     assert.match(f.appended[0].textContent, /assets 1\/1$/);
     assert.strictEqual(session.getItem("handy-timing-tap"), null, "a tap counts once");
-    // Back from the back-forward cache: said so, no numbers.
+    // Back from the back-forward cache: said so in the same line, no numbers, no second line.
     f.listeners.pageshow[0]({ persisted: true });
-    assert.strictEqual(f.appended[1].textContent, "back-forward cache: no request");
+    assert.strictEqual(f.appended.length, 1);
+    assert.strictEqual(f.appended[0].textContent, "back-forward cache: no request");
+});
+
+test("About's Page timing row shows the state and links to the other one", () => {
+    const attrs = {};
+    const state = { textContent: "Off" };
+    const row = { setAttribute: (k, v) => (attrs[k] = v), querySelector: () => state };
+    const doc = { readyState: "complete", querySelector: () => row };
+    toggle(doc, true);
+    assert.strictEqual(state.textContent, "On");
+    assert.strictEqual(attrs.href, "/updates?timing=0#timing");
+    toggle(doc, false);
+    assert.strictEqual(state.textContent, "Off");
+    assert.strictEqual(attrs.href, "/updates?timing=1#timing");
+    // A page without the row, and one still loading: nothing until it has loaded.
+    toggle({ readyState: "complete", querySelector: () => null }, true);
+    const waiting = [];
+    toggle({ readyState: "loading", querySelector: () => row, addEventListener: (t, fn) => waiting.push([t, fn]) }, true);
+    assert.strictEqual(waiting[0][0], "DOMContentLoaded");
+    waiting[0][1]();
+    assert.strictEqual(state.textContent, "On");
 });

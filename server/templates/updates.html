@@ -243,6 +243,20 @@
         <p class="group-footer">Within about 10 minutes of the time, by the Pi's clock.</p>
     </section>
     {% endif %}
+
+    {#- The tab-switch timing's switch for this browser (Q28; code QA M2: the installed iPhone app has
+        no address bar and its own storage). A plain link back to this group; static/nav-timing.js
+        shows On and points it at ?timing=0 while timing is on. -#}
+    <section id="timing" aria-labelledby="timing-title">
+        <h2 class="group-header" id="timing-title">Diagnostics</h2>
+        <div class="group">
+            <a class="row" href="/updates?timing=1#timing" data-timing-toggle>
+                <span class="row-label">Page timing</span>
+                <span class="row-value" data-timing-state>Off</span>
+            </a>
+        </div>
+        <p class="group-footer">On this device only: a line at the top of each page with how long it took.</p>
+    </section>
 </main>
 </body>
 </html>
