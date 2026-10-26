@@ -37,3 +37,17 @@ phone book with photos):
 | WhatsApp's real `sender_person` URI shape, on the test account only | The photo for a phone-book number; the app icon for a `content://` or missing URI. Don't paste `dumpsys notification --noredact` output with real numbers into the docs |
 | After a reboot, before the first unlock | Rows show the app icon, no photo, no crash (the DE rules' contacts have `id = 0`, CE unreadable) |
 | First lock render after a cold start | The photo shows first, then the app mark once the icon job has drawn it |
+
+## Owed after launcher-glance-c (2026-10-26)
+
+The branch's emulator checks (debug launcher, music playing in the music app, three conversations on the lock's glance;
+screenshots through the emulator console, the lock is `FLAG_SECURE`):
+
+| Check | What to see |
+|---|---|
+| `jelly36` (320x569 dp), font 1.0, music + 3 rows (RC3-8) | The compact tile and all three rows in sight, no fade at the bottom; log `Glance layout: tile COMPACT, 3 rows, 0 more` |
+| `jelly36`, font 1.3, music + 3 rows | The compact tile; the rows that don't fit sit under the bottom fade (a row's top or the card above it fading), the page scrolls to them |
+| `jelly36`, font 1.0 and 1.3, music + 1 row | The full tile 12 dp lower than before (162.8 dp in the model): the controls closer to the tile's bottom edge, nothing cut, the play glyph not touching the edge |
+| `jelly36`, any font, a long message | The row's text is still one line, cut with "…" (below 720 dp tall) |
+| `six35` (411x914 dp), font 1.3, music + 3 rows with short messages (F4) | Each row's text on up to two lines (a short message whole), the title one line; the three rows fit or the rest is under the fade |
+| `six35`, font 1.3, Home with 5+ contacts with two-line names (F3) | "Bestemor" and "Kristoffer" (and every neighbour pair) with a visible gap between them; at font 1.0 Home looks as before |
