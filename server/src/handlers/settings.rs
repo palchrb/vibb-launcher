@@ -72,6 +72,9 @@ struct ProvisioningSettingsTemplate {
     tailscale_key_hint: Option<String>,
     /// `?saved=1`: the flash under the Save button (`#saved`).
     saved: bool,
+    /// The address the QR uses is plain http to a private address, or the saved one is refused by
+    /// the rule now (saved before 0.55.0, QA L-e): said under the field (security review L8).
+    url_warning: Option<String>,
     /// A refused save: the field ("server_url", "locale" or "time_zone") and why.
     error: Option<(&'static str, &'static str)>,
     country_code: CountryCode,
@@ -148,8 +151,26 @@ fn render(
     error: Option<(&'static str, &'static str)>,
     country_code: CountryCode,
 ) -> Response {
+    let url_refused = error.is_some_and(|(field, _)| field == "server_url");
+    let shown = if entered.server_url.is_empty() {
+        state.config.phone_server_url.as_deref().unwrap_or("")
+    } else {
+        entered.server_url.as_str()
+    };
+    let url_warning = if url_refused || shown.is_empty() {
+        None
+    } else if crate::handlers::provisioning::saved_refused(shown) {
+        Some(
+            "This saved address isn't put in the setup QR: plain http goes only to a private \
+             address. Save an https:// one."
+                .to_string(),
+        )
+    } else {
+        crate::handlers::provisioning::plain_http_warning(shown)
+    };
     let page = ProvisioningSettingsTemplate {
         title: "Phone Setup".to_string(),
+        url_warning,
         entered,
         env_server_url: state.config.phone_server_url.clone(),
         tailscale_key_hint: key_hint(&settings.tailscale_auth_key),
@@ -219,10 +240,12 @@ pub async fn update_provisioning_settings(
     // written (fix round 2026-10-06).
     let locale = form.get("locale").map(|s| s.trim()).unwrap_or("");
     let time_zone = form.get("time_zone").map(|s| s.trim()).unwrap_or("");
-    // Empty = .env's PHONE_SERVER_URL, else the one rule for the QR's address (security review L8).
-    let url_refusal = Some(server_url)
-        .filter(|url| !url.is_empty())
-        .and_then(crate::config::server_url_refusal);
+    // Empty = .env's PHONE_SERVER_URL, else the one rule for the QR's address (security review L8):
+    // a refused one isn't saved, a plain-http one to a private address is, with its warning.
+    let url_refusal = match crate::config::check_server_url(server_url) {
+        crate::config::ServerUrl::Refused(why) if !server_url.is_empty() => Some(why),
+        _ => None,
+    };
     let error = if let Some(why) = url_refusal {
         Some(("server_url", why))
     } else if !locale.is_empty() && !crate::handlers::provisioning::valid_locale(locale) {

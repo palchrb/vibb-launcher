@@ -92,11 +92,16 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.
   Provisioning: `GET /devices/{id}/provision` (Connect) is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
   the Tailscale key is write-only (`settings::key_hint`, empty keeps, `clear_tailscale_auth_key` removes). The QR's
-  server address (Phone Setup's field and `.env`'s `PHONE_SERVER_URL`, one rule since 0.55.0, security review L8,
-  `config::server_url_refusal`): `https://` and a host, or `http://` only to a tailnet address (100.64.0.0/10, the
-  tunnel encrypts it); the form refuses anything else (400, the reason under the field, nothing saved), `.env`'s is
-  ignored with a log line. An address saved before stays until the form is saved again
-  (`provisioning::a_plain_http_server_address_is_refused_outside_the_tailnet`).
+  server address (Phone Setup's field and `.env`'s `PHONE_SERVER_URL`, one rule since 0.55.0, security review L8 and
+  the user's rule of 2026-10-26, `config::check_server_url`): `https://` and a host, or `http://` to a Tailscale address
+  (100.64.0.0/10, `fd7a:115c:a1e0::/48`, `*.ts.net`) - fine, silent; `http://` to another private address (RFC 1918,
+  loopback, link-local, `fc00::/7`, a `.local`/`.internal`/single-label name) - saved and put in the QR, with "The
+  phones will use plain http to <host>. That is safe only if the path is an encrypted tunnel (WireGuard, Tailscale).
+  The server can't tell." under the field and on the Connect page (`.env`'s: a log line), since a WireGuard or
+  Headscale path can't be told from a cleartext LAN; `http://` to a public host - the form refuses it (400, the reason
+  under the field, nothing saved), `.env`'s is ignored with a log line. A saved one the rule refuses (saved before
+  0.55.0) is never put in a QR (`provisioning::server_url`) and Phone Setup says so under the field (QA L-e;
+  `config::tests::a_server_address_is_judged_in_four_classes`, `provisioning::the_server_address_is_judged_on_save_and_shown`).
   `security_events` pruned after 180 days (`retention::prune`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
   systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by
