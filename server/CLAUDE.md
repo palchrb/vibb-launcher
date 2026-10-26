@@ -43,7 +43,7 @@ Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the sam
 
 - **Language:** Rust, **Web framework:** Axum, **Database:** SQLite via `sqlx` (WAL mode)
 - **Templating:** Askama (compile-time-checked server-rendered HTML, no JS build step, no frontend framework) - templates are compiled into the binary, so editing one requires a rebuild, not just a file save. A plain `cargo run` dev server (no `cargo watch`) needs to be manually killed and restarted after any template/static change.
-- **Sessions/auth:** `tower-sessions` + `tower-sessions-sqlx-store`, `argon2` for the admin password, mandatory TOTP 2FA
+- **Sessions/auth:** `tower-sessions` + `tower-sessions-sqlx-store`, `argon2` for the admin password, mandatory TOTP 2FA (a session ends `SESSION_INACTIVITY_DAYS`, default 30, unused, and `SESSION_MAX_DAYS`, default 90, after its sign-in - security review L6, `docs/notes/server/connectivity.md`)
 - **UI:** the parent PWA is **Vibb Phone** (design 31, `docs/design/31-pwa-redesign.md`; the 2FA issuer stays "Kids Device MDM"), mobile-first bottom tab bar (Devices / Apps / Locate / Music / Settings, `templates/partials/tab_bar.html`: each page sets `{% let tab = "..." %}` before including it - Device › Apps alone from a `device_pages::Tab` field, Apps when opened from the Apps tab (`?from=`, `docs/notes/server/pwa.md`) - and the server marks that tab `aria-current="page"`; an app shell (design 43): the document never scrolls, `main.container` does and the bar floats over its bottom, absolute in the body (2026-10-22) - no fixed box - and `static/scroll-restore.js` keeps the place in `main`, on Back and reload too (`docs/notes/server/pwa.md`, "The app shell"); no brand bar since design 31 steps 10 and 15 - a tab's landing page opens on its large title, every other page on its back link and large title; Time Rules, Web Filter (`/dns`) and Blocked Activity are rows of the Settings hub, `handlers::settings_hub`, whose values come only from the database - never the network), iOS-style grouped-list CSS (`static/style.css`: tokens for light and dark, rows, the switch as a checkbox plus a sibling `<span class="knob">`, ⓘ, badges, Attention levels, flash, confirm; browser floor Chrome/WebView 80 and iOS Safari 14, no `:has()` or nesting), installable PWA (`static/manifest.webmanifest`, minimal install-only service worker at `templates/sw.js` - no offline page caching, deliberately, since this app handles session cookies and device bearer tokens), light/dark theming via `prefers-color-scheme` CSS variables (no manual toggle)
 - **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), or any x86_64 Linux box: every `server-v*` tag builds the static `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl` binaries, each natively on a runner of its own architecture (root `.github/workflows/server-release.yml`, plain `cargo build --target`, `musl-tools`; no `cross` since 2026-10-25), and publishes a tarball for each - `deploy/install.sh` downloads the newest `server-v*` release's tarball for `uname -m` and sets up a systemd service
 
@@ -57,9 +57,13 @@ No prior programming experience - build features directly rather than explaining
   names only (`is_package_name`), no duplicates, labels clipped to 100 chars, an installer that isn't a package name
   dropped, at most `MAX_INSTALLED_APPS` (1500); `lock_reason` 32 chars, `app_version` 64; every JSON blob goes
   through its own `sanitize_*` (`call_state`/`time_state` through `device_api::known_fields` since 0.55.0, security
-  review L10). An older launcher's `battery_exempt` (round 7 §2, removed 2026-10-20) is ignored and never stored
+  review L10: a key the launcher adds to its `TimeState`/`CallState` is dropped until
+  `device_api::TIME_STATE_FIELDS`/`CALL_STATE_FIELDS` list it - one commit with the launcher's change, the API rule;
+  `intake_limits::the_field_tables_keep_every_contract_key` checks every contract file's). An older launcher's `battery_exempt` (round 7 §2, removed 2026-10-20) is ignored and never stored
   (`intake_limits::an_older_launchers_battery_exempt_is_accepted_and_dropped`). `/security` pages back 200 events at a time (`?before=<id>`), so a flood can't
-  hide a sign-in attempt.
+  hide a sign-in attempt. A phone's storage has a daily budget (security review L4, `retention::Budget`,
+  `STATUS_ROWS_A_DAY`, `CRASH_HASHES`; `docs/notes/server/retention-and-crashes.md`), and its security-log lines and
+  inbox events an hourly one (L1, `security::record_phone_event`, `parent_events::EVENTS_AN_HOUR`).
 - **A catalog app is pinned to its package and signing key (security review M10, server part).** `src/apk.rs` reads
   an APK's manifest `package` (binary XML) and its signer (SHA-256 hex of the first certificate in the v3, else v2,
   signing block - what `apksigner --print-certs` and the launcher's `SelfUpdate.signers` give). `tracked_apps`

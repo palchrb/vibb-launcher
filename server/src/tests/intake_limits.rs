@@ -130,7 +130,7 @@ async fn dns_events_are_stored_checked() {
 }
 
 /// Security review L10: `call_state` and `time_state` are stored through their known keys - an
-/// unknown key dropped, a value of the wrong shape dropped, `last_error` clipped to 100.
+/// unknown key dropped, a value of the wrong shape dropped, `last_error` clipped to 300.
 #[tokio::test]
 async fn call_and_time_state_keep_their_known_keys() {
     let app = TestApp::new().await;
@@ -167,7 +167,7 @@ async fn call_and_time_state_keep_their_known_keys() {
     assert_eq!(
         call,
         serde_json::json!({
-            "state": "managed", "dialer_role_held": true, "last_error": "E".repeat(100),
+            "state": "managed", "dialer_role_held": true, "last_error": "E".repeat(300),
             "last_emergency_call_at": null
         })
     );
@@ -340,6 +340,32 @@ async fn a_phones_storage_has_a_budget() {
         0,
         "the oldest went"
     );
+}
+
+/// QA L-f: every `time_state` and `call_state` in a contract file the launcher shares is kept
+/// whole by the field tables - a key the launcher adds is dropped until `device_api`'s
+/// `TIME_STATE_FIELDS`/`CALL_STATE_FIELDS` list it, so a contract that gains one fails here.
+#[test]
+fn the_field_tables_keep_every_contract_key() {
+    use crate::handlers::device_api::{CALL_STATE_FIELDS, TIME_STATE_FIELDS, known_fields};
+    let mut checked = 0;
+    for entry in std::fs::read_dir("testdata").unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        for (key, fields) in [("time_state", TIME_STATE_FIELDS), ("call_state", CALL_STATE_FIELDS)] {
+            if let Some(blob) = json.get(key) {
+                let kept: serde_json::Value =
+                    serde_json::from_str(&known_fields(blob, fields).unwrap()).unwrap();
+                assert_eq!(&kept, blob, "{}'s {key}", path.display());
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked >= 1, "time_status_report.json carries a time_state");
 }
 
 #[tokio::test]

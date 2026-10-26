@@ -1073,7 +1073,7 @@ pub async fn dns_events(
 
 /// What one known key of a phone's `time_state` or `call_state` may hold (security review L10).
 #[derive(Clone, Copy)]
-enum Field {
+pub(crate) enum Field {
     /// Free text, clipped to this many characters.
     Text(usize),
     /// A name, a time or a package: dropped when longer than this.
@@ -1085,7 +1085,7 @@ enum Field {
 }
 
 /// The launcher's `TimeState` (`StatusReportRequest.kt`), every key it sends.
-const TIME_STATE_FIELDS: &[(&str, Field)] = &[
+pub(crate) const TIME_STATE_FIELDS: &[(&str, Field)] = &[
     ("day", Field::Word(10)),
     ("used_minutes", Field::Int),
     ("budget_minutes", Field::Int),
@@ -1100,7 +1100,7 @@ const TIME_STATE_FIELDS: &[(&str, Field)] = &[
 ];
 
 /// The launcher's `CallState` (`StatusReportRequest.kt`), every key it sends.
-const CALL_STATE_FIELDS: &[(&str, Field)] = &[
+pub(crate) const CALL_STATE_FIELDS: &[(&str, Field)] = &[
     ("state", Field::Word(32)),
     ("dialer_role_held", Field::Bool),
     ("redirection_role_held", Field::Bool),
@@ -1110,7 +1110,8 @@ const CALL_STATE_FIELDS: &[(&str, Field)] = &[
     ("sms_restricted", Field::Bool),
     ("outgoing_restricted", Field::Bool),
     ("default_sms_package", Field::Word(255)),
-    ("last_error", Field::Text(100)),
+    // The launcher keeps 300 (`AppEnforcer`): the exception's message is the end that matters.
+    ("last_error", Field::Text(300)),
     ("last_emergency_call_at", Field::Word(64)),
     ("callback_window_until", Field::Word(64)),
     ("call_log_readable", Field::Bool),
@@ -1122,7 +1123,7 @@ const CALL_STATE_FIELDS: &[(&str, Field)] = &[
 /// value of its shape (or `null`, the launcher's "none"), every other key dropped; `None` when
 /// `value` isn't an object or none of its keys is kept. A key the launcher adds later is stored
 /// once it is listed here, when the server starts reading it.
-fn known_fields(value: &serde_json::Value, fields: &[(&str, Field)]) -> Option<String> {
+pub(crate) fn known_fields(value: &serde_json::Value, fields: &[(&str, Field)]) -> Option<String> {
     use serde_json::Value;
     let object = value.as_object()?;
     let mut kept = serde_json::Map::new();
