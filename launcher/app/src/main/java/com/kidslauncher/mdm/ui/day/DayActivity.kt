@@ -53,6 +53,7 @@ class DayActivity : UIObjectActivity() {
     private val calendarListener: () -> Unit = {
         adapter.refreshBound()
         renderReminder()
+        renderAdd()
     }
     private val dateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) = moveAnchor()
@@ -81,6 +82,14 @@ class DayActivity : UIObjectActivity() {
         })
         renderHeader()
         CalendarStore.ensureKidCalendar(this)
+        // Step 3: the "+" for the kid's own event, on the shown day.
+        binding.dayAdd.setOnClickListener { startActivity(EventEditActivity.newIntent(this, shownDay())) }
+    }
+
+    /** The "+" while the kid may add events and their calendar is there to write to (§1b). */
+    private fun renderAdd() {
+        val shown = CalendarStore.kidCalendar() != null && CalendarStore.canWrite(this)
+        binding.dayAdd.visibility = if (shown) android.view.View.VISIBLE else android.view.View.GONE
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -115,6 +124,7 @@ class DayActivity : UIObjectActivity() {
         CalendarStore.requestSyncIfDue()
         adapter.refreshBound()
         renderReminder()
+        renderAdd()
         tick.removeCallbacks(minute)
         tick.postDelayed(minute, 60_000L - System.currentTimeMillis() % 60_000L + 200)
     }

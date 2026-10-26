@@ -402,4 +402,22 @@
         <item quantity="other">om %d minutter</item>
     </plurals>
     <string name="day_reminder_line">%1$s · %2$s</string>
+    <string name="event_new_title">Ny avtale</string>
+    <string name="event_edit_title">Endre avtale</string>
+    <string name="event_what">Hva</string>
+    <string name="event_day">Dag</string>
+    <string name="event_from">Fra</string>
+    <string name="event_length">Varighet</string>
+    <string name="event_where">Sted (valgfritt)</string>
+    <string name="event_save">Lagre</string>
+    <string name="event_cancel">Avbryt</string>
+    <string name="event_what_missing">Skriv hva avtalen er.</string>
+    <string name="event_save_failed">Fikk ikke lagret avtalen.</string>
+    <string name="event_delete_confirm">Slette «%1$s»?</string>
+    <string name="event_minutes">%1$d min</string>
+    <string name="event_hour_and_half">1,5 timer</string>
+    <plurals name="event_hours">
+        <item quantity="one">%d time</item>
+        <item quantity="other">%d timer</item>
+    </plurals>
 </resources>

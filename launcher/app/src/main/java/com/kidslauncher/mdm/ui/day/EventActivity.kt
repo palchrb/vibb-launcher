@@ -28,13 +28,13 @@ import java.time.format.DateTimeFormatter
  * 2 000 code points) - a plain TextView, no links (kiosk). An event that is gone (or a rule now hides) says so and
  * goes back. Not exported.
  */
-open class EventActivity : UIObjectActivity() {
+class EventActivity : UIObjectActivity() {
 
-    protected lateinit var binding: ActivityEventBinding
+    private lateinit var binding: ActivityEventBinding
     private val main = Handler(Looper.getMainLooper())
-    protected var eventId = 0L
-    protected var begin = 0L
-    protected var end = 0L
+    private var eventId = 0L
+    private var begin = 0L
+    private var end = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,14 +54,16 @@ open class EventActivity : UIObjectActivity() {
         load()
     }
 
-    protected fun load() {
+    private fun load() {
         val app = applicationContext
-        CalendarStore.run({ Loaded(CalendarStore.eventBlocking(app, eventId)) }) { render(it.detail) }
+        CalendarStore.run({ Loaded(CalendarStore.eventBlocking(app, eventId), CalendarStore.kidMayEditBlocking(app, eventId)) }) {
+            render(it.detail, it.mine)
+        }
     }
 
-    private class Loaded(val detail: CalendarStore.EventDetail?)
+    private class Loaded(val detail: CalendarStore.EventDetail?, val mine: Boolean)
 
-    private fun render(detail: CalendarStore.EventDetail?) {
+    private fun render(detail: CalendarStore.EventDetail?, mine: Boolean) {
         if (isDestroyed) return
         val calendar = detail?.let { CalendarStore.state.byId[it.calendarId] }
         val policy = CalendarStore.policy()
@@ -88,11 +90,26 @@ open class EventActivity : UIObjectActivity() {
         val description = TitleRules.clean(detail.description, DESCRIPTION_MAX)
         binding.eventDescription.text = description
         binding.eventDescription.visibility = if (description.isEmpty()) View.GONE else View.VISIBLE
-        onShown(detail, calendar)
+        // Step 3: only the kid's own event (Vibb One's, in the kid's calendar) can be changed or deleted - here only.
+        binding.eventOwnActions.visibility = if (mine) View.VISIBLE else View.GONE
+        if (mine) {
+            binding.eventChange.setOnClickListener { startActivity(EventEditActivity.editIntent(this, eventId)) }
+            binding.eventDelete.setOnClickListener { confirmDelete(shown) }
+        }
     }
 
-    /** The kid's own event's actions (step 3, [EventEditActivity]); nothing here. */
-    protected open fun onShown(detail: CalendarStore.EventDetail, calendar: com.kidslauncher.mdm.day.CalendarInfo) = Unit
+    private class Deleted(val ok: Boolean)
+
+    private fun confirmDelete(title: String) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setMessage(getString(R.string.event_delete_confirm, title))
+            .setPositiveButton(R.string.event_delete) { _, _ ->
+                val app = applicationContext
+                CalendarStore.run({ Deleted(CalendarStore.deleteKidEventBlocking(app, eventId)) }) { if (it.ok && !isDestroyed) finish() }
+            }
+            .setNegativeButton(R.string.event_cancel, null)
+            .show()
+    }
 
     private fun timeLine(allDay: Boolean): String {
         if (allDay) return getString(R.string.day_all_day)

@@ -484,6 +484,70 @@ object CalendarStore {
         }
     }
 
+    // ---- the kid's own events (step 3) ---------------------------------------------------------------------------
+
+    /** A new event of the kid's in the kid's calendar (off the main thread): marked as Vibb One's (`UID_2445`
+     * "vibb-…", `CUSTOM_APP_PACKAGE`). Returns its id, `null` when the kid may add nothing now or the provider refused. */
+    fun insertKidEventBlocking(context: Context, input: com.kidslauncher.mdm.day.KidEventInput): Long? {
+        val calendar = kidCalendar() ?: return null
+        if (!canWrite(context)) return null
+        return try {
+            val values = ContentValues().apply {
+                put(Events.CALENDAR_ID, calendar.id)
+                put(Events.TITLE, input.title)
+                put(Events.EVENT_LOCATION, input.place)
+                put(Events.DTSTART, input.beginMs)
+                put(Events.DTEND, input.endMs)
+                put(Events.EVENT_TIMEZONE, ZoneId.systemDefault().id)
+                put(Events.UID_2445, com.kidslauncher.mdm.day.kidEventUid(java.util.UUID.randomUUID().toString()))
+                put(Events.CUSTOM_APP_PACKAGE, context.packageName)
+                put(Events.HAS_ALARM, 0)
+            }
+            context.contentResolver.insert(Events.CONTENT_URI, values)?.let { ContentUris.parseId(it) }
+                .also { invalidate() }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't add the kid's event: ${e.javaClass.simpleName}")
+            null
+        }
+    }
+
+    /** Whether the kid may change or delete [eventId] now: Vibb One's, in the kid's calendar (read again). */
+    fun kidMayEditBlocking(context: Context, eventId: Long): Boolean {
+        val detail = eventBlocking(context, eventId) ?: return false
+        return com.kidslauncher.mdm.day.kidMayEdit(detail.uid, detail.customApp, context.packageName, detail.calendarId, kidCalendar()?.id)
+    }
+
+    /** The kid's change of their own event (off the main thread); `false` when it isn't theirs (any more). */
+    fun updateKidEventBlocking(context: Context, eventId: Long, input: com.kidslauncher.mdm.day.KidEventInput): Boolean {
+        if (!canWrite(context) || !kidMayEditBlocking(context, eventId)) return false
+        return try {
+            val values = ContentValues().apply {
+                put(Events.TITLE, input.title)
+                put(Events.EVENT_LOCATION, input.place)
+                put(Events.DTSTART, input.beginMs)
+                put(Events.DTEND, input.endMs)
+                put(Events.EVENT_TIMEZONE, ZoneId.systemDefault().id)
+            }
+            (context.contentResolver.update(ContentUris.withAppendedId(Events.CONTENT_URI, eventId), values, null, null) == 1)
+                .also { invalidate() }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't change the kid's event: ${e.javaClass.simpleName}")
+            false
+        }
+    }
+
+    /** The kid's delete of their own event (off the main thread); `false` when it isn't theirs (any more). */
+    fun deleteKidEventBlocking(context: Context, eventId: Long): Boolean {
+        if (!canWrite(context) || !kidMayEditBlocking(context, eventId)) return false
+        return try {
+            (context.contentResolver.delete(ContentUris.withAppendedId(Events.CONTENT_URI, eventId), null, null) == 1)
+                .also { invalidate() }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't delete the kid's event: ${e.javaClass.simpleName}")
+            false
+        }
+    }
+
     /** The provider changed under us (the kid's own save): drop the kept days and tell the listeners. */
     fun invalidate() {
         main.removeCallbacks(changed)

@@ -220,6 +220,11 @@
             android:configChanges="orientation|screenSize"
             android:exported="false" />
         <activity
+            android:name=".ui.day.EventEditActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".ui.kidsettings.KidSettingsActivity"
             android:configChanges="orientation|screenSize"
             android:excludeFromRecents="true"

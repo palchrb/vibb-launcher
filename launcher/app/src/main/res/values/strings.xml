@@ -469,4 +469,22 @@
         <item quantity="other">in %d minutes</item>
     </plurals>
     <string name="day_reminder_line">%1$s · %2$s</string>
+    <string name="event_new_title">New event</string>
+    <string name="event_edit_title">Change event</string>
+    <string name="event_what">What</string>
+    <string name="event_day">Day</string>
+    <string name="event_from">From</string>
+    <string name="event_length">Length</string>
+    <string name="event_where">Place (optional)</string>
+    <string name="event_save">Save</string>
+    <string name="event_cancel">Cancel</string>
+    <string name="event_what_missing">Write what it is.</string>
+    <string name="event_save_failed">Couldn\'t save the event.</string>
+    <string name="event_delete_confirm">Delete «%1$s»?</string>
+    <string name="event_minutes">%1$d min</string>
+    <string name="event_hour_and_half">1.5 hours</string>
+    <plurals name="event_hours">
+        <item quantity="one">%d hour</item>
+        <item quantity="other">%d hours</item>
+    </plurals>
 </resources>

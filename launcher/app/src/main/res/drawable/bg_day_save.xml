@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Lagre" on the kid's event form (design 69 §1b): the peach pill, the night ink on it (9.9:1). -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#33000000">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_accent" />
+            <corners android:radius="24dp" />
+        </shape>
+    </item>
+</ripple>
