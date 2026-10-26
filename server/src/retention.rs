@@ -29,6 +29,94 @@ pub const COMMAND_DAYS: i64 = 30;
 /// How often [run_pruning] runs (and once at startup).
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
+/// A phone's storage budget (security review L4): what one token can add in a rolling day, so a
+/// leaked token or a rooted phone can't fill the disk at the device API's rate limit. Far above
+/// what a phone sends: a report every few minutes, a fix a minute while it moves, the blocked-
+/// domain log's 10-minute dedup per domain.
+pub const STATUS_ROWS_A_DAY: i64 = 200;
+/// Distinct crash hashes kept per phone; past it the oldest reported goes.
+pub const CRASH_HASHES: i64 = 50;
+
+/// The append-only tables with a daily budget per phone: past it, a phone's new rows are not
+/// stored that day (logged).
+#[derive(Clone, Copy, Debug)]
+pub enum Budget {
+    Locations,
+    DnsEvents,
+    PinEvents,
+}
+
+impl Budget {
+    fn rows_a_day(self) -> i64 {
+        match self {
+            Budget::Locations => 3_000,
+            Budget::DnsEvents => 10_000,
+            Budget::PinEvents => 500,
+        }
+    }
+
+    fn count_sql(self) -> &'static str {
+        match self {
+            Budget::Locations => {
+                "SELECT COUNT(*) FROM device_locations \
+                 WHERE device_id = ? AND received_at > datetime('now', '-1 day')"
+            }
+            Budget::DnsEvents => {
+                "SELECT COUNT(*) FROM device_dns_events \
+                 WHERE device_id = ? AND received_at > datetime('now', '-1 day')"
+            }
+            Budget::PinEvents => {
+                "SELECT COUNT(*) FROM device_pin_events \
+                 WHERE device_id = ? AND received_at > datetime('now', '-1 day')"
+            }
+        }
+    }
+
+    /// How many rows `device_id` may still add today; past the budget, logged.
+    pub async fn left_today(
+        self,
+        conn: &mut sqlx::SqliteConnection,
+        device_id: i64,
+    ) -> Result<usize, sqlx::Error> {
+        let today: i64 = sqlx::query_scalar(self.count_sql())
+            .bind(device_id)
+            .fetch_one(&mut *conn)
+            .await?;
+        let left = (self.rows_a_day() - today).max(0);
+        if left == 0 {
+            tracing::warn!(device_id, table = ?self, "a phone's daily storage budget is spent");
+        }
+        Ok(usize::try_from(left).unwrap_or(0))
+    }
+}
+
+/// Past [STATUS_ROWS_A_DAY] reports in a rolling day, a new report replaces the one before it
+/// (`previous_id`, just read) instead of adding to the history - so the newest report is always
+/// the latest and a phone's day holds at most the budget plus one. Never the newest report that
+/// said it enforces calls (`prune`'s keeper). A failure is logged: the row stays.
+pub async fn replace_over_budget(db: &SqlitePool, device_id: i64, previous_id: i64) {
+    let result = sqlx::query(
+        "DELETE FROM device_status WHERE id = ?1 AND device_id = ?2 \
+           AND reported_at > datetime('now', '-1 day') \
+           AND (SELECT COUNT(*) FROM device_status \
+                WHERE device_id = ?2 AND reported_at > datetime('now', '-1 day')) > ?3 \
+           AND id IS NOT (SELECT MAX(id) FROM device_status \
+                          WHERE device_id = ?2 AND capabilities_json LIKE ?4)",
+    )
+    .bind(previous_id)
+    .bind(device_id)
+    .bind(STATUS_ROWS_A_DAY)
+    .bind(format!(
+        "%\"{}\"%",
+        crate::handlers::calls::CALL_POLICY_CAPABILITY
+    ))
+    .execute(db)
+    .await;
+    if let Err(err) = result {
+        tracing::error!(device_id, %err, "can't keep a phone's status history within its budget");
+    }
+}
+
 /// Rows [prune] deleted, per table.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Pruned {

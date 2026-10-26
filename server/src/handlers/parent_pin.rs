@@ -258,7 +258,15 @@ pub async fn pin_events(
         return StatusCode::INTERNAL_SERVER_ERROR;
     };
     let mut raised = false;
-    for raw in events {
+    // Within the phone's daily budget (security review L4); the rest of today's are dropped.
+    let left = match crate::retention::Budget::PinEvents
+        .left_today(&mut tx, device.id)
+        .await
+    {
+        Ok(left) => left,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    for raw in events.iter().take(left) {
         let event = match parent_pin::clean_event(raw, received_ms) {
             Ok(event) => event,
             Err(why) => {

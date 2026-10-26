@@ -478,7 +478,15 @@ pub async fn intake(
     let mut stored_any = false;
     match state.db.acquire().await {
         Ok(mut conn) => {
-            for (loc, captured_at) in fixes {
+            // Within the phone's daily budget (security review L4): the newest that fit.
+            let left = crate::retention::Budget::Locations
+                .left_today(&mut conn, device_id)
+                .await
+                .unwrap_or_else(|err| {
+                    tracing::error!(device_id, %err, "can't count today's fixes");
+                    0
+                });
+            for (loc, captured_at) in &fixes[fixes.len().saturating_sub(left)..] {
                 match store_fix(&mut conn, device_id, loc, captured_at).await {
                     Ok(_) => stored_any = true,
                     Err(err) => tracing::error!(device_id, %err, "can't store the fix"),

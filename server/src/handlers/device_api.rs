@@ -1039,11 +1039,19 @@ pub async fn dns_events(
     if enabled != Some(true) {
         return StatusCode::NO_CONTENT;
     }
-    // Each field checked (security review L3): a hostname, a short category, a time near now.
+    // Each field checked (security review L3): a hostname, a short category, a time near now;
+    // within the phone's daily budget (L4).
+    let left = match state.db.acquire().await {
+        Ok(mut conn) => crate::retention::Budget::DnsEvents
+            .left_today(&mut conn, device.id)
+            .await
+            .unwrap_or(0),
+        Err(_) => 0,
+    };
     let received = chrono::Utc::now();
     for (domain, category, blocked_at) in events
         .iter()
-        .take(200)
+        .take(200.min(left))
         .filter_map(|event| event.checked(received))
     {
         sqlx::query(
@@ -1344,6 +1352,10 @@ pub async fn status(
     .execute(&state.db)
     .await
     .ok();
+    // The phone's storage budget (security review L4): past it, this report replaces the last.
+    if let Some(previous) = &previous {
+        crate::retention::replace_over_budget(&state.db, device.id, previous.id).await;
+    }
     // Design 59 §2.1: the PIN the phone last confirmed is forgotten at the current rev, and a phone
     // in android mode that needs the Child PIN gets it as a command (nudged at once).
     if let Some(lock_state) = crate::kid_lock::parse_lock_state(lock_state_json.as_deref()) {
@@ -2263,7 +2275,16 @@ pub async fn crash_reports(
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
     }
-    if tx.commit().await.is_err() {
+    // At most CRASH_HASHES kept per phone, the oldest reported going first (security review L4).
+    let pruned = sqlx::query(
+        "DELETE FROM device_crashes WHERE device_id = ?1 AND id NOT IN (SELECT id FROM \
+         device_crashes WHERE device_id = ?1 ORDER BY reported_at DESC, id DESC LIMIT ?2)",
+    )
+    .bind(device.id)
+    .bind(crate::retention::CRASH_HASHES)
+    .execute(&mut *tx)
+    .await;
+    if pruned.is_err() || tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
     StatusCode::NO_CONTENT
