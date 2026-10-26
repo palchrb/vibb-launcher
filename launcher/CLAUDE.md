@@ -872,19 +872,24 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   `writeGrantState`, which logs a `false` from `setPermissionGrantState` (the call pass's too). `enforceCameraOnPackage`
   runs the rule for one package on every install (`enforceOnNewPackage`, outside its managed-calls branch, before it
   can hide the app) and every package change (`Application.onPackageChanged`, outside the relock branch), so an install
-  or an update that adds CAMERA is denied before its first start.
+  or an update that adds CAMERA is denied before its first start; it takes `apply`'s lock (`@Synchronized`), so an
+  install callback at a window's edge can't land between the window's DEFAULT and the next apply. A hidden target is
+  skipped (Android can't grant-state a hidden package; the pass that unhides it comes first). The call-end wake's
+  decision is the pure `deferredCameraApplyDue`.
 - **The special accesses** (§2.2-§2.3, `server/AppAccess.kt`, `AppAccessTest`): `manage_media`, `exact_alarm`,
   `write_settings`, `usage_access`, `full_screen` (`SpecialAccess`: permission and app-op) - app-ops a device owner
   can't grant, approved only on Android's page for the app. `declaredAccesses` (only what the manifest declares; no
   `exact_alarm` for an app declaring `USE_EXACT_ALARM`); `AppAccessReader.states` reads another app's op with
   `unsafeCheckOpRawNoThrow` (deprecated in API 36, `@Suppress`ed; needs no GET_APP_OPS_STATS) through the pure
-  `accessState`: ALLOWED granted, IGNORED/ERRORED denied, DEFAULT as `PackageManager.checkPermission` says,
+  `readAccess` (a read that throws is `unknown`) and `accessState`: ALLOWED granted, IGNORED/ERRORED denied, DEFAULT as `PackageManager.checkPermission` says,
   `exact_alarm` also granted when battery-exempt or at DEFAULT below target 33, any other mode or a throw `unknown`.
-  The emulator probe (`docs/testing/emulator.md` §6v step 0) checks each op against `cmd appops get`; an op that
-  disagrees ships as `unknown`.
+  The emulator probe (`docs/testing/emulator.md` §6v step 0, the gate before the launcher RC) checks each op against
+  `cmd appops get`; an op that disagrees ships as `unknown`. Usage access is named as Android 16 names it: "App usage
+  data" / "Data om appbruk".
 - **Status** (§3.3): `InstalledApp.access` (`Map<String, String>?`, `collectInstalledApps` reads with
-  `GET_PERMISSIONS`; `AppAccessReader.report`): `camera` (`requested` | `admin_denied` - the grant state DENIED) only
-  for `cameraGrants`' targets, then each declared access; left out when empty. Contract
+  `GET_PERMISSIONS`; `AppAccessReader.report`), for third-party apps but ours only (a system app's privileged grants
+  say nothing a parent can change; the code QA's L2): `camera` (`requested` | `admin_denied` - the grant state DENIED)
+  when it requests it, then each declared access; left out when empty. Contract
   `installed_apps_report.json` (`SyncScheduleTest`). Capability `app_permissions_v1` (`APP_PERMISSIONS_CAPABILITY`).
 - **"App access" in the PIN-gated Settings** (§4.2, `SettingsFragmentLauncher.updateAccessRows`): the
   `PreferenceCategory` `settings_mdm_app_access` ("App access" / "Tilgang for apper"), last in `preferences.xml` (after

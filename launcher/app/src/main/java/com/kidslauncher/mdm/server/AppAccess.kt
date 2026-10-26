@@ -57,6 +57,17 @@ fun accessState(mode: Int, hasPermission: Boolean, ignoresBatteryOpt: Boolean, t
     }
 }
 
+/** One access's inputs as read from Android: the raw app-op mode, `checkPermission`, the battery exemption, the target. */
+data class AccessReading(val mode: Int, val hasPermission: Boolean, val ignoresBatteryOpt: Boolean, val targetSdk: Int)
+
+/** [accessState] of what [read] returns; a read that throws (another app's op, its uid, a service) is unknown. */
+fun readAccess(kind: SpecialAccess, read: () -> AccessReading): AccessState = try {
+    val r = read()
+    accessState(r.mode, r.hasPermission, r.ignoresBatteryOpt, r.targetSdk, kind)
+} catch (e: Exception) {
+    AccessState.UNKNOWN
+}
+
 /** `access.camera` for a camera target ([cameraGrants]): the grant state DENIED is `admin_denied`. */
 fun cameraReport(grantState: Int): String = if (grantState == GRANT_STATE_DENIED) "admin_denied" else "requested"
 
@@ -148,23 +159,26 @@ object AppAccessReader {
         val pkg = info.packageName
         val app = info.applicationInfo
         return kinds.map { kind ->
-            kind to try {
-                val mode = context.getSystemService(AppOpsManager::class.java)!!.unsafeCheckOpRawNoThrow(kind.op, app!!.uid, pkg)
-                val exempt = kind == SpecialAccess.EXACT_ALARM &&
-                    context.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(pkg) == true
-                accessState(mode, pm.checkPermission(kind.permission, pkg) == PackageManager.PERMISSION_GRANTED, exempt, app.targetSdkVersion, kind)
-            } catch (e: Exception) {
-                AccessState.UNKNOWN
+            kind to readAccess(kind) {
+                AccessReading(
+                    mode = context.getSystemService(AppOpsManager::class.java)!!.unsafeCheckOpRawNoThrow(kind.op, app!!.uid, pkg),
+                    hasPermission = pm.checkPermission(kind.permission, pkg) == PackageManager.PERMISSION_GRANTED,
+                    ignoresBatteryOpt = kind == SpecialAccess.EXACT_ALARM &&
+                        context.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(pkg) == true,
+                    targetSdk = app.targetSdkVersion,
+                )
             }
         }
     }
 
-    /** [info]'s `installed_apps[].access`: `camera` for a third-party app but ours that requests it (unreadable grant
-     * state: `requested`), then [states]. */
+    /** [info]'s `installed_apps[].access`, for a third-party app but ours only (a system app's privileged grants say
+     * nothing a parent can change - the code QA's L2): `camera` when it requests it (unreadable grant state:
+     * `requested`), then [states]. */
     fun report(context: Context, info: PackageInfo): Map<String, String>? {
         val requested = info.requestedPermissions.orEmpty()
         val thirdParty = (info.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM == 0
-        val camera = if (thirdParty && info.packageName != context.packageName && CAMERA_PERMISSION in requested) {
+        if (!thirdParty || info.packageName == context.packageName) return null
+        val camera = if (CAMERA_PERMISSION in requested) {
             cameraReport(
                 try {
                     val dpm = context.getSystemService(DevicePolicyManager::class.java)!!

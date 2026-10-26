@@ -332,6 +332,15 @@ class EnforcementPlanTest {
         assertEquals(android.app.admin.DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED, GRANT_STATE_DENIED)
     }
 
+    /** The code QA's L5: the call-end wake applies only for a waiting denial with no call live, and reads the call
+     * only then. */
+    @Test
+    fun `the call-end wake applies a deferred camera denial once no call is live`() {
+        assertTrue(deferredCameraApplyDue(deferred = true) { false })
+        assertFalse(deferredCameraApplyDue(deferred = true) { true })
+        assertFalse(deferredCameraApplyDue(deferred = false) { error("no call read without a deferral") })
+    }
+
     @Test
     fun `a grant state is written only when it differs`() {
         assertNull(grantWrite(GRANT_STATE_GRANTED, GRANT_STATE_GRANTED))

@@ -1794,19 +1794,12 @@ pub(crate) async fn render_apps(
         Ok(own) => own,
         Err(err) => return read_failed(id, "the phone's app names", err),
     };
-    // Design 68: the parent's camera-off apps and what the phone reports per app (`installed_apps[].access`).
+    // Design 68: the parent's camera-off apps (what the phone reports per app rides on the row, `access`).
     let camera_off = match crate::app_permissions::camera_denied(&state.db, id).await {
         Ok(denied) => denied,
         Err(err) => return read_failed(id, "the phone's app permissions", err),
     };
-    let access: std::collections::HashMap<String, crate::app_permissions::AppAccess> = latest
-        .as_ref()
-        .and_then(|s| s.installed_apps_json.as_deref())
-        .and_then(|j| serde_json::from_str::<Vec<crate::models::InstalledApp>>(j).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|a| a.access.map(|access| (a.package_name, access)))
-        .collect();
+    let paused = latest.as_ref().is_some_and(|s| s.restrictions_paused);
     let (nav_tab, back_href, back_label, from) = match apps_nav(state, &device, from).await {
         Ok(nav) => nav,
         Err(err) => return read_failed(id, "the catalog app it came from", err),
@@ -1877,8 +1870,9 @@ pub(crate) async fn render_apps(
                     id,
                     &package,
                     &row.label,
-                    access.get(&package),
+                    row.access.as_ref(),
                     camera_off.contains(&package),
+                    paused,
                     open_perms == Some(package.as_str()),
                 )
             })

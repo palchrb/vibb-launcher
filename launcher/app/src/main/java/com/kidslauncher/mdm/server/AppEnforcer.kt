@@ -777,13 +777,16 @@ object AppEnforcer {
         windowOpen: Boolean,
     ): Boolean = try {
         val pm = context.packageManager
-        val targets = requested.filter { (pkg, perms) -> pkg != context.packageName && CAMERA_PERMISSION in perms }.keys
+        // A hidden app (not allowed) is skipped: Android can't grant-state it (it logged "Platform refused" at every
+        // apply - the code QA's N1); the apply that unhides it comes after the loop, so it is denied then.
+        val visible = requested.filter { (pkg, perms) -> CAMERA_PERMISSION !in perms || !isHidden(dpm, admin, pkg) }
+        val targets = visible.filter { (pkg, perms) -> pkg != context.packageName && CAMERA_PERMISSION in perms }.keys
         val denied = appPermissionsOf(policy?.appPermissions)
         val current = targets.associateWith { dpm.getPermissionGrantState(admin, it, CAMERA_PERMISSION) }
         val toDeny = denied.orEmpty().intersect(targets)
         val held = toDeny.filterTo(mutableSetOf()) { pm.checkPermission(CAMERA_PERMISSION, it) == PackageManager.PERMISSION_GRANTED }
         val callLive = !windowOpen && held.isNotEmpty() && WindowRelock.liveCall(context)
-        val plan = cameraGrants(requested, context.packageName, denied, windowOpen, callLive, held, current)
+        val plan = cameraGrants(visible, context.packageName, denied, windowOpen, callLive, held, current)
         for ((pkg, state) in plan.writes) {
             try {
                 writeGrantState(dpm, admin, pkg, CAMERA_PERMISSION, state)
@@ -813,8 +816,10 @@ object AppEnforcer {
      * Design 68 §3.2: [cameraGrants] for one just-installed or updated package, so an app the parent switched the
      * camera off for (or an update that adds CAMERA) is denied before its first start - whether or not calls or apps are
      * managed. Called from [enforceOnNewPackage] and on every package change; a hidden package is left to the apply that
-     * unhides it. Never throws.
+     * unhides it. Under [apply]'s lock (the code QA's N2), so an install callback at a window's edge can't write DENIED
+     * between the window's DEFAULT and the next apply. Never throws; never on the main thread.
      */
+    @Synchronized
     fun enforceCameraOnPackage(context: Context, packageName: String) {
         try {
             val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager

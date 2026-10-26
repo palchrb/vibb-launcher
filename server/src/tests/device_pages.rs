@@ -2081,8 +2081,25 @@ async fn the_permissions_form_returns_to_its_open_details() {
     let action = format!("/devices/{id}/apps/permissions#{anchor}");
     assert!(html.contains(&format!("action=\"{action}\"")));
 
-    // Off: the switch's field missing (an auto-saving checkbox).
+    // Signed out: sent to sign in, nothing written (the route is behind the session and 2FA).
     let target = format!("/devices/{id}/apps/permissions");
+    let res = app
+        .request_form(Method::POST, &target, None, &[("package_name", element)])
+        .await;
+    assert!(res.status.is_redirection(), "{}", res.status);
+    assert!(
+        !res.location().unwrap_or("").contains("/apps"),
+        "{:?}",
+        res.location()
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_permissions")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+
+    // Off: the switch's field missing (an auto-saving checkbox); the phone is nudged.
+    let mut nudges = app.state.command_notify.subscribe();
     let res = app
         .request_form(
             Method::POST,
@@ -2093,6 +2110,7 @@ async fn the_permissions_form_returns_to_its_open_details() {
         .await;
     let back = format!("{page}?perms={element}");
     assert_redirect(&res, &back, Some(&anchor));
+    assert_eq!(nudges.try_recv().ok(), Some(id));
     app.assert_lands(&res, &cookie).await;
     let html = app.get_page(&back, &cookie).await.text();
     assert!(
@@ -2164,6 +2182,61 @@ async fn the_permissions_form_returns_to_its_open_details() {
         .await
         .unwrap();
     assert_eq!(rows, 0);
+}
+
+/// Design 68: at most `MAX_ROWS_PER_DEVICE` camera-off apps a phone - a new one past it is refused at its row and
+/// nothing is written; a stored one can still be saved again.
+#[tokio::test]
+async fn the_permissions_cap_refuses_the_201st_app() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    for n in 0..crate::app_permissions::MAX_ROWS_PER_DEVICE {
+        sqlx::query(
+            "INSERT INTO device_app_permissions (device_id, package_name, camera) VALUES (?, ?, 'deny')",
+        )
+        .bind(id)
+        .bind(format!("org.example.app{n}"))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let target = format!("/devices/{id}/apps/permissions");
+    let page = device_page(id, Section::Apps);
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", "org.example.new")],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("{page}?notice=perms_full&app=app-org.example.new"),
+        Some("app-org.example.new"),
+    );
+    let count = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM device_app_permissions")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    assert_eq!(count().await, crate::app_permissions::MAX_ROWS_PER_DEVICE);
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", "org.example.app7")],
+        )
+        .await;
+    assert_redirect(
+        &res,
+        &format!("{page}?perms=org.example.app7"),
+        Some("perms-org.example.app7"),
+    );
+    assert_eq!(count().await, crate::app_permissions::MAX_ROWS_PER_DEVICE);
 }
 
 /// A switch that can't be what it says changes nothing: not a package name, nothing at all, Play's

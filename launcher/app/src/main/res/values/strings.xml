@@ -253,7 +253,7 @@
     <string name="app_access_row_title">%1$s: %2$s</string>
     <string name="app_access_manage_media">Media management</string>
     <string name="app_access_exact_alarm">Alarms &amp; reminders</string>
-    <string name="app_access_usage_access">Usage access</string>
+    <string name="app_access_usage_access">App usage data</string>
     <string name="app_access_full_screen">Full-screen notifications</string>
     <string name="app_access_approved">Approved - tap to change</string>
     <string name="app_access_approved_pause_first">Approved - pause first to change it</string>

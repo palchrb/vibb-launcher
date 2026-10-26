@@ -1958,18 +1958,23 @@ Design 68 §2.3 and §6 (`docs/design/68-app-permissions.md`), the debug launche
 Immich, Etar and Fossify Calendar installed and allowed. Logcat `AppEnforcer` (`Camera off waits for the call's end`,
 `Platform refused android.permission.CAMERA = 2 for ...`).
 
-0. **The app-op probe first** (§2.3; each op for an app that has the access and one that doesn't, `write_settings` and
+0. **The app-op probe first - the gate before the launcher RC** (the code QA's L1; §2.3; each op for an app that has the access and one that doesn't, `write_settings` and
    `usage_access` with test apps): `adb shell cmd appops get <package> <OP>` against the report's `installed_apps[].access`
    (the PWA's line, or `device_status.installed_apps_json`) for `MANAGE_MEDIA` (Immich), `SCHEDULE_EXACT_ALARM` (Etar,
    Signal; and Etar again after it is battery-exempt), `WRITE_SETTINGS`, `GET_USAGE_STATS`, `USE_FULL_SCREEN_INTENT`
-   (Element X). An op whose reading disagrees ships as `unknown`. Repeat on the Jelly Star. Note Android's nb name of
-   "Full-screen notifications" (the launcher says "Fullskjermvarsler" until checked).
+   (Element X). An op whose reading disagrees ships as `unknown`. Repeat on the Jelly Star. No launcher RC with B1
+   until this passes. ("Fullskjermvarsler" is Settings' own nb word, checked in the code QA.)
+   **Glue only the device shows** (the code QA's L5; the pure halves are unit-tested): `AppAccessReader.states`
+   feeding `readAccess` (a throwing read must show `unknown`, never `denied`), `BootHome.callMayHaveEnded`'s wake
+   (`deferredCameraApplyDue` + `WindowRelock.liveCall`, step 2), and the hidden-target skip in `cameraPass` (no
+   "Platform refused ... CAMERA" line per apply for a hidden camera-off app, step 2).
 1. **Camera off** for Element X in the PWA: `dumpsys package io.element.android.x` shows `CAMERA: granted=false` with
    `POLICY_FIXED`; Settings' camera switch for it is locked by the admin (note the words). Back on: the flag is gone,
    the app asks again.
 2. **During an Element X call**: off while it holds the camera waits for the call's end; off for an app that doesn't
    hold it is written at once. A camera-off app hidden and allowed again: denied by the apply that unhides it. A
-   preinstalled camera app: no `camera` key, no switch.
+   preinstalled camera app, or any system app: no `access` at all (no switch, no line). In a pause the PWA says
+   "Camera off · back on while restrictions are paused".
 3. **Immich**: the PWA says "Media management: not approved"; Settings › App access's row says to pause first; in the
    pause it opens Android's page for `app.alextran.immich`; turned on and back, the row reads "Approved - tap to change"
    and the next report `granted`. The pause ending with that page open: Home comes to the front, the row stays.

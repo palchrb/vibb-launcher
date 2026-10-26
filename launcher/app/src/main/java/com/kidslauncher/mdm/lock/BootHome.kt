@@ -101,7 +101,10 @@ object BootHome {
      */
     fun callMayHaveEnded(context: Context) {
         // Design 68 §3.2: a camera denial that waited for this call is written now (the apply's own rule decides).
-        if (com.kidslauncher.mdm.server.AppEnforcer.cameraDeferred && !com.kidslauncher.mdm.server.WindowRelock.liveCall(context)) {
+        if (com.kidslauncher.mdm.server.deferredCameraApplyDue(com.kidslauncher.mdm.server.AppEnforcer.cameraDeferred) {
+                com.kidslauncher.mdm.server.WindowRelock.liveCall(context)
+            }
+        ) {
             com.kidslauncher.mdm.server.AppEnforcer.cameraDeferred = false
             val app = context.applicationContext
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {

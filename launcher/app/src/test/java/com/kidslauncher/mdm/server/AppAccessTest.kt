@@ -36,6 +36,21 @@ class AppAccessTest {
         assertEquals(SpecialAccess.entries, declaredAccesses(SpecialAccess.entries.map { it.permission }))
     }
 
+    /** The code QA's L5: a read that throws is unknown, never denied; what reads cleanly goes through [accessState]. */
+    @Test
+    fun `a failed read is unknown`() {
+        assertEquals(AccessState.UNKNOWN, readAccess(SpecialAccess.MANAGE_MEDIA) { throw SecurityException("op") })
+        assertEquals(AccessState.UNKNOWN, readAccess(SpecialAccess.MANAGE_MEDIA) { throw NullPointerException() })
+        assertEquals(
+            AccessState.DENIED,
+            readAccess(SpecialAccess.MANAGE_MEDIA) { AccessReading(AppOpsManager.MODE_ERRORED, true, false, 36) },
+        )
+        assertEquals(
+            AccessState.GRANTED,
+            readAccess(SpecialAccess.EXACT_ALARM) { AccessReading(AppOpsManager.MODE_ERRORED, false, true, 36) },
+        )
+    }
+
     @Test
     fun `the report - camera first, declared accesses, nothing is null`() {
         assertEquals("admin_denied", cameraReport(GRANT_STATE_DENIED))

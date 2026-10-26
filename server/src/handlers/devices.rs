@@ -684,6 +684,8 @@ pub(crate) struct UnifiedAppRow {
     /// synced, or a manual-upload app nobody's uploaded a build to yet). Selecting it used to
     /// silently do nothing until a release showed up, with no indication why.
     pub(crate) show_no_release_hint: bool,
+    /// What the phone's report says about the app's camera and special accesses (design 68), for an installed app.
+    pub(crate) access: Option<crate::app_permissions::AppAccess>,
 }
 
 /// The six parent-facing LockTask features, decoded from/encoded into the
@@ -1099,8 +1101,9 @@ pub async fn save_app_permissions(
         Some("default") => false,
         Some(_) => return (StatusCode::BAD_REQUEST, "Not a camera setting.").into_response(),
     };
-    // No row has a name outside the grammar, so there is no row to return to (no page sends one).
-    if !crate::handlers::device_api::is_package_name(&package) {
+    // No row has a name outside the grammar (the launcher's `isValidPackageName`, stricter than the status intake's),
+    // so there is no row to return to (no page sends one).
+    if !crate::app_display::valid_package_name(&package) {
         return (StatusCode::BAD_REQUEST, "Not an app - nothing was changed.").into_response();
     }
     let failed = |err: sqlx::Error| {
@@ -1371,6 +1374,7 @@ pub(crate) async fn app_rows(
             package_name: app.package_name.clone(),
             label: app.label.clone(),
             is_launcher: false,
+            access: app.access.clone(),
         });
         seen_packages.insert(app.package_name.clone());
     }
@@ -1412,6 +1416,7 @@ pub(crate) async fn app_rows(
             package_name: t.package_name.clone(),
             label: t.name.clone(),
             is_launcher: false,
+            access: None,
         });
     }
 
@@ -1439,6 +1444,7 @@ pub(crate) async fn app_rows(
                 package_name: launcher.package_name.clone(),
                 label: launcher.name.clone(),
                 is_launcher: true,
+                access: None,
             },
         );
     }

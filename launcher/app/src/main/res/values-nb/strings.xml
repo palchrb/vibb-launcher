@@ -208,7 +208,7 @@
     <string name="app_access_row_title">%1$s: %2$s</string>
     <string name="app_access_manage_media">Medieadministrering</string>
     <string name="app_access_exact_alarm">Alarmer og påminnelser</string>
-    <string name="app_access_usage_access">Brukstilgang</string>
+    <string name="app_access_usage_access">Data om appbruk</string>
     <string name="app_access_full_screen">Fullskjermvarsler</string>
     <string name="app_access_approved">Godkjent - trykk for å endre</string>
     <string name="app_access_approved_pause_first">Godkjent - sett begrensningene på pause først for å endre</string>

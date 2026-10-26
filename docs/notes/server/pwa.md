@@ -379,9 +379,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 ## Device › Apps: Permissions (design 68, `docs/design/68-app-permissions.md` §4.1, migration `0102_app_permissions.sql`)
 
 - **What the parent sees**: an allowed app the phone reports something about (`installed_apps[].access`, launcher
-  `app_permissions_v1`) gets a second sub-line under its row, in neutral words - "Camera off" (a stored row and the
-  report reads `admin_denied`; "Camera off · waiting for the phone" while it still reads `requested`), then per declared
-  access "<name>: approved / not approved / unknown" -, and a `<details>` "Permissions" next to "Name and icon"
+  `app_permissions_v1`; third-party apps only, the phone reports none for a system app) gets a second sub-line under
+  its row with only what needs a look - "Camera off" (a stored row and the report reads `admin_denied`; "Camera off ·
+  waiting for the phone" while it still reads `requested`, "Camera off · back on while restrictions are paused" while
+  the last report says paused - the pause lifts it), then each declared access "<name>: not approved / unknown" (an
+  approval stays out of the line and is shown in the details; the code QA's L2) -, and a `<details>` "Permissions"
+  next to "Name and icon"
   (`partials/app_permissions_form.html`, `app_permissions::PermsView`): the **camera switch only when the report has
   `access.camera`** (third-party apps that ask for the camera; a preinstalled camera or Google app has none), with its
   help ("Off: <app> can't use the camera - a video call or a QR scan stops working. Turning it off closes <app> if it was
@@ -398,11 +401,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   details **open**: `apps_url("perms=<package>", from, "perms-<package>")`, and `view_apps` renders that package's
   `<details>` with `open` (`?perms=`) - a save never lands at the top and never closes the details. Refused at the
   row (`?notice=perms&app=app-<package>`, `settings_log::refused`): Play's core and Vibb; a 400 for another `camera`
-  value or a package outside the grammar (no row has one); 404 an unknown phone; a DB error 500.
+  value or a package outside the launcher's grammar (`app_display::valid_package_name`; no row has one); 404 an
+  unknown phone; a DB error 500. The report's `access` rides on the row (`UnifiedAppRow.access`, one parse).
 - **The policy**: `app_permissions` (`[{package_name, camera: "deny"}]`, always a list) from the same table; a failing
   read is a 500 for the whole policy (`device_api::db_error_is_500_not_default`), never `[]`. The report's `access` is
   kept with known keys and values only (`AppAccess::of`, a `lenient_*`-style deserializer).
-- Tests: `device_pages::the_permissions_form_returns_to_its_open_details`, `app_permissions::tests`,
+- Tests: `device_pages::the_permissions_form_returns_to_its_open_details` (with the nudge and a signed-out POST),
+  `device_pages::the_permissions_cap_refuses_the_201st_app`, `app_permissions::tests`,
   `device_api::policy_json_keys_snapshot`, `app_updates::the_installed_apps_contract_raises_app_updated`.
 
 ## Device › Music (design 31 step 7, `docs/design/31-pwa-redesign.md` §3.2, §8)

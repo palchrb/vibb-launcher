@@ -346,6 +346,10 @@ fun cameraGrants(
     return CameraPlan(writes, deferred)
 }
 
+/** Design 68 §3.2: the call-end wake applies again only when a denial waits ([deferred]) and no call is live now -
+ * [callLive] is read only then (a Telecom binder call). */
+fun deferredCameraApplyDue(deferred: Boolean, callLive: () -> Boolean): Boolean = deferred && !callLive()
+
 /**
  * The policy's `app_permissions` (design 68 §3.1), read field by field: the packages whose camera the parent switched
  * off on this phone. An entry without a valid package is dropped; any `camera` but `"deny"` is the default. `null` -
