@@ -1,5 +1,5 @@
 {#- One app on Device › Apps (`device_pages::AppView`, as `app`): its switch - its own auto-saving
-    form -, a refused switch's reason, and an allowed app's Name and icon under it. The id is the
+    form -, a refused switch's reason, and an allowed app's Name and icon and Permissions (design 68) under it. The id is the
     anchor the switch, the name save, the blocked apps and the Apps tab return to. -#}
 <div class="cell" id="{{ app.anchor }}" data-app="{{ app.anchor }}">
     {% if app.row.is_launcher %}
@@ -18,7 +18,7 @@
         {% if let Some(from) = from %}<input type="hidden" name="from" value="{{ from }}">{% endif %}
         <label class="row">
             {% if let Some((icon, colour)) = app.icon %}<span class="app-row-tile" style="background: {{ colour }}" aria-hidden="true"><img src="/static/app-icons/{{ icon }}.svg" alt=""></span>{% else %}<span class="app-row-tile" aria-hidden="true">{{ app.letter }}</span>{% endif %}
-            <span class="row-label">{{ app.row.label }}<span class="row-sub{% if app.row.install_failed %} text-alarm{% endif %}" data-installing="{{ app.row.is_installing }}" data-failed="{{ app.row.install_failed }}">{{ app.row.status_label }}{% if app.row.show_no_release_hint %} · No release yet{% endif %}</span></span>
+            <span class="row-label">{{ app.row.label }}<span class="row-sub{% if app.row.install_failed %} text-alarm{% endif %}" data-installing="{{ app.row.is_installing }}" data-failed="{{ app.row.install_failed }}">{{ app.row.status_label }}{% if app.row.show_no_release_hint %} · No release yet{% endif %}</span>{% if let Some(perms) = app.perms %}{% if !perms.line.is_empty() %}<span class="row-sub" data-perms-line>{{ perms.line }}</span>{% endif %}{% endif %}</span>
             <input type="checkbox" role="switch" class="sw" name="selected"{% if app.row.checked %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
         </label>
         <noscript><button type="submit" class="row row-button">Save</button></noscript>
@@ -28,6 +28,9 @@
     {% endif %}
     {% if let Some(form) = app.display %}
     {% include "partials/app_display_form.html" %}
+    {% endif %}
+    {% if let Some(perms) = app.perms %}
+    {% include "partials/app_permissions_form.html" %}
     {% endif %}
     {% endif %}
 </div>

@@ -9,6 +9,59 @@
 use serde::Serialize;
 use sqlx::SqlitePool;
 
+/// At most this many rows a phone (the PWA's form is the only writer).
+pub const MAX_ROWS_PER_DEVICE: i64 = 200;
+
+/// Every word this round shows the parent, in one place (the coordinator's rule of 2026-10-26: no English scattered
+/// through templates).
+// i18n: moves to i18n.rs (design 69)
+pub mod words {
+    /// The `<details>`' summary under an app's row.
+    pub const PERMISSIONS: &str = "Permissions";
+    pub const CAMERA: &str = "Camera";
+    pub const CAMERA_OFF: &str = "Camera off";
+    pub const CAMERA_WAITING: &str = "Camera off · waiting for the phone";
+    pub const APPROVED: &str = "approved";
+    pub const NOT_APPROVED: &str = "not approved";
+    pub const UNKNOWN: &str = "unknown";
+    pub const SAVE: &str = "Save";
+    /// Above the Allowed list while the phone's launcher can't do this yet.
+    pub const UPDATE_NOTE: &str = "Update Vibb One to manage apps' permissions";
+    /// A refused save, under the app's row (`?notice=perms`).
+    pub const REFUSED: &str = "This app's permissions can't be changed here.";
+    pub const FULL: &str =
+        "This phone already has 200 apps with their camera off - turn some back on first.";
+    /// The special accesses' names, by wire key (`AppAccess::special`'s order).
+    pub const ACCESSES: [(&str, &str); 5] = [
+        ("manage_media", "Media management"),
+        ("exact_alarm", "Alarms & reminders"),
+        ("write_settings", "Modify system settings"),
+        ("usage_access", "Usage access"),
+        ("full_screen", "Full-screen notifications"),
+    ];
+
+    pub fn state(state: &str) -> &'static str {
+        match state {
+            "granted" => APPROVED,
+            "denied" => NOT_APPROVED,
+            _ => UNKNOWN,
+        }
+    }
+
+    pub fn camera_help(app: &str) -> String {
+        format!(
+            "Off: {app} can't use the camera - a video call or a QR scan stops working. Turning it off closes \
+             {app} if it was allowed the camera."
+        )
+    }
+
+    pub fn how_to_approve(app: &str, access: &str) -> String {
+        format!(
+            "On the phone: Settings (parent code) › Pause all restrictions › App access › {app}: {access}"
+        )
+    }
+}
+
 /// One entry of the policy's `app_permissions`: a package the parent switched away from the default on this phone.
 /// Later keys are additive; an older launcher ignores the whole key.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -44,15 +97,6 @@ pub async fn camera_denied(db: &SqlitePool, device_id: i64) -> Result<Vec<String
     .fetch_all(db)
     .await
 }
-
-/// The special accesses a phone reports, in the order the PWA shows them, with their names.
-pub const ACCESSES: [(&str, &str); 5] = [
-    ("manage_media", "Media management"),
-    ("exact_alarm", "Alarms & reminders"),
-    ("write_settings", "Modify system settings"),
-    ("usage_access", "Usage access"),
-    ("full_screen", "Full-screen notifications"),
-];
 
 const ACCESS_STATES: [&str; 3] = ["granted", "denied", "unknown"];
 const CAMERA_STATES: [&str; 2] = ["requested", "admin_denied"];
@@ -98,7 +142,7 @@ impl AppAccess {
         (access != AppAccess::default()).then_some(access)
     }
 
-    /// The special accesses the app declares, in [ACCESSES]' order: `(key, name, state)`.
+    /// The special accesses the app declares, in [words::ACCESSES]' order: `(key, name, state)`.
     pub fn special(&self) -> Vec<(&'static str, &'static str, &'static str)> {
         let states = [
             self.manage_media,
@@ -107,7 +151,7 @@ impl AppAccess {
             self.usage_access,
             self.full_screen,
         ];
-        ACCESSES
+        words::ACCESSES
             .iter()
             .zip(states)
             .filter_map(|((key, name), state)| state.map(|s| (*key, *name, s)))
@@ -121,6 +165,104 @@ pub fn lenient_access<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<AppAccess>, D::Error> {
     let value = <Option<serde_json::Value> as serde::Deserialize>::deserialize(deserializer)?;
     Ok(value.as_ref().and_then(AppAccess::of))
+}
+
+/// Sets or clears one app's camera-off row. `Ok(false)`: the phone already has [MAX_ROWS_PER_DEVICE] rows (nothing
+/// written).
+pub async fn set_camera(
+    db: &SqlitePool,
+    device_id: i64,
+    package: &str,
+    deny: bool,
+) -> Result<bool, sqlx::Error> {
+    if !deny {
+        sqlx::query("DELETE FROM device_app_permissions WHERE device_id = ? AND package_name = ?")
+            .bind(device_id)
+            .bind(package)
+            .execute(db)
+            .await?;
+        return Ok(true);
+    }
+    let others: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM device_app_permissions WHERE device_id = ? AND package_name != ?",
+    )
+    .bind(device_id)
+    .bind(package)
+    .fetch_one(db)
+    .await?;
+    if others >= MAX_ROWS_PER_DEVICE {
+        return Ok(false);
+    }
+    sqlx::query(
+        "INSERT INTO device_app_permissions (device_id, package_name, camera) VALUES (?, ?, 'deny') \
+         ON CONFLICT(device_id, package_name) DO UPDATE SET camera = 'deny', updated_at = datetime('now')",
+    )
+    .bind(device_id)
+    .bind(package)
+    .execute(db)
+    .await?;
+    Ok(true)
+}
+
+/// One allowed app's Permissions on Device › Apps: the row's second sub-line and the `<details>` under it.
+pub struct PermsView {
+    /// `perms-<package>`: the details' id and the form's return.
+    pub anchor: String,
+    pub action: String,
+    pub package_name: String,
+    /// Open on return from its own save (`?perms=<package>`).
+    pub open: bool,
+    /// "Camera off · Media management: not approved"; empty for nothing to say.
+    pub line: String,
+    /// The camera switch, only when the report has `access.camera`: `(on, help)`.
+    pub camera: Option<(bool, String)>,
+    /// One line per declared access: `(text, how to approve it while it isn't)`.
+    pub accesses: Vec<(String, Option<String>)>,
+    pub title: &'static str,
+    pub camera_label: &'static str,
+    pub save: &'static str,
+}
+
+impl PermsView {
+    /// For an allowed app: `None` when the report says nothing about it (no `access`).
+    pub fn of(
+        device_id: i64,
+        package: &str,
+        label: &str,
+        access: Option<&AppAccess>,
+        camera_off: bool,
+        open: bool,
+    ) -> Option<Self> {
+        let access = access?;
+        let mut parts = Vec::new();
+        match (camera_off, access.camera) {
+            (true, Some("admin_denied")) => parts.push(words::CAMERA_OFF.to_string()),
+            (true, Some(_)) => parts.push(words::CAMERA_WAITING.to_string()),
+            _ => {}
+        }
+        let mut accesses = Vec::new();
+        for (_, name, state) in access.special() {
+            let text = format!("{name}: {}", words::state(state));
+            parts.push(text.clone());
+            let how = (state != "granted").then(|| words::how_to_approve(label, name));
+            accesses.push((text, how));
+        }
+        let anchor = format!("perms-{package}");
+        Some(PermsView {
+            action: format!("/devices/{device_id}/apps/permissions#{anchor}"),
+            anchor,
+            package_name: package.to_string(),
+            open,
+            line: parts.join(" · "),
+            camera: access
+                .camera
+                .map(|_| (!camera_off, words::camera_help(label))),
+            accesses,
+            title: words::PERMISSIONS,
+            camera_label: words::CAMERA,
+            save: words::SAVE,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -152,5 +294,34 @@ mod tests {
             access.special(),
             [("manage_media", "Media management", "granted")]
         );
+    }
+
+    #[test]
+    fn the_line_and_the_details_say_what_the_report_says() {
+        let access = AppAccess::of(&json!({"camera": "requested", "manage_media": "denied"}));
+        let view = PermsView::of(1, "app.x", "Immich", access.as_ref(), true, false).unwrap();
+        assert_eq!(
+            view.line,
+            "Camera off · waiting for the phone · Media management: not approved"
+        );
+        assert_eq!(view.camera.as_ref().map(|c| c.0), Some(false));
+        assert_eq!(
+            view.accesses[0].1.as_deref(),
+            Some(
+                "On the phone: Settings (parent code) › Pause all restrictions › App access › \
+                 Immich: Media management"
+            )
+        );
+        assert_eq!(view.action, "/devices/1/apps/permissions#perms-app.x");
+        let denied = AppAccess::of(&json!({"camera": "admin_denied", "manage_media": "granted"}));
+        let view = PermsView::of(1, "app.x", "Immich", denied.as_ref(), true, false).unwrap();
+        assert_eq!(view.line, "Camera off · Media management: approved");
+        assert_eq!(view.accesses[0].1, None);
+        // No camera key: no switch, and a stored row is inert.
+        let none = AppAccess::of(&json!({"full_screen": "granted"}));
+        let view = PermsView::of(1, "app.x", "X", none.as_ref(), true, false).unwrap();
+        assert!(view.camera.is_none());
+        assert_eq!(view.line, "Full-screen notifications: approved");
+        assert!(PermsView::of(1, "app.x", "X", None, true, false).is_none());
     }
 }

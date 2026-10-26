@@ -2030,6 +2030,142 @@ async fn apps_forms_return_to_their_rows() {
     assert!(section(&html, "not-allowed").contains("id=\"app-com.android.deskclock\""));
 }
 
+/// Design 68 §4.1: an allowed app's Permissions - the sub-line, the camera switch only for an app that asks for the
+/// camera, a declared access with the way to approve it - and its form: a save lands on its own details, open
+/// (`?perms=<package>#perms-<package>`), writes the row the policy sends and nudges; a bad camera value is a 400, Play's
+/// core and Vibb are refused at their row; the update note while the launcher lacks `app_permissions_v1`.
+#[tokio::test]
+async fn the_permissions_form_returns_to_its_open_details() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let element = "io.element.android.x";
+    let report = |caps: serde_json::Value| {
+        json!({
+            "capabilities": caps,
+            "installed_apps": [
+                { "package_name": element, "label": "Element X", "preinstalled": false,
+                  "access": { "camera": "requested", "manage_media": "denied" } },
+                { "package_name": "org.example.plain", "label": "Plain", "preinstalled": false },
+            ],
+        })
+    };
+    app.post_status(&token, report(json!([]))).await;
+    sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+        .bind(format!("[\"{element}\", \"org.example.plain\"]"))
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let page = device_page(id, Section::Apps);
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(
+        html.contains("data-row=\"update-note\""),
+        "an older launcher: the note"
+    );
+    app.post_status(&token, report(json!(["app_permissions_v1"])))
+        .await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(!html.contains("data-row=\"update-note\""));
+    let anchor = format!("perms-{element}");
+    assert!(
+        html.contains(&format!("<details class=\"app-display\" id=\"{anchor}\">")),
+        "closed at first"
+    );
+    assert!(
+        !html.contains("id=\"perms-org.example.plain\""),
+        "nothing to say: no details"
+    );
+    assert!(html.contains("Media management: not approved"));
+    assert!(html.contains("App access › Element X: Media management"));
+    let action = format!("/devices/{id}/apps/permissions#{anchor}");
+    assert!(html.contains(&format!("action=\"{action}\"")));
+
+    // Off: the switch's field missing (an auto-saving checkbox).
+    let target = format!("/devices/{id}/apps/permissions");
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", element)],
+        )
+        .await;
+    let back = format!("{page}?perms={element}");
+    assert_redirect(&res, &back, Some(&anchor));
+    app.assert_lands(&res, &cookie).await;
+    let html = app.get_page(&back, &cookie).await.text();
+    assert!(
+        html.contains(&format!("id=\"{anchor}\" open")),
+        "the details stay open"
+    );
+    assert!(html.contains("Camera off · waiting for the phone · Media management: not approved"));
+    let policy = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json();
+    assert_eq!(
+        policy["app_permissions"],
+        json!([{"package_name": element, "camera": "deny"}])
+    );
+
+    // Back on.
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", element), ("camera", "default")],
+        )
+        .await;
+    assert_redirect(&res, &back, Some(&anchor));
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_permissions")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+
+    // Refused: a value no page sends; Play's core and Vibb at their row, nothing written.
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", element), ("camera", "allow")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let res = app
+        .request_form(
+            Method::POST,
+            &target,
+            Some(&cookie),
+            &[("package_name", "not a package")],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    for package in ["com.android.vending", "me.vibb.launcher"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                &target,
+                Some(&cookie),
+                &[("package_name", package)],
+            )
+            .await;
+        assert_redirect(
+            &res,
+            &format!("{page}?notice=perms&app=app-{package}"),
+            Some(&format!("app-{package}")),
+        );
+    }
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_app_permissions")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}
+
 /// A switch that can't be what it says changes nothing: not a package name, nothing at all, Play's
 /// core, Vibb itself (400), an unknown phone (404); a catalog app deleted since the page loaded
 /// returns to the page (a second tap lands where the first did). A failed read is a 500, never a

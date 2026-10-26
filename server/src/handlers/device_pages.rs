@@ -1566,6 +1566,9 @@ pub struct AppView {
     /// A refused switch, under the row (`toggle_app`'s `?notice=<code>&app=<row>`,
     /// `devices::toggle_refusal`).
     pub refused: Option<&'static str>,
+    /// Design 68: an allowed app's Permissions - the row's second sub-line and the `<details>` - when the phone's
+    /// report says something about it.
+    pub perms: Option<crate::app_permissions::PermsView>,
 }
 
 /// A tab of the bar (`partials/tab_bar.html`'s five), for the one page whose tab is a field
@@ -1719,6 +1722,9 @@ struct AppsTemplate {
     not_allowed: Vec<AppView>,
     /// The phone has reported its apps at least once.
     reported: bool,
+    /// Design 68: the phone reported its apps without `app_permissions_v1` - "Update Vibb One to manage apps'
+    /// permissions" above the Allowed list.
+    update_note: Option<&'static str>,
     /// Something installs now: the page reloads every 3 s for the percentage
     /// (`static/auto-reload.js`) - never on a refused save's page, the answer to a POST.
     installing: bool,
@@ -1746,7 +1752,9 @@ pub async fn view_apps(
             .map(|text| (row.as_str(), text))
     });
     let from = query.get("from").and_then(|f| AppsFrom::parse(f));
-    render_apps(&state, id, refused, None, from).await
+    // Design 68 §4.1: back from a Permissions save, that app's details open.
+    let perms = query.get("perms").map(String::as_str);
+    render_apps(&state, id, refused, None, from, perms).await
 }
 
 /// Device › Apps; `refused` = the row whose switch was refused and why, `entered` = a refused Name
@@ -1758,6 +1766,7 @@ pub(crate) async fn render_apps(
     refused: Option<(&str, &'static str)>,
     entered: Option<(String, crate::app_display::Entered)>,
     from: Option<AppsFrom>,
+    open_perms: Option<&str>,
 ) -> Response {
     use crate::app_display::{self as display, AppDisplayForm, DisplayValues};
     let device = match load_device(state, id).await {
@@ -1785,6 +1794,19 @@ pub(crate) async fn render_apps(
         Ok(own) => own,
         Err(err) => return read_failed(id, "the phone's app names", err),
     };
+    // Design 68: the parent's camera-off apps and what the phone reports per app (`installed_apps[].access`).
+    let camera_off = match crate::app_permissions::camera_denied(&state.db, id).await {
+        Ok(denied) => denied,
+        Err(err) => return read_failed(id, "the phone's app permissions", err),
+    };
+    let access: std::collections::HashMap<String, crate::app_permissions::AppAccess> = latest
+        .as_ref()
+        .and_then(|s| s.installed_apps_json.as_deref())
+        .and_then(|j| serde_json::from_str::<Vec<crate::models::InstalledApp>>(j).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|a| a.access.map(|access| (a.package_name, access)))
+        .collect();
     let (nav_tab, back_href, back_label, from) = match apps_nav(state, &device, from).await {
         Ok(nav) => nav,
         Err(err) => return read_failed(id, "the catalog app it came from", err),
@@ -1849,7 +1871,20 @@ pub(crate) async fn render_apps(
                 }
                 form
             });
+        let perms = (row.checked && !row.is_launcher)
+            .then(|| {
+                crate::app_permissions::PermsView::of(
+                    id,
+                    &package,
+                    &row.label,
+                    access.get(&package),
+                    camera_off.contains(&package),
+                    open_perms == Some(package.as_str()),
+                )
+            })
+            .flatten();
         let view = AppView {
+            perms,
             letter: crate::handlers::devices::initial(&row.label),
             refused: refused
                 .filter(|(row, _)| *row == anchor)
@@ -1889,6 +1924,9 @@ pub(crate) async fn render_apps(
             }),
             allowed,
             not_allowed,
+            update_note: (latest.is_some()
+                && !has_capability(latest.as_ref(), crate::models::APP_PERMISSIONS_CAPABILITY))
+            .then_some(crate::app_permissions::words::UPDATE_NOTE),
             reported: latest.is_some(),
             installing,
             wifi_only: policy.app_updates_wifi_only,

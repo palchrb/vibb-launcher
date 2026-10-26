@@ -969,6 +969,7 @@ pub async fn save_app_display(
                 None,
                 Some((package, entered)),
                 from,
+                None,
             )
             .await;
             // The page, as a refusal; a page that failed to render keeps its own status.
@@ -1072,6 +1073,88 @@ pub async fn save_app_display(
             )
                 .into_response()
         }
+    }
+}
+
+/// `POST /devices/{id}/apps/permissions` (design 68 §4.1): one app's camera off (`camera` = `deny`, or the switch's
+/// field missing - an auto-saving checkbox) or back to the default (`default`). Saved: back to the app's Permissions,
+/// open (`?perms=<package>#perms-<package>`), and the phone nudged. Refused at the app's row (`?notice=perms`): Play's
+/// core or Vibb itself; `?notice=perms_full` past `app_permissions::MAX_ROWS_PER_DEVICE`. Another `camera` value or a
+/// package outside the grammar (no row has one) is a 400, an unknown phone a 404, a DB error a 500.
+pub async fn save_app_permissions(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    let package = form
+        .get("package_name")
+        .map(|p| p.trim())
+        .unwrap_or("")
+        .to_string();
+    let from = form
+        .get("from")
+        .and_then(|f| crate::handlers::device_pages::AppsFrom::parse(f));
+    let deny = match form.get("camera").map(String::as_str) {
+        None | Some("deny") => true,
+        Some("default") => false,
+        Some(_) => return (StatusCode::BAD_REQUEST, "Not a camera setting.").into_response(),
+    };
+    // No row has a name outside the grammar, so there is no row to return to (no page sends one).
+    if !crate::handlers::device_api::is_package_name(&package) {
+        return (StatusCode::BAD_REQUEST, "Not an app - nothing was changed.").into_response();
+    }
+    let failed = |err: sqlx::Error| {
+        tracing::error!(device_id = id, %err, "couldn't save an app's permissions");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Couldn't save - nothing was changed.",
+        )
+            .into_response()
+    };
+    match sqlx::query_scalar::<_, i64>("SELECT id FROM devices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+    {
+        Ok(Some(_)) => {}
+        Ok(None) => return (StatusCode::NOT_FOUND, "Device not found").into_response(),
+        Err(err) => return failed(err),
+    }
+    let anchor = app_anchor(&package, None);
+    let refused = |code: &str| {
+        crate::settings_log::refused(Redirect::to(&crate::handlers::device_pages::apps_url(
+            id,
+            &format!("notice={code}&app={anchor}"),
+            from,
+            &anchor,
+        )))
+    };
+    let vibb = match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM tracked_apps WHERE is_launcher = 1 AND package_name = ?",
+    )
+    .bind(&package)
+    .fetch_one(&state.db)
+    .await
+    {
+        Ok(count) => count > 0 || package.starts_with("me.vibb.launcher"),
+        Err(err) => return failed(err),
+    };
+    if crate::play::is_play_core(&package) || vibb {
+        return refused("perms");
+    }
+    match crate::app_permissions::set_camera(&state.db, id, &package, deny).await {
+        Ok(true) => {
+            let _ = state.command_notify.send(id);
+            Redirect::to(&crate::handlers::device_pages::apps_url(
+                id,
+                &format!("perms={package}"),
+                from,
+                &format!("perms-{package}"),
+            ))
+            .into_response()
+        }
+        Ok(false) => refused("perms_full"),
+        Err(err) => failed(err),
     }
 }
 
@@ -1778,6 +1861,8 @@ pub(crate) fn toggle_refusal(code: &str) -> Option<&'static str> {
              that copy first.",
         ),
         "not_an_app" => Some("This app changed in the catalog since the page loaded. Try again."),
+        "perms" => Some(crate::app_permissions::words::REFUSED),
+        "perms_full" => Some(crate::app_permissions::words::FULL),
         _ => None,
     }
 }
