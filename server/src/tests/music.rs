@@ -3588,7 +3588,12 @@ async fn the_phone_reports_music_state_with_known_fields_only() {
         )),
         "{on_phone}"
     );
-    assert!(oslo.exact(reported_at).contains("12:00:00"));
+    // 10:00 UTC is 12:00 in Oslo in summer, 11:00 in winter (the test runs on any day).
+    let exact = oslo.exact(reported_at);
+    assert!(
+        exact.contains("12:00:00") || exact.contains("11:00:00"),
+        "{exact}"
+    );
 
     // The phone's library is older, or not there yet.
     for (applied, value) in [
