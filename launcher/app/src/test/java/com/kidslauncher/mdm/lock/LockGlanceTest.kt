@@ -718,24 +718,29 @@ class LockGlanceLayoutTest {
     private fun Element.byId(id: String): Element = all().single { it.getAttributeNS(ns, "id") == "@+id/$id" }
     private fun Element.id() = getAttributeNS(ns, "id").substringAfter("/")
 
-    /** An element's own height (its visibility aside), margins not included. */
-    private fun height(e: Element): Float {
+    /** An element's own height (its visibility aside), margins not included, at font scale [font]; a row's text line
+     * (`@integer/glance_row_text_lines`) takes [textLines] lines (six-inch F4: 2 from a 720 dp tall screen). */
+    private fun height(e: Element, font: Float = 1f, textLines: Int = 1): Float {
         val explicit = e.getAttributeNS(ns, "layout_height").takeIf { it.endsWith("dp") }?.removeSuffix("dp")?.toFloat()
         if (explicit != null) return explicit
         val padding = e.dim("paddingTop") + e.dim("paddingBottom") + 2 * e.dim("padding")
         val content = when (e.tagName) {
             "LinearLayout" -> if (e.getAttributeNS(ns, "orientation") == "vertical") {
-                e.kids().sumOf { (it.dim("layout_marginTop") + it.dim("layout_marginBottom") + height(it)).toDouble() }.toFloat()
+                e.kids().sumOf { (it.dim("layout_marginTop") + it.dim("layout_marginBottom") + height(it, font, textLines)).toDouble() }.toFloat()
             } else {
-                e.kids().maxOfOrNull { it.dim("layout_marginTop") + it.dim("layout_marginBottom") + height(it) } ?: 0f
+                e.kids().maxOfOrNull { it.dim("layout_marginTop") + it.dim("layout_marginBottom") + height(it, font, textLines) } ?: 0f
             }
-            "FrameLayout" -> e.kids().maxOfOrNull { height(it) } ?: 0f
-            else -> e.dim("textSize") * 1.4f * (e.getAttributeNS(ns, "maxLines").toIntOrNull() ?: 1)
+            "FrameLayout" -> e.kids().maxOfOrNull { height(it, font, textLines) } ?: 0f
+            else -> e.dim("textSize") * 1.4f * font * when (val lines = e.getAttributeNS(ns, "maxLines")) {
+                GLANCE_TEXT_LINES_REF -> textLines
+                else -> lines.toIntOrNull() ?: 1
+            }
         }
         return maxOf(padding + content, e.dim("minHeight"))
     }
 
-    private fun withMargins(id: String): Float = root.byId(id).let { it.dim("layout_marginTop") + it.dim("layout_marginBottom") + height(it) }
+    private fun withMargins(id: String, font: Float = 1f): Float =
+        root.byId(id).let { it.dim("layout_marginTop") + it.dim("layout_marginBottom") + height(it, font) }
 
     /** The parts as the page lays them out (r11 §1.2: measured by nothing any more - a model of what scrolls). */
     private data class Parts(
@@ -744,23 +749,24 @@ class LockGlanceLayoutTest {
         val rule: Float,
     )
 
-    private val parts by lazy {
-        Parts(
-            bottom = withMargins("lock_glance_bottom"),
-            clock = root.byId("lock_glance_clock").dim("textSize") * 1.4f,
-            date = withMargins("lock_glance_date"),
-            alarm = withMargins("lock_glance_alarm"),
-            tileFull = withMargins("lock_media_tile"),
-            tileCompact = withMargins("lock_media_compact"),
-            timer = withMargins("lock_timer_tile"),
-            rowsTop = root.byId("lock_glance_list").dim("layout_marginTop"),
-            rowsTopNoTile = 22f,
-            row = height(row),
-            rowGap = 8f,
-            more = root.byId("lock_glance_more").let { it.dim("layout_marginTop") + height(it) },
-            rule = withMargins("lock_rule_card"),
-        )
-    }
+    /** The parts at font scale [font] with [textLines] lines of a row's text. */
+    private fun partsAt(font: Float, textLines: Int = 1) = Parts(
+        bottom = withMargins("lock_glance_bottom", font),
+        clock = root.byId("lock_glance_clock").dim("textSize") * 1.4f * font,
+        date = withMargins("lock_glance_date", font),
+        alarm = withMargins("lock_glance_alarm", font),
+        tileFull = withMargins("lock_media_tile", font),
+        tileCompact = withMargins("lock_media_compact", font),
+        timer = withMargins("lock_timer_tile", font),
+        rowsTop = root.byId("lock_glance_list").dim("layout_marginTop"),
+        rowsTopNoTile = 22f,
+        row = height(row, font, textLines),
+        rowGap = 8f,
+        more = root.byId("lock_glance_more").let { it.dim("layout_marginTop") + height(it, font) },
+        rule = withMargins("lock_rule_card", font),
+    )
+
+    private val parts by lazy { partsAt(1f) }
 
     /** The scroller's content for [layout] (the top block has no vertical padding). */
     private fun content(layout: GlanceLayout, p: Parts = parts, alarm: Boolean = false): Float {
@@ -792,9 +798,12 @@ class LockGlanceLayoutTest {
         assertEquals("rows of at least 56 dp, 8 dp vertical padding (QA Low 4)", 56f, height(row))
         assertEquals(8f, row.dim("paddingTop"))
         assertEquals(8f, row.dim("paddingBottom"))
-        // r9 §3: 12 + the 48 dp cover + 10 + the times' line (12 sp) + 2 + the 56 dp play + 12, and its 18 dp margin
-        // (r6's tile was 233.8); the compact tile keeps its 52 dp art row.
-        assertEquals(174.8f, parts.tileFull, 0.01f)
+        // r9 §3's player: 12 + the 48 dp cover + 6 + the times' line (12 sp) + 2 + the 56 dp play + 4, and its 18 dp
+        // margin - 12 dp lower since 2026-10-26 (the user: "enda litt lavere"; the 10 and 12 became 6 and 4, from 174.8
+        // dp; r6's tile was 233.8); the compact tile keeps its 52 dp art row.
+        assertEquals(162.8f, parts.tileFull, 0.01f)
+        val tile = root.byId("lock_media_tile")
+        assertEquals(listOf(12f, 12f, 12f, 4f), listOf("paddingStart", "paddingEnd", "paddingTop", "paddingBottom").map { tile.dim(it) })
         assertEquals(90f, parts.tileCompact, 0.01f)
         // Design 59d §8.13: the bottom row 48 + its 8 dp (the hint line went - 79.6 with it; Lås opp + the row 116 before).
         assertEquals(56f, parts.bottom, 0.01f)
@@ -968,8 +977,8 @@ class LockGlanceLayoutTest {
         fun at(tile: Boolean, rows: Int) = content(glanceLayout(tile, rows, timer = false))
         // r11 §1.2's table: the content, then how far it scrolls in the 401 / 425 dp scroller (0 = it fits).
         val table = listOf(
-            Triple("the full tile alone", at(true, 0), 278.8f),
-            Triple("music + 1 row (full)", at(true, 1), 348.8f),
+            Triple("the full tile alone", at(true, 0), 266.8f),
+            Triple("music + 1 row (full)", at(true, 1), 336.8f),
             Triple("music + 2 rows (compact)", at(true, 2), 328f),
             Triple("music + 3 rows (compact)", at(true, 3), 392f),
             Triple("music + 4 rows", at(true, 4), 456f),
@@ -992,8 +1001,8 @@ class LockGlanceLayoutTest {
             Triple("the card + 1 row", ruled(false, 1), 256f to (0f to 0f)),
             Triple("the card + 3 rows", ruled(false, 3), 384f to (0f to 0f)),
             Triple("the card + 4 rows", ruled(false, 4), 448f to (47f to 23f)),
-            Triple("the card + full music", ruled(true, 0), 360.8f to (0f to 0f)),
-            Triple("the card + full music + 1 row", ruled(true, 1), 430.8f to (29.8f to 5.8f)),
+            Triple("the card + full music", ruled(true, 0), 348.8f to (0f to 0f)),
+            Triple("the card + full music + 1 row", ruled(true, 1), 418.8f to (17.8f to 0f)),
             Triple("the card + compact music + 2 rows", ruled(true, 2), 410f to (9f to 0f)),
         )
         for ((case, content, expected) in ruleTable) {
@@ -1003,9 +1012,9 @@ class LockGlanceLayoutTest {
             assertEquals("$case at 497", scrolls.second, maxOf(0f, content - scroller(24f)), 0.01f)
         }
         val withAlarm = content(glanceLayout(tile = true, rowCount = 1, timer = false, rule = true), alarm = true)
-        assertEquals("frame D + the alarm line", 451f, withAlarm, 0.01f)
-        assertEquals(50f, withAlarm - scroller(48f), 0.01f)
-        assertEquals(26f, withAlarm - scroller(24f), 0.01f)
+        assertEquals("frame D + the alarm line", 439f, withAlarm, 0.01f)
+        assertEquals(38f, withAlarm - scroller(48f), 0.01f)
+        assertEquals(14f, withAlarm - scroller(24f), 0.01f)
         // Nine rows and more: eight and the "more" line.
         assertEquals(at(false, 8) + parts.more, at(false, 9), 0.01f)
         assertEquals(at(false, 9), at(false, 30), 0.01f)
@@ -1017,6 +1026,60 @@ class LockGlanceLayoutTest {
         // ... and with one row the full tile, on every bar (59d §8.15's "compact no longer for music + 1 row" is the
         // rule's first line now).
         assertEquals(GlanceTileSize.FULL, glanceLayout(tile = true, rowCount = 1, timer = false).tile)
+    }
+
+    /**
+     * RC3-8 (the rc.3 run, font 1.0, music + 3 rows): r9's fit took the full tile with one row and left two rows out of
+     * sight with nothing to show for them. Since r11 the rule takes the compact tile from two rows, so all three are
+     * in sight on the Jelly Star; and whatever is still below the fold has the scroller's fade over it - the "more" line
+     * can't be that hint, it is the list's last child and below the fold with the rows.
+     */
+    @Test
+    fun `music + 3 rows at font 1_0 - the compact tile and every row in sight, and a row below the fold always has the fade (RC3-8)`() {
+        val layout = glanceLayout(tile = true, rowCount = 3, timer = false)
+        assertEquals(GlanceLayout(GlanceTileSize.COMPACT, rows = 3, more = 0, timer = false), layout)
+        assertEquals(392f, content(layout), 0.01f)
+        assertTrue(content(layout) <= scroller(48f) && content(layout) <= scroller(24f))
+        // The fade is the ScrollView's own: Android draws it exactly at an edge with more content (its strength is 0
+        // while nothing is below), so it shows exactly when part of the list - the rows, then the "more" line - is
+        // below the fold, and never while everything fits. Its 16 dp reach past a row's gap and bottom padding, so
+        // even when a whole row is below, the card above it fades at its edge.
+        val scroll = root.byId("lock_glance_scroll")
+        assertEquals("vertical", scroll.getAttributeNS(ns, "requiresFadingEdge"))
+        assertTrue(scroll.dim("fadingEdgeLength") >= parts.rowGap + row.dim("paddingBottom"))
+        val list = root.byId("lock_glance_list")
+        val children = (0 until list.childNodes.length).map { list.childNodes.item(it) }.filterIsInstance<Element>()
+        assertEquals(listOf("lock_glance_rows", "lock_glance_more"), children.map { it.id() })
+        // The "more" line counts only the rows the page doesn't bind.
+        for (n in 0..12) assertEquals("$n rows", maxOf(0, n - GLANCE_MAX_ROWS), glanceLayout(tile = true, rowCount = n, timer = false).more)
+    }
+
+    /**
+     * Six-inch F4: a row's text takes two lines from a 720 dp tall screen (`values-h720dp`), so a short message shows
+     * whole; the title stays one line. 720 dp is the first round height where the compact tile and three two-line rows
+     * still fit the scroller at font 1.3 (533.2 dp, from 701.2 dp tall) with a 48 dp status bar and 3-button
+     * navigation; the Jelly Star (569 dp) keeps one line and every pin above, the six-inch (914 dp) gets two.
+     */
+    @Test
+    fun `a row's text takes two lines only from a 720 dp tall screen (six-inch F4)`() {
+        fun integer(dir: String): Int? = Regex("""<integer name="glance_row_text_lines">(\d+)</integer>""")
+            .find(file("res/$dir/integers.xml").readText())?.groupValues?.get(1)?.toInt()
+        assertEquals(1, integer("values"))
+        assertEquals(2, integer("values-h720dp"))
+        val res = listOf("src/main/res", "app/src/main/res").map(::File).first { it.isDirectory }
+        val defining = res.listFiles { dir -> dir.name.startsWith("values") }!!
+            .filter { dir -> dir.listFiles()!!.any { it.readText().contains("name=\"glance_row_text_lines\"") } }
+        assertEquals(setOf("values", "values-h720dp"), defining.map { it.name }.toSet())
+        // One line is the 56 dp row; two add one 13 sp line (the 1.4 x model: 73.4 dp).
+        assertEquals(56f, height(row, textLines = 1), 0.01f)
+        assertEquals(73.4f, height(row, textLines = 2), 0.01f)
+        // Where the threshold comes from: music + 3 two-line rows at font 1.3 against a screen's scroller.
+        val at13 = partsAt(1.3f, textLines = 2)
+        fun scrollerAt(screenDp: Float) = screenDp - 48f - 48f - root.dim("paddingTop") - root.dim("paddingBottom") - at13.bottom
+        val tall = content(glanceLayout(tile = true, rowCount = 3, timer = false), at13)
+        assertEquals(533.2f, tall, 0.1f)
+        assertTrue(tall <= scrollerAt(720f))
+        assertTrue(tall > scrollerAt(700f))
     }
 
     /**
@@ -1113,12 +1176,13 @@ class LockGlanceLayoutTest {
         assertEquals(288f, 320f - root.dim("paddingStart") - root.dim("paddingEnd") - top.dim("paddingStart") - top.dim("paddingEnd"))
         for (screen in listOf(320f, 360f, 411f)) {
             val content = screen - root.dim("paddingStart") - root.dim("paddingEnd") - top.dim("paddingStart") - top.dim("paddingEnd")
-            assertTrue("$screen: tile controls", fixedWidth(controls) <= content - 2 * tile.dim("padding"))
+            val tileSides = tile.dim("paddingStart") + tile.dim("paddingEnd")
+            assertTrue("$screen: tile controls", fixedWidth(controls) <= content - tileSides)
             // A book over an hour at font scale 2.0: "0:00:00" and "−0:00:00" at 12 sp, 0.6 em a figure, still leave
             // a bar (32 dp at 320).
             val times = (7 + 8) * 12f * 2f * 0.6f
             val barMargins = bar.dim("layout_marginStart") + bar.dim("layout_marginEnd")
-            assertTrue("$screen: the progress row at 2.0", content - 2 * tile.dim("padding") - barMargins - times >= 24f)
+            assertTrue("$screen: the progress row at 2.0", content - tileSides - barMargins - times >= 24f)
             assertTrue("$screen: compact tile", content - fixedWidth(compact) >= 120f)
             // Design 42: the timer's "8:88:88" at 24 sp and font scale 2.0 in the tile's full width.
             val timer = root.byId("lock_timer_tile")
@@ -1192,10 +1256,10 @@ class LockGlanceLayoutTest {
         for (id in listOf("lock_glance_list", "lock_glance_rows")) assertEquals(id, "false", root.byId(id).getAttributeNS(ns, "clipChildren"))
         val bottom = root.byId("lock_glance_bottom")
         assertEquals(listOf(16f, 16f), listOf(bottom.dim("layout_marginStart"), bottom.dim("layout_marginEnd")))
-        // A row: icon, title, subtitle, time; one line each, ellipsized.
-        for (id in listOf("glance_row_title", "glance_row_subtitle")) {
+        // A row: icon, title, subtitle, time; ellipsized - the title one line, the text one or two (six-inch F4).
+        for ((id, lines) in listOf("glance_row_title" to "1", "glance_row_subtitle" to GLANCE_TEXT_LINES_REF)) {
             val text = row.all().single { it.id() == id }
-            assertEquals("1", text.getAttributeNS(ns, "maxLines"))
+            assertEquals(id, lines, text.getAttributeNS(ns, "maxLines"))
             assertEquals("end", text.getAttributeNS(ns, "ellipsize"))
         }
         // qa-launcher-glance-b-code Q-7: the name line wraps its content; only the name (weight 1) is cut, its suffix
@@ -1213,3 +1277,6 @@ class LockGlanceLayoutTest {
         assertEquals("gone until the panel binds a row", "gone", root.byId("lock_glance_list").getAttributeNS(ns, "visibility"))
     }
 }
+
+/** A glance row's text line count, per screen height (`values/integers.xml`, `values-h720dp/`). */
+private const val GLANCE_TEXT_LINES_REF = "@integer/glance_row_text_lines"

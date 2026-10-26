@@ -2,7 +2,8 @@
 <!-- One row of the lock's glance page (design 25 §1.2, mockup LockGlance.dc.html A and B): a button on
      #1B1B28 with 16 dp corners, at least 56 dp, padding 8/12 dp (QA Low 4) - a 36 dp icon (the app's,
      as Home draws it, or the contact's avatar with a red phone badge), the title (15 sp, one line), the
-     subtitle (13 sp, one line) and the time (12 sp) at the top right. One TalkBack node (the panel sets
+     subtitle (13 sp, one line; two on a screen 720 dp tall or more - @integer/glance_row_text_lines,
+     six-inch F4) and the time (12 sp) at the top right. One TalkBack node (the panel sets
      its description and click label); every view here is accessibility-data-sensitive. A tap only leads
      to the keypad: nothing opens before the code. The round parts have fixed equal sizes. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -106,7 +107,7 @@
             android:layout_height="wrap_content"
             android:ellipsize="end"
             android:fontFamily="@font/nunito_bold"
-            android:maxLines="1"
+            android:maxLines="@integer/glance_row_text_lines"
             android:textColor="@color/kid_core_dim"
             android:textSize="13sp" />
     </LinearLayout>

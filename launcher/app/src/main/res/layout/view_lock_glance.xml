@@ -151,7 +151,9 @@
                  as plain glyphs in the ink (48 / 56 / 48 dp targets 28 dp apart, an oval ripple, no discs). The times
                  are one line in a fixed width the panel sets from the widest text of their shape (never wrap_content,
                  no ellipsize: a tick swaps the text without a layout and never shows "1:2…"); the bar's content
-                 description says the time to TalkBack. -->
+                 description says the time to TalkBack. 12 dp lower since 2026-10-26 (the user: "enda litt lavere"): 4 dp
+                 under the controls, whose own targets keep 11-15 dp under their glyphs, and 6 dp above the progress row
+                 (12 and 10 before); the content is r9's. -->
             <LinearLayout
                 android:id="@+id/lock_media_tile"
                 android:layout_width="match_parent"
@@ -159,7 +161,10 @@
                 android:layout_marginTop="18dp"
                 android:background="@drawable/bg_music_tile"
                 android:orientation="vertical"
-                android:padding="12dp"
+                android:paddingStart="12dp"
+                android:paddingTop="12dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="4dp"
                 android:visibility="gone">
 
                 <LinearLayout
@@ -223,7 +228,7 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
+                    android:layout_marginTop="6dp"
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
