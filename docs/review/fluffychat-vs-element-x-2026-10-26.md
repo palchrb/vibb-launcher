@@ -303,6 +303,134 @@ whether the call keeps running when our lock re-fronts (no PiP, so no PiP hang-u
 the second message and in DMs created by Element X, UnifiedPush with our own ntfy, and whether undeclared managed-config
 keys are honoured.
 
+## 7. Addendum: gomuks android (2026-10-26)
+
+The user asked whether gomuks android has call screens. Sources read as code: gomuks android `main`
+[`92866c44`][gma] (2026-10-13), gomuks [`5300375c`][gm] (2026-10-26, after v0.2610.0 of 2026-10-16; its
+[CHANGELOG][gm-cl]), mautrix-go [`a180aa49`][mx] (the version gomuks's `go.mod` pins, after v0.32.0), the GitHub
+issues on 2026-10-26.
+
+**Short answer: no call screen of any kind.** gomuks android has no incoming-call screen, no ring, no call notification
+and no Telecom. The only calls are Element Call running in an iframe in the web UI, started by hand while the app is in
+the foreground. The phone never learns that someone is calling.
+
+**Architecture.** The user's premise needs one correction: the Go backend does **not** run on the phone. The README
+says "this does not currently include a bundled backend, so the backend has to be hosted elsewhere" ([README][gma-readme]),
+and the install docs say "The Android wrapper does not currently come with the backend ... Something like a Raspberry Pi
+plus Tailscale" ([docs.mau.fi][gm-docs]). The app is a **GeckoView** wrapper (Mozilla's engine, `geckoview-beta` 158,
+[libs.versions.toml][gma-libs]), not an Android WebView. It holds a login screen for the backend's URL, user name and
+password, and loads gomuks web from that backend. Native Kotlin covers only FCM push, the notifications, reply and
+mark-read receivers, shares, the file picker and the permission prompts (21 files, about 3,400 lines). The backend
+(`hicli` on mautrix-go) serves one Matrix account per instance (`HiClient.Account`, [hicli.go L43][gm-hicli]), holds the
+crypto store and the full message database, and syncs on the host. For us that would be one gomuks backend per child,
+run by our server: a new AGPL Go service in the stack. A wasm build with the backend inside the browser exists
+(demo.gomuks.app, "significantly worse" than native, per the docs), but the Android app doesn't use it. Nexus, a Flutter
+frontend that embeds the backend through the C FFI, is "in early development" ([gomuks README][gm-readme]).
+`minSdk = 33`, `compileSdk`/`targetSdk 37` ([build.gradle.kts L15][gma-gradle]). Distribution: only per-push CI
+artifacts on mau.dev (`gomuks-android-arm64-v8a.apk`, [.gitlab-ci.yml][gma-ci]). It has no GitHub releases, no F-Droid
+entry (fdroiddata has no `app.gomuks.android`) and no Play listing, and it ships `versionCode = 1`, `versionName "1.0"`
+forever. The release build type is `isDebuggable = true` ([build.gradle.kts L41-47][gma-gradle]), which breaks our "no
+debug APK on the kid's phone" rule and leaves our catalog's version-code checks with nothing to compare. Maintainer:
+Tulir Asokan alone (all 62 android commits in the last 12 months; in gomuks 768 of 784, the next has 5). The
+backend releases monthly (`v0.26MM.0` on the 16th). Licence: gomuks AGPL-3.0 (plus an App Store exception,
+`LICENSE.iOS`); the android repo has **no licence file** (GitHub `license: null`), so strictly it is all rights reserved.
+Installing it is still allowed, but we can't fork it or ship it from our server.
+
+**Encryption.** The crypto runs on the backend host, not the phone. mautrix-go uses **libolm via cgo by default**
+(`registerlibolm.go`, `//go:build !goolm`) and its own pure-Go `goolm` only with the build tag
+([registergoolm.go][mx-goolm], [registerlibolm.go][mx-libolm]). gomuks's CI builds Linux (`.build-linux`) without the tag,
+so on libolm, and only macOS and wasm with `goolm` ([.gitlab-ci.yml L76-100, L165][gm-ci]). No vodozemac anywhere, so the
+libolm deprecation that §1 dismissed for FluffyChat applies here unless we build with `goolm` ourselves. Verification:
+only the recovery key or passphrase (`Verify`, [verify.go L250-318][gm-verify]), or "reset encryption", which generates a
+new recovery key. There is **no interactive emoji or QR verification** in gomuks: mautrix-go has `verificationhelper`
+with SAS and QR, but `hicli` never uses it (grep). The UI is blocked behind `VerificationScreen` until the device is
+verified, with no skip ([App.tsx L96-99][gm-app]). Cross-signing keys come from SSSS. Key backup is checked as part of
+"verified" ([verify.go L31-60][gm-verify-chk]) and keys are uploaded to it ([backupupload.go][gm-backup]). Key sharing
+uses mautrix-go's defaults, which `hicli` leaves unchanged ([hicli.go L214-219][gm-hicli-om]): `SendKeysMinTrust =
+TrustStateUnset`, so room keys go to every device including unverified ones, and `ShareKeysMinTrust =
+CrossSignedTOFU` for answering key requests ([machine.go L140-141][mx-machine]). `DisableDecryptKeyFetching = true`.
+Few open UTD issues, but that reflects a small user base, not proven robustness. The changelog shows interop repairs:
+v26.09 "support for accounts with a broken default SSSS key ID (likely caused by setting up encryption with fluffychat)",
+and "hicli: automatically repair otks" ([`b5cb4ff`][gm-b5cb], 2026-08-25).
+
+**Calls.** What exists:
+
+- **Element Call as a widget only**: `@element-hq/element-call-embedded` 0.28.0, bundled since 2025-07-12 ("use
+  embedded element call" [`6853ce76`][gm-6853], permission prompt skipped [`5f61964d`][gm-5f61]). It opens from
+  "Widgets in room" -> "Element Call" in the right panel ([WidgetList.tsx L44-52][gm-wl]), or as the whole view of an
+  `org.matrix.msc3417.call` room ([RoomView.tsx L47-48][gm-rv]).
+- The widget URL fixes `intent: "join_existing"` ([ElementCall.tsx L22-37][gm-ec]), so gomuks just joins or creates
+  the MatrixRTC session, and per Element Call's intents sends no ring notification. Whether an Element X parent's phone
+  rings when the kid calls is unverified; probably not.
+- The v26.10 backend adds RPCs for the MSC4195 LiveKit token endpoints, wired into the widget driver ([`ac876132`][gm-ac87]):
+  plumbing for Element Call, not a native call.
+- **No legacy 1:1 VoIP** ([#440][gi440], open since 2023) and **no ringing even inside the open web UI**
+  ([#713][gi713] "Element Call ringtone", open since 2026-05-04).
+
+On Android:
+
+- **Nothing.** The manifest has no `ConnectionService`/`MANAGE_OWN_CALLS`, no `USE_FULL_SCREEN_INTENT`, no
+  `FOREGROUND_SERVICE`, no `showWhenLocked`/`turnScreenOn`, no `supportsPictureInPicture` and one activity
+  ([AndroidManifest.xml][gma-man]).
+- The native code has no `CallStyle` and no call channel: four channels, silent, noisy, error and download
+  ([NotificationChannels.kt L8-11][gma-ch]).
+- The backend pushes **only `m.room.message` and `m.sticker`** (`formatPushNotificationMessage`,
+  [pushmessage.go L175][gm-pm]). An Element X parent's `rtc.notification`/`call.member` produces no push, so a sleeping
+  phone shows nothing at all, not even "missed call".
+- The only native call support is mic and camera: since [`dd57478`][gma-dd57]/[`30332bb`][gma-3033] the app holds
+  `CAMERA` "for Element Call" and auto-grants media to the backend's origin ([PermissionDelegate.kt L94-98][gma-perm]).
+- When the activity stops, the Gecko session is set inactive ([MainActivity.kt L272-275][gma-main]), and no FGS keeps a
+  call alive if the kid leaves the app or the screen turns off. Untested, but nothing protects the call.
+
+**Notifications.** The only path is FCM: Google -> `push.gomuks.app` -> the phone. The phone registers its FCM token and
+a fresh AES-256 key with its own backend ([ExtensionBridge.kt L65-80, L168-180][gma-eb]). The backend formats the
+notification (decrypted text, sender and room names, avatar paths) and encrypts it with AES-GCM under that key
+([push.go L213-232][gm-push]). It posts it to `https://<fcm_gateway>/_gomuks/push/fcm`, default `push.gomuks.app`, with
+a whitelist ([push.go L278-297][gm-push-fcm], [config.go L56-58, L181-189][gm-cfg]). So Google and the gateway see
+ciphertext; the gateway also logs the user ID ([L284][gm-push-fcm]). There is no UnifiedPush and no background sync. The
+`web` push type is for browsers and GeckoView here implements no Web Push delegate (grep). **Without Google Play
+services there are no notifications.** The posted notification ([MessagingService.kt][gma-ms]):
+
+- One per room: `notify(roomID.hashCode(), ...)`, **tag null**, new messages appended to the active MessagingStyle.
+- `shortcutId` is the **room id** (`!room:server`): a long-lived conversation shortcut whose intent is
+  `matrix:roomid/<id>`, with a `Person` only for DMs (L44-64, L198-212).
+- `messagingUser` is Person(key = **own MXID**). Each sender is Person(name = per-room display name, **key = sender MXID,
+  URI `matrix:u/<mxid>`**, icon = avatar fetched from the backend) (L35-42, L122-131).
+- `isGroupConversation = !is_dm` (the backend's DM flag), title = room name for groups. Large icon = room avatar.
+  Category `message` (since 2026-10-03), actions Reply and Mark as read.
+
+So a Device Owner's listener learns contact -> room exactly as with FluffyChat: room from `shortcutId`, MXIDs from the
+Person keys, and here also the URI. `matrix:roomid/` and `matrix.to` intents open the room (manifest).
+
+**Per-room name and avatar.** The backend's commands `/myroomnick` and `/myroomavatar` rewrite our own
+`m.room.member` ([commands.go L208-221, L250-262][gm-cmd], since [`16a32b2f`][gm-16a3], 2025-10-28). `/myroomavatar`
+needs an attached unencrypted image (L238-248), so it fails in an encrypted room, where uploads are encrypted.
+Notifications use the room's member displayname (`getNotificationUser`, [pushmessage.go][gm-pm]), so names a parent
+set from Element Web show.
+
+**Kid-suitability.** No lockdown switches. Since v26.10 the backend config's `default_preferences` overrides the web
+UI's defaults ([config.go L79][gm-cfg], [`b4530330`][gm-b453]); these are only defaults, as with FluffyChat's managed
+config. It is a power-user client: event source view, a `/raw` command that sends any event ([cmdspec][gm-cmdspec]), room
+creation, widgets. Third parties by default:
+
+- `push.gomuks.app` and Google (every message, encrypted).
+- GIF search straight from the phone to **`api.klipy.com`** (default provider; Giphy and Tenor selectable), with
+  pictures sent through `mxc://tenor.mau.dev` ([preferences.ts L197-202][gm-pref], [gifsource.ts L103-121][gm-gif]).
+- OpenStreetMap tiles for location messages ([preferences.ts L185-190][gm-pref]).
+- Element Call's rageshake target `element.io/bugreports/submit`, used only on a report ([ElementCall.tsx L35][gm-ec]).
+
+No analytics: Firebase analytics is off in the manifest. The other trust shift: the backend keeps every child's keys and
+the decrypted history on our server.
+
+**Verdict (gomuks).** gomuks lands below both. It has no ring, no call screen, no call notice and no calls at all
+unless the kid opens a widget by hand. Push works only with Play services, through one person's gateway. It is a
+debuggable, unversioned, unlicensed CI APK. It needs a per-child Go backend on our server with libolm-based crypto
+and recovery-key-only verification. To use it, the launcher would need far more than a `MessagePackages` entry: our
+server running one gomuks backend per kid, our own ring (the server watching `rtc.notification` and telling the
+launcher, which would ring and then open the room's call widget), and all of design 57's in-call handling around a
+GeckoView. That is building a calling app, not adopting one. Stay on Element X; gomuks isn't worth a device test until
+it ships an embedded backend and native call handling.
+
 [fc]: https://github.com/krille-chan/fluffychat/tree/85efb515d7c394c94401bf4f21b1087734d89799
 [fc-cl]: https://github.com/krille-chan/fluffychat/blob/85efb515d7c394c94401bf4f21b1087734d89799/CHANGELOG.md
 [fc-pubspec]: https://github.com/krille-chan/fluffychat/blob/85efb515d7c394c94401bf4f21b1087734d89799/pubspec.yaml
@@ -396,3 +524,50 @@ keys are honoured.
 [i3800]: https://github.com/krille-chan/fluffychat/issues/3800
 [i3841]: https://github.com/krille-chan/fluffychat/issues/3841
 [i3857]: https://github.com/krille-chan/fluffychat/issues/3857
+[gma]: https://github.com/gomuks/android/tree/92866c44ab716163c9f4ae9de148a96a64763565
+[gma-readme]: https://github.com/gomuks/android/blob/92866c44ab716163c9f4ae9de148a96a64763565/README.md
+[gma-libs]: https://github.com/gomuks/android/blob/92866c44ab716163c9f4ae9de148a96a64763565/gradle/libs.versions.toml
+[gma-gradle]: https://github.com/gomuks/android/blob/92866c44ab716163c9f4ae9de148a96a64763565/app/build.gradle.kts#L15-L47
+[gma-ci]: https://github.com/gomuks/android/blob/92866c44ab716163c9f4ae9de148a96a64763565/.gitlab-ci.yml
+[gma-man]: https://github.com/gomuks/android/blob/92866c44ab716163c9f4ae9de148a96a64763565/app/src/main/AndroidManifest.xml
+[gma-ch]: https://github.com/gomuks/android/blob/92866c44ab716163c9f4ae9de148a96a64763565/app/src/main/java/app/gomuks/android/NotificationChannels.kt#L8-L11
+[gma-perm]: https://github.com/gomuks/android/blob/92866c44ab716163c9f4ae9de148a96a64763565/app/src/main/java/app/gomuks/android/PermissionDelegate.kt#L94-L98
+[gma-main]: https://github.com/gomuks/android/blob/92866c44ab716163c9f4ae9de148a96a64763565/app/src/main/java/app/gomuks/android/MainActivity.kt#L272-L275
+[gma-eb]: https://github.com/gomuks/android/blob/92866c44ab716163c9f4ae9de148a96a64763565/app/src/main/java/app/gomuks/android/ExtensionBridge.kt#L65-L180
+[gma-ms]: https://github.com/gomuks/android/blob/92866c44ab716163c9f4ae9de148a96a64763565/app/src/main/java/app/gomuks/android/MessagingService.kt
+[gma-dd57]: https://github.com/gomuks/android/commit/dd57478
+[gma-3033]: https://github.com/gomuks/android/commit/30332bb
+[gm]: https://github.com/gomuks/gomuks/tree/5300375c7091d076acd07ea93a0d6556c99cd79b
+[gm-cl]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/CHANGELOG.md
+[gm-readme]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/README.md
+[gm-docs]: https://docs.mau.fi/gomuks/installation.html
+[gm-hicli]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/hicli/hicli.go#L43
+[gm-hicli-om]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/hicli/hicli.go#L214-L219
+[gm-ci]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/.gitlab-ci.yml#L76-L165
+[gm-verify]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/hicli/verify.go#L250-L318
+[gm-verify-chk]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/hicli/verify.go#L31-L60
+[gm-backup]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/hicli/backupupload.go
+[gm-app]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/web/src/App.tsx#L96-L99
+[gm-b5cb]: https://github.com/gomuks/gomuks/commit/b5cb4ff
+[gm-6853]: https://github.com/gomuks/gomuks/commit/6853ce76
+[gm-5f61]: https://github.com/gomuks/gomuks/commit/5f61964d
+[gm-ac87]: https://github.com/gomuks/gomuks/commit/ac876132
+[gm-16a3]: https://github.com/gomuks/gomuks/commit/16a32b2f
+[gm-b453]: https://github.com/gomuks/gomuks/commit/b4530330
+[gm-wl]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/web/src/ui/rightpanel/WidgetList.tsx#L44-L52
+[gm-rv]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/web/src/ui/roomview/RoomView.tsx#L47-L48
+[gm-ec]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/web/src/ui/widget/ElementCall.tsx#L22-L37
+[gm-pm]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/gomuks/pushmessage.go#L130-L176
+[gm-push]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/gomuks/push.go#L199-L232
+[gm-push-fcm]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/gomuks/push.go#L278-L297
+[gm-cfg]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/gomuks/config.go#L56-L189
+[gm-cmd]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/hicli/commands.go#L204-L262
+[gm-cmdspec]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/pkg/hicli/cmdspec/commands.go#L30
+[gm-pref]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/web/src/api/types/preferences/preferences.ts#L185-L202
+[gm-gif]: https://github.com/gomuks/gomuks/blob/5300375c7091d076acd07ea93a0d6556c99cd79b/web/src/ui/emojipicker/gifsource.ts#L103-L121
+[gi440]: https://github.com/gomuks/gomuks/issues/440
+[gi713]: https://github.com/gomuks/gomuks/issues/713
+[mx]: https://github.com/mautrix/go/tree/a180aa49964897a6b113897c6ae7b764562276d7
+[mx-goolm]: https://github.com/mautrix/go/blob/a180aa49964897a6b113897c6ae7b764562276d7/crypto/registergoolm.go
+[mx-libolm]: https://github.com/mautrix/go/blob/a180aa49964897a6b113897c6ae7b764562276d7/crypto/registerlibolm.go
+[mx-machine]: https://github.com/mautrix/go/blob/a180aa49964897a6b113897c6ae7b764562276d7/crypto/machine.go#L130-L145
