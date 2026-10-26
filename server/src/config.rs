@@ -66,8 +66,8 @@ pub struct ForkConfig {
     /// the module doc comment and DEPLOY.md for how to compute it.
     pub launcher_signature_checksum: Option<String>,
     /// `PHONE_SERVER_URL`: the phones' server address in the setup QR when Settings › Phone Setup
-    /// has none saved - the saved one always wins (`provisioning::server_url`). `http://` is taken
-    /// (the emulator loop) with a startup warning.
+    /// has none saved - the saved one always wins (`provisioning::server_url`). Checked as Phone
+    /// Setup's field ([server_url_refusal]): `https://`, or `http://` only to a tailnet address.
     pub phone_server_url: Option<String>,
     /// `SSE_KEEPALIVE_SECS` (5-240, default 240 since design 19, 120 before): how often the
     /// command stream sends a keepalive comment. Every phone holds the stream (no FCM); its read
@@ -144,13 +144,7 @@ impl ForkConfig {
                 })
                 .unwrap_or_else(|| DEFAULT_LAUNCHER_APK_URL.to_string()),
             launcher_signature_checksum: read("LAUNCHER_SIGNATURE_CHECKSUM", is_valid_checksum),
-            phone_server_url: read("PHONE_SERVER_URL", is_valid_server_url).inspect(|url| {
-                if !url.starts_with("https://") {
-                    tracing::warn!(
-                        "PHONE_SERVER_URL={url} is not https - phones would talk to this server unencrypted outside a tailnet"
-                    );
-                }
-            }),
+            phone_server_url: read("PHONE_SERVER_URL", |url| server_url_refusal(url).is_none()),
             sse_keepalive_secs: read("SSE_KEEPALIVE_SECS", is_valid_keepalive)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(DEFAULT_SSE_KEEPALIVE_SECS),
@@ -189,14 +183,33 @@ fn is_valid_url(value: &str) -> bool {
     value.starts_with("https://") && value.len() > "https://".len()
 }
 
-/// A server address the phones can use: `https://` or `http://`, a host, no spaces.
-fn is_valid_server_url(value: &str) -> bool {
-    let rest = value
-        .strip_prefix("https://")
-        .or_else(|| value.strip_prefix("http://"));
-    rest.is_some_and(|rest| {
-        !rest.is_empty() && !rest.starts_with('/') && !value.chars().any(char::is_whitespace)
-    })
+/// Why `value` can't be the phones' server address in the setup QR, or `None` when it can
+/// (security review L8): `https://` and a host, or `http://` only to a tailnet address
+/// (100.64.0.0/10 - the tunnel encrypts it); no spaces. The one rule for `.env`'s
+/// `PHONE_SERVER_URL` (anything else is ignored, logged) and Phone Setup's field (refused).
+pub fn server_url_refusal(value: &str) -> Option<&'static str> {
+    let parsed = reqwest::Url::parse(value)
+        .ok()
+        .filter(|_| !value.chars().any(char::is_whitespace))
+        // The parser makes `https:///path` a host "path"; the text must name one.
+        .filter(|_| value.split_once("://").is_some_and(|(_, rest)| !rest.starts_with('/')))
+        .filter(|url| url.host_str().is_some_and(|host| !host.is_empty()));
+    let Some(url) = parsed else {
+        return Some("Use an address like https://vibb.your-tailnet.ts.net. Nothing was saved.");
+    };
+    let tailnet = url
+        .host_str()
+        .and_then(|host| host.parse::<std::net::Ipv4Addr>().ok())
+        .is_some_and(|ip| ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1]));
+    match url.scheme() {
+        "https" => None,
+        "http" if tailnet => None,
+        "http" => Some(
+            "Use https://, or http:// only to the server's tailnet address (100.x.y.z): plain http \
+             would carry the phones' traffic unencrypted. Nothing was saved.",
+        ),
+        _ => Some("Use an address like https://vibb.your-tailnet.ts.net. Nothing was saved."),
+    }
 }
 
 /// 32 bytes as base64url without padding is exactly 43 characters.
@@ -256,11 +269,11 @@ mod tests {
             config.phone_server_url.as_deref(),
             Some("https://vibb.example.ts.net")
         );
-        // The emulator loop's plain address is taken (with a warning).
-        let config = ForkConfig::from_vars(&vars(&[("PHONE_SERVER_URL", "http://10.0.2.2:3100")]));
+        // Plain http only to a tailnet address (security review L8).
+        let config = ForkConfig::from_vars(&vars(&[("PHONE_SERVER_URL", "http://100.101.102.103:3100")]));
         assert_eq!(
             config.phone_server_url.as_deref(),
-            Some("http://10.0.2.2:3100")
+            Some("http://100.101.102.103:3100")
         );
     }
 
@@ -277,6 +290,9 @@ mod tests {
             ("PHONE_SERVER_URL", "https:///path"),
             ("PHONE_SERVER_URL", "https://a b"),
             ("PHONE_SERVER_URL", "ftp://vibb.example"),
+            ("PHONE_SERVER_URL", "http://10.0.2.2:3100"),
+            ("PHONE_SERVER_URL", "http://vibb.example.ts.net"),
+            ("PHONE_SERVER_URL", "http://100.128.0.1"),
             ("LAUNCHER_SIGNATURE_CHECKSUM", "too-short"),
             // 44 characters: a padded base64 value, not the unpadded form Android expects.
             (

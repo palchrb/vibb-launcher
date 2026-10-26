@@ -237,6 +237,45 @@ fn locale_and_time_zone_validation() {
     }
 }
 
+/// Security review L8: the QR's server address is https, or plain http only to a tailnet address;
+/// another one writes nothing and says why under the field.
+#[tokio::test]
+async fn a_plain_http_server_address_is_refused_outside_the_tailnet() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let save = |url: &'static str| {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            app.request_form(
+                Method::POST,
+                "/settings/provisioning",
+                Some(cookie),
+                &[("server_url", url), ("locale", ""), ("time_zone", "")],
+            )
+            .await
+        }
+    };
+    let stored = || async {
+        sqlx::query_scalar::<_, String>("SELECT server_url FROM provisioning_settings")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    for bad in ["http://192.168.1.5:3100", "http://vibb.example.ts.net", "vibb.example"] {
+        let res = save(bad).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad}");
+        let page = res.text();
+        assert!(page.contains("id=\"server_url-error\""), "{bad}: {page}");
+        assert!(page.contains(&format!("value=\"{bad}\"")), "{bad}");
+        assert_eq!(stored().await, "", "{bad}");
+    }
+    for good in ["http://100.101.102.103:3100", "https://vibb.example.ts.net"] {
+        assert!(save(good).await.status.is_redirection(), "{good}");
+        assert_eq!(stored().await, good);
+    }
+}
+
 /// Defaults nb_NO / Europe/Oslo (migrations/0034), editable on the provisioning page, invalid
 /// values refused without writing anything, and the device's QR page carries them.
 #[tokio::test]

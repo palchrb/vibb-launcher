@@ -88,7 +88,12 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   methods, not `/api/devices/`, not `/notifications/receipt` - the push receipt's token is its proof): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
   `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.
   Provisioning: `GET /devices/{id}/provision` (Connect) is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
-  the Tailscale key is write-only (`settings::key_hint`, empty keeps, `clear_tailscale_auth_key` removes).
+  the Tailscale key is write-only (`settings::key_hint`, empty keeps, `clear_tailscale_auth_key` removes). The QR's
+  server address (Phone Setup's field and `.env`'s `PHONE_SERVER_URL`, one rule since 0.55.0, security review L8,
+  `config::server_url_refusal`): `https://` and a host, or `http://` only to a tailnet address (100.64.0.0/10, the
+  tunnel encrypts it); the form refuses anything else (400, the reason under the field, nothing saved), `.env`'s is
+  ignored with a log line. An address saved before stays until the form is saved again
+  (`provisioning::a_plain_http_server_address_is_refused_outside_the_tailnet`).
   `security_events` pruned after 180 days (`retention::prune`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
   systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by

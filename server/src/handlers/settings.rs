@@ -72,7 +72,7 @@ struct ProvisioningSettingsTemplate {
     tailscale_key_hint: Option<String>,
     /// `?saved=1`: the flash under the Save button (`#saved`).
     saved: bool,
-    /// A refused save: the field ("locale" or "time_zone") and why.
+    /// A refused save: the field ("server_url", "locale" or "time_zone") and why.
     error: Option<(&'static str, &'static str)>,
     country_code: CountryCode,
 }
@@ -219,7 +219,13 @@ pub async fn update_provisioning_settings(
     // written (fix round 2026-10-06).
     let locale = form.get("locale").map(|s| s.trim()).unwrap_or("");
     let time_zone = form.get("time_zone").map(|s| s.trim()).unwrap_or("");
-    let error = if !locale.is_empty() && !crate::handlers::provisioning::valid_locale(locale) {
+    // Empty = .env's PHONE_SERVER_URL, else the one rule for the QR's address (security review L8).
+    let url_refusal = Some(server_url)
+        .filter(|url| !url.is_empty())
+        .and_then(crate::config::server_url_refusal);
+    let error = if let Some(why) = url_refusal {
+        Some(("server_url", why))
+    } else if !locale.is_empty() && !crate::handlers::provisioning::valid_locale(locale) {
         Some(("locale", "Use the form nb_NO. Nothing was saved."))
     } else if !time_zone.is_empty() && !crate::handlers::provisioning::valid_time_zone(time_zone) {
         Some((

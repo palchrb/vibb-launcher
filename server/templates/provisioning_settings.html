@@ -16,12 +16,13 @@
         <div class="group form-group">
             <div class="field">
                 <label class="field-label" for="server_url">Server address</label>
-                <input type="text" id="server_url" name="server_url" value="{{ entered.server_url }}" placeholder="{% if let Some(env) = env_server_url %}{{ env }}{% else %}https://vibb.your-tailnet.ts.net{% endif %}" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url">
+                <input type="text" id="server_url" name="server_url" value="{{ entered.server_url }}" placeholder="{% if let Some(env) = env_server_url %}{{ env }}{% else %}https://vibb.your-tailnet.ts.net{% endif %}" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="url"{% if let Some((field, _)) = error %}{% if *field == "server_url" %} aria-invalid="true" aria-describedby="server_url-error" autofocus{% endif %}{% endif %}>
+                {% if let Some((field, why)) = error %}{% if *field == "server_url" %}<p class="field-error" id="server_url-error">{{ why }}</p>{% endif %}{% endif %}
                 {#- Where the QR's address comes from (Q25): saved here wins over .env's PHONE_SERVER_URL. -#}
                 {% if let Some(env) = env_server_url %}
                 {% if entered.server_url.is_empty() %}<p class="field-hint" data-source="env">From .env (PHONE_SERVER_URL): {{ env }}. An address saved here wins.</p>
                 {% else %}<p class="field-hint" data-source="saved">Saved here; it wins over .env's {{ env }}. Empty the field to use that.</p>{% endif %}
-                {% else %}<p class="field-hint">This server's https address, as the phones reach it.</p>{% endif %}
+                {% else %}<p class="field-hint">This server's https address, as the phones reach it (plain http only to its tailnet address, 100.x.y.z).</p>{% endif %}
             </div>
             <div class="field">
                 <label class="field-label" for="tailscale_auth_key">Tailscale key</label>
