@@ -34,9 +34,6 @@ import eu.jonahbauer.android.preference.annotations.Preferences;
                 @PreferenceGroup(name = "display", prefix = "settings_display_", suffix = "_key", value = {
                         @Preference(name = "rotate_screen", type = boolean.class, defaultValue = "true"),
                 }),
-                @PreferenceGroup(name = "minimalist", prefix = "settings_minimalist_", suffix = "_key", value = {
-                        @Preference(name = "apps", type = Set.class, serializer = SetAbstractAppInfoPreferenceSerializer.class),
-                }),
                 @PreferenceGroup(name = "mdm", prefix = "settings_mdm_", suffix = "_key", value = {
                         @Preference(name = "server_url", type = String.class),
                         // Bearer credential returned by POST /api/devices/enroll - the one-shot

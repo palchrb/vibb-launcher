@@ -47,10 +47,7 @@
     <string name="calls_busy">Legg på samtalen du er i først.</string>
     <string name="calls_could_not_call">Klarte ikke å starte samtalen.</string>
     <string name="calls_could_not_message">Klarte ikke å åpne meldingsappen.</string>
-    <string name="calls_incoming">Innkommende samtale</string>
     <string name="calls_dialing">Ringer …</string>
-    <string name="calls_on_hold">Satt på vent</string>
-    <string name="calls_ended">Samtalen er avsluttet</string>
     <string name="calls_unknown_caller">Ukjent nummer</string>
     <string name="calls_answer">Svar</string>
     <string name="calls_decline">Avvis</string>
@@ -232,26 +229,13 @@
     <string name="list_title_hidden">Skjulte apper</string>
     <string name="list_app_hidden_add">Skjul</string>
     <string name="list_app_hidden_remove">Vis</string>
-    <string name="list_app_minimalist_add">Legg til på hjemskjermen</string>
-    <string name="list_app_minimalist_remove">Fjern fra hjemskjermen</string>
     <string name="list_app_rename">Gi nytt navn</string>
     <string name="settings">Innstillinger</string>
     <string name="snackbar_app_hidden">Appen er skjult. Du kan vise den igjen i innstillingene.</string>
-    <string name="toast_minimalist_limit_reached">Du kan legge til opptil 10 apper på hjemskjermen.</string>
     <string name="undo">Angre</string>
     <string name="dialog_rename_title">Gi nytt navn til %1$s</string>
-    <string name="dialog_select_color_red">Rød</string>
-    <string name="dialog_select_color_alpha">Gjennomsiktighet</string>
-    <string name="dialog_select_color_blue">Blå</string>
-    <string name="dialog_select_color_green">Grønn</string>
-    <string name="dialog_select_color_color_hex">Farge</string>
-    <string name="dialog_choose_color_title">Velg farge</string>
-    <string name="dialog_cancel">Avbryt</string>
     <string name="settings_meta_licenses">Lisenser for åpen kildekode</string>
     <string name="legal_info_title">Lisenser for åpen kildekode</string>
-    <string name="toast_activity_not_found_browser">Kan ikke åpne lenken: fant ingen nettleser.</string>
-
-    <string name="dialog_ok">OK</string>
     <string name="notification_channel_ring">Finn enheten – ringing</string>
     <string name="notification_ring_title">Telefonen ringer</string>
     <string name="notification_ring_text">En forelder startet dette fra Finn enheten.</string>

@@ -4,8 +4,8 @@ import com.kidslauncher.mdm.server.keyguardDisabledFeatures as secureCameraRule
 
 /*
  * The keyguard cover (design 32 step 2, docs/design/32-lock-flash.md §8 step 2) - pure, tested in
- * KeyguardCoverPlanTest. A debug-only device experiment: only `KeyguardCoverDebug`'s switch (src/debug,
- * the release one is always false) makes it COVER; otherwise the keyguard is written exactly as before.
+ * KeyguardCoverPlanTest. A device experiment whose debug switch is gone (round 0b): nothing asks for COVER now,
+ * so the keyguard is written exactly as before (design 59 phase D deletes COVER).
  *
  * The system keyguard as a bridge across the sleep: a bare Swipe keyguard (no credential, every
  * feature off) that our showWhenLocked lock occludes while dark. While it is locked, AOSP shows no
@@ -346,13 +346,3 @@ fun rewriteDue(configured: Boolean): Boolean = configured
  * the guard trips in a new process, where nothing is in memory. */
 fun disableNowDue(coverOn: Boolean, coverWritten: Boolean): Boolean = coverOn || coverWritten
 
-/** The debug switch's test knobs for the dismissal (`--ez skipDismiss`, `--ez failDismiss`; memory only). */
-enum class DismissTest {
-    NONE,
-
-    /** The lock never asks and never counts: the keyguard stays locked behind the lock. */
-    SKIP,
-
-    /** The lock "asks" without the call: the state check counts each one, the 2nd falls back. */
-    FAIL,
-}

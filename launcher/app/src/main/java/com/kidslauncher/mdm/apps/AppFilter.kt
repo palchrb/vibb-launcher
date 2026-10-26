@@ -16,7 +16,6 @@ import java.util.Locale
 class AppFilter(
     var context: Context,
     var hiddenVisibility: AppSetVisibility = AppSetVisibility.HIDDEN,
-    var pinnedVisibility: AppSetVisibility = AppSetVisibility.VISIBLE
 ) {
 
     operator fun invoke(apps: List<AbstractDetailedAppInfo>): List<AbstractDetailedAppInfo> {
@@ -24,7 +23,6 @@ class AppFilter(
             apps.sortedBy { app -> app.getCustomLabel(context).lowercase(Locale.ROOT) }
 
         val hidden = LauncherPreferences.apps().hidden() ?: setOf()
-        val pinned = LauncherPreferences.minimalist().apps() ?: setOf()
 
         val blockedDialer = blockedSystemDialer()
         // Design 16d: enforcement never hides or suspends the recents provider - kept off here.
@@ -43,7 +41,6 @@ class AppFilter(
         apps = apps.filter { info ->
             val packageName = (info.getRawInfo() as? AppInfo)?.packageName
             hiddenVisibility.predicate(hidden, info)
-                    && pinnedVisibility.predicate(pinned, info)
                     && !isMdmSuspended(info)
                     && kidListable(packageName, blockedDialer, recentsProvider, installMode, emergencySos)
         }
@@ -106,7 +103,6 @@ class AppFilter(
         enum class AppSetVisibility(
             val predicate: (set: Set<AbstractAppInfo>, AbstractDetailedAppInfo) -> Boolean
         ) {
-            VISIBLE({ _, _ -> true }),
             HIDDEN({ set, appInfo -> !set.contains(appInfo.getRawInfo()) }),
             EXCLUSIVE({ set, appInfo -> set.contains(appInfo.getRawInfo()) }),
             ;
