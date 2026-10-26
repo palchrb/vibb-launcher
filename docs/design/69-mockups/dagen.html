@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Dagen mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;600;700;800&display=swap">
+<style>
+  /* Design 69 "Dagen" (docs/design/69-dagen.md): a read-only day view in Vibb One, the parent's title rules, and
+     three ways the day could reach the lock glance. Phones are 320x569 dp (the Jelly Star), 1 CSS px = 1 dp. Colours
+     are the launcher's tokens (res/values/colors_kid.xml), as in r13-mockups/mockup.html. The page itself is dark
+     by choice: it shows night-ground screens. */
+  :root {
+    --ground: #0C0C14; --tile: #1B1B28; --control: #2A2A3A; --ink: #FFFFFF; --core: #FBE4DC;
+    --core-dim: rgba(251, 228, 220, 0.78); --accent: #F0A884; --disc: rgba(240, 168, 132, 0.14);
+    --row-icon: #4A6FA5; --page: #15151c; --label: #9a9aa6; --fg: #e8e8ee; --hair: #2b2b36;
+    --pwa-bg: #f2f2f7; --pwa-card: #ffffff; --pwa-ink: #111; --pwa-sub: #6e6e73; --pwa-accent: #c96f44;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding-block: 24px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px));
+         padding-right: max(16px, env(safe-area-inset-right, 0px)); background: var(--page); color: var(--fg);
+         font-family: Nunito, system-ui, sans-serif; }
+  h1 { font-size: 22px; font-weight: 800; margin: 0 0 6px; text-wrap: balance; }
+  p.lead { margin: 0 0 28px; color: var(--label); font-size: 14px; max-width: 64ch; line-height: 1.5; }
+  h2 { font-size: 15px; font-weight: 800; margin: 36px 0 14px; color: #cfcfd8; letter-spacing: .02em;
+       text-transform: uppercase; }
+  .grid { display: flex; flex-wrap: wrap; gap: 28px; }
+  figure { margin: 0; max-width: 320px; }
+  figcaption { margin-top: 10px; font-size: 13px; color: var(--label); line-height: 1.45; }
+  figcaption b { color: var(--fg); font-weight: 700; }
+  .note { max-width: 64ch; font-size: 14px; line-height: 1.5; color: var(--fg); background: var(--tile);
+          border-radius: 14px; padding: 14px 16px; margin: 0 0 8px; }
+  .note b { color: var(--accent); }
+
+  /* ---- the phone ---- */
+  .phone { position: relative; width: 320px; height: 569px; max-width: 100%; background: var(--ground);
+           overflow: hidden; border-radius: 18px; box-shadow: 0 0 0 1px var(--hair); }
+  .bar { position: absolute; left: 0; right: 0; top: 0; height: 24px; display: flex; align-items: center;
+         justify-content: space-between; padding: 0 16px; font-size: 13px; font-weight: 700; color: #fff; }
+  .bar .icons { display: flex; gap: 5px; align-items: center; }
+  .bar .icons i { display: block; width: 10px; height: 10px; background: #fff; border-radius: 2px; opacity: .9; }
+  .handle { position: absolute; left: 112px; right: 112px; bottom: 8px; height: 4px; border-radius: 2px;
+            background: rgba(255,255,255,.7); }
+
+  /* the lock glance (r11/r13 geometry) */
+  .clock { position: absolute; left: 28px; top: 59.7px; font-weight: 300; font-size: 86px; line-height: 1;
+           color: #fff; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
+  .date { position: absolute; left: 35px; top: 155.4px; font-size: 16px; line-height: 1; font-weight: 600;
+          color: var(--core-dim); }
+  .alarm { position: absolute; left: 35px; top: 178px; font-size: 13px; line-height: 1; font-weight: 600;
+           color: var(--core-dim); }
+  .next { position: absolute; left: 35px; top: 199px; font-size: 13px; line-height: 1; font-weight: 700;
+          color: var(--core); }
+  .card, .row, .today { position: absolute; left: 16px; width: 288px; background: var(--tile); }
+  .row { height: 58px; border-radius: 18px; padding: 10px 12px; display: flex; align-items: center; gap: 12px; }
+  .row .ic { width: 38px; height: 38px; border-radius: 50%; background: var(--row-icon); flex: none;
+             display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 800; font-size: 15px; }
+  .row .ic.cal { background: var(--disc); color: var(--accent); }
+  .t15 { font-size: 15px; font-weight: 800; color: var(--ink); line-height: 21px; white-space: nowrap;
+         overflow: hidden; text-overflow: ellipsis; }
+  .t13 { font-size: 13px; font-weight: 700; color: var(--core-dim); line-height: 18px; white-space: nowrap;
+         overflow: hidden; text-overflow: ellipsis; }
+  .today { border-radius: 20px; padding: 12px 14px; }
+  .today .hd { font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+               color: var(--core-dim); margin-bottom: 6px; }
+  .today .ev { display: flex; gap: 10px; font-size: 14px; line-height: 22px; color: var(--ink); font-weight: 700; }
+  .today .ev .tm { width: 44px; flex: none; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .today .ev.dim { color: var(--core-dim); font-weight: 600; }
+  .emergency { position: absolute; left: 0; right: 0; bottom: 22px; display: flex; align-items: center;
+               justify-content: space-between; padding: 0 20px 0 100px; }
+  .emergency span { font-size: 14px; font-weight: 700; color: #FF8A8A; }
+  .torch { width: 40px; height: 40px; border-radius: 50%; background: var(--control); }
+
+  /* the Dagen page (a page of Vibb One: the Home ground, Nunito, calm) */
+  .dagen .head { position: absolute; left: 16px; right: 16px; top: 40px; display: flex; align-items: baseline;
+                 justify-content: space-between; }
+  .dagen .day { font-size: 28px; font-weight: 800; color: var(--ink); line-height: 1.1; }
+  .dagen .day small { display: block; font-size: 14px; font-weight: 700; color: var(--core-dim); margin-top: 2px; }
+  .dagen .back { position: absolute; left: 12px; top: 10px; width: 36px; height: 24px; color: var(--core-dim);
+                 font-size: 18px; font-weight: 700; line-height: 24px; }
+  .dagen .today-btn { font-size: 13px; font-weight: 800; color: var(--accent); background: var(--disc);
+                      border-radius: 14px; padding: 6px 12px; }
+  .dagen .list { position: absolute; left: 16px; right: 16px; top: 118px; display: flex; flex-direction: column; gap: 10px; }
+  .dagen .ev { display: flex; gap: 12px; align-items: flex-start; background: var(--tile); border-radius: 18px;
+               padding: 12px 14px; }
+  .dagen .ev .tm { width: 56px; flex: none; font-size: 14px; font-weight: 800; color: var(--accent);
+                   line-height: 20px; font-variant-numeric: tabular-nums; }
+  .dagen .ev .tm small { display: block; font-size: 12px; font-weight: 700; color: var(--core-dim); }
+  .dagen .ev .tx { min-width: 0; }
+  .dagen .ev .ti { font-size: 15px; font-weight: 800; color: var(--ink); line-height: 20px; }
+  .dagen .ev .wh { font-size: 13px; font-weight: 600; color: var(--core-dim); line-height: 18px; }
+  .dagen .ev.now { box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .dagen .ev.all .tm { color: var(--core-dim); }
+  .dagen .dots { position: absolute; left: 0; right: 0; bottom: 30px; display: flex; justify-content: center;
+                 gap: 6px; }
+  .dagen .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--control); }
+  .dagen .dots i.on { background: var(--accent); }
+  .dagen .empty { position: absolute; left: 16px; right: 16px; top: 118px; background: var(--tile);
+                  border-radius: 18px; padding: 22px 16px; text-align: center; color: var(--core-dim);
+                  font-size: 14px; font-weight: 700; line-height: 1.45; }
+  .dagen .peek { position: absolute; top: 118px; width: 10px; height: 300px; }
+  .dagen .peek.l { left: 0; background: linear-gradient(90deg, rgba(27,27,40,.9), transparent); }
+  .dagen .peek.r { right: 0; background: linear-gradient(270deg, rgba(27,27,40,.9), transparent); }
+
+  /* the PWA (light, iOS grouped lists; the Vibb identity D) */
+  .pwa { position: relative; width: 320px; max-width: 100%; height: 569px; background: var(--pwa-bg);
+         color: var(--pwa-ink); border-radius: 18px; overflow: hidden; box-shadow: 0 0 0 1px var(--hair);
+         padding: 0 16px; color-scheme: light; }
+  .pwa .top { display: flex; justify-content: space-between; align-items: center; height: 44px; margin-top: 24px;
+              font-size: 15px; }
+  .pwa .top .bk { color: var(--pwa-accent); font-weight: 700; }
+  .pwa .top .sv { color: var(--pwa-accent); font-weight: 800; }
+  .pwa h3 { font-size: 24px; font-weight: 800; margin: 4px 0 14px; }
+  .pwa .gh { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+             color: var(--pwa-sub); margin: 14px 0 6px 16px; }
+  .pwa .group { background: var(--pwa-card); border-radius: 14px; overflow: hidden; }
+  .pwa .r { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 8px 16px;
+            border-bottom: 1px solid #e6e6ea; font-size: 15px; gap: 10px; }
+  .pwa .r:last-child { border-bottom: 0; }
+  .pwa .r .l { min-width: 0; }
+  .pwa .r .l small { display: block; font-size: 12px; color: var(--pwa-sub); margin-top: 2px; }
+  .pwa .r .v { color: var(--pwa-sub); font-size: 14px; flex: none; }
+  .pwa .r .v.on { color: var(--pwa-accent); font-weight: 700; }
+  .pwa .ft { font-size: 12px; color: var(--pwa-sub); margin: 6px 16px 0; line-height: 1.4; }
+  .pwa .pre { background: var(--pwa-card); border-radius: 14px; padding: 10px 16px; font-size: 14px; }
+  .pwa .pre .a { color: var(--pwa-sub); text-decoration: line-through; }
+  .pwa .pre .b { font-weight: 800; }
+  .pwa .pre .arr { color: var(--pwa-accent); margin: 0 6px; }
+  .sw { width: 42px; height: 26px; border-radius: 13px; background: #34c759; position: relative; flex: none; }
+  .sw::after { content: ""; position: absolute; right: 2px; top: 2px; width: 22px; height: 22px; border-radius: 50%;
+               background: #fff; }
+  .sw.off { background: #d1d1d6; } .sw.off::after { right: auto; left: 2px; }
+  @media (prefers-reduced-motion: no-preference) { .dagen .ev.now { animation: none; } }
+</style>
+</head>
+<body>
+<h1>«Dagen»: barnets dag i Vibb One</h1>
+<p class="lead">Fire skjermer av selve dagvisningen, forelderens regler i PWA-en, og tre måter dagen kan nå låseskjermen på.
+Alt er 320×569 dp som Jelly Star, i launcherens egne farger og Nunito. Hendelsene er eksempler: en skolefeed med lange
+titler, en fotballfeed, og en delt familiekalender.</p>
+
+<h2>1. Dagvisningen</h2>
+<div class="grid">
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">I dag<small>Mandag 26. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="list">
+        <div class="ev all"><div class="tm">Hele<small>dagen</small></div><div class="tx"><div class="ti">Høstferie slutt</div><div class="wh">Familie</div></div></div>
+        <div class="ev"><div class="tm">08:15<small>14:30</small></div><div class="tx"><div class="ti">Skole</div><div class="wh">Rom 204 · Matte, norsk, gym</div></div></div>
+        <div class="ev now"><div class="tm">14:45<small>15:30</small></div><div class="tx"><div class="ti">SFO: Leksehjelp</div><div class="wh">Pågår nå</div></div></div>
+        <div class="ev"><div class="tm">17:30<small>18:45</small></div><div class="tx"><div class="ti">Fotball: Trening</div><div class="wh">Kunstgresset</div></div></div>
+      </div>
+      <div class="peek l"></div><div class="peek r"></div>
+      <div class="dots"><i></i><i></i><i class="on"></i><i></i><i></i></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>I dag.</b> Én dag som en liste: tid til venstre, tittel og sted til høyre, heldagshendelser øverst, den som pågår
+    har en tynn fersken-ramme. Sveip til siden for neste eller forrige dag; prikkene og de smale kantene antyder at det er flere
+    dager. Ingen redigering, ingen menyer.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">Tirsdag<small>27. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="list">
+        <div class="ev"><div class="tm">08:15<small>13:00</small></div><div class="tx"><div class="ti">Skole</div><div class="wh">Kort dag · Engelsk, KRLE</div></div></div>
+        <div class="ev"><div class="tm">16:00<small>17:00</small></div><div class="tx"><div class="ti">Tannlege</div><div class="wh">Mamma henter 15:30</div></div></div>
+      </div>
+      <div class="peek l"></div><div class="peek r"></div>
+      <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>I morgen.</b> Samme liste, neste dag. Overskriften sier ukedagen; «I dag»-knappen tar deg tilbake uansett hvor
+    langt du har sveipet. Tannlegen kommer fra familiekalenderen, med forelderens egen notat som sted.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">Lørdag<small>31. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="empty">Ingenting i kalenderen.<br>Fri dag.</div>
+      <div class="peek l"></div><div class="peek r"></div>
+      <div class="dots"><i></i><i></i><i></i><i></i><i class="on"></i></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>Tom dag.</b> En rolig tom tilstand, ikke et tomt rutenett. Ordene kan være forelderens («Fri dag») eller faste.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">I dag<small>Mandag 26. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="list">
+        <div class="ev"><div class="tm">08:15<small>14:30</small></div><div class="tx"><div class="ti">Gruppe 2 skoleåret 2026/27 – 5B – Matte, norsk, gym</div><div class="wh">Rom 204</div></div></div>
+        <div class="ev"><div class="tm">14:45<small>15:30</small></div><div class="tx"><div class="ti">SFO Solbakken avd. 3: Leksehjelp</div><div class="wh"></div></div></div>
+        <div class="ev"><div class="tm">17:30<small>18:45</small></div><div class="tx"><div class="ti">Vibb IL G2017 – Trening</div><div class="wh">Kunstgresset</div></div></div>
+      </div>
+      <div class="peek l"></div><div class="peek r"></div>
+      <div class="dots"><i></i><i></i><i class="on"></i><i></i><i></i></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>Uten regler.</b> Slik ser feedene ut rett fra kilden. Sammenlign med første skjerm: tre regler gjør
+    «Gruppe 2 skoleåret 2026/27 – 5B – …» til «Skole», «SFO Solbakken avd. 3:» til «SFO:» og «Vibb IL G2017 –» til «Fotball:».</figcaption>
+  </figure>
+</div>
+
+<h2>2. Forelderens regler (PWA, Enhet › Kalender)</h2>
+<div class="grid">
+  <figure>
+    <div class="pwa">
+      <div class="top"><span class="bk">‹ Testtelefon</span><span class="sv">Save</span></div>
+      <h3>Calendar</h3>
+      <div class="gh">Calendars shown</div>
+      <div class="group">
+        <div class="r"><div class="l">Skolen<small>ICSx5 · skole.kommune.no</small></div><div class="sw"></div></div>
+        <div class="r"><div class="l">Vibb IL G2017<small>ICSx5 · spond.com</small></div><div class="sw"></div></div>
+        <div class="r"><div class="l">Familie<small>DAVx5 · nextcloud</small></div><div class="sw"></div></div>
+        <div class="r"><div class="l">Bursdager<small>Phone</small></div><div class="sw off"></div></div>
+      </div>
+      <div class="gh">Title rules</div>
+      <div class="group">
+        <div class="r"><div class="l">Starts with «Gruppe 2 skoleåret 2026/27 – 5B –»<small>Skolen · show as «Skole»</small></div><div class="v">›</div></div>
+        <div class="r"><div class="l">Starts with «SFO Solbakken avd. 3:»<small>Skolen · show as «SFO:» + the rest</small></div><div class="v">›</div></div>
+        <div class="r"><div class="l">Starts with «Vibb IL G2017 –»<small>Vibb IL · show as «Fotball:» + the rest</small></div><div class="v">›</div></div>
+        <div class="r"><div class="l">Contains «faktura»<small>Any calendar · hidden</small></div><div class="v">›</div></div>
+        <div class="r"><div class="l" style="color:var(--pwa-accent);font-weight:700">Add a rule…</div></div>
+      </div>
+      <div class="ft">First matching rule wins. The phone applies them when it draws the day; the calendar itself never leaves the phone.</div>
+    </div>
+    <figcaption><b>Reglene.</b> Hvilke kalendere barnet ser, og titler som skrives om eller skjules. Enkle mønstre («begynner med»,
+    «inneholder») som standard; regex som avansert valg med lengdetak.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="pwa">
+      <div class="top"><span class="bk">‹ Calendar</span><span class="sv">Save</span></div>
+      <h3>Title rule</h3>
+      <div class="gh">When the title</div>
+      <div class="group">
+        <div class="r"><div class="l">Starts with</div><div class="v on">✓</div></div>
+        <div class="r"><div class="l">Contains</div><div class="v"></div></div>
+        <div class="r"><div class="l">Matches a pattern (regex)</div><div class="v"></div></div>
+        <div class="r"><div class="l" style="font-family:ui-monospace,monospace;font-size:14px">Gruppe 2 skoleåret 2026/27 – 5B –</div></div>
+      </div>
+      <div class="gh">Then</div>
+      <div class="group">
+        <div class="r"><div class="l">Show as</div><div class="v on">✓</div></div>
+        <div class="r"><div class="l">Hide the event</div><div class="v"></div></div>
+        <div class="r"><div class="l" style="font-family:ui-monospace,monospace;font-size:14px">Skole</div></div>
+        <div class="r"><div class="l">Keep the rest of the title</div><div class="sw off"></div></div>
+      </div>
+      <div class="gh">Preview</div>
+      <div class="pre"><span class="a">Gruppe 2 skoleåret 2026/27 – 5B – Matte, norsk, gym</span><span class="arr">→</span><span class="b">Skole</span></div>
+      <div class="ft">Paste a real title to see what the phone will show. In: Skolen only.</div>
+    </div>
+    <figcaption><b>Én regel.</b> Mønster, hva som skjer, og en forhåndsvisning med en ekte tittel, så en feilskrevet regel aldri
+    overrasker. Per kalender eller for alle.</figcaption>
+  </figure>
+</div>
+
+<h2>3. Dagen på låseskjermen: tre tanker</h2>
+<p class="note">Du var usikker på om du vil ha dette. Her er de tre formene, fra minst til mest, med en mening om hver.
+Alle tre følger samme regler som ellers: titlene som vises er de omskrevne, og en skjult hendelse finnes ikke.</p>
+<div class="grid">
+  <figure>
+    <div class="phone">
+      <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="clock">12:06</div>
+      <div class="date">Man. 26. okt.</div>
+      <div class="alarm">Alarm 07:00</div>
+      <div class="next">Neste: Fotball 17:30</div>
+      <div class="row" style="top:232px"><div class="ic">M</div><div><div class="t15">Mamma</div><div class="t13">Husk gymtøy i dag!</div></div></div>
+      <div class="emergency"><span>Nødsamtale</span><div class="torch"></div></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>A. Én linje: «Neste: Fotball 17:30».</b> Under alarmlinjen, samme stil. Den neste hendelsen i dag; ingenting når
+    dagen er tom. Koster nesten ingenting og stjeler ingen plass fra radene. <b>Dette ville jeg startet med.</b></figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone">
+      <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="clock">12:06</div>
+      <div class="date">Man. 26. okt.</div>
+      <div class="alarm">Alarm 07:00</div>
+      <div class="today" style="top:206px">
+        <div class="hd">I dag</div>
+        <div class="ev dim"><span class="tm">08:15</span><span>Skole</span></div>
+        <div class="ev"><span class="tm">14:45</span><span>SFO: Leksehjelp</span></div>
+        <div class="ev"><span class="tm">17:30</span><span>Fotball: Trening</span></div>
+      </div>
+      <div class="row" style="top:334px"><div class="ic">M</div><div><div class="t15">Mamma</div><div class="t13">Husk gymtøy i dag!</div></div></div>
+      <div class="emergency"><span>Nødsamtale</span><div class="torch"></div></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>B. Et «I dag»-kort.</b> Dagens hendelser som et kort over radene; det som er over, er dempet. Mer nyttig for et
+    barn som planlegger dagen, men det er ett kort til på en skjerm som allerede har musikkflis, regelkort og samtaler, og
+    det dytter radene under bretten (glance C). Bare som valg i PWA-en, aldri standard.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone">
+      <div class="bar"><span>17:15</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="clock">17:15</div>
+      <div class="date">Man. 26. okt.</div>
+      <div class="alarm">Alarm 07:00</div>
+      <div class="row" style="top:206px"><div class="ic cal">▣</div><div><div class="t15">Fotball: Trening om 15 min</div><div class="t13">17:30 · Kunstgresset</div></div></div>
+      <div class="row" style="top:274px"><div class="ic">M</div><div><div class="t15">Mamma</div><div class="t13">Husk gymtøy i dag!</div></div></div>
+      <div class="emergency"><span>Nødsamtale</span><div class="torch"></div></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>C. En påminnelsesrad X minutter før.</b> Dukker opp som en vanlig rad (samme form som en melding) når det er
+    f.eks. 15 min igjen, med kalenderglyf, og forsvinner når hendelsen starter. Ingen lyd, ingen egen varsling; forelderen
+    velger minuttene per kalender. Passer best sammen med A: A sier hva som kommer, C sier at det er nå.</figcaption>
+  </figure>
+</div>
+
+<h2>4. Det jeg ville anbefalt</h2>
+<p class="note">Steg 1: dagvisningen og reglene (skjerm 1-6). Steg 2: <b>A</b> på låseskjermen, alltid på når en kalender er valgt.
+<b>C</b> som valg per kalender («Minn på 15 min før»), siden fotballtrening og tannlege trenger det, skoletimer ikke. <b>B</b> lar jeg
+ligge: den konkurrerer med samtaleradene om plassen, og barnet har Dagen ett trykk unna.</p>
+</body>
+</html>
