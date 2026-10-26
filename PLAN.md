@@ -542,6 +542,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     - design 60 (hardware-bound token)
 - **Music app**
   - **Round M1 - the splash and the "no network" words** (merged 2026-10-26, `music-splash-b`: the wordmark under the rings and the no-network words built; the entry moved to "Approved for the next fix batch"):
+  - **Round M1b - the wordmark held 400 ms** (`music-splash-c`, XS; the user, 2026-10-26, after E1: "sikkert greit at man kan se vibb music i minst 400ms"): E1 measured the app splash at full strength for only 50-70 ms when the content is ready at once (the empty state, or a library from the snapshot) - the wordmark fades in over the system splash's 250 ms exit and fades out again almost at once. `logic/Splash.kt` `splashFadeDue` gets a minimum: the app splash's fade starts no earlier than 400 ms after the system splash's exit fade ended (or after the app splash's first frame when there was no system splash), the 3 s cap unchanged; `SplashTest` pins it. Ships in `music-v0.5.0-rc.7`.
   - **Round M2 - the music app's security Lows** (`music-sec-lows`; the shared line is under Server / PWA, Rounds S2 + S3).
 - **Server / PWA**
   - **Round S1 - server small items** (`server-small-e`):
