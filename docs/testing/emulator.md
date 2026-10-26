@@ -1121,6 +1121,8 @@ Design 32 step 2's keyguard cover (Android's keyguard as a bare Swipe cover acro
 experiment. Its switch, `KeyguardCoverDebug` and its receiver, was deleted in round 0b (2026-10-26) unrun, so the
 cover never arms and its checks are gone; the COVER mode's code goes with design 59 phase D. §5's H2 toggle
 (`LockUpDebug`) went with it.
+"Stay awake" still goes off in design 59's android mode, which sets `setMaximumTimeToLock` (DPMS then writes
+`STAY_ON_WHILE_PLUGGED_IN = 0`): run `adb shell svc power stayon true` again after it where a check needs it (§6f, §6j).
 
 **The frame-stepping rule** (every check below that records, §11):
 ```

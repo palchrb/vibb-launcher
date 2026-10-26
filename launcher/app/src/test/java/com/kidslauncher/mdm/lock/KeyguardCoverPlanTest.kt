@@ -375,6 +375,10 @@ class KeyguardCoverPlanTest {
         // Design 38: the receiver's cover part (its writes first, then the power record).
         assertTrue(body(code("$lock/BootCover.kt"), "coverAtShutdown").contains("KeyguardCover.onShutdown(app)"))
         assertTrue(body(code("$lock/PinLockRuntime.kt"), "guardTripped").contains("KeyguardCover.guardTripped(app)"))
+        // Every apply writes (android mode too, qa-0b-cleanup-code L1): one return, the write's.
+        val apply = body(cover, "configure")
+        assertTrue(apply.contains("return write(app, dpm, admin, \"apply\", wanted, forManaged).lockMayRun"))
+        assertEquals(1, Regex("\\breturn\\b").findAll(apply).count())
         // configure's keyguard is the writer's, after the guard re-arm.
         val configure = body(code("$lock/PinLockRuntime.kt"), "configure")
         assertTrue(configure.contains("val keyguardDisabled = KeyguardCover.configure(app, dpm, admin, managed, newConfig != null, deviceSecure, guard.trippedAtMs != null, requested, androidHeld)"))

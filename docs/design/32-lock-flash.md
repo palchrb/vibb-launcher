@@ -762,6 +762,10 @@ Open for step 3: whether the cover gets a server switch, and whether the lock so
 
 ## 11. Device checks
 
+> **2026-10-26 (round 0b):** the debug hooks below (`LockUpDebug`'s `skipRestart`, the keyguard cover's switch and its
+> `failDismiss`/`skipDismiss`) were deleted. Step 1's checks run with the plain lock; the H2 comparison and step 2's
+> checks can no longer run.
+
 **The frame-stepping rule** (every check below that records):
 ```
 adb shell screenrecord --bugreport --bit-rate 8000000 /sdcard/flash.mp4   # stamps time + frame number

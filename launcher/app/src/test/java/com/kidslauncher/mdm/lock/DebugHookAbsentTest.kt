@@ -40,8 +40,8 @@ class DebugHookAbsentTest {
         val main = dir("main/AndroidManifest.xml").readText()
         val debug = code(dir("debug/AndroidManifest.xml"))
         val receivers = listOf("lock" to "LockTaskOverrideReceiver", "server" to "PinVaultKeyReceiver", "music" to "HeadsetDebugReceiver")
-        // No other hook: a new one is listed here (and in checkReleaseHasNoDebugHook) first.
-        assertEquals(receivers.size, Regex("<receiver\\b").findAll(debug).count())
+        // No other hook (no other component of any kind): a new one is listed here (and in checkReleaseHasNoDebugHook) first.
+        assertEquals(receivers.size, Regex("<(receiver|activity|activity-alias|service|provider)\\b").findAll(debug).count())
         for ((pkg, name) in receivers) {
             assertFalse(name, main.contains(name))
             val receiver = debug.substringAfter("android:name=\"com.kidslauncher.mdm.$pkg.$name\"", "").substringBefore("/>")
