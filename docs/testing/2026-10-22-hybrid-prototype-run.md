@@ -1,6 +1,6 @@
 # Design 59 hybrid prototype - emulator run, 2026-10-22
 
-The prototype at `46cf0fa5` (branch `proto-59-hybrid`), run against `docs/design/59-prototype.md` §3 on the local
+The prototype at `46cf0fa5` (branch `proto-59-hybrid`, archived as tag `archive/proto-59-hybrid`), run against `docs/design/59-prototype.md` §3 on the local
 headless AVD `handy36`: Android 16, google_apis_playstore x86_64, 480x854 at 320 dpi, gesture navigation, English
 locale (so "Lås opp" reads "Unlock" and "Nødsamtale" reads "Emergency call").
 

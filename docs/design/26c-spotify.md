@@ -3,7 +3,7 @@
 Architect draft (2026-10-13), the first buildable step of design 26's phase 3 after the engine spike. Inputs: design 26
 (phase 3 and "How to work"), the user's product definition and route decision (below), the spike's record
 `docs/testing/spotify-spike.md` (§1 terms, §7 checklist, **§7b results**: item 10 passed on the emulator, forced Doze
-included) and its throwaway APK on branch `spotify-spike` (`spike/spotify/`: `web-playback.html`, `WebPlayer.kt`,
+included) and its throwaway APK on branch `spotify-spike` (archived as tag `archive/spotify-spike`; `spike/spotify/`: `web-playback.html`, `WebPlayer.kt`,
 `WebApi.kt`, `KeepAliveService.kt`, `WebPlaybackActivity.kt`, `NetProbe.kt` - the proven recipe), `vibb-spotify-options.md`
 (the research), design 26a (the renderer axis: `Renderer`, `attach()`, `saveNow()`, `showsPlaying`, `RendererChoice`,
 `PlayerHub.State.waiting`; its hush, bedtime and mobile-data sections), design 26b (the pattern this follows: a server

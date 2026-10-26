@@ -7,7 +7,7 @@ SpotifyRenderer,SpotifyLocks}.kt`, `playback/{Renderer,PlayerModel}.kt`, `ui/Pla
 design 26c (§0.4, §1.1, §5.1-§5.10, §6.2, §7.1-§7.2, §9.3, §11 steps 5a and 5b, the design QA fix round and every
 status section, "Step 5a implementation status" with its 11 deviations, its spec findings and "Owed by step 5b"),
 `qa-26c-step4-code.md`, `qa-26b-step4b-code.md` and `qa-26a-step3a/3b-code.md` (the template and the renderer-axis
-rules), `spotify-spike.md` §7b and the spike's `WebPlayer.kt` (branch `spotify-spike`), and the step 4 code it builds on
+rules), `spotify-spike.md` §7b and the spike's `WebPlayer.kt` (branch `spotify-spike`, archived as tag `archive/spotify-spike`), and the step 4 code it builds on
 (`SpotifyTracker.kt`, `TokenCache.kt`, `SpotifyApi.kt`, `WebPolicy.kt`, `assets/spotify/player.{html,js}`) beside
 `SonosRenderer.kt` and `LocalRenderer.kt`. Line numbers are `afaa351`'s.
 

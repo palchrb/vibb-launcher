@@ -4,7 +4,7 @@ Design 26 phase 3, first step. It decides whether Spotify can be a hidden "engin
 (design 20 §4, `docs/design/vibb-spotify-options.md` option A), and also whether the phone needs no Spotify
 app at all (item 10, the Web Playback SDK in a WebView). Nothing else in phase 3 starts before these answers.
 
-- Branch `spotify-spike`. The app is `spike/spotify/` (package `me.vibb.spotifyspike`, label "Vibb engine
+- Branch `spotify-spike` (archived as tag `archive/spotify-spike`). The app is `spike/spotify/` (package `me.vibb.spotifyspike`, label "Vibb engine
   spike"); the manual workflow is `.github/workflows/spotify-spike.yml`.
 - **The user's hard rule** (design 20 §4 "Never shown"): the kid never sees the Spotify app. Items 1-3 are kill
   criteria: if App Remote can't connect, play and reconnect without a Spotify screen, the App Remote source is

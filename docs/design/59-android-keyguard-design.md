@@ -3,7 +3,7 @@
 Status: revised 2026-10-22 from its design QA (`docs/review/qa-59-design.md`, Q59-1..14 and nits) and the prototype's
 code QA (`fb6df128:docs/review/qa-59-prototype-code.md`, P59-1..8); the last section lists what changed. Base:
 `59-android-keyguard-assessment.md` ("A §n"), the user's answers in PLAN's design 59 entry, the prototype on
-`proto-59-hybrid` (`46cf0fa5`, `59-prototype.md`, "P"), `docs/review/recents-over-lock-2026-10-22.md` and design r10.
+`proto-59-hybrid` (archived as tag `archive/proto-59-hybrid`; `46cf0fa5`, `59-prototype.md`, "P"), `docs/review/recents-over-lock-2026-10-22.md` and design r10.
 
 **Goal** (the user, 2026-10-22): a full RC - a server release and `launcher-vX.Y.0-rc.1` - with Android's lock screen
 behind a per-phone switch, tested live on the user's emulator. Missing switch = today's lock, so the RC is safe to
@@ -336,7 +336,7 @@ the two locks; `kid_lock` null on a fresh policy opens it without a code, as tod
 
 ## 5. Design 57, today's lock code, r10
 
-- **Design 57's branch** (`worktree-agent-a689b601f638554b8`) is not merged; it goes at phase D with its Lows. Of
+- **Design 57's branch** (`worktree-agent-a689b601f638554b8`, archived as tag `archive/design-57-prep`) is not merged; it goes at phase D with its Lows. Of
   PLAN's "VoIP over the lock, small launcher fixes": (1) "Tilbake til samtalen" when the reopen fails still applies in
   both modes (in android mode its send hits the PIN pad when the call screen isn't `showWhenLocked` - safe); (2) the
   SOS guess on a VoIP wake and (3) the BlockedAppActivity flash are own-mode only - moot after phase D; (4)
