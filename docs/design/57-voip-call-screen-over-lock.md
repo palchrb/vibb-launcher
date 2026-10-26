@@ -552,6 +552,13 @@ fun phoneStateWrites(denyCalls: Boolean, target: Boolean, dpmState: Int): List<I
   (Q2, accepted). **A runtime revoke kills the app's process**: releasing while a WhatsApp call is on (calls switched
   to unmanaged, or WhatsApp taken off the list) ends that call. We never set READ_PHONE_STATE DENIED otherwise, so a
   DENIED found later is our cut-short release.
+- **Built 2026-10-26 (round L2, branch `launcher-enforce`) with the release as DEFAULT alone**, not the table's
+  `[DENIED, DEFAULT]`: the revoke would kill the app and end a WhatsApp call in progress, and the grant it would take
+  away gives no reach the kid couldn't grant from Android's own dialog once the denial is gone (an app off the list is
+  hidden anyway). So after a release the grant stays, no longer policy-fixed, and can be revoked in Settings. As built:
+  pure `phoneStateGrants` (`EnforcementPlan.kt`) returns GRANTED or DEFAULT for every third-party app that requests
+  READ_PHONE_STATE (never ours), written only when the state differs (`grantWrite`); `enforceOnNewPackage` grants it
+  at once to an install already allowlisted.
 
 **(e) Stuck in Recents after an unlock - not reproduced; analysis.** The symptoms (quickstep's RecentsActivity on top,
 lock task LOCKED, `am start -c HOME` -> 101) say the HOME start's **target task wasn't allowlisted** (§1: 101 is

@@ -723,26 +723,16 @@ object AppEnforcer {
                 setGrantState(dpm, admin, packageName, permission, denial)
             }
         }
-        // Every requester, not only today's grants: an app updated out of the targets or taken off
-        // the allowlist goes back to DEFAULT too.
-        val phoneState = phoneStateGrants(requested, context.packageName, allowlist, deny)
-        for ((packageName, permissions) in requested) {
-            if (packageName == context.packageName || READ_PHONE_STATE !in permissions) continue
-            val wanted = if (packageName in phoneState) {
-                DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
-            } else {
-                DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT
-            }
+        for ((packageName, wanted) in phoneStateGrants(requested, context.packageName, allowlist, deny)) {
             setGrantState(dpm, admin, packageName, READ_PHONE_STATE, wanted)
         }
     }
 
-    /** Written only when the state differs (the rule above). */
+    /** Written only when the state differs ([grantWrite], the rule above). */
     private fun setGrantState(dpm: DevicePolicyManager, admin: ComponentName, packageName: String, permission: String, wanted: Int) {
         try {
-            if (dpm.getPermissionGrantState(admin, packageName, permission) != wanted) {
-                dpm.setPermissionGrantState(admin, packageName, permission, wanted)
-            }
+            val write = grantWrite(dpm.getPermissionGrantState(admin, packageName, permission), wanted) ?: return
+            dpm.setPermissionGrantState(admin, packageName, permission, write)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't set $permission for $packageName", e)
         }
@@ -1262,10 +1252,14 @@ object AppEnforcer {
                 )
                 val isSystem = (info.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM != 0
                 if (!isSystem && packageName != context.packageName) {
-                    // READ_PHONE_STATE (design 57 (d)) waits for the next apply, which knows the allowlist.
-                    for (permission in info.requestedPermissions.orEmpty().filter { it in CALL_PERMISSIONS }) {
+                    val requested = info.requestedPermissions.orEmpty().toList()
+                    for (permission in requested.filter { it in CALL_PERMISSIONS }) {
                         setGrantState(dpm, admin, packageName, permission, DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED)
                     }
+                    // Design 57 (d) at once for an install already allowlisted, by apply's rule and allowlist.
+                    val allowlist = effectiveAllowlist(decision.policy?.allowlist, relockBlocked)
+                    phoneStateGrants(mapOf(packageName to requested), context.packageName, allowlist, denyCalls = true)[packageName]
+                        ?.let { setGrantState(dpm, admin, packageName, READ_PHONE_STATE, it) }
                 }
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Couldn't check call permissions of $packageName", e)

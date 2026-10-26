@@ -281,10 +281,30 @@ class EnforcementPlanTest {
             OWN to listOf(READ_PHONE_STATE, "android.permission.CALL_PHONE"),
         )
         val allowed = listOf("com.whatsapp", "org.example.voip", "org.example.state", OWN)
-        assertEquals(setOf("com.whatsapp"), phoneStateGrants(requested, OWN, allowed, denyCalls = true))
-        assertEquals(setOf("com.whatsapp", "org.example.blocked"), phoneStateGrants(requested, OWN, null, denyCalls = true))
-        assertEquals(emptySet<String>(), phoneStateGrants(requested, OWN, allowed, denyCalls = false))
-        assertEquals(emptySet<String>(), phoneStateGrants(requested, OWN, null, denyCalls = false))
+        val g = GRANT_STATE_GRANTED
+        val d = GRANT_STATE_DEFAULT
+        // Every third-party requester gets a state, never our own (self-fixed); the rest go back to DEFAULT.
+        assertEquals(
+            mapOf("com.whatsapp" to g, "org.example.blocked" to d, "org.example.state" to d),
+            phoneStateGrants(requested, OWN, allowed, denyCalls = true),
+        )
+        assertEquals(
+            mapOf("com.whatsapp" to g, "org.example.blocked" to g, "org.example.state" to d),
+            phoneStateGrants(requested, OWN, null, denyCalls = true),
+        )
+        val released = mapOf("com.whatsapp" to d, "org.example.blocked" to d, "org.example.state" to d)
+        assertEquals(released, phoneStateGrants(requested, OWN, allowed, denyCalls = false))
+        assertEquals(released, phoneStateGrants(requested, OWN, null, denyCalls = false))
+        assertEquals(android.app.admin.DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED, g)
+        assertEquals(android.app.admin.DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT, d)
+    }
+
+    @Test
+    fun `a grant state is written only when it differs`() {
+        assertNull(grantWrite(GRANT_STATE_GRANTED, GRANT_STATE_GRANTED))
+        assertNull(grantWrite(GRANT_STATE_DEFAULT, GRANT_STATE_DEFAULT))
+        assertEquals(GRANT_STATE_GRANTED, grantWrite(GRANT_STATE_DEFAULT, GRANT_STATE_GRANTED))
+        assertEquals(GRANT_STATE_DEFAULT, grantWrite(GRANT_STATE_GRANTED, GRANT_STATE_DEFAULT))
     }
 
     @Test
