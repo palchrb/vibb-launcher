@@ -852,6 +852,14 @@ pub fn build_admin_router(
             "/devices/{id}/time",
             get(handlers::schedules::view_device_time),
         )
+        .route(
+            "/devices/{id}/bedtime",
+            get(handlers::bedtime::show_bedtime).post(handlers::bedtime::save_bedtime),
+        )
+        .route(
+            "/devices/{id}/bedtime/remove",
+            post(handlers::bedtime::remove_bedtime),
+        )
         .route("/devices/{id}/lifts", post(handlers::lifts::create_lift))
         .route(
             "/devices/{id}/lifts/{lift_id}/end",
@@ -1562,6 +1570,11 @@ pub async fn try_connect_db(database_url: &str) -> Result<SqlitePool, String> {
     time_rules::migrate_legacy(&db)
         .await
         .map_err(|err| format!("failed to convert the old schedules into time rules: {err}"))?;
+    // Rules that cross midnight become the phone's Bedtime or are split (design 66 §3.5); at
+    // every start, idempotent, one transaction per phone or rule.
+    time_rules::migrate_crossing(&db)
+        .await
+        .map_err(|err| format!("failed to convert the rules that cross midnight: {err}"))?;
     // A ring, pause or location update still waiting when the server stopped is never sent after
     // it starts again: the Pi has no RTC, so its clock may run behind until NTP fixes it, and the
     // hour couldn't be trusted (QA of cmd-expiry, Low 4).

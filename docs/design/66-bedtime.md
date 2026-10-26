@@ -188,8 +188,8 @@ served `{23:59, 0}`, is a one-minute window and never converts again). For each 
 Each conversion writes `time_rule_to_bedtime` or `time_rule_split` to the security log (no actor); these two and
 `bedtime_saved` / `bedtime_removed` get their words in `admin.rs`'s table, next to `time_rule_*` (lines 115-117). What
 the phone sees change: a converted custom rule shows "Leggetid" and the moon instead of its own name (§6 Q3) and ranks
-as a bedtime (school > bedtime > custom). A pause running on a split rule's morning part ends at the upgrade. A phone
-on Own rules that later goes back to everyone's keeps its own bedtime and no longer follows a global one. Both are
+as a bedtime (school > bedtime > custom). A pause running on a split rule's morning part ends at the upgrade. A split rule's evening part shows no end ("Til") on the phone or in the badge, since its morning part still locks at 00:00 (qa-66-code L1, accepted). A phone
+on Own rules that later goes back to everyone's keeps its own bedtime and no longer follows a global one. All are
 rare, and accepted.
 
 ## 4. Edge cases

@@ -213,8 +213,9 @@ position, 2026-10-25: `device_locations.shutdown_at`) follows 0096, and `0098_pu
 texts: `parent_events.push_title`/`push_body`) and `0099_app_update_notices.sql` (app update notices:
 `notification_prefs.push_app_updates`, default 0, and `parent_events` rebuilt with a nullable `device_id`, with
 `push_deliveries` and `parent_event_reads`) follow it, and `0100_device_avatar.sql` (server round C, `pwa-fixes-c`:
-`devices.avatar_hash`, the phone's own picture) follows 0099 (`migrations_73_to_100_in_order`). The next free number
-is 0101.
+`devices.avatar_hash`, the phone's own picture) follows 0099, and `0101_bedtime.sql` (design 66: `time_rules.bedtime`,
+one per phone by `idx_time_rules_bedtime`) follows 0100 (`migrations_73_to_101_in_order`). The next free number is
+0102.
 
 - `admin_users` - parent login accounts, TOTP secret (+ `totp_last_step`), forced-password-change flag, TOTP failure counter and lock (`lock_count`, `locked_until`), `session_epoch`, `reauth_wrong` (0086: wrong passwords in a row at the re-auth forms); several equal accounts per family since design 62 (0087: `display_name`, `invited_by`, `invite_expires_at` - a one-time password's 72 h, `removed_at` - a soft remove; `docs/notes/server/connectivity.md`, "Parent accounts")
 - `devices` - one row per kid's phone: name, enrollment code hash + kind (+ expiry, cleared on use; `enrollment_code` itself is always NULL since 0052), hashed bearer token, enrolled/last-seen timestamps, `avatar_hash` (0100: the phone's own picture, the PWA's alone and never sent to the phone - `photos::DEVICE_AVATARS` in `data/device_avatars/`, backed up like the contact photos; uploaded from the summary's header to `POST /devices/{id}/avatar` (`/avatar/remove`), served **without a session** at `GET /phone-avatars/{hash}` (only a hash a phone names; the admin gate applies - with `ADMIN_PUBLIC=on` the hash is the only guard; never on the phones' listener) because it is also a push's icon; `docs/notes/server/pwa.md`, "A phone's own picture")
@@ -266,7 +267,7 @@ Area notes, moved verbatim from this file on 2026-10-19; read only the ones your
 - `docs/notes/server/architecture.md` - Architecture
 - `docs/notes/server/calls-and-contacts.md` - Calls & SMS; Emulator fixes; Calls & Contacts
 - `docs/notes/server/hardening-and-pins.md` - Hardening; Handy's own PIN lock; Parent PIN; Windows that lock again, unseen boots; The lock's glance page; Android's lock screen (design 59)
-- `docs/notes/server/time-rules.md` - Time rules, screen time, location policy; Time Rules and Device › Time
+- `docs/notes/server/time-rules.md` - Time rules, screen time, location policy; Time Rules and Device › Time; Bedtime (design 66)
 - `docs/notes/server/launcher-ui.md` - Launcher UI, contact photos, airplane mode; Wallpapers; App names and icons; The launcher is "Vibb One"
 - `docs/notes/server/play-and-updates.md` - FCM removed, SSE only; Play; Kiosk escapes; Catalog downloads; App downloads: Wi-Fi only, resumable; Install Now (design 37); F-Droid source
 - `docs/notes/server/dns.md` - A custom DNS server for the Web Filter

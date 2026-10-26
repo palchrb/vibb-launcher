@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    {#- Design 66: one form shaped like the rule editor. Save sits in the sticky top bar with the
+        save's flash or a refusal's reason; a save returns to this form (#bedtime), a refusal
+        renders this page again (400) as typed, the reason also under its row. -#}
+    <form method="post" action="/devices/{{ device_id }}/bedtime#bedtime" id="bedtime">
+        <div class="editor-bar" data-bar="bedtime">
+            <div class="title-bar title-bar-split">
+                <a class="nav-back" href="/devices/{{ device_id }}/time"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Time</a>
+                <button type="submit" class="title-action" data-save="bedtime">{% if stored %}Save{% else %}Add{% endif %}</button>
+            </div>
+            {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">Not saved. {{ why }}</p>{% endif %}
+            {% if saved && refusal.is_none() %}<p class="flash bar-flash" role="status" data-flash="bedtime">Saved. The phone gets it within seconds when online.</p>{% endif %}
+        </div>
+        <h1 class="page-title">Bedtime</h1>
+
+        {% if let Some(parts) = corrupt %}
+        <div class="attention attention-alarm" data-warning="bedtime-corrupt"><div class="attention-text">Stored bedtime unreadable<div class="attention-sub">{{ parts }}, so they show empty here and are saved as you see them: set them again, then Save - or remove the bedtime.</div></div></div>
+        {% endif %}
+        <section id="nights" aria-label="Nights">
+            <div class="group">
+                {% for r in rule.rows %}
+                <div class="row day-row" data-nights="{{ r.index }}">
+                    <span class="row-label">{{ r.label }}</span>
+                    <input type="time" class="row-time" name="n{{ r.index }}_start" value="{{ r.start }}" aria-label="{{ r.label }} from"{% if r.error.is_some() %} aria-invalid="true" aria-describedby="n{{ r.index }}-error" autofocus{% endif %}>
+                    <span class="day-dash" aria-hidden="true">&ndash;</span>
+                    <input type="time" class="row-time" name="n{{ r.index }}_end" value="{{ r.end }}" aria-label="{{ r.label }} until"{% if r.error.is_some() %} aria-invalid="true" aria-describedby="n{{ r.index }}-error"{% endif %}>
+                </div>
+                {% if let Some(why) = r.error %}<p class="flash flash-error" id="n{{ r.index }}-error" data-flash="nights-{{ r.index }}">{{ why }}</p>{% endif %}
+                {% endfor %}
+            </div>
+            <p class="group-footer">From evening to morning, on the phone's clock. Fri-Sat are the nights before Saturday and Sunday. Leave a row empty for no bedtime on those nights.</p>
+        </section>
+
+        <section id="calls" aria-label="Calls">
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">Calls with contacts</span>
+                    <input type="checkbox" role="switch" class="sw" name="calls_allowed" value="on"{% if rule.calls_allowed %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                </label>
+            </div>
+            <p class="group-footer">The phone is locked during bedtime. Emergency calls always work.</p>
+        </section>
+
+{% include "partials/exceptions.html" %}
+    </form>
+
+    {% if stored %}
+    <section id="remove" aria-label="Remove bedtime">
+        <div class="group">
+            <details class="confirm cell">
+                <summary class="row">Remove Bedtime&hellip;</summary>
+                <form method="post" action="/devices/{{ device_id }}/bedtime/remove" class="confirm-body">
+                    <p>Remove the bedtime? {{ device_name }}'s phone is no longer locked at night.</p>
+                    <button type="submit" class="button-destructive">Remove Bedtime</button>
+                </form>
+            </details>
+        </div>
+    </section>
+    {% endif %}
+</main>
+</body>
+</html>

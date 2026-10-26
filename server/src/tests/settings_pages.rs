@@ -96,6 +96,10 @@ fn leaves_the_page(action: &str) -> bool {
         path.as_slice(),
         // A zone's delete lands on Locate's #zones (design 64).
         ["devices", d, "zones", n, "delete"] if number(d) && number(n)
+    ) || matches!(
+        path.as_slice(),
+        // Remove Bedtime lands on Device › Time's #bedtime (design 66).
+        ["devices", d, "bedtime", "remove"] if number(d)
     )
 }
 

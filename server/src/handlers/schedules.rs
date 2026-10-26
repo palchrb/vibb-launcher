@@ -46,7 +46,7 @@ use crate::handlers::device_pages::Note;
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp};
 use crate::security::{self, CurrentAdmin};
 use crate::time_rules::{
-    self, DayWindow, MAX_EXEMPT_APPS, MAX_RULE_NAME_CHARS, RULE_KINDS, TimeRuleRow,
+    self, DayWindow, LAST_MINUTE, MAX_EXEMPT_APPS, MAX_RULE_NAME_CHARS, RULE_KINDS, TimeRuleRow,
 };
 
 const DAY_NAMES: [&str; 7] = [
@@ -66,7 +66,7 @@ pub(crate) fn minutes_to_time_input(minutes: i64) -> String {
 }
 
 /// Strict "HH:MM" (00:00-23:59) to minutes since midnight.
-fn time_input_to_minutes(value: &str) -> Option<i64> {
+pub(crate) fn time_input_to_minutes(value: &str) -> Option<i64> {
     let (h, m) = value.trim().split_once(':')?;
     let digits = |t: &str| t.len() == 2 && t.bytes().all(|b| b.is_ascii_digit());
     if !digits(h) || !digits(m) {
@@ -98,30 +98,27 @@ fn day_runs<T: PartialEq + Copy>(days: &[T]) -> Vec<(String, T)> {
     runs
 }
 
-/// "Mon-Fri 08:15-14:30, Sat 10:00-12:00", "Every day 21:00-07:00" (an end before the start is
-/// the next morning), "Sat 00:00 for 24 h", "Never" for a rule without days.
+/// "Mon-Fri 08:15-14:30, Sat 00:00-23:59" (a day rule starts and ends on its day, design 66),
+/// "Never" for a rule without days.
 pub(crate) fn days_summary(days: &[Option<DayWindow>]) -> String {
     let parts: Vec<String> = day_runs(days)
         .into_iter()
-        .filter_map(|(range, w)| {
-            let w = w?;
-            let span = if w.start == w.end {
-                format!("{} for 24 h", minutes_to_time_input(w.start))
-            } else {
-                format!(
-                    "{}-{}",
-                    minutes_to_time_input(w.start),
-                    minutes_to_time_input(w.end)
-                )
-            };
-            Some(format!("{range} {span}"))
-        })
+        .filter_map(|(range, w)| Some(format!("{range} {}", window_text(w?))))
         .collect();
     if parts.is_empty() {
         "Never".to_string()
     } else {
         parts.join(", ")
     }
+}
+
+/// "08:15-14:30".
+pub(crate) fn window_text(w: DayWindow) -> String {
+    format!(
+        "{}-{}",
+        minutes_to_time_input(w.start),
+        minutes_to_time_input(w.end)
+    )
 }
 
 /// "Mon-Fri 90 min · Sat-Sun 2 h", "Every day 45 min", "No limit".
@@ -149,30 +146,34 @@ pub(crate) struct RuleRow {
     pub corrupt: bool,
 }
 
+/// The rules as rows. The summary is of the stored days, as the editor shows them ("00:00-23:59"),
+/// not the served ones (`end: 0`, qa-66-code M1); `to_policy` only says whether the row reads.
 fn rule_rows(rows: &[TimeRuleRow]) -> Vec<RuleRow> {
     rows.iter()
-        .map(|row| match row.to_policy() {
-            Ok(rule) => RuleRow {
-                id: rule.id,
-                summary: format!(
-                    "{} · {}",
-                    days_summary(&rule.days),
-                    if rule.calls_allowed {
-                        "calls on"
-                    } else {
-                        "calls off"
-                    }
-                ),
-                name: rule.name,
-                corrupt: false,
+        .map(
+            |row| match (row.to_policy(), time_rules::parse_days(&row.days_json)) {
+                (Ok(_), Ok(days)) => RuleRow {
+                    id: row.id,
+                    summary: format!(
+                        "{} · {}",
+                        days_summary(&days),
+                        if row.calls_allowed {
+                            "calls on"
+                        } else {
+                            "calls off"
+                        }
+                    ),
+                    name: row.name.clone(),
+                    corrupt: false,
+                },
+                _ => RuleRow {
+                    id: row.id,
+                    name: row.name.clone(),
+                    summary: "Can't be read".to_string(),
+                    corrupt: true,
+                },
             },
-            Err(_) => RuleRow {
-                id: row.id,
-                name: row.name.clone(),
-                summary: "Can't be read".to_string(),
-                corrupt: true,
-            },
-        })
+        )
         .collect()
 }
 
@@ -190,7 +191,7 @@ fn rules_notice(code: Option<&str>) -> Option<(&'static str, bool)> {
     }
 }
 
-fn read_failed(err: sqlx::Error, what: &str) -> Response {
+pub(crate) fn read_failed(err: sqlx::Error, what: &str) -> Response {
     tracing::error!(%err, "can't read {what}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -199,7 +200,7 @@ fn read_failed(err: sqlx::Error, what: &str) -> Response {
         .into_response()
 }
 
-fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
+pub(crate) fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
     tracing::error!(%err, "{what}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -212,7 +213,7 @@ fn bad_request(message: impl Into<String>) -> Response {
     (StatusCode::BAD_REQUEST, message.into()).into_response()
 }
 
-fn render(template: impl Template, status: StatusCode) -> Response {
+pub(crate) fn render(template: impl Template, status: StatusCode) -> Response {
     match template.render() {
         Ok(html) => (status, Html(html)).into_response(),
         Err(err) => server_error(err, "failed to render a time page"),
@@ -223,7 +224,8 @@ fn render(template: impl Template, status: StatusCode) -> Response {
 // Settings › Time Rules
 // ------------------------------------------------------------------------------------------------
 
-/// A phone on the Time Rules page: its Time page, and whether it follows its own rules.
+/// A phone on the Time Rules page: its Time page, whether it follows its own rules, and its
+/// bedtime as the sub-line (design 66 §2).
 struct PhoneRow {
     id: i64,
     name: String,
@@ -231,6 +233,47 @@ struct PhoneRow {
     avatar: &'static str,
     photo: Option<String>,
     own: bool,
+    bedtime: Bedtime,
+}
+
+/// A phone's bedtime as a row says it: "Sun-Thu 21:00-07:00 · Fri-Sat 22:30-09:00", none, or a
+/// stored one that doesn't read (`text-alarm`).
+enum Bedtime {
+    None,
+    Nights(String),
+    Unreadable,
+}
+
+impl Bedtime {
+    fn of(row: Option<&TimeRuleRow>) -> Bedtime {
+        match row.map(crate::handlers::bedtime::bedtime_summary) {
+            None => Bedtime::None,
+            Some(Some(summary)) => Bedtime::Nights(summary),
+            Some(None) => Bedtime::Unreadable,
+        }
+    }
+
+    fn unreadable(&self) -> bool {
+        matches!(self, Bedtime::Unreadable)
+    }
+
+    /// Device › Time's row value.
+    fn value(&self) -> &str {
+        match self {
+            Bedtime::None => "Not set",
+            Bedtime::Nights(summary) => summary,
+            Bedtime::Unreadable => "Can't be read",
+        }
+    }
+
+    /// Settings › Time Rules' sub-line under the phone.
+    fn line(&self) -> String {
+        match self {
+            Bedtime::None => "No bedtime".to_string(),
+            Bedtime::Nights(summary) => format!("Bedtime {summary}"),
+            Bedtime::Unreadable => "Bedtime can't be read".to_string(),
+        }
+    }
 }
 
 #[derive(Template)]
@@ -263,7 +306,7 @@ pub async fn show_schedules(
             Ok(json) => json,
             Err(err) => return read_failed(err, "the global screen time"),
         };
-    let rules = match time_rules::effective_rule_rows(&state.db, 0, false).await {
+    let rules = match time_rules::rule_set_rows(&state.db, None).await {
         Ok(rules) => rules,
         Err(err) => return read_failed(err, "the global rules"),
     };
@@ -283,6 +326,14 @@ pub async fn show_schedules(
         Ok(own) => own,
         Err(err) => return read_failed(err, "the own-rules switches"),
     };
+    let bedtimes: HashMap<Option<i64>, TimeRuleRow> =
+        match sqlx::query_as::<_, TimeRuleRow>("SELECT * FROM time_rules WHERE bedtime = 1")
+            .fetch_all(&state.db)
+            .await
+        {
+            Ok(rows) => rows.into_iter().map(|row| (row.device_id, row)).collect(),
+            Err(err) => return read_failed(err, "the bedtimes"),
+        };
     let budget_json = budget_json.unwrap_or_else(|| time_rules::UNLIMITED_BUDGET_JSON.to_string());
     render(
         SchedulesTemplate {
@@ -300,6 +351,7 @@ pub async fn show_schedules(
                     avatar: crate::handlers::devices::avatar_class(d),
                     photo: crate::handlers::devices::avatar_photo(d),
                     own: own.contains(&d.id),
+                    bedtime: Bedtime::of(bedtimes.get(&Some(d.id))),
                 })
                 .collect(),
             notice: rules_notice(params.get("notice").map(String::as_str)),
@@ -408,9 +460,23 @@ pub async fn show_budget(
 
 /// An app the rule may leave usable.
 pub(crate) struct AppChoice {
-    package: String,
-    label: String,
-    checked: bool,
+    pub(crate) package: String,
+    pub(crate) label: String,
+    pub(crate) checked: bool,
+}
+
+/// "Klokke, Kalkulator", "None": the chosen apps, for the Exceptions row.
+pub(crate) fn apps_value(apps: &[AppChoice]) -> String {
+    let chosen: Vec<&str> = apps
+        .iter()
+        .filter(|a| a.checked)
+        .map(|a| a.label.as_str())
+        .collect();
+    match chosen.len() {
+        0 => "None".to_string(),
+        1 | 2 => chosen.join(", "),
+        n => format!("{n} apps"),
+    }
 }
 
 struct DayInput {
@@ -436,19 +502,9 @@ struct RuleForm {
 }
 
 impl RuleForm {
-    /// "Klokke, Kalkulator", "None".
+    /// For `partials/exceptions.html`.
     fn apps_value(&self) -> String {
-        let chosen: Vec<&str> = self
-            .apps
-            .iter()
-            .filter(|a| a.checked)
-            .map(|a| a.label.as_str())
-            .collect();
-        match chosen.len() {
-            0 => "None".to_string(),
-            1 | 2 => chosen.join(", "),
-            n => format!("{n} apps"),
-        }
+        apps_value(&self.apps)
     }
 }
 
@@ -472,7 +528,10 @@ fn day_inputs(days: &[Option<DayWindow>]) -> Vec<DayInput> {
 
 /// The apps a rule may exempt: what the devices in scope reported installed, plus whatever the
 /// rule already has (so a choice never silently disappears from the form).
-fn app_choices(available: &BTreeMap<String, String>, chosen: &[String]) -> Vec<AppChoice> {
+pub(crate) fn app_choices(
+    available: &BTreeMap<String, String>,
+    chosen: &[String],
+) -> Vec<AppChoice> {
     let mut all = available.clone();
     for package in chosen {
         all.entry(package.clone())
@@ -491,7 +550,7 @@ fn app_choices(available: &BTreeMap<String, String>, chosen: &[String]) -> Vec<A
 }
 
 /// package -> label from the latest installed-apps report of each device in `device_ids`.
-async fn reported_apps(
+pub(crate) async fn reported_apps(
     state: &AppState,
     device_ids: &[i64],
 ) -> Result<BTreeMap<String, String>, sqlx::Error> {
@@ -573,8 +632,9 @@ struct RuleTemplate {
     refusal: Option<String>,
     /// The stored rule doesn't read: which parts (they open empty and are saved as shown).
     corrupt: Option<String>,
-    /// The kind select's options: value and label.
-    kinds: [(&'static str, &'static str); 3],
+    /// The kind select's options: value and label. Bedtime only on a day rule of that kind kept
+    /// from before (design 66 §2), so a save keeps it.
+    kinds: Vec<(&'static str, &'static str)>,
 }
 
 fn render_rule(
@@ -618,11 +678,15 @@ fn render_rule(
             saved,
             refusal,
             corrupt,
-            kinds: [
-                ("school", "School"),
-                ("bedtime", "Bedtime"),
-                ("custom", "Other"),
-            ],
+            kinds: if rule.kind == "bedtime" {
+                vec![
+                    ("school", "School"),
+                    ("bedtime", "Bedtime"),
+                    ("custom", "Other"),
+                ]
+            } else {
+                vec![("school", "School"), ("custom", "Other")]
+            },
             rule,
         },
         status,
@@ -692,7 +756,8 @@ fn unreadable_parts(row: &TimeRuleRow) -> Option<String> {
 }
 
 /// GET `/schedules/rules/{id}`: the editor. A rule whose stored data doesn't read opens with what
-/// does, and a warning; saving it again fixes it.
+/// does, and a warning; saving it again fixes it. A phone's bedtime row (a rule converted in place
+/// keeps its id, so an old link names it) goes to its Bedtime page (design 66 §3.3).
 pub async fn show_rule(
     State(state): State<AppState>,
     Path(rule_id): Path<i64>,
@@ -707,6 +772,12 @@ pub async fn show_rule(
         Ok(None) => return (StatusCode::NOT_FOUND, "Rule not found").into_response(),
         Err(err) => return read_failed(err, "a time rule"),
     };
+    if row.bedtime {
+        return match row.device_id {
+            Some(device) => Redirect::to(&format!("/devices/{device}/bedtime")).into_response(),
+            None => (StatusCode::NOT_FOUND, "Rule not found").into_response(),
+        };
+    }
     let scope = match scope_of(&state, row.device_id).await {
         Ok(scope) => scope,
         Err(answer) => return *answer,
@@ -785,12 +856,30 @@ pub(crate) enum RuleError {
     Apps(String),
 }
 
-fn field<'a>(fields: &'a [(String, String)], key: &str) -> &'a str {
+pub(crate) fn field<'a>(fields: &'a [(String, String)], key: &str) -> &'a str {
     fields
         .iter()
         .find(|(k, _)| k == key)
         .map(|(_, v)| v.as_str())
         .unwrap_or("")
+}
+
+/// The ticked `exempt_apps` (a rule's or the bedtime's): package names, each once, at most
+/// [MAX_EXEMPT_APPS]; the refusal's words otherwise.
+pub(crate) fn parse_exempt_apps_form(fields: &[(String, String)]) -> Result<Vec<String>, String> {
+    let mut exempt_apps: Vec<String> = Vec::new();
+    for (k, v) in fields {
+        if k == "exempt_apps" && !exempt_apps.contains(v) {
+            if !time_rules::valid_package_name(v) {
+                return Err("One of the apps isn't an app. Pick them again.".to_string());
+            }
+            exempt_apps.push(v.clone());
+        }
+    }
+    if exempt_apps.len() > MAX_EXEMPT_APPS {
+        return Err(format!("Pick at most {MAX_EXEMPT_APPS} apps."));
+    }
+    Ok(exempt_apps)
 }
 
 pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, RuleError> {
@@ -813,7 +902,25 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
             continue;
         }
         match (time_input_to_minutes(start), time_input_to_minutes(end)) {
-            (Some(start), Some(end)) => days.push(Some(DayWindow { start, end })),
+            // A day rule starts and ends on its day (design 66 §3.3). An end of 00:00 is "until
+            // midnight" and is stored as 23:59, as the conversion stores it (qa-66-code L2;
+            // 00:00-00:00 is the whole day); 23:59-23:59 is "23:59 to midnight", so it saves
+            // unchanged.
+            (Some(start), Some(0)) => days.push(Some(DayWindow {
+                start,
+                end: LAST_MINUTE,
+            })),
+            (Some(start), Some(end))
+                if end > start || (start, end) == (LAST_MINUTE, LAST_MINUTE) =>
+            {
+                days.push(Some(DayWindow { start, end }))
+            }
+            (Some(_), Some(_)) => {
+                return Err(RuleError::Day(
+                    i,
+                    format!("{day}: the end must be after the start. For a night, use Bedtime."),
+                ));
+            }
             _ if start.is_empty() || end.is_empty() => {
                 return Err(RuleError::Day(
                     i,
@@ -825,22 +932,7 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
             }
         }
     }
-    let mut exempt_apps: Vec<String> = Vec::new();
-    for (k, v) in fields {
-        if k == "exempt_apps" && !exempt_apps.contains(v) {
-            if !time_rules::valid_package_name(v) {
-                return Err(RuleError::Apps(
-                    "One of the apps isn't an app. Pick them again.".to_string(),
-                ));
-            }
-            exempt_apps.push(v.clone());
-        }
-    }
-    if exempt_apps.len() > MAX_EXEMPT_APPS {
-        return Err(RuleError::Apps(format!(
-            "Pick at most {MAX_EXEMPT_APPS} apps."
-        )));
-    }
+    let exempt_apps = parse_exempt_apps_form(fields).map_err(RuleError::Apps)?;
     Ok(RuleInput {
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
         name,
@@ -900,7 +992,7 @@ fn rule_entered(
 }
 
 /// Parent edits to time rules and budgets go to the security log, like lifts (QA step 6 #9).
-async fn log_change(
+pub(crate) async fn log_change(
     state: &AppState,
     admin: &crate::models::AdminUser,
     event: &str,
@@ -919,7 +1011,7 @@ async fn log_change(
 }
 
 /// Nudges the devices a change in `scope` affects: one device, or every device for a global one.
-async fn nudge(state: &AppState, scope: Option<i64>) {
+pub(crate) async fn nudge(state: &AppState, scope: Option<i64>) {
     match scope {
         Some(id) => {
             let _ = state.command_notify.send(id);
@@ -935,7 +1027,7 @@ async fn nudge(state: &AppState, scope: Option<i64>) {
     }
 }
 
-fn form_pairs(body: &Bytes) -> Vec<(String, String)> {
+pub(crate) fn form_pairs(body: &Bytes) -> Vec<(String, String)> {
     form_urlencoded::parse(body).into_owned().collect()
 }
 
@@ -1007,7 +1099,8 @@ pub async fn create_rule(
 }
 
 /// The rule, if it still exists and belongs to `scope` (a device's own rule can't be edited
-/// through the global form and vice versa): `Ok(None)` when it is gone, a 404 for another scope's.
+/// through the global form and vice versa): `Ok(None)` when it is gone, a 404 for another scope's
+/// and for a phone's bedtime (its own page writes it; day windows never go into it, design 66).
 async fn rule_in_scope(
     state: &AppState,
     rule_id: i64,
@@ -1018,7 +1111,7 @@ async fn rule_in_scope(
         .fetch_optional(&state.db)
         .await
     {
-        Ok(Some(rule)) if rule.device_id == scope => Ok(Some(rule)),
+        Ok(Some(rule)) if rule.device_id == scope && !rule.bedtime => Ok(Some(rule)),
         Ok(Some(_)) => Err(Box::new(
             (StatusCode::NOT_FOUND, "Rule not found").into_response(),
         )),
@@ -1060,7 +1153,7 @@ pub async fn update_rule(
     };
     let result = sqlx::query(
         "UPDATE time_rules SET name = ?, kind = ?, calls_allowed = ?, exempt_apps_json = ?, \
-         days_json = ? WHERE id = ? AND device_id IS ?",
+         days_json = ? WHERE id = ? AND device_id IS ? AND bedtime = 0",
     )
     .bind(&input.name)
     .bind(&input.kind)
@@ -1102,11 +1195,12 @@ pub async fn delete_rule(
         Ok(None) => return crate::settings_log::refused(to_list(&scope, "gone")),
         Err(response) => return *response,
     };
-    if let Err(err) = sqlx::query("DELETE FROM time_rules WHERE id = ? AND device_id IS ?")
-        .bind(rule_id)
-        .bind(scope.id())
-        .execute(&state.db)
-        .await
+    if let Err(err) =
+        sqlx::query("DELETE FROM time_rules WHERE id = ? AND device_id IS ? AND bedtime = 0")
+            .bind(rule_id)
+            .bind(scope.id())
+            .execute(&state.db)
+            .await
     {
         return server_error(err, "failed to delete a time rule");
     }
@@ -1264,6 +1358,10 @@ struct DeviceTimeTemplate {
     /// Pause a Rule shows for its flash even with no rule left to pause (qa-31-s9-code M1).
     pause_done: bool,
     custom: bool,
+    /// The phone's bedtime (design 66), its row to the Bedtime page.
+    bedtime: Bedtime,
+    /// The flash after Remove Bedtime.
+    bedtime_removed: bool,
     /// Everyone's rules: how many (the row to Settings › Time Rules).
     everyone_rules: String,
     own_rules: Vec<RuleRow>,
@@ -1328,7 +1426,7 @@ async fn render_device_time(
         Ok(rules) => rules,
         Err(err) => return read_failed(err, "the phone's rules"),
     };
-    let own = match time_rules::effective_rule_rows(&state.db, id, true).await {
+    let own = match time_rules::rule_set_rows(&state.db, Some(id)).await {
         Ok(rules) => rules,
         Err(err) => return read_failed(err, "the phone's own rules"),
     };
@@ -1454,6 +1552,8 @@ async fn render_device_time(
             done,
             pause_done: done.is_some_and(|(group, _, _)| group == "pause"),
             custom: policy.custom_schedule_enabled,
+            bedtime: Bedtime::of(effective.iter().find(|r| r.bedtime)),
+            bedtime_removed: query.get("notice").map(String::as_str) == Some("bedtime_removed"),
             everyone_rules: match everyone_count {
                 0 => "None".to_string(),
                 1 => "1 rule".to_string(),
@@ -1504,9 +1604,12 @@ mod tests {
         ];
         assert_eq!(days_summary(&bed), "Every day 21:00-07:00");
         let mut mixed = vec![None; 7];
-        mixed[5] = Some(DayWindow { start: 0, end: 0 });
+        mixed[5] = Some(DayWindow {
+            start: 0,
+            end: LAST_MINUTE,
+        });
         mixed[0] = w;
-        assert_eq!(days_summary(&mixed), "Mon 08:15-14:00, Sat 00:00 for 24 h");
+        assert_eq!(days_summary(&mixed), "Mon 08:15-14:00, Sat 00:00-23:59");
         assert_eq!(days_summary(&[None; 7]), "Never");
     }
 
@@ -1610,6 +1713,48 @@ mod tests {
             refused(&[("name", &long), ("kind", "custom")]),
             RuleError::Name(_)
         ));
+
+        // Design 66: a day rule ends after its start, on the same day; a night is Bedtime's.
+        let night = "Sunday: the end must be after the start. For a night, use Bedtime.";
+        for (start, end) in [("21:00", "07:00"), ("10:00", "10:00"), ("23:59", "00:01")] {
+            assert_eq!(
+                refused(&[
+                    ("name", "x"),
+                    ("kind", "custom"),
+                    ("d6_start", start),
+                    ("d6_end", end)
+                ]),
+                RuleError::Day(6, night.to_string()),
+                "{start}-{end}"
+            );
+        }
+        for (start, end) in [(0, LAST_MINUTE), (LAST_MINUTE, LAST_MINUTE)] {
+            let ok = parse_rule_form(&pairs(&[
+                ("name", "x"),
+                ("kind", "custom"),
+                ("d5_start", &minutes_to_time_input(start)),
+                ("d5_end", &minutes_to_time_input(end)),
+            ]))
+            .unwrap();
+            assert_eq!(ok.days[5], Some(DayWindow { start, end }));
+        }
+        // An end of 00:00 is "until midnight", stored as 23:59 (qa-66-code L2).
+        for (start, stored) in [("20:00", 1200), ("00:00", 0)] {
+            let ok = parse_rule_form(&pairs(&[
+                ("name", "x"),
+                ("kind", "custom"),
+                ("d5_start", start),
+                ("d5_end", "00:00"),
+            ]))
+            .unwrap();
+            assert_eq!(
+                ok.days[5],
+                Some(DayWindow {
+                    start: stored,
+                    end: LAST_MINUTE
+                })
+            );
+        }
     }
 
     #[test]

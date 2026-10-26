@@ -129,13 +129,16 @@ impl TimeReport {
     }
 }
 
-/// Each rule's id and its 7 windows, for [BadgeContext::rules]. A rule whose days don't read is
-/// kept as "always on" (an empty list), which refuses any end.
+/// Each rule's id and its 7 windows as the phone gets them (`time_rules::served_days`, design 66
+/// §3.2: an end of 23:59 runs until midnight), for [BadgeContext::rules]. A rule whose days don't
+/// read is kept as "always on" (an empty list), which refuses any end.
 pub fn rule_days(rules: &[crate::time_rules::TimeRuleRow]) -> Vec<(i64, Vec<Option<DayWindow>>)> {
     rules
         .iter()
         .map(|rule| {
-            let days = crate::time_rules::parse_days(&rule.days_json).unwrap_or_default();
+            let days = crate::time_rules::parse_days(&rule.days_json)
+                .map(|days| crate::time_rules::served_days(&days))
+                .unwrap_or_default();
             (rule.id, days)
         })
         .collect()

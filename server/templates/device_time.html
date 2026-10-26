@@ -115,6 +115,19 @@
     </section>
     {% endif %}
 
+    {#- Design 66: the phone's bedtime, outside the rule sets - it holds whatever Own rules says.
+        Remove Bedtime lands here with its flash. -#}
+    <section id="bedtime" aria-label="Bedtime">
+        <div class="group">
+            <a class="row" href="/devices/{{ device.id }}/bedtime" data-row="bedtime">
+                <span class="row-label">Bedtime<span class="row-sub{% if bedtime.unreadable() %} text-alarm{% endif %}">{{ bedtime.value() }}</span></span>
+                <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            {% if bedtime_removed %}<p class="flash" role="status" data-flash="bedtime">Bedtime removed.</p>{% endif %}
+        </div>
+        <p class="group-footer">Every night on the phone's clock, with Own rules on or off.</p>
+    </section>
+
     <section id="rules" aria-labelledby="rules-title">
         <h2 class="group-header" id="rules-title">Rules</h2>
         <div class="group">

@@ -99,11 +99,11 @@ async fn device_override_uses_its_own_rules_and_budget() {
             Some(&cookie),
             &[
                 ("scope", &scope),
-                ("name", "Leggetid"),
-                ("kind", "bedtime"),
+                ("name", "Kveld"),
+                ("kind", "custom"),
                 ("calls_allowed", "on"),
-                ("d6_start", "21:00"),
-                ("d6_end", "07:00"),
+                ("d6_start", "19:00"),
+                ("d6_end", "20:00"),
             ],
         )
         .await;
@@ -140,9 +140,9 @@ async fn device_override_uses_its_own_rules_and_budget() {
     let p = app.policy(&token).await;
     let rules = p["time_policy"]["rules"].as_array().unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0]["name"], "Leggetid");
+    assert_eq!(rules[0]["name"], "Kveld");
     assert_eq!(rules[0]["calls_allowed"], true);
-    assert_eq!(rules[0]["days"][6], json!({"start": 1260, "end": 420}));
+    assert_eq!(rules[0]["days"][6], json!({"start": 1140, "end": 1200}));
     assert_eq!(
         p["time_policy"]["daily_budget_minutes"],
         json!([null, null, 45, null, null, null, null])
@@ -150,7 +150,7 @@ async fn device_override_uses_its_own_rules_and_budget() {
 
     let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(page.text().contains("Leggetid"));
+    assert!(page.text().contains("Kveld"));
 }
 
 #[tokio::test]
@@ -818,24 +818,40 @@ async fn legacy_schedules_become_rules_once() {
     db.close().await;
     let db = crate::connect_db(&url).await;
 
-    let rows: Vec<(Option<i64>, String, String, bool, String)> = sqlx::query_as(
-        "SELECT device_id, name, kind, calls_allowed, days_json FROM time_rules \
-         ORDER BY device_id IS NOT NULL, sort_order",
+    // Then design 66's `migrate_crossing` (twice too): no phone follows everyone's rules, so
+    // everyone's "Bedtime" and "Outside allowed hours" are split at midnight, and the phone's own
+    // bedtime becomes its Bedtime in place.
+    let rows: Vec<(Option<i64>, String, String, bool, String, bool)> = sqlx::query_as(
+        "SELECT device_id, name, kind, calls_allowed, days_json, bedtime FROM time_rules \
+         ORDER BY device_id IS NOT NULL, sort_order, id",
     )
     .fetch_all(&db)
     .await
     .unwrap();
-    assert_eq!(rows.len(), 3, "{rows:?}");
+    let day = |row: usize, d: usize| {
+        serde_json::from_str::<serde_json::Value>(&rows[row].4).unwrap()[d].clone()
+    };
+    assert_eq!(rows.len(), 5, "{rows:?}");
     assert_eq!(rows[0].0, None);
-    assert_eq!(rows[0].2, "bedtime");
+    assert_eq!(
+        (rows[0].1.as_str(), rows[0].2.as_str()),
+        ("Bedtime", "bedtime")
+    );
     assert!(rows[0].3);
-    assert_eq!(rows[1].1, "Outside allowed hours");
-    assert_eq!(rows[1].2, "custom");
+    assert_eq!(day(0, 0), json!({"start": 1260, "end": 1439}));
+    assert_eq!(rows[1].1, "Bedtime (morning)");
+    assert_eq!(day(1, 0), json!({"start": 0, "end": 420}));
+    assert_eq!(rows[2].1, "Outside allowed hours");
+    assert_eq!(rows[2].2, "custom");
     // Friday: locked from 20:00 until Saturday 08:00.
-    let days: serde_json::Value = serde_json::from_str(&rows[1].4).unwrap();
-    assert_eq!(days[4], json!({"start": 1200, "end": 480}));
-    assert_eq!(rows[2].0, Some(custom));
-    assert_eq!(rows[2].1, "Bedtime");
+    assert_eq!(day(2, 4), json!({"start": 1200, "end": 1439}));
+    assert_eq!(rows[3].1, "Outside allowed hours (morning)");
+    assert_eq!(day(3, 5), json!({"start": 0, "end": 480}));
+    assert!(rows[..4].iter().all(|r| !r.5));
+    assert_eq!(rows[4].0, Some(custom));
+    assert_eq!(rows[4].1, "Bedtime");
+    assert!(rows[4].5, "the phone's own bedtime is its Bedtime");
+    assert_eq!(day(4, 6), json!({"start": 1200, "end": 360}));
     let migrated: Vec<i64> = sqlx::query_scalar(
         "SELECT rules_migrated FROM global_schedule UNION ALL SELECT rules_migrated FROM device_policy",
     )
@@ -937,6 +953,11 @@ async fn new_admin_routes_refuse_without_a_session_and_write_nothing() {
             vec![("mode", "off")],
         ),
         (format!("/devices/{id}/command/locate"), vec![]),
+        (
+            format!("/devices/{id}/bedtime"),
+            vec![("n0_start", "21:00"), ("n0_end", "07:00")],
+        ),
+        (format!("/devices/{id}/bedtime/remove"), vec![]),
     ];
     for (path, fields) in &routes {
         let res = app.request_form(Method::POST, path, None, fields).await;
@@ -967,7 +988,7 @@ async fn new_admin_routes_refuse_without_a_session_and_write_nothing() {
         0
     );
     assert_eq!(count(&app, "SELECT COUNT(*) FROM device_commands").await, 0);
-    assert_eq!(count(&app, "SELECT COUNT(*) FROM security_events WHERE event_type LIKE 'time_%' OR event_type LIKE 'location_%' OR event_type = 'screen_time_saved' OR event_type = 'device_command_queued'").await, 0);
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM security_events WHERE event_type LIKE 'time_%' OR event_type LIKE 'location_%' OR event_type = 'screen_time_saved' OR event_type = 'device_command_queued' OR event_type LIKE 'bedtime_%'").await, 0);
     let after_policy: (String, String, i64) = sqlx::query_as(
         "SELECT daily_budget_json, location_mode, custom_schedule_enabled FROM device_policy \
          WHERE device_id = ?",
@@ -1317,4 +1338,279 @@ async fn a_rule_name_is_never_script() {
     let editor = app.get_page("/schedules/rules/7", &cookie).await.text();
     assert!(editor.contains(&format!("<title>{escaped} · Vibb Phone</title>")));
     assert!(editor.contains(&format!("value=\"{escaped}\"")));
+}
+
+// Design 66: a phone's Bedtime, and the rules that crossed midnight converted at startup.
+
+const NIGHTS: &str = r#"[{"start":1260,"end":420},{"start":1260,"end":420},{"start":1260,"end":420},{"start":1260,"end":420},{"start":1260,"end":420},{"start":1260,"end":420},{"start":1260,"end":420}]"#;
+
+/// A stored rule (calls on, Vibb music usable), as an older server stored it.
+async fn stored_rule(app: &TestApp, device: Option<i64>, name: &str, days: &str) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
+         days_json) VALUES (?, ?, 'custom', 1, '[\"me.vibb.music\"]', ?) RETURNING id",
+    )
+    .bind(device)
+    .bind(name)
+    .bind(days)
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+async fn stored_bedtime(app: &TestApp, device: i64) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
+         days_json, bedtime) VALUES (?, 'Bedtime', 'bedtime', 1, '[]', ?, 1) RETURNING id",
+    )
+    .bind(device)
+    .bind(NIGHTS)
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+async fn own_rules_on(app: &TestApp, device: i64) {
+    sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
+        .bind(device)
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
+async fn bedtime_of(app: &TestApp, device: i64) -> Vec<(i64, String, String, String, String)> {
+    sqlx::query_as(
+        "SELECT id, name, kind, exempt_apps_json, days_json FROM time_rules \
+         WHERE device_id = ? AND bedtime = 1",
+    )
+    .bind(device)
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+}
+
+/// The policy: the rule set, then the phone's bedtime once, with no name (the phone says
+/// "Leggetid") and kind bedtime - with Own rules off and on.
+#[tokio::test]
+async fn the_bedtime_is_served_after_the_rule_set_once_and_without_a_name() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    app.request_form(Method::POST, "/schedules/rules", Some(&cookie), SCHOOL_FORM)
+        .await;
+    let bedtime = stored_bedtime(&app, id).await;
+    let rules = app.policy(&token).await["time_policy"]["rules"].clone();
+    assert_eq!(rules.as_array().unwrap().len(), 2, "{rules}");
+    assert_eq!(rules[0]["name"], "Skole");
+    assert_eq!(
+        rules[1],
+        json!({"id": bedtime, "name": "", "kind": "bedtime", "calls_allowed": true,
+               "exempt_apps": [], "days": serde_json::from_str::<serde_json::Value>(NIGHTS).unwrap()})
+    );
+    own_rules_on(&app, id).await;
+    let rules = app.policy(&token).await["time_policy"]["rules"].clone();
+    assert_eq!(rules.as_array().unwrap().len(), 1, "{rules}");
+    assert_eq!(rules[0]["id"], bedtime);
+    // A day rule's 23:59 is served as midnight (end exclusive on the phone).
+    let scope = id.to_string();
+    app.request_form(
+        Method::POST,
+        "/schedules/rules",
+        Some(&cookie),
+        &[
+            ("scope", &scope),
+            ("name", "Helg"),
+            ("kind", "custom"),
+            ("d5_start", "00:00"),
+            ("d5_end", "23:59"),
+        ],
+    )
+    .await;
+    let rules = app.policy(&token).await["time_policy"]["rules"].clone();
+    assert_eq!(rules.as_array().unwrap().len(), 2, "{rules}");
+    assert_eq!(rules[0]["name"], "Helg");
+    assert_eq!(rules[0]["days"][5], json!({"start": 0, "end": 0}));
+    assert_eq!(rules[1]["id"], bedtime);
+}
+
+/// §3.5: everyone's bedtime-shaped rule becomes the bedtime of every phone that follows
+/// everyone's rules (their lifts on it repointed, ended ones too), and the global row goes; a
+/// phone on Own rules keeps its lift as it was.
+#[tokio::test]
+async fn everyones_bedtime_becomes_each_followers_and_their_pauses_follow() {
+    let app = TestApp::new().await;
+    let (anna, token) = app.enrolled_device("Anna").await;
+    let (emil, _) = app.enrolled_device("Emil").await;
+    let (ola, _) = app.enrolled_device("Ola").await;
+    own_rules_on(&app, ola).await;
+    let global = stored_rule(&app, None, "Natt", NIGHTS).await;
+    for (device, ended) in [(anna, true), (ola, false)] {
+        sqlx::query(
+            "INSERT INTO time_lifts (device_id, target, rule_id, rule_name, minutes, \
+             expires_at, ended_early_at) VALUES (?, 'rule', ?, 'Natt', 30, \
+             datetime('now', '+30 minutes'), CASE WHEN ? THEN datetime('now') END)",
+        )
+        .bind(device)
+        .bind(global)
+        .bind(ended)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+
+    crate::time_rules::migrate_crossing(&app.db).await.unwrap();
+
+    for device in [anna, emil] {
+        let rows = bedtime_of(&app, device).await;
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        let (_, name, kind, apps, days) = &rows[0];
+        assert_eq!(
+            (name.as_str(), kind.as_str(), apps.as_str(), days.as_str()),
+            ("Bedtime", "bedtime", "[\"me.vibb.music\"]", NIGHTS)
+        );
+    }
+    assert!(bedtime_of(&app, ola).await.is_empty());
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM time_rules WHERE device_id IS NULL"
+        )
+        .await,
+        0
+    );
+    let lifts: Vec<(i64, Option<i64>)> =
+        sqlx::query_as("SELECT device_id, rule_id FROM time_lifts ORDER BY id")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        lifts,
+        [
+            (anna, Some(bedtime_of(&app, anna).await[0].0)),
+            (ola, Some(global))
+        ]
+    );
+    assert_eq!(
+        count(
+            &app,
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'time_rule_to_bedtime'"
+        )
+        .await,
+        1
+    );
+    let rules = app.policy(&token).await["time_policy"]["rules"].clone();
+    assert_eq!(rules.as_array().unwrap().len(), 1);
+    assert_eq!(
+        (rules[0]["name"].clone(), rules[0]["kind"].clone()),
+        (json!(""), json!("bedtime"))
+    );
+}
+
+/// §3.5: a phone on Own rules gets its bedtime-shaped rule as its bedtime in place (same id, so
+/// an old link opens the Bedtime page); a phone that already has a bedtime never gets a second -
+/// its rule, and everyone's when a follower has one, is split instead.
+#[tokio::test]
+async fn an_own_rule_becomes_the_bedtime_in_place_and_never_a_second() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    let (emil, _) = app.enrolled_device("Emil").await;
+    let (ola, _) = app.enrolled_device("Ola").await;
+    own_rules_on(&app, emil).await;
+    own_rules_on(&app, ola).await;
+    let anna_bedtime = stored_bedtime(&app, anna).await;
+    let ola_bedtime = stored_bedtime(&app, ola).await;
+    let emils = stored_rule(&app, Some(emil), "Natt", NIGHTS).await;
+    let olas = stored_rule(&app, Some(ola), "Natt", NIGHTS).await;
+    let global = stored_rule(&app, None, "Natt", NIGHTS).await;
+
+    crate::time_rules::migrate_crossing(&app.db).await.unwrap();
+
+    let rows = bedtime_of(&app, emil).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].0, rows[0].1.as_str(), rows[0].2.as_str()),
+        (emils, "Bedtime", "bedtime")
+    );
+    assert_eq!(bedtime_of(&app, anna).await[0].0, anna_bedtime);
+    assert_eq!(bedtime_of(&app, ola).await.len(), 1);
+    assert_eq!(bedtime_of(&app, ola).await[0].0, ola_bedtime);
+    let split: Vec<(i64, Option<i64>, String, String)> = sqlx::query_as(
+        "SELECT id, device_id, name, days_json FROM time_rules WHERE bedtime = 0 ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    let evening = r#"{"start":1260,"end":1439}"#;
+    let morning = r#"{"start":0,"end":420}"#;
+    assert_eq!(split.len(), 4, "{split:?}");
+    for (id, device) in [(olas, Some(ola)), (global, None)] {
+        let parts: Vec<_> = split.iter().filter(|r| r.1 == device).collect();
+        assert_eq!(parts[0].0, id);
+        assert_eq!(parts[0].2, "Natt");
+        assert!(
+            parts[0].3.starts_with(&format!("[{evening},")),
+            "{}",
+            parts[0].3
+        );
+        assert_eq!(parts[1].2, "Natt (morning)");
+        assert!(
+            parts[1].3.starts_with(&format!("[{morning},")),
+            "{}",
+            parts[1].3
+        );
+    }
+    // The converted rule's old link lands on the Bedtime page; the editor never writes it.
+    let res = app
+        .get_page(&format!("/schedules/rules/{emils}"), &cookie)
+        .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/{emil}/bedtime").as_str())
+    );
+}
+
+/// A rule whose stored days or apps don't read is left as it is, with a warning, and the start
+/// goes on (the policy's 500 stays until the parent saves or deletes it).
+#[tokio::test]
+async fn an_unreadable_rule_is_left_and_the_start_goes_on() {
+    let app = TestApp::new().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    let bad_days = stored_rule(&app, None, "Days", "[1,2]").await;
+    let bad_apps = stored_rule(&app, Some(anna), "Apps", NIGHTS).await;
+    sqlx::query("UPDATE time_rules SET exempt_apps_json = 'nope' WHERE id = ?")
+        .bind(bad_apps)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let fine = stored_rule(&app, None, "Natt", NIGHTS).await;
+    let before: Vec<(i64, String, String)> =
+        sqlx::query_as("SELECT id, days_json, exempt_apps_json FROM time_rules WHERE id IN (?, ?)")
+            .bind(bad_days)
+            .bind(bad_apps)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+
+    crate::time_rules::migrate_crossing(&app.db).await.unwrap();
+
+    let after: Vec<(i64, String, String)> =
+        sqlx::query_as("SELECT id, days_json, exempt_apps_json FROM time_rules WHERE id IN (?, ?)")
+            .bind(bad_days)
+            .bind(bad_apps)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(before, after);
+    // The readable one became Anna's bedtime (she follows everyone's rules).
+    assert_eq!(
+        count(
+            &app,
+            &format!("SELECT COUNT(*) FROM time_rules WHERE id = {fine}")
+        )
+        .await,
+        0
+    );
+    assert_eq!(bedtime_of(&app, anna).await.len(), 1);
 }

@@ -686,7 +686,19 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
     .execute(&app.db)
     .await
     .unwrap();
+    // Anna's bedtime (design 66), so its page shows Remove Bedtime...; Ola's opens as a new one.
+    sqlx::query(
+        "INSERT INTO time_rules (device_id, name, kind, calls_allowed, days_json, bedtime) \
+         VALUES (?, 'Bedtime', 'bedtime', 1, ?, 1)",
+    )
+    .bind(id)
+    .bind(serde_json::to_string(&vec![serde_json::json!({"start": 1260, "end": 420}); 7]).unwrap())
+    .execute(&app.db)
+    .await
+    .unwrap();
     let mut pages = vec![
+        format!("/devices/{id}/bedtime"),
+        format!("/devices/{not_set_up}/bedtime"),
         format!("/devices/{id}/zones/new"),
         format!("/devices/{id}/zones/1"),
         "/devices".to_string(),
