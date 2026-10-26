@@ -87,6 +87,15 @@ Asked once, in this order; a default is what the round does if there is no answe
 
 ---
 
+**Answers (2026-10-26):** the user took the defaults for every decision except: 2 - J1 is split: the user first tests what an
+emulator can show on their own `jellystar2` (list given in chat 2026-10-26: the fold and ripple looks, the rule card +
+music + 3 rows, a restored task after a kill, the glance's contact photos with Element X / WhatsApp accounts, the
+power menu's Power off / Restart, fingerprint with the screen on through the emulator's sensor, the zones day by
+simulated routes), the Jelly Star-only items later (the App blocker dump, the real sensor, a flat battery, safe mode,
+the release build's timing, real speakers); 13 - done (six `archive/*` tags pushed, 76 branches and 14 worktrees
+deleted 2026-10-26; `proto-59-run` archived too). New: round L6's bedtime setting (PLAN) replaces "rules inside one
+day" as the shape; the rule screen's code entry goes with PWA-only lifting.
+
 ## 1. Half-done: the inventory
 
 Read the notes as of main c8bba7b3. The headline: **almost every designed step is merged; what drifted is the
