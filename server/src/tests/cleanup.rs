@@ -318,7 +318,7 @@ async fn pruning_keeps_only_what_retention_allows() {
     dns_event(db, logged, "-8 days").await;
     dns_event(db, logged, "-6 days").await;
     dns_event(db, quiet, "-1 hours").await;
-    // Locations: the default 7 days, the newest fix always kept; 30 days for `long`.
+    // Locations: the default 7 days, the newest fix too (security review P1); 30 days for `long`.
     location(db, logged, "2026-09-01T10:00:00Z", "-20 days").await;
     location(db, logged, "2026-09-02T10:00:00Z", "-10 days").await;
     location(db, quiet, "2026-10-05T10:00:00Z", "-1 days").await;
@@ -326,11 +326,13 @@ async fn pruning_keeps_only_what_retention_allows() {
     location(db, long, "2026-09-20T10:00:00Z", "-8 days").await;
     location(db, long, "2026-09-01T10:00:00Z", "-31 days").await;
     location(db, long, "2026-09-25T10:00:00Z", "-2 days").await;
-    // Status history (screen time): 30 days, the newest report per phone always kept.
+    // Status history (security review P2): 48 hours, the newest report per phone always kept.
     status(db, logged, "-40 days").await;
     status(db, logged, "-35 days").await;
     status(db, quiet, "-40 days").await;
-    status(db, quiet, "-1 days").await;
+    status(db, quiet, "-49 hours").await;
+    status(db, quiet, "-47 hours").await;
+    status(db, quiet, "-1 hours").await;
     // Commands (design 48 §1.6): 30 days, but never one that may still reach the phone - an
     // undelivered wipe or lock waits however long it takes; an expired locate, a finished ring, a
     // cancelled lock and a delivered one never confirmed go.
@@ -367,14 +369,17 @@ async fn pruning_keeps_only_what_retention_allows() {
         pruned,
         crate::retention::Pruned {
             dns_events: 2,
-            locations: 3,
-            status_reports: 2,
+            locations: 4,
+            status_reports: 3,
             crashes: 0,
             security_events: 0,
             pin_events: 0,
             parent_events: 0,
             push_rows: 0,
             commands: 4,
+            lifts: 0,
+            bans: 0,
+            install_progress: 0,
             failed: vec![],
         }
     );
@@ -398,8 +403,7 @@ async fn pruning_keeps_only_what_retention_allows() {
     assert_eq!(
         kept,
         vec![
-            // `logged` has only old fixes: the newest stays ("last seen").
-            (logged, "2026-09-02T10:00:00Z".to_string()),
+            // `logged` had only old fixes: none is left (Locate says so).
             (quiet, "2026-10-05T10:00:00Z".to_string()),
             (long, "2026-09-20T10:00:00Z".to_string()),
             (long, "2026-09-25T10:00:00Z".to_string()),
@@ -411,7 +415,7 @@ async fn pruning_keeps_only_what_retention_allows() {
     .fetch_all(db)
     .await
     .unwrap();
-    assert_eq!(statuses, vec![(logged, 1), (quiet, 1)]);
+    assert_eq!(statuses, vec![(logged, 1), (quiet, 2)]);
     // A second pass finds nothing more.
     assert_eq!(
         crate::retention::prune(db).await,
@@ -441,7 +445,7 @@ async fn a_failing_table_leaves_the_rest_of_the_pass() {
         .unwrap();
     let pruned = crate::retention::prune(db).await;
     assert_eq!(pruned.failed, ["device_dns_events"]);
-    assert_eq!((pruned.locations, pruned.status_reports), (1, 1));
+    assert_eq!((pruned.locations, pruned.status_reports), (2, 1));
 }
 
 #[tokio::test]
@@ -692,5 +696,210 @@ async fn pruning_keeps_the_last_report_that_enforced_calls() {
     assert!(
         page.contains("stopped reporting that it screens calls"),
         "{page}"
+    );
+}
+
+/// Security review P1, P6, P7: a fix the phone re-sent as still current counts from that re-send;
+/// ended lifts go after 90 days, expired bans and stale download progress at once; a phone's own
+/// security-log lines after 30 days (its parent-PIN lines after 90), the rest after 180, and a
+/// wrong sign-in's typed name after a day.
+#[tokio::test]
+async fn pruning_follows_what_each_row_describes() {
+    let app = super::TestApp::new().await;
+    let db = &app.db;
+    let (id, _) = app.create_device("kid").await;
+    location(db, id, "2026-10-01T10:00:00.000Z", "-8 days").await;
+    location(db, id, "2026-10-02T10:00:00.000Z", "-8 days").await;
+    sqlx::query(
+        "UPDATE device_locations SET resent_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 hours') \
+         WHERE captured_at = '2026-10-02T10:00:00.000Z'",
+    )
+    .execute(db)
+    .await
+    .unwrap();
+    for ends in ["-91 days", "-89 days", "+1 hours"] {
+        sqlx::query(
+            "INSERT INTO time_lifts (device_id, target, minutes, expires_at) \
+             VALUES (?, 'budget', 30, datetime('now', ?))",
+        )
+        .bind(id)
+        .bind(ends)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO banned_ips (ip_address, banned_until) VALUES \
+         ('192.0.2.1', datetime('now', '-1 minutes')), ('192.0.2.2', datetime('now', '+1 hours'))",
+    )
+    .execute(db)
+    .await
+    .unwrap();
+    let app_id: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo) \
+         VALUES ('App', 'org.example.app', 'o/r') RETURNING id",
+    )
+    .fetch_one(db)
+    .await
+    .unwrap();
+    let other: i64 = sqlx::query_scalar(
+        "INSERT INTO tracked_apps (name, package_name, github_repo) \
+         VALUES ('Other', 'org.example.other', 'o/r2') RETURNING id",
+    )
+    .fetch_one(db)
+    .await
+    .unwrap();
+    for (app_row, age) in [(app_id, "-11 minutes"), (other, "-1 minutes")] {
+        sqlx::query(
+            "INSERT INTO device_install_progress (device_id, tracked_app_id, percent, updated_at) \
+             VALUES (?, ?, 40, datetime('now', ?))",
+        )
+        .bind(id)
+        .bind(app_row)
+        .bind(age)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM security_events")
+        .execute(db)
+        .await
+        .unwrap();
+    // (kind, username, age, kept)
+    let lines = [
+        ("app_installed", None, "-31 days", false),
+        ("boot_unseen", None, "-29 days", true),
+        ("phone_lines_dropped", None, "-31 days", false),
+        ("parent_pin_used", None, "-91 days", false),
+        ("parent_pin_lockout", None, "-89 days", true),
+        ("storytel_login_sent", None, "-100 days", true),
+        ("login_success", Some("mamma"), "-179 days", true),
+        ("login_success", Some("mamma"), "-181 days", false),
+    ];
+    for (kind, name, age, _) in lines {
+        sqlx::query(
+            "INSERT INTO security_events (event_type, username, created_at) \
+             VALUES (?, ?, datetime('now', ?))",
+        )
+        .bind(kind)
+        .bind(name)
+        .bind(age)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+    for age in ["-25 hours", "-23 hours"] {
+        sqlx::query(
+            "INSERT INTO security_events (event_type, username, ip_address, created_at) \
+             VALUES ('login_failed', 'a typed password', '192.0.2.3', datetime('now', ?))",
+        )
+        .bind(age)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    let pruned = crate::retention::prune(db).await;
+    assert_eq!(
+        (
+            pruned.locations,
+            pruned.lifts,
+            pruned.bans,
+            pruned.install_progress
+        ),
+        (1, 1, 1, 1),
+        "{pruned:?}"
+    );
+    assert_eq!(pruned.security_events, 4, "{pruned:?}");
+    let fixes: Vec<String> = sqlx::query_scalar("SELECT captured_at FROM device_locations")
+        .fetch_all(db)
+        .await
+        .unwrap();
+    assert_eq!(fixes, ["2026-10-02T10:00:00.000Z"]);
+    let left: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT event_type, username FROM security_events ORDER BY id")
+            .fetch_all(db)
+            .await
+            .unwrap();
+    let mut expected: Vec<(String, Option<String>)> = lines
+        .iter()
+        .filter(|line| line.3)
+        .map(|(kind, name, _, _)| (kind.to_string(), name.map(str::to_string)))
+        .collect();
+    expected.push(("login_failed".to_string(), None));
+    expected.push((
+        "login_failed".to_string(),
+        Some("a typed password".to_string()),
+    ));
+    assert_eq!(left, expected);
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM time_lifts WHERE expires_at > datetime('now', '-90 days')"
+        )
+        .await,
+        2
+    );
+    assert_eq!(
+        count(
+            db,
+            "SELECT COUNT(*) FROM banned_ips WHERE ip_address = '192.0.2.2'"
+        )
+        .await,
+        1
+    );
+}
+
+/// Security review P7: every line a phone's report writes (`security::record_phone_event`) has a
+/// window of its own - a new kind can't silently keep the kid's activity 180 days.
+#[test]
+fn every_phone_line_kind_has_its_window() {
+    let writer = regex::Regex::new(r"record_phone_event(?:_logged)?\(").unwrap();
+    let literal = regex::Regex::new(r#""([a-z][a-z0-9]*(?:_[a-z0-9]+)+)""#).unwrap();
+    let mut dirs = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+    let mut kinds = std::collections::BTreeSet::new();
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|n| n != "tests") {
+                    dirs.push(path);
+                }
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                if !writer.is_match(line) || line.contains("fn ") || line.contains("//") {
+                    continue;
+                }
+                for near in &lines[i..(i + 5).min(lines.len())] {
+                    for found in literal.captures_iter(near) {
+                        kinds.insert(found[1].to_string());
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        kinds.contains("app_installed"),
+        "the scan misses: {kinds:?}"
+    );
+    // A Storytel login handed to a phone is about the parent's credential: the sign-ins' 180 days.
+    let kept_long = ["storytel_login_sent"];
+    let unmapped: Vec<&String> = kinds
+        .iter()
+        .filter(|kind| {
+            !crate::retention::PHONE_LOG_KINDS.contains(&kind.as_str())
+                && !crate::retention::PIN_LOG_KINDS.contains(&kind.as_str())
+                && !kept_long.contains(&kind.as_str())
+        })
+        .collect();
+    assert!(
+        unmapped.is_empty(),
+        "phone lines without a window: {unmapped:?}"
     );
 }

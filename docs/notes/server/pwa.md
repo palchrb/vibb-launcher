@@ -242,6 +242,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   (`lock_glance::wake_log_line`); sent as `launcher_ui.lock_wake_on_notification`. The group's footer says that what
   the lock shows is seen by anyone near the phone (its ⓘ went in the ⓘ cut, 2026-10-24). Tests: `lock_glance::the_wake_switch_saves_logs_nudges_and_reaches_the_policy`,
   the redirect table in `device_pages`, `policy_json_keys_snapshot`.
+- **What OpenStreetMap sees** (security review P8, re-checked 2026-10-26, accepted - design 33): the tiles are
+  `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, no query string, so the request carries the area looked at (z/x/y),
+  the parent's IP and browser User-Agent, and `Referer: <the PWA's origin>/` (the tailnet host name; never a path or
+  a `?device=`). `no-referrer` isn't an option: OSM answers a browser tile request without a Referer with "403 Access
+  blocked", and its tile policy forbids stripping it and discourages a proxy (design 33's two options). No
+  `crossorigin`: the tiles are plain images, sent without CORS, and no OSM cookie reaches `tile.`. A self-hosted tile
+  source stays out of scope.
 - **Where the forms return** (§5.1, pinned by `device_pages::lock_forms_return_to_the_page`): `kid-lock` →
   `/lock?notice=…#child-pin`, `kid-pin/send` → `/lock?notice=…#child-pin`, `kid-lock/keyguard` → its row
   `#lock-keyguard` (design 59; a warning coming in above the group then moves nothing), Show Child PIN → the page
@@ -339,6 +346,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   save's page (the answer to a POST); a refusal's `?notice=` is dropped from the address once shown. A phone
   not set up has the page too. Every read is a 500 on a DB error (`app_rows`, the names, the last report), never a
   shorter list.
+- **What OpenStreetMap sees** (security review P8, re-checked 2026-10-26, accepted - design 33): the tiles are
+  `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, no query string, so the request carries the area looked at (z/x/y),
+  the parent's IP and browser User-Agent, and `Referer: <the PWA's origin>/` (the tailnet host name; never a path or
+  a `?device=`). `no-referrer` isn't an option: OSM answers a browser tile request without a Referer with "403 Access
+  blocked", and its tile policy forbids stripping it and discourages a proxy (design 33's two options). No
+  `crossorigin`: the tiles are plain images, sent without CORS, and no OSM cookie reaches `tile.`. A self-hosted tile
+  source stays out of scope.
 - **Where the forms return** (§5.1, `tests::device_pages::apps_forms_return_to_their_rows`, built from the rendered
   forms): a switch (`/apps/toggle`, `back=apps`) to its row, `/devices/{id}/apps#app-<package>` (`#catalog-<id>` for a
   catalog app without a package; `devices::app_anchor`) - the row moves between the groups and the fragment finds it,
@@ -395,6 +409,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   "Storytel refused the phone's login" (→ `#storytel-title`), "Music over the storage limit" (→ `#storage-title`),
   "Update Vibb One and the music app" / "Update Vibb One" / "Update the music app" (`OlderApps::title`, → `#music-settings`), "N music entries fail on the phone" (only entries on for the
   phone, one row, → `#library`); `attention::Sources::music_ticked` carries the entries on.
+- **What OpenStreetMap sees** (security review P8, re-checked 2026-10-26, accepted - design 33): the tiles are
+  `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, no query string, so the request carries the area looked at (z/x/y),
+  the parent's IP and browser User-Agent, and `Referer: <the PWA's origin>/` (the tailnet host name; never a path or
+  a `?device=`). `no-referrer` isn't an option: OSM answers a browser tile request without a Referer with "403 Access
+  blocked", and its tile policy forbids stripping it and discourages a proxy (design 33's two options). No
+  `crossorigin`: the tiles are plain images, sent without CORS, and no OSM cookie reaches `tile.`. A self-hosted tile
+  source stays out of scope.
 - **Where the forms return** (§5.1, `tests::device_pages::music_forms_return_to_their_groups`, built from the
   rendered forms, each fragment checked to hold its form): the app switch to `#music-app`, refused to `?music_notice=from_play|not_an_app#music-app` (the reason in that group), a catalog row
   deleted since the page loaded to `#music-app`; an entry's switch to `#music-entry-<id>` (refused
@@ -434,6 +455,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Time, Lock Screen & PINs, Home Screen, Web Filter) and About This Phone / Advanced. A phone not set up has the
   header, "Set a Parent PIN before setup ›" while managed without one, **Connect This Phone** (`#access`: the live code, the typed-code pause, New Setup Code - a POST -, Set Up
   with QR Code ›) and every row live (each sub-page answers before setup; what is saved reaches the first policy).
+- **What OpenStreetMap sees** (security review P8, re-checked 2026-10-26, accepted - design 33): the tiles are
+  `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, no query string, so the request carries the area looked at (z/x/y),
+  the parent's IP and browser User-Agent, and `Referer: <the PWA's origin>/` (the tailnet host name; never a path or
+  a `?device=`). `no-referrer` isn't an option: OSM answers a browser tile request without a Referer with "403 Access
+  blocked", and its tile policy forbids stripping it and discourages a proxy (design 33's two options). No
+  `crossorigin`: the tiles are plain images, sent without CORS, and no OSM cookie reaches `tile.`. A self-hosted tile
+  source stays out of scope.
 - **Where the forms return** (§5.1, `tests::summary::every_form_on_the_summary_returns_to_its_group`, built from the
   rendered forms, each action carrying its group's fragment): the lifts (`back=summary`) →
   `/devices/{id}?done=extra|pause|gone#quick` (`lifts::summary_group`; a refused pause says why there), End now →
@@ -560,13 +588,20 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   as on Devices); one phone is shown at once. A chosen phone: the **phone switcher** (plain links to `?device=`, the
   state as a dot and in each `aria-label`, "Anna, online"; the chosen one `aria-current="true"` - the tab bar has the
   page's one `"page"`), the **map** (Leaflet, OSM tiles with design 33's origin-only Referer, unchanged) with the
-  trail, the **last fix** as age and accuracy in the Phone Setup zone ("10 min ago", "Within 40 m", the exact time in
+  trail, the **last fix** (none kept: "No position in the last 7 days.", the phone's window - security review P1) as age and accuracy in the Phone Setup zone ("10 min ago", "Within 40 m", the exact time in
   `title`; the marker's popup says the same, built with `textContent`), the newest Update Location's **answer row**
   (only while it says something - "The answer row" below), the waiting line and its poll, **Update Location**; the two **warnings** as
   orange rows (location off, erasing not ready); **Ring, Stop Ringing, Lock** as three tiles, **Erase Phone…** as a
   `<details>` confirm with the type-the-name field; the footer with Lock's note behind ⓘ; **Recent** (the 10 newest:
   "Lock" · "10:58 · Done", the line under it, **Cancel** while it waits); **Location Settings** (When to locate +
   Every as one form - `location-policy` needs the mode on every post -, Keep history for, both auto-saving).
+- **What OpenStreetMap sees** (security review P8, re-checked 2026-10-26, accepted - design 33): the tiles are
+  `https://tile.openstreetmap.org/{z}/{x}/{y}.png`, no query string, so the request carries the area looked at (z/x/y),
+  the parent's IP and browser User-Agent, and `Referer: <the PWA's origin>/` (the tailnet host name; never a path or
+  a `?device=`). `no-referrer` isn't an option: OSM answers a browser tile request without a Referer with "403 Access
+  blocked", and its tile policy forbids stripping it and discourages a proxy (design 33's two options). No
+  `crossorigin`: the tiles are plain images, sent without CORS, and no OSM cookie reaches `tile.`. A self-hosted tile
+  source stays out of scope.
 - **Where the forms return** (§5.1, `tests::locate_page::every_form_on_the_locate_page_returns_to_its_group`, built
   from the rendered forms): Update Location → `?device={id}&requested=1#location` (the map and the wait in view; the
   poll's reload goes to `#location` too), Ring / Stop Ringing / Lock / Erase → `#actions` (Recent right under it),

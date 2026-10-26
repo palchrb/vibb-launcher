@@ -19,6 +19,9 @@ at each fix, as below.
   `captured_at` as stored - normalised UTC ms, so `+01:00` and `Z` spellings of one instant are one - latitude and
   longitude); the launcher re-sends its cached fix in every report and each copy used to be a row. Accuracy is not part
   of the key. Old duplicates are left to retention. A different time, or another place at that time, is another fix.
+  Nothing is stored or judged while the phone's location is Off (`zones::takes_fixes`, security review P1, 0.57.0;
+  `retention-and-crashes.md`, "Location history"); the newest fix ages out with the window, and a zone's cursor needs
+  no row (no foreign key).
 - **The rule** (`src/zones.rs`, pure): `side(circle, lat, lng, accuracy)` - haversine on 6 371 008.8 m, everything in
   whole millimetres (`d + a <= r` inside, `d - a >= r` outside, else unsure; no accuracy, NaN or negative = unsure) so
   the boundary is exact and reproducible on the launcher in step 2; pinned by `testdata/zone_vectors.json` (15 rows:

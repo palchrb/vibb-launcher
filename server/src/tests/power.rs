@@ -820,3 +820,25 @@ async fn the_sender_claims_only_a_queued_row() {
         .unwrap();
     assert_eq!(attempts, 1, "the refused claim counted nothing");
 }
+
+/// Security review P1: under location Off the shutdown's position is neither stored as a fix nor
+/// told in the `phone_off`; the shutdown itself is.
+#[tokio::test]
+async fn location_off_keeps_no_shutdown_position() {
+    let (app, id, token) = setup().await;
+    sqlx::query("UPDATE device_policy SET location_mode = 'off' WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let off_at = Utc::now() - Duration::minutes(5);
+    let location = json!({ "location": {
+        "lat": 59.9139, "lng": 10.7522, "accuracy_m": 25.0, "at_ms": ms(off_at) - 60_000,
+    }});
+    let body = json!({ "off": off(off_at, 41, location) });
+    assert_eq!(post(&app, &token, body).await, StatusCode::NO_CONTENT);
+    assert!(shutdown_fixes(&app, id).await.is_empty());
+    let (params, detail) = off_params(&app, id).await;
+    assert!(params.get("location").is_none(), "{params}");
+    assert!(!detail.unwrap_or_default().contains("Locate"));
+}

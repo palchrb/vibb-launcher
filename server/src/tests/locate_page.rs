@@ -306,7 +306,8 @@ async fn the_fix_and_the_answer_read_in_local_time() {
         .unwrap();
     let (id, _) = app.enrolled_device("Anna").await;
     let html = locate_page(&app, &cookie, &format!("?device={id}")).await;
-    assert!(html.contains("No location reported yet."));
+    // Security review P1: the newest fix ages out too, so the line says how long is kept.
+    assert!(html.contains("No position in the last 7 days."), "{html}");
 
     let ten_min_ago = chrono::Utc::now() - chrono::Duration::minutes(10);
     sqlx::query(

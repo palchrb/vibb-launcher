@@ -17,12 +17,38 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `DNS_LOG_RETENTION_DAYS` = 7 (by `received_at`).
 - **Location history**: `device_policy.location_retention_days` (1/7/14/30, default 7; was a fixed 30), Locate tab
   `POST /devices/{id}/location-retention` (400 other values, 404, security event `location_retention_changed`,
-  prunes at once). By `received_at` (server time); the newest fix per phone is always kept (Find My Device's "last
-  seen").
-- **Status history** (`device_status`: screen time in `time_state_json`, call state, app lists): 30 days, the newest
-  report per phone kept, and the newest one with `call_policy_v1` (the calls warning "stopped reporting that it
-  enforces calls" rests on it, qa-cleanup #7). There is no server-side blocked-call log; the phone deletes blocked calls from its call log
+  prunes at once). By `received_at` (server time), or a still fix's last re-send (`resent_at`, design 64 Q-3: the
+  phone's position as of that report). Since 0.57.0 (security review P1) the newest fix ages out too (before, it was
+  kept for good, also after location was turned off): a phone with nothing left reads "No position in the last 7
+  days." on Locate (the phone's own window, "day" for 1). **Nothing is stored while the phone's location is Off**
+  (`zones::takes_fixes` in `zones::intake` - a report's `location` and `extra_locations` - and in the power route:
+  the shutdown's position is neither a fix nor in the `phone_off`'s parameters; a phone without a policy row reads
+  as "Only when asked", a read that fails stores nothing; `locations::no_fix_is_stored_while_location_is_off`,
+  `power::location_off_keeps_no_shutdown_position`). "Only when asked" keeps taking every fix the phone sends:
+  the launcher sends one only for an Update Location, at low battery and at shutdown (2026-10-25), each one asked
+  for - the review's "only within a window after a `locate`" would drop the last two, so it wasn't built.
+- **Status history** (`device_status`: screen time in `time_state_json`, call state, app lists): **48 hours** since
+  0.57.0 (`STATUS_HISTORY_HOURS`; was 30 days, which nothing read - security review P2), the newest report per phone
+  kept, and the newest one with `call_policy_v1` (the calls warning "stopped reporting that it enforces calls" rests
+  on it, qa-cleanup #7). Every page, Attention, the intake's comparisons (`app_updated`, new apps, foreign access,
+  unseen boots) and the policy read the newest report; the storage budget counts a rolling 24 hours of them, hence
+  two days. The power route's "newest report before the boot" (a start with no shutdown seen) is the newest kept
+  until a first report after a long-off phone's start and the prune pass meet before its power report: accepted. There is no server-side blocked-call log; the phone deletes blocked calls from its call log
   after 30 days (launcher `calls/BlockedCallLog`).
+- **The security log** (`security_events`): 180 days (`SECURITY_EVENT_DAYS`: sign-ins, refusals, enrollments, the
+  parents' changes). Since 0.57.0 (security review P7) a phone's own lines go with what they describe:
+  `PHONE_LOG_KINDS` (`app_installed`, `play_install_mode`, `boot_unseen`, `phone_app_blocked`,
+  `phone_foreign_access`, `phone_relock_findings`, `mock_location_ignored`, `phone_lines_dropped`) after 30 days (an
+  unseen boot's Attention window; the status they come from is 48 hours), `PIN_LOG_KINDS` (`parent_pin_used`,
+  `parent_pin_lockout`) after `PIN_EVENT_DAYS` (90, as the PIN events); `storytel_login_sent` (the parent's credential
+  handed to a phone) keeps 180. `cleanup::every_phone_line_kind_has_its_window` fails for a kind
+  `record_phone_event` writes without one. A wrong sign-in's typed username is cleared after `SIGN_IN_NAME_HOURS`
+  (24; a password typed into the name field), its line and address kept; `music_entry_added` names a feed by its host
+  only (`feed at example.org`: a private feed's URL may carry a token). The Security Log's footer says the windows.
+- **Three small tables** (security review P6, 0.57.0): `time_lifts` `LIFT_DAYS` (90, the inbox's) after the lift's
+  `expires_at`; `banned_ips` once the ban expired (nothing reads an expired one; the security log keeps the ban's
+  line); `device_install_progress` past `INSTALL_PROGRESS_MINUTES` (10, the window `devices::view_device` reads it
+  in). `Pruned.lifts`/`bans`/`install_progress`; `cleanup::pruning_follows_what_each_row_describes`.
 - **Commands** (`device_commands`, design 48 §1.6): `COMMAND_DAYS` = 30 by `requested_at`, counted in
   `Pruned.commands` - except one that may still reach its phone: never delivered, never cancelled, never acknowledged
   and not in `models::EXPIRING_COMMANDS` (the pop's rule in SQL). So an undelivered `lock`, `wipe`, `end_windows`,

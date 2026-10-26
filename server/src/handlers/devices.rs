@@ -1226,13 +1226,15 @@ pub(crate) async fn app_rows(
     // NotInstalled row below, so this is the only place they're consulted. The 10-minute window
     // matches the client's own in-flight-attempt timeout (TrackedAppUpdateState) for consistency -
     // long enough to cover a slow download, short enough that an abandoned attempt's last-reported
-    // percentage doesn't linger looking "in progress" forever.
+    // percentage doesn't linger looking "in progress" forever. Older rows are pruned
+    // (`retention::INSTALL_PROGRESS_MINUTES`).
     let install_progress: std::collections::HashMap<i64, (i64, bool)> =
         sqlx::query_as::<_, (i64, i64, bool)>(
             "SELECT tracked_app_id, percent, failed FROM device_install_progress \
-             WHERE device_id = ? AND updated_at > datetime('now', '-10 minutes')",
+             WHERE device_id = ? AND updated_at > datetime('now', '-' || ? || ' minutes')",
         )
         .bind(id)
+        .bind(crate::retention::INSTALL_PROGRESS_MINUTES)
         .fetch_all(&state.db)
         .await?
         .into_iter()

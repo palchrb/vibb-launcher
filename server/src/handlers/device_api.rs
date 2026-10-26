@@ -1585,7 +1585,8 @@ pub async fn status(
     // Attached on every regular heartbeat when the device has a location
     // reading available, not just after a `locate` command - see
     // LocationReport's doc comment. Pruned by retention::prune (the phone's
-    // location_retention_days, default 7; the newest fix is kept).
+    // location_retention_days, default 7, the newest fix too); never stored while the
+    // phone's location is Off (`zones::takes_fixes`, security review P1).
     // Only a fix that is what it says (security review H2): the time is RFC 3339 (stored
     // normalised, UTC with milliseconds), the coordinates are on Earth and the accuracy isn't
     // negative. Anything else is dropped (and logged); the rest of the report is kept.
@@ -2314,6 +2315,13 @@ pub async fn power(
     };
     if report.off.is_none() && report.on.is_none() {
         return StatusCode::BAD_REQUEST;
+    }
+    // Location Off (security review P1): the shutdown's position is neither stored nor told.
+    if let Some(off) = report.off.as_mut()
+        && off.location.is_some()
+        && !crate::zones::takes_fixes(&state.db, device.id).await
+    {
+        off.location = None;
     }
     // 2026-10-25: the shutdown's last fix, as a status report's fix is checked (time, place,
     // accuracy, not ahead); one that isn't valid costs the position only, never the shutdown.
