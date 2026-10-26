@@ -66,6 +66,32 @@ class PolicyResponseCompatTest {
         assertEquals(FreshDecode.Ok(policy), decodeFresh(serverResponse))
     }
 
+    /** Design 68 §3.1: `app_permissions` (the server's `policy_json_keys_snapshot` literal) - read field by field by
+     * `appPermissionsOf`, so nothing in it fails the policy; missing or not a list = touch nothing (`null`). */
+    @Test
+    fun `app_permissions decodes, never fails the policy, and missing means touch nothing`() {
+        fun policy(value: String) = ServerJson.decodeFromString(PolicyResponse.serializer(), """{"app_permissions": $value}""")
+        assertEquals(
+            setOf("com.whatsapp"),
+            appPermissionsOf(policy("""[{"package_name": "com.whatsapp", "camera": "deny"}]""").appPermissions),
+        )
+        // A bad package, another camera value, a wrong type, a newer key: dropped, the rest kept.
+        assertEquals(
+            setOf("io.element.android.x"),
+            appPermissionsOf(
+                policy(
+                    """[{"package_name": "not a package", "camera": "deny"}, {"package_name": "com.whatsapp", "camera": "allow"},
+                       {"package_name": "io.element.android.x", "camera": "deny", "microphone": "deny"}, 7, null]""",
+                ).appPermissions,
+            ),
+        )
+        assertEquals(emptySet<String>(), appPermissionsOf(policy("[]").appPermissions))
+        assertNull(appPermissionsOf(policy("null").appPermissions))
+        assertNull(appPermissionsOf(policy("{}").appPermissions))
+        assertNull(appPermissionsOf(ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").appPermissions))
+        assertNull(appPermissionsOf(LastEnforcedPlan.of(policy("[]")).toPolicy().appPermissions))
+    }
+
     @Test
     fun `a server without block_activity_start leaves the kiosk app block off (qa-09-code 7)`() {
         assertEquals(false, ServerJson.decodeFromString(PolicyResponse.serializer(), "{}").blockActivityStart)

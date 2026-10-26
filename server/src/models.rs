@@ -689,6 +689,10 @@ pub const COMMAND_RECEIPT_CAPABILITY: &str = "command_receipt_v1";
 /// such a phone is sent the zones' centres and radii (qa-design-64-step2-code Q-10).
 pub const ZONES_CAPABILITY: &str = "zones_v1";
 
+/// Status-report capability of a launcher that applies the policy's `app_permissions` and reports
+/// `installed_apps[].access` (design 68): without it Device › Apps says to update Vibb One.
+pub const APP_PERMISSIONS_CAPABILITY: &str = "app_permissions_v1";
+
 fn minutes_since(at: &str, now: chrono::NaiveDateTime) -> Option<i64> {
     chrono::NaiveDateTime::parse_from_str(at, "%Y-%m-%d %H:%M:%S")
         .ok()
@@ -930,6 +934,15 @@ pub struct InstalledApp {
         deserialize_with = "lenient_text"
     )]
     pub version_name: Option<String>,
+    /// The app's camera and special accesses as the phone reads them (design 68 §3.3): only the keys the app
+    /// declares, known keys and values only (`app_permissions::AppAccess::of`) - a newer launcher's key is dropped,
+    /// never a refused report. Absent from older launchers and for an app with nothing to say.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::app_permissions::lenient_access"
+    )]
+    pub access: Option<crate::app_permissions::AppAccess>,
 }
 
 // ---------------------------------------------------------------------
@@ -1042,6 +1055,10 @@ pub struct PolicyResponse {
     /// with whether its text shows too (design 51). A failing query sends `apps: []` (fewer rows, never a 500). An older
     /// launcher ignores it; an older server's missing key means Element X, sender only.
     pub lock_glance: crate::lock_glance::LockGlancePolicy,
+    /// Per-app permissions (design 68), always a list: `[{package_name, camera: "deny"}]` - the packages the parent
+    /// switched away from the default on this phone. A failing query is a 500 for the whole policy (fail closed): a
+    /// lost list would hand the camera back. An older launcher ignores it.
+    pub app_permissions: Vec<crate::app_permissions::AppPermission>,
 }
 
 /// `PolicyResponse.kid_lock`.

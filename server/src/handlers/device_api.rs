@@ -335,6 +335,9 @@ pub(crate) async fn build_policy(
     .await?;
 
     let call_policy = build_call_policy(state, &policy).await?;
+    // Design 68: fail closed - a failing query is a 500, never `[]`, which would hand every camera back.
+    let app_permissions =
+        crate::app_permissions::policy_app_permissions(&state.db, device_id).await?;
 
     // Vibb music (design 21): `null` when it can't be read (QA #3) - the phone keeps what it has; a
     // made-up empty library would make it delete its downloads. Never fails the policy.
@@ -500,6 +503,7 @@ pub(crate) async fn build_policy(
         location_policy,
         music,
         lock_glance,
+        app_permissions,
     })
 }
 

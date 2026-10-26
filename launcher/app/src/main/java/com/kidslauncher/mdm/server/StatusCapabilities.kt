@@ -34,4 +34,9 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     com.kidslauncher.mdm.music.STORYTEL_JWT_CAPABILITY,
     // Design 59 step 4: claimed only with `set_kid_pin`'s handler (Q59-13) - the server then sends this phone the PIN.
     com.kidslauncher.mdm.lock.ANDROID_KEYGUARD_CAPABILITY,
+    // Design 68: the policy's `app_permissions` (camera off per app) and `installed_apps[].access` in every report.
+    APP_PERMISSIONS_CAPABILITY,
 )
+
+/** Design 68's capability: the server's `app_permissions::CAPABILITY`. */
+const val APP_PERMISSIONS_CAPABILITY = "app_permissions_v1"

@@ -599,7 +599,7 @@ object WindowRelock {
 
     /** The self-update gate's view of a call (§1.2 step 6, QA #11): ours, Telecom's, a VoIP call,
      * the lock's emergency flow - Home then stays where it is. */
-    private fun liveCall(app: Context): Boolean =
+    internal fun liveCall(app: Context): Boolean =
         OngoingCalls.hasLiveCall || SelfUpdate.telecomInCall(app) != false || VoipCalls.liveCall || PinLockRuntime.emergencyFlowActive
 
     private class AndroidPlatform(private val app: Context, private val dpm: DevicePolicyManager) : RelockPlatform {

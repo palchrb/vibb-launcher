@@ -16,6 +16,9 @@ const val GRANT_STATE_GRANTED = 1
 /** `DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT`. */
 const val GRANT_STATE_DEFAULT = 0
 
+/** `DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED`. */
+const val GRANT_STATE_DENIED = 2
+
 /** The grant state to write: [wanted], or `null` when [current] already is it - re-setting re-notifies (CLAUDE.md). */
 fun grantWrite(current: Int, wanted: Int): Int? = wanted.takeIf { it != current }
 

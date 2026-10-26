@@ -411,7 +411,10 @@ object AppEnforcer {
         // SMS off (or rules unknown): no SMS in or out. The SMS apps are suspended by the plan too,
         // for RCS. Not lifted by an override.
         setRestriction(dpm, admin, UserManager.DISALLOW_SMS, plan.restrictSms)
-        applyCallPermissions(context, dpm, admin, plan.denyCallPermissions, allowlist)
+        // One read of every third-party app's requested permissions for the call pass here and the camera pass after the
+        // loop (`MATCH_UNINSTALLED_PACKAGES`: hiding doesn't change what an app requests); `null` if it failed.
+        val requested = thirdPartyRequested(context)
+        applyCallPermissions(context, dpm, admin, plan.denyCallPermissions, allowlist, requested)
 
         lastPlanSuspend = plan.suspend
         for (packageName in installedPackages) {
@@ -474,6 +477,9 @@ object AppEnforcer {
                 )
             }
         }
+        // Design 68 §3.2: after the loop - a hidden app probably can't be denied (the admin path reads the package
+        // without MATCH_UNINSTALLED_PACKAGES), and the pass that unhides it comes first.
+        if (requested != null) applyCameraPermissions(context, dpm, admin, requested, policy, overrideActive)
         lastEnforcedLockKey = lock.key()
         lastEnforcedPlayState = playState
         lastEnforcedOverride = overrideActive
@@ -704,21 +710,14 @@ object AppEnforcer {
         admin: ComponentName,
         deny: Boolean,
         allowlist: List<String>?,
+        requested: Map<String, List<String>>?,
     ) {
         if (deny) {
             for (permission in OWN_CALL_PERMISSIONS) {
                 QuickControls.selfGrantPermission(context, dpm, admin, permission)
             }
         }
-        val requested = try {
-            context.packageManager.getInstalledPackages(
-                PackageManager.PackageInfoFlags.of((PackageManager.GET_PERMISSIONS or PackageManager.MATCH_UNINSTALLED_PACKAGES).toLong())
-            ).filter { (it.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM == 0 }
-                .associate { it.packageName to it.requestedPermissions.orEmpty().toList() }
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't list installed packages for call permissions", e)
-            return
-        }
+        requested ?: return
         val denial = if (deny) DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED else DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT
         for (packageName in callPermissionTargets(requested, context.packageName)) {
             for (permission in requested[packageName].orEmpty().filter { it in CALL_PERMISSIONS }) {
@@ -730,13 +729,113 @@ object AppEnforcer {
         }
     }
 
+    /** Every non-system package's requested permissions (hidden ones too), or `null` when the list can't be read. */
+    private fun thirdPartyRequested(context: Context): Map<String, List<String>>? = try {
+        context.packageManager.getInstalledPackages(
+            PackageManager.PackageInfoFlags.of((PackageManager.GET_PERMISSIONS or PackageManager.MATCH_UNINSTALLED_PACKAGES).toLong())
+        ).filter { (it.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM == 0 }
+            .associate { it.packageName to it.requestedPermissions.orEmpty().toList() }
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't list installed packages for their permissions", e)
+        null
+    }
+
     /** Written only when the state differs ([grantWrite], the rule above). */
     private fun setGrantState(dpm: DevicePolicyManager, admin: ComponentName, packageName: String, permission: String, wanted: Int) {
         try {
             val write = grantWrite(dpm.getPermissionGrantState(admin, packageName, permission), wanted) ?: return
-            dpm.setPermissionGrantState(admin, packageName, permission, write)
+            writeGrantState(dpm, admin, packageName, permission, write)
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't set $permission for $packageName", e)
+        }
+    }
+
+    /** `setPermissionGrantState`, its `false` (refused without a throw) logged. */
+    private fun writeGrantState(dpm: DevicePolicyManager, admin: ComponentName, packageName: String, permission: String, state: Int) {
+        if (!dpm.setPermissionGrantState(admin, packageName, permission, state)) {
+            Log.w(LOG_TAG, "Platform refused $permission = $state for $packageName (setPermissionGrantState)")
+        }
+    }
+
+    /** A camera denial waits for a call's end ([cameraGrants]); [com.kidslauncher.mdm.lock.BootHome.callMayHaveEnded]
+     * applies again once no call is live. Memory only: a new process's first apply decides again. */
+    @Volatile
+    var cameraDeferred: Boolean = false
+
+    /**
+     * Design 68 §3.2: the parent's "camera off" per app ([cameraGrants]) for [requested] (third-party apps and their
+     * requested permissions), with the policy's `app_permissions` ([appPermissionsOf]; `null` = touch nothing but a
+     * window's lift), the window ([windowOpen]: the pause or the override lift it), the live call ([WindowRelock.liveCall])
+     * and which denied targets hold the camera now. Returns whether a denial was deferred. Never throws.
+     */
+    private fun cameraPass(
+        context: Context,
+        dpm: DevicePolicyManager,
+        admin: ComponentName,
+        requested: Map<String, List<String>>,
+        policy: PolicyResponse?,
+        windowOpen: Boolean,
+    ): Boolean = try {
+        val pm = context.packageManager
+        // A hidden app (not allowed) is skipped: Android can't grant-state it (it logged "Platform refused" at every
+        // apply - the code QA's N1); the apply that unhides it comes after the loop, so it is denied then.
+        val visible = requested.filter { (pkg, perms) -> CAMERA_PERMISSION !in perms || !isHidden(dpm, admin, pkg) }
+        val targets = visible.filter { (pkg, perms) -> pkg != context.packageName && CAMERA_PERMISSION in perms }.keys
+        val denied = appPermissionsOf(policy?.appPermissions)
+        val current = targets.associateWith { dpm.getPermissionGrantState(admin, it, CAMERA_PERMISSION) }
+        val toDeny = denied.orEmpty().intersect(targets)
+        val held = toDeny.filterTo(mutableSetOf()) { pm.checkPermission(CAMERA_PERMISSION, it) == PackageManager.PERMISSION_GRANTED }
+        val callLive = !windowOpen && held.isNotEmpty() && WindowRelock.liveCall(context)
+        val plan = cameraGrants(visible, context.packageName, denied, windowOpen, callLive, held, current)
+        for ((pkg, state) in plan.writes) {
+            try {
+                writeGrantState(dpm, admin, pkg, CAMERA_PERMISSION, state)
+            } catch (e: Exception) {
+                Log.w(LOG_TAG, "Couldn't set the camera for $pkg", e)
+            }
+        }
+        if (plan.deferred) Log.i(LOG_TAG, "Camera off waits for the call's end")
+        plan.deferred
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Camera permissions failed", e)
+        false
+    }
+
+    private fun applyCameraPermissions(
+        context: Context,
+        dpm: DevicePolicyManager,
+        admin: ComponentName,
+        requested: Map<String, List<String>>,
+        policy: PolicyResponse?,
+        overrideActive: Boolean,
+    ) {
+        cameraDeferred = cameraPass(context, dpm, admin, requested, policy, overrideActive)
+    }
+
+    /**
+     * Design 68 §3.2: [cameraGrants] for one just-installed or updated package, so an app the parent switched the
+     * camera off for (or an update that adds CAMERA) is denied before its first start - whether or not calls or apps are
+     * managed. Called from [enforceOnNewPackage] and on every package change; a hidden package is left to the apply that
+     * unhides it. Under [apply]'s lock (the code QA's N2), so an install callback at a window's edge can't write DENIED
+     * between the window's DEFAULT and the next apply. Never throws; never on the main thread.
+     */
+    @Synchronized
+    fun enforceCameraOnPackage(context: Context, packageName: String) {
+        try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            if (!dpm.isDeviceOwnerApp(context.packageName) || packageName == context.packageName) return
+            val info = context.packageManager.getPackageInfo(
+                packageName, PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong())
+            )
+            if ((info.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM != 0) return
+            val requested = mapOf(packageName to info.requestedPermissions.orEmpty().toList())
+            val windowOpen = OfflineOverride.isActive() || RestrictionsPause.isActive()
+            val admin = ComponentName(context, MdmDeviceAdminReceiver::class.java)
+            if (cameraPass(context, dpm, admin, requested, currentPolicyDecision().policy, windowOpen)) cameraDeferred = true
+        } catch (e: PackageManager.NameNotFoundException) {
+            // Hidden or gone: the apply that unhides it denies it.
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't check the camera of $packageName", e)
         }
     }
 
@@ -1267,6 +1366,8 @@ object AppEnforcer {
                 Log.w(LOG_TAG, "Couldn't check call permissions of $packageName", e)
             }
         }
+        // Design 68: the camera rule for this package, managed calls or not, before it can be hidden below.
+        enforceCameraOnPackage(context, packageName)
         if (!suspend) return false
         // Hidden only if not allowed at all - the schedule lock alone just suspends.
         val hide = shouldSuspendNewPackage(
