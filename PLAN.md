@@ -546,6 +546,7 @@ separators, one item per bullet, so each sits in its round; the words are unchan
     - GitHub asset digests
     - PWA tab-switch timing (Navigation Timing behind a debug switch, then prefetch).
     - Settings saves in the security log
+    - **One red alert while restrictions are paused, not two** (the user, 2026-10-26, iPhone PWA screenshot of a phone's summary: "unødvendig med to røde alerts her?"): the Attention row "Restrictions paused ›" and the Quick actions card "Unlocked on the phone - Restrictions are paused (...)" say the same thing in the same red. Keep one: the Attention row stays (it links to the detail), and the quick-actions card drops its red tint and shrinks to its one useful line (how it ends: "It ends by itself, or tap Lock again") or goes. Server/PWA, XS; a browser pass on the summary in light and dark.
   - **Rounds S2 + S3 - security Lows, the server half** (`server-sec-lows-a`, `-b`; the launcher half is L4, the music half M2):
     - The security reviews' Low items (server 18, launcher 16, music 9).
   - **Round S4 - F-Droid trust** (`fdroid-trust`):
