@@ -223,7 +223,7 @@ corrected at that round's merge.
 | 75 local QA/run/design branches (`qa-31-s*`, `qa-34-s*` except s9, `qa-*`, `59s*-qa`, `f3-*`, `rc2-*`, `rc3-run`, `design-64`, `r11-glance-design`, `r12-music-design`, `proto-59-run`, …; the list is in the audit, reproduced in Round 0a) | MERGED-ELSEWHERE (63 patch-equivalent, 12 whose doc is on main identical or longer) | delete (`git branch -D`; 14 are checked out in old worktrees - remove those first) |
 | `qa-34-s9` | SUPERSEDED (a 2-nit QA doc never added; the merge says "QA'd without code findings") | delete |
 | `proto-59-hybrid`, `proto-59-qa`, `proto-plain-lock` | SUPERSEDED, cited by hash in design 59 / PLAN:909 | tag `archive/*`, delete the branches (decision 13) |
-| `worktree-agent-a689b601f638554b8` (design 57 prep + QA) | SUPERSEDED by the hybrid, held on purpose | tag `archive/d57-prep`, delete (decision 13) |
+| `worktree-agent-a689b601f638554b8` (design 57 prep + QA) | SUPERSEDED by the hybrid, held on purpose | tag `archive/design-57-prep`, delete (decision 13) |
 | `origin/relock-24b-s4` (24b S4, 1 commit, 13 files) | STILL-NEEDED if 04 check 6 passes | decision 8 |
 | `origin/review-dead-code` (the 2026-10-13 dead-code review, 456 lines, never merged; its "safe to delete" list was never acted on - `tokio-util` and the unreachable route are still on main) | STILL-NEEDED (the doc) | merge the doc in 0a (re-verified line numbers in 0b/S1) |
 | `origin/spotify-spike` (10 commits, 3 673 lines of spike code) | SUPERSEDED by 26c | tag `archive/spotify-spike`, delete the remote branch - or leave it untouched (Spotify parked); *default leave* |
@@ -305,11 +305,11 @@ lines, two Gradle suites); the server part is XS inside S1. In all about one day
   alongside the two rounds in build, because it builds nothing. Touches PLAN.md - **one PLAN writer at a time**:
   do it between the two running rounds' merges, or let the Sonnet agent do the notes and the coordinator the PLAN
   lines.
-- **Items:** (1) the stale status lines of §1.4 and §1.1-1.3's "(0a)" rows: banners on 03, 10, 15, 17, 20, 26,
+- **Items:** (1) **[done 2026-10-26, 8dc49a31 for the design notes; PLAN.md in the commit after it]** the stale status lines of §1.4 and §1.1-1.3's "(0a)" rows: banners on 03, 10, 15, 17, 20, 26,
   26b, 26c-handover, 57, vibb-spotify-options; headers of 34, r10, r13; 22 §4.1/§4.2; 25's checklist → a pointer; 29
   step 4's check text; 31/33 closing lines; 36 :531; PLAN:131/:152 and the old status blocks; `launcher/CLAUDE.md`'s
-  2026-08-07 section retitled as history; (2) merge `origin/review-dead-code`'s doc onto main as it is (a header line
-  "acted on in rounds 0b/S1, 2026-10-2x"); (3) the branches of §1.5: tag the archives, delete the 76 merged/superseded
+  2026-08-07 section retitled as history; (2) **[done 2026-10-26, 8dc49a31]** merge `origin/review-dead-code`'s doc onto main as it is (a header line
+  "acted on in rounds 0b/S1, 2026-10-2x"); (3) the branches of §1.5: **[the archive tags done 2026-10-26, 8dc49a31 - `archive/design-57-prep`, `archive/proto-59-hybrid`, `archive/proto-59-qa`, `archive/proto-plain-lock`, `archive/spotify-spike`; the branch deletions wait for the user]** tag the archives, delete the 76 merged/superseded
   local branches and the remote `qa-*`/`proto-*` copies the user agrees to, prune the 58 worktrees and their target
   dirs. The 75 merged-elsewhere local branches (re-check each with `git cherry main <b>` right before deleting):
   `58s2-qa 59b-qa 59s1-qa 59s2-qa 59s3-qa 59s4-qa 62s12-qa 62s345-qa d59-rc-run design-64 f3-qa f3-run f3r2-qa
