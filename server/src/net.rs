@@ -8,8 +8,15 @@
 //!   client forge).
 //! - [limit_key]: what limits and bans count by - an IPv4 address, or an IPv6 /64 (one home gets
 //!   a whole /64, so a single IPv6 address is no key at all).
+//! - [USER_AGENT]: what this server calls itself when it asks others.
 
 use std::collections::HashMap;
+
+/// The `User-Agent` of every request this server makes (security review P5): GitHub, F-Droid
+/// repos, the filter lists, podcast hosts and their CDNs, NRK, Storytel, Spotify. Neutral - no
+/// "kid", nothing about the household - and fixed, never the server's version, so every server
+/// sends the same; GitHub's API wants one (an app name).
+pub const USER_AGENT: &str = "vibb/1.0";
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use axum::http::HeaderMap;
@@ -455,6 +462,40 @@ impl NetConfig {
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+
+    /// Security review P5: every outbound client says [USER_AGENT], and it names no kid. It reads
+    /// the builders' `user_agent` calls only: a new `Client::builder()` without one isn't caught - reqwest
+    /// then sends no `User-Agent` at all (as the push transport does), which names nothing either.
+    #[test]
+    fn every_client_says_the_one_neutral_user_agent() {
+        assert!(!USER_AGENT.to_lowercase().contains("kid"));
+        // Spelled in two halves, so this test's own text isn't a client.
+        let needle = concat!(".user", "_agent(");
+        let wanted = concat!(".user", "_agent(crate::net::USER_AGENT)");
+        let mut dirs = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        let mut clients = 0;
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for (at, _) in text.match_indices(needle) {
+                        let rest = &text[at..];
+                        assert!(
+                            rest.starts_with(wanted),
+                            "{}: {}",
+                            path.display(),
+                            rest.lines().next().unwrap_or_default()
+                        );
+                        clients += 1;
+                    }
+                }
+            }
+        }
+        assert!(clients >= 8, "the scan found {clients} clients");
+    }
 
     fn ip(text: &str) -> IpAddr {
         text.parse().unwrap()

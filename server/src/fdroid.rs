@@ -190,7 +190,7 @@ pub fn tag_of(version_name: &str, version_code: i64) -> String {
 /// trust path (Q-2, as `music_net`).
 pub fn client() -> Result<reqwest::Client, Failure> {
     reqwest::Client::builder()
-        .user_agent("kid-phone-server (self-hosted)")
+        .user_agent(crate::net::USER_AGENT)
         .no_proxy()
         .connect_timeout(REQUEST_TIMEOUT)
         .redirect(crate::handlers::tracked_apps::https_redirects())

@@ -418,7 +418,7 @@ pub async fn healthcheck(bind_addr: &str) -> Result<(), String> {
 /// about (v0.18.5 shipped one).
 pub async fn selftest_tls() -> Result<String, String> {
     let client = reqwest::Client::builder()
-        .user_agent("kid-phone-server selftest-tls (self-hosted, github.com)")
+        .user_agent(crate::net::USER_AGENT)
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|err| format!("couldn't build the HTTP client: {err}"))?;

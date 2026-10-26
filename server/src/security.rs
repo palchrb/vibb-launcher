@@ -148,6 +148,55 @@ pub async fn record_security_event(
 /// The security-log lines one phone's reports may write in a rolling hour (security review L1).
 pub const PHONE_LINES_AN_HOUR: i64 = 60;
 
+/// Declares [PhoneLine] from one list, so its variants, [PhoneLine::ALL], the wire name and the
+/// window can't drift apart.
+macro_rules! phone_lines {
+    ($($(#[$doc:meta])* $variant:ident = $wire:literal, $days:expr;)*) => {
+        /// The kinds of line a phone's reports write ([record_phone_event]), each with how long the
+        /// log keeps it (security review P7: what the kid's phone did goes with the data it
+        /// describes, never the sign-ins' 180 days; `retention::prune`).
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum PhoneLine {
+            $($(#[$doc])* $variant,)*
+        }
+
+        impl PhoneLine {
+            pub const ALL: &[PhoneLine] = &[$(PhoneLine::$variant,)*];
+
+            /// The `security_events.event_type`.
+            pub fn wire(self) -> &'static str {
+                match self {
+                    $(PhoneLine::$variant => $wire,)*
+                }
+            }
+
+            /// Days the security log keeps the line.
+            pub fn keep_days(self) -> i64 {
+                match self {
+                    $(PhoneLine::$variant => $days,)*
+                }
+            }
+        }
+    };
+}
+
+phone_lines! {
+    AppInstalled = "app_installed", crate::retention::PHONE_LOG_DAYS;
+    PlayInstallMode = "play_install_mode", crate::retention::PHONE_LOG_DAYS;
+    BootUnseen = "boot_unseen", crate::retention::PHONE_LOG_DAYS;
+    AppBlocked = "phone_app_blocked", crate::retention::PHONE_LOG_DAYS;
+    ForeignAccess = "phone_foreign_access", crate::retention::PHONE_LOG_DAYS;
+    RelockFindings = "phone_relock_findings", crate::retention::PHONE_LOG_DAYS;
+    MockLocationIgnored = "mock_location_ignored", crate::retention::PHONE_LOG_DAYS;
+    /// The line in place of an hour's lines past [PHONE_LINES_AN_HOUR].
+    LinesDropped = "phone_lines_dropped", crate::retention::PHONE_LOG_DAYS;
+    /// With the parent-PIN events they describe.
+    ParentPinUsed = "parent_pin_used", crate::parent_pin::PIN_EVENT_DAYS;
+    ParentPinLockout = "parent_pin_lockout", crate::parent_pin::PIN_EVENT_DAYS;
+    /// The parent's Storytel credential handed to a phone: a sign-in's 180 days.
+    StorytelLoginSent = "storytel_login_sent", crate::retention::SECURITY_EVENT_DAYS;
+}
+
 /// A line a phone's report raised - a PIN use, a start without the launcher, an app installed, a
 /// relock's findings -, within [PHONE_LINES_AN_HOUR] a rolling hour per phone (security review L1:
 /// a leaked token or a rooted phone can't bury the sign-ins under rows kept 180 days). `line`
@@ -160,7 +209,7 @@ pub const PHONE_LINES_AN_HOUR: i64 = 60;
 pub async fn record_phone_event(
     conn: &mut sqlx::SqliteConnection,
     device_id: i64,
-    event_type: &str,
+    kind: PhoneLine,
     line: &str,
 ) -> Result<bool, sqlx::Error> {
     let written: i64 = sqlx::query_scalar(
@@ -171,10 +220,10 @@ pub async fn record_phone_event(
     .bind(format!("device {device_id}"))
     .fetch_one(&mut *conn)
     .await?;
-    let (event_type, line) = match written {
-        n if n < PHONE_LINES_AN_HOUR => (event_type, line.to_string()),
+    let (kind, line) = match written {
+        n if n < PHONE_LINES_AN_HOUR => (kind, line.to_string()),
         n if n == PHONE_LINES_AN_HOUR => (
-            "phone_lines_dropped",
+            PhoneLine::LinesDropped,
             format!(
                 "device {device_id}: more lines from this phone in this hour are not logged (at \
                  most {PHONE_LINES_AN_HOUR} an hour)"
@@ -182,9 +231,9 @@ pub async fn record_phone_event(
         ),
         _ => return Ok(false),
     };
-    let own = event_type != "phone_lines_dropped";
+    let own = kind != PhoneLine::LinesDropped;
     sqlx::query("INSERT INTO security_events (event_type, detail) VALUES (?, ?)")
-        .bind(event_type)
+        .bind(kind.wire())
         .bind(line)
         .execute(&mut *conn)
         .await?;
@@ -195,15 +244,15 @@ pub async fn record_phone_event(
 pub async fn record_phone_event_logged(
     db: &sqlx::SqlitePool,
     device_id: i64,
-    event_type: &str,
+    kind: PhoneLine,
     line: &str,
 ) {
     let written = match db.acquire().await {
-        Ok(mut conn) => record_phone_event(&mut conn, device_id, event_type, line).await,
+        Ok(mut conn) => record_phone_event(&mut conn, device_id, kind, line).await,
         Err(err) => Err(err),
     };
     if let Err(err) = written {
-        tracing::error!(device_id, event_type, %err, "can't write a phone's security-log line");
+        tracing::error!(device_id, kind = kind.wire(), %err, "can't write a phone's security-log line");
     }
 }
 

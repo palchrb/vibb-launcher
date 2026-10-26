@@ -49,7 +49,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   a rename and a directory sync in a 0700 directory; a non-empty file is never replaced; `music_secret` uses it too),
   `src/webpush.rs` (pure, on `ring` - now a direct dependency, `default-features = false, features = ["alloc"]`,
   already compiled in through rustls, so `Cargo.lock` gained only the dependency line: `VapidKey` (PKCS#8, `public`
-  base64url, `fingerprint` 16 hex), `vapid_jwt` (ES256, `aud` = "https://host", `exp` = `iat` + 12 h, `sub` - `VAPID_SUBJECT`, else an `https://` origin, else none),
+  base64url, `fingerprint` 16 hex), `vapid_jwt` (ES256, `aud` = "https://host", `exp` = `iat` + 12 h, `sub` - `VAPID_SUBJECT`, else `push::DEFAULT_SUBJECT`, the project's page, the same for every server: security review P4, 0.57.0 - before, the subscription's `https://` origin, the tailnet name, which the push services read in clear; the keys are unchanged, so every subscription keeps working),
   `authorization` ("vapid t=…, k=…"), `encrypt` (RFC 8291 + RFC 8188 `aes128gcm`, one record, a fresh ephemeral key
   then a fresh salt per message, plaintext cap 3072), `allowed` (https, port 443, no userinfo, no IP literal;
   `fcm.googleapis.com`, `jmt17.google.com` (a Chromium without Google's API keys, 2026-10-19),

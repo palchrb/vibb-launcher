@@ -821,7 +821,13 @@ async fn nrk_and_rss_links_are_checked_once_and_named_after_their_title() {
     .unwrap();
     assert_eq!((name.as_str(), source.as_str()), ("Ukas nyheter", "rss"));
     assert_eq!(key, crate::music::state_key("https://example.org/feed.xml"));
-    assert_eq!(events(&app, "music_entry_added").await.len(), 3);
+    let added = events(&app, "music_entry_added").await;
+    assert_eq!(added.len(), 3);
+    // Security review P7: a feed is logged by its host only (its URL may carry a token).
+    assert!(
+        added[2].ends_with("(feed at example.org)") && !added[2].contains("feed.xml"),
+        "{added:?}"
+    );
 }
 
 #[tokio::test]
