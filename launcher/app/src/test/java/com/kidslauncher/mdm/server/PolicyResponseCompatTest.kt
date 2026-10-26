@@ -564,6 +564,29 @@ class PolicyResponseCompatTest {
         assertNull(LastEnforcedPlan.of(policy).toPolicy().lockGlance)
     }
 
+    /** Design 69 §4.1: `calendar` - the server's literal for a fresh phone decodes, survives the cache and reads as its
+     * switches; nothing in it fails the policy; missing is an older server; the fallback never carries it. */
+    @Test
+    fun `calendar never fails the policy and is carried as is (69)`() {
+        fun withCalendar(calendar: String) = serverResponse.replaceFirst("{", "{\"calendar\": $calendar,")
+        val today = withCalendar(
+            """{"on_home": true, "kid_adds": true, "glance_next": false, "lock_reminders": "off", "calendars": [], "rules": []}""",
+        )
+        val policy = (decodeFresh(today) as FreshDecode.Ok).policy
+        assertEquals(
+            com.kidslauncher.mdm.day.CalendarPolicy(usable = true, onHome = true, kidAdds = true),
+            com.kidslauncher.mdm.day.calendarPolicy(policy.calendar),
+        )
+        assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
+        for (odd in listOf("null", "[]", "5", "{}", """{"rules": [5, null, {"id": "x"}], "calendars": "no"}""")) {
+            assertTrue(odd, decodeFresh(withCalendar(odd)) is FreshDecode.Ok)
+        }
+        val older = (decodeFresh(serverResponse) as FreshDecode.Ok).policy
+        assertNull(older.calendar)
+        assertEquals(com.kidslauncher.mdm.day.CalendarPolicy.OLDER_SERVER, com.kidslauncher.mdm.day.calendarPolicy(older.calendar))
+        assertNull(LastEnforcedPlan.of(policy).toPolicy().calendar)
+    }
+
     /** Design 13: "App updates only on Wi-Fi". Missing (an older server) or `null` = off, as
      * before - nothing in this key can fail the policy; the fallback keeps the parent's choice. */
     @Test

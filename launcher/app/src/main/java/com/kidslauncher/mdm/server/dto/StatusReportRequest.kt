@@ -114,7 +114,37 @@ data class StatusReportRequest(
     /** Design 64 step 2 (capability `zones_v1`): the phone's zone watch - see [ZoneWatchReport];
      * `null` = not device owner (left out). */
     val zoneWatch: ZoneWatchReport? = null,
+    /** Design 69 §4.2 (capability `calendar_v1`): which calendars the phone has - see [CalendarReport]; `null` = not
+     * read yet (left out). Never an event, a title, a count or a time. Pinned by `calendar_status_report.json`
+     * (`CalendarReportTest`). */
+    val calendar: CalendarReport? = null,
 )
+
+/**
+ * `StatusReportRequest.calendar` (design 69 §4.2): whether the phone can read its calendar provider ([readable]:
+ * `false` = no permission or the provider threw, then [calendars] is empty), each calendar it has, and the ids of the
+ * parent's rules this launcher had to drop ([rulesSkipped]).
+ */
+@Serializable
+data class CalendarReport(
+    val readable: Boolean,
+    val calendars: List<CalendarReportRow>,
+    val rulesSkipped: List<Long>,
+)
+
+/** One calendar: its key (16 hex, `day/CalendarKey.kt`), the sync app's account type, the display name (a label
+ * only), the feed's host ([source], never its path, query, user or port; `null` = none - left out) and
+ * `CALENDAR_ACCESS_LEVEL`. Never the account name. */
+@Serializable
+data class CalendarReportRow(
+    val key: String,
+    val accountType: String,
+    val name: String,
+    val source: String? = null,
+    val accessLevel: Int,
+) {
+    override fun toString() = "CalendarReportRow($key)"
+}
 
 /**
  * `StatusReportRequest.zoneWatch` (design 64 step 2; no defaults: every field is always sent): the

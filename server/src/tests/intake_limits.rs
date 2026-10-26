@@ -372,6 +372,28 @@ fn the_field_tables_keep_every_contract_key() {
                 checked += 1;
             }
         }
+        // Design 69 §4.2: the calendar report through its own sanitizer (its rows through
+        // `calendar::CALENDAR_ROW_FIELDS`), with every rule id it names known.
+        if let Some(blob) = json.get("calendar") {
+            let ids = blob["rules_skipped"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|id| id.as_i64())
+                .collect();
+            let kept = crate::calendar::sanitize_report(blob, &ids).unwrap();
+            let kept = serde_json::to_value(&kept).unwrap();
+            let mut expected = blob.clone();
+            // A calendar without a source is stored as `null`; the phone leaves the key out.
+            for row in expected["calendars"].as_array_mut().unwrap() {
+                row.as_object_mut()
+                    .unwrap()
+                    .entry("source")
+                    .or_insert(serde_json::Value::Null);
+            }
+            assert_eq!(kept, expected, "{}'s calendar", path.display());
+            checked += 1;
+        }
     }
     assert!(checked >= 1, "time_status_report.json carries a time_state");
 }

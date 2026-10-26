@@ -1042,6 +1042,9 @@ pub struct PolicyResponse {
     /// with whether its text shows too (design 51). A failing query sends `apps: []` (fewer rows, never a 500). An older
     /// launcher ignores it; an older server's missing key means Element X, sender only.
     pub lock_glance: crate::lock_glance::LockGlancePolicy,
+    /// Dagen (design 69 §4.1), always sent: the phone-wide switches, the parent's choices per calendar and the title
+    /// rules (`calendar::CalendarPolicy`). A DB error is a 500 (a missing hide rule would show what the parent hid).
+    pub calendar: crate::calendar::CalendarPolicy,
 }
 
 /// `PolicyResponse.kid_lock`.
@@ -1269,6 +1272,11 @@ pub struct StatusReportRequest {
     /// launchers.
     #[serde(default)]
     pub zone_watch: Option<serde_json::Value>,
+    /// Design 69 §4.2: `{readable, calendars: [{key, account_type, name, source, access_level}], rules_skipped}` -
+    /// which calendars the phone has, never an event (`calendar::sanitize_report`, stored as
+    /// `devices.calendar_report`). Absent from older launchers.
+    #[serde(default)]
+    pub calendar: Option<serde_json::Value>,
 }
 
 /// `StatusReportRequest.extra_locations`: the entries that are a [LocationReport]; anything else

@@ -127,6 +127,12 @@ data class PolicyResponse(
      * build before design 25) = unknown, missed calls only (QA Low 11). Not in
      * [com.kidslauncher.mdm.server.LastEnforcedPlan]. */
     val lockGlance: kotlinx.serialization.json.JsonElement? = null,
+    /** Dagen (design 69 §4.1): `{on_home, kid_adds, glance_next, lock_reminders, calendars: [{key, shown, remind,
+     * remind_minutes, writable_for_kid}], rules: [{id, calendar, field, match, pattern, action, text}]}`. Raw JSON read
+     * field by field by [com.kidslauncher.mdm.day.calendarPolicy], so nothing in it can fail the policy. Missing (an
+     * older server) = every calendar shown, no rules, nothing on the lock. Not in
+     * [com.kidslauncher.mdm.server.LastEnforcedPlan]: without a usable cache Dagen is off. */
+    val calendar: kotlinx.serialization.json.JsonElement? = null,
 )
 
 /** `PolicyResponse.kidLock` - `security::hash_pin` on the server (PBKDF2-SHA256, see

@@ -359,6 +359,9 @@ pub(crate) async fn build_policy(
             crate::lock_glance::LockGlancePolicy { apps: Vec::new() }
         });
 
+    // Dagen (design 69 §4.1): a read error fails the policy, like the zones - the phone keeps its cache.
+    let calendar = crate::calendar::policy_calendar(&state.db, device_id).await?;
+
     // Popped last, after every read above has succeeded, and in one statement: a 500 never
     // consumes a command, and two concurrent polls can't both get the same one. A launcher that
     // confirms commands (security review L12) confirms each one before running it; one it didn't
@@ -500,6 +503,7 @@ pub(crate) async fn build_policy(
         location_policy,
         music,
         lock_glance,
+        calendar,
     })
 }
 
@@ -1356,6 +1360,8 @@ pub async fn status(
     .execute(&state.db)
     .await
     .ok();
+    // Design 69 §4.2: which calendars the phone has (its own sanitizer), never an event.
+    crate::calendar::store_report(&state.db, device.id, report.calendar.as_ref()).await;
     // The phone's storage budget (security review L4): past it, this report replaces the last.
     if let Some(previous) = &previous {
         crate::retention::replace_over_budget(&state.db, device.id, previous.id).await;

@@ -6,6 +6,7 @@ mod app_icons;
 mod attention;
 mod audit;
 mod boot_witness;
+mod calendar;
 mod config;
 mod crashes;
 mod device_routes;

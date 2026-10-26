@@ -310,6 +310,7 @@ async fn policy_json_keys_snapshot() {
             "bedtime_start_minutes",
             "block_activity_start",
             "boot_cover",
+            "calendar",
             "call_policy",
             "dns_filter_version",
             "dns_log_enabled",
@@ -343,6 +344,7 @@ async fn policy_json_keys_snapshot() {
     for non_null in [
         "app_updates_wifi_only",
         "block_activity_start",
+        "calendar",
         "call_policy",
         "dns_filter_version",
         "dns_log_enabled",
@@ -465,6 +467,22 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(
         object["lock_glance"],
         serde_json::json!({ "apps": [{ "package": "io.element.android.x", "show_text": false }] })
+    );
+
+    // Dagen (design 69 §4.1): always an object, a fresh phone's defaults - on Home, the kid may add events (to the
+    // phone's own calendar), nothing on the lock, no calendars saved, no rules. The launcher's `calendarPolicy`
+    // reads exactly this shape (`PolicyResponseCompatTest`); a rule's and a calendar's keys in
+    // `calendar::the_policy_carries_the_rules_and_the_calendars`.
+    assert_eq!(
+        object["calendar"],
+        serde_json::json!({
+            "on_home": true,
+            "kid_adds": true,
+            "glance_next": false,
+            "lock_reminders": "off",
+            "calendars": [],
+            "rules": []
+        })
     );
 
     // The launcher's (nullable, step 1: ignored) music DTO (design 21): every key, a fresh phone's

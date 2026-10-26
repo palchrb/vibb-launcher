@@ -9,6 +9,7 @@ mod app_updates;
 mod attention;
 mod avatars;
 mod backup_secrets;
+mod calendar;
 mod calls;
 mod catalog_pins;
 mod cleanup;
