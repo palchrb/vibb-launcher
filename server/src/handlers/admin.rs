@@ -69,6 +69,7 @@ fn label_of(kind: &str) -> Option<&'static str> {
         "totp_failed" => "Wrong two-factor code",
         "totp_reset" => "Two-factor login reset",
         "totp_reset_refused" => "Two-factor reset refused",
+        "password_change_refused" => "Password change refused",
         "password_changed" => "Password changed",
         "signed_out_everywhere" => "Signed out everywhere",
         "login_expired" => "Sign-in after the invitation expired",

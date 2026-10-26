@@ -469,7 +469,18 @@ pub async fn change_password(
         Ok(changed) => changed,
         Err(admin_auth::Busy) => return admin_auth::busy_response(),
     };
-    // Three wrong in a row end the session (design 59 §2.2's one re-auth rule).
+    // Three wrong in a row end the session (design 59 §2.2's one re-auth rule); each wrong one is
+    // in the security log (security review L7).
+    if changed.is_none() {
+        security::record_security_event(
+            &state.db,
+            "password_change_refused",
+            Some(&admin.username),
+            None,
+            Some("wrong current password"),
+        )
+        .await;
+    }
     let reauth = admin_auth::record_reauth(&state.db, &session, &admin, changed.is_some()).await;
     let new_hash = match (reauth, changed) {
         (admin_auth::Reauth::Right, Some(hash)) => hash,
@@ -902,7 +913,18 @@ pub async fn update_account_password(
         Ok(changed) => changed,
         Err(admin_auth::Busy) => return admin_auth::busy_response(),
     };
-    // Three wrong in a row end the session (design 59 §2.2's one re-auth rule).
+    // Three wrong in a row end the session (design 59 §2.2's one re-auth rule); each wrong one is
+    // in the security log (security review L7).
+    if changed.is_none() {
+        security::record_security_event(
+            &state.db,
+            "password_change_refused",
+            Some(&admin.username),
+            None,
+            Some("wrong current password"),
+        )
+        .await;
+    }
     let reauth = admin_auth::record_reauth(&state.db, &session, &admin, changed.is_some()).await;
     let new_hash = match (reauth, changed) {
         (admin_auth::Reauth::Right, Some(hash)) => hash,

@@ -378,6 +378,12 @@ async fn the_password_forms_share_one_count() {
     assert!(res.text().contains("One more wrong one signs you out"));
     let res = reveal(&app, &cookie, id, "not it").await;
     assert_eq!(res.location(), Some("/login"));
+    // Each wrong one is in the security log, the password change's too (security review L7).
+    assert_eq!(
+        events(&app, "password_change_refused").await,
+        [Some("wrong current password".to_string())]
+    );
+    assert_eq!(events(&app, "totp_reset_refused").await.len(), 1);
     let account = app.get_page("/account", &cookie).await;
     assert_eq!(account.location(), Some("/login"));
     // Nothing was changed on the way.

@@ -143,7 +143,9 @@ Step 2 (Lock Screen & PINs; `docs/notes/server/pwa.md`, "Lock Screen & PINs", ha
   Android's lock"), every save nudges. Labelled for the test phase: Android's lock is the destination (PLAN).
 - **Show Child PIN** (`device_pages::lock_action`, `POST /devices/{id}/lock#show-pin` with `action=reveal_kid_pin` and
   `password`; another action 400): `admin_auth::reauth` (the gated Argon2; three wrong in a row end every session of the
-  account, the count - `admin_users.reauth_wrong` - shared with the password and 2FA forms), then the page rendered with `kid_lock::shown_pin` over
+  account, the count - `admin_users.reauth_wrong` - shared with the password and 2FA forms and Add/Reset/Remove Parent;
+  security review L7 asked for exactly this count, built in design 59; since 0.55.0 a wrong one at the password forms is
+  logged too, `password_change_refused`, as the 2FA reset's `totp_reset_refused`), then the page rendered with `kid_lock::shown_pin` over
   `kid_lock::KeptPin` (the four columns in one read): the PIN; for a phone with the capability reporting another rev,
   the confirmed PIN kept in `prev` when its rev is the phone's ("New Child PIN" + "Until the phone gets it, its PIN is
   still 1357."), else "The phone still has an earlier PIN"; a reported `pin_rev: null` on Android's lock says the PIN
