@@ -44,6 +44,7 @@ mod parents;
 mod play;
 mod power;
 mod provisioning;
+mod settings_log;
 pub(crate) mod settings_pages;
 mod shell;
 mod sound_mode;
@@ -257,6 +258,28 @@ impl TestApp {
         };
         self.send(builder.body(body).expect("failed to build request"))
             .await
+    }
+
+    /// The phone's `GET /api/devices/policy` with `token`: a 200, as JSON.
+    pub async fn policy(&self, token: &str) -> serde_json::Value {
+        let res = self
+            .request(Method::GET, "/api/devices/policy", Some(token), None)
+            .await;
+        assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+        res.json()
+    }
+
+    /// The phone's `POST /api/devices/status` with `token`: `{"lock_reason": "NONE",
+    /// "kiosk_engaged": true}` with `extra`'s keys over it; a 204.
+    pub async fn post_status(&self, token: &str, extra: serde_json::Value) {
+        let mut body = serde_json::json!({ "lock_reason": "NONE", "kiosk_engaged": true });
+        for (key, value) in extra.as_object().expect("an object of status keys") {
+            body[key] = value.clone();
+        }
+        let res = self
+            .request(Method::POST, "/api/devices/status", Some(token), Some(body))
+            .await;
+        assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
     }
 
     /// Sends a request through the router as a real connection would: with a fixed loopback

@@ -11,22 +11,6 @@ use serde_json::json;
 use super::settings_pages::forms;
 use super::{Section, TestApp, assert_redirect, device_page};
 
-async fn post_status(app: &TestApp, token: &str, body: serde_json::Value) {
-    let mut report = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
-    for (key, value) in body.as_object().unwrap() {
-        report[key] = value.clone();
-    }
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(token),
-            Some(report),
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
-}
-
 /// One group of the summary: `<section id="…">` to its end.
 fn group<'a>(html: &'a str, id: &str) -> &'a str {
     let start = html
@@ -88,7 +72,7 @@ async fn the_header_says_whether_the_phone_is_connected() {
     assert!(!html.contains("class=\"app-header\""), "{html}");
 
     // A report, no stream: Away, and changes may be delayed.
-    post_status(&app, &token, json!({})).await;
+    app.post_status(&token, json!({})).await;
     let html = page().await;
     let head = header(&html);
     assert!(
@@ -142,8 +126,7 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
         .await
         .today(chrono::Utc::now())
         .to_string();
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "time_state": { "lock_reason": "NONE", "day": today, "used_minutes": 42,
                                 "budget_minutes": 90 } }),
@@ -160,8 +143,7 @@ async fn the_header_shows_the_lock_and_todays_screen_time() {
         "{head}"
     );
     assert!(head.contains("<i style=\"width: 46%\"></i>"), "{head}");
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "time_state": { "lock_reason": "BEDTIME", "active_rule_name": "Leggetid",
                                 "day": today, "used_minutes": 42, "budget_minutes": 90 } }),
@@ -209,12 +191,8 @@ async fn the_quick_actions_follow_the_phone() {
     );
 
     add_rule(&app, "Skole <i>").await;
-    post_status(
-        &app,
-        &token,
-        json!({ "capabilities": ["window_relock_v1"] }),
-    )
-    .await;
+    app.post_status(&token, json!({ "capabilities": ["window_relock_v1"] }))
+        .await;
     let html = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
@@ -255,9 +233,7 @@ async fn every_form_on_the_summary_returns_to_its_group() {
     .execute(&app.db)
     .await
     .unwrap();
-    post_status(
-        &app,
-        &token,
+    app.post_status(&token,
         json!({ "capabilities": ["window_relock_v1"],
                 "install_mode": { "until_ms": chrono::Utc::now().timestamp_millis() + 600_000 },
                 "relock_blocks": [{ "package_name": "org.example.game", "signer": null,

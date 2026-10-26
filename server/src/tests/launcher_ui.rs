@@ -12,17 +12,9 @@ use sha2::{Digest, Sha256};
 
 use super::{Section, TestApp, TestResponse, assert_redirect, device_page, form_action_of};
 
-async fn policy(app: &TestApp, token: &str) -> serde_json::Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK);
-    res.json()
-}
-
 /// `launcher_ui` without the wallpapers (tests/wallpapers.rs covers those).
 async fn launcher_settings(app: &TestApp, token: &str) -> serde_json::Value {
-    let mut ui = policy(app, token).await["launcher_ui"].clone();
+    let mut ui = app.policy(token).await["launcher_ui"].clone();
     assert!(ui["wallpapers"].is_array(), "wallpapers always sent");
     assert!(
         ui["app_display"].is_array(),
@@ -244,7 +236,7 @@ async fn photo_is_reencoded_and_reaches_the_device() {
 
     let hash = photo_hash(&app, mamma).await.expect("photo hash stored");
     assert_eq!(stored_files(&app), [format!("{hash}.jpg")]);
-    let contacts = policy(&app, &token).await["call_policy"]["contacts"].clone();
+    let contacts = app.policy(&token).await["call_policy"]["contacts"].clone();
     assert_eq!(contacts[0]["photo"], json!(hash));
 
     let res = app
@@ -429,7 +421,7 @@ async fn replaced_and_removed_photos_are_deleted() {
     assert_eq!(photo_hash(&app, mamma).await, None);
     assert!(stored_files(&app).is_empty());
     assert_eq!(
-        policy(&app, &token).await["call_policy"]["contacts"][0]["photo"],
+        app.policy(&token).await["call_policy"]["contacts"][0]["photo"],
         json!(null)
     );
 

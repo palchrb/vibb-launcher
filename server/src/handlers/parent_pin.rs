@@ -106,7 +106,9 @@ pub async fn update_parent_pin(
         .fetch_optional(&state.db)
         .await;
         match stored {
-            Ok(Some(Some(_))) => return back("override_needed_by_lock"),
+            Ok(Some(Some(_))) => {
+                return crate::settings_log::refused(back("override_needed_by_lock"));
+            }
             Ok(_) => ("override_pin_cleared", "parent_pin_cleared"),
             Err(err) => {
                 tracing::error!(device_id = id, %err, "failed to remove the parent PIN");
@@ -119,7 +121,7 @@ pub async fn update_parent_pin(
             .map(|p| p.trim().to_string())
             .unwrap_or_default();
         if !parent_pin::valid(&new_pin) {
-            return back("parent_pin_invalid");
+            return crate::settings_log::refused(back("parent_pin_invalid"));
         }
         // PBKDF2 (the cross-check with the kid's PIN and the new hash): off the async workers.
         let decided = tokio::task::spawn_blocking(move || {
@@ -135,7 +137,7 @@ pub async fn update_parent_pin(
         .await;
         let ((hash, salt), easy) = match decided {
             Ok(Some(new)) => new,
-            Ok(None) => return back("override_is_kid_pin"),
+            Ok(None) => return crate::settings_log::refused(back("override_is_kid_pin")),
             Err(err) => {
                 tracing::error!(device_id = id, %err, "parent PIN hashing failed");
                 return (StatusCode::INTERNAL_SERVER_ERROR, SAVE_FAILED).into_response();

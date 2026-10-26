@@ -424,6 +424,7 @@ service after editing: `sudo systemctl restart kid-phone-server`):
 | `LAUNCHER_ADMIN_COMPONENT` | `me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` (the launcher's package is `me.vibb.launcher` since 2026-10-06; an `.env` that still has the old `com.kidslauncher.mdm/...` default is read as the new one) |
 | `LAUNCHER_APK_URL` | `https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk` (only launcher releases are ever "latest") |
 | `LAUNCHER_SIGNATURE_CHECKSUM` | none - required for the provisioning QR code |
+| `PHONE_SERVER_URL` | none - the phones' server address in the setup QR while Settings > Phone Setup has none saved; an address saved there wins, and the page says which one is used. `https://` (an `http://` address is used with a startup warning) |
 | `SERVER_RELEASE_REPO` | `palchrb/vibb-launcher` (where the Updates page looks for new server versions - only `server-vX.Y.Z` releases count) |
 
 `LAUNCHER_SIGNATURE_CHECKSUM` is the SHA-256 of the launcher's **signing certificate** (not of the APK file),
@@ -497,8 +498,8 @@ Order, if this server ever had FCM configured:
 1. Release and install the server first (`server-v0.20.0` or later, `update.sh`). Migration 0048 drops the stored FCM
    installation IDs. A phone that was using FCM gets no nudges from this update until its next check-in (at most
    30 minutes), then switches to the stream by itself; "Sync now" in its Settings or a reboot shortens that.
-2. Remove `FCM_SERVICE_ACCOUNT_FILE` from `/opt/kid-phone-server/.env` (while it is set, the server logs one warning at
-   startup and ignores it), delete the key file (`sudo rm /etc/kid-phone-server/fcm-service-account.json`) and every
+2. Remove `FCM_SERVICE_ACCOUNT_FILE` from `/opt/kid-phone-server/.env` (the server ignores it; 0.20.0-0.53.x
+   also logged a warning at startup), delete the key file (`sudo rm /etc/kid-phone-server/fcm-service-account.json`) and every
    other copy, and **revoke the key**: delete the service account (or its key) in Google Cloud IAM - that is what makes
    the stored IDs and any old backup useless. Then delete the Firebase project.
 3. Then the launcher (a `launcher-v*` tag on design 19's launcher commits or later). Only after that tag's release

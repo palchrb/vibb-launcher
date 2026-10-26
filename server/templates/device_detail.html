@@ -126,12 +126,11 @@
         grid's width. -#}
     <section id="quick" aria-labelledby="quick-title">
         <h2 class="group-header" id="quick-title">Quick Actions</h2>
-        {#- Where the "Restrictions paused" alarm lands: what it means and what ends it, for an older
-            launcher too (qa-31-s10-code M1). -#}
+        {#- Where the "Restrictions paused" alarm lands: how the pause ends, for an older launcher too
+            (qa-31-s10-code M1). One line, no alarm colour: the Attention row above is the one red
+            alert (the user, 2026-10-26). -#}
         {% if paused %}
-        <div class="attention attention-alarm" data-warning="restrictions-paused">
-            <span class="attention-text">Unlocked on the phone<span class="attention-sub">Restrictions are paused (from here, or with the Parent PIN in Vibb One's Settings): apps, Settings and the Play Store are open. {% if relock.lock_again %}It ends by itself, or tap Lock again to end it now.{% else %}It ends by itself; this version of Vibb One can't be locked again from here.{% endif %}</span></span>
-        </div>
+        <p class="quick-note" data-warning="restrictions-paused">{% if relock.lock_again %}The pause ends by itself, or tap Lock again to end it now.{% else %}The pause ends by itself; this version of Vibb One can't be locked again from here.{% endif %}</p>
         {% endif %}
         <div class="act-grid">
             {% for minutes in [15, 30, 60] %}

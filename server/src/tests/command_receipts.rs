@@ -2,17 +2,9 @@
 //! (`POST /api/devices/command-receipt`), and a command it didn't confirm is offered again.
 
 use axum::http::{Method, StatusCode};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::TestApp;
-
-async fn policy(app: &TestApp, token: &str) -> Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    res.json()
-}
 
 /// A status report that says the launcher confirms commands.
 async fn report_receipts(app: &TestApp, token: &str) {
@@ -116,31 +108,31 @@ async fn an_unconfirmed_command_is_offered_again_to_a_phone_that_confirms() {
     report_receipts(&app, &token).await;
     let id = queue(&app, device, "lock").await;
 
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], id);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], id);
     assert!(
-        policy(&app, &token).await["pending_command"].is_null(),
+        app.policy(&token).await["pending_command"].is_null(),
         "not twice within two minutes"
     );
     // The answer was lost: after two minutes it comes again, the same id.
     age_delivery(&app, id, 3).await;
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], id);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], id);
     assert_eq!(row(&app, id).await.1, 2);
     // A third and last time.
     age_delivery(&app, id, 3).await;
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], id);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], id);
     age_delivery(&app, id, 3).await;
     assert!(
-        policy(&app, &token).await["pending_command"].is_null(),
+        app.policy(&token).await["pending_command"].is_null(),
         "at most three deliveries"
     );
     assert_eq!(row(&app, id).await.1, 3);
 
     // A confirmed one is never offered again.
     let ring = queue(&app, device, "ring").await;
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], ring);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], ring);
     assert_eq!(receipt(&app, &token, ring).await, StatusCode::NO_CONTENT);
     age_delivery(&app, ring, 30).await;
-    assert!(policy(&app, &token).await["pending_command"].is_null());
+    assert!(app.policy(&token).await["pending_command"].is_null());
 }
 
 #[tokio::test]
@@ -148,9 +140,9 @@ async fn an_older_launcher_gets_a_command_once() {
     let app = TestApp::new().await;
     let (device, token) = app.enrolled_device("phone").await;
     let id = queue(&app, device, "lock").await;
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], id);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], id);
     age_delivery(&app, id, 30).await;
-    assert!(policy(&app, &token).await["pending_command"].is_null());
+    assert!(app.policy(&token).await["pending_command"].is_null());
     assert_eq!(row(&app, id).await.1, 1);
 }
 
@@ -159,7 +151,7 @@ async fn a_result_confirms_and_says_whether_it_worked() {
     let app = TestApp::new().await;
     let (device, token) = app.enrolled_device("phone").await;
     let id = queue(&app, device, "wipe").await;
-    policy(&app, &token).await;
+    app.policy(&token).await;
     let res = app
         .request(
             Method::POST,
@@ -183,7 +175,7 @@ async fn a_new_command_stops_an_unconfirmed_one_coming_again() {
     let (device, token) = app.enrolled_device("phone").await;
     report_receipts(&app, &token).await;
     let ring = queue(&app, device, "ring").await;
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], ring);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], ring);
 
     let res = app
         .request_form(
@@ -197,12 +189,12 @@ async fn a_new_command_stops_an_unconfirmed_one_coming_again() {
     age_delivery(&app, ring, 3).await;
     // A command of the same kind replaces it (QA of cmd-expiry, Medium 1: only the same kind).
     assert_eq!(
-        policy(&app, &token).await["pending_command"]["command"],
+        app.policy(&token).await["pending_command"]["command"],
         "stop_ring"
     );
     age_delivery(&app, ring, 30).await;
     assert!(
-        policy(&app, &token).await["pending_command"].is_null(),
+        app.policy(&token).await["pending_command"].is_null(),
         "the ring stays history"
     );
     assert!(row(&app, ring).await.1 >= crate::models::MAX_COMMAND_DELIVERIES);
@@ -413,7 +405,7 @@ async fn a_stale_command_is_never_sent_again() {
     }
     report_receipts(&app, &token).await;
     assert!(
-        policy(&app, &token).await["pending_command"].is_null(),
+        app.policy(&token).await["pending_command"].is_null(),
         "nothing old replays"
     );
 }
@@ -426,7 +418,7 @@ async fn re_delivery_ends_with_the_window() {
     let (device, token) = app.enrolled_device("phone").await;
     report_receipts(&app, &token).await;
     let id = queue(&app, device, "lock").await;
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], id);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], id);
     // The first delivery is 14 minutes ago: still in the window.
     sqlx::query(
         "UPDATE device_commands SET first_delivered_at = datetime('now', '-14 minutes'), \
@@ -436,7 +428,7 @@ async fn re_delivery_ends_with_the_window() {
     .execute(&app.db)
     .await
     .unwrap();
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], id);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], id);
     // Past the window: never again, though only two of three deliveries were used.
     sqlx::query(
         "UPDATE device_commands SET first_delivered_at = datetime('now', '-16 minutes'), \
@@ -446,7 +438,7 @@ async fn re_delivery_ends_with_the_window() {
     .execute(&app.db)
     .await
     .unwrap();
-    assert!(policy(&app, &token).await["pending_command"].is_null());
+    assert!(app.policy(&token).await["pending_command"].is_null());
     assert_eq!(row(&app, id).await.1, 2);
 }
 
@@ -458,7 +450,7 @@ async fn a_lost_pause_never_runs_after_a_later_lock_again() {
     let (device, token) = app.enrolled_device("phone").await;
     report_receipts(&app, &token).await;
     let pause = queue(&app, device, "start_pause").await;
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], pause);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], pause);
     // The answer was lost; a minute later the parent ends the windows.
     sqlx::query(
         "INSERT INTO device_commands (device_id, command, requested_at) \
@@ -469,12 +461,12 @@ async fn a_lost_pause_never_runs_after_a_later_lock_again() {
     .await
     .unwrap();
     assert_eq!(
-        policy(&app, &token).await["pending_command"]["command"],
+        app.policy(&token).await["pending_command"]["command"],
         "end_windows"
     );
     age_delivery(&app, pause, 3).await;
     assert!(
-        policy(&app, &token).await["pending_command"].is_null(),
+        app.policy(&token).await["pending_command"].is_null(),
         "the pause stays history"
     );
 }
@@ -487,7 +479,7 @@ async fn an_unconfirmed_command_nudges_the_phone() {
     let (device, token) = app.enrolled_device("phone").await;
     report_receipts(&app, &token).await;
     let id = queue(&app, device, "ring").await;
-    policy(&app, &token).await;
+    app.policy(&token).await;
     let mut stream = app.state.command_notify.subscribe();
     assert!(
         crate::handlers::device_api::redelivery_nudge(
@@ -519,7 +511,7 @@ async fn a_new_enrollment_never_gets_the_earlier_phones_commands() {
     let (device, token) = app.enrolled_device("phone").await;
     report_receipts(&app, &token).await;
     let lock = queue(&app, device, "lock").await;
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], lock);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], lock);
     queue(&app, device, "wipe").await;
     age_delivery(&app, lock, 3).await;
 
@@ -535,7 +527,7 @@ async fn a_new_enrollment_never_gets_the_earlier_phones_commands() {
     assert_eq!(res.status, StatusCode::OK);
     let new_token = res.json()["device_token"].as_str().unwrap().to_string();
     assert!(
-        policy(&app, &new_token).await["pending_command"].is_null(),
+        app.policy(&new_token).await["pending_command"].is_null(),
         "neither the wipe nor the lock"
     );
     let commands: Vec<(String, Option<String>)> = sqlx::query_as(
@@ -574,7 +566,7 @@ async fn an_answer_counts_only_for_the_command_it_names() {
     let (device, token) = app.enrolled_device("phone").await;
     report_receipts(&app, &token).await;
     let old = queue(&app, device, "ring").await;
-    let first = policy(&app, &token).await["pending_command"].clone();
+    let first = app.policy(&token).await["pending_command"].clone();
     assert_eq!(first["id"], old);
     let old_requested = first["requested_at"]
         .as_str()
@@ -621,7 +613,7 @@ async fn an_answer_counts_only_for_the_command_it_names() {
         None,
         "the lock isn't confirmed by the ring's answers"
     );
-    let next = policy(&app, &token).await["pending_command"].clone();
+    let next = app.policy(&token).await["pending_command"].clone();
     assert_eq!(next["command"], "lock");
     assert_ne!(next["requested_at"], old_requested.as_str());
     // Its own receipt counts (one without requested_at - an older launcher - is the first test).

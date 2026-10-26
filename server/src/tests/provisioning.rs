@@ -77,6 +77,7 @@ fn provision_payload_uses_configured_values() {
         launcher_admin_component: "org.example/org.example.Admin".to_string(),
         launcher_apk_url: "https://example.org/launcher.apk".to_string(),
         launcher_signature_checksum: Some("B".repeat(43)),
+        phone_server_url: None,
         sse_keepalive_secs: 120,
         github_api: "https://api.github.com".to_string(),
     };
@@ -721,5 +722,82 @@ async fn a_payload_too_big_for_a_qr_code_keeps_the_live_code() {
         code_hash(&app, id).await,
         before,
         "the live code was replaced"
+    );
+}
+
+/// `PHONE_SERVER_URL` in `.env` (Q25) is the QR's server address only while Phone Setup has none
+/// saved: the saved one wins. Phone Setup says where the address comes from, and the Connect page
+/// needs no setup with the env value alone.
+#[tokio::test]
+async fn the_env_server_url_loses_to_the_saved_one() {
+    let app = TestApp::new().await;
+    let (id, _) = app.create_device("Anna").await;
+    let env = "https://vibb.example.ts.net";
+    let mut state = app.state.clone();
+    let mut config = (*state.config).clone();
+    config.phone_server_url = Some(env.to_string());
+    state.config = Arc::new(config);
+    let saved = |url: &str| crate::models::ProvisioningSettings {
+        server_url: url.to_string(),
+        ..Default::default()
+    };
+    assert_eq!(provisioning::server_url(&saved(""), &state.config), env);
+    assert_eq!(
+        provisioning::server_url(&saved("https://saved.example"), &state.config),
+        "https://saved.example"
+    );
+    assert_eq!(provisioning::server_url(&saved(""), &app.state.config), "");
+    // The QR's own payload (code QA L4): the env address with nothing saved, the saved one else.
+    let qr_url = |settings: &crate::models::ProvisioningSettings| {
+        provisioning::setup_payload(&state.config, settings, None, "ABC123".to_string()).unwrap()
+            ["android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE"]["server_url"]
+            .clone()
+    };
+    assert_eq!(qr_url(&saved("")), env);
+    assert_eq!(
+        qr_url(&saved("https://saved.example")),
+        "https://saved.example"
+    );
+
+    let phone_setup = |state: AppState| async move {
+        let response = crate::handlers::settings::provisioning_settings_form(
+            State(state),
+            axum::extract::Query(Default::default()),
+        )
+        .await;
+        read_response(response).await.text()
+    };
+    let connect = |state: AppState| async move {
+        let response = provisioning::provision_form(State(state), Path(id))
+            .await
+            .into_response();
+        read_response(response).await.text()
+    };
+    // Nothing saved: the env value, said so.
+    let html = phone_setup(state.clone()).await;
+    let hint = settings_pages::part(&html, "data-source=", "</p>");
+    assert!(
+        hint.starts_with("data-source=\"env\"") && hint.contains(env),
+        "{html}"
+    );
+    assert!(!connect(state.clone()).await.contains("Server setup needed"));
+    assert!(
+        connect(app.state.clone())
+            .await
+            .contains("Server setup needed")
+    );
+    // Saved: the saved one, and the page says it wins.
+    sqlx::query("UPDATE provisioning_settings SET server_url = 'https://saved.example'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let html = phone_setup(state.clone()).await;
+    assert!(html.contains("data-source=\"saved\""), "{html}");
+    assert!(html.contains("value=\"https://saved.example\""));
+    // Without the env value: today's hint, no source line.
+    assert!(
+        !phone_setup(app.state.clone())
+            .await
+            .contains("data-source=")
     );
 }

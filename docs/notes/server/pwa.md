@@ -414,8 +414,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   while Offline, "Disconnected · access removed" with "Connect again ›" to Advanced › Connection, "Not seen yet",
   "Not set up"; the lock badge only while a rule locks - `devices::badge_and_screen`, the Devices list's rules, so no
   end unless the phone reports Phone Setup's zone -; today's bar); **Attention** (`attention::items`, the list's count); the
-  **foreign-app warning** with its steps (`#foreign-access`); **Quick Actions** (`#quick`: a red "Unlocked on the phone" first while the last report has the restrictions
-  paused - what ends it, also for an older launcher -; +15 min, +30 min, +1 h,
+  **foreign-app warning** with its steps (`#foreign-access`); **Quick Actions** (`#quick`: while the last report has the restrictions paused, one plain line first,
+  `.quick-note` - "The pause ends by itself, or tap Lock again to end it now.", an older launcher's own words; no red
+  since 2026-10-26: the Attention row "Restrictions paused ›" that lands here is the one red alert -; +15 min, +30 min, +1 h,
   Pause a rule… as a `<details>` sheet with only the rules that apply, Lock again while a pause or Play install mode
   runs, Unlock for 2 h… behind a `<details>` confirm while no pause is on - both only for a `window_relock_v1`
   launcher -, Locate as a link to `/devices/locate?device={id}`; an open sheet spans the grid; after Lock again or
@@ -654,6 +655,20 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Sub-pages of Settings** (the sub-page header: "‹ Settings" and the large title, `partials/tab_bar.html` alone):
   Web Filter (`/dns`), Blocked Activity (`/dns/log`), Wallpapers, Phone Setup (`/settings/provisioning`), Account &
   Parents (`/account`; design 62 added its Name and Parents groups - `connectivity.md`, "Parent accounts"), Security Log (`/security`), Backups, Software Updates (`/updates`). No POST route changed.
+- **Settings saves in the Security Log (Q29, 0.54.0, `src/settings_log.rs`)**: `settings_log::log_saves`, inside
+  `require_full_auth` on the admin and host routes, writes `settings_saved` ("Settings saved") for a POST answered
+  303 to a page of this app (decision 10: the success path; a 4xx, a re-rendered form, a redirect to `/login` or off
+  the app are not saves; `/music` is). Detail: `<page> · <route> (<param> <value>, ...); <route> ... ×N` - the
+  Location's path, the matched route and its path ids (cleaned to `[A-Za-z0-9/._-]`), never form values; one row per
+  parent and page from its first save for `MERGE_MINUTES` (10), up to 1000 characters. `NOT_SAVES`: commands,
+  pauses and lifts, checks, read marks and the dismissed sign-in warning, the test push, backup create, upload and
+  restore, the root helper's actions (their own events). Two 303s are no save (code QA M1, L2): **a refusal back to
+  its page** (`?notice=parent_pin_invalid`, the Child PIN's, `revoke_unconfirmed`, `toggle_app`'s, the DNS
+  `bad_list`/`not_a_domain_*`, `music_notice=`, a gone contact, rule or parent, the push refusals, a refused avatar)
+  carries `settings_log::Refused` in its extensions (`settings_log::refused(...)`) - **a new refusal by redirect must
+  be marked so** - and **a save whose handler wrote its own security event** (any kind but `settings_saved`, by the
+  same parent, during the request: `music_sweep_saved`, `override_pin_changed`, ...) gets no second row; a success
+  with a notice (`notice=uploaded`) is a save. Tests: `tests::settings_log`, `settings_log::tests`.
 - **Notifications (design 45, server round 5)**: the hub's Notifications row leads to Notification Settings
   (`/notifications/settings`: This Device, Getting Notifications, Notify Me About), while the bell on the tab pages leads
   to the inbox (`/notifications`), which reads the rows it shows (`docs/notes/server/notifications.md`, step 2).
@@ -847,6 +862,19 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   401 / no answer / refused password / submit / loop cases, the redirected ping), `jstest/scroll-restore.test.js`
   (`handyPlaceRecord`, the bounce mark left alone). Owed: the next time it happens, the time and whether the address bar showed
   `/login…`, and the server log's line.
+
+## Tab-switch timing (Q28 step 1, 0.54.0, `static/nav-timing.js`)
+
+- **Off until switched on in a browser**: any page with `?timing=1` (remembered in localStorage `handy-timing`;
+  `?timing=0` clears it), or **Settings › About › Diagnostics › Page timing** (`/updates#timing`, a plain link to
+  `?timing=1` / `?timing=0` that the script shows as On/Off - the installed iPhone app has no address bar and its
+  own storage; code QA M2). Then every load prints one line to the console (`[timing] <path> ...`) and shows it at the
+  top of the page (`.timing-line`, no taps): `tap` (the tapped link's time, sessionStorage `handy-timing-tap`, to this
+  page's load event) and `wait` (tap to the navigation's start), `dns`, `connect` (0 = a kept connection), `ttfb`,
+  `download`, `dom`, `load`, the navigation type and `assets N/M` (network-fetched of all; many = the cache was gone).
+  Navigation Timing level 2, level 1 on iOS 14; a back-forward cache restore says so in the same line. Sends nothing anywhere. Prefetch
+  (step 2) waits for the user's iPhone numbers. Tests: `jstest/nav-timing.test.js`; the head loads it
+  (`shell::every_page_carries_the_connecting_script_and_its_ping`).
 
 ## Pull down to refresh (2026-10-25, `static/pull-refresh.js`)
 

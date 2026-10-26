@@ -526,7 +526,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `low_detail` - a flat field or small text on one background). Known limit: the series line is dHash only, so a flat
   episode picture can count as a flat series cover (the cover shows), and a recoloured series picture is `same`. A
   failure never fails the check: a 4xx, a refused address or an undecodable picture uses one of 3 tries; a network
-  error, timeout or 5xx uses none, and `ART_NETWORK_FAILURES` (3) in a row end the pass (code QA M2). **No picture
+  error, timeout or 5xx uses none, and `ART_NETWORK_FAILURES` (3) in a row from one host end that host's part of the
+  pass (code QA M2; per host since 0.54.0, Q26 - before, three on one dead host ended the whole pass and the pictures
+  on the entry's other hosts waited for the regular check): its pictures wait untried, the other hosts' go on; behind
+  a host that answered in the pass they make the entry due again at once, behind one that never did they wait. While no
+  host has answered, `ART_PASS_FAILURES` (6) troubles over all hosts end the whole pass (code QA L3: a DNS or uplink
+  fault after a good listing). The r5
+  investigation found one bad picture never raises the listing's `failures` (the art pass runs only after a good
+  listing and never fails it), so `Why::Art`'s `failures == 0` holds nothing and stays. **No picture
   budget** (the user's decision, 2026-10-19: "all pictures ASAP" - the source-politeness budget of design 27/39,
   `ART_PER_CHECK` 20, `ART_PER_CHECK_SPOTIFY` 100, `ART_PER_DAY` 400 and `ART_DAY_RESERVE` 100 with `art_gets` and
   `art_backfill_allowed`, was removed at the user's decision; he owns the server): a check fetches an entry's pictures

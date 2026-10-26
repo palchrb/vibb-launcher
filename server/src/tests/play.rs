@@ -12,22 +12,6 @@ use tower::ServiceExt;
 
 use super::TestApp;
 
-async fn post_status(app: &TestApp, token: &str, extra: serde_json::Value) {
-    let mut report = json!({ "lock_reason": "none", "kiosk_engaged": true });
-    for (key, value) in extra.as_object().unwrap() {
-        report[key] = value.clone();
-    }
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(token),
-            Some(report),
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
-}
-
 async fn device_page(app: &TestApp, id: i64) -> String {
     let response = crate::handlers::devices::view_device(
         axum::extract::State(app.state.clone()),
@@ -95,8 +79,7 @@ async fn security_details(app: &TestApp, event_type: &str) -> Vec<String> {
 async fn an_old_launchers_push_report_is_accepted_and_dropped() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({
             "push": { "fcm_token": "dIsVQ2QVRT-nQyYvE0SNfx", "fcm_token_kind": "fid",
@@ -264,15 +247,13 @@ async fn dns_changes_nudge_the_devices() {
 async fn status_stores_install_mode_installer_and_logs() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "installed_apps": [{ "package_name": "a", "label": "A", "preinstalled": true }] }),
     )
     .await;
     let until = chrono::Utc::now().timestamp_millis() + 15 * 60_000;
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({
             "installed_apps": [
@@ -314,12 +295,8 @@ async fn status_stores_install_mode_installer_and_logs() {
     assert!(page.contains("Installed from Play"), "{page}");
 
     // The same window again isn't logged twice.
-    post_status(
-        &app,
-        &token,
-        json!({ "install_mode": { "until_ms": until } }),
-    )
-    .await;
+    app.post_status(&token, json!({ "install_mode": { "until_ms": until } }))
+        .await;
     assert_eq!(security_details(&app, "play_install_mode").await.len(), 1);
 }
 
@@ -331,9 +308,7 @@ async fn status_stores_install_mode_installer_and_logs() {
 async fn play_core_is_never_in_the_allowlist_ui() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    post_status(
-        &app,
-        &token,
+    app.post_status(&token,
         json!({ "installed_apps": [
             { "package_name": "com.android.vending", "label": "Play Store", "preinstalled": true },
             { "package_name": "com.google.android.gms", "label": "Play services", "preinstalled": true },
@@ -400,9 +375,7 @@ async fn catalog_app_installed_from_play_is_refused() {
     .fetch_one(&app.db)
     .await
     .unwrap();
-    post_status(
-        &app,
-        &token,
+    app.post_status(&token,
         json!({ "installed_apps": [{ "package_name": "com.example.game", "label": "Game",
                                      "preinstalled": false, "installer": "com.android.vending" }] }),
     )
@@ -446,8 +419,7 @@ async fn catalog_app_installed_from_play_is_refused() {
     assert_eq!(selected, 0, "nothing written");
 
     // From another source it's fine.
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "installed_apps": [{ "package_name": "com.example.game", "label": "Game",
                                      "preinstalled": false, "installer": "me.vibb.launcher" }] }),
@@ -540,12 +512,8 @@ async fn battery_exemption_is_stored_and_shown() {
         }
     };
 
-    post_status(
-        &app,
-        &token,
-        json!({ "battery_optimization_exempt": false }),
-    )
-    .await;
+    app.post_status(&token, json!({ "battery_optimization_exempt": false }))
+        .await;
     assert_eq!(stored(&app).await, Some(false));
     let html = about_page(&app, id).await;
     let row = &html[html.find("data-row=\"battery\"").expect("the row")..];
@@ -553,14 +521,15 @@ async fn battery_exemption_is_stored_and_shown() {
     assert!(row.contains("Changes may arrive late"), "{html}");
     assert!(row.contains("Background connection"), "{html}");
 
-    post_status(&app, &token, json!({ "battery_optimization_exempt": true })).await;
+    app.post_status(&token, json!({ "battery_optimization_exempt": true }))
+        .await;
     assert_eq!(stored(&app).await, Some(true));
     let html = about_page(&app, id).await;
     let row = &html[html.find("data-row=\"battery\"").expect("the row")..];
     assert!(row.contains(">Off</span>"), "{html}");
     assert!(!html.contains("Changes may arrive late"), "{html}");
 
-    post_status(&app, &token, json!({})).await;
+    app.post_status(&token, json!({})).await;
     assert_eq!(stored(&app).await, None);
     assert!(!about_page(&app, id).await.contains("Battery optimisation"));
 }
@@ -587,7 +556,8 @@ async fn write_settings_grant_is_stored_and_shown() {
         }
     };
 
-    post_status(&app, &token, json!({ "write_settings_granted": false })).await;
+    app.post_status(&token, json!({ "write_settings_granted": false }))
+        .await;
     assert_eq!(stored(&app).await, Some(false));
     let html = about_page(&app, id).await;
     let row = &html[html.find("data-row=\"write-settings\"").expect("the row")..];
@@ -598,14 +568,15 @@ async fn write_settings_grant_is_stored_and_shown() {
     let adb = row.find("adb shell appops").expect("the shortcut");
     assert!(on_phone < adb, "the on-phone path comes first: {html}");
 
-    post_status(&app, &token, json!({ "write_settings_granted": true })).await;
+    app.post_status(&token, json!({ "write_settings_granted": true }))
+        .await;
     assert_eq!(stored(&app).await, Some(true));
     let html = about_page(&app, id).await;
     let row = &html[html.find("data-row=\"write-settings\"").expect("the row")..];
     assert!(row.contains(">Allowed</span>"), "{html}");
     assert!(!html.contains("adb shell appops"), "{html}");
 
-    post_status(&app, &token, json!({})).await;
+    app.post_status(&token, json!({})).await;
     assert_eq!(stored(&app).await, None);
     assert!(
         !about_page(&app, id)

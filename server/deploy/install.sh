@@ -281,6 +281,9 @@ LAUNCHER_APK_URL=https://github.com/palchrb/vibb-launcher/releases/latest/downlo
 #   apksigner verify --print-certs kids-launcher-mdm.apk | sed -n 's/.*SHA-256 digest: //p' | xxd -r -p | openssl base64 -A | tr '+/' '-_' | tr -d '='
 # (DEPLOY.md has the same command, plus one that reads the keystore.)
 #LAUNCHER_SIGNATURE_CHECKSUM=
+# The phones' server address in the setup QR while Settings > Phone Setup has none saved (an address
+# saved there wins). https://, or http:// for the emulator loop (a startup warning).
+#PHONE_SERVER_URL=https://vibb.your-tailnet.ts.net
 EOF
     PRINT_CREDENTIALS=1
 else

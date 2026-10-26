@@ -24,15 +24,11 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-async fn post_status(app: &TestApp, token: &str, extra: Value) {
-    let mut body = json!({ "lock_reason": "NONE", "kiosk_engaged": true, "capabilities": [CAP] });
-    for (key, value) in extra.as_object().unwrap() {
-        body[key] = value.clone();
-    }
-    let res = app
-        .request(Method::POST, "/api/devices/status", Some(token), Some(body))
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
+/// A status report from a launcher with [CAP] (`extra`'s `capabilities` replace it).
+async fn post_status(app: &TestApp, token: &str, mut extra: Value) {
+    let keys = extra.as_object_mut().unwrap();
+    keys.entry("capabilities").or_insert_with(|| json!([CAP]));
+    app.post_status(token, extra).await;
 }
 
 async fn events(app: &TestApp, event_type: &str) -> Vec<String> {
@@ -232,18 +228,20 @@ async fn lock_again_follows_the_status_and_the_capability() {
     post_status(&app, &token, json!({})).await;
     let html = page(&app, id, &cookie).await;
     assert!(!html.contains(&button) && !html.contains(paused), "{html}");
-    // A pause: the button among the quick actions, the pause said there - where the Attention row
-    // lands - with what Lock again does (qa-31-s10-code M1).
+    // A pause: the button among the quick actions, and where the Attention row lands one plain
+    // line says what Lock again does (qa-31-s10-code M1) - the Attention row is the one red alert
+    // (the user, 2026-10-26).
     post_status(&app, &token, json!({ "restrictions_paused": true })).await;
     let html = page(&app, id, &cookie).await;
     let quick = group(&html, "quick");
     assert!(quick.contains(&button), "{html}");
-    assert!(quick.contains(paused), "{quick}");
-    assert!(quick.contains("Unlocked on the phone"), "{quick}");
     assert!(
-        quick.contains("It ends by itself, or tap Lock again to end it now."),
+        quick.contains(&format!(
+            "<p class=\"quick-note\" {paused}>The pause ends by itself, or tap Lock again to end it now.</p>"
+        )),
         "{quick}"
     );
+    assert!(!quick.contains("attention-alarm"), "{quick}");
     assert!(
         html.contains(&format!(
             "href=\"/devices/{id}#quick\" data-attention=\"restrictions-paused\""
@@ -282,12 +280,12 @@ async fn lock_again_follows_the_status_and_the_capability() {
     let html = page(&app, id, &cookie).await;
     assert!(!html.contains(&button));
     assert!(!html.contains("start-pause"), "{html}");
-    // ... and its quick actions still say the phone is paused, and that it ends by itself.
+    // ... and its quick actions still say that the pause ends by itself.
     let quick = group(&html, "quick");
     assert!(quick.contains(paused), "{quick}");
     assert!(
         quick.contains(
-            "It ends by itself; this version of Vibb One can't be locked again from here."
+            "The pause ends by itself; this version of Vibb One can't be locked again from here."
         ),
         "{quick}"
     );

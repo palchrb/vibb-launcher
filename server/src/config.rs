@@ -65,6 +65,10 @@ pub struct ForkConfig {
     /// certificate, base64url without padding (43 characters). `None` until configured - see
     /// the module doc comment and DEPLOY.md for how to compute it.
     pub launcher_signature_checksum: Option<String>,
+    /// `PHONE_SERVER_URL`: the phones' server address in the setup QR when Settings › Phone Setup
+    /// has none saved - the saved one always wins (`provisioning::server_url`). `http://` is taken
+    /// (the emulator loop) with a startup warning.
+    pub phone_server_url: Option<String>,
     /// `SSE_KEEPALIVE_SECS` (5-240, default 240 since design 19, 120 before): how often the
     /// command stream sends a keepalive comment. Every phone holds the stream (no FCM); its read
     /// timeout is 300 s (launcher `SSE_READ_TIMEOUT_MS`, also in launchers already shipped), so
@@ -140,6 +144,13 @@ impl ForkConfig {
                 })
                 .unwrap_or_else(|| DEFAULT_LAUNCHER_APK_URL.to_string()),
             launcher_signature_checksum: read("LAUNCHER_SIGNATURE_CHECKSUM", is_valid_checksum),
+            phone_server_url: read("PHONE_SERVER_URL", is_valid_server_url).inspect(|url| {
+                if !url.starts_with("https://") {
+                    tracing::warn!(
+                        "PHONE_SERVER_URL={url} is not https - phones would talk to this server unencrypted outside a tailnet"
+                    );
+                }
+            }),
             sse_keepalive_secs: read("SSE_KEEPALIVE_SECS", is_valid_keepalive)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(DEFAULT_SSE_KEEPALIVE_SECS),
@@ -178,6 +189,16 @@ fn is_valid_url(value: &str) -> bool {
     value.starts_with("https://") && value.len() > "https://".len()
 }
 
+/// A server address the phones can use: `https://` or `http://`, a host, no spaces.
+fn is_valid_server_url(value: &str) -> bool {
+    let rest = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"));
+    rest.is_some_and(|rest| {
+        !rest.is_empty() && !rest.starts_with('/') && !value.chars().any(char::is_whitespace)
+    })
+}
+
 /// 32 bytes as base64url without padding is exactly 43 characters.
 fn is_valid_checksum(value: &str) -> bool {
     value.len() == 43
@@ -209,6 +230,7 @@ mod tests {
         );
         assert_eq!(config.launcher_apk_url, DEFAULT_LAUNCHER_APK_URL);
         assert_eq!(config.launcher_signature_checksum, None);
+        assert_eq!(config.phone_server_url, None);
     }
 
     #[test]
@@ -218,6 +240,7 @@ mod tests {
             ("LAUNCHER_ADMIN_COMPONENT", "org.example/org.example.Admin"),
             ("LAUNCHER_APK_URL", "https://example.org/launcher.apk"),
             ("LAUNCHER_SIGNATURE_CHECKSUM", CHECKSUM),
+            ("PHONE_SERVER_URL", "https://vibb.example.ts.net"),
         ]));
         assert_eq!(config.server_release_repo, "someone/kid-phone-server");
         assert_eq!(
@@ -229,6 +252,16 @@ mod tests {
             config.launcher_signature_checksum.as_deref(),
             Some(CHECKSUM)
         );
+        assert_eq!(
+            config.phone_server_url.as_deref(),
+            Some("https://vibb.example.ts.net")
+        );
+        // The emulator loop's plain address is taken (with a warning).
+        let config = ForkConfig::from_vars(&vars(&[("PHONE_SERVER_URL", "http://10.0.2.2:3100")]));
+        assert_eq!(
+            config.phone_server_url.as_deref(),
+            Some("http://10.0.2.2:3100")
+        );
     }
 
     #[test]
@@ -239,6 +272,11 @@ mod tests {
             ("SERVER_RELEASE_REPO", "/repo"),
             ("LAUNCHER_ADMIN_COMPONENT", "org.example.Admin"),
             ("LAUNCHER_APK_URL", "http://example.org/launcher.apk"),
+            ("PHONE_SERVER_URL", "vibb.example.ts.net"),
+            ("PHONE_SERVER_URL", "https://"),
+            ("PHONE_SERVER_URL", "https:///path"),
+            ("PHONE_SERVER_URL", "https://a b"),
+            ("PHONE_SERVER_URL", "ftp://vibb.example"),
             ("LAUNCHER_SIGNATURE_CHECKSUM", "too-short"),
             // 44 characters: a padded base64 value, not the unpadded form Android expects.
             (

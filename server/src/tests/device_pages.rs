@@ -15,17 +15,6 @@ use super::{
     nav_current, tags,
 };
 
-async fn report(app: &TestApp, token: &str, extra: serde_json::Value) {
-    let mut body = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
-    for (key, value) in extra.as_object().unwrap() {
-        body[key] = value.clone();
-    }
-    let res = app
-        .request(Method::POST, "/api/devices/status", Some(token), Some(body))
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
-}
-
 /// The text of About's row `key` (`data-row`) value, tags dropped ("Online since 08:12").
 fn value(html: &str, key: &str) -> Option<String> {
     let row = &html[html.find(&format!("data-row=\"{key}\""))?..];
@@ -54,8 +43,7 @@ async fn about_this_phone_shows_the_last_reports_facts() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
-    report(
-        &app,
+    app.post_status(
         &token,
         json!({
             "lock_reason": "SCHOOL",
@@ -147,8 +135,7 @@ async fn about_says_applied_and_on_for_a_healthy_phone_and_a_time_rule_by_kind()
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Emil").await;
-    report(
-        &app,
+    app.post_status(
         &token,
         json!({
             "lock_reason": "BEDTIME",
@@ -471,7 +458,7 @@ async fn about_keeps_a_disconnected_phones_last_contact() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
-    report(&app, &token, json!({})).await;
+    app.post_status(&token, json!({})).await;
     let before = app
         .get_page(&device_page(id, Section::About), &cookie)
         .await
@@ -791,8 +778,7 @@ async fn the_lock_state_says_when_it_was_reported() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("Anna").await;
     set_pins(&app, &cookie, id).await;
-    report(
-        &app,
+    app.post_status(
         &token,
         json!({ "capabilities": ["pin_lock_v1"],
                 "lock_state": { "active": true, "locked": true } }),
@@ -1761,8 +1747,7 @@ async fn apps_phone(app: &TestApp) -> (i64, i64, i64, i64) {
         .execute(&app.db)
         .await
         .unwrap();
-    report(
-        app,
+    app.post_status(
         &token,
         json!({ "installed_apps": [
             { "package_name": "com.android.deskclock", "label": "Clock", "preinstalled": true },
@@ -2357,9 +2342,7 @@ async fn music_phone(app: &TestApp, cookie: &str) -> (i64, String, [i64; 2], i64
             .fetch_one(&app.db)
             .await
             .unwrap();
-    report(
-        app,
-        &token,
+    app.post_status(&token,
         json!({
             "capabilities": ["music_v1"],
             "music_state": {"package": "me.vibb.music", "bridge": "bound",
@@ -2658,8 +2641,7 @@ async fn music_refusals_land_in_their_group_and_the_page_fails_loudly() {
     let (id, token, _, music_app) = music_phone(&app, &cookie).await;
     let page = device_page(id, Section::Music);
     // The music app came from the Play Store: one source per package.
-    report(
-        &app,
+    app.post_status(
         &token,
         json!({
             "capabilities": ["music_v1"],

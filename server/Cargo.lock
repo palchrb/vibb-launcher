@@ -1302,7 +1302,7 @@ dependencies = [
 
 [[package]]
 name = "kid_phone_server"
-version = "0.53.0"
+version = "0.54.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1337,7 +1337,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
- "tokio-util",
  "totp-rs",
  "tower",
  "tower-http 0.7.0",

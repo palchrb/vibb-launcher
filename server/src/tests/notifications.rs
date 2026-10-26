@@ -7,17 +7,6 @@ use serde_json::{Value, json};
 use super::settings_pages::check_forms;
 use super::{Section, TestApp, assert_redirect, device_page};
 
-async fn report(app: &TestApp, token: &str, extra: Value) {
-    let mut body = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
-    body.as_object_mut()
-        .unwrap()
-        .extend(extra.as_object().unwrap().clone());
-    let res = app
-        .request(Method::POST, "/api/devices/status", Some(token), Some(body))
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
-}
-
 /// `(kind, title)` of a phone's events, oldest first.
 async fn events(app: &TestApp, device: i64) -> Vec<(String, String)> {
     sqlx::query_as("SELECT kind, title FROM parent_events WHERE device_id = ? ORDER BY id")
@@ -63,19 +52,19 @@ async fn each_kind_is_raised_once_from_its_real_input() {
 
     // An emergency call: raised once, however often the report repeats it.
     let call = ago(1);
-    report(&app, &token, call_state(&call)).await;
-    report(&app, &token, call_state(&call)).await;
+    app.post_status(&token, call_state(&call)).await;
+    app.post_status(&token, call_state(&call)).await;
     // Starts without the launcher: when the count rises.
     let boots = |count: i64| json!({ "unseen_boots": { "count": count, "last_at_ms": 1_760_000_000_000_i64 } });
-    report(&app, &token, boots(1)).await;
-    report(&app, &token, boots(1)).await;
+    app.post_status(&token, boots(1)).await;
+    app.post_status(&token, boots(1)).await;
     // A foreign app: when the set appears or changes, by the phone's name for it in the detail.
     let foreign = json!({
         "foreign_access": { "admins": ["org.example.spy"], "accessibility": [] },
         "installed_apps": [{ "package_name": "org.example.spy", "label": "Helper" }],
     });
-    report(&app, &token, foreign.clone()).await;
-    report(&app, &token, foreign.clone()).await;
+    app.post_status(&token, foreign.clone()).await;
+    app.post_status(&token, foreign.clone()).await;
     // Parent-PIN events: a use and a lockout (a wrong try is no event), posted twice.
     let now_ms = chrono::Utc::now().timestamp_millis();
     let pins = json!({ "events": [
@@ -106,12 +95,12 @@ async fn each_kind_is_raised_once_from_its_real_input() {
     assert_eq!(detail.as_deref(), Some("Device admin: Helper."));
 
     // The same again after it went away is a new event; a rising count is a new start.
-    report(&app, &token, json!({})).await;
-    report(&app, &token, foreign).await;
-    report(&app, &token, boots(2)).await;
+    app.post_status(&token, json!({})).await;
+    app.post_status(&token, foreign).await;
+    app.post_status(&token, boots(2)).await;
     // A newer call is a new event; the old one in a later report is not.
-    report(&app, &token, call_state(&ago(0))).await;
-    report(&app, &token, call_state(&call)).await;
+    app.post_status(&token, call_state(&ago(0))).await;
+    app.post_status(&token, call_state(&call)).await;
     assert_eq!(
         kinds(&app, id).await[5..],
         ["foreign_access", "unseen_boot", "emergency_call"]
@@ -133,16 +122,16 @@ async fn an_old_emergency_call_is_not_announced() {
         .execute(&app.db)
         .await
         .unwrap();
-    report(&app, &token, call_state(&call)).await;
+    app.post_status(&token, call_state(&call)).await;
     assert!(events(&app, id).await.is_empty());
     // A phone's first report with a call two days old.
     let (ola, ola_token) = app.enrolled_device("Ola").await;
     let old = ago(48);
-    report(&app, &ola_token, call_state(&old)).await;
-    report(&app, &ola_token, call_state(&old)).await;
+    app.post_status(&ola_token, call_state(&old)).await;
+    app.post_status(&ola_token, call_state(&old)).await;
     // A report without `call_state`, then the old call again.
-    report(&app, &ola_token, json!({})).await;
-    report(&app, &ola_token, call_state(&old)).await;
+    app.post_status(&ola_token, json!({})).await;
+    app.post_status(&ola_token, call_state(&old)).await;
     assert!(events(&app, ola).await.is_empty());
 }
 
@@ -204,11 +193,11 @@ async fn the_battery_latches_once() {
     };
 
     // A report without `battery` (an older launcher): nothing, no line.
-    report(&app, &token, json!({})).await;
+    app.post_status(&token, json!({})).await;
     assert_eq!(low_events().await, 0);
     assert_eq!(line(&app.get_page("/devices", &cookie).await.text()), None);
 
-    report(&app, &token, battery(14, false, true)).await;
+    app.post_status(&token, battery(14, false, true)).await;
     assert_eq!(low_events().await, 1);
     let title: String =
         sqlx::query_scalar("SELECT title FROM parent_events WHERE kind = 'low_battery'")
@@ -217,9 +206,9 @@ async fn the_battery_latches_once() {
             .unwrap();
     assert_eq!(title, "Battery low on Anna (14 %)");
     // Plugged in (Android clears `low`), unplugged at 12 % (`low` again): still the one latch.
-    report(&app, &token, battery(13, true, false)).await;
-    report(&app, &token, battery(12, false, true)).await;
-    report(&app, &token, battery(12, true, true)).await;
+    app.post_status(&token, battery(13, true, false)).await;
+    app.post_status(&token, battery(12, false, true)).await;
+    app.post_status(&token, battery(12, true, true)).await;
     assert_eq!(low_events().await, 1);
     // The line on the Devices row and the device page.
     for page in ["/devices".to_string(), device_page(id, Section::Summary)] {
@@ -231,7 +220,7 @@ async fn the_battery_latches_once() {
         );
     }
     // On battery above the level: armed again; the next low is a second event.
-    report(&app, &token, battery(25, false, false)).await;
+    app.post_status(&token, battery(25, false, false)).await;
     let latch: Option<String> =
         sqlx::query_scalar("SELECT battery_low_since FROM devices WHERE id = ?")
             .bind(id)
@@ -239,12 +228,13 @@ async fn the_battery_latches_once() {
             .await
             .unwrap();
     assert_eq!(latch, None);
-    report(&app, &token, battery(15, false, true)).await;
+    app.post_status(&token, battery(15, false, true)).await;
     assert_eq!(low_events().await, 2);
 
     // A level out of range drops the battery, never the report.
-    report(&app, &token, json!({ "battery": { "level": 150, "charging": false, "low": true }, "lock_reason": "BEDTIME" })).await;
-    report(&app, &token, json!({ "battery": { "level": "x" } })).await;
+    app.post_status(&token, json!({ "battery": { "level": 150, "charging": false, "low": true }, "lock_reason": "BEDTIME" })).await;
+    app.post_status(&token, json!({ "battery": { "level": "x" } }))
+        .await;
     let latest: Vec<(String, Option<i64>)> = sqlx::query_as(
         "SELECT lock_reason, battery_level FROM device_status WHERE device_id = ? ORDER BY id DESC LIMIT 2",
     )
@@ -278,10 +268,9 @@ async fn many_events(app: &TestApp, n: i64) {
 async fn three_events(app: &TestApp) -> (i64, i64) {
     let (anna, anna_token) = app.enrolled_device("Anna").await;
     let (ola, ola_token) = app.enrolled_device("Ola <b>").await;
-    report(app, &anna_token, call_state(&ago(1))).await;
-    report(app, &ola_token, call_state(&ago(1))).await;
-    report(
-        app,
+    app.post_status(&anna_token, call_state(&ago(1))).await;
+    app.post_status(&ola_token, call_state(&ago(1))).await;
+    app.post_status(
         &anna_token,
         json!({ "battery": { "level": 10, "charging": false, "low": true } }),
     )
@@ -684,8 +673,7 @@ async fn the_switches_are_saved_and_events_still_stored() {
     );
 
     let (id, token) = app.enrolled_device("Anna").await;
-    report(
-        &app,
+    app.post_status(
         &token,
         json!({ "battery": { "level": 10, "charging": false, "low": true } }),
     )
@@ -698,9 +686,9 @@ async fn events_go_with_their_phone_and_after_90_days() {
     let app = TestApp::new().await;
     let (anna, anna_token) = app.enrolled_device("Anna").await;
     let (ola, ola_token) = app.enrolled_device("Ola").await;
-    report(&app, &anna_token, call_state(&ago(1))).await;
-    report(&app, &ola_token, call_state(&ago(1))).await;
-    report(&app, &ola_token, call_state(&ago(0))).await;
+    app.post_status(&anna_token, call_state(&ago(1))).await;
+    app.post_status(&ola_token, call_state(&ago(1))).await;
+    app.post_status(&ola_token, call_state(&ago(0))).await;
     // One of Ola's events 91 days old (gone), the other 89 (kept): the 90 days (qa-35-s1-code L3).
     for (age, order) in [("-91 days", "MIN"), ("-89 days", "MAX")] {
         sqlx::query(&format!(

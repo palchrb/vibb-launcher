@@ -5,14 +5,6 @@ use serde_json::json;
 
 use super::{Section, TestApp, assert_redirect, device_page};
 
-async fn policy(app: &TestApp, token: &str) -> serde_json::Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    res.json()
-}
-
 const SCHOOL_FORM: &[(&str, &str)] = &[
     ("scope", ""),
     ("name", "Skole"),
@@ -28,7 +20,7 @@ const SCHOOL_FORM: &[(&str, &str)] = &[
 async fn fresh_policy_has_no_rules_unlimited_budget_and_on_request_location() {
     let app = TestApp::new().await;
     let (_, token) = app.enrolled_device("phone").await;
-    let p = policy(&app, &token).await;
+    let p = app.policy(&token).await;
     assert_eq!(
         p["time_policy"],
         json!({"rules": [], "daily_budget_minutes": [null, null, null, null, null, null, null], "lifts": []})
@@ -65,7 +57,7 @@ async fn global_rule_reaches_every_device_and_nudges_them() {
     assert_eq!(nudged, vec![a.min(b), a.max(b)]);
 
     for token in [&token_a, &token_b] {
-        let rules = policy(&app, token).await["time_policy"]["rules"].clone();
+        let rules = app.policy(token).await["time_policy"]["rules"].clone();
         assert_eq!(rules.as_array().unwrap().len(), 1);
         let rule = &rules[0];
         assert_eq!(rule["name"], "Skole");
@@ -127,7 +119,7 @@ async fn device_override_uses_its_own_rules_and_budget() {
     );
 
     // Not in force until the override is on.
-    let p = policy(&app, &token).await;
+    let p = app.policy(&token).await;
     assert_eq!(p["time_policy"]["rules"][0]["name"], "Skole");
     assert_eq!(
         p["time_policy"]["daily_budget_minutes"],
@@ -145,7 +137,7 @@ async fn device_override_uses_its_own_rules_and_budget() {
         .await;
     assert!(res.status.is_redirection(), "{}", res.text());
     assert_eq!(nudges.try_recv().ok(), Some(id));
-    let p = policy(&app, &token).await;
+    let p = app.policy(&token).await;
     let rules = p["time_policy"]["rules"].as_array().unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0]["name"], "Leggetid");
@@ -231,7 +223,7 @@ async fn rule_edit_and_delete_are_scoped() {
         &format!("/schedules/rules/{rule_id}?saved=1"),
         Some("rule"),
     );
-    let rule = policy(&app, &token).await["time_policy"]["rules"][0].clone();
+    let rule = app.policy(&token).await["time_policy"]["rules"][0].clone();
     assert_eq!(rule["name"], "School");
     assert_eq!(rule["calls_allowed"], true);
 
@@ -244,10 +236,7 @@ async fn rule_edit_and_delete_are_scoped() {
         )
         .await;
     assert_redirect(&res, "/schedules?notice=deleted", Some("rules"));
-    assert_eq!(
-        policy(&app, &token).await["time_policy"]["rules"],
-        json!([])
-    );
+    assert_eq!(app.policy(&token).await["time_policy"]["rules"], json!([]));
     // A second tap on Delete lands on the list too, with nothing to delete.
     let res = app
         .request_form(
@@ -371,7 +360,7 @@ async fn lifts_are_recorded_delivered_and_end() {
         .await;
     assert!(res.status.is_redirection());
 
-    let lifts = policy(&app, &token).await["time_policy"]["lifts"].clone();
+    let lifts = app.policy(&token).await["time_policy"]["lifts"].clone();
     let lifts = lifts.as_array().unwrap();
     assert_eq!(lifts.len(), 2);
     assert_eq!(lifts[0]["target"], "rule");
@@ -407,7 +396,7 @@ async fn lifts_are_recorded_delivered_and_end() {
         )
         .await;
     assert!(res.status.is_redirection(), "{}", res.text());
-    let lifts = policy(&app, &token).await["time_policy"]["lifts"].clone();
+    let lifts = app.policy(&token).await["time_policy"]["lifts"].clone();
     assert_eq!(lifts.as_array().unwrap().len(), 1);
     let res = app
         .request_form(
@@ -466,10 +455,7 @@ async fn lifts_are_recorded_delivered_and_end() {
         .execute(&app.db)
         .await
         .unwrap();
-    assert_eq!(
-        policy(&app, &token).await["time_policy"]["lifts"],
-        json!([])
-    );
+    assert_eq!(app.policy(&token).await["time_policy"]["lifts"], json!([]));
     let page = app.get_page(&device_page(id, Section::Time), &cookie).await;
     assert!(page.text().contains("Ended early"));
 }
@@ -687,7 +673,7 @@ async fn update_location_now_queues_locate() {
         Some(format!("/devices/locate?device={id}&requested=1#location").as_str())
     );
     assert_eq!(nudges.try_recv().ok(), Some(id));
-    let p = policy(&app, &token).await;
+    let p = app.policy(&token).await;
     assert_eq!(p["pending_command"]["command"], "locate");
 
     let page = app
@@ -740,7 +726,7 @@ async fn location_policy_form_round_trip() {
     assert!(res.status.is_redirection(), "{}", res.text());
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
-        policy(&app, &token).await["location_policy"],
+        app.policy(&token).await["location_policy"],
         json!({"mode": "interval", "interval_minutes": 60, "zones": []})
     );
     // Mode only keeps the interval.
@@ -752,7 +738,7 @@ async fn location_policy_form_round_trip() {
     )
     .await;
     assert_eq!(
-        policy(&app, &token).await["location_policy"],
+        app.policy(&token).await["location_policy"],
         json!({"mode": "off", "interval_minutes": 60, "zones": []})
     );
     for bad in [
@@ -887,7 +873,7 @@ async fn legacy_fields_are_still_sent_for_older_launchers() {
     .execute(&app.db)
     .await
     .unwrap();
-    let p = policy(&app, &token).await;
+    let p = app.policy(&token).await;
     assert_eq!(p["bedtime_start_minutes"], 1260);
     assert_eq!(p["bedtime_end_minutes"], 420);
 }
@@ -1258,7 +1244,7 @@ async fn the_phones_locate_answer_is_shown() {
         &[],
     )
     .await;
-    let cmd = policy(&app, &token).await["pending_command"]["id"]
+    let cmd = app.policy(&token).await["pending_command"]["id"]
         .as_i64()
         .unwrap();
     let res = app
