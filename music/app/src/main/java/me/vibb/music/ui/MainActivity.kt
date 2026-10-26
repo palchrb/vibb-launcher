@@ -2,16 +2,22 @@ package me.vibb.music.ui
 
 import android.content.ComponentName
 import android.content.Intent
+import android.animation.ObjectAnimator
 import android.os.Bundle
-import android.os.SystemClock
 import android.graphics.Color
 import android.view.View
-import android.view.ViewTreeObserver
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.core.animation.doOnEnd
 import androidx.core.os.bundleOf
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
@@ -19,7 +25,7 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import me.vibb.music.bridge.LiveBridge
-import me.vibb.music.logic.keepSplash
+import me.vibb.music.logic.SPLASH_FADE_MS
 import me.vibb.music.logic.resumeRequested
 import me.vibb.music.playback.Commands
 import me.vibb.music.playback.PlaybackService
@@ -43,8 +49,11 @@ class MainActivity : ComponentActivity() {
     private var controller: MediaController? = null
     private val pending = mutableListOf<(MediaController) -> Unit>()
 
-    /** The first content frame composed (the library or the player, with the first snapshot): the splash may go. */
-    private var contentShown = false
+    /**
+     * The first content frame composed (the library or the player, with the first snapshot): the app's launch splash
+     * fades. A recreated instance (a font-scale change) has its screens at once - no splash over them.
+     */
+    private var contentShown by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // The app is always dark (Palette.bg), so the system bars' icons are always light: the default
@@ -54,29 +63,32 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        contentShown = savedInstanceState != null
+        fadeSystemSplash()
         open(intent, restored = savedInstanceState != null)
-        setContent { MusicRoot(vm, actions, onContent = { contentShown = true }) }
-        holdSplash()
+        setContent {
+            Box(Modifier.fillMaxSize()) {
+                MusicRoot(vm, actions, onContent = { contentShown = true })
+                LaunchSplash(contentShown)
+            }
+        }
     }
 
     /**
-     * The launch splash (the theme's `windowSplashScreen*`, Android 12+) stays until the first content frame, at most
-     * [me.vibb.music.logic.SPLASH_CAP_MS] ([keepSplash]): no frame is drawn before that - the platform's way, and what
-     * `androidx.core.splashscreen`'s keep-on-screen condition does on API 31+ (minSdk 34: no library needed). A
-     * cancelled draw schedules the next frame, so the condition is read every frame until it lets go.
+     * The system splash (the theme's `windowSplashScreen*`; minSdk 34) goes at the app's first frame, which is the app's
+     * own splash (logic/Splash.kt). Its exit is ours, a plain fade, so the app's window never moves: the shell's default
+     * (`starting_window_exit_animation_type` 0, a radial reveal) slides the app's window up 20 dp
+     * (`starting_surface_exit_animation_window_shift_length`), and the rings would jump. [View.ALPHA] goes through
+     * `SplashScreenView.setAlpha`, which fades its icon too.
      */
-    private fun holdSplash() {
-        val createdAt = SystemClock.elapsedRealtime()
-        val content = findViewById<View>(android.R.id.content)
-        content.viewTreeObserver.addOnPreDrawListener(
-            object : ViewTreeObserver.OnPreDrawListener {
-                override fun onPreDraw(): Boolean {
-                    if (keepSplash(contentShown, SystemClock.elapsedRealtime() - createdAt)) return false
-                    content.viewTreeObserver.removeOnPreDrawListener(this)
-                    return true
-                }
-            },
-        )
+    private fun fadeSystemSplash() {
+        splashScreen.setOnExitAnimationListener { view ->
+            ObjectAnimator.ofFloat(view, View.ALPHA, 0f).apply {
+                duration = SPLASH_FADE_MS
+                doOnEnd { view.remove() }
+                start()
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

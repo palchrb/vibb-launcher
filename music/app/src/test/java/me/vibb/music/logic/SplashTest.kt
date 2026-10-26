@@ -1,19 +1,62 @@
 package me.vibb.music.logic
 
+import me.vibb.music.Fixtures.moduleFile
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.hypot
 
-/** The launch splash stays until the first content frame, never past the cap (PLAN "Splash with the vibb logo"). */
+/** The launch splash: the app's first frame is the system splash plus the wordmark, until the first content frame. */
 class SplashTest {
+    private fun res(path: String) = moduleFile("src/main/res/$path").readText()
+    private fun attr(xml: String, name: String) = Regex("""$name="([^"]+)"""").find(xml)!!.groupValues[1]
+
     @Test
-    fun `the splash stays until the content's first frame, at most the cap`() {
-        // qa-music-r13-code Q-4: well below the 5 s input ANR of a window that never draws
+    fun `the cap is a backstop, never a hang`() {
         assertTrue("the cap is $SPLASH_CAP_MS ms", SPLASH_CAP_MS in 1_000L..4_000L)
-        assertTrue("no content yet", keepSplash(contentShown = false, sinceCreateMs = 900))
-        assertFalse("the content composed", keepSplash(contentShown = true, sinceCreateMs = 900))
-        assertTrue("just under the cap", keepSplash(contentShown = false, sinceCreateMs = SPLASH_CAP_MS - 1))
-        assertFalse("a slow start never looks hung", keepSplash(contentShown = false, sinceCreateMs = SPLASH_CAP_MS))
+    }
+
+    @Test
+    fun `the first frame's mark is the system splash's - the drawable unscaled, centred on the window`() {
+        val theme = res("values/themes.xml")
+        // Android's geometry holds for an icon with no icon background, and there is no branding image to move
+        assertTrue(theme.contains("""name="android:windowSplashScreenAnimatedIcon">@drawable/splash_vibb_mark<"""))
+        assertFalse(theme.contains("windowSplashScreenIconBackgroundColor"))
+        assertFalse(theme.contains("windowSplashScreenBrandingImage"))
+        // WMShell: the 160 dp icon x 1.2 without a background = the 192 dp view, its drawable 1.5 x that
+        assertEquals(160f * 1.2f * 1.5f, SPLASH_MARK_DP, 0.001f)
+        val mark = res("drawable/splash_vibb_mark.xml")
+        assertEquals("${SPLASH_MARK_DP.toInt()}dp", attr(mark, "android:width"))
+        assertEquals("${SPLASH_MARK_DP.toInt()}dp", attr(mark, "android:height"))
+        assertEquals(SPLASH_MARK_DP, attr(mark, "android:viewportWidth").toFloat(), 0f)
+        assertEquals("the rings' centre is the canvas's", SPLASH_MARK_DP / 2, attr(mark, "android:translateX").toFloat(), 0f)
+        assertEquals(SPLASH_MARK_DP / 2, attr(mark, "android:translateY").toFloat(), 0f)
+    }
+
+    @Test
+    fun `the rings' edge is read from the drawable and lies inside the splash's clip circle`() {
+        val mark = res("drawable/splash_vibb_mark.xml")
+        // the mark's group (3.3645), then each ring's own (0.94)
+        val (scale, ring) = Regex("""android:scaleX="([\d.]+)"""").findAll(mark).map { it.groupValues[1].toFloat() }.take(2).toList()
+        val points = Regex("""[ML](-?[\d.]+) (-?[\d.]+)""").findAll(mark).map { hypot(it.groupValues[1].toFloat(), it.groupValues[2].toFloat()) }
+        val stroke = attr(mark, "android:strokeWidth").toFloat()
+        val edge = (points.max() + stroke / 2) * ring * scale
+        assertEquals(SPLASH_RINGS_RADIUS_DP, edge, 0.05f)
+        // nothing reaches the 192 dp view's circle, so the app's unclipped drawing is what the splash shows
+        assertTrue(edge < 160f * 1.2f / 2)
+    }
+
+    @Test
+    fun `vibb music sits 24 dp under the rings, its ink centred in its box`() {
+        val word = res("drawable/splash_wordmark.xml")
+        val ys = Regex("""(-?[\d.]+),(-?[\d.]+)""").findAll(word).map { it.groupValues[2].toFloat() }.toList()
+        val box = attr(word, "android:viewportHeight").toFloat()
+        assertEquals(SPLASH_WORDMARK_INK_DP, ys.max() - ys.min(), 0.02f)
+        assertEquals("the ink centred in the box", box / 2, (ys.max() + ys.min()) / 2, 0.02f)
+        // the box's centre is placed SPLASH_WORDMARK_BELOW_DP under the window's centre = the rings' centre
+        val inkTop = SPLASH_WORDMARK_BELOW_DP - SPLASH_WORDMARK_INK_DP / 2
+        assertEquals(24f, inkTop - SPLASH_RINGS_RADIUS_DP, 0.001f)
     }
 
     @Test

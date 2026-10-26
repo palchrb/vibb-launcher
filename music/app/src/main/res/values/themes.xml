@@ -6,11 +6,10 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
-        <!-- The launch splash (Android 12+; minSdk 34): the Vibb mark on the night ground and the wordmark at the
-             foot, both from scripts/music-splash.py; the system's own fade is the only motion. MainActivity keeps it up
-             until the first content frame (logic/Splash.kt). -->
+        <!-- The launch splash (Android 12+; minSdk 34): the Vibb mark alone on the night ground (scripts/music-splash.py),
+             static. No branding image: Android pins it to the screen's foot, and the wordmark sits right under the rings
+             in the app's first frame instead, which this splash fades into (MainActivity, logic/Splash.kt). -->
         <item name="android:windowSplashScreenBackground">@color/vibb_night</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_vibb_mark</item>
-        <item name="android:windowSplashScreenBrandingImage">@drawable/splash_wordmark</item>
     </style>
 </resources>
