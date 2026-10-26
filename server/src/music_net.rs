@@ -183,6 +183,19 @@ pub trait Source: Send + Sync {
     fn resolve<'a>(&'a self, host: &'a str) -> BoxFut<'a, Result<Vec<IpAddr>, FetchError>>;
 }
 
+/// An address a LAN feed may live on (21b §2.7, security review L2): private, but never "this
+/// host" (`0.0.0.0/8`, `::`) - what a DNS blocker answers for a blocked name, which would turn a
+/// public feed into a LAN one. Still private for [Reach::Public] ([is_private]).
+pub fn is_lan(ip: IpAddr) -> bool {
+    let unspecified = match ip {
+        IpAddr::V4(v4) => v4.octets()[0] == 0,
+        IpAddr::V6(v6) => {
+            v6.is_unspecified() || v6.to_ipv4_mapped().is_some_and(|v4| v4.octets()[0] == 0)
+        }
+    };
+    is_private(ip) && !unspecified
+}
+
 /// The private ranges of 21b §2.7. Mapped (`::ffff:0:0/96`) and NAT64 (`64:ff9b::/96`) addresses
 /// are judged by their IPv4.
 pub fn is_private(ip: IpAddr) -> bool {

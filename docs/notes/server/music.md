@@ -103,15 +103,21 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `state` ok/pending/gone, keys checked). Stamps are UTC text from the caller's `now` (tests drive a fake clock).
   Triggers on both tables move `music_library_revision` (the library names `items` = the listing version, falls back
   to the listing's cover, and plays an `auto` NRK series that keeps its newest 100 `newest_first`). Each library
-  entry also says `lan` (true only for an RSS feed whose first check found it on the LAN or tailnet, written in the
-  same update as its first version): the music app refuses private addresses for every other entry's audio
+  entry also says `lan` (true only for an RSS feed whose checks found it on the LAN or tailnet, written in the
+  same update as its first version; since 0.55.0 it can turn false, never true again): the music app refuses private addresses for every other entry's audio
   (qa-21b-step1c-code #14).
 - **Fetching** (`music_net`): every source request (add check, sweep, covers) through `AppState.music_fetch` =
   `Gated(HttpSource)` - one request in flight server-wide, starts 200 ms apart; caps/timeouts per `Kind` (page 2 MB /
   30 s, manifest 256 KB / 15 s, feed 20 MB / 120 s, image 10 MB / 60 s; 10 s connect, 30 s without data), gzip, no
   proxy, <= 5 redirects http(s) only. `Reach::Public` (NRK, and a feed whose target resolved publicly at its first
   check) uses a resolver that drops private answers at connect time and refuses private IP literals and redirects to
-  them; `Reach::Any` only for a LAN/tailnet feed the parent entered. Tests use `tests::music::CannedFetch` (canned
+  them; `Reach::Any` only for a LAN/tailnet feed the parent entered. Since 0.55.0 (security review L2): LAN means
+  every answer private and none "this host" (`music_net::is_lan`: never `0.0.0.0/8` or `::`, what a DNS blocker answers);
+  a LAN feed is judged again at every check (`rss_check`) and is public for good the first time its host answers
+  otherwise (public never turns LAN: a later private answer is refused); its cover and episode pictures go with
+  `Reach::Any` only from the feed's own host and port (`music_sweep::lan_art`), every other picture as a public one
+  (`tests::music_sweep::a_lan_feed_is_judged_at_every_check_and_its_art_stays_home`). The connection isn't pinned to the
+  checked addresses: a LAN feed's host may name any private address anyway. Tests use `tests::music::CannedFetch` (canned
   answers, DNS, ETags, an in-flight counter) behind the real gate; no test touches the network.
 - **Parsing** (`music_sources`, pure): psapi pages/roots/manifests/metadata (keys `[A-Za-z0-9_-]{1,64}`, years >=
   2100 = always) and RSS with `quick-xml` (decoded by BOM/declaration with `encoding_rs`; a DOCTYPE with an internal
@@ -520,7 +526,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   cover's or NRK's 16:9 picture's -> `same`, no request. Step 2: another item (this entry's, else any entry's, one
   with a file first) has a print for that URL -> judged against this entry's reference prints, no request; a `same`
   elsewhere has no file, so an `own` here needs the request (QA L1 c). Step 3: one GET (`Kind::Image`,
-  `public_media` unless a LAN feed), `process_limited(Square)`, `photos::fingerprint_limited` (9x8 dHash + `tone_image`, the
+  `public_media` unless a LAN feed's own host and port), `process_limited(Square)`, `photos::fingerprint_limited` (9x8 dHash + `tone_image`, the
   quarters' mean RGB); within `SAME_PICTURE_BITS` (5) of a reference -> `same` (nothing stored), else `own`; two own
   pictures of an entry are one hash only as `twins` (code QA L4: within `TWIN_BITS` 2, the same tone, and not
   `low_detail` - a flat field or small text on one background). Known limit: the series line is dHash only, so a flat

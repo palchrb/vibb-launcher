@@ -2409,15 +2409,35 @@ fn give_up_pending(plan: &mut Plan, now: DateTime<Utc>) {
 // RSS
 // ------------------------------------------------------------------------------------------------
 
-/// Where a pasted or swept feed lives (§2.7): `true` when its host resolves only to private
-/// addresses (the home LAN or the tailnet). The add check and the first sweep check judge it alike.
+/// Where a pasted or swept feed lives (§2.7): `true` when its host resolves only to LAN addresses
+/// (the home LAN or the tailnet, `music_net::is_lan`: never `0.0.0.0`/`::`, a blocker's answer).
+/// The add check and the sweep's checks judge it alike (security review L2: a LAN feed is judged
+/// again at each check, `rss_check`).
 pub async fn feed_is_lan(source: &dyn Source, url: &str) -> Result<bool, FetchError> {
     let host = music_net::host_of(url)
         .ok_or_else(|| FetchError::Refused("only http and https links work".to_string()))?;
     let found = tokio::time::timeout(LOOKUP_TIMEOUT, source.resolve(&host))
         .await
         .unwrap_or(Err(FetchError::Timeout))?;
-    Ok(!found.is_empty() && found.iter().all(|ip| music_net::is_private(*ip)))
+    Ok(!found.is_empty() && found.iter().all(|ip| music_net::is_lan(*ip)))
+}
+
+/// Whether a picture at `url` is fetched with the LAN reach (security review L2): only for a feed
+/// judged LAN at this check, and only from the feed's own host and port - every other picture
+/// goes out as a public one (`Reach::Public`, and never to a private host).
+fn lan_art(plan: &Plan, link: &Link, url: &str) -> bool {
+    let Link::Rss { url: feed } = link else {
+        return false;
+    };
+    let origin = |url: &str| {
+        reqwest::Url::parse(url).ok().and_then(|url| {
+            Some((
+                url.host_str()?.to_ascii_lowercase(),
+                url.port_or_known_default()?,
+            ))
+        })
+    };
+    plan.lan == Some(true) && origin(feed).is_some() && origin(feed) == origin(url)
 }
 
 async fn rss_check(
@@ -2427,15 +2447,15 @@ async fn rss_check(
     old: &Listing,
     recheck: bool,
 ) -> Result<(), CheckError> {
-    // Where the target lives, fixed at the first check (§2.7).
+    // Where the target lives (§2.7). Public stays public for good (a host that later answers a
+    // private address is refused, never turned LAN); LAN is judged again at every check and
+    // becomes public for good the first time the host answers otherwise (security review L2: one
+    // private answer - a rebinding, a blocker's - never makes a feed LAN for good).
     let lan = match plan.lan {
-        Some(lan) => lan,
-        None => {
-            let lan = feed_is_lan(job.source, url).await?;
-            plan.lan = Some(lan);
-            lan
-        }
+        Some(false) => false,
+        _ => feed_is_lan(job.source, url).await?,
     };
+    plan.lan = Some(lan);
     let reach = if lan { Reach::Any } else { Reach::Public };
     let current_parser = old.parser == Some(sources::PARSER_VERSION);
     let mut request = SourceRequest::new(url, Kind::Feed, reach);
@@ -3187,7 +3207,7 @@ async fn cover(job: &mut Job<'_>, plan: &mut Plan, link: &Link) -> CoverResult {
     if (plan.has_cover && !changed) || tried_recently {
         return CoverResult(None);
     }
-    let lan = plan.lan == Some(true) && matches!(link, Link::Rss { .. });
+    let lan = lan_art(plan, link, &url);
     plan.cover_at = Some(stamp(now));
     if !music_net::media_url_ok(&url) || (!lan && !job.public_media(&url).await) {
         return CoverResult(None);
@@ -3637,8 +3657,6 @@ async fn art_pass(
         .chain(older.into_iter().filter(|_| backlog))
         .filter(|at| art_due(&plan.items[*at], now))
         .collect();
-    let lan = plan.lan == Some(true) && matches!(link, Link::Rss { .. });
-    let reach = if lan { Reach::Any } else { Reach::Public };
     // Per image host: network errors (and 5xx answers) in a row, and whether it answered in this
     // pass (code QA M2; per host since Q26). A host at [ART_NETWORK_FAILURES] is down for the rest
     // of the pass: its pictures wait untried, the other hosts' go on.
@@ -3728,6 +3746,8 @@ async fn art_pass(
             cut_at = Some(step);
             break;
         }
+        let lan = lan_art(plan, link, &url);
+        let reach = if lan { Reach::Any } else { Reach::Public };
         if !music_net::media_url_ok(&url) || (!lan && !job.public_media(&url).await) {
             tried.insert(url.clone(), false);
             art_failed(&mut plan.items[index], url, now);
