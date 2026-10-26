@@ -49,10 +49,23 @@ struct ReleaseAsset {
     /// Bytes, as GitHub (or the repo's index) reports it; 0 if missing.
     #[serde(default)]
     size: u64,
-    /// The SHA-256 (lower-case hex) the download must have, from an F-Droid repo's index: checked
-    /// before the file is moved into place ([stream_to_file]). `None` for GitHub.
-    #[serde(skip)]
+    /// The SHA-256 (hex) the download must have, checked before the file is moved into place
+    /// ([stream_to_file]): an F-Droid repo's index's, or GitHub's asset `digest` (`sha256:<hex>`,
+    /// sent since 2025). `None` - today's path, the size and the ZIP header only - for an asset
+    /// GitHub lists without one, or with another algorithm.
+    #[serde(default, rename = "digest", deserialize_with = "github_digest")]
     sha256: Option<String>,
+}
+
+/// GitHub's asset `digest`, `sha256:<64 hex>`, as the hex; anything else (null, absent, another
+/// algorithm, a malformed value) is no digest.
+fn github_digest<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<String>, D::Error> {
+    let digest: Option<String> = Option::deserialize(de)?;
+    Ok(digest.and_then(|digest| {
+        let hex = digest.strip_prefix("sha256:")?;
+        (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+            .then(|| hex.to_ascii_lowercase())
+    }))
 }
 
 /// An APK is a ZIP file: anything else (an HTML error page, a truncated download) must never be
@@ -343,7 +356,8 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 /// Streams an asset to `final_path` through a temp file next to it (`<final_path>.<random>.part`),
 /// renamed into place only once it is a complete APK: ZIP header, exactly `expected_size` bytes
 /// when the release lists one, never over [MAX_ASSET_BYTES], and - with `expected_sha256` (an
-/// F-Droid repo's index) - exactly that SHA-256, else `ChecksumMismatch` and nothing is kept. A
+/// F-Droid repo's index, GitHub's asset digest) - exactly that SHA-256, else `ChecksumMismatch`
+/// and nothing is kept. A
 /// chunk that takes longer than `stall` fails the download. Nothing is held in memory beyond one
 /// chunk. Returns the bytes written and their SHA-256, which the phones check the whole file
 /// against (design 13 QA #2).
@@ -413,7 +427,7 @@ async fn stream_to_file(
         return Err(Failure::new(
             SyncProblem::ChecksumMismatch,
             format!(
-                "the download's SHA-256 is {sha256}, the repo's index says {expected} - not stored"
+                "the download's SHA-256 is {sha256}, the release lists {expected} - not stored"
             ),
         ));
     }
@@ -4231,6 +4245,120 @@ mod tests {
         let mut both = vec![ticked, other];
         both.sort();
         assert_eq!(nudged(), both);
+    }
+
+    /// GitHub's asset `digest` (Q27): `sha256:<hex>` is the SHA-256 the download must have;
+    /// null, absent, another algorithm or a malformed value is no digest (today's path).
+    #[test]
+    fn a_github_asset_reads_its_sha256_digest() {
+        let hex = "AB".repeat(32);
+        let asset = |digest: serde_json::Value| -> ReleaseAsset {
+            serde_json::from_value(serde_json::json!({
+                "id": 7, "name": "app.apk", "size": 10,
+                "browser_download_url": "https://example.org/app.apk", "digest": digest,
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            asset(serde_json::json!(format!("sha256:{hex}"))).sha256,
+            Some("ab".repeat(32))
+        );
+        for no in [
+            serde_json::json!(null),
+            serde_json::json!(format!("sha512:{hex}")),
+            serde_json::json!("sha256:abc"),
+            serde_json::json!(format!("sha256:{}", "zz".repeat(32))),
+            serde_json::json!(hex),
+        ] {
+            assert_eq!(asset(no.clone()).sha256, None, "{no}");
+        }
+        let without: ReleaseAsset = serde_json::from_value(serde_json::json!({
+            "id": 7, "name": "app.apk", "browser_download_url": "https://example.org/app.apk",
+        }))
+        .unwrap();
+        assert_eq!(without.sha256, None);
+    }
+
+    /// A GitHub asset whose download isn't its listed digest is refused and nothing is stored or
+    /// pinned (Q27); the right digest, or none, is stored as before.
+    #[tokio::test]
+    async fn a_github_download_must_match_its_digest() {
+        let app = crate::tests::TestApp::new().await;
+        let server = axum::Router::new().route(
+            "/key1.apk",
+            axum::routing::get(|| async {
+                std::fs::read("testdata/apk/fixture-key1.apk").unwrap()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
+        let (apk, sha) = fixture_apk();
+        let asset = |id: i64, digest: Option<String>| ReleaseAsset {
+            id,
+            name: "key1.apk".to_string(),
+            browser_download_url: format!("{base}/key1.apk"),
+            size: apk.len() as u64,
+            sha256: digest,
+        };
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tracked_apps (name, package_name, github_repo) \
+             VALUES ('Fixture', '', 'o/r') RETURNING id",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        let wrong = "cd".repeat(32);
+        let err = sync_release(
+            &app.state,
+            &row_of(&app, id).await,
+            "v1",
+            &asset(1, Some(wrong.clone())),
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.problem, SyncProblem::ChecksumMismatch, "{}", err.detail);
+        assert!(
+            err.detail.contains(&wrong) && err.detail.contains(&sha),
+            "{}",
+            err.detail
+        );
+        let row = row_of(&app, id).await;
+        assert_eq!(row.latest_release_tag, None);
+        assert_eq!(
+            row.signer_sha256, None,
+            "nothing pinned from an unverified file"
+        );
+        let app_dir = app.state.tracked_apps_dir.join(id.to_string());
+        assert_eq!(files_in(&app_dir), Vec::<String>::new());
+
+        sync_release(
+            &app.state,
+            &row_of(&app, id).await,
+            "v1",
+            &asset(2, Some(sha.clone())),
+            false,
+        )
+        .await
+        .unwrap();
+        let row = row_of(&app, id).await;
+        assert_eq!(row.latest_release_tag.as_deref(), Some("v1"));
+        assert_eq!(row.latest_release_sha256.as_deref(), Some(sha.as_str()));
+        // No digest: stored as before.
+        sync_release(
+            &app.state,
+            &row_of(&app, id).await,
+            "v2",
+            &asset(3, None),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            row_of(&app, id).await.latest_release_tag.as_deref(),
+            Some("v2")
+        );
     }
 
     fn fork_config(vars: &[(&str, &str)]) -> crate::config::ForkConfig {
