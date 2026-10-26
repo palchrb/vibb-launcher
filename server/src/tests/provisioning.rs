@@ -237,6 +237,92 @@ fn locale_and_time_zone_validation() {
     }
 }
 
+/// Security review L8 (the user's rule): https and http to a Tailscale address are saved
+/// silently; http to another private address is saved with a warning under the field and on the
+/// Connect page; http to a public host writes nothing and says why. An address saved before the
+/// rule that it refuses now is never put in the QR, and Phone Setup says so (QA L-e).
+#[tokio::test]
+async fn the_server_address_is_judged_on_save_and_shown() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.create_device("phone").await;
+    let save = |url: &'static str| {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            app.request_form(
+                Method::POST,
+                "/settings/provisioning",
+                Some(cookie),
+                &[("server_url", url), ("locale", ""), ("time_zone", "")],
+            )
+            .await
+        }
+    };
+    let stored = || async {
+        sqlx::query_scalar::<_, String>("SELECT server_url FROM provisioning_settings")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    let setup = || async { app.get_page("/settings/provisioning", &cookie).await.text() };
+    let connect = || async {
+        app.get_page(&format!("/devices/{id}/provision"), &cookie)
+            .await
+            .text()
+    };
+    for bad in [
+        "http://vibb.example.org",
+        "http://203.0.113.5",
+        "vibb.example",
+    ] {
+        let res = save(bad).await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad}");
+        let page = res.text();
+        assert!(page.contains("id=\"server_url-error\""), "{bad}: {page}");
+        assert!(page.contains(&format!("value=\"{bad}\"")), "{bad}");
+        assert_eq!(stored().await, "", "{bad}");
+    }
+    for fine in [
+        "http://100.101.102.103:3100",
+        "http://[fd7a:115c:a1e0::1]:3100",
+        "http://vibb.tail1234.ts.net",
+        "https://vibb.example.org",
+    ] {
+        assert!(save(fine).await.status.is_redirection(), "{fine}");
+        assert_eq!(stored().await, fine);
+        assert!(
+            !setup().await.contains("data-warning=\"plain-http\""),
+            "{fine}"
+        );
+        assert!(
+            !connect().await.contains("data-warning=\"plain-http\""),
+            "{fine}"
+        );
+    }
+    assert!(
+        save("http://192.168.1.5:3100")
+            .await
+            .status
+            .is_redirection()
+    );
+    assert_eq!(stored().await, "http://192.168.1.5:3100");
+    for page in [setup().await, connect().await] {
+        assert!(page.contains("data-warning=\"plain-http\""), "{page}");
+        assert!(
+            page.contains("The phones will use plain http to 192.168.1.5."),
+            "{page}"
+        );
+    }
+    // Saved before the rule: shown as not used, and the QR has no address from it.
+    sqlx::query("UPDATE provisioning_settings SET server_url = 'http://vibb.example.org'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert!(setup().await.contains("isn&#39;t put in the setup QR"));
+    assert!(connect().await.contains("data-missing=\"server-url\""));
+}
+
 /// Defaults nb_NO / Europe/Oslo (migrations/0034), editable on the provisioning page, invalid
 /// values refused without writing anything, and the device's QR page carries them.
 #[tokio::test]

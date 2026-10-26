@@ -282,7 +282,9 @@ LAUNCHER_APK_URL=https://github.com/palchrb/vibb-launcher/releases/latest/downlo
 # (DEPLOY.md has the same command, plus one that reads the keystore.)
 #LAUNCHER_SIGNATURE_CHECKSUM=
 # The phones' server address in the setup QR while Settings > Phone Setup has none saved (an address
-# saved there wins). https://, or http:// for the emulator loop (a startup warning).
+# saved there wins). https://; http:// to a Tailscale address (100.x, fd7a:115c:a1e0::, *.ts.net);
+# http:// to another private address only through an encrypted tunnel (taken with a warning, the
+# server can't tell); http:// to a public host is ignored.
 #PHONE_SERVER_URL=https://vibb.your-tailnet.ts.net
 EOF
     PRINT_CREDENTIALS=1

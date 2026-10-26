@@ -478,7 +478,11 @@ pub async fn intake(
     let mut stored_any = false;
     match state.db.acquire().await {
         Ok(mut conn) => {
-            for (loc, captured_at) in fixes {
+            // Within the phone's daily budget (security review L4): the newest that fit.
+            let left = crate::retention::Budget::Locations
+                .left_today(&mut conn, device_id)
+                .await;
+            for (loc, captured_at) in &fixes[fixes.len().saturating_sub(left)..] {
                 match store_fix(&mut conn, device_id, loc, captured_at).await {
                     Ok(_) => stored_any = true,
                     Err(err) => tracing::error!(device_id, %err, "can't store the fix"),
@@ -802,17 +806,19 @@ pub async fn mock_rise(
             .bind(device_id)
             .execute(&mut *tx)
             .await?;
-        let line = mock_log_line(device_id, logged, count);
-        if let Some(line) = &line {
-            sqlx::query(
-                "INSERT INTO security_events (event_type, username, ip_address, detail) \
-                 VALUES ('mock_location_ignored', NULL, NULL, ?)",
+        // Within the phone's hourly line budget (QA M2: a count that goes 1, 0, 1, 0 would
+        // otherwise write a line on every other report).
+        match mock_log_line(device_id, logged, count) {
+            Some(line) => crate::security::record_phone_event(
+                &mut tx,
+                device_id,
+                "mock_location_ignored",
+                &line,
             )
-            .bind(line)
-            .execute(&mut *tx)
-            .await?;
+            .await?
+            .then_some(line),
+            None => None,
         }
-        line
     } else {
         None
     };

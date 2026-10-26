@@ -77,15 +77,31 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   decision on QA 22 M5; other sessions) and `POST
   /account/sign-out-everywhere` (all) bump it (`load_active_admin` compares); cookie `__Host-handy` (Secure, Path=/,
   HttpOnly, Strict) or `handy` with `INSECURE_COOKIES` (`security::session_layer`); `SESSION_INACTIVITY_DAYS`
-  (`NetConfig`, default 30). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
+  (`NetConfig`, default 30), and since 0.55.0 (security review L6) `SESSION_MAX_DAYS` (default 90, 1-3650): the sign-in's
+  time (`admin_auth::SIGNED_IN_AT_KEY`, set at the sign-in's last step) ends the session that long after, however
+  often it is used (`load_active_admin`, `SignInWhy::TooOld`); a session from before has no time and starts its clock
+  at its next request, so the upgrade signs nobody out (`admin_auth::a_session_ends_after_its_absolute_lifetime`). `kid_phone_server reset-2fa <user>` (`main::run_command`) clears TOTP, lock and counter,
   bumps the epoch and replaces the password with a new one in `data/initial-admin-password-<id>` (QA 22 M4; one file per
   account since design 62, which also restores a removed account and clears a one-time password's expiry). `admin_headers`: HSTS, nosniff, Referrer-Policy, X-Frame-Options, COOP, Permissions-Policy,
-  CSP phase 1 (`ADMIN_CSP`, inline JS still allowed until S7); HTML `private, no-cache`, `no_store_path` (locations
+  CSP (`ADMIN_CSP`; phase 2 since 0.55.0, design 22 S7 and security review L5: `script-src 'self'`, no
+  `'unsafe-inline'` - the last inline handler, the rule editor's Type, is `static/rule-kind.js`;
+  `tests::admin_auth::no_template_has_inline_script` fails on an inline `<script>`, an `on*=` attribute or a
+  `javascript:` link in any template, partials too; inline styles stay allowed); HTML `private, no-cache`, `no_store_path` (locations
   JSON, backups, provision, the code page, provisioning settings, account, auth; since design 35 the inbox) `no-store`. `csrf_guard` (unsafe
   methods, not `/api/devices/`, not `/notifications/receipt` - the push receipt's token is its proof): `Sec-Fetch-Site` same-origin/none, else `Origin` host[:port] = `Host` (or
   `X-Forwarded-Host` from a trusted peer), neither header passes; refused = 403 + throttled `csrf_refused`.
   Provisioning: `GET /devices/{id}/provision` (Connect) is the form only, `POST` makes the QR (Wi-Fi password never in a URL);
-  the Tailscale key is write-only (`settings::key_hint`, empty keeps, `clear_tailscale_auth_key` removes).
+  the Tailscale key is write-only (`settings::key_hint`, empty keeps, `clear_tailscale_auth_key` removes). The QR's
+  server address (Phone Setup's field and `.env`'s `PHONE_SERVER_URL`, one rule since 0.55.0, security review L8 and
+  the user's rule of 2026-10-26, `config::check_server_url`): `https://` and a host, or `http://` to a Tailscale address
+  (100.64.0.0/10, `fd7a:115c:a1e0::/48`, `*.ts.net`) - fine, silent; `http://` to another private address (RFC 1918,
+  loopback, link-local, `fc00::/7`, a `.local`/`.internal`/single-label name) - saved and put in the QR, with "The
+  phones will use plain http to <host>. That is safe only if the path is an encrypted tunnel (WireGuard, Tailscale).
+  The server can't tell." under the field and on the Connect page (`.env`'s: a log line), since a WireGuard or
+  Headscale path can't be told from a cleartext LAN; `http://` to a public host - the form refuses it (400, the reason
+  under the field, nothing saved), `.env`'s is ignored with a log line. A saved one the rule refuses (saved before
+  0.55.0) is never put in a QR (`provisioning::server_url`) and Phone Setup says so under the field (QA L-e;
+  `config::tests::a_server_address_is_judged_in_four_classes`, `provisioning::the_server_address_is_judged_on_save_and_shown`).
   `security_events` pruned after 180 days (`retention::prune`). The TOTP secret stays in the DB (QA b, DEPLOY.md).
 - **Docker and startup** (D1, `src/startup.rs`, `Dockerfile`, `deploy/image-smoke.sh`): `DEPLOY_KIND` (`NetConfig`,
   systemd default, the image sets docker). Startup for every kind: `check_data_writable` ("data/ is not writable by

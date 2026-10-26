@@ -359,7 +359,7 @@ pub async fn log_relock_blocks(
     };
     let before = window_relock::parse_relock_blocks(previous);
     if let Some(line) = window_relock::blocks_log_line(device_id, before.as_deref(), &blocks) {
-        security::record_security_event(db, "phone_app_blocked", None, None, Some(&line)).await;
+        security::record_phone_event_logged(db, device_id, "phone_app_blocked", &line).await;
     }
 }
 
@@ -379,12 +379,11 @@ pub async fn log_foreign_access(
     if before == after {
         return;
     }
-    security::record_security_event(
+    security::record_phone_event_logged(
         &state.db,
+        device_id,
         "phone_foreign_access",
-        None,
-        None,
-        Some(&window_relock::foreign_log_line(device_id, after.as_ref())),
+        &window_relock::foreign_log_line(device_id, after.as_ref()),
     )
     .await;
     if let (Some((phone, previous_status_id)), Some(found), Some(stored)) = (phone, &after, now) {
@@ -424,12 +423,11 @@ pub async fn log_relock(
     if previous_at == Some(report.at_ms) || !window_relock::found_anything(&report) {
         return;
     }
-    security::record_security_event(
+    security::record_phone_event_logged(
         db,
+        device_id,
         "phone_relock_findings",
-        None,
-        None,
-        Some(&window_relock::log_line(device_id, &report)),
+        &window_relock::log_line(device_id, &report),
     )
     .await;
 }

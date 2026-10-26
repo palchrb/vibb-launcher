@@ -813,10 +813,20 @@ pub fn local_target(target: &str) -> bool {
     target.starts_with('/') && !target.starts_with("//") && !target.starts_with("/\\")
 }
 
+/// A phone raises at most this many events of one kind in a rolling hour; past it they are not
+/// stored (logged) - a leaked token or a rooted phone can't bury the inbox (security review L1).
+pub const EVENTS_AN_HOUR: i64 = 20;
+/// Of an urgent kind, a phone's first this many in a rolling hour are pushed; the rest of the hour's
+/// are stored without a push of their own (L1: the parent has had that many "PIN locked" or
+/// "another app has control" pushes; the inbox has the rest). Never the emergency call (QA L-b):
+/// every one stored is pushed, so at most [EVENTS_AN_HOUR] an hour.
+pub const URGENT_PUSHES_AN_HOUR: i64 = 3;
+
 /// Stores `event` once: the new row's id, or `None` when it was there already (the same phone,
-/// kind and key) or its target isn't a local path (a bug, logged). A new row queues its pushes
-/// (`push::queue`). Runs on the caller's connection, so a caller's transaction holds both; the
-/// caller wakes the sender (`state.push.wake()`) once that committed.
+/// kind and key), its phone is past [EVENTS_AN_HOUR] of the kind (logged), or its target isn't a
+/// local path (a bug, logged). A new row queues its pushes (`push::queue`; an urgent kind past
+/// [URGENT_PUSHES_AN_HOUR], none). Runs on the caller's connection, so a caller's transaction holds
+/// both; the caller wakes the sender (`state.push.wake()`) once that committed.
 pub async fn raise(
     conn: &mut SqliteConnection,
     event: &NewEvent,
@@ -827,6 +837,31 @@ pub async fn raise(
             "an event's target isn't a local path"
         );
         return Ok(None);
+    }
+    let mut push = event.push;
+    if let Some(device_id) = event.device_id {
+        let this_hour: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM parent_events WHERE device_id = ? AND kind = ? \
+             AND created_at > datetime('now', '-1 hour')",
+        )
+        .bind(device_id)
+        .bind(event.kind.wire())
+        .fetch_one(&mut *conn)
+        .await?;
+        if this_hour >= EVENTS_AN_HOUR {
+            tracing::warn!(
+                device_id,
+                kind = event.kind.wire(),
+                "a phone's events of one kind are past their hourly budget; not stored"
+            );
+            return Ok(None);
+        }
+        if event.kind.urgent()
+            && event.kind != Kind::EmergencyCall
+            && this_hour >= URGENT_PUSHES_AN_HOUR
+        {
+            push = Push::No;
+        }
     }
     let id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO parent_events \
@@ -849,7 +884,7 @@ pub async fn raise(
     .fetch_optional(&mut *conn)
     .await?;
     if let Some(id) = id {
-        match event.push {
+        match push {
             Push::Now => crate::push::queue(conn, id, event.kind, None).await?,
             Push::Held(until) => crate::push::queue(conn, id, event.kind, Some(until)).await?,
             Push::No => {}
@@ -884,7 +919,10 @@ pub fn new_emergency_call(
     previous: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
 ) -> Option<DateTime<Utc>> {
-    let at = reported?;
+    // A call dated past the server's clock (a phone clock that runs fast) is announced at the
+    // server's now (QA L-b: dropped, it would never be news later - the previous report already
+    // holds its time); `EVENTS_AN_HOUR` bounds a phone that sends a new one with every report.
+    let at = reported?.min(now);
     match previous {
         Some(before) => (at > before).then_some(at),
         None => (now - at <= chrono::Duration::hours(FIRST_REPORT_CALL_HOURS)).then_some(at),
@@ -2710,6 +2748,10 @@ mod tests {
         let now = utc("2026-10-18 12:00:00");
         let call = Some(utc("2026-10-18 11:00:00"));
         assert_eq!(new_emergency_call(call, call, now), None);
+        // A call past the server's clock is announced at the server's now (QA L-b).
+        let ahead = Some(utc("2026-10-18 12:06:00"));
+        assert_eq!(new_emergency_call(ahead, call, now), Some(now));
+        assert_eq!(new_emergency_call(ahead, None, now), Some(now));
         assert_eq!(
             new_emergency_call(call, Some(utc("2026-10-17 11:00:00")), now),
             call

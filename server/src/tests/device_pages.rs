@@ -1096,11 +1096,14 @@ async fn web_filter_holds_the_phones_parts() {
     )
     .unwrap();
     let local = ads_at.with_timezone(&chrono_tz::Europe::Oslo);
-    // In the order the phone queued them: a garbled time last, as it arrived.
+    // In the order the phone queued them: a garbled time last, as it arrived. A domain that
+    // isn't a hostname is never stored (security review L3).
     let events = json!([
         { "domain": "ads.example", "category": "Ads & tracking",
           "blocked_at": ads_at.to_rfc3339() },
-        { "domain": "<b>bold</b>.example", "category": "<i>Custom</i>",
+        { "domain": "<b>bold</b>.example", "category": "Custom",
+          "blocked_at": (now - chrono::Duration::minutes(10)).to_rfc3339() },
+        { "domain": "bold.example", "category": "<i>Custom</i>",
           "blocked_at": (now - chrono::Duration::minutes(10)).to_rfc3339() },
         { "domain": "odd.example", "category": "Custom", "blocked_at": "yesterday-ish" },
     ]);
@@ -1120,12 +1123,12 @@ async fn web_filter_holds_the_phones_parts() {
     let log = &html[html.find("data-group=\"log-events\"").expect("the log")..];
     let log = &log[..log.find("</section>").unwrap()];
     let ads = log.find("ads.example").unwrap();
-    // Newest first by the phone's time, the unreadable one last (qa-31-s5-code N5).
-    assert!(ads < log.find("bold").unwrap());
-    assert!(log.find("bold").unwrap() < log.find("odd.example").unwrap());
-    assert!(log.contains("&#60;b&#62;bold&#60;/b&#62;.example") && !log.contains("<b>"));
+    // Newest first by the phone's time; an unreadable time is stored as the arrival (L3).
+    assert!(log.find("odd.example").unwrap() < ads);
+    assert!(ads < log.find("bold.example").unwrap());
+    assert!(!log.contains("&#60;b&#62;") && !log.contains("<b>"));
     assert!(log.contains("&#60;i&#62;Custom&#60;/i&#62;") && !log.contains("<i>"));
-    assert!(log.contains(">Time unknown</span>") && !log.contains("yesterday-ish"));
+    assert!(!log.contains("Time unknown") && !log.contains("yesterday-ish"));
     let row = &log[ads..];
     let row = &row[..row.find("</div>").unwrap()];
     assert!(

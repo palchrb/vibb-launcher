@@ -145,6 +145,68 @@ pub async fn record_security_event(
     .ok();
 }
 
+/// The security-log lines one phone's reports may write in a rolling hour (security review L1).
+pub const PHONE_LINES_AN_HOUR: i64 = 60;
+
+/// A line a phone's report raised - a PIN use, a start without the launcher, an app installed, a
+/// relock's findings -, within [PHONE_LINES_AN_HOUR] a rolling hour per phone (security review L1:
+/// a leaked token or a rooted phone can't bury the sign-ins under rows kept 180 days). `line`
+/// starts with `device {device_id}:` or `device {device_id},`, as every phone line does, and has
+/// neither a username nor an address - what the hour's count matches, so a parent's lines about
+/// the phone (which carry the parent's name) never use up its budget (QA L-a). The line over the
+/// budget is one `phone_lines_dropped` row; the rest of that hour's lines are not written (the
+/// phone's own pages keep what they show). `true` when `line` itself was written. On the caller's
+/// connection, so a caller's transaction holds it.
+pub async fn record_phone_event(
+    conn: &mut sqlx::SqliteConnection,
+    device_id: i64,
+    event_type: &str,
+    line: &str,
+) -> Result<bool, sqlx::Error> {
+    let written: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM security_events WHERE created_at > datetime('now', '-1 hour') \
+         AND username IS NULL AND ip_address IS NULL \
+         AND (detail LIKE ?1 || ':%' OR detail LIKE ?1 || ',%')",
+    )
+    .bind(format!("device {device_id}"))
+    .fetch_one(&mut *conn)
+    .await?;
+    let (event_type, line) = match written {
+        n if n < PHONE_LINES_AN_HOUR => (event_type, line.to_string()),
+        n if n == PHONE_LINES_AN_HOUR => (
+            "phone_lines_dropped",
+            format!(
+                "device {device_id}: more lines from this phone in this hour are not logged (at \
+                 most {PHONE_LINES_AN_HOUR} an hour)"
+            ),
+        ),
+        _ => return Ok(false),
+    };
+    let own = event_type != "phone_lines_dropped";
+    sqlx::query("INSERT INTO security_events (event_type, detail) VALUES (?, ?)")
+        .bind(event_type)
+        .bind(line)
+        .execute(&mut *conn)
+        .await?;
+    Ok(own)
+}
+
+/// [record_phone_event] on its own connection; a failure is logged.
+pub async fn record_phone_event_logged(
+    db: &sqlx::SqlitePool,
+    device_id: i64,
+    event_type: &str,
+    line: &str,
+) {
+    let written = match db.acquire().await {
+        Ok(mut conn) => record_phone_event(&mut conn, device_id, event_type, line).await,
+        Err(err) => Err(err),
+    };
+    if let Err(err) = written {
+        tracing::error!(device_id, event_type, %err, "can't write a phone's security-log line");
+    }
+}
+
 pub async fn is_ip_banned(db: &sqlx::SqlitePool, ip: &str) -> bool {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM banned_ips WHERE ip_address = ? AND banned_until > datetime('now'))",
@@ -427,6 +489,8 @@ pub enum SignInWhy {
     Reauth,
     /// Settings' Sign Out.
     SignOut,
+    /// The sign-in is older than `SESSION_MAX_DAYS` (security review L6).
+    TooOld,
 }
 
 impl SignInWhy {
@@ -450,6 +514,7 @@ impl SignInWhy {
                 "re-auth: the third wrong password in a row signed every session out"
             }
             SignInWhy::SignOut => "Sign Out",
+            SignInWhy::TooOld => "the sign-in is older than SESSION_MAX_DAYS",
         }
     }
 }
@@ -486,7 +551,10 @@ pub fn has_session_cookie(headers: &axum::http::HeaderMap, name: &str) -> bool {
 /// only through its epoch bump - qa-62-revision-check N1). Otherwise why not
 /// ([SignInWhy::NotSignedIn] for a session without an account; [why_signed_out] tells the
 /// cookie's cases apart).
-async fn load_active_admin(state: &AppState, session: &Session) -> Result<AdminUser, SignInWhy> {
+pub(crate) async fn load_active_admin(
+    state: &AppState,
+    session: &Session,
+) -> Result<AdminUser, SignInWhy> {
     let admin_id: i64 = session
         .get("admin_id")
         .await
@@ -509,7 +577,31 @@ async fn load_active_admin(state: &AppState, session: &Session) -> Result<AdminU
     if admin.session_epoch != epoch {
         return Err(SignInWhy::Epoch);
     }
+    // The absolute lifetime (security review L6): however often it is used, a session ends
+    // `session_max_days` after its sign-in. A session from before 0.55.0 has no sign-in time: its
+    // clock starts now (one sign-in again after the cap, not one at the upgrade).
+    let now = crate::admin_auth::now_secs();
+    let signed_in_at: Option<u64> = session
+        .get(crate::admin_auth::SIGNED_IN_AT_KEY)
+        .await
+        .map_err(|_| SignInWhy::StoreError)?;
+    match signed_in_at {
+        None => session
+            .insert(crate::admin_auth::SIGNED_IN_AT_KEY, now)
+            .await
+            .map_err(|_| SignInWhy::StoreError)?,
+        Some(at) if session_too_old(at, now, state.net.session_max_days) => {
+            return Err(SignInWhy::TooOld);
+        }
+        Some(_) => {}
+    }
     Ok(admin)
+}
+
+/// A sign-in at `signed_in_at` (Unix seconds) is past `max_days` at `now`.
+pub fn session_too_old(signed_in_at: u64, now: u64, max_days: i64) -> bool {
+    let max_secs = u64::try_from(max_days).unwrap_or(0).saturating_mul(86_400);
+    now.saturating_sub(signed_in_at) > max_secs
 }
 
 /// [load_active_admin]'s [SignInWhy::NotSignedIn] told apart by the cookie: none, one that isn't
@@ -627,7 +719,8 @@ pub async fn log_sign_in_redirects(
 
 /// `GET /api/session` (2026-10-25, `static/reconnect.js`): 204 while the request's session is a
 /// signed-in, onboarded admin's (what [require_full_auth] lets through), else 401 - no body,
-/// `no-store`, nothing written (the session isn't flushed). The sign-in page asks it before it
+/// `no-store`, nothing written but a session from before 0.55.0's first sign-in time
+/// (`load_active_admin`, security review L6; the session isn't flushed). The sign-in page asks it before it
 /// stays on screen; each answer is logged with its reason.
 pub async fn session_check(
     State(state): State<AppState>,
@@ -659,7 +752,8 @@ pub async fn session_check(
 /// The admin session cookie (design 22 §3.2.2): `__Host-handy` (Secure, `Path=/`, no `Domain`,
 /// HttpOnly, SameSite=Strict); with `INSECURE_COOKIES` (the emulator loop over plain http) a
 /// plain `handy`, since browsers drop a `__Host-` cookie that isn't Secure. Sessions end after
-/// `inactivity_days` without use.
+/// `inactivity_days` without use, and `NetConfig::session_max_days` after their sign-in whatever
+/// the use ([load_active_admin]).
 pub fn session_layer(
     store: tower_sessions_sqlx_store::SqliteStore,
     insecure: bool,

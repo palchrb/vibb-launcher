@@ -37,8 +37,8 @@
                 {% if let Some(why) = rule.name_error %}<p class="flash flash-error" id="name-error" data-flash="name">{{ why }}</p>{% endif %}
                 <label class="row">
                     <span class="row-label">Type</span>
-                    {#- The kind pre-sets the calls switch (school: off); the switch can still be changed. -#}
-                    <select class="pick" name="kind" onchange="var c=this.form.querySelector('[name=calls_allowed]'); if (c) c.checked = this.value != 'school';">
+                    {#- The kind pre-sets the calls switch (school: off; static/rule-kind.js); the switch can still be changed. -#}
+                    <select class="pick" name="kind" data-presets-calls>
                         {% for (value, label) in kinds %}
                         <option value="{{ value }}"{% if rule.kind == *value %} selected{% endif %}>{{ label }}</option>
                         {% endfor %}
@@ -86,5 +86,6 @@
     </section>
     {% endif %}
 </main>
+<script src="/static/rule-kind.js?v=1" defer></script>
 </body>
 </html>

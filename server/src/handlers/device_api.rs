@@ -1039,21 +1039,118 @@ pub async fn dns_events(
     if enabled != Some(true) {
         return StatusCode::NO_CONTENT;
     }
-    for event in events.into_iter().take(200) {
+    // Each field checked (security review L3): a hostname, a short category, a time near now;
+    // within the phone's daily budget (L4).
+    let left = match state.db.acquire().await {
+        Ok(mut conn) => {
+            crate::retention::Budget::DnsEvents
+                .left_today(&mut conn, device.id)
+                .await
+        }
+        Err(_) => usize::MAX,
+    };
+    let received = chrono::Utc::now();
+    for (domain, category, blocked_at) in events
+        .iter()
+        .take(200.min(left))
+        .filter_map(|event| event.checked(received))
+    {
         sqlx::query(
             "INSERT INTO device_dns_events (device_id, domain, category, blocked_at) \
              VALUES (?, ?, ?, ?)",
         )
         .bind(device.id)
-        .bind(&event.domain)
-        .bind(&event.category)
-        .bind(&event.blocked_at)
+        .bind(domain)
+        .bind(category)
+        .bind(blocked_at)
         .execute(&state.db)
         .await
         .ok();
     }
 
     StatusCode::NO_CONTENT
+}
+
+/// What one known key of a phone's `time_state` or `call_state` may hold (security review L10).
+#[derive(Clone, Copy)]
+pub(crate) enum Field {
+    /// Free text, clipped to this many characters.
+    Text(usize),
+    /// A name, a time or a package: dropped when longer than this.
+    Word(usize),
+    Int,
+    Bool,
+    /// Integers, at most this many.
+    Ints(usize),
+}
+
+/// The launcher's `TimeState` (`StatusReportRequest.kt`), every key it sends.
+pub(crate) const TIME_STATE_FIELDS: &[(&str, Field)] = &[
+    ("day", Field::Word(10)),
+    ("used_minutes", Field::Int),
+    ("budget_minutes", Field::Int),
+    ("extra_minutes", Field::Int),
+    ("active_rule_id", Field::Int),
+    ("active_rule_name", Field::Text(100)),
+    ("calls_blocked", Field::Bool),
+    ("lock_reason", Field::Word(32)),
+    ("lifts_active", Field::Ints(100)),
+    ("ledger_unreadable", Field::Bool),
+    ("zone", Field::Word(64)),
+];
+
+/// The launcher's `CallState` (`StatusReportRequest.kt`), every key it sends.
+pub(crate) const CALL_STATE_FIELDS: &[(&str, Field)] = &[
+    ("state", Field::Word(32)),
+    ("dialer_role_held", Field::Bool),
+    ("redirection_role_held", Field::Bool),
+    ("screening_role_held", Field::Bool),
+    ("default_dialer", Field::Word(255)),
+    ("system_dialer", Field::Word(255)),
+    ("sms_restricted", Field::Bool),
+    ("outgoing_restricted", Field::Bool),
+    ("default_sms_package", Field::Word(255)),
+    // The launcher keeps 300 (`AppEnforcer`): the exception's message is the end that matters.
+    ("last_error", Field::Text(300)),
+    ("last_emergency_call_at", Field::Word(64)),
+    ("callback_window_until", Field::Word(64)),
+    ("call_log_readable", Field::Bool),
+    ("boot_policy", Field::Word(32)),
+    ("in_call_ui_failed_at", Field::Word(64)),
+];
+
+/// A phone's JSON object through `fields` (security review L10): each known key kept only with a
+/// value of its shape (or `null`, the launcher's "none"), every other key dropped; `None` when
+/// `value` isn't an object or none of its keys is kept. A key the launcher adds later is stored
+/// once it is listed here, when the server starts reading it.
+pub(crate) fn known_fields(value: &serde_json::Value, fields: &[(&str, Field)]) -> Option<String> {
+    use serde_json::Value;
+    let object = value.as_object()?;
+    let mut kept = serde_json::Map::new();
+    for (key, field) in fields {
+        let Some(found) = object.get(*key) else {
+            continue;
+        };
+        let value = match (field, found) {
+            (_, Value::Null) => Value::Null,
+            (Field::Text(max), Value::String(text)) => {
+                Value::String(crate::audit::clip(text, *max).to_string())
+            }
+            (Field::Word(max), Value::String(word)) if word.chars().count() <= *max => {
+                found.clone()
+            }
+            (Field::Int, Value::Number(n)) if n.is_i64() => found.clone(),
+            (Field::Bool, Value::Bool(_)) => found.clone(),
+            (Field::Ints(max), Value::Array(list))
+                if list.len() <= *max && list.iter().all(Value::is_i64) =>
+            {
+                found.clone()
+            }
+            _ => continue,
+        };
+        kept.insert(key.to_string(), value);
+    }
+    (!kept.is_empty()).then(|| Value::Object(kept).to_string())
 }
 
 pub async fn status(
@@ -1086,18 +1183,15 @@ pub async fn status(
         .filter(|caps| !caps.is_empty())
         .and_then(|caps| serde_json::to_string(caps).ok())
         .filter(|json| json.len() <= 4096);
+    // Through their known keys (security review L10), like every other blob.
     let time_state_json = report
         .time_state
         .as_ref()
-        .filter(|state| state.is_object())
-        .map(|state| state.to_string())
-        .filter(|json| json.len() <= 4096);
+        .and_then(|state| known_fields(state, TIME_STATE_FIELDS));
     let call_state_json = report
         .call_state
         .as_ref()
-        .filter(|state| state.is_object())
-        .map(|state| state.to_string())
-        .filter(|json| json.len() <= 4096);
+        .and_then(|state| known_fields(state, CALL_STATE_FIELDS));
 
     let install_mode_until_ms = report.install_mode.map(|m| m.until_ms);
     // Handy's lock (step 10): what the phone says about it - only the known fields are kept, so
@@ -1260,6 +1354,10 @@ pub async fn status(
     .execute(&state.db)
     .await
     .ok();
+    // The phone's storage budget (security review L4): past it, this report replaces the last.
+    if let Some(previous) = &previous {
+        crate::retention::replace_over_budget(&state.db, device.id, previous.id).await;
+    }
     // Design 59 §2.1: the PIN the phone last confirmed is forgotten at the current rev, and a phone
     // in android mode that needs the Child PIN gets it as a command (nudged at once).
     if let Some(lock_state) = crate::kid_lock::parse_lock_state(lock_state_json.as_deref()) {
@@ -1331,7 +1429,7 @@ pub async fn status(
         previous_unseen,
         unseen_boots.map(|(count, _)| count),
     ) {
-        crate::security::record_security_event(&state.db, "boot_unseen", None, None, Some(&line))
+        crate::security::record_phone_event_logged(&state.db, device.id, "boot_unseen", &line)
             .await;
         if let (Some(phone), Some((count, last_at_ms))) = (&phone, unseen_boots) {
             crate::parent_events::raise_logged(&state, &phone.unseen_boot(count, last_at_ms)).await;
@@ -1578,14 +1676,11 @@ async fn log_play_events(
         let until = chrono::DateTime::from_timestamp_millis(mode.until_ms)
             .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
             .unwrap_or_else(|| mode.until_ms.to_string());
-        crate::security::record_security_event(
+        crate::security::record_phone_event_logged(
             &state.db,
+            device_id,
             "play_install_mode",
-            None,
-            None,
-            Some(&format!(
-                "device {device_id}: Play install mode until {until}"
-            )),
+            &format!("device {device_id}: Play install mode until {until}"),
         )
         .await;
     }
@@ -1608,16 +1703,15 @@ async fn log_play_events(
         .take(20)
     {
         let source = app.installer.as_deref().unwrap_or("unknown source");
-        crate::security::record_security_event(
+        crate::security::record_phone_event_logged(
             &state.db,
+            device_id,
             "app_installed",
-            None,
-            None,
-            Some(&format!(
+            &format!(
                 "device {device_id}: {} ({}) installed from {source}",
                 app.label.chars().take(80).collect::<String>(),
                 app.package_name.chars().take(200).collect::<String>()
-            )),
+            ),
         )
         .await;
     }
@@ -2183,7 +2277,16 @@ pub async fn crash_reports(
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
     }
-    if tx.commit().await.is_err() {
+    // At most CRASH_HASHES kept per phone, the oldest reported going first (security review L4).
+    let pruned = sqlx::query(
+        "DELETE FROM device_crashes WHERE device_id = ?1 AND id NOT IN (SELECT id FROM \
+         device_crashes WHERE device_id = ?1 ORDER BY reported_at DESC, id DESC LIMIT ?2)",
+    )
+    .bind(device.id)
+    .bind(crate::retention::CRASH_HASHES)
+    .execute(&mut *tx)
+    .await;
+    if pruned.is_err() || tx.commit().await.is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
     StatusCode::NO_CONTENT

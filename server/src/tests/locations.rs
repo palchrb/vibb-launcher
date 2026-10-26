@@ -315,7 +315,7 @@ async fn a_stored_future_fix_is_pruned() {
     .execute(&app.db)
     .await
     .unwrap();
-    crate::retention::prune(&app.db).await.unwrap();
+    crate::retention::prune(&app.db).await;
     let left = stored(&app, id).await;
     assert_eq!(left.len(), 1, "{left:?}");
     assert_eq!((left[0].1, left[0].2), (59.9, 10.7));

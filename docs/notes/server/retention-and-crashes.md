@@ -7,6 +7,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 - **Blocked-domain log**: `device_policy.dns_log_enabled`, **default off** (the migration deleted every existing
   entry), sent as `PolicyResponse.dns_log_enabled` (always; the launcher records and reports only while it is on).
   `POST /api/devices/dns-events` stores nothing for a phone with the log off (204, an older launcher still sends).
+  Since 0.55.0 (security review L3) each event is checked (`DnsEventReport::checked`, the wire shape unchanged): the
+  domain only as a lowercased hostname of at most 253 characters (labels of 1-63 letters, digits, `-`, `_`; anything
+  else skipped), the category without control characters and at most 64, `blocked_at` as RFC 3339 clamped to the
+  log's 7 days before the arrival (an offline phone's queue keeps its times, QA L-d) and 5 minutes after it, stored as UTC `...T...mmmZ` (the arrival when it doesn't parse;
+  `intake_limits::dns_events_are_stored_checked`).
   Switch "Keep a log" on the phone's Web Filter page (design 31 step 5; `POST /dns/log/{device_id}`, back to `/devices/{id}/filter`, auto-saving checkbox, missing = off, 404 unknown
   device, nudges, security event `dns_log_changed`); off deletes the phone's log at once. Entries are kept
   `DNS_LOG_RETENTION_DAYS` = 7 (by `received_at`).
@@ -24,7 +29,16 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `allow_blocked` or `install_update` waits at any age (a lost phone back weeks later is still locked or wiped); a
   cancelled or answered one goes like the rest. The summary's Activity week is a query filter, not retention.
 - `retention::run_pruning` (spawned from `main` only) runs `prune` at startup and hourly - it replaced the old
-  `run_dns_event_pruning` (60 days) and `run_location_pruning` (30 days). Connections use `secure_delete`.
+  `run_dns_event_pruning` (60 days) and `run_location_pruning` (30 days). Connections use `secure_delete`. Since
+  0.55.0 (security review L9) every statement of the pass runs on its own: one that fails is logged with its table
+  and named in `Pruned.failed` (the log only, no page shows it), the rest are pruned all the same (`prune` returns `Pruned`, no error;
+  `cleanup::a_failing_table_leaves_the_rest_of_the_pass`).
+- **A phone's storage budget** (0.55.0, security review L4, `retention::Budget`, `STATUS_ROWS_A_DAY`, `CRASH_HASHES`):
+  what one token can add in a rolling day, far above what a phone sends. Past 500 status reports a day (the shortest location interval alone is 144; QA L-c) each new one
+  replaces the one before it (`replace_over_budget`: the newest stays current, never the newest report with
+  `call_policy_v1`); past 3000 fixes (`zones::intake`, the newest of a report that fit), 10 000 blocked domains or 500
+  parent-PIN events a day the new ones aren't stored (logged); at most 50 crash hashes per phone, the oldest reported
+  going first. A count that can't be read is logged and drops nothing. Security-log lines and inbox events have their own hourly budgets (L1). `intake_limits::a_phones_storage_has_a_budget`.
 - Tests: `src/tests/cleanup.rs`.
 
 ## Crash reports (cleanup 2026-10-06, `src/crashes.rs`, migration `0040_device_crashes.sql`)

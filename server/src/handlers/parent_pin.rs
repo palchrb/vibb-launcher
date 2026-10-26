@@ -258,7 +258,11 @@ pub async fn pin_events(
         return StatusCode::INTERNAL_SERVER_ERROR;
     };
     let mut raised = false;
-    for raw in events {
+    // Within the phone's daily budget (security review L4); the rest of today's are dropped.
+    let left = crate::retention::Budget::PinEvents
+        .left_today(&mut tx, device.id)
+        .await;
+    for raw in events.iter().take(left) {
         let event = match parent_pin::clean_event(raw, received_ms) {
             Ok(event) => event,
             Err(why) => {
@@ -292,13 +296,15 @@ pub async fn pin_events(
                 } else {
                     "parent_pin_lockout"
                 };
-                let logged =
-                    sqlx::query("INSERT INTO security_events (event_type, detail) VALUES (?, ?)")
-                        .bind(event_type)
-                        .bind(parent_pin::log_line(device.id, &event))
-                        .execute(&mut *tx)
-                        .await
-                        .map(|_| ());
+                // Within the phone's hourly budget of security lines (security review L1).
+                let logged = crate::security::record_phone_event(
+                    &mut tx,
+                    device.id,
+                    event_type,
+                    &parent_pin::log_line(device.id, &event),
+                )
+                .await
+                .map(|_| ());
                 match phone.as_ref().and_then(|phone| phone.pin_event(&event)) {
                     Some(new) if logged.is_ok() => crate::parent_events::raise(&mut tx, &new)
                         .await

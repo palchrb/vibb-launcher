@@ -30,6 +30,12 @@
     </div>
     {% endif %}
 
+    {% if let Some(why) = url_warning %}
+    <div class="attention attention-action" data-warning="plain-http">
+        <span class="attention-text">Plain http<span class="attention-sub">{{ why }} <a href="/settings/provisioning">Phone Setup</a></span></span>
+    </div>
+    {% endif %}
+
     {#- The QR code renders in the POST's answer, in this group: the form posts to #qr, so the
         answer lands on it with or without JS. The Wi-Fi password is never stored or shown again. -#}
     <section id="qr" aria-labelledby="qr-title">

@@ -8,7 +8,7 @@ Status: design, 2026-10-09. Revised after QA's design review and the user's answ
 > direct-HTTPS mode for phones), L1 (`ConnectionPlan`, `ServerConnection`), L3 (the strict network-security config)
 > and S6 + L2 (mode 2, the Tailscale app).** S5/L1 and S6/L2 are parked: *the tailnet-only setup is the
 > product* (decision 16 of `docs/plan/2026-10-25-queue-rounds.md`; L3 has no queue entry yet). S7 (the CSP without
-> `unsafe-inline`) moves to the server security round S2 (it is server security review L5 as well). So §4 describes
+> `unsafe-inline`) is built in the server security round S2 (0.55.0; it is server security review L5 as well). So §4 describes
 > launcher code that does not exist, and the sections on `connection`, QR v2 and `tailscale_app` are history; the phones
 > use the embedded tsnet only.
 
@@ -317,7 +317,8 @@ private IP: an untrusted proxy, or Docker hiding the client.
    - CSP phase 1: `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src
      'self' data: https://tile.openstreetmap.org; connect-src 'self'; frame-ancestors 'none'; base-uri 'none';
      form-action 'self'; object-src 'none'`.
-   - Phase 2 (S7): the inline JS moves to `/static`, and `script-src` drops `'unsafe-inline'`.
+   - Phase 2 (S7): the inline JS moves to `/static`, and `script-src` drops `'unsafe-inline'`. *Built in server
+     0.55.0 (round S2, with security review L5): the rule editor's Type handler was the last inline script.*
 5. **CSRF.** A middleware on the admin listener for unsafe methods:
    - `Sec-Fetch-Site` of `same-origin` or `none` passes;
    - otherwise an `Origin`, when present, must match the `Host` header on host[:port] (the scheme isn't compared,
