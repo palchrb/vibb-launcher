@@ -250,7 +250,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   left out. The version picked: the API's code (the file named `<id>_<code>.apk` first), else the highest stable.
 - **The APK**: `<repo>/<file.name>` (`<id>_<versionCode>.apk`), streamed by `download_asset` with the index's size
   and SHA-256: `stream_to_file` checks the hash **before** the rename, so a mismatch keeps nothing and the row is
-  untouched (`ChecksumMismatch`). Once is retried at the next hourly check (a CDN mid-update); 3 in a row of one
+  untouched (`ChecksumMismatch`). A GitHub asset's `digest` (`sha256:<hex>`, in the releases API since 2025) is read
+  into the same `ReleaseAsset.sha256` and checked the same way since 0.54.0 (Q27); an asset without one (null,
+  another algorithm, malformed) keeps the size and ZIP-header checks only. Once is retried at the next hourly check (a CDN mid-update); 3 in a row of one
   release (`MISMATCHES_TO_REFUSE`, `AppSyncs::mismatched`) make it a remembered refusal like a wrong key - the hourly
   check doesn't download it again, "Check Now" and a new release do, and a stored release clears it (Q-3). Then
   `check_fdroid_package`: the APK's manifest package must be `fdroid_package` (`OtherApp`), before the pins
