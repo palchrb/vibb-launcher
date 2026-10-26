@@ -57,7 +57,8 @@ the QA's R13-4 and R13-7):
   school or bedtime too. The request says "Bedtime", and the parent may pause the rule, add minutes or do nothing.
 - **D4 - the compact player (R13-4).** The card does **not** count toward the compact player's two notifications
   (`GLANCE_COMPACT_FROM_ROWS`, `LockGlance.kt:524-525`, the user's "ved 2 notifications"). It is treated like the timer
-  tile. The card, the full tile and one row come to 430.8 dp and scroll about 30 dp (3-button) or 6 dp (gestures).
+  tile. The card, the full tile and one row come to 430.8 dp and scroll about 30 dp (3-button) or 6 dp (gestures)
+  (as built 2026-10-26, the full tile 12 dp lower: 418.8 dp, about 18 dp with 3-button, none with gestures).
   That is accepted, as r11 accepted a scroll for the glance ("no fit at all").
 - **D5 - the daily cap (R13-7).** At most 3 requests a day per phone, enforced on the phone as well as the server.
   After the third accepted request of the day, the action is gone until midnight (the phone's own count, DE prefs).
@@ -194,6 +195,9 @@ What scrolls (r11 §1.2's model: the scroller is 401 dp with 3-button navigation
 | the card + **full** music + 1 row (frame D) | 430.8 | scrolls 29.8 / 5.8 (accepted, D4) |
 | the card + compact music + 2 rows | 410 | scrolls 9 / fits |
 | frame D + the alarm line | 451 | scrolls 50 / 26 |
+
+As built 2026-10-26 (branch `launcher-glance-c`): the full tile is 162.8 dp (12 dp lower), so the card + full music is
+348.8, frame D 418.8 (scrolls 17.8 / fits) and frame D + the alarm line 439 (scrolls 38 / 14); the rest is unchanged.
 
 At font scale 2.0 the page scrolls as r11 decided; nothing shrinks.
 

@@ -45,9 +45,14 @@ screenshots through the emulator console, the lock is `FLAG_SECURE`):
 
 | Check | What to see |
 |---|---|
-| `jelly36` (320x569 dp), font 1.0, music + 3 rows (RC3-8) | The compact tile and all three rows in sight, no fade at the bottom; log `Glance layout: tile COMPACT, 3 rows, 0 more` |
+| `jelly36` (320x569 dp), font 1.0, music + 3 rows (RC3-8), gesture navigation, no alarm, own mode and android mode (the profile clock in both) | The compact tile and all three rows in sight, no fade at the bottom; log `Glance layout: tile COMPACT, 3 rows, 0 more` |
+| The same with **3-button navigation**, and again **with an alarm set** (both bars) | Every row at least partly in sight: 3-button, row 3's bottom under the 32 dp fade (model 42.6 dp of it in sight with a 48 dp status bar, ~5 dp under on `jelly36`'s own bars); with the alarm, row 3 more under the fade (model 22.4 / 46.4 dp in sight) - never a row wholly hidden |
 | `jelly36`, font 1.3, music + 3 rows | The compact tile; the rows that don't fit sit under the bottom fade (a row's top or the card above it fading), the page scrolls to them |
 | `jelly36`, font 1.0 and 1.3, music + 1 row | The full tile 12 dp lower than before (162.8 dp in the model): the controls closer to the tile's bottom edge, nothing cut, the play glyph not touching the edge |
 | `jelly36`, any font, a long message | The row's text is still one line, cut with "…" (below 720 dp tall) |
 | `six35` (411x914 dp), font 1.3, music + 3 rows with short messages (F4) | Each row's text on up to two lines (a short message whole), the title one line; the three rows fit or the rest is under the fade |
 | `six35`, font 1.3, Home with 5+ contacts with two-line names (F3) | "Bestemor" and "Kristoffer" (and every neighbour pair) with a visible gap between them; at font 1.0 Home looks as before |
+| `jelly36`, font 1.3, **3-button**, a time rule locking: the **rule card + music + 3 rows**; and font 1.0, 3-button, no music, **5 rows** (the fold in the gap above row 5) | Rows 2 and 3 (the first case) / row 5 (the second) wholly below the fold; screenshot the bottom edge: the card above fades into its text under the 32 dp fade - judge whether it reads as "more below" (code QA M-2); a scroll brings them up |
+| `jelly36`, the full tile: **press and hold play/pause, previous, next** | The press ripple a round 28 dp disc, never cut flat at the tile's bottom edge (code QA L-2); the play glyph 15 dp from the edge |
+| `six35`, font 1.3: a **two-line row next to a one-line row**, a **long nb message**, and **3-button navigation** with music + 3 two-line rows | The icons aligned at the top beside the titles in both rows (code QA N-2); the long message cut with "…" at the end of line 2; the three two-line rows fit (533.2 dp in a ~770 dp scroller) |
+| `jelly36`, font 1.0 / 1.3 / 2.0: **Home's contacts row and the phone book** (the 4 dp sides apply to both) | 1.0 as before; at 1.3 "Kristoffer" a step smaller (its 88 dp line); at 2.0 "Mamma"/"Mormor" whole, smaller - never cut between letters; neighbours never touch |

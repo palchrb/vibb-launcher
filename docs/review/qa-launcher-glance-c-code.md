@@ -248,3 +248,23 @@ pre-existing "source version RELEASE_11" lines.
 
 L-5's five items, into `docs/testing/2026-10-25-evening-run.md` "Owed after launcher-glance-c", with the RC3-8 row's
 expectation corrected per M-1.
+
+## Fix round (2026-10-26, the implementer)
+
+On `launcher-glance-c`, on top of `85ffdbf3` and this review's cherry-pick. Every finding fixed, none skipped.
+
+| Finding | What was done |
+|---|---|
+| M-1 | The RC3-8 test runs on `profileParts` too: 414.4 dp, fits with gestures, row 3 42.6 dp in sight with 3-button (13.4 under the fade); with the alarm line 434.6 dp, 22.4 / 46.4 dp in sight. PLAN's RC3-8 paragraph and the owed check's expectation now say so (gestures, no alarm: no fade; 3-button and the alarm: row 3's bottom under the fade, never a row wholly hidden), in own mode and android mode. |
+| M-2 | The scroller's fade is 32 dp, Home's `FADE_BOTTOM_DP` (one attribute, so the top fade too). Pinned strictly: `fadingEdgeLength > row gap + paddingBottom + half the subtitle line` (25.1 dp) and equal to `FADE_BOTTOM_DP`; the order test's `"16dp"` / `CONTACTS_FADE_DP` pin moved to `"32dp"`. The fold-in-the-gap cases are in the owed checks (L-5 item 2). |
+| L-1 | The model's default line count is `values/integers.xml`'s (`defaultTextLines` via `textLinesIn`), for `height()` and `partsAt()`; the F4 test reads `values-h720dp` the same way. m2 now moves every Jelly Star table. |
+| L-2 | `res/drawable/ripple_lock_media_control.xml`: a `<ripple>` in `?android:attr/colorControlHighlight`, radius 28 dp, no mask or content (unbounded, projected as before) on previous/play/next. Pinned: the drawable's shape and radius, and that the radius reaches no further than the tile's bottom edge for each button (play 28 + 4, prev/next 24 + 4 + 4). The press is owed check 3. |
+| L-3 | The queue list is the coordinator's (not touched here). Q5 (the fingerprint help line, waiting on J1) stays open and is not part of this branch. |
+| L-4 | `WholeWordsTest`'s phone-book line is `nameLine(min(104, 288 / 3))` = 88 dp, pinned as such. |
+| L-5 | The five checks are in `docs/testing/2026-10-25-evening-run.md` "Owed after launcher-glance-c" (3-button and alarm in both modes, the rule card + music + 3 rows at 1.3 and 5 rows at 1.0, the ripple, the six-inch two-line/one-line pair with a long nb message and 3-button, Home's row and the phone book at 1.0/1.3/2.0). |
+| L-6 | `height()` refuses a text with `lineSpacingExtra`, `lineSpacingMultiplier`, `lineHeight`, `firstBaselineToTopHeight`, `lastBaselineToBottomHeight` or `includeFontPadding="false"` (`modelled()`): whoever adds one models it first. m11 now fails six layout tests. |
+| N-1 | `values-h720dp/integers.xml`, PLAN's F4 paragraph and `launcher/CLAUDE.md` say what the qualifier reads: `screenHeightDp`, the whole window on Android 15+ (targetSdk 36), less both bars on 14 (~816 dp of screen there, stricter). |
+| N-2 | The row's icon frame is `layout_gravity="top"` with a 2 dp top margin: exactly where centring put it in a one-line row (56 - 16 - 36 = 4, halved), beside the title in a two-line one. Pinned in the F4 test. |
+| N-3 | A dated "As built 2026-10-26" line under r11 §1.2's table and r13 §1.3's table, and one clause on D4's 430.8 dp; the tables themselves untouched. |
+| N-4 | PLAN's F3 paragraph says a name up to ~88 dp fits at 1.0 as before, a single word between 88 and 96 dp takes a step smaller ("Kristoffer" at 1.3) - the intended trade. |
+| m7 | Expected escape, nothing to do (a wider modelled line can only fit more; `HomeEdgesTest` pins the padding). |
