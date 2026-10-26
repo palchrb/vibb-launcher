@@ -97,6 +97,7 @@ import me.vibb.music.logic.restoredMix
 import me.vibb.music.logic.runEnd
 import me.vibb.music.logic.segmentAt
 import me.vibb.music.logic.toggledMix
+import me.vibb.music.logic.failureMessage
 import me.vibb.music.logic.finished
 import me.vibb.music.logic.isSpotify
 import me.vibb.music.logic.isSpotifyContext
@@ -1934,7 +1935,7 @@ class PlaybackService : MediaSessionService() {
                 onIsPlayingChanged(event.playing)
                 if (callPause.inCall) callStep()
             }
-            is RendererEvent.Error -> onError(event.code, event.gated)
+            is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork)
             RendererEvent.Lost -> scope.launch { lost() }
             RendererEvent.StateChanged -> {
                 publish()
@@ -2087,8 +2088,9 @@ class PlaybackService : MediaSessionService() {
      * holes, an item that turned not playable) - is "Ikke lastet ned - trenger Wi-Fi" with no item error;
      * an `http_416` on the phone for an item without a done copy - the length guard's changed source, or
      * the server's own - drops the row and plays the item on uncached from where it was ([playOnUncached]).
+     * [noNetwork]: a name that couldn't be looked up says "Trenger internett" ([failureMessage]); the item error is kept.
      */
-    private fun onError(code: String, gated: Boolean = false) {
+    private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false) {
         val a = active ?: return
         val index = renderer.currentIndex()
         val item = a.items.getOrNull(index) ?: return
@@ -2121,7 +2123,7 @@ class PlaybackService : MediaSessionService() {
         // player never reports `gated` (that is the phone's own player's streaming gate, design 30 §1.6)
         val offline = gated ||
             !isSpotify(a.entry) && copy == null && item.fileId == null && !streamAllowed(netCaps(this@PlaybackService), store.streamMobileData)
-        PlayerHub.mutableMessages.tryEmit(if (offline) PlayerHub.Message.NOT_DOWNLOADED else PlayerHub.Message.CANT_PLAY)
+        PlayerHub.mutableMessages.tryEmit(failureMessage(offline, noNetwork))
         renderer.saveNow()
         if (a.failRunFrom == null) a.failRunFrom = index // the run's first failure: its lap ends back here
         val m = mixOf(a)

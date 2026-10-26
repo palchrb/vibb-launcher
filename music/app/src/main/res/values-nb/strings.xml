@@ -29,6 +29,8 @@
     <string name="hint_spotify_picks">%1$s · rekkefølgen velges for deg</string>
     <string name="cant_play">Kan ikke spilles nå</string>
     <string name="not_downloaded">Ikke lastet ned - trenger Wi-Fi</string>
+    <!-- A stream whose host's name couldn't be looked up (logic/PlayFailure.kt); the web player's own words. -->
+    <string name="no_network" tools:ignore="Typos">Trenger internett</string>
     <string name="cant_play_on_sonos">Kan ikke spilles på Sonos</string>
     <string name="room_not_allowed">Rommet er ikke lenger tillatt</string>
     <string name="headset_no_contact">Fikk ikke kontakt med hodetelefonene - er de på?</string>

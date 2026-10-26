@@ -863,8 +863,8 @@ class GuardsTest {
     @Test
     fun `26c 5_10 - onError records unplayable and stays synchronous on main, the move-on the web player's own`() {
         val events = serviceBody("private fun onRendererEvent(event: RendererEvent) {")
-        assertTrue("called directly from the renderer's event", events.contains("is RendererEvent.Error -> onError(event.code, event.gated)"))
-        val onError = serviceBody("private fun onError(code: String, gated: Boolean = false) {")
+        assertTrue("called directly from the renderer's event", events.contains("is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork)"))
+        val onError = serviceBody("private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false) {")
         assertTrue(onError.contains("recordsItemError(a.entry, hasUrl = item.url != null) ->\n                scope.launch(writer) { ItemErrors.record(this@PlaybackService, entryId, item.key, code) }"))
         assertTrue("an own file and a copy first, each by its own rule", onError.indexOf("item.fileId != null || gated -> Unit") < onError.indexOf("copy != null -> if (code == \"bad_media\")") && onError.indexOf("copy != null ->") < onError.indexOf("recordsItemError("))
         assertTrue(onError.contains("val offline = gated ||\n            !isSpotify(a.entry) && copy == null"))
@@ -1098,9 +1098,9 @@ class GuardsTest {
         val local = code("src/main/java/me/vibb/music/playback/LocalRenderer.kt")
         assertTrue(local.contains(".setMaxAudioBitrate(HLS_MAX_BITRATE)\n                .setForceHighestSupportedBitrate(true)"))
         // The gate's refusal: "Ikke lastet ned", no item error.
-        assertTrue(local.contains("emit(RendererEvent.Error(MediaCache.errorCode(error), MediaCache.gated(error)))"))
-        assertTrue(service.contains("is RendererEvent.Error -> onError(event.code, event.gated)"))
-        val onError = body(service, "private fun onError(code: String, gated: Boolean = false) {")
+        assertTrue(local.contains("emit(RendererEvent.Error(MediaCache.errorCode(error), MediaCache.gated(error), noNetwork(error)))"))
+        assertTrue(service.contains("is RendererEvent.Error -> onError(event.code, event.gated, event.noNetwork)"))
+        val onError = body(service, "private fun onError(code: String, gated: Boolean = false, noNetwork: Boolean = false) {")
         assertTrue(onError.contains("item.fileId != null || gated -> Unit"))
         // design 26c: a Spotify item's offline isn't the item's (its web player never reports `gated`)
         assertTrue(onError.contains("val offline = gated ||\n            !isSpotify(a.entry) && copy == null && item.fileId == null && !streamAllowed("))

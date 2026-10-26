@@ -31,6 +31,7 @@
     <string name="hint_spotify_picks">%1$s · the order is picked for you</string>
     <string name="cant_play">Can\'t play right now</string>
     <string name="not_downloaded">Not downloaded - needs Wi-Fi</string>
+    <string name="no_network">Needs the internet</string>
     <string name="cant_play_on_sonos">Can\'t play on Sonos</string>
     <string name="room_not_allowed">This room is no longer allowed</string>
     <string name="headset_no_contact">Couldn\'t reach the headphones - are they switched on?</string>
