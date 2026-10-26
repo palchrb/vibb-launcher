@@ -2077,8 +2077,9 @@ music" 24 dp under them, and a failed stream's real cause is logged. These repla
     move - **at most a pixel** (the shell truncates the icon's bounds: at 240 dpi the canvas is drawn 430.2 px instead of
     432, at 440 dpi also 0.9 px up and left), no slide, no scale step, no shift by the status bar (compare the rings' top
     edge in the frames before and after the fade). The rings sharpen as the system splash fades (its icon is a 108 dp
-    bitmap scaled 1.78x) - not a scale step. Then the wordmark **held whole** (at full strength at least one frame)
-    before the library fades in over the splash; no plain night frame anywhere. Nothing is cut: the wordmark's ink starts
+    bitmap scaled 1.78x) - not a scale step. Then the wordmark **held whole and still** (round M1b: at full strength
+    at least 400 ms from the system splash's last frame, about 10 frames at 24 fps; the 3 s cap still wins) before the
+    library fades in over the splash; no plain night frame anywhere. Nothing is cut: the wordmark's ink starts
     about 107 dp under the screen's centre. Note the frames from the tap to the wordmark and to the library.
 13. **Empty library** (no entries in the feed): the same hand-over, then the empty state right after the system splash's
     fade (not at 3 s).
@@ -2106,9 +2107,10 @@ music" 24 dp under them, and a failed stream's real cause is logged. These repla
     them, then the library fading in - no plain night frame (record at 24 fps as step 12). The same with "Don't keep
     activities" on and the music paused in the service (a warm process, a new activity).
 18. **A warm start's two fades** (Q-3): with music paused (the service alive) and "Don't keep activities" on, tap the
-    tile and step the recording: the system splash fades, the wordmark is then held at full strength, and only then the
-    library fades in - never a faint wordmark flash. A start with no system splash at all (if one can be made, e.g. from
-    inside the app's own task) holds the app splash at most 0.5 s.
+    tile and step the recording: the system splash fades, the wordmark is then held at full strength at least 400 ms
+    (round M1b), and only then the library fades in - never a faint wordmark flash. A start with no system splash at all
+    (if one can be made, e.g. from inside the app's own task) holds the app splash about 0.5 s with the content ready
+    (the 400 ms hold and the 500 ms hand-over wait run concurrently from its first frame, not 0.9 s).
 
 ## 7. Reporting back
 

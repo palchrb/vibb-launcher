@@ -7,7 +7,7 @@ package me.vibb.music.logic
  * music" [SPLASH_WORDMARK_GAP_DP] under them. The system splash's fade (MainActivity's exit listener, [SPLASH_FADE_MS])
  * then only reveals the wordmark. The app's splash stays until the first frame of content - the library (or the player
  * it opens on) with the first snapshot in and the carousel already on its start tile ([contentReady]) - and then fades
- * over it. Pure; SplashTest.
+ * over it, once "vibb music" has stood whole for [SPLASH_HOLD_MS] ([splashFadeDue]). Pure; SplashTest.
  */
 
 /**
@@ -30,12 +30,31 @@ const val SPLASH_HANDOVER_WAIT_MS = 500L
 enum class SystemSplash { UNKNOWN, FADING, GONE }
 
 /**
- * Whether the app splash fades now (qa-music-splash-b Q-3): the content is shown, and the system splash's own fade has
- * ended - so "vibb music" is seen whole between the two fades, never as a faint flash -, or no system splash was handed
- * over within [SPLASH_HANDOVER_WAIT_MS] ([handOverWaitOver]: a start without one).
+ * The least the app splash stands whole before its fade (ms; PLAN "Round M1b", the user, 2026-10-26: "vibb music" seen
+ * at least 400 ms) - counted from the system splash's exit fade's end, or from the app splash's first frame when there
+ * was none. The E1 emulator run measured 50-70 ms at full strength without it when the content was ready at once.
  */
-fun splashFadeDue(contentShown: Boolean, system: SystemSplash, handOverWaitOver: Boolean): Boolean =
-    contentShown && (system == SystemSplash.GONE || system == SystemSplash.UNKNOWN && handOverWaitOver)
+const val SPLASH_HOLD_MS = 400L
+
+/**
+ * When the app splash's hold is over (ms since its first frame), or null while the system splash still fades (its
+ * animator always ends, [systemSplashExit]). Gone at [goneAtMs]: [SPLASH_HOLD_MS] after it, but never past
+ * [SPLASH_CAP_MS] (the cap counts from the first frame and wins; gone with no instant known, the cap alone). Never handed over: the hold and the hand-over wait
+ * ([SPLASH_HANDOVER_WAIT_MS]) both count from the first frame and run **concurrently, not in sequence** - the later of
+ * the two, so 500 ms today; before the wait is over a hand-over may still come, and the hold is long since run.
+ */
+fun splashHoldEnd(system: SystemSplash, goneAtMs: Long?): Long? = when (system) {
+    SystemSplash.FADING -> null
+    SystemSplash.GONE -> minOf((goneAtMs ?: SPLASH_CAP_MS) + SPLASH_HOLD_MS, SPLASH_CAP_MS)
+    SystemSplash.UNKNOWN -> maxOf(SPLASH_HANDOVER_WAIT_MS, SPLASH_HOLD_MS)
+}
+
+/**
+ * Whether the app splash fades at [nowMs] (ms since its first frame; qa-music-splash-b Q-3, round M1b): the content is
+ * shown, and its hold is over ([splashHoldEnd]) - so "vibb music" is seen whole and still, never as a faint flash.
+ */
+fun splashFadeDue(contentShown: Boolean, system: SystemSplash, goneAtMs: Long?, nowMs: Long): Boolean =
+    contentShown && splashHoldEnd(system, goneAtMs)?.let { nowMs >= it } == true
 
 /**
  * The system splash's exit, Android aside (MainActivity's listener; qa-music-splash-b Q-5): [state] FADING, [fade], and
