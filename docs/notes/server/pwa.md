@@ -661,8 +661,14 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the app are not saves; `/music` is). Detail: `<page> · <route> (<param> <value>, ...); <route> ... ×N` - the
   Location's path, the matched route and its path ids (cleaned to `[A-Za-z0-9/._-]`), never form values; one row per
   parent and page from its first save for `MERGE_MINUTES` (10), up to 1000 characters. `NOT_SAVES`: commands,
-  pauses and lifts, checks, read marks, the test push, backup create/restore, the root helper's actions (their own
-  events). Tests: `tests::settings_log`, `settings_log::tests`.
+  pauses and lifts, checks, read marks and the dismissed sign-in warning, the test push, backup create, upload and
+  restore, the root helper's actions (their own events). Two 303s are no save (code QA M1, L2): **a refusal back to
+  its page** (`?notice=parent_pin_invalid`, the Child PIN's, `revoke_unconfirmed`, `toggle_app`'s, the DNS
+  `bad_list`/`not_a_domain_*`, `music_notice=`, a gone contact, rule or parent, the push refusals, a refused avatar)
+  carries `settings_log::Refused` in its extensions (`settings_log::refused(...)`) - **a new refusal by redirect must
+  be marked so** - and **a save whose handler wrote its own security event** (any kind but `settings_saved`, by the
+  same parent, during the request: `music_sweep_saved`, `override_pin_changed`, ...) gets no second row; a success
+  with a notice (`notice=uploaded`) is a save. Tests: `tests::settings_log`, `settings_log::tests`.
 - **Notifications (design 45, server round 5)**: the hub's Notifications row leads to Notification Settings
   (`/notifications/settings`: This Device, Getting Notifications, Notify Me About), while the bell on the tab pages leads
   to the inbox (`/notifications`), which reads the rows it shows (`docs/notes/server/notifications.md`, step 2).
@@ -860,11 +866,13 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
 ## Tab-switch timing (Q28 step 1, 0.54.0, `static/nav-timing.js`)
 
 - **Off until switched on in a browser**: any page with `?timing=1` (remembered in localStorage `handy-timing`;
-  `?timing=0` clears it). Then every load prints one line to the console (`[timing] <path> ...`) and shows it at the
+  `?timing=0` clears it), or **Settings › About › Diagnostics › Page timing** (`/updates#timing`, a plain link to
+  `?timing=1` / `?timing=0` that the script shows as On/Off - the installed iPhone app has no address bar and its
+  own storage; code QA M2). Then every load prints one line to the console (`[timing] <path> ...`) and shows it at the
   top of the page (`.timing-line`, no taps): `tap` (the tapped link's time, sessionStorage `handy-timing-tap`, to this
   page's load event) and `wait` (tap to the navigation's start), `dns`, `connect` (0 = a kept connection), `ttfb`,
   `download`, `dom`, `load`, the navigation type and `assets N/M` (network-fetched of all; many = the cache was gone).
-  Navigation Timing level 2, level 1 on iOS 14; a back-forward cache restore says so. Sends nothing anywhere. Prefetch
+  Navigation Timing level 2, level 1 on iOS 14; a back-forward cache restore says so in the same line. Sends nothing anywhere. Prefetch
   (step 2) waits for the user's iPhone numbers. Tests: `jstest/nav-timing.test.js`; the head loads it
   (`shell::every_page_carries_the_connecting_script_and_its_ping`).
 

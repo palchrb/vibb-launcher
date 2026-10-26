@@ -4692,10 +4692,9 @@ pub async fn save_device_spotify(
         value => match value.parse::<i64>() {
             Ok(account) => Some(account),
             Err(_) => {
-                return Redirect::to(&format!(
+                return crate::settings_log::refused(Redirect::to(&format!(
                     "/devices/{id}/music?music_notice=spotify_unknown#music-spotify"
-                ))
-                .into_response();
+                )));
             }
         },
     };
@@ -4725,10 +4724,9 @@ pub async fn save_device_spotify(
             .fetch_one(&state.db)
             .await;
             return match device {
-                Ok(true) => Redirect::to(&format!(
+                Ok(true) => crate::settings_log::refused(Redirect::to(&format!(
                     "/devices/{id}/music?music_notice=spotify_unknown#music-spotify"
-                ))
-                .into_response(),
+                ))),
                 Ok(false) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
                 Err(err) => server_error(err, "couldn't read a phone's policy"),
             };
@@ -4867,10 +4865,9 @@ pub async fn set_device_entry(
         match ticked {
             Ok(true) => {}
             Ok(false) => {
-                return Redirect::to(&format!(
+                return crate::settings_log::refused(Redirect::to(&format!(
                     "/devices/{id}/music?music_notice=too_big&music_entry={entry_id}#music-entry-{entry_id}"
-                ))
-                .into_response();
+                )));
             }
             Err(err) => return server_error(err, "couldn't tick a music entry"),
         }
@@ -5072,10 +5069,9 @@ const MAX_ROOMS_EVENT_CHARS: usize = 300;
 /// A refused Sonos save: back to the rooms with the reason by them, nothing stored (qa-26a-step3c-code
 /// L4; the form is a row of auto-saving ticks, so the page as it was is the values as entered).
 fn refused_rooms(id: i64, code: &str) -> Response {
-    Redirect::to(&format!(
+    crate::settings_log::refused(Redirect::to(&format!(
         "/devices/{id}/music?music_notice={code}#music-sonos"
-    ))
-    .into_response()
+    )))
 }
 
 #[cfg(test)]

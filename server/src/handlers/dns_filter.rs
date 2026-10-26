@@ -729,12 +729,11 @@ pub async fn create_blocklist(
     let url = form.get("url").map(|s| s.trim()).unwrap_or_default();
     let web = url.starts_with("https://") || url.starts_with("http://");
     if name.is_empty() || !web || url.len() > 2000 || name.chars().count() > 100 {
-        return Redirect::to(&format!(
+        return crate::settings_log::refused(Redirect::to(&format!(
             "/dns?notice=bad_list&name={}&url={}#lists",
             query_value(form.get("name")),
             query_value(form.get("url")),
-        ))
-        .into_response();
+        )));
     }
     let result = sqlx::query("INSERT INTO dns_blocklists (name, url, enabled) VALUES (?, ?, 1)")
         .bind(name)
@@ -808,10 +807,9 @@ pub async fn create_custom_domain(
         } else {
             String::new()
         };
-        return Redirect::to(&format!(
+        return crate::settings_log::refused(Redirect::to(&format!(
             "{path}?notice=not_a_domain_{list_type}{typed}#{group}"
-        ))
-        .into_response();
+        )));
     }
     // The same domain twice in one list is stored once (qa-31-s5-code N4).
     let result = sqlx::query(

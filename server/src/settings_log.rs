@@ -6,11 +6,16 @@
 //! its route to the row (`×N` when the same route and ids come again), so a session of toggles is
 //! one line. The detail is `<page> · <route> (<param> <value>, ...); ...`, from the matched route
 //! and its path's ids only - never a form's values.
+//!
+//! Two answers that look like a save aren't one (code QA M1, L2): a refusal that goes back to its
+//! page with a 303 and its reason in the query (`?notice=parent_pin_invalid`) carries [Refused] in
+//! its extensions ([refused]), and a save whose handler wrote its own security event (any kind but
+//! this one, by the same parent, during the request) already says what changed.
 
 use axum::extract::{MatchedPath, Request, State};
 use axum::http::{Method, StatusCode, header};
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 
 use crate::AppState;
 use crate::security::{CurrentAdmin, record_security_event};
@@ -41,8 +46,11 @@ const NOT_SAVES: &[&str] = &[
     "/music/entries/{id}/check",
     "/notifications/{id}/open",
     "/notifications/read-all",
+    // Hides a session banner, like a read mark (code QA L1).
+    "/account/dismiss-warning",
     "/notifications/subscriptions/{id}/test",
     "/backups/create",
+    "/backups/upload",
     "/backups/{filename}/restore",
     // The Pi's root helper's actions (their own `*_triggered` events).
     "/update/trigger",
@@ -56,6 +64,17 @@ const NOT_SAVES: &[&str] = &[
 
 /// One write at a time, so two saves at once can't both start a row or lose a count.
 static WRITES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// The mark of a refusal answered with a 303 back to its page: not a save (code QA M1).
+#[derive(Clone, Copy, Debug)]
+pub struct Refused;
+
+/// `response` marked [Refused].
+pub fn refused(response: impl IntoResponse) -> Response {
+    let mut response = response.into_response();
+    response.extensions_mut().insert(Refused);
+    response
+}
 
 /// The middleware (inside `require_full_auth`, which puts [CurrentAdmin] in): see the module doc.
 /// A failed write is logged and the answer goes out unchanged.
@@ -77,17 +96,58 @@ pub async fn log_saves(State(state): State<AppState>, request: Request, next: Ne
                 .then(|| (actor, entry(&route, request.uri().path())))
         })
         .flatten();
+    // The newest event before the handler runs: one it writes itself is above it.
+    let before = match saved {
+        Some(_) => newest_event(&state.db).await,
+        None => None,
+    };
     let response = next.run(request).await;
-    let Some((actor, entry)) = saved else {
+    let (Some((actor, entry)), Some(before)) = (saved, before) else {
         return response;
     };
-    if let Some(page) = page_of(&response) {
-        let _guard = WRITES.lock().await;
-        if let Err(err) = record(&state.db, &actor, &page, &entry).await {
-            tracing::error!(%err, "couldn't log a settings save");
+    let Some(page) = page_of(&response) else {
+        return response;
+    };
+    if response.extensions().get::<Refused>().is_some() {
+        return response;
+    }
+    let _guard = WRITES.lock().await;
+    let result = async {
+        if !logged_since(&state.db, &actor, before).await? {
+            record(&state.db, &actor, &page, &entry).await?;
         }
+        Ok::<_, sqlx::Error>(())
+    }
+    .await;
+    if let Err(err) = result {
+        tracing::error!(%err, "couldn't log a settings save");
     }
     response
+}
+
+/// The id of the newest security event (0 for none); `None` (logged) when it can't be read.
+async fn newest_event(db: &sqlx::SqlitePool) -> Option<i64> {
+    sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM security_events")
+        .fetch_one(db)
+        .await
+        .map_err(|err| tracing::error!(%err, "couldn't read the security log"))
+        .ok()
+}
+
+/// Whether `actor`'s request wrote an event of its own after the event `before` (code QA L2).
+async fn logged_since(
+    db: &sqlx::SqlitePool,
+    actor: &str,
+    before: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM security_events WHERE id > ? AND username = ? \
+         AND event_type <> 'settings_saved')",
+    )
+    .bind(before)
+    .bind(actor)
+    .fetch_one(db)
+    .await
 }
 
 /// The page a 303 sends the browser back to (its path), or `None` for any other answer, a

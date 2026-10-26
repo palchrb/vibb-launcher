@@ -854,7 +854,7 @@ pub async fn subscribe(
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let Some(key) = &state.push.key else {
-        return back_to(&form, "push_server", "this-device");
+        return crate::settings_log::refused(back_to(&form, "push_server", "this-device"));
     };
     // `csrf_check` passes `Sec-Fetch-Site: same-origin` without an Origin; the push's
     // `navigate` and the JWT's fallback `sub` need it (§5.2, qa-35 L5).
@@ -864,7 +864,7 @@ pub async fn subscribe(
         .filter(|o| o.starts_with("https://") || o.starts_with("http://"))
         .filter(|o| o.len() <= 255)
     else {
-        return back_to(&form, "push_origin", "this-device");
+        return crate::settings_log::refused(back_to(&form, "push_origin", "this-device"));
     };
     let endpoint = form.get("endpoint").map(|e| e.trim()).unwrap_or("");
     if endpoint.len() > 1024 || !crate::webpush::allowed(endpoint) {
@@ -874,13 +874,13 @@ pub async fn subscribe(
             host = crate::webpush::host_of(endpoint),
             "a browser's push service is not on the list - notifications stay off there"
         );
-        return back_to(&form, "push_service", "this-device");
+        return crate::settings_log::refused(back_to(&form, "push_service", "this-device"));
     }
     let (Some(p256dh), Some(auth)) = (b64url(form.get("p256dh")), b64url(form.get("auth"))) else {
-        return back_to(&form, "push_key", "this-device");
+        return crate::settings_log::refused(back_to(&form, "push_key", "this-device"));
     };
     if auth.len() != 16 || !crate::webpush::valid_browser_key(&p256dh) {
-        return back_to(&form, "push_key", "this-device");
+        return crate::settings_log::refused(back_to(&form, "push_key", "this-device"));
     }
     let label = push::label_of(
         headers
@@ -938,7 +938,7 @@ pub async fn subscribe(
             .await;
             back_to(&form, "push_on", "this-device")
         }
-        Ok(false) => back_to(&form, "push_many", "this-device"),
+        Ok(false) => crate::settings_log::refused(back_to(&form, "push_many", "this-device")),
         Err(err) => db_error(err),
     }
 }

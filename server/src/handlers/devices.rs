@@ -549,10 +549,9 @@ pub async fn revoke_access(
     Form(form): Form<RevokeForm>,
 ) -> Response {
     if form.confirm != "yes" {
-        return Redirect::to(&format!(
+        return crate::settings_log::refused(Redirect::to(&format!(
             "/devices/{id}/advanced?notice=revoke_unconfirmed#connection"
-        ))
-        .into_response();
+        )));
     }
     let revoked = sqlx::query_scalar::<_, String>(
         "UPDATE devices SET token_hash = NULL WHERE id = ? RETURNING name",
@@ -1884,12 +1883,11 @@ pub async fn toggle_app(
         .map(String::as_str)
         == Some("music");
     let refused = |code: &str, anchor: &str| {
-        Redirect::to(&if music {
+        crate::settings_log::refused(Redirect::to(&if music {
             format!("/devices/{id}/music?music_notice={code}#music-app")
         } else {
             page(&format!("notice={code}&app={anchor}"), anchor)
-        })
-        .into_response()
+        }))
     };
     // The catalog app's own package: an uninstall queued for it is cancelled too, and an older
     // catalog's free-text package is accepted only as exactly this.
@@ -2326,7 +2324,7 @@ pub async fn update_kid_lock(
         .await;
         let (hash, salt, length) = match decided {
             Ok(Ok(new)) => new,
-            Ok(Err(refusal)) => return back(refusal.code()),
+            Ok(Err(refusal)) => return crate::settings_log::refused(back(refusal.code())),
             Err(err) => {
                 tracing::error!(device_id = id, %err, "kid PIN hashing failed");
                 return (
@@ -2385,7 +2383,11 @@ pub async fn update_kid_lock(
         }
         .await;
         let result = match result {
-            Ok(false) => return back(crate::kid_lock::KidPinRefusal::NeedsOverride.code()),
+            Ok(false) => {
+                return crate::settings_log::refused(back(
+                    crate::kid_lock::KidPinRefusal::NeedsOverride.code(),
+                ));
+            }
             Ok(true) => Ok(()),
             Err(err) => Err(err),
         };
@@ -2470,7 +2472,7 @@ pub async fn update_kid_keyguard(
         Redirect::to(&format!("/devices/{id}/lock{query}#lock-keyguard")).into_response()
     };
     if !has_pin {
-        return back(Some("keyguard_no_pin"));
+        return crate::settings_log::refused(back(Some("keyguard_no_pin")));
     }
     let result = async {
         let mut tx = state.db.begin().await?;
