@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import kotlinx.coroutines.launch
 import com.kidslauncher.mdm.calls.OngoingCalls
 import com.kidslauncher.mdm.preferences.LauncherPreferences
 import com.kidslauncher.mdm.server.BootClock
@@ -99,6 +100,18 @@ object BootHome {
      * so the start is still due; a Home that came up meanwhile is MARK_DONE. Main thread.
      */
     fun callMayHaveEnded(context: Context) {
+        // Design 68 §3.2: a camera denial that waited for this call is written now (the apply's own rule decides).
+        if (com.kidslauncher.mdm.server.AppEnforcer.cameraDeferred && !com.kidslauncher.mdm.server.WindowRelock.liveCall(context)) {
+            com.kidslauncher.mdm.server.AppEnforcer.cameraDeferred = false
+            val app = context.applicationContext
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                try {
+                    com.kidslauncher.mdm.server.AppEnforcer.apply(app, currentPolicyDecision())
+                } catch (e: Exception) {
+                    Log.w(LOG_TAG, "Apply after the call failed: ${e.javaClass.simpleName}")
+                }
+            }
+        }
         if (waitingForCall == null || callLive(context)) return
         val app = context.applicationContext
         main.removeCallbacksAndMessages(RETRY_TOKEN)
