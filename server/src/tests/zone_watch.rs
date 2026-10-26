@@ -816,11 +816,13 @@ async fn alternating_mock_counts_stay_within_the_line_budget() {
     let count = |kind: &'static str| {
         let db = app.db.clone();
         async move {
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM security_events WHERE event_type = ?")
-                .bind(kind)
-                .fetch_one(&db)
-                .await
-                .unwrap()
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM security_events WHERE event_type = ?",
+            )
+            .bind(kind)
+            .fetch_one(&db)
+            .await
+            .unwrap()
         }
     };
     assert_eq!(count("mock_location_ignored").await, 60);

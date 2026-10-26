@@ -283,9 +283,7 @@ fn host_kind(host: &str) -> HostKind {
         }
         Err(_) if host.ends_with(".ts.net") => HostKind::Tailscale,
         Err(_)
-            if !host.contains('.')
-                || host.ends_with(".local")
-                || host.ends_with(".internal") =>
+            if !host.contains('.') || host.ends_with(".local") || host.ends_with(".internal") =>
         {
             HostKind::Private
         }

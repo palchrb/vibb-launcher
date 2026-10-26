@@ -271,7 +271,11 @@ async fn the_server_address_is_judged_on_save_and_shown() {
             .await
             .text()
     };
-    for bad in ["http://vibb.example.org", "http://203.0.113.5", "vibb.example"] {
+    for bad in [
+        "http://vibb.example.org",
+        "http://203.0.113.5",
+        "vibb.example",
+    ] {
         let res = save(bad).await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad}");
         let page = res.text();
@@ -287,14 +291,28 @@ async fn the_server_address_is_judged_on_save_and_shown() {
     ] {
         assert!(save(fine).await.status.is_redirection(), "{fine}");
         assert_eq!(stored().await, fine);
-        assert!(!setup().await.contains("data-warning=\"plain-http\""), "{fine}");
-        assert!(!connect().await.contains("data-warning=\"plain-http\""), "{fine}");
+        assert!(
+            !setup().await.contains("data-warning=\"plain-http\""),
+            "{fine}"
+        );
+        assert!(
+            !connect().await.contains("data-warning=\"plain-http\""),
+            "{fine}"
+        );
     }
-    assert!(save("http://192.168.1.5:3100").await.status.is_redirection());
+    assert!(
+        save("http://192.168.1.5:3100")
+            .await
+            .status
+            .is_redirection()
+    );
     assert_eq!(stored().await, "http://192.168.1.5:3100");
     for page in [setup().await, connect().await] {
         assert!(page.contains("data-warning=\"plain-http\""), "{page}");
-        assert!(page.contains("The phones will use plain http to 192.168.1.5."), "{page}");
+        assert!(
+            page.contains("The phones will use plain http to 192.168.1.5."),
+            "{page}"
+        );
     }
     // Saved before the rule: shown as not used, and the QR has no address from it.
     sqlx::query("UPDATE provisioning_settings SET server_url = 'http://vibb.example.org'")

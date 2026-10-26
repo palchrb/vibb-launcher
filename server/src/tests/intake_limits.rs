@@ -114,8 +114,14 @@ async fn dns_events_are_stored_checked() {
     // An old time is kept back to the log's 7 days (an offline phone's queue, QA L-d).
     let week = chrono::Duration::days(crate::retention::DNS_LOG_RETENTION_DAYS);
     let oldest = at(&rows[1].2);
-    assert!(oldest >= now - week - chrono::Duration::seconds(5), "{rows:?}");
-    assert!(oldest <= now - week + chrono::Duration::seconds(5), "{rows:?}");
+    assert!(
+        oldest >= now - week - chrono::Duration::seconds(5),
+        "{rows:?}"
+    );
+    assert!(
+        oldest <= now - week + chrono::Duration::seconds(5),
+        "{rows:?}"
+    );
     assert!(
         at(&rows[2].2) >= now - chrono::Duration::seconds(5),
         "{rows:?}"
@@ -259,8 +265,10 @@ async fn a_phones_storage_has_a_budget() {
                 Method::POST,
                 "/api/devices/status",
                 Some(&token),
-                Some(serde_json::json!({ "lock_reason": "CAPS", "kiosk_engaged": true,
-                                         "capabilities": caps })),
+                Some(
+                    serde_json::json!({ "lock_reason": "CAPS", "kiosk_engaged": true,
+                                         "capabilities": caps }),
+                ),
             )
             .await;
         assert_eq!(res.status, StatusCode::NO_CONTENT);
@@ -353,7 +361,10 @@ fn the_field_tables_keep_every_contract_key() {
         }
         let json: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        for (key, fields) in [("time_state", TIME_STATE_FIELDS), ("call_state", CALL_STATE_FIELDS)] {
+        for (key, fields) in [
+            ("time_state", TIME_STATE_FIELDS),
+            ("call_state", CALL_STATE_FIELDS),
+        ] {
             if let Some(blob) = json.get(key) {
                 let kept: serde_json::Value =
                     serde_json::from_str(&known_fields(blob, fields).unwrap()).unwrap();

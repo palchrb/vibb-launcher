@@ -728,8 +728,9 @@ pub async fn check_link(
             // reached as such; a public one never follows a redirect to a private address (QA 1c
             // #9: else it would be added but never list).
             let request = match crate::music_sweep::lan_addresses(source, url).await? {
-                Some(addrs) => SourceRequest::new(url.clone(), Kind::Feed, Reach::Any)
-                    .pinned_to(&addrs),
+                Some(addrs) => {
+                    SourceRequest::new(url.clone(), Kind::Feed, Reach::Any).pinned_to(&addrs)
+                }
                 None => SourceRequest::new(url.clone(), Kind::Feed, Reach::Public),
             };
             let fetched = source.get(request).await?;

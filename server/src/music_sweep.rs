@@ -3242,8 +3242,7 @@ async fn cover(job: &mut Job<'_>, plan: &mut Plan, link: &Link) -> CoverResult {
     if !music_net::media_url_ok(&url) || (!lan && !job.public_media(&url).await) {
         return CoverResult(None);
     }
-    let answer = match job.get(art_request(plan, lan, &url)).await
-    {
+    let answer = match job.get(art_request(plan, lan, &url)).await {
         Got::Answer(answer) if answer.status == 200 && !answer.truncated => answer,
         _ => return CoverResult(None),
     };
