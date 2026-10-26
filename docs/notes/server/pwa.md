@@ -376,6 +376,35 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   the refused Name and icon, Back to `#phones`), `device_pages::tests::apps_from_takes_only_its_two_shapes`,
   `tracked_apps::tests::a_phone_link_says_where_it_came_from`, `jstest/auto-reload.test.js`.
 
+## Device › Apps: Permissions (design 68, `docs/design/68-app-permissions.md` §4.1, migration `0102_app_permissions.sql`)
+
+- **What the parent sees**: an allowed app the phone reports something about (`installed_apps[].access`, launcher
+  `app_permissions_v1`) gets a second sub-line under its row, in neutral words - "Camera off" (a stored row and the
+  report reads `admin_denied`; "Camera off · waiting for the phone" while it still reads `requested`), then per declared
+  access "<name>: approved / not approved / unknown" -, and a `<details>` "Permissions" next to "Name and icon"
+  (`partials/app_permissions_form.html`, `app_permissions::PermsView`): the **camera switch only when the report has
+  `access.camera`** (third-party apps that ask for the camera; a preinstalled camera or Google app has none), with its
+  help ("Off: <app> can't use the camera - a video call or a QR scan stops working. Turning it off closes <app> if it was
+  allowed the camera."), and one line per declared access with the way to approve it while it isn't ("On the phone:
+  Settings (parent code) › Pause all restrictions › App access › <app>: <access>"). A stored row for an app that no
+  longer asks is inert (no switch, no word). While the phone has reported its apps without `app_permissions_v1`, one
+  `row-note` "Update Vibb One to manage apps' permissions" sits above the Allowed list.
+- **Every word is in one table**, `app_permissions::words` (the refusals too, through `devices::toggle_refusal`'s
+  `perms`/`perms_full`), marked `// i18n: moves to i18n.rs (design 69)`; the templates print fields only.
+- **The form** (`POST /devices/{id}/apps/permissions`, `devices::save_app_permissions`): `package_name`, the checkbox
+  `camera=default` (checked = the camera allowed; the field missing = off, an auto-saving checkbox; an explicit
+  `deny` works too), the hidden `from`. It writes `device_app_permissions` (no row = the default; at most
+  `MAX_ROWS_PER_DEVICE` 200 a phone, else `?notice=perms_full` at the row), nudges the phone and returns to its own
+  details **open**: `apps_url("perms=<package>", from, "perms-<package>")`, and `view_apps` renders that package's
+  `<details>` with `open` (`?perms=`) - a save never lands at the top and never closes the details. Refused at the
+  row (`?notice=perms&app=app-<package>`, `settings_log::refused`): Play's core and Vibb; a 400 for another `camera`
+  value or a package outside the grammar (no row has one); 404 an unknown phone; a DB error 500.
+- **The policy**: `app_permissions` (`[{package_name, camera: "deny"}]`, always a list) from the same table; a failing
+  read is a 500 for the whole policy (`device_api::db_error_is_500_not_default`), never `[]`. The report's `access` is
+  kept with known keys and values only (`AppAccess::of`, a `lenient_*`-style deserializer).
+- Tests: `device_pages::the_permissions_form_returns_to_its_open_details`, `app_permissions::tests`,
+  `device_api::policy_json_keys_snapshot`, `app_updates::the_installed_apps_contract_raises_app_updated`.
+
 ## Device › Music (design 31 step 7, `docs/design/31-pwa-redesign.md` §3.2, §8)
 
 - **The page** (`GET /devices/{id}/music`, chained with the settings form's POST; `device_pages::view_music`,

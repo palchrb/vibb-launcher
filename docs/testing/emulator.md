@@ -1952,6 +1952,30 @@ the moving series on a walk, a walk home with the screen off (the push within mi
 "Here now" for hours (`zone_watch.still`, Q-3), the battery run, a mock-location app -> `mock_location_ignored` in the
 security log once per rise, with the date on the Locate row.
 
+## 6v. Per-app permissions: camera off, the special accesses approved on the phone (design 68)
+
+Design 68 §2.3 and §6 (`docs/design/68-app-permissions.md`), the debug launcher and a server of this branch, Element X,
+Immich, Etar and Fossify Calendar installed and allowed. Logcat `AppEnforcer` (`Camera off waits for the call's end`,
+`Platform refused android.permission.CAMERA = 2 for ...`).
+
+0. **The app-op probe first** (§2.3; each op for an app that has the access and one that doesn't, `write_settings` and
+   `usage_access` with test apps): `adb shell cmd appops get <package> <OP>` against the report's `installed_apps[].access`
+   (the PWA's line, or `device_status.installed_apps_json`) for `MANAGE_MEDIA` (Immich), `SCHEDULE_EXACT_ALARM` (Etar,
+   Signal; and Etar again after it is battery-exempt), `WRITE_SETTINGS`, `GET_USAGE_STATS`, `USE_FULL_SCREEN_INTENT`
+   (Element X). An op whose reading disagrees ships as `unknown`. Repeat on the Jelly Star. Note Android's nb name of
+   "Full-screen notifications" (the launcher says "Fullskjermvarsler" until checked).
+1. **Camera off** for Element X in the PWA: `dumpsys package io.element.android.x` shows `CAMERA: granted=false` with
+   `POLICY_FIXED`; Settings' camera switch for it is locked by the admin (note the words). Back on: the flag is gone,
+   the app asks again.
+2. **During an Element X call**: off while it holds the camera waits for the call's end; off for an app that doesn't
+   hold it is written at once. A camera-off app hidden and allowed again: denied by the apply that unhides it. A
+   preinstalled camera app: no `camera` key, no switch.
+3. **Immich**: the PWA says "Media management: not approved"; Settings › App access's row says to pause first; in the
+   pause it opens Android's page for `app.alextran.immich`; turned on and back, the row reads "Approved - tap to change"
+   and the next report `granted`. The pause ending with that page open: Home comes to the front, the row stays.
+4. **Etar**: "Etar: Alarms & reminders" approved in a pause; after it Etar's first start works with no pause. Fossify
+   Calendar has no row (it declares `USE_EXACT_ALARM`). `me.vibb.music.debug`: no row, no camera switch.
+
 ## 6u. The music app's launch splash and the connecting line on a room (music round r13)
 
 PLAN "Music app" queue, branch `music-r13`. The debug music app with the debug feed (§6f) and the fake room (§6h).
