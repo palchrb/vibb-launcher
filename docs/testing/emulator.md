@@ -1486,7 +1486,7 @@ on https, or the paste; the parent's account is never logged in, design 26c step
   play from the top - never "Trenger internett".
 - [ ] The DNS capture of design 26c §6.2 (the host list), as `docs/testing/spotify-spike.md` describes.
 
-## 6m. A custom DNS server with a backup, networks that block 853 (design 36 steps 2-3)
+## 6m. A custom DNS server with a backup, networks that block 853, the secure-DNS bypass (design 36 steps 2-3, design 67)
 
 Design 36 (`docs/design/36-custom-dns.md` §5, §8): with Settings › Web Filter › "Look-ups go to: Custom server", the
 phone forwards every query its lists let through to the parent's server, and to the backup while that server is
@@ -1543,8 +1543,46 @@ filter must be on for the phone (its Web Filter page) and the launcher must be t
    IOException` in pairs, then `DoT blocked: cloudflare over DoH`, and ping said `unknown host` from the first start on;
    a Wi-Fi toggle didn't help. A refused protect now logs `NotProtectedException`.
 
+**The browsers' secure-DNS bypass and "DNS can't be reached"** (design 67, `docs/design/67-dns-bypass.md` §5, E3), on
+`jelly36` (Chrome preinstalled; Firefox, Edge, Brave and Vivaldi from Play). Two custom servers that can't be reached:
+`tls://192.0.2.10` and `tls://192.0.2.11` (TEST-NET-1, never routed, not the tunnel's own `.1`/`.2`; two because the
+server refuses the same server twice, and one alone isn't enough: the backup answers).
+
+9. Install main's APK first and, on the enrolled phone: Chrome › Settings › Privacy and security › Use secure DNS.
+   Record whether it shows "managed by your organization" (Chromium's owned-device default). Then this branch's
+   build: `chrome://policy` lists `DnsOverHttpsMode` = `off`, source Platform; the switch is managed and off. Record
+   the result in launcher/CLAUDE.md's browser table.
+10. On main's build, set Chrome's secure DNS to Google (or in a fork that still shows the switch): a name on the
+    phone's lists still doesn't load. Then `adb shell ping -c1 dns.google` and `ping -c1 chrome.cloudflare-dns.com`:
+    unknown host. With the phone's log on, the phone's Blocked Activity has "Secure DNS bypass".
+11. Firefox (Play): `adb shell ping -c1 use-application-dns.net` -> unknown host (NXDOMAIN; nothing in the log).
+    Firefox Settings › Privacy › DNS over HTTPS (if present): Default -> filtered; Increased with Cloudflare ->
+    filtered (falls back); Max -> pages fail (the host is blocked). Record which modes exist on Android and fix the
+    Firefox line's words (`dns_filter::DOH_IGNORING_BROWSERS`).
+12. Custom server `https://dns.quad9.net/dns-query`, backup `https://family.cloudflare-dns.com/dns-query` (both names
+    on the built-in list): look-ups work, and with a failing primary (`https://wrong.host.badssl.com/dns-query`) the
+    backup by name answers (logcat `Upstream: backup`) - our own upstreams never meet the list.
+13. Custom `tls://192.0.2.10`, backup `tls://192.0.2.11`: ping three names over 40 s
+    (`adb logcat -s UpstreamReach CustomDns`). logcat shows `Upstream unreachable`; after Sync now, if it gets
+    through, the DNS Server footer reads "DNS can't be reached since ... - neither your server nor the backup
+    answers". Set the backup to `https://1.1.1.3/dns-query` (this bumps `custom_rev`): `Upstream outage ended`, names
+    resolve, and the next report gives "Backup server since ... · couldn't be reached HH:MM-HH:MM" - the ended line
+    survives the rev change.
+14. Offline is no outage: with the servers of step 13, `adb shell svc wifi disable` (and `svc data disable`) for 90 s
+    with apps asking, then enable: no `Upstream unreachable` in logcat, no outage line.
+15. Provider mode with 853 and `1.1.1.1:443` blocked (step 7's host iptables, `-d 1.1.1.1 --dport 443` and `--dport
+    853`; no guest root): "DNS can't be reached since ... - Cloudflare doesn't answer from where the phone is" - the
+    only phone line in provider mode.
+16. Edge, Brave, Vivaldi from Play, allowlisted: `edge://policy` / `brave://policy` / `vivaldi://policy` show
+    `DnsOverHttpsMode`; fill launcher/CLAUDE.md's browser table. Element X still connects with the built-in list in
+    force (WhatsApp: a device check).
+17. Cromite allowlisted for the phone: the Each Phone footer names it ("Cromite: set its Secure DNS to Off ...");
+    with its Secure DNS on, pages don't load; Off -> filtered. The Web filter switched off for the phone: the line
+    goes, and `adb shell dumpsys device_policy | grep -A2 com.android.chrome` shows an empty bundle.
+
 What the emulator can't show (device checks, design 36 "Step 2 implementation status"): a home-network server on the
 home Wi-Fi and away from it, AdGuard Home's REFUSED for a client id it doesn't allow; and, without root, step 7.
+Design 67's: Samsung Internet's managed config, WhatsApp with the built-in list.
 
 ## 6n. Battery low and the emergency call reach the parent at once (design 35 step 3)
 

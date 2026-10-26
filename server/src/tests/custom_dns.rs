@@ -709,7 +709,7 @@ async fn the_footer_says_per_phone_which_server_is_in_use() {
     let page = app.get_page("/dns", &cookie).await.text();
     assert_eq!(line(&page, ola), "Ola · Backup server");
 
-    // Only while Custom is chosen.
+    // Only while Custom is chosen (with a provider only an outage gives a line, design 67).
     store(
         &app,
         "quad9",
@@ -720,4 +720,207 @@ async fn the_footer_says_per_phone_which_server_is_in_use() {
     .await;
     let page = app.get_page("/dns", &cookie).await.text();
     assert!(!page.contains("data-dns-phone"));
+}
+
+/// The lines with a `data-` attribute naming phone `id`, in order, quotes unescaped.
+fn lines_of(html: &str, attr: &str, id: i64) -> Vec<String> {
+    let marker = format!("{attr}=\"{id}\">");
+    html.match_indices(&marker)
+        .map(|(at, _)| {
+            let rest = &html[at + marker.len()..];
+            rest[..rest.find("</li>").unwrap()].replace("&#39;", "'")
+        })
+        .collect()
+}
+
+async fn post_status(app: &TestApp, token: &str, body: Value) {
+    let res = app
+        .request(Method::POST, "/api/devices/status", Some(token), Some(body))
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+}
+
+async fn filter_off(app: &TestApp, id: i64) {
+    sqlx::query("UPDATE device_policy SET vpn_filter_enabled = 0 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
+/// Design 67 §3.3: "DNS can't be reached" on the phones' lines, in both modes.
+#[tokio::test]
+async fn the_lines_say_when_dns_cant_be_reached() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    store(
+        &app,
+        "custom",
+        "https://dns.example/dns-query",
+        "tls://1.1.1.3",
+        0,
+    )
+    .await;
+    let report = |token: String, upstream: Value| {
+        let app = &app;
+        async move {
+            let body = json!({"lock_reason": "NONE", "kiosk_engaged": true,
+                "capabilities": ["dns_custom_v1", "dns_bypass_v1"], "dns_upstream": upstream});
+            post_status(app, &token, body).await;
+        }
+    };
+    let now = chrono::Utc::now();
+    let ms = |minutes: i64| (now - chrono::Duration::minutes(minutes)).timestamp_millis();
+    let zone = Zone::load(&app.db).await;
+    let when = |minutes: i64| zone.when(now - chrono::Duration::minutes(minutes), now);
+    let (anna, t) = app.enrolled_device("Anna").await;
+    report(
+        t,
+        json!({"rev": 0, "in_use": "backup", "since_ms": ms(9), "reason": "tls",
+            "unreachable_since_ms": ms(5), "unreachable_until_ms": null}),
+    )
+    .await;
+    let (ola, ola_token) = app.enrolled_device("Ola").await;
+    report(
+        ola_token.clone(),
+        json!({"rev": 0, "in_use": "custom", "since_ms": ms(60),
+            "unreachable_since_ms": ms(50), "unreachable_until_ms": ms(30)}),
+    )
+    .await;
+    // An ended outage shows at an old rev too (the fixed servers bumped it).
+    let (kari, t) = app.enrolled_device("Kari").await;
+    report(
+        t,
+        json!({"rev": 7, "in_use": "custom",
+            "unreachable_since_ms": ms(50), "unreachable_until_ms": ms(30)}),
+    )
+    .await;
+    // A provider report at rev 0 while Custom is in force at rev 0: never the backup.
+    let (per, per_token) = app.enrolled_device("Per").await;
+    report(per_token.clone(), json!({"rev": 0, "in_use": "provider"})).await;
+    let (liv, t) = app.enrolled_device("Liv").await;
+    report(
+        t,
+        json!({"rev": 0, "in_use": "custom", "unreachable_since_ms": ms(5)}),
+    )
+    .await;
+    filter_off(&app, liv).await;
+
+    let line = |html: &str, id: i64| lines_of(html, "data-dns-phone", id).join(" | ");
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert_eq!(
+        line(&page, anna),
+        format!(
+            "Anna · DNS can't be reached since {} - neither your server nor the backup answers",
+            when(5)
+        )
+    );
+    let ended = format!("couldn't be reached {}-{}", when(50), when(30));
+    assert_eq!(
+        line(&page, ola),
+        format!("Ola · Your server in use · {ended}")
+    );
+    assert_eq!(
+        line(&page, kari),
+        format!("Kari · Waiting for the phone · {ended}")
+    );
+    assert_eq!(line(&page, per), "Per · Waiting for the phone");
+    assert_eq!(line(&page, liv), "Liv · Web filter off");
+
+    // 24 h after its end an outage is gone (the next one would replace it).
+    report(
+        ola_token,
+        json!({"rev": 0, "in_use": "custom",
+            "unreachable_since_ms": ms(25 * 60), "unreachable_until_ms": ms(24 * 60 + 1)}),
+    )
+    .await;
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert_eq!(line(&page, ola), "Ola · Your server in use");
+
+    // With a provider only the phones with an outage have a line: ongoing with the provider's
+    // name, ended alone; never one whose filter is off.
+    store(&app, "quad9", "", "", 0).await;
+    report(
+        per_token,
+        json!({"rev": 0, "in_use": "provider", "unreachable_since_ms": ms(5)}),
+    )
+    .await;
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert_eq!(
+        line(&page, per),
+        format!(
+            "Per · DNS can't be reached since {} - Quad9 doesn't answer from where the phone is",
+            when(5)
+        )
+    );
+    assert_eq!(line(&page, kari), format!("Kari · DNS {ended}"));
+    // Anna's outage is her custom servers', not the provider's; Ola's ended a day ago; Liv's
+    // filter is off.
+    for id in [anna, ola, liv] {
+        assert_eq!(line(&page, id), "", "{id}");
+    }
+    store(&app, "cloudflare", "", "", 0).await;
+    let page = app.get_page("/dns", &cookie).await.text();
+    assert!(line(&page, per).contains("- Cloudflare doesn't answer"));
+}
+
+/// Design 67 §2.4: the built-in row, the honest footer and the Each Phone lines.
+#[tokio::test]
+async fn the_secure_dns_bypass_on_the_page() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let phone = |name: &'static str, caps: Value, allowlist: Value| {
+        let app = &app;
+        async move {
+            let (id, token) = app.enrolled_device(name).await;
+            let body = json!({"lock_reason": "NONE", "kiosk_engaged": true, "capabilities": caps});
+            post_status(app, &token, body).await;
+            sqlx::query("UPDATE device_policy SET allowlist_json = ? WHERE device_id = ?")
+                .bind(allowlist.to_string())
+                .bind(id)
+                .execute(&app.db)
+                .await
+                .unwrap();
+            id
+        }
+    };
+    let both = json!(["dns_custom_v1", "dns_bypass_v1"]);
+    let anna = phone(
+        "Anna",
+        json!(["dns_custom_v1"]),
+        json!(["org.mozilla.firefox", "com.android.chrome"]),
+    )
+    .await;
+    let ola = phone("Ola", both.clone(), json!(["org.cromite.cromite"])).await;
+    let per = phone("Per", both, json!(["com.android.chrome"])).await;
+    let liv = phone("Liv", json!([]), json!(["org.cromite.cromite"])).await;
+    filter_off(&app, liv).await;
+    let (mia, _) = app.enrolled_device("Mia").await;
+
+    let page = app.get_page("/dns", &cookie).await.text();
+    let lines = |id: i64| lines_of(&page, "data-bypass-phone", id);
+    assert_eq!(
+        lines(anna),
+        [
+            "Anna · Update Vibb One to close the secure-DNS bypass",
+            "Anna · Firefox: its own secure DNS can get around the filter",
+        ]
+    );
+    assert_eq!(
+        lines(ola),
+        ["Ola · Cromite: set its Secure DNS to Off on the phone, or it won't load pages"]
+    );
+    // Nothing owed, the filter off, or no report yet: no line.
+    for id in [per, liv, mia] {
+        assert!(lines(id).is_empty(), "{id}");
+    }
+    let page = page.replace("&#39;", "'");
+    let lists = part(&page, "<section id=\"lists\"", "</section>");
+    assert!(lists.contains(
+        "Secure DNS servers<span class=\"row-sub\">Built into Vibb One, on with the filter</span>"
+    ));
+    assert!(lists.contains(
+        "Chrome's own secure DNS is turned off, and the best-known public secure-DNS servers are \
+         blocked. Firefox and Cromite can still be set to another secure-DNS server by hand."
+    ));
 }

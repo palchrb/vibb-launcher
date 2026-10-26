@@ -1540,11 +1540,30 @@ Together: an app store install of something not on the allowlist would still nee
   its own default network) and resets on the pure `networkChanged` (another network, or one that gained VALIDATED -
   a captive portal logged in); unregistered in `stopSelfCleanly`. Never set underlying networks
   (`VpnMeteredInvariantTest`); lockdown stays off.
-- **Status**: `StatusReportRequest.dnsUpstream` = `KidVpnService.dnsUpstreamReport()` - only while the VPN runs with a
-  custom server: `{rev, in_use: custom|backup, since_ms (wall clock, from elapsed time), reason (backup only):
-  bootstrap|connect|tls|http|refused|timeout}`, never an address (`upstreamReport`; contract
-  `dns_upstream_status.json`, byte-identical with `../server/testdata/`, `DnsUpstreamStatusTest`,
+- **Status**: `StatusReportRequest.dnsUpstream` = `KidVpnService.dnsUpstreamReport()` - only while the tunnel is up
+  (design 67: `state.tunnel` is volatile and read there; a dead read loop sends none): with a custom server `{rev,
+  in_use: custom|backup, since_ms (wall clock, from elapsed time), reason (backup only):
+  bootstrap|connect|tls|http|refused|timeout, unreachable_since_ms, unreachable_until_ms}`, with a provider `{rev: 0,
+  in_use: provider, since_ms: null, reason: null, ...}` (`providerReport`), never an address (`upstreamReport`;
+  contract `dns_upstream_status.json`, byte-identical with `../server/testdata/`, `DnsUpstreamStatusTest`,
   `UpstreamChooserTest`). Capability `dns_custom_v1` in `STATUS_CAPABILITIES`.
+- **DNS can't be reached** (design 67 §3, pure `server/UpstreamReach.kt`; glue `ReachTracker`, one `AtomicReference`
+  per `KidVpnService` instance, CAS): `CustomDns.resolve` and `DnsFilterEngine.resolveProvider` return `Resolved(bytes,
+  answered)` and `reachKind` reads it - FAILED: dropped with no server bytes, whatever the cause (every attempt a
+  transport failure, silence after the request, `Attempt.Unprotected`, an exception in our code); ANSWERED: server
+  bytes relayed (NXDOMAIN, a relayed REFUSED/SERVFAIL too), or our NODATA/SERVFAIL after a healthy canary; NEITHER: our
+  SERVFAIL/NODATA after a canary the query gave up waiting for. The chooser and `DotBlockedRule` still ignore
+  `Unprotected`; only this count reads it. A failure counts only while `lastNetwork` (`@Volatile`) is validated
+  (offline - airplane mode, a Wi-Fi-only phone away - is no outage), and `validatedLost` in `onNetwork` ends an
+  ongoing outage. The key is `reachKey` (`custom:<rev>` or the provider's label). At least 3 failures (`MIN_FAILURES`)
+  over at least 30 s (`MIN_SPAN_MS`) with no answer between make an outage dated from the first failure (`Upstream
+  unreachable, failures=N` once); a failure more than 60 s (`GAP_MS`) after the last restarts the count; an answer, a
+  new key (a new `rev` - `syncCustom` rekeys at once - or another provider) or the loss of the validated network end it
+  into `lastOutage` (`Upstream outage ended`), which a rekey keeps; a VPN restart starts afresh, a network reset changes
+  nothing. In custom mode nothing counts while the backup answers. `outageTimes` gives the report's two wall-clock
+  times: ongoing `(since, null)`, the last ended `(since, until)`, none `(null, null)`. Tests: `UpstreamReachTest`
+  (the window, the 60 s rule, offline, the rekey, CAS, the kinds, the report), `CustomDnsTest` (both failed, the probe
+  and the backup failed, an exception, a healthy and a given-up canary).
 - **Secrets**: both targets may hold an AdGuard Home client id. `CustomUpstream`/`UpstreamTarget` `toString`s are
   redacted; log lines name modes, kinds, reasons, counts and exception classes only (never `e.message`, which OkHttp
   fills with the URL) - `CustomUpstreamPrefTest` scans the log calls; the policy decode failure and a corrupt cache are
@@ -1592,7 +1611,47 @@ Everything below "Historical" in this section predates and is superseded by this
 
 **Also historical, same reason as above**: `setGlobalPrivateDnsModeSpecifiedHost` (unlike `setGlobalPrivateDnsModeOpportunistic`, which the current code uses) returns an `Int` status, not `void` - this mattered a lot when the code called it, since a first live test showed `DISALLOW_CONFIG_PRIVATE_DNS` correctly applied ("blocked by admin" in Settings) but `private_dns_mode` (checked directly via `adb shell settings get global private_dns_mode`) still reading `opportunistic`, not `hostname` - Android actively tests connectivity to the specified host before accepting "specified host" mode, and silently keeps whatever mode was already set if that test fails. Not relevant to the current Opportunistic-only code, but worth remembering if a specific-host lock is ever reintroduced for something else.
 
-**One known hole, deliberately not addressed yet**: a browser's own independent DNS-over-HTTPS (e.g. Chrome's "Use secure DNS") can't be blocked by any of the above, since a VPN/DNS-level lock can't distinguish "this HTTPS packet is a DNS query" from any other HTTPS traffic without breaking TLS. Chrome specifically supports an Android Enterprise managed-config key (`DnsOverHttpsMode`) that could lock this via `setApplicationRestrictions`, but this wasn't built - the primary browser in use (Vanadium, GrapheneOS's own) already had this off and isn't Play-Store/Enterprise-managed at all, so there's no equivalent lock available for it anyway.
+**The browsers' secure DNS** (design 67 §2, `docs/design/67-dns-bypass.md`; security review S-M3 - before it, one
+"Use secure DNS" switch in an allowed browser bypassed the whole filter). A VPN/DNS-level filter can't tell a DoH request
+from any other HTTPS, so three parts, all following `vpnFilterEnabled` (lifted by the override, the pause and the
+parent's switch) and claimed together as capability `dns_bypass_v1` (`DNS_BYPASS_CAPABILITY`):
+- **The managed config** (`server/BrowserDoh.kt`, the only part that really closes it, in browsers that read it):
+  `AppEnforcer.apply` calls `BrowserDoh.apply` right after `applyVpnRestrictions`; pure `browserDohPlan(filterOn,
+  installed)` gives every installed (hidden ones too: `MATCH_UNINSTALLED_PACKAGES`) package of `BROWSER_DOH_PACKAGES`
+  exactly `{"DnsOverHttpsMode": "off"}` (a String) while on and an empty bundle while off, written with
+  `setApplicationRestrictions` only when it differs (`sameBundle`, shared with MusicSync). A fixed list, not the
+  restrictions schema; not tied to the allowlist (a browser allowed later starts with DoH off). Stock Chrome on a
+  device-owner phone likely has DoH off already (Chromium's `ShouldDisableDohForManaged`); the policy closes the startup
+  window and covers forks. Which browsers read it (E3, `docs/testing/emulator.md` §6m checks 9 and 16; fill in):
+
+  | Package | Browser | Reads `DnsOverHttpsMode`? |
+  |---|---|---|
+  | `com.android.chrome`, `com.chrome.beta`, `.dev`, `.canary` | Chrome | yes (documented, Android 85+); E3 check 9 |
+  | `com.microsoft.emmx` | Edge | not checked yet (`edge://policy`) |
+  | `com.brave.browser`, `_beta`, `_nightly` | Brave | not checked yet (`brave://policy`) |
+  | `com.vivaldi.browser` | Vivaldi | not checked yet (`vivaldi://policy`) |
+  | `com.sec.android.app.sbrowser` | Samsung Internet | a device check (no emulator image) |
+  | `com.kiwibrowser.browser` | Kiwi (discontinued 2025) | not checked yet |
+
+  Not listed: Cromite (its patch drops the provider; the server's Each Phone line tells the parent to set its Secure
+  DNS to Off), Firefox (below), Vanadium (not on these phones). A browser that doesn't read it stays listed.
+- **The built-in secure-DNS hosts** (a best-effort backstop): `assets/dns/doh_hosts.txt`, one name per line, each a
+  suffix, listed one by one (no `doh.`/`dns.` first-label rule: `doh.wa.gov` is a health department), loaded by
+  `DnsFilterEngine.loadFromDisk` **before** the list's early return (in force before the first sync). `classifyDomain`
+  takes it as its fourth input: FCM and Spotify first, then the set (category `"Secure DNS bypass"`, the phone's NODATA,
+  recorded by `BlockedEventLog` like any block while the parent has that phone's log on), then the server's lists. The
+  parent can't lift it (design 67 §6), but turning the phone's filter off does. Only ever asked for queries through the
+  tunnel: our own upstreams are IP literals or looked up by `BootstrapDns` on protected sockets, so a parent's backup
+  `https://family.cloudflare-dns.com/dns-query` still works. Side effect: an app's own DoH fallback (Telegram's
+  `dns.google`) falls back to the filtered system resolver.
+- **Firefox's canary**: `use-application-dns.net` (the exact name, any QTYPE) is answered NXDOMAIN with the SOA
+  (`nxdomainResponse`) in `handlePacket` before `classify` - never forwarded, logged or counted. It turns off the DoH
+  Firefox enabled by default; a user's own "Increased" falls back to us, "Max" with an unlisted host still bypasses.
+- **What stays open** (the page says so): a browser that ignores the managed config (Firefox, Cromite) set by hand to
+  an unlisted DoH host or an IP-literal template (`https://1.1.1.1/dns-query`). Routing the resolvers' IPs into the
+  tunnel is design 67's non-goal.
+- Tests: `DnsFilterEngineTest` (the file's lines, hits and misses, the order, the load before the early return),
+  `NxdomainTest`, `BrowserDohTest`, `SyncScheduleTest` (the capability), `CustomDnsGuardsTest` (the canary before the lists).
 
 All planned client-side functionality is built and confirmed working live on the physical test phone (Pixel 4a 5G GrapheneOS, adb serial `0A031JECB05961`): enrollment, allowlist enforcement, kiosk mode with the full lock-task feature bitmask, bedtime/screen-time schedule, WiFi/Bluetooth restrictions, offline override PIN, Settings PIN-gate, pause-all-restrictions kill-switch, self-update through the unified tracked-app path, and GitHub-Releases app tracking/auto-install. (The "required-Tailscale enforcement" item that used to be listed here - managed-config + always-on lockdown once an exit node was set - is retired as of Phase D; the launcher's own `KidVpnService` is the always-on VPN now, see the on-device-filtering migration section above.) Repo is public, GPLv3 (plus preserved MIT for the inherited app-list code). That test phone hit a real post-reboot lockout incident (GrapheneOS's auto-reboot-after-inactivity + kiosk mode suppressing the keyguard by default + this app being the exclusive enforced Home app with no direct-boot awareness = no way to unlock at all) - see the server's own CLAUDE.md gotcha entry; fixed by forcing `LOCK_FEATURE_KEYGUARD` on server-side, no client change needed.
 
