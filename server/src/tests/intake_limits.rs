@@ -61,6 +61,56 @@ async fn a_status_report_is_stored_within_limits() {
 /// Launcher round 7 §2 (the battery state) was removed on 2026-10-20, but launcher 0.32.0 still sends
 /// `installed_apps[].battery_exempt`: the report is accepted, the field is dropped (never stored), and the
 /// Apps page says nothing about the background.
+/// Security review L3: a blocked domain is stored only as a hostname, its category short and its
+/// time near the server's.
+#[tokio::test]
+async fn dns_events_are_stored_checked() {
+    let app = TestApp::new().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    sqlx::query("UPDATE device_policy SET dns_log_enabled = 1 WHERE device_id = ?")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let event = |domain: &str, category: &str, at: &str| {
+        serde_json::json!({ "domain": domain, "category": category, "blocked_at": at })
+    };
+    let now = chrono::Utc::now();
+    let res = app
+        .request(
+            Method::POST,
+            "/api/devices/dns-events",
+            Some(&token),
+            Some(serde_json::json!([
+                event("Ads.Example.COM.", "Ads & tracking", &now.to_rfc3339()),
+                event("<b>bad</b>.example", "Ads", &now.to_rfc3339()),
+                event(&"a".repeat(64), "Ads", &now.to_rfc3339()),
+                event(&format!("{}.example", "a.".repeat(130)), "Ads", &now.to_rfc3339()),
+                event("x..example", "Ads", &now.to_rfc3339()),
+                event("far.example", &format!("\u{7}{}", "C".repeat(100)), "2001-01-01T00:00:00Z"),
+                event("garbled.example", "Custom", "yesterday"),
+            ])),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT);
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT domain, category, blocked_at FROM device_dns_events WHERE device_id = ? ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    let domains: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    assert_eq!(domains, ["ads.example.com", "far.example", "garbled.example"]);
+    assert_eq!(rows[0].1, "Ads & tracking");
+    assert_eq!(rows[1].1, "C".repeat(64));
+    let at = |text: &str| chrono::DateTime::parse_from_rfc3339(text).unwrap();
+    let day = chrono::Duration::days(1);
+    assert!(at(&rows[1].2) >= now - day - chrono::Duration::seconds(5), "{rows:?}");
+    assert!(at(&rows[2].2) >= now - chrono::Duration::seconds(5), "{rows:?}");
+    assert!(rows.iter().all(|r| r.2.ends_with('Z') && r.2.len() == 24), "{rows:?}");
+}
+
 #[tokio::test]
 async fn an_older_launchers_battery_exempt_is_accepted_and_dropped() {
     let app = TestApp::new().await;

@@ -1039,15 +1039,21 @@ pub async fn dns_events(
     if enabled != Some(true) {
         return StatusCode::NO_CONTENT;
     }
-    for event in events.into_iter().take(200) {
+    // Each field checked (security review L3): a hostname, a short category, a time near now.
+    let received = chrono::Utc::now();
+    for (domain, category, blocked_at) in events
+        .iter()
+        .take(200)
+        .filter_map(|event| event.checked(received))
+    {
         sqlx::query(
             "INSERT INTO device_dns_events (device_id, domain, category, blocked_at) \
              VALUES (?, ?, ?, ?)",
         )
         .bind(device.id)
-        .bind(&event.domain)
-        .bind(&event.category)
-        .bind(&event.blocked_at)
+        .bind(domain)
+        .bind(category)
+        .bind(blocked_at)
         .execute(&state.db)
         .await
         .ok();
