@@ -383,17 +383,16 @@ async fn the_settings_hub_links_everything_with_cheap_values() {
         ("blocked-activity", "/dns/log", Some("2 today".to_string())),
         ("wallpapers", "/wallpapers", Some(wallpapers.to_string())),
         ("phone-setup", "/settings/provisioning", None),
-        ("software-updates", "/updates", None),
-        ("account", "/account", None),
-        ("security-log", "/security", None),
         (
-            "about",
+            "software-updates",
             "/updates",
             Some(format!(
                 "Server {}",
                 crate::APP_VERSION.trim_start_matches('v')
             )),
         ),
+        ("account", "/account", None),
+        ("security-log", "/security", None),
     ] {
         let row = row(name);
         assert!(row.contains(&format!("href=\"{href}\"")), "{name}: {row}");

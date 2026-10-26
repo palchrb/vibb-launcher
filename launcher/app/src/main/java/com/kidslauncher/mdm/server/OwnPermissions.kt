@@ -13,6 +13,12 @@ package com.kidslauncher.mdm.server
 /** `DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED`. */
 const val GRANT_STATE_GRANTED = 1
 
+/** `DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT`. */
+const val GRANT_STATE_DEFAULT = 0
+
+/** The grant state to write: [wanted], or `null` when [current] already is it - re-setting re-notifies (CLAUDE.md). */
+fun grantWrite(current: Int, wanted: Int): Int? = wanted.takeIf { it != current }
+
 /**
  * Runtime permissions the dialer role grants its holder (roles.xml ROLE_DIALER: phone, call log,
  * contacts, SMS, microphone, camera, notifications) - only the ones that can matter to us are
