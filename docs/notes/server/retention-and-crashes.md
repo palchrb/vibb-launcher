@@ -10,7 +10,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   Since 0.55.0 (security review L3) each event is checked (`DnsEventReport::checked`, the wire shape unchanged): the
   domain only as a lowercased hostname of at most 253 characters (labels of 1-63 letters, digits, `-`, `_`; anything
   else skipped), the category without control characters and at most 64, `blocked_at` as RFC 3339 clamped to the
-  arrival +- 1 day and stored as UTC `...T...mmmZ` (the arrival when it doesn't parse;
+  log's 7 days before the arrival (an offline phone's queue keeps its times, QA L-d) and 5 minutes after it, stored as UTC `...T...mmmZ` (the arrival when it doesn't parse;
   `intake_limits::dns_events_are_stored_checked`).
   Switch "Keep a log" on the phone's Web Filter page (design 31 step 5; `POST /dns/log/{device_id}`, back to `/devices/{id}/filter`, auto-saving checkbox, missing = off, 404 unknown
   device, nudges, security event `dns_log_changed`); off deletes the phone's log at once. Entries are kept

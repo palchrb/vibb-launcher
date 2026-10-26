@@ -1561,10 +1561,11 @@ impl DnsEventReport {
     /// The event as stored (security review L3), `(domain, category, blocked_at)`; `None` when the
     /// domain isn't a hostname. The domain lowercased without a trailing dot, at most 253
     /// characters in labels of 1-63 letters, digits, `-` or `_`; the category without control
-    /// characters, trimmed, at most [DNS_CATEGORY_MAX] characters (it is the name of the list the
-    /// phone matched, which this server sent - "Custom" or a blocklist's category); `blocked_at` as
-    /// UTC `YYYY-MM-DDTHH:MM:SS.mmmZ`, clamped to `received` +- 1 day (`received` when it isn't
-    /// RFC 3339).
+    /// characters, trimmed, at most [DNS_CATEGORY_MAX] characters (the name of what the phone
+    /// matched: "Custom", a blocklist's category this server sent, or one the phone names itself,
+    /// such as "Secure DNS server"); `blocked_at` as UTC `YYYY-MM-DDTHH:MM:SS.mmmZ`, clamped to
+    /// the log's retention before `received` (an event queued while the phone was offline keeps
+    /// its own time, QA L-d) and 5 minutes after it (`received` when it isn't RFC 3339).
     pub fn checked(
         &self,
         received: chrono::DateTime<chrono::Utc>,
@@ -1592,12 +1593,10 @@ impl DnsEventReport {
             .chars()
             .take(DNS_CATEGORY_MAX)
             .collect();
-        let day = chrono::Duration::days(1);
+        let oldest = received - chrono::Duration::days(crate::retention::DNS_LOG_RETENTION_DAYS);
+        let newest = received + chrono::Duration::minutes(5);
         let blocked_at = chrono::DateTime::parse_from_rfc3339(self.blocked_at.trim())
-            .map(|t| {
-                t.with_timezone(&chrono::Utc)
-                    .clamp(received - day, received + day)
-            })
+            .map(|t| t.with_timezone(&chrono::Utc).clamp(oldest, newest))
             .unwrap_or(received);
         Some((
             domain,

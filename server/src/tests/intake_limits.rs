@@ -114,11 +114,11 @@ async fn dns_events_are_stored_checked() {
     assert_eq!(rows[0].1, "Ads & tracking");
     assert_eq!(rows[1].1, "C".repeat(64));
     let at = |text: &str| chrono::DateTime::parse_from_rfc3339(text).unwrap();
-    let day = chrono::Duration::days(1);
-    assert!(
-        at(&rows[1].2) >= now - day - chrono::Duration::seconds(5),
-        "{rows:?}"
-    );
+    // An old time is kept back to the log's 7 days (an offline phone's queue, QA L-d).
+    let week = chrono::Duration::days(crate::retention::DNS_LOG_RETENTION_DAYS);
+    let oldest = at(&rows[1].2);
+    assert!(oldest >= now - week - chrono::Duration::seconds(5), "{rows:?}");
+    assert!(oldest <= now - week + chrono::Duration::seconds(5), "{rows:?}");
     assert!(
         at(&rows[2].2) >= now - chrono::Duration::seconds(5),
         "{rows:?}"
