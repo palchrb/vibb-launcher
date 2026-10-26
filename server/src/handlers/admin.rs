@@ -463,6 +463,12 @@ mod tests {
         ] {
             assert!(ids.contains(known), "the scan misses {known}: {ids:?}");
         }
+        // A phone's lines name their kind by `security::PhoneLine`, not by a literal at the call.
+        ids.extend(
+            crate::security::PhoneLine::ALL
+                .iter()
+                .map(|kind| kind.wire().to_string()),
+        );
         let unlabelled: Vec<&String> = ids
             .iter()
             .filter(|id| !NOT_EVENTS.contains(&id.as_str()))

@@ -276,7 +276,7 @@ pub async fn storytel(
     crate::security::record_phone_event_logged(
         &state.db,
         device.id,
-        "storytel_login_sent",
+        crate::security::PhoneLine::StorytelLoginSent,
         &format!("device {}: generation {generation}", device.id),
     )
     .await;

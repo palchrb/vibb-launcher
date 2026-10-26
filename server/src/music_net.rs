@@ -401,7 +401,7 @@ fn pinned_client(
 ) -> Result<reqwest::Client, FetchError> {
     let addrs: Vec<SocketAddr> = addrs.iter().map(|ip| SocketAddr::new(*ip, 0)).collect();
     reqwest::Client::builder()
-        .user_agent("kid-phone-server (self-hosted; vibb music library)")
+        .user_agent(crate::net::USER_AGENT)
         .no_proxy()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(30))
@@ -429,7 +429,7 @@ impl HttpSource {
     pub fn new() -> Self {
         let base = |reach: Reach, follow: bool| {
             let builder = reqwest::Client::builder()
-                .user_agent("kid-phone-server (self-hosted; vibb music library)")
+                .user_agent(crate::net::USER_AGENT)
                 .no_proxy()
                 .connect_timeout(Duration::from_secs(10))
                 .read_timeout(Duration::from_secs(30))

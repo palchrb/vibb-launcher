@@ -1012,11 +1012,20 @@ pub async fn add_link(
     };
     // Its first fill comes before anything waiting (design 21b §2.2).
     state.music_sweep.wake();
+    // A feed by its host only (security review P7): a private or paid feed's URL often carries a
+    // token, and the log keeps it 180 days.
+    let logged = match &link {
+        music::Link::Rss { url } => reqwest::Url::parse(url)
+            .ok()
+            .and_then(|url| url.host_str().map(|host| format!("feed at {host}")))
+            .unwrap_or_else(|| "a feed".to_string()),
+        _ => target,
+    };
     log_event(
         &state,
         &admin,
         "music_entry_added",
-        &format!("entry {id}: {title} ({target})"),
+        &format!("entry {id}: {title} ({logged})"),
     )
     .await;
     Redirect::to(&format!("/music#entry-{id}")).into_response()

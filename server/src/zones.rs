@@ -447,6 +447,28 @@ async fn store_fix(
     .await
 }
 
+/// The phone's location setting takes fixes (security review P1): anything but "Off". The phone
+/// sends none under Off; a fix that comes all the same (a report sent before the phone had the new
+/// policy, an older launcher, a rooted phone) is never stored. Under "Only when asked" the phone
+/// sends a fix for an Update Location, at low battery and at shutdown (2026-10-25) - all asked for.
+/// A phone without a policy row reads as a new phone's ("Only when asked"); a read that fails
+/// takes nothing (logged).
+pub async fn takes_fixes<'e, E: sqlx::SqliteExecutor<'e>>(db: E, device_id: i64) -> bool {
+    match sqlx::query_scalar::<_, String>(
+        "SELECT location_mode FROM device_policy WHERE device_id = ?",
+    )
+    .bind(device_id)
+    .fetch_optional(db)
+    .await
+    {
+        Ok(mode) => mode.as_deref() != Some("off"),
+        Err(err) => {
+            tracing::error!(device_id, %err, "can't read the location setting; no fix stored");
+            false
+        }
+    }
+}
+
 /// A status report's fix (already through `models::checked_location`; `captured_at` as stored),
 /// in two steps (code QA Q-6: a zone's error never costs the trail its fix):
 /// 1. stored once ([store_fix]), on its own;
@@ -466,6 +488,8 @@ async fn store_fix(
 /// `resent` (qa-design-64-step2-code Q-3): the report's own `location` when its `zone_watch` says
 /// `still` - the phone re-sent its fix while its motion sensor says it hasn't moved since; that
 /// row's `resent_at` becomes now, so "Here now" counts from this report ([freshness_inputs]).
+///
+/// Nothing is stored or marked while the phone's location is Off ([takes_fixes]).
 pub async fn intake(
     state: &AppState,
     device_id: i64,
@@ -478,6 +502,10 @@ pub async fn intake(
     let mut stored_any = false;
     match state.db.acquire().await {
         Ok(mut conn) => {
+            if !takes_fixes(&mut *conn, device_id).await {
+                tracing::warn!(device_id, "dropped fixes: the phone's location is off");
+                return;
+            }
             // Within the phone's daily budget (security review L4): the newest that fit.
             let left = crate::retention::Budget::Locations
                 .left_today(&mut conn, device_id)
@@ -812,7 +840,7 @@ pub async fn mock_rise(
             Some(line) => crate::security::record_phone_event(
                 &mut tx,
                 device_id,
-                "mock_location_ignored",
+                crate::security::PhoneLine::MockLocationIgnored,
                 &line,
             )
             .await?

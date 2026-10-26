@@ -90,14 +90,16 @@
                    line-height: 20px; font-variant-numeric: tabular-nums; }
   .dagen .ev .tm small { display: block; font-size: 12px; font-weight: 700; color: var(--core-dim); }
   .dagen .ev .tx { min-width: 0; }
-  .dagen .ev .ti { font-size: 15px; font-weight: 800; color: var(--ink); line-height: 20px; }
-  .dagen .ev .wh { font-size: 13px; font-weight: 600; color: var(--core-dim); line-height: 18px; }
+  .dagen .ev .ti { font-size: 15px; font-weight: 800; color: var(--ink); line-height: 20px; display: -webkit-box;
+                   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .dagen .ev .wh { font-size: 13px; font-weight: 600; color: var(--core-dim); line-height: 18px; display: -webkit-box;
+                   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .dagen .ev.more::after { content: '›'; position: absolute; right: 12px; top: 50%; transform: translateY(-55%);
+                           font-size: 20px; font-weight: 700; color: var(--core-dim); }
+  .dagen .ev { position: relative; }
+  .dagen .ev.more .tx { padding-right: 14px; }
   .dagen .ev.now { box-shadow: inset 0 0 0 1.5px var(--accent); }
   .dagen .ev.all .tm { color: var(--core-dim); }
-  .dagen .dots { position: absolute; left: 0; right: 0; bottom: 30px; display: flex; justify-content: center;
-                 gap: 6px; }
-  .dagen .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--control); }
-  .dagen .dots i.on { background: var(--accent); }
   .dagen .empty { position: absolute; left: 16px; right: 16px; top: 118px; background: var(--tile);
                   border-radius: 18px; padding: 22px 16px; text-align: center; color: var(--core-dim);
                   font-size: 14px; font-weight: 700; line-height: 1.45; }
@@ -111,6 +113,23 @@
   .dagen .detail .tm { font-size: 14px; font-weight: 800; color: var(--accent); margin-top: 6px; font-variant-numeric: tabular-nums; }
   .dagen .detail .cal { font-size: 13px; font-weight: 700; color: var(--core-dim); margin-top: 2px; }
   .dagen .detail .body { font-size: 14px; font-weight: 600; color: var(--core); line-height: 21px; margin-top: 14px; }
+  .dagen .fab { position: absolute; right: 16px; bottom: 28px; width: 52px; height: 52px; border-radius: 50%;
+                background: var(--accent); color: var(--ground); font-size: 30px; font-weight: 600; line-height: 52px;
+                text-align: center; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+  .dagen .form { position: absolute; left: 16px; right: 16px; top: 104px; display: flex; flex-direction: column; gap: 10px; }
+  .dagen .field { background: var(--tile); border-radius: 16px; padding: 10px 14px; }
+  .dagen .field .lb { font-size: 12px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--core-dim); }
+  .dagen .field .vl { font-size: 16px; font-weight: 700; color: var(--ink); line-height: 24px; margin-top: 2px; }
+  .dagen .field .vl.ph { color: var(--core-dim); font-weight: 600; }
+  .dagen .row2 { display: flex; gap: 10px; } .dagen .row2 .field { flex: 1; }
+  .dagen .save { position: absolute; left: 16px; right: 16px; bottom: 28px; height: 48px; border-radius: 24px;
+                 background: var(--accent); color: var(--ground); font-size: 16px; font-weight: 800; line-height: 48px;
+                 text-align: center; }
+  .dagen .topbar { position: absolute; left: 12px; right: 12px; top: 40px; display: flex; justify-content: space-between;
+                   align-items: center; }
+  .dagen .topbar .ttl { font-size: 22px; font-weight: 800; color: var(--ink); }
+  .dagen .topbar .x { font-size: 15px; font-weight: 700; color: var(--core-dim); }
+  .dagen .ev.mine .tm { color: #9fd3a8; }
   /* the PWA (light, iOS grouped lists; the Vibb identity D) */
   .pwa { position: relative; width: 320px; max-width: 100%; height: 569px; background: var(--pwa-bg);
          color: var(--pwa-ink); border-radius: 18px; overflow: hidden; box-shadow: 0 0 0 1px var(--hair);
@@ -154,7 +173,7 @@ titler, en fotballfeed, og en delt familiekalender.</p>
     <div class="phone dagen">
       <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">I dag<small>Mandag 26. oktober</small></div></div>
+      <div class="head"><div class="day">Mandag<small>26. oktober · i dag</small></div></div>
       <div class="list">
         <div class="ev all"><div class="tm">Hele<small>dagen</small></div><div class="tx"><div class="ti">Høstferie slutt</div><div class="wh">Familie</div></div></div>
         <div class="ev"><div class="tm">08:15<small>14:30</small></div><div class="tx"><div class="ti">Skole: Matte, norsk, gym</div><div class="wh">Rom 204</div></div></div>
@@ -162,39 +181,38 @@ titler, en fotballfeed, og en delt familiekalender.</p>
         <div class="ev"><div class="tm">17:30<small>18:45</small></div><div class="tx"><div class="ti">Fotball: Trening</div><div class="wh">Kunstgresset</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i class="on"></i><i></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>I dag.</b> Én dag som en liste: tid til venstre, tittel og sted til høyre, heldagshendelser øverst, den som pågår
-    har en tynn fersken-ramme. Sveip til siden for neste eller forrige dag; prikkene viser hvor du er i forhold til i dag, og de smale kantene antyder
-    flere dager. «I dag»-knappen vises bare når du har sveipet bort. Ingen redigering, ingen menyer.</figcaption>
+    har en tynn fersken-ramme. Sveip til siden for neste eller forrige dag, uten ende begge veier; de smale kantene antyder
+    flere dager. «← I dag»-knappen vises bare når du har sveipet bort; pilen peker mot dagen i dag («I dag →» når du er
+    bakover i tid), så den leses som et hopp tilbake, ikke som en overskrift. Tittel og andrelinje får inntil to
+    linjer hver; er noe kuttet, viser kortet «…» og en liten pil «›» i høyre kant, og trykket åpner alt. Kort der alt fikk plass
+    har ingen pil. Ingen redigering, ingen menyer.</figcaption>
   </figure>
 
   <figure>
     <div class="phone dagen">
       <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">Tirsdag<small>27. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Tirsdag<small>27. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="list">
         <div class="ev"><div class="tm">08:15<small>13:00</small></div><div class="tx"><div class="ti">Skole</div><div class="wh">Kort dag · Engelsk, KRLE</div></div></div>
         <div class="ev"><div class="tm">16:00<small>17:00</small></div><div class="tx"><div class="ti">Tannlege</div><div class="wh">Mamma henter 15:30</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i></div>
       <div class="handle"></div>
     </div>
-    <figcaption><b>I morgen.</b> Samme liste, neste dag. Overskriften sier ukedagen; «I dag»-knappen tar deg tilbake uansett hvor
-    langt du har sveipet. Tannlegen kommer fra familiekalenderen, med forelderens egen notat som sted.</figcaption>
+    <figcaption><b>I morgen.</b> Samme liste, neste dag. Overskriften sier alltid ukedagen og datoen; «← I dag» hopper tilbake uansett hvor langt du har sveipet. Tannlegen kommer fra familiekalenderen, med forelderens egen notat som sted.</figcaption>
   </figure>
 
   <figure>
     <div class="phone dagen">
       <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">Lørdag<small>31. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Lørdag<small>31. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="empty">Ingenting i kalenderen i dag.</div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i></i><i></i><i class="on"></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>Tom dag.</b> En rolig tom tilstand med faste ord, ikke et tomt rutenett.</figcaption>
@@ -204,18 +222,62 @@ titler, en fotballfeed, og en delt familiekalender.</p>
     <div class="phone dagen">
       <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">I dag<small>Mandag 26. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Mandag<small>26. oktober · i dag</small></div><div class="today-btn">← I dag</div></div>
       <div class="list">
-        <div class="ev"><div class="tm">08:15<small>14:30</small></div><div class="tx"><div class="ti">Gruppe 2 skoleåret 2026/27 – 5B – Matte, norsk, gym</div><div class="wh">Rom 204</div></div></div>
+        <div class="ev more"><div class="tm">08:15<small>14:30</small></div><div class="tx"><div class="ti">Gruppe 2 skoleåret 2026/27 – 5B – Matte, norsk, gym</div><div class="wh">Rom 204</div></div></div>
         <div class="ev"><div class="tm">14:45<small>15:30</small></div><div class="tx"><div class="ti">SFO Solbakken avd. 3: Leksehjelp</div><div class="wh"></div></div></div>
         <div class="ev"><div class="tm">17:30<small>18:45</small></div><div class="tx"><div class="ti">Vibb IL G2017 – Trening</div><div class="wh">Kunstgresset</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i class="on"></i><i></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>Uten regler.</b> Slik ser feedene ut rett fra kilden. Sammenlign med første skjerm: tre regler gjør
     «Gruppe 2 skoleåret 2026/27 – 5B – …» til «Skole», «SFO Solbakken avd. 3:» til «SFO:» og «Vibb IL G2017 –» til «Fotball:».</figcaption>
+  </figure>
+</div>
+
+
+<h2>1b. Steg 3: barnets egne avtaler</h2>
+<p class="note">Barnets avtaler går som standard til en lokal «Min kalender» som Vibb One oppretter på telefonen, så «+» er der fra
+første dag. Forelderen kan velge en annen skrivbar kalender (f.eks. familiekalenderen via DAVx5) eller slå av «Barnet kan
+legge til avtaler». Barnet kan legge inn, endre og slette <b>sine egne</b> avtaler; alt annet er urørlig som før.
+På samme side i PWA-en: «Dagen på Hjem» (på som standard; av skjuler flisen, linjen og påminnelsene, reglene står).</p>
+<div class="grid">
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">Lørdag<small>31. oktober</small></div><div class="today-btn">← I dag</div></div>
+      <div class="list">
+        <div class="ev mine"><div class="tm">14:00<small>16:00</small></div><div class="tx"><div class="ti">Besøk hos Ola</div><div class="wh">Min kalender</div></div></div>
+      </div>
+      <div class="peek l"></div><div class="peek r"></div>
+      <div class="fab">+</div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>Med «+».</b> Den runde knappen nederst til høyre; borte bare om forelderen har slått av «Barnet kan legge til avtaler». Barnets egne
+    avtaler har kalenderens navn som andrelinje og en grønnere tid, så de skiller seg fra skolen og familien.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="topbar"><span class="x">Avbryt</span><span class="ttl">Ny avtale</span><span class="x" style="visibility:hidden">Avbryt</span></div>
+      <div class="form">
+        <div class="field"><div class="lb">Hva</div><div class="vl">Besøk hos Ola</div></div>
+        <div class="field"><div class="lb">Dag</div><div class="vl">Lørdag 31. oktober</div></div>
+        <div class="row2">
+          <div class="field"><div class="lb">Fra</div><div class="vl">14:00</div></div>
+          <div class="field"><div class="lb">Varighet</div><div class="vl">2 timer</div></div>
+        </div>
+        <div class="field"><div class="lb">Sted (valgfritt)</div><div class="vl ph">Hos Ola</div></div>
+      </div>
+      <div class="save">Lagre</div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>Ny avtale.</b> Fire felt og Lagre: hva, dag (forhåndsutfylt med dagen du sto på), fra, varighet, og et valgfritt sted.
+    Ingen gjester, ingen gjentakelse, ingen påminnelsesvalg (de følger kalenderens regel). Det samme skjemaet åpner for «Endre»
+    på barnets egne avtaler; «Slett» ligger på detaljsiden deres, og bare der.</figcaption>
   </figure>
 </div>
 
@@ -225,6 +287,11 @@ titler, en fotballfeed, og en delt familiekalender.</p>
     <div class="pwa">
       <div class="top"><span class="bk">‹ Testtelefon</span><span class="sv">Save</span></div>
       <h3>Calendar</h3>
+      <div class="gh">Dagen</div>
+      <div class="group">
+        <div class="r"><div class="l">Dagen on Home</div><div class="sw"></div></div>
+        <div class="r"><div class="l">The kid may add events<small>to: My calendar (on the phone) ›</small></div><div class="sw"></div></div>
+      </div>
       <div class="gh">Calendars shown</div>
       <div class="group">
         <div class="r"><div class="l">Skolen<small>ICSx5 · skole.kommune.no · Reminder: off</small></div><div class="sw"></div></div>
@@ -343,12 +410,11 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
     <div class="phone dagen">
       <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">Torsdag<small>15. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Torsdag<small>15. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="list">
-        <div class="ev"><div class="tm">10:45<small>11:30</small></div><div class="tx"><div class="ti">Skole: Litteraturhuset - Det kuleste fra R omerriket</div><div class="wh">Vi deler gruppa i to og tar buss 08.56 og 09.11. Viktig at man er klar på skolen 08.30.</div></div></div>
+        <div class="ev more"><div class="tm">10:45<small>11:30</small></div><div class="tx"><div class="ti">Skole: Litteraturhuset - Det kuleste fra R omerriket</div><div class="wh">Vi deler gruppa i to og tar buss 08.56 og 09.11. Viktig at man er klar på skolen 08.30.</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>15. oktober.</b> «Gruppe 2- skoleåret 2026/2027: Litteraturhuset - Det kuleste fra R omerriket» blir «Skole: Litteraturhuset -
@@ -360,12 +426,11 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
     <div class="phone dagen">
       <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">Tirsdag<small>20. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Tirsdag<small>20. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="list">
-        <div class="ev"><div class="tm">09:00<small>13:15</small></div><div class="tx"><div class="ti">Skole: Girl Tech Fest</div><div class="wh">Jentene på 5. trinn, hentes med buss fra VoMo klokka 0900. Retur med buss, tilbake på skolen ca. 13.15</div></div></div>
+        <div class="ev more"><div class="tm">09:00<small>13:15</small></div><div class="tx"><div class="ti">Skole: Girl Tech Fest</div><div class="wh">Jentene på 5. trinn, hentes med buss fra VoMo klokka 0900. Retur med buss, tilbake på skolen ca. 13.15</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>20. oktober.</b> Feeden har to hendelser denne dagen: Girl Tech Fest og «Frankenstein- for 6. og 7. trinn»
@@ -377,13 +442,12 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
     <div class="phone dagen">
       <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">Onsdag<small>28. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Onsdag<small>28. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="list">
         <div class="ev"><div class="tm">10:00<small>11:30</small></div><div class="tx"><div class="ti">Skole: Gym for 4. eller 5. trinn</div><div class="wh"></div></div></div>
-        <div class="ev"><div class="tm">13:00<small>14:30</small></div><div class="tx"><div class="ti">Skole: Språk: Ordtak</div><div class="wh">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen kjente ordspråk og talemåter kommer fra.</div></div></div>
+        <div class="ev more"><div class="tm">13:00<small>14:30</small></div><div class="tx"><div class="ti">Skole: Språk: Ordtak</div><div class="wh">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen kjente ordspråk og talemåter kommer fra.</div></div></div>
       </div>
       <div class="peek l"></div><div class="peek r"></div>
-      <div class="dots"><i></i><i></i><i></i><i class="on"></i><i></i></div>
       <div class="handle"></div>
     </div>
     <figcaption><b>28. oktober</b>, etter vintertid: 09:00Z blir 10:00. Gym-hendelsen har tom beskrivelse, så bare tittelen.

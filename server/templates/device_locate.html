@@ -42,10 +42,10 @@
         <div class="group">
             {% if let Some(fix) = view.fix %}
             <div class="row" data-row="fix">
-                <span class="row-label"><span class="fix-age" title="{{ fix.exact }}">{{ fix.age }}</span><span class="row-sub">{{ fix.accuracy }}</span>{% if fix.before_off %}<span class="row-sub" data-fix-before-off>Last position before the phone went off</span>{% endif %}</span>
+                <span class="row-label"><span class="fix-age" title="{{ fix.exact }}">{{ fix.age }}</span><span class="row-sub">{{ fix.accuracy }}</span>{% if let Some(aged) = fix.aged %}<span class="row-sub" data-fix-aged>{{ aged }}</span>{% endif %}{% if fix.before_off %}<span class="row-sub" data-fix-before-off>Last position before the phone went off</span>{% endif %}</span>
             </div>
             {% else %}
-            <p class="row row-note" data-row="fix">No location reported yet.</p>
+            <p class="row row-note" data-row="fix">{% if view.location_off %}No position kept while location is off.{% else %}No position yet.{% endif %}</p>
             {% endif %}
             {% if let Some(a) = view.answer %}
             {#- 2026-10-25: only while asked, 10 min after a found answer, a failure until the next fix (locate::answer_state). -#}
@@ -214,7 +214,7 @@
                 <noscript><button type="submit" class="row row-button">Save History</button></noscript>
             </form>
         </div>
-        <p class="group-footer">Each fix uses some battery; the newest location is always kept. Off turns location off on the phone. <span data-note="last-position">A phone that shuts down or runs low on battery sends a last position, but a sudden power loss or airplane mode leaves nothing.</span></p>
+        <p class="group-footer">Each fix uses some battery; the newest location is kept until a newer one comes. Off turns location off on the phone and erases its locations. <span data-note="last-position">A phone that shuts down or runs low on battery sends a last position, but a sudden power loss or airplane mode leaves nothing.</span></p>
     </section>
 
     <script src="/static/leaflet/leaflet.js"></script>

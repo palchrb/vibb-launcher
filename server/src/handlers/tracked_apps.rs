@@ -187,7 +187,7 @@ async fn fetch_latest_release(
     // An invalid stored filter fails before any request.
     AssetFilter::parse(asset_pattern).map_err(filter_failure)?;
     let client = reqwest::Client::builder()
-        .user_agent("kid-phone-server (self-hosted, github.com)")
+        .user_agent(crate::net::USER_AGENT)
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| Failure::new(Server, e.to_string()))?;
@@ -477,7 +477,7 @@ async fn download_asset(
     }
     // A neutral user agent: the same client fetches GitHub's assets and F-Droid's APKs (Q-9).
     let mut builder = reqwest::Client::builder()
-        .user_agent("kid-phone-server (self-hosted)")
+        .user_agent(crate::net::USER_AGENT)
         .connect_timeout(Duration::from_secs(15))
         .redirect(https_redirects());
     if fdroid {
