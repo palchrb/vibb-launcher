@@ -1359,6 +1359,8 @@ async fn pull_down_to_refresh_is_on_devices_and_the_summary_only() {
 async fn every_page_carries_the_connecting_script_and_its_ping() {
     let head = std::fs::read_to_string("templates/partials/head.html").unwrap();
     assert!(head.contains("<script src=\"/static/reconnect.js?v=6\" defer></script>"));
+    // The tab-switch timing (Q28), off until `?timing=1`: on every page too, deferred.
+    assert!(head.contains("<script src=\"/static/nav-timing.js?v=1\" defer></script>"));
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, _) = app.enrolled_device("phone").await;
