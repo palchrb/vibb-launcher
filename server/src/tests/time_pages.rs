@@ -1157,3 +1157,289 @@ async fn the_bedtime_row_is_never_a_day_rule() {
         );
     }
 }
+
+/// A bedtime row's stored days and calls, and how many the phone has.
+async fn bedtime_of(app: &TestApp, id: i64) -> (i64, Option<(String, bool, String)>) {
+    let rows: Vec<(String, bool, String)> = sqlx::query_as(
+        "SELECT days_json, calls_allowed, exempt_apps_json FROM time_rules \
+         WHERE device_id = ? AND bedtime = 1",
+    )
+    .bind(id)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    (rows.len() as i64, rows.into_iter().next())
+}
+
+const BEDTIME_FORM: &[(&str, &str)] = &[
+    ("n0_start", "21:00"),
+    ("n0_end", "07:00"),
+    ("n1_start", "22:30"),
+    ("n1_end", "09:00"),
+    ("exempt_apps", "me.vibb.music"),
+];
+
+/// Design 66 §2: the Bedtime page. A phone without one opens with both rows at 21:00-07:00, calls
+/// on and Add, nothing stored; Add and Save are one upsert back to the form (`#bedtime`, the
+/// flash in the top bar); a refusal renders the page (400) as typed with the reason under its
+/// row and in the bar; Remove lands on Device › Time's Bedtime group. Each is posted from the
+/// rendered form and its landing checked (`assert_lands`); Device › Time and Settings › Time
+/// Rules say the bedtime.
+#[tokio::test]
+async fn the_bedtime_page_adds_saves_refuses_and_removes_in_place() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("Anna").await;
+    let page = format!("/devices/{id}/bedtime");
+
+    let html = app.get_page(&page, &cookie).await.text();
+    assert_eq!(nav_current(&html), "devices");
+    assert!(html.contains(&format!(
+        "<a class=\"nav-back\" href=\"/devices/{id}/time\">"
+    )));
+    assert!(html.contains("data-save=\"bedtime\">Add</button>"));
+    assert_eq!(html.matches("value=\"21:00\"").count(), 2);
+    assert_eq!(html.matches("value=\"07:00\"").count(), 2);
+    assert_eq!(input_checked(&html, "calls_allowed", "on"), Some(true));
+    assert!(!html.contains("Remove Bedtime"), "nothing to remove yet");
+    assert_eq!(
+        bedtime_of(&app, id).await.0,
+        0,
+        "nothing stored by opening it"
+    );
+    let device_time = app
+        .get_page(&device_page(id, Section::Time), &cookie)
+        .await
+        .text();
+    assert!(section(&device_time, "bedtime").contains("Not set"));
+    assert!(
+        section(&app.get_page("/schedules", &cookie).await.text(), "phones").contains("No bedtime")
+    );
+
+    // Add, from the rendered form.
+    let found = forms(&html);
+    assert_eq!(found.len(), 1, "the one form, no Remove yet");
+    assert_eq!(found[0].0, format!("{page}#bedtime"));
+    assert!(encloses(&html, "bedtime", found[0].1));
+    let mut nudges = app.state.command_notify.subscribe();
+    let res = app
+        .request_form(Method::POST, &page, Some(&cookie), BEDTIME_FORM)
+        .await;
+    assert_redirect(&res, &format!("{page}?saved=1"), Some("bedtime"));
+    app.assert_lands(&res, &cookie).await;
+    assert_eq!(nudges.try_recv().ok(), Some(id));
+    let (count, row) = bedtime_of(&app, id).await;
+    assert_eq!(count, 1);
+    let (days, calls, apps) = row.unwrap();
+    let school = json!({"start": 1260, "end": 420});
+    let free = json!({"start": 1350, "end": 540});
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&days).unwrap(),
+        json!([school, school, school, school, free, free, school])
+    );
+    assert!(!calls, "the switch was off in the post");
+    assert_eq!(apps, "[\"me.vibb.music\"]");
+    let html = app
+        .get_page(&format!("{page}?saved=1"), &cookie)
+        .await
+        .text();
+    assert!(html.contains("data-flash=\"bedtime\">Saved."));
+    assert!(html.contains("Remove Bedtime"));
+    assert!(html.contains("value=\"22:30\""));
+    let summary = "Sun-Thu 21:00-07:00 · Fri-Sat 22:30-09:00";
+    let device_time = app
+        .get_page(&device_page(id, Section::Time), &cookie)
+        .await
+        .text();
+    assert!(
+        section(&device_time, "bedtime").contains(summary),
+        "{device_time}"
+    );
+    let phones = app.get_page("/schedules", &cookie).await.text();
+    assert!(section(&phones, "phones").contains(&format!("Bedtime {summary}")));
+    // The phone gets it, and Pause a Rule offers it.
+    let rules = app
+        .request(Method::GET, "/api/devices/policy", Some(&token), None)
+        .await
+        .json()["time_policy"]["rules"]
+        .clone();
+    assert_eq!(rules[0]["kind"], "bedtime");
+    assert!(section(&device_time, "pause").contains(">Bedtime</option>"));
+
+    // A save is the same upsert: still one row.
+    let res = app
+        .request_form(
+            Method::POST,
+            &page,
+            Some(&cookie),
+            &[
+                ("n0_start", "20:30"),
+                ("n0_end", "06:45"),
+                ("calls_allowed", "on"),
+            ],
+        )
+        .await;
+    assert_redirect(&res, &format!("{page}?saved=1"), Some("bedtime"));
+    let (count, row) = bedtime_of(&app, id).await;
+    assert_eq!(count, 1);
+    let (days, calls, _) = row.unwrap();
+    assert!(calls);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&days).unwrap()[4],
+        serde_json::Value::Null,
+        "an empty row is no bedtime those nights"
+    );
+
+    // A refusal: the page again as typed, the reason under its row and in the bar.
+    let res = app
+        .request_form(
+            Method::POST,
+            &page,
+            Some(&cookie),
+            &[
+                ("n0_start", "20:30"),
+                ("n0_end", "06:45"),
+                ("n1_start", "08:00"),
+                ("n1_end", "09:00"),
+            ],
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::BAD_REQUEST);
+    let html = res.text();
+    let why = "Fri-Sat nights: bedtime starts after noon and ends before noon.";
+    assert!(html.contains(&format!("data-flash=\"refused\">Not saved. {why}")));
+    assert!(html.contains(&format!("data-flash=\"nights-1\">{why}")));
+    assert!(html.contains("name=\"n1_start\" value=\"08:00\" aria-label=\"Fri-Sat nights from\" aria-invalid=\"true\" aria-describedby=\"n1-error\" autofocus"));
+    assert!(html.contains("value=\"20:30\""));
+    assert_eq!(
+        bedtime_of(&app, id).await.1.unwrap().0,
+        days,
+        "nothing written"
+    );
+
+    // Remove, from the rendered confirm: Device › Time's Bedtime group with its flash.
+    let html = app.get_page(&page, &cookie).await.text();
+    let remove = forms(&html)
+        .into_iter()
+        .find(|(action, _, _)| action.ends_with("/remove"))
+        .expect("Remove Bedtime…");
+    assert_eq!(remove.0, format!("{page}/remove"));
+    let res = app
+        .request_form(Method::POST, &remove.0, Some(&cookie), &[])
+        .await;
+    assert_redirect(
+        &res,
+        &format!("/devices/{id}/time?notice=bedtime_removed"),
+        Some("bedtime"),
+    );
+    app.assert_lands(&res, &cookie).await;
+    assert_eq!(bedtime_of(&app, id).await.0, 0);
+    let device_time = app
+        .get_page(
+            &format!("/devices/{id}/time?notice=bedtime_removed"),
+            &cookie,
+        )
+        .await
+        .text();
+    assert!(section(&device_time, "bedtime").contains("data-flash=\"bedtime\">Bedtime removed."));
+    // Again (another tab): the same landing, nothing to log.
+    let res = app
+        .request_form(Method::POST, &remove.0, Some(&cookie), &[])
+        .await;
+    assert!(res.status.is_redirection());
+    let logged: Vec<String> = sqlx::query_scalar(
+        "SELECT event_type FROM security_events WHERE event_type LIKE 'bedtime_%' ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        logged,
+        ["bedtime_saved", "bedtime_saved", "bedtime_removed"]
+    );
+
+    // An unknown phone is a 404 on every route.
+    for (method, path) in [
+        (Method::GET, "/devices/999/bedtime"),
+        (Method::POST, "/devices/999/bedtime"),
+        (Method::POST, "/devices/999/bedtime/remove"),
+    ] {
+        let res = if method == Method::GET {
+            app.get_page(path, &cookie).await
+        } else {
+            app.request_form(method, path, Some(&cookie), BEDTIME_FORM)
+                .await
+        };
+        assert_eq!(res.status, StatusCode::NOT_FOUND, "{path}");
+    }
+}
+
+/// A stored bedtime that doesn't read (days that aren't two rows of nights, a restored or
+/// hand-edited row) says "Can't be read" on both lists; its page opens with the rows empty and a
+/// warning, and a save rewrites all seven days.
+#[tokio::test]
+async fn a_bedtime_that_cant_be_read() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    sqlx::query(
+        "INSERT INTO time_rules (device_id, name, kind, calls_allowed, days_json, bedtime) \
+         VALUES (?, 'Bedtime', 'bedtime', 1, ?, 1)",
+    )
+    .bind(id)
+    .bind(r#"[{"start":1260,"end":420},null,null,null,null,null,null]"#)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let device_time = app
+        .get_page(&device_page(id, Section::Time), &cookie)
+        .await
+        .text();
+    assert!(section(&device_time, "bedtime").contains("text-alarm\">Can&#39;t be read"));
+    let phones = app.get_page("/schedules", &cookie).await.text();
+    assert!(
+        section(&phones, "phones").contains("text-alarm\" data-bedtime>Bedtime can&#39;t be read")
+    );
+    let page = format!("/devices/{id}/bedtime");
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(html.contains("data-warning=\"bedtime-corrupt\""));
+    assert!(html.contains("Its nights couldn&#39;t be read"));
+    assert!(!html.contains("value=\"21:00\""), "the rows open empty");
+    let res = app
+        .request_form(Method::POST, &page, Some(&cookie), BEDTIME_FORM)
+        .await;
+    assert_redirect(&res, &format!("{page}?saved=1"), Some("bedtime"));
+    let days: String =
+        sqlx::query_scalar("SELECT days_json FROM time_rules WHERE device_id = ? AND bedtime = 1")
+            .bind(id)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        crate::time_rules::Nights::from_days(&crate::time_rules::parse_days(&days).unwrap())
+            .unwrap()
+            .free,
+        Some(crate::time_rules::DayWindow {
+            start: 1350,
+            end: 540
+        })
+    );
+}
+
+/// Two saves of a new bedtime at once (two tabs) end in one row, never a 500: the save is one
+/// upsert on the partial unique index.
+#[tokio::test]
+async fn two_saves_of_a_new_bedtime_make_one_row() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let page = format!("/devices/{id}/bedtime");
+    let (a, b) = tokio::join!(
+        app.request_form(Method::POST, &page, Some(&cookie), BEDTIME_FORM),
+        app.request_form(Method::POST, &page, Some(&cookie), BEDTIME_FORM),
+    );
+    for res in [a, b] {
+        assert_redirect(&res, &format!("{page}?saved=1"), Some("bedtime"));
+    }
+    assert_eq!(bedtime_of(&app, id).await.0, 1);
+}

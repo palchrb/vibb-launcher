@@ -266,7 +266,7 @@ Area notes, moved verbatim from this file on 2026-10-19; read only the ones your
 - `docs/notes/server/architecture.md` - Architecture
 - `docs/notes/server/calls-and-contacts.md` - Calls & SMS; Emulator fixes; Calls & Contacts
 - `docs/notes/server/hardening-and-pins.md` - Hardening; Handy's own PIN lock; Parent PIN; Windows that lock again, unseen boots; The lock's glance page; Android's lock screen (design 59)
-- `docs/notes/server/time-rules.md` - Time rules, screen time, location policy; Time Rules and Device › Time
+- `docs/notes/server/time-rules.md` - Time rules, screen time, location policy; Time Rules and Device › Time; Bedtime (design 66)
 - `docs/notes/server/launcher-ui.md` - Launcher UI, contact photos, airplane mode; Wallpapers; App names and icons; The launcher is "Vibb One"
 - `docs/notes/server/play-and-updates.md` - FCM removed, SSE only; Play; Kiosk escapes; Catalog downloads; App downloads: Wi-Fi only, resumable; Install Now (design 37); F-Droid source
 - `docs/notes/server/dns.md` - A custom DNS server for the Web Filter

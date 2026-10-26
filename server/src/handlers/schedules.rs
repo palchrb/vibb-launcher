@@ -187,7 +187,7 @@ fn rules_notice(code: Option<&str>) -> Option<(&'static str, bool)> {
     }
 }
 
-fn read_failed(err: sqlx::Error, what: &str) -> Response {
+pub(crate) fn read_failed(err: sqlx::Error, what: &str) -> Response {
     tracing::error!(%err, "can't read {what}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -196,7 +196,7 @@ fn read_failed(err: sqlx::Error, what: &str) -> Response {
         .into_response()
 }
 
-fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
+pub(crate) fn server_error(err: impl std::fmt::Display, what: &str) -> Response {
     tracing::error!(%err, "{what}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -209,7 +209,7 @@ fn bad_request(message: impl Into<String>) -> Response {
     (StatusCode::BAD_REQUEST, message.into()).into_response()
 }
 
-fn render(template: impl Template, status: StatusCode) -> Response {
+pub(crate) fn render(template: impl Template, status: StatusCode) -> Response {
     match template.render() {
         Ok(html) => (status, Html(html)).into_response(),
         Err(err) => server_error(err, "failed to render a time page"),
@@ -220,7 +220,8 @@ fn render(template: impl Template, status: StatusCode) -> Response {
 // Settings › Time Rules
 // ------------------------------------------------------------------------------------------------
 
-/// A phone on the Time Rules page: its Time page, and whether it follows its own rules.
+/// A phone on the Time Rules page: its Time page, whether it follows its own rules, and its
+/// bedtime as the sub-line (design 66 §2).
 struct PhoneRow {
     id: i64,
     name: String,
@@ -228,6 +229,47 @@ struct PhoneRow {
     avatar: &'static str,
     photo: Option<String>,
     own: bool,
+    bedtime: Bedtime,
+}
+
+/// A phone's bedtime as a row says it: "Sun-Thu 21:00-07:00 · Fri-Sat 22:30-09:00", none, or a
+/// stored one that doesn't read (`text-alarm`).
+enum Bedtime {
+    None,
+    Nights(String),
+    Unreadable,
+}
+
+impl Bedtime {
+    fn of(row: Option<&TimeRuleRow>) -> Bedtime {
+        match row.map(crate::handlers::bedtime::bedtime_summary) {
+            None => Bedtime::None,
+            Some(Some(summary)) => Bedtime::Nights(summary),
+            Some(None) => Bedtime::Unreadable,
+        }
+    }
+
+    fn unreadable(&self) -> bool {
+        matches!(self, Bedtime::Unreadable)
+    }
+
+    /// Device › Time's row value.
+    fn value(&self) -> &str {
+        match self {
+            Bedtime::None => "Not set",
+            Bedtime::Nights(summary) => summary,
+            Bedtime::Unreadable => "Can't be read",
+        }
+    }
+
+    /// Settings › Time Rules' sub-line under the phone.
+    fn line(&self) -> String {
+        match self {
+            Bedtime::None => "No bedtime".to_string(),
+            Bedtime::Nights(summary) => format!("Bedtime {summary}"),
+            Bedtime::Unreadable => "Bedtime can't be read".to_string(),
+        }
+    }
 }
 
 #[derive(Template)]
@@ -280,6 +322,14 @@ pub async fn show_schedules(
         Ok(own) => own,
         Err(err) => return read_failed(err, "the own-rules switches"),
     };
+    let bedtimes: HashMap<Option<i64>, TimeRuleRow> =
+        match sqlx::query_as::<_, TimeRuleRow>("SELECT * FROM time_rules WHERE bedtime = 1")
+            .fetch_all(&state.db)
+            .await
+        {
+            Ok(rows) => rows.into_iter().map(|row| (row.device_id, row)).collect(),
+            Err(err) => return read_failed(err, "the bedtimes"),
+        };
     let budget_json = budget_json.unwrap_or_else(|| time_rules::UNLIMITED_BUDGET_JSON.to_string());
     render(
         SchedulesTemplate {
@@ -297,6 +347,7 @@ pub async fn show_schedules(
                     avatar: crate::handlers::devices::avatar_class(d),
                     photo: crate::handlers::devices::avatar_photo(d),
                     own: own.contains(&d.id),
+                    bedtime: Bedtime::of(bedtimes.get(&Some(d.id))),
                 })
                 .collect(),
             notice: rules_notice(params.get("notice").map(String::as_str)),
@@ -405,9 +456,23 @@ pub async fn show_budget(
 
 /// An app the rule may leave usable.
 pub(crate) struct AppChoice {
-    package: String,
-    label: String,
-    checked: bool,
+    pub(crate) package: String,
+    pub(crate) label: String,
+    pub(crate) checked: bool,
+}
+
+/// "Klokke, Kalkulator", "None": the chosen apps, for the Exceptions row.
+pub(crate) fn apps_value(apps: &[AppChoice]) -> String {
+    let chosen: Vec<&str> = apps
+        .iter()
+        .filter(|a| a.checked)
+        .map(|a| a.label.as_str())
+        .collect();
+    match chosen.len() {
+        0 => "None".to_string(),
+        1 | 2 => chosen.join(", "),
+        n => format!("{n} apps"),
+    }
 }
 
 struct DayInput {
@@ -433,19 +498,9 @@ struct RuleForm {
 }
 
 impl RuleForm {
-    /// "Klokke, Kalkulator", "None".
+    /// For `partials/exceptions.html`.
     fn apps_value(&self) -> String {
-        let chosen: Vec<&str> = self
-            .apps
-            .iter()
-            .filter(|a| a.checked)
-            .map(|a| a.label.as_str())
-            .collect();
-        match chosen.len() {
-            0 => "None".to_string(),
-            1 | 2 => chosen.join(", "),
-            n => format!("{n} apps"),
-        }
+        apps_value(&self.apps)
     }
 }
 
@@ -469,7 +524,10 @@ fn day_inputs(days: &[Option<DayWindow>]) -> Vec<DayInput> {
 
 /// The apps a rule may exempt: what the devices in scope reported installed, plus whatever the
 /// rule already has (so a choice never silently disappears from the form).
-fn app_choices(available: &BTreeMap<String, String>, chosen: &[String]) -> Vec<AppChoice> {
+pub(crate) fn app_choices(
+    available: &BTreeMap<String, String>,
+    chosen: &[String],
+) -> Vec<AppChoice> {
     let mut all = available.clone();
     for package in chosen {
         all.entry(package.clone())
@@ -488,7 +546,7 @@ fn app_choices(available: &BTreeMap<String, String>, chosen: &[String]) -> Vec<A
 }
 
 /// package -> label from the latest installed-apps report of each device in `device_ids`.
-async fn reported_apps(
+pub(crate) async fn reported_apps(
     state: &AppState,
     device_ids: &[i64],
 ) -> Result<BTreeMap<String, String>, sqlx::Error> {
@@ -794,12 +852,30 @@ pub(crate) enum RuleError {
     Apps(String),
 }
 
-fn field<'a>(fields: &'a [(String, String)], key: &str) -> &'a str {
+pub(crate) fn field<'a>(fields: &'a [(String, String)], key: &str) -> &'a str {
     fields
         .iter()
         .find(|(k, _)| k == key)
         .map(|(_, v)| v.as_str())
         .unwrap_or("")
+}
+
+/// The ticked `exempt_apps` (a rule's or the bedtime's): package names, each once, at most
+/// [MAX_EXEMPT_APPS]; the refusal's words otherwise.
+pub(crate) fn parse_exempt_apps_form(fields: &[(String, String)]) -> Result<Vec<String>, String> {
+    let mut exempt_apps: Vec<String> = Vec::new();
+    for (k, v) in fields {
+        if k == "exempt_apps" && !exempt_apps.contains(v) {
+            if !time_rules::valid_package_name(v) {
+                return Err("One of the apps isn't an app. Pick them again.".to_string());
+            }
+            exempt_apps.push(v.clone());
+        }
+    }
+    if exempt_apps.len() > MAX_EXEMPT_APPS {
+        return Err(format!("Pick at most {MAX_EXEMPT_APPS} apps."));
+    }
+    Ok(exempt_apps)
 }
 
 pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, RuleError> {
@@ -846,22 +922,7 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
             }
         }
     }
-    let mut exempt_apps: Vec<String> = Vec::new();
-    for (k, v) in fields {
-        if k == "exempt_apps" && !exempt_apps.contains(v) {
-            if !time_rules::valid_package_name(v) {
-                return Err(RuleError::Apps(
-                    "One of the apps isn't an app. Pick them again.".to_string(),
-                ));
-            }
-            exempt_apps.push(v.clone());
-        }
-    }
-    if exempt_apps.len() > MAX_EXEMPT_APPS {
-        return Err(RuleError::Apps(format!(
-            "Pick at most {MAX_EXEMPT_APPS} apps."
-        )));
-    }
+    let exempt_apps = parse_exempt_apps_form(fields).map_err(RuleError::Apps)?;
     Ok(RuleInput {
         calls_allowed: fields.iter().any(|(k, _)| k == "calls_allowed"),
         name,
@@ -921,7 +982,7 @@ fn rule_entered(
 }
 
 /// Parent edits to time rules and budgets go to the security log, like lifts (QA step 6 #9).
-async fn log_change(
+pub(crate) async fn log_change(
     state: &AppState,
     admin: &crate::models::AdminUser,
     event: &str,
@@ -940,7 +1001,7 @@ async fn log_change(
 }
 
 /// Nudges the devices a change in `scope` affects: one device, or every device for a global one.
-async fn nudge(state: &AppState, scope: Option<i64>) {
+pub(crate) async fn nudge(state: &AppState, scope: Option<i64>) {
     match scope {
         Some(id) => {
             let _ = state.command_notify.send(id);
@@ -956,7 +1017,7 @@ async fn nudge(state: &AppState, scope: Option<i64>) {
     }
 }
 
-fn form_pairs(body: &Bytes) -> Vec<(String, String)> {
+pub(crate) fn form_pairs(body: &Bytes) -> Vec<(String, String)> {
     form_urlencoded::parse(body).into_owned().collect()
 }
 
@@ -1285,6 +1346,10 @@ struct DeviceTimeTemplate {
     /// Pause a Rule shows for its flash even with no rule left to pause (qa-31-s9-code M1).
     pause_done: bool,
     custom: bool,
+    /// The phone's bedtime (design 66), its row to the Bedtime page.
+    bedtime: Bedtime,
+    /// The flash after Remove Bedtime.
+    bedtime_removed: bool,
     /// Everyone's rules: how many (the row to Settings › Time Rules).
     everyone_rules: String,
     own_rules: Vec<RuleRow>,
@@ -1475,6 +1540,8 @@ async fn render_device_time(
             done,
             pause_done: done.is_some_and(|(group, _, _)| group == "pause"),
             custom: policy.custom_schedule_enabled,
+            bedtime: Bedtime::of(effective.iter().find(|r| r.bedtime)),
+            bedtime_removed: query.get("notice").map(String::as_str) == Some("bedtime_removed"),
             everyone_rules: match everyone_count {
                 0 => "None".to_string(),
                 1 => "1 rule".to_string(),

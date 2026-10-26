@@ -967,6 +967,11 @@ async fn new_admin_routes_refuse_without_a_session_and_write_nothing() {
             vec![("mode", "off")],
         ),
         (format!("/devices/{id}/command/locate"), vec![]),
+        (
+            format!("/devices/{id}/bedtime"),
+            vec![("n0_start", "21:00"), ("n0_end", "07:00")],
+        ),
+        (format!("/devices/{id}/bedtime/remove"), vec![]),
     ];
     for (path, fields) in &routes {
         let res = app.request_form(Method::POST, path, None, fields).await;
@@ -997,7 +1002,7 @@ async fn new_admin_routes_refuse_without_a_session_and_write_nothing() {
         0
     );
     assert_eq!(count(&app, "SELECT COUNT(*) FROM device_commands").await, 0);
-    assert_eq!(count(&app, "SELECT COUNT(*) FROM security_events WHERE event_type LIKE 'time_%' OR event_type LIKE 'location_%' OR event_type = 'screen_time_saved' OR event_type = 'device_command_queued'").await, 0);
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM security_events WHERE event_type LIKE 'time_%' OR event_type LIKE 'location_%' OR event_type = 'screen_time_saved' OR event_type = 'device_command_queued' OR event_type LIKE 'bedtime_%'").await, 0);
     let after_policy: (String, String, i64) = sqlx::query_as(
         "SELECT daily_budget_json, location_mode, custom_schedule_enabled FROM device_policy \
          WHERE device_id = ?",

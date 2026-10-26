@@ -68,29 +68,7 @@
             <p class="group-footer">On the phone's clock, from the start to the end of the same day; 00:00-23:59 is the whole day. Leave a day empty when the rule is off. A night past midnight goes in Bedtime, on each phone's Time page.</p>
         </section>
 
-        <section id="exceptions" aria-labelledby="exceptions-title">
-            <h2 class="group-header" id="exceptions-title">Exceptions</h2>
-            <div class="group">
-                {#- Inside the form (H1): the handler writes the exempt apps with every save. -#}
-                <details class="cell disclosure"{% if rule.apps_error.is_some() %} open{% endif %}>
-                    <summary class="row">
-                        <span class="row-label">Apps that still work</span>
-                        <span class="row-value" data-value="apps">{{ rule.apps_value() }}</span>
-                        <svg class="chev section-chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </summary>
-                    {% if let Some(why) = rule.apps_error %}<p class="flash flash-error" id="apps-error" data-flash="apps">{{ why }}</p>{% endif %}
-                    {% for a in rule.apps %}
-                    <label class="row">
-                        <span class="row-label">{{ a.label }}</span>
-                        <input type="checkbox" role="switch" class="sw" name="exempt_apps" value="{{ a.package }}"{% if a.checked %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
-                    </label>
-                    {% else %}
-                    <p class="row row-note">No apps reported by the phones yet.</p>
-                    {% endfor %}
-                </details>
-            </div>
-            <p class="group-footer">They must also be allowed under Apps on the phone.</p>
-        </section>
+{% include "partials/exceptions.html" %}
     </form>
 
     {% if rule.id != 0 %}

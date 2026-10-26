@@ -863,6 +863,14 @@ pub fn build_admin_router(
             "/devices/{id}/time",
             get(handlers::schedules::view_device_time),
         )
+        .route(
+            "/devices/{id}/bedtime",
+            get(handlers::bedtime::show_bedtime).post(handlers::bedtime::save_bedtime),
+        )
+        .route(
+            "/devices/{id}/bedtime/remove",
+            post(handlers::bedtime::remove_bedtime),
+        )
         .route("/devices/{id}/lifts", post(handlers::lifts::create_lift))
         .route(
             "/devices/{id}/lifts/{lift_id}/end",
