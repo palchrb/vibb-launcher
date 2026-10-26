@@ -45,3 +45,8 @@ ALTER TABLE device_policy ADD COLUMN calendar_lock_reminders TEXT NOT NULL DEFAU
 -- The phone's last `calendar` report, as `calendar::sanitize_report` kept it: whether it can read its calendars and
 -- which it has (key, account type, display name, the feed's host, access level), never an event.
 ALTER TABLE devices ADD COLUMN calendar_report TEXT;
+
+-- Design 69 §4.4: "On Home" per phone and app (Device › Apps › Name and icon). Off keeps an allowed app - a sync app
+-- such as ICSx5 or DAVx5 - off Home and the app list except during a pause; the policy's `app_display` entry then
+-- carries `on_home: false`.
+ALTER TABLE device_app_display ADD COLUMN on_home INTEGER NOT NULL DEFAULT 1;

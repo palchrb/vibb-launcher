@@ -1785,6 +1785,10 @@ pub(crate) async fn render_apps(
         Ok(own) => own,
         Err(err) => return read_failed(id, "the phone's app names", err),
     };
+    let off_home = match display::off_home(&state.db, id).await {
+        Ok(off) => off,
+        Err(err) => return read_failed(id, "the phone's apps off Home", err),
+    };
     let (nav_tab, back_href, back_label, from) = match apps_nav(state, &device, from).await {
         Ok(nav) => nav,
         Err(err) => return read_failed(id, "the catalog app it came from", err),
@@ -1842,10 +1846,14 @@ pub(crate) async fn render_apps(
                         .map(|(_, e)| e),
                 );
                 form.catalog_default = default.map(DisplayValues::describe);
-                form.own_row = phone_row.is_some();
+                form.own_row = phone_row.is_some() || off_home.contains(&package);
                 form.from = from.clone();
+                form.on_home = Some(!off_home.contains(&package));
                 if phone_row.is_none() && default.is_some() {
                     form.summary = format!("{} (from the catalog)", form.summary);
+                }
+                if off_home.contains(&package) {
+                    form.summary = format!("{} · not on Home", form.summary);
                 }
                 form
             });

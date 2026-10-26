@@ -40,6 +40,14 @@ pub struct PolicyAppDisplay {
     pub label: Option<String>,
     pub icon: Option<String>,
     pub color: String,
+    /// Design 69 §4.4: `false` = off Home and the app list except during a pause (a sync app such as ICSx5 or
+    /// DAVx5 that must stay allowed); sent only when `false` (missing = on, as an older server).
+    #[serde(skip_serializing_if = "is_true")]
+    pub on_home: bool,
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 /// A name/icon/colour choice, validated.
@@ -243,8 +251,22 @@ pub async fn device_rows(
         .collect())
 }
 
+/// The packages this phone keeps off Home (design 69 §4.4, `device_app_display.on_home = 0`).
+pub async fn off_home(
+    db: &SqlitePool,
+    device_id: i64,
+) -> Result<std::collections::BTreeSet<String>, sqlx::Error> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT package_name FROM device_app_display WHERE device_id = ? AND on_home = 0",
+    )
+    .bind(device_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
 /// `launcher_ui.app_display` for a phone: the catalog defaults, each replaced as a whole by the
-/// phone's own row; only entries with a label or an icon (a phone row with neither = Vibb style on
+/// phone's own row; only entries with a label, an icon or Off Home (a phone row with neither = Vibb style on
 /// that phone), sorted by package. An entry without an icon or with [OWN] always says [AUTO].
 pub async fn policy_app_display(
     db: &SqlitePool,
@@ -252,17 +274,22 @@ pub async fn policy_app_display(
 ) -> Result<Vec<PolicyAppDisplay>, sqlx::Error> {
     let mut resolved = catalog_defaults(db).await?;
     resolved.extend(device_rows(db, device_id).await?);
+    let off = off_home(db, device_id).await?;
     Ok(resolved
         .into_iter()
-        .filter(|(_, v)| !v.is_empty())
-        .map(|(package_name, v)| wire_entry(package_name, v))
+        .filter(|(package, v)| !v.is_empty() || off.contains(package))
+        .map(|(package_name, v)| {
+            let on_home = !off.contains(&package_name);
+            wire_entry(package_name, v, on_home)
+        })
         .collect())
 }
 
 /// One wire entry: the colour only with a glyph - [AUTO] without an icon and for [OWN], whatever
 /// the values carry (a guard: `sanitized` already forces [AUTO] for [OWN] on every read).
-fn wire_entry(package_name: String, v: DisplayValues) -> PolicyAppDisplay {
+fn wire_entry(package_name: String, v: DisplayValues, on_home: bool) -> PolicyAppDisplay {
     PolicyAppDisplay {
+        on_home,
         package_name,
         color: if v.icon.is_some() && !v.is_own() {
             v.color
@@ -326,6 +353,8 @@ pub struct AppDisplayForm {
     /// Device › Apps opened from the Apps tab: its `from`, a hidden field the save keeps
     /// (`device_pages::AppsFrom`); `None` elsewhere.
     pub from: Option<String>,
+    /// Device page: "On Home" (design 69 §4.4) - `None` on the catalog page, which has no such switch.
+    pub on_home: Option<bool>,
 }
 
 /// What a refused save sends back to the form: the entered values and the error.
@@ -400,6 +429,7 @@ impl AppDisplayForm {
             icons,
             colors,
             from: None,
+            on_home: None,
         }
     }
 
@@ -700,11 +730,16 @@ mod tests {
             icon: icon.map(str::to_string),
             color: "sky".into(),
         };
-        assert_eq!(wire_entry("a.b".into(), built(Some(OWN))).color, AUTO);
-        assert_eq!(wire_entry("a.b".into(), built(None)).color, AUTO);
-        assert_eq!(wire_entry("a.b".into(), built(Some("chat"))).color, "sky");
+        assert_eq!(wire_entry("a.b".into(), built(Some(OWN)), true).color, AUTO);
+        assert_eq!(wire_entry("a.b".into(), built(None), true).color, AUTO);
         assert_eq!(
-            wire_entry("a.b".into(), built(Some(OWN))).icon.as_deref(),
+            wire_entry("a.b".into(), built(Some("chat")), true).color,
+            "sky"
+        );
+        assert_eq!(
+            wire_entry("a.b".into(), built(Some(OWN)), true)
+                .icon
+                .as_deref(),
             Some(OWN)
         );
     }

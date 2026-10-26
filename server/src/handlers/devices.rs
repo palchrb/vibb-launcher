@@ -1002,11 +1002,15 @@ pub async fn save_app_display(
                 .into_response();
         }
     };
+    // Design 69 §4.4: "On Home" - only a page that shows the switch says so (`on_home_shown`); an older page keeps
+    // the app on Home. Reset puts it back.
+    let on_home = reset || !form.contains_key("on_home_shown") || form.contains_key("on_home");
     let keep_row = !reset
-        && match &default {
-            Some(default) => *default != values,
-            None => !values.is_empty(),
-        };
+        && (!on_home
+            || match &default {
+                Some(default) => *default != values,
+                None => !values.is_empty(),
+            });
     let result = if keep_row {
         let rows: i64 = match sqlx::query_scalar(
             "SELECT COUNT(*) FROM device_app_display WHERE device_id = ? AND package_name != ?",
@@ -1037,13 +1041,14 @@ pub async fn save_app_display(
             .await;
         }
         sqlx::query(
-            "INSERT INTO device_app_display (device_id, package_name, label, icon_key, color_key)              VALUES (?, ?, ?, ?, ?) ON CONFLICT(device_id, package_name) DO UPDATE SET              label = excluded.label, icon_key = excluded.icon_key, color_key = excluded.color_key,              updated_at = datetime('now')",
+            "INSERT INTO device_app_display (device_id, package_name, label, icon_key, color_key, on_home)              VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(device_id, package_name) DO UPDATE SET              label = excluded.label, icon_key = excluded.icon_key, color_key = excluded.color_key,              on_home = excluded.on_home, updated_at = datetime('now')",
         )
         .bind(id)
         .bind(&package)
         .bind(&values.label)
         .bind(&values.icon)
         .bind(&values.color)
+        .bind(on_home)
         .execute(&state.db)
         .await
     } else {

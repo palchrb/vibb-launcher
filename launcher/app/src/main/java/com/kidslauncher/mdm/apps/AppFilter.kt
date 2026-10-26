@@ -38,11 +38,14 @@ class AppFilter(
         } catch (e: Exception) {
             false
         }
+        // Design 69 §4.4: an app the parent keeps off Home (a sync app) shows only in a window.
+        val windowOpen = com.kidslauncher.mdm.server.OfflineOverride.isActive() || com.kidslauncher.mdm.server.RestrictionsPause.isActive()
         apps = apps.filter { info ->
             val packageName = (info.getRawInfo() as? AppInfo)?.packageName
             hiddenVisibility.predicate(hidden, info)
                     && !isMdmSuspended(info)
                     && kidListable(packageName, blockedDialer, recentsProvider, installMode, emergencySos)
+                    && com.kidslauncher.mdm.appdisplay.onHomeListable(com.kidslauncher.mdm.appdisplay.AppDisplay.entry(packageName), windowOpen)
         }
 
         return apps
