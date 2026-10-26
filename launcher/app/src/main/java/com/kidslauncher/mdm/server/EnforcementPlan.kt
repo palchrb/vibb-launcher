@@ -274,3 +274,28 @@ fun smsPackages(defaultSmsPackage: String?): Set<String> = KNOWN_SMS_PACKAGES + 
  */
 fun callPermissionTargets(requested: Map<String, Collection<String>>, ownPackage: String): Set<String> =
     requested.filter { (pkg, perms) -> pkg != ownPackage && perms.any { it in CALL_PERMISSIONS } }.keys
+
+/** The permission [phoneStateGrants] grants (design 57 (d)). */
+const val READ_PHONE_STATE = "android.permission.READ_PHONE_STATE"
+
+/**
+ * Design 57 (d): while the call-permission denial is on ([denyCalls]) it greys the whole Phone group ("not allowed by
+ * admin") of every [callPermissionTargets] app, so one that also asks for READ_PHONE_STATE (WhatsApp, to know a
+ * carrier call is on) could never get it. Those apps get it by policy when they are allowed: in the effective
+ * [allowlist], or every one while apps are unmanaged (`null`). The apps this returns are set GRANTED; every other
+ * third-party app that requests READ_PHONE_STATE goes back to DEFAULT - the policy fix cleared without a revoke (a
+ * revoke kills the app, a WhatsApp call with it), as the denials go back and as [shouldResetOwnPermissions] does. The
+ * override and the pause change nothing (call rules are never lifted): the caller passes the allowlist, not the
+ * window's plan.
+ */
+fun phoneStateGrants(
+    requested: Map<String, Collection<String>>,
+    ownPackage: String,
+    allowlist: Collection<String>?,
+    denyCalls: Boolean,
+): Set<String> {
+    if (!denyCalls) return emptySet()
+    return callPermissionTargets(requested, ownPackage).filterTo(sortedSetOf()) { pkg ->
+        READ_PHONE_STATE in requested[pkg].orEmpty() && (allowlist == null || pkg in allowlist)
+    }
+}

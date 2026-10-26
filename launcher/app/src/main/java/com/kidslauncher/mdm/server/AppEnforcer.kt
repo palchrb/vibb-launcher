@@ -411,7 +411,7 @@ object AppEnforcer {
         // SMS off (or rules unknown): no SMS in or out. The SMS apps are suspended by the plan too,
         // for RCS. Not lifted by an override.
         setRestriction(dpm, admin, UserManager.DISALLOW_SMS, plan.restrictSms)
-        applyCallPermissions(context, dpm, admin, plan.denyCallPermissions)
+        applyCallPermissions(context, dpm, admin, plan.denyCallPermissions, allowlist)
 
         lastPlanSuspend = plan.suspend
         for (packageName in installedPackages) {
@@ -691,11 +691,18 @@ object AppEnforcer {
      * While calls are managed: our own call permissions are self-granted (READ_CONTACTS so
      * screening sees every number, CALL_PHONE for the phone book, READ_PHONE_STATE, READ_CALL_LOG
      * for the callback window - the dialer role grants most of them too), and every third-party
-     * app's CALL_PHONE/ANSWER_PHONE_CALLS is denied ("blocked by admin"). Unmanaged, those go back
-     * to DEFAULT. Grant states are only written when they differ (re-setting re-notifies, see
-     * CLAUDE.md).
+     * app's CALL_PHONE/ANSWER_PHONE_CALLS is denied ("blocked by admin"), and READ_PHONE_STATE is
+     * granted to the allowed ones of them that ask for it ([phoneStateGrants], design 57 (d) - the
+     * denial greys their whole Phone group). Unmanaged, all of it goes back to DEFAULT. Grant states
+     * are only written when they differ (re-setting re-notifies, see CLAUDE.md).
      */
-    private fun applyCallPermissions(context: Context, dpm: DevicePolicyManager, admin: ComponentName, deny: Boolean) {
+    private fun applyCallPermissions(
+        context: Context,
+        dpm: DevicePolicyManager,
+        admin: ComponentName,
+        deny: Boolean,
+        allowlist: List<String>?,
+    ) {
         if (deny) {
             for (permission in OWN_CALL_PERMISSIONS) {
                 QuickControls.selfGrantPermission(context, dpm, admin, permission)
@@ -710,27 +717,34 @@ object AppEnforcer {
             Log.w(LOG_TAG, "Couldn't list installed packages for call permissions", e)
             return
         }
+        val denial = if (deny) DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED else DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT
         for (packageName in callPermissionTargets(requested, context.packageName)) {
-            setCallPermissions(dpm, admin, packageName, requested[packageName].orEmpty(), deny)
+            for (permission in requested[packageName].orEmpty().filter { it in CALL_PERMISSIONS }) {
+                setGrantState(dpm, admin, packageName, permission, denial)
+            }
+        }
+        // Every requester, not only today's grants: an app updated out of the targets or taken off
+        // the allowlist goes back to DEFAULT too.
+        val phoneState = phoneStateGrants(requested, context.packageName, allowlist, deny)
+        for ((packageName, permissions) in requested) {
+            if (packageName == context.packageName || READ_PHONE_STATE !in permissions) continue
+            val wanted = if (packageName in phoneState) {
+                DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+            } else {
+                DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT
+            }
+            setGrantState(dpm, admin, packageName, READ_PHONE_STATE, wanted)
         }
     }
 
-    private fun setCallPermissions(
-        dpm: DevicePolicyManager,
-        admin: ComponentName,
-        packageName: String,
-        requested: Collection<String>,
-        deny: Boolean,
-    ) {
-        val wanted = if (deny) DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED else DevicePolicyManager.PERMISSION_GRANT_STATE_DEFAULT
-        for (permission in requested.filter { it in CALL_PERMISSIONS }) {
-            try {
-                if (dpm.getPermissionGrantState(admin, packageName, permission) != wanted) {
-                    dpm.setPermissionGrantState(admin, packageName, permission, wanted)
-                }
-            } catch (e: Exception) {
-                Log.w(LOG_TAG, "Couldn't set $permission for $packageName", e)
+    /** Written only when the state differs (the rule above). */
+    private fun setGrantState(dpm: DevicePolicyManager, admin: ComponentName, packageName: String, permission: String, wanted: Int) {
+        try {
+            if (dpm.getPermissionGrantState(admin, packageName, permission) != wanted) {
+                dpm.setPermissionGrantState(admin, packageName, permission, wanted)
             }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't set $permission for $packageName", e)
         }
     }
 
@@ -1248,7 +1262,10 @@ object AppEnforcer {
                 )
                 val isSystem = (info.applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_SYSTEM != 0
                 if (!isSystem && packageName != context.packageName) {
-                    setCallPermissions(dpm, admin, packageName, info.requestedPermissions.orEmpty().toList(), deny = true)
+                    // READ_PHONE_STATE (design 57 (d)) waits for the next apply, which knows the allowlist.
+                    for (permission in info.requestedPermissions.orEmpty().filter { it in CALL_PERMISSIONS }) {
+                        setGrantState(dpm, admin, packageName, permission, DevicePolicyManager.PERMISSION_GRANT_STATE_DENIED)
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(LOG_TAG, "Couldn't check call permissions of $packageName", e)

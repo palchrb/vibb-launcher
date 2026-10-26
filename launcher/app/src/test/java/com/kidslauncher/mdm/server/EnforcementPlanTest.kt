@@ -272,6 +272,22 @@ class EnforcementPlanTest {
     }
 
     @Test
+    fun `READ_PHONE_STATE goes to the allowed apps whose Phone group the denial greys, only while it is on`() {
+        val requested = mapOf(
+            "com.whatsapp" to listOf(READ_PHONE_STATE, "android.permission.CALL_PHONE"),
+            "org.example.blocked" to listOf(READ_PHONE_STATE, "android.permission.ANSWER_PHONE_CALLS"),
+            "org.example.voip" to listOf("android.permission.CALL_PHONE"),
+            "org.example.state" to listOf(READ_PHONE_STATE),
+            OWN to listOf(READ_PHONE_STATE, "android.permission.CALL_PHONE"),
+        )
+        val allowed = listOf("com.whatsapp", "org.example.voip", "org.example.state", OWN)
+        assertEquals(setOf("com.whatsapp"), phoneStateGrants(requested, OWN, allowed, denyCalls = true))
+        assertEquals(setOf("com.whatsapp", "org.example.blocked"), phoneStateGrants(requested, OWN, null, denyCalls = true))
+        assertEquals(emptySet<String>(), phoneStateGrants(requested, OWN, allowed, denyCalls = false))
+        assertEquals(emptySet<String>(), phoneStateGrants(requested, OWN, null, denyCalls = false))
+    }
+
+    @Test
     fun `sms packages include the default SMS app`() {
         assertTrue("com.example.sms" in smsPackages("com.example.sms"))
         assertTrue(SMS in smsPackages(null))
