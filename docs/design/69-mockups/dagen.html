@@ -168,7 +168,8 @@ titler, en fotballfeed, og en delt familiekalender.</p>
     </div>
     <figcaption><b>I dag.</b> Én dag som en liste: tid til venstre, tittel og sted til høyre, heldagshendelser øverst, den som pågår
     har en tynn fersken-ramme. Sveip til siden for neste eller forrige dag, uten ende begge veier; de smale kantene antyder
-    flere dager. «I dag»-knappen vises bare når du har sveipet bort og tar deg rett tilbake. Tittel og andrelinje får inntil to
+    flere dager. «← I dag»-knappen vises bare når du har sveipet bort; pilen peker mot dagen i dag («I dag →» når du er
+    bakover i tid), så den leses som et hopp tilbake, ikke som en overskrift. Tittel og andrelinje får inntil to
     linjer hver; er noe kuttet, viser kortet «…» og en liten pil «›» i høyre kant, og trykket åpner alt. Kort der alt fikk plass
     har ingen pil. Ingen redigering, ingen menyer.</figcaption>
   </figure>
@@ -177,7 +178,7 @@ titler, en fotballfeed, og en delt familiekalender.</p>
     <div class="phone dagen">
       <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">Tirsdag<small>27. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Tirsdag<small>27. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="list">
         <div class="ev"><div class="tm">08:15<small>13:00</small></div><div class="tx"><div class="ti">Skole</div><div class="wh">Kort dag · Engelsk, KRLE</div></div></div>
         <div class="ev"><div class="tm">16:00<small>17:00</small></div><div class="tx"><div class="ti">Tannlege</div><div class="wh">Mamma henter 15:30</div></div></div>
@@ -185,15 +186,14 @@ titler, en fotballfeed, og en delt familiekalender.</p>
       <div class="peek l"></div><div class="peek r"></div>
       <div class="handle"></div>
     </div>
-    <figcaption><b>I morgen.</b> Samme liste, neste dag. Overskriften sier ukedagen; «I dag»-knappen tar deg tilbake uansett hvor
-    langt du har sveipet. Tannlegen kommer fra familiekalenderen, med forelderens egen notat som sted.</figcaption>
+    <figcaption><b>I morgen.</b> Samme liste, neste dag. Overskriften sier alltid ukedagen og datoen; «← I dag» hopper tilbake uansett hvor langt du har sveipet. Tannlegen kommer fra familiekalenderen, med forelderens egen notat som sted.</figcaption>
   </figure>
 
   <figure>
     <div class="phone dagen">
       <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">Lørdag<small>31. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Lørdag<small>31. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="empty">Ingenting i kalenderen i dag.</div>
       <div class="peek l"></div><div class="peek r"></div>
       <div class="handle"></div>
@@ -205,7 +205,7 @@ titler, en fotballfeed, og en delt familiekalender.</p>
     <div class="phone dagen">
       <div class="bar"><span>12:06</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">I dag<small>Mandag 26. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">I dag<small>Mandag 26. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="list">
         <div class="ev more"><div class="tm">08:15<small>14:30</small></div><div class="tx"><div class="ti">Gruppe 2 skoleåret 2026/27 – 5B – Matte, norsk, gym</div><div class="wh">Rom 204</div></div></div>
         <div class="ev"><div class="tm">14:45<small>15:30</small></div><div class="tx"><div class="ti">SFO Solbakken avd. 3: Leksehjelp</div><div class="wh"></div></div></div>
@@ -343,7 +343,7 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
     <div class="phone dagen">
       <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">Torsdag<small>15. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Torsdag<small>15. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="list">
         <div class="ev more"><div class="tm">10:45<small>11:30</small></div><div class="tx"><div class="ti">Skole: Litteraturhuset - Det kuleste fra R omerriket</div><div class="wh">Vi deler gruppa i to og tar buss 08.56 og 09.11. Viktig at man er klar på skolen 08.30.</div></div></div>
       </div>
@@ -359,7 +359,7 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
     <div class="phone dagen">
       <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">Tirsdag<small>20. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Tirsdag<small>20. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="list">
         <div class="ev more"><div class="tm">09:00<small>13:15</small></div><div class="tx"><div class="ti">Skole: Girl Tech Fest</div><div class="wh">Jentene på 5. trinn, hentes med buss fra VoMo klokka 0900. Retur med buss, tilbake på skolen ca. 13.15</div></div></div>
       </div>
@@ -375,7 +375,7 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
     <div class="phone dagen">
       <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
       <div class="back">‹</div>
-      <div class="head"><div class="day">Onsdag<small>28. oktober</small></div><div class="today-btn">I dag</div></div>
+      <div class="head"><div class="day">Onsdag<small>28. oktober</small></div><div class="today-btn">← I dag</div></div>
       <div class="list">
         <div class="ev"><div class="tm">10:00<small>11:30</small></div><div class="tx"><div class="ti">Skole: Gym for 4. eller 5. trinn</div><div class="wh"></div></div></div>
         <div class="ev more"><div class="tm">13:00<small>14:30</small></div><div class="tx"><div class="ti">Skole: Språk: Ordtak</div><div class="wh">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen kjente ordspråk og talemåter kommer fra.</div></div></div>
