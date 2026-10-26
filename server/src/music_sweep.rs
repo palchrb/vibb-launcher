@@ -128,6 +128,10 @@ pub const ART_BACKLOG_RETRY_DAYS: i64 = 30;
 /// check's 10 minutes. Counted per host since 0.54.0 (Q26): a dead host no longer holds the
 /// pictures on the entry's other hosts.
 pub const ART_NETWORK_FAILURES: u32 = 3;
+/// Host troubles in one art pass, over all hosts, that end it while no host has answered in it
+/// (code QA of round S1, L3): a DNS or uplink fault after a good listing doesn't ask every host
+/// three times.
+pub const ART_PASS_FAILURES: u32 = 2 * ART_NETWORK_FAILURES;
 /// A judged picture whose URL moved to another path is fetched again at most this often (code QA
 /// M1: a feed that renames its pictures at every fetch). A change in the query alone keeps the
 /// result with no request.
@@ -3649,6 +3653,8 @@ async fn art_pass(
     // Pictures left behind a host that answered in this pass and then went down (a blip): due
     // again at once. Behind a host that never answered they wait for the regular check.
     let mut blipped = 0;
+    // Host troubles in this pass over all hosts ([ART_PASS_FAILURES]).
+    let mut troubles = 0;
     // The pass's memo of URLs it sent a request for and got no picture from (design 26c §3.5: a
     // playlist repeats its albums' pictures): the next item naming one costs no request. A URL
     // judged in this pass is found again by step 2 (this entry's items first).
@@ -3755,6 +3761,11 @@ async fn art_pass(
             item.art_at = Some(stamp(now));
             if item.art_state.is_none() {
                 item.art_from = Some(url);
+            }
+            troubles += 1;
+            if troubles >= ART_PASS_FAILURES && !hosts.values().any(|(_, answered)| *answered) {
+                // No host answers: the rest wait for the regular check, untried.
+                break;
             }
             continue;
         }

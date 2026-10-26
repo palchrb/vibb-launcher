@@ -1013,6 +1013,44 @@ async fn a_bad_picture_or_a_dead_host_holds_no_other_picture() {
     );
 }
 
+/// Code QA L3: with every host failing (a DNS or uplink fault after a good listing) the pass ends
+/// after [sweep::ART_PASS_FAILURES] troubles over all hosts, not three per host; the rest wait for
+/// the regular check, untried.
+#[tokio::test]
+async fn many_dead_hosts_end_the_pass() {
+    let app = TestApp::new().await;
+    let feed = "https://example.org/hosts.rss";
+    let id = rss_entry(&app, feed).await;
+    let urls: Vec<String> = (0..10)
+        .map(|n| format!("https://cdn{n}.example.org/p.jpg"))
+        .collect();
+    let guids: Vec<String> = (0..10).map(|n| format!("h{n}")).collect();
+    let feed_items: Vec<(&str, Option<&str>)> = guids
+        .iter()
+        .zip(&urls)
+        .map(|(g, u)| (g.as_str(), Some(u.as_str())))
+        .collect();
+    app.fetch.answer(feed, 200, art_feed(None, &feed_items));
+    for url in &urls {
+        app.fetch.fail(
+            url,
+            crate::music_net::FetchError::Network("no route".to_string()),
+        );
+    }
+    check(&app, id, t0()).await;
+    assert_eq!(
+        calls_starting(&app, "https://cdn"),
+        sweep::ART_PASS_FAILURES as usize
+    );
+    let list = items(&app, id).await;
+    assert_eq!(
+        list.iter().filter(|i| i.art_from.is_none()).count(),
+        10 - sweep::ART_PASS_FAILURES as usize,
+        "the rest untried"
+    );
+    assert_eq!(listing(&app, id).await.art_more, 0);
+}
+
 /// A host that answered in this pass and then failed three times in a row (a blip) leaves its
 /// other pictures untried and brings the entry back at once (code QA M2's rule, per host).
 #[tokio::test]
