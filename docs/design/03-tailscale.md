@@ -1,5 +1,10 @@
 # 03: Full Tailscale for the kid (Tailscale app mode)
 
+> **Status 2026-10-26 (main 8d8ba426): not built, parked.** None of §10's steps 1-12 exists: no `tailscale_app` mode
+> and no `com.tailscale.ipn` handling in `launcher/` or `server/` (grep). Phones reach the server through the embedded
+> tsnet (`TsnetClient.kt`), the one mode that is built. Mode 2 is parked with design 22 S6/L2 ("the tailnet-only
+> setup is the product", decision 16 of `docs/plan/2026-10-25-queue-rounds.md`). The text below is history.
+
 > **Superseded in part by design 22** (`22-connectivity-and-docker.md`): §6 (the server listener), §7 (the switch)
 > and the AdGuard Home choice are replaced there - two listeners with an admin gate (server 0.23.0), the switching
 > rules in `ConnectionPlan`, and the server's own tailnet resolver (S6). The facts table, §3 and §9 still hold for

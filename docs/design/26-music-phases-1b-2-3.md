@@ -1,5 +1,12 @@
 # Design 26: Vibb music phases 1b (Sonos), 2 (Storytel), 3 (Spotify) - brief
 
+> **Historical since 2026-10-14; status 2026-10-26 (main 8d8ba426).** This brief is superseded by 26a, 26b and 26c, and
+> the "built on branch" / "not done yet" lines below are no longer true: all three phases are on `main`, merged
+> together by `36cabb48` (2026-10-14, "Merge design 26c", which carried `music-1b-sonos` and `music-2-storytel` in
+> it). The first music tag containing them is `music-v0.4.0-rc.1` (2026-10-14); stable `music-v0.4.0` followed on
+> 2026-10-20. The `music-v0.1.0`/`0.2.0`/`0.3.0` plans were never used. Device checks (Jelly Star, real speakers,
+> §6h/§6i of `docs/testing/emulator.md`) remain owed; Spotify is parked since 2026-10-25.
+
 Status: a brief for the session that builds these phases (2026-10-11). Nothing here is designed yet: the first step of
 each phase is an architect's buildable spec, in the style of design 21. This file carries what that session needs and
 can't see elsewhere, in particular the working rules the main session keeps in its own memory.
@@ -94,7 +101,7 @@ can't see elsewhere, in particular the working rules the main session keeps in i
   in logs. The credentials are never shown back in the PWA and never logged.
 
 ### 3 - Spotify (a spike first)
-- **Status (2026-10-13):** the spike ran (`docs/testing/spotify-spike.md`, branch `spotify-spike`): App Remote's login
+- **Status (2026-10-13):** the spike ran (`docs/testing/spotify-spike.md`, branch `spotify-spike`, archived as tag `archive/spotify-spike`): App Remote's login
   failed on the emulator (and needs Play services activities lock task blocks), the Web Playback SDK in the spike's
   WebView passed (item 10, forced Doze included). The user chose that WebView route and defined the product (a share
   link in the PWA, ticked phones, a tile that behaves like a podcast). The buildable spec is

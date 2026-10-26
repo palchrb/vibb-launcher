@@ -401,8 +401,11 @@ Nothing in `server/` or `launcher/`, and no shared contract file.
      "a copy without a record is hashed once, then judged".
    - **Results:** the report's `held` (`BridgeSync.push`) names only kept copies, so the launcher fetches the new file.
      Positions of `f<id>` stay keyed by the entry key, as today.
-   - **Device check:** replace an own file's copy on the emulator with another file's bytes (`run-as`, keeping its
-     name). The next sync logs the mismatch, fetches the right file and plays it.
+   - **Device check** (corrected 2026-10-26, main 8d8ba426; the check as first written, "replace a copy with another
+     file's bytes, keeping its name", cannot catch the case: the record is trusted, and swapping only the bytes leaves it
+     matching the library): replace an own file's copy with another file's bytes **and delete its `.sha256` record**
+     (`docs/testing/emulator.md` §6f has the `run-as` command). The next sync logs "copy is another file", fetches the
+     right file and plays it. A real restore changes the library's SHA-256, which is what the rule compares.
 
 ## 7. Device checks (emulator, docs/testing/emulator.md §6f with the launcher's bridge, §6i for Storytel)
 
@@ -538,7 +541,8 @@ lint 0 errors, its 40 warnings all older). The port (`markNewSeen`, `NewItemsTes
   which is hashed once. Every copy delete goes through `Store.deleteOwnCopy` (the copy and its record).
 - The report's `held` names a copy only when its record is the library's SHA-256. The mismatch is logged
   (`BridgeSync`), and the right file arrives one sync later, once the launcher has fetched it.
-- §6 step 4's device check as written ("replace a copy with another file's bytes, keeping its name") isn't caught:
+- §6 step 4's device check as first written ("replace a copy with another file's bytes, keeping its name", now corrected
+  in §6) isn't caught:
   the record is trusted, and swapping only the bytes leaves it matching the library. The check in
   `docs/testing/emulator.md` §6f also deletes the record, so the copy is hashed (as a pre-design-29 copy is). A real
   restore changes the library's SHA-256, which is what the rule compares.

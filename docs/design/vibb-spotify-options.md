@@ -1,5 +1,11 @@
 # Vibb on the handy phone: Spotify options
 
+> **Superseded by design 26c; status 2026-10-26 (main 8d8ba426).** The decision at the end (option A, the Spotify app as
+> a hidden engine behind App Remote, 2026-10-06) was overtaken by the device spike (`docs/testing/spotify-spike.md`
+> §7b: App Remote's login failed on the emulator) and the user's route decision after it: the music app plays Spotify
+> through the Web Playback SDK in a headless WebView (`26c-spotify.md` §0.1, merged `36cabb48`, 2026-10-14). No "engine
+> app" state and no App Remote code exist. Spotify work is parked since 2026-10-25. The research below is history.
+
 Research 2026-10-06 for the Vibb Android app (PLAN.md "Vibb integration", vibb `PLAN-android.md`). NRK/RSS, Storytel and own
 files port as planned; this is only about Spotify. Markers: [S#] = source list at the end, [unverified] = not confirmed from a
 primary source, [needs device test] = must be tried on the Jelly Star. Kiosk facts are from docs 09 (B4) and 11 (section 1).

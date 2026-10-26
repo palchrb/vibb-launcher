@@ -651,6 +651,14 @@ None. The three questions of the first draft and the QA's two (R13-4, R13-7) are
 
 ## Implementation status (2026-10-25, branch `r13-rule-card`, code-QA'd, fix round done, awaiting merge)
 
+> **Status 2026-10-26 (main 8d8ba426): merged.** The launcher half merged as `3eb0c025` (branch `r13-rule-card`,
+> 2026-10-25; in `launcher-v0.37.0-rc.2` and later) and the music half as `85cc9dc7` (`music-r13`) with its fix
+> `9061a8e9` (`music-r13-fix`; `music-v0.5.0-rc.6`); the server half (the new parent-event kind and the time-request
+> route) is in `server-v0.50.0`. Emulator run: `docs/testing/2026-10-25-r13-run.md` (the card, the notification with a
+> budget, the action and a lift's answer pass). **Owed** (E1): the compact/scroll cases with music and rows, the
+> budget used up (set a 5-minute limit), the cap of three, the 30-minute expiry, the new kind's web push; the Jelly
+> Star. The header line above is the state when the section was written.
+
 Built in three steps, each its own commit on `r13-rule-card` (from `main` at 77089563):
 
 1. **Step 1, launcher** - the rule card: `lock/RuleCard.kt` (`ruleCard`, `lockEnd`, `ruleLiftsAt`, `lockEndOf`,

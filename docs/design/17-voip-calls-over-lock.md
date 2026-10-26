@@ -1,5 +1,14 @@
 # 17 - VoIP calls over the PIN lock (Element X and other allowed messaging apps)
 
+> **Status 2026-10-26 (main 8d8ba426): built 2026-10-06/07 (17, 17b) for the own lock; later notes change what applies.**
+> Design 57 (usage access as a precondition, the call's own screen only) was never merged: its prep and QA branch is
+> archived as tag `archive/design-57-prep` and `57-voip-call-screen-over-lock.md` is held. In android mode (design 59,
+> the per-phone switch) the platform decides: a call screen that is not `showWhenLocked` lands behind the keyguard
+> (`59-android-keyguard-design.md` §4, "VoIP"); this design's re-front race is own-mode only and goes with phase D
+> (not built). Still owed: the precedence checks (phone call, emergency, alarm over a VoIP ring), every Jelly Star
+> item, and which VoIP call screens are `showWhenLocked` (J1 in `docs/plan/2026-10-25-queue-rounds.md`; only the
+> hybrid's checks matter).
+
 User report (emulator, 2026-10-06): an Element X voice or video call to the kid only rings once the phone is
 unlocked. With the screen off, the kid must unlock first, and by then the call is usually gone. Phone calls
 already ring over our lock (our InCallActivity is exempt), and VoIP calls must do the same.

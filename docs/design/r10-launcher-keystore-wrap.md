@@ -306,6 +306,14 @@ Added by the code QA (`docs/review/qa-r10-keystore-code.md`), run by the coordin
 
 ## Implementation status (2026-10-25, branch `r10-keystore-wrap`, awaiting code QA)
 
+> **Status 2026-10-26 (main 8d8ba426): merged and code-QA'd.** The code QA ran (`224be72c`, its fix round `a35c436a`,
+> the review and checks 7-13 in `2057cb8e`) and the branch merged as `74f5faa5` (2026-10-25); it ships in
+> `launcher-v0.37.0-rc.1` and later. The emulator run is `docs/testing/2026-10-25-r10-keystore-run.md`: checks 1, 2, 5
+> and 7 pass; checks 4/9 were not observable without a real process restart. **Owed** (not run): 3 and 10 (an Android
+> credential set inside a window), 6 (BFU), 8 (a `*.ts.net` server), 11 (a second enrolment on the old build), 12
+> (screen off during the enrol call) - 3/10/11 in E1, 6/8/12 on the Jelly Star (J1). The header line above is the
+> state when the section was written.
+
 **As built** (launcher only; no API, policy or contract change):
 - `server/SealedPrefs.kt`: `Sealed`, `SecretBox`, `SealedPrefs` (the pure core: `read`, `edit` with its `Editor`
   - `putSealed`/`remove` -, `putRecovering`, the migration, one leaf `LOCK`, the memo as one immutable

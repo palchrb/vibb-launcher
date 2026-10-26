@@ -927,72 +927,26 @@ the server half; the full launcher suite after steps 2, 3a and 3b.
 
 **Not run here:** no emulator or phone in this sandbox. Everything below is a device check.
 
-**Device checklist** (emulator at 320x569 dp, nb and en, then the Jelly Star; §9 plus QA Low 12):
-- [ ] The page in both kiosk modes, with gesture and 3-button navigation, with and without music, with 0, 1, 2, 3
-      and 5 rows:
-      - the fit picks §1.2's candidates;
-      - nothing is clipped or squeezed, and round buttons stay round;
-      - the same at 360 and 411 dp and at font scale 1.3;
-      - the keypad stage has no clock or date, and its keys are >= 52 dp.
-- [ ] Element X, a DM and a group from another account:
-      - sender only ("Pappa", "Element X · 2 meldinger");
-      - the switch on shows the newest text ("Pappa: ..." in the group);
-      - the switch off removes the texts at the next sync, without a restart;
-      - unticking Element X removes its rows, and ticking it brings them back;
-      - a DM read on another device removes its row.
-- [ ] A row's tap: the keypad says "Skriv koden for å åpne Element X", and the right code opens the room (kiosk on
-      and off; Back from it). Also check:
-      - the parent code instead of the kid's PIN;
-      - a wrong code (the keypad stays);
-      - the arrow back (the plain prompt);
-      - a screen-off on the keypad (the glance page again, the target gone);
-      - the row's notification removed before the code (the room still opens);
-      - Element X suspended meanwhile (nothing opens);
-      - a missed-call row opens the contact's sheet, and every missed-call row is gone afterwards.
-- [ ] Under the screen-time budget (Element X usable): a row's tap shows the hint, and after the code the time-rule
-      screen comes, then the room over it, and Back returns to the time-rule screen. Under bedtime with Element X
-      not exempt: no hint, and after the code the time-rule screen only. A missed-call row under a rule that
-      allows calls opens the phone book over the time-rule screen.
-- [ ] A message while Element X is suspended (bedtime) shows no row; it appears when the rule ends.
-- [ ] Missed calls:
-      - one call, then two from Pappa and one from Mamma (one row per contact, newest first);
-      - calling back removes the row;
-      - after a launcher force-stop the row is still there (`refreshAtStart`);
-      - calls unmanaged with our dialer role show the plain row;
-      - a missed-call notification snoozed from the shade (while unlocked) removes the row.
-- [ ] States:
-      - an incoming call and a VoIP ring over the glance page;
-      - "Nødsamtale" from it;
-      - an alarm;
-      - a reboot (rows appear when the listener binds);
-      - no listener access (missed calls only, and the PWA's notes);
-      - `ForeignAccess` ("Foreldrekode" refused as in 24b, the glance page unchanged).
-- [ ] TalkBack:
-      - the reading order;
-      - one node per row with its action label;
-      - the keypad unreachable while covered;
-      - a UI dump lists the rows.
-- [ ] `FLAG_SECURE`:
-      - `screencap`, power + volume-down and a screen recording show the lock black;
-      - whether `adb emu screenrecord screenshot` captures it.
-- [ ] Nothing runs from the lock:
-      - long-press, swipe and double-tap on rows do nothing;
-      - Element X's quick reply never appears;
-      - the notification stays unread in Element X until the room opens.
-- [ ] The kiosk-on root case: force the 1 s fallback. Nothing opens, and the kid lands on Home - also under the
-      screen-time budget with an Element X row (the hand-over refuses too, code QA Low 1).
-- [ ] A refused send (code QA Low 2): a ticked app whose content intent the platform refuses (the API 34/35 opt-in,
-      or a target lock task doesn't permit with "Block other apps" off) - within 1.5 s the app's launch intent
-      opens instead (kiosk on: from Home; under a rule: from the time-rule screen), and the row isn't hidden when
-      nothing opened. A Back within 1.5 s of a room that did open re-opens the app's main screen once (accepted).
-- [ ] Missed calls and the glance after the night's update during bedtime: the row is there in the morning (code QA
-      Low 3); a missed-call notification snoozed from the shade comes back as a row when the snooze ends.
-- [ ] A ticked app whose content intent goes into an app that isn't allowlisted: BlockedAppActivity with the kiosk
-      on, nothing with it off.
-- [ ] The open on an API 34 or 35 emulator (`MODE_BACKGROUND_ACTIVITY_START_ALLOWED`); the Jelly Star (16) covers
-      only `ALLOW_IF_VISIBLE`.
-- [ ] Whether the Jelly Star's notification assistant marks anything as sensitive (the redacted case).
-- [ ] The PWA on a phone: tick, untick and the switch keep the place (no jump), and the notes appear.
+**Device checklist - replaced 2026-10-26 (main 8d8ba426) by a pointer.** The list that stood here (the page in both
+kiosk modes and at 320/360/411 dp and font 1.3; Element X rows and their switch; a row's tap, the keypad and the open
+after the code; the screen-time budget and bedtime hand-over; missed calls; states; TalkBack; `FLAG_SECURE`; nothing
+runs from the lock; the kiosk-on root case; a refused send; the night's update; a non-allowlisted target; API 34/35;
+the redacted case; the PWA's no-jump) was never walked as a list, and the lock it described has been reworked since
+(the glance is the face of Android's lock in android mode, designs 59/59b; the scroll and the rule card are r11 and
+r13). The list is in the repo's history at `8d8ba426`. What was checked, where:
+- the glance at every wake, "Lås opp" to the pad, a row's tap, the pad's Emergency, the queue after Android's unlock:
+  `docs/testing/2026-10-22-d59-rc-run.md` (steps 4, 5, 11) and `docs/testing/2026-10-22-rc2-run.md` (part A, design 59b);
+- rows, the scroll, the swipe and the count with ten SMS conversations and a missed call:
+  `docs/testing/2026-10-24-r11-glance-run.md`;
+- the rule card on the glance: `docs/testing/2026-10-25-r13-run.md`;
+- the keypad and the glance at font 1.0/1.3/2.0 (the glance with app notifications was blocked):
+  `docs/testing/2026-10-14-emulator-round.md` (design 34 rows 1 and 8); the glance at other sizes:
+  `docs/testing/2026-10-23-six-inch-android15.md`; font 1.0 with music and three rows: `docs/testing/2026-10-23-rc3-run.md`
+  (RC3-8).
+**Never run** (Element X was not installed in the runs above): Element X rows from another account, the sender-only
+and text switch end to end, the tap-to-open into a room, TalkBack, the redacted-notification case, API 34/35, and
+everything on the Jelly Star (J1 in `docs/plan/2026-10-25-queue-rounds.md`). The checklists of 25b and 25f below are
+in the same state.
 
 ## Lock fix round 25b (2026-10-12)
 

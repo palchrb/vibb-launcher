@@ -10,6 +10,11 @@ LTC = `wm/LockTaskController.java`; ASI = `wm/ActivityStartInterceptor.java`; CG
 ## Part A - SMS only with approved contacts - **postponed (user, 2026-10-05)**
 Not implemented: SMS stays on/off only (`DISALLOW_SMS` + Messages suspended while off), as in
 step 2. Everything in Part A, its tasks 6-11 and checklist items 6-12 wait for a later step.
+
+> **Parked 2026-10-26 (main 8d8ba426), not scheduled.** No SMS role, receiver, UI, flag or migration exists (grep), and
+> none is planned: part A is a one-line entry under PLAN.md "Parked" (decision 17 of
+> `docs/plan/2026-10-25-queue-rounds.md`), and this section is its reference if the idea returns. Part B was built (see
+> "Implementation status"); its remaining checks (D5, MMI/USSD) are owed on the Jelly Star.
 ### A1. Platform facts
 | Fact | Source |
 |---|---|
