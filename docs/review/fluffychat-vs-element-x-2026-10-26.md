@@ -286,6 +286,13 @@ branch; the Message button's `matrix:roomid/` for FluffyChat; trusted ring class
 in-call bar and a package-scoped "only action = hang up" rule (we never read titles); check that a self-managed Telecom
 call doesn't trip our Telecom-precedence or `isInCall` paths (`LauncherLocales.callActive` reads `isInCall`).
 
+**Addendum (the user, 2026-10-26): in android lock mode (design 59, the default since 2026-10-22) design 57's activity rule is
+moot - it dies with phase D. What counts there is each app's own call screen over Android's keyguard: Element X shows
+the call over the lock (`ElementCallActivity`, showWhenLocked); FluffyChat shows only its ring screen over the lock, and
+after Accept starts `MainActivity`, which has no `showWhenLocked`, so the kid unlocks with the kid PIN to see the call -
+fine outside a rule (the phone is open to the kid anyway), and during a locking rule the rule screen fronts. So (b)'s
+fencing problem shrinks to nothing in android mode; the call-quality and crypto-robustness points stand.
+
 **(c) Recommendation: stay on Element X; don't offer both yet.** Two apps doubles the reader/call matrix and design 57's
 rules for no family benefit today. Re-evaluate FluffyChat in about three months (after call fixes and the promised
 "mandatory backup, unsigned devices ignored") with a device test, and then as a parent-chosen per-phone option, not a
