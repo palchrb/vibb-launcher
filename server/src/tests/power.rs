@@ -433,13 +433,13 @@ async fn the_shutdowns_position_goes_with_the_location_retention() {
         .execute(&app.db)
         .await
         .unwrap();
-    crate::retention::prune(&app.db).await.unwrap();
+    crate::retention::prune(&app.db).await;
     assert_eq!(off_params(&app, id).await.0["location"]["lat"], 59.9139);
     sqlx::query("UPDATE device_policy SET location_retention_days = 7")
         .execute(&app.db)
         .await
         .unwrap();
-    crate::retention::prune(&app.db).await.unwrap();
+    crate::retention::prune(&app.db).await;
     assert_eq!(off_params(&app, id).await, (Value::Null, None));
     assert_eq!(events(&app, id).await.len(), 1, "the event stays");
 }

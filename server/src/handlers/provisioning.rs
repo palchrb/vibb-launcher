@@ -26,15 +26,34 @@ pub(crate) struct AdminExtras {
 }
 
 /// The phones' server address for the setup QR: the one saved on Settings › Phone Setup, else
-/// `.env`'s `PHONE_SERVER_URL` (`ForkConfig::phone_server_url`); "" when neither is set.
+/// `.env`'s `PHONE_SERVER_URL` (`ForkConfig::phone_server_url`); "" when neither is set. A saved
+/// one the rule refuses now (`config::check_server_url`: an http address to a public host, saved
+/// before 0.55.0) is never put in a QR (QA L-e): Phone Setup says why under the field.
 pub(crate) fn server_url<'a>(
     settings: &'a ProvisioningSettings,
     config: &'a ForkConfig,
 ) -> &'a str {
-    if settings.server_url.is_empty() {
+    let saved = &settings.server_url;
+    if saved.is_empty() || saved_refused(saved) {
         config.phone_server_url.as_deref().unwrap_or("")
     } else {
-        &settings.server_url
+        saved
+    }
+}
+
+/// A saved address the rule refuses now.
+pub(crate) fn saved_refused(saved: &str) -> bool {
+    matches!(
+        crate::config::check_server_url(saved),
+        crate::config::ServerUrl::Refused(_)
+    )
+}
+
+/// The plain-http warning for the QR's address, if it has one (`config::ServerUrl::PlainHttp`).
+pub(crate) fn plain_http_warning(url: &str) -> Option<String> {
+    match crate::config::check_server_url(url) {
+        crate::config::ServerUrl::PlainHttp(why) => Some(why),
+        _ => None,
     }
 }
 
@@ -121,6 +140,9 @@ struct ProvisionQrTemplate {
     /// Empty until the form is sent (and when `missing_checksum` is set) - no QR is rendered then.
     qr_svg: String,
     missing_server_url: bool,
+    /// The QR's address is plain http to a private address (security review L8): said above the
+    /// QR, as on Phone Setup.
+    url_warning: Option<String>,
     /// `LAUNCHER_SIGNATURE_CHECKSUM` isn't configured: "Server setup needed" instead of a QR code,
     /// rather than falling back to any built-in (upstream's) checksum.
     missing_checksum: bool,
@@ -151,6 +173,7 @@ impl ProvisionQrTemplate {
             device,
             qr_svg: String::new(),
             missing_server_url: server_url(settings, &state.config).is_empty(),
+            url_warning: plain_http_warning(server_url(settings, &state.config)),
             missing_checksum: state.config.launcher_signature_checksum.is_none(),
             wifi_ssid: String::new(),
             until: None,

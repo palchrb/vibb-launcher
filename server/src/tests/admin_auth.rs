@@ -691,7 +691,7 @@ async fn the_security_log_is_pruned_after_180_days() {
         .await
         .unwrap();
     }
-    let pruned = crate::retention::prune(&app.db).await.unwrap();
+    let pruned = crate::retention::prune(&app.db).await;
     assert_eq!(pruned.security_events, 1);
     let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM security_events")
         .fetch_one(&app.db)
@@ -1430,4 +1430,126 @@ async fn the_sign_in_log_lines_hold_no_cookie_value_and_no_query() {
         "{}",
         gate[0]
     );
+}
+
+/// Security review L6: a session ends `SESSION_MAX_DAYS` (90) after its sign-in however often it is
+/// used; one from before the cap (no sign-in time) starts its clock at its next request, so an
+/// upgrade signs nobody out. A real sign-in sets the time.
+#[tokio::test]
+async fn a_session_ends_after_its_absolute_lifetime() {
+    use crate::admin_auth::{EPOCH_KEY, SIGNED_IN_AT_KEY, now_secs};
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    assert_eq!(
+        app.get_page("/devices", &cookie).await.status,
+        StatusCode::OK
+    );
+    let (admin_id, epoch): (i64, i64) =
+        sqlx::query_as("SELECT id, session_epoch FROM admin_users LIMIT 1")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let store = std::sync::Arc::new(tower_sessions_sqlx_store::SqliteStore::new(app.db.clone()));
+    let session = tower_sessions::Session::new(None, store, None);
+    session.insert("admin_id", admin_id).await.unwrap();
+    session.insert(EPOCH_KEY, epoch).await.unwrap();
+    assert!(
+        security::load_active_admin(&app.state, &session)
+            .await
+            .is_ok()
+    );
+    let started: Option<u64> = session.get(SIGNED_IN_AT_KEY).await.unwrap();
+    assert!(started.is_some_and(|at| at.abs_diff(now_secs()) < 60));
+    let day = 86_400;
+    session
+        .insert(SIGNED_IN_AT_KEY, now_secs() - 89 * day)
+        .await
+        .unwrap();
+    assert!(
+        security::load_active_admin(&app.state, &session)
+            .await
+            .is_ok()
+    );
+    session
+        .insert(SIGNED_IN_AT_KEY, now_secs() - 91 * day)
+        .await
+        .unwrap();
+    assert_eq!(
+        security::load_active_admin(&app.state, &session)
+            .await
+            .err(),
+        Some(security::SignInWhy::TooOld)
+    );
+    assert!(!security::session_too_old(1_000, 1_000 + 90 * day, 90));
+    assert!(security::session_too_old(1_000, 1_001 + 90 * day, 90));
+}
+
+/// The CSP allows no inline script (security review L5, design 22 S7): no template - partials
+/// included - has an inline `<script>`, an `on*=` handler or a `javascript:` link, and the policy
+/// says `script-src 'self'` alone.
+#[test]
+fn no_template_has_inline_script() {
+    fn inline_scripts(html: &str) -> Vec<String> {
+        // `onclick = "x"` is `onclick="x"` to a browser (QA nit): no spaces around `=`.
+        let mut lower = html.to_ascii_lowercase();
+        while lower.contains(" =") || lower.contains("= ") {
+            lower = lower.replace(" =", "=").replace("= ", "=");
+        }
+        let mut found = Vec::new();
+        if lower.contains("javascript:") {
+            found.push("javascript: link".to_string());
+        }
+        for (at, _) in lower.match_indices('<') {
+            let tag = &lower[at + 1..];
+            if !tag.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                continue;
+            }
+            let tag = &tag[..tag.find('>').unwrap_or(tag.len())];
+            if tag.starts_with("script") && !tag.contains("src=") {
+                found.push(format!("<{tag}>"));
+            }
+            for word in tag.split(|c: char| c.is_whitespace() || c == '}') {
+                if let Some((name, _)) = word.split_once('=')
+                    && name.len() > 2
+                    && name.starts_with("on")
+                    && name.chars().all(|c| c.is_ascii_alphabetic())
+                {
+                    found.push(format!("{name}= in <{tag}>"));
+                }
+            }
+        }
+        found
+    }
+    assert_eq!(
+        inline_scripts(
+            r#"<select onchange="x()"><script>y()</script><a href="javascript:z"><b onclick = "w">"#
+        )
+        .len(),
+        4
+    );
+    assert!(inline_scripts(r#"<script src="/static/a.js" defer></script><p>on=1</p>"#).is_empty());
+    let mut bad = Vec::new();
+    let mut dirs = vec![std::path::PathBuf::from("templates")];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "html") {
+                let html = std::fs::read_to_string(&path).unwrap();
+                bad.extend(
+                    inline_scripts(&html)
+                        .into_iter()
+                        .map(|what| format!("{}: {what}", path.display())),
+                );
+            }
+        }
+    }
+    assert!(bad.is_empty(), "inline script the CSP blocks: {bad:#?}");
+    let script_src: Vec<&str> = crate::admin_auth::ADMIN_CSP
+        .split(';')
+        .map(str::trim)
+        .filter(|directive| directive.starts_with("script-src"))
+        .collect();
+    assert_eq!(script_src, ["script-src 'self'"]);
 }

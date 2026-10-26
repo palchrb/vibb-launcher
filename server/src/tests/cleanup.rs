@@ -362,7 +362,7 @@ async fn pruning_keeps_only_what_retention_allows() {
         .unwrap();
     }
 
-    let pruned = crate::retention::prune(db).await.unwrap();
+    let pruned = crate::retention::prune(db).await;
     assert_eq!(
         pruned,
         crate::retention::Pruned {
@@ -375,6 +375,7 @@ async fn pruning_keeps_only_what_retention_allows() {
             parent_events: 0,
             push_rows: 0,
             commands: 4,
+            failed: vec![],
         }
     );
     let commands: Vec<(String, bool)> = sqlx::query_as(
@@ -413,9 +414,34 @@ async fn pruning_keeps_only_what_retention_allows() {
     assert_eq!(statuses, vec![(logged, 1), (quiet, 1)]);
     // A second pass finds nothing more.
     assert_eq!(
-        crate::retention::prune(db).await.unwrap(),
+        crate::retention::prune(db).await,
         crate::retention::Pruned::default()
     );
+}
+
+/// One table that can't be pruned (here: gone) never keeps the pass from the others (security
+/// review L9): it is named in `failed`, the rest are pruned.
+#[tokio::test]
+async fn a_failing_table_leaves_the_rest_of_the_pass() {
+    let app = super::TestApp::new().await;
+    let db = &app.db;
+    let (logged, _) = app.enrolled_device("logged").await;
+    sqlx::query("UPDATE device_policy SET dns_log_enabled = 1 WHERE device_id = ?")
+        .bind(logged)
+        .execute(db)
+        .await
+        .unwrap();
+    location(db, logged, "2026-01-01T00:00:00.000Z", "-40 days").await;
+    location(db, logged, "2026-01-02T00:00:00.000Z", "-40 days").await;
+    status(db, logged, "-40 days").await;
+    status(db, logged, "-1 days").await;
+    sqlx::query("DROP TABLE device_dns_events")
+        .execute(db)
+        .await
+        .unwrap();
+    let pruned = crate::retention::prune(db).await;
+    assert_eq!(pruned.failed, ["device_dns_events"]);
+    assert_eq!((pruned.locations, pruned.status_reports), (1, 1));
 }
 
 #[tokio::test]
@@ -574,7 +600,7 @@ async fn crash_reports_reach_the_device_page_without_free_text() {
         .execute(&app.db)
         .await
         .unwrap();
-    assert_eq!(crate::retention::prune(&app.db).await.unwrap().crashes, 1);
+    assert_eq!(crate::retention::prune(&app.db).await.crashes, 1);
     let page = app.get_page(&about, &cookie).await.text();
     assert!(page.contains("None in 30 days"));
     assert!(!page.contains("java.lang.IllegalStateException"));
@@ -648,7 +674,7 @@ async fn pruning_keeps_the_last_report_that_enforced_calls() {
         .await
         .unwrap();
     }
-    assert_eq!(crate::retention::prune(db).await.unwrap().status_reports, 2);
+    assert_eq!(crate::retention::prune(db).await.status_reports, 2);
     assert_eq!(
         count(
             db,

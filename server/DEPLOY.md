@@ -41,6 +41,7 @@ pages and the phones' API can be exposed differently:
 | `TRUSTED_PROXIES` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-For` is believed: exact proxy addresses (a range only if every address in it is one of your proxies). Your proxy on the same box needs nothing here. |
 | `ADMIN_TAILSCALE_USERS` | unset | Only behind `tailscale serve`: the admin pages also need one of these Tailscale logins (comma list). Tagged phones carry no login, so a phone node can't open the admin even if a serve rule points it there. |
 | `SESSION_INACTIVITY_DAYS` | `30` | How long an admin session lasts without use. |
+| `SESSION_MAX_DAYS` | `90` | How long an admin session lasts after its sign-in, however often it is used (1-3650): the installed PWA signs in again once in that time. |
 
 The admin gate is on by default: a proxy rule meant for the phones, or a typo in a Caddyfile, can't put the PWA on the
 internet - it answers 403 to anything that isn't loopback or tailnet. `/healthz` (says `ok`) always answers.
@@ -424,7 +425,7 @@ service after editing: `sudo systemctl restart kid-phone-server`):
 | `LAUNCHER_ADMIN_COMPONENT` | `me.vibb.launcher/com.kidslauncher.mdm.server.MdmDeviceAdminReceiver` (the launcher's package is `me.vibb.launcher` since 2026-10-06; an `.env` that still has the old `com.kidslauncher.mdm/...` default is read as the new one) |
 | `LAUNCHER_APK_URL` | `https://github.com/palchrb/vibb-launcher/releases/latest/download/kids-launcher-mdm.apk` (only launcher releases are ever "latest") |
 | `LAUNCHER_SIGNATURE_CHECKSUM` | none - required for the provisioning QR code |
-| `PHONE_SERVER_URL` | none - the phones' server address in the setup QR while Settings > Phone Setup has none saved; an address saved there wins, and the page says which one is used. `https://` (an `http://` address is used with a startup warning) |
+| `PHONE_SERVER_URL` | none - the phones' server address in the setup QR while Settings > Phone Setup has none saved; an address saved there wins, and the page says which one is used. `https://`; `http://` to a Tailscale address (100.64.0.0/10, `fd7a:115c:a1e0::/48`, a `*.ts.net` name); `http://` to another private address (RFC 1918, `fc00::/7`, link-local, loopback, `.local`/`.internal`/single-label names) is taken with a warning in the log, on Phone Setup and on the Connect page - plain http is safe only through an encrypted tunnel (WireGuard, Tailscale), which the server can't see; `http://` to a public host is ignored with a log line, and Phone Setup refuses it the same way |
 | `SERVER_RELEASE_REPO` | `palchrb/vibb-launcher` (where the Updates page looks for new server versions - only `server-vX.Y.Z` releases count) |
 
 `LAUNCHER_SIGNATURE_CHECKSUM` is the SHA-256 of the launcher's **signing certificate** (not of the APK file),

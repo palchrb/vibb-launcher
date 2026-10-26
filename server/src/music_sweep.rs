@@ -1401,6 +1401,9 @@ struct Plan {
     items: Vec<Item>,
     title: Option<String>,
     lan: Option<bool>,
+    /// A LAN feed's addresses as this check judged them (empty otherwise): its requests are
+    /// pinned to them (security review L2).
+    lan_addrs: Vec<std::net::IpAddr>,
     fallback: bool,
     capped: bool,
     keep_end: Option<String>,
@@ -1649,6 +1652,7 @@ async fn run_check(
         items,
         title: old.title.clone(),
         lan: old.lan,
+        lan_addrs: Vec::new(),
         fallback: old.fallback,
         capped: old.capped,
         keep_end: old.keep_end.clone(),
@@ -1697,7 +1701,9 @@ async fn run_check(
             .and_then(parse_stamp)
             .is_none_or(|at| at <= now - hours(24));
     let result = match link {
-        Link::Rss { url } => rss_check(&mut job, &mut plan, url, old, any_flag).await,
+        Link::Rss { url } => {
+            rss_check(&mut job, &mut plan, url, old, any_flag, mode.requested).await
+        }
         Link::NrkPodcast { slug } => {
             nrk_check(
                 &mut job, &mut plan, link, slug, "podcast", play_order, mode, whole,
@@ -2409,15 +2415,55 @@ fn give_up_pending(plan: &mut Plan, now: DateTime<Utc>) {
 // RSS
 // ------------------------------------------------------------------------------------------------
 
-/// Where a pasted or swept feed lives (§2.7): `true` when its host resolves only to private
-/// addresses (the home LAN or the tailnet). The add check and the first sweep check judge it alike.
-pub async fn feed_is_lan(source: &dyn Source, url: &str) -> Result<bool, FetchError> {
+/// Where a pasted or swept feed lives (§2.7): `true` when its host resolves only to LAN addresses
+/// (the home LAN or the tailnet, `music_net::is_lan`: never `0.0.0.0`/`::`, a blocker's answer).
+/// The add check and the sweep's checks judge it alike (security review L2: a LAN feed is judged
+/// again at each check, `rss_check`).
+/// `Some(addresses)` for a LAN feed: the requests to it are pinned to them
+/// (`SourceRequest::pinned_to`), so the name can't answer otherwise between the judgement and the
+/// fetch.
+pub async fn lan_addresses(
+    source: &dyn Source,
+    url: &str,
+) -> Result<Option<Vec<std::net::IpAddr>>, FetchError> {
     let host = music_net::host_of(url)
         .ok_or_else(|| FetchError::Refused("only http and https links work".to_string()))?;
     let found = tokio::time::timeout(LOOKUP_TIMEOUT, source.resolve(&host))
         .await
         .unwrap_or(Err(FetchError::Timeout))?;
-    Ok(!found.is_empty() && found.iter().all(|ip| music_net::is_private(*ip)))
+    Ok((!found.is_empty() && found.iter().all(|ip| music_net::is_lan(*ip))).then_some(found))
+}
+
+/// Whether a picture at `url` is fetched with the LAN reach (security review L2): only for a feed
+/// judged LAN at this check, and only from the feed's own host and port - every other picture
+/// goes out as a public one (`Reach::Public`, and never to a private host). A LAN picture's
+/// request is pinned to the judged addresses and follows a redirect only on that host and port
+/// ([art_request]).
+fn lan_art(plan: &Plan, link: &Link, url: &str) -> bool {
+    let Link::Rss { url: feed } = link else {
+        return false;
+    };
+    let origin = |url: &str| {
+        reqwest::Url::parse(url).ok().and_then(|url| {
+            Some((
+                url.host_str()?.to_ascii_lowercase(),
+                url.port_or_known_default()?,
+            ))
+        })
+    };
+    plan.lan == Some(true)
+        && !plan.lan_addrs.is_empty()
+        && origin(feed).is_some()
+        && origin(feed) == origin(url)
+}
+
+/// A picture's request: with the LAN reach pinned to the feed's judged addresses, else public.
+fn art_request(plan: &Plan, lan: bool, url: &str) -> SourceRequest {
+    if lan {
+        SourceRequest::new(url, Kind::Image, Reach::Any).pinned_to(&plan.lan_addrs)
+    } else {
+        SourceRequest::new(url, Kind::Image, Reach::Public)
+    }
 }
 
 async fn rss_check(
@@ -2426,19 +2472,23 @@ async fn rss_check(
     url: &str,
     old: &Listing,
     recheck: bool,
+    requested: bool,
 ) -> Result<(), CheckError> {
-    // Where the target lives, fixed at the first check (§2.7).
-    let lan = match plan.lan {
-        Some(lan) => lan,
-        None => {
-            let lan = feed_is_lan(job.source, url).await?;
-            plan.lan = Some(lan);
-            lan
-        }
+    // Where the target lives (§2.7). Public stays public for good (a host that later answers a
+    // private address is refused, never turned LAN); LAN is judged again at every check and
+    // becomes public for good the first time the host answers otherwise (security review L2: one
+    // private answer - a rebinding, a blocker's - never makes a feed LAN for good).
+    // A parent's Check now judges it afresh (QA L-g): the way back for a NAS name that once
+    // answered a public address (split-horizon DNS, a blocker's restart).
+    plan.lan_addrs = match plan.lan {
+        Some(false) if !requested => Vec::new(),
+        _ => lan_addresses(job.source, url).await?.unwrap_or_default(),
     };
+    let lan = !plan.lan_addrs.is_empty();
+    plan.lan = Some(lan);
     let reach = if lan { Reach::Any } else { Reach::Public };
     let current_parser = old.parser == Some(sources::PARSER_VERSION);
-    let mut request = SourceRequest::new(url, Kind::Feed, reach);
+    let mut request = SourceRequest::new(url, Kind::Feed, reach).pinned_to(&plan.lan_addrs);
     if !recheck && current_parser {
         request.etag = old.etag.clone();
         request.last_modified = old.last_modified.clone();
@@ -3187,16 +3237,12 @@ async fn cover(job: &mut Job<'_>, plan: &mut Plan, link: &Link) -> CoverResult {
     if (plan.has_cover && !changed) || tried_recently {
         return CoverResult(None);
     }
-    let lan = plan.lan == Some(true) && matches!(link, Link::Rss { .. });
+    let lan = lan_art(plan, link, &url);
     plan.cover_at = Some(stamp(now));
     if !music_net::media_url_ok(&url) || (!lan && !job.public_media(&url).await) {
         return CoverResult(None);
     }
-    let reach = if lan { Reach::Any } else { Reach::Public };
-    let answer = match job
-        .get(SourceRequest::new(url.clone(), Kind::Image, reach))
-        .await
-    {
+    let answer = match job.get(art_request(plan, lan, &url)).await {
         Got::Answer(answer) if answer.status == 200 && !answer.truncated => answer,
         _ => return CoverResult(None),
     };
@@ -3637,8 +3683,6 @@ async fn art_pass(
         .chain(older.into_iter().filter(|_| backlog))
         .filter(|at| art_due(&plan.items[*at], now))
         .collect();
-    let lan = plan.lan == Some(true) && matches!(link, Link::Rss { .. });
-    let reach = if lan { Reach::Any } else { Reach::Public };
     // Per image host: network errors (and 5xx answers) in a row, and whether it answered in this
     // pass (code QA M2; per host since Q26). A host at [ART_NETWORK_FAILURES] is down for the rest
     // of the pass: its pictures wait untried, the other hosts' go on.
@@ -3728,14 +3772,13 @@ async fn art_pass(
             cut_at = Some(step);
             break;
         }
+        let lan = lan_art(plan, link, &url);
         if !music_net::media_url_ok(&url) || (!lan && !job.public_media(&url).await) {
             tried.insert(url.clone(), false);
             art_failed(&mut plan.items[index], url, now);
             continue;
         }
-        let got = job
-            .get(SourceRequest::new(url.clone(), Kind::Image, reach))
-            .await;
+        let got = job.get(art_request(plan, lan, &url)).await;
         if matches!(got, Got::Skipped) {
             cut_at = Some(step);
             break;

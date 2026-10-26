@@ -2014,6 +2014,70 @@ async fn public_feeds_never_reach_private_addresses() {
     }
 }
 
+/// Security review L2: a LAN feed's pictures come with the LAN reach only from its own host and
+/// port (another private host's never fetched); a blocker's `0.0.0.0` is no LAN; and a LAN feed
+/// whose host answers a public address once is public for good - a private answer after that is
+/// refused.
+#[tokio::test]
+async fn a_lan_feed_is_judged_at_every_check_and_its_art_stays_home() {
+    let app = TestApp::new().await;
+    let lan = entry(
+        &app,
+        "http://nas.home/feed.rss",
+        "NAS",
+        "auto",
+        "2026-10-09 11:00:00",
+    )
+    .await;
+    app.fetch.dns("nas.home", &["192.168.1.10"]);
+    let body = "<rss><channel><title>NAS</title><itunes:image href=\"http://nas.home/cover.jpg\"/>\
+        <item><guid>1</guid><enclosure url=\"http://nas.home/1.mp3\"/><itunes:image href=\"http://192.168.1.1/1.jpg\"/></item>\
+        <item><guid>2</guid><enclosure url=\"http://nas.home/2.mp3\"/><itunes:image href=\"http://nas.home:8080/2.jpg\"/></item>\
+        </channel></rss>";
+    app.fetch.answer("http://nas.home/feed.rss", 200, body);
+    check(&app, lan, t0()).await;
+    assert_eq!(listing(&app, lan).await.lan, Some(true));
+    let calls = app.fetch.calls.lock().unwrap().clone();
+    assert!(
+        calls.iter().any(|u| u == "http://nas.home/cover.jpg"),
+        "{calls:?}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|u| u.contains("192.168.1.1/") || u.contains(":8080")),
+        "another LAN host's picture is never fetched: {calls:?}"
+    );
+
+    let blocked = entry(
+        &app,
+        "https://blocked.example/feed.rss",
+        "Blocked",
+        "auto",
+        "2026-10-09 11:00:00",
+    )
+    .await;
+    app.fetch.dns("blocked.example", &["0.0.0.0"]);
+    let report = check(&app, blocked, t0()).await;
+    assert_eq!(report.error.as_deref(), Some("network"));
+    assert_eq!(listing(&app, blocked).await.lan, Some(false));
+
+    app.fetch.dns("nas.home", &["203.0.113.5"]);
+    check(&app, lan, t0() + TimeDelta::hours(6)).await;
+    assert_eq!(listing(&app, lan).await.lan, Some(false));
+    app.fetch.dns("nas.home", &["192.168.1.10"]);
+    let report = check(&app, lan, t0() + TimeDelta::hours(12)).await;
+    assert_eq!(report.error.as_deref(), Some("network"));
+    assert_eq!(listing(&app, lan).await.lan, Some(false));
+    // A parent's Check now judges it afresh (QA L-g): LAN again.
+    sweep::request_check(&app.db, lan, t0() + TimeDelta::hours(13))
+        .await
+        .unwrap();
+    let report = check(&app, lan, t0() + TimeDelta::hours(13)).await;
+    assert_eq!(report.error, None);
+    assert_eq!(listing(&app, lan).await.lan, Some(true));
+}
+
 // ------------------------------------------------------------------------------------------------
 // Covers (§2.6)
 // ------------------------------------------------------------------------------------------------

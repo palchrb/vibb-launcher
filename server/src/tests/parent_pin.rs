@@ -500,6 +500,51 @@ async fn wrong_tries_stay_off_the_security_log_and_lockouts_go_on_it() {
     );
 }
 
+/// Security review L1: a flood of lockouts from one token stays bounded - the phone's page keeps
+/// them all, the security log takes 60 lines an hour and one saying the rest weren't logged, the
+/// inbox 20 events of the kind an hour, and only the first 3 are pushed.
+#[tokio::test]
+async fn a_flood_of_lockouts_is_bounded() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    super::web_push::subscribe(&app, &cookie, "https://web.push.apple.com/flood").await;
+    let (id, token) = app.enrolled_device("phone").await;
+    let at = chrono::Utc::now().timestamp_millis() - 60_000;
+    let events: Vec<Value> = (1..=100)
+        .map(|n| {
+            event(
+                &hex_id(n),
+                "lockout",
+                "pin_lock",
+                at,
+                serde_json::json!({ "level": 1, "until_ms": at + 60_000 }),
+            )
+        })
+        .collect();
+    let body = serde_json::json!({ "events": events }).to_string();
+    assert_eq!(
+        post_events(&app, &token, &body).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(stored_events(&app, id).await.len(), 100);
+    assert_eq!(security_details(&app, "parent_pin_lockout").await.len(), 60);
+    assert_eq!(
+        security_details(&app, "phone_lines_dropped").await,
+        [format!(
+            "device {id}: more lines from this phone in this hour are not logged (at most 60 an \
+             hour)"
+        )]
+    );
+    let counts: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM parent_events WHERE kind = 'pin_lockout'), \
+                (SELECT COUNT(*) FROM push_deliveries)",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(counts, (20, 3));
+}
+
 #[tokio::test]
 async fn bad_events_are_skipped_or_cleaned_and_bad_bodies_refused() {
     let app = TestApp::new().await;
@@ -676,7 +721,7 @@ async fn old_events_are_pruned_after_90_days() {
     .execute(&app.db)
     .await
     .unwrap();
-    let pruned = crate::retention::prune(&app.db).await.unwrap();
+    let pruned = crate::retention::prune(&app.db).await;
     assert_eq!(pruned.pin_events, 1);
     assert_eq!(stored_events(&app, id).await.len(), 1);
 }

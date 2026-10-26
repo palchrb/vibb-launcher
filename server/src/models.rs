@@ -1554,6 +1554,58 @@ pub struct DnsEventReport {
     pub blocked_at: String,
 }
 
+/// A category is kept to this many characters.
+pub const DNS_CATEGORY_MAX: usize = 64;
+
+impl DnsEventReport {
+    /// The event as stored (security review L3), `(domain, category, blocked_at)`; `None` when the
+    /// domain isn't a hostname. The domain lowercased without a trailing dot, at most 253
+    /// characters in labels of 1-63 letters, digits, `-` or `_`; the category without control
+    /// characters, trimmed, at most [DNS_CATEGORY_MAX] characters (the name of what the phone
+    /// matched: "Custom", a blocklist's category this server sent, or one the phone names itself,
+    /// such as "Secure DNS server"); `blocked_at` as UTC `YYYY-MM-DDTHH:MM:SS.mmmZ`, clamped to
+    /// the log's retention before `received` (an event queued while the phone was offline keeps
+    /// its own time, QA L-d) and 5 minutes after it (`received` when it isn't RFC 3339).
+    pub fn checked(
+        &self,
+        received: chrono::DateTime<chrono::Utc>,
+    ) -> Option<(String, String, String)> {
+        let domain = self
+            .domain
+            .trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        let label_ok = |label: &str| {
+            (1..=63).contains(&label.len())
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        };
+        if domain.len() > 253 || !domain.split('.').all(label_ok) {
+            return None;
+        }
+        let category: String = self
+            .category
+            .chars()
+            .filter(|c| !c.is_control())
+            .collect::<String>()
+            .trim()
+            .chars()
+            .take(DNS_CATEGORY_MAX)
+            .collect();
+        let oldest = received - chrono::Duration::days(crate::retention::DNS_LOG_RETENTION_DAYS);
+        let newest = received + chrono::Duration::minutes(5);
+        let blocked_at = chrono::DateTime::parse_from_rfc3339(self.blocked_at.trim())
+            .map(|t| t.with_timezone(&chrono::Utc).clamp(oldest, newest))
+            .unwrap_or(received);
+        Some((
+            domain,
+            category,
+            blocked_at.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        ))
+    }
+}
+
 /// Response body for `GET /api/devices/dns-blocklist` - this device's fully
 /// resolved effective blocklist, grouped by category rather than a flat
 /// domain->category map, since at ~100k+ domains a flat JSON object would

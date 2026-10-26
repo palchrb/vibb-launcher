@@ -41,6 +41,9 @@ pub const PENDING_SECS: i64 = 5 * 60;
 pub const PENDING_ID_KEY: &str = "pending_admin_id";
 pub const PENDING_AT_KEY: &str = "pending_at";
 pub const EPOCH_KEY: &str = "session_epoch";
+/// When the session's sign-in finished (Unix seconds): its absolute lifetime counts from here
+/// (security review L6, `NetConfig::session_max_days`).
+pub const SIGNED_IN_AT_KEY: &str = "signed_in_at";
 /// The banner text after a complete login that followed failed 2FA attempts.
 pub const LOGIN_WARNING_KEY: &str = "login_warning";
 
@@ -640,9 +643,10 @@ fn normalize_host(host: &str) -> String {
         .unwrap_or(host)
 }
 
-/// CSP phase 1 (§3.2.4): inline scripts and handlers still allowed until S7 moves them to
-/// `/static`.
-pub const ADMIN_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; \
+/// The admin pages' CSP (design 22 §3.2.4; phase 2, S7 and security review L5): scripts only from
+/// `/static` - no template has an inline script or an `on*=` handler
+/// (`tests::admin_auth::no_template_has_inline_script`). Inline styles stay allowed.
+pub const ADMIN_CSP: &str = "default-src 'self'; script-src 'self'; \
      style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org; \
      connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; \
      object-src 'none'";
