@@ -65,7 +65,7 @@
                 {% if let Some(why) = d.error %}<p class="flash flash-error" id="d{{ d.index }}-error" data-flash="day-{{ d.index }}">{{ why }}</p>{% endif %}
                 {% endfor %}
             </div>
-            <p class="group-footer">On the phone's clock, from the start to the end of the same day; 00:00-23:59 is the whole day. Leave a day empty when the rule is off. A night past midnight goes in Bedtime, on each phone's Time page.</p>
+            <p class="group-footer">On the phone's clock, from the start to the end of the same day; an end of 00:00 is midnight, and 00:00-23:59 is the whole day. Leave a day empty when the rule is off. A night past midnight goes in Bedtime, on each phone's Time page.</p>
         </section>
 
 {% include "partials/exceptions.html" %}

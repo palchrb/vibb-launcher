@@ -33,8 +33,9 @@ use crate::handlers::schedules::{
 use crate::security::CurrentAdmin;
 use crate::time_rules::{self, BEDTIME_NAME, DayWindow, LAST_MINUTE, NOON, Nights, TimeRuleRow};
 
-/// The two rows: their labels, Sun-Thu first.
-const ROWS: [&str; 2] = ["Sun-Thu nights", "Fri-Sat nights"];
+/// The two rows: their labels, Sun-Thu first, with a non-breaking hyphen (U+2011) so a narrow
+/// phone never breaks "Sun-Thu" (qa-66-code N1).
+const ROWS: [&str; 2] = ["Sun\u{2011}Thu nights", "Fri\u{2011}Sat nights"];
 /// A new bedtime's rows.
 const DEFAULT_NIGHT: DayWindow = DayWindow {
     start: 21 * 60,
@@ -55,6 +56,7 @@ pub(crate) fn nights_summary(nights: &Nights) -> String {
         ),
         (Some(school), None) => format!("Sun-Thu nights {}", window_text(school)),
         (None, Some(free)) => format!("Fri-Sat nights {}", window_text(free)),
+        // Never stored by the form, and read as unreadable ([nights_of]).
         (None, None) => "No nights".to_string(),
     }
 }
@@ -63,7 +65,14 @@ pub(crate) fn nights_summary(nights: &Nights) -> String {
 /// or its days aren't two rows of nights (a restored or hand-edited row).
 fn stored_nights(row: &TimeRuleRow) -> Option<Nights> {
     row.to_policy().ok()?;
-    Nights::from_days(&time_rules::parse_days(&row.days_json).ok()?)
+    nights_of(row)
+}
+
+/// The stored days as two rows of nights; `None` when they don't parse, aren't two rows, or are
+/// all empty (the form never stores that, qa-66-code N2).
+fn nights_of(row: &TimeRuleRow) -> Option<Nights> {
+    let nights = Nights::from_days(&time_rules::parse_days(&row.days_json).ok()?)?;
+    (nights.school.is_some() || nights.free.is_some()).then_some(nights)
 }
 
 /// The bedtime's words for Device › Time and Settings › Time Rules; `None` for a row that
@@ -220,10 +229,7 @@ async fn stored_and_apps(state: &AppState, id: i64) -> Result<StoredAndApps, Box
 
 /// The parts of a stored bedtime that don't read, for the page's warning.
 fn unreadable_parts(row: &TimeRuleRow) -> Option<String> {
-    let nights = time_rules::parse_days(&row.days_json)
-        .ok()
-        .and_then(|days| Nights::from_days(&days))
-        .is_some();
+    let nights = nights_of(row).is_some();
     let apps = time_rules::parse_exempt_apps(&row.exempt_apps_json).is_ok();
     let parts = match (nights, apps) {
         (true, true) => return None,
@@ -255,10 +261,7 @@ pub async fn show_bedtime(
     };
     let rule = match &stored {
         Some(row) => {
-            let nights = time_rules::parse_days(&row.days_json)
-                .ok()
-                .and_then(|days| Nights::from_days(&days))
-                .map_or([None, None], |n| [n.school, n.free]);
+            let nights = nights_of(row).map_or([None, None], |n| [n.school, n.free]);
             let exempt = time_rules::parse_exempt_apps(&row.exempt_apps_json).unwrap_or_default();
             BedtimeForm {
                 rows: nights_inputs(&nights),
@@ -502,12 +505,12 @@ mod tests {
             refused(&[("n0_start", "21:00")]),
             BedtimeError::Row(
                 0,
-                "Sun-Thu nights: give both times, or leave both empty.".to_string()
+                format!("{}: give both times, or leave both empty.", ROWS[0])
             )
         );
         assert_eq!(
             refused(&[("n0_start", "9pm"), ("n0_end", "07:00")]),
-            BedtimeError::Row(0, "Sun-Thu nights: use times like 21:00.".to_string())
+            BedtimeError::Row(0, format!("{}: use times like 21:00.", ROWS[0]))
         );
         assert!(matches!(
             refused(&[
@@ -532,5 +535,33 @@ mod tests {
         );
         assert_eq!(nights(w(1260, 420), None), "Sun-Thu nights 21:00-07:00");
         assert_eq!(nights(None, w(1350, 540)), "Fri-Sat nights 22:30-09:00");
+        // A stored row: two rows read; one row only, no nights at all or bad apps can't be read.
+        let row = |days: &str, apps: &str| TimeRuleRow {
+            id: 1,
+            device_id: Some(1),
+            name: BEDTIME_NAME.to_string(),
+            kind: "bedtime".to_string(),
+            calls_allowed: true,
+            exempt_apps_json: apps.to_string(),
+            days_json: days.to_string(),
+            sort_order: 0,
+            bedtime: true,
+        };
+        let every = serde_json::to_string(&[w(1260, 420); 7]).unwrap();
+        assert_eq!(
+            bedtime_summary(&row(&every, "[]")).as_deref(),
+            Some("Every night 21:00-07:00")
+        );
+        for (days, apps) in [
+            ("[null,null,null,null,null,null,null]", "[]"),
+            (
+                r#"[{"start":1260,"end":420},null,null,null,null,null,null]"#,
+                "[]",
+            ),
+            (every.as_str(), "nope"),
+        ] {
+            assert_eq!(bedtime_summary(&row(days, apps)), None, "{days} {apps}");
+            assert!(unreadable_parts(&row(days, apps)).is_some());
+        }
     }
 }

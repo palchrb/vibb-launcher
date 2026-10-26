@@ -109,6 +109,14 @@ async fn time_rules_lists_rules_the_limit_and_the_phones() {
     let (emil, _) = app.enrolled_device("Emil").await;
     let skole = add_rule(&app, None, "Skole", SCHOOL_DAYS).await;
     let broken = add_rule(&app, None, "Broken", "[1,2]").await;
+    // A whole day reads as the editor shows it, not as it is served (`end: 0`; qa-66-code M1).
+    add_rule(
+        &app,
+        None,
+        "Helg",
+        r#"[null,null,null,null,{"start":1200,"end":1439},{"start":0,"end":1439},null]"#,
+    )
+    .await;
     add_rule(&app, Some(emil), "Emil's own", SCHOOL_DAYS).await;
     sqlx::query("UPDATE device_policy SET custom_schedule_enabled = 1 WHERE device_id = ?")
         .bind(emil)
@@ -130,6 +138,10 @@ async fn time_rules_lists_rules_the_limit_and_the_phones() {
     let rules = section(&html, "rules");
     assert!(rules.contains(&format!("href=\"/schedules/rules/{skole}\"")));
     assert!(rules.contains("Mon-Fri 08:15-14:30 · calls off"), "{rules}");
+    assert!(
+        rules.contains("Fri 20:00-23:59, Sat 00:00-23:59 · calls off"),
+        "{rules}"
+    );
     // A rule that doesn't read says so and still opens (to be saved again or deleted).
     assert!(rules.contains(&format!("href=\"/schedules/rules/{broken}\"")));
     assert!(rules.contains("Can&#39;t be read"));
@@ -1306,10 +1318,10 @@ async fn the_bedtime_page_adds_saves_refuses_and_removes_in_place() {
         .await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
     let html = res.text();
-    let why = "Fri-Sat nights: bedtime starts after noon and ends before noon.";
+    let why = "Fri\u{2011}Sat nights: bedtime starts after noon and ends before noon.";
     assert!(html.contains(&format!("data-flash=\"refused\">Not saved. {why}")));
     assert!(html.contains(&format!("data-flash=\"nights-1\">{why}")));
-    assert!(html.contains("name=\"n1_start\" value=\"08:00\" aria-label=\"Fri-Sat nights from\" aria-invalid=\"true\" aria-describedby=\"n1-error\" autofocus"));
+    assert!(html.contains("name=\"n1_start\" value=\"08:00\" aria-label=\"Fri\u{2011}Sat nights from\" aria-invalid=\"true\" aria-describedby=\"n1-error\" autofocus"));
     assert!(html.contains("value=\"20:30\""));
     assert_eq!(
         bedtime_of(&app, id).await.1.unwrap().0,

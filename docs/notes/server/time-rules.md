@@ -75,7 +75,7 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   last (the policy, lifts, the badge, the summary, Attention, Pause a Rule) - the Own rules switch never adds or
   drops it.
 - **Day rules stay inside one day**: the editor refuses an end at or before the start ("{Day}: the end must be after
-  the start. For a night, use Bedtime."), except 23:59-23:59 ("23:59 to midnight"); `parse_days` (the policy read)
+  the start. For a night, use Bedtime."), except 23:59-23:59 ("23:59 to midnight"); an end of 00:00 is "until midnight" and is stored as 23:59 (qa-66-code L2); `parse_days` (the policy read)
   still takes any window. The Type select offers School and Other (Bedtime only on a stored day rule of that kind).
   The editor never handles the bedtime row: `show_rule` answers it with a 303 to `/devices/{id}/bedtime` (a rule
   converted in place keeps its id), `rule_in_scope` with a 404 (save, delete).
@@ -88,7 +88,9 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   everything else that still crosses is split exactly at midnight (the row keeps its id and runs each crossing day to
   23:59, "<name> (morning)" takes `{0, end}` the next day). A phone with a bedtime never gets a second. A row whose
   days or apps don't read is skipped with a warning, never a failed start. A 24 h window at 23:59 is read as "23:59 to
-  midnight", the one inexact case. Logged `time_rule_to_bedtime` / `time_rule_split` (no actor). Pinned by
+  midnight", the one inexact case. Accepted cost: a split rule's evening part shows no end (no "Til" on the phone, no
+  "until" in the badge), as its morning part still locks at 00:00 (qa-66-code L1). The rule lists summarise the stored
+  days ("00:00-23:59"), never the served ones (qa-66-code M1). Logged `time_rule_to_bedtime` / `time_rule_split` (no actor). Pinned by
   `time_rules::tests::crossing_rules_convert_exactly` (every minute of a week, before and after, and a second run) and
   `a_stopped_conversion_ends_in_the_same_rows`, and `tests::time_rules` on a database.
 - **The Bedtime page** (`GET /devices/{id}/bedtime`, `handlers::bedtime`, `device_bedtime.html`, tab Devices): one

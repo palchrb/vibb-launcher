@@ -146,30 +146,34 @@ pub(crate) struct RuleRow {
     pub corrupt: bool,
 }
 
+/// The rules as rows. The summary is of the stored days, as the editor shows them ("00:00-23:59"),
+/// not the served ones (`end: 0`, qa-66-code M1); `to_policy` only says whether the row reads.
 fn rule_rows(rows: &[TimeRuleRow]) -> Vec<RuleRow> {
     rows.iter()
-        .map(|row| match row.to_policy() {
-            Ok(rule) => RuleRow {
-                id: rule.id,
-                summary: format!(
-                    "{} · {}",
-                    days_summary(&rule.days),
-                    if rule.calls_allowed {
-                        "calls on"
-                    } else {
-                        "calls off"
-                    }
-                ),
-                name: rule.name,
-                corrupt: false,
+        .map(
+            |row| match (row.to_policy(), time_rules::parse_days(&row.days_json)) {
+                (Ok(_), Ok(days)) => RuleRow {
+                    id: row.id,
+                    summary: format!(
+                        "{} · {}",
+                        days_summary(&days),
+                        if row.calls_allowed {
+                            "calls on"
+                        } else {
+                            "calls off"
+                        }
+                    ),
+                    name: row.name.clone(),
+                    corrupt: false,
+                },
+                _ => RuleRow {
+                    id: row.id,
+                    name: row.name.clone(),
+                    summary: "Can't be read".to_string(),
+                    corrupt: true,
+                },
             },
-            Err(_) => RuleRow {
-                id: row.id,
-                name: row.name.clone(),
-                summary: "Can't be read".to_string(),
-                corrupt: true,
-            },
-        })
+        )
         .collect()
 }
 
@@ -898,8 +902,14 @@ pub(crate) fn parse_rule_form(fields: &[(String, String)]) -> Result<RuleInput, 
             continue;
         }
         match (time_input_to_minutes(start), time_input_to_minutes(end)) {
-            // A day rule starts and ends on its day (design 66 §3.3); 23:59-23:59 is "23:59 to
-            // midnight", what a conversion stores for such a window, so it saves unchanged.
+            // A day rule starts and ends on its day (design 66 §3.3). An end of 00:00 is "until
+            // midnight" and is stored as 23:59, as the conversion stores it (qa-66-code L2;
+            // 00:00-00:00 is the whole day); 23:59-23:59 is "23:59 to midnight", so it saves
+            // unchanged.
+            (Some(start), Some(0)) => days.push(Some(DayWindow {
+                start,
+                end: LAST_MINUTE,
+            })),
             (Some(start), Some(end))
                 if end > start || (start, end) == (LAST_MINUTE, LAST_MINUTE) =>
             {
@@ -1706,7 +1716,7 @@ mod tests {
 
         // Design 66: a day rule ends after its start, on the same day; a night is Bedtime's.
         let night = "Sunday: the end must be after the start. For a night, use Bedtime.";
-        for (start, end) in [("21:00", "07:00"), ("10:00", "10:00"), ("00:00", "00:00")] {
+        for (start, end) in [("21:00", "07:00"), ("10:00", "10:00"), ("23:59", "00:01")] {
             assert_eq!(
                 refused(&[
                     ("name", "x"),
@@ -1727,6 +1737,23 @@ mod tests {
             ]))
             .unwrap();
             assert_eq!(ok.days[5], Some(DayWindow { start, end }));
+        }
+        // An end of 00:00 is "until midnight", stored as 23:59 (qa-66-code L2).
+        for (start, stored) in [("20:00", 1200), ("00:00", 0)] {
+            let ok = parse_rule_form(&pairs(&[
+                ("name", "x"),
+                ("kind", "custom"),
+                ("d5_start", start),
+                ("d5_end", "00:00"),
+            ]))
+            .unwrap();
+            assert_eq!(
+                ok.days[5],
+                Some(DayWindow {
+                    start: stored,
+                    end: LAST_MINUTE
+                })
+            );
         }
     }
 

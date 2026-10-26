@@ -720,20 +720,7 @@ async fn convert_global_bedtime(
         return tx.commit().await;
     }
     for (device_id, _) in &followers {
-        let copy: Option<i64> = sqlx::query_scalar(
-            "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
-             days_json, bedtime) SELECT ?, ?, 'bedtime', calls_allowed, exempt_apps_json, \
-             days_json, 1 FROM time_rules WHERE id = ? \
-             AND NOT EXISTS (SELECT 1 FROM time_rules WHERE device_id = ? AND bedtime = 1) \
-             RETURNING id",
-        )
-        .bind(device_id)
-        .bind(BEDTIME_NAME)
-        .bind(row.id)
-        .bind(device_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        if let Some(copy) = copy {
+        if let Some(copy) = copy_as_bedtime(&mut tx, row.id, *device_id).await? {
             sqlx::query("UPDATE time_lifts SET rule_id = ? WHERE device_id = ? AND rule_id = ?")
                 .bind(copy)
                 .bind(device_id)
@@ -750,6 +737,27 @@ async fn convert_global_bedtime(
     let what = format!("{}, now the bedtime of device {}", row.name, to.join(", "));
     log_conversion(&mut tx, "time_rule_to_bedtime", None, &what).await?;
     tx.commit().await
+}
+
+/// Everyone's rule `rule_id` copied as the phone's bedtime, unless it has one: the copy's id.
+async fn copy_as_bedtime(
+    conn: &mut sqlx::SqliteConnection,
+    rule_id: i64,
+    device_id: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "INSERT INTO time_rules (device_id, name, kind, calls_allowed, exempt_apps_json, \
+         days_json, bedtime) SELECT ?, ?, 'bedtime', calls_allowed, exempt_apps_json, \
+         days_json, 1 FROM time_rules WHERE id = ? \
+         AND NOT EXISTS (SELECT 1 FROM time_rules WHERE device_id = ? AND bedtime = 1) \
+         RETURNING id",
+    )
+    .bind(device_id)
+    .bind(BEDTIME_NAME)
+    .bind(rule_id)
+    .bind(device_id)
+    .fetch_optional(&mut *conn)
+    .await
 }
 
 /// Turns the rules that cross midnight into the phones' bedtimes, or splits them at midnight
@@ -1361,35 +1369,64 @@ mod tests {
         );
     }
 
-    /// The same rules for [a_stopped_conversion_ends_in_the_same_rows]: everyone's bedtime and a
-    /// crossing school rule, the first phone's own crossing rule (not in force), the second
-    /// phone's own bedtime-shaped rule and a crossing school rule.
+    /// The same rules for [a_stopped_conversion_ends_in_the_same_rows]: everyone's bedtime, a
+    /// second bedtime-shaped rule and a crossing school rule, with a pause on the bedtime; the
+    /// first phone's own crossing rule (not in force), the second phone's own bedtime-shaped rule
+    /// and a crossing school rule.
     async fn a_house() -> (tempfile::TempDir, SqlitePool, i64) {
         let (dir, db, anna, emil) = two_phones().await;
-        add(&db, None, "bedtime", &vec![w(1260, 420); 7]).await;
+        let bedtime = add(&db, None, "bedtime", &vec![w(1260, 420); 7]).await;
+        add(&db, None, "custom", &vec![w(1320, 360); 7]).await;
         add(&db, None, "school", &on(&[0], w(1320, 60))).await;
+        sqlx::query(
+            "INSERT INTO time_lifts (device_id, target, rule_id, rule_name, minutes, expires_at) \
+             VALUES (?, 'rule', ?, 'Rule bedtime', 30, datetime('now', '+30 minutes'))",
+        )
+        .bind(anna)
+        .bind(bedtime)
+        .execute(&db)
+        .await
+        .unwrap();
         add(&db, Some(anna), "custom", &on(&[2], w(1200, 300))).await;
         add(&db, Some(emil), "custom", &vec![w(1290, 390); 7]).await;
         add(&db, Some(emil), "school", &on(&[6], w(1380, 30))).await;
         (dir, db, anna)
     }
 
-    /// Crash-safe (§3.5): a run that stopped after the first phone's transaction, then ran again
-    /// at the next start, ends in the same rows and log lines as one run.
+    /// Crash-safe (§3.5): a run that stopped at an awkward point, then ran again at the next
+    /// start, ends in the same rows, lifts and log lines as one run. The stops: inside everyone's
+    /// bedtime's transaction right after the follower's copy was inserted (before its lift was
+    /// repointed and the global row deleted - the transaction never commits), and after that
+    /// transaction committed with the second bedtime-shaped rule still waiting (the next run takes
+    /// it as "first", but its follower now has a bedtime, so it is split as in one run).
     #[tokio::test]
     async fn a_stopped_conversion_ends_in_the_same_rows() {
+        async fn state(db: &SqlitePool) -> (Vec<StoredRow>, Vec<(i64, Option<i64>)>, i64) {
+            let lifts = sqlx::query_as("SELECT id, rule_id FROM time_lifts ORDER BY id")
+                .fetch_all(db)
+                .await
+                .unwrap();
+            let events = "SELECT COUNT(*) FROM security_events WHERE event_type LIKE 'time_rule_%'";
+            (stored(db).await, lifts, count(db, events).await)
+        }
+        /// Everything before everyone's rules: the phones' units.
+        async fn phones_done(db: &SqlitePool) -> (i64, Vec<(TimeRuleRow, Days)>) {
+            normalise_all(db).await.unwrap();
+            let phones: Vec<i64> = sqlx::query_scalar("SELECT id FROM devices ORDER BY id")
+                .fetch_all(db)
+                .await
+                .unwrap();
+            for (i, id) in phones.iter().enumerate() {
+                convert_phone(db, *id, i == 1).await.unwrap();
+            }
+            let everyone = readable_rules(&mut db.acquire().await.unwrap(), None)
+                .await
+                .unwrap();
+            (phones[0], everyone)
+        }
         let (_one, straight, _) = a_house().await;
         migrate_crossing(&straight).await.unwrap();
-        let (_two, stopped, anna) = a_house().await;
-        normalise_all(&stopped).await.unwrap();
-        convert_phone(&stopped, anna, false).await.unwrap();
-        migrate_crossing(&stopped).await.unwrap();
-        assert_eq!(stored(&stopped).await, stored(&straight).await);
-        let events = "SELECT COUNT(*) FROM security_events WHERE event_type LIKE 'time_rule_%'";
-        assert_eq!(
-            count(&stopped, events).await,
-            count(&straight, events).await
-        );
+        let expected = state(&straight).await;
         assert_eq!(
             count(
                 &straight,
@@ -1398,5 +1435,46 @@ mod tests {
             .await,
             2
         );
+        assert_eq!(
+            count(
+                &straight,
+                "SELECT COUNT(*) FROM time_rules WHERE device_id IS NULL"
+            )
+            .await,
+            4,
+            "the second bedtime-shaped rule and the school rule, each split"
+        );
+
+        // Stopped inside the transaction, right after the copy was inserted.
+        let (_two, stopped, _) = a_house().await;
+        let (anna, everyone) = phones_done(&stopped).await;
+        let first = first_bedtime(&everyone).unwrap();
+        {
+            let mut tx = stopped.begin().await.unwrap();
+            let copy = copy_as_bedtime(&mut tx, everyone[first].0.id, anna)
+                .await
+                .unwrap();
+            assert!(copy.is_some());
+            // The process stops here: the transaction is dropped, never committed.
+        }
+        migrate_crossing(&stopped).await.unwrap();
+        assert_eq!(state(&stopped).await, expected);
+
+        // Stopped after everyone's bedtime was converted, the second one still waiting.
+        let (_three, stopped, _) = a_house().await;
+        let (_, mut everyone) = phones_done(&stopped).await;
+        let (row, days) = everyone.remove(first_bedtime(&everyone).unwrap());
+        convert_global_bedtime(&stopped, &row, &days).await.unwrap();
+        assert!(
+            first_bedtime(
+                &readable_rules(&mut stopped.acquire().await.unwrap(), None)
+                    .await
+                    .unwrap()
+            )
+            .is_some(),
+            "the second bedtime-shaped rule waits"
+        );
+        migrate_crossing(&stopped).await.unwrap();
+        assert_eq!(state(&stopped).await, expected);
     }
 }
