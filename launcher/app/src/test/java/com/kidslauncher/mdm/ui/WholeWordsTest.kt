@@ -158,10 +158,13 @@ class WholeWordsTest {
             // The two the emulator showed cut ("Mamm/a", "Mormo/r") shrink.
             if (name == "Mamma" || name == "Mormor") assertTrue("$name shrinks at 2.0", size < 30f)
         }
-        // The phone book: 14 sp names in 104 dp.
+        // The phone book: 14 sp names in a cell of its 3-column grid (16 dp sides), at most the label's 104 dp - 96 dp on
+        // the Jelly Star, so an 88 dp line (code QA L-4 of launcher-glance-c).
+        val bookLine = nameLine(minOf(104f, (320f - 32f) / 3))
+        assertEquals(88f, bookLine, 0.01f)
         for (scale in scales) for (name in names) {
-            val (size, display) = shown(name, 14f * scale, nameLine(104f))
-            assertNoCut("phone book ${scale}x '$name'", size, display, nameLine(104f))
+            val (size, display) = shown(name, 14f * scale, bookLine)
+            assertNoCut("phone book ${scale}x '$name'", size, display, bookLine)
         }
     }
 

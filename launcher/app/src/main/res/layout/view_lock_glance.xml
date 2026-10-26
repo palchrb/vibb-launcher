@@ -28,13 +28,15 @@
     <!-- The scroller (r11 §1.1): the whole top block in one plain ScrollView (at most eight rows - nothing to
          recycle). A drag scrolls it while it can scroll; a tap still leads to the keypad (the scroll's slop keeps a
          drag from being a tap). It clips at its own bounds, so nothing is drawn over the status bar or the bottom
-         block. The fade (the contacts row's 16 dp) shows only at an edge with more. Every lock-up starts at the top. -->
+         block. The fade shows only at an edge with more, ramping with what is left: Home's bottom fade, 32 dp (code QA
+         M-2 of launcher-glance-c), long enough that a row wholly below the fold still fades the card above it into its
+         text, not just its padding - the page's only hint that rows are below. Every lock-up starts at the top. -->
     <ScrollView
         android:id="@+id/lock_glance_scroll"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:fadingEdgeLength="16dp"
+        android:fadingEdgeLength="32dp"
         android:requiresFadingEdge="vertical">
 
         <LinearLayout
@@ -148,8 +150,8 @@
 
             <!-- The full tile (r9 §3, the iPhone 16's lock player): a 48 dp cover, the item and the entry on one line
                  each, one progress row - elapsed, the 4 dp bar, the time left with a minus - and previous / play / next
-                 as plain glyphs in the ink (48 / 56 / 48 dp targets 28 dp apart, an oval ripple, no discs). The times
-                 are one line in a fixed width the panel sets from the widest text of their shape (never wrap_content,
+                 as plain glyphs in the ink (48 / 56 / 48 dp targets 28 dp apart, a 28 dp borderless ripple that stays
+                 inside the tile, no discs). The times are one line in a fixed width the panel sets from the widest text of their shape (never wrap_content,
                  no ellipsize: a tick swaps the text without a layout and never shows "1:2…"); the bar's content
                  description says the time to TalkBack. 12 dp lower since 2026-10-26 (the user: "enda litt lavere"): 4 dp
                  under the controls, whose own targets keep 11-15 dp under their glyphs, and 6 dp above the progress row
@@ -280,7 +282,7 @@
                         android:id="@+id/lock_media_previous"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
-                        android:background="?android:attr/selectableItemBackgroundBorderless"
+                        android:background="@drawable/ripple_lock_media_control"
                         android:contentDescription="@string/music_previous"
                         android:padding="11dp"
                         android:scaleType="fitCenter"
@@ -293,7 +295,7 @@
                         android:layout_height="56dp"
                         android:layout_marginStart="28dp"
                         android:layout_marginEnd="28dp"
-                        android:background="?android:attr/selectableItemBackgroundBorderless"
+                        android:background="@drawable/ripple_lock_media_control"
                         android:padding="11dp"
                         android:scaleType="fitCenter"
                         android:src="@drawable/ic_music_pause"
@@ -303,7 +305,7 @@
                         android:id="@+id/lock_media_next"
                         android:layout_width="48dp"
                         android:layout_height="48dp"
-                        android:background="?android:attr/selectableItemBackgroundBorderless"
+                        android:background="@drawable/ripple_lock_media_control"
                         android:contentDescription="@string/music_next"
                         android:padding="11dp"
                         android:scaleType="fitCenter"

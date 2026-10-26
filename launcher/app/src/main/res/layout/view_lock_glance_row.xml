@@ -23,9 +23,13 @@
     android:paddingEnd="12dp"
     android:paddingBottom="8dp">
 
+    <!-- At the top, 2 dp in: where centring put it in a one-line row, and beside the title in a two-line one (code QA
+         N-2 of launcher-glance-c), as the time is. -->
     <FrameLayout
         android:layout_width="36dp"
         android:layout_height="36dp"
+        android:layout_gravity="top"
+        android:layout_marginTop="2dp"
         android:clipChildren="false"
         android:importantForAccessibility="noHideDescendants">
 
