@@ -132,8 +132,7 @@ impl Transport for HttpTransport {
 /// the contact, the transport, the sender's wake-up, the JWT cache and the test pushes' spacing.
 pub struct Push {
     pub key: Option<Arc<VapidKey>>,
-    /// `VAPID_SUBJECT` (`mailto:` or `https:`); else each subscription's `https://` origin, else
-    /// none (RFC 8292 takes no `http:` contact).
+    /// `VAPID_SUBJECT` (`mailto:` or `https:`); else [DEFAULT_SUBJECT].
     subject: Option<String>,
     transport: Arc<dyn Transport>,
     wake: tokio::sync::Notify,
@@ -272,6 +271,13 @@ fn icon_of(avatar_hash: Option<&str>) -> String {
     crate::handlers::device_avatar::src_of(avatar_hash).unwrap_or_else(|| APP_ICON.to_string())
 }
 
+/// The VAPID `sub` without `VAPID_SUBJECT` (security review P4): the same for every server, so the
+/// push services (Apple, Google, Mozilla), which read the JWT in clear, learn no household's
+/// address - before, each subscription's own origin, the tailnet name. The project's page: a real
+/// `https:` URL, which every push service takes. The keys are unchanged, so every subscription
+/// keeps working; the JWT is signed per request.
+pub const DEFAULT_SUBJECT: &str = "https://github.com/palchrb/vibb-launcher";
+
 /// `VAPID_SUBJECT` when it is a `mailto:` or `https:` URL; anything else is ignored (logged by
 /// the caller).
 pub fn subject_of(value: Option<&str>) -> Result<Option<String>, String> {
@@ -279,8 +285,8 @@ pub fn subject_of(value: Option<&str>) -> Result<Option<String>, String> {
         None => Ok(None),
         Some(v) if v.starts_with("mailto:") || v.starts_with("https://") => Ok(Some(v.to_string())),
         Some(v) => Err(format!(
-            "VAPID_SUBJECT {v:?} is not a mailto: or https: URL - ignored, each device's own \
-             address is sent instead"
+            "VAPID_SUBJECT {v:?} is not a mailto: or https: URL - ignored, {DEFAULT_SUBJECT} \
+             is sent instead"
         )),
     }
 }
@@ -826,13 +832,7 @@ async fn send_one(
     if !claim(&state.db, delivery.id, &Sha256::digest(token)).await? {
         return Ok(());
     }
-    let sub = state.push.subject.clone().or_else(|| {
-        delivery
-            .origin
-            .starts_with("https://")
-            .then(|| delivery.origin.clone())
-    });
-    let sub = sub.as_deref();
+    let sub = Some(state.push.subject.as_deref().unwrap_or(DEFAULT_SUBJECT));
     let request = |jwt: &str| PushRequest {
         endpoint: delivery.endpoint.clone(),
         headers: vec![

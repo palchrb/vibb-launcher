@@ -720,7 +720,9 @@ The bell and the inbox (`/notifications`) need nothing. Notifications on the par
   (`event=push|push-declarative|pushnotification|click`) and the worker's version; on Safari a tap on the
   notification opens its link without the worker.
 - **`VAPID_SUBJECT`** (optional) in `.env`: a `mailto:` or `https:` address the push services may contact about the
-  server's pushes. Without it each device's own address of the PWA is sent.
+  server's pushes. They read it in clear with every push, so without it the server sends the project's page
+  (`push::DEFAULT_SUBJECT`, the same for every server), never the PWA's own address with your tailnet name (security
+  review P4, 0.57.0; before, each device's own address was sent). Existing subscriptions keep working.
 - **The key** `data/keys/vapid-p256.pk8` is made on the first start (0600) and is never backed up, like the Storytel
   key. After a restore onto a new machine (or a lost key file) every device's notifications are turned off: turn them
   on again on each device (Notifications › This Device). A damaged key file is left as it is and notifications stay

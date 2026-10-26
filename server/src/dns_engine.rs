@@ -122,7 +122,7 @@ pub async fn compile_blocklist(state: &AppState, shared: &SharedCompiledBlocklis
         .collect();
 
     let client = reqwest::Client::builder()
-        .user_agent("kid-phone-server (self-hosted, dns filter)")
+        .user_agent(crate::net::USER_AGENT)
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .expect("reqwest client always builds");
