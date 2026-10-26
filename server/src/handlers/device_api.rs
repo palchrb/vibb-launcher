@@ -1431,8 +1431,13 @@ pub async fn status(
         previous_unseen,
         unseen_boots.map(|(count, _)| count),
     ) {
-        crate::security::record_phone_event_logged(&state.db, device.id, "boot_unseen", &line)
-            .await;
+        crate::security::record_phone_event_logged(
+            &state.db,
+            device.id,
+            crate::security::PhoneLine::BootUnseen,
+            &line,
+        )
+        .await;
         if let (Some(phone), Some((count, last_at_ms))) = (&phone, unseen_boots) {
             crate::parent_events::raise_logged(&state, &phone.unseen_boot(count, last_at_ms)).await;
         }
@@ -1585,8 +1590,9 @@ pub async fn status(
     // Attached on every regular heartbeat when the device has a location
     // reading available, not just after a `locate` command - see
     // LocationReport's doc comment. Pruned by retention::prune (the phone's
-    // location_retention_days, default 7, the newest fix too); never stored while the
-    // phone's location is Off (`zones::takes_fixes`, security review P1).
+    // location_retention_days, default 7, the newest fix kept while location is on);
+    // never stored while the phone's location is Off (`zones::takes_fixes`, security
+    // review P1).
     // Only a fix that is what it says (security review H2): the time is RFC 3339 (stored
     // normalised, UTC with milliseconds), the coordinates are on Earth and the accuracy isn't
     // negative. Anything else is dropped (and logged); the rest of the report is kept.
@@ -1682,7 +1688,7 @@ async fn log_play_events(
         crate::security::record_phone_event_logged(
             &state.db,
             device_id,
-            "play_install_mode",
+            crate::security::PhoneLine::PlayInstallMode,
             &format!("device {device_id}: Play install mode until {until}"),
         )
         .await;
@@ -1709,7 +1715,7 @@ async fn log_play_events(
         crate::security::record_phone_event_logged(
             &state.db,
             device_id,
-            "app_installed",
+            crate::security::PhoneLine::AppInstalled,
             &format!(
                 "device {device_id}: {} ({}) installed from {source}",
                 app.label.chars().take(80).collect::<String>(),

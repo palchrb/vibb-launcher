@@ -330,6 +330,9 @@ struct FixView {
     exact: String,
     /// "Last position before the phone went off" ([before_off]).
     before_off: bool,
+    /// "Last seen 9 days ago": the newest fix kept past the location window (the owner's decision
+    /// on M1 of round S3), `None` inside it.
+    aged: Option<String>,
 }
 
 /// How long after a shutdown a report may come and its fix still be the last before the phone went
@@ -1164,6 +1167,14 @@ async fn locate_view(
             accuracy,
             exact: fix_title(fix.at.map(|t| zone.exact(t)).unwrap_or_default(), l),
             before_off: fix_before_off,
+            aged: fix
+                .at
+                .map(|at| (now - at).num_days())
+                .filter(|days| *days >= location_retention.max(1))
+                .map(|days| match days {
+                    1 => "Last seen 1 day ago".to_string(),
+                    days => format!("Last seen {days} days ago"),
+                }),
         }
     });
     if let Some(badge) = badge.as_ref().filter(|_| newest.is_some()) {
@@ -1810,7 +1821,8 @@ pub async fn locate(
 
 /// How long this phone's location history is kept (`POST /devices/{id}/location-retention`,
 /// `days` = one of `retention::LOCATION_RETENTION_DAYS`; cleanup 2026-10-06). Older fixes are
-/// deleted at once - the newest one always stays - and by the hourly pruning from then on.
+/// deleted at once - the newest one stays while location is on - and by the hourly pruning from
+/// then on.
 /// 400 for another value, 404 for an unknown device; nothing is sent to the phone. Back to
 /// Location Settings (`#location-settings`): the last group of a long page, so a `<noscript>` Save
 /// or a save after a refused erase doesn't land at the top (qa-31-s13-code M1).
@@ -1865,7 +1877,9 @@ pub async fn update_location_retention(
 
 /// The location policy: `mode` off / on_request / interval, `interval_minutes` from
 /// `time_rules::LOCATION_INTERVALS` (kept as is when absent: the page sends it only in
-/// "Regularly"). 400 on an unknown value, 404 for an unknown device; nudges the phone. Back to
+/// "Regularly"). 400 on an unknown value, 404 for an unknown device; nudges the phone. Off erases
+/// the phone's every fix and shutdown position at once (the pruning pass; security review P1, the
+/// owner's decision on M1 of round S3) - the hourly pass again if this one fails. Back to
 /// `#location-settings`, as the history - or to `#zones` for the zones' Locate Regularly
 /// (`back=zones`, design 64 §3.6; anything else is the settings).
 pub async fn update_location_policy(
@@ -1911,6 +1925,10 @@ pub async fn update_location_policy(
                 )),
             )
             .await;
+            if mode == "off" {
+                // A failing table is logged by the pass itself (security review L9).
+                crate::retention::prune(&state.db).await;
+            }
             let _ = state.command_notify.send(id);
             let group = match form.get("back").map(String::as_str) {
                 Some("zones") => "zones",

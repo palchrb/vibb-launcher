@@ -463,7 +463,9 @@ mod tests {
     use super::*;
     use axum::http::HeaderValue;
 
-    /// Security review P5: every outbound client says [USER_AGENT], and it names no kid.
+    /// Security review P5: every outbound client says [USER_AGENT], and it names no kid. It reads
+    /// the builders' `user_agent` calls only: a new `Client::builder()` without one isn't caught - reqwest
+    /// then sends no `User-Agent` at all (as the push transport does), which names nothing either.
     #[test]
     fn every_client_says_the_one_neutral_user_agent() {
         assert!(!USER_AGENT.to_lowercase().contains("kid"));

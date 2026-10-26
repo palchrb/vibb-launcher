@@ -821,6 +821,42 @@ async fn the_sender_claims_only_a_queued_row() {
     assert_eq!(attempts, 1, "the refused claim counted nothing");
 }
 
+/// QA L2 of round S3: a phone off for 60 h whose first reports after the start and an hourly
+/// prune all come before its power report - the start still says its last report before the boot.
+#[tokio::test]
+async fn a_long_off_phones_last_report_outlives_the_prune() {
+    let (app, id, token) = setup().await;
+    for (level, age) in [(40, "-61 hours"), (5, "-60 hours")] {
+        sqlx::query(
+            "INSERT INTO device_status (device_id, lock_reason, kiosk_engaged, battery_level, \
+             battery_charging, reported_at) VALUES (?, 'NONE', 1, ?, 0, datetime('now', ?))",
+        )
+        .bind(id)
+        .bind(level)
+        .bind(age)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let boot = Utc::now() - Duration::minutes(10);
+    for _ in 0..2 {
+        app.post_status(
+            &token,
+            json!({ "battery": { "level": 60, "charging": true } }),
+        )
+        .await;
+    }
+    assert_eq!(crate::retention::prune(&app.db).await.status_reports, 1);
+    post(&app, &token, json!({ "on": on(boot, 7) })).await;
+    let rows = events(&app, id).await;
+    let summary = &rows.last().unwrap().2;
+    assert!(
+        summary.contains(" · no shutdown seen · last report ")
+            && summary.ends_with(", battery 5 %, probably flat"),
+        "{summary}"
+    );
+}
+
 /// Security review P1: under location Off the shutdown's position is neither stored as a fix nor
 /// told in the `phone_off`; the shutdown itself is.
 #[tokio::test]

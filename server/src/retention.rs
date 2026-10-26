@@ -15,34 +15,23 @@ pub const DNS_LOG_RETENTION_DAYS: i64 = 7;
 pub const LOCATION_RETENTION_DAYS: [i64; 4] = [1, 7, 14, 30];
 pub const DEFAULT_LOCATION_RETENTION_DAYS: i64 = 7;
 /// Status reports (security review P2): every page and check reads a phone's newest report, so
-/// the rest go after this many hours - the newest per phone and the newest that reported call
-/// enforcement are always kept. Two days: the storage budget ([STATUS_ROWS_A_DAY],
-/// [replace_over_budget]) counts a rolling 24 hours of them, and a day's slack.
+/// the rest go after this many hours. Kept besides: each phone's newest report from before the
+/// window - its newest at all while it is silent, and for a phone back after days off the report
+/// from before its shutdown, which its power report's "last report" reads however many reports
+/// came first (QA L2) - and the newest that reported call enforcement. Two days: the storage
+/// budget ([STATUS_ROWS_A_DAY], [replace_over_budget]) counts a rolling 24 hours of them, and a
+/// day's slack.
 pub const STATUS_HISTORY_HOURS: i64 = 48;
 /// Launcher crash reports, counted from when the phone last reported that crash.
 pub const CRASH_REPORT_DAYS: i64 = 30;
 /// The security log (`security_events`, design 22 QA c): sign-ins, refused requests, enrollments,
 /// the parents' changes.
 pub const SECURITY_EVENT_DAYS: i64 = 180;
-/// The lines a phone's reports write (`security::record_phone_event`) about what the kid's phone
-/// did (security review P7): kept as long as the phone's own warnings run (an unseen boot's 30
-/// days, `boot_witness::WARN_MS`), never the sign-ins' 180. Its parent-PIN lines go with the PIN
-/// events they describe ([PIN_LOG_KINDS]); a Storytel login sent to a phone is about the parent's
-/// credential and keeps 180.
-pub const PHONE_LOG_KINDS: [&str; 8] = [
-    "app_installed",
-    "play_install_mode",
-    "boot_unseen",
-    "phone_app_blocked",
-    "phone_foreign_access",
-    "phone_relock_findings",
-    "mock_location_ignored",
-    "phone_lines_dropped",
-];
-/// [PHONE_LOG_KINDS]' window.
+/// The lines a phone's reports write about what the kid's phone did (`security::PhoneLine`,
+/// security review P7): kept as long as the phone's own warnings run (an unseen boot's 30 days,
+/// `boot_witness::WARN_MS`), never the sign-ins' 180. Its parent-PIN lines go with the PIN events
+/// they describe; a Storytel login sent to a phone is about the parent's credential and keeps 180.
 pub const PHONE_LOG_DAYS: i64 = 30;
-/// The phone's parent-PIN lines: kept `parent_pin::PIN_EVENT_DAYS`, as the events themselves.
-pub const PIN_LOG_KINDS: [&str; 2] = ["parent_pin_used", "parent_pin_lockout"];
 /// A wrong sign-in's typed username is cleared after this (security review P7: a password typed
 /// into the name field); the line, its time and address stay.
 pub const SIGN_IN_NAME_HOURS: i64 = 24;
@@ -57,6 +46,8 @@ pub const PUSH_DAYS: i64 = 30;
 /// The phones' commands (`device_commands`, design 48 §1.6), by when they were asked - except one
 /// that may still reach its phone.
 pub const COMMAND_DAYS: i64 = 30;
+/// The phones whose location is Off: none of their fixes or shutdown positions is kept.
+const LOCATION_OFF: &str = "SELECT device_id FROM device_policy WHERE location_mode = 'off'";
 /// How often [run_pruning] runs (and once at startup).
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
@@ -200,14 +191,16 @@ fn rows(
 /// - blocked domains older than [DNS_LOG_RETENTION_DAYS], and every entry of a phone whose log
 ///   is off (an older launcher may still send them; the server drops those at the door too);
 /// - locations older than the phone's `location_retention_days` (by the server's receive time, or
-///   the phone's last re-send of it as still current, `resent_at`), the newest fix too (security
-///   review P1: Locate then says there was no position in that time);
-/// - status reports older than [STATUS_HISTORY_HOURS], except the newest per phone and the newest
-///   one that reported call enforcement (`call_policy_v1`);
+///   the phone's last re-send of it as still current, `resent_at`), except each phone's newest fix:
+///   its last known position, which Locate shows with its age (the owner's decision on M1 of round
+///   S3); and every fix of a phone whose location is Off, the newest too (security review P1; the
+///   location policy's Off save runs the pass at once);
+/// - status reports older than [STATUS_HISTORY_HOURS], except each phone's newest one of them and
+///   the newest one that reported call enforcement (`call_policy_v1`);
 /// - crash reports not reported again for [CRASH_REPORT_DAYS];
-/// - security log entries older than [SECURITY_EVENT_DAYS], a phone's own lines after
-///   [PHONE_LOG_DAYS] (its parent-PIN lines after `parent_pin::PIN_EVENT_DAYS`), and a wrong
-///   sign-in's typed username after [SIGN_IN_NAME_HOURS];
+/// - security log entries older than [SECURITY_EVENT_DAYS], a phone's own lines after their
+///   `security::PhoneLine::keep_days`, and a wrong sign-in's typed username after
+///   [SIGN_IN_NAME_HOURS];
 /// - the phones' parent-PIN events after `parent_pin::PIN_EVENT_DAYS` (by when they arrived);
 /// - a zone's arrivals and departures with the phone's location history (`location_retention_days`,
 ///   by when they were stored; design 64 decision 6);
@@ -254,13 +247,16 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         + rows(
             failed,
             "device_locations",
-            sqlx::query(
-                "DELETE FROM device_locations \
-         WHERE MAX(received_at, COALESCE(datetime(resent_at), received_at)) \
+            sqlx::query(&format!(
+                "DELETE FROM device_locations WHERE device_id IN ({LOCATION_OFF}) \
+            OR (MAX(received_at, COALESCE(datetime(resent_at), received_at)) \
                < datetime('now', '-' || MAX(1, COALESCE( \
                  (SELECT p.location_retention_days FROM device_policy p \
-                  WHERE p.device_id = device_locations.device_id), ?)) || ' days')",
-            )
+                  WHERE p.device_id = device_locations.device_id), ?)) || ' days') \
+           AND id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER ( \
+                 PARTITION BY device_id ORDER BY captured_at DESC, id DESC) AS newest \
+               FROM device_locations) WHERE newest = 1))",
+            ))
             .bind(DEFAULT_LOCATION_RETENTION_DAYS)
             .execute(db)
             .await,
@@ -272,9 +268,11 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         "device_status",
         sqlx::query(
             "DELETE FROM device_status \
-         WHERE reported_at < datetime('now', '-' || ? || ' hours') \
-           AND id NOT IN (SELECT MAX(id) FROM device_status GROUP BY device_id) \
-           AND id NOT IN (SELECT MAX(id) FROM device_status WHERE capabilities_json LIKE ? \
+         WHERE reported_at < datetime('now', '-' || ?1 || ' hours') \
+           AND id NOT IN (SELECT MAX(id) FROM device_status \
+                          WHERE reported_at < datetime('now', '-' || ?1 || ' hours') \
+                          GROUP BY device_id) \
+           AND id NOT IN (SELECT MAX(id) FROM device_status WHERE capabilities_json LIKE ?2 \
                           GROUP BY device_id)",
         )
         .bind(STATUS_HISTORY_HOURS)
@@ -305,11 +303,21 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         .execute(db)
         .await,
     );
-    // A phone's own lines go with what they describe (security review P7).
-    for (kinds, days) in [
-        (&PHONE_LOG_KINDS[..], PHONE_LOG_DAYS),
-        (&PIN_LOG_KINDS[..], crate::parent_pin::PIN_EVENT_DAYS),
-    ] {
+    // A phone's own lines go with what they describe (security review P7): one statement per
+    // window shorter than the log's.
+    let mut windows: Vec<i64> = crate::security::PhoneLine::ALL
+        .iter()
+        .map(|kind| kind.keep_days())
+        .filter(|days| *days < SECURITY_EVENT_DAYS)
+        .collect();
+    windows.sort_unstable();
+    windows.dedup();
+    for days in windows {
+        let kinds: Vec<&str> = crate::security::PhoneLine::ALL
+            .iter()
+            .filter(|kind| kind.keep_days() == days)
+            .map(|kind| kind.wire())
+            .collect();
         let sql = format!(
             "DELETE FROM security_events WHERE created_at < datetime('now', '-' || ? || ' days') \
                AND event_type IN ({})",
@@ -357,17 +365,19 @@ pub async fn prune(db: &SqlitePool) -> Pruned {
         .await,
     );
     // The shutdown's last position (2026-10-25) in a `phone_off`'s parameters and detail goes
-    // with the location history too; the event itself stays its 90 days.
+    // with the location history too, and at once while the phone's location is Off; the event
+    // itself stays its 90 days.
     rows(
         failed,
         "parent_events",
-        sqlx::query(
+        sqlx::query(&format!(
             "UPDATE parent_events SET params = NULL, detail = NULL WHERE kind = ? \
            AND params IS NOT NULL \
-           AND created_at < datetime('now', '-' || MAX(1, COALESCE( \
+           AND (device_id IN ({LOCATION_OFF}) \
+                OR created_at < datetime('now', '-' || MAX(1, COALESCE( \
                  (SELECT p.location_retention_days FROM device_policy p \
-                  WHERE p.device_id = parent_events.device_id), ?)) || ' days')",
-        )
+                  WHERE p.device_id = parent_events.device_id), ?)) || ' days'))",
+        ))
         .bind(crate::parent_events::Kind::PhoneOff.wire())
         .bind(DEFAULT_LOCATION_RETENTION_DAYS)
         .execute(db)

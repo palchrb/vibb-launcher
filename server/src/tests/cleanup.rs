@@ -318,7 +318,8 @@ async fn pruning_keeps_only_what_retention_allows() {
     dns_event(db, logged, "-8 days").await;
     dns_event(db, logged, "-6 days").await;
     dns_event(db, quiet, "-1 hours").await;
-    // Locations: the default 7 days, the newest fix too (security review P1); 30 days for `long`.
+    // Locations: the default 7 days, the newest fix kept past it (the last known position - the
+    // owner's decision on M1 of round S3); 30 days for `long`.
     location(db, logged, "2026-09-01T10:00:00Z", "-20 days").await;
     location(db, logged, "2026-09-02T10:00:00Z", "-10 days").await;
     location(db, quiet, "2026-10-05T10:00:00Z", "-1 days").await;
@@ -326,7 +327,8 @@ async fn pruning_keeps_only_what_retention_allows() {
     location(db, long, "2026-09-20T10:00:00Z", "-8 days").await;
     location(db, long, "2026-09-01T10:00:00Z", "-31 days").await;
     location(db, long, "2026-09-25T10:00:00Z", "-2 days").await;
-    // Status history (security review P2): 48 hours, the newest report per phone always kept.
+    // Status history (security review P2): 48 hours, and each phone's newest report from before
+    // them (QA L2) - a silent phone keeps only its newest.
     status(db, logged, "-40 days").await;
     status(db, logged, "-35 days").await;
     status(db, quiet, "-40 days").await;
@@ -369,8 +371,8 @@ async fn pruning_keeps_only_what_retention_allows() {
         pruned,
         crate::retention::Pruned {
             dns_events: 2,
-            locations: 4,
-            status_reports: 3,
+            locations: 3,
+            status_reports: 2,
             crashes: 0,
             security_events: 0,
             pin_events: 0,
@@ -403,7 +405,8 @@ async fn pruning_keeps_only_what_retention_allows() {
     assert_eq!(
         kept,
         vec![
-            // `logged` had only old fixes: none is left (Locate says so).
+            // `logged` has only old fixes: the newest stays (Locate shows it with its age).
+            (logged, "2026-09-02T10:00:00Z".to_string()),
             (quiet, "2026-10-05T10:00:00Z".to_string()),
             (long, "2026-09-20T10:00:00Z".to_string()),
             (long, "2026-09-25T10:00:00Z".to_string()),
@@ -415,7 +418,7 @@ async fn pruning_keeps_only_what_retention_allows() {
     .fetch_all(db)
     .await
     .unwrap();
-    assert_eq!(statuses, vec![(logged, 1), (quiet, 2)]);
+    assert_eq!(statuses, vec![(logged, 1), (quiet, 3)]);
     // A second pass finds nothing more.
     assert_eq!(
         crate::retention::prune(db).await,
@@ -437,6 +440,7 @@ async fn a_failing_table_leaves_the_rest_of_the_pass() {
         .unwrap();
     location(db, logged, "2026-01-01T00:00:00.000Z", "-40 days").await;
     location(db, logged, "2026-01-02T00:00:00.000Z", "-40 days").await;
+    status(db, logged, "-41 days").await;
     status(db, logged, "-40 days").await;
     status(db, logged, "-1 days").await;
     sqlx::query("DROP TABLE device_dns_events")
@@ -445,7 +449,7 @@ async fn a_failing_table_leaves_the_rest_of_the_pass() {
         .unwrap();
     let pruned = crate::retention::prune(db).await;
     assert_eq!(pruned.failed, ["device_dns_events"]);
-    assert_eq!((pruned.locations, pruned.status_reports), (2, 1));
+    assert_eq!((pruned.locations, pruned.status_reports), (1, 1));
 }
 
 #[tokio::test]
@@ -678,7 +682,8 @@ async fn pruning_keeps_the_last_report_that_enforced_calls() {
         .await
         .unwrap();
     }
-    assert_eq!(crate::retention::prune(db).await.status_reports, 2);
+    // The -50 days row goes; -35 is the newest from before the window, -40 the call keeper.
+    assert_eq!(crate::retention::prune(db).await.status_reports, 1);
     assert_eq!(
         count(
             db,
@@ -710,6 +715,7 @@ async fn pruning_follows_what_each_row_describes() {
     let (id, _) = app.create_device("kid").await;
     location(db, id, "2026-10-01T10:00:00.000Z", "-8 days").await;
     location(db, id, "2026-10-02T10:00:00.000Z", "-8 days").await;
+    location(db, id, "2026-10-03T10:00:00.000Z", "-8 days").await;
     sqlx::query(
         "UPDATE device_locations SET resent_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 hours') \
          WHERE captured_at = '2026-10-02T10:00:00.000Z'",
@@ -815,7 +821,11 @@ async fn pruning_follows_what_each_row_describes() {
         .fetch_all(db)
         .await
         .unwrap();
-    assert_eq!(fixes, ["2026-10-02T10:00:00.000Z"]);
+    // The re-sent one by its re-send, the newest as the last known position.
+    assert_eq!(
+        fixes,
+        ["2026-10-02T10:00:00.000Z", "2026-10-03T10:00:00.000Z"]
+    );
     let left: Vec<(String, Option<String>)> =
         sqlx::query_as("SELECT event_type, username FROM security_events ORDER BY id")
             .fetch_all(db)
@@ -850,56 +860,87 @@ async fn pruning_follows_what_each_row_describes() {
     );
 }
 
-/// Security review P7: every line a phone's report writes (`security::record_phone_event`) has a
-/// window of its own - a new kind can't silently keep the kid's activity 180 days.
-#[test]
-fn every_phone_line_kind_has_its_window() {
-    let writer = regex::Regex::new(r"record_phone_event(?:_logged)?\(").unwrap();
-    let literal = regex::Regex::new(r#""([a-z][a-z0-9]*(?:_[a-z0-9]+)+)""#).unwrap();
-    let mut dirs = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
-    let mut kinds = std::collections::BTreeSet::new();
-    while let Some(dir) = dirs.pop() {
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                if path.file_name().is_some_and(|n| n != "tests") {
-                    dirs.push(path);
-                }
-                continue;
-            }
-            if path.extension().is_none_or(|e| e != "rs") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&path).unwrap();
-            let lines: Vec<&str> = text.lines().collect();
-            for (i, line) in lines.iter().enumerate() {
-                if !writer.is_match(line) || line.contains("fn ") || line.contains("//") {
-                    continue;
-                }
-                for near in &lines[i..(i + 5).min(lines.len())] {
-                    for found in literal.captures_iter(near) {
-                        kinds.insert(found[1].to_string());
-                    }
-                }
-            }
-        }
+/// Security review P1, the owner's decision on M1 of round S3: a phone's newest fix outlives the
+/// window while its location is on; an Off phone keeps none, and choosing Off erases every fix and
+/// the shutdown positions in its `phone_off`s at once.
+#[tokio::test]
+async fn off_erases_every_fix_and_on_keeps_the_last_known() {
+    use axum::http::Method;
+    let app = super::TestApp::new().await;
+    let db = &app.db;
+    let (on, _) = app.enrolled_device("on").await;
+    let (off, _) = app.enrolled_device("off").await;
+    for device in [on, off] {
+        location(db, device, "2026-09-01T10:00:00.000Z", "-20 days").await;
+        location(db, device, "2026-09-02T10:00:00.000Z", "-10 days").await;
+        location(db, device, "2026-10-25T10:00:00.000Z", "-1 hours").await;
     }
-    assert!(
-        kinds.contains("app_installed"),
-        "the scan misses: {kinds:?}"
+    // The aged fixes go, the newest stays on both while neither is Off.
+    sqlx::query("DELETE FROM device_locations WHERE captured_at = '2026-10-25T10:00:00.000Z'")
+        .execute(db)
+        .await
+        .unwrap();
+    assert_eq!(crate::retention::prune(db).await.locations, 2);
+    let left = |device: i64| {
+        sqlx::query_scalar::<_, String>(
+            "SELECT captured_at FROM device_locations WHERE device_id = ? ORDER BY captured_at",
+        )
+        .bind(device)
+        .fetch_all(db)
+    };
+    assert_eq!(left(on).await.unwrap(), ["2026-09-02T10:00:00.000Z"]);
+    location(db, off, "2026-10-25T10:00:00.000Z", "-1 hours").await;
+    for device in [on, off] {
+        sqlx::query(
+            "INSERT INTO parent_events (device_id, kind, dedup_key, title, summary, target, detail, \
+             params, happened_at) VALUES (?, 'phone_off', ?, 'off', 'off', '/devices', \
+             'Last position: shown on Locate', \
+             '{\"location\":{\"lat\":59.9,\"lng\":10.7}}', datetime('now'))",
+        )
+        .bind(device)
+        .bind(format!("off-{device}"))
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    let cookie = app.admin_cookie().await;
+    let res = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{off}/location-policy"),
+            Some(&cookie),
+            &[("mode", "off")],
+        )
+        .await;
+    assert_eq!(
+        res.location(),
+        Some(format!("/devices/locate?device={off}#location-settings").as_str())
     );
-    // A Storytel login handed to a phone is about the parent's credential: the sign-ins' 180 days.
-    let kept_long = ["storytel_login_sent"];
-    let unmapped: Vec<&String> = kinds
-        .iter()
-        .filter(|kind| {
-            !crate::retention::PHONE_LOG_KINDS.contains(&kind.as_str())
-                && !crate::retention::PIN_LOG_KINDS.contains(&kind.as_str())
-                && !kept_long.contains(&kind.as_str())
-        })
-        .collect();
+    assert!(left(off).await.unwrap().is_empty());
+    assert_eq!(left(on).await.unwrap(), ["2026-09-02T10:00:00.000Z"]);
+    let positions: Vec<(i64, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT device_id, params, detail FROM parent_events WHERE kind = 'phone_off' \
+         ORDER BY device_id",
+    )
+    .fetch_all(db)
+    .await
+    .unwrap();
     assert!(
-        unmapped.is_empty(),
-        "phone lines without a window: {unmapped:?}"
+        positions[0].1.is_some() && positions[0].2.is_some(),
+        "{positions:?}"
+    );
+    assert_eq!(positions[1], (off, None, None));
+    // An Off phone keeps none, even one that arrives some other way (a restored backup).
+    location(db, off, "2026-10-26T10:00:00.000Z", "-1 minutes").await;
+    crate::retention::prune(db).await;
+    assert!(left(off).await.unwrap().is_empty());
+    let page = app
+        .get_page(&format!("/devices/locate?device={off}"), &cookie)
+        .await
+        .text();
+    assert!(
+        page.contains("No position kept while location is off."),
+        "{page}"
     );
 }

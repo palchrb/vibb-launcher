@@ -840,7 +840,7 @@ pub async fn mock_rise(
             Some(line) => crate::security::record_phone_event(
                 &mut tx,
                 device_id,
-                "mock_location_ignored",
+                crate::security::PhoneLine::MockLocationIgnored,
                 &line,
             )
             .await?
