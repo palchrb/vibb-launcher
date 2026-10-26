@@ -2484,3 +2484,12 @@ details.app-display[open] > summary .section-chev {
 
 /* ---- The tab-switch timing line (static/nav-timing.js, only after ?timing=1): debug, never in the way ---- */
 .timing-line { position: absolute; z-index: 1999; top: calc(env(safe-area-inset-top, 0px) + 3px); left: 8px; right: 8px; padding: 2px 6px; border-radius: 6px; background: var(--surface); color: var(--label-2); font: 11px/1.4 ui-monospace, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; opacity: 0.92; }
+
+/* ---- Design 69: Device › Calendar (templates/device_calendar.html, device_calendar_rule.html) ---- */
+/* A saved calendar the phone no longer reports, greyed. A title rule's row: its words link to the editor, the
+   up/down buttons sit at its end. The preview: the pasted title struck through, an arrow, what the phone shows. */
+.row-dim .row-label { opacity: 0.55; }
+.calendar-rule .row-label { color: inherit; text-decoration: none; }
+.calendar-rule-move { display: flex; flex: none; gap: 4px; }
+.calendar-preview-before { color: var(--label-2); text-decoration: line-through; }
+.calendar-preview-arrow { color: var(--tint); margin: 0 6px; }

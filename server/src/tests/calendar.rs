@@ -168,3 +168,353 @@ async fn the_policy_carries_the_rules_and_the_calendars() {
     .await;
     assert!(second.is_err());
 }
+
+// ---- the pages ---------------------------------------------------------------------------------
+
+/// A phone that reported the contract's calendars.
+async fn reported(app: &TestApp) -> (i64, String) {
+    let (id, token) = app.enrolled_device("Anna").await;
+    let report: Value = serde_json::from_str(CALENDAR_REPORT).unwrap();
+    app.request(
+        Method::POST,
+        "/api/devices/status",
+        Some(&token),
+        Some(report),
+    )
+    .await;
+    (id, token)
+}
+
+async fn settings_saved(app: &TestApp) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM security_events WHERE event_type = 'settings_saved'")
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+fn rule_ids(policy: &Value) -> Vec<i64> {
+    policy["calendar"]["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_i64().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn the_page_lists_the_groups_and_the_reported_calendars() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = reported(&app).await;
+    let page = app
+        .get_page(&format!("/devices/{id}/calendar"), &cookie)
+        .await;
+    assert_eq!(page.status, StatusCode::OK);
+    let html = page.text();
+    // The lock group above the calendars, the rules last (§3).
+    let at = |needle: &str| html.find(needle).unwrap_or_else(|| panic!("{needle}"));
+    assert!(at(r#"id="dagen""#) < at(r#"id="lock""#));
+    assert!(at(r#"id="lock""#) < at(r#"id="calendars""#));
+    assert!(at(r#"id="calendars""#) < at(r#"id="rules""#));
+    assert!(html.contains("ICSx5 · skole.kommune.no"), "{html}");
+    assert!(html.contains("DAVx5 · nextcloud.example.no"));
+    // The contract's report claims calendar_v1; the master switch is off, so each reminder says so.
+    assert!(!html.contains("calendar-not-capable"));
+    assert_eq!(html.matches("data-reminders-off").count(), 3);
+    // The kid's calendar: off, the phone's own (the default) and the one writable DAVx5 calendar.
+    assert!(
+        html.contains(r#"<option value="phone" selected>"#),
+        "{html}"
+    );
+    assert!(html.contains(r#"<option value="c04e7b19a2f6d853">Familie</option>"#));
+    assert!(
+        !html.contains(r#"<option value="9f3a61c2d84be705">"#),
+        "ICSx5 is read-only"
+    );
+    // A phone without a report says what to do; Norwegian when the browser asks for it.
+    let (other, _) = app.enrolled_device("Ola").await;
+    let request = axum::http::Request::builder()
+        .uri(format!("/devices/{other}/calendar"))
+        .header(axum::http::header::COOKIE, &cookie)
+        .header(
+            axum::http::header::ACCEPT_LANGUAGE,
+            "nb-NO,nb;q=0.9,en;q=0.5",
+        )
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let nb = app.send(request).await.text();
+    assert!(nb.contains(r#"<html lang="nb">"#));
+    assert!(nb.contains("Kalendere som vises") && nb.contains(r#"data-calendars="no-report""#));
+    assert!(nb.contains("calendar-not-capable"));
+    // The summary row: three reported, none hidden.
+    let summary = app
+        .get_page(&format!("/devices/{id}"), &cookie)
+        .await
+        .text();
+    assert!(summary.contains(r#"data-row="calendar""#));
+    assert!(summary.contains("3 shown"), "{summary}");
+    assert_eq!(
+        app.get_page("/devices/999/calendar", &cookie).await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn the_switches_and_the_calendars_save_back_to_their_groups() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = reported(&app).await;
+    let page = format!("/devices/{id}/calendar");
+    let post = |path: String, fields: Vec<(&'static str, &'static str)>| {
+        let (app, cookie) = (&app, cookie.clone());
+        async move {
+            app.request_form(Method::POST, &path, Some(&cookie), &fields)
+                .await
+        }
+    };
+    let lock = post(
+        format!("{page}/lock"),
+        vec![("glance_next", "on"), ("reminders", "row")],
+    )
+    .await;
+    super::assert_redirect(&lock, &page, Some("lock"));
+    app.assert_lands(&lock, &cookie).await;
+    let bad = post(format!("{page}/lock"), vec![("reminders", "loud")]).await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    let dagen = post(format!("{page}/dagen"), vec![("kid", "c04e7b19a2f6d853")]).await;
+    super::assert_redirect(&dagen, &page, Some("dagen"));
+    // ICSx5's feed can't be the kid's.
+    let feed = post(
+        format!("{page}/dagen"),
+        vec![("on_home", "on"), ("kid", "9f3a61c2d84be705")],
+    )
+    .await;
+    assert_eq!(feed.status, StatusCode::BAD_REQUEST);
+    // One form, exactly the rows sent: the feed hidden with a 15-minute reminder; the family calendar sent without
+    // its reminder keeps it (and stays the kid's); a key that isn't one is ignored.
+    let calendars = post(
+        format!("{page}/calendars"),
+        vec![
+            ("key", "9f3a61c2d84be705"),
+            ("remind_9f3a61c2d84be705", "15"),
+            ("key", "c04e7b19a2f6d853"),
+            ("shown_c04e7b19a2f6d853", "on"),
+            ("key", "51d8e0aa3b7c9462"),
+            ("shown_51d8e0aa3b7c9462", "on"),
+            ("remind_51d8e0aa3b7c9462", "own"),
+            ("key", "not-a-key"),
+        ],
+    )
+    .await;
+    super::assert_redirect(&calendars, &page, Some("calendars"));
+    assert_eq!(
+        app.policy(&token).await["calendar"],
+        json!({
+            "on_home": false, "kid_adds": true, "glance_next": true, "lock_reminders": "row",
+            "calendars": [
+                {"key": "51d8e0aa3b7c9462", "shown": true, "remind": "own", "remind_minutes": null, "writable_for_kid": false},
+                {"key": "9f3a61c2d84be705", "shown": false, "remind": "before", "remind_minutes": 15, "writable_for_kid": false},
+                {"key": "c04e7b19a2f6d853", "shown": true, "remind": "off", "remind_minutes": null, "writable_for_kid": true}
+            ],
+            "rules": []
+        })
+    );
+    // Off for the kid; a calendar gone from the phone shows so and is removed.
+    post(
+        format!("{page}/dagen"),
+        vec![("on_home", "on"), ("kid", "off")],
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO device_calendars (device_id, calendar_key, shown) VALUES (?, 'aaaaaaaaaaaaaaaa', 0)",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert!(
+        app.get_page(&page, &cookie)
+            .await
+            .text()
+            .contains("Not on the phone now")
+    );
+    let remove = post(format!("{page}/calendars/aaaaaaaaaaaaaaaa/remove"), vec![]).await;
+    super::assert_redirect(&remove, &page, Some("calendars"));
+    let policy = app.policy(&token).await;
+    assert_eq!(policy["calendar"]["kid_adds"], json!(false));
+    assert_eq!(policy["calendar"]["on_home"], json!(true));
+    let keys: Vec<&str> = policy["calendar"]["calendars"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, ["51d8e0aa3b7c9462", "9f3a61c2d84be705"]);
+}
+
+#[tokio::test]
+async fn a_rule_is_saved_refused_previewed_moved_and_deleted() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = reported(&app).await;
+    let page = format!("/devices/{id}/calendar");
+    let post = |path: String, fields: Vec<(&'static str, &'static str)>| {
+        let (app, cookie) = (&app, cookie.clone());
+        async move {
+            app.request_form(Method::POST, &path, Some(&cookie), &fields)
+                .await
+        }
+    };
+    let school = vec![
+        ("field", "title"),
+        ("match", "starts"),
+        ("pattern", "Gruppe 2- skoleåret 2026/2027:"),
+        ("then", "show"),
+        ("text", "Skole:"),
+        ("keep_rest", "on"),
+        ("calendar", "9f3a61c2d84be705"),
+    ];
+    let created = post(format!("{page}/rules"), school.clone()).await;
+    super::assert_redirect(&created, &page, Some("rule-1"));
+    app.assert_lands(&created, &cookie).await;
+    let hide = vec![
+        ("field", "description"),
+        ("match", "contains"),
+        ("pattern", "6. og 7. trinn"),
+        ("then", "hide"),
+    ];
+    post(format!("{page}/rules"), hide.clone()).await;
+    let policy = app.policy(&token).await;
+    assert_eq!(rule_ids(&policy), [1, 2]);
+    assert_eq!(policy["calendar"]["rules"][0]["action"], json!("prefix"));
+
+    // A refused rule: the editor again (400) as typed, the reason in the bar; nothing written, no settings_saved.
+    let before = settings_saved(&app).await;
+    let refused = post(
+        format!("{page}/rules/1"),
+        vec![
+            ("field", "description"),
+            ("match", "contains"),
+            ("pattern", "Typed text"),
+            ("then", "show"),
+            ("text", "x"),
+        ],
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    let html = refused.text();
+    assert!(
+        html.contains(r#"value="Typed text""#)
+            && html.contains("A rule on the description can only hide"),
+        "{html}"
+    );
+    assert_eq!(
+        app.policy(&token).await["calendar"]["rules"][0]["field"],
+        json!("title")
+    );
+
+    // The preview: 200 with the fragment only (never the form), nothing logged; a rule before it is named.
+    let preview = post(
+        format!("{page}/rules/preview"),
+        vec![
+            ("rule", "2"),
+            ("field", "title"),
+            ("match", "contains"),
+            ("pattern", "R omer riket"),
+            ("then", "hide"),
+            ("calendar", "9f3a61c2d84be705"),
+            (
+                "preview_title",
+                "Gruppe 2- skoleåret 2026/2027: Det kuleste fra Romerriket",
+            ),
+            ("fragment", "1"),
+        ],
+    )
+    .await;
+    assert_eq!(preview.status, StatusCode::OK);
+    let fragment = preview.text();
+    assert!(
+        !fragment.contains("<form") && !fragment.contains("<html"),
+        "{fragment}"
+    );
+    assert!(
+        fragment.contains("Skole: Det kuleste fra Romerriket"),
+        "{fragment}"
+    );
+    assert!(
+        fragment.contains("Rule 1 matches this title first"),
+        "{fragment}"
+    );
+    let alone = post(
+        format!("{page}/rules/preview"),
+        vec![
+            ("field", "title"),
+            ("match", "contains"),
+            ("pattern", "romerriket"),
+            ("then", "hide"),
+            ("preview_title", "Det kuleste fra R omerriket"),
+            ("fragment", "1"),
+        ],
+    )
+    .await
+    .text();
+    assert!(alone.contains(r#"data-preview-after="hidden""#), "{alone}");
+    // Without the script: the whole editor with the preview filled.
+    let full_page = post(
+        format!("{page}/rules/preview"),
+        vec![
+            ("field", "title"),
+            ("match", "starts"),
+            ("pattern", "Tur"),
+            ("then", "show"),
+            ("text", "Utflukt"),
+            ("preview_title", "Tur til skogen"),
+        ],
+    )
+    .await;
+    assert_eq!(full_page.status, StatusCode::OK);
+    let text = full_page.text();
+    assert!(
+        text.contains(r#"id="rule-form""#)
+            && text.contains("<strong data-preview-after>Utflukt</strong>")
+    );
+    assert_eq!(settings_saved(&app).await, before);
+
+    // Rule 2 up: the order follows, back to its row.
+    let moved = post(format!("{page}/rules/2/move"), vec![("dir", "up")]).await;
+    super::assert_redirect(&moved, &page, Some("rule-2"));
+    assert_eq!(rule_ids(&app.policy(&token).await), [2, 1]);
+
+    // Deleted, then gone: its page and its save are a 303 to #rules with the notice, marked refused.
+    let deleted = post(format!("{page}/rules/1/delete"), vec![]).await;
+    super::assert_redirect(&deleted, &page, Some("rules"));
+    let before = settings_saved(&app).await;
+    let gone = post(format!("{page}/rules/1"), school.clone()).await;
+    super::assert_redirect(&gone, &format!("{page}?notice=rule_gone"), Some("rules"));
+    assert_eq!(settings_saved(&app).await, before);
+    let notice = app
+        .get_page(&format!("{page}?notice=rule_gone"), &cookie)
+        .await;
+    assert!(notice.text().contains(r#"data-flash="rule-gone""#));
+    assert!(
+        app.get_page(&format!("{page}/rules/1"), &cookie)
+            .await
+            .status
+            .is_redirection()
+    );
+
+    // At most 30 rules.
+    for n in 0..29 {
+        add_rule(
+            &app,
+            id,
+            100 + n,
+            9,
+            "NULL, 'title', 'contains', 'x', 'hide', ''",
+        )
+        .await;
+    }
+    let full = post(format!("{page}/rules"), hide).await;
+    assert_eq!(full.status, StatusCode::BAD_REQUEST);
+    assert!(full.text().contains("30 rules already"));
+}

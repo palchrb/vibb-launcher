@@ -44,7 +44,7 @@
         <p class="hint">Vibb style: a white symbol on a calm colour picked from the app's icon (an app without a plain symbol shows its own logo). The app's own logo: its real icon in its own colours. The colour applies to a chosen icon.{% if form.can_reset() %} {{ form.reset_hint() }}{% endif %} Shown on the home screen, in the app list, on the lock screen and in the contact card. Android's own screens and the app's notifications keep its own name.</p>
         {% if let Some(on_home) = form.on_home %}
         <input type="hidden" name="on_home_shown" value="1">
-        <label class="row app-display-home">
+        <label class="row">
             <span class="row-label">On Home<span class="row-sub">Off: the app stays allowed and runs, but the kid doesn't see it on Home or in the app list, except during a pause - for a sync app such as ICSx5 or DAVx5.</span></span>
             <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
         </label>

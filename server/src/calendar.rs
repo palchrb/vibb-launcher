@@ -9,7 +9,7 @@
 //! `day/TitleRules.kt` is the same code; `testdata/calendar_title_rules.json` (byte-identical in the launcher's test
 //! resources) pins both. The PWA's preview runs this one on titles the parent pastes.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -551,15 +551,6 @@ pub fn app_of(account_type: &str) -> &str {
         "com.google" => "Google",
         other => other,
     }
-}
-
-/// The key -> reported calendar map of a report.
-pub fn by_key(report: &CalendarReport) -> HashMap<&str, &ReportedCalendar> {
-    report
-        .calendars
-        .iter()
-        .map(|c| (c.key.as_str(), c))
-        .collect()
 }
 
 #[cfg(test)]

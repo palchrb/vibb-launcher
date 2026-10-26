@@ -100,6 +100,10 @@ fn leaves_the_page(action: &str) -> bool {
         path.as_slice(),
         // Remove Bedtime lands on Device › Time's #bedtime (design 66).
         ["devices", d, "bedtime", "remove"] if number(d)
+    ) || matches!(
+        path.as_slice(),
+        // A title rule's delete lands on Device › Calendar's #rules (design 69).
+        ["devices", d, "calendar", "rules", n, "delete"] if number(d) && number(n)
     )
 }
 

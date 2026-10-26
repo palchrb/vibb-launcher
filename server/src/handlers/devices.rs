@@ -780,6 +780,9 @@ struct DeviceDetailTemplate {
     music_attention: bool,
     time_value: &'static str,
     time_attention: bool,
+    /// Device › Calendar's row (design 69), in the request's language.
+    calendar_label: &'static str,
+    calendar_value: String,
     lock_value: &'static str,
     home_value: String,
     filter_value: &'static str,
@@ -1170,10 +1173,11 @@ pub async fn update_kiosk_escapes(
 pub async fn view_device(
     State(state): State<AppState>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    lang: crate::i18n::Lang,
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    render_device(&state, admin.id, id, &query).await
+    render_device(&state, admin.id, lang, id, &query).await
 }
 
 /// The Apps list a phone's pages build on: one row per app the phone reports and per catalog app
@@ -1380,6 +1384,7 @@ pub(crate) async fn app_rows(
 async fn render_device(
     state: &AppState,
     admin_id: i64,
+    lang: crate::i18n::Lang,
     id: i64,
     query: &std::collections::HashMap<String, String>,
 ) -> Response {
@@ -1738,6 +1743,8 @@ async fn render_device(
             music_attention,
             time_value,
             time_attention,
+            calendar_label: crate::i18n::t(lang, "calendar.summary.label"),
+            calendar_value: crate::handlers::calendar::summary_value(state, lang, id).await,
             lock_value: if crate::kid_lock::policy_kid_lock(&policy).is_none() {
                 "PIN off"
             } else if crate::kid_lock::android_requested(&policy) {

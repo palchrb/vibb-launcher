@@ -17,6 +17,7 @@ mod enrollment;
 mod fdroid;
 mod gate;
 mod handlers;
+mod i18n;
 mod install_now;
 mod keys;
 mod kid_lock;
@@ -860,6 +861,51 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/bedtime/remove",
             post(handlers::bedtime::remove_bedtime),
+        )
+        // Dagen (design 69 §3): Device › Calendar and its rule editor.
+        .route(
+            "/devices/{id}/calendar",
+            get(handlers::calendar::view_calendar),
+        )
+        .route(
+            "/devices/{id}/calendar/dagen",
+            post(handlers::calendar::save_dagen),
+        )
+        .route(
+            "/devices/{id}/calendar/lock",
+            post(handlers::calendar::save_lock),
+        )
+        .route(
+            "/devices/{id}/calendar/calendars",
+            post(handlers::calendar::save_calendars),
+        )
+        .route(
+            "/devices/{id}/calendar/calendars/{key}/remove",
+            post(handlers::calendar::remove_calendar),
+        )
+        .route(
+            "/devices/{id}/calendar/rules",
+            post(handlers::calendar::create_rule),
+        )
+        .route(
+            "/devices/{id}/calendar/rules/new",
+            get(handlers::calendar::new_rule),
+        )
+        .route(
+            "/devices/{id}/calendar/rules/preview",
+            post(handlers::calendar::preview_rule),
+        )
+        .route(
+            "/devices/{id}/calendar/rules/{rule}",
+            get(handlers::calendar::show_rule).post(handlers::calendar::update_rule),
+        )
+        .route(
+            "/devices/{id}/calendar/rules/{rule}/move",
+            post(handlers::calendar::move_rule),
+        )
+        .route(
+            "/devices/{id}/calendar/rules/{rule}/delete",
+            post(handlers::calendar::delete_rule),
         )
         .route("/devices/{id}/lifts", post(handlers::lifts::create_lift))
         .route(

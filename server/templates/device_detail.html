@@ -335,6 +335,12 @@
             <span class="row-value{% if time_attention %} row-value-action{% endif %}">{{ time_value }}</span>
             <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>
+        <a class="row" href="/devices/{{ device.id }}/calendar" data-row="calendar">
+            <span class="tile tile-teal"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="12" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M2.5 7h12M6 2v3M11 2v3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+            <span class="row-label">{{ calendar_label }}</span>
+            <span class="row-value">{{ calendar_value }}</span>
+            <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
         <a class="row" href="/devices/{{ device.id }}/lock" data-row="lock">
             <span class="tile tile-graphite"><svg viewBox="0 0 17 17" aria-hidden="true" focusable="false"><rect x="3" y="7.2" width="11" height="7.6" rx="1.7" fill="currentColor"/><path d="M5.4 7.2V5.3a3.1 3.1 0 0 1 6.2 0v1.9" fill="none" stroke="currentColor" stroke-width="1.7"/></svg></span>
             <span class="row-label">Lock Screen &amp; PINs</span>

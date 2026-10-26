@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    <a class="nav-back" href="/devices/{{ device_id }}"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ device_name }}</a>
+    <h1 class="page-title">{{ title }}</h1>
+
+    {#- Design 69 §3. The switches and selects save on change (autosave.js) and return to their group (#dagen,
+        #lock, #calendars); <noscript> Save without JS. The calendars are one form that writes exactly the rows it
+        was sent. Title rules: each row's up/down returns to the row (#rule-<id>). Nothing here holds an event: the
+        calendars are the phone's last report. -#}
+    {% if !capable %}
+    <div class="attention attention-action" data-warning="calendar-not-capable"><div class="attention-text">{{ self.t("calendar.not_capable") }}<div class="attention-sub">{{ self.t("calendar.not_capable_sub") }}</div></div></div>
+    {% endif %}
+
+    <section id="dagen" aria-labelledby="dagen-title">
+        <h2 class="group-header" id="dagen-title">{{ self.t("calendar.dagen.title") }}</h2>
+        <form method="post" action="/devices/{{ device_id }}/calendar/dagen#dagen" class="group">
+            <label class="row">
+                <span class="row-label">{{ self.t("calendar.dagen.on_home") }}<span class="row-sub">{{ self.t("calendar.dagen.on_home_sub") }}</span></span>
+                <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <label class="row">
+                <span class="row-label">{{ self.t("calendar.kid.label") }}</span>
+                <select class="pick" name="kid" data-autosave>
+                    {% for k in kid_choices %}<option value="{{ k.value }}"{% if k.selected %} selected{% endif %}>{{ k.label }}</option>{% endfor %}
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <p class="group-footer">{{ self.t("calendar.dagen.footer") }}</p>
+    </section>
+
+    <section id="lock" aria-labelledby="lock-title">
+        <h2 class="group-header" id="lock-title">{{ self.t("calendar.lock.title") }}</h2>
+        <form method="post" action="/devices/{{ device_id }}/calendar/lock#lock" class="group">
+            <label class="row">
+                <span class="row-label">{{ self.t("calendar.lock.next") }}<span class="row-sub">{{ self.t("calendar.lock.next_sub") }}</span></span>
+                <input type="checkbox" role="switch" class="sw" name="glance_next" value="on"{% if glance_next %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+            </label>
+            <label class="row">
+                <span class="row-label">{{ self.t("calendar.lock.reminders") }}</span>
+                <select class="pick" name="reminders" data-autosave>
+                    <option value="off"{% if !reminders_row %} selected{% endif %}>{{ self.t("calendar.lock.reminders.off") }}</option>
+                    <option value="row"{% if reminders_row %} selected{% endif %}>{{ self.t("calendar.lock.reminders.row") }}</option>
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <p class="group-footer">{{ self.t("calendar.lock.footer") }}</p>
+    </section>
+
+    <section id="calendars" aria-labelledby="calendars-title">
+        <h2 class="group-header" id="calendars-title">{{ self.t("calendar.calendars.title") }}</h2>
+        {% match state %}
+        {% when ReportState::NoReport %}
+        <p class="group-footer" data-calendars="no-report">{{ self.t("calendar.calendars.no_report") }}</p>
+        {% when ReportState::Unreadable %}
+        <p class="group-footer" data-calendars="unreadable">{{ self.t("calendar.calendars.unreadable") }}</p>
+        {% when ReportState::NoCalendars %}
+        <p class="group-footer" data-calendars="none">{{ self.t("calendar.calendars.none") }}</p>
+        {% when ReportState::Listed %}
+        {% endmatch %}
+        {% if !calendars.is_empty() %}
+        <form method="post" action="/devices/{{ device_id }}/calendar/calendars#calendars" class="group">
+            {% for c in calendars %}
+            <input type="hidden" name="key" value="{{ c.key }}">
+            <div class="cell{% if !c.on_phone %} row-dim{% endif %}" data-calendar="{{ c.key }}">
+                <label class="row">
+                    <span class="row-label">{{ c.name }}<span class="row-sub">{{ c.sub }}</span></span>
+                    <input type="checkbox" role="switch" class="sw" name="shown_{{ c.key }}" value="on" aria-label="{{ self.t("calendar.calendars.shown") }}"{% if c.shown %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.calendars.reminder") }}{% if !reminders_row %}<span class="row-sub" data-reminders-off>{{ self.t("calendar.calendars.reminders_off") }}</span>{% endif %}</span>
+                    <select class="pick" name="remind_{{ c.key }}" data-autosave>
+                        {% for r in c.reminds %}<option value="{{ r.value }}"{% if r.selected %} selected{% endif %}>{{ r.label }}</option>{% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                {% if !c.on_phone %}
+                <button type="submit" class="row row-button row-danger" formaction="/devices/{{ device_id }}/calendar/calendars/{{ c.key }}/remove#calendars">{{ self.t("calendar.calendars.remove") }}</button>
+                {% endif %}
+            </div>
+            {% endfor %}
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <p class="group-footer">{{ self.t("calendar.calendars.footer") }}</p>
+        {% endif %}
+        {% if state != ReportState::Listed %}
+        <p class="group-footer">{{ self.t("calendar.calendars.setup") }}</p>
+        {% endif %}
+    </section>
+
+    <section id="rules" aria-labelledby="rules-title">
+        <h2 class="group-header" id="rules-title">{{ self.t("calendar.rules.title") }}</h2>
+        {% if let Some(key) = notice %}<p class="flash flash-error" role="alert" data-flash="rule-gone">{{ self.t(key) }}</p>{% endif %}
+        {% if !rules_skipped.is_empty() %}<p class="flash flash-error" data-flash="rules-skipped">{{ self.skipped_line() }}</p>{% endif %}
+        <div class="group">
+            {% for r in rules %}
+            <div class="row calendar-rule" id="rule-{{ r.id }}">
+                <a class="row-label" href="/devices/{{ device_id }}/calendar/rules/{{ r.id }}">{{ r.text }}</a>
+                <form method="post" action="/devices/{{ device_id }}/calendar/rules/{{ r.id }}/move#rule-{{ r.id }}" class="calendar-rule-move">
+                    {% if !r.first %}<button type="submit" class="row-action" name="dir" value="up" aria-label="{{ self.t("calendar.rules.up") }}">&uarr;</button>{% endif %}
+                    {% if !r.last %}<button type="submit" class="row-action" name="dir" value="down" aria-label="{{ self.t("calendar.rules.down") }}">&darr;</button>{% endif %}
+                </form>
+            </div>
+            {% endfor %}
+            {% if can_add_rule %}
+            <a class="row row-button" href="/devices/{{ device_id }}/calendar/rules/new">{{ self.t("calendar.rules.add") }}&hellip;</a>
+            {% endif %}
+        </div>
+        <p class="group-footer">{{ self.t("calendar.rules.footer") }}</p>
+    </section>
+</main>
+</body>
+</html>

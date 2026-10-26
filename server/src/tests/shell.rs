@@ -695,7 +695,36 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
     .execute(&app.db)
     .await
     .unwrap();
+    // Dagen (design 69): a reported calendar, a saved one gone from the phone, and a rule, so every form renders.
+    sqlx::query(
+        "UPDATE devices SET calendar_report = '{\"readable\":true,\"calendars\":[{\"key\":\"9f3a61c2d84be705\",\
+         \"account_type\":\"at.bitfire.icsdroid\",\"name\":\"Skolen\",\"source\":null,\"access_level\":200}],\
+         \"rules_skipped\":[]}' WHERE id = ?",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO device_calendars (device_id, calendar_key, shown) VALUES (?, 'c04e7b19a2f6d853', 0)",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        sqlx::query(
+            "INSERT INTO device_calendar_rules (device_id, sort_order, field, match_kind, pattern, action) \
+             VALUES (?, 1, 'title', 'contains', 'x', 'hide')",
+        )
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
     let mut pages = vec![
+        format!("/devices/{id}/calendar/rules/new"),
+        format!("/devices/{id}/calendar/rules/1"),
         format!("/devices/{id}/bedtime"),
         format!("/devices/{not_set_up}/bedtime"),
         format!("/devices/{id}/zones/new"),
@@ -737,6 +766,7 @@ async fn every_form_on_every_page_lands_on_its_own_group() {
             Section::Apps,
             Section::Music,
             Section::Time,
+            Section::Calendar,
             Section::Lock,
             Section::Home,
             Section::Filter,
