@@ -727,14 +727,12 @@ pub async fn check_link(
             // Judged like the sweep's first check (§2.7): a feed on the LAN or the tailnet may be
             // reached as such; a public one never follows a redirect to a private address (QA 1c
             // #9: else it would be added but never list).
-            let reach = if crate::music_sweep::feed_is_lan(source, url).await? {
-                Reach::Any
-            } else {
-                Reach::Public
+            let request = match crate::music_sweep::lan_addresses(source, url).await? {
+                Some(addrs) => SourceRequest::new(url.clone(), Kind::Feed, Reach::Any)
+                    .pinned_to(&addrs),
+                None => SourceRequest::new(url.clone(), Kind::Feed, Reach::Public),
             };
-            let fetched = source
-                .get(SourceRequest::new(url.clone(), Kind::Feed, reach))
-                .await?;
+            let fetched = source.get(request).await?;
             if fetched.status != 200 {
                 return Err(CheckError::Status(fetched.status));
             }

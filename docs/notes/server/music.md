@@ -116,8 +116,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   a LAN feed is judged again at every check (`rss_check`) and is public for good the first time its host answers
   otherwise (public never turns LAN: a later private answer is refused); its cover and episode pictures go with
   `Reach::Any` only from the feed's own host and port (`music_sweep::lan_art`), every other picture as a public one
-  (`tests::music_sweep::a_lan_feed_is_judged_at_every_check_and_its_art_stays_home`). The connection isn't pinned to the
-  checked addresses: a LAN feed's host may name any private address anyway. Tests use `tests::music::CannedFetch` (canned
+  (`tests::music_sweep::a_lan_feed_is_judged_at_every_check_and_its_art_stays_home`). Every request to a LAN feed
+  (the add check, the feed, its own pictures) is pinned to the addresses that check judged (`SourceRequest::pinned_to`,
+  reqwest `resolve_to_addrs`: no second lookup, so the name can't rebind between the judgement and the fetch) and
+  follows a redirect only on the same host and port (`music_net::same_origin_policy`;
+  `music_net::tests::a_pinned_request_stays_on_the_judged_host`). Tests use `tests::music::CannedFetch` (canned
   answers, DNS, ETags, an in-flight counter) behind the real gate; no test touches the network.
 - **Parsing** (`music_sources`, pure): psapi pages/roots/manifests/metadata (keys `[A-Za-z0-9_-]{1,64}`, years >=
   2100 = always) and RSS with `quick-xml` (decoded by BOM/declaration with `encoding_rs`; a DOCTYPE with an internal

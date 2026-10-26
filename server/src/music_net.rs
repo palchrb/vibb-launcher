@@ -100,6 +100,11 @@ pub struct SourceRequest {
     /// is, its `Location` in [SourceResponse::location] (design 26c §3.1: a Spotify short link is
     /// resolved one hop at a time, each hop's host checked before it is asked).
     pub follow: bool,
+    /// A LAN feed's addresses as `music_sweep::lan_addresses` judged them (security review L2):
+    /// when set, the request connects only to these (never a second lookup, so a name can't
+    /// rebind between the judgement and the fetch) and follows a redirect only to the same host
+    /// and port. Empty: the [Reach]'s own resolver and redirect rule.
+    pub pinned: Vec<IpAddr>,
 }
 
 impl SourceRequest {
@@ -114,7 +119,14 @@ impl SourceRequest {
             headers: Vec::new(),
             body: None,
             follow: true,
+            pinned: Vec::new(),
         }
+    }
+
+    /// The request pinned to `addrs` ([SourceRequest::pinned]).
+    pub fn pinned_to(mut self, addrs: &[IpAddr]) -> Self {
+        self.pinned = addrs.to_vec();
+        self
     }
 }
 
@@ -357,6 +369,53 @@ fn redirect_policy(reach: Reach) -> reqwest::redirect::Policy {
     })
 }
 
+/// The redirect rule of a pinned request ([SourceRequest::pinned]): at most 5 hops, only to the
+/// first URL's host and port - the pin holds that host's addresses, any other would be looked up.
+fn same_origin_policy(first: &reqwest::Url) -> reqwest::redirect::Policy {
+    let origin = (
+        first.host_str().map(str::to_ascii_lowercase),
+        first.port_or_known_default(),
+    );
+    reqwest::redirect::Policy::custom(move |attempt| {
+        let url = attempt.url();
+        let here = (
+            url.host_str().map(str::to_ascii_lowercase),
+            url.port_or_known_default(),
+        );
+        if attempt.previous().len() > 5 {
+            attempt.error("more than 5 redirects")
+        } else if here != origin {
+            attempt.error("a redirect off a LAN feed's own host and port")
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+/// A client for one pinned request: `host` resolves only to `addrs` (the URL's port kept).
+fn pinned_client(
+    url: &reqwest::Url,
+    host: &str,
+    addrs: &[IpAddr],
+    follow: bool,
+) -> Result<reqwest::Client, FetchError> {
+    let addrs: Vec<SocketAddr> = addrs.iter().map(|ip| SocketAddr::new(*ip, 0)).collect();
+    reqwest::Client::builder()
+        .user_agent("kid-phone-server (self-hosted; vibb music library)")
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(30))
+        .redirect(if follow {
+            same_origin_policy(url)
+        } else {
+            reqwest::redirect::Policy::none()
+        })
+        .referer(false)
+        .resolve_to_addrs(host, &addrs)
+        .build()
+        .map_err(|err| FetchError::Network(err.without_url().to_string()))
+}
+
 /// The real client: four reqwest clients, one per [Reach] and redirect rule.
 pub struct HttpSource {
     public: reqwest::Client,
@@ -454,7 +513,14 @@ impl Source for HttpSource {
                     "a private address where only public ones may go".to_string(),
                 ));
             }
+            let pinned;
             let client = match (request.reach, request.follow) {
+                (Reach::Any, follow) if !request.pinned.is_empty() => {
+                    let parsed = reqwest::Url::parse(&request.url)
+                        .map_err(|_| FetchError::Refused("not a link".to_string()))?;
+                    pinned = pinned_client(&parsed, &host, &request.pinned, follow)?;
+                    &pinned
+                }
                 (Reach::Public, true) => &self.public,
                 (Reach::Any, true) => &self.any,
                 (Reach::Public, false) => &self.public_once,
@@ -884,6 +950,52 @@ mod tests {
             source.resolve("192.168.1.1").await.unwrap(),
             vec!["192.168.1.1".parse::<IpAddr>().unwrap()]
         );
+    }
+
+    /// Security review L2: a pinned (LAN feed) request connects to the judged addresses only - a
+    /// name that would answer otherwise now (here: one that never resolves) still reaches them -
+    /// and follows a redirect on its own host and port, never off it.
+    #[tokio::test]
+    async fn a_pinned_request_stays_on_the_judged_host() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        use axum::routing::get;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = axum::Router::new()
+            .route("/pic", get(|| async { "picture" }))
+            .route(
+                "/same",
+                get(|| async { axum::response::Redirect::temporary("/pic") }),
+            )
+            .route(
+                "/away",
+                get(move || async move {
+                    axum::response::Redirect::temporary(&format!("http://localhost:{port}/pic"))
+                }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let source = HttpSource::new();
+        let loopback = ["127.0.0.1".parse::<IpAddr>().unwrap()];
+        let pinned = |path: &str| {
+            SourceRequest::new(
+                format!("http://nas.invalid:{port}{path}"),
+                Kind::Image,
+                Reach::Any,
+            )
+            .pinned_to(&loopback)
+        };
+        let got = source.get(pinned("/pic")).await.unwrap();
+        assert_eq!((got.status, got.body.as_slice()), (200, &b"picture"[..]));
+        assert_eq!(source.get(pinned("/same")).await.unwrap().status, 200);
+        let away = source.get(pinned("/away")).await;
+        assert!(matches!(away, Err(FetchError::Refused(_))), "{away:?}");
+        // Unpinned, the name is looked up and doesn't exist.
+        let unpinned = SourceRequest::new(
+            format!("http://nas.invalid:{port}/pic"),
+            Kind::Image,
+            Reach::Any,
+        );
+        assert!(source.get(unpinned).await.is_err());
     }
 
     /// 21b §8: a public source that redirects to any private range (mapped IPv4 forms too) is
