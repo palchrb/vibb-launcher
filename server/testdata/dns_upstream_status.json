@@ -1,1 +1,1 @@
-{"lock_reason":"NONE","kiosk_engaged":true,"capabilities":["dns_custom_v1"],"dns_upstream":{"rev":4,"in_use":"backup","since_ms":1792312345000,"reason":"tls"}}
+{"lock_reason":"NONE","kiosk_engaged":true,"capabilities":["dns_custom_v1","dns_bypass_v1"],"dns_upstream":{"rev":4,"in_use":"backup","since_ms":1792312345000,"reason":"tls","unreachable_since_ms":1792312400000,"unreachable_until_ms":null}}

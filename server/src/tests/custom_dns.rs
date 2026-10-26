@@ -547,6 +547,9 @@ async fn dns_upstream_status_contract() {
     let mut sneaky = report.clone();
     sneaky["dns_upstream"]["host"] = json!("abc123.dns.example");
     sneaky["dns_upstream"]["reason"] = json!("https://abc123.dns.example");
+    // Design 67: the outage's times are numbers or nothing.
+    sneaky["dns_upstream"]["unreachable_since_ms"] = json!("abc123.dns.example");
+    sneaky["dns_upstream"]["unreachable_until_ms"] = json!("10:42");
     app.request(
         Method::POST,
         "/api/devices/status",
@@ -557,6 +560,8 @@ async fn dns_upstream_status_contract() {
     let stored = kept().await.unwrap();
     assert!(!stored.to_string().contains("example"), "{stored}");
     assert_eq!(stored["reason"], Value::Null);
+    assert_eq!(stored["unreachable_since_ms"], Value::Null);
+    assert_eq!(stored["unreachable_until_ms"], Value::Null);
     for junk in [
         json!("backup"),
         json!({"rev": "4", "in_use": "custom"}),

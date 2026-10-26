@@ -152,17 +152,21 @@ class UpstreamChooserTest {
     fun `the status field is the contract's, and dns_custom_v1 is announced`() {
         val since = 1_000_000L
         val s = afterTransport(healthy, 0, since, BackupReason.TLS)
-        val report = upstreamReport(s, rev = 4, elapsedNow = since + 5_000, wallNow = 1_792_312_350_000)
-        assertEquals(DnsUpstreamReport(rev = 4, inUse = "backup", sinceMs = 1_792_312_345_000, reason = "tls"), report)
+        // Design 67: an ongoing outage since 55 s after the backup period began.
+        val down = ReachState(key = "custom:4", failures = 3, firstFailMs = since + 55_000, lastFailMs = since + 58_000, downSinceMs = since + 55_000)
+        val report = upstreamReport(s, rev = 4, reach = down, elapsedNow = since + 60_000, wallNow = 1_792_312_405_000)
+        assertEquals(DnsUpstreamReport(4, "backup", 1_792_312_345_000, "tls", 1_792_312_400_000, null), report)
         val contract = javaClass.classLoader!!.getResource("dns_upstream_status.json")!!.readText()
         val encoded = ServerJson.encodeToString(
             StatusReportRequest.serializer(),
-            StatusReportRequest(lockReason = "NONE", kioskEngaged = true, capabilities = listOf(DNS_CUSTOM_CAPABILITY), dnsUpstream = report),
+            StatusReportRequest(
+                lockReason = "NONE", kioskEngaged = true, capabilities = listOf(DNS_CUSTOM_CAPABILITY, DNS_BYPASS_CAPABILITY), dnsUpstream = report,
+            ),
         )
         assertEquals(contract.trimEnd(), encoded)
         assertTrue(DNS_CUSTOM_CAPABILITY in STATUS_CAPABILITIES)
-        // Healthy: "custom", never a reason.
-        val back = upstreamReport(afterAnswer(s, s.gen, since + 9_000), 4, since + 10_000, 2_000_000)
-        assertEquals(DnsUpstreamReport(4, "custom", 1_999_000, null), back)
+        // Healthy: "custom", never a reason; no outage, no times.
+        val back = upstreamReport(afterAnswer(s, s.gen, since + 9_000), 4, ReachState(), since + 10_000, 2_000_000)
+        assertEquals(DnsUpstreamReport(4, "custom", 1_999_000, null, null, null), back)
     }
 }

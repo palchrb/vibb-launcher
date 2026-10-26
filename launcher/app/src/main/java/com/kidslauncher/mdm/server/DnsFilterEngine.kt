@@ -198,16 +198,12 @@ object DnsFilterEngine {
      * Forwards an allowed DNS query to the admin-configured public resolver (Cloudflare or Quad9,
      * [PublicResolvers.of]): DoT by its fixed address, SNI and certificate on its name, with
      * [PROVIDER_BUDGET] (2.5 s connect), and on a network that blocks 853 the same provider's DoH
-     * on 443 through [dohClient], built at its first use (design 36 step 3). Returns the response to relay, or null on any
-     * failure (the query is dropped; the client's own retry handles it). The parent's own server goes
-     * through [CustomDns] instead.
+     * on 443 through [dohClient], built at its first use (design 36 step 3). Returns the response to
+     * relay, its bytes null on any failure (the query is dropped; the client's own retry handles it).
+     * The parent's own server goes through [CustomDns] instead.
      */
-    fun resolveProvider(query: ByteArray, upstream: String, protectSocket: (Socket) -> Boolean, dohClient: () -> OkHttpClient): ByteArray? =
-        when (val outcome = PublicResolvers.of(upstream).resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, targetTransport(dohClient, protectSocket))) {
-            is Attempt.Answer -> outcome.bytes
-            is Attempt.Odd -> outcome.bytes
-            is Attempt.Transport, Attempt.Unprotected -> null
-        }
+    fun resolveProvider(query: ByteArray, upstream: String, protectSocket: (Socket) -> Boolean, dohClient: () -> OkHttpClient): Resolved =
+        relayed(PublicResolvers.of(upstream).resolve(query, PROVIDER_BUDGET, UPSTREAM_BUDGET, targetTransport(dohClient, protectSocket)))
 }
 
 /** The phone's block answer: NODATA (NOERROR, empty answer, a negative-cache SOA in the authority

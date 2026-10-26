@@ -51,6 +51,8 @@ class VpnTunnelState<T : Any>(
     var stopped = false
         private set
 
+    /** Also read by the status report's thread (`KidVpnService.dnsUpstreamReport`). */
+    @Volatile
     var tunnel: T? = null
         private set
 

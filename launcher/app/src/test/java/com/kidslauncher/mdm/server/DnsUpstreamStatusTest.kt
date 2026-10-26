@@ -21,8 +21,11 @@ class DnsUpstreamStatusTest {
     @Test
     fun the_report_encodes_exactly_the_contract() {
         val report = StatusReportRequest(
-            lockReason = "NONE", kioskEngaged = true, capabilities = listOf("dns_custom_v1"),
-            dnsUpstream = DnsUpstreamReport(rev = 4, inUse = "backup", sinceMs = 1_792_312_345_000, reason = "tls"),
+            lockReason = "NONE", kioskEngaged = true, capabilities = listOf("dns_custom_v1", "dns_bypass_v1"),
+            dnsUpstream = DnsUpstreamReport(
+                rev = 4, inUse = "backup", sinceMs = 1_792_312_345_000, reason = "tls",
+                unreachableSinceMs = 1_792_312_400_000, unreachableUntilMs = null,
+            ),
         )
         assertEquals(contract.trimEnd(), ServerJson.encodeToString(StatusReportRequest.serializer(), report))
         val none = ServerJson.encodeToString(StatusReportRequest.serializer(), StatusReportRequest(lockReason = "NONE", kioskEngaged = true))

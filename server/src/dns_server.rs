@@ -202,39 +202,52 @@ pub const BACKUP_REASONS: [&str; 6] = ["bootstrap", "connect", "tls", "http", "r
 pub struct DnsUpstreamState {
     /// The `custom_rev` of the servers the phone forwards to.
     pub rev: i64,
-    /// `custom` or `backup`.
+    /// `custom`, `backup` or (design 67) `provider`.
     pub in_use: String,
     /// Since when (the phone's wall clock, ms); `None` when implausible.
     pub since_ms: Option<i64>,
     /// With `backup` only: one of [BACKUP_REASONS], or `None`.
     pub reason: Option<String>,
+    /// "DNS can't be reached" since (design 67 §3.2, the phone's wall clock): with no
+    /// [Self::unreachable_until_ms] it goes on, with one it is the last ended outage.
+    pub unreachable_since_ms: Option<i64>,
+    /// The last outage's end; only with a kept `unreachable_since_ms`, never before it.
+    pub unreachable_until_ms: Option<i64>,
 }
 
 /// The status report's `dns_upstream`, stored through the known words only: an integer `rev` and
 /// `in_use` are needed, `since_ms` is kept when plausible (2000..2100), `reason` when it is a known
-/// word on a `backup` report. Never an address, whatever a launcher sends.
+/// word on a `backup` report; `unreachable_since_ms` when plausible, `unreachable_until_ms` only
+/// with it and not before it (design 67). Never an address, whatever a launcher sends.
 pub fn sanitize_dns_upstream(value: &serde_json::Value) -> Option<String> {
     const MIN_MS: i64 = 946_684_800_000; // 2000-01-01
     const MAX_MS: i64 = 4_102_444_800_000; // 2100-01-01
+    let plausible = |key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_i64)
+            .filter(|ms| (MIN_MS..MAX_MS).contains(ms))
+    };
     let rev = value.get("rev")?.as_i64()?;
     let in_use = value.get("in_use")?.as_str()?;
-    if !matches!(in_use, "custom" | "backup") {
+    if !matches!(in_use, "custom" | "backup" | "provider") {
         return None;
     }
-    let since_ms = value
-        .get("since_ms")
-        .and_then(serde_json::Value::as_i64)
-        .filter(|ms| (MIN_MS..MAX_MS).contains(ms));
     let reason = value
         .get("reason")
         .and_then(serde_json::Value::as_str)
         .filter(|word| in_use == "backup" && BACKUP_REASONS.contains(word))
         .map(str::to_string);
+    let unreachable_since_ms = plausible("unreachable_since_ms");
+    let unreachable_until_ms = plausible("unreachable_until_ms")
+        .filter(|until| unreachable_since_ms.is_some_and(|since| *until >= since));
     let state = DnsUpstreamState {
         rev,
         in_use: in_use.to_string(),
-        since_ms,
+        since_ms: plausible("since_ms"),
         reason,
+        unreachable_since_ms,
+        unreachable_until_ms,
     };
     serde_json::to_string(&state).ok()
 }
@@ -769,6 +782,8 @@ mod tests {
             in_use: in_use.to_string(),
             since_ms,
             reason: reason.map(str::to_string),
+            unreachable_since_ms: None,
+            unreachable_until_ms: None,
         };
         assert_eq!(
             kept(
@@ -794,6 +809,34 @@ mod tests {
                 json!({"rev": 2, "in_use": "backup", "since_ms": "x", "reason": "abc123.dns.example"})
             ),
             Some(state(2, "backup", None, None))
+        );
+        // Design 67: provider mode (its reason dropped) and the outage's two times - an end only
+        // with a kept start and not before it, both plausible.
+        let outage = |since, until| DnsUpstreamState {
+            unreachable_since_ms: since,
+            unreachable_until_ms: until,
+            ..state(0, "provider", None, None)
+        };
+        let t = 1_792_312_400_000_i64;
+        for (sent, stored) in [
+            (json!([t, t + 60_000]), outage(Some(t), Some(t + 60_000))),
+            (json!([t, null]), outage(Some(t), None)),
+            (json!([t, t - 1]), outage(Some(t), None)),
+            (json!([5, t]), outage(None, None)),
+            (json!([null, t]), outage(None, None)),
+            (json!(["10:42", "11:05"]), outage(None, None)),
+        ] {
+            assert_eq!(
+                kept(json!({"rev": 0, "in_use": "provider", "reason": "tls",
+                    "unreachable_since_ms": sent[0], "unreachable_until_ms": sent[1]})),
+                Some(stored),
+                "{sent}"
+            );
+        }
+        // A report stored before design 67 reads back without them.
+        assert_eq!(
+            parse_dns_upstream(Some(r#"{"rev":2,"in_use":"custom","since_ms":null,"reason":null}"#)),
+            Some(state(2, "custom", None, None))
         );
         for junk in [
             json!({"in_use": "custom"}),
