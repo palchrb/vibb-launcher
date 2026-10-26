@@ -828,15 +828,7 @@ async fn the_app_update_switch_saves_and_reaches_the_phone() {
     let app = TestApp::new().await;
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
-    async fn policy(app: &TestApp, token: String) -> serde_json::Value {
-        app.request(Method::GET, "/api/devices/policy", Some(&token), None)
-            .await
-            .json()
-    }
-    assert_eq!(
-        policy(&app, token.clone()).await["app_updates_wifi_only"],
-        true
-    );
+    assert_eq!(app.policy(&token).await["app_updates_wifi_only"], true);
     let page = app
         .get_page(&device_page(id, Section::Apps), &cookie)
         .await
@@ -857,10 +849,7 @@ async fn the_app_update_switch_saves_and_reaches_the_phone() {
     assert_redirect(&off, &device_page(id, Section::Apps), Some("downloads"));
     assert!(page.contains(r#"<section id="downloads""#));
     assert_eq!(nudges.try_recv().ok(), Some(id));
-    assert_eq!(
-        policy(&app, token.clone()).await["app_updates_wifi_only"],
-        false
-    );
+    assert_eq!(app.policy(&token).await["app_updates_wifi_only"], false);
     let page = app
         .get_page(&device_page(id, Section::Apps), &cookie)
         .await
@@ -877,7 +866,7 @@ async fn the_app_update_switch_saves_and_reaches_the_phone() {
         )
         .await;
     assert!(on.status.is_redirection());
-    assert_eq!(policy(&app, token).await["app_updates_wifi_only"], true);
+    assert_eq!(app.policy(&token).await["app_updates_wifi_only"], true);
 
     let unknown = app
         .request_form(

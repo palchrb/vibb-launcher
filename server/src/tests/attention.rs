@@ -2,24 +2,16 @@
 //! setting that should raise a row raises exactly that row on a phone that is otherwise clean,
 //! and the call report types every warning it writes.
 
-use axum::http::{Method, StatusCode};
 use serde_json::{Value, json};
 
 use super::{TestApp, tags};
 
-async fn report(app: &TestApp, token: &str, extra: Value) {
-    let mut body = json!({
-        "lock_reason": "NONE",
-        "kiosk_engaged": true,
-        "capabilities": ["time_rules_v1"],
-    });
-    for (key, value) in extra.as_object().unwrap() {
-        body[key] = value.clone();
-    }
-    let res = app
-        .request(Method::POST, "/api/devices/status", Some(token), Some(body))
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+/// A status report from a launcher with time rules (`extra`'s `capabilities` replace them).
+async fn report(app: &TestApp, token: &str, mut extra: Value) {
+    let keys = extra.as_object_mut().unwrap();
+    keys.entry("capabilities")
+        .or_insert_with(|| json!(["time_rules_v1"]));
+    app.post_status(token, extra).await;
 }
 
 /// An enrolled phone with a Parent PIN and a clean first report (a time-rules launcher): no

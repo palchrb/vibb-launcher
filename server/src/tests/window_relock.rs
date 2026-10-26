@@ -24,15 +24,11 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-async fn post_status(app: &TestApp, token: &str, extra: Value) {
-    let mut body = json!({ "lock_reason": "NONE", "kiosk_engaged": true, "capabilities": [CAP] });
-    for (key, value) in extra.as_object().unwrap() {
-        body[key] = value.clone();
-    }
-    let res = app
-        .request(Method::POST, "/api/devices/status", Some(token), Some(body))
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
+/// A status report from a launcher with [CAP] (`extra`'s `capabilities` replace it).
+async fn post_status(app: &TestApp, token: &str, mut extra: Value) {
+    let keys = extra.as_object_mut().unwrap();
+    keys.entry("capabilities").or_insert_with(|| json!([CAP]));
+    app.post_status(token, extra).await;
 }
 
 async fn events(app: &TestApp, event_type: &str) -> Vec<String> {

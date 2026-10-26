@@ -70,14 +70,6 @@ async fn commands(app: &TestApp, device: i64) -> Vec<(i64, Option<String>, bool,
     .unwrap()
 }
 
-async fn policy(app: &TestApp, token: &str) -> Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    res.json()
-}
-
 async fn receipt(app: &TestApp, token: &str, id: i64) {
     let res = app
         .request(
@@ -172,7 +164,7 @@ async fn install_now_queues_one_command_with_the_tag_and_the_pop_sends_it() {
     assert_eq!(rows[1].3, None);
 
     // The pop: release_tag only for Install Now.
-    let pending = policy(&app, &token).await["pending_command"].clone();
+    let pending = app.policy(&token).await["pending_command"].clone();
     assert_eq!(pending["command"], "install_update");
     assert_eq!(pending["release_tag"], TAG);
     assert!(pending.get("allow").is_none());
@@ -192,7 +184,7 @@ async fn install_now_queues_one_command_with_the_tag_and_the_pop_sends_it() {
         .execute(&app.db)
         .await
         .unwrap();
-    let ring = policy(&app, &token).await["pending_command"].clone();
+    let ring = app.policy(&token).await["pending_command"].clone();
     assert_eq!(ring["command"], "ring");
     assert!(ring.get("release_tag").is_none(), "{ring}");
 }
@@ -373,7 +365,7 @@ async fn cancel_stops_it_before_the_fetch_only() {
 
     // Fetched: too late.
     post(&app, &cookie, &install_uri(launcher, phone)).await;
-    let id = policy(&app, &token).await["pending_command"]["id"]
+    let id = app.policy(&token).await["pending_command"]["id"]
         .as_i64()
         .unwrap();
     let res = post(
@@ -475,7 +467,7 @@ async fn a_server_start_keeps_it_and_a_confirmed_one_works_for_25_hours() {
     crate::handlers::device_api::end_expiring_at_start(&app.db).await;
     assert_eq!(commands(&app, phone).await[0].3, None);
 
-    let id = policy(&app, &token).await["pending_command"]["id"]
+    let id = app.policy(&token).await["pending_command"]["id"]
         .as_i64()
         .unwrap();
     receipt(&app, &token, id).await;
@@ -563,7 +555,7 @@ async fn the_answer_shows_in_the_row() {
     let launcher = launcher(&app).await;
     let (phone, token) = behind_phone(&app, "Anna").await;
     post(&app, &cookie, &install_uri(launcher, phone)).await;
-    let pending = policy(&app, &token).await["pending_command"].clone();
+    let pending = app.policy(&token).await["pending_command"].clone();
     let id = pending["id"].as_i64().unwrap();
     receipt(&app, &token, id).await;
     let res = app
@@ -629,7 +621,7 @@ async fn release_tag_goes_only_with_install_now() {
     .execute(&app.db)
     .await
     .unwrap();
-    let pending = policy(&app, &token).await["pending_command"].clone();
+    let pending = app.policy(&token).await["pending_command"].clone();
     assert_eq!(pending["command"], "allow_blocked");
     assert!(pending["allow"].is_array(), "{pending}");
     assert!(pending.get("release_tag").is_none(), "{pending}");

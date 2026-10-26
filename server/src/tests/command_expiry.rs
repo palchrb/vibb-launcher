@@ -5,17 +5,9 @@
 //! enrollment.
 
 use axum::http::{Method, StatusCode};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::TestApp;
-
-async fn policy(app: &TestApp, token: &str) -> Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
-    res.json()
-}
 
 /// A command asked for `requested` (an SQL time expression), not delivered yet.
 async fn insert(app: &TestApp, device: i64, command: &str, requested: &str) -> i64 {
@@ -77,11 +69,11 @@ async fn a_pause_ring_stop_or_locate_expires_after_an_hour_at_the_boundary() {
     }
     let stop = insert(&app, device, "stop_ring", "datetime('now', '-59 minutes')").await;
     assert_eq!(
-        policy(&app, &token).await["pending_command"]["id"],
+        app.policy(&token).await["pending_command"]["id"],
         stop,
         "59 minutes: still sent; an hour and a second: never"
     );
-    assert!(policy(&app, &token).await["pending_command"].is_null());
+    assert!(app.policy(&token).await["pending_command"].is_null());
 }
 
 #[tokio::test]
@@ -92,10 +84,7 @@ async fn a_lock_or_wipe_waits_however_long_it_takes() {
     let wipe = insert(&app, device, "wipe", "datetime('now', '-20 days')").await;
     let again = insert(&app, device, "end_windows", "datetime('now', '-2 hours')").await;
     for expected in [lock, wipe, again] {
-        assert_eq!(
-            policy(&app, &token).await["pending_command"]["id"],
-            expected
-        );
+        assert_eq!(app.policy(&token).await["pending_command"]["id"], expected);
     }
 }
 
@@ -118,10 +107,10 @@ async fn an_expiring_command_is_never_sent_again_past_its_hour() {
         .unwrap();
     }
     assert_eq!(
-        policy(&app, &token).await["pending_command"]["command"],
+        app.policy(&token).await["pending_command"]["command"],
         "lock"
     );
-    assert!(policy(&app, &token).await["pending_command"].is_null());
+    assert!(app.policy(&token).await["pending_command"].is_null());
     let cookie = app.admin_cookie().await;
     let page = locate_page(&app, &cookie, device).await;
     assert!(
@@ -152,7 +141,7 @@ async fn a_cancelled_command_never_reaches_the_phone() {
         "back to Recent, where the line says it was cancelled"
     );
     // The newer lock still goes; the cancelled wipe never, also once time has passed.
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], lock);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], lock);
     sqlx::query(
         "UPDATE device_commands SET requested_at = datetime('now', '-1 days') WHERE id = ?",
     )
@@ -160,7 +149,7 @@ async fn a_cancelled_command_never_reaches_the_phone() {
     .execute(&app.db)
     .await
     .unwrap();
-    assert!(policy(&app, &token).await["pending_command"].is_null());
+    assert!(app.policy(&token).await["pending_command"].is_null());
     let page = app
         .get_page(
             &format!("/devices/locate?device={device}&cancel=done"),
@@ -212,7 +201,7 @@ async fn too_late_to_cancel() {
     let (other, _) = app.enrolled_device("sibling").await;
     report_receipts(&app, &token).await;
     let lock = insert(&app, device, "lock", "datetime('now')").await;
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], lock);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], lock);
     let too_late = Some(format!(
         "/devices/locate?device={device}&cancel=too_late#recent"
     ));
@@ -225,7 +214,7 @@ async fn too_late_to_cancel() {
     .execute(&app.db)
     .await
     .unwrap();
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], lock);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], lock);
 
     let expired = insert(&app, device, "ring", "datetime('now', '-2 hours')").await;
     assert_eq!(cancel(&app, &cookie, device, expired).await, too_late);
@@ -306,7 +295,7 @@ async fn the_locate_page_shows_waiting_expired_and_cancelled() {
         .await;
     assert_eq!(res.status, StatusCode::OK);
     let token = res.json()["device_token"].as_str().unwrap().to_string();
-    assert!(policy(&app, &token).await["pending_command"].is_null());
+    assert!(app.policy(&token).await["pending_command"].is_null());
     let page = locate_page(&app, &cookie, device).await;
     assert!(
         row(&page, "lock").contains("Never sent: the phone was set up again."),
@@ -404,14 +393,14 @@ async fn a_waiting_wipe_is_never_replaced() {
         .await
         .unwrap();
     assert_eq!(
-        policy(&app, &token).await["pending_command"]["command"],
+        app.policy(&token).await["pending_command"]["command"],
         "wipe"
     );
     assert_eq!(
-        policy(&app, &token).await["pending_command"]["command"],
+        app.policy(&token).await["pending_command"]["command"],
         "lock"
     );
-    assert!(policy(&app, &token).await["pending_command"].is_null());
+    assert!(app.policy(&token).await["pending_command"].is_null());
     let replaced: String = sqlx::query_scalar(
         "SELECT detail FROM security_events WHERE event_type = 'device_command_replaced'",
     )
@@ -441,7 +430,7 @@ async fn a_waiting_lock_is_never_replaced() {
     }
     for expected in ["lock", "lock", "wipe"] {
         assert_eq!(
-            policy(&app, &token).await["pending_command"]["command"],
+            app.policy(&token).await["pending_command"]["command"],
             expected
         );
     }
@@ -487,7 +476,7 @@ async fn an_enrollment_or_a_restart_ends_what_could_expire() {
     let locate = insert(&app, device, "locate", "datetime('now')").await;
     let wipe = insert(&app, device, "wipe", "datetime('now')").await;
     crate::handlers::device_api::end_expiring_at_start(&app.db).await;
-    assert_eq!(policy(&app, &token).await["pending_command"]["id"], wipe);
+    assert_eq!(app.policy(&token).await["pending_command"]["id"], wipe);
     // Not in Locate's Requests (no bucket of design 48 §1.4 holds it): the summary's Activity.
     let page = app
         .get_page(&format!("/devices/{device}"), &cookie)

@@ -8,30 +8,6 @@ use serde_json::{Value, json};
 
 use super::{Section, TestApp, assert_redirect, device_page};
 
-async fn policy(app: &TestApp, token: &str) -> Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK);
-    res.json()
-}
-
-async fn post_status(app: &TestApp, token: &str, extra: Value) {
-    let mut report = json!({ "lock_reason": "none", "kiosk_engaged": true });
-    for (key, value) in extra.as_object().unwrap() {
-        report[key] = value.clone();
-    }
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(token),
-            Some(report),
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
-}
-
 async fn kid_columns(app: &TestApp, id: i64) -> (Option<String>, Option<String>, Option<i64>) {
     sqlx::query_as(
         "SELECT kid_pin_hash, kid_pin_salt, kid_pin_length FROM device_policy WHERE device_id = ?",
@@ -100,7 +76,7 @@ async fn kid_pin_needs_an_override_pin_first() {
         )
     );
     assert_eq!(kid_columns(&app, id).await, (None, None, None));
-    assert!(policy(&app, &token).await["kid_lock"].is_null());
+    assert!(app.policy(&token).await["kid_lock"].is_null());
     assert!(!safe_boot(&app, id).await);
 
     let html = app.get_page(&location, &cookie).await.text();
@@ -140,7 +116,7 @@ async fn kid_pin_saved_sent_and_safe_boot_blocked() {
     .unwrap();
     assert!(since.is_some());
 
-    let policy = policy(&app, &token).await;
+    let policy = app.policy(&token).await;
     let kid_lock = &policy["kid_lock"];
     assert_eq!(kid_lock["pin_length"], 4);
     let hash = kid_lock["pin_hash"].as_str().unwrap();
@@ -212,7 +188,7 @@ async fn kid_and_override_pins_reject_each_other() {
     assert_eq!(kid_columns(&app, id).await.0, None);
 
     set_kid_pin(&app, &cookie, id, "654321").await;
-    let before = policy(&app, &token).await["override_pin_hash"].clone();
+    let before = app.policy(&token).await["override_pin_hash"].clone();
 
     // Override PIN = kid PIN: refused, the old override stays.
     let location = set_override(&app, &cookie, id, &[("new_pin", "654321")]).await;
@@ -220,7 +196,7 @@ async fn kid_and_override_pins_reject_each_other() {
         location.contains("notice=override_is_kid_pin"),
         "{location}"
     );
-    assert_eq!(policy(&app, &token).await["override_pin_hash"], before);
+    assert_eq!(app.policy(&token).await["override_pin_hash"], before);
 
     // The override can't be removed while the kid's lock needs it.
     let location = set_override(&app, &cookie, id, &[("clear_pin", "on")]).await;
@@ -228,12 +204,12 @@ async fn kid_and_override_pins_reject_each_other() {
         location.contains("notice=override_needed_by_lock"),
         "{location}"
     );
-    assert_eq!(policy(&app, &token).await["override_pin_hash"], before);
+    assert_eq!(app.policy(&token).await["override_pin_hash"], before);
 
     // A different override PIN is fine.
     let location = set_override(&app, &cookie, id, &[("new_pin", "9876543")]).await;
     assert!(location.contains("notice=parent_pin_saved"), "{location}");
-    assert_ne!(policy(&app, &token).await["override_pin_hash"], before);
+    assert_ne!(app.policy(&token).await["override_pin_hash"], before);
 }
 
 #[tokio::test]
@@ -243,7 +219,7 @@ async fn clearing_the_kid_pin_switches_the_lock_off() {
     let (id, token) = app.enrolled_device("phone").await;
     set_override(&app, &cookie, id, &[("new_pin", "246810")]).await;
     set_kid_pin(&app, &cookie, id, "1357").await;
-    assert!(policy(&app, &token).await["kid_lock"].is_object());
+    assert!(app.policy(&token).await["kid_lock"].is_object());
 
     let res = app
         .request_form(
@@ -258,7 +234,7 @@ async fn clearing_the_kid_pin_switches_the_lock_off() {
         &format!("{}?notice=cleared", device_page(id, Section::Lock)),
         Some("child-pin"),
     );
-    assert!(policy(&app, &token).await["kid_lock"].is_null());
+    assert!(app.policy(&token).await["kid_lock"].is_null());
     assert_eq!(kid_columns(&app, id).await, (None, None, None));
     assert_eq!(events(&app, "kid_pin_cleared").await, 1);
     // Now the override can go.
@@ -316,8 +292,7 @@ async fn lock_state_is_stored_sanitized_and_capped() {
         }
     };
 
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "lock_state": {
             "active": true, "inactive": null, "locked": true, "failures": 5,
@@ -335,10 +310,10 @@ async fn lock_state_is_stored_sanitized_and_capped() {
     assert!(json.get("pin").is_none(), "{json}");
 
     // Not an object, or an oversized `inactive`: nothing / capped.
-    post_status(&app, &token, json!({ "lock_state": "locked" })).await;
+    app.post_status(&token, json!({ "lock_state": "locked" }))
+        .await;
     assert_eq!(stored(&app).await, None);
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "lock_state": { "inactive": "x".repeat(10_000) } }),
     )
@@ -348,8 +323,7 @@ async fn lock_state_is_stored_sanitized_and_capped() {
 
     // Design r7 §1.1.3: `voip_rang` kept, a malformed entry dropped - never the rest of lock_state.
     let now = chrono::Utc::now().timestamp_millis();
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "lock_state": {
             "active": true, "locked": true, "failures": 1,
@@ -370,7 +344,8 @@ async fn lock_state_is_stored_sanitized_and_capped() {
         json!([{ "package": "org.thoughtcrime.securesms", "last_at_ms": now - 60_000 }])
     );
     // An older launcher sends none: an empty list.
-    post_status(&app, &token, json!({ "lock_state": { "active": true } })).await;
+    app.post_status(&token, json!({ "lock_state": { "active": true } }))
+        .await;
     let json: Value = serde_json::from_str(&stored(&app).await.unwrap()).unwrap();
     assert_eq!(json["voip_rang"], json!([]));
 }
@@ -383,9 +358,7 @@ async fn lock_page_says_which_apps_rang_over_the_lock() {
     set_override(&app, &cookie, id, &[("new_pin", "246810")]).await;
     set_kid_pin(&app, &cookie, id, "1357").await;
     let now = chrono::Utc::now().timestamp_millis();
-    post_status(
-        &app,
-        &token,
+    app.post_status(&token,
         json!({ "capabilities": ["pin_lock_v1"],
                 "installed_apps": [{ "package_name": "org.thoughtcrime.securesms", "label": "Signal" }],
                 "lock_state": { "active": true, "locked": true,
@@ -437,7 +410,8 @@ async fn lock_page_warns_about_the_lock_state() {
     set_override(&app, &cookie, id, &[("new_pin", "246810")]).await;
     set_kid_pin(&app, &cookie, id, "1357").await;
     // A launcher without the capability.
-    post_status(&app, &token, json!({ "capabilities": ["call_policy_v1"] })).await;
+    app.post_status(&token, json!({ "capabilities": ["call_policy_v1"] }))
+        .await;
     let html = lock_page(&app, &cookie, id).await;
     assert!(
         child_group(&html).contains("Vibb One needs an update"),
@@ -452,8 +426,7 @@ async fn lock_page_warns_about_the_lock_state() {
             "Android&#39;s screen lock is still on",
         ),
     ] {
-        post_status(
-            &app,
+        app.post_status(
             &token,
             json!({ "capabilities": ["pin_lock_v1"], "lock_state": { "inactive": inactive } }),
         )
@@ -470,9 +443,7 @@ async fn lock_page_warns_about_the_lock_state() {
         "{group}"
     );
 
-    post_status(
-        &app,
-        &token,
+    app.post_status(&token,
         json!({ "capabilities": ["pin_lock_v1"],
                 "lock_state": { "active": true, "locked": false, "failures": 2, "inactive": null } }),
     )
@@ -503,8 +474,7 @@ async fn in_call_ui_failure_is_a_call_warning() {
     let cookie = app.admin_cookie().await;
     let (id, token) = app.enrolled_device("phone").await;
     let at = chrono::Utc::now().to_rfc3339();
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "capabilities": ["call_policy_v1"],
                 "call_state": { "state": "unmanaged", "in_call_ui_failed_at": at } }),

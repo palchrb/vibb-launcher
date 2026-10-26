@@ -621,22 +621,6 @@ async fn admin_cookie_logs_in_through_password_and_totp() {
     assert!(res.status.is_redirection());
 }
 
-async fn post_status(app: &TestApp, token: &str, extra: serde_json::Value) {
-    let mut report = json!({ "lock_reason": "none", "kiosk_engaged": true });
-    for (key, value) in extra.as_object().unwrap() {
-        report[key] = value.clone();
-    }
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(token),
-            Some(report),
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
-}
-
 async fn device_page(app: &TestApp, id: i64) -> String {
     let response = crate::handlers::devices::view_device(
         axum::extract::State(app.state.clone()),
@@ -653,8 +637,7 @@ async fn device_page(app: &TestApp, id: i64) -> String {
 async fn status_report_stores_policy_state_and_pause() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "policy_state": "cache_corrupt", "restrictions_paused": true }),
     )
@@ -699,7 +682,7 @@ async fn about_page(app: &TestApp, id: i64) -> String {
 async fn status_report_from_older_launcher_has_no_warnings() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    post_status(&app, &token, json!({})).await;
+    app.post_status(&token, json!({})).await;
 
     let (state, paused): (Option<String>, bool) = sqlx::query_as(
         "SELECT policy_state, restrictions_paused FROM device_status WHERE device_id = ?",
@@ -711,7 +694,8 @@ async fn status_report_from_older_launcher_has_no_warnings() {
     assert_eq!(state, None);
     assert!(!paused);
 
-    post_status(&app, &token, json!({ "policy_state": "ok" })).await;
+    app.post_status(&token, json!({ "policy_state": "ok" }))
+        .await;
     let page = device_page(&app, id).await;
     assert!(!page.contains("apply its settings"));
     assert!(!page.contains("All restrictions are paused"));
@@ -797,14 +781,14 @@ async fn heartbeat_bootstraps_only_a_null_allowlist() {
         { "package_name": "com.android.deskclock", "label": "Clock" },
     ] });
 
-    post_status(&app, &token, apps.clone()).await;
+    app.post_status(&token, apps.clone()).await;
     assert_eq!(
         allowlist_json(&app, id).await.as_deref(),
         Some(r#"["com.android.deskclock"]"#)
     );
 
     set_allowlist_json(&app, id, Some("[]")).await;
-    post_status(&app, &token, apps).await;
+    app.post_status(&token, apps).await;
     assert_eq!(allowlist_json(&app, id).await.as_deref(), Some("[]"));
 }
 
@@ -812,7 +796,8 @@ async fn heartbeat_bootstraps_only_a_null_allowlist() {
 async fn server_error_policy_state_is_shown() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    post_status(&app, &token, json!({ "policy_state": "server_error" })).await;
+    app.post_status(&token, json!({ "policy_state": "server_error" }))
+        .await;
     let about = about_page(&app, id).await;
     assert!(about.contains(">Server error</span>"), "{about}");
     assert!(
@@ -901,7 +886,8 @@ async fn screen_timeout_policy_form_and_report() {
     assert!(page.contains("<option value=\"60\" selected>1 minute</option>"));
     assert!(!page.contains("data-row=\"timeout-applied\""));
     // The phone runs another value (it takes the new one at its next sync): shown.
-    post_status(&app, &token, json!({ "screen_timeout_seconds": 120 })).await;
+    app.post_status(&token, json!({ "screen_timeout_seconds": 120 }))
+        .await;
     let page = lock().await;
     let applied = &page[page.find("data-row=\"timeout-applied\"").expect("the row")..];
     assert!(
@@ -909,10 +895,12 @@ async fn screen_timeout_policy_form_and_report() {
         "{page}"
     );
     // The same value: nothing to say.
-    post_status(&app, &token, json!({ "screen_timeout_seconds": 60 })).await;
+    app.post_status(&token, json!({ "screen_timeout_seconds": 60 }))
+        .await;
     assert!(!lock().await.contains("timeout-applied"));
     // An implausible report isn't stored.
-    post_status(&app, &token, json!({ "screen_timeout_seconds": -5 })).await;
+    app.post_status(&token, json!({ "screen_timeout_seconds": -5 }))
+        .await;
     assert!(!lock().await.contains("timeout-applied"));
 }
 

@@ -8,14 +8,6 @@ use serde_json::{Value, json};
 use super::settings_pages::part;
 use super::{TestApp, assert_redirect, tags};
 
-async fn policy(app: &TestApp, token: &str) -> Value {
-    let res = app
-        .request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await;
-    assert_eq!(res.status, StatusCode::OK);
-    res.json()
-}
-
 async fn set_managed(app: &TestApp, device_id: i64, calls: bool, sms: bool) {
     sqlx::query(
         "UPDATE device_policy SET calls_managed = 1, calls_enabled = ?, sms_enabled = ? \
@@ -71,7 +63,7 @@ async fn unmanaged_policy_has_explicit_managed_false() {
     // Contacts attached to an unmanaged device are not sent.
     attach(&app, id, "Mamma", "+4791234567", [true, true, true], 0).await;
 
-    let call_policy = &policy(&app, &token).await["call_policy"];
+    let call_policy = &app.policy(&token).await["call_policy"];
     assert_eq!(call_policy["managed"], json!(false));
     assert_eq!(call_policy["contacts"], json!([]));
     assert_eq!(call_policy["default_country_code"], json!("47"));
@@ -93,7 +85,7 @@ async fn managed_policy_lists_contacts_with_flags_in_order() {
     .await
     .unwrap();
 
-    let call_policy = policy(&app, &token).await["call_policy"].clone();
+    let call_policy = app.policy(&token).await["call_policy"].clone();
     assert_eq!(call_policy["managed"], json!(true));
     assert_eq!(call_policy["calls_enabled"], json!(true));
     assert_eq!(call_policy["sms_enabled"], json!(false));
@@ -126,7 +118,7 @@ async fn contacts_of_other_devices_are_not_sent() {
     set_managed(&app, b, true, true).await;
     attach(&app, b, "Stranger", "+4790000009", [true, true, true], 0).await;
     assert_eq!(
-        policy(&app, &token_a).await["call_policy"]["contacts"],
+        app.policy(&token_a).await["call_policy"]["contacts"],
         json!([])
     );
 }
@@ -489,7 +481,7 @@ async fn settings_form_missing_checkbox_means_false() {
         )
         .await;
     assert!(res.status.is_redirection());
-    let call_policy = policy(&app, &token).await["call_policy"].clone();
+    let call_policy = app.policy(&token).await["call_policy"].clone();
     assert_eq!(call_policy["managed"], json!(true));
     assert_eq!(call_policy["calls_enabled"], json!(true));
     assert_eq!(call_policy["sms_enabled"], json!(false));
@@ -504,7 +496,7 @@ async fn settings_form_missing_checkbox_means_false() {
     // Everything unchecked: unmanaged, explicitly.
     app.request_form(Method::POST, &uri, Some(&cookie), &[])
         .await;
-    let call_policy = policy(&app, &token).await["call_policy"].clone();
+    let call_policy = app.policy(&token).await["call_policy"].clone();
     assert_eq!(call_policy["managed"], json!(false));
 
     let res = app
@@ -605,7 +597,7 @@ async fn default_country_code_is_validated_and_used() {
     }
     assert!(nudges.try_recv().is_err(), "a refusal nudges nobody");
     assert_eq!(
-        policy(&app, &token).await["call_policy"]["default_country_code"],
+        app.policy(&token).await["call_policy"]["default_country_code"],
         json!("47")
     );
     // An older Calls page's form (`device_id`) lands on Phone Setup too.
@@ -627,7 +619,7 @@ async fn default_country_code_is_validated_and_used() {
     );
     assert_eq!(nudges.try_recv().ok(), Some(id));
     assert_eq!(
-        policy(&app, &token).await["call_policy"]["default_country_code"],
+        app.policy(&token).await["call_policy"]["default_country_code"],
         json!("46")
     );
     let html = app
@@ -691,22 +683,6 @@ async fn device_page_summarises_calls() {
 // Status report: capabilities and call state, and the warnings built from them.
 // ---------------------------------------------------------------------------------------------
 
-async fn post_status(app: &TestApp, token: &str, extra: Value) {
-    let mut report = json!({ "lock_reason": "none", "kiosk_engaged": true });
-    for (key, value) in extra.as_object().unwrap() {
-        report[key] = value.clone();
-    }
-    let res = app
-        .request(
-            Method::POST,
-            "/api/devices/status",
-            Some(token),
-            Some(report),
-        )
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT);
-}
-
 fn good_call_state() -> Value {
     json!({
         "state": "managed",
@@ -732,8 +708,7 @@ async fn calls_page(app: &TestApp, cookie: &str, id: i64) -> String {
 async fn status_stores_capabilities_and_call_state() {
     let app = TestApp::new().await;
     let (id, token) = app.enrolled_device("phone").await;
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
     )
@@ -750,7 +725,8 @@ async fn status_stores_capabilities_and_call_state() {
     assert_eq!(call_state, good_call_state());
 
     // An older launcher sends neither; a non-object call_state is not stored.
-    post_status(&app, &token, json!({ "call_state": "garbage" })).await;
+    app.post_status(&token, json!({ "call_state": "garbage" }))
+        .await;
     let (caps, call_state): (Option<String>, Option<String>) = sqlx::query_as(
         "SELECT capabilities_json, call_state_json FROM device_status WHERE device_id = ? \
          ORDER BY id DESC LIMIT 1",
@@ -788,13 +764,12 @@ async fn calls_page_warns_without_capability() {
     let (id, token) = app.enrolled_device("phone").await;
     set_managed(&app, id, true, true).await;
 
-    post_status(&app, &token, json!({})).await;
+    app.post_status(&token, json!({})).await;
     let page = calls_page(&app, &cookie, id).await;
     assert!(page.contains("Calls aren&#39;t screened"), "{page}");
     assert!(page.contains("too old to screen calls"), "{page}");
 
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
     )
@@ -803,7 +778,7 @@ async fn calls_page_warns_without_capability() {
     assert_eq!(warnings(&page), 0, "{page}");
 
     // QA #22: a launcher that used to enforce calls and stops reporting it.
-    post_status(&app, &token, json!({})).await;
+    app.post_status(&token, json!({})).await;
     let page = calls_page(&app, &cookie, id).await;
     assert!(
         page.contains("stopped reporting that it screens calls"),
@@ -838,8 +813,7 @@ async fn calls_page_shows_role_problems_and_fail_closed() {
     call_state["last_error"] = json!("setDefaultDialerApplication: IllegalArgumentException");
     call_state["call_log_readable"] = json!(false);
     call_state["boot_policy"] = json!("write_failed");
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
     )
@@ -916,8 +890,7 @@ async fn calls_page_says_whether_incoming_calls_are_filtered() {
         if let Some(held) = held {
             call_state["screening_role_held"] = json!(held);
         }
-        post_status(
-            &app,
+        app.post_status(
             &token,
             json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
         )
@@ -964,8 +937,7 @@ async fn allowlisted_messages_app_with_sms_off_is_flagged() {
         .execute(&app.db)
         .await
         .unwrap();
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "capabilities": ["call_policy_v1"], "call_state": good_call_state() }),
     )
@@ -1004,8 +976,7 @@ async fn emergency_call_is_shown_on_the_device_page() {
     let mut call_state = good_call_state();
     call_state["last_emergency_call_at"] = json!(called.to_rfc3339());
     call_state["callback_window_until"] = json!(until.to_rfc3339());
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
     )
@@ -1038,8 +1009,7 @@ async fn emergency_call_is_shown_on_the_device_page() {
     let mut call_state = good_call_state();
     call_state["last_emergency_call_at"] = json!((now - chrono::Duration::days(8)).to_rfc3339());
     call_state["callback_window_until"] = json!((now - chrono::Duration::days(8)).to_rfc3339());
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
     )
@@ -1229,8 +1199,7 @@ async fn the_calls_page_escapes_what_it_shows() {
     .unwrap();
     let mut call_state = good_call_state();
     call_state["last_error"] = json!("<img src=x onerror=alert(1)>");
-    post_status(
-        &app,
+    app.post_status(
         &token,
         json!({ "capabilities": ["call_policy_v1"], "call_state": call_state }),
     )

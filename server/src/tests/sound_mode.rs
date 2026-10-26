@@ -2,27 +2,10 @@
 //! ringer mode and Do Not Disturb filter from every status report show on About This Phone. Touch
 //! sounds and vibration (design r9 §4) are bit 16 of the same mask.
 
-use axum::http::{Method, StatusCode};
-use serde_json::{Value, json};
+use axum::http::Method;
+use serde_json::json;
 
 use super::{Section, TestApp, device_page};
-
-async fn policy(app: &TestApp, token: &str) -> Value {
-    app.request(Method::GET, "/api/devices/policy", Some(token), None)
-        .await
-        .json()
-}
-
-async fn report(app: &TestApp, token: &str, extra: Value) {
-    let mut body = json!({ "lock_reason": "NONE", "kiosk_engaged": true });
-    for (key, value) in extra.as_object().unwrap() {
-        body[key] = value.clone();
-    }
-    let res = app
-        .request(Method::POST, "/api/devices/status", Some(token), Some(body))
-        .await;
-    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
-}
 
 async fn stored(app: &TestApp, id: i64) -> (Option<String>, Option<String>) {
     sqlx::query_as(
@@ -60,7 +43,7 @@ async fn the_sound_bit_saves_and_reaches_the_phone() {
     // Back to its group (§5.1.4); scroll-restore keeps the place (no jump to the top).
     super::assert_redirect(&res, &home, Some("quick-controls"));
     assert_eq!(
-        policy(&app, &token).await["quick_controls_mask"],
+        app.policy(&token).await["quick_controls_mask"],
         json!(1 | 8)
     );
     let html = app.get_page(&home, &cookie).await.text();
@@ -78,7 +61,7 @@ async fn the_sound_bit_saves_and_reaches_the_phone() {
         &[("section", "quick"), ("quick_control_wifi", "on")],
     )
     .await;
-    assert_eq!(policy(&app, &token).await["quick_controls_mask"], json!(1));
+    assert_eq!(app.policy(&token).await["quick_controls_mask"], json!(1));
     let html = app.get_page(&home, &cookie).await.text();
     assert_eq!(
         super::input_checked(&html, "quick_control_sound", "on"),
@@ -117,7 +100,7 @@ async fn the_touch_bit_saves_reaches_the_phone_and_starts_off() {
     let res = save(true).await;
     super::assert_redirect(&res, &home, Some("quick-controls"));
     assert_eq!(
-        policy(&app, &token).await["quick_controls_mask"],
+        app.policy(&token).await["quick_controls_mask"],
         json!(1 | 16)
     );
     let html = app.get_page(&home, &cookie).await.text();
@@ -131,7 +114,7 @@ async fn the_touch_bit_saves_reaches_the_phone_and_starts_off() {
     ));
 
     save(false).await;
-    assert_eq!(policy(&app, &token).await["quick_controls_mask"], json!(1));
+    assert_eq!(app.policy(&token).await["quick_controls_mask"], json!(1));
     let html = app.get_page(&home, &cookie).await.text();
     assert_eq!(
         super::input_checked(&html, "quick_control_touch", "on"),
@@ -167,13 +150,12 @@ async fn sound_state_is_stored_and_shown() {
     };
 
     // An older launcher: no fields, nothing shown.
-    report(&app, &token, json!({})).await;
+    app.post_status(&token, json!({})).await;
     assert_eq!(stored(&app, id).await, (None, None));
     let html = page(id).await;
     assert!(!html.contains("id=\"sound\""), "{html}");
 
-    report(
-        &app,
+    app.post_status(
         &token,
         json!({ "ringer_mode": "vibrate", "interruption_filter": "priority" }),
     )
@@ -201,8 +183,7 @@ async fn sound_state_is_stored_and_shown() {
     assert!(!page(other).await.contains("id=\"sound\""));
 
     // Off and on are plain rows.
-    report(
-        &app,
+    app.post_status(
         &token,
         json!({ "ringer_mode": "normal", "interruption_filter": "all" }),
     )
@@ -213,8 +194,7 @@ async fn sound_state_is_stored_and_shown() {
     assert!(!html.contains("row-value-alarm"), "{html}");
 
     // Unknown values (and explicit nulls) are stored as NULL, never shown.
-    report(
-        &app,
+    app.post_status(
         &token,
         json!({ "ringer_mode": "<b>loud</b>", "interruption_filter": null }),
     )
