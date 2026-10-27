@@ -1321,9 +1321,13 @@ man er inne på en device". Branch `pwa-fixes-b`.
   `lang()`, and `t`, `tp`, `tc` as default methods), so the page and the partials it includes (`head`, `tab_bar`,
   `bell`) say `{{ self.t("…") }}`, `{{ self.tp("…", [("name", value.as_str())]) }}` (no `&` before the array: Askama
   references an argument) and `{{ self.tc("…", n, []) }}`; the module that first calls one imports
-  `crate::i18n::Words`. Every page sets `<html lang="{{ lang.code() }}">` (the `<html>` tag is the page's own, before
-  `head.html`). A handler takes `lang: Lang` as an extractor and hands it to the helper that builds the page. Since
+  `crate::i18n::Words`. A moved page sets `<html lang="{{ lang.code() }}">` (the `<html>` tag is the page's own, before
+  `head.html`); a page still in English keeps `lang="en"` until its slice-3 PR moves its words and flips it
+  (qa-s-i18n-1-code L1), so a screen reader never reads English text with a Norwegian voice. A handler takes `lang: Lang` as an extractor and hands it to the helper that builds the page. Since
   slice 1 every template struct has it (`/sw.js` has no words, §4: its template is the one without); Device ›
   Calendar, its rule editor, its preview and the summary's Calendar row (`calendar.md`) and Settings › Account (with
-  its Parents group, `parents::rows`) are worded; the other pages stay English until their slice. **No new
+  its Parents group, `parents::rows`) are worded; the other pages stay English until their slice. One English sentence
+  is left on Account until slice 3a: the "Wrong codes before this sign-in" banner, which `admin_auth::login_warning`
+  builds at sign-in and the session keeps as text (3a keeps the count and addresses instead, worded by the page, with
+  the Devices list's row). **No new
   user-facing word is hardcoded** (the user, 2026-10-26).

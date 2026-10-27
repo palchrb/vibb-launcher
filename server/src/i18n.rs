@@ -17,7 +17,7 @@ use axum::response::{IntoResponse, Response};
 
 use crate::security::CurrentAdmin;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Lang {
     #[default]
     En,
@@ -77,10 +77,12 @@ impl Lang {
                 .unwrap_or_default()
                 .trim()
                 .to_ascii_lowercase();
+            // No q is 1; a q that isn't a number from 0 to 1 counts as 0 - the entry is ignored.
             let q = pieces
                 .find_map(|p| p.trim().strip_prefix("q="))
-                .and_then(|q| q.trim().parse::<f32>().ok())
-                .unwrap_or(1.0);
+                .map_or(Some(1.0), |q| q.trim().parse::<f32>().ok())
+                .filter(|q| (0.0..=1.0).contains(q))
+                .unwrap_or(0.0);
             let primary = tag.split('-').next().unwrap_or_default();
             let lang = match primary {
                 "nb" | "nn" | "no" => Lang::Nb,
@@ -128,13 +130,21 @@ impl<S: Send + Sync> FromRequestParts<S> for Lang {
     }
 }
 
-/// The text of `key` in `lang`; the key itself when the catalog lacks it (visible on the page, and logged - the tests
-/// keep that from happening).
+/// The text of `key` in `lang`; the key itself when the catalog lacks it (visible on the page, and logged once per key
+/// and language - the tests keep that from happening).
 pub fn t(lang: Lang, key: &str) -> &str {
     match lang.catalog().get(key) {
         Some(text) => text,
         None => {
-            tracing::warn!(key, lang = lang.code(), "no such i18n key");
+            static WARNED: LazyLock<std::sync::Mutex<std::collections::HashSet<(Lang, String)>>> =
+                LazyLock::new(Default::default);
+            let first = WARNED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert((lang, key.to_string()));
+            if first {
+                tracing::warn!(key, lang = lang.code(), "no such i18n key");
+            }
             key
         }
     }
@@ -315,6 +325,14 @@ mod tests {
                     );
                     used += 1;
                 }
+                // `i18n::error(lang, status, "…")`: its key is the third argument, maybe a line down.
+                for (i, _) in text.match_indices("i18n::error(") {
+                    let args = &text[i..i + text[i..].find(')').unwrap()];
+                    if let Some((_, rest)) = args.split_once('"') {
+                        let key = &rest[..rest.find('"').unwrap()];
+                        assert!(exists(key), "{}: {key} is in no catalog", path.display());
+                    }
+                }
                 // The call forms name a key in any namespace (a typo in its first segment too).
                 for marker in [
                     "self.t(\"",
@@ -348,6 +366,10 @@ mod tests {
             (Some("de, nb;q=0.3"), Lang::Nb),
             (Some("sv,da"), Lang::En),
             (Some("nb;q=0"), Lang::En),
+            // A q that isn't a number from 0 to 1 is ignored (qa-s-i18n-1-code Nit 2).
+            (Some("nb;q=abc, en;q=0.9"), Lang::En),
+            (Some("nb;q=5, en;q=0.1"), Lang::En),
+            (Some("en;q=, nb;q=0.2"), Lang::Nb),
         ] {
             assert_eq!(Lang::from_accept_language(header), lang, "{header:?}");
         }
@@ -420,13 +442,20 @@ mod tests {
         );
     }
 
-    /// Each `{name}` is filled in one pass: a value is never scanned again.
+    /// Each `{name}` is filled in one pass: a value is never scanned again - not for its own name, and not for
+    /// another param's (a `replace` per param would fill a name that says "{until}" with the time).
     #[test]
     fn parameters_are_filled_once() {
         assert_eq!(
             t_params(Lang::En, "calendar.rules.skipped", &[("ids", "{ids} #1")]),
             "The phone's Vibb One can't use rule {ids} #1 yet and leaves it out."
         );
+        let hint = t_params(
+            Lang::En,
+            "account.otp.hint",
+            &[("name", "{until}"), ("until", "14:05")],
+        );
+        assert!(hint.contains("until 14:05; {until} sets"), "{hint}");
     }
 
     #[test]

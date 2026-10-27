@@ -858,6 +858,21 @@ pub async fn require_full_auth(
             if admin.lang.is_none() {
                 admin.lang = store_first_lang(&state.db, admin.id, request.headers()).await;
             }
+            // Past here `CurrentAdmin.lang` is always a language this server has: a value it can't read (a
+            // rollback from a build with another language; kept in the row) or a failed store reads as the
+            // header's, as the extractor would - so Account's select always has one selected (qa-s-i18n-1-code L3).
+            if admin
+                .lang
+                .as_deref()
+                .and_then(crate::i18n::Lang::from_code)
+                .is_none()
+            {
+                admin.lang = Some(
+                    crate::i18n::Lang::of_headers(request.headers())
+                        .code()
+                        .to_string(),
+                );
+            }
             request.extensions_mut().insert(CurrentAdmin(admin));
             next.run(request).await
         }

@@ -52,8 +52,8 @@ Deliberately mirrors `board-game-tracker` (another self-hosted Pi app by the sam
   Settings › Account › Language changes it (`POST /account/language`). `t(lang, key)` (a missing key reads as the key,
   logged), `t_params` (one pass), `t_count` (`.one`/`.other`, `Lang::plural_form`), `i18n::error(lang, status, key)`
   (a plain-text answer), over `src/i18n/en.json` and `nb.json` compiled in; every template struct has `lang: Lang`
-  and `impl Words` (`i18n::words!`; `self.t`/`self.tp`/`self.tc`), every page `<html lang="{{ lang.code() }}">`.
-  `i18n::tests` keeps both catalogs' keys and parameters equal, the plural pairs, no markup, and every used key
+  and `impl Words` (`i18n::words!`; `self.t`/`self.tp`/`self.tc`), every moved page `<html lang="{{ lang.code() }}">`
+  (the others keep `lang="en"` until their slice). `i18n::tests` keeps both catalogs' keys and parameters equal, the plural pairs, no markup, and every used key
   present. **No new user-facing word is hardcoded** (the user, 2026-10-26): new pages go through it (design 69's
   Calendar pages and Account are moved; round S-i18n, design 70, moves the rest; `docs/notes/server/pwa.md`, "Words").
 - **Hosting target:** Raspberry Pi Zero 2 W (or similar aarch64 board), or any x86_64 Linux box: every `server-v*` tag builds the static `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl` binaries, each natively on a runner of its own architecture (root `.github/workflows/server-release.yml`, plain `cargo build --target`, `musl-tools`; no `cross` since 2026-10-25), and publishes a tarball for each - `deploy/install.sh` downloads the newest `server-v*` release's tarball for `uname -m` and sets up a systemd service

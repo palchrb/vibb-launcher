@@ -13,7 +13,7 @@ use axum::response::{Html, IntoResponse};
 use crate::AppState;
 use crate::handlers::settings::Flash;
 use crate::handlers::{system_maintenance, system_update};
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 
 #[derive(Template)]
 #[template(path = "updates.html")]

@@ -1810,7 +1810,8 @@ async fn get_in(app: &TestApp, uri: &str, cookie: &str, accept: Option<&str>) ->
 
 /// Design 70 §3, §8: each parent's own language. NULL until the first signed-in request stores its
 /// `Accept-Language` (once; never `?lang=`), `?lang=` wins for one request, the Account row saves it (a save in the
-/// log, back at #language in the new language), a bad one is a 400.
+/// log, back at #language in the new language), a bad one is a 400. The store's `AND lang IS NULL` (two first requests
+/// racing) stays untested here: the requests run one at a time, so no test can lose the race (qa-s-i18n-1-code L4).
 #[tokio::test]
 async fn language_is_each_parents() {
     let app = TestApp::new().await;
@@ -1855,9 +1856,15 @@ async fn language_is_each_parents() {
     let en = get_in(&app, "/account", &pappa, Some("nb")).await.text();
     assert!(en.contains(r#"<html lang="en">"#) && en.contains("Account &#38; Parents"));
     assert!(en.contains(r#"<option value="en" lang="en" selected>English</option>"#));
-    let once = get_in(&app, "/devices?lang=nb", &pappa, None).await.text();
+    // The select shows the account's language, never the request's.
+    let once = get_in(&app, "/account?lang=nb", &pappa, None).await.text();
     assert!(once.contains(r#"<html lang="nb">"#));
+    assert!(once.contains(r#"<option value="en" lang="en" selected>English</option>"#));
+    assert!(!once.contains(r#"lang="nb" selected"#));
     assert_eq!(stored("pappa").await.as_deref(), Some("en"));
+    // A page not moved yet keeps lang="en" over its English words (qa-s-i18n-1-code L1).
+    let unmoved = get_in(&app, "/devices?lang=nb", &pappa, None).await.text();
+    assert!(unmoved.contains(r#"<html lang="en">"#));
     // An unknown `?lang=` is ignored.
     let ignored = get_in(&app, "/account?lang=zz", &pappa, None).await.text();
     assert!(ignored.contains(r#"<html lang="en">"#));
@@ -1889,6 +1896,27 @@ async fn language_is_each_parents() {
     // Mamma stays Norwegian; her choice is hers.
     assert_eq!(stored("parent").await.as_deref(), Some("nb"));
 
+    // A stored language this server can't read (a rollback from a build with another one) is kept, and the select
+    // shows the browser's, so choosing it saves (qa-s-i18n-1-code L3).
+    sqlx::query("UPDATE admin_users SET lang = 'de' WHERE username = 'parent'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for (accept, shown) in [("en", "en"), ("nb", "nb")] {
+        let page = get_in(&app, "/account", &mamma, Some(accept)).await.text();
+        assert!(
+            page.contains(&format!(r#"<html lang="{shown}">"#)),
+            "{accept}"
+        );
+        assert!(
+            page.contains(&format!(
+                r#"<option value="{shown}" lang="{shown}" selected>"#
+            )),
+            "{accept}"
+        );
+    }
+    assert_eq!(stored("parent").await.as_deref(), Some("de"));
+
     // A language this server doesn't have: 400 in the page's language, nothing written.
     for bad in ["zz", "", "NB"] {
         let res = app
@@ -1900,7 +1928,7 @@ async fn language_is_each_parents() {
             )
             .await;
         assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad:?}");
-        assert_eq!(res.text(), "Ikke et språk denne serveren har.");
+        assert_eq!(res.text(), "Denne serveren har ikke det språket.");
     }
     assert_eq!(stored("pappa").await.as_deref(), Some("nb"));
 
@@ -1921,4 +1949,20 @@ async fn language_is_each_parents() {
         "Avvist: dette skjemaet ble sendt fra et annet nettsted."
     );
     assert_eq!(stored("pappa").await.as_deref(), Some("nb"));
+}
+
+/// A language save held past a Reset (another session's epoch bump) writes nothing and signs out
+/// (qa-s-i18n-1-code L4), as the Name's.
+#[tokio::test]
+async fn held_language_save_cant_outlive_a_reset() {
+    let app = TestApp::new().await;
+    app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    app.get_page("/devices", &pappa).await;
+    assert_eq!(account(&app, "pappa").await.lang.as_deref(), Some("en"));
+    let (tx, task) = held(&app, "/account/language", &pappa).await;
+    reset_by_sql(&app, "pappa").await;
+    let answer = release(tx, task, "lang=nb").await;
+    assert_eq!(location(&answer), Some("/login"));
+    assert_eq!(account(&app, "pappa").await.lang.as_deref(), Some("en"));
 }

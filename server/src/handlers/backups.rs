@@ -18,7 +18,7 @@ use std::io::Write;
 
 use crate::AppState;
 use crate::handlers::settings::Flash;
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Words};
 use crate::security::{self, CurrentAdmin};
 
 /// The backups' folder in `AppState::data_dir` (`data/backups`).
