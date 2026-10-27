@@ -171,6 +171,53 @@ class NotificationRuleTest {
     }
 
     @Test
+    fun `a keep is logged by its reason - never the phone-wide ones, once for the flag ones, 1st 10th 100th for the rest`() {
+        for (reason in NAG_KEEP_SILENT) assertTrue(reason.name, (1..1000).none { keepLogDue(reason, it) })
+        for (reason in NAG_KEEP_ONCE) assertEquals(reason.name, listOf(1), (1..1000).filter { keepLogDue(reason, it) })
+        for (reason in listOf(NagKeep.ESSENTIAL_PACKAGE, NagKeep.ESSENTIAL_CATEGORY, NagKeep.ESSENTIAL_CHANNEL, NagKeep.ALLOWED)) {
+            assertEquals(reason.name, listOf(1, 10, 100, 1000), (1..1000).filter { keepLogDue(reason, it) })
+        }
+        // Every reason is in exactly one of the three groups.
+        assertEquals(NagKeep.entries.toSet(), NAG_KEEP_SILENT + NAG_KEEP_ONCE + setOf(NagKeep.ESSENTIAL_PACKAGE, NagKeep.ESSENTIAL_CATEGORY, NagKeep.ESSENTIAL_CHANNEL, NagKeep.ALLOWED))
+    }
+
+    @Test
+    fun `an ALLOWED line names the set that allowed the package`() {
+        val parts = policy.copy(allowlist = setOf("org.example.chat", "both"), messaging = setOf("org.thoughtcrime.securesms", "both"), lockUsable = setOf("usable"))
+        assertEquals("allowlist", allowedBy(parts, "org.example.chat"))
+        assertEquals("messaging", allowedBy(parts, "org.thoughtcrime.securesms"))
+        assertEquals("lock-usable", allowedBy(parts, "usable"))
+        assertEquals("allowlist+messaging", allowedBy(parts, "both"))
+        assertEquals("unknown", allowedBy(policy, "org.example.chat"))
+        assertEquals("unknown", allowedBy(null, "org.example.chat"))
+    }
+
+    @Test
+    fun `keep counts run per (package, channel, reason) for the process and forget the oldest triple`() {
+        val keeps = KeepCounts(maxKeys = 2)
+        assertEquals(1, keeps.record(gms, "welcome", "ALLOWED"))
+        assertEquals(2, keeps.record(gms, "welcome", "ALLOWED"))
+        assertEquals(1, keeps.record(gms, "welcome", "ESSENTIAL_PACKAGE"))
+        assertEquals(1, keeps.record(gms, "other", "ALLOWED"))
+        // The (gms, welcome, ALLOWED) triple was the oldest: it starts over, never stays silent.
+        assertEquals(1, keeps.record(gms, "welcome", "ALLOWED"))
+    }
+
+    @Test
+    fun `the post-cancel check - the platform kept it only when the same post is still there, at most 8 checks wait`() {
+        assertTrue(platformKeptAfterCancel(activePostTime = 500L, cancelledPostTime = 500L))
+        assertFalse("gone", platformKeptAfterCancel(activePostTime = null, cancelledPostTime = 500L))
+        assertFalse("the app re-posted after our cancel", platformKeptAfterCancel(activePostTime = 900L, cancelledPostTime = 500L))
+        val checks = PostCancelChecks()
+        assertEquals(POST_CANCEL_CHECKS_MAX, (0 until 20).count { checks.take() })
+        checks.done()
+        assertTrue(checks.take())
+        assertFalse(checks.take())
+        checks.clear()
+        assertTrue(checks.take())
+    }
+
+    @Test
     fun `a group summary is only cancelled when every non-ongoing child would be (qa-11-code 6)`() {
         val nagChild = nag(channel = "nag")
         val alertChild = nag(channel = "earthquake_alerts")

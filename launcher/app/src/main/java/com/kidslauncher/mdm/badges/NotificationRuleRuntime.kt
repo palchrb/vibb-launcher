@@ -51,6 +51,14 @@ object NotificationRuleRuntime {
     private val counts = NagCounts()
     private val main = Handler(Looper.getMainLooper())
 
+    // The 2026-10-27 diagnostic: the kept notifications' counts (process lifetime, see KeepCounts),
+    // the post-cancel checks in flight and the (package, channel) pairs whose refused cancel was
+    // logged already - each line once per process.
+    private val keeps = KeepCounts()
+    private val postCancelChecks = PostCancelChecks()
+    private val platformKeptLogged = LinkedHashSet<Pair<String, String?>>()
+    private val postCancelToken = Any()
+
     @Volatile
     private var listener: BadgeListenerService? = null
 
@@ -70,7 +78,8 @@ object NotificationRuleRuntime {
         val rules = (callState as? CallPolicyState.Managed)?.rules
         val defaultSms = CallSystem.defaultSmsPackage(context)
         val messaging = messagingAppPackages(rules, defaultSms)
-        val allowed = enforced?.allowlist.orEmpty().toSet() + messaging + lockUsableApps
+        val allowlist = enforced?.allowlist.orEmpty().toSet()
+        val allowed = allowlist + messaging + lockUsableApps
         val own = ownPackageFamily(context.packageName)
         val next = NagPolicy(
             enabled = enforced?.notificationAutoCancel == true,
@@ -78,6 +87,9 @@ object NotificationRuleRuntime {
             allowed = allowed,
             essential = essential,
             own = own,
+            allowlist = allowlist,
+            messaging = messaging,
+            lockUsable = lockUsableApps,
         )
         // Design r7 §1.1.1: the apps that may ring over the lock, once per pass (the listener's main
         // thread only reads it) - the effective allowlist, never the raw one.
@@ -99,7 +111,12 @@ object NotificationRuleRuntime {
     }
 
     fun detach(service: BadgeListenerService) {
-        if (listener === service) listener = null
+        if (listener === service) {
+            listener = null
+            // The checks hold nothing but a key; unbound, the answer would be "can't read" anyway.
+            main.removeCallbacksAndMessages(postCancelToken)
+            postCancelChecks.clear()
+        }
     }
 
     /** Cancel or snooze (the budget decides) - and count it. Only package and channel are kept. */
@@ -111,6 +128,50 @@ object NotificationRuleRuntime {
             Log.i(LOG_TAG, "${action.name.lowercase()} ${facts.packageName} / ${facts.channelId ?: "-"} ($total since the last report)")
         }
         return action
+    }
+
+    /**
+     * The verdict was a Keep: logged by [keepLogDue]'s rule as `kept <package> / <channel>: <REASON>
+     * (N so far)` - N counts this process's keeps of that (package, channel, reason). ALLOWED names
+     * the set that allowed it ([allowedBy]). Never the key, title or text.
+     */
+    fun kept(facts: NotificationFacts, reason: NagKeep) {
+        if (reason in NAG_KEEP_SILENT) return
+        val label = if (reason == NagKeep.ALLOWED) "ALLOWED via ${allowedBy(policy, facts.packageName)}" else reason.name
+        logKept(facts.packageName, facts.channelId, reason.name, label) { keepLogDue(reason, it) }
+    }
+
+    /** `applyRule` returned before any verdict: the facts couldn't be read ([exceptionName]). */
+    fun keptFactsFailed(packageName: String, channelId: String?, exceptionName: String) =
+        logKept(packageName, channelId, "FACTS_FAILED", "FACTS_FAILED $exceptionName", ::nagLogDue)
+
+    /** A group summary the rule would cancel, kept for a child that stays (qa-11-code #6). */
+    fun keptGroupChild(facts: NotificationFacts) =
+        logKept(facts.packageName, facts.channelId, "GROUP_CHILD_KEPT", "GROUP_CHILD_KEPT", ::nagLogDue)
+
+    private fun logKept(packageName: String, channelId: String?, reason: String, label: String, due: (Int) -> Boolean) {
+        val total = keeps.record(packageName, channelId, reason)
+        if (due(total)) Log.i(LOG_TAG, "kept $packageName / ${channelId ?: "-"}: $label ($total so far)")
+    }
+
+    /**
+     * After a cancel: [POST_CANCEL_CHECK_MS] later, on the main thread, the listener looks whether
+     * [key] is still active ([platformKeptAfterCancel]: Android 15/16 can refuse a listener's cancel
+     * - `FLAG_NO_DISMISS`, a lifetime-extended notification) and logs `platform kept <package> /
+     * <channel>` once per (package, channel). At most [POST_CANCEL_CHECKS_MAX] checks wait at once;
+     * the rest are skipped, and [detach] drops them all.
+     */
+    fun checkAfterCancel(service: BadgeListenerService, key: String, postTime: Long, facts: NotificationFacts) {
+        if (!postCancelChecks.take()) return
+        main.postDelayed({
+            postCancelChecks.done()
+            val live = listener?.takeIf { it === service } ?: return@postDelayed
+            if (!platformKeptAfterCancel(live.activePostTime(key), postTime)) return@postDelayed
+            if (platformKeptLogged.add(facts.packageName to facts.channelId)) {
+                while (platformKeptLogged.size > 64) platformKeptLogged.remove(platformKeptLogged.first())
+                Log.i(LOG_TAG, "platform kept ${facts.packageName} / ${facts.channelId ?: "-"}")
+            }
+        }, postCancelToken, POST_CANCEL_CHECK_MS)
     }
 
     /** For the status report: whether the rule is active and the counts since the last report. */
