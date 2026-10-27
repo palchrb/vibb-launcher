@@ -572,6 +572,32 @@ class LockGlanceTest {
             assertFalse(printed, printed.contains("!room") || printed.contains("key-1") || printed.contains("4790000002"))
         }
     }
+
+    /** Design 69 §2.2: the reminder row's target - Dagen through the keypad, never under a time rule that locks; the
+     * open starts Dagen. */
+    @Test
+    fun `Dagen's target - the keypad's prompt, no target under a time rule, the open (design 69 §2_2)`() {
+        val day = GlanceTarget.Day(20_752)
+        assertEquals(null, day.appPackage)
+        assertEquals(GlancePrompt.OPEN_APP, glancePrompt(true, false, false, false, day, androidFace = false))
+        val locked = com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.SCHOOL, callsAllowed = true)
+        assertFalse(glanceUsableUnderLock(locked, day, callsManaged = true))
+        assertTrue(glanceUsableUnderLock(com.kidslauncher.mdm.timerules.TimeLock(com.kidslauncher.mdm.server.LockReason.NONE), day, callsManaged = true))
+        assertEquals(GlanceOpen.DAY, glanceOpenStep(app.copy(day = true, installed = false, hasIntent = false)).open)
+        assertEquals(GlanceOpen.HAND_TO_TIME_RULE_SCREEN, glanceOpenStep(app.copy(day = true, timeRule = true)).open)
+        assertEquals(GlanceOpen.NOTHING, glanceOpenStep(app.copy(day = true, lockWasRoot = true)).open)
+        // Calm: the calendar's path on the glance posts nothing and wakes nothing.
+        val calm = src("java/com/kidslauncher/mdm/lock/GlanceCalendar.kt").readText() +
+            src("java/com/kidslauncher/mdm/day/Reminders.kt").readText() +
+            src("java/com/kidslauncher/mdm/lock/GlancePanel.kt").readText().let {
+                it.substringAfter("private fun bindNext()").substringBefore("private fun alarmText(")
+            }
+        for (banned in listOf("noticeCame", "NotificationManager", ".notify(", "Notification.Builder", "NotificationCompat", "Vibrator", "WakeLock")) {
+            assertFalse(banned, calm.contains(banned))
+        }
+    }
+
+    private fun src(path: String) = listOf("src/main/$path", "app/src/main/$path").map { java.io.File(it) }.first { it.exists() }
 }
 
 /**
@@ -1103,6 +1129,39 @@ class LockGlanceLayoutTest {
     }
 
     /**
+     * Design 69 §5.1: Dagen's "Neste" line (the alarm line's style, 20.2 dp) yields when it would push the third row out
+     * of sight - [glanceNextFits] against the model, at font 1.0 and 1.3. The worst page today (the profile clock, the
+     * alarm line, music + 3 rows) keeps 22.4 dp of row 3 with 3-button navigation; the line would leave 2.2, so it yields
+     * there and shows with gestures (26.2 dp). With two rows nothing can be pushed out.
+     */
+    @Test
+    fun `the Neste line yields when the third row would leave the screen (design 69 §5_1)`() {
+        val next = root.byId("lock_glance_next")
+        val alarmLine = root.byId("lock_glance_alarm")
+        for (attr in listOf("textSize", "layout_marginTop")) assertEquals(attr, alarmLine.dim(attr), next.dim(attr))
+        assertEquals("1", next.getAttributeNS(ns, "maxLines"))
+        assertEquals("gone", next.getAttributeNS(ns, "visibility"))
+        assertEquals("", next.getAttributeNS(ns, "clickable"))
+        val three = glanceLayout(tile = true, rowCount = 3, timer = false)
+        val withAlarm = content(three, profileParts, alarm = true)
+        val thirdTop = withAlarm - parts.row
+        assertFalse(glanceNextFits(scroller(48f), thirdTop, parts.alarm))
+        assertTrue(glanceNextFits(scroller(24f), thirdTop, parts.alarm))
+        assertEquals(2.2f, scroller(48f) - (thirdTop + parts.alarm), 0.1f)
+        // Two rows: no third to push out.
+        assertTrue(glanceNextFits(scroller(48f), null, parts.alarm))
+        assertEquals(390.8f, content(glanceLayout(tile = true, rowCount = 2, timer = false), profileParts, alarm = true) + parts.alarm, 0.1f)
+        // Without the alarm line (the centred clock): music + 3 rows keeps row 3 whole with the line at both bars.
+        val plain = content(three)
+        assertTrue(glanceNextFits(scroller(48f), plain - parts.row, parts.alarm))
+        // Font 1.3: the same page's row 3 is under the fold already - the line never makes it worse.
+        val at13 = partsAt(1.3f)
+        val big = content(three, at13, alarm = true)
+        assertFalse(glanceNextFits(scroller(48f), big - at13.row, at13.alarm))
+        assertTrue(glanceNextFits(scroller(48f), null, at13.alarm))
+    }
+
+    /**
      * Six-inch F4: a row's text takes two lines from a 720 dp tall screen (`values-h720dp`), so a short message shows
      * whole; the title stays one line. 720 dp is the first round height where the compact tile and three two-line rows
      * still fit the scroller at font 1.3 (533.2 dp, from 701.2 dp tall) with a 48 dp status bar and 3-button
@@ -1178,7 +1237,7 @@ class LockGlanceLayoutTest {
         assertTrue(look, look.contains("R.font.nunito_light"))
         assertEquals("only the profile's clock is light", 1, Regex("R\\.font\\.nunito_light").findAll(panel).count())
         assertTrue(look, look.contains("date.transformationMethod = FirstCapital(locale)"))
-        assertTrue(look, look.contains("listOf(clock, date, glance.lockGlanceAlarm)"))
+        assertTrue(look, look.contains("listOf(clock, date, glance.lockGlanceAlarm, glance.lockGlanceNext)"))
         assertTrue(panel.contains("DateFormat.getBestDateTimePattern(locale, glanceDateSkeleton(profile != null))"))
         val place = panel.substringAfter("private fun placeProfile(").substringBefore("private fun margins(")
         assertTrue(place, place.contains("floorPx = -descent"))

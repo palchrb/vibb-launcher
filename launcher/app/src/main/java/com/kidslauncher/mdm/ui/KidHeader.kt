@@ -30,4 +30,27 @@ object KidHeader {
             header.kidHeaderAction.visibility = View.GONE
         }
     }
+
+    /** A title with a second line under it (Dagen: the weekday over the date, design 69 §2.1), and an optional text
+     * action (`null` = none). */
+    fun bind(
+        activity: ComponentActivity,
+        header: IncludeKidHeaderBinding,
+        title: CharSequence,
+        subtitle: CharSequence?,
+        action: CharSequence?,
+        onAction: (() -> Unit)?,
+    ) {
+        header.kidHeaderBack.setOnClickListener { activity.onBackPressedDispatcher.onBackPressed() }
+        header.kidHeaderTitle.text = title
+        header.kidHeaderSubtitle.text = subtitle
+        header.kidHeaderSubtitle.visibility = if (subtitle.isNullOrEmpty()) View.GONE else View.VISIBLE
+        if (action != null && onAction != null) {
+            header.kidHeaderAction.text = action
+            header.kidHeaderAction.visibility = View.VISIBLE
+            header.kidHeaderAction.setOnClickListener { onAction() }
+        } else {
+            header.kidHeaderAction.visibility = View.GONE
+        }
+    }
 }

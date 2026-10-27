@@ -47,6 +47,19 @@ class HomeModelTest {
         assertEquals(listOf(GridTile.PhoneBook, GridTile.Settings), homeGrid(emptyList(), true, emptyMap()))
     }
 
+    /** Design 69 §2.2: Dagen right after the phone book (it's ours; apps follow by label), first without it; gone
+     * when [homeGrid] is told no calendar is shown. */
+    @Test
+    fun `Dagen sits right after the phone book`() {
+        assertEquals(
+            listOf(GridTile.PhoneBook, GridTile.Day, GridTile.App(app("a"), 0), GridTile.Settings),
+            homeGrid(listOf(app("a")), showPhoneBook = true, badges = emptyMap(), showDay = true),
+        )
+        assertEquals(listOf(GridTile.Day, GridTile.Settings), homeGrid(emptyList(), false, emptyMap(), showDay = true))
+        assertTrue(homeGrid(listOf(app("a")), true, emptyMap(), showDay = false).none { it == GridTile.Day })
+        assertEquals("day", gridTileId(GridTile.Day))
+    }
+
     @Test
     fun `the flashlight sits right before settings with its state, and is absent without a flash`() {
         val dark = homeGrid(listOf(app("a")), showPhoneBook = true, badges = emptyMap(), torch = TorchState(lit = false))

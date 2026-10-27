@@ -190,6 +190,9 @@ async fn db_error_is_500_not_default() {
         "device_pending_uninstalls",
         // Design 68: a lost list would hand the camera back.
         "device_app_permissions",
+        // Design 69: a lost hide rule would show what the parent hid.
+        "device_calendar_rules",
+        "device_calendars",
     ] {
         let app = TestApp::new().await;
         let (_, token) = app.enrolled_device("phone").await;
@@ -313,6 +316,7 @@ async fn policy_json_keys_snapshot() {
             "bedtime_start_minutes",
             "block_activity_start",
             "boot_cover",
+            "calendar",
             "call_policy",
             "dns_filter_version",
             "dns_log_enabled",
@@ -347,6 +351,7 @@ async fn policy_json_keys_snapshot() {
         "app_permissions",
         "app_updates_wifi_only",
         "block_activity_start",
+        "calendar",
         "call_policy",
         "dns_filter_version",
         "dns_log_enabled",
@@ -469,6 +474,22 @@ async fn policy_json_keys_snapshot() {
     assert_eq!(
         object["lock_glance"],
         serde_json::json!({ "apps": [{ "package": "io.element.android.x", "show_text": false }] })
+    );
+
+    // Dagen (design 69 §4.1): always an object, a fresh phone's defaults - on Home, the kid may add events (to the
+    // phone's own calendar), nothing on the lock, no calendars saved, no rules. The launcher's `calendarPolicy`
+    // reads exactly this shape (`PolicyResponseCompatTest`); a rule's and a calendar's keys in
+    // `calendar::the_policy_carries_the_rules_and_the_calendars`.
+    assert_eq!(
+        object["calendar"],
+        serde_json::json!({
+            "on_home": true,
+            "kid_adds": true,
+            "glance_next": false,
+            "lock_reminders": "off",
+            "calendars": [],
+            "rules": []
+        })
     );
 
     // The launcher's (nullable, step 1: ignored) music DTO (design 21): every key, a fresh phone's
@@ -647,6 +668,7 @@ async fn device_page(app: &TestApp, id: i64) -> String {
     let response = crate::handlers::devices::view_device(
         axum::extract::State(app.state.clone()),
         axum::Extension(crate::security::CurrentAdmin(app.an_admin().await)),
+        crate::i18n::Lang::En,
         axum::extract::Path(id),
         axum::extract::Query(Default::default()),
     )

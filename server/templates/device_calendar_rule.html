@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="{{ lang.code() }}">
+<head>
+{% include "partials/head.html" %}
+<script src="/static/calendar-preview.js" defer></script>
+</head>
+<body>
+{% let tab = "devices" %}
+{% include "partials/tab_bar.html" %}
+<main class="container">
+    {#- Design 69 §3.3: one title rule. Save sits in the sticky top bar with a refusal's reason; a save goes back to the
+        rule's row on the Calendar page (#rule-<id>), a refusal renders this page again (400) as typed. The preview
+        fields are part of the form but never saved: static/calendar-preview.js posts the form to .../preview 400 ms
+        after typing stops and swaps only #preview-result; without JS the Preview button answers with this page. -#}
+    <form method="post" action="{{ self.action() }}" id="rule-form" data-preview-url="/devices/{{ device_id }}/calendar/rules/preview">
+        {% if let Some(rule) = rule_id %}<input type="hidden" name="rule" value="{{ rule }}">{% endif %}
+        <div class="editor-bar" data-bar="rule">
+            <div class="title-bar title-bar-split">
+                <a class="nav-back" href="/devices/{{ device_id }}/calendar#rules"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("calendar.title") }}</a>
+                <button type="submit" class="title-action" data-save="rule">{% if rule_id.is_some() %}{{ self.t("common.save") }}{% else %}{{ self.t("common.add") }}{% endif %}</button>
+            </div>
+            {% if let Some(why) = refusal %}<p class="flash flash-error bar-flash" role="alert" data-flash="refused">{{ self.t("common.not_saved") }} {{ self.t(why) }}</p>{% endif %}
+        </div>
+        <h1 class="page-title">{{ title }}</h1>
+
+        <section id="rule-when" aria-label="{{ self.t("calendar.rule.when") }}">
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.rule.look_in") }}</span>
+                    <select class="pick" name="field">
+                        <option value="title"{% if form.field != "description" %} selected{% endif %}>{{ self.t("calendar.rule.field.title") }}</option>
+                        <option value="description"{% if form.field == "description" %} selected{% endif %}>{{ self.t("calendar.rule.field.description") }}</option>
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.rule.when_it") }}</span>
+                    <select class="pick" name="match">
+                        <option value="starts"{% if form.match_kind != "contains" %} selected{% endif %}>{{ self.t("calendar.rule.match.starts") }}</option>
+                        <option value="contains"{% if form.match_kind == "contains" %} selected{% endif %}>{{ self.t("calendar.rule.match.contains") }}</option>
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.rule.text_to_match") }}</span>
+                    <input type="text" class="row-input row-input-end" name="pattern" value="{{ form.pattern }}" maxlength="400" autocomplete="off" required placeholder="Gruppe 2-"{% if refusal.is_some() %} autofocus{% endif %}>
+                </label>
+            </div>
+            <p class="group-footer">{{ self.t("calendar.rule.match_footer") }}</p>
+        </section>
+
+        <section id="rule-then" aria-labelledby="rule-then-title">
+            <h2 class="group-header" id="rule-then-title">{{ self.t("calendar.rule.then") }}</h2>
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.rule.action") }}</span>
+                    <select class="pick" name="then">
+                        <option value="show"{% if form.then != "hide" %} selected{% endif %}>{{ self.t("calendar.rule.then.show") }}</option>
+                        <option value="hide"{% if form.then == "hide" %} selected{% endif %}>{{ self.t("calendar.rule.then.hide") }}</option>
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.rule.text_to_show") }}</span>
+                    <input type="text" class="row-input row-input-end" name="text" value="{{ form.text }}" maxlength="200" autocomplete="off" placeholder="Skole:">
+                </label>
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.rule.keep_rest") }}</span>
+                    <input type="checkbox" role="switch" class="sw" name="keep_rest" value="on"{% if form.keep_rest %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+                </label>
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.rule.in") }}</span>
+                    <select class="pick" name="calendar">
+                        {% for s in scopes %}<option value="{{ s.key }}"{% if s.selected %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
+                    </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </label>
+            </div>
+            <p class="group-footer">{{ self.t("calendar.rule.then_footer") }}</p>
+        </section>
+
+        <section id="preview" aria-labelledby="preview-title">
+            <h2 class="group-header" id="preview-title">{{ self.t("calendar.preview.title") }}</h2>
+            <div class="group">
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.preview.event_title") }}</span>
+                    <input type="text" class="row-input row-input-end" name="preview_title" value="{{ form.preview_title }}" autocomplete="off">
+                </label>
+                <label class="row">
+                    <span class="row-label">{{ self.t("calendar.preview.description") }}</span>
+                    <input type="text" class="row-input row-input-end" name="preview_description" value="{{ form.preview_description }}" autocomplete="off">
+                </label>
+                <div id="preview-result" data-preview-result aria-live="polite">{% include "partials/calendar_preview.html" %}</div>
+                <noscript><button type="submit" class="row row-button" formaction="/devices/{{ device_id }}/calendar/rules/preview#preview">{{ self.t("calendar.preview.button") }}</button></noscript>
+            </div>
+            <p class="group-footer">{{ self.t("calendar.preview.footer") }}</p>
+        </section>
+    </form>
+
+    {% if let Some(rule) = rule_id %}
+    <section id="delete" aria-label="{{ self.t("calendar.rule.delete") }}">
+        <div class="group">
+            <details class="confirm cell">
+                <summary class="row">{{ self.t("calendar.rule.delete") }}&hellip;</summary>
+                <form method="post" action="/devices/{{ device_id }}/calendar/rules/{{ rule }}/delete" class="confirm-body">
+                    <p>{{ self.t("calendar.rule.delete_confirm") }}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("calendar.rule.delete") }}</button>
+                </form>
+            </details>
+        </div>
+    </section>
+    {% endif %}
+</main>
+</body>
+</html>

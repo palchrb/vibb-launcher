@@ -7,7 +7,8 @@ name: Launcher
 #   music app's copy, design 26c §8), the time status report (server/testdata/, design 34 P13),
 #   Storytel's token answers (server/testdata/ and the music app's copy, design 58 §8), the release tags'
 #   versionCodes (server/testdata/launcher_tag_codes.json), the server's copy of the built-in
-#   secure-DNS hosts (server/testdata/doh_hosts.txt, design 67),
+#   secure-DNS hosts (server/testdata/doh_hosts.txt, design 67), Dagen's title-rule vectors and calendar
+#   report (server/testdata/calendar_*.json, design 69),
 #   music's Gradle wrapper and verification
 #   metadata and music.yml - BuildChainTest checks them, security review L9): build and test (debug, unsigned release, lint, unit
 #   tests) and upload the debug APK as a workflow artifact. Nothing is published, no secrets.
@@ -74,7 +75,7 @@ jobs:
         # No usable base (manual run, new branch, force push): build.
         if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
           changed=true
-        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/aidl/|music/app/src/main/AndroidManifest\.xml$|music/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/(music_(library|listing|state)|spotify_hosts|time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report)\.json$|music/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel_token_answers\.json$|server/testdata/doh_hosts\.txt$)'; then
+        elif git diff --name-only "$base" "$GITHUB_SHA" | grep -qE '^(launcher/|\.github/workflows/launcher\.yml$|\.github/workflows/music\.yml$|\.github/actions/build-tsnet/|music/gradle/|music/app/src/main/aidl/|music/app/src/main/AndroidManifest\.xml$|music/app/src/test/resources/(bridge_contract|spotify_hosts)\.json$|server/testdata/(music_(library|listing|state)|spotify_hosts|time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report)\.json$|music/app/src/test/resources/storytel_token_answers\.json$|server/testdata/storytel_token_answers\.json$|server/testdata/doh_hosts\.txt$)'; then
           changed=true
         else
           changed=false

@@ -9,6 +9,7 @@ mod app_updates;
 mod attention;
 mod avatars;
 mod backup_secrets;
+mod calendar;
 mod calls;
 mod catalog_pins;
 mod cleanup;
@@ -709,6 +710,8 @@ pub enum Section {
     /// `/devices/{id}/time`: Time (design 31 step 9) - what the phone last said, extra time, Pause
     /// a rule, the recent lifts, the own-rules switch, the phone's own rules and daily limits.
     Time,
+    /// `/devices/{id}/calendar`: Calendar (design 69) - Dagen, the lock screen, the calendars, the title rules.
+    Calendar,
     /// `/devices/{id}/lock`: Lock Screen & PINs (design 31 step 4) - the Child and Parent PINs,
     /// the screen timeout, the lock's background and notifications.
     Lock,
@@ -733,6 +736,7 @@ pub fn device_page(id: i64, section: Section) -> String {
         Section::Apps => format!("/devices/{id}/apps"),
         Section::Music => format!("/devices/{id}/music"),
         Section::Time => format!("/devices/{id}/time"),
+        Section::Calendar => format!("/devices/{id}/calendar"),
         Section::Lock => format!("/devices/{id}/lock"),
         Section::Home => format!("/devices/{id}/home"),
         Section::Filter => format!("/devices/{id}/filter"),

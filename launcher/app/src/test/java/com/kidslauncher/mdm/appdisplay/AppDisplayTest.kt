@@ -31,6 +31,28 @@ class AppDisplayTest {
         )
     }
 
+    /** Design 69 §4.4: `on_home: false` alone is an entry (a sync app kept off Home); only JSON `false` is off; an
+     * app off Home is listed only while a window is open. */
+    @Test
+    fun `on_home false keeps an app off Home outside a window`() {
+        val off = map(
+            """[{"package_name":"at.bitfire.icsdroid","label":null,"icon":null,"color":"auto","on_home":false},
+                {"package_name":"at.bitfire.davdroid","label":null,"icon":null,"color":"auto","on_home":"false"},
+                {"package_name":"$element","label":"Chat","icon":null,"color":"auto","on_home":true}]""",
+        )
+        assertEquals(
+            mapOf(
+                "at.bitfire.icsdroid" to AppDisplayEntry(null, null, AUTO_COLOR, onHome = false),
+                element to AppDisplayEntry("Chat", null, AUTO_COLOR),
+            ),
+            off,
+        )
+        assertFalse(onHomeListable(off["at.bitfire.icsdroid"], windowOpen = false))
+        assertTrue(onHomeListable(off["at.bitfire.icsdroid"], windowOpen = true))
+        assertTrue(onHomeListable(off[element], windowOpen = false))
+        assertTrue(onHomeListable(null, windowOpen = false))
+    }
+
     /** Design 34 P1 (QA H1): "the app's own logo" is kept with and without a label, always auto. */
     @Test
     fun `the app's own logo is kept with and without a label`() {

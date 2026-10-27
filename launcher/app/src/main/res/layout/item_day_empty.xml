@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dagen's empty day (design 69 §2.1): one calm tile with fixed words, never an empty grid. -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_day_event"
+    android:fontFamily="@font/nunito_bold"
+    android:gravity="center"
+    android:paddingStart="16dp"
+    android:paddingTop="22dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="22dp"
+    android:text="@string/day_empty"
+    android:textColor="@color/kid_core_dim"
+    android:textSize="14sp" />

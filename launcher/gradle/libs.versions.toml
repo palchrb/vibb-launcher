@@ -20,6 +20,9 @@ recyclerview = "1.4.0"
 retrofit = "2.11.0"
 retrofit-kotlinx-serialization-converter = "1.0.0"
 serialization = "1.8.10"
+# Dagen's endless day pager (design 69 §2.1): the version material already brings, so verification-metadata.xml
+# needs no new artifact.
+viewpager2 = "1.1.0-beta02"
 
 [libraries]
 # AndroidX dependencies
@@ -31,6 +34,7 @@ androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = 
 androidx-gridlayout = { group = "androidx.gridlayout", name = "gridlayout", version.ref = "gridlayout" }
 androidx-preference-ktx = { group = "androidx.preference", name = "preference-ktx", version.ref = "preference-ktx" }
 androidx-recyclerview = { group = "androidx.recyclerview", name = "recyclerview", version.ref = "recyclerview" }
+androidx-viewpager2 = { group = "androidx.viewpager2", name = "viewpager2", version.ref = "viewpager2" }
 
 # Google Material
 google-material = { group = "com.google.android.material", name = "material", version.ref = "material" }

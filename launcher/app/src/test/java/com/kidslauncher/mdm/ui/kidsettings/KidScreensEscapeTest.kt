@@ -40,7 +40,7 @@ class KidScreensEscapeTest {
      * what a Home tile's tap runs - launcher round 7 §4). */
     private val guarded = listOf(
         "ui/kidsettings", "ui/quickcontrols", "ui/wallpaper", "server/QuickControls.kt", "server/BluetoothAudio.kt",
-        "ui/HomeActivity.kt", "ui/home", "calls/PhoneBookActivity.kt", "calls/PhoneBookAdapter.kt",
+        "ui/HomeActivity.kt", "ui/home", "calls/PhoneBookActivity.kt", "calls/PhoneBookAdapter.kt", "ui/day", "calendar",
         "actions",
     )
 

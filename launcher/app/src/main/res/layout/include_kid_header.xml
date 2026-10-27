@@ -22,18 +22,36 @@
         android:scaleType="fitCenter"
         android:src="@drawable/ic_kid_back" />
 
-    <TextView
-        android:id="@+id/kid_header_title"
+    <!-- The title, and Dagen's second line under it (design 69 §2.1: the weekday over the date); gone elsewhere. -->
+    <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="8dp"
         android:layout_weight="1"
-        android:accessibilityHeading="true"
-        android:ellipsize="end"
-        android:fontFamily="@font/nunito_extrabold"
-        android:maxLines="1"
-        android:textColor="@color/kid_ink"
-        android:textSize="24sp" />
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/kid_header_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:accessibilityHeading="true"
+            android:ellipsize="end"
+            android:fontFamily="@font/nunito_extrabold"
+            android:maxLines="1"
+            android:textColor="@color/kid_ink"
+            android:textSize="24sp" />
+
+        <TextView
+            android:id="@+id/kid_header_subtitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:fontFamily="@font/nunito_bold"
+            android:maxLines="1"
+            android:textColor="@color/kid_core_dim"
+            android:textSize="14sp"
+            android:visibility="gone" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/kid_header_action"

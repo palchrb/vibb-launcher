@@ -3,6 +3,7 @@ pub mod admin;
 pub mod auth;
 pub mod backups;
 pub mod bedtime;
+pub mod calendar;
 pub mod calls;
 pub mod device_api;
 pub mod device_avatar;

@@ -453,4 +453,51 @@
     <string name="re_enrol_unreachable">Couldn\'t reach the server. Check the connection and try again.</string>
     <string name="re_enrol_done">The phone is connected again. Try the parent code once it has synced.</string>
     <string name="parent_pin_foreign_access">An app the parent hasn\'t allowed can control this phone or read its screen, so the parent code can\'t be typed here. Use the parent app: its Status card shows what to do.</string>
+    <!-- Dagen (design 69): the kid's day. -->
+    <string name="day_title">Dagen</string>
+    <string name="day_jump_back">← Today</string>
+    <string name="day_jump_forward">Today →</string>
+    <string name="day_all_day">All day</string>
+    <string name="day_ongoing">Happening now</string>
+    <string name="day_ongoing_with">Happening now · %1$s</string>
+    <string name="day_continues">→</string>
+    <string name="day_more">›</string>
+    <string name="day_empty">Nothing in the calendar.</string>
+    <string name="day_open_event">Open the event</string>
+    <string name="day_spoken_time">%1$s to %2$s</string>
+    <string name="day_kid_calendar_name">My calendar</string>
+    <string name="day_add">New event</string>
+    <string name="event_time_range">%1$s - %2$s</string>
+    <string name="event_gone">This event is no longer in the calendar.</string>
+    <string name="event_change">Change</string>
+    <string name="event_delete">Delete</string>
+    <string name="glance_next">Next: %1$s %2$s</string>
+    <string name="glance_reminder_in">%1$s in %2$d min</string>
+    <string name="glance_reminder_now">%1$s now</string>
+    <string name="glance_reminder_now_spoken">now</string>
+    <string name="glance_reminder_spoken">Reminder: %1$s, %2$s, %3$s</string>
+    <string name="glance_reminder_action">Unlock and open Dagen</string>
+    <plurals name="glance_reminder_minutes">
+        <item quantity="one">in %d minute</item>
+        <item quantity="other">in %d minutes</item>
+    </plurals>
+    <string name="day_reminder_line">%1$s · %2$s</string>
+    <string name="event_new_title">New event</string>
+    <string name="event_edit_title">Change event</string>
+    <string name="event_what">What</string>
+    <string name="event_day">Day</string>
+    <string name="event_from">From</string>
+    <string name="event_length">Length</string>
+    <string name="event_where">Place (optional)</string>
+    <string name="event_save">Save</string>
+    <string name="event_cancel">Cancel</string>
+    <string name="event_what_missing">Write what it is.</string>
+    <string name="event_save_failed">Couldn\'t save the event.</string>
+    <string name="event_delete_confirm">Delete «%1$s»?</string>
+    <string name="event_minutes">%1$d min</string>
+    <string name="event_hour_and_half">1.5 hours</string>
+    <plurals name="event_hours">
+        <item quantity="one">%d hour</item>
+        <item quantity="other">%d hours</item>
+    </plurals>
 </resources>

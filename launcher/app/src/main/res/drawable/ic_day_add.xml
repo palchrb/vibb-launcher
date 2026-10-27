@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A plus, drawn by hand (two rounded strokes), in the night ink on Dagen's peach "+". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M12,4.5L12,19.5M4.5,12L19.5,12"
+        android:strokeWidth="2.6"
+        android:strokeColor="@color/kid_ground"
+        android:strokeLineCap="round" />
+</vector>

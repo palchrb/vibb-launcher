@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A Dagen row (design 69 §2.1, mockup dagen.html §1): the night tile #1B1B28, 18 dp corners, a calm press. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#1FFFFFFF">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/kid_music_tile" />
+            <corners android:radius="18dp" />
+        </shape>
+    </item>
+</ripple>

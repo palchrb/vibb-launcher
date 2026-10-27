@@ -427,6 +427,8 @@ class Application : android.app.Application() {
                 // The lock's glance page (design 25): the parent's choice from the cached policy (off the
                 // main thread), and our missed-call notification known again if it is still on screen.
                 com.kidslauncher.mdm.badges.GlanceStore.loadAtStart()
+                // Dagen (design 69): the calendar permissions, the provider's calendars and its change notification.
+                com.kidslauncher.mdm.calendar.CalendarStore.init(this)
                 com.kidslauncher.mdm.calls.MissedCallNotifier.refreshAtStart(this)
 
                 // The anchor service: every background sync and the SSE stream (the only nudge since

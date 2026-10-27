@@ -75,6 +75,11 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   name on a phone with a catalog default keeps an empty row (Vibb style there). An older launcher drops `own` as an
   unknown icon (with no label the entry is gone - today's look).
 - Tests: `app_display::tests`, `src/tests/app_display.rs` (`the_apps_own_logo_is_stored_sent_and_shown`).
+- **On Home** (design 69 §4.4, `device_app_display.on_home` in migration 0103): the device form's switch (Name and icon,
+  device page only; `on_home_shown` marks a page that shows it, so an older page never turns it off; Reset puts it
+  back). Off sends `on_home: false` in the entry (the key is left out while on), and such a row is kept even with
+  neither a label nor an icon; the launcher keeps the app off Home and the drawer except in a pause or the override - a
+  sync app (ICSx5, DAVx5) that must stay allowed. `app_display::on_home_off_keeps_an_app_off_home`; `docs/notes/server/calendar.md`.
 
 ## Per-app permissions (design 68, `docs/design/68-app-permissions.md`, migration `0102_app_permissions.sql`)
 

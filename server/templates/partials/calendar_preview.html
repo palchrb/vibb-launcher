@@ -1,0 +1,10 @@
+{#- The rule editor's preview (design 69 §3.3): the title as pasted, what the phone shows, and a note. Rendered alone
+    for the page's script (`calendar::preview_rule`, fragment=1) and inside the editor. Reads `preview` and `self.t`. -#}
+{% if !preview.before.is_empty() %}
+<div class="row" data-preview-line>
+    <span class="row-label"><span class="calendar-preview-before">{{ preview.before }}</span>
+        <span class="calendar-preview-arrow" aria-hidden="true">&rarr;</span>
+        {% if let Some(after) = preview.after %}<strong data-preview-after>{{ after }}</strong>{% else %}<strong data-preview-after="hidden">{{ self.t("calendar.preview.hidden") }}</strong>{% endif %}</span>
+</div>
+{% endif %}
+{% if let Some(note) = preview.note %}<p class="group-footer" data-preview-note>{{ note }}</p>{% endif %}

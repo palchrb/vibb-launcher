@@ -1742,6 +1742,7 @@ struct AppsTemplate {
 /// turned on installs with its first settings.
 pub async fn view_apps(
     State(state): State<AppState>,
+    lang: crate::i18n::Lang,
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -1754,7 +1755,7 @@ pub async fn view_apps(
     let from = query.get("from").and_then(|f| AppsFrom::parse(f));
     // Design 68 §4.1: back from a Permissions save, that app's details open.
     let perms = query.get("perms").map(String::as_str);
-    render_apps(&state, id, refused, None, from, perms).await
+    render_apps(&state, lang, id, refused, None, from, perms).await
 }
 
 /// Device › Apps; `refused` = the row whose switch was refused and why, `entered` = a refused Name
@@ -1762,6 +1763,7 @@ pub async fn view_apps(
 /// from the Apps tab (the tab, the back link and every form's hidden `from`).
 pub(crate) async fn render_apps(
     state: &AppState,
+    lang: crate::i18n::Lang,
     id: i64,
     refused: Option<(&str, &'static str)>,
     entered: Option<(String, crate::app_display::Entered)>,
@@ -1793,6 +1795,10 @@ pub(crate) async fn render_apps(
     let own = match display::device_rows(&state.db, id).await {
         Ok(own) => own,
         Err(err) => return read_failed(id, "the phone's app names", err),
+    };
+    let off_home = match display::off_home(&state.db, id).await {
+        Ok(off) => off,
+        Err(err) => return read_failed(id, "the phone's apps off Home", err),
     };
     // Design 68: the parent's camera-off apps (what the phone reports per app rides on the row, `access`).
     let camera_off = match crate::app_permissions::camera_denied(&state.db, id).await {
@@ -1857,10 +1863,22 @@ pub(crate) async fn render_apps(
                         .map(|(_, e)| e),
                 );
                 form.catalog_default = default.map(DisplayValues::describe);
-                form.own_row = phone_row.is_some();
+                form.own_row = phone_row.is_some() || off_home.contains(&package);
                 form.from = from.clone();
+                form.on_home = Some(!off_home.contains(&package));
+                form.on_home_words = Some((
+                    crate::i18n::t(lang, "apps.on_home"),
+                    crate::i18n::t(lang, "apps.on_home_sub"),
+                ));
                 if phone_row.is_none() && default.is_some() {
                     form.summary = format!("{} (from the catalog)", form.summary);
+                }
+                if off_home.contains(&package) {
+                    form.summary = format!(
+                        "{} · {}",
+                        form.summary,
+                        crate::i18n::t(lang, "apps.not_on_home")
+                    );
                 }
                 form
             });

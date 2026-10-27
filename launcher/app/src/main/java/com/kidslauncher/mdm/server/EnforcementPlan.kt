@@ -17,6 +17,10 @@ import com.kidslauncher.mdm.play.playStoreSuspended
 /** `DevicePolicyManager.LOCK_TASK_FEATURE_KEYGUARD`, duplicated so this file stays Android-free. */
 const val LOCK_TASK_FEATURE_KEYGUARD = 32
 
+/** The calendar sync apps Dagen reads (design 69 §4.4): ICSx5 (subscribed feeds) and DAVx5 (CalDAV). A time rule's lock
+ * never suspends them while they are allowed, so the school feed is current at school. */
+val CALENDAR_SYNC_APPS = setOf("at.bitfire.icsdroid", "at.bitfire.davdroid")
+
 data class EnforcementPlan(
     /** Packages that must be suspended. Everything else controllable is unsuspended. */
     val suspend: Set<String>,
@@ -195,7 +199,13 @@ fun computeEnforcementPlan(
     val suspend = hide.toMutableSet()
     // The alarm app is spared by the lock only, so an alarm set inside bedtime still rings; it
     // isn't pinned, so in kiosk it can show its alarm but not be opened from Home.
-    if (locked) controllable.filterTo(suspend) { it !in neverRestrict && it != alarmApp && it !in lockUsableApps }
+    // Design 69 §4.4: the calendar sync apps, while allowed, keep syncing through a lock (not neverRestrict, which
+    // would also spare them the hide of an app that isn't allowed).
+    if (locked) {
+        controllable.filterTo(suspend) {
+            it !in neverRestrict && it != alarmApp && it !in lockUsableApps && !(it in CALENDAR_SYNC_APPS && it in allowed)
+        }
+    }
     // The Play Store follows its own rule, whatever the allowlist or the lock's usable apps say.
     suspend.remove(PLAY_STORE)
     val playSuspended = playStoreSuspended(appsManaged, locked, playState) || (locked && !playState.updateWindow)

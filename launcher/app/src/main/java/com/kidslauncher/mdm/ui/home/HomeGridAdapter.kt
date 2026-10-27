@@ -113,6 +113,7 @@ class HomeGridAdapter(
             view.setOnClickListener { v ->
                 when (val tile = tiles.getOrNull(bindingAdapterPosition)) {
                     GridTile.PhoneBook -> activity.startActivity(PhoneBookActivity.intent(activity))
+                    GridTile.Day -> activity.startActivity(Intent(activity, com.kidslauncher.mdm.ui.day.DayActivity::class.java))
                     GridTile.Settings -> activity.startActivity(Intent(activity, KidSettingsActivity::class.java))
                     // Opens nothing: the torch's state comes back through its callback (renderGrid).
                     is GridTile.Flashlight -> Torch.toggle(activity)
@@ -203,6 +204,7 @@ class HomeGridAdapter(
         holder.itemView.stateDescription = null
         when (val tile = tiles[position]) {
             GridTile.PhoneBook -> glyphTile(holder, R.color.kid_phone_book, R.drawable.ic_kid_phone_book, R.string.calls_phone_book)
+            GridTile.Day -> glyphTile(holder, R.color.kid_day_tile, R.drawable.app_glyph_calendar_month, R.string.day_title)
             GridTile.Settings -> glyphTile(holder, R.color.kid_settings_tile, R.drawable.ic_kid_settings, R.string.kid_settings_title)
             // Design 41: dark - the indigo tone; lit - a filled peach disc with the night glyph. One glyph
             // for both (the user, 2026-10-23: no strike-through, the colours say the state). No yellow, no animation.

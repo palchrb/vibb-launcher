@@ -397,6 +397,73 @@ async fn any_allowed_app_can_be_named_on_its_phone() {
     assert_eq!(unknown.status, StatusCode::NOT_FOUND);
 }
 
+/// Design 69 §4.4: "On Home" off sends `on_home: false` (a sync app stays allowed but off Home); on again, or Reset,
+/// and the entry is gone. An older page without the switch never turns it off.
+#[tokio::test]
+async fn on_home_off_keeps_an_app_off_home() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = app.enrolled_device("phone").await;
+    report_installed(&app, &token, &["at.bitfire.icsdroid"]).await;
+    let page = app
+        .get_page(&device_page(id, Section::Apps), &cookie)
+        .await
+        .text();
+    assert!(page.contains(r#"name="on_home_shown""#), "{page}");
+    let off = save(
+        &app,
+        &cookie,
+        id,
+        &[
+            ("package_name", "at.bitfire.icsdroid"),
+            ("on_home_shown", "1"),
+        ],
+    )
+    .await;
+    assert_redirect(
+        &off,
+        &device_page(id, Section::Apps),
+        Some("app-at.bitfire.icsdroid"),
+    );
+    assert_eq!(
+        app_display(&app, &token).await,
+        serde_json::json!([{"package_name": "at.bitfire.icsdroid", "label": null, "icon": null, "color": "auto",
+                            "on_home": false}])
+    );
+    let page = app
+        .get_page(&device_page(id, Section::Apps), &cookie)
+        .await
+        .text();
+    assert!(page.contains("· not on Home"), "{page}");
+    // An older page (no switch) keeps the app's state as on: the row goes.
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", "at.bitfire.icsdroid")],
+    )
+    .await;
+    assert_eq!(app_display(&app, &token).await, serde_json::json!([]));
+    save(
+        &app,
+        &cookie,
+        id,
+        &[
+            ("package_name", "at.bitfire.icsdroid"),
+            ("on_home_shown", "1"),
+        ],
+    )
+    .await;
+    save(
+        &app,
+        &cookie,
+        id,
+        &[("package_name", "at.bitfire.icsdroid"), ("action", "reset")],
+    )
+    .await;
+    assert_eq!(app_display(&app, &token).await, serde_json::json!([]));
+}
+
 /// Refused input: 400, nothing written, Device › Apps with that app's form open, the entered
 /// values kept and the field with the problem focused (no jump to the top).
 #[tokio::test]

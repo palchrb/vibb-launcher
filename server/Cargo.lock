@@ -1302,7 +1302,7 @@ dependencies = [
 
 [[package]]
 name = "kid_phone_server"
-version = "0.58.0"
+version = "0.59.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1344,6 +1344,7 @@ dependencies = [
  "tower-sessions-sqlx-store",
  "tracing",
  "tracing-subscriber",
+ "unicode-normalization",
  "zip",
 ]
 

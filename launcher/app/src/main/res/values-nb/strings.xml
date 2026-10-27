@@ -386,4 +386,51 @@
     <string name="re_enrol_unreachable">Fikk ikke kontakt med serveren. Sjekk tilkoblingen og prøv igjen.</string>
     <string name="re_enrol_done">Telefonen er koblet til igjen. Prøv foreldrekoden når den har synkronisert.</string>
     <string name="parent_pin_foreign_access">En app foreldrene ikke har tillatt kan styre telefonen eller lese skjermen, så foreldrekoden kan ikke skrives her. Bruk foreldreappen: Status-kortet der viser hva du skal gjøre.</string>
+    <!-- Dagen (design 69): barnets dag. -->
+    <string name="day_title">Dagen</string>
+    <string name="day_jump_back">← I dag</string>
+    <string name="day_jump_forward">I dag →</string>
+    <string name="day_all_day">Hele dagen</string>
+    <string name="day_ongoing">Pågår nå</string>
+    <string name="day_ongoing_with">Pågår nå · %1$s</string>
+    <string name="day_continues">→</string>
+    <string name="day_more">›</string>
+    <string name="day_empty">Ingenting i kalenderen.</string>
+    <string name="day_open_event">Åpne hendelsen</string>
+    <string name="day_spoken_time">%1$s til %2$s</string>
+    <string name="day_kid_calendar_name">Min kalender</string>
+    <string name="day_add">Ny avtale</string>
+    <string name="event_time_range">%1$s - %2$s</string>
+    <string name="event_gone">Denne hendelsen er ikke i kalenderen lenger.</string>
+    <string name="event_change">Endre</string>
+    <string name="event_delete">Slett</string>
+    <string name="glance_next">Neste: %1$s %2$s</string>
+    <string name="glance_reminder_in">%1$s om %2$d min</string>
+    <string name="glance_reminder_now">%1$s nå</string>
+    <string name="glance_reminder_now_spoken">nå</string>
+    <string name="glance_reminder_spoken">Påminnelse: %1$s, %2$s, %3$s</string>
+    <string name="glance_reminder_action">Lås opp og åpne Dagen</string>
+    <plurals name="glance_reminder_minutes">
+        <item quantity="one">om %d minutt</item>
+        <item quantity="other">om %d minutter</item>
+    </plurals>
+    <string name="day_reminder_line">%1$s · %2$s</string>
+    <string name="event_new_title">Ny avtale</string>
+    <string name="event_edit_title">Endre avtale</string>
+    <string name="event_what">Hva</string>
+    <string name="event_day">Dag</string>
+    <string name="event_from">Fra</string>
+    <string name="event_length">Varighet</string>
+    <string name="event_where">Sted (valgfritt)</string>
+    <string name="event_save">Lagre</string>
+    <string name="event_cancel">Avbryt</string>
+    <string name="event_what_missing">Skriv hva avtalen er.</string>
+    <string name="event_save_failed">Fikk ikke lagret avtalen.</string>
+    <string name="event_delete_confirm">Slette «%1$s»?</string>
+    <string name="event_minutes">%1$d min</string>
+    <string name="event_hour_and_half">1,5 timer</string>
+    <plurals name="event_hours">
+        <item quantity="one">%d time</item>
+        <item quantity="other">%d timer</item>
+    </plurals>
 </resources>

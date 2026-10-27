@@ -73,6 +73,9 @@ sealed interface GlanceTarget {
     data object ClockApp : GlanceTarget {
         val packageName: String get() = com.kidslauncher.mdm.lock.ClockApp.PACKAGE
     }
+
+    /** Dagen's reminder row (design 69 §2.2): Dagen on the event's day ([epochDay]). */
+    data class Day(val epochDay: Long) : GlanceTarget
 }
 
 /** The app a target opens; null for the missed calls (the phone book). */
@@ -81,6 +84,7 @@ val GlanceTarget.appPackage: String?
         is GlanceTarget.Conversation -> packageName
         is GlanceTarget.ClockApp -> packageName
         is GlanceTarget.MissedCalls -> null
+        is GlanceTarget.Day -> null
     }
 
 /** The stage and the target it carries. */
@@ -552,6 +556,20 @@ fun glanceLayout(tile: Boolean, rowCount: Int, timer: Boolean, rule: Boolean = f
     return GlanceLayout(size, rows, n - rows, timer, rule)
 }
 
+// ---- Dagen's "Neste" line (design 69 §5.1) --------------------------------------------------------
+
+/**
+ * The "Neste" line yields (§5.1) when it would push the page's third row out of sight: [thirdRowTopDp] is where that
+ * row starts in the scroller's content without the line (`null` = no third row), [scrollerDp] the scroller's height;
+ * the row keeps at least [GLANCE_ROW_MIN_IN_SIGHT_DP] in sight with the line, else the line yields.
+ */
+fun glanceNextFits(scrollerDp: Float, thirdRowTopDp: Float?, lineDp: Float): Boolean =
+    thirdRowTopDp == null || scrollerDp - (thirdRowTopDp + lineDp) >= GLANCE_ROW_MIN_IN_SIGHT_DP
+
+/** A row "in sight" for [glanceNextFits]: today's worst case (the profile clock, the alarm line, music + 3 rows, 3-button
+ * navigation) shows 22.4 dp of row 3; the line would leave 2.2. */
+const val GLANCE_ROW_MIN_IN_SIGHT_DP = 16f
+
 // ---- the keypad's prompt -------------------------------------------------------------------------
 
 /** A label in the keypad's hint is cut to this many characters (QA Low 5: the parent's label can be
@@ -584,7 +602,7 @@ fun glancePrompt(
     waiting -> GlancePrompt.WAIT
     checking -> GlancePrompt.CHECKING
     wrong -> GlancePrompt.WRONG
-    target is GlanceTarget.Conversation || target is GlanceTarget.ClockApp -> GlancePrompt.OPEN_APP
+    target is GlanceTarget.Conversation || target is GlanceTarget.ClockApp || target is GlanceTarget.Day -> GlancePrompt.OPEN_APP
     target is GlanceTarget.MissedCalls -> GlancePrompt.SEE_MISSED
     else -> GlancePrompt.PLAIN
 }
@@ -607,6 +625,8 @@ fun glanceTargetTaken(timeRule: Boolean, usableUnderRule: Boolean): Boolean = !t
  */
 fun glanceUsableUnderLock(lock: com.kidslauncher.mdm.timerules.TimeLock, target: GlanceTarget, callsManaged: Boolean): Boolean = when {
     !lock.locked -> true
+    // Dagen isn't one of a time rule's usable screens (design 69 §2.2).
+    target is GlanceTarget.Day -> false
     else -> target.appPackage?.let { it in lock.usableApps } ?: (lock.callsAllowed && callsManaged)
 }
 
@@ -632,6 +652,9 @@ enum class GlanceOpen {
 
     /** The app's launch intent. */
     LAUNCH,
+
+    /** Dagen on the reminder's day (design 69 §2.2). */
+    DAY,
 
     NOTHING,
 }
@@ -662,6 +685,8 @@ data class GlanceOpenFacts(
      * the launch intent instead. */
     val sendFailed: Boolean,
     val hasLaunchIntent: Boolean,
+    /** The target is Dagen's reminder row (design 69 §2.2). */
+    val day: Boolean = false,
 )
 
 /** The decision with its reason (the log names the package and the reason only). */
@@ -691,6 +716,7 @@ fun glanceOpenStep(f: GlanceOpenFacts): GlanceOpenStep = when {
     f.from == GlanceOpenFrom.TIME_RULE_SCREEN && !f.usableUnderRule -> GlanceOpenStep(GlanceOpen.NOTHING, "not usable under the time rule")
     f.kioskWithoutLockTask -> GlanceOpenStep(GlanceOpen.NOTHING, "lock task not running")
     f.missedCalls -> GlanceOpenStep(GlanceOpen.MISSED_CALLS, "missed calls")
+    f.day -> GlanceOpenStep(GlanceOpen.DAY, "dagen")
     !f.installed -> GlanceOpenStep(GlanceOpen.NOTHING, "not installed")
     f.suspended -> GlanceOpenStep(GlanceOpen.NOTHING, "suspended")
     f.hidden -> GlanceOpenStep(GlanceOpen.NOTHING, "hidden")

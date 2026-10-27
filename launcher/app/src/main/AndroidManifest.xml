@@ -80,6 +80,10 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Dagen (design 69): the calendar provider that ICSx5 and DAVx5 feed, and the kid's own events in their calendar;
+         self-granted by the device owner. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
@@ -205,6 +209,21 @@
             android:taskAffinity="${applicationId}.pinlock"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:turnScreenOn="true" />
+        <!-- Dagen (design 69): the kid's day, an event's own page, the kid's own event. Not exported. -->
+        <activity
+            android:name=".ui.day.DayActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"
+            android:launchMode="singleTop" />
+        <activity
+            android:name=".ui.day.EventActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false" />
+        <activity
+            android:name=".ui.day.EventEditActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.kidsettings.KidSettingsActivity"
             android:configChanges="orientation|screenSize"

@@ -33,8 +33,9 @@ val KNOWN_ICONS: Set<String> = AppGlyphs.ICONS.keys + OWN_ICON
 
 /** The parent's choice for one package: [label] `null` = the app's own name; [icon] `null` = Vibb
  * style (the white glyph on the app's tone), [OWN_ICON] = the app's own logo, else a glyph key;
- * [color] [AUTO_COLOR] or a key of [AppGlyphs.COLORS] (only used with a glyph). */
-data class AppDisplayEntry(val label: String?, val icon: String?, val color: String = AUTO_COLOR) {
+ * [color] [AUTO_COLOR] or a key of [AppGlyphs.COLORS] (only used with a glyph); [onHome] `false` = off Home and the
+ * app list except during a window (design 69 §4.4: a sync app that stays allowed). */
+data class AppDisplayEntry(val label: String?, val icon: String?, val color: String = AUTO_COLOR, val onHome: Boolean = true) {
     /** The parent chose the app's own logo. */
     val ownLogo: Boolean get() = icon == OWN_ICON
 }
@@ -65,7 +66,7 @@ private fun JsonObject.string(key: String): String? =
  * server's unknown icon, a bad label, `null`s, wrong types, not even a list - never fails the
  * policy and only drops what can't be used: an unknown icon keeps the label, a bad label keeps the
  * icon, an unknown or missing colour is [AUTO_COLOR]; an entry without a valid package or with
- * neither a label nor an icon is left out; the first entry of a package wins. [OWN_ICON] is kept
+ * neither a label, an icon nor `on_home: false` is left out (only JSON `false` is off); the first entry of a package wins. [OWN_ICON] is kept
  * (design 34 P1), always with [AUTO_COLOR]; [icons] without it is an older launcher's shape.
  */
 fun appDisplayMap(
@@ -81,12 +82,17 @@ fun appDisplayMap(
         if (pkg in map) continue
         val label = cleanDisplayLabel(obj.string("label"))
         val icon = obj.string("icon")?.takeIf { it in icons }
-        if (label == null && icon == null) continue
+        val onHome = (obj["on_home"] as? JsonPrimitive)?.takeIf { !it.isString }?.content != "false"
+        if (label == null && icon == null && onHome) continue
         val color = obj.string("color")?.takeIf { it in colors } ?: AUTO_COLOR
-        map[pkg] = AppDisplayEntry(label, icon, if (icon == null || icon == OWN_ICON) AUTO_COLOR else color)
+        map[pkg] = AppDisplayEntry(label, icon, if (icon == null || icon == OWN_ICON) AUTO_COLOR else color, onHome)
     }
     return map
 }
+
+/** Design 69 §4.4: an app on Home and in the app list - unless the parent switched "On Home" off, and then only while
+ * a window (the pause, the override) is open, when the parent sets it up. */
+fun onHomeListable(entry: AppDisplayEntry?, windowOpen: Boolean): Boolean = entry?.onHome != false || windowOpen
 
 /** The name an app shows: the parent's, else the kid's rename, else the app's own. */
 fun displayLabel(parent: String?, kidRename: String?, appLabel: String): String =

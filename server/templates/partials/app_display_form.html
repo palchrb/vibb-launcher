@@ -42,6 +42,13 @@
             {% endfor %}
         </fieldset>
         <p class="hint">Vibb style: a white symbol on a calm colour picked from the app's icon (an app without a plain symbol shows its own logo). The app's own logo: its real icon in its own colours. The colour applies to a chosen icon.{% if form.can_reset() %} {{ form.reset_hint() }}{% endif %} Shown on the home screen, in the app list, on the lock screen and in the contact card. Android's own screens and the app's notifications keep its own name.</p>
+        {% if let Some(on_home) = form.on_home %}{% if let Some((label, sub)) = form.on_home_words %}
+        <input type="hidden" name="on_home_shown" value="1">
+        <label class="row">
+            <span class="row-label">{{ label }}<span class="row-sub">{{ sub }}</span></span>
+            <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %}><span class="knob" aria-hidden="true"></span>
+        </label>
+        {% endif %}{% endif %}
         <button type="submit" name="action" value="save">Save</button>
         {% if form.can_reset() %}
         <button type="submit" name="action" value="reset" class="button-secondary">Reset</button>

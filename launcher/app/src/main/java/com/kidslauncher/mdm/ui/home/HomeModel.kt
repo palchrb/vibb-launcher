@@ -25,6 +25,10 @@ sealed interface GridTile {
     /** The phone book, first whenever calls are managed (or their rules are unknown). */
     data object PhoneBook : GridTile
 
+    /** Dagen (design 69 §2.2): the kid's day, right after the phone book - when the parent keeps it on Home and a
+     * calendar is shown ([com.kidslauncher.mdm.calendar.CalendarStore.tileShown]). No badge, no long-press menu. */
+    data object Day : GridTile
+
     data class App(val app: GridApp, val badge: Int) : GridTile
 
     /** The flashlight (design 41), right before [Settings] - only on a phone with a flash unit. The
@@ -45,7 +49,7 @@ sealed interface GridTile {
 fun showPhoneBookTile(state: CallPolicyState): Boolean = state !is CallPolicyState.Unmanaged
 
 /**
- * The grid: the phone-book tile first (when [showPhoneBook], see [showPhoneBookTile]), then
+ * The grid: the phone-book tile first (when [showPhoneBook], see [showPhoneBookTile]), Dagen ([showDay]), then
  * [apps] by label (case-insensitive, stable), each with its unread count from [badges]
  * (0 = no badge), then the flashlight ([torch]; `null` = no flash unit, no tile) and the Settings tile.
  */
@@ -54,9 +58,11 @@ fun homeGrid(
     showPhoneBook: Boolean,
     badges: Map<String, Int>,
     torch: com.kidslauncher.mdm.torch.TorchState? = null,
+    showDay: Boolean = false,
 ): List<GridTile> {
     val tiles = mutableListOf<GridTile>()
     if (showPhoneBook) tiles += GridTile.PhoneBook
+    if (showDay) tiles += GridTile.Day
     apps.sortedBy { it.label.lowercase() }.mapTo(tiles) { app ->
         GridTile.App(app, app.packageName?.let { badges[it] } ?: 0)
     }
@@ -213,6 +219,7 @@ fun avatarStyle(contact: RuleContact, isEmergency: Boolean): AvatarStyle {
 /** A tile's identity across grid updates (launcher round 7 §4): an app by its key, the others by kind. */
 fun gridTileId(tile: GridTile): String = when (tile) {
     GridTile.PhoneBook -> "phone_book"
+    GridTile.Day -> "day"
     GridTile.Settings -> "settings"
     is GridTile.Flashlight -> "flashlight"
     is GridTile.App -> "app:${tile.app.key}"
