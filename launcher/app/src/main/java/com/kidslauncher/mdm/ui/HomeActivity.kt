@@ -75,6 +75,7 @@ import com.kidslauncher.mdm.ui.home.HomeGridAdapter
 import com.kidslauncher.mdm.ui.home.KidAvatars
 import com.kidslauncher.mdm.ui.home.NightGround
 import com.kidslauncher.mdm.ui.home.PressFeedback
+import com.kidslauncher.mdm.ui.home.foldGrid
 import com.kidslauncher.mdm.ui.home.gridColumns
 import com.kidslauncher.mdm.ui.home.homeArrivalOf
 import com.kidslauncher.mdm.ui.home.homeGroundDue
@@ -329,6 +330,8 @@ class HomeActivity : UIObjectActivity() {
                 KidAvatars.dp(this, GRID_ROW_GAP_DP.toFloat()),
             ) { gridLayout.spanCount }
         )
+        // PLAN "Home's fold at four rows": the grid's edge never lands between an icon and its label.
+        binding.homeGrid.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> foldGrid(binding.homeGrid) }
         musicCard = com.kidslauncher.mdm.music.MusicHomeCard(this, binding.homeMusicCard)
         // Design 24b §1.3: "Lock again" ends a parent-PIN window - no PIN, it only takes access away.
         binding.homeWindowLockAgain.setOnClickListener {

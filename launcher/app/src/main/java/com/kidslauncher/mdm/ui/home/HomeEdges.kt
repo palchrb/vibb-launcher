@@ -67,6 +67,39 @@ fun tileHeightDp(metrics: GridMetrics, fontScale: Float, lines: Int = GRID_LABEL
     metrics.iconDp + TILE_BADGE_ROOM_DP + TILE_LABEL_GAP_DP +
         lines.coerceIn(1, GRID_LABEL_MAX_LINES) * metrics.labelSp * fontScale * NUNITO_LINE_EM
 
+/** The grid's own bottom padding (`activity_home.xml`): the room under the last row once scrolled to the end. */
+const val GRID_BOTTOM_PADDING_DP = 16f
+
+/**
+ * One grid row as laid out at the grid's top, in px from the grid's top edge: the middle of its
+ * icons, the bottom of its labels' first line (the lowest in the row) and the row's bottom.
+ */
+data class GridRow(val iconMidPx: Int, val labelLinePx: Int, val bottomPx: Int)
+
+/**
+ * Home's fold (PLAN "Home's fold at four rows", 2026-10-27): the grid's bottom edge must never
+ * land between an icon and its label. On the Jelly Star at font 1.0 with gestures (11 tiles) the
+ * fourth row's icon stood whole at the bottom and its one-line label sat under the fade and the
+ * edge: a tile without its label, not "more below".
+ *
+ * [rows] are the laid-out rows from the first, with the grid at its top ([lastShown]: the last of
+ * them is the grid's last row). A row's label is legible when its first line ends above the middle
+ * of the bottom fade - [fadePx] while more rows follow, for the last row only what is left to
+ * scroll past it (`fadeStrength`: the content's end is [paddingPx] under it; nothing when the grid
+ * fits). The first row whose label isn't legible must show at most the top half of its icon (a
+ * cut through the icon reads as more below): its icon's middle at or under [heightPx], else the
+ * grid clips at that middle - the bottom padding to clip at, never less than [paddingPx]. 0 when
+ * nothing moves: the layout's own [paddingPx], unclipped, the fade over it.
+ */
+fun gridFoldPaddingPx(rows: List<GridRow>, lastShown: Boolean, heightPx: Int, fadePx: Int, paddingPx: Int): Int {
+    for ((i, row) in rows.withIndex()) {
+        val fade = if (lastShown && i == rows.lastIndex) (row.bottomPx + paddingPx - heightPx).coerceIn(0, fadePx) else fadePx
+        if (2 * row.labelLinePx <= 2 * heightPx - fade) continue
+        return if (row.iconMidPx >= heightPx) 0 else max(paddingPx, heightPx - row.iconMidPx)
+    }
+    return 0
+}
+
 /** How far the call badge's right edge sits past the avatar's (`item_kid_contact.xml`: the frame
  * is 12 dp wider than the avatar, the badge at its end with a 2 dp margin). */
 const val CALL_BADGE_OVERHANG_DP = 4f
