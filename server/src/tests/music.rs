@@ -33,6 +33,8 @@ pub struct Canned {
     pub last_modified: Option<String>,
     /// A 3xx's `Location` (design 26c §3.1: a short link's hop).
     pub location: Option<String>,
+    /// `Content-Type` (design 72: a calendar body's charset).
+    pub content_type: Option<String>,
 }
 
 /// One request as the canned fetch saw it (design 26b §2.2: the Storytel bookshelf's shape).
@@ -286,6 +288,7 @@ impl crate::music_net::Source for CannedFetch {
                 last_modified: answer.last_modified,
                 retry_after: self.retry_after.lock().unwrap().get(&request.url).cloned(),
                 location: answer.location,
+                content_type: answer.content_type,
             })
         })
     }

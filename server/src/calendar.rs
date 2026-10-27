@@ -1,8 +1,9 @@
 //! Dagen (design 69, `docs/design/69-dagen.md` at the monorepo root, migrations/0103_calendar.sql): the kid's
-//! day view in Vibb One reads the phone's calendar provider, which ICSx5 and DAVx5 feed. The server never sees an
-//! event: it keeps the parent's choices for the phone's calendars (shown, the reminder, the kid's own calendar) and
-//! the title rules, sends them as `PolicyResponse.calendar`, and stores the phone's report of which calendars it has
-//! (`calendar` in the status report, [sanitize_report]).
+//! day view in Vibb One reads the phone's calendar provider, which ICSx5 and DAVx5 feed. No event ever leaves the
+//! phone: the server keeps the parent's choices for the phone's calendars (shown, the reminder, the kid's own
+//! calendar) and the title rules, sends them as `PolicyResponse.calendar`, and stores the phone's report of which
+//! calendars it has (`calendar` in the status report, [sanitize_report]). Since design 72 the server also fetches the
+//! parent's calendar links (`calendar_feeds`) and so holds those calendars' events, sent only to the phones with them.
 //!
 //! The title rules are one grammar on both sides (§3.4): [clean] (control and bidi characters out, whitespace runs
 //! one space, NFC), matching that ignores case per code point and whitespace, and the three actions. The launcher's
@@ -293,6 +294,8 @@ pub struct CalendarPolicy {
     pub lock_reminders: String,
     pub calendars: Vec<PolicyCalendar>,
     pub rules: Vec<Rule>,
+    /// The phone's calendar links (design 72 §3, `calendar_feeds`): `[{id, name, rev}]`, `[]` when none.
+    pub feeds: Vec<crate::calendar_feeds::PolicyFeed>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq, sqlx::FromRow)]
@@ -391,6 +394,7 @@ pub async fn policy_calendar(
         lock_reminders,
         calendars: calendars(db, device_id).await?,
         rules: rules(db, device_id).await?,
+        feeds: crate::calendar_feeds::policy_feeds(db, device_id).await?,
     })
 }
 
@@ -406,12 +410,25 @@ pub struct ReportedCalendar {
     pub access_level: i64,
 }
 
+/// One calendar link as the phone applied it (design 72 §4): the set's rev it wrote last (`null` before the first),
+/// the series the provider refused at the last pass, the series whose zone the phone's tz database doesn't know.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ReportedFeed {
+    pub id: String,
+    pub applied_rev: Option<String>,
+    pub refused: i64,
+    pub unknown_zone: i64,
+}
+
 /// The phone's `calendar` report, as stored.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct CalendarReport {
     pub readable: bool,
     pub calendars: Vec<ReportedCalendar>,
     pub rules_skipped: Vec<i64>,
+    /// Absent from a launcher before design 72.
+    #[serde(default)]
+    pub feeds: Vec<ReportedFeed>,
 }
 
 /// A calendar key: exactly 16 lowercase hex digits.
@@ -441,6 +458,53 @@ pub const CALENDAR_ROW_FIELDS: &[(&str, crate::handlers::device_api::Field)] = &
     ("source", crate::handlers::device_api::Field::Word(253)),
     ("access_level", crate::handlers::device_api::Field::Int),
 ];
+
+/// The keys of one reported calendar link (design 72 §4).
+pub const FEED_ROW_FIELDS: &[(&str, crate::handlers::device_api::Field)] = &[
+    ("id", crate::handlers::device_api::Field::Word(32)),
+    ("applied_rev", crate::handlers::device_api::Field::Word(16)),
+    ("refused", crate::handlers::device_api::Field::Int),
+    ("unknown_zone", crate::handlers::device_api::Field::Int),
+];
+
+/// A report's `feeds` (design 72 §4): at most [crate::calendar_feeds::MAX_LINKS_PER_PHONE] rows, each with a valid
+/// uid (once), its rev 16 lowercase hex or null, the counts non-negative ints (else 0).
+fn sanitize_feeds(value: Option<&serde_json::Value>) -> Vec<ReportedFeed> {
+    let mut seen = HashSet::new();
+    let hex16 =
+        |r: &str| r.len() == 16 && r.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    value
+        .and_then(|f| f.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|row| {
+            let kept: serde_json::Value = serde_json::from_str(
+                &crate::handlers::device_api::known_fields(row, FEED_ROW_FIELDS)?,
+            )
+            .ok()?;
+            let id = kept
+                .get("id")?
+                .as_str()
+                .filter(|id| crate::calendar_feeds::valid_uid(id))?;
+            if !seen.insert(id.to_string()) {
+                return None;
+            }
+            let count = |key: &str| kept.get(key).and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+            Some(ReportedFeed {
+                id: id.to_string(),
+                applied_rev: kept
+                    .get("applied_rev")
+                    .and_then(|r| r.as_str())
+                    .filter(|r| hex16(r))
+                    .map(str::to_string),
+                refused: count("refused"),
+                unknown_zone: count("unknown_zone"),
+            })
+        })
+        .take(crate::calendar_feeds::MAX_LINKS_PER_PHONE as usize)
+        .collect()
+}
 
 /// The phone's `calendar` through its known keys (§4.2): `readable` a bool (else nothing is kept); at most
 /// [MAX_REPORTED_CALENDARS] calendars, each with a valid key (once) and an account type, its name cut to 100, its
@@ -504,6 +568,7 @@ pub fn sanitize_report(
         readable,
         calendars,
         rules_skipped,
+        feeds: sanitize_feeds(value.get("feeds")),
     })
 }
 

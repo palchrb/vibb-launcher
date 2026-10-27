@@ -16,6 +16,12 @@ import kotlinx.serialization.json.longOrNull
 /** A launcher with Dagen reports this capability; the server's Calendar page waits for it. */
 const val CALENDAR_CAPABILITY = "calendar_v1"
 
+/** A launcher that writes the parent's calendar links (design 72) reports this capability. */
+const val CALENDAR_FEEDS_CAPABILITY = "calendar_feeds_v1"
+
+/** One calendar link (design 72 §3): its uid (32 hex), the name the parent gave it, its set's rev. */
+data class FeedRef(val id: String, val name: String, val rev: String)
+
 /** A calendar's reminder (§5.2): none, the calendar's own alarms, or a fixed number of minutes before every event. */
 sealed interface Remind {
     data object Off : Remind
@@ -45,13 +51,18 @@ data class CalendarPolicy(
     /** Ids of rules this launcher can't use (an unknown field, match or action; a description rule that doesn't
      * hide; nothing to match), reported in the status report. */
     val rulesSkipped: List<Long> = emptyList(),
+    /** The calendar links that read (design 72). */
+    val feeds: List<FeedRef> = emptyList(),
+    /** `feeds` is an array every element of which read: only then may a link's calendar the policy doesn't name be
+     * deleted (QA L9) - an older server, a bad element, a cached policy delete nothing. */
+    val feedsComplete: Boolean = false,
 ) {
     fun setting(key: String): CalendarSetting = calendars[key] ?: CalendarSetting()
 
     /** The parent's pick for the kid's own events; `null` = the phone's own "Min kalender". */
     val kidCalendarKey: String? get() = calendars.entries.firstOrNull { it.value.writableForKid }?.key
 
-    override fun toString() = "CalendarPolicy(usable=$usable, rules=${rules.size})"
+    override fun toString() = "CalendarPolicy(usable=$usable, rules=${rules.size}, feeds=${feeds.size})"
 
     companion object {
         /** No usable policy: Dagen off. */
@@ -98,6 +109,8 @@ fun calendarPolicy(element: JsonElement?): CalendarPolicy {
         val rule = titleRule(id, r)
         if (rule != null) rules += rule else skipped += id
     }
+    val feedRows = obj["feeds"] as? JsonArray
+    val feeds = feedRows.orEmpty().mapNotNull { feedRef(it) }.distinctBy { it.id }
     return CalendarPolicy(
         usable = true,
         onHome = obj.bool("on_home") ?: true,
@@ -107,7 +120,20 @@ fun calendarPolicy(element: JsonElement?): CalendarPolicy {
         calendars = calendars,
         rules = rules,
         rulesSkipped = skipped,
+        feeds = feeds,
+        feedsComplete = feedRows != null && feeds.size == feedRows.size,
     )
+}
+
+private val FEED_ID = Regex("[0-9a-f]{32}")
+
+/** One link of `calendar.feeds`, or `null` when it doesn't read: a 32-hex id, a name and a rev, all strings. */
+private fun feedRef(row: JsonElement): FeedRef? {
+    val r = row as? JsonObject ?: return null
+    val id = r.string("id")?.takeIf { FEED_ID.matches(it) } ?: return null
+    val name = r.string("name")?.takeIf { it.isNotBlank() } ?: return null
+    val rev = r.string("rev")?.takeIf { it.isNotBlank() } ?: return null
+    return FeedRef(id, name, rev)
 }
 
 /** One rule, or `null` when this launcher can't use it (§4.1, §3.4's grammar). */

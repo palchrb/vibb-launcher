@@ -8,6 +8,7 @@ mod attention;
 mod audit;
 mod boot_witness;
 mod calendar;
+mod calendar_feeds;
 mod config;
 mod crashes;
 mod device_routes;
@@ -19,6 +20,7 @@ mod fdroid;
 mod gate;
 mod handlers;
 mod i18n;
+mod ics;
 mod install_now;
 mod keys;
 mod kid_lock;
@@ -518,6 +520,8 @@ async fn main() {
     tokio::task::spawn(retention::run_pruning(state.clone()));
     // The music sweep (design 21b): lists every NRK/RSS entry, its first pass 60 s from now.
     tokio::task::spawn(music_sweep::run(state.clone()));
+    // Calendar links (design 72): each linked calendar fetched every hour, its first pass 30 s from now.
+    tokio::task::spawn(calendar_feeds::run(state.clone()));
     // Design 24: parent PINs stored before the easy-PIN check get it once.
     tokio::task::spawn(parent_pin::run_easy_sweep(
         state.db.clone(),
@@ -907,6 +911,23 @@ pub fn build_admin_router(
         .route(
             "/devices/{id}/calendar/rules/{rule}/delete",
             post(handlers::calendar::delete_rule),
+        )
+        // Design 72: the phone's calendar links.
+        .route(
+            "/devices/{id}/calendar/links",
+            post(handlers::calendar::add_link),
+        )
+        .route(
+            "/devices/{id}/calendar/links/{uid}/name",
+            post(handlers::calendar::rename_link),
+        )
+        .route(
+            "/devices/{id}/calendar/links/{uid}/fetch",
+            post(handlers::calendar::fetch_link),
+        )
+        .route(
+            "/devices/{id}/calendar/links/{uid}/remove",
+            post(handlers::calendar::remove_link),
         )
         .route("/devices/{id}/lifts", post(handlers::lifts::create_lift))
         .route(

@@ -156,7 +156,8 @@ async fn the_policy_carries_the_rules_and_the_calendars() {
                  "pattern": "6. og 7. trinn", "action": "hide", "text": ""},
                 {"id": 7, "calendar": "9f3a61c2d84be705", "field": "title", "match": "starts",
                  "pattern": "Gruppe 2- skoleåret 2026/2027:", "action": "prefix", "text": "Skole:"}
-            ]
+            ],
+            "feeds": []
         })
     );
     // At most one calendar a phone is the kid's.
@@ -316,7 +317,8 @@ async fn the_switches_and_the_calendars_save_back_to_their_groups() {
                 {"key": "9f3a61c2d84be705", "shown": false, "remind": "before", "remind_minutes": 15, "writable_for_kid": false},
                 {"key": "c04e7b19a2f6d853", "shown": true, "remind": "off", "remind_minutes": null, "writable_for_kid": true}
             ],
-            "rules": []
+            "rules": [],
+            "feeds": []
         })
     );
     // Off for the kid; a calendar gone from the phone shows so and is removed.
@@ -624,7 +626,8 @@ async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
         let panel = &panel[..panel.find("</details>").unwrap()];
         assert!(panel.contains(text), "{label}: {panel}");
     }
-    assert_eq!(html.matches(r#"<details class="info">"#).count(), 3);
+    // Dagen, the lock, Calendars shown and (design 72) Calendar links.
+    assert_eq!(html.matches(r#"<details class="info">"#).count(), 4);
     assert!(html.contains(r#"role="img" aria-label="Skole: Matte om 15 min, 08:30""#));
     for gone in [
         "Den rolige raden",
@@ -703,7 +706,16 @@ async fn every_calendar_route_needs_a_session() {
     let app = TestApp::new().await;
     let (id, _) = reported(&app).await;
     add_rule(&app, id, 1, 0, "NULL, 'title', 'contains', 'x', 'hide', ''").await;
+    // Design 72: a calendar link, so its routes have one to act on.
+    let link = "https://skole.example.no/k.ics";
+    app.fetch
+        .answer(link, 200, "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n");
+    let uid = crate::calendar_feeds::add(&app.state, id, link, "Skolen", chrono::Utc::now())
+        .await
+        .unwrap();
+    let calls = app.fetch.count();
     let page = format!("/devices/{id}/calendar");
+    let links = format!("{page}/links/{uid}");
     let posts: Vec<(String, Vec<(&str, &str)>)> = vec![
         (format!("{page}/dagen"), vec![("kid", "off")]),
         (
@@ -742,6 +754,13 @@ async fn every_calendar_route_needs_a_session() {
         ),
         (format!("{page}/rules/1/move"), vec![("dir", "down")]),
         (format!("{page}/rules/1/delete"), vec![]),
+        (
+            format!("{page}/links"),
+            vec![("url", "https://other.example.no/k.ics"), ("name", "x")],
+        ),
+        (format!("{links}/name"), vec![("name", "Renamed")]),
+        (format!("{links}/fetch"), vec![]),
+        (format!("{links}/remove"), vec![]),
     ];
     for (path, fields) in posts {
         let res = app.request_form(Method::POST, &path, None, &fields).await;
@@ -787,4 +806,10 @@ async fn every_calendar_route_needs_a_session() {
         .await
         .unwrap();
     assert_eq!(saved, 0);
+    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM device_calendar_feeds")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(names, ["Skolen"]);
+    assert_eq!(app.fetch.count(), calls, "no fetch without a session");
 }

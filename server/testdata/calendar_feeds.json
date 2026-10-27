@@ -1,0 +1,226 @@
+{
+  "feed": {
+    "events": [
+      {
+        "alarms": [],
+        "all_day": true,
+        "description": "",
+        "end": "20261114",
+        "exdates": [],
+        "location": "",
+        "overrides": [],
+        "rdates": [],
+        "rev": "2bb4496baa0233a1",
+        "rrule": null,
+        "start": "20261113",
+        "status": "confirmed",
+        "summary": "Planleggingsdag",
+        "tz": null,
+        "uid": "contract-allday"
+      },
+      {
+        "alarms": [
+          30
+        ],
+        "all_day": false,
+        "description": "Klasserommet, 2. etasje",
+        "end": "20261105T193000",
+        "exdates": [],
+        "location": "Skolen",
+        "overrides": [],
+        "rdates": [],
+        "rev": "247993d828454224",
+        "rrule": null,
+        "start": "20261105T180000",
+        "status": "confirmed",
+        "summary": "Foreldremøte",
+        "tz": "Europe/Oslo",
+        "uid": "contract-timed"
+      },
+      {
+        "alarms": [
+          15,
+          60
+        ],
+        "all_day": false,
+        "description": "",
+        "end": "20261102T091500",
+        "exdates": [
+          "20261109T081500"
+        ],
+        "location": "",
+        "overrides": [
+          {
+            "alarms": [
+              15,
+              60
+            ],
+            "description": "",
+            "end": "20261116T111500",
+            "location": "",
+            "recurrence_id": "20261116T081500",
+            "start": "20261116T101500",
+            "status": "confirmed",
+            "summary": "Gym (ute)"
+          },
+          {
+            "alarms": [
+              15,
+              60
+            ],
+            "description": "",
+            "end": "20261123T091500",
+            "location": "",
+            "recurrence_id": "20261123T081500",
+            "start": "20261123T081500",
+            "status": "cancelled",
+            "summary": "Gym"
+          }
+        ],
+        "rdates": [],
+        "rev": "6792fd67422f5ba3",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;UNTIL=20270621T061500Z",
+        "start": "20261102T081500",
+        "status": "confirmed",
+        "summary": "Gym",
+        "tz": "Europe/Oslo",
+        "uid": "contract-weekly"
+      }
+    ],
+    "id": "ece0aa6b9bd653a8553c15ec7e05dacf",
+    "rev": "5787faacda7a9594",
+    "v": 1
+  },
+  "keys": {
+    "ece0aa6b9bd653a8553c15ec7e05dacf": "d37791088d7b159c"
+  },
+  "policy": {
+    "feeds": [
+      {
+        "id": "ece0aa6b9bd653a8553c15ec7e05dacf",
+        "name": "Skolen",
+        "rev": "5787faacda7a9594"
+      }
+    ]
+  },
+  "provider": [
+    {
+      "_sync_id": "contract-allday",
+      "allDay": 1,
+      "description": "",
+      "dtend": 1794614400000,
+      "dtstart": 1794528000000,
+      "duration": null,
+      "eventLocation": "",
+      "eventStatus": 1,
+      "eventTimezone": "UTC",
+      "exdate": null,
+      "hasAlarm": 0,
+      "rdate": null,
+      "reminders": [],
+      "rrule": null,
+      "sync_data1": "2bb4496baa0233a1",
+      "sync_data2": null,
+      "title": "Planleggingsdag",
+      "uid2445": "contract-allday"
+    },
+    {
+      "_sync_id": "contract-timed",
+      "allDay": 0,
+      "description": "Klasserommet, 2. etasje",
+      "dtend": 1793903400000,
+      "dtstart": 1793898000000,
+      "duration": null,
+      "eventLocation": "Skolen",
+      "eventStatus": 1,
+      "eventTimezone": "Europe/Oslo",
+      "exdate": null,
+      "hasAlarm": 1,
+      "rdate": null,
+      "reminders": [
+        30
+      ],
+      "rrule": null,
+      "sync_data1": "247993d828454224",
+      "sync_data2": null,
+      "title": "Foreldremøte",
+      "uid2445": "contract-timed"
+    },
+    {
+      "_sync_id": "contract-weekly",
+      "allDay": 0,
+      "description": "",
+      "dtend": null,
+      "dtstart": 1793603700000,
+      "duration": "PT3600S",
+      "eventLocation": "",
+      "eventStatus": 1,
+      "eventTimezone": "Europe/Oslo",
+      "exdate": "20261109T071500Z",
+      "hasAlarm": 1,
+      "rdate": null,
+      "reminders": [
+        15,
+        60
+      ],
+      "rrule": "FREQ=WEEKLY;BYDAY=MO;UNTIL=20270621T061500Z",
+      "sync_data1": "6792fd67422f5ba3",
+      "sync_data2": null,
+      "title": "Gym",
+      "uid2445": "contract-weekly"
+    },
+    {
+      "_sync_id": "contract-weekly#20261116T081500",
+      "allDay": 0,
+      "description": "",
+      "dtend": 1794824100000,
+      "dtstart": 1794820500000,
+      "eventLocation": "",
+      "eventStatus": 1,
+      "eventTimezone": "Europe/Oslo",
+      "hasAlarm": 1,
+      "originalAllDay": 0,
+      "originalInstanceTime": 1794813300000,
+      "original_sync_id": "contract-weekly",
+      "reminders": [
+        15,
+        60
+      ],
+      "sync_data1": "6792fd67422f5ba3",
+      "title": "Gym (ute)",
+      "uid2445": "contract-weekly"
+    },
+    {
+      "_sync_id": "contract-weekly#20261123T081500",
+      "allDay": 0,
+      "description": "",
+      "dtend": 1795421700000,
+      "dtstart": 1795418100000,
+      "eventLocation": "",
+      "eventStatus": 2,
+      "eventTimezone": "Europe/Oslo",
+      "hasAlarm": 1,
+      "originalAllDay": 0,
+      "originalInstanceTime": 1795418100000,
+      "original_sync_id": "contract-weekly",
+      "reminders": [
+        15,
+        60
+      ],
+      "sync_data1": "6792fd67422f5ba3",
+      "title": "Gym",
+      "uid2445": "contract-weekly"
+    }
+  ],
+  "report": {
+    "feeds": [
+      {
+        "applied_rev": "5787faacda7a9594",
+        "id": "ece0aa6b9bd653a8553c15ec7e05dacf",
+        "refused": 0,
+        "unknown_zone": 0
+      }
+    ]
+  },
+  "zone": "Europe/Oslo"
+}

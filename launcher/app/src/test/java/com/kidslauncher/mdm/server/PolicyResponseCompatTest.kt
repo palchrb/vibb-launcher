@@ -595,14 +595,19 @@ class PolicyResponseCompatTest {
     @Test
     fun `calendar never fails the policy and is carried as is (69)`() {
         fun withCalendar(calendar: String) = serverResponse.replaceFirst("{", "{\"calendar\": $calendar,")
+        // Design 72: `feeds`, `[]` without a link - a fully readable array (a link's keys in `calendar_feeds.json`).
         val today = withCalendar(
-            """{"on_home": true, "kid_adds": true, "glance_next": false, "lock_reminders": "off", "calendars": [], "rules": []}""",
+            """{"on_home": true, "kid_adds": true, "glance_next": false, "lock_reminders": "off", "calendars": [], "rules": [], "feeds": []}""",
         )
         val policy = (decodeFresh(today) as FreshDecode.Ok).policy
         assertEquals(
-            com.kidslauncher.mdm.day.CalendarPolicy(usable = true, onHome = true, kidAdds = true),
+            com.kidslauncher.mdm.day.CalendarPolicy(usable = true, onHome = true, kidAdds = true, feedsComplete = true),
             com.kidslauncher.mdm.day.calendarPolicy(policy.calendar),
         )
+        for (odd in listOf("""{"feeds": 5}""", """{"feeds": [5, {"id": 1}]}""")) {
+            assertTrue(odd, decodeFresh(withCalendar(odd)) is FreshDecode.Ok)
+            assertTrue(odd, !com.kidslauncher.mdm.day.calendarPolicy((decodeFresh(withCalendar(odd)) as FreshDecode.Ok).policy.calendar).feedsComplete)
+        }
         assertEquals(CachedPolicy.Ok(policy), decodeCached(ServerJson.encodeToString(PolicyResponse.serializer(), policy)))
         for (odd in listOf("null", "[]", "5", "{}", """{"rules": [5, null, {"id": "x"}], "calendars": "no"}""")) {
             assertTrue(odd, decodeFresh(withCalendar(odd)) is FreshDecode.Ok)

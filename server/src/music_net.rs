@@ -44,6 +44,8 @@ pub enum Kind {
     /// Spotify's accounts service: the token exchange and refresh, and `/v1/me` at a login
     /// (design 26c §2.4; a token answer is a few hundred bytes).
     Token,
+    /// A calendar link's body (design 72 §2.1): 5 MB decoded, past it `too_big` and the last set kept.
+    Calendar,
 }
 
 impl Kind {
@@ -56,6 +58,7 @@ impl Kind {
             Kind::Login => 64_000,
             Kind::Shelf => 8_000_000,
             Kind::Token => 64_000,
+            Kind::Calendar => 5_000_000,
         }
     }
 
@@ -68,6 +71,7 @@ impl Kind {
             Kind::Login => 20,
             Kind::Shelf => 30,
             Kind::Token => 20,
+            Kind::Calendar => 60,
         })
     }
 }
@@ -144,6 +148,8 @@ pub struct SourceResponse {
     /// `Location` as sent (a 3xx of a request with `follow: false`, design 26c §3.1), cut to one
     /// character past [MAX_MEDIA_URL_CHARS] - so a longer one is seen to be too long.
     pub location: Option<String>,
+    /// `Content-Type` as sent, at most 200 characters (design 72 QA L1: a calendar body's charset).
+    pub content_type: Option<String>,
 }
 
 /// Without the body (design 26b QA L4): a Storytel login's body holds the session token.
@@ -157,6 +163,7 @@ impl std::fmt::Debug for SourceResponse {
             .field("last_modified", &self.last_modified)
             .field("retry_after", &self.retry_after)
             .field("location", &self.location.is_some())
+            .field("content_type", &self.content_type)
             .finish()
     }
 }
@@ -546,6 +553,7 @@ impl Source for HttpSource {
             let etag = header(&response, reqwest::header::ETAG);
             let last_modified = header(&response, reqwest::header::LAST_MODIFIED);
             let retry_after = header(&response, reqwest::header::RETRY_AFTER);
+            let content_type = header_cut(&response, reqwest::header::CONTENT_TYPE, 200);
             let location = header_cut(
                 &response,
                 reqwest::header::LOCATION,
@@ -571,6 +579,7 @@ impl Source for HttpSource {
                 last_modified,
                 retry_after,
                 location,
+                content_type,
             })
         })
     }
