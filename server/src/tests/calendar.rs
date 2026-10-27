@@ -592,18 +592,12 @@ async fn the_kids_calendar_survives_a_report_without_it() {
     assert_eq!(other.status, StatusCode::BAD_REQUEST);
 }
 
-/// The page in Norwegian, as an iPhone set to it asks.
+/// `page` in Norwegian for this request only (`?lang=nb`, design 70): an `Accept-Language` would become the account's
+/// language at its first request and turn the English checks Norwegian.
 async fn page_nb(app: &TestApp, page: &str, cookie: &str) -> String {
-    let request = axum::http::Request::builder()
-        .uri(page)
-        .header(axum::http::header::COOKIE, cookie)
-        .header(
-            axum::http::header::ACCEPT_LANGUAGE,
-            "nb-NO,nb;q=0.9,en;q=0.5",
-        )
-        .body(axum::body::Body::empty())
-        .unwrap();
-    app.send(request).await.text()
+    app.get_page(&format!("{page}?lang=nb"), cookie)
+        .await
+        .text()
 }
 
 /// The 2026-10-27 polish: each group's help behind its "i", the kid's calendar on a line of its own, and the lock
