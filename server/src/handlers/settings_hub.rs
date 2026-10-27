@@ -20,15 +20,18 @@ use std::path::Path;
 use crate::AppState;
 use crate::display_time::Zone;
 use crate::handlers::backups::{BACKUP_DIR, is_safe_backup_filename};
+use crate::i18n::Lang;
 
 #[derive(Template)]
 #[template(path = "settings_hub.html")]
 struct SettingsHubTemplate {
+    lang: Lang,
     title: String,
     values: HubValues,
     /// The bell and the Notifications row's "3 unread" (design 35 §5.1).
     bell: crate::parent_events::Bell,
 }
+crate::i18n::words!(SettingsHubTemplate);
 
 /// The value at the end of each hub row; `None` shows nothing (none yet, or a read failed - the
 /// row still leads to its page).
@@ -51,6 +54,7 @@ pub struct HubValues {
 
 pub async fn settings_hub(
     State(state): State<AppState>,
+    lang: Lang,
     axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
         crate::security::CurrentAdmin,
     >,
@@ -65,6 +69,7 @@ pub async fn settings_hub(
     .await;
     Html(
         SettingsHubTemplate {
+            lang,
             title: "Settings".to_string(),
             values,
             bell: crate::parent_events::Bell::load(&state.db, admin.id).await,

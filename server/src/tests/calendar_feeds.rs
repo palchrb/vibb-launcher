@@ -195,19 +195,16 @@ async fn the_page_shows_a_link_and_waits_for_the_phone() {
     assert!(page.contains("May be the same as the calendar link Skolen"));
     // The kid's calendar is never a link's.
     assert!(!page.contains(&format!("<option value=\"{key}\"")));
-    // In Norwegian.
+    // In Norwegian, for this request only (`?lang=nb`, design 70).
     let nb = app
-        .send(
-            axum::http::Request::builder()
-                .uri(format!("/devices/{id}/calendar"))
-                .header(header::COOKIE, &cookie)
-                .header(header::ACCEPT_LANGUAGE, "nb-NO")
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
+        .get_page(&format!("/devices/{id}/calendar?lang=nb"), &cookie)
         .await
         .text();
-    assert!(nb.contains("Kalenderlenker") && nb.contains("Hentet "));
+    assert!(
+        nb.contains("Kalenderlenker") && nb.contains("Hentet "),
+        "{nb}"
+    );
+    assert!(nb.contains("Telefonen fikk ikke lagret 2 hendelser"));
 }
 
 #[tokio::test]

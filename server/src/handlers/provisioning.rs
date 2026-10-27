@@ -11,6 +11,7 @@ use crate::AppState;
 use crate::config::ForkConfig;
 use crate::display_time::Zone;
 use crate::enrollment::Kind;
+use crate::i18n::Lang;
 use crate::models::{Device, ProvisioningSettings};
 
 /// android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE's contents - Android's own
@@ -133,6 +134,7 @@ const MAX_WIFI_PASSWORD_CHARS: usize = 63;
 #[derive(Template)]
 #[template(path = "provision_qr.html")]
 struct ProvisionQrTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     /// The phone has connected before: a new code cuts that connection off.
@@ -162,12 +164,19 @@ struct ProvisionQrTemplate {
     zone: Zone,
     now: chrono::DateTime<chrono::Utc>,
 }
+crate::i18n::words!(ProvisionQrTemplate);
 
 impl ProvisionQrTemplate {
-    async fn new(state: &AppState, device: Device, settings: &ProvisioningSettings) -> Self {
+    async fn new(
+        state: &AppState,
+        lang: Lang,
+        device: Device,
+        settings: &ProvisioningSettings,
+    ) -> Self {
         let zone = Zone::load(&state.db).await;
         let now = chrono::Utc::now();
         ProvisionQrTemplate {
+            lang,
             title: format!("Connect {}", device.name),
             enrolled: device.enrolled_at.is_some(),
             device,
@@ -236,12 +245,16 @@ async fn load(state: &AppState, id: i64) -> Result<(Device, ProvisioningSettings
 /// `GET /devices/{id}/provision`: the two ways to connect. No code is made by looking at the page
 /// (design 22 §0 #7): "Make QR Code" posts the form ([provision_qr]), "New Setup Code" posts to
 /// `regenerate-code`.
-pub async fn provision_form(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+pub async fn provision_form(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+) -> Response {
     let (device, settings) = match load(&state, id).await {
         Ok(loaded) => loaded,
         Err(status) => return status.into_response(),
     };
-    ProvisionQrTemplate::new(&state, device, &settings)
+    ProvisionQrTemplate::new(&state, lang, device, &settings)
         .await
         .page(StatusCode::OK)
 }
@@ -286,6 +299,7 @@ pub(crate) fn wifi_refusal(ssid: &str, password: &str) -> Option<(&'static str, 
 /// is made (400, the reason under the field, the password never echoed).
 pub async fn provision_qr(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<ProvisionForm>,
 ) -> Response {
@@ -295,7 +309,7 @@ pub async fn provision_qr(
     };
     let ssid = form.wifi_ssid.trim();
     let password = form.wifi_password.trim();
-    let mut page = ProvisionQrTemplate::new(&state, device, &settings).await;
+    let mut page = ProvisionQrTemplate::new(&state, lang, device, &settings).await;
 
     if let Some((field, why)) = wifi_refusal(ssid, password) {
         page.error_field = field;

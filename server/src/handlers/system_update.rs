@@ -25,6 +25,7 @@ use crate::AppState;
 use crate::config::SERVER_RELEASE_TAG_PREFIX;
 use crate::handlers::settings::Flash;
 use crate::handlers::updates;
+use crate::i18n::Lang;
 use crate::security::{self, CurrentAdmin};
 
 use crate::handlers::backups::FLAG_FILE;
@@ -206,11 +207,12 @@ pub(crate) async fn gather(state: &AppState) -> AppUpdateData {
 
 pub async fn trigger_update(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
     if let Some(reason) = update_blocked_reason(&state).await {
         let flash = Flash::refused("app", "Run the installer again first").because(reason);
-        return updates::render_page(&state, Some(flash))
+        return updates::render_page(&state, Some(flash), lang)
             .await
             .into_response();
     }
@@ -223,7 +225,7 @@ pub async fn trigger_update(
             "Not updating: the newest release ({latest}) isn't newer than this one ({}).",
             crate::APP_VERSION
         ));
-        return updates::render_page(&state, Some(flash))
+        return updates::render_page(&state, Some(flash), lang)
             .await
             .into_response();
     }
@@ -233,12 +235,14 @@ pub async fn trigger_update(
         "update",
         "system_update_triggered",
         updates::Done::Update,
+        lang,
     )
     .await
 }
 
 pub async fn trigger_restart(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
     updates::request_action(
@@ -247,6 +251,7 @@ pub async fn trigger_restart(
         "restart",
         "system_restart_triggered",
         updates::Done::Restart,
+        lang,
     )
     .await
 }
@@ -266,6 +271,7 @@ const VALID_FREQUENCIES: [&str; 3] = ["daily", "weekly", "monthly"];
 /// that isn't HH:MM writes nothing (400, the reason in the group).
 pub async fn save_app_update_schedule(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::Form(form): axum::Form<AppUpdateScheduleForm>,
 ) -> impl IntoResponse {
@@ -288,7 +294,7 @@ pub async fn save_app_update_schedule(
         );
         return (
             axum::http::StatusCode::BAD_REQUEST,
-            updates::render_page(&state, Some(flash)).await,
+            updates::render_page(&state, Some(flash), lang).await,
         )
             .into_response();
     };
@@ -309,7 +315,7 @@ pub async fn save_app_update_schedule(
     .is_err()
     {
         let flash = Flash::refused("app-schedule", "Couldn't save the schedule.");
-        let page = updates::render_page(&state, Some(flash)).await;
+        let page = updates::render_page(&state, Some(flash), lang).await;
         return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, page).into_response();
     }
     security::record_security_event(

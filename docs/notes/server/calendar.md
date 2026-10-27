@@ -93,9 +93,9 @@ stays allowed, and a time rule never suspends ICSx5 or DAVx5 while allowed.
 
 ## Words
 
-Every word of these pages goes through `src/i18n.rs` (`docs/notes/server/pwa.md`, "Words"): the page's language from
-`Accept-Language`, `self.t("calendar.…")` in the templates, `t`/`t_params` in the handler - the 400 and 500 bodies too
-(`calendar.error.*`). The Apps page's "On Home" switch, its sub-line and the summary's "· not on Home" are
+Every word of these pages goes through `src/i18n.rs` (`docs/notes/server/pwa.md`, "Words"): the page's language (the
+account's, else `Accept-Language`; design 70), `self.t("calendar.…")` in the templates, `t`/`t_params` in the handler -
+the 400 and 500 bodies too (`calendar.error.*`). The Apps page's "On Home" switch, its sub-line and the summary's "· not on Home" are
 `apps.on_home*`/`apps.not_on_home`, handed to the pre-i18n form (`AppDisplayForm.on_home_words`).
 
 ## Calendar links (design 72 step 1, `docs/design/72-calendar-feeds.md`)

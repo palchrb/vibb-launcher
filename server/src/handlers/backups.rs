@@ -18,6 +18,7 @@ use std::io::Write;
 
 use crate::AppState;
 use crate::handlers::settings::Flash;
+use crate::i18n::{Lang, Words};
 use crate::security::{self, CurrentAdmin};
 
 /// The backups' folder in `AppState::data_dir` (`data/backups`).
@@ -366,6 +367,7 @@ pub async fn perform_backup(state: &AppState) -> Result<String, String> {
 #[derive(Template)]
 #[template(path = "backups.html")]
 struct BackupsTemplate {
+    lang: Lang,
     title: String,
     backups: Vec<BackupRow>,
     /// The last form's result, in its group ("backups", "upload", "schedule", "drive").
@@ -382,6 +384,7 @@ struct BackupsTemplate {
     /// `DEPLOY_KIND=docker` (design 22 §6): no external drive, live mirror or formatting.
     docker: bool,
 }
+crate::i18n::words!(BackupsTemplate);
 
 impl BackupsTemplate {
     /// Why a restore of `file` was refused, if it was (its confirm then renders open).
@@ -500,7 +503,12 @@ impl Answer {
 
 /// The page. Every form renders its answer here, in the POST's response (as before design 31), and
 /// posts to its group's fragment, so the answer lands where the parent was.
-async fn render_backups(state: &AppState, status: StatusCode, answer: Answer) -> Response {
+async fn render_backups(
+    state: &AppState,
+    status: StatusCode,
+    answer: Answer,
+    lang: Lang,
+) -> Response {
     let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
     let zone = crate::display_time::Zone::load(&state.db).await;
     let now = chrono::Utc::now();
@@ -530,6 +538,7 @@ async fn render_backups(state: &AppState, status: StatusCode, answer: Answer) ->
     backups.sort_by(|a, b| b.filename.cmp(&a.filename));
 
     let page = BackupsTemplate {
+        lang,
         title: "Backups".to_string(),
         backups,
         flash: answer.flash,
@@ -552,6 +561,7 @@ async fn render_backups(state: &AppState, status: StatusCode, answer: Answer) ->
 /// The page; `?done=<code>` (a form that worked, [Done]) shows its line in its group.
 pub async fn list_backups(
     State(state): State<AppState>,
+    lang: Lang,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
@@ -562,10 +572,10 @@ pub async fn list_backups(
             .map(|done| done.flash(docker)),
         ..Answer::default()
     };
-    render_backups(&state, StatusCode::OK, answer).await
+    render_backups(&state, StatusCode::OK, answer, lang).await
 }
 
-pub async fn create_backup(State(state): State<AppState>) -> Response {
+pub async fn create_backup(lang: Lang, State(state): State<AppState>) -> Response {
     match perform_backup(&state).await {
         Ok(_) => {
             let schedule = BackupScheduleConfig::load(&state.data_dir).await;
@@ -583,7 +593,7 @@ pub async fn create_backup(State(state): State<AppState>) -> Response {
                 ),
                 ..Answer::default()
             };
-            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
+            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
         }
     }
 }
@@ -613,6 +623,7 @@ pub async fn download_backup(
 /// Deletes a backup file (behind a `<details>` confirm). One already gone (a second tab) says so.
 pub async fn delete_backup(
     State(state): State<AppState>,
+    lang: Lang,
     Path(filename): Path<String>,
 ) -> Response {
     if !is_safe_backup_filename(&filename) {
@@ -624,7 +635,7 @@ pub async fn delete_backup(
         Err(err) => {
             tracing::error!(%err, "couldn't delete a backup");
             let answer = Answer::refused("backups", "Couldn't delete the backup.");
-            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
+            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
         }
     }
 }
@@ -646,12 +657,13 @@ const VALID_FREQUENCIES: [&str; 3] = ["daily", "weekly", "monthly"];
 /// (400, the reason in the group).
 pub async fn save_backup_schedule(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::Form(form): axum::Form<BackupScheduleForm>,
 ) -> Response {
     if !VALID_FREQUENCIES.contains(&form.frequency.as_str()) {
         let answer = Answer::refused("schedule", "Unknown frequency - nothing was saved.");
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     }
     let day_of_week: i32 = form.day_of_week.trim().parse().unwrap_or(0).clamp(0, 6);
     let day_of_month: i32 = form.day_of_month.trim().parse().unwrap_or(1).clamp(1, 28);
@@ -665,7 +677,7 @@ pub async fn save_backup_schedule(
             "schedule",
             "The time must look like 02:00 - nothing was saved.",
         );
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     };
     let retention_count: i64 = form
         .retention_count
@@ -706,7 +718,7 @@ pub async fn save_backup_schedule(
     } else {
         Answer::refused("schedule", "Couldn't save the schedule.")
     };
-    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
+    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
 }
 
 /// Background task (spawned once at startup, see main.rs) that creates a
@@ -955,6 +967,7 @@ pub struct FormatDriveForm {
 /// page with that drive's confirm open and the reason under the field.
 pub async fn format_drive(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::Form(form): axum::Form<FormatDriveForm>,
 ) -> Response {
@@ -963,7 +976,7 @@ pub async fn format_drive(
         Ok(drive) => drive,
         Err(refusal) => {
             let answer = refusal.answer(&form.device);
-            return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
+            return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
         }
     };
 
@@ -984,7 +997,7 @@ pub async fn format_drive(
     } else {
         not_requested("drive")
     };
-    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
+    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
 }
 
 /// The root helper's request file couldn't be written: nothing happens, and why is behind ⓘ.
@@ -1015,6 +1028,7 @@ pub struct RestoreBackupForm {
 /// backup's confirm open and the reason under the field.
 pub async fn restore_backup(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(filename): Path<String>,
     axum::Form(form): axum::Form<RestoreBackupForm>,
@@ -1028,7 +1042,7 @@ pub async fn restore_backup(
             "backups",
             "That backup isn't there any more - nothing was restored.",
         );
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     }
     if form.confirm_filename.trim() != filename {
         let answer = Answer {
@@ -1038,11 +1052,11 @@ pub async fn restore_backup(
             )),
             ..Answer::default()
         };
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     }
 
     if state.net.deploy_kind == crate::net::DeployKind::Docker {
-        return restore_in_container(&state, &admin, &filename).await;
+        return restore_in_container(&state, &admin, &filename, lang).await;
     }
 
     let flag_content = format!("restore_backup {filename}");
@@ -1062,7 +1076,7 @@ pub async fn restore_backup(
     } else {
         not_requested("backups")
     };
-    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
+    render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
 }
 
 /// The restore in the container (design 22 §6): no root helper, so the marker
@@ -1074,6 +1088,7 @@ async fn restore_in_container(
     state: &AppState,
     admin: &crate::models::AdminUser,
     filename: &str,
+    lang: Lang,
 ) -> Response {
     let marker = state.data_dir.join(crate::startup::RESTORE_REQUEST);
     if let Err(err) = tokio::fs::write(&marker, filename).await {
@@ -1082,7 +1097,7 @@ async fn restore_in_container(
             "backups",
             "Couldn't start the restore - nothing was restored. The server's log says why.",
         );
-        return render_backups(state, StatusCode::INTERNAL_SERVER_ERROR, answer).await;
+        return render_backups(state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await;
     }
     security::record_security_event(
         &state.db,
@@ -1119,6 +1134,7 @@ fn restart_soon(state: AppState) {
 /// Upload group (its form open).
 pub async fn upload_backup(
     State(state): State<AppState>,
+    lang: Lang,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
     let refused = |why: &'static str| Answer::refused("upload", why);
@@ -1127,18 +1143,20 @@ pub async fn upload_backup(
             &state,
             StatusCode::BAD_REQUEST,
             refused("Choose a file first."),
+            lang,
         )
         .await;
     };
     let Ok(bytes) = field.bytes().await else {
         let answer = refused("The file couldn't be read. Nothing was added.");
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     };
     if bytes.is_empty() {
         return render_backups(
             &state,
             StatusCode::BAD_REQUEST,
             refused("That file is empty."),
+            lang,
         )
         .await;
     }
@@ -1161,7 +1179,7 @@ pub async fn upload_backup(
             ),
             ..Answer::default()
         };
-        return render_backups(&state, StatusCode::BAD_REQUEST, answer).await;
+        return render_backups(&state, StatusCode::BAD_REQUEST, answer, lang).await;
     }
 
     let nanos = std::time::SystemTime::now()
@@ -1183,7 +1201,7 @@ pub async fn upload_backup(
         Err(err) => {
             tracing::error!(%err, "couldn't save an uploaded backup");
             let answer = refused("Couldn't save the file. Nothing was added.");
-            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer).await
+            render_backups(&state, StatusCode::INTERNAL_SERVER_ERROR, answer, lang).await
         }
     }
 }
@@ -1231,6 +1249,7 @@ mod tests {
     fn the_page_with_a_backup_and_a_drive() {
         let page = |format_refused: Option<(String, &'static str)>, flash: Option<Flash>| {
             BackupsTemplate {
+                lang: Lang::En,
                 title: "Backups".to_string(),
                 backups: vec![BackupRow {
                     filename: "backup-20261013-030000.zip".to_string(),

@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::music::{NEXT_SORT, log_event, nudge, render_import, server_error};
 use crate::AppState;
+use crate::i18n::Lang;
 use crate::music::{self, MusicCategory};
 use crate::music_import::{self, MAX_IMPORT_BYTES, Section};
 use crate::security::CurrentAdmin;
@@ -231,7 +232,11 @@ fn refused(error: impl Into<String>) -> ImportCard {
 
 /// `POST /music/import` (multipart `library`): the preview, nothing stored. Not JSON, no
 /// `sections` list or over 1 MB: 400 with the reason by the file field.
-pub async fn preview(State(state): State<AppState>, mut multipart: Multipart) -> Response {
+pub async fn preview(
+    State(state): State<AppState>,
+    lang: Lang,
+    mut multipart: Multipart,
+) -> Response {
     const TOO_BIG: &str =
         "That file is over 1 MB - a Vibb library is much smaller. Pick the box's library.json.";
     let mut bytes = None;
@@ -240,29 +245,33 @@ pub async fn preview(State(state): State<AppState>, mut multipart: Multipart) ->
             Ok(Some(field)) if field.name() == Some("library") => match field.bytes().await {
                 Ok(read) => bytes = Some(read),
                 Err(_) => {
-                    return render_import(&state, StatusCode::BAD_REQUEST, refused(TOO_BIG)).await;
+                    return render_import(&state, StatusCode::BAD_REQUEST, refused(TOO_BIG), lang)
+                        .await;
                 }
             },
             Ok(Some(_)) => {}
             Ok(None) => break,
             Err(_) => {
-                return render_import(&state, StatusCode::BAD_REQUEST, refused(TOO_BIG)).await;
+                return render_import(&state, StatusCode::BAD_REQUEST, refused(TOO_BIG), lang)
+                    .await;
             }
         }
     }
     let Some(bytes) = bytes.filter(|b| !b.is_empty()) else {
         let card = refused("Choose the library file first.");
-        return render_import(&state, StatusCode::BAD_REQUEST, card).await;
+        return render_import(&state, StatusCode::BAD_REQUEST, card, lang).await;
     };
     if bytes.len() > MAX_IMPORT_BYTES {
-        return render_import(&state, StatusCode::BAD_REQUEST, refused(TOO_BIG)).await;
+        return render_import(&state, StatusCode::BAD_REQUEST, refused(TOO_BIG), lang).await;
     }
     let sections = match music_import::parse(&bytes) {
         Ok(sections) => sections,
-        Err(error) => return render_import(&state, StatusCode::BAD_REQUEST, refused(error)).await,
+        Err(error) => {
+            return render_import(&state, StatusCode::BAD_REQUEST, refused(error), lang).await;
+        }
     };
     match preview_card(&state, sections, None).await {
-        Ok(card) => render_import(&state, StatusCode::OK, card).await,
+        Ok(card) => render_import(&state, StatusCode::OK, card, lang).await,
         Err(err) => server_error(err, "couldn't preview a Vibb import"),
     }
 }
@@ -284,6 +293,7 @@ struct Done {
 /// past a phone's limit (`music::tick_fits`). Back to `/music/import#import` with what happened.
 pub async fn confirm(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     session: tower_sessions::Session,
     Form(form): Form<Vec<(String, String)>>,
@@ -324,13 +334,13 @@ pub async fn confirm(
     }
     let Some(doc) = doc.filter(|d| d.len() <= MAX_IMPORT_BYTES) else {
         let card = refused("The preview was lost - choose the file and preview it again.");
-        return render_import(&state, StatusCode::BAD_REQUEST, card).await;
+        return render_import(&state, StatusCode::BAD_REQUEST, card, lang).await;
     };
     let mut sections = match music_import::parse(doc.as_bytes()) {
         Ok(sections) => sections,
         Err(_) => {
             let card = refused("The preview was lost - choose the file and preview it again.");
-            return render_import(&state, StatusCode::BAD_REQUEST, card).await;
+            return render_import(&state, StatusCode::BAD_REQUEST, card, lang).await;
         }
     };
     let again = |error: &str, sections: Vec<Section>| {
@@ -338,7 +348,7 @@ pub async fn confirm(
         let error = error.to_string();
         async move {
             match preview_card(&state, sections, Some(error)).await {
-                Ok(card) => render_import(&state, StatusCode::BAD_REQUEST, card).await,
+                Ok(card) => render_import(&state, StatusCode::BAD_REQUEST, card, lang).await,
                 Err(err) => server_error(err, "couldn't preview a Vibb import"),
             }
         }

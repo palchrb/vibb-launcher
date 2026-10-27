@@ -24,6 +24,7 @@ use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
 use crate::handlers::device_api::device_contacts;
 use crate::handlers::device_pages::Note;
+use crate::i18n::Lang;
 use crate::models::{Device, DevicePolicy, MESSAGE_APPS};
 use crate::phone;
 use crate::photos;
@@ -120,6 +121,7 @@ fn contact_summary(inbound: bool, outbound: bool, home: bool) -> String {
 #[derive(Template)]
 #[template(path = "device_calls.html")]
 struct DeviceCallsTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     managed: bool,
@@ -142,6 +144,7 @@ struct DeviceCallsTemplate {
     add_number: String,
     add_error: Option<(&'static str, String)>,
 }
+crate::i18n::words!(DeviceCallsTemplate);
 
 /// What a request shows besides the stored state: an open contact, a notice, a refusal.
 #[derive(Default)]
@@ -175,6 +178,7 @@ fn contacts_notice(code: &str) -> Option<&'static str> {
 
 pub async fn show_calls(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
@@ -183,12 +187,18 @@ pub async fn show_calls(
         notice: query.get("notice").and_then(|code| contacts_notice(code)),
         ..Default::default()
     };
-    render(&state, id, StatusCode::OK, shown).await
+    render(&state, id, StatusCode::OK, shown, lang).await
 }
 
 /// The page; a read that fails is a 500, never an empty list (its saves would read as "off").
-async fn render(state: &AppState, id: i64, status: StatusCode, shown: Shown<'_>) -> Response {
-    match load_page(state, id, shown).await {
+async fn render(
+    state: &AppState,
+    id: i64,
+    status: StatusCode,
+    shown: Shown<'_>,
+    lang: Lang,
+) -> Response {
+    match load_page(state, id, shown, lang).await {
         Ok(Some(page)) => (status, Html(page.render().unwrap())).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
         Err(err) => {
@@ -206,6 +216,7 @@ async fn load_page(
     state: &AppState,
     id: i64,
     shown: Shown<'_>,
+    lang: Lang,
 ) -> Result<Option<DeviceCallsTemplate>, sqlx::Error> {
     let Some(device) = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
@@ -297,6 +308,7 @@ async fn load_page(
     let auto_refresh = report.auto_refresh && add_error.is_none() && refused.is_none();
 
     Ok(Some(DeviceCallsTemplate {
+        lang,
         title: format!("{} - Calls & Contacts", device.name),
         managed: policy.calls_managed,
         calls_enabled: policy.calls_enabled,
@@ -982,6 +994,7 @@ pub async fn save_settings(
 /// renders the page (400) with Add Contact open, what was typed and the reason under its field.
 pub async fn add_contact(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -993,7 +1006,7 @@ pub async fn add_contact(
             add: Some((name, raw_number, field, why)),
             ..Default::default()
         };
-        render(state, id, StatusCode::BAD_REQUEST, shown).await
+        render(state, id, StatusCode::BAD_REQUEST, shown, lang).await
     };
 
     let name_len = name.chars().count();
@@ -1115,6 +1128,7 @@ fn valid_matrix_id(value: &str) -> bool {
 /// `#contacts` saying nothing was saved. An unknown phone is a 404.
 pub async fn update_contact(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, contact_id)): Path<(i64, i64)>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -1144,7 +1158,7 @@ pub async fn update_contact(
                 }),
                 ..Default::default()
             };
-            return render(&state, id, StatusCode::BAD_REQUEST, shown).await;
+            return render(&state, id, StatusCode::BAD_REQUEST, shown, lang).await;
         }
     };
 
@@ -1275,6 +1289,7 @@ async fn photo_saved(
 /// address-book contact, so every device that has it gets it. Back to the contact's row.
 pub async fn upload_photo(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, contact_id)): Path<(i64, i64)>,
     mut multipart: Multipart,
 ) -> Response {
@@ -1297,7 +1312,7 @@ pub async fn upload_photo(
                 }),
                 ..Default::default()
             };
-            render(&state, id, StatusCode::BAD_REQUEST, shown).await
+            render(&state, id, StatusCode::BAD_REQUEST, shown, lang).await
         }
     };
 

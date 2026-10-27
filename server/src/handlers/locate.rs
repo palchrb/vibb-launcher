@@ -22,6 +22,7 @@ use std::collections::HashMap;
 
 use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
+use crate::i18n::Lang;
 use crate::models::{
     AdminUser, CancelledBy, CommandStatus, Device, DeviceCommand, DeviceLocation, Unconfirmed,
     command_label,
@@ -49,12 +50,14 @@ const FIXES_PER_PAGE: usize = 200;
 #[derive(Template)]
 #[template(path = "device_locate.html")]
 struct LocateTemplate {
+    lang: Lang,
     title: String,
     /// Every phone: the switcher above the chosen one, or the list when none is chosen.
     phones: Vec<PhoneLink>,
     selected: Option<Locate>,
     bell: crate::parent_events::Bell,
 }
+crate::i18n::words!(LocateTemplate);
 
 /// A phone in the switcher (or the list): its state as a dot and, for screen readers, in its
 /// `aria-label` ("Anna, online", §5.4).
@@ -1038,6 +1041,7 @@ async fn render_locate_page(
     admin_id: i64,
     selected_id: Option<i64>,
     asked: Asked<'_>,
+    lang: Lang,
 ) -> Result<Html<String>, sqlx::Error> {
     let devices = sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name, id")
         .fetch_all(&state.db)
@@ -1055,6 +1059,7 @@ async fn render_locate_page(
     };
     Ok(Html(
         LocateTemplate {
+            lang,
             title: "Locate".to_string(),
             phones,
             selected,
@@ -1371,6 +1376,7 @@ async fn count_in_span(
 
 pub async fn show_locate(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -1392,6 +1398,7 @@ pub async fn show_locate(
             zone,
             zone_id,
         },
+        lang,
     )
     .await
     {
@@ -1542,6 +1549,7 @@ pub async fn locations_json(
 #[derive(Template)]
 #[template(path = "device_locations.html")]
 struct LocationsTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     map: MapData,
@@ -1552,6 +1560,7 @@ struct LocationsTemplate {
     /// This is an older page: "Newest" leads back.
     paged: bool,
 }
+crate::i18n::words!(LocationsTemplate);
 
 /// A row of the Locations page: when ("10:58", "yesterday 21:40", "12 Oct 08:12", the exact time
 /// in `title`), the accuracy ("± 25 m"), and the popup's words for `static/locate.js`.
@@ -1579,6 +1588,7 @@ fn before_of(raw: Option<&String>) -> Option<(String, i64)> {
 /// read fails.
 pub async fn show_locations(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -1643,6 +1653,7 @@ pub async fn show_locations(
         .collect();
     Html(
         LocationsTemplate {
+            lang,
             title: "Locations".to_string(),
             device,
             map,
@@ -1954,6 +1965,7 @@ pub async fn update_location_policy(
 /// action ends in `#erase`, so the answer lands there); 404 for an unknown phone.
 pub async fn wipe(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
@@ -1982,6 +1994,7 @@ pub async fn wipe(
                 zone: None,
                 zone_id: None,
             },
+            lang,
         )
         .await
         {

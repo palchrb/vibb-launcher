@@ -537,6 +537,7 @@ async fn create_device_inserts_policy_row() {
     let app = TestApp::new().await;
     let response = crate::handlers::devices::create_device(
         axum::extract::State(app.state.clone()),
+        crate::i18n::Lang::En,
         axum::Form(crate::handlers::devices::CreateDeviceForm {
             name: "phone".to_string(),
         }),
@@ -561,6 +562,7 @@ async fn a_new_device_starts_with_all_kid_settings_on() {
     let (existing, _) = app.create_device("old").await;
     let response = crate::handlers::devices::create_device(
         axum::extract::State(app.state.clone()),
+        crate::i18n::Lang::En,
         axum::Form(crate::handlers::devices::CreateDeviceForm {
             name: "new".to_string(),
         }),
@@ -630,6 +632,7 @@ async fn failed_create_device_leaves_no_device_row() {
 
     let response = crate::handlers::devices::create_device(
         axum::extract::State(app.state.clone()),
+        crate::i18n::Lang::En,
         axum::Form(crate::handlers::devices::CreateDeviceForm {
             name: "phone".to_string(),
         }),
@@ -718,6 +721,7 @@ async fn status_report_stores_policy_state_and_pause() {
 async fn about_page(app: &TestApp, id: i64) -> String {
     let response = crate::handlers::device_pages::view_about(
         axum::extract::State(app.state.clone()),
+        crate::i18n::Lang::En,
         axum::extract::Path(id),
     )
     .await;
