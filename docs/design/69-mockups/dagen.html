@@ -494,6 +494,148 @@ stedet når det finnes, ellers første setning av beskrivelsen, og et trykk på 
   </figure>
 </div>
 
+<h2>6. Farge per kalender i stedet for «Skole: » (2026-10-27)</h2>
+<p class="note">Tanken: hver kalender får en farge (forelderen velger blant åtte rolige i PWA-en), og Dagen viser fargen på raden.
+Da trenger ikke tittelregelen skrive «Skole: » foran alt; regelen kan nøye seg med å <b>fjerne</b> «Gruppe 2- skoleåret 2026/2027: ».
+Samme dag i fire varianter: skolen (blå), fotball (grønn) og barnets egen avtale (fersken, som i dag). Fargene er dempede
+på mørk grunn, og raden sier fortsatt kalenderens navn når man åpner den.</p>
+<style>
+  .dagen .ev.c-school { --cal: #6FA8DC; }
+  .dagen .ev.c-sport  { --cal: #7FC28F; }
+  .dagen .ev.c-own    { --cal: var(--accent); }
+  .dagen .vA .ev { border-left: 4px solid var(--cal); padding-left: 11px; }
+  .dagen .vB .ev .tm::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                                background: var(--cal); margin-right: 6px; vertical-align: 1px; }
+  .dagen .vB .ev .tm { color: var(--core); }
+  .dagen .vC .ev .tm { color: var(--cal); }
+  .dagen .vC .ev .tm small { color: var(--core-dim); }
+  .dagen .vD .ev .tm { color: var(--core); }
+  .dagen .vD .ev .chip { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .04em;
+                          text-transform: uppercase; color: var(--cal); background: color-mix(in srgb, var(--cal) 16%, transparent);
+                          border-radius: 8px; padding: 1px 7px; margin-top: 4px; }
+  .dagen .vD .ev.c-own .chip { color: var(--accent); }
+  .dagen .legend { position: absolute; left: 16px; right: 16px; bottom: 34px; display: flex; gap: 14px; font-size: 12px;
+                   font-weight: 700; color: var(--core-dim); }
+  .dagen .legend span::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+                                background: var(--cal); margin-right: 5px; }
+  .dagen .legend .c-school { --cal: #6FA8DC; } .dagen .legend .c-sport { --cal: #7FC28F; } .dagen .legend .c-own { --cal: var(--accent); }
+  .pwa .sw { display: flex; gap: 8px; margin-top: 8px; }
+  .pwa .sw i { width: 22px; height: 22px; border-radius: 50%; display: block; box-shadow: 0 0 0 1px rgba(0,0,0,.08) inset; }
+  .pwa .sw i.on { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--pwa-accent); }
+  .row .ic.dot { background: transparent; position: relative; }
+  .row .ic.dot::after { content: ''; position: absolute; left: 11px; top: 11px; width: 16px; height: 16px; border-radius: 50%;
+                        background: #6FA8DC; }
+</style>
+<div class="grid">
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">Onsdag<small>28. oktober</small></div><div class="today-btn">← I dag</div></div>
+      <div class="list vA">
+        <div class="ev c-school"><div class="tm">10:00<small>11:30</small></div><div class="tx"><div class="ti">Gym for 4. eller 5. trinn</div><div class="wh"></div></div></div>
+        <div class="ev c-school more"><div class="tm">13:00<small>14:30</small></div><div class="tx"><div class="ti">Språk: Ordtak</div><div class="wh">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen kjente ordspråk kommer fra.</div></div></div>
+        <div class="ev c-sport"><div class="tm">17:30<small>19:00</small></div><div class="tx"><div class="ti">Trening G2016</div><div class="wh">Nadderud kunstgress</div></div></div>
+        <div class="ev c-own"><div class="tm">19:30<small>20:30</small></div><div class="tx"><div class="ti">Kino med Ola og Per</div><div class="wh">Min kalender</div></div></div>
+      </div>
+      <div class="peek l"></div><div class="peek r"></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>A. Fargekant.</b> En 4 dp stripe på radens venstre kant. Tydeligst av de fire, tåler fargeblindhet dårligst alene,
+    men kalenderens navn står alltid på hendelsessiden. Tittelen er nå bare «Gym for 4. eller 5. trinn»: regelen fjerner prefikset
+    i stedet for å bytte det.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">Onsdag<small>28. oktober</small></div><div class="today-btn">← I dag</div></div>
+      <div class="list vB">
+        <div class="ev c-school"><div class="tm">10:00<small>11:30</small></div><div class="tx"><div class="ti">Gym for 4. eller 5. trinn</div><div class="wh"></div></div></div>
+        <div class="ev c-school more"><div class="tm">13:00<small>14:30</small></div><div class="tx"><div class="ti">Språk: Ordtak</div><div class="wh">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen kjente ordspråk kommer fra.</div></div></div>
+        <div class="ev c-sport"><div class="tm">17:30<small>19:00</small></div><div class="tx"><div class="ti">Trening G2016</div><div class="wh">Nadderud kunstgress</div></div></div>
+        <div class="ev c-own"><div class="tm">19:30<small>20:30</small></div><div class="tx"><div class="ti">Kino med Ola og Per</div><div class="wh">Min kalender</div></div></div>
+      </div>
+      <div class="legend"><span class="c-school">Skolen</span><span class="c-sport">Fotball</span><span class="c-own">Mine</span></div>
+      <div class="peek l"></div><div class="peek r"></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>B. Prikk foran klokkeslettet</b>, og en liten forklaring nederst på siden med kalendernavnene. Roligst. Prikken tar
+    8 dp av tidskolonnen, så 12-timers tider («12:30 PM») må få kolonnen utvidet, som i dag.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">Onsdag<small>28. oktober</small></div><div class="today-btn">← I dag</div></div>
+      <div class="list vC">
+        <div class="ev c-school"><div class="tm">10:00<small>11:30</small></div><div class="tx"><div class="ti">Gym for 4. eller 5. trinn</div><div class="wh"></div></div></div>
+        <div class="ev c-school more"><div class="tm">13:00<small>14:30</small></div><div class="tx"><div class="ti">Språk: Ordtak</div><div class="wh">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen kjente ordspråk kommer fra.</div></div></div>
+        <div class="ev c-sport"><div class="tm">17:30<small>19:00</small></div><div class="tx"><div class="ti">Trening G2016</div><div class="wh">Nadderud kunstgress</div></div></div>
+        <div class="ev c-own"><div class="tm">19:30<small>20:30</small></div><div class="tx"><div class="ti">Kino med Ola og Per</div><div class="wh">Min kalender</div></div></div>
+      </div>
+      <div class="peek l"></div><div class="peek r"></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>C. Klokkeslettet i kalenderens farge.</b> Ingen nye elementer, men fersken mister rollen som «tid» og blir «mine
+    avtaler», og «Pågår nå»-ringen (fersken) kolliderer med en fersken tid. Svakest.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone dagen">
+      <div class="bar"><span>08:12</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="back">‹</div>
+      <div class="head"><div class="day">Onsdag<small>28. oktober</small></div><div class="today-btn">← I dag</div></div>
+      <div class="list vD">
+        <div class="ev c-school"><div class="tm">10:00<small>11:30</small></div><div class="tx"><div class="ti">Gym for 4. eller 5. trinn</div><span class="chip">Skolen</span></div></div>
+        <div class="ev c-school more"><div class="tm">13:00<small>14:30</small></div><div class="tx"><div class="ti">Språk: Ordtak</div><div class="wh">Vi premierer forrige ukes vinnere av ordtak-konkurransen, og mens vi koser oss med premien ser vi på hvor noen kjente ordspråk kommer fra.</div><span class="chip">Skolen</span></div></div>
+        <div class="ev c-sport"><div class="tm">17:30<small>19:00</small></div><div class="tx"><div class="ti">Trening G2016</div><div class="wh">Nadderud kunstgress</div><span class="chip">Fotball</span></div></div>
+        <div class="ev c-own"><div class="tm">19:30<small>20:30</small></div><div class="tx"><div class="ti">Kino med Ola og Per</div><span class="chip">Mine</span></div></div>
+      </div>
+      <div class="peek l"></div><div class="peek r"></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>D. En liten merkelapp</b> med kalenderens navn i kalenderens farge under hver rad. Selvforklarende uten
+    forklaring, men hver rad blir 18 dp høyere, så færre rader får plass på skjermen.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="phone">
+      <div class="bar"><span>17:15</span><span class="icons"><i></i><i></i><i></i></span></div>
+      <div class="clock">17:15</div>
+      <div class="date">onsdag 28. oktober</div>
+      <div class="alarm">Vekking 07:00</div>
+      <div class="row" style="top:228px"><div class="ic cal dot"></div><div><div class="t15">Trening G2016 om 15 min</div><div class="t13">17:30 · Fotball</div></div></div>
+      <div class="emergency"><span>Nødanrop</span><div class="torch"></div></div>
+      <div class="handle"></div>
+    </div>
+    <figcaption><b>Raden på låseskjermen</b> med samme farge: prikken i sirkelen i stedet for kalenderglyfen, og kalendernavnet
+    etter klokkeslettet. Gjelder uansett hvilken variant Dagen får.</figcaption>
+  </figure>
+
+  <figure>
+    <div class="pwa">
+      <div class="top"><span class="bk">‹ Sverre</span><span class="sv"></span></div>
+      <h3>Kalender</h3>
+      <div class="gh">Kalendere som vises</div>
+      <div class="group">
+        <div class="r"><div class="l">Skolen<small>itslearning · 23 hendelser</small></div><div class="v">På</div></div>
+        <div class="r" style="display:block"><div class="l">Farge</div><div class="sw"><i style="background:#6FA8DC" class="on"></i><i style="background:#7FC28F"></i><i style="background:#E8B86D"></i><i style="background:#C98BD1"></i><i style="background:#E8908C"></i><i style="background:#7FC9C4"></i><i style="background:#B0B0BC"></i><i style="background:#F0A884"></i></div></div>
+        <div class="r"><div class="l">Påminnelse</div><div class="v">Kalenderens egne ⌃</div></div>
+      </div>
+      <div class="ft">Fargen vises på radene i Dagen og på låseskjermen. Barnets egne avtaler er alltid fersken.</div>
+    </div>
+    <figcaption><b>I PWA-en:</b> én rad «Farge» per kalender med åtte prikker. Første ledige farge velges automatisk når en kalender
+    dukker opp, så forelderen trenger ikke gjøre noe. Fersken er reservert for barnets egne.</figcaption>
+  </figure>
+</div>
+<p class="note"><b>Det jeg ville anbefalt:</b> <b>B</b> (prikken) i Dagen, med forklaringen nederst bare når det er mer enn én kalender på dagen,
+og samme prikk på låseskjermraden. A er nest best og kan være et valg om B blir for stille. Reglene beholder «bytt ut»-handlingen, men
+den vanligste regelen for en skolefeed blir «fjern prefikset», som er en «bytt ut med ingenting». Farge er policy
+(<code>calendar.calendars[].color</code>, åtte navngitte verdier, ikke hex), så den går inn i kontrakten på begge sider i samme commit.</p>
+
 <h2>4. Det jeg ville anbefalt</h2>
 <p class="note">Steg 1: dagvisningen og reglene (skjerm 1-6). Steg 2: <b>A</b> på låseskjermen, alltid på når en kalender er valgt.
 <b>C</b> som valg per kalender («Minn på 15 min før»), siden fotballtrening og tannlege trenger det, skoletimer ikke. <b>B</b> lar jeg
