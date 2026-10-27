@@ -113,7 +113,8 @@ class HomeGridAdapter(
             view.setOnClickListener { v ->
                 when (val tile = tiles.getOrNull(bindingAdapterPosition)) {
                     GridTile.PhoneBook -> activity.startActivity(PhoneBookActivity.intent(activity))
-                    GridTile.Day -> activity.startActivity(Intent(activity, com.kidslauncher.mdm.ui.day.DayActivity::class.java))
+                    // Dagen's own task (2026-10-27): the one intent the glance uses too.
+                    GridTile.Day -> activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(activity))
                     GridTile.Settings -> activity.startActivity(Intent(activity, KidSettingsActivity::class.java))
                     // Opens nothing: the torch's state comes back through its callback (renderGrid).
                     is GridTile.Flashlight -> Torch.toggle(activity)

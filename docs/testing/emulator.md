@@ -2173,6 +2173,13 @@ feature itself - the seed is a test shortcut; the real path is ICSx5 from the ca
    time pickers at font 1.0 and 1.3, with the system in light and in dark mode (`adb shell cmd uimode night yes|no`):
    every day number, the weekday row and both month arrows visible on the night panel, the chosen day night on peach;
    the time picker's clock-face numbers visible, the chosen one night on peach.
+8. **Dagen's own task** (2026-10-27, branch `day-task`): open Dagen from Home, tap Recents (`KEYCODE_APP_SWITCH`) - a
+   card titled "Dagen" with the launcher's icon shows the day (no empty frame); Home - Android's task-close animation
+   (the view shrinks away, not the theme's fade); Back from the day - the same; the reminder row's tap + code from the
+   lock - the same card, on the reminder's day. An event page open, then Home, then the tile: the task comes back with
+   the page on top (as any app); the reminder row then lands on the day view itself. A time rule beginning while Dagen
+   is open, then Recents › Dagen: the time-rule screen comes back on top at once (`dumpsys activity activities | grep
+   -E "DayActivity|LockActivity"`); `adb shell dumpsys activity recents | grep -c "\.day"` is 1.
 
 **Run 2026-10-27, E5** (`docs/testing/2026-10-27-e4-e5-run.md`): steps 1-7 on `jelly36` (en-US, UTC) passed except: the
 reminder row's tap + code lands on Home, not Dagen (`DayActivity` started from the PIN lock without a new task - High),
