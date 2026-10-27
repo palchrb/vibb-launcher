@@ -5,7 +5,7 @@
 {%- if f.ok -%}
 <p class="flash" data-flash="{{ at }}" role="status">{{ f.title }}</p>
 {%- else if let Some(detail) = f.detail -%}
-<details class="info cell" data-flash="{{ at }}"><summary class="row"><span class="row-label text-alarm" role="status">{{ f.title }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="Why" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ detail }}</p></div></details>
+<details class="info cell" data-flash="{{ at }}"><summary class="row"><span class="row-label text-alarm" role="status">{{ f.title }}</span><svg class="info-icon" viewBox="0 0 20 20" role="img" aria-label="{{ self.t("common.why") }}" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary><div class="info-panel"><p>{{ detail }}</p></div></details>
 {%- else -%}
 <p class="flash flash-error" data-flash="{{ at }}" role="status">{{ f.title }}</p>
 {%- endif -%}

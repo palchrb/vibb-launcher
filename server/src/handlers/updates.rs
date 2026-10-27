@@ -13,10 +13,12 @@ use axum::response::{Html, IntoResponse};
 use crate::AppState;
 use crate::handlers::settings::Flash;
 use crate::handlers::{system_maintenance, system_update};
+use crate::i18n::{Lang, Words};
 
 #[derive(Template)]
 #[template(path = "updates.html")]
 struct UpdatesTemplate {
+    lang: Lang,
     title: String,
     flash: Option<Flash>,
     app: system_update::AppUpdateData,
@@ -28,8 +30,13 @@ struct UpdatesTemplate {
     /// What to set `HANDY_VERSION` to ("0.23.0") when a newer release is out.
     docker_version: Option<String>,
 }
+crate::i18n::words!(UpdatesTemplate);
 
-pub(crate) async fn render_page(state: &AppState, flash: Option<Flash>) -> Html<String> {
+pub(crate) async fn render_page(
+    state: &AppState,
+    flash: Option<Flash>,
+    lang: Lang,
+) -> Html<String> {
     let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
     let app = system_update::gather(state).await;
     let os = if docker {
@@ -37,7 +44,7 @@ pub(crate) async fn render_page(state: &AppState, flash: Option<Flash>) -> Html<
     } else {
         system_maintenance::gather(&state.data_dir).await
     };
-    page(docker, app, os, flash)
+    page(docker, app, os, flash, lang)
 }
 
 /// The page from what was gathered (no network: the tests build it directly).
@@ -46,6 +53,7 @@ pub(crate) fn page(
     app: system_update::AppUpdateData,
     os: system_maintenance::OsUpdateData,
     flash: Option<Flash>,
+    lang: Lang,
 ) -> Html<String> {
     let docker_version = app
         .latest_version
@@ -54,6 +62,7 @@ pub(crate) fn page(
         .map(|version| version.trim_start_matches('v').to_string());
     Html(
         UpdatesTemplate {
+            lang,
             title: "Software Updates".to_string(),
             flash,
             os,
@@ -156,10 +165,11 @@ pub(crate) async fn request_action(
     action: &str,
     event_type: &str,
     done: Done,
+    lang: Lang,
 ) -> axum::response::Response {
     let path = state.data_dir.join(crate::handlers::backups::FLAG_FILE);
     if tokio::fs::write(path, action).await.is_err() {
-        let page = render_page(state, Some(not_requested(done.group()))).await;
+        let page = render_page(state, Some(not_requested(done.group())), lang).await;
         return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, page).into_response();
     }
     crate::security::record_security_event(
@@ -183,6 +193,7 @@ pub(crate) fn not_requested(at: &'static str) -> Flash {
 
 /// The page; `?done=<code>` (a form that worked, [Done]) shows its line in its group.
 pub async fn show_updates_page(
+    lang: Lang,
     axum::extract::State(state): axum::extract::State<AppState>,
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
@@ -190,5 +201,5 @@ pub async fn show_updates_page(
         .get("done")
         .and_then(|code| Done::parse(code))
         .map(Done::flash);
-    render_page(&state, flash).await
+    render_page(&state, flash, lang).await
 }

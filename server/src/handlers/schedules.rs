@@ -43,6 +43,7 @@ use chrono::Utc;
 use crate::AppState;
 use crate::display_time::Zone;
 use crate::handlers::device_pages::Note;
+use crate::i18n::Lang;
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp};
 use crate::security::{self, CurrentAdmin};
 use crate::time_rules::{
@@ -279,6 +280,7 @@ impl Bedtime {
 #[derive(Template)]
 #[template(path = "schedules.html")]
 struct SchedulesTemplate {
+    lang: Lang,
     title: String,
     rules: Vec<RuleRow>,
     /// Everyone's daily limit, `None` when the stored one doesn't read.
@@ -286,10 +288,12 @@ struct SchedulesTemplate {
     phones: Vec<PhoneRow>,
     notice: Option<(&'static str, bool)>,
 }
+crate::i18n::words!(SchedulesTemplate);
 
 /// GET `/schedules`: Settings › Time Rules. `?device=X` redirects to that phone's Time page.
 pub async fn show_schedules(
     State(state): State<AppState>,
+    lang: Lang,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     if let Some(id) = params
@@ -337,6 +341,7 @@ pub async fn show_schedules(
     let budget_json = budget_json.unwrap_or_else(|| time_rules::UNLIMITED_BUDGET_JSON.to_string());
     render(
         SchedulesTemplate {
+            lang,
             title: "Time Rules".to_string(),
             rules: rule_rows(&rules),
             budget: time_rules::parse_budget(&budget_json)
@@ -404,11 +409,13 @@ fn budget_entered(fields: &[(String, String)], error: &(usize, String)) -> Vec<B
 #[derive(Template)]
 #[template(path = "schedule_budget.html")]
 struct BudgetTemplate {
+    lang: Lang,
     title: String,
     budget: Vec<BudgetInput>,
     corrupt: bool,
     saved: bool,
 }
+crate::i18n::words!(BudgetTemplate);
 
 /// A refused limits form: the fields as posted, and the refused day with its reason.
 type RefusedBudget<'a> = (&'a [(String, String)], (usize, String));
@@ -417,6 +424,7 @@ async fn render_budget(
     state: &AppState,
     entered: Option<RefusedBudget<'_>>,
     saved: bool,
+    lang: Lang,
 ) -> Response {
     let json: Option<String> =
         match sqlx::query_scalar("SELECT daily_budget_json FROM global_schedule WHERE id = 1")
@@ -430,6 +438,7 @@ async fn render_budget(
     let refused = entered.is_some();
     render(
         BudgetTemplate {
+            lang,
             title: "Daily Limit".to_string(),
             corrupt: time_rules::parse_budget(&json).is_err(),
             budget: match &entered {
@@ -449,9 +458,10 @@ async fn render_budget(
 /// GET `/schedules/screen-time`: everyone's daily limits.
 pub async fn show_budget(
     State(state): State<AppState>,
+    lang: Lang,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    render_budget(&state, None, params.contains_key("saved")).await
+    render_budget(&state, None, params.contains_key("saved"), lang).await
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -618,6 +628,7 @@ impl RuleScope {
 #[derive(Template)]
 #[template(path = "schedule_rule.html")]
 struct RuleTemplate {
+    lang: Lang,
     title: String,
     rule: RuleForm,
     /// Posted back with every form: "" for everyone's rules, else the phone's id.
@@ -636,6 +647,7 @@ struct RuleTemplate {
     /// from before (design 66 §2), so a save keeps it.
     kinds: Vec<(&'static str, &'static str)>,
 }
+crate::i18n::words!(RuleTemplate);
 
 fn render_rule(
     scope: &RuleScope,
@@ -643,6 +655,7 @@ fn render_rule(
     saved: Option<&'static str>,
     corrupt: Option<String>,
     status: StatusCode,
+    lang: Lang,
 ) -> Response {
     let refusal = rule
         .name_error
@@ -663,6 +676,7 @@ fn render_rule(
     };
     render(
         RuleTemplate {
+            lang,
             title: if rule.id == 0 {
                 "New Rule".to_string()
             } else if rule.name.trim().is_empty() {
@@ -760,6 +774,7 @@ fn unreadable_parts(row: &TimeRuleRow) -> Option<String> {
 /// keeps its id, so an old link names it) goes to its Bedtime page (design 66 §3.3).
 pub async fn show_rule(
     State(state): State<AppState>,
+    lang: Lang,
     Path(rule_id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -808,12 +823,13 @@ pub async fn show_rule(
         Some(_) => Some("Saved."),
         None => None,
     };
-    render_rule(&scope, rule, saved, corrupt, StatusCode::OK)
+    render_rule(&scope, rule, saved, corrupt, StatusCode::OK, lang)
 }
 
 /// GET `/schedules/rules/new` (`?device=X` for a phone's own rule): the editor, empty.
 pub async fn new_rule(
     State(state): State<AppState>,
+    lang: Lang,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let scope = match parse_scope(&state, params.get("device").map_or("", String::as_str)).await {
@@ -834,7 +850,7 @@ pub async fn new_rule(
         name_error: None,
         apps_error: None,
     };
-    render_rule(&scope, rule, None, None, StatusCode::OK)
+    render_rule(&scope, rule, None, None, StatusCode::OK, lang)
 }
 
 /// A validated rule form.
@@ -1039,6 +1055,7 @@ async fn refuse_rule(
     stored: Option<&TimeRuleRow>,
     fields: &[(String, String)],
     error: RuleError,
+    lang: Lang,
 ) -> Response {
     let id = stored.map_or(0, |row| row.id);
     if error == RuleError::Kind {
@@ -1055,12 +1072,14 @@ async fn refuse_rule(
         None,
         stored.and_then(unreadable_parts),
         StatusCode::BAD_REQUEST,
+        lang,
     )
 }
 
 /// POST `/schedules/rules`: a new rule, then its page.
 pub async fn create_rule(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     body: Bytes,
 ) -> Response {
@@ -1071,7 +1090,7 @@ pub async fn create_rule(
     };
     let input = match parse_rule_form(&fields) {
         Ok(input) => input,
-        Err(error) => return refuse_rule(&state, &scope, None, &fields, error).await,
+        Err(error) => return refuse_rule(&state, &scope, None, &fields, error, lang).await,
     };
     let device = scope.id();
     let result = sqlx::query_scalar::<_, i64>(
@@ -1133,6 +1152,7 @@ fn to_list(scope: &RuleScope, notice: &str) -> Response {
 /// POST `/schedules/rules/{id}`: save, then the rule's page.
 pub async fn update_rule(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(rule_id): Path<i64>,
     body: Bytes,
@@ -1149,7 +1169,9 @@ pub async fn update_rule(
     };
     let input = match parse_rule_form(&fields) {
         Ok(input) => input,
-        Err(error) => return refuse_rule(&state, &scope, Some(&stored), &fields, error).await,
+        Err(error) => {
+            return refuse_rule(&state, &scope, Some(&stored), &fields, error, lang).await;
+        }
     };
     let result = sqlx::query(
         "UPDATE time_rules SET name = ?, kind = ?, calls_allowed = ?, exempt_apps_json = ?, \
@@ -1234,13 +1256,14 @@ pub(crate) fn parse_budget_form(fields: &[(String, String)]) -> Result<String, (
 /// POST `/schedules/global`: everyone's daily limits.
 pub async fn save_global_schedule(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
     let budget = match parse_budget_form(&fields) {
         Ok(budget) => budget,
-        Err(error) => return render_budget(&state, Some((&fields, error)), false).await,
+        Err(error) => return render_budget(&state, Some((&fields, error)), false, lang).await,
     };
     if let Err(err) = sqlx::query(
         "UPDATE global_schedule SET daily_budget_json = ?, updated_at = datetime('now') \
@@ -1261,6 +1284,7 @@ pub async fn save_global_schedule(
 /// (`section=budget`); without a section (a page from before design 31 step 9) both, as before.
 pub async fn save_device_schedule(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     body: Bytes,
@@ -1277,8 +1301,14 @@ pub async fn save_device_schedule(
         match parse_budget_form(&fields) {
             Ok(budget) => Some(budget),
             Err(error) => {
-                return render_device_time(&state, id, &HashMap::new(), Some((&fields, error)))
-                    .await;
+                return render_device_time(
+                    &state,
+                    id,
+                    &HashMap::new(),
+                    Some((&fields, error)),
+                    lang,
+                )
+                .await;
             }
         }
     } else {
@@ -1336,6 +1366,7 @@ pub async fn save_device_schedule(
 #[derive(Template)]
 #[template(path = "device_time.html")]
 struct DeviceTimeTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     /// Above the first group: Vibb too old, the record unreadable, incoming calls not blocked.
@@ -1370,14 +1401,16 @@ struct DeviceTimeTemplate {
     budget_corrupt: bool,
     budget_saved: bool,
 }
+crate::i18n::words!(DeviceTimeTemplate);
 
 /// GET `/devices/{id}/time`: Device › Time.
 pub async fn view_device_time(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    render_device_time(&state, id, &query, None).await
+    render_device_time(&state, id, &query, None, lang).await
 }
 
 /// The page; `entered` is a refused own-limits save (its page again, 400, as typed).
@@ -1386,6 +1419,7 @@ async fn render_device_time(
     id: i64,
     query: &HashMap<String, String>,
     entered: Option<RefusedBudget<'_>>,
+    lang: Lang,
 ) -> Response {
     let device = match sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
         .bind(id)
@@ -1540,6 +1574,7 @@ async fn render_device_time(
         .and_then(|code| crate::handlers::lifts::done_flash(code));
     render(
         DeviceTimeTemplate {
+            lang,
             title: format!("Time · {}", device.name),
             warnings,
             lock,

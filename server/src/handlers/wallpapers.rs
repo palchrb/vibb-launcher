@@ -13,6 +13,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::{Extension, Form};
 
 use crate::AppState;
+use crate::i18n::Lang;
 use crate::photos::{self, PhotoError, Shape, WALLPAPERS};
 use crate::security::{self, CurrentAdmin};
 use crate::wallpapers::{self as store, WallpaperRow};
@@ -33,13 +34,15 @@ pub struct WallpaperView {
 #[derive(Template)]
 #[template(path = "wallpapers.html")]
 struct WallpapersTemplate {
+    lang: Lang,
     title: String,
     /// Why the last upload was refused: under the photo field, the Add a Photo group open.
     upload_error: Option<String>,
     wallpapers: Vec<WallpaperView>,
 }
+crate::i18n::words!(WallpapersTemplate);
 
-async fn page(state: &AppState, status: StatusCode, error: Option<String>) -> Response {
+async fn page(state: &AppState, status: StatusCode, error: Option<String>, lang: Lang) -> Response {
     let rows = match store::all(&state.db).await {
         Ok(rows) => rows,
         Err(err) => return db_error(err),
@@ -69,6 +72,7 @@ async fn page(state: &AppState, status: StatusCode, error: Option<String>) -> Re
         })
         .collect();
     let template = WallpapersTemplate {
+        lang,
         title: "Wallpapers".to_string(),
         upload_error: error,
         wallpapers,
@@ -91,14 +95,18 @@ fn nudge(state: &AppState, devices: &[i64]) {
     }
 }
 
-pub async fn show(State(state): State<AppState>) -> Response {
-    page(&state, StatusCode::OK, None).await
+pub async fn show(lang: Lang, State(state): State<AppState>) -> Response {
+    page(&state, StatusCode::OK, None, lang).await
 }
 
 /// Uploads a wallpaper (multipart: `image`, `label`, optional `lock_screen`). A file that isn't a
 /// JPEG/PNG/WebP photo, is too big or can't be decoded is a 400 with the page and nothing is
 /// stored. The new wallpaper is on no phone yet.
-pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> Response {
+pub async fn upload(
+    State(state): State<AppState>,
+    lang: Lang,
+    mut multipart: Multipart,
+) -> Response {
     let mut image = None;
     let mut label = String::new();
     let mut lock_screen = false;
@@ -112,6 +120,7 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
                             &state,
                             StatusCode::BAD_REQUEST,
                             Some(PhotoError::TooLarge.message().into()),
+                            lang,
                         )
                         .await;
                     }
@@ -126,6 +135,7 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
                     &state,
                     StatusCode::BAD_REQUEST,
                     Some(PhotoError::TooLarge.message().into()),
+                    lang,
                 )
                 .await;
             }
@@ -142,12 +152,21 @@ pub async fn upload(State(state): State<AppState>, mut multipart: Multipart) -> 
             &state,
             StatusCode::BAD_REQUEST,
             Some(PhotoError::Empty.message().into()),
+            lang,
         )
         .await;
     };
     let processed = match photos::process_limited(bytes, Shape::Portrait).await {
         Ok(processed) => processed,
-        Err(err) => return page(&state, StatusCode::BAD_REQUEST, Some(err.message().into())).await,
+        Err(err) => {
+            return page(
+                &state,
+                StatusCode::BAD_REQUEST,
+                Some(err.message().into()),
+                lang,
+            )
+            .await;
+        }
     };
     let result = {
         let _files = WALLPAPERS.lock().await;

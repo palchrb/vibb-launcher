@@ -1469,6 +1469,8 @@ pub fn build_admin_router(
         // Design 62: your name, and the family's parents. The GETs serve Account, where a reload
         // of their POST's answer lands (static/reveal.js turns it into a GET of the same path).
         .route("/account/name", post(handlers::parents::set_name))
+        // Design 70: the account's language.
+        .route("/account/language", post(handlers::auth::set_language))
         .route(
             "/account/parents",
             get(handlers::auth::account_page).post(handlers::parents::add),

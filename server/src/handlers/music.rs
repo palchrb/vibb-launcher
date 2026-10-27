@@ -30,6 +30,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
 use crate::handlers::device_pages::{Note, Row};
+use crate::i18n::Lang;
 use crate::models::{DevicePolicy, DeviceStatus, InstalledApp};
 use crate::music::{
     self, CACHE_CHOICES, MAX_CATEGORY_NAME_CHARS, MAX_ENTRIES, MAX_FILE_BYTES, MAX_FILES_PER_ENTRY,
@@ -303,6 +304,7 @@ pub struct CatalogCard {
 #[derive(Template)]
 #[template(path = "music.html")]
 struct MusicTemplate {
+    lang: Lang,
     title: String,
     entries: Vec<EntryRow>,
     entry_count: i64,
@@ -321,12 +323,14 @@ struct MusicTemplate {
     phones: Vec<PhoneRow>,
     bell: crate::parent_events::Bell,
 }
+crate::i18n::words!(MusicTemplate);
 
 /// `/music/settings`: new episodes, Storytel, Spotify (design 47), the music app, files no entry
 /// uses.
 #[derive(Template)]
 #[template(path = "music_settings.html")]
 struct MusicSettingsTemplate {
+    lang: Lang,
     title: String,
     storytel: StorytelCard,
     /// Storytel on each phone (design 47 §1.7): `(id, name, on)`, every phone.
@@ -341,26 +345,31 @@ struct MusicSettingsTemplate {
     sweep_hours: i64,
     sweep_choices: Vec<i64>,
 }
+crate::i18n::words!(MusicSettingsTemplate);
 
 /// `/music/categories`.
 #[derive(Template)]
 #[template(path = "music_categories.html")]
 struct MusicCategoriesTemplate {
+    lang: Lang,
     title: String,
     categories: Vec<CategoryView>,
     icons: Vec<&'static str>,
     colors: Vec<(&'static str, &'static str)>,
     new_category: NewCategoryForm,
 }
+crate::i18n::words!(MusicCategoriesTemplate);
 
 /// `/music/import` (design 21a).
 #[derive(Template)]
 #[template(path = "music_import.html")]
 struct MusicImportTemplate {
+    lang: Lang,
     title: String,
     category_options: Vec<(i64, String)>,
     import: super::music_import::ImportCard,
 }
+crate::i18n::words!(MusicImportTemplate);
 
 /// A refused category save: its id, the values and the error.
 type RefusedCategory = (i64, String, String, String, String, &'static str);
@@ -379,6 +388,7 @@ fn html(status: StatusCode, page: Result<impl Template, sqlx::Error>, what: &str
 /// `GET /music[?edit=1]`: the tab.
 pub async fn show(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> Response {
@@ -390,6 +400,7 @@ pub async fn show(
         edit,
         AddForm::default(),
         OwnForm::default(),
+        lang,
     )
     .await
 }
@@ -401,8 +412,9 @@ async fn render_music(
     edit: bool,
     add: AddForm,
     own: OwnForm,
+    lang: Lang,
 ) -> Response {
-    let page = music_page(state, admin_id, edit, add, own).await;
+    let page = music_page(state, admin_id, edit, add, own, lang).await;
     html(status, page, "couldn't load the music page")
 }
 
@@ -412,6 +424,7 @@ async fn music_page(
     edit: bool,
     add: AddForm,
     own: OwnForm,
+    lang: Lang,
 ) -> Result<MusicTemplate, sqlx::Error> {
     let categories: Vec<MusicCategory> =
         sqlx::query_as("SELECT * FROM music_categories ORDER BY sort, id")
@@ -505,6 +518,7 @@ async fn music_page(
     let signed_in = stored && login_opens(state, fingerprint.as_deref());
 
     Ok(MusicTemplate {
+        lang,
         title: "Music".to_string(),
         entries: entry_rows,
         entry_count: count as i64,
@@ -545,6 +559,7 @@ fn login_opens(state: &AppState, fingerprint: Option<&str>) -> bool {
 /// the query (design 47 §1.2); nothing else on the page reads those keys.
 pub async fn show_settings(
     State(state): State<AppState>,
+    lang: Lang,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
     session: tower_sessions::Session,
@@ -558,6 +573,7 @@ pub async fn show_settings(
         StatusCode::OK,
         (None, notice),
         super::music_spotify::Entered::query(query),
+        lang,
     )
     .await
 }
@@ -572,6 +588,7 @@ pub(crate) async fn render_settings_plain(state: &AppState) -> Response {
         StatusCode::OK,
         (None, None),
         Default::default(),
+        Lang::En,
     )
     .await
 }
@@ -587,13 +604,14 @@ pub(crate) async fn render_settings(
     status: StatusCode,
     (storytel_error, storytel_notice): (Option<String>, Option<String>),
     spotify: super::music_spotify::Entered,
+    lang: Lang,
 ) -> Response {
     // The page's query rides in the Spotify state: `?storytel=phones` opens Storytel's row.
     let open = spotify.query_value("storytel") == Some("phones");
     let page = async {
         let spotify =
             super::music_spotify::setup_view(state, headers, peer_trusted, spotify).await?;
-        settings_page(state, storytel_error, storytel_notice, open, spotify).await
+        settings_page(state, storytel_error, storytel_notice, open, spotify, lang).await
     }
     .await;
     let mut response = html(status, page, "couldn't load the music settings");
@@ -614,6 +632,7 @@ async fn settings_page(
     storytel_notice: Option<String>,
     storytel_phones_open: bool,
     spotify: super::music_spotify::SpotifySetup,
+    lang: Lang,
 ) -> Result<MusicSettingsTemplate, sqlx::Error> {
     type StoredRow = (
         Option<Vec<u8>>,
@@ -699,6 +718,7 @@ async fn settings_page(
     };
 
     Ok(MusicSettingsTemplate {
+        lang,
         title: "Music Settings".to_string(),
         storytel,
         storytel_switches,
@@ -719,10 +739,11 @@ async fn settings_page(
 /// a move comes back to it as it was (qa-31-s12-code N8).
 pub async fn show_categories(
     State(state): State<AppState>,
+    lang: Lang,
     axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> Response {
     let open = query.get("open").and_then(|v| v.parse().ok());
-    render_categories(&state, StatusCode::OK, None, None, open).await
+    render_categories(&state, StatusCode::OK, None, None, open, lang).await
 }
 
 async fn render_categories(
@@ -731,8 +752,9 @@ async fn render_categories(
     new_category: Option<NewCategoryForm>,
     refused: Option<RefusedCategory>,
     open: Option<i64>,
+    lang: Lang,
 ) -> Response {
-    let page = categories_page(state, new_category, refused, open).await;
+    let page = categories_page(state, new_category, refused, open, lang).await;
     html(status, page, "couldn't load the music categories")
 }
 
@@ -741,6 +763,7 @@ async fn categories_page(
     new_category: Option<NewCategoryForm>,
     refused: Option<RefusedCategory>,
     open: Option<i64>,
+    lang: Lang,
 ) -> Result<MusicCategoriesTemplate, sqlx::Error> {
     let categories: Vec<MusicCategory> =
         sqlx::query_as("SELECT * FROM music_categories ORDER BY sort, id")
@@ -786,6 +809,7 @@ async fn categories_page(
         })
         .collect();
     Ok(MusicCategoriesTemplate {
+        lang,
         title: "Categories".to_string(),
         categories: views,
         icons: crate::music_icons::ICONS.iter().map(|(k, _)| *k).collect(),
@@ -797,6 +821,7 @@ async fn categories_page(
 /// `GET /music/import`; shows (once) how the last import went (design 21a, a session flash).
 pub async fn show_import(
     State(state): State<AppState>,
+    lang: Lang,
     session: tower_sessions::Session,
 ) -> Response {
     let result: Option<super::music_import::ImportResult> = session
@@ -808,7 +833,7 @@ pub async fn show_import(
         result,
         ..Default::default()
     };
-    render_import(&state, StatusCode::OK, card).await
+    render_import(&state, StatusCode::OK, card, lang).await
 }
 
 /// The import page with its card as given (a preview, or a refused import).
@@ -816,6 +841,7 @@ pub(super) async fn render_import(
     state: &AppState,
     status: StatusCode,
     card: super::music_import::ImportCard,
+    lang: Lang,
 ) -> Response {
     let page = async {
         let category_options: Vec<(i64, String)> =
@@ -823,6 +849,7 @@ pub(super) async fn render_import(
                 .fetch_all(&state.db)
                 .await?;
         Ok(MusicImportTemplate {
+            lang,
             title: "Import from Vibb".to_string(),
             category_options,
             import: card,
@@ -902,7 +929,7 @@ pub(super) const NEXT_SORT: &str = "(SELECT COALESCE(MAX(sort), 0) + 10 FROM mus
 pub(super) const BELOW_ENTRY_LIMIT: &str = "WHERE (SELECT COUNT(*) FROM music_entries) < ?";
 
 /// A refused "Podcast or NRK link": the tab, the link kept, the reason in its open form.
-async fn refused_add(state: &AppState, admin_id: i64, form: AddForm) -> Response {
+async fn refused_add(state: &AppState, admin_id: i64, form: AddForm, lang: Lang) -> Response {
     render_music(
         state,
         admin_id,
@@ -910,12 +937,13 @@ async fn refused_add(state: &AppState, admin_id: i64, form: AddForm) -> Response
         false,
         form,
         OwnForm::default(),
+        lang,
     )
     .await
 }
 
 /// A refused "Upload your own files": the tab, the name kept, the reason in its open form.
-async fn refused_own(state: &AppState, admin_id: i64, form: OwnForm) -> Response {
+async fn refused_own(state: &AppState, admin_id: i64, form: OwnForm, lang: Lang) -> Response {
     render_music(
         state,
         admin_id,
@@ -923,6 +951,7 @@ async fn refused_own(state: &AppState, admin_id: i64, form: OwnForm) -> Response
         false,
         AddForm::default(),
         form,
+        lang,
     )
     .await
 }
@@ -932,6 +961,7 @@ async fn refused_own(state: &AppState, admin_id: i64, form: OwnForm) -> Response
 /// when it isn't.
 pub async fn add_link(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
 ) -> Response {
@@ -945,13 +975,13 @@ pub async fn add_link(
     let link = match music::parse_link(&link_text) {
         Ok(link) => link,
         Err(error) => {
-            return refused_add(&state, admin.id, refuse(error.to_string())).await;
+            return refused_add(&state, admin.id, refuse(error.to_string()), lang).await;
         }
     };
     match entry_count(&state.db).await {
         Ok(n) if n >= MAX_ENTRIES => {
             let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return refused_add(&state, admin.id, refuse(error)).await;
+            return refused_add(&state, admin.id, refuse(error), lang).await;
         }
         Ok(_) => {}
         Err(err) => return server_error(err, "music entry count failed"),
@@ -968,19 +998,19 @@ pub async fn add_link(
         };
     if let Some(name) = exists {
         let error = format!("That link is already in the library (\"{name}\").");
-        return refused_add(&state, admin.id, refuse(error)).await;
+        return refused_add(&state, admin.id, refuse(error), lang).await;
     }
     let category = match pick_category(&state.db, &picked, link.source()).await {
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
-            return refused_add(&state, admin.id, refuse(error.to_string())).await;
+            return refused_add(&state, admin.id, refuse(error.to_string()), lang).await;
         }
         Err(err) => return server_error(err, "music category lookup failed"),
     };
     let title = match music::check_link(state.music_fetch.as_ref(), &link).await {
         Ok(title) => title,
         Err(err) => {
-            return refused_add(&state, admin.id, refuse(err.message())).await;
+            return refused_add(&state, admin.id, refuse(err.message()), lang).await;
         }
     };
     // The limit is checked in the INSERT itself (qa-21-step1-code #6): two adds can't pass it.
@@ -1001,12 +1031,12 @@ pub async fn add_link(
         Ok(Some(id)) => id,
         Ok(None) => {
             let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return refused_add(&state, admin.id, refuse(error)).await;
+            return refused_add(&state, admin.id, refuse(error), lang).await;
         }
         // Added by another request since the check above.
         Err(sqlx::Error::Database(err)) if err.is_unique_violation() => {
             let error = "That link is already in the library.".to_string();
-            return refused_add(&state, admin.id, refuse(error)).await;
+            return refused_add(&state, admin.id, refuse(error), lang).await;
         }
         Err(err) => return server_error(err, "couldn't add a music entry"),
     };
@@ -1034,6 +1064,7 @@ pub async fn add_link(
 /// `POST /music/own`: a new "own files" entry (name, category), then its page for the uploads.
 pub async fn add_own(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
 ) -> Response {
@@ -1046,13 +1077,13 @@ pub async fn add_own(
     };
     let Some(name) = music::clean_name(&name_text, MAX_NAME_CHARS) else {
         let error = format!("Give it a name (at most {MAX_NAME_CHARS} characters).");
-        return refused_own(&state, admin.id, refuse(error)).await;
+        return refused_own(&state, admin.id, refuse(error), lang).await;
     };
     // The 200-entry limit is the INSERT's own condition below.
     let category = match pick_category(&state.db, &picked, "own").await {
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
-            return refused_own(&state, admin.id, refuse(error.to_string())).await;
+            return refused_own(&state, admin.id, refuse(error.to_string()), lang).await;
         }
         Err(err) => return server_error(err, "music category lookup failed"),
     };
@@ -1073,7 +1104,7 @@ pub async fn add_own(
         Ok(Some(id)) => id,
         Ok(None) => {
             let error = format!("The library has {MAX_ENTRIES} entries - delete one first.");
-            return refused_own(&state, admin.id, refuse(error)).await;
+            return refused_own(&state, admin.id, refuse(error), lang).await;
         }
         Err(err) => return server_error(err, "couldn't add an own-files entry"),
     };
@@ -1163,6 +1194,7 @@ fn check_category(name: &str, icon: &str, color: &str) -> Result<String, (String
 /// `POST /music/categories`: a new category (name, icon, colour), last in the row.
 pub async fn add_category(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
 ) -> Response {
@@ -1181,8 +1213,15 @@ pub async fn add_category(
                 error: Some(error),
                 error_field,
             };
-            return render_categories(&state, StatusCode::BAD_REQUEST, Some(form), None, None)
-                .await;
+            return render_categories(
+                &state,
+                StatusCode::BAD_REQUEST,
+                Some(form),
+                None,
+                None,
+                lang,
+            )
+            .await;
         }
     };
     let inserted: Result<i64, sqlx::Error> = sqlx::query_scalar(
@@ -1211,6 +1250,7 @@ pub async fn add_category(
 /// `POST /music/categories/{id}`: renames it and sets its icon and colour.
 pub async fn save_category(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
@@ -1224,8 +1264,15 @@ pub async fn save_category(
         Ok(checked) => checked,
         Err((error, error_field)) => {
             let refused = (id, name, icon, color, error, error_field);
-            return render_categories(&state, StatusCode::BAD_REQUEST, None, Some(refused), None)
-                .await;
+            return render_categories(
+                &state,
+                StatusCode::BAD_REQUEST,
+                None,
+                Some(refused),
+                None,
+                lang,
+            )
+            .await;
         }
     };
     let updated =
@@ -1297,6 +1344,7 @@ pub async fn move_category(
 /// `POST /music/categories/{id}/delete`: only while no entry uses it (else 400, the card says so).
 pub async fn delete_category(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
@@ -1335,7 +1383,15 @@ pub async fn delete_category(
             ),
             "delete",
         );
-        return render_categories(&state, StatusCode::BAD_REQUEST, None, Some(refused), None).await;
+        return render_categories(
+            &state,
+            StatusCode::BAD_REQUEST,
+            None,
+            Some(refused),
+            None,
+            lang,
+        )
+        .await;
     }
     if let Err(err) = sqlx::query("DELETE FROM music_categories WHERE id = ?")
         .bind(id)
@@ -1457,6 +1513,7 @@ fn storytel_status(
 /// and a one-time notice on the card. Never shown back, never logged; the fields never prefilled.
 pub async fn save_storytel(
     State(state): State<AppState>,
+    lang: Lang,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: axum::http::HeaderMap,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -1474,6 +1531,7 @@ pub async fn save_storytel(
             status,
             (entered, None),
             Default::default(),
+            lang,
         )
     };
     let Some(key) = state.music_key.clone() else {
@@ -1643,6 +1701,7 @@ pub struct PickerRow {
 #[derive(Template)]
 #[template(path = "music_storytel.html")]
 struct StorytelPickerTemplate {
+    lang: Lang,
     title: String,
     /// No login stored (or no key): a pointer to the Storytel card instead of the shelf.
     no_login: bool,
@@ -1660,6 +1719,7 @@ struct StorytelPickerTemplate {
     max_entries: i64,
     form_error: Option<String>,
 }
+crate::i18n::words!(StorytelPickerTemplate);
 
 fn book_order(order: f64) -> String {
     if order == 0.0 {
@@ -1699,6 +1759,7 @@ async fn render_picker(
     status: StatusCode,
     shelf: Result<std::sync::Arc<Vec<crate::storytel::Group>>, crate::storytel::StorytelError>,
     view: PickerView,
+    lang: Lang,
 ) -> Response {
     use crate::storytel::{StorytelError, TargetKind};
     let page: Result<StorytelPickerTemplate, sqlx::Error> = async {
@@ -1794,6 +1855,7 @@ async fn render_picker(
             })
             .collect();
         Ok(StorytelPickerTemplate {
+            lang,
             title: "Storytel shelf".to_string(),
             no_login,
             error,
@@ -1821,6 +1883,7 @@ async fn render_picker(
 /// disabled. Text only: no remote images.
 pub async fn storytel_shelf(
     State(state): State<AppState>,
+    lang: Lang,
     axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> Response {
     let shelf = state.storytel.bookshelf(&state).await;
@@ -1832,7 +1895,7 @@ pub async fn storytel_shelf(
         category: None,
         ticked: Default::default(),
     };
-    render_picker(&state, StatusCode::OK, shelf, view).await
+    render_picker(&state, StatusCode::OK, shelf, view, lang).await
 }
 
 /// `POST /music/storytel/add` (`target` repeated, `category`, `all`): each ticked group of the
@@ -1842,6 +1905,7 @@ pub async fn storytel_shelf(
 /// is ticked by itself (design 20 decision 6).
 pub async fn add_storytel(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Response {
@@ -1889,18 +1953,18 @@ pub async fn add_storytel(
         Ok(groups) => groups.clone(),
         Err(_) => {
             let view = refuse("Nothing was added: the shelf couldn't be read.".to_string());
-            return render_picker(&state, StatusCode::SERVICE_UNAVAILABLE, shelf, view).await;
+            return render_picker(&state, StatusCode::SERVICE_UNAVAILABLE, shelf, view, lang).await;
         }
     };
     if too_many {
         let view = refuse(format!(
             "More than {MAX_ENTRIES} rows are ticked - nothing was added."
         ));
-        return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+        return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view, lang).await;
     }
     if targets.is_empty() {
         let view = refuse("Tick a series or a book first.".to_string());
-        return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+        return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view, lang).await;
     }
     let mut chosen = Vec::new();
     for target in &targets {
@@ -1912,7 +1976,7 @@ pub async fn add_storytel(
                      added."
                         .to_string(),
                 );
-                return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+                return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view, lang).await;
             }
         }
     }
@@ -1920,7 +1984,7 @@ pub async fn add_storytel(
         Ok(Ok(id)) => id,
         Ok(Err(error)) => {
             let view = refuse(error.to_string());
-            return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+            return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view, lang).await;
         }
         Err(err) => return server_error(err, "music category lookup failed"),
     };
@@ -1982,7 +2046,7 @@ pub async fn add_storytel(
         let view = refuse(format!(
             "The library has {MAX_ENTRIES} entries - delete one first."
         ));
-        return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view).await;
+        return render_picker(&state, StatusCode::BAD_REQUEST, shelf, view, lang).await;
     }
     if added > 0 {
         state.music_sweep.wake();
@@ -2020,6 +2084,7 @@ pub struct FileRow {
 #[derive(Template)]
 #[template(path = "music_entry.html")]
 struct EntryTemplate {
+    lang: Lang,
     title: String,
     entry: MusicEntry,
     kind: &'static str,
@@ -2056,6 +2121,7 @@ struct EntryTemplate {
     /// The cover the sweep fetched from the source (shown while the parent has none).
     source_cover: Option<String>,
 }
+crate::i18n::words!(EntryTemplate);
 
 /// The entry page's list header (design 31 step 12, qa-26c-merge2-code M1): a Storytel series'
 /// "Books", a Spotify playlist's, album's, track's or artist's "Tracks", every other's "Episodes"
@@ -2111,8 +2177,12 @@ fn duration_text(ms: Option<i64>) -> Option<String> {
     })
 }
 
-pub async fn show_entry(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
-    render_entry(&state, id, StatusCode::OK, EntryEntered::default()).await
+pub async fn show_entry(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+) -> Response {
+    render_entry(&state, id, StatusCode::OK, EntryEntered::default(), lang).await
 }
 
 async fn render_entry(
@@ -2120,6 +2190,7 @@ async fn render_entry(
     id: i64,
     status: StatusCode,
     entered: EntryEntered,
+    lang: Lang,
 ) -> Response {
     let entry = match load_entry(&state.db, id).await {
         Ok(Some(entry)) => entry,
@@ -2207,6 +2278,7 @@ async fn render_entry(
             })
             .collect();
         Ok(EntryTemplate {
+            lang,
             title: entry.name.clone(),
             kind: music::kind_label(&entry.source, entry.target.as_deref()),
             own: entry.source == "own",
@@ -2268,6 +2340,7 @@ fn storytel_caches(stored: i64) -> Vec<(i64, String)> {
 /// always in order, always all; for Storytel vibb's choices, 0 saved as -1) and resume.
 pub async fn save_entry(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<FormMap>,
@@ -2323,7 +2396,7 @@ pub async fn save_entry(
             format!("Give it a name (at most {MAX_NAME_CHARS} characters)."),
             "name",
         );
-        return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
+        return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
     };
     let category_exists: bool =
         match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM music_categories WHERE id = ?)")
@@ -2336,11 +2409,11 @@ pub async fn save_entry(
         };
     if !category_exists {
         let entered = refuse("Pick one of the categories.".to_string(), "category");
-        return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
+        return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
     }
     if !music::valid_order(&order) {
         let entered = refuse("Pick one of the orders.".to_string(), "order");
-        return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
+        return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
     }
     // One of the choices, or the value it already has (an import keeps the Vibb box's, 21a).
     let choice = if storytel {
@@ -2352,7 +2425,7 @@ pub async fn save_entry(
     };
     if !own && !spotify && !choice && cache != entry.cache {
         let entered = refuse("Pick one of the offline choices.".to_string(), "cache");
-        return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
+        return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
     }
     let updated = sqlx::query(
         "UPDATE music_entries SET name = ?, category_id = ?, play_order = ?, cache = ?, \
@@ -2435,6 +2508,7 @@ pub async fn delete_entry(
 /// no metadata (`photos::process`), in the music cover store.
 pub async fn upload_cover(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     mut multipart: Multipart,
@@ -2455,25 +2529,32 @@ pub async fn upload_cover(
                 Ok(bytes) => image = Some(bytes),
                 Err(_) => {
                     let entered = refuse(photos::PhotoError::TooLarge.message());
-                    return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
+                    return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
                 }
             },
             Ok(Some(_)) => {}
             Ok(None) => break,
             Err(_) => {
                 let entered = refuse(photos::PhotoError::TooLarge.message());
-                return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
+                return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
             }
         }
     }
     let Some(bytes) = image else {
         let entered = refuse(photos::PhotoError::Empty.message());
-        return render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await;
+        return render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await;
     };
     let processed = match photos::process_limited(bytes, Shape::Square).await {
         Ok(processed) => processed,
         Err(err) => {
-            return render_entry(&state, id, StatusCode::BAD_REQUEST, refuse(err.message())).await;
+            return render_entry(
+                &state,
+                id,
+                StatusCode::BAD_REQUEST,
+                refuse(err.message()),
+                lang,
+            )
+            .await;
         }
     };
     let result = {
@@ -2835,6 +2916,7 @@ async fn remove_files(state: &AppState, ids: &[i64]) {
 /// with problems, the page (400) lists them next to how many were saved.
 pub async fn upload_files(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     mut multipart: Multipart,
@@ -2988,7 +3070,7 @@ pub async fn upload_files(
         upload_saved: added.len() + restored.len(),
         ..Default::default()
     };
-    render_entry(&state, id, StatusCode::BAD_REQUEST, entered).await
+    render_entry(&state, id, StatusCode::BAD_REQUEST, entered, lang).await
 }
 
 /// `POST /music/entries/{id}/files/{file_id}/delete`.
@@ -3871,8 +3953,10 @@ pub async fn save_offline(
 #[derive(Template)]
 #[template(path = "partials/music_status_only.html")]
 struct StatusTemplate<'a> {
+    lang: Lang,
     status: &'a StatusBlock,
 }
+crate::i18n::words!(StatusTemplate<'_>);
 
 #[derive(serde::Deserialize)]
 pub struct CardsQuery {
@@ -3887,6 +3971,7 @@ pub const MAX_CARD_IDS: usize = 200;
 /// `static/music-cards.js` while a card says Checking or Waiting.
 pub async fn cards(
     State(state): State<AppState>,
+    lang: Lang,
     axum::extract::Query(query): axum::extract::Query<CardsQuery>,
 ) -> Response {
     let ids: Result<Vec<i64>, _> = query
@@ -3918,7 +4003,7 @@ pub async fn cards(
                 serde_json::json!({
                     "id": entry.id,
                     "busy": status.busy,
-                    "html": StatusTemplate { status: &status }.render().unwrap_or_default(),
+                    "html": StatusTemplate { lang, status: &status }.render().unwrap_or_default(),
                 })
             })
             .collect())

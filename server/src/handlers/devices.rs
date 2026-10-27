@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::handlers::activity::ActivityRow;
+use crate::i18n::Lang;
 use crate::models::{Device, DevicePolicy, DeviceStatus, InstalledApp, TrackedApp};
 use crate::security::{self, CurrentAdmin};
 
@@ -48,6 +49,7 @@ pub(crate) const AVATAR_COLOURS: [&str; 6] = [
 #[derive(Template)]
 #[template(path = "devices_list.html")]
 struct DevicesListTemplate {
+    lang: Lang,
     title: String,
     devices: Vec<DeviceListRow>,
     /// Failed 2FA codes before this sign-in (design 22 §3.2.1), until dismissed; the full text
@@ -60,9 +62,11 @@ struct DevicesListTemplate {
     /// A device that may not be showing notifications (design 35 §6).
     push_warning: Option<crate::handlers::auth::WarningRow>,
 }
+crate::i18n::words!(DevicesListTemplate);
 
 pub async fn list_devices(
     State(state): State<AppState>,
+    lang: Lang,
     session: tower_sessions::Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> impl IntoResponse {
@@ -80,6 +84,7 @@ pub async fn list_devices(
 
     Html(
         DevicesListTemplate {
+            lang,
             title: "Devices".to_string(),
             devices: rows,
             login_warning: crate::handlers::auth::login_warning_row(
@@ -351,15 +356,23 @@ pub(crate) const MAX_DEVICE_NAME_CHARS: usize = 40;
 #[derive(Template)]
 #[template(path = "device_add.html")]
 struct DeviceAddTemplate {
+    lang: Lang,
     title: String,
     /// What was typed, after a refusal.
     name: String,
     error: Option<&'static str>,
     max_name: usize,
 }
+crate::i18n::words!(DeviceAddTemplate);
 
-fn device_add_page(status: StatusCode, name: String, error: Option<&'static str>) -> Response {
+fn device_add_page(
+    status: StatusCode,
+    name: String,
+    error: Option<&'static str>,
+    lang: Lang,
+) -> Response {
     let page = DeviceAddTemplate {
+        lang,
         title: "Add Phone".to_string(),
         name,
         error,
@@ -374,8 +387,8 @@ fn device_add_page(status: StatusCode, name: String, error: Option<&'static str>
     }
 }
 
-pub async fn new_device_form() -> Response {
-    device_add_page(StatusCode::OK, String::new(), None)
+pub async fn new_device_form(lang: Lang) -> Response {
+    device_add_page(StatusCode::OK, String::new(), None, lang)
 }
 
 #[derive(Deserialize)]
@@ -389,6 +402,7 @@ pub struct CreateDeviceForm {
 /// the form again (400) with what was typed and the reason under the field.
 pub async fn create_device(
     State(state): State<AppState>,
+    lang: Lang,
     Form(form): Form<CreateDeviceForm>,
 ) -> axum::response::Response {
     let name = form.name.trim();
@@ -401,7 +415,7 @@ pub async fn create_device(
     };
     if let Some(why) = refusal {
         let typed: String = name.chars().take(MAX_DEVICE_NAME_CHARS * 4).collect();
-        return device_add_page(StatusCode::BAD_REQUEST, typed, Some(why));
+        return device_add_page(StatusCode::BAD_REQUEST, typed, Some(why), lang);
     }
     match insert_device_with_policy(&state, name).await {
         Ok(id) => Redirect::to(&format!("/devices/{id}/provision")).into_response(),
@@ -453,6 +467,7 @@ async fn insert_device_with_policy(state: &AppState, name: &str) -> Result<i64, 
 #[derive(Template)]
 #[template(path = "enroll_code.html")]
 struct EnrollCodeTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     code: String,
@@ -463,6 +478,7 @@ struct EnrollCodeTemplate {
     /// Until when typed codes are paused (local), when they are (too many wrong ones this hour).
     paused_until: Option<String>,
 }
+crate::i18n::words!(EnrollCodeTemplate);
 
 /// "New Setup Code" on Connect and Advanced › Connection (design 22 §3.1): a typed code (8
 /// characters, 15 minutes), shown on this response only - only its hash is stored, and the page is
@@ -471,6 +487,7 @@ struct EnrollCodeTemplate {
 /// still made, and the page says from when it works (a setup QR code works at once).
 pub async fn regenerate_code(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
@@ -509,6 +526,7 @@ pub async fn regenerate_code(
     let zone = crate::display_time::Zone::load(&state.db).await;
     let now = chrono::Utc::now();
     let page = EnrollCodeTemplate {
+        lang,
         title: format!("Setup Code for {}", device.name),
         code: crate::enrollment::display(&code),
         until: zone.until_db(&expires_at, now),
@@ -730,6 +748,7 @@ pub(crate) const DEFAULT_QUICK_CONTROLS: i64 =
 #[derive(Template)]
 #[template(path = "device_detail.html")]
 struct DeviceDetailTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     /// The header (design 31 §3.2 item 1): the avatar, the connection word and "seen 3 min ago"
@@ -790,6 +809,7 @@ struct DeviceDetailTemplate {
     filter_value: &'static str,
     about_value: Option<String>,
 }
+crate::i18n::words!(DeviceDetailTemplate);
 
 impl DeviceDetailTemplate {
     /// The flash of summary group [group]: a command's (`?notice=`) or a lift's (`?done=`), and
@@ -1777,6 +1797,7 @@ async fn render_device(
         });
     Html(
         DeviceDetailTemplate {
+            lang,
             title: device.name.clone(),
             avatar: avatar_class(&device),
             initial: initial(&device.name),

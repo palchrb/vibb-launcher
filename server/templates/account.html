@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ lang.code() }}">
 <head>
 {% include "partials/head.html" %}
 </head>
@@ -8,22 +8,22 @@
 {% include "partials/tab_bar.html" %}
 {% import "partials/group_flash.html" as group_flash %}
 <main class="container container-narrow">
-    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Settings</a>
-    <h1 class="page-title">Account &amp; Parents</h1>
+    <a class="nav-back" href="/settings"><svg viewBox="0 0 12 20" aria-hidden="true" focusable="false"><path d="M10 2L2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{ self.t("account.back") }}</a>
+    <h1 class="page-title">{{ self.t("account.title") }}</h1>
 
     {% if let Some(warning) = live_warning %}
     <div class="attention attention-alarm" id="live-warning">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-        <span class="attention-text">Wrong two-factor codes<span class="attention-sub">{{ warning }}</span></span>
+        <span class="attention-text">{{ self.t("account.warning.live_title") }}<span class="attention-sub">{{ warning }}</span></span>
     </div>
     {% endif %}
     {% if let Some(warning) = login_warning %}
     <div class="attention attention-alarm" id="login-warning">
         <svg class="attention-icon" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path d="M11 2.5l9.5 17h-19z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M11 9v4.5M11 16.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
-        <span class="attention-text">Wrong codes before this sign-in<span class="attention-sub">{{ warning }}</span></span>
+        <span class="attention-text">{{ self.t("account.warning.login_title") }}<span class="attention-sub">{{ warning }}</span></span>
         <form method="post" action="/account/dismiss-warning">
             <input type="hidden" name="back" value="/account">
-            <button type="submit" class="attention-dismiss">Dismiss</button>
+            <button type="submit" class="attention-dismiss">{{ self.t("account.warning.dismiss") }}</button>
         </form>
     </div>
     {% endif %}
@@ -31,99 +31,115 @@
     {#- Each form renders its answer in the POST's response at its own group (a password never goes
         into a URL). -#}
     <section id="name" aria-labelledby="name-title">
-        <h2 class="group-header" id="name-title">Name</h2>
+        <h2 class="group-header" id="name-title">{{ self.t("account.name.title") }}</h2>
         <div class="group">
             <form method="post" action="/account/name#name" class="cell form-group">
                 <div class="field">
-                    <label class="field-label" for="display_name">Your name</label>
+                    <label class="field-label" for="display_name">{{ self.t("account.name.label") }}</label>
                     <input type="text" id="display_name" name="display_name" value="{{ name_value }}" placeholder="{{ username }}" maxlength="64" autocomplete="nickname"{% if let Some(why) = self.error_for("display_name") %} aria-invalid="true" aria-describedby="display_name-error" autofocus>
                     <p class="field-error" id="display_name-error">{{ why }}</p>{% else %} aria-describedby="display_name-hint">
-                    <p class="field-hint" id="display_name-hint">What the other parents see, like "Mamma". Empty: {{ username }}.</p>{% endif %}
+                    <p class="field-hint" id="display_name-hint">{{ self.tp("account.name.hint", [("username", username.as_str())]) }}</p>{% endif %}
                 </div>
-                <button type="submit" class="button-wide">Save Name</button>
+                <button type="submit" class="button-wide">{{ self.t("account.name.save") }}</button>
             </form>
             {% call group_flash::show(flash, "name") %}{% endcall %}
         </div>
     </section>
 
+    <section id="language" aria-labelledby="language-title">
+        <h2 class="group-header" id="language-title">{{ self.t("account.language.title") }}</h2>
+        {#- Design 70 §3: saves on change (autosave.js), a <noscript> Save without JS; the answer is this group
+            again, in the chosen language. Each option is in its own language. -#}
+        <form method="post" action="/account/language#language" class="group">
+            <label class="row">
+                <span class="row-label">{{ self.t("account.language.label") }}</span>
+                <select class="pick" name="lang" data-autosave>
+                    {% for l in languages %}<option value="{{ l.code }}" lang="{{ l.code }}"{% if l.selected %} selected{% endif %}>{{ self.t(l.label) }}</option>{% endfor %}
+                </select><svg class="pick-arrows" viewBox="0 0 10 16" aria-hidden="true" focusable="false"><path d="M2 6l3-3 3 3M2 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </label>
+            <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+        </form>
+        <p class="group-footer">{{ self.t("account.language.footer") }}</p>
+    </section>
+
     <section id="password" aria-labelledby="password-title">
-        <h2 class="group-header" id="password-title">Password</h2>
+        <h2 class="group-header" id="password-title">{{ self.t("account.password.title") }}</h2>
         <div class="group">
             <div class="row" data-row="username">
-                <span class="row-label">Signed in as</span>
+                <span class="row-label">{{ self.t("account.password.signed_in_as") }}</span>
                 <span class="row-value">{{ username }}</span>
             </div>
             <form method="post" action="/account/password#password" class="cell form-group">
                 <div class="field">
-                    <label class="field-label" for="current_password">Current password</label>
+                    <label class="field-label" for="current_password">{{ self.t("account.password.current") }}</label>
                     <input type="password" id="current_password" name="current_password" autocomplete="current-password" required{% if password_field == "current_password" %} aria-invalid="true" aria-describedby="password-error" autofocus{% endif %}>
                     {% if password_field == "current_password" %}{% if let Some(f) = flash %}<p class="field-error" id="password-error">{{ f.title }}</p>{% endif %}{% endif %}
                 </div>
                 <div class="field">
-                    <label class="field-label" for="new_password">New password</label>
+                    <label class="field-label" for="new_password">{{ self.t("account.password.new") }}</label>
                     <input type="password" id="new_password" name="new_password" autocomplete="new-password" minlength="12" required{% if password_field == "new_password" %} aria-invalid="true" aria-describedby="password-error" autofocus{% endif %}>
-                    {% if password_field == "new_password" %}{% if let Some(f) = flash %}<p class="field-error" id="password-error">{{ f.title }}</p>{% endif %}{% else %}<p class="field-hint">At least 12 characters.</p>{% endif %}
+                    {% if password_field == "new_password" %}{% if let Some(f) = flash %}<p class="field-error" id="password-error">{{ f.title }}</p>{% endif %}{% else %}<p class="field-hint">{{ self.t("account.password.new_hint") }}</p>{% endif %}
                 </div>
                 <div class="field">
-                    <label class="field-label" for="confirm_password">New password again</label>
+                    <label class="field-label" for="confirm_password">{{ self.t("account.password.again") }}</label>
                     <input type="password" id="confirm_password" name="confirm_password" autocomplete="new-password" minlength="12" required{% if password_field == "confirm_password" %} aria-invalid="true" aria-describedby="password-error" autofocus{% endif %}>
                     {% if password_field == "confirm_password" %}{% if let Some(f) = flash %}<p class="field-error" id="password-error">{{ f.title }}</p>{% endif %}{% endif %}
                 </div>
-                <button type="submit" class="button-wide">Change Password</button>
+                <button type="submit" class="button-wide">{{ self.t("account.password.change") }}</button>
             </form>
             {% if password_field.is_empty() %}{% call group_flash::show(flash, "password") %}{% endcall %}{% endif %}
         </div>
-        <p class="group-footer">A new password signs out every other browser and phone and turns notifications off everywhere.</p>
+        <p class="group-footer">{{ self.t("account.password.footer") }}</p>
     </section>
 
     <section id="two-factor" aria-labelledby="two-factor-title">
-        <h2 class="group-header" id="two-factor-title">Two-Factor Login</h2>
+        <h2 class="group-header" id="two-factor-title">{{ self.t("account.totp.title") }}</h2>
         <div class="group">
             <div class="row" data-row="two-factor">
-                <span class="row-label">Two-factor login</span>
-                <span class="row-value">{% if totp_enabled %}On{% else %}Not set up{% endif %}</span>
+                <span class="row-label">{{ self.t("account.totp.row") }}</span>
+                <span class="row-value">{% if totp_enabled %}{{ self.t("account.totp.on") }}{% else %}{{ self.t("account.totp.not_set_up") }}{% endif %}</span>
             </div>
             {% if totp_enabled %}
             <details class="confirm cell" id="reset-2fa"{% if reset_error.is_some() %} open{% endif %}>
-                <summary class="row">Reset Two-Factor Login…</summary>
+                <summary class="row">{{ self.t("account.totp.reset_open") }}</summary>
                 <form method="post" action="/account/reset-2fa#two-factor" class="confirm-body">
-                    <p>For a lost authenticator app: you scan a new QR code next, every other browser and phone is signed out, and notifications are turned off everywhere.</p>
-                    <label class="field-label" for="reset_current_password">Current password</label>
+                    <p>{{ self.t("account.totp.reset_confirm") }}</p>
+                    <label class="field-label" for="reset_current_password">{{ self.t("account.password.current") }}</label>
                     <input type="password" id="reset_current_password" name="current_password" autocomplete="current-password" required{% if reset_error.is_some() %} aria-invalid="true" aria-describedby="reset-error" autofocus{% endif %}>
                     {% if let Some(why) = reset_error %}<p class="field-error" id="reset-error">{{ why }}</p>{% endif %}
-                    <button type="submit" class="button-destructive">Reset Two-Factor Login</button>
+                    <button type="submit" class="button-destructive">{{ self.t("account.totp.reset") }}</button>
                 </form>
             </details>
             {% endif %}
         </div>
-        <div class="group-footer">Locked out and signed out? It can be reset on the server.
+        <div class="group-footer">{{ self.t("account.totp.footer") }}
             <details class="info">
-                <summary aria-label="How to reset two-factor login on the server"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <summary aria-label="{{ self.t("account.totp.server_info") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
                 <div class="info-panel">
-                    <p>On the server, run:</p>
+                    <p>{{ self.t("account.totp.server_run") }}</p>
                     <pre><code>kid_phone_server reset-2fa {{ username }}</code></pre>
-                    <p>It also puts a new password in data/initial-admin-password-{{ admin_id }}.</p>
+                    <p>{{ self.tp("account.totp.server_password", [("id", admin_id.to_string().as_str())]) }}</p>
                 </div>
             </details>
         </div>
     </section>
 
     <section id="sessions" aria-labelledby="sessions-title">
-        <h2 class="group-header" id="sessions-title">Sessions</h2>
+        <h2 class="group-header" id="sessions-title">{{ self.t("account.sessions.title") }}</h2>
         <div class="group">
             <details class="confirm cell" id="sign-out-everywhere">
-                <summary class="row">Sign Out Everywhere…</summary>
+                <summary class="row">{{ self.t("account.sessions.sign_out_open") }}</summary>
                 <form method="post" action="/account/sign-out-everywhere" class="confirm-body">
-                    <p>Sign out every browser and phone that has Vibb Phone open, this one too?</p>
-                    <button type="submit" class="button-destructive">Sign Out Everywhere</button>
+                    <p>{{ self.t("account.sessions.sign_out_confirm") }}</p>
+                    <button type="submit" class="button-destructive">{{ self.t("account.sessions.sign_out") }}</button>
                 </form>
             </details>
         </div>
-        <p class="group-footer">For a lost phone or computer that is still signed in.</p>
+        <p class="group-footer">{{ self.t("account.sessions.footer") }}</p>
     </section>
 
     <section id="parents" aria-labelledby="parents-title">
-        <h2 class="group-header" id="parents-title">Parents</h2>
+        <h2 class="group-header" id="parents-title">{{ self.t("account.parents.title") }}</h2>
         <div class="group">
             {%- if let Some(o) = otp %}
             {#- Add Parent's and Reset's answer (design 62 §3): the one-time password only in this POST's page,
@@ -131,10 +147,10 @@
                 removes it when the page is left; without JS the CSS hides it after 5 minutes. -#}
             <div class="cell" id="parent-otp" data-reveal>
                 <div class="edit-body" role="status">
-                    <p class="field-label">{{ o.title }} for {{ o.name }} &middot; sign in as {{ o.username }}</p>
+                    <p class="field-label">{{ self.tp(o.title, [("name", o.name.as_str()), ("username", o.username.as_str())]) }}</p>
                     <p class="secret-once" translate="no">{% for chunk in o.chunks %}<span>{{ chunk }}</span>{% endfor %}</p>
-                    <button type="button" class="button-small button-secondary copy-secret" data-copy-secret hidden>Copy</button>
-                    <p class="field-hint pin-line">Copy it before you leave this page - it's shown only once. It works until {{ o.until }}; {{ o.name }} sets a new password and two-factor login at the first sign-in.</p>
+                    <button type="button" class="button-small button-secondary copy-secret" data-copy-secret hidden>{{ self.t("account.otp.copy") }}</button>
+                    <p class="field-hint pin-line">{{ self.tp("account.otp.hint", [("until", o.until.as_str()), ("name", o.name.as_str())]) }}</p>
                 </div>
             </div>
             {%- endif %}
@@ -146,56 +162,56 @@
             {#- Another parent's two actions (design 62 §3): the same Reset and the same soft Remove
                 for every row, only the labels differ while it isn't ready. -#}
             <details class="confirm cell" id="reset-{{ p.id }}"{% if self.parent_reset_error(p.id).is_some() %} open{% endif %}>
-                <summary class="row">{% if p.waiting %}New One-Time Password{% else %}Reset{% endif %}&hellip;</summary>
+                <summary class="row">{% if p.waiting %}{{ self.t("account.parents.new_otp_open") }}{% else %}{{ self.t("account.parents.reset_open") }}{% endif %}</summary>
                 <form method="post" action="/account/parents/{{ p.id }}/reset#parents" class="confirm-body">
-                    {% if p.waiting %}<p>Make a new one-time password for {{ p.name }}? The one they have stops working at once.</p>{% else %}<p>Reset {{ p.name }}'s password and two-factor login? {{ p.name }} is signed out everywhere and signs in again with a new one-time password from you.</p>{% endif %}
+                    {% if p.waiting %}<p>{{ self.tp("account.parents.new_otp_confirm", [("name", p.name.as_str())]) }}</p>{% else %}<p>{{ self.tp("account.parents.reset_confirm", [("name", p.name.as_str())]) }}</p>{% endif %}
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
-                    <label class="field-label" for="reset_password_{{ p.id }}">Your password</label>
+                    <label class="field-label" for="reset_password_{{ p.id }}">{{ self.t("account.parents.your_password") }}</label>
                     <input type="password" id="reset_password_{{ p.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.parent_reset_error(p.id) %} aria-invalid="true" aria-describedby="reset-error-{{ p.id }}" autofocus>
                     <p class="field-error" id="reset-error-{{ p.id }}">{{ why }}</p>{% else %}>{% endif %}
-                    <button type="submit" class="button-destructive">{% if p.waiting %}New One-Time Password{% else %}Reset {{ p.name }}{% endif %}</button>
+                    <button type="submit" class="button-destructive">{% if p.waiting %}{{ self.t("account.parents.new_otp") }}{% else %}{{ self.tp("account.parents.reset", [("name", p.name.as_str())]) }}{% endif %}</button>
                 </form>
             </details>
             <details class="confirm cell" id="remove-{{ p.id }}"{% if self.remove_error(p.id).is_some() %} open{% endif %}>
-                <summary class="row">{% if p.waiting %}Withdraw{% else %}Remove{% endif %}&hellip;</summary>
+                <summary class="row">{% if p.waiting %}{{ self.t("account.parents.withdraw_open") }}{% else %}{{ self.t("account.parents.remove_open") }}{% endif %}</summary>
                 <form method="post" action="/account/parents/{{ p.id }}/remove#parents" class="confirm-body">
-                    {% if p.waiting %}<p>Withdraw {{ p.name }}'s invitation? The one-time password stops working at once. The username {{ p.username }} stays taken.</p>{% else %}<p>Remove {{ p.name }}? {{ p.name }} is signed out everywhere and can't sign in again; what they did keeps their name. Only the server's reset-2fa brings the account back.</p>{% endif %}
+                    {% if p.waiting %}<p>{{ self.tp("account.parents.withdraw_confirm", [("name", p.name.as_str()), ("username", p.username.as_str())]) }}</p>{% else %}<p>{{ self.tp("account.parents.remove_confirm", [("name", p.name.as_str())]) }}</p>{% endif %}
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
-                    <label class="field-label" for="remove_password_{{ p.id }}">Your password</label>
+                    <label class="field-label" for="remove_password_{{ p.id }}">{{ self.t("account.parents.your_password") }}</label>
                     <input type="password" id="remove_password_{{ p.id }}" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.remove_error(p.id) %} aria-invalid="true" aria-describedby="remove-error-{{ p.id }}" autofocus>
                     <p class="field-error" id="remove-error-{{ p.id }}">{{ why }}</p>{% else %}>{% endif %}
-                    <button type="submit" class="button-destructive">{% if p.waiting %}Withdraw Invitation{% else %}Remove {{ p.name }}{% endif %}</button>
+                    <button type="submit" class="button-destructive">{% if p.waiting %}{{ self.t("account.parents.withdraw") }}{% else %}{{ self.tp("account.parents.remove", [("name", p.name.as_str())]) }}{% endif %}</button>
                 </form>
             </details>
             {%- endif %}
             {% endfor %}
             <details class="edit cell" id="add-parent"{% if add_open %} open{% endif %}>
                 <summary class="row">
-                    <span class="row-label">Add Parent&hellip;</span>
+                    <span class="row-label">{{ self.t("account.add.open") }}</span>
                     <svg class="chev" viewBox="0 0 8 14" aria-hidden="true" focusable="false"><path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </summary>
                 <form method="post" action="/account/parents#parents" class="edit-body">
-                    <label class="field-label" for="new_username">Their username</label>
+                    <label class="field-label" for="new_username">{{ self.t("account.add.username") }}</label>
                     <input type="text" id="new_username" name="new_username" value="{{ add_typed.0 }}" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="64" required{% if let Some(why) = self.error_for("new_username") %} aria-invalid="true" aria-describedby="new_username-error" autofocus>
                     <p class="field-error" id="new_username-error">{{ why }}</p>{% else %} aria-describedby="new_username-hint">
-                    <p class="field-hint" id="new_username-hint">For signing in, like "pappa": lowercase letters, digits, . _ or -.</p>{% endif %}
-                    <label class="field-label" for="parent_name">Their name</label>
+                    <p class="field-hint" id="new_username-hint">{{ self.t("account.add.username_hint") }}</p>{% endif %}
+                    <label class="field-label" for="parent_name">{{ self.t("account.add.name") }}</label>
                     <input type="text" id="parent_name" name="name" value="{{ add_typed.1 }}" autocomplete="off" maxlength="64"{% if let Some(why) = self.error_for("parent_name") %} aria-invalid="true" aria-describedby="parent_name-error" autofocus>
                     <p class="field-error" id="parent_name-error">{{ why }}</p>{% else %} aria-describedby="parent_name-hint">
-                    <p class="field-hint" id="parent_name-hint">What you all see, like "Pappa". They can change it.</p>{% endif %}
+                    <p class="field-hint" id="parent_name-hint">{{ self.t("account.add.name_hint") }}</p>{% endif %}
                     {#- Your own username for the password manager, so it never pairs the new one with your
                         password (qa-62-design Q62-10); it isn't sent. -#}
                     <input type="text" autocomplete="username" value="{{ username }}" hidden>
-                    <label class="field-label" for="add_password">Your password</label>
+                    <label class="field-label" for="add_password">{{ self.t("account.parents.your_password") }}</label>
                     <input type="password" id="add_password" name="current_password" autocomplete="current-password" required{% if let Some(why) = self.error_for("add_password") %} aria-invalid="true" aria-describedby="add_password-error" autofocus>
                     <p class="field-error" id="add_password-error">{{ why }}</p>{% else %} aria-describedby="add_password-hint">
-                    <p class="field-hint" id="add_password-hint">The one you sign in here with. You get a one-time password to give them; three wrong passwords sign you out.</p>{% endif %}
-                    <button type="submit" class="button-wide">Add Parent</button>
+                    <p class="field-hint" id="add_password-hint">{{ self.t("account.add.password_hint") }}</p>{% endif %}
+                    <button type="submit" class="button-wide">{{ self.t("account.add.submit") }}</button>
                 </form>
             </details>
             {% call group_flash::show(flash, "parents") %}{% endcall %}
         </div>
-        <p class="group-footer">Every parent signs in with their own password and two-factor login, and manages every phone. Up to 8.</p>
+        <p class="group-footer">{{ self.t("account.parents.footer") }}</p>
     </section>
 </main>
 {% if otp.is_some() %}<script src="/static/reveal.js?v=3"></script>{% endif %}

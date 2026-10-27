@@ -7,6 +7,7 @@ use serde::Deserialize;
 use std::net::SocketAddr;
 use tower_sessions::Session;
 
+use crate::i18n::{Lang, Words, t, t_count};
 use crate::models::AdminUser;
 use crate::security::{self, CurrentAdmin};
 use crate::{AppState, admin_auth};
@@ -24,12 +25,14 @@ pub(crate) const INVITE_EXPIRED: &str = "This invitation has expired - ask for a
 #[derive(Template)]
 #[template(path = "login.html")]
 struct LoginTemplate {
+    lang: Lang,
     title: String,
     error: Option<String>,
 }
+crate::i18n::words!(LoginTemplate);
 
-pub async fn login_form() -> impl IntoResponse {
-    render_login(None)
+pub async fn login_form(lang: Lang) -> impl IntoResponse {
+    render_login(None, lang)
 }
 
 #[derive(Deserialize)]
@@ -38,9 +41,10 @@ pub struct LoginForm {
     password: String,
 }
 
-fn render_login(error: Option<String>) -> Html<String> {
+fn render_login(error: Option<String>, lang: Lang) -> Html<String> {
     Html(
         LoginTemplate {
+            lang,
             title: "Sign In".to_string(),
             error,
         }
@@ -68,6 +72,7 @@ fn locked_message(minutes: i64) -> String {
 /// session id is cycled, and the pending state lasts `admin_auth::PENDING_SECS`.
 pub async fn login(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -81,7 +86,7 @@ pub async fn login(
     if security::is_ip_banned(&state.db, &ip).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            render_login(Some(BANNED_MESSAGE.to_string())),
+            render_login(Some(BANNED_MESSAGE.to_string()), lang),
         )
             .into_response();
     }
@@ -134,7 +139,8 @@ pub async fn login(
 
     let Some(admin) = admin.filter(|_| valid) else {
         security::check_and_ban_ip_if_needed(&state.db, &ip).await;
-        return render_login(Some("Incorrect username or password.".to_string())).into_response();
+        return render_login(Some("Incorrect username or password.".to_string()), lang)
+            .into_response();
     };
 
     take_back().await;
@@ -148,7 +154,7 @@ pub async fn login(
             Some("correct password after the one-time password's 72 hours"),
         )
         .await;
-        return render_login(Some(INVITE_EXPIRED.to_string())).into_response();
+        return render_login(Some(INVITE_EXPIRED.to_string()), lang).into_response();
     }
     if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
         security::record_security_event(
@@ -159,7 +165,7 @@ pub async fn login(
             Some("correct password while the account is locked"),
         )
         .await;
-        return render_login(Some(locked_message(minutes))).into_response();
+        return render_login(Some(locked_message(minutes)), lang).into_response();
     }
 
     session.cycle_id().await.ok();
@@ -205,9 +211,11 @@ pub async fn login(
 #[derive(Template)]
 #[template(path = "verify_2fa.html")]
 struct Verify2faTemplate {
+    lang: Lang,
     title: String,
     error: Option<String>,
 }
+crate::i18n::words!(Verify2faTemplate);
 
 /// The pending admin id, while the password step is at most `admin_auth::PENDING_SECS` old.
 async fn pending_admin(session: &Session) -> Option<i64> {
@@ -226,17 +234,18 @@ async fn pending_admin(session: &Session) -> Option<i64> {
 
 const PENDING_EXPIRED: &str = "Sign-in timed out - enter your password again.";
 
-pub async fn verify_2fa_form(session: Session) -> impl IntoResponse {
+pub async fn verify_2fa_form(lang: Lang, session: Session) -> impl IntoResponse {
     if pending_admin(&session).await.is_none() {
         session.flush().await.ok();
         return Redirect::to("/login").into_response();
     }
-    render_verify(None).into_response()
+    render_verify(None, lang).into_response()
 }
 
-fn render_verify(error: Option<String>) -> Html<String> {
+fn render_verify(error: Option<String>, lang: Lang) -> Html<String> {
     Html(
         Verify2faTemplate {
+            lang,
             title: "Two-Factor Code".to_string(),
             error,
         }
@@ -256,6 +265,7 @@ pub struct Verify2faForm {
 /// the account's epoch, and a banner names earlier failed codes (`admin_auth::login_warning`).
 pub async fn verify_2fa(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -266,14 +276,14 @@ pub async fn verify_2fa(
     if security::is_ip_banned(&state.db, &ip).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            render_verify(Some(BANNED_MESSAGE.to_string())),
+            render_verify(Some(BANNED_MESSAGE.to_string()), lang),
         )
             .into_response();
     }
 
     let Some(admin_id) = pending_admin(&session).await else {
         session.flush().await.ok();
-        return render_login(Some(PENDING_EXPIRED.to_string())).into_response();
+        return render_login(Some(PENDING_EXPIRED.to_string()), lang).into_response();
     };
 
     let admin = sqlx::query_as::<_, AdminUser>(
@@ -304,7 +314,7 @@ pub async fn verify_2fa(
                 .await
                 .unwrap_or(1);
             session.flush().await.ok();
-            return render_login(Some(locked_message(minutes))).into_response();
+            return render_login(Some(locked_message(minutes)), lang).into_response();
         }
         Err(err) => {
             tracing::error!(%err, "couldn't count the 2FA attempt");
@@ -337,9 +347,9 @@ pub async fn verify_2fa(
             security::check_and_ban_ip_if_needed(&state.db, &ip).await;
             if let Some(minutes) = admin_auth::lock_minutes_left(&state.db, admin.id).await {
                 session.flush().await.ok();
-                return render_login(Some(locked_message(minutes))).into_response();
+                return render_login(Some(locked_message(minutes)), lang).into_response();
             }
-            return render_verify(Some("That code didn't match. Try again.".to_string()))
+            return render_verify(Some("That code didn't match. Try again.".to_string()), lang)
                 .into_response();
         }
         Err(err) => {
@@ -413,18 +423,22 @@ pub async fn logout(
 #[derive(Template)]
 #[template(path = "change_password.html")]
 struct ChangePasswordTemplate {
+    lang: Lang,
     title: String,
     error: Option<String>,
 }
+crate::i18n::words!(ChangePasswordTemplate);
 
 pub async fn change_password_form(
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    lang: Lang,
 ) -> impl IntoResponse {
     if !admin.must_change_password {
         return Redirect::to("/").into_response();
     }
     Html(
         ChangePasswordTemplate {
+            lang,
             title: "New Password".to_string(),
             error: None,
         }
@@ -443,6 +457,7 @@ pub struct ChangePasswordForm {
 
 pub async fn change_password(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<ChangePasswordForm>,
@@ -450,6 +465,7 @@ pub async fn change_password(
     let render_error = |msg: &str| -> axum::response::Response {
         Html(
             ChangePasswordTemplate {
+                lang,
                 title: "New Password".to_string(),
                 error: Some(msg.to_string()),
             }
@@ -557,11 +573,13 @@ pub async fn change_password(
 #[derive(Template)]
 #[template(path = "setup_2fa.html")]
 struct Setup2faTemplate {
+    lang: Lang,
     title: String,
     qr_base64: String,
     secret_base32: String,
     error: Option<String>,
 }
+crate::i18n::words!(Setup2faTemplate);
 
 impl Setup2faTemplate {
     /// The key in blocks of 4 ("343I I2AD …"), so it wraps between blocks, never a lone character
@@ -581,6 +599,7 @@ impl Setup2faTemplate {
 /// onboarding show the same secret, and a request held past a Reset or a removal writes nothing.
 pub async fn setup_2fa_form(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> axum::response::Response {
@@ -619,6 +638,7 @@ pub async fn setup_2fa_form(
 
     Html(
         Setup2faTemplate {
+            lang,
             title: "Two-Factor Login".to_string(),
             qr_base64,
             secret_base32: secret,
@@ -640,6 +660,7 @@ pub struct Setup2faForm {
 /// is ready (§4.1, qa-62-design Q62-8; the password change comes first - P62-1).
 pub async fn setup_2fa_verify(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<Setup2faForm>,
@@ -669,6 +690,7 @@ pub async fn setup_2fa_verify(
         let qr_base64 = totp.get_qr_base64().expect("QR generation should not fail");
         return Html(
             Setup2faTemplate {
+                lang,
                 title: "Two-Factor Login".to_string(),
                 qr_base64,
                 secret_base32: secret,
@@ -713,6 +735,7 @@ pub async fn setup_2fa_verify(
 #[derive(Template)]
 #[template(path = "account.html")]
 struct AccountTemplate {
+    lang: Lang,
     title: String,
     admin_id: i64,
     username: String,
@@ -734,6 +757,16 @@ struct AccountTemplate {
     /// What a refused Add Parent sent: (username, name).
     add_typed: (String, String),
     otp: Option<OtpShown>,
+    /// The Language select: the account's own language selected (never `?lang=`).
+    languages: Vec<LanguageChoice>,
+}
+crate::i18n::words!(AccountTemplate);
+
+/// An option of Account's Language select (design 70 §3), its label a key worded in its own language.
+struct LanguageChoice {
+    code: &'static str,
+    label: &'static str,
+    selected: bool,
 }
 
 impl AccountTemplate {
@@ -766,7 +799,7 @@ pub(crate) fn reset_field(id: i64) -> String {
 /// Add Parent's and Reset's answer (design 62 §3): the one-time password, in blocks of 4 for reading (the
 /// blocks are spans, so a copy has no spaces), and its end.
 pub(crate) struct OtpShown {
-    /// "One-time password", "New one-time password".
+    /// The line's key: `account.otp.first` or `account.otp.new` (with `{name}`, `{username}`).
     pub title: &'static str,
     pub name: String,
     pub username: String,
@@ -793,10 +826,11 @@ pub(crate) async fn render_account(
     admin: &AdminUser,
     status: StatusCode,
     answer: AccountAnswer,
+    lang: Lang,
 ) -> axum::response::Response {
     let zone = crate::display_time::Zone::load(&state.db).await;
     let now = chrono::Utc::now();
-    let parents = match crate::parents::rows(&state.db, admin, &zone, now).await {
+    let parents = match crate::parents::rows(&state.db, admin, &zone, now, lang).await {
         Ok(rows) => rows,
         Err(err) => {
             tracing::error!(%err, "couldn't read the parent accounts");
@@ -804,7 +838,8 @@ pub(crate) async fn render_account(
         }
     };
     let page = AccountTemplate {
-        title: "Account & Parents".to_string(),
+        lang,
+        title: t(lang, "account.title").to_string(),
         admin_id: admin.id,
         username: admin.username.clone(),
         totp_enabled: admin.totp_enabled,
@@ -812,7 +847,7 @@ pub(crate) async fn render_account(
         password_field: answer.password_field,
         reset_error: answer.reset_error,
         login_warning: login_warning_of(session).await,
-        live_warning: live_warning(admin, &zone, now),
+        live_warning: live_warning(admin, &zone, now, lang),
         name_value: answer
             .name_typed
             .unwrap_or_else(|| admin.display_name.clone().unwrap_or_default()),
@@ -821,6 +856,17 @@ pub(crate) async fn render_account(
         add_open: answer.add_open,
         add_typed: answer.add_typed,
         otp: answer.otp,
+        languages: [Lang::Nb, Lang::En]
+            .into_iter()
+            .map(|choice| LanguageChoice {
+                code: choice.code(),
+                label: match choice {
+                    Lang::En => "account.language.en",
+                    Lang::Nb => "account.language.nb",
+                },
+                selected: admin.lang.as_deref() == Some(choice.code()),
+            })
+            .collect(),
     };
     (status, Html(page.render().unwrap())).into_response()
 }
@@ -840,6 +886,7 @@ pub async fn login_warning_of(session: &Session) -> Option<String> {
 /// answer lands (design 62 §3, `static/reveal.js`).
 pub async fn account_page(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -849,24 +896,17 @@ pub async fn account_page(
         query.get("changed").map(String::as_str),
         query.get("parents").map(String::as_str),
     ) {
-        (Some("password"), _) => Some(Flash::done(
-            "password",
-            "Password changed. Every other browser and phone is signed out, and notifications are off \
-             everywhere.",
-        )),
-        (Some("name"), _) => Some(Flash::done("name", "Name saved.")),
-        (_, Some("removed")) => Some(Flash::done(
-            "parents",
-            "Done - that account can't sign in any more.",
-        )),
-        (_, Some("gone")) => Some(Flash::done("parents", "That account was already removed.")),
+        (Some("password"), _) => Some(Flash::done("password", t(lang, "account.password.changed"))),
+        (Some("name"), _) => Some(Flash::done("name", t(lang, "account.name.saved"))),
+        (_, Some("removed")) => Some(Flash::done("parents", t(lang, "account.parents.removed"))),
+        (_, Some("gone")) => Some(Flash::done("parents", t(lang, "account.parents.gone"))),
         _ => None,
     };
     let answer = AccountAnswer {
         flash,
         ..AccountAnswer::default()
     };
-    render_account(&state, &session, &admin, StatusCode::OK, answer).await
+    render_account(&state, &session, &admin, StatusCode::OK, answer, lang).await
 }
 
 #[derive(Deserialize)]
@@ -883,31 +923,34 @@ pub struct UpdatePasswordForm {
 /// M1), as with Sign Out Everywhere.
 pub async fn update_account_password(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<UpdatePasswordForm>,
 ) -> impl IntoResponse {
     use crate::handlers::settings::Flash;
     let refuse = |field: &'static str, why: &'static str| AccountAnswer {
-        flash: Some(Flash::refused("password", why)),
+        flash: Some(Flash::refused("password", t(lang, why))),
         password_field: field,
         ..AccountAnswer::default()
     };
     let refused = if form.new_password.len() < security::MIN_PASSWORD_LEN {
-        Some(refuse(
-            "new_password",
-            "Use at least 12 characters. Nothing was changed.",
-        ))
+        Some(refuse("new_password", "account.password.too_short"))
     } else if form.new_password != form.confirm_password {
-        Some(refuse(
-            "confirm_password",
-            "The new passwords don't match. Nothing was changed.",
-        ))
+        Some(refuse("confirm_password", "account.password.mismatch"))
     } else {
         None
     };
     if let Some(answer) = refused {
-        return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
+        return render_account(
+            &state,
+            &session,
+            &admin,
+            StatusCode::BAD_REQUEST,
+            answer,
+            lang,
+        )
+        .await;
     }
     let changed = match state
         .passwords
@@ -940,13 +983,20 @@ pub async fn update_account_password(
             let answer = refuse(
                 "current_password",
                 if left == 1 {
-                    "The current password is wrong. Nothing was changed. One more wrong one \
-                     signs you out."
+                    "account.password.wrong_last"
                 } else {
-                    "The current password is wrong. Nothing was changed."
+                    "account.password.wrong"
                 },
             );
-            return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
+            return render_account(
+                &state,
+                &session,
+                &admin,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await;
         }
         _ => return admin_auth::signed_out_response(),
     };
@@ -971,11 +1021,11 @@ pub async fn update_account_password(
     }
     let Ok(Some(epoch)) = epoch else {
         tracing::error!(?epoch, "couldn't save the new password");
-        return (
+        return crate::i18n::error(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't save the new password - nothing was changed. Check the server log.",
-        )
-            .into_response();
+            "account.password.failed",
+        );
     };
     session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
     // A browser a stolen session turned notifications on in stops getting them too (security
@@ -1020,6 +1070,7 @@ pub struct ResetTotpForm {
 /// Account with the confirm open and the reason under the field (400).
 pub async fn reset_totp(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<ResetTotpForm>,
@@ -1039,20 +1090,23 @@ pub async fn reset_totp(
         )
         .await;
         let reset_error = match reauth {
-            admin_auth::Reauth::Wrong { left: 1 } => {
-                "The current password is wrong. Two-factor login was not reset. One more wrong \
-                 one signs you out."
-            }
-            admin_auth::Reauth::Wrong { .. } => {
-                "The current password is wrong. Two-factor login was not reset."
-            }
+            admin_auth::Reauth::Wrong { left: 1 } => "account.totp.wrong_last",
+            admin_auth::Reauth::Wrong { .. } => "account.totp.wrong",
             _ => return admin_auth::signed_out_response(),
         };
         let answer = AccountAnswer {
-            reset_error: Some(reset_error),
+            reset_error: Some(t(lang, reset_error)),
             ..AccountAnswer::default()
         };
-        return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
+        return render_account(
+            &state,
+            &session,
+            &admin,
+            StatusCode::BAD_REQUEST,
+            answer,
+            lang,
+        )
+        .await;
     }
     let epoch: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
         "UPDATE admin_users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL, \
@@ -1069,11 +1123,11 @@ pub async fn reset_totp(
     }
     let Ok(Some(epoch)) = epoch else {
         tracing::error!(?epoch, "couldn't reset two-factor login");
-        return (
+        return crate::i18n::error(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't reset two-factor login - nothing was changed. Check the server log.",
-        )
-            .into_response();
+            "account.totp.failed",
+        );
     };
     session.insert(admin_auth::EPOCH_KEY, epoch).await.ok();
     // Every device's notifications end with the other sessions (security review M1).
@@ -1096,16 +1150,17 @@ pub async fn reset_totp(
 /// parent is told so (500) - this session is kept, so they know it failed.
 pub async fn sign_out_everywhere(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> axum::response::Response {
     if admin_auth::bump_epoch(&state.db, admin.id).await.is_none() {
         tracing::error!("couldn't sign out everywhere");
-        return (
+        return crate::i18n::error(
+            lang,
             StatusCode::INTERNAL_SERVER_ERROR,
-            "Couldn't sign out the other sessions - nothing was changed. Check the server log.",
-        )
-            .into_response();
+            "account.sessions.failed",
+        );
     }
     // A lost device stops getting notifications too (design 35 §7).
     crate::push::forget_subscriptions(&state.db, admin.id).await;
@@ -1207,26 +1262,66 @@ pub fn live_warning(
     admin: &AdminUser,
     zone: &crate::display_time::Zone,
     now: chrono::DateTime<chrono::Utc>,
+    lang: Lang,
 ) -> Option<String> {
-    if admin.failed_login_attempts <= 0 {
+    let n = admin.failed_login_attempts;
+    if n <= 0 {
         return None;
     }
     let lock = admin
         .locked_until
         .as_deref()
         .and_then(crate::display_time::parse_db_utc)
-        .filter(|until| *until > now)
-        .map(|until| {
-            format!(
-                ", and new sign-ins are locked until {}",
-                zone.until(until, now)
-            )
-        })
-        .unwrap_or_default();
-    let n = admin.failed_login_attempts;
-    Some(format!(
-        "{n} wrong two-factor code{} entered since your last sign-in{lock}. Whoever entered them \
-         knows your password - change it now (that also lifts the lock).",
-        if n == 1 { " was" } else { "s were" }
-    ))
+        .filter(|until| *until > now);
+    Some(match lock {
+        Some(until) => t_count(
+            lang,
+            "account.warning.live_locked",
+            n,
+            &[("until", &zone.until(until, now))],
+        ),
+        None => t_count(lang, "account.warning.live", n, &[]),
+    })
+}
+
+/// The Language form (design 70 §3).
+#[derive(Deserialize)]
+pub struct LanguageForm {
+    #[serde(default)]
+    lang: String,
+}
+
+/// `POST /account/language`: the account's language, `en` or `nb` (anything else is a 400 in the page's language,
+/// nothing written), for this session's epoch and a live account; back to `/account#language`, where the page comes
+/// back in the new language at the same place. `settings_log` logs it as a save.
+pub async fn set_language(
+    State(state): State<AppState>,
+    lang: Lang,
+    session: Session,
+    Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
+    Form(form): Form<LanguageForm>,
+) -> axum::response::Response {
+    let Some(chosen) = Lang::from_code(&form.lang) else {
+        return crate::i18n::error(lang, StatusCode::BAD_REQUEST, "account.language.refused");
+    };
+    let saved = sqlx::query(
+        "UPDATE admin_users SET lang = ? \
+         WHERE id = ? AND session_epoch = ? AND removed_at IS NULL",
+    )
+    .bind(chosen.code())
+    .bind(admin.id)
+    .bind(admin.session_epoch)
+    .execute(&state.db)
+    .await;
+    match saved {
+        Ok(done) if done.rows_affected() == 1 => Redirect::to("/account#language").into_response(),
+        Ok(_) => {
+            session.flush().await.ok();
+            admin_auth::signed_out_response()
+        }
+        Err(err) => {
+            tracing::error!(%err, "couldn't save the account's language");
+            crate::i18n::error(lang, StatusCode::INTERNAL_SERVER_ERROR, "common.not_saved")
+        }
+    }
 }

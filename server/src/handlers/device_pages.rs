@@ -35,6 +35,7 @@ use chrono::{DateTime, Utc};
 
 use crate::AppState;
 use crate::display_time::Zone;
+use crate::i18n::Lang;
 use crate::models::{Device, DevicePolicy, DeviceStatus, Hardening};
 use crate::streams::ConnectionState;
 
@@ -374,6 +375,7 @@ pub struct CrashView {
 #[derive(Template)]
 #[template(path = "device_about.html")]
 struct AboutTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     connection: Vec<Row>,
@@ -384,6 +386,7 @@ struct AboutTemplate {
     crashes_value: String,
     diagnostics: Vec<Row>,
 }
+crate::i18n::words!(AboutTemplate);
 
 /// The phone, or the page's answer: 404 for an unknown one, 500 when the database fails
 /// (qa-31-s3-code N4: not "Device not found" for a DB error).
@@ -515,7 +518,11 @@ fn connection_rows(
 }
 
 /// GET `/devices/{id}/about`: About This Phone.
-pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+pub async fn view_about(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+) -> Response {
     let device = match load_device(&state, id).await {
         Ok(device) => device,
         Err(answer) => return answer.into_response(),
@@ -701,6 +708,7 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
 
     Html(
         AboutTemplate {
+            lang,
             title: format!("About {}", device.name),
             device,
             connection: connection_rows,
@@ -719,6 +727,7 @@ pub async fn view_about(State(state): State<AppState>, Path(id): Path<i64>) -> R
 #[derive(Template)]
 #[template(path = "device_advanced.html")]
 struct AdvancedTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     hardening: Hardening,
@@ -734,10 +743,12 @@ struct AdvancedTemplate {
     escape_rows: Vec<Note>,
     access: crate::handlers::devices::AccessCard,
 }
+crate::i18n::words!(AdvancedTemplate);
 
 /// GET `/devices/{id}/advanced`: Advanced.
 pub async fn view_advanced(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -772,6 +783,7 @@ pub async fn view_advanced(
 
     Html(
         AdvancedTemplate {
+            lang,
             title: format!("Advanced · {}", device.name),
             hardening: policy.hardening.clone(),
             backup_service_enabled: latest.as_ref().and_then(|s| s.backup_service_enabled),
@@ -799,6 +811,7 @@ pub async fn view_advanced(
 #[derive(Template)]
 #[template(path = "device_lock.html")]
 struct LockTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     /// Child PIN: set or not, its length; the phone's lock as warnings (above the group) and rows.
@@ -841,6 +854,7 @@ struct LockTemplate {
     lock_screen: crate::lock_glance::LockScreenCard,
     lock_screen_warnings: Vec<Note>,
 }
+crate::i18n::words!(LockTemplate);
 
 /// "Show Child PIN…"'s answer (design 59 §2.2): rendered into the page the POST came from, never
 /// a redirect, so the PIN is in no address, session or log.
@@ -935,11 +949,12 @@ impl RevealView {
 /// PINs can be set before setup.
 pub async fn view_lock(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     let notice = query.get("notice").map(String::as_str);
-    render_lock(&state, id, notice, None).await
+    render_lock(&state, id, notice, None, lang).await
 }
 
 /// POST `/devices/{id}/lock`, `action=reveal_kid_pin` (design 59 §2.2, qa-59-design Q59-11): the
@@ -949,6 +964,7 @@ pub async fn view_lock(
 /// covers the answer, and the security log names the phone only.
 pub async fn lock_action(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     session: tower_sessions::Session,
     axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
@@ -1014,7 +1030,7 @@ pub async fn lock_action(
             Reveal::Shown(shown)
         }
     };
-    render_lock(&state, id, None, Some(reveal)).await
+    render_lock(&state, id, None, Some(reveal), lang).await
 }
 
 /// What the last report says about the lock ([crate::kid_lock::PhoneLock]).
@@ -1071,6 +1087,7 @@ async fn render_lock(
     id: i64,
     notice: Option<&str>,
     reveal: Option<Reveal>,
+    lang: Lang,
 ) -> Response {
     let device = match load_device(state, id).await {
         Ok(device) => device,
@@ -1174,6 +1191,7 @@ async fn render_lock(
     };
 
     let page = LockTemplate {
+        lang,
         title: format!("Lock Screen & PINs · {}", device.name),
         child_warnings,
         child_rows,
@@ -1280,6 +1298,7 @@ pub(crate) fn clock_format_note(
 #[derive(Template)]
 #[template(path = "device_home.html")]
 struct HomeTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     /// Above the first group: Vibb can't read notifications.
@@ -1299,13 +1318,14 @@ struct HomeTemplate {
     quick_sound: bool,
     quick_touch: bool,
 }
+crate::i18n::words!(HomeTemplate);
 
 /// GET `/devices/{id}/home`: Home Screen (design 31 §3.2, step 5). Language and apps per row (one
 /// form, `/launcher`), the wallpapers this phone may use (one form, `/wallpapers`) and the quick
 /// controls (`/policy` with `section=quick`). Every form auto-saves and returns here without a
 /// fragment. A phone not set up has the page too: what is saved reaches it with its first
 /// settings.
-pub async fn view_home(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+pub async fn view_home(State(state): State<AppState>, lang: Lang, Path(id): Path<i64>) -> Response {
     use crate::handlers::devices::{
         QUICK_CONTROL_BLUETOOTH, QUICK_CONTROL_BRIGHTNESS, QUICK_CONTROL_SOUND,
         QUICK_CONTROL_TOUCH, QUICK_CONTROL_WIFI,
@@ -1330,6 +1350,7 @@ pub async fn view_home(State(state): State<AppState>, Path(id): Path<i64>) -> Re
     let mask = policy.quick_controls_mask;
     Html(
         HomeTemplate {
+            lang,
             title: format!("Home Screen · {}", device.name),
             notification_warning: notification_access_note(latest.as_ref()),
             clock_warning: clock_format_note(&policy, latest.as_ref()),
@@ -1374,6 +1395,7 @@ pub struct LogRow {
 #[derive(Template)]
 #[template(path = "device_filter.html")]
 struct FilterTemplate {
+    lang: Lang,
     title: String,
     /// An allowed host the phone blocks anyway (`dns_filter::doh_allowed_notice`, design 67).
     doh_allowed: Option<String>,
@@ -1396,6 +1418,7 @@ struct FilterTemplate {
     /// The site-wide blocked domains it overrides on this phone.
     spotify_global: Vec<String>,
 }
+crate::i18n::words!(FilterTemplate);
 
 impl FilterTemplate {
     /// This phone's block `id` is one of Spotify's hosts while the phone plays Spotify.
@@ -1414,6 +1437,7 @@ impl FilterTemplate {
 /// redirect here.
 pub async fn view_filter(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -1531,6 +1555,7 @@ pub async fn view_filter(
     };
     Html(
         FilterTemplate {
+            lang,
             title: format!("Web Filter · {}", device.name),
             refused,
             doh_allowed: crate::handlers::dns_filter::doh_allowed_notice(&query),
@@ -1706,6 +1731,7 @@ async fn apps_nav(
 #[derive(Template)]
 #[template(path = "device_apps.html")]
 struct AppsTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     /// Devices, or Apps when opened from the Apps tab (`AppsFrom`).
@@ -1732,6 +1758,7 @@ struct AppsTemplate {
     /// The phone's network at its last report, with its time (`app_downloads::network`).
     network: Option<Row>,
 }
+crate::i18n::words!(AppsTemplate);
 
 /// GET `/devices/{id}/apps`: Device › Apps (design 31 §3.2, step 6). The phone's apps and the
 /// catalog's in two groups, Allowed and Not allowed, each a switch (`/apps/toggle`, `back=apps`);
@@ -1914,6 +1941,7 @@ pub(crate) async fn render_apps(
     }
     Html(
         AppsTemplate {
+            lang,
             title: format!("Apps · {}", device.name),
             nav_tab,
             back_href,
@@ -1954,6 +1982,7 @@ pub(crate) async fn render_apps(
 #[derive(Template)]
 #[template(path = "device_music.html")]
 struct MusicTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     music: crate::handlers::music::MusicCard,
@@ -1961,6 +1990,7 @@ struct MusicTemplate {
     /// `title=`.
     reported: Option<(String, String)>,
 }
+crate::i18n::words!(MusicTemplate);
 
 /// GET `/devices/{id}/music`: Device › Music (design 31 §3.2, step 7) - the Music card as design
 /// 30 step 1 left it (M7): the music app's switch (`/apps/toggle`, `back=music`), one switch per
@@ -1972,6 +2002,7 @@ struct MusicTemplate {
 /// error, never an empty library or default settings.
 pub async fn view_music(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -2006,6 +2037,7 @@ pub async fn view_music(
         .map(|at| (zone.relative(at, Utc::now()), zone.exact(at)));
     Html(
         MusicTemplate {
+            lang,
             title: format!("Music · {}", device.name),
             music,
             reported,

@@ -15,10 +15,14 @@ use crate::handlers::provisioning::{self, AdminExtras};
 
 /// The page after "Make QR code" (a POST since design 22).
 async fn provision_page(state: AppState, device_id: i64) -> String {
-    let response =
-        provisioning::provision_qr(State(state), Path(device_id), Form(Default::default()))
-            .await
-            .into_response();
+    let response = provisioning::provision_qr(
+        State(state),
+        crate::i18n::Lang::En,
+        Path(device_id),
+        Form(Default::default()),
+    )
+    .await
+    .into_response();
     let res = read_response(response).await;
     assert!(res.status.is_success(), "provision page: {}", res.status);
     res.text()
@@ -657,7 +661,7 @@ async fn server_setup_needed_is_one_row_with_its_detail_behind_info() {
     let mut config = (*state.config).clone();
     config.launcher_signature_checksum = None;
     state.config = Arc::new(config);
-    let response = provisioning::provision_form(State(state), Path(id))
+    let response = provisioning::provision_form(State(state), crate::i18n::Lang::En, Path(id))
         .await
         .into_response();
     let html = read_response(response).await.text();
@@ -848,13 +852,14 @@ async fn the_env_server_url_loses_to_the_saved_one() {
     let phone_setup = |state: AppState| async move {
         let response = crate::handlers::settings::provisioning_settings_form(
             State(state),
+            crate::i18n::Lang::En,
             axum::extract::Query(Default::default()),
         )
         .await;
         read_response(response).await.text()
     };
     let connect = |state: AppState| async move {
-        let response = provisioning::provision_form(State(state), Path(id))
+        let response = provisioning::provision_form(State(state), crate::i18n::Lang::En, Path(id))
             .await
             .into_response();
         read_response(response).await.text()

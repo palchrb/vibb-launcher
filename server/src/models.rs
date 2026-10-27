@@ -20,6 +20,10 @@ pub struct AdminUser {
     /// A one-time password's onboarding ends by then (SQLite `datetime` text, UTC); `None` once
     /// the account is ready. Removed accounts never load (`removed_at` is read in SQL only).
     pub invite_expires_at: Option<String>,
+    /// The PWA's language, `Lang::code` (design 70, migration 0104): NULL until the first signed-in request stores
+    /// its `Accept-Language`, then the parent's choice on Account. Read through `Lang::from_code` (an unknown value
+    /// is none).
+    pub lang: Option<String>,
 }
 
 impl AdminUser {

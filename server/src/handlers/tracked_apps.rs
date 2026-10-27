@@ -25,6 +25,7 @@ use tokio::io::AsyncWriteExt;
 use crate::AppState;
 use crate::config::{MUSIC_RELEASE_TAG_PREFIX, SERVER_RELEASE_TAG_PREFIX};
 use crate::handlers::device_pages::AppsFrom;
+use crate::i18n::Lang;
 use crate::models::TrackedApp;
 use crate::security::{CurrentAdmin, generate_device_token};
 
@@ -1943,16 +1944,19 @@ async fn allowed_count(state: &AppState, device_id: i64, catalog: &[TrackedApp])
 #[derive(Template)]
 #[template(path = "apps_list.html")]
 struct AppsListTemplate {
+    lang: Lang,
     title: String,
     phones: Vec<PhoneRow>,
     apps: Vec<CatalogRow>,
     bell: crate::parent_events::Bell,
 }
+crate::i18n::words!(AppsListTemplate);
 
 /// The Apps tab (design 31 §3.3): each phone with how many apps it allows, the catalog - every
 /// app the server keeps up to date, the launcher's own row included - and Add App.
 pub async fn list_apps(
     State(state): State<AppState>,
+    lang: Lang,
     axum::Extension(crate::security::CurrentAdmin(admin)): axum::Extension<
         crate::security::CurrentAdmin,
     >,
@@ -2007,6 +2011,7 @@ pub async fn list_apps(
 
     Html(
         AppsListTemplate {
+            lang,
             title: "Apps".to_string(),
             phones,
             apps,
@@ -2020,6 +2025,7 @@ pub async fn list_apps(
 #[derive(Template)]
 #[template(path = "tracked_app_add.html")]
 struct TrackedAppAddTemplate {
+    lang: Lang,
     title: String,
     /// Set when a save was refused; the fields below then hold what was entered.
     error: Option<String>,
@@ -2039,6 +2045,7 @@ struct TrackedAppAddTemplate {
     /// "fdroid_package").
     error_field: &'static str,
 }
+crate::i18n::words!(TrackedAppAddTemplate);
 
 impl TrackedAppAddTemplate {
     /// "More options" starts open when one of its fields holds something or was refused.
@@ -2051,9 +2058,10 @@ impl TrackedAppAddTemplate {
     }
 }
 
-pub async fn new_tracked_app_form() -> impl IntoResponse {
+pub async fn new_tracked_app_form(lang: Lang) -> impl IntoResponse {
     Html(
         TrackedAppAddTemplate {
+            lang,
             title: "Add App".to_string(),
             error: None,
             name: String::new(),
@@ -2152,6 +2160,7 @@ fn normalize_github_repo(input: &str) -> String {
 
 pub async fn create_tracked_app(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(_admin): Extension<CurrentAdmin>,
     Form(fields): Form<HashMap<String, String>>,
 ) -> Response {
@@ -2207,6 +2216,7 @@ pub async fn create_tracked_app(
     };
     if let Some((error, error_field)) = refused {
         let page = TrackedAppAddTemplate {
+            lang,
             title: "Add App".to_string(),
             error: Some(error),
             name: field("name"),
@@ -2255,6 +2265,7 @@ pub async fn create_tracked_app(
 #[derive(Template)]
 #[template(path = "tracked_app_detail.html")]
 struct TrackedAppDetailTemplate {
+    lang: Lang,
     title: String,
     app: TrackedApp,
     /// The upload's result (refused, or done), shown in the Upload group (§3.0's flash).
@@ -2293,6 +2304,7 @@ struct TrackedAppDetailTemplate {
     fdroid_page: Option<String>,
     fdroid_note: &'static str,
 }
+crate::i18n::words!(TrackedAppDetailTemplate);
 
 /// A local time on a page: "2 h ago" and the exact time for `title=` and ⓘ panels.
 struct When {
@@ -2395,6 +2407,7 @@ struct DetailsForm {
 /// & Signing), so the form it came from is where the parent left it.
 pub async fn view_tracked_app(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
@@ -2414,21 +2427,28 @@ pub async fn view_tracked_app(
         None,
         query.get("open").map(String::as_str),
         install,
+        lang,
     )
     .await
 }
 
-async fn render_detail(state: &AppState, id: i64, refused: Option<Note>) -> Response {
-    render_detail_full(state, id, refused, None, None, None, None).await
+async fn render_detail(state: &AppState, id: i64, refused: Option<Note>, lang: Lang) -> Response {
+    render_detail_full(state, id, refused, None, None, None, None, lang).await
 }
 
-async fn render_detail_page(state: &AppState, id: i64, details: Option<DetailsForm>) -> Response {
-    render_detail_full(state, id, None, details, None, None, None).await
+async fn render_detail_page(
+    state: &AppState,
+    id: i64,
+    details: Option<DetailsForm>,
+    lang: Lang,
+) -> Response {
+    render_detail_full(state, id, None, details, None, None, None, lang).await
 }
 
 /// The app's page (design 31 §3.3); `display` = a refused "Show on phones as" save (design 14),
 /// `open` = the `<details>` a save returns to ("display", "source"), `install` = Install Now's
 /// answer (design 37: the word and the phone it names).
+#[allow(clippy::too_many_arguments)]
 async fn render_detail_full(
     state: &AppState,
     id: i64,
@@ -2437,6 +2457,7 @@ async fn render_detail_full(
     display: Option<crate::app_display::Entered>,
     open: Option<&str>,
     install: Option<(&str, Option<i64>)>,
+    lang: Lang,
 ) -> Response {
     let app = match sqlx::query_as::<_, TrackedApp>("SELECT * FROM tracked_apps WHERE id = ?")
         .bind(id)
@@ -2564,6 +2585,7 @@ async fn render_detail_full(
         || open == Some("source");
     Html(
         TrackedAppDetailTemplate {
+            lang,
             title: app.name.clone(),
             version: app
                 .latest_release_tag
@@ -2665,6 +2687,7 @@ pub async fn check_now(State(state): State<AppState>, Path(id): Path<i64>) -> Re
 /// same shape as the old launcher_releases upload flow this replaces.
 pub async fn upload_tracked_app_release(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
@@ -2693,6 +2716,7 @@ pub async fn upload_tracked_app_release(
                 ),
                 ok: false,
             })),
+            lang,
         )
         .await;
         if page.status() == StatusCode::OK {
@@ -2727,6 +2751,7 @@ pub async fn upload_tracked_app_release(
             &state,
             id,
             Some(Note::Upload(Flash::title("Add a version and a file"))),
+            lang,
         )
         .await;
     };
@@ -2736,6 +2761,7 @@ pub async fn upload_tracked_app_release(
             &state,
             id,
             Some(Note::Upload(Flash::title("Add a version and a file"))),
+            lang,
         )
         .await;
     }
@@ -2746,6 +2772,7 @@ pub async fn upload_tracked_app_release(
             &state,
             id,
             Some(Note::Upload(Flash::title("Couldn't save the file"))),
+            lang,
         )
         .await;
     }
@@ -2758,6 +2785,7 @@ pub async fn upload_tracked_app_release(
             &state,
             id,
             Some(Note::Upload(Flash::title("Couldn't save the file"))),
+            lang,
         )
         .await;
     }
@@ -2770,12 +2798,12 @@ pub async fn upload_tracked_app_release(
         Ok(identity) => identity,
         Err(err) => {
             tokio::fs::remove_file(&file_path).await.ok();
-            return render_detail(&state, id, Some(Note::Upload(err.into()))).await;
+            return render_detail(&state, id, Some(Note::Upload(err.into())), lang).await;
         }
     };
     if let Err(err) = check_new_package(&state, &app, &identity).await {
         tokio::fs::remove_file(&file_path).await.ok();
-        return render_detail(&state, id, Some(Note::Upload(err.into()))).await;
+        return render_detail(&state, id, Some(Note::Upload(err.into())), lang).await;
     }
 
     let sha256 = hex_digest(Sha256::digest(&apk_bytes));
@@ -2800,6 +2828,7 @@ pub async fn upload_tracked_app_release(
             &state,
             id,
             Some(Note::Upload(Flash::title("Couldn't save the file"))),
+            lang,
         )
         .await;
     }
@@ -2818,6 +2847,7 @@ pub async fn upload_tracked_app_release(
 /// under the parent, the browser pass of 2026-10-14, 6f); nudges every phone (cosmetic, cheap).
 pub async fn save_display(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -2835,7 +2865,8 @@ pub async fn save_display(
                     error,
                 };
                 let mut page =
-                    render_detail_full(&state, id, None, None, Some(entered), None, None).await;
+                    render_detail_full(&state, id, None, None, Some(entered), None, None, lang)
+                        .await;
                 if page.status() == StatusCode::OK {
                     *page.status_mut() = StatusCode::BAD_REQUEST;
                 }
@@ -2885,6 +2916,7 @@ pub async fn save_display(
 /// the app's is refused (400, nothing written), worded by whether a release is cached.
 pub async fn update_tracked_app(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(fields): Form<HashMap<String, String>>,
 ) -> Response {
@@ -2979,7 +3011,7 @@ pub async fn update_tracked_app(
             error: Some(error),
             error_field,
         };
-        let mut page = render_detail_page(&state, id, Some(details)).await;
+        let mut page = render_detail_page(&state, id, Some(details), lang).await;
         *page.status_mut() = StatusCode::BAD_REQUEST;
         return page;
     }
@@ -3318,6 +3350,7 @@ pub struct ConfirmPackageForm {
 /// installed it on allows it ([crate::handlers::device_api::allow_installed_catalog_apps]).
 pub async fn confirm_package(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Form(form): Form<ConfirmPackageForm>,
 ) -> Response {
@@ -3336,6 +3369,7 @@ pub async fn confirm_package(
                     )),
                     ok: false,
                 })),
+                lang,
             )
             .await,
         )
@@ -3355,6 +3389,7 @@ pub async fn confirm_package(
             Some(Note::Package(Flash::title(
                 "Couldn't save. Nothing was changed.",
             ))),
+            lang,
         )
         .await;
     }

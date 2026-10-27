@@ -23,6 +23,7 @@ use crate::AppState;
 use crate::display_time::Zone;
 use crate::dns_engine;
 use crate::dns_server::{self, DnsServer, Refusal};
+use crate::i18n::Lang;
 use crate::models::{Device, DnsBlocklist, DnsCustomDomain, DnsFilterSettings};
 use crate::security::CurrentAdmin;
 use crate::streams::ConnectionState;
@@ -132,6 +133,7 @@ fn write_failed(err: sqlx::Error) -> Response {
 #[derive(Template)]
 #[template(path = "dns_filter.html")]
 struct DnsFilterTemplate {
+    lang: Lang,
     title: String,
     blocklists: Vec<FeedRow>,
     blocked_domains: Vec<DnsCustomDomain>,
@@ -153,6 +155,7 @@ struct DnsFilterTemplate {
     /// The Each Phone group's lines ([bypass_lines], `data-bypass-phone` = the phone's id).
     bypass: Vec<(i64, String)>,
 }
+crate::i18n::words!(DnsFilterTemplate);
 
 /// The DNS Server group: the picker, the Custom Server row with its two write-only fields, and
 /// the phones' lines under it.
@@ -528,12 +531,13 @@ fn read_failed(err: sqlx::Error) -> Response {
 /// act on what isn't shown).
 pub async fn show_dns_filter(
     State(state): State<AppState>,
+    lang: Lang,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     if let Some(id) = old_device_param(&params) {
         return Redirect::to(&format!("/devices/{id}/filter")).into_response();
     }
-    render_page(&state, &params, None).await
+    render_page(&state, &params, None, lang).await
 }
 
 /// The page as stored, or (`custom`) a refused Custom Server save or pick rendered in place: 400,
@@ -543,6 +547,7 @@ async fn render_page(
     state: &AppState,
     params: &HashMap<String, String>,
     refusal: Option<CustomRefusal>,
+    lang: Lang,
 ) -> Response {
     let read = async {
         let settings = sqlx::query_as::<_, DnsFilterSettings>(
@@ -657,6 +662,7 @@ async fn render_page(
         phones,
     };
     let page = DnsFilterTemplate {
+        lang,
         title: "Web Filter".to_string(),
         blocklists,
         blocked_domains,
@@ -704,6 +710,7 @@ async fn nudge(state: &AppState, device: Option<i64>) {
 /// (`dns_server_changed`, kinds only) and nudges every phone. Back to its group (`#server`).
 pub async fn set_upstream(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -729,7 +736,7 @@ pub async fn set_upstream(
             backup_error,
             ..CustomRefusal::default()
         };
-        return render_page(&state, &HashMap::new(), Some(refusal)).await;
+        return render_page(&state, &HashMap::new(), Some(refusal), lang).await;
     }
     let result = sqlx::query(
         "UPDATE dns_filter_settings SET upstream = ?1, updated_at = datetime('now') \
@@ -783,6 +790,7 @@ async fn server_changed(state: &AppState, username: &str, detail: &str) {
 /// typed values win). Nothing typed: nothing changes. Never logs either value. Back to `#server`.
 pub async fn set_custom(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
@@ -830,7 +838,7 @@ pub async fn set_custom(
                 backup_error,
                 forget,
             };
-            return render_page(&state, &HashMap::new(), Some(refusal)).await;
+            return render_page(&state, &HashMap::new(), Some(refusal), lang).await;
         }
     };
     if typed_server.is_empty() && typed_backup.is_empty() {
@@ -1106,16 +1114,19 @@ struct LogPhone {
 #[derive(Template)]
 #[template(path = "dns_log.html")]
 struct DnsLogTemplate {
+    lang: Lang,
     title: String,
     phones: Vec<LogPhone>,
     retention_days: i64,
 }
+crate::i18n::words!(DnsLogTemplate);
 
 /// Blocked Activity (`/dns/log`): the phones, each with its log off or today's count (since local
 /// midnight in the Phone Setup zone, as the Settings row counts), linking to the log on its Web
 /// Filter page (design 31 steps 5 and 14). `?device=X` redirects there (L5). A DB error is a 500.
 pub async fn show_dns_log(
     State(state): State<AppState>,
+    lang: Lang,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     if let Some(id) = old_device_param(&params) {
@@ -1156,6 +1167,7 @@ pub async fn show_dns_log(
     };
     Html(
         DnsLogTemplate {
+            lang,
             title: "Blocked Activity".to_string(),
             phones,
             retention_days: crate::retention::DNS_LOG_RETENTION_DAYS,

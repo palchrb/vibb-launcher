@@ -1288,16 +1288,46 @@ man er inne på en device". Branch `pwa-fixes-b`.
   pages too. Desktop Safari has a real push implementation, so it says nothing about it.
 
 
-## Words: the i18n layer (design 69, 2026-10-26; the rest of the PWA in round S-i18n)
+## Words: the i18n layer (design 69, 2026-10-26; round S-i18n, design 70, `docs/design/70-pwa-i18n.md`)
 
-- `src/i18n.rs`: `Lang { En, Nb }`, an axum extractor resolved per request from `Accept-Language` (its q-values; `nb`, `nn`
-  and `no` are Norwegian, anything else English) - `admin_users` has no language of its own yet, so nothing in the schema;
-  `t(lang, key)` and `t_params(lang, key, &[("name", value)])` (`{name}` in the text) over `src/i18n/en.json` and
-  `src/i18n/nb.json`, flat objects compiled in. A key missing from both reads `?` (logged); the tests keep that from
-  happening: `i18n::tests` checks that both catalogs have every key with the same parameters, that every key the
-  templates and handlers name (`self.t("…")`, `t(lang, "…")`, `t_params(lang, "…"`, and every quoted `calendar.`/`common.`
-  key) exists, and the header's parsing.
-- A page that uses it: its template struct has `lang: Lang` and `fn t(&self, key: &str) -> &'static str`; the template
-  sets `<html lang="{{ lang.code() }}">` and says `{{ self.t("…") }}`; a handler takes `lang: Lang` as an extractor. Device ›
-  Calendar, its rule editor, the preview fragment and the summary's Calendar row are the first (`calendar.md`); the older
-  pages stay English until round S-i18n. **No new user-facing word is hardcoded** (the user, 2026-10-26).
+- `src/i18n.rs`: `Lang { En, Nb }`; `t(lang, key)`, `t_params(lang, key, &[("name", value)])` (`{name}` in the text,
+  filled in one pass: a value is never scanned again), `t_count(lang, key, n, params)` (`<key>.one` or `<key>.other`
+  by `Lang::plural_form`, `{count}` filled with `n`; zero is its own key the caller picks) and `i18n::error(lang,
+  status, key)` (a plain-text answer, e.g. the CSRF refusal `error.csrf`) over `src/i18n/en.json` and
+  `src/i18n/nb.json`, flat objects compiled in. A missing key reads as the key itself ("account.title" on the page)
+  with a `warn!` - no English fallback.
+- **The catalog's rules**: a key names the thing, not its English words (area, page, thing: `account.password.new`);
+  no markup in a value (a sentence with a link is split at the element: `….before`, `….link`, `….after`), Askama
+  escapes every `{{ }}` and no word gets `|safe`; a param is for user data (a name, a phone, a time) - a word of ours
+  is its own key, so the two catalogs can order a sentence freely; a count is a `.one`/`.other` pair, both with
+  `{count}`. `i18n::tests` checks that both catalogs have every key with the same parameters, no empty value, no `<`
+  or `>`, the plural pairs, and that every key the templates and handlers name exists (the call forms' first argument,
+  and every quoted literal shaped like a key in one of the catalog's namespaces - its keys' first segments).
+- **The language of a request** (`Lang::of_request`, the extractor), first match wins: `?lang=en|nb` - that request
+  only, never stored, any other value ignored (QA, screenshots, the sign-in page); the account's `admin_users.lang`
+  (migration 0104), read from the `CurrentAdmin` that `require_session`/`require_full_auth` put in the extensions -
+  no database read; `Accept-Language` (its q-values; `nb`, `nn`, `no` are Norwegian); English. Before a choice,
+  `require_full_auth` stores the first signed-in request's `Accept-Language` language (never `?lang=`) with one
+  `UPDATE ... WHERE id = ? AND lang IS NULL`, so today's sessions get it at their next page. One language per
+  account, not per device. `provisioning_settings.locale` (0034, `nb_NO`) is the phones' locale, not a parent's,
+  and never this fallback.
+- **The Account row**: Settings › Account › Language (`id="language"`), one select, "Norsk" and "English" each in
+  its own language (`lang` on the option), the account's stored language selected; it saves on change
+  (`static/autosave.js`, a `<noscript>` Save) to `POST /account/language` (`lang=en|nb`, else a 400 worded by
+  `i18n::error`; behind full auth and `csrf_guard`, guarded by the session's epoch like the Name), a 303 to
+  `/account#language`: the page comes back in the new language at the same place, and `settings_log` logs it as a
+  save.
+- **A page**: its template struct has `lang: Lang` and `crate::i18n::words!(TheTemplate)` (the `Words` trait:
+  `lang()`, and `t`, `tp`, `tc` as default methods), so the page and the partials it includes (`head`, `tab_bar`,
+  `bell`) say `{{ self.t("…") }}`, `{{ self.tp("…", [("name", value.as_str())]) }}` (no `&` before the array: Askama
+  references an argument) and `{{ self.tc("…", n, []) }}`; the module that first calls one imports
+  `crate::i18n::Words`. A moved page sets `<html lang="{{ lang.code() }}">` (the `<html>` tag is the page's own, before
+  `head.html`); a page still in English keeps `lang="en"` until its slice-3 PR moves its words and flips it
+  (qa-s-i18n-1-code L1), so a screen reader never reads English text with a Norwegian voice. A handler takes `lang: Lang` as an extractor and hands it to the helper that builds the page. Since
+  slice 1 every template struct has it (`/sw.js` has no words, §4: its template is the one without); Device ›
+  Calendar, its rule editor, its preview and the summary's Calendar row (`calendar.md`) and Settings › Account (with
+  its Parents group, `parents::rows`) are worded; the other pages stay English until their slice. One English sentence
+  is left on Account until slice 3a: the "Wrong codes before this sign-in" banner, which `admin_auth::login_warning`
+  builds at sign-in and the session keeps as text (3a keeps the count and addresses instead, worded by the page, with
+  the Devices list's row). **No new
+  user-facing word is hardcoded** (the user, 2026-10-26).

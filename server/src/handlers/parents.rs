@@ -22,6 +22,7 @@ use serde::Deserialize;
 use tower_sessions::Session;
 
 use crate::handlers::auth::{AccountAnswer, OtpShown, remove_field, render_account, reset_field};
+use crate::i18n::{Lang, t};
 use crate::models::AdminUser;
 use crate::parents::{Added, Removed};
 use crate::security::{self, CurrentAdmin};
@@ -38,6 +39,7 @@ pub struct NameForm {
 /// live account; logged `display_name_changed`.
 pub async fn set_name(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<NameForm>,
@@ -46,11 +48,19 @@ pub async fn set_name(
         Ok(name) => name,
         Err(why) => {
             let answer = AccountAnswer {
-                field_error: Some(("display_name".to_string(), why.to_string())),
+                field_error: Some(("display_name".to_string(), t(lang, why).to_string())),
                 name_typed: Some(form.display_name),
                 ..AccountAnswer::default()
             };
-            return render_account(&state, &session, &admin, StatusCode::BAD_REQUEST, answer).await;
+            return render_account(
+                &state,
+                &session,
+                &admin,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await;
         }
     };
     let saved = sqlx::query(
@@ -96,22 +106,26 @@ pub struct AddForm {
     current_password: String,
 }
 
-const USERNAME_RULE: &str =
-    "Use 1-32 lowercase letters, digits, '.', '_' or '-'. No one was added.";
-
-/// The refusal text for the [admin_auth::Reauth::Wrong]th password.
-fn wrong_password(left: i64, nothing: &str) -> String {
+/// The refusal text for the [admin_auth::Reauth::Wrong]th password: three sentences, the middle one `nothing`'s
+/// (`account.add.nobody`, `account.parents.nothing_changed`).
+fn wrong_password(lang: Lang, left: i64, nothing: &str) -> String {
+    let mut out = format!(
+        "{} {}",
+        t(lang, "account.parents.wrong_password"),
+        t(lang, nothing)
+    );
     if left == 1 {
-        format!("The password is wrong. {nothing} One more wrong one signs you out.")
-    } else {
-        format!("The password is wrong. {nothing}")
+        out.push(' ');
+        out.push_str(t(lang, "account.parents.one_more_wrong"));
     }
+    out
 }
 
 /// Add Parent (design 62 §4.1). The username is trimmed and lowercased, then checked; whether it
 /// is taken is said only after your password was right (no enumeration).
 pub async fn add(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(actor)): Extension<CurrentAdmin>,
     Form(form): Form<AddForm>,
@@ -130,10 +144,24 @@ pub async fn add(
         (true, Ok(name)) => name,
         (valid, name) => {
             let answer = match name {
-                Err(why) if valid => refuse("parent_name", format!("{why} No one was added.")),
-                _ => refuse("new_username", USERNAME_RULE.to_string()),
+                Err(why) if valid => refuse(
+                    "parent_name",
+                    format!("{} {}", t(lang, why), t(lang, "account.add.nobody")),
+                ),
+                _ => refuse(
+                    "new_username",
+                    t(lang, "account.add.username_rule").to_string(),
+                ),
             };
-            return render_account(&state, &session, &actor, StatusCode::BAD_REQUEST, answer).await;
+            return render_account(
+                &state,
+                &session,
+                &actor,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await;
         }
     };
 
@@ -161,8 +189,19 @@ pub async fn add(
     let otp_hash = match (reauth, changed) {
         (admin_auth::Reauth::Right, Some(hash)) => hash,
         (admin_auth::Reauth::Wrong { left }, _) => {
-            let answer = refuse("add_password", wrong_password(left, "No one was added."));
-            return render_account(&state, &session, &actor, StatusCode::BAD_REQUEST, answer).await;
+            let answer = refuse(
+                "add_password",
+                wrong_password(lang, left, "account.add.nobody"),
+            );
+            return render_account(
+                &state,
+                &session,
+                &actor,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await;
         }
         _ => return admin_auth::signed_out_response(),
     };
@@ -172,30 +211,32 @@ pub async fn add(
             .await;
     let (expires_at, refused) = match added {
         Ok(Added::Done { expires_at, .. }) => (expires_at, None),
-        Ok(Added::Taken) => (
-            String::new(),
-            Some("That username is taken. No one was added."),
-        ),
-        Ok(Added::Full) => (
-            String::new(),
-            Some("A family can have at most 8 parents. No one was added."),
-        ),
+        Ok(Added::Taken) => (String::new(), Some("account.add.taken")),
+        Ok(Added::Full) => (String::new(), Some("account.add.full")),
         Ok(Added::SignedOut) => {
             session.flush().await.ok();
             return admin_auth::signed_out_response();
         }
         Err(err) => {
             tracing::error!(%err, "couldn't add the parent");
-            return (
+            return crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't add the parent - no one was added. Check the server log.",
-            )
-                .into_response();
+                "account.add.failed",
+            );
         }
     };
     if let Some(why) = refused {
-        let answer = refuse("new_username", why.to_string());
-        return render_account(&state, &session, &actor, StatusCode::BAD_REQUEST, answer).await;
+        let answer = refuse("new_username", t(lang, why).to_string());
+        return render_account(
+            &state,
+            &session,
+            &actor,
+            StatusCode::BAD_REQUEST,
+            answer,
+            lang,
+        )
+        .await;
     }
     let name = display.clone().unwrap_or_else(|| username.clone());
     security::record_security_event(
@@ -208,7 +249,7 @@ pub async fn add(
     .await;
     let shown = otp_shown(
         &state,
-        "One-time password",
+        "account.otp.first",
         name,
         username,
         &otp,
@@ -219,7 +260,7 @@ pub async fn add(
         otp: Some(shown),
         ..AccountAnswer::default()
     };
-    render_account(&state, &session, &actor, StatusCode::OK, answer).await
+    render_account(&state, &session, &actor, StatusCode::OK, answer, lang).await
 }
 
 /// A one-time password as the answer shows it: in blocks of 4, with its end.
@@ -266,6 +307,7 @@ pub struct ResetForm {
 /// push subscription of theirs. The answer shows the one-time password once, as Add's.
 pub async fn reset(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(actor)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
@@ -304,11 +346,19 @@ pub async fn reset(
             let answer = AccountAnswer {
                 field_error: Some((
                     reset_field(id),
-                    wrong_password(left, "Nothing was changed."),
+                    wrong_password(lang, left, "account.parents.nothing_changed"),
                 )),
                 ..AccountAnswer::default()
             };
-            return render_account(&state, &session, &actor, StatusCode::BAD_REQUEST, answer).await;
+            return render_account(
+                &state,
+                &session,
+                &actor,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await;
         }
         _ => return admin_auth::signed_out_response(),
     };
@@ -330,16 +380,16 @@ pub async fn reset(
             .await;
             state.spotify.forget_pending(&username);
             let title = if was_ready {
-                "New one-time password"
+                "account.otp.new"
             } else {
-                "One-time password"
+                "account.otp.first"
             };
             let shown = otp_shown(&state, title, name, username, &otp, &expires_at).await;
             let answer = AccountAnswer {
                 otp: Some(shown),
                 ..AccountAnswer::default()
             };
-            render_account(&state, &session, &actor, StatusCode::OK, answer).await
+            render_account(&state, &session, &actor, StatusCode::OK, answer, lang).await
         }
         Ok(crate::parents::Reset::Gone) => {
             crate::settings_log::refused(Redirect::to("/account?parents=gone#parents"))
@@ -348,11 +398,19 @@ pub async fn reset(
             let answer = AccountAnswer {
                 flash: Some(crate::handlers::settings::Flash::refused(
                     "parents",
-                    "Your own account: change your password or reset your two-factor login above.",
+                    t(lang, "account.parents.reset_yourself"),
                 )),
                 ..AccountAnswer::default()
             };
-            render_account(&state, &session, &actor, StatusCode::BAD_REQUEST, answer).await
+            render_account(
+                &state,
+                &session,
+                &actor,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await
         }
         Ok(crate::parents::Reset::SignedOut) => {
             session.flush().await.ok();
@@ -360,11 +418,11 @@ pub async fn reset(
         }
         Err(err) => {
             tracing::error!(%err, "couldn't reset the parent");
-            (
+            crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't reset the parent - nothing was changed. Check the server log.",
+                "account.parents.reset_failed",
             )
-                .into_response()
         }
     }
 }
@@ -380,6 +438,7 @@ pub struct RemoveForm {
 /// password; their Spotify login in progress is dropped too. Removing yourself signs you out.
 pub async fn remove(
     State(state): State<AppState>,
+    lang: Lang,
     session: Session,
     Extension(CurrentAdmin(actor)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
@@ -409,8 +468,20 @@ pub async fn remove(
             let admin_auth::Reauth::Wrong { left } = reauth else {
                 return admin_auth::signed_out_response();
             };
-            let answer = refuse(wrong_password(left, "Nothing was changed."));
-            return render_account(&state, &session, &actor, StatusCode::BAD_REQUEST, answer).await;
+            let answer = refuse(wrong_password(
+                lang,
+                left,
+                "account.parents.nothing_changed",
+            ));
+            return render_account(
+                &state,
+                &session,
+                &actor,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await;
         }
     }
     match crate::parents::remove_parent(&state.db, &actor, id).await {
@@ -437,16 +508,24 @@ pub async fn remove(
             // Only reachable for yourself (a waiting target never counts, and the actor is ready):
             // said in the group, since your own row has no form.
             let why = if id == actor.id {
-                "You are the only parent who can sign in - add another parent first.".to_string()
+                t(lang, "account.parents.last_you").to_string()
             } else {
                 let name = target.as_ref().map_or(target_username, AdminUser::name);
-                format!("{name} is the only parent who can sign in - add another parent first.")
+                crate::i18n::t_params(lang, "account.parents.last_other", &[("name", name)])
             };
             let answer = AccountAnswer {
                 flash: Some(crate::handlers::settings::Flash::refused("parents", why)),
                 ..AccountAnswer::default()
             };
-            render_account(&state, &session, &actor, StatusCode::BAD_REQUEST, answer).await
+            render_account(
+                &state,
+                &session,
+                &actor,
+                StatusCode::BAD_REQUEST,
+                answer,
+                lang,
+            )
+            .await
         }
         Ok(Removed::SignedOut) => {
             session.flush().await.ok();
@@ -454,11 +533,11 @@ pub async fn remove(
         }
         Err(err) => {
             tracing::error!(%err, "couldn't remove the parent");
-            (
+            crate::i18n::error(
+                lang,
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Couldn't remove the parent - nothing was changed. Check the server log.",
+                "account.parents.remove_failed",
             )
-                .into_response()
         }
     }
 }

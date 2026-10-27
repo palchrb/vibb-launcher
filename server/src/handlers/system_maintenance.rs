@@ -26,6 +26,7 @@ use std::time::Duration;
 use crate::AppState;
 use crate::handlers::settings::Flash;
 use crate::handlers::updates;
+use crate::i18n::Lang;
 use crate::security::{self, CurrentAdmin};
 
 /// In `AppState::data_dir`.
@@ -228,34 +229,54 @@ pub(crate) async fn gather(data: &std::path::Path) -> OsUpdateData {
 
 pub async fn trigger_os_check(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let done = updates::Done::OsCheck;
-    updates::request_action(&state, &admin, "os_check", "os_check_triggered", done).await
+    updates::request_action(&state, &admin, "os_check", "os_check_triggered", done, lang).await
 }
 
 pub async fn trigger_os_upgrade(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let done = updates::Done::OsUpgrade;
-    updates::request_action(&state, &admin, "os_upgrade", "os_upgrade_triggered", done).await
+    updates::request_action(
+        &state,
+        &admin,
+        "os_upgrade",
+        "os_upgrade_triggered",
+        done,
+        lang,
+    )
+    .await
 }
 
 pub async fn trigger_tailscale_update(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let (action, event) = ("tailscale_update", "tailscale_update_triggered");
-    updates::request_action(&state, &admin, action, event, updates::Done::Tailscale).await
+    updates::request_action(
+        &state,
+        &admin,
+        action,
+        event,
+        updates::Done::Tailscale,
+        lang,
+    )
+    .await
 }
 
 pub async fn trigger_reboot(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let done = updates::Done::Reboot;
-    updates::request_action(&state, &admin, "reboot", "reboot_triggered", done).await
+    updates::request_action(&state, &admin, "reboot", "reboot_triggered", done, lang).await
 }
 
 #[derive(Deserialize)]
@@ -275,13 +296,14 @@ const VALID_FREQUENCIES: [&str; 3] = ["daily", "weekly", "monthly"];
 /// writes nothing (400, the reason in the group).
 pub async fn save_schedule(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<ScheduleForm>,
 ) -> Response {
     let refuse = |why: &str| Flash::refused("os-schedule", why);
     if !VALID_FREQUENCIES.contains(&form.frequency.as_str()) {
         let flash = refuse("Unknown frequency - nothing was saved.");
-        let page = updates::render_page(&state, Some(flash)).await;
+        let page = updates::render_page(&state, Some(flash), lang).await;
         return (http::StatusCode::BAD_REQUEST, page).into_response();
     }
     let day_of_week: i32 = form.day_of_week.trim().parse().unwrap_or(0).clamp(0, 6);
@@ -293,7 +315,7 @@ pub async fn save_schedule(
         form.check_time.trim().to_string()
     } else {
         let flash = refuse("The time must look like 03:00 - nothing was saved.");
-        let page = updates::render_page(&state, Some(flash)).await;
+        let page = updates::render_page(&state, Some(flash), lang).await;
         return (http::StatusCode::BAD_REQUEST, page).into_response();
     };
 
@@ -314,7 +336,8 @@ pub async fn save_schedule(
     .await
     .is_err()
     {
-        let page = updates::render_page(&state, Some(refuse("Couldn't save the schedule."))).await;
+        let page =
+            updates::render_page(&state, Some(refuse("Couldn't save the schedule.")), lang).await;
         return (http::StatusCode::INTERNAL_SERVER_ERROR, page).into_response();
     }
     security::record_security_event(

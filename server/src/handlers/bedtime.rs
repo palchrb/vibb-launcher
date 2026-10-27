@@ -30,6 +30,7 @@ use crate::handlers::schedules::{
     nudge, parse_exempt_apps_form, read_failed, render, reported_apps, server_error,
     time_input_to_minutes, window_text,
 };
+use crate::i18n::Lang;
 use crate::security::CurrentAdmin;
 use crate::time_rules::{self, BEDTIME_NAME, DayWindow, LAST_MINUTE, NOON, Nights, TimeRuleRow};
 
@@ -124,6 +125,7 @@ fn nights_inputs(nights: &[Option<DayWindow>; 2]) -> Vec<NightsInput> {
 #[derive(Template)]
 #[template(path = "device_bedtime.html")]
 struct BedtimeTemplate {
+    lang: Lang,
     title: String,
     device_id: i64,
     device_name: String,
@@ -137,6 +139,7 @@ struct BedtimeTemplate {
     /// The stored bedtime doesn't read: what shows empty and is saved as shown.
     corrupt: Option<String>,
 }
+crate::i18n::words!(BedtimeTemplate);
 
 /// A validated bedtime form.
 #[derive(Debug, PartialEq, Eq)]
@@ -248,6 +251,7 @@ fn unreadable_parts(row: &TimeRuleRow) -> Option<String> {
 /// GET `/devices/{id}/bedtime`: the page, with the stored bedtime or a new one's defaults.
 pub async fn show_bedtime(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -279,6 +283,7 @@ pub async fn show_bedtime(
     };
     render(
         BedtimeTemplate {
+            lang,
             title: "Bedtime".to_string(),
             device_id: id,
             device_name,
@@ -299,6 +304,7 @@ async fn refuse(
     device_name: String,
     fields: &[(String, String)],
     error: BedtimeError,
+    lang: Lang,
 ) -> Response {
     let (stored, available) = match stored_and_apps(state, id).await {
         Ok(found) => found,
@@ -337,6 +343,7 @@ async fn refuse(
     };
     render(
         BedtimeTemplate {
+            lang,
             title: "Bedtime".to_string(),
             device_id: id,
             device_name,
@@ -353,6 +360,7 @@ async fn refuse(
 /// POST `/devices/{id}/bedtime`: add or save (one upsert), then the page's form.
 pub async fn save_bedtime(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Path(id): Path<i64>,
     body: Bytes,
@@ -364,7 +372,7 @@ pub async fn save_bedtime(
     };
     let input = match parse_bedtime_form(&fields) {
         Ok(input) => input,
-        Err(error) => return refuse(&state, id, device_name, &fields, error).await,
+        Err(error) => return refuse(&state, id, device_name, &fields, error, lang).await,
     };
     // The partial unique index is the conflict target: a save of a new bedtime racing another
     // one updates the row the other made, never a second row or a 500.

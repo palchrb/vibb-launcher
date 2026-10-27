@@ -27,6 +27,7 @@ use sqlx::Row as _;
 
 use crate::AppState;
 use crate::display_time::Zone;
+use crate::i18n::Lang;
 use crate::parent_events::{self, Kind};
 use crate::push::{self, Health};
 use crate::security::CurrentAdmin;
@@ -104,6 +105,7 @@ pub struct Switch {
 #[derive(Template)]
 #[template(path = "notifications.html")]
 struct InboxTemplate {
+    lang: Lang,
     title: String,
     /// `from`, the back link's path and words.
     back: (&'static str, &'static str, &'static str),
@@ -129,11 +131,13 @@ struct InboxTemplate {
     /// A push refused the server's signature in the last day: one row to the settings page.
     clock_warning: bool,
 }
+crate::i18n::words!(InboxTemplate);
 
 /// Notification Settings (design 45 §1.2).
 #[derive(Template)]
 #[template(path = "notifications_settings.html")]
 struct SettingsTemplate {
+    lang: Lang,
     title: String,
     /// `from`, kept for the inbox's back link.
     back: (&'static str, &'static str, &'static str),
@@ -152,6 +156,7 @@ struct SettingsTemplate {
     /// A flash in This Device or in Getting Notifications: `(text, error)`.
     this_notice: Option<(&'static str, bool)>,
 }
+crate::i18n::words!(SettingsTemplate);
 
 /// A notice code's words and group (`#this-device` = true, `#devices` = false).
 fn notice_of(code: Option<&str>) -> Option<(bool, &'static str, bool)> {
@@ -276,6 +281,7 @@ pub(crate) fn inbox_row(
 /// counts what is left; the rows keep the unread state they had, for their dot.
 pub async fn page(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -325,6 +331,7 @@ pub async fn page(
         .collect();
     Html(
         InboxTemplate {
+            lang,
             title: "Notifications".to_string(),
             back,
             phones: phones
@@ -350,6 +357,7 @@ pub async fn page(
 /// Notification Settings (design 45 §1.2): This Device, Getting Notifications, Notify Me About.
 pub async fn settings_page(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
@@ -388,6 +396,7 @@ pub async fn settings_page(
         .collect();
     Html(
         SettingsTemplate {
+            lang,
             title: "Notification Settings".to_string(),
             back,
             device,
