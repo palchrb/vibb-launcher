@@ -69,7 +69,12 @@ class EventEditActivity : UIObjectActivity() {
     override fun onResume() {
         super.onResume()
         // QA L3: Dagen turned off (or the policy unusable) while the form was open - it closes, nothing saved.
-        if (!CalendarStore.dagenOn()) finish()
+        if (!CalendarStore.dagenOn()) {
+            finish()
+            return
+        }
+        // Dagen's own task can come back from Recents under a time rule: the time-rule screen first (2026-10-27).
+        DayActivity.redirectIfLocked(this)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

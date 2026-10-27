@@ -57,6 +57,8 @@ class EventActivity : UIObjectActivity() {
             finish()
             return
         }
+        // Dagen's own task can come back from Recents under a time rule: the time-rule screen first (2026-10-27).
+        if (DayActivity.redirectIfLocked(this)) return
         load()
     }
 
