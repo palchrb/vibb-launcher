@@ -141,6 +141,8 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         com.kidslauncher.mdm.badges.GlanceStore.refreshPolicy(freshPolicy.lockGlance, fresh = true)
         // Dagen (design 69): the rules and the calendars' settings apply to the shown day at once.
         com.kidslauncher.mdm.calendar.CalendarStore.policyChanged()
+        // Design 72: the calendar links whose set moved, written into their own local calendars (never throws).
+        com.kidslauncher.mdm.calendar.CalendarFeeds.refreshIfNeeded(context, api, freshPolicy.calendar)
         // Round 7 §3: the parent's "Wake the screen for a notification" (memory, read by the lock).
         com.kidslauncher.mdm.lock.PinLockRuntime.noticeWakeSwitch(freshPolicy.launcherUi)
         // Real server contact just succeeded - the offline override's whole job (bridging the gap

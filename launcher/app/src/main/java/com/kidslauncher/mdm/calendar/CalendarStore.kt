@@ -4,12 +4,15 @@ import android.Manifest
 import android.accounts.Account
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
+import android.content.ContentProviderOperation
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.content.OperationApplicationException
 import android.content.pm.PackageManager
 import android.database.ContentObserver
+import android.database.sqlite.SQLiteException
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -24,6 +27,16 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.R
+import com.kidslauncher.mdm.day.BatchResult
+import com.kidslauncher.mdm.day.FEED_ACCESS_LEVEL
+import com.kidslauncher.mdm.day.FEED_ACCOUNT
+import com.kidslauncher.mdm.day.FEED_MAPPING
+import com.kidslauncher.mdm.day.FeedRef
+import com.kidslauncher.mdm.day.SeriesRows
+import com.kidslauncher.mdm.day.StoredRow
+import com.kidslauncher.mdm.day.feedCalendarName
+import com.kidslauncher.mdm.day.feedColour
+import com.kidslauncher.mdm.day.feedUidOf
 import com.kidslauncher.mdm.day.CalendarInfo
 import com.kidslauncher.mdm.day.CalendarPolicy
 import com.kidslauncher.mdm.day.DayView
@@ -395,7 +408,8 @@ object CalendarStore {
             // Cleaned by code points, so a cut never splits a surrogate pair (QA nit 3).
             CalendarReportRow(it.key, it.accountType, TitleRules.clean(it.displayName, 100), calendarSource(it.name), it.accessLevel)
         }
-        return CalendarReport(true, rows, policy.rulesSkipped)
+        // Design 72: the calendar links as applied (their calendars are rows above like any other).
+        return CalendarReport(true, rows, policy.rulesSkipped, CalendarFeeds.report(context))
     }
 
     /** Dagen is there for the kid: a usable policy with Dagen on Home. An open Dagen or event page closes without it
@@ -583,4 +597,194 @@ object CalendarStore {
     }
 
     internal fun executeOnWorker(work: Runnable) = worker.execute(work)
+
+    // ---- calendar links (design 72 §4, [CalendarFeeds]; on the worker) ---------------------------------------------
+    // Every Calendars, Events and Reminders insert, update and delete of a link's calendar goes through the sync-adapter
+    // URI with the account parameters (QA L10): a plain delete only marks DELETED, and CAL_SYNC*, _SYNC_ID and
+    // SYNC_DATA* are sync columns. A plain app may be the sync adapter of its own LOCAL account.
+
+    /** One link's calendar as the provider holds it. */
+    internal data class FeedCalendar(
+        val id: Long,
+        val uid: String,
+        val displayName: String?,
+        val appliedRev: String?,
+        val mapping: String?,
+        val refused: Int,
+        val unknownZone: Int,
+        val floatingZone: String?,
+    ) {
+        override fun toString() = "FeedCalendar($id)"
+    }
+
+    private fun asFeedAdapter(uri: Uri): Uri = uri.buildUpon()
+        .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+        .appendQueryParameter(Calendars.ACCOUNT_NAME, FEED_ACCOUNT)
+        .appendQueryParameter(Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
+        .build()
+
+    /** The link calendars under "Vibb One"; `null` when the provider can't be read. */
+    internal fun feedCalendarsBlocking(context: Context): List<FeedCalendar>? {
+        if (!canRead(context)) return null
+        return try {
+            val out = ArrayList<FeedCalendar>()
+            context.contentResolver.query(
+                Calendars.CONTENT_URI,
+                arrayOf(
+                    Calendars._ID, Calendars.NAME, Calendars.CALENDAR_DISPLAY_NAME, Calendars.CAL_SYNC1,
+                    Calendars.CAL_SYNC2, Calendars.CAL_SYNC3, Calendars.CAL_SYNC4, Calendars.CAL_SYNC5,
+                ),
+                "${Calendars.ACCOUNT_TYPE} = ? AND ${Calendars.ACCOUNT_NAME} = ?",
+                arrayOf(CalendarContract.ACCOUNT_TYPE_LOCAL, FEED_ACCOUNT),
+                null,
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val uid = feedUidOf(c.getString(1)) ?: continue
+                    out += FeedCalendar(
+                        id = c.getLong(0),
+                        uid = uid,
+                        displayName = c.getString(2),
+                        appliedRev = c.getString(3),
+                        mapping = c.getString(4),
+                        refused = c.getString(5)?.toIntOrNull() ?: 0,
+                        unknownZone = c.getString(6)?.toIntOrNull() ?: 0,
+                        floatingZone = c.getString(7),
+                    )
+                }
+            }
+            out
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't read the calendar links' calendars: ${e.javaClass.simpleName}")
+            null
+        }
+    }
+
+    /** A link gone from the policy: its calendar deleted, its events with it. */
+    internal fun deleteFeedCalendarBlocking(context: Context, id: Long) {
+        try {
+            context.contentResolver.delete(ContentUris.withAppendedId(asFeedAdapter(Calendars.CONTENT_URI), id), null, null)
+            Log.i(LOG_TAG, "Deleted a calendar link's calendar")
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't delete a calendar link's calendar: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun updateFeedCalendar(context: Context, id: Long, values: ContentValues) {
+        try {
+            context.contentResolver.update(ContentUris.withAppendedId(asFeedAdapter(Calendars.CONTENT_URI), id), values, null, null)
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't update a calendar link's calendar: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** The link's calendar id: made when missing (LOCAL, read-only, shown, synced, a calm colour by its key), renamed
+     * from the policy alone; `null` when the provider refuses. */
+    internal fun ensureFeedCalendarBlocking(context: Context, feed: FeedRef, existing: FeedCalendar?): Long? {
+        if (existing != null) {
+            if (existing.displayName != feed.name) {
+                updateFeedCalendar(context, existing.id, ContentValues().apply { put(Calendars.CALENDAR_DISPLAY_NAME, feed.name) })
+            }
+            return existing.id
+        }
+        val name = feedCalendarName(feed.id)
+        val values = ContentValues().apply {
+            put(Calendars.ACCOUNT_NAME, FEED_ACCOUNT)
+            put(Calendars.ACCOUNT_TYPE, CalendarContract.ACCOUNT_TYPE_LOCAL)
+            put(Calendars.NAME, name)
+            put(Calendars.CALENDAR_DISPLAY_NAME, feed.name)
+            put(Calendars.CALENDAR_COLOR, feedColour(calendarKey(CalendarContract.ACCOUNT_TYPE_LOCAL, FEED_ACCOUNT, name)))
+            put(Calendars.CALENDAR_ACCESS_LEVEL, FEED_ACCESS_LEVEL)
+            put(Calendars.OWNER_ACCOUNT, FEED_ACCOUNT)
+            put(Calendars.SYNC_EVENTS, 1)
+            put(Calendars.VISIBLE, 1)
+            put(Calendars.CALENDAR_TIME_ZONE, ZoneId.systemDefault().id)
+        }
+        return try {
+            context.contentResolver.insert(asFeedAdapter(Calendars.CONTENT_URI), values)?.let { ContentUris.parseId(it) }
+                .also { Log.i(LOG_TAG, if (it != null) "Made a calendar link's calendar" else "The provider refused a calendar link's calendar") }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Couldn't make a calendar link's calendar: ${e.javaClass.simpleName}")
+            null
+        }
+    }
+
+    /** A pass that ended with the provider there: the set's rev, the mapping, the counts, the floating zone. */
+    internal fun markFeedAppliedBlocking(context: Context, id: Long, rev: String, refused: Int, unknownZone: Int, floatingZone: String) =
+        updateFeedCalendar(context, id, ContentValues().apply {
+            put(Calendars.CAL_SYNC1, rev)
+            put(Calendars.CAL_SYNC2, FEED_MAPPING)
+            put(Calendars.CAL_SYNC3, refused.toString())
+            put(Calendars.CAL_SYNC4, unknownZone.toString())
+            put(Calendars.CAL_SYNC5, floatingZone)
+        })
+
+    /** A link calendar's rows; `null` when the provider can't be read. */
+    internal fun feedRowsBlocking(context: Context, calendarId: Long): List<StoredRow>? = try {
+        val out = ArrayList<StoredRow>()
+        context.contentResolver.query(
+            asFeedAdapter(Events.CONTENT_URI),
+            arrayOf(Events._ID, Events._SYNC_ID, Events.ORIGINAL_SYNC_ID, Events.SYNC_DATA1, Events.SYNC_DATA2),
+            "${Events.CALENDAR_ID} = ?",
+            arrayOf(calendarId.toString()),
+            null,
+        )?.use { c ->
+            while (c.moveToNext()) out += StoredRow(c.getLong(0), c.getString(1), c.getString(2), c.getString(3), c.getString(4))
+        }
+        out
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "Couldn't read a calendar link's events: ${e.javaClass.simpleName}")
+        null
+    }
+
+    internal fun deleteFeedRowsBlocking(context: Context, ids: List<Long>): BatchResult =
+        applyFeedBatch(context, ids.mapTo(ArrayList()) { ContentProviderOperation.newDelete(ContentUris.withAppendedId(asFeedAdapter(Events.CONTENT_URI), it)).build() })
+
+    /** Each series' master, its overrides (ORIGINAL_ID by a back reference to the master) and the Reminders rows, as
+     * one batch. */
+    internal fun insertFeedSeriesBlocking(context: Context, calendarId: Long, batch: List<SeriesRows>): BatchResult {
+        val ops = ArrayList<ContentProviderOperation>()
+        for (s in batch) {
+            val master = ops.size
+            for (row in s.rows) {
+                val at = ops.size
+                val b = ContentProviderOperation.newInsert(asFeedAdapter(Events.CONTENT_URI)).withValue(Events.CALENDAR_ID, calendarId)
+                for ((key, value) in row.values) b.withValue(key, value)
+                if (row.isOverride) b.withValueBackReference(Events.ORIGINAL_ID, master)
+                ops += b.build()
+                for (minutes in row.reminders) {
+                    ops += ContentProviderOperation.newInsert(asFeedAdapter(Reminders.CONTENT_URI))
+                        .withValueBackReference(Reminders.EVENT_ID, at)
+                        .withValue(Reminders.MINUTES, minutes)
+                        .withValue(Reminders.METHOD, Reminders.METHOD_ALERT)
+                        .build()
+                }
+            }
+        }
+        return applyFeedBatch(context, ops)
+    }
+
+    /** One `applyBatch` (one transaction in the provider): rows refused vs. the provider gone (QA M2). */
+    private fun applyFeedBatch(context: Context, ops: ArrayList<ContentProviderOperation>): BatchResult {
+        if (ops.isEmpty()) return BatchResult.OK
+        val client = try {
+            context.contentResolver.acquireContentProviderClient(CalendarContract.AUTHORITY)
+        } catch (e: Exception) {
+            null
+        } ?: return BatchResult.GONE
+        return try {
+            client.applyBatch(ops)
+            BatchResult.OK
+        } catch (e: IllegalArgumentException) {
+            BatchResult.REFUSED
+        } catch (e: SQLiteException) {
+            BatchResult.REFUSED
+        } catch (e: OperationApplicationException) {
+            BatchResult.REFUSED
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "A calendar link's batch found no provider: ${e.javaClass.simpleName}")
+            BatchResult.GONE
+        } finally {
+            client.close()
+        }
+    }
 }

@@ -116,6 +116,11 @@ interface MdmApi {
      * `timeRequestAnswer` (an old server's 404 included) - see `timerules/TimeRequests`. */
     @POST("api/devices/time-request")
     suspend fun sendTimeRequest(@Body request: TimeRequestBody): Response<ResponseBody>
+
+    /** A calendar link's set (design 72 §3): `ETag` = its rev, 304 for [ifNoneMatch], 404 unless this phone has the
+     * link - see `calendar/CalendarFeeds`. */
+    @GET("api/devices/calendar/feeds/{id}")
+    suspend fun calendarFeed(@Path("id") id: String, @Header("If-None-Match") ifNoneMatch: String?): Response<ResponseBody>
 }
 
 /** [callTimeoutMs] bounds a whole call (design 38's prepared shutdown client); `null` = none.
