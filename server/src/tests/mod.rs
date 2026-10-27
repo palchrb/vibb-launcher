@@ -10,6 +10,7 @@ mod attention;
 mod avatars;
 mod backup_secrets;
 mod calendar;
+mod calendar_feeds;
 mod calls;
 mod catalog_pins;
 mod cleanup;

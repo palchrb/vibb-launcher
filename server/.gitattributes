@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# Calendar feed fixtures keep their CRLF line ends and fold bytes as real feeds send them (design 72).
+testdata/calendar_feeds/*.ics -text

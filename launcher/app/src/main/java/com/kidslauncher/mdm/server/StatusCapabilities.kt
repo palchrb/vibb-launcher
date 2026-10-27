@@ -36,6 +36,8 @@ val STATUS_CAPABILITIES: List<String> = listOf(
     com.kidslauncher.mdm.lock.ANDROID_KEYGUARD_CAPABILITY,
     // Design 69: Dagen - the policy's `calendar`, `calendar` in every report.
     com.kidslauncher.mdm.day.CALENDAR_CAPABILITY,
+    // Design 72: the policy's `calendar.feeds` written into local calendars, `calendar.feeds` in every report.
+    com.kidslauncher.mdm.day.CALENDAR_FEEDS_CAPABILITY,
     // Design 68: the policy's `app_permissions` (camera off per app) and `installed_apps[].access` in every report.
     APP_PERMISSIONS_CAPABILITY,
 )

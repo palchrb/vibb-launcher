@@ -130,7 +130,22 @@ data class CalendarReport(
     val readable: Boolean,
     val calendars: List<CalendarReportRow>,
     val rulesSkipped: List<Long>,
+    /** Design 72 §4: each calendar link as this phone applied it; empty (left out) without one. Pinned by
+     * `calendar_feeds.json`'s `report` (`CalendarFeedsTest`). */
+    val feeds: List<CalendarFeedReportRow> = emptyList(),
 )
+
+/** One calendar link: its uid, the set's rev written last (`null` before the first), the series the provider
+ * refused at the last pass, the series whose zone this phone's tz database doesn't know. */
+@Serializable
+data class CalendarFeedReportRow(
+    val id: String,
+    val appliedRev: String?,
+    val refused: Int,
+    val unknownZone: Int,
+) {
+    override fun toString() = "CalendarFeedReportRow(refused=$refused)"
+}
 
 /** One calendar: its key (16 hex, `day/CalendarKey.kt`), the sync app's account type, the display name (a label
  * only), the feed's host ([source], never its path, query, user or port; `null` = none - left out) and

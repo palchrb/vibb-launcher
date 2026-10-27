@@ -44,6 +44,8 @@ const NOT_SAVES: &[&str] = &[
     "/apps/tracked/{id}/install-now/{device_id}",
     "/apps/tracked/{id}/install-now/{device_id}/cancel/{command_id}",
     "/music/entries/{id}/check",
+    // A calendar link's "Fetch now" (design 72 §5): a check, not a setting.
+    "/devices/{id}/calendar/links/{uid}/fetch",
     "/notifications/{id}/open",
     "/notifications/read-all",
     // Hides a session banner, like a read mark (code QA L1).

@@ -111,6 +111,10 @@ class KidEventTest {
             val body = store.substringAfter("fun $fn(").substringBefore("\n    }\n")
             assertTrue(fn, body.contains("kidMayEditBlocking(context, eventId)"))
         }
-        assertEquals(4, Regex("""contentResolver\.(insert|update|delete)\(""").findAll(store).count())
+        // The kid's own: the local calendar and the three guarded writes; design 72's link calendars below their own
+        // marker (`FeedEventsTest` checks those go through the sync-adapter URI).
+        val kid = store.substringBefore("// ---- calendar links (design 72")
+        assertTrue(kid.length < store.length)
+        assertEquals(4, Regex("""contentResolver\.(insert|update|delete)\(""").findAll(kid).count())
     }
 }

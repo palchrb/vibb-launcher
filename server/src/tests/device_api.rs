@@ -479,7 +479,8 @@ async fn policy_json_keys_snapshot() {
     // Dagen (design 69 §4.1): always an object, a fresh phone's defaults - on Home, the kid may add events (to the
     // phone's own calendar), nothing on the lock, no calendars saved, no rules. The launcher's `calendarPolicy`
     // reads exactly this shape (`PolicyResponseCompatTest`); a rule's and a calendar's keys in
-    // `calendar::the_policy_carries_the_rules_and_the_calendars`.
+    // `calendar::the_policy_carries_the_rules_and_the_calendars`. Design 72: `feeds`, the phone's calendar links
+    // (`[]` without one; a link's keys in `calendar::a_link_reaches_the_policy_and_the_phone`, `calendar_feeds.json`).
     assert_eq!(
         object["calendar"],
         serde_json::json!({
@@ -488,7 +489,8 @@ async fn policy_json_keys_snapshot() {
             "glance_next": false,
             "lock_reminders": "off",
             "calendars": [],
-            "rules": []
+            "rules": [],
+            "feeds": []
         })
     );
 

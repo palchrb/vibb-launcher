@@ -1,0 +1,27 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//itslearning//Calendar//NO
+X-WR-CALNAME:itslearning - 5B
+BEGIN:VEVENT
+UID:itsl-1001@itslearning.com
+DTSTAMP:20261001T120000Z
+DTSTART:20261015T084500Z
+DTEND:20261015T093000Z
+SUMMARY:Gruppe 2- skole�
+ �ret 2026/2027: Litteraturhuset - Det kuleste fra R
+  omerriket
+DESCRIPTION:Vi deler gruppa i to og tar buss 08.56 og 09.11. Viktig at man 
+ er klar på skolen 08.30. Husk matpakke\, drikke og varme klær\; vi er ut
+ e hele dagen.\n\nGjelder 5. trinn og 6. trinn. Foreldre som kan være med 
+ som ekstra voksne\, gi beskjed til kontaktlærer innen fredag.
+LOCATION:Litteraturhuset
+END:VEVENT
+BEGIN:VEVENT
+UID:itsl-2002@itslearning.com
+DTSTART:20261019T070000Z
+DTEND:20261019T073000Z
+RRULE:FREQ=WEEKLY;BYDAY=MO;UNTIL=20270615T220000Z
+SUMMARY:Gym - 5B
+DESCRIPTION:Ta med gymtøy.
+END:VEVENT
+END:VCALENDAR

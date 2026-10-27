@@ -959,6 +959,7 @@ async fn unchanged_feeds_cost_one_request_and_nothing_else() {
             etag: Some("\"v1\"".into()),
             last_modified: None,
             location: None,
+            content_type: None,
         },
     );
     check(&app, id, t0()).await;
@@ -1622,6 +1623,7 @@ pub(super) async fn day_library(setting: i64) -> (TestApp, i64) {
                 etag: Some(format!("\"{n}\"")),
                 last_modified: None,
                 location: None,
+                content_type: None,
             },
         );
         tick_on(&app, phone, id).await;
@@ -3288,6 +3290,7 @@ async fn a_routine_nrk_check_starts_with_five_episodes() {
             etag: Some("\"p1\"".to_string()),
             last_modified: None,
             location: None,
+            content_type: None,
         },
     );
     check(&app, id, t0() + TimeDelta::hours(25)).await;

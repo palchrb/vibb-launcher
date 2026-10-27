@@ -132,6 +132,14 @@ The launcher's built-in secure-DNS hosts `launcher/app/src/main/assets/dns/doh_h
 byte-identical in `server/testdata/doh_hosts.txt`, which the server compiles in for the Allowed Domains notice
 (`dns_server::is_builtin_doh_host`): the server's `dns_server::tests::doh_hosts_match_the_launchers_asset` and the
 launcher's `DnsFilterEngineTest` compare the copies; a change goes into both in one commit.
+The calendar links' contract (design 72 §3) is `server/testdata/calendar_feeds.json`, byte-identical in
+`launcher/app/src/test/resources/`: `feed` (the document `GET /api/devices/calendar/feeds/{uid}` serves for
+`server/testdata/calendar_feeds/contract.ics`), `keys` (a link's calendar key), `policy` (a `calendar.feeds` row),
+`report` (a status report's `calendar.feeds` row), `zone` and `provider` (the Events rows the phone writes in that
+zone). The server's `calendar_feeds::tests::the_contract` produces `feed` and `keys` (`CALENDAR_FEEDS_CONTRACT_WRITE=1`
+rewrites them), `intake_limits` keeps `report`'s keys; the launcher's `CalendarFeedsTest` maps `feed` to exactly
+`provider`, checks the key and decodes and encodes the rows; both compare the copies. The policy's `calendar.feeds` is
+pinned by `policy_json_keys_snapshot` and the launcher's `PolicyResponseCompatTest`.
 
 ## CI and releases
 
@@ -140,7 +148,7 @@ launcher's `DnsFilterEngineTest` compare the copies; a change goes into both in 
   (`launcher.yml` also on `.github/actions/build-tsnet/` and the music files its tests read: the bridge, the
   shared snapshots, the three `spotify_hosts.json`, `server/testdata/time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json` and the two `calendar_*.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`; `music.yml` also on the shared
+  `time_request.json`, `installed_apps_report.json` and the three `calendar_*.json`, `music/gradle/` and `music.yml`, and the server's and music's `storytel_token_answers.json`, and `server/testdata/doh_hosts.txt`; `music.yml` also on the shared
   `server/testdata/music_*.json` and `spotify_hosts.json`, the launcher's copy of the bridge AIDL,
   `bridge_contract.json` and `spotify_hosts.json`, `server/testdata/spotify/`, `scripts/fake-sonos.py`,
   `scripts/fake-storytel.py`, `scripts/fake-spotify.py`, `scripts/fake-audio.py` and `scripts/music-splash.py`
@@ -148,7 +156,7 @@ launcher's `DnsFilterEngineTest` compare the copies; a change goes into both in 
   `server-ci.yml`'s build job also on the apps' `spotify_hosts.json` and `storytel_token_answers.json` copies and
   the launcher's `time_status_report.json`,
   `dns_upstream_status.json`, `power_report.json`, `zone_status_report.json`, `launcher_tag_codes.json`,
-  `time_request.json`, `installed_apps_report.json` and the two `calendar_*.json`, and the launcher's `assets/dns/doh_hosts.txt`;
+  `time_request.json`, `installed_apps_report.json` and the three `calendar_*.json`, and the launcher's `assets/dns/doh_hosts.txt`;
   `server-ci.yml`'s
   `server-image` job only when `server/Dockerfile`, `server/.dockerignore`, `server/deploy/image-smoke.sh` or
   the workflow changed). The server's Rust (`toolchain: 1.99.0`) is pinned in `server-ci.yml` and
