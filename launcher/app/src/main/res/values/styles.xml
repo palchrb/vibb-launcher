@@ -35,6 +35,44 @@
         <item name="android:textColor">@color/kid_accent</item>
     </style>
 
+    <!-- "Ny avtale"'s framework date and time pickers (EventEditActivity; jellystar2, 2026-10-27): passed to both
+         constructors. Without it the picker took the system's light dialog under our theme's white text, and every
+         day number but the selected one was white on white. The framework's own dark Material dialog (never
+         DeviceDefault, which follows an OEM's day/night) with every colour of ours set by name - the panel the lifted
+         night, text and the month arrows our ink, the weekday row dim, the header and the selection peach with night
+         text on them - so it is the same in the system's light and dark mode. -->
+    <style name="VibbPickerDialog" parent="@android:style/Theme.Material.Dialog">
+        <item name="android:windowBackground">@drawable/bg_kid_dialog</item>
+        <item name="android:colorBackground">@color/kid_ground_lift</item>
+        <item name="android:colorBackgroundFloating">@color/kid_ground_lift</item>
+        <item name="android:colorPrimary">@color/kid_accent</item>
+        <item name="android:colorAccent">@color/kid_accent</item>
+        <item name="android:colorControlActivated">@color/kid_accent</item>
+        <item name="android:colorControlNormal">@color/kid_ink</item>
+        <item name="android:textColor">@color/kid_ink</item>
+        <item name="android:textColorPrimary">@color/kid_ink</item>
+        <item name="android:textColorSecondary">@color/kid_core_dim</item>
+        <item name="android:textColorPrimaryInverse">@color/kid_ground</item>
+        <item name="android:textColorSecondaryInverse">@color/kid_ground</item>
+        <item name="android:datePickerStyle">@style/VibbDatePicker</item>
+        <item name="android:timePickerStyle">@style/VibbTimePicker</item>
+    </style>
+
+    <style name="VibbDatePicker" parent="@android:style/Widget.Material.DatePicker">
+        <item name="android:datePickerMode">calendar</item>
+        <item name="android:headerBackground">@color/kid_accent</item>
+        <item name="android:calendarTextColor">@color/vibb_picker_number</item>
+    </style>
+
+    <style name="VibbTimePicker" parent="@android:style/Widget.Material.TimePicker">
+        <item name="android:timePickerMode">clock</item>
+        <item name="android:headerBackground">@color/kid_accent</item>
+        <item name="android:numbersBackgroundColor">@color/kid_ground</item>
+        <item name="android:numbersSelectorColor">@color/kid_accent</item>
+        <item name="android:numbersTextColor">@color/vibb_picker_number</item>
+        <item name="android:numbersInnerTextColor">@color/vibb_picker_number</item>
+    </style>
+
     <!-- Base theme for Launcher -->
     <style name="launcherBaseTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="colorPrimary">@color/finnmglasTheme_background_color</item>

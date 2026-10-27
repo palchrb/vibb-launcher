@@ -146,6 +146,10 @@ shows - a title can name a place, "Tannlege Solbakken"):
 - **"Next event line"** (A) - off by default.
 - **"Reminders"**: **Off** (default) / **The calm row** - the master switch (`lock_reminders: "off"|"row"`), overriding
   every calendar's reminder below. Off = no reminder row whatever a calendar says.
+- 2026-10-27 polish: the master is named "Reminders on the lock screen" / "Påminnelser på låseskjermen" with **Off** /
+  **Quiet row** ("Av" / "Stille rad"; "The calm row" said nothing to the user), still a select since a third form - a
+  quiet row with a ping - is to come; the policy's values unchanged. The page's long footers went behind each group's
+  ⓘ, and the kid's calendar picker sits under its label ("The kid's events") - `docs/notes/server/calendar.md`.
 
 ### 3.2 Calendars shown (`#calendars`, one form, `POST .../calendar/calendars`)
 
