@@ -171,6 +171,83 @@ class NotificationRuleTest {
     }
 
     @Test
+    fun `a keep is logged by its reason - never the phone-wide ones, once for the flag ones, 1st 10th 100th for the rest`() {
+        for (reason in NAG_KEEP_SILENT) assertTrue(reason.name, (1..1000).none { keepLogDue(reason, it) })
+        for (reason in NAG_KEEP_ONCE) assertEquals(reason.name, listOf(1), (1..1000).filter { keepLogDue(reason, it) })
+        for (reason in listOf(NagKeep.ESSENTIAL_PACKAGE, NagKeep.ESSENTIAL_CATEGORY, NagKeep.ESSENTIAL_CHANNEL, NagKeep.ALLOWED)) {
+            assertEquals(reason.name, listOf(1, 10, 100, 1000), (1..1000).filter { keepLogDue(reason, it) })
+        }
+        // Every reason is in exactly one of the three groups.
+        assertEquals(NagKeep.entries.toSet(), NAG_KEEP_SILENT + NAG_KEEP_ONCE + setOf(NagKeep.ESSENTIAL_PACKAGE, NagKeep.ESSENTIAL_CATEGORY, NagKeep.ESSENTIAL_CHANNEL, NagKeep.ALLOWED))
+    }
+
+    @Test
+    fun `an ALLOWED line names the set that allowed the package`() {
+        val parts = policy.copy(allowlist = setOf("org.example.chat", "both"), messaging = setOf("org.thoughtcrime.securesms", "both"), lockUsable = setOf("usable"))
+        assertEquals("allowlist", allowedBy(parts, "org.example.chat"))
+        assertEquals("messaging", allowedBy(parts, "org.thoughtcrime.securesms"))
+        assertEquals("lock-usable", allowedBy(parts, "usable"))
+        assertEquals("allowlist+messaging", allowedBy(parts, "both"))
+        assertEquals("unknown", allowedBy(policy, "org.example.chat"))
+        assertEquals("unknown", allowedBy(null, "org.example.chat"))
+    }
+
+    @Test
+    fun `keep counts run per (package, channel, reason) for the process and forget the oldest triple`() {
+        val keeps = KeepCounts(maxKeys = 2)
+        assertEquals(1, keeps.record(gms, "welcome", "ALLOWED"))
+        assertEquals(2, keeps.record(gms, "welcome", "ALLOWED"))
+        assertEquals(1, keeps.record(gms, "welcome", "ESSENTIAL_PACKAGE"))
+        assertEquals(1, keeps.record(gms, "other", "ALLOWED"))
+        // The (gms, welcome, ALLOWED) triple was the oldest: it starts over, never stays silent.
+        assertEquals(1, keeps.record(gms, "welcome", "ALLOWED"))
+    }
+
+    @Test
+    fun `the post-cancel check - the platform kept it only when the same post is still there, at most 8 checks wait`() {
+        assertTrue(platformKeptAfterCancel(activePostTime = 500L, cancelledPostTime = 500L))
+        assertFalse("gone", platformKeptAfterCancel(activePostTime = null, cancelledPostTime = 500L))
+        assertFalse("the app re-posted after our cancel", platformKeptAfterCancel(activePostTime = 900L, cancelledPostTime = 500L))
+        val checks = PostCancelChecks()
+        assertEquals(POST_CANCEL_CHECKS_MAX, (0 until 20).count { checks.take() })
+        assertEquals("not the burst's last", 0, checks.done())
+        assertTrue(checks.take())
+        assertFalse(checks.take())
+        checks.clear()
+        assertTrue(checks.take())
+        // The skips are said once, when the burst's last check is done (qa-nf-keep-log-code Q-6).
+        val one = PostCancelChecks(max = 1)
+        assertTrue(one.take())
+        assertFalse(one.take())
+        assertFalse(one.take())
+        assertEquals(2, one.done())
+        assertEquals(0, one.done())
+    }
+
+    private fun source(name: String) = listOf("src/main/java/com/kidslauncher/mdm/badges/$name", "app/src/main/java/com/kidslauncher/mdm/badges/$name")
+        .map { java.io.File(it) }.first { it.exists() }.readText()
+
+    /** qa-nf-keep-log-code Q-3: the glue that makes the diagnostic exist (K9-K11), by source. */
+    @Test
+    fun `the listener logs every keep, checks after every cancel, and the runtime drops the checks at detach`() {
+        val service = source("BadgeListenerService.kt")
+        val applyRule = service.substringAfter("private fun applyRule(").substringBefore("\n    }\n")
+        assertTrue(applyRule.contains("is NagVerdict.Keep -> {\n                NotificationRuleRuntime.kept(facts, verdict.reason, policy)\n                return"))
+        assertTrue(applyRule.contains("?: run { NotificationRuleRuntime.keptActiveUnreadable(facts); return })"))
+        assertTrue(applyRule.contains("NotificationRuleRuntime.keptGroupChild(facts)"))
+        assertTrue(applyRule.contains("NotificationRuleRuntime.keptFactsFailed(sbn.packageName, channel, e.javaClass.simpleName)"))
+        assertTrue(Regex("""cancelNotification\(sbn\.key\)\s*(//[^\n]*\n\s*)*NotificationRuleRuntime\.checkAfterCancel\(this, sbn\.key, sbn\.postTime, facts\)""").containsMatchIn(applyRule))
+        assertTrue("the one refusal line under the filter's tag (Q-4)", applyRule.contains("NotificationRuleRuntime.removeFailed(facts, e)") && !service.contains("Log.w(\"BadgeListener\", \"Couldn't remove"))
+        val runtime = source("NotificationRuleRuntime.kt")
+        val detach = runtime.substringAfter("fun detach(").substringBefore("\n    }\n")
+        assertTrue(detach.contains("main.removeCallbacksAndMessages(postCancelToken)") && detach.contains("postCancelChecks.clear()"))
+        assertTrue(runtime.contains("}, postCancelToken, POST_CANCEL_CHECK_MS)"))
+        // Q-2: the resolved essentials by name when the set changes.
+        assertTrue(runtime.contains("val essentialChanged = next.essential != policy?.essential"))
+        assertTrue(runtime.contains("if (essentialChanged) \": \${next.essential.sorted().joinToString(\", \")}\" else \"\""))
+    }
+
+    @Test
     fun `a group summary is only cancelled when every non-ongoing child would be (qa-11-code 6)`() {
         val nagChild = nag(channel = "nag")
         val alertChild = nag(channel = "earthquake_alerts")

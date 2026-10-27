@@ -384,6 +384,15 @@ adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.andr
     READ_PHONE_STATE has no `POLICY_FIXED` (the grant itself stays until revoked in Settings). A pause changes
     neither. After a pause's end the re-suspended apps stay in `adb shell dumpsys meminfo` as cached processes: expected
     (no device-owner API ends another app's process on API 34+, `launcher/CLAUDE.md` "Non-obvious gotchas").
+12. Home's fold (PLAN "Home's fold at four rows"): `jelly36` (§3), three Home contacts, 11 tiles in 3 columns (four
+    rows), font scale 1.0 and 1.3 (§3b), each with gesture and 3-button navigation (`adb shell cmd overlay
+    enable-exclusive --category com.android.internal.systemui.navbar.threebutton`, `.gestural` back). With the grid at
+    its top the fourth row is either whole with its label readable above the fade, or cut through its icon (at most the
+    top half, fading out) - never a whole icon whose label is under the fade or the edge. Scroll down and back up:
+    the same. With a clip the grid scrolled to its end stops at the clip (46 dp above the bar at 1.0 with gestures),
+    not 16 dp - rule (b), not a gap. No `requestLayout() improperly called` line in logcat (`-s ViewRootImpl`) while
+    Home lays out. Install or remove an app while scrolled down, scroll back to the top: the fold follows the new
+    row count.
 
 Then the full checklists in `docs/design/01`–`07`, `09`, `10` and `11` (§6d below).
 
@@ -522,6 +531,21 @@ Notifications (B; kiosk LOCKED, block on unless noted):
   cell-broadcast test alert (`adb emu cbs ...` / the emulator's extended controls) and the Play services earthquake-alert
   demo stay. The device page lists the removed package/channel counts. **The `notification_auto_cancel` switch may
   default on only after this passes.**
+- [ ] **B6 the kept lines** (the 2026-10-27 diagnostic, branch `nf-keep-log`; `adb logcat -s NotificationRule`): with the
+  filter ON, `adb shell cmd notification post -S bigtext -t 'Test' tag1 'hei'` vanishes within 1 s and the log has
+  `cancel com.android.shell / shell_cmd (1 since the last report)`; with the filter OFF it stays (no line: `SWITCHED_OFF`
+  is never logged). A notification the rule would have cancelled but kept is logged as
+  `kept <package> / <channel>: <REASON> (N so far)` - `ESSENTIAL_PACKAGE`, `ESSENTIAL_CATEGORY`, `ESSENTIAL_CHANNEL`,
+  `ALLOWED via allowlist|messaging|lock-usable` (the set that allowed it), `GROUP_CHILD_KEPT`, `ACTIVE_UNREADABLE` (a
+  summary whose children couldn't be read) or `FACTS_FAILED <Exception>` on the 1st/10th/100th keep of that (package,
+  channel, reason) in the process; `ONGOING`/`NOT_CLEARABLE`/`FULL_SCREEN`/`INSISTENT` once per (package, channel);
+  never `POLICY_UNKNOWN`, `SWITCHED_OFF`, `UNMANAGED` or `OWN`. `Rule active: N essential packages: a, b, …` names the
+  resolved essentials whenever the set changes - is `com.google.android.gms` in it? One second after each cancel the
+  listener looks again: a notification still there with the same post time logs `platform kept <package> / <channel>`
+  once (Android refused the listener's cancel); a cancel that threw is `couldn't remove <package> / <channel>:
+  <Exception>` (warn). Every line of the filter is under the one tag `NotificationRule`.
+  **A Google nag that stays (PLAN: Play services' `multidevice...WELCOME_CHANNEL_ID`) is diagnosed from this line**: its
+  `kept com.google.android.gms / ... : <REASON>` names why, or `platform kept` says the cancel was refused; paste it.
 
 Fix round (qa-11-code) and user requests, 2026-10-06:
 - [ ] **Orphan sweep**: with the fence up (A4, during the window) `adb shell run-as $P rm shared_prefs/update_fence.xml`,
@@ -2173,6 +2197,13 @@ feature itself - the seed is a test shortcut; the real path is ICSx5 from the ca
    time pickers at font 1.0 and 1.3, with the system in light and in dark mode (`adb shell cmd uimode night yes|no`):
    every day number, the weekday row and both month arrows visible on the night panel, the chosen day night on peach;
    the time picker's clock-face numbers visible, the chosen one night on peach.
+8. **Dagen's own task** (2026-10-27, branch `day-task`): open Dagen from Home, tap Recents (`KEYCODE_APP_SWITCH`) - a
+   card titled "Dagen" with the launcher's icon shows the day (no empty frame); Home - Android's task-close animation
+   (the view shrinks away, not the theme's fade); Back from the day - the same; the reminder row's tap + code from the
+   lock - the same card, on the reminder's day. An event page open, then Home, then the tile: the task comes back with
+   the page on top (as any app); the reminder row then lands on the day view itself. A time rule beginning while Dagen
+   is open, then Recents › Dagen: the time-rule screen comes back on top at once (`dumpsys activity activities | grep
+   -E "DayActivity|LockActivity"`); `adb shell dumpsys activity recents | grep -c "\.day"` is 1.
 
 **Run 2026-10-27, E5** (`docs/testing/2026-10-27-e4-e5-run.md`): steps 1-7 on `jelly36` (en-US, UTC) passed except: the
 reminder row's tap + code lands on Home, not Dagen (`DayActivity` started from the PIN lock without a new task - High),

@@ -191,6 +191,146 @@ class HomeEdgesTest {
         assertEquals(139.9f, tileHeightDp(m, 2.0f), 0.1f)
     }
 
+    // --- the fold: never between an icon and its label (PLAN "Home's fold at four rows") ---
+
+    private data class Screen(val widthDp: Float, val heightDp: Float, val statusDp: Float, val density: Float)
+
+    private val jellyStar = Screen(320f, 569f, 24f, 1.5f)
+    private val sixInch = Screen(411f, 914f, 48f, 2.625f)
+
+    /** The grid's height: the screen less the bars, the contacts row (one-line names, as the
+     * screenshot's) with its 4 dp margin, and the grid's 18 dp margin. */
+    private fun gridHeightDp(s: Screen, navDp: Float, scale: Float): Float =
+        s.heightDp - s.statusDp - navDp - (4f + 4f + (76f + 6f) + 6f + 15f * scale * NUNITO_LINE_EM + 4f) - 18f
+
+    /** The grid's rows as Android lays them out from the top, in px: [lines] is each row's label line count. */
+    private fun rowsOf(s: Screen, cols: Int, scale: Float, lines: List<Int>, rowCount: Int): List<GridRow> {
+        val m = gridMetrics(s.widthDp - 32f, cols)
+        fun px(dp: Float) = (dp * s.density).toInt()
+        var top = 0f
+        return (0 until rowCount).map { i ->
+            val tile = tileHeightDp(m, scale, lines.getOrElse(i) { lines.last() })
+            val icon = top + TILE_BADGE_ROOM_DP
+            val row = GridRow(
+                px(icon + m.iconDp / 2f),
+                px(icon + m.iconDp + TILE_LABEL_GAP_DP + m.labelSp * scale * NUNITO_LINE_EM),
+                px(top + tile),
+            )
+            top += tile + GRID_ROW_GAP_DP
+            row
+        }
+    }
+
+    private class Fold(val heightPx: Int, val rows: List<GridRow>, val density: Float) {
+        val fadePx = (FADE_BOTTOM_DP * density).toInt()
+        val basePx = (GRID_BOTTOM_PADDING_DP * density).toInt()
+        val shown = gridFoldPaddingPx(rows, true, heightPx, fadePx, basePx)
+        /** The grid's drawn bottom edge: the view's own, or the clip. */
+        val edgePx = if (shown > 0) heightPx - shown else heightPx
+
+        /** Where [edge] lands in row [i] (the rule restated: a label is legible above the middle of the fade that
+         * is drawn there - shorter for the last row when little is left to scroll). */
+        fun cut(edge: Int, clipped: Boolean): String {
+            for ((i, row) in rows.withIndex()) {
+                val fade = if (!clipped && i == rows.lastIndex) (row.bottomPx + basePx - edge).coerceIn(0, fadePx) else fadePx
+                if (2 * row.labelLinePx <= 2 * edge - fade) continue
+                return if (row.iconMidPx >= edge) "row ${i + 1} at most half its icon" else "row ${i + 1} icon without its label"
+            }
+            return "every label legible"
+        }
+    }
+
+    private fun fold(s: Screen, navDp: Float, scale: Float, lines: List<Int>, tiles: Int, cols: Int = 3): Fold {
+        val rows = rowsOf(s, cols, scale, lines, (tiles + cols - 1) / cols)
+        return Fold((gridHeightDp(s, navDp, scale) * s.density).toInt(), rows, s.density)
+    }
+
+    /**
+     * The measured cases (the model above: the Jelly Star 320x569 dp at 240 dpi, the six-inch AVD 411x914 at 420,
+     * three contacts, no music card; gestures 24 dp, three buttons 48 dp). Before: where the grid's own edge landed.
+     * After: the clip, in dp.
+     */
+    @Test
+    fun `the fold lands in a gap or through an icon on the Jelly Star and the six-inch`() {
+        data class Case(val name: String, val s: Screen, val nav: Float, val scale: Float, val lines: List<Int>, val tiles: Int, val before: String, val clipDp: Float, val after: String)
+        val cases = listOf(
+            // The user's screenshot: "Innstillinger"'s icon whole at the bottom, its label under the fade.
+            Case("Jelly Star 1.0 gestures", jellyStar, 24f, 1.0f, listOf(1), 11, "row 4 icon without its label", 46.3f, "row 4 at most half its icon"),
+            Case("Jelly Star 1.0 three buttons", jellyStar, 48f, 1.0f, listOf(1), 11, "row 4 icon without its label", 22.3f, "row 4 at most half its icon"),
+            // At 1.3 "Innstillinger" hyphenates: the last row has two lines.
+            Case("Jelly Star 1.3 gestures", jellyStar, 24f, 1.3f, listOf(1, 1, 1, 2), 11, "row 4 icon without its label", 24.2f, "row 4 at most half its icon"),
+            // The edge 0.2 dp under row 4's icon middle - inside a pixel: nothing moves.
+            Case("Jelly Star 1.3 three buttons", jellyStar, 48f, 1.3f, listOf(1, 1, 1, 2), 11, "row 4 at most half its icon", 0f, "row 4 at most half its icon"),
+            // Every label on two lines: the edge is in the gap above row 4, row 3's first line legible - nothing moves.
+            Case("Jelly Star 1.3 gestures, two lines", jellyStar, 24f, 1.3f, listOf(2), 11, "row 4 at most half its icon", 0f, "row 4 at most half its icon"),
+            Case("six-inch 1.0 gestures", sixInch, 24f, 1.0f, listOf(1), 11, "every label legible", 0f, "every label legible"),
+            Case("six-inch 1.0 three buttons", sixInch, 48f, 1.0f, listOf(1), 11, "every label legible", 0f, "every label legible"),
+            Case("six-inch 1.3 gestures, 20 tiles", sixInch, 24f, 1.3f, listOf(2), 20, "row 5 icon without its label", 46.6f, "row 5 at most half its icon"),
+            Case("six-inch 1.3 three buttons, 20 tiles", sixInch, 48f, 1.3f, listOf(2), 20, "row 5 icon without its label", 22.6f, "row 5 at most half its icon"),
+        )
+        for (c in cases) {
+            val f = fold(c.s, c.nav, c.scale, c.lines, c.tiles)
+            assertEquals(c.name, c.before, f.cut(f.heightPx, clipped = false))
+            assertEquals(c.name, c.clipDp, f.shown / c.s.density, 1f)
+            assertEquals(c.name, c.after, f.cut(f.edgePx, clipped = f.shown > 0))
+        }
+        // (a) - a fourth row that fits by tightening the label's gap and the badge room - doesn't: on the Jelly Star at
+        // 1.0 with gestures four rows need 22.4 dp more than the grid has, 62 % of those 4 x 9 dp, and 3-button
+        // navigation takes 24 dp more.
+        val m = gridMetrics(288f, 3)
+        val four = 4 * tileHeightDp(m, 1.0f, 1) + 3 * GRID_ROW_GAP_DP + GRID_BOTTOM_PADDING_DP
+        assertEquals(22.4f, four - gridHeightDp(jellyStar, 24f, 1.0f), 0.1f)
+        assertTrue(four - gridHeightDp(jellyStar, 48f, 1.0f) > 4 * (TILE_BADGE_ROOM_DP + TILE_LABEL_GAP_DP))
+    }
+
+    @Test
+    fun `on every screen the edge leaves a label legible or cuts through the icon - and moves only when it must`() {
+        for (s in listOf(jellyStar, sixInch, Screen(270f, 584f, 24f, 2f), Screen(411f, 914f, 48f, 1.5f))) {
+            for (cols in 3..4) for (scale in scales) for (nav in listOf(0f, 24f, 48f)) for (music in listOf(0f, 84f, 110f)) {
+                for (lines in listOf(listOf(1), listOf(2), listOf(1, 2), listOf(2, 1, 1, 2))) for (tiles in 1..30) {
+                    val rows = rowsOf(s, cols, scale, lines, (tiles + cols - 1) / cols)
+                    val f = Fold(((gridHeightDp(s, nav, scale) - music) * s.density).toInt(), rows, s.density)
+                    val name = "$s cols $cols scale $scale nav $nav music $music lines $lines tiles $tiles"
+                    val before = f.cut(f.heightPx, clipped = false)
+                    // Only a fold between an icon and its label moves anything, and then to a clip of at least 16 dp.
+                    if (!before.endsWith("without its label")) assertEquals(name, 0, f.shown) else assertTrue(name, f.shown >= f.basePx)
+                    assertFalse(name, f.cut(f.edgePx, clipped = f.shown > 0).endsWith("without its label"))
+                    // A grid that fits never clips.
+                    if (rows.last().bottomPx + f.basePx <= f.heightPx) assertEquals(name, 0, f.shown)
+                }
+            }
+        }
+        // The last row whole with less than its half fade left to scroll stays as it is.
+        val rows = listOf(GridRow(45, 100, 120), GridRow(160, 200, 215))
+        assertEquals(0, gridFoldPaddingPx(rows, lastShown = true, heightPx = 220, fadePx = 48, paddingPx = 24))
+        // Not known to be the last row: the whole fade is drawn - the label under it, the clip at the icon's middle.
+        assertEquals(60, gridFoldPaddingPx(rows, lastShown = false, heightPx = 220, fadePx = 48, paddingPx = 24))
+        assertEquals(0, gridFoldPaddingPx(emptyList(), lastShown = true, heightPx = 220, fadePx = 48, paddingPx = 24))
+    }
+
+    @Test
+    fun `Home feeds the fold from the laid-out rows after every layout`() {
+        val grid = byId(xml("res/layout/activity_home.xml"), "home_grid")
+        assertEquals("${GRID_BOTTOM_PADDING_DP.toInt()}dp", grid.attr("paddingBottom"))
+        val home = file("java/com/kidslauncher/mdm/ui/HomeActivity.kt").readText()
+        // qa-home-fold-code Q-1/Q-2: asked for after each layout change and each scroll arriving at the top, run at
+        // the grid's next pre-draw (never inside the layout pass), the frame's draw cancelled when the fold moved.
+        assertTrue(home.contains("binding.homeGrid.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> foldBeforeDraw() }"))
+        assertTrue(home.contains("if (!recyclerView.canScrollVertically(-1)) foldBeforeDraw()"))
+        val before = home.substringAfter("private fun foldBeforeDraw()").substringBefore("\n    }\n")
+        assertTrue(before.contains("observer.addOnPreDrawListener(") && before.contains("return !foldGrid(grid)"))
+        assertEquals(1, Regex("""\bfoldGrid\(""").findAll(home).count())
+        val glue = file("java/com/kidslauncher/mdm/ui/home/HomeGridAdapter.kt").readText().substringAfter("fun foldGrid(")
+        // Only at the grid's top, from the view's own height, and the clip only with a fold to move.
+        assertTrue(glue.contains("if (grid.canScrollVertically(-1)) return false"))
+        assertTrue(glue.contains("rows.lastKey() == (count - 1) / span, grid.height,"))
+        assertTrue(glue.contains("grid.clipToPadding = fold > 0"))
+        // F8 (qa-home-fold-code Q-3): no fold keeps the layout's own padding, never 0.
+        assertTrue(glue.contains("val bottom = if (fold > 0) fold else padding"))
+        assertTrue(glue.contains("if (grid.clipToPadding == fold > 0 && grid.paddingBottom == bottom) return false"))
+        assertEquals(1, Regex("gridFoldPaddingPx\\(").findAll(glue).count())
+    }
+
     // --- (c) the call badge ---
 
     @Test
