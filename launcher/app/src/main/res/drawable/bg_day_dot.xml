@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A calendar's dot on Dagen's rows (2026-10-27, "a colour per calendar"): 8 dp, tinted the calendar's colour
+     (CalendarColor) by the adapter. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <size android:width="8dp" android:height="8dp" />
+    <solid android:color="#FFFFFFFF" />
+</shape>

@@ -74,14 +74,27 @@ data class DayRow(
     val ownedByVibb: Boolean,
     /** The provider's all-day event (UTC-midnight based, §2.4) - not a multi-day timed event's middle day. */
     val allDayEvent: Boolean = false,
+    /** The dot before the time (2026-10-27): the calendar's colour from the policy, [CalendarColor.OWN] for the
+     * kid's own calendar, `null` = no dot (the column stays, so a day's times share one left edge). */
+    val color: CalendarColor? = null,
 ) {
     val timed: Boolean get() = kind != RowKind.ALL_DAY
 
     override fun toString() = "DayRow($eventId, $kind)"
 }
 
+/** One entry of the day's key under the list: a calendar with events on this day, its dot and its name. */
+data class LegendEntry(val calendarId: Long, val name: String, val color: CalendarColor?)
+
 data class DayView(val allDay: List<DayRow>, val timed: List<DayRow>) {
     val empty: Boolean get() = allDay.isEmpty() && timed.isEmpty()
+
+    /** The calendars on this day, in the order their first row appears (all-day first, then the timed ones). */
+    val legend: List<LegendEntry>
+        get() = (allDay + timed).distinctBy { it.calendarId }.map { LegendEntry(it.calendarId, it.calendarName, it.color) }
+
+    /** The key shows only when the day has events from more than one calendar (one calendar needs no key). */
+    val legendShown: Boolean get() = legend.size > 1
 
     companion object {
         val EMPTY = DayView(emptyList(), emptyList())
@@ -163,6 +176,7 @@ fun dayView(
             ongoing = kind != RowKind.ALL_DAY && row.begin <= now && now < row.end,
             ownedByVibb = ownedByVibb(row.uid, row.customApp, ownPackage, phoneTag),
             allDayEvent = row.allDay,
+            color = rowColor(calendar, policy),
         )
         if (kind == RowKind.ALL_DAY) allDay += out else timed += out
     }
@@ -170,6 +184,11 @@ fun dayView(
     timed.sortWith(compareBy<DayRow> { it.begin }.thenBy { it.end }.thenBy { it.title.lowercase() }.thenBy { it.eventId })
     return DayView(allDay, timed)
 }
+
+/** A row's dot: the kid's own calendar (the phone's own "Min kalender", or the parent's pick for the kid's events) is
+ * always peach, every other calendar has the policy's colour or none. */
+fun rowColor(calendar: CalendarInfo, policy: CalendarPolicy): CalendarColor? =
+    if (calendar.vibbLocal || calendar.key == policy.kidCalendarKey) CalendarColor.OWN else policy.setting(calendar.key).color
 
 /** The provider's Julian day of a date (`Time.getJulianDay` for a whole local day). */
 fun julianDay(day: LocalDate): Int = (day.toEpochDay() + 2440588).toInt()
