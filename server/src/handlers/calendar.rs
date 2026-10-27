@@ -556,8 +556,9 @@ async fn prune_default_rows(
     .map(|_| ())
 }
 
-/// POST `/devices/{id}/calendar/lock`: `glance_next` (missing = off) and `reminders` (`off` or `row`), back to
-/// `#lock`. Any other `reminders` is a 400.
+/// POST `/devices/{id}/calendar/lock`: `glance_next` (missing = off) and `reminders` (`off` or `row`, the select
+/// "Reminders on the lock screen": a select, not a switch, since a third form - a quiet row with a ping - is to come),
+/// back to `#lock`. Any other `reminders` is a 400.
 pub async fn save_lock(
     State(state): State<AppState>,
     lang: Lang,

@@ -773,6 +773,28 @@ select.pick {
     margin-left: 6px;
 }
 
+/* A picker whose choices are too wide to share the row with its label (Device › Calendar's "The kid's
+   events"): the label on its own line, the picker under it at full width, its arrows at the row's end. */
+.row-stacked {
+    flex-wrap: wrap;
+}
+
+.row-stacked > .row-label {
+    flex-basis: 100%;
+}
+
+.row-stacked > select.pick {
+    flex: 1 1 0%;
+    max-width: none;
+    margin: 4px 0 0;
+    text-align: left;
+    text-align-last: left;
+}
+
+.row-stacked > select.pick + .pick-arrows {
+    margin-top: 4px;
+}
+
 /* ---- "i" disclosure (§4.4) ---- */
 
 details.info > summary,
@@ -2493,3 +2515,5 @@ details.app-display[open] > summary .section-chev {
 .calendar-rule-move { display: flex; flex: none; gap: 4px; }
 .calendar-preview-before { color: var(--label-2); text-decoration: line-through; }
 .calendar-preview-arrow { color: var(--tint); margin: 0 6px; }
+/* The lock's reminder row, drawn in the lock group's ⓘ (the night ground in both schemes). */
+.calendar-example { display: block; width: 100%; max-width: 280px; height: auto; margin-top: 8px; font-family: inherit; }

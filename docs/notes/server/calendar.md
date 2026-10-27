@@ -43,11 +43,20 @@ copies). Regex rules are design 69 §3.5's later step (RE2/J on the phone).
 (`#dagen`: on Home; the kid's calendar - off, the phone's own, or a reported calendar it may write to: contributor or
 more, not ICSx5, not phone-local; a saved pick the last report doesn't list - a re-login, a sync turned off, an
 unreadable provider - stays the selected choice, "The chosen calendar - not on the phone now", and a save keeps it,
-`tests::calendar::the_kids_calendar_survives_a_report_without_it`), On the lock screen (`#lock`: the "Next" line; the reminders' master switch, off or
-the calm row), Calendars shown (`#calendars`: the phone's last report, one auto-saving form writing exactly the rows it
+`tests::calendar::the_kids_calendar_survives_a_report_without_it`), On the lock screen (`#lock`: the "Next" line; the reminders' master select
+"Reminders on the lock screen", Off or Quiet row), Calendars shown (`#calendars`: the phone's last report, one auto-saving form writing exactly the rows it
 was sent - a missing `remind_<key>` keeps it -, a saved calendar gone from the phone greyed with Remove, the setup
 steps without a report), Title rules (`#rules`: the list in order, up/down back to `#rule-<id>`, "Add a rule…").
 "This phone's Vibb One doesn't know Dagen yet" until the last report claims `calendar_v1`.
+
+2026-10-27 polish (the user's iPhone look at the nb page): each of Dagen, On the lock screen and Calendars shown has one
+short footer line and the rest behind its ⓘ (`<details class="info">`, as About and Calls); the kid's calendar is a
+`.row-stacked` row (the label "The kid's events" / "Barnets avtaler" on its own line, the picker under it at full
+width - no wrap at 390 px); the lock master is the select "Reminders on the lock screen" / "Påminnelser på låseskjermen"
+with Off / Quiet row ("Av" / "Stille rad"; a select, not a switch, since a third form - a quiet row with a ping - is to
+come), the sub-line "A quiet row before the event - no sound, no vibration"; the policy's `lock_reminders` and its
+`off`/`row` unchanged. The lock group's ⓘ draws the reminder row ("Skole: Matte om 15 min", 08:30) in one inline SVG
+on the night ground. `tests::calendar::the_help_is_behind_the_i_and_the_reminders_say_what_they_are`.
 
 Every route is behind the full session (`require_full_auth`; `tests::calendar::every_calendar_route_needs_a_session`:
 signed out, each GET and POST is the login redirect and writes nothing).

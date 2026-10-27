@@ -586,6 +586,116 @@ async fn the_kids_calendar_survives_a_report_without_it() {
     assert_eq!(other.status, StatusCode::BAD_REQUEST);
 }
 
+/// The page in Norwegian, as an iPhone set to it asks.
+async fn page_nb(app: &TestApp, page: &str, cookie: &str) -> String {
+    let request = axum::http::Request::builder()
+        .uri(page)
+        .header(axum::http::header::COOKIE, cookie)
+        .header(
+            axum::http::header::ACCEPT_LANGUAGE,
+            "nb-NO,nb;q=0.9,en;q=0.5",
+        )
+        .body(axum::body::Body::empty())
+        .unwrap();
+    app.send(request).await.text()
+}
+
+/// The 2026-10-27 polish: each group's help behind its "i", the kid's calendar on a line of its own, and the lock
+/// screen's reminders named for what they are ("Reminders on the lock screen": Off / Quiet row - a select, as a third
+/// form is to come; the policy's words unchanged), back to `#lock`, round trip both ways.
+#[tokio::test]
+async fn the_help_is_behind_the_i_and_the_reminders_say_what_they_are() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = reported(&app).await;
+    let page = format!("/devices/{id}/calendar");
+    let html = page_nb(&app, &page, &cookie).await;
+    // One "i" per group, its text in the panel; the old footers' long sentences and the select's words gone.
+    for (label, text) in [
+        ("Om Dagen", "Barnet sveiper fra dag til dag."),
+        ("Om låseskjermen", "En tittel kan nevne et sted."),
+        ("Om påminnelsene", "uansett hva du velger her."),
+    ] {
+        let at = html
+            .find(&format!(r#"<summary aria-label="{label}">"#))
+            .unwrap_or_else(|| panic!("{label}: {html}"));
+        let panel = &html[at..];
+        let panel = &panel[panel.find(r#"<div class="info-panel">"#).unwrap()..];
+        let panel = &panel[..panel.find("</details>").unwrap()];
+        assert!(panel.contains(text), "{label}: {panel}");
+    }
+    assert_eq!(html.matches(r#"<details class="info">"#).count(), 3);
+    assert!(html.contains(r#"role="img" aria-label="Skole: Matte om 15 min, 08:30""#));
+    for gone in [
+        "Den rolige raden",
+        "Barnets avtaler i<",
+        "Dagen er barnets dag i Vibb One",
+        "Det låseskjermen viser",
+        "Påminnelsen velges per kalender",
+    ] {
+        assert!(!html.contains(gone), "{gone}");
+    }
+    // The kid's calendar: its label alone on the row's first line, the select under it.
+    let kid = &html[html.find(r#"<label class="row row-stacked">"#).unwrap()..];
+    assert!(
+        kid.starts_with(
+            r#"<label class="row row-stacked">
+                <span class="row-label">Barnets avtaler</span>
+                <select class="pick" name="kid" data-autosave>"#
+        ),
+        "{kid}"
+    );
+    // The master: Off by default, each calendar's reminder saying so.
+    let master = r#"<span class="row-label">Påminnelser på låseskjermen<span class="row-sub">En stille rad før hendelsen - ingen lyd, ingen vibrasjon</span></span>
+                <select class="pick" name="reminders" data-autosave>
+                    <option value="off" selected>Av</option>
+                    <option value="row">Stille rad</option>
+                </select>"#;
+    assert!(html.contains(master), "{html}");
+    assert_eq!(html.matches("data-reminders-off").count(), 3);
+    // The quiet row.
+    let on = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/lock"),
+            Some(&cookie),
+            &[("reminders", "row")],
+        )
+        .await;
+    super::assert_redirect(&on, &page, Some("lock"));
+    assert_eq!(
+        app.policy(&token).await["calendar"]["lock_reminders"],
+        json!("row")
+    );
+    let html = page_nb(&app, &page, &cookie).await;
+    assert!(html.contains(r#"<option value="row" selected>Stille rad</option>"#));
+    assert!(!html.contains("data-reminders-off"));
+    // Back to Off, the "Next" line on.
+    let off = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/lock"),
+            Some(&cookie),
+            &[("glance_next", "on"), ("reminders", "off")],
+        )
+        .await;
+    super::assert_redirect(&off, &page, Some("lock"));
+    let policy = app.policy(&token).await;
+    assert_eq!(policy["calendar"]["lock_reminders"], json!("off"));
+    assert_eq!(policy["calendar"]["glance_next"], json!(true));
+    assert!(
+        page_nb(&app, &page, &cookie)
+            .await
+            .contains(r#"<option value="off" selected>Av</option>"#)
+    );
+    // English has its words too.
+    let en = app.get_page(&page, &cookie).await.text();
+    assert!(en.contains(">Reminders on the lock screen<"), "{en}");
+    assert!(en.contains(r#"<option value="row">Quiet row</option>"#));
+    assert!(en.contains(">The kid&#39;s events<"), "{en}");
+    assert!(!en.contains("The calm row"));
+}
+
 /// QA L5 (g): every Calendar route needs a signed-in parent - without the session each answers the sign-in redirect
 /// and writes nothing.
 #[tokio::test]

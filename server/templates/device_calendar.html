@@ -25,7 +25,7 @@
                 <span class="row-label">{{ self.t("calendar.dagen.on_home") }}<span class="row-sub">{{ self.t("calendar.dagen.on_home_sub") }}</span></span>
                 <input type="checkbox" role="switch" class="sw" name="on_home" value="on"{% if on_home %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
-            <label class="row">
+            <label class="row row-stacked">
                 <span class="row-label">{{ self.t("calendar.kid.label") }}</span>
                 <select class="pick" name="kid" data-autosave>
                     {% for k in kid_choices %}<option value="{{ k.value }}"{% if k.selected %} selected{% endif %}>{{ k.label }}</option>{% endfor %}
@@ -33,7 +33,14 @@
             </label>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">{{ self.t("calendar.dagen.footer") }}</p>
+        <div class="group-footer" data-footer="dagen">{{ self.t("calendar.dagen.footer") }}
+            <details class="info">
+                <summary aria-label="{{ self.t("calendar.dagen.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("calendar.dagen.info") }}</p>
+                </div>
+            </details>
+        </div>
     </section>
 
     <section id="lock" aria-labelledby="lock-title">
@@ -44,7 +51,7 @@
                 <input type="checkbox" role="switch" class="sw" name="glance_next" value="on"{% if glance_next %} checked{% endif %} data-autosave><span class="knob" aria-hidden="true"></span>
             </label>
             <label class="row">
-                <span class="row-label">{{ self.t("calendar.lock.reminders") }}</span>
+                <span class="row-label">{{ self.t("calendar.lock.reminders") }}<span class="row-sub">{{ self.t("calendar.lock.reminders_sub") }}</span></span>
                 <select class="pick" name="reminders" data-autosave>
                     <option value="off"{% if !reminders_row %} selected{% endif %}>{{ self.t("calendar.lock.reminders.off") }}</option>
                     <option value="row"{% if reminders_row %} selected{% endif %}>{{ self.t("calendar.lock.reminders.row") }}</option>
@@ -52,7 +59,28 @@
             </label>
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">{{ self.t("calendar.lock.footer") }}</p>
+        <div class="group-footer" data-footer="lock">{{ self.t("calendar.lock.footer") }}
+            <details class="info">
+                <summary aria-label="{{ self.t("calendar.lock.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("calendar.lock.info") }}</p>
+                    <p>{{ self.t("calendar.lock.example_caption") }}</p>
+                    {#- The reminder row as the lock draws it (design 69 §5.2: #1B1B28, 16 dp corners, the calendar glyph, the
+                        title counting down, the start under it), on the night ground. -#}
+                    <svg class="calendar-example" viewBox="0 0 280 72" role="img" aria-label="{{ self.t("calendar.lock.example") }}, {{ self.t("calendar.lock.example_time") }}">
+                        <rect width="280" height="72" rx="14" fill="#0C0C14"/>
+                        <rect x="8" y="8" width="264" height="56" rx="12" fill="#1B1B28"/>
+                        <circle cx="38" cy="36" r="18" fill="#2C2C3E"/>
+                        <g fill="none" stroke="#F0A884" stroke-width="1.6" stroke-linejoin="round">
+                            <rect x="29" y="29" width="18" height="16" rx="2.5"/>
+                            <path d="M29 34h18M33 26.5v4M43 26.5v4" stroke-linecap="round"/>
+                        </g>
+                        <text x="66" y="32" fill="#FFFFFF" font-size="15" font-weight="600">{{ self.t("calendar.lock.example") }}</text>
+                        <text x="66" y="51" fill="#A9A9BC" font-size="13">{{ self.t("calendar.lock.example_time") }}</text>
+                    </svg>
+                </div>
+            </details>
+        </div>
     </section>
 
     <section id="calendars" aria-labelledby="calendars-title">
@@ -88,7 +116,14 @@
             {% endfor %}
             <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
         </form>
-        <p class="group-footer">{{ self.t("calendar.calendars.footer") }}</p>
+        <div class="group-footer" data-footer="calendars">{{ self.t("calendar.calendars.footer") }}
+            <details class="info">
+                <summary aria-label="{{ self.t("calendar.calendars.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("calendar.calendars.info") }}</p>
+                </div>
+            </details>
+        </div>
         {% endif %}
         {% if state != ReportState::Listed %}
         <p class="group-footer">{{ self.t("calendar.calendars.setup") }}</p>
