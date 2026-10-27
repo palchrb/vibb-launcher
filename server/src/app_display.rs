@@ -355,6 +355,8 @@ pub struct AppDisplayForm {
     pub from: Option<String>,
     /// Device page: "On Home" (design 69 §4.4) - `None` on the catalog page, which has no such switch.
     pub on_home: Option<bool>,
+    /// The switch's label and sub-line in the page's language (`i18n`), set with [Self::on_home].
+    pub on_home_words: Option<(&'static str, &'static str)>,
 }
 
 /// What a refused save sends back to the form: the entered values and the error.
@@ -430,6 +432,7 @@ impl AppDisplayForm {
             colors,
             from: None,
             on_home: None,
+            on_home_words: None,
         }
     }
 

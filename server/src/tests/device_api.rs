@@ -190,6 +190,9 @@ async fn db_error_is_500_not_default() {
         "device_pending_uninstalls",
         // Design 68: a lost list would hand the camera back.
         "device_app_permissions",
+        // Design 69: a lost hide rule would show what the parent hid.
+        "device_calendar_rules",
+        "device_calendars",
     ] {
         let app = TestApp::new().await;
         let (_, token) = app.enrolled_device("phone").await;

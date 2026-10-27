@@ -18,7 +18,7 @@
   "calendar.dagen.on_home": "Dagen på Hjem",
   "calendar.dagen.on_home_sub": "Av skjuler flisen, linjen på låseskjermen og påminnelsene; reglene står",
   "calendar.dagen.footer": "Dagen er barnets dag i Vibb One: én dag om gangen, sveip fra dag til dag. Barnets egne avtaler havner i kalenderen du velger; barnet kan bare endre eller slette dem.",
-  "calendar.kid.label": "Barnet kan legge til avtaler i",
+  "calendar.kid.label": "Barnets avtaler i",
   "calendar.kid.off": "Ingen (ingen +)",
   "calendar.kid.phone": "Min kalender (på telefonen)",
 
@@ -103,5 +103,16 @@
   "calendar.preview.paste": "Lim inn en tittel over.",
   "calendar.preview.hidden": "skjult",
   "calendar.preview.no_match": "Ingen regel passer: telefonen viser den som den er.",
-  "calendar.preview.other_first": "Regel {n} passer på denne tittelen først."
+  "calendar.preview.other_first": "Regel {n} passer på denne tittelen først.",
+  "calendar.error.read": "Fikk ikke lest kalenderinnstillingene - se serverloggen.",
+  "calendar.error.save": "Fikk ikke lagret - ingenting ble endret. Se serverloggen.",
+  "calendar.error.no_phone": "Den telefonen finnes ikke.",
+  "calendar.error.kid_calendar": "Ikke en kalender barnet kan legge avtaler i.",
+  "calendar.error.reminders": "Ikke et valg for påminnelser.",
+  "calendar.error.move": "Flytt en regel opp eller ned.",
+  "calendar.kid.gone": "Den valgte kalenderen - ikke på telefonen nå",
+  "calendar.rule.action": "Hva skjer",
+  "apps.on_home": "På Hjem",
+  "apps.on_home_sub": "Av: appen er fortsatt tillatt og kjører, men barnet ser den ikke på Hjem eller i applisten, unntatt i en pause - for en synkapp som ICSx5 eller DAVx5.",
+  "apps.not_on_home": "ikke på Hjem"
 }

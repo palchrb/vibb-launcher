@@ -928,6 +928,7 @@ pub(crate) async fn lock_screen_card(
 /// the top). Saved: back to the app's row (`/devices/{id}/apps#app-<package>`); nudges.
 pub async fn save_app_display(
     State(state): State<AppState>,
+    lang: crate::i18n::Lang,
     Path(id): Path<i64>,
     Form(form): Form<std::collections::HashMap<String, String>>,
 ) -> Response {
@@ -970,6 +971,7 @@ pub async fn save_app_display(
         async move {
             let mut response = crate::handlers::device_pages::render_apps(
                 &state,
+                lang,
                 id,
                 None,
                 Some((package, entered)),

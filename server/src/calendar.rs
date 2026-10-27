@@ -355,6 +355,12 @@ pub async fn calendars(
     .await
 }
 
+/// The switches of a phone without a policy row: the columns' defaults (on Home, the kid may add events, nothing on
+/// the lock).
+pub fn default_switches() -> (bool, bool, bool, String) {
+    (true, true, false, "off".to_string())
+}
+
 /// The phone-wide switches: (on_home, kid_adds, glance_next, lock_reminders).
 pub async fn switches(
     db: &SqlitePool,
@@ -377,7 +383,7 @@ pub async fn policy_calendar(
 ) -> Result<CalendarPolicy, sqlx::Error> {
     let (on_home, kid_adds, glance_next, lock_reminders) = switches(db, device_id)
         .await?
-        .unwrap_or((true, false, false, "off".to_string()));
+        .unwrap_or_else(default_switches);
     Ok(CalendarPolicy {
         on_home,
         kid_adds,
@@ -463,7 +469,7 @@ pub fn sanitize_report(
             }
             Some(ReportedCalendar {
                 key: key.to_string(),
-                account_type: kept.get("account_type")?.as_str()?.to_string(),
+                account_type: clean(kept.get("account_type")?.as_str()?, 200),
                 name: kept
                     .get("name")
                     .and_then(|n| n.as_str())

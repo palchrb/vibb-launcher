@@ -31,7 +31,7 @@ use crate::calendar::{
     self, Action, CalendarReport, Field, MAX_RULES, Match, Outcome, PATTERN_MAX, PolicyCalendar,
     REMIND_MINUTES, Rule, TEXT_MAX,
 };
-use crate::handlers::schedules::{form_pairs, server_error};
+use crate::handlers::schedules::form_pairs;
 use crate::i18n::{Lang, t, t_params};
 
 fn field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
@@ -45,24 +45,39 @@ fn has(fields: &[(String, String)], name: &str) -> bool {
     fields.iter().any(|(k, _)| k == name)
 }
 
-fn read_failed(err: sqlx::Error, what: &str) -> Response {
+fn read_failed(lang: Lang, err: sqlx::Error, what: &str) -> Response {
     tracing::error!(%err, "can't read {what}");
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        "Couldn't read the calendar settings - check the server log.",
+        t(lang, "calendar.error.read"),
     )
         .into_response()
 }
 
-fn render(template: impl Template, status: StatusCode) -> Response {
+/// A save (or a render) that failed: a 500 in the page's language, nothing changed.
+fn failed(lang: Lang, err: impl std::fmt::Display, what: &str) -> Response {
+    tracing::error!(%err, "{what}");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        t(lang, "calendar.error.save"),
+    )
+        .into_response()
+}
+
+/// A form this page never sends: a 400 with its reason.
+fn bad(lang: Lang, key: &str) -> Response {
+    (StatusCode::BAD_REQUEST, t(lang, key)).into_response()
+}
+
+fn render(lang: Lang, template: impl Template, status: StatusCode) -> Response {
     match template.render() {
         Ok(html) => (status, Html(html)).into_response(),
-        Err(err) => server_error(err, "failed to render a calendar page"),
+        Err(err) => failed(lang, err, "failed to render a calendar page"),
     }
 }
 
 /// The phone's name, or the answer: 404 for an unknown phone, 500 on a DB error.
-async fn phone(state: &AppState, id: i64) -> Result<String, Box<Response>> {
+async fn phone(state: &AppState, lang: Lang, id: i64) -> Result<String, Box<Response>> {
     match sqlx::query_scalar(
         "SELECT d.name FROM devices d JOIN device_policy p ON p.device_id = d.id WHERE d.id = ?",
     )
@@ -72,9 +87,9 @@ async fn phone(state: &AppState, id: i64) -> Result<String, Box<Response>> {
     {
         Ok(Some(name)) => Ok(name),
         Ok(None) => Err(Box::new(
-            (StatusCode::NOT_FOUND, "Device not found").into_response(),
+            (StatusCode::NOT_FOUND, t(lang, "calendar.error.no_phone")).into_response(),
         )),
-        Err(err) => Err(Box::new(read_failed(err, "the device"))),
+        Err(err) => Err(Box::new(read_failed(lang, err, "the device"))),
     }
 }
 
@@ -107,6 +122,8 @@ pub struct CalendarView {
 /// One title rule in the list.
 pub struct RuleView {
     pub id: i64,
+    /// Its place in the list (1 first), which the preview's "Rule {n} matches first" names.
+    pub n: usize,
     pub text: String,
     pub first: bool,
     pub last: bool,
@@ -277,6 +294,15 @@ fn kid_choices(
             });
         }
     }
+    // QA M1: a pick the last report doesn't list (a re-login, a sync turned off, an unreadable provider) stays the
+    // selected choice, so the form's next autosave keeps it.
+    if let Some(key) = chosen.filter(|key| !out.iter().any(|c| c.value == *key)) {
+        out.push(KidChoice {
+            value: key.to_string(),
+            label: t(lang, "calendar.kid.gone").to_string(),
+            selected: kid_adds,
+        });
+    }
     out
 }
 
@@ -293,7 +319,7 @@ pub async fn view_calendar(
     Path(id): Path<i64>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let device_name = match phone(&state, id).await {
+    let device_name = match phone(&state, lang, id).await {
         Ok(name) => name,
         Err(answer) => return *answer,
     };
@@ -309,10 +335,10 @@ pub async fn view_calendar(
     .await;
     let (switches, saved, rules, report, capabilities) = match loaded {
         Ok(found) => found,
-        Err(err) => return read_failed(err, "the calendar settings"),
+        Err(err) => return read_failed(lang, err, "the calendar settings"),
     };
     let (on_home, kid_adds, glance_next, lock_reminders) =
-        switches.unwrap_or((true, true, false, "off".to_string()));
+        switches.unwrap_or_else(calendar::default_switches);
     let saved_by_key: BTreeMap<&str, &PolicyCalendar> =
         saved.iter().map(|c| (c.key.as_str(), c)).collect();
     let mut calendars: Vec<CalendarView> = Vec::new();
@@ -355,6 +381,7 @@ pub async fn view_calendar(
         .enumerate()
         .map(|(i, r)| RuleView {
             id: r.id,
+            n: i + 1,
             text: rule_text(lang, r, &names),
             first: i == 0,
             last: i + 1 == count,
@@ -362,6 +389,7 @@ pub async fn view_calendar(
         .collect();
     let ids: HashSet<i64> = rules.iter().map(|r| r.id).collect();
     render(
+        lang,
         CalendarTemplate {
             lang,
             title: t(lang, "calendar.title").to_string(),
@@ -440,11 +468,12 @@ pub async fn summary_value(state: &AppState, lang: Lang, id: i64) -> String {
 /// phone reports writable), back to `#dagen`. A `kid` it can't use is a 400, nothing written.
 pub async fn save_dagen(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
-    if let Err(answer) = phone(&state, id).await {
+    if let Err(answer) = phone(&state, lang, id).await {
         return *answer;
     }
     let on_home = has(&fields, "on_home");
@@ -455,22 +484,24 @@ pub async fn save_dagen(
         key if calendar::valid_key(key) => {
             let report = match calendar::last_report(&state.db, id).await {
                 Ok(report) => report,
-                Err(err) => return read_failed(err, "the calendar report"),
+                Err(err) => return read_failed(lang, err, "the calendar report"),
             };
-            if !report
-                .iter()
-                .flat_map(|r| &r.calendars)
-                .any(|c| c.key == key && writable_for_kid(c))
+            // The saved pick stays allowed while the report lacks it (QA M1).
+            let saved_pick = match calendar::calendars(&state.db, id).await {
+                Ok(saved) => saved.iter().any(|c| c.key == key && c.writable_for_kid),
+                Err(err) => return read_failed(lang, err, "the saved calendars"),
+            };
+            if !saved_pick
+                && !report
+                    .iter()
+                    .flat_map(|r| &r.calendars)
+                    .any(|c| c.key == key && writable_for_kid(c))
             {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    "Not a calendar the kid can write to.",
-                )
-                    .into_response();
+                return bad(lang, "calendar.error.kid_calendar");
             }
             Some(Some(key.to_string()))
         }
-        _ => return (StatusCode::BAD_REQUEST, "Not a calendar.").into_response(),
+        _ => return bad(lang, "calendar.error.kid_calendar"),
     };
     let result = async {
         let mut tx = state.db.begin().await?;
@@ -506,7 +537,7 @@ pub async fn save_dagen(
     .await;
     match result {
         Ok(()) => saved(&state, id, "dagen"),
-        Err(err) => server_error(err, "couldn't save Dagen's switches"),
+        Err(err) => failed(lang, err, "couldn't save Dagen's switches"),
     }
 }
 
@@ -529,17 +560,18 @@ async fn prune_default_rows(
 /// `#lock`. Any other `reminders` is a 400.
 pub async fn save_lock(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
-    if let Err(answer) = phone(&state, id).await {
+    if let Err(answer) = phone(&state, lang, id).await {
         return *answer;
     }
     let reminders = match field(&fields, "reminders") {
         "" | "off" => "off",
         "row" => "row",
-        _ => return (StatusCode::BAD_REQUEST, "Not a reminder choice.").into_response(),
+        _ => return bad(lang, "calendar.error.reminders"),
     };
     match sqlx::query(
         "UPDATE device_policy SET calendar_glance_next = ?, calendar_lock_reminders = ? WHERE device_id = ?",
@@ -551,7 +583,7 @@ pub async fn save_lock(
     .await
     {
         Ok(_) => saved(&state, id, "lock"),
-        Err(err) => server_error(err, "couldn't save the lock screen's calendar switches"),
+        Err(err) => failed(lang, err, "couldn't save the lock screen's calendar switches"),
     }
 }
 
@@ -560,11 +592,12 @@ pub async fn save_lock(
 /// missing = unchanged). The kid's choice is kept. Back to `#calendars`.
 pub async fn save_calendars(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
-    if let Err(answer) = phone(&state, id).await {
+    if let Err(answer) = phone(&state, lang, id).await {
         return *answer;
     }
     let keys: Vec<&str> = fields
@@ -607,7 +640,7 @@ pub async fn save_calendars(
     .await;
     match result {
         Ok(()) => saved(&state, id, "calendars"),
-        Err(err) => server_error(err, "couldn't save the calendars"),
+        Err(err) => failed(lang, err, "couldn't save the calendars"),
     }
 }
 
@@ -615,9 +648,10 @@ pub async fn save_calendars(
 /// naming it stay and say so). Back to `#calendars`.
 pub async fn remove_calendar(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, key)): Path<(i64, String)>,
 ) -> Response {
-    if let Err(answer) = phone(&state, id).await {
+    if let Err(answer) = phone(&state, lang, id).await {
         return *answer;
     }
     match sqlx::query("DELETE FROM device_calendars WHERE device_id = ? AND calendar_key = ?")
@@ -627,7 +661,7 @@ pub async fn remove_calendar(
         .await
     {
         Ok(_) => saved(&state, id, "calendars"),
-        Err(err) => server_error(err, "couldn't remove a calendar"),
+        Err(err) => failed(lang, err, "couldn't remove a calendar"),
     }
 }
 
@@ -838,8 +872,8 @@ struct Context {
     keys: HashSet<String>,
 }
 
-async fn context(state: &AppState, id: i64) -> Result<Context, Box<Response>> {
-    phone(state, id).await?;
+async fn context(state: &AppState, lang: Lang, id: i64) -> Result<Context, Box<Response>> {
+    phone(state, lang, id).await?;
     let loaded = async {
         Ok::<_, sqlx::Error>((
             calendar::rules(&state.db, id).await?,
@@ -847,7 +881,8 @@ async fn context(state: &AppState, id: i64) -> Result<Context, Box<Response>> {
         ))
     }
     .await;
-    let (rules, report) = loaded.map_err(|err| Box::new(read_failed(err, "the calendar rules")))?;
+    let (rules, report) =
+        loaded.map_err(|err| Box::new(read_failed(lang, err, "the calendar rules")))?;
     let mut keys: HashSet<String> = report
         .iter()
         .flat_map(|r| r.calendars.iter().map(|c| c.key.clone()))
@@ -926,12 +961,13 @@ async fn render_editor(
     refusal: Option<&'static str>,
     status: StatusCode,
 ) -> Response {
-    let ctx = match context(state, id).await {
+    let ctx = match context(state, lang, id).await {
         Ok(ctx) => ctx,
         Err(answer) => return *answer,
     };
     let preview = preview(lang, &ctx, rule_id, &form);
     render(
+        lang,
         RuleTemplate {
             lang,
             title: t(lang, "calendar.rule.title").to_string(),
@@ -973,7 +1009,7 @@ pub async fn show_rule(
     lang: Lang,
     Path((id, rule_id)): Path<(i64, i64)>,
 ) -> Response {
-    let ctx = match context(&state, id).await {
+    let ctx = match context(&state, lang, id).await {
         Ok(ctx) => ctx,
         Err(answer) => return *answer,
     };
@@ -1014,7 +1050,7 @@ async fn save_rule(
     rule_id: Option<i64>,
     fields: &[(String, String)],
 ) -> Response {
-    let ctx = match context(state, id).await {
+    let ctx = match context(state, lang, id).await {
         Ok(ctx) => ctx,
         Err(answer) => return *answer,
     };
@@ -1075,7 +1111,7 @@ async fn save_rule(
     };
     match result {
         Ok(saved_id) => saved(state, id, &format!("rule-{saved_id}")),
-        Err(err) => server_error(err, "couldn't save a calendar rule"),
+        Err(err) => failed(lang, err, "couldn't save a calendar rule"),
     }
 }
 
@@ -1093,11 +1129,12 @@ pub async fn preview_rule(
     if field(&fields, "fragment") != "1" {
         return render_editor(&state, lang, id, rule_id, form, None, StatusCode::OK).await;
     }
-    let ctx = match context(&state, id).await {
+    let ctx = match context(&state, lang, id).await {
         Ok(ctx) => ctx,
         Err(answer) => return *answer,
     };
     render(
+        lang,
         PreviewTemplate {
             lang,
             preview: preview(lang, &ctx, rule_id, &form),
@@ -1110,17 +1147,18 @@ pub async fn preview_rule(
 /// `#rule-<id>`.
 pub async fn move_rule(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, rule_id)): Path<(i64, i64)>,
     body: Bytes,
 ) -> Response {
     let fields = form_pairs(&body);
-    if let Err(answer) = phone(&state, id).await {
+    if let Err(answer) = phone(&state, lang, id).await {
         return *answer;
     }
     let up = match field(&fields, "dir") {
         "up" => true,
         "down" => false,
-        _ => return (StatusCode::BAD_REQUEST, "Up or down.").into_response(),
+        _ => return bad(lang, "calendar.error.move"),
     };
     let result = async {
         let mut tx = state.db.begin().await?;
@@ -1153,16 +1191,17 @@ pub async fn move_rule(
     match result {
         Ok(true) => saved(&state, id, &format!("rule-{rule_id}")),
         Ok(false) => rule_gone(id),
-        Err(err) => server_error(err, "couldn't move a calendar rule"),
+        Err(err) => failed(lang, err, "couldn't move a calendar rule"),
     }
 }
 
 /// POST `/devices/{id}/calendar/rules/{rule}/delete`: back to `#rules` (a rule already gone lands there too).
 pub async fn delete_rule(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, rule_id)): Path<(i64, i64)>,
 ) -> Response {
-    if let Err(answer) = phone(&state, id).await {
+    if let Err(answer) = phone(&state, lang, id).await {
         return *answer;
     }
     match sqlx::query("DELETE FROM device_calendar_rules WHERE id = ? AND device_id = ?")
@@ -1172,7 +1211,7 @@ pub async fn delete_rule(
         .await
     {
         Ok(_) => saved(&state, id, "rules"),
-        Err(err) => server_error(err, "couldn't delete a calendar rule"),
+        Err(err) => failed(lang, err, "couldn't delete a calendar rule"),
     }
 }
 

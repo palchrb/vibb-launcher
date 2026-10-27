@@ -30,5 +30,8 @@
   {"rules": [{"id": 18, "calendar": null, "field": "title", "match": "starts", "pattern": "  Gruppe\u00a0 2-  ", "action": "prefix", "text": " Skole: "}], "calendar": null, "title": "Gruppe 2- Matte", "shown": "Skole: Matte"},
   {"rules": [{"id": 19, "calendar": null, "field": "title", "match": "contains", "pattern": "ab", "action": "prefix", "text": "X"}], "calendar": null, "title": "ab cab", "shown": "X cab"},
   {"rules": [{"id": 9, "calendar": null, "field": "title", "match": "contains", "pattern": "6. og 7. trinn", "action": "hide", "text": ""}], "calendar": "c04e7b19a2f6d853", "title": "Frankenstein- for 6. og 7. trinn", "shown": null},
-  {"rules": [], "calendar": null, "title": " \t ", "shown": ""}
+  {"rules": [], "calendar": null, "title": " \t ", "shown": ""},
+  {"rules": [{"id": 20, "calendar": null, "field": "location", "match": "starts", "pattern": "Tur", "action": "hide", "text": ""}], "calendar": null, "title": "Tur i skogen", "shown": "Tur i skogen"},
+  {"rules": [{"id": 21, "calendar": null, "field": "title", "match": "contains", "pattern": "  ", "action": "hide", "text": ""}], "calendar": null, "title": "Tur", "shown": "Tur"},
+  {"rules": [{"id": 22, "calendar": null, "field": "title", "match": "contains", "pattern": "blåbær", "action": "prefix", "text": "Bær:"}], "calendar": null, "title": "Plukke BLÅBÆR i skogen", "shown": "Bær: Plukke i skogen"}
 ]}

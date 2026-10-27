@@ -518,3 +518,163 @@ async fn a_rule_is_saved_refused_previewed_moved_and_deleted() {
     assert_eq!(full.status, StatusCode::BAD_REQUEST);
     assert!(full.text().contains("30 rules already"));
 }
+
+/// QA M1: the kid's calendar the parent picked stays picked while the phone's report doesn't list it - the page shows
+/// it selected ("not on the phone now"), and the Dagen group's next autosave (On Home off) keeps it.
+#[tokio::test]
+async fn the_kids_calendar_survives_a_report_without_it() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = reported(&app).await;
+    let page = format!("/devices/{id}/calendar");
+    let pick = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/dagen"),
+            Some(&cookie),
+            &[("on_home", "on"), ("kid", "c04e7b19a2f6d853")],
+        )
+        .await;
+    super::assert_redirect(&pick, &page, Some("dagen"));
+    // A report that can't read the provider: no calendars at all.
+    app.request(
+        Method::POST,
+        "/api/devices/status",
+        Some(&token),
+        Some(json!({"lock_reason": "NONE", "kiosk_engaged": true,
+                    "calendar": {"readable": false, "calendars": [], "rules_skipped": []}})),
+    )
+    .await;
+    let html = app.get_page(&page, &cookie).await.text();
+    assert!(
+        html.contains(r#"<option value="c04e7b19a2f6d853" selected>The chosen calendar - not on the phone now</option>"#),
+        "{html}"
+    );
+    let kid = &html[html.find(r#"name="kid""#).unwrap()..];
+    let kid = &kid[..kid.find("</select>").unwrap()];
+    assert_eq!(kid.matches(" selected>").count(), 1, "{kid}");
+    // The browser sends what the select shows: the pick, with On Home now off.
+    let off = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/dagen"),
+            Some(&cookie),
+            &[("kid", "c04e7b19a2f6d853")],
+        )
+        .await;
+    super::assert_redirect(&off, &page, Some("dagen"));
+    let policy = app.policy(&token).await;
+    assert_eq!(policy["calendar"]["on_home"], json!(false));
+    assert_eq!(policy["calendar"]["kid_adds"], json!(true));
+    assert_eq!(
+        policy["calendar"]["calendars"][0]["key"],
+        json!("c04e7b19a2f6d853")
+    );
+    assert_eq!(
+        policy["calendar"]["calendars"][0]["writable_for_kid"],
+        json!(true)
+    );
+    // A key that is neither reported writable nor the saved pick is still refused.
+    let other = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/dagen"),
+            Some(&cookie),
+            &[("kid", "aaaaaaaaaaaaaaaa")],
+        )
+        .await;
+    assert_eq!(other.status, StatusCode::BAD_REQUEST);
+}
+
+/// QA L5 (g): every Calendar route needs a signed-in parent - without the session each answers the sign-in redirect
+/// and writes nothing.
+#[tokio::test]
+async fn every_calendar_route_needs_a_session() {
+    let app = TestApp::new().await;
+    let (id, _) = reported(&app).await;
+    add_rule(&app, id, 1, 0, "NULL, 'title', 'contains', 'x', 'hide', ''").await;
+    let page = format!("/devices/{id}/calendar");
+    let posts: Vec<(String, Vec<(&str, &str)>)> = vec![
+        (format!("{page}/dagen"), vec![("kid", "off")]),
+        (
+            format!("{page}/lock"),
+            vec![("glance_next", "on"), ("reminders", "row")],
+        ),
+        (
+            format!("{page}/calendars"),
+            vec![
+                ("key", "9f3a61c2d84be705"),
+                ("remind_9f3a61c2d84be705", "15"),
+            ],
+        ),
+        (format!("{page}/calendars/9f3a61c2d84be705/remove"), vec![]),
+        (
+            format!("{page}/rules"),
+            vec![
+                ("field", "title"),
+                ("match", "starts"),
+                ("pattern", "x"),
+                ("then", "hide"),
+            ],
+        ),
+        (
+            format!("{page}/rules/preview"),
+            vec![("preview_title", "x"), ("fragment", "1")],
+        ),
+        (
+            format!("{page}/rules/1"),
+            vec![
+                ("field", "title"),
+                ("match", "starts"),
+                ("pattern", "y"),
+                ("then", "hide"),
+            ],
+        ),
+        (format!("{page}/rules/1/move"), vec![("dir", "down")]),
+        (format!("{page}/rules/1/delete"), vec![]),
+    ];
+    for (path, fields) in posts {
+        let res = app.request_form(Method::POST, &path, None, &fields).await;
+        assert!(res.status.is_redirection(), "{path}: {}", res.status);
+        assert!(
+            res.location().is_some_and(|l| l.starts_with("/login")),
+            "{path}: {:?}",
+            res.location()
+        );
+    }
+    for path in [
+        page.clone(),
+        format!("{page}/rules/new"),
+        format!("{page}/rules/1"),
+    ] {
+        let res = app
+            .send(
+                axum::http::Request::builder()
+                    .uri(&path)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+        assert!(res.status.is_redirection(), "{path}: {}", res.status);
+    }
+    let (glance, kid_adds): (bool, bool) = sqlx::query_as(
+        "SELECT calendar_glance_next, calendar_kid_adds FROM device_policy WHERE device_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(!glance && kid_adds);
+    let rules: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, pattern FROM device_calendar_rules WHERE device_id = ?")
+            .bind(id)
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(rules, [(1, "x".to_string())]);
+    let saved: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM device_calendars")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(saved, 0);
+}

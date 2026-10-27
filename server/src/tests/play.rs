@@ -40,6 +40,7 @@ async fn about_page(app: &TestApp, id: i64) -> String {
 async fn apps_page(app: &TestApp, id: i64, query: &[(&str, &str)]) -> String {
     let response = crate::handlers::device_pages::view_apps(
         axum::extract::State(app.state.clone()),
+        crate::i18n::Lang::En,
         axum::extract::Path(id),
         axum::extract::Query(
             query

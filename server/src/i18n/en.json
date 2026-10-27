@@ -18,7 +18,7 @@
   "calendar.dagen.on_home": "Dagen on Home",
   "calendar.dagen.on_home_sub": "Off hides the tile, the lock screen's line and the reminders; the rules stay",
   "calendar.dagen.footer": "Dagen is the kid's day in Vibb One: one day at a time, swiped from day to day. The kid's own events go to the chosen calendar; they can change or delete only those.",
-  "calendar.kid.label": "The kid may add events to",
+  "calendar.kid.label": "The kid's events go to",
   "calendar.kid.off": "Nowhere (no +)",
   "calendar.kid.phone": "My calendar (on the phone)",
 
@@ -103,5 +103,16 @@
   "calendar.preview.paste": "Paste a title above.",
   "calendar.preview.hidden": "hidden",
   "calendar.preview.no_match": "No rule matches: the phone shows it as it is.",
-  "calendar.preview.other_first": "Rule {n} matches this title first."
+  "calendar.preview.other_first": "Rule {n} matches this title first.",
+  "calendar.error.read": "Couldn't read the calendar settings - check the server log.",
+  "calendar.error.save": "Couldn't save - nothing was changed. Check the server log.",
+  "calendar.error.no_phone": "There is no such phone.",
+  "calendar.error.kid_calendar": "Not a calendar the kid can add events to.",
+  "calendar.error.reminders": "Not a reminder choice.",
+  "calendar.error.move": "Move a rule up or down.",
+  "calendar.kid.gone": "The chosen calendar - not on the phone now",
+  "calendar.rule.action": "What happens",
+  "apps.on_home": "On Home",
+  "apps.on_home_sub": "Off: the app stays allowed and runs, but the kid doesn't see it on Home or in the app list, except during a pause - for a sync app such as ICSx5 or DAVx5.",
+  "apps.not_on_home": "not on Home"
 }

@@ -51,7 +51,7 @@
             <h2 class="group-header" id="rule-then-title">{{ self.t("calendar.rule.then") }}</h2>
             <div class="group">
                 <label class="row">
-                    <span class="row-label">{{ self.t("calendar.rule.then") }}</span>
+                    <span class="row-label">{{ self.t("calendar.rule.action") }}</span>
                     <select class="pick" name="then">
                         <option value="show"{% if form.then != "hide" %} selected{% endif %}>{{ self.t("calendar.rule.then.show") }}</option>
                         <option value="hide"{% if form.then == "hide" %} selected{% endif %}>{{ self.t("calendar.rule.then.hide") }}</option>

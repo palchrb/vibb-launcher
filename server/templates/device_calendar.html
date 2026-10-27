@@ -102,7 +102,7 @@
         <div class="group">
             {% for r in rules %}
             <div class="row calendar-rule" id="rule-{{ r.id }}">
-                <a class="row-label" href="/devices/{{ device_id }}/calendar/rules/{{ r.id }}">{{ r.text }}</a>
+                <a class="row-label" href="/devices/{{ device_id }}/calendar/rules/{{ r.id }}">{{ r.n }}. {{ r.text }}</a>
                 <form method="post" action="/devices/{{ device_id }}/calendar/rules/{{ r.id }}/move#rule-{{ r.id }}" class="calendar-rule-move">
                     {% if !r.first %}<button type="submit" class="row-action" name="dir" value="up" aria-label="{{ self.t("calendar.rules.up") }}">&uarr;</button>{% endif %}
                     {% if !r.last %}<button type="submit" class="row-action" name="dir" value="down" aria-label="{{ self.t("calendar.rules.down") }}">&darr;</button>{% endif %}
