@@ -2204,6 +2204,20 @@ feature itself - the seed is a test shortcut; the real path is ICSx5 from the ca
    the page on top (as any app); the reminder row then lands on the day view itself. A time rule beginning while Dagen
    is open, then Recents › Dagen: the time-rule screen comes back on top at once (`dumpsys activity activities | grep
    -E "DayActivity|LockActivity"`); `adb shell dumpsys activity recents | grep -c "\.day"` is 1.
+9. **A colour per calendar** (2026-10-27, branch `calendar-colours`, mockup §6 B): seed a second LOCAL calendar
+   ("Fotball", step 1) with an event on the same day as Skolen's. In the PWA's Device › Calendar every calendar but
+   the kid's own pick has a "Colour" row ("Farge") under its Reminder: before any save its select says "Pick for me"
+   and no swatch shows; change anything on the form (a reminder) - the page comes back at the same place, not the top,
+   and every shown calendar now has a swatch and its name selected, each a different colour (Skolen Sky, Fotball
+   Forest, the kid's "Min kalender" none - peach is its own); pick "Sea" for Fotball and the swatch follows. After the
+   sync Dagen's rows: an 8 dp dot in the calendar's colour in its own column before the time, the start **and** the
+   end time of every row at one left edge (a row of a calendar without a colour keeps the empty column), the kid's own
+   event's dot peach; under the list the key "● Skolen   ● Fotball   ● Min kalender" only on a day with events from
+   more than one calendar (a day with Skolen's alone has none); TalkBack reads a row on such a day with its calendar
+   last ("…, Gym, Skolen") and the key as "Kalendere: Skolen, Fotball". Lock the phone with the quiet reminder row
+   up: the disc holds a 16 dp dot in the calendar's colour instead of the calendar glyph (the glyph stays for a
+   calendar without one). Hide Fotball in the PWA, then show it again: it keeps its colour. A `color` the launcher
+   doesn't know (edit the policy by hand) is no dot, never a wrong one.
 
 **Run 2026-10-27, E5** (`docs/testing/2026-10-27-e4-e5-run.md`): steps 1-7 on `jelly36` (en-US, UTC) passed except: the
 reminder row's tap + code lands on Home, not Dagen (`DayActivity` started from the PIN lock without a new task - High),

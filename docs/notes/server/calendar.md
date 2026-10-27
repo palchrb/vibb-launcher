@@ -6,8 +6,8 @@ choices and the title rules, sends them as `PolicyResponse.calendar`, and stores
 
 ## The policy's `calendar` (`calendar::policy_calendar`, always sent)
 
-`{on_home, kid_adds, glance_next, lock_reminders, calendars: [{key, shown, remind, remind_minutes, writable_for_kid}],
-rules: [{id, calendar, field, match, pattern, action, text}]}`. A fresh phone: on Home, the kid may add events (to the
+`{on_home, kid_adds, glance_next, lock_reminders, calendars: [{key, shown, remind, remind_minutes, writable_for_kid,
+color}], rules: [{id, calendar, field, match, pattern, action, text}]}` (`color` since 2026-10-27, below). A fresh phone: on Home, the kid may add events (to the
 phone's own "Min kalender"), nothing on the lock (`glance_next` false, `lock_reminders` `"off"`), no calendars saved, no
 rules (`policy_json_keys_snapshot`). A read error fails the whole policy (500; the phone keeps its cache): a missing hide
 rule would show what the parent hid. The key is the phone's (16 hex of SHA-256 over the provider's account type, account
@@ -15,6 +15,26 @@ name and `Calendars.NAME` - the feed or collection URL, so a display name's rena
 leaves the phone. Tables (migration `0103_calendar.sql`): `device_calendars` (no row = shown, reminders off, not the
 kid's; `idx_device_calendars_kid`: at most one `writable_for_kid`), `device_calendar_rules` (`sort_order`; a description
 rule only hides - a CHECK), the four `device_policy.calendar_*` switches, `devices.calendar_report`.
+
+## A colour per calendar (2026-10-27, mockup §6 B, branch `calendar-colours`)
+
+`calendars[].color` is one of eight names (`calendar::COLORS`: `sky`, `forest`, `sun`, `berry`, `sea`, `lavender`,
+`sand`, `slate` - in the auto-pick's order; never hex: the phone's `CalendarColor` keeps the ARGB values, the PWA's
+`static/style.css` the swatches `.cal-<name>`) or `null` = no dot (`device_calendars.color`, migration 0106, numbered
+past the feeds branch's 0105 on purpose). Peach is the kid's own calendar's - the parent's pick or the phone's own "Min
+kalender" - and is never stored or offered: the pick's row has no Colour row, and choosing a calendar as the kid's
+clears its colour. Device › Calendar's "Colour" row under each calendar's Reminder (`color_<key>`, a plain autosaving
+select, back to `#calendars`) offers the eight; before the first save it says "Pick for me" (value `""`, read as
+unchanged - a select of the eight alone would post the first for every calendar at the first autosave). The auto-pick
+(`handlers::calendar::assign_free_colors`, after every save of the calendars form and of Dagen's switches): every
+shown calendar without a colour that isn't the kid's gets the first name no other shown calendar of the phone has, in
+the form's order, so two feeds ticked at once get two colours and a parent who never opens the select still sees
+distinct dots; eight in use - none; a hidden calendar keeps its colour and doesn't count. An unknown name is a 400
+(`calendar.error.color`) that writes nothing. A row with a colour is never pruned as "the defaults". The phone's own
+"Min kalender" is reported like any calendar, so the PWA can't tell it from another LOCAL one (Fossify Calendar's, say)
+and offers it a colour too; the phone draws it peach whatever the policy says (the ⓘ says so). Test:
+`tests::calendar::a_colour_is_saved_picked_and_refused`; the row's shape in
+`the_policy_carries_the_rules_and_the_calendars` and the launcher's `PolicyResponseCompatTest`.
 
 ## The report's `calendar` (`calendar::sanitize_report`, `store_report`)
 
