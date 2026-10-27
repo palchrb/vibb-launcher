@@ -1981,6 +1981,15 @@ Immich, Etar and Fossify Calendar installed and allowed. Logcat `AppEnforcer` (`
 4. **Etar**: "Etar: Alarms & reminders" approved in a pause; after it Etar's first start works with no pause. Fossify
    Calendar has no row (it declares `USE_EXACT_ALARM`). `me.vibb.music.debug`: no row, no camera switch.
 
+**Run 2026-10-27, E4** (`docs/testing/2026-10-27-e4-e5-run.md`): step 0's probe agrees for all five ops on `jelly36`
+(granted and denied; Android's own page writes the uid mode, which the reader follows; a battery-exempt Etar reads
+`granted` with Settings' switch off) - the gate passed, the Jelly Star repeat is owed. No app here declares
+`WRITE_SETTINGS`/`PACKAGE_USAGE_STATS`: a manifest-only probe APK stood in. Steps 1-4 passed except: system apps get App
+access rows on the phone, and Etar's first start outside a pause crashes on its own battery-optimization request (step
+4). Owed to a device: the live-call deferral and its wake, a throwing read as `unknown`. Settings' camera words (step 1)
+can't be reached: Settings is hidden outside a pause and the pause lifts the denial. Unticking an app under Apps
+uninstalls it - don't nudge with it.
+
 ## 6u. The music app's launch splash and the connecting line on a room (music round r13)
 
 PLAN "Music app" queue, branch `music-r13`. The debug music app with the debug feed (§6f) and the fake room (§6h).
@@ -2140,6 +2149,14 @@ feature itself - the seed is a test shortcut; the real path is ICSx5 from the ca
    has Endre and Slett; a feed's event has neither. In the PWA pick a DAVx5 calendar the kid may write to (a CalDAV test
    server, e.g. Radicale): the new event uploads with its `vibb-` UID, comes back on the next sync and can still be
    changed; "Nowhere (no +)" removes the "+".
+
+**Run 2026-10-27, E5** (`docs/testing/2026-10-27-e4-e5-run.md`): steps 1-7 on `jelly36` (en-US, UTC) passed except: the
+reminder row's tap + code lands on Home, not Dagen (`DayActivity` started from the PIN lock without a new task - High),
+the header's date line is clipped at font 1.3, and the 10 dp peek doesn't show. Every [verify] item of step 5 passed
+with ICSx5 2.4.3 from the catalog (grant its calendar access on its own start card in the pause, or it never syncs). The
+"Contains" hide of step 4 works once moved above the "Starts with" rule (first match wins). A `--bind` value with a
+colon needs `\:`. Device checks: Dagen on 2040 (the provider answers), TalkBack's action words, music + 3 rows with
+3-button navigation, the DAVx5/Radicale half.
 
 ## 7. Reporting back
 
