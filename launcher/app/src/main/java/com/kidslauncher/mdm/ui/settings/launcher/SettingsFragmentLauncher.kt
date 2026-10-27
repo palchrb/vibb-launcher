@@ -232,6 +232,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
             if (intent != null && batteryRowState(exempt, dialogAvailable = true) == BatteryRow.CAN_ASK) {
                 exemptBeforeDialog = exempt
                 try {
+                    (activity as? com.kidslauncher.mdm.ui.settings.SettingsActivity)?.ownPageOpening()
                     batteryDialogLauncher.launch(intent)
                 } catch (e: Exception) {
                     Log.w(LOG_TAG, "Couldn't open the battery dialog", e)
@@ -374,6 +375,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
     private fun openFirstPage(pages: List<Intent>, launcher: ActivityResultLauncher<Intent>): Boolean {
         for (page in pages) {
             try {
+                (activity as? com.kidslauncher.mdm.ui.settings.SettingsActivity)?.ownPageOpening()
                 launcher.launch(page)
                 return true
             } catch (e: ActivityNotFoundException) {
@@ -422,7 +424,7 @@ class SettingsFragmentLauncher : PreferenceFragmentCompat() {
                         key = row.key
                         isPersistent = false
                         title = getString(R.string.app_access_row_title, row.label, getString(com.kidslauncher.mdm.server.accessNameRes(row.kind)))
-                        summary = getString(com.kidslauncher.mdm.server.accessRowTextRes(model.text), row.label)
+                        summary = getString(com.kidslauncher.mdm.server.accessRowTextRes(model.text, row.kind), row.label)
                         setOnPreferenceClickListener {
                             appAccessPageMissing -= row.key
                             if (model.pages.isNotEmpty()) {

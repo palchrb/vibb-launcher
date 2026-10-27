@@ -26,8 +26,8 @@ import com.kidslauncher.mdm.ui.UIObjectActivity
  * so, OK disabled) - so a kid can't tamper with
  * enrollment/sync/the restrictions-pause switch below through any entry point (drawer, the
  * exported `APPLICATION_PREFERENCES` filter, an explicit intent, recents, a restore after process
- * death). A passed gate lasts until `onStop` (kept across a configuration change only): leaving
- * Settings and coming back through recents asks again. Recents screenshots are off.
+ * death). A passed gate lasts until `onStop` (kept across a configuration change, and across Android's page a row
+ * opened - [ownPageKeepsGate], at most 10 minutes): leaving Settings and coming back through recents asks again. Recents screenshots are off.
  *
  * The gate is a non-cancelable modal dialog shown on top of the normally-inflated content rather
  * than deferring content/binding setup, since [com.kidslauncher.mdm.ui.UIObject]'s `onStart()`
@@ -81,10 +81,24 @@ class SettingsActivity : UIObjectActivity() {
         )
     }
 
+    /** When a row last opened Android's page (elapsed realtime) - [ownPageKeepsGate]; one trip each. */
+    private var ownPageAt: Long? = null
+
+    /** A Settings row opens Android's page now ([ownPageKeepsGate]): the gate stays open across it. */
+    fun ownPageOpening() {
+        ownPageAt = android.os.SystemClock.elapsedRealtime()
+    }
+
     override fun onStart() {
         super.onStart()
         LauncherPreferences.getSharedPreferences()
             .registerOnSharedPreferenceChangeListener(sharedPreferencesListener)
+        // Back from Android's page a row opened: the gate holds only within its window, and only once.
+        if (ownPageAt != null && !ownPageKeepsGate(ownPageAt, android.os.SystemClock.elapsedRealtime(), atStop = false)) {
+            session++
+            gatePassed = false
+        }
+        ownPageAt = null
         enforceGate()
     }
 
@@ -130,7 +144,9 @@ class SettingsActivity : UIObjectActivity() {
     override fun onStop() {
         // Leaving Settings (Home, recents, another activity, screen off) ends the session: the
         // next onStart asks for the PIN again. A configuration change keeps it (see onCreate).
-        if (!isChangingConfigurations) {
+        val ownPage = ownPageKeepsGate(ownPageAt, android.os.SystemClock.elapsedRealtime(), atStop = true)
+        if (!ownPage) ownPageAt = null
+        if (!isChangingConfigurations && !ownPage) {
             session++
             gatePassed = false
             pinDialog?.dismiss()

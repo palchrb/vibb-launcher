@@ -83,11 +83,13 @@ fun appAccessReport(camera: String?, states: List<Pair<SpecialAccess, AccessStat
 // ---- the PIN-gated Settings' "App access" rows (§4.2) ---------------------------------------------------------------
 
 /**
- * Whether an app gets "App access" rows: an allowed app - in the effective allowlist ([allowed]: relock blocks out), every
- * third-party app while apps are unmanaged (`null`) -, not ours, and not suspended by the last plan ([suspended]).
+ * Whether an app gets "App access" rows - the report's rule too ([AppAccessReader.report]): a third-party app only (a system
+ * app's privileged grants say nothing a parent can change - E4's M3: Camera, Clock, Messages and Phone each read "Approved -
+ * pause first"), allowed - in the effective allowlist ([allowed]: relock blocks out), any while apps are unmanaged (`null`) -,
+ * not ours, and not suspended by the last plan ([suspended]).
  */
 fun accessEligible(packageName: String, system: Boolean, allowed: Collection<String>?, suspended: Set<String>, ownPackage: String): Boolean =
-    packageName != ownPackage && packageName !in suspended && (if (allowed == null) !system else packageName in allowed)
+    !system && packageName != ownPackage && packageName !in suspended && (allowed == null || packageName in allowed)
 
 /** One row: an app and one access it declares, in any state (so the parent can take an approval back). */
 data class AccessRow(val packageName: String, val label: String, val kind: SpecialAccess, val state: AccessState) {
@@ -128,11 +130,17 @@ fun accessRowText(state: AccessState, access: SystemPageAccess): AccessRowText =
     else -> AccessRowText.NO_PAGE
 }
 
-/** The summary's string (pinned by test). [AccessRowText.OPEN] takes the app's name. */
-fun accessRowTextRes(text: AccessRowText): Int = when (text) {
+/** The summary's string (pinned by test). [AccessRowText.OPEN] takes the app's name. For `exact_alarm` it also says to
+ * open the app once in the pause: Etar asks for the battery exemption at its first start, which can't resolve with
+ * Android's Settings hidden, and crashes (E4's M2). */
+fun accessRowTextRes(text: AccessRowText, kind: SpecialAccess): Int = when (text) {
     AccessRowText.APPROVED -> com.kidslauncher.mdm.R.string.app_access_approved
     AccessRowText.APPROVED_PAUSE_FIRST -> com.kidslauncher.mdm.R.string.app_access_approved_pause_first
-    AccessRowText.OPEN -> com.kidslauncher.mdm.R.string.app_access_open
+    AccessRowText.OPEN -> if (kind == SpecialAccess.EXACT_ALARM) {
+        com.kidslauncher.mdm.R.string.app_access_open_exact_alarm
+    } else {
+        com.kidslauncher.mdm.R.string.app_access_open
+    }
     AccessRowText.UNKNOWN_OPEN -> com.kidslauncher.mdm.R.string.app_access_unknown
     AccessRowText.PAUSE_FIRST -> com.kidslauncher.mdm.R.string.settings_mdm_write_settings_pause_first
     AccessRowText.WAIT -> com.kidslauncher.mdm.R.string.app_access_wait

@@ -389,7 +389,8 @@ Moved verbatim from server/CLAUDE.md on 2026-10-19; the core file's 'Where the r
   `access.camera`** (third-party apps that ask for the camera; a preinstalled camera or Google app has none), with its
   help ("Off: <app> can't use the camera - a video call or a QR scan stops working. Turning it off closes <app> if it was
   allowed the camera."), and one line per declared access with the way to approve it while it isn't ("On the phone:
-  Settings (parent code) › Pause all restrictions › App access › <app>: <access>"). A stored row for an app that no
+  Settings (parent code) › Pause all restrictions › App access › <app>: <access>"; Alarms & reminders add ", then open
+  <app> once while restrictions are paused" - Etar's first start outside a pause crashes, E4's M2). A stored row for an app that no
   longer asks is inert (no switch, no word). While the phone has reported its apps without `app_permissions_v1`, one
   `row-note` "Update Vibb One to manage apps' permissions" sits above the Allowed list.
 - **Every word is in one table**, `app_permissions::words` (the refusals too, through `devices::toggle_refusal`'s

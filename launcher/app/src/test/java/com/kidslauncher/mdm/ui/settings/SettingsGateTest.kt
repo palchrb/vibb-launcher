@@ -30,4 +30,18 @@ class SettingsGateTest {
     fun `locked out stays shut`() {
         assertEquals(SettingsAccess.REFUSE_LOCKED_OUT, settingsAccess(policyEverApplied = true, pinConfigured = true, lockedOut = true))
     }
+
+    /** E4's L3: the gate holds across Android's page a row opened - only for the stop that page causes, and back within
+     * 10 minutes; any other stop, no open, or later asks again. */
+    @Test
+    fun `the gate stays open across our own page, within its windows only`() {
+        val opened = 100_000L
+        assertEquals(true, ownPageKeepsGate(opened, opened + 500, atStop = true))
+        assertEquals(false, ownPageKeepsGate(opened, opened + OWN_PAGE_STOP_WINDOW_MS + 1, atStop = true))
+        assertEquals(true, ownPageKeepsGate(opened, opened + OWN_PAGE_GATE_MS, atStop = false))
+        assertEquals(false, ownPageKeepsGate(opened, opened + OWN_PAGE_GATE_MS + 1, atStop = false))
+        assertEquals(false, ownPageKeepsGate(null, opened, atStop = true))
+        assertEquals(false, ownPageKeepsGate(null, opened, atStop = false))
+        assertEquals(false, ownPageKeepsGate(opened, opened - 1, atStop = false))
+    }
 }

@@ -258,6 +258,7 @@
     <string name="app_access_approved">Approved - tap to change</string>
     <string name="app_access_approved_pause_first">Approved - pause first to change it</string>
     <string name="app_access_open">Not approved - tap, turn on %1$s\'s switch, then come back</string>
+    <string name="app_access_open_exact_alarm">Not approved - tap, turn on %1$s\'s switch, come back, then open %1$s once while restrictions are paused</string>
     <string name="app_access_unknown">Can\'t be read here - tap to open the page</string>
     <string name="app_access_wait">Not approved - the pause is starting, a moment…</string>
     <string name="app_access_no_page">Not approved - Android has no page for this on this phone</string>
