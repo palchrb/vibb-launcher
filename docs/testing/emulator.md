@@ -1962,23 +1962,30 @@ Immich, Etar and Fossify Calendar installed and allowed. Logcat `AppEnforcer` (`
    `usage_access` with test apps): `adb shell cmd appops get <package> <OP>` against the report's `installed_apps[].access`
    (the PWA's line, or `device_status.installed_apps_json`) for `MANAGE_MEDIA` (Immich), `SCHEDULE_EXACT_ALARM` (Etar,
    Signal; and Etar again after it is battery-exempt), `WRITE_SETTINGS`, `GET_USAGE_STATS`, `USE_FULL_SCREEN_INTENT`
-   (Element X). An op whose reading disagrees ships as `unknown`. Repeat on the Jelly Star. No launcher RC with B1
-   until this passes. ("Fullskjermvarsler" is Settings' own nb word, checked in the code QA.)
+   (Element X). An op whose reading disagrees ships as `unknown`. No launcher RC with B1 until this passes (passed on
+   `jelly36` on 2026-10-27; **the Jelly Star repeat is still owed**). ("Fullskjermvarsler" is Settings' own nb word,
+   checked in the code QA.)
    **Glue only the device shows** (the code QA's L5; the pure halves are unit-tested): `AppAccessReader.states`
    feeding `readAccess` (a throwing read must show `unknown`, never `denied`), `BootHome.callMayHaveEnded`'s wake
    (`deferredCameraApplyDue` + `WindowRelock.liveCall`, step 2), and the hidden-target skip in `cameraPass` (no
-   "Platform refused ... CAMERA" line per apply for a hidden camera-off app, step 2).
+   "Platform refused ... CAMERA" line per apply for a hidden camera-off app, step 2). **Still owed to a device**: a
+   failed read showing `unknown`, and a camera change waiting for a live call's end with its wake.
 1. **Camera off** for Element X in the PWA: `dumpsys package io.element.android.x` shows `CAMERA: granted=false` with
-   `POLICY_FIXED`; Settings' camera switch for it is locked by the admin (note the words). Back on: the flag is gone,
-   the app asks again.
+   `POLICY_FIXED` (done 2026-10-27). Back on: the flag is gone, the app asks again. Settings' own camera switch can't be
+   seen: Android's Settings is hidden outside a pause, and the pause lifts the denial - `dumpsys` is the check.
 2. **During an Element X call**: off while it holds the camera waits for the call's end; off for an app that doesn't
    hold it is written at once. A camera-off app hidden and allowed again: denied by the apply that unhides it. A
-   preinstalled camera app, or any system app: no `access` at all (no switch, no line). In a pause the PWA says
+   preinstalled camera app, or any system app: no `access` at all (no switch, no line) and no App access row on the
+   phone (E4's M3). In a pause the PWA says
    "Camera off · back on while restrictions are paused".
 3. **Immich**: the PWA says "Media management: not approved"; Settings › App access's row says to pause first; in the
    pause it opens Android's page for `app.alextran.immich`; turned on and back, the row reads "Approved - tap to change"
-   and the next report `granted`. The pause ending with that page open: Home comes to the front, the row stays.
-4. **Etar**: "Etar: Alarms & reminders" approved in a pause; after it Etar's first start works with no pause. Fossify
+   and the next report `granted`, **without the parent code asked again** on the way back (the gate holds across a page
+   a row opened, at most 10 minutes; E4's L3 - Home or Recents from there asks again). The pause ending with that page
+   open: Home comes to the front, the row stays.
+4. **Etar**: "Etar: Alarms & reminders" approved in a pause, and **Etar's first start in the same pause** (it asks for
+   the battery exemption at its first start, which can't open outside a pause - its own crash, E4's M2; the row's and
+   the PWA's words say so); after it Etar works with no pause. Fossify
    Calendar has no row (it declares `USE_EXACT_ALARM`). `me.vibb.music.debug`: no row, no camera switch.
 
 **Run 2026-10-27, E4** (`docs/testing/2026-10-27-e4-e5-run.md`): step 0's probe agrees for all five ops on `jelly36`

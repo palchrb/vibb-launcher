@@ -894,13 +894,17 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
 - **"App access" in the PIN-gated Settings** (§4.2, `SettingsFragmentLauncher.updateAccessRows`): the
   `PreferenceCategory` `settings_mdm_app_access` ("App access" / "Tilgang for apper"), last in `preferences.xml` (after
   "Pause all restrictions", so no other row falls under its header; hidden while empty), filled in code off the main
-  thread: one row per allowed app (`accessEligible`: the effective allowlist, every third-party app while unmanaged;
-  not ours, not in `AppEnforcer.lastPlanSuspend`) and per declared access **in any state** (`accessRows`), titled
+  thread: one row per allowed third-party app (`accessEligible`, the report's rule: never a system app - E4's M3; the
+  effective allowlist, every one while unmanaged; not ours, not in `AppEnforcer.lastPlanSuspend`) and per declared
+  access **in any state** (`accessRows`), titled
   "<app>: <access>". A tap opens Android's page for that app (`accessPageActions`: the `package:` page, then the plain
   action, each through `systemPageIntent` - so only in the pause or the override); the summary is `accessRowText` of
   the state and `systemPageAccess` ("Approved - tap to change" / "Approved - pause first to change it", "Not approved -
-  tap, turn on <app>'s switch, then come back", "Can't be read here - tap to open the page", pause first, a moment, no
-  page). Read again on resume, after each apply (`addAppliedListener`) and on return, where a changed state requests a
+  tap, turn on <app>'s switch, then come back" - for `exact_alarm` "..., come back, then open <app> once while
+  restrictions are paused" (Etar's first start outside a pause crashes on its own battery-exemption request, E4's M2) -,
+  "Can't be read here - tap to open the page", pause first, a moment, no page). The Settings gate stays open across
+  Android's page a row opened (`SettingsActivity.ownPageOpening`, pure `ownPageKeepsGate`: the stop within 3 s of the
+  open, back within 10 minutes, once; E4's L3); any other leave asks again. Read again on resume, after each apply (`addAppliedListener`) and on return, where a changed state requests a
   sync (`app_access`). Display over other apps and battery "Unrestricted" get no row (§2.2). `KidScreensEscapeTest`
   stays green: the intents live in `server/`, behind the gate.
 - Not device-tested: `docs/testing/emulator.md` §6v (the probe, Element X's camera, Immich, Etar) and the Jelly Star run.

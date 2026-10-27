@@ -28,6 +28,23 @@ enum class SettingsAccess {
  * the server it stays shut, instead of upstream's "open to anyone" (the server URL could be
  * re-pointed and the pause switch reached).
  */
+/** A stop this soon after a row opened Android's page is that page coming up over Settings. */
+const val OWN_PAGE_STOP_WINDOW_MS = 3_000L
+
+/** How long a passed gate outlives a trip to Android's page that a row opened (E4's L3). */
+const val OWN_PAGE_GATE_MS = 10 * 60_000L
+
+/**
+ * E4's L3: a passed gate stays open across Android's page a Settings row opened (`systemPageIntent`, reached only through
+ * the gate) - at the stop ([atStop]) only when the stop comes within [OWN_PAGE_STOP_WINDOW_MS] of that open, and back at
+ * the next start only within [OWN_PAGE_GATE_MS] of it. Any other stop (Home, Recents, the screen off) and anything later
+ * asks for the code again. [openedAtElapsed]: the row's open (elapsed realtime), `null` for none.
+ */
+fun ownPageKeepsGate(openedAtElapsed: Long?, nowElapsed: Long, atStop: Boolean): Boolean {
+    val since = nowElapsed - (openedAtElapsed ?: return false)
+    return since >= 0 && since <= if (atStop) OWN_PAGE_STOP_WINDOW_MS else OWN_PAGE_GATE_MS
+}
+
 fun settingsAccess(policyEverApplied: Boolean, pinConfigured: Boolean, lockedOut: Boolean): SettingsAccess =
     when {
         !policyEverApplied -> SettingsAccess.OPEN

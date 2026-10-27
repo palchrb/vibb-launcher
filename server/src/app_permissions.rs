@@ -58,9 +58,16 @@ pub mod words {
         )
     }
 
-    pub fn how_to_approve(app: &str, access: &str) -> String {
+    /// The way to approve `access` (its wire `key`, its `name`) on the phone. Alarms & reminders add the app's first start
+    /// in the pause: Etar asks for the battery exemption then, which can't open outside it, and crashes (E4's M2).
+    pub fn how_to_approve(app: &str, key: &str, access: &str) -> String {
+        let then = if key == "exact_alarm" {
+            format!(", then open {app} once while restrictions are paused")
+        } else {
+            String::new()
+        };
         format!(
-            "On the phone: Settings (parent code) › Pause all restrictions › App access › {app}: {access}"
+            "On the phone: Settings (parent code) › Pause all restrictions › App access › {app}: {access}{then}"
         )
     }
 }
@@ -248,7 +255,7 @@ impl PermsView {
             _ => {}
         }
         let mut accesses = Vec::new();
-        for (_, name, state) in access.special() {
+        for (key, name, state) in access.special() {
             let text = format!("{name}: {}", words::state(state));
             let approved = state == "granted";
             if !approved {
@@ -256,7 +263,7 @@ impl PermsView {
             }
             accesses.push((
                 text,
-                (!approved).then(|| words::how_to_approve(label, name)),
+                (!approved).then(|| words::how_to_approve(label, key, name)),
             ));
         }
         let anchor = format!("perms-{package}");
@@ -348,5 +355,27 @@ mod tests {
         assert!(view.camera.is_none());
         assert_eq!(view.line, "");
         assert!(PermsView::of(1, "app.x", "X", None, true, false, false).is_none());
+        // E4's M2: an alarm access's way says to open the app once in the pause.
+        let alarm = AppAccess::of(&json!({"exact_alarm": "denied"}));
+        let view = PermsView::of(
+            1,
+            "ws.xsoh.etar",
+            "Etar",
+            alarm.as_ref(),
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(
+            view.accesses[0]
+                .1
+                .as_deref()
+                .is_some_and(|how| how.ends_with(
+                    "Etar: Alarms & reminders, then open Etar once while restrictions are paused"
+                )),
+            "{:?}",
+            view.accesses
+        );
     }
 }

@@ -67,9 +67,10 @@ class AppAccessTest {
 
     @Test
     fun `the rows - allowed apps only, every state kept, by name`() {
-        // Managed: the effective allowlist, a system app too; never ours, never one the plan suspends.
+        // Managed: the effective allowlist; never ours, never one the plan suspends.
         assertEquals(true, accessEligible("app.alextran.immich", false, listOf("app.alextran.immich"), emptySet(), "me.vibb.launcher"))
-        assertEquals(true, accessEligible("com.android.deskclock", true, listOf("com.android.deskclock"), emptySet(), "me.vibb.launcher"))
+        // A system app never, even allowed (E4's M3; the report's rule).
+        assertEquals(false, accessEligible("com.android.deskclock", true, listOf("com.android.deskclock"), emptySet(), "me.vibb.launcher"))
         assertEquals(false, accessEligible("org.other", false, listOf("app.alextran.immich"), emptySet(), "me.vibb.launcher"))
         assertEquals(false, accessEligible("app.alextran.immich", false, listOf("app.alextran.immich"), setOf("app.alextran.immich"), "me.vibb.launcher"))
         assertEquals(false, accessEligible("me.vibb.launcher", false, null, emptySet(), "me.vibb.launcher"))
@@ -122,10 +123,13 @@ class AppAccessTest {
         assertEquals(AccessRowText.PAUSE_FIRST, accessRowText(AccessState.UNKNOWN, SystemPageAccess.PAUSE_FIRST))
         assertEquals(AccessRowText.WAIT, accessRowText(AccessState.DENIED, SystemPageAccess.WAIT))
         assertEquals(AccessRowText.NO_PAGE, accessRowText(AccessState.DENIED, SystemPageAccess.NO_PAGE))
-        assertEquals(com.kidslauncher.mdm.R.string.app_access_open, accessRowTextRes(AccessRowText.OPEN))
-        assertEquals(com.kidslauncher.mdm.R.string.app_access_approved, accessRowTextRes(AccessRowText.APPROVED))
-        assertEquals(com.kidslauncher.mdm.R.string.settings_mdm_write_settings_pause_first, accessRowTextRes(AccessRowText.PAUSE_FIRST))
-        assertEquals(AccessRowText.entries.size, AccessRowText.entries.map(::accessRowTextRes).toSet().size)
+        val media = SpecialAccess.MANAGE_MEDIA
+        assertEquals(com.kidslauncher.mdm.R.string.app_access_open, accessRowTextRes(AccessRowText.OPEN, media))
+        // E4's M2: Etar's first start outside a pause crashes - the alarm row says to open the app once in the pause.
+        assertEquals(com.kidslauncher.mdm.R.string.app_access_open_exact_alarm, accessRowTextRes(AccessRowText.OPEN, SpecialAccess.EXACT_ALARM))
+        assertEquals(com.kidslauncher.mdm.R.string.app_access_approved, accessRowTextRes(AccessRowText.APPROVED, media))
+        assertEquals(com.kidslauncher.mdm.R.string.settings_mdm_write_settings_pause_first, accessRowTextRes(AccessRowText.PAUSE_FIRST, media))
+        assertEquals(AccessRowText.entries.size, AccessRowText.entries.map { accessRowTextRes(it, media) }.toSet().size)
         assertEquals(SpecialAccess.entries.size, SpecialAccess.entries.map(::accessNameRes).toSet().size)
         assertEquals(com.kidslauncher.mdm.R.string.settings_mdm_write_settings, accessNameRes(SpecialAccess.WRITE_SETTINGS))
     }

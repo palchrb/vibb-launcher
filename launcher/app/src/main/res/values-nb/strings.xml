@@ -213,6 +213,7 @@
     <string name="app_access_approved">Godkjent - trykk for å endre</string>
     <string name="app_access_approved_pause_first">Godkjent - sett begrensningene på pause først for å endre</string>
     <string name="app_access_open">Ikke godkjent - trykk, slå på bryteren for %1$s, og kom tilbake</string>
+    <string name="app_access_open_exact_alarm">Ikke godkjent - trykk, slå på bryteren for %1$s, kom tilbake, og åpne %1$s én gang mens begrensningene er på pause</string>
     <string name="app_access_unknown">Kan ikke leses her - trykk for å åpne siden</string>
     <string name="app_access_wait">Ikke godkjent - pausen starter, et øyeblikk …</string>
     <string name="app_access_no_page">Ikke godkjent - Android har ingen side for dette på denne telefonen</string>
