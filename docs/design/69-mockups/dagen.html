@@ -504,8 +504,11 @@ på mørk grunn, og raden sier fortsatt kalenderens navn når man åpner den.</p
   .dagen .ev.c-sport  { --cal: #7FC28F; }
   .dagen .ev.c-own    { --cal: var(--accent); }
   .dagen .vA .ev { border-left: 4px solid var(--cal); padding-left: 11px; }
-  .dagen .vB .ev .tm::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-                                background: var(--cal); margin-right: 6px; vertical-align: 1px; }
+  /* B, the user's pick (2026-10-27): the dot in its own 14 dp column, so the start and the end time share one left
+     edge ("fra og til klokkeslettet bør stå med lik tab ut fra siden") */
+  .dagen .vB .ev { padding-left: 28px; }
+  .dagen .vB .ev::before { content: ''; position: absolute; left: 12px; top: 18px; width: 8px; height: 8px;
+                           border-radius: 50%; background: var(--cal); }
   .dagen .vB .ev .tm { color: var(--core); }
   .dagen .vC .ev .tm { color: var(--cal); }
   .dagen .vC .ev .tm small { color: var(--core-dim); }
@@ -561,8 +564,9 @@ på mørk grunn, og raden sier fortsatt kalenderens navn når man åpner den.</p
       <div class="peek l"></div><div class="peek r"></div>
       <div class="handle"></div>
     </div>
-    <figcaption><b>B. Prikk foran klokkeslettet</b>, og en liten forklaring nederst på siden med kalendernavnene. Roligst. Prikken tar
-    8 dp av tidskolonnen, så 12-timers tider («12:30 PM») må få kolonnen utvidet, som i dag.</figcaption>
+    <figcaption><b>B. Prikk foran klokkeslettet</b>, og en liten forklaring nederst på siden med kalendernavnene. Roligst.
+    <b>Valgt av forelderen 2026-10-27</b>, med én endring: prikken står i sin egen smale kolonne, så fra- og til-klokkeslettet
+    har samme venstrekant (første utkast lot prikken dytte bare fra-tiden). Tidskolonnen utvides for 12-timers tider som i dag.</figcaption>
   </figure>
 
   <figure>
