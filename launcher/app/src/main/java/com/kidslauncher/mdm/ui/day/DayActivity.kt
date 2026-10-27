@@ -112,6 +112,8 @@ class DayActivity : UIObjectActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // A later reader of `intent` sees the newest start's day, not the first's (qa-day-task-code Q-5).
+        setIntent(intent)
         val day = intent.getLongExtra(EXTRA_DAY, Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE } ?: return
         binding.dayPager.setCurrentItem(positionOf(anchor, LocalDate.ofEpochDay(day)), false)
     }
@@ -228,7 +230,9 @@ class DayActivity : UIObjectActivity() {
          * its own (`FLAG_ACTIVITY_NEW_TASK` with the manifest's `.day` affinity, 2026-10-27), as the missed calls'
          * intent - started from `PinLockActivity`'s task it would be destroyed with the lock (E5's H1). Without a
          * [day] a task already there comes back as it was (an event page on top stays, as any app's task); with one
-         * (the reminder's) `FLAG_ACTIVITY_CLEAR_TOP` lands on the day view itself (singleTop: `onNewIntent`).
+         * (the reminder's) `FLAG_ACTIVITY_CLEAR_TOP` lands on the day view itself (singleTop: `onNewIntent`) - an
+         * open "Ny avtale" above it is discarded unsaved, accepted (qa-day-task-code Q-3: before the own task the form
+         * died at every screen-off anyway).
          */
         fun intent(context: Context, day: LocalDate? = null): Intent =
             Intent(context, DayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).apply {

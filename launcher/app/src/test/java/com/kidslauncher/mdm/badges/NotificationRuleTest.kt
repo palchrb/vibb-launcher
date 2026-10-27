@@ -210,11 +210,41 @@ class NotificationRuleTest {
         assertFalse("the app re-posted after our cancel", platformKeptAfterCancel(activePostTime = 900L, cancelledPostTime = 500L))
         val checks = PostCancelChecks()
         assertEquals(POST_CANCEL_CHECKS_MAX, (0 until 20).count { checks.take() })
-        checks.done()
+        assertEquals("not the burst's last", 0, checks.done())
         assertTrue(checks.take())
         assertFalse(checks.take())
         checks.clear()
         assertTrue(checks.take())
+        // The skips are said once, when the burst's last check is done (qa-nf-keep-log-code Q-6).
+        val one = PostCancelChecks(max = 1)
+        assertTrue(one.take())
+        assertFalse(one.take())
+        assertFalse(one.take())
+        assertEquals(2, one.done())
+        assertEquals(0, one.done())
+    }
+
+    private fun source(name: String) = listOf("src/main/java/com/kidslauncher/mdm/badges/$name", "app/src/main/java/com/kidslauncher/mdm/badges/$name")
+        .map { java.io.File(it) }.first { it.exists() }.readText()
+
+    /** qa-nf-keep-log-code Q-3: the glue that makes the diagnostic exist (K9-K11), by source. */
+    @Test
+    fun `the listener logs every keep, checks after every cancel, and the runtime drops the checks at detach`() {
+        val service = source("BadgeListenerService.kt")
+        val applyRule = service.substringAfter("private fun applyRule(").substringBefore("\n    }\n")
+        assertTrue(applyRule.contains("is NagVerdict.Keep -> {\n                NotificationRuleRuntime.kept(facts, verdict.reason, policy)\n                return"))
+        assertTrue(applyRule.contains("?: run { NotificationRuleRuntime.keptActiveUnreadable(facts); return })"))
+        assertTrue(applyRule.contains("NotificationRuleRuntime.keptGroupChild(facts)"))
+        assertTrue(applyRule.contains("NotificationRuleRuntime.keptFactsFailed(sbn.packageName, channel, e.javaClass.simpleName)"))
+        assertTrue(Regex("""cancelNotification\(sbn\.key\)\s*(//[^\n]*\n\s*)*NotificationRuleRuntime\.checkAfterCancel\(this, sbn\.key, sbn\.postTime, facts\)""").containsMatchIn(applyRule))
+        assertTrue("the one refusal line under the filter's tag (Q-4)", applyRule.contains("NotificationRuleRuntime.removeFailed(facts, e)") && !service.contains("Log.w(\"BadgeListener\", \"Couldn't remove"))
+        val runtime = source("NotificationRuleRuntime.kt")
+        val detach = runtime.substringAfter("fun detach(").substringBefore("\n    }\n")
+        assertTrue(detach.contains("main.removeCallbacksAndMessages(postCancelToken)") && detach.contains("postCancelChecks.clear()"))
+        assertTrue(runtime.contains("}, postCancelToken, POST_CANCEL_CHECK_MS)"))
+        // Q-2: the resolved essentials by name when the set changes.
+        assertTrue(runtime.contains("val essentialChanged = next.essential != policy?.essential"))
+        assertTrue(runtime.contains("if (essentialChanged) \": \${next.essential.sorted().joinToString(\", \")}\" else \"\""))
     }
 
     @Test

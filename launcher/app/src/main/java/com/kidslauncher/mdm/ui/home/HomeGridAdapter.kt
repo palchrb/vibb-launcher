@@ -259,14 +259,16 @@ class GridGapDecoration(private val columnGapPx: Int, private val rowGapPx: Int,
 }
 
 /**
- * Home's fold ([gridFoldPaddingPx]): after each layout pass at the grid's top, the rows as laid out - the icons'
- * middle, the labels' first line, the row's bottom - decide the bottom padding and whether the grid clips there.
- * A scrolled grid keeps what it has; the height the rule reads is the view's own, which the padding never changes.
+ * Home's fold ([gridFoldPaddingPx]): with the grid at its top, the rows as laid out - the icons' middle, the labels'
+ * first line, the row's bottom - decide the bottom padding and whether the grid clips there. A scrolled grid keeps
+ * what it has (Home runs this again when a scroll arrives at the top); the height the rule reads is the view's own,
+ * which the padding never changes. Returns whether the padding or the clip changed (a `requestLayout` - Home calls
+ * this at pre-draw, never inside a layout pass, qa-home-fold-code Q-1).
  */
-fun foldGrid(grid: RecyclerView) {
-    val span = (grid.layoutManager as? GridLayoutManager)?.spanCount ?: return
-    val count = grid.adapter?.itemCount ?: return
-    if (grid.canScrollVertically(-1)) return
+fun foldGrid(grid: RecyclerView): Boolean {
+    val span = (grid.layoutManager as? GridLayoutManager)?.spanCount ?: return false
+    val count = grid.adapter?.itemCount ?: return false
+    if (grid.canScrollVertically(-1)) return false
     val rows = sortedMapOf<Int, GridRow>()
     for (i in 0 until grid.childCount) {
         val tile = grid.getChildAt(i)
@@ -283,7 +285,7 @@ fun foldGrid(grid: RecyclerView) {
             GridRow(a.iconMidPx, maxOf(a.labelLinePx, b.labelLinePx), maxOf(a.bottomPx, b.bottomPx))
         }
     }
-    if (rows.isEmpty() || rows.firstKey() != 0) return
+    if (rows.isEmpty() || rows.firstKey() != 0) return false
     val context = grid.context
     val padding = KidAvatars.dp(context, GRID_BOTTOM_PADDING_DP)
     val fold = gridFoldPaddingPx(
@@ -291,8 +293,8 @@ fun foldGrid(grid: RecyclerView) {
         KidAvatars.dp(context, FADE_BOTTOM_DP), padding,
     )
     val bottom = if (fold > 0) fold else padding
-    if (grid.clipToPadding != fold > 0 || grid.paddingBottom != bottom) {
-        grid.clipToPadding = fold > 0
-        grid.setPadding(grid.paddingLeft, grid.paddingTop, grid.paddingRight, bottom)
-    }
+    if (grid.clipToPadding == fold > 0 && grid.paddingBottom == bottom) return false
+    grid.clipToPadding = fold > 0
+    grid.setPadding(grid.paddingLeft, grid.paddingTop, grid.paddingRight, bottom)
+    return true
 }

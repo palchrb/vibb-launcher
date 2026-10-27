@@ -44,6 +44,15 @@ class DayTaskTest {
         val day = file("java/com/kidslauncher/mdm/ui/day/DayActivity.kt").readText()
         assertTrue(!day.contains("fun glanceIntent"))
         assertTrue(day.contains(".setLabel(getString(R.string.day_title))"))
+        // qa-day-task-code Q-1: the guard's own rule, and CLEAR_TOP only with a day.
+        val guard = day.substringAfter("internal fun redirectIfLocked(").substringBefore("\n        }\n")
+        assertTrue(guard.contains("if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false"))
+        assertTrue(guard.substringAfter("return false").contains("LockActivity.start(activity)"))
+        val intent = day.substringAfter("fun intent(context: Context, day: LocalDate? = null): Intent =").substringBefore("\n            }\n")
+        assertTrue(intent.contains("Intent(context, DayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
+        assertTrue(intent.substringAfter("if (day != null) {").contains("addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)"))
+        assertTrue(!intent.substringBefore("if (day != null) {").contains("CLEAR_TOP"))
+        assertTrue(day.substringAfter("override fun onNewIntent(").contains("setIntent(intent)"))
         for (name in listOf("DayActivity", "EventActivity", "EventEditActivity")) {
             val code = file("java/com/kidslauncher/mdm/ui/day/$name.kt").readText()
             val onResume = code.substringAfter("override fun onResume()").substringBefore("\n    }\n")

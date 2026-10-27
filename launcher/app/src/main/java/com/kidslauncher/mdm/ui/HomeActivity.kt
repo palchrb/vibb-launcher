@@ -19,6 +19,7 @@ import android.view.GestureDetector
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewTreeObserver
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -234,6 +235,30 @@ class HomeActivity : UIObjectActivity() {
     /** Once a second while the card shows (the live mm:ss); [renderCallCard] re-arms it. */
     private val callTicker = Runnable { renderCallCard() }
 
+    /** A fold is waiting for the next pre-draw (one per frame, whatever asked for it). */
+    private var foldPending = false
+
+    /**
+     * Runs [foldGrid] at the grid's next pre-draw, not where it was asked for: the fold's padding write is a
+     * `requestLayout`, which inside a layout pass logs "requestLayout() improperly called ... during layout" and runs
+     * a second pass (qa-home-fold-code Q-1). At pre-draw the rows are laid out and nothing is drawn yet; when the fold
+     * moved, the listener cancels this frame's draw (`false`), so the rescheduled traversal lays the clipped grid out
+     * before anything shows - no frame with the old fold.
+     */
+    private fun foldBeforeDraw() {
+        if (foldPending) return
+        val grid = binding.homeGrid
+        val observer = grid.viewTreeObserver.takeIf { it.isAlive } ?: return
+        foldPending = true
+        observer.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                grid.viewTreeObserver.takeIf { it.isAlive }?.removeOnPreDrawListener(this)
+                foldPending = false
+                return !foldGrid(grid)
+            }
+        })
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Design 32 (QA M3): Home lies under the PIN lock after a lock-up while dark - its snapshot,
@@ -330,8 +355,15 @@ class HomeActivity : UIObjectActivity() {
                 KidAvatars.dp(this, GRID_ROW_GAP_DP.toFloat()),
             ) { gridLayout.spanCount }
         )
-        // PLAN "Home's fold at four rows": the grid's edge never lands between an icon and its label.
-        binding.homeGrid.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> foldGrid(binding.homeGrid) }
+        // PLAN "Home's fold at four rows": the grid's edge never lands between an icon and its label - decided
+        // after each layout change and each scroll that arrives at the top (a content change while scrolled,
+        // qa-home-fold-code Q-2), written before the draw, never inside the layout pass (Q-1).
+        binding.homeGrid.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> foldBeforeDraw() }
+        binding.homeGrid.addOnScrollListener(object : androidx.recyclerview.widget.RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: androidx.recyclerview.widget.RecyclerView, dx: Int, dy: Int) {
+                if (!recyclerView.canScrollVertically(-1)) foldBeforeDraw()
+            }
+        })
         musicCard = com.kidslauncher.mdm.music.MusicHomeCard(this, binding.homeMusicCard)
         // Design 24b §1.3: "Lock again" ends a parent-PIN window - no PIN, it only takes access away.
         binding.homeWindowLockAgain.setOnClickListener {

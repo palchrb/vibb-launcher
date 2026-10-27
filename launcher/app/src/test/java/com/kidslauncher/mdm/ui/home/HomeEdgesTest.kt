@@ -313,12 +313,21 @@ class HomeEdgesTest {
         val grid = byId(xml("res/layout/activity_home.xml"), "home_grid")
         assertEquals("${GRID_BOTTOM_PADDING_DP.toInt()}dp", grid.attr("paddingBottom"))
         val home = file("java/com/kidslauncher/mdm/ui/HomeActivity.kt").readText()
-        assertTrue(home.contains("binding.homeGrid.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> foldGrid(binding.homeGrid) }"))
+        // qa-home-fold-code Q-1/Q-2: asked for after each layout change and each scroll arriving at the top, run at
+        // the grid's next pre-draw (never inside the layout pass), the frame's draw cancelled when the fold moved.
+        assertTrue(home.contains("binding.homeGrid.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> foldBeforeDraw() }"))
+        assertTrue(home.contains("if (!recyclerView.canScrollVertically(-1)) foldBeforeDraw()"))
+        val before = home.substringAfter("private fun foldBeforeDraw()").substringBefore("\n    }\n")
+        assertTrue(before.contains("observer.addOnPreDrawListener(") && before.contains("return !foldGrid(grid)"))
+        assertEquals(1, Regex("""\bfoldGrid\(""").findAll(home).count())
         val glue = file("java/com/kidslauncher/mdm/ui/home/HomeGridAdapter.kt").readText().substringAfter("fun foldGrid(")
         // Only at the grid's top, from the view's own height, and the clip only with a fold to move.
-        assertTrue(glue.contains("if (grid.canScrollVertically(-1)) return"))
+        assertTrue(glue.contains("if (grid.canScrollVertically(-1)) return false"))
         assertTrue(glue.contains("rows.lastKey() == (count - 1) / span, grid.height,"))
         assertTrue(glue.contains("grid.clipToPadding = fold > 0"))
+        // F8 (qa-home-fold-code Q-3): no fold keeps the layout's own padding, never 0.
+        assertTrue(glue.contains("val bottom = if (fold > 0) fold else padding"))
+        assertTrue(glue.contains("if (grid.clipToPadding == fold > 0 && grid.paddingBottom == bottom) return false"))
         assertEquals(1, Regex("gridFoldPaddingPx\\(").findAll(glue).count())
     }
 

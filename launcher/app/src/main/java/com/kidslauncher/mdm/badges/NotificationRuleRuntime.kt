@@ -101,8 +101,14 @@ object NotificationRuleRuntime {
             excluded = voipExcluded(defaultSms, essential, own),
         )
         val changed = next != policy
+        // qa-nf-keep-log-code Q-2: the resolved essentials by name whenever the set changes (system package
+        // names, our own info log), so an ESSENTIAL_PACKAGE line can be read against the set it came from.
+        val essentialChanged = next.essential != policy?.essential
         policy = next
-        if (changed) Log.i(LOG_TAG, "Rule ${if (next.enabled && next.managed) "active" else "inactive"}: ${next.essential.size} essential packages")
+        if (changed) {
+            val names = if (essentialChanged) ": ${next.essential.sorted().joinToString(", ")}" else ""
+            Log.i(LOG_TAG, "Rule ${if (next.enabled && next.managed) "active" else "inactive"}: ${next.essential.size} essential packages$names")
+        }
         if (next.enabled && next.managed) main.post { listener?.sweep() }
     }
 
@@ -133,9 +139,10 @@ object NotificationRuleRuntime {
     /**
      * The verdict was a Keep: logged by [keepLogDue]'s rule as `kept <package> / <channel>: <REASON>
      * (N so far)` - N counts this process's keeps of that (package, channel, reason). ALLOWED names
-     * the set that allowed it ([allowedBy]). Never the key, title or text.
+     * the set that allowed it ([allowedBy], from the [policy] the verdict read - never a second read
+     * of the volatile, qa-nf-keep-log-code Q-5). Never the key, title or text.
      */
-    fun kept(facts: NotificationFacts, reason: NagKeep) {
+    fun kept(facts: NotificationFacts, reason: NagKeep, policy: NagPolicy?) {
         if (reason in NAG_KEEP_SILENT) return
         val label = if (reason == NagKeep.ALLOWED) "ALLOWED via ${allowedBy(policy, facts.packageName)}" else reason.name
         logKept(facts.packageName, facts.channelId, reason.name, label) { keepLogDue(reason, it) }
@@ -149,6 +156,16 @@ object NotificationRuleRuntime {
     fun keptGroupChild(facts: NotificationFacts) =
         logKept(facts.packageName, facts.channelId, "GROUP_CHILD_KEPT", "GROUP_CHILD_KEPT", ::nagLogDue)
 
+    /** A group summary the rule would cancel, kept because its children couldn't be read (the listener
+     * unbound in between, or a RemoteException it caught; qa-nf-keep-log-code Q-1). */
+    fun keptActiveUnreadable(facts: NotificationFacts) =
+        logKept(facts.packageName, facts.channelId, "ACTIVE_UNREADABLE", "ACTIVE_UNREADABLE", ::nagLogDue)
+
+    /** A cancel or snooze that threw (unbound in between, or the platform refused with an exception):
+     * under the filter's one tag, so B6's `-s NotificationRule` shows it (qa-nf-keep-log-code Q-4). */
+    fun removeFailed(facts: NotificationFacts, e: Exception) =
+        Log.w(LOG_TAG, "couldn't remove ${facts.packageName} / ${facts.channelId ?: "-"}: ${e.javaClass.simpleName}")
+
     private fun logKept(packageName: String, channelId: String?, reason: String, label: String, due: (Int) -> Boolean) {
         val total = keeps.record(packageName, channelId, reason)
         if (due(total)) Log.i(LOG_TAG, "kept $packageName / ${channelId ?: "-"}: $label ($total so far)")
@@ -159,12 +176,14 @@ object NotificationRuleRuntime {
      * [key] is still active ([platformKeptAfterCancel]: Android 15/16 can refuse a listener's cancel
      * - `FLAG_NO_DISMISS`, a lifetime-extended notification) and logs `platform kept <package> /
      * <channel>` once per (package, channel). At most [POST_CANCEL_CHECKS_MAX] checks wait at once;
-     * the rest are skipped, and [detach] drops them all.
+     * the rest are skipped - counted, and said once when the burst's last check is done
+     * (qa-nf-keep-log-code Q-6) -, and [detach] drops them all.
      */
     fun checkAfterCancel(service: BadgeListenerService, key: String, postTime: Long, facts: NotificationFacts) {
         if (!postCancelChecks.take()) return
         main.postDelayed({
-            postCancelChecks.done()
+            val skipped = postCancelChecks.done()
+            if (skipped > 0) Log.i(LOG_TAG, "post-cancel checks skipped ($skipped)")
             val live = listener?.takeIf { it === service } ?: return@postDelayed
             if (!platformKeptAfterCancel(live.activePostTime(key), postTime)) return@postDelayed
             if (platformKeptLogged.add(facts.packageName to facts.channelId)) {

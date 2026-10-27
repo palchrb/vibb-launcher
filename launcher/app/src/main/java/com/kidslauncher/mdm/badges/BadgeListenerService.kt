@@ -116,15 +116,16 @@ class BadgeListenerService : NotificationListenerService() {
         val policy = NotificationRuleRuntime.policy
         when (val verdict = nagVerdict(facts, policy)) {
             is NagVerdict.Keep -> {
-                NotificationRuleRuntime.kept(facts, verdict.reason)
+                NotificationRuleRuntime.kept(facts, verdict.reason, policy)
                 return
             }
             NagVerdict.Cancel -> {}
         }
         if (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) {
             // Cancelling a summary takes its non-ongoing children with it (qa-11-code #6). The
-            // group key stays in memory here - never logged or reported.
-            val children = (active ?: activeOrNull() ?: return)
+            // group key stays in memory here - never logged or reported. Children that can't be
+            // read keep the summary - and say so (qa-nf-keep-log-code Q-1: GMS groups its nags).
+            val children = (active ?: activeOrNull() ?: run { NotificationRuleRuntime.keptActiveUnreadable(facts); return })
                 .filter { it.key != sbn.key && it.groupKey == sbn.groupKey && it.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0 }
                 .mapNotNull { child -> runCatching { facts(child) }.getOrNull()?.let { it to nagVerdict(it, policy) } }
             if (!groupSummaryCancellable(children)) {
@@ -142,8 +143,9 @@ class BadgeListenerService : NotificationListenerService() {
                 NagAction.SNOOZE -> snoozeNotification(sbn.key, NAG_SNOOZE_MS)
             }
         } catch (e: Exception) {
-            // Unbound in between, or the platform refused (lifetime-extended). Never the key in the log.
-            Log.w("BadgeListener", "Couldn't remove a notification of ${facts.packageName}: ${e.javaClass.simpleName}")
+            // Unbound in between, or the platform refused (lifetime-extended). Never the key in the log;
+            // under the filter's one tag (qa-nf-keep-log-code Q-4).
+            NotificationRuleRuntime.removeFailed(facts, e)
         }
     }
 

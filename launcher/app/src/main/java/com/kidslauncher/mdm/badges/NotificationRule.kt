@@ -285,8 +285,9 @@ fun allowedBy(policy: NagPolicy?, packageName: String): String {
 /**
  * Counts the keeps per (package, channel, reason) for the whole process - never reset by a status
  * report ([NagCounts.take] leaves it alone, so the report's numbers don't change and the
- * once-per-process reasons stay once), bounded at [maxKeys] triples with the oldest forgotten (a
- * forgotten triple starts over at 1: at most one more line per eviction, never silence).
+ * once-per-process reasons stay once), bounded at [maxKeys] triples with the least recently
+ * recorded forgotten (a forgotten triple starts over at 1: at most one more line per eviction,
+ * never silence).
  */
 class KeepCounts(private val maxKeys: Int = 128) {
     private val counts = LinkedHashMap<Triple<String, String?, String>, Int>()
@@ -317,24 +318,35 @@ const val POST_CANCEL_CHECKS_MAX = 8
 fun platformKeptAfterCancel(activePostTime: Long?, cancelledPostTime: Long): Boolean =
     activePostTime != null && activePostTime <= cancelledPostTime
 
-/** The post-cancel checks in flight: [take] admits one while fewer than [max] wait, [done] gives it back. */
+/**
+ * The post-cancel checks in flight: [take] admits one while fewer than [max] wait (else counts it
+ * skipped), [done] gives one back and, when it was the burst's last, returns how many the burst
+ * skipped (0 otherwise) - one log line per burst, not per skip.
+ */
 class PostCancelChecks(private val max: Int = POST_CANCEL_CHECKS_MAX) {
     private var pending = 0
+    private var skipped = 0
 
     @Synchronized
     fun take(): Boolean {
-        if (pending >= max) return false
+        if (pending >= max) {
+            skipped++
+            return false
+        }
         pending++
         return true
     }
 
     @Synchronized
-    fun done() {
+    fun done(): Int {
         if (pending > 0) pending--
+        if (pending > 0) return 0
+        return skipped.also { skipped = 0 }
     }
 
     @Synchronized
     fun clear() {
         pending = 0
+        skipped = 0
     }
 }
