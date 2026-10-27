@@ -12,6 +12,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use std::collections::HashMap;
 
 use crate::AppState;
+use crate::i18n::Lang;
 use crate::models::ProvisioningSettings;
 
 /// A form's result, shown inside the group `at` (its id) by `partials/group_flash.html`: green
@@ -63,6 +64,7 @@ struct Entered {
 #[derive(Template)]
 #[template(path = "provisioning_settings.html")]
 struct ProvisioningSettingsTemplate {
+    lang: Lang,
     title: String,
     entered: Entered,
     /// `.env`'s `PHONE_SERVER_URL`: the QR's address while none is saved here, and the field's
@@ -79,6 +81,7 @@ struct ProvisioningSettingsTemplate {
     error: Option<(&'static str, &'static str)>,
     country_code: CountryCode,
 }
+crate::i18n::words!(ProvisioningSettingsTemplate);
 
 /// The second form: the default country code, stored or as a refused save typed it.
 struct CountryCode {
@@ -142,6 +145,7 @@ fn read_failed() -> Response {
         .into_response()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render(
     state: &AppState,
     status: StatusCode,
@@ -150,6 +154,7 @@ fn render(
     saved: bool,
     error: Option<(&'static str, &'static str)>,
     country_code: CountryCode,
+    lang: Lang,
 ) -> Response {
     let url_refused = error.is_some_and(|(field, _)| field == "server_url");
     let shown = if entered.server_url.is_empty() {
@@ -169,6 +174,7 @@ fn render(
         crate::handlers::provisioning::plain_http_warning(shown)
     };
     let page = ProvisioningSettingsTemplate {
+        lang,
         title: "Phone Setup".to_string(),
         url_warning,
         entered,
@@ -188,6 +194,7 @@ fn render(
 /// error is a 500, never an empty form (its Save would clear every value).
 pub async fn provisioning_settings_form(
     State(state): State<AppState>,
+    lang: Lang,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
     let (Some(settings), Some(code)) = (load(&state).await, load_country_code(&state).await) else {
@@ -207,6 +214,7 @@ pub async fn provisioning_settings_form(
         saved == Some("1"),
         None,
         country_code,
+        lang,
     )
 }
 
@@ -227,6 +235,7 @@ fn stored(settings: &ProvisioningSettings) -> Entered {
 /// (`?saved=1#saved`), where the parent was, with or without JS.
 pub async fn update_provisioning_settings(
     State(state): State<AppState>,
+    lang: Lang,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let server_url = form.get("server_url").map(|s| s.trim()).unwrap_or("");
@@ -283,6 +292,7 @@ pub async fn update_provisioning_settings(
             false,
             error,
             country_code,
+            lang,
         );
     }
 
@@ -320,6 +330,7 @@ pub async fn update_provisioning_settings(
 /// returns there (an older Calls page's `device_id` is ignored).
 pub async fn save_country_code(
     State(state): State<AppState>,
+    lang: Lang,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
     let typed = form
@@ -344,6 +355,7 @@ pub async fn save_country_code(
             false,
             None,
             country_code,
+            lang,
         );
     }
     let result = async {

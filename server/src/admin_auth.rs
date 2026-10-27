@@ -595,11 +595,9 @@ pub async fn csrf_guard(State(state): State<AppState>, request: Request, next: N
                 &format!("{reason} ({method} {})", crate::audit::clip(path, 100)),
             )
             .await;
-        return (
-            StatusCode::FORBIDDEN,
-            "Refused: this form was sent from another site.",
-        )
-            .into_response();
+        // Before the session layer: `?lang=` or the browser's language.
+        let lang = crate::i18n::Lang::of_request(request.uri(), request.headers(), None);
+        return crate::i18n::error(lang, StatusCode::FORBIDDEN, "error.csrf");
     }
     next.run(request).await
 }

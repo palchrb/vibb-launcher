@@ -725,10 +725,10 @@ async fn invitee_onboards_with_the_otp() {
     // A ready row's actions read Reset… and Remove… (step 3), never Withdraw….
     let actions = part(&rows, "data-parent=\"pappa\"", "</section>");
     assert!(
-        actions.contains("Reset&hellip;</summary>") && actions.contains("Remove&hellip;</summary>"),
+        actions.contains("Reset…</summary>") && actions.contains("Remove…</summary>"),
         "{actions}"
     );
-    assert!(!actions.contains("Withdraw&hellip;"));
+    assert!(!actions.contains("Withdraw…"));
 }
 
 /// Reset's answer (step 3) reloads as a GET of its path: Account, never a 405.
@@ -1248,8 +1248,8 @@ async fn reset_shows_a_new_otp_and_ends_the_sessions() {
     assert_eq!(reload.status, StatusCode::OK);
     assert!(!reload.text().contains(&otp));
     let row = part(&reload.text(), "data-parent=\"pappa\"", "</section>").to_string();
-    assert!(row.contains("Waiting · until ") && row.contains("New One-Time Password&hellip;"));
-    assert!(row.contains("Withdraw&hellip;"), "{row}");
+    assert!(row.contains("Waiting · until ") && row.contains("New One-Time Password…"));
+    assert!(row.contains("Withdraw…"), "{row}");
     // The old password is gone; the new one onboards.
     assert!(
         login(&app, "pappa", PASSWORD)
@@ -1794,4 +1794,131 @@ async fn remove_drops_reads() {
         crate::parents::Removed::Done
     );
     assert_eq!(reads().await, 0);
+}
+
+/// A request with a session cookie and an optional `Accept-Language`.
+async fn get_in(app: &TestApp, uri: &str, cookie: &str, accept: Option<&str>) -> TestResponse {
+    let mut request = axum::http::Request::builder()
+        .uri(uri)
+        .header(header::COOKIE, cookie);
+    if let Some(accept) = accept {
+        request = request.header(header::ACCEPT_LANGUAGE, accept);
+    }
+    app.send(request.body(axum::body::Body::empty()).unwrap())
+        .await
+}
+
+/// Design 70 §3, §8: each parent's own language. NULL until the first signed-in request stores its
+/// `Accept-Language` (once; never `?lang=`), `?lang=` wins for one request, the Account row saves it (a save in the
+/// log, back at #language in the new language), a bad one is a 400.
+#[tokio::test]
+async fn language_is_each_parents() {
+    let app = TestApp::new().await;
+    let mamma = app.admin_cookie().await;
+    let pappa = app.admin_cookie_as("pappa", "Pappa").await;
+    let stored = |username: &'static str| {
+        let app = &app;
+        async move { account(app, username).await.lang }
+    };
+    // Both NULL, as an account from before 0104 (signing in isn't a signed-in request).
+    sqlx::query("UPDATE admin_users SET lang = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    // `?lang=` is this request's alone: Mamma's first request stores her browser's language, not it.
+    let page = get_in(&app, "/account?lang=en", &mamma, Some("nb-NO,nb;q=0.9")).await;
+    assert!(page.text().contains(r#"<html lang="en">"#));
+    assert_eq!(stored("parent").await.as_deref(), Some("nb"));
+    // Pappa's browser says English; a later request in another language writes nothing.
+    get_in(&app, "/devices", &pappa, Some("en-GB")).await;
+    get_in(&app, "/devices", &pappa, Some("nb")).await;
+    assert_eq!(stored("pappa").await.as_deref(), Some("en"));
+    get_in(&app, "/devices", &mamma, Some("en")).await;
+    assert_eq!(stored("parent").await.as_deref(), Some("nb"));
+
+    // Each parent's page in their own language, whatever the browser says; `?lang=` still wins once.
+    let nb = get_in(&app, "/account", &mamma, Some("en")).await.text();
+    assert!(nb.contains(r#"<html lang="nb">"#) && nb.contains("Konto og foreldre"));
+    let row = part(&nb, "<section id=\"language\"", "</section>");
+    assert!(row.contains("Språk"), "{row}");
+    assert!(
+        row.contains(r#"<option value="nb" lang="nb" selected>Norsk</option>"#),
+        "{row}"
+    );
+    assert!(
+        row.contains(r#"<option value="en" lang="en">English</option>"#),
+        "{row}"
+    );
+    assert!(super::autosaves(row, "lang"), "{row}");
+    check_forms("/account", &nb);
+    let en = get_in(&app, "/account", &pappa, Some("nb")).await.text();
+    assert!(en.contains(r#"<html lang="en">"#) && en.contains("Account &#38; Parents"));
+    assert!(en.contains(r#"<option value="en" lang="en" selected>English</option>"#));
+    let once = get_in(&app, "/devices?lang=nb", &pappa, None).await.text();
+    assert!(once.contains(r#"<html lang="nb">"#));
+    assert_eq!(stored("pappa").await.as_deref(), Some("en"));
+    // An unknown `?lang=` is ignored.
+    let ignored = get_in(&app, "/account?lang=zz", &pappa, None).await.text();
+    assert!(ignored.contains(r#"<html lang="en">"#));
+
+    // Pappa chooses Norwegian: back to the group, now in Norwegian, and a save in the log.
+    let saves = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM security_events WHERE event_type = 'settings_saved' \
+             AND username = 'pappa' AND detail LIKE '%/account/language%'",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    let res = app
+        .request_form(
+            Method::POST,
+            "/account/language",
+            Some(&pappa),
+            &[("lang", "nb")],
+        )
+        .await;
+    assert_redirect(&res, "/account", Some("language"));
+    app.assert_lands(&res, &pappa).await;
+    assert_eq!(stored("pappa").await.as_deref(), Some("nb"));
+    assert_eq!(saves().await, 1);
+    let back = get_in(&app, "/account", &pappa, Some("en")).await.text();
+    assert!(back.contains(r#"<html lang="nb">"#) && back.contains("Konto og foreldre"));
+    // Mamma stays Norwegian; her choice is hers.
+    assert_eq!(stored("parent").await.as_deref(), Some("nb"));
+
+    // A language this server doesn't have: 400 in the page's language, nothing written.
+    for bad in ["zz", "", "NB"] {
+        let res = app
+            .request_form(
+                Method::POST,
+                "/account/language",
+                Some(&pappa),
+                &[("lang", bad)],
+            )
+            .await;
+        assert_eq!(res.status, StatusCode::BAD_REQUEST, "{bad:?}");
+        assert_eq!(res.text(), "Ikke et språk denne serveren har.");
+    }
+    assert_eq!(stored("pappa").await.as_deref(), Some("nb"));
+
+    // The CSRF refusal, before any session, in the browser's language.
+    let request = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/account/language")
+        .header(header::COOKIE, &pappa)
+        .header(header::ACCEPT_LANGUAGE, "nb")
+        .header("sec-fetch-site", "cross-site")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(axum::body::Body::from("lang=en"))
+        .unwrap();
+    let refused = app.send(request).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        refused.text(),
+        "Avvist: dette skjemaet ble sendt fra et annet nettsted."
+    );
+    assert_eq!(stored("pappa").await.as_deref(), Some("nb"));
 }

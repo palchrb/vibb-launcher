@@ -51,17 +51,17 @@ pub fn valid_username(name: &str) -> bool {
 
 /// A display name as typed (design 62 §2): trimmed, empty is `None` (the username shows), else
 /// 1-32 characters with no control, line-break or Unicode format character (bidi overrides,
-/// zero-width), so a "by Mamma" line can't be spoofed.
+/// zero-width), so a "by Mamma" line can't be spoofed. A refusal is its catalog key (`account.name.*`).
 pub fn display_name(raw: &str) -> Result<Option<String>, &'static str> {
     let name = raw.trim();
     if name.is_empty() {
         return Ok(None);
     }
     if name.chars().count() > 32 {
-        return Err("Use at most 32 characters.");
+        return Err("account.name.too_long");
     }
     if name.chars().any(|c| c.is_control() || is_format_char(c)) {
-        return Err("Use letters, digits, spaces and punctuation only.");
+        return Err("account.name.bad_chars");
     }
     Ok(Some(name.to_string()))
 }
@@ -841,7 +841,8 @@ pub async fn require_session(
 }
 
 /// Requires a logged-in admin who has completed the forced password change
-/// and mandatory 2FA setup. Use this on every route in the actual admin UI.
+/// and mandatory 2FA setup. Use this on every route in the actual admin UI. An account without a
+/// language gets this request's `Accept-Language` one, once ([store_first_lang], design 70).
 pub async fn require_full_auth(
     State(state): State<AppState>,
     session: Session,
@@ -853,13 +854,39 @@ pub async fn require_full_auth(
             Redirect::to("/auth/change-password").into_response()
         }
         Ok(admin) if !admin.totp_enabled => Redirect::to("/auth/setup-2fa").into_response(),
-        Ok(admin) => {
+        Ok(mut admin) => {
+            if admin.lang.is_none() {
+                admin.lang = store_first_lang(&state.db, admin.id, request.headers()).await;
+            }
             request.extensions_mut().insert(CurrentAdmin(admin));
             next.run(request).await
         }
         Err(why) => {
             session.flush().await.ok();
             sign_in_redirect(why)
+        }
+    }
+}
+
+/// An account's language before the parent chose one (design 70 §3, D2): the first signed-in request's
+/// `Accept-Language` (never `?lang=`, which is that request's alone), written once - a later request, or one
+/// racing it, finds the column set. Today's sessions and push subscriptions are covered at their next page.
+async fn store_first_lang(
+    db: &sqlx::SqlitePool,
+    id: i64,
+    headers: &axum::http::HeaderMap,
+) -> Option<String> {
+    let code = crate::i18n::Lang::of_headers(headers).code();
+    match sqlx::query("UPDATE admin_users SET lang = ? WHERE id = ? AND lang IS NULL")
+        .bind(code)
+        .bind(id)
+        .execute(db)
+        .await
+    {
+        Ok(_) => Some(code.to_string()),
+        Err(err) => {
+            tracing::warn!(%err, "couldn't store the account's language");
+            None
         }
     }
 }

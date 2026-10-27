@@ -29,6 +29,7 @@ async fn device_page(app: &TestApp, id: i64) -> String {
 async fn about_page(app: &TestApp, id: i64) -> String {
     let response = crate::handlers::device_pages::view_about(
         axum::extract::State(app.state.clone()),
+        crate::i18n::Lang::En,
         axum::extract::Path(id),
     )
     .await;
@@ -56,6 +57,7 @@ async fn apps_page(app: &TestApp, id: i64, query: &[(&str, &str)]) -> String {
 async fn advanced_page(app: &TestApp, id: i64) -> String {
     let response = crate::handlers::device_pages::view_advanced(
         axum::extract::State(app.state.clone()),
+        crate::i18n::Lang::En,
         axum::extract::Path(id),
         axum::extract::Query(Default::default()),
     )

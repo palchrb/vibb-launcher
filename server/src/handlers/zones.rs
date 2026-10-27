@@ -19,6 +19,7 @@ use axum::{Extension, Form};
 use std::collections::HashMap;
 
 use crate::AppState;
+use crate::i18n::Lang;
 use crate::models::{AdminUser, Device};
 use crate::security::{self, CurrentAdmin};
 use crate::zones::{self, MAX_ZONES, NAME_MAX, RADIUS};
@@ -26,6 +27,7 @@ use crate::zones::{self, MAX_ZONES, NAME_MAX, RADIUS};
 #[derive(Template)]
 #[template(path = "device_zone.html")]
 struct ZoneTemplate {
+    lang: Lang,
     title: String,
     device: Device,
     /// `None` for a new zone.
@@ -42,6 +44,7 @@ struct ZoneTemplate {
     radius_max: i64,
     radius_step: i64,
 }
+crate::i18n::words!(ZoneTemplate);
 
 /// The form's values as shown (typed, or stored).
 struct ZoneForm {
@@ -259,6 +262,7 @@ async fn render(
     errors: ZoneErrors,
     refusal: Option<String>,
     status: StatusCode,
+    lang: Lang,
 ) -> Response {
     let phone_fix = match newest_point(state, device.id).await {
         Ok(fix) => fix.map(|(lat, lng)| (coordinate(lat), coordinate(lng))),
@@ -270,6 +274,7 @@ async fn render(
         "New Zone".to_string()
     };
     let page = ZoneTemplate {
+        lang,
         title,
         device,
         zone_id,
@@ -287,7 +292,7 @@ async fn render(
 
 /// `GET /devices/{id}/zones/new`: the form at the phone's newest fix and the default radius (no
 /// fix: empty coordinates and the page says so).
-pub async fn new_zone(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+pub async fn new_zone(State(state): State<AppState>, lang: Lang, Path(id): Path<i64>) -> Response {
     let device = match device_of(&state, id).await {
         Ok(Some(device)) => device,
         Ok(None) => return not_found("Device not found"),
@@ -315,6 +320,7 @@ pub async fn new_zone(State(state): State<AppState>, Path(id): Path<i64>) -> Res
         ZoneErrors::default(),
         None,
         StatusCode::OK,
+        lang,
     )
     .await
 }
@@ -335,6 +341,7 @@ async fn zone_of(
 /// `GET /devices/{id}/zones/{zone_id}`: the zone's form as stored.
 pub async fn show_zone(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, zone_id)): Path<(i64, i64)>,
 ) -> Response {
     let device = match device_of(&state, id).await {
@@ -364,6 +371,7 @@ pub async fn show_zone(
         ZoneErrors::default(),
         None,
         StatusCode::OK,
+        lang,
     )
     .await
 }
@@ -402,6 +410,7 @@ enum Outcome {
 /// field, a name the phone has, an 11th zone.
 pub async fn create_zone(
     State(state): State<AppState>,
+    lang: Lang,
     Path(id): Path<i64>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
@@ -424,6 +433,7 @@ pub async fn create_zone(
                 errors,
                 None,
                 StatusCode::BAD_REQUEST,
+                lang,
             )
             .await;
         }
@@ -480,6 +490,7 @@ pub async fn create_zone(
                 ZoneErrors::default(),
                 Some(refusal),
                 StatusCode::BAD_REQUEST,
+                lang,
             )
             .await
         }
@@ -497,6 +508,7 @@ pub async fn create_zone(
                 errors,
                 None,
                 StatusCode::BAD_REQUEST,
+                lang,
             )
             .await
         }
@@ -510,6 +522,7 @@ pub async fn create_zone(
 /// Another phone's zone is a 404.
 pub async fn save_zone(
     State(state): State<AppState>,
+    lang: Lang,
     Path((id, zone_id)): Path<(i64, i64)>,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<HashMap<String, String>>,
@@ -537,6 +550,7 @@ pub async fn save_zone(
                 errors,
                 None,
                 StatusCode::BAD_REQUEST,
+                lang,
             )
             .await;
         }
@@ -604,6 +618,7 @@ pub async fn save_zone(
                 errors,
                 None,
                 StatusCode::BAD_REQUEST,
+                lang,
             )
             .await
         }

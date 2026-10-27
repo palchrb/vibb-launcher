@@ -32,7 +32,7 @@ use crate::calendar::{
     REMIND_MINUTES, Rule, TEXT_MAX,
 };
 use crate::handlers::schedules::form_pairs;
-use crate::i18n::{Lang, t, t_params};
+use crate::i18n::{Lang, Words, t, t_params};
 
 fn field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
     fields
@@ -66,7 +66,7 @@ fn failed(lang: Lang, err: impl std::fmt::Display, what: &str) -> Response {
 
 /// A form this page never sends: a 400 with its reason.
 fn bad(lang: Lang, key: &str) -> Response {
-    (StatusCode::BAD_REQUEST, t(lang, key)).into_response()
+    crate::i18n::error(lang, StatusCode::BAD_REQUEST, key)
 }
 
 fn render(lang: Lang, template: impl Template, status: StatusCode) -> Response {
@@ -164,12 +164,9 @@ struct CalendarTemplate {
     can_add_rule: bool,
     notice: Option<&'static str>,
 }
+crate::i18n::words!(CalendarTemplate);
 
 impl CalendarTemplate {
-    fn t(&self, key: &str) -> &'static str {
-        t(self.lang, key)
-    }
-
     fn skipped_line(&self) -> String {
         let ids: Vec<String> = self
             .rules_skipped
@@ -808,6 +805,7 @@ struct RuleTemplate {
     refusal: Option<&'static str>,
     preview: Preview,
 }
+crate::i18n::words!(RuleTemplate);
 
 #[derive(Template)]
 #[template(path = "partials/calendar_preview.html")]
@@ -815,11 +813,9 @@ struct PreviewTemplate {
     lang: Lang,
     preview: Preview,
 }
+crate::i18n::words!(PreviewTemplate);
 
 impl RuleTemplate {
-    fn t(&self, key: &str) -> &'static str {
-        t(self.lang, key)
-    }
     fn action(&self) -> String {
         match self.rule_id {
             Some(rule) => format!(
@@ -828,12 +824,6 @@ impl RuleTemplate {
             ),
             None => format!("/devices/{}/calendar/rules#rule-form", self.device_id),
         }
-    }
-}
-
-impl PreviewTemplate {
-    fn t(&self, key: &str) -> &'static str {
-        t(self.lang, key)
     }
 }
 

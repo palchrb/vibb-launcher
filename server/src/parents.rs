@@ -258,7 +258,9 @@ pub async fn rows(
     me: &AdminUser,
     zone: &crate::display_time::Zone,
     now: chrono::DateTime<chrono::Utc>,
+    lang: crate::i18n::Lang,
 ) -> Result<Vec<ParentRow>, sqlx::Error> {
+    use crate::i18n::{t, t_params};
     let accounts: Vec<AdminUser> =
         sqlx::query_as("SELECT * FROM admin_users WHERE removed_at IS NULL ORDER BY id")
             .fetch_all(db)
@@ -286,21 +288,24 @@ pub async fn rows(
             .fetch_optional(db)
             .await?
         };
-        // ("14:02", " from 10.0.0.3")
+        // ("14:02", Some("10.0.0.3"))
         let signed_in = signed_in.and_then(|(at, ip)| {
             let at = crate::display_time::parse_db_utc(&at)?;
-            Some((
-                zone.when(at, now),
-                ip.map(|ip| format!(" from {ip}")).unwrap_or_default(),
-            ))
+            Some((zone.when(at, now), ip))
         });
         let state = if you {
-            "You".to_string()
+            t(lang, "account.parents.you").to_string()
         } else if account.ready() {
             match &signed_in {
-                Some((when, from)) if from.is_empty() => format!("Signed in {when}"),
-                Some((when, from)) => format!("Signed in {when} ·{from}"),
-                None => "Not signed in yet".to_string(),
+                Some((when, None)) => {
+                    t_params(lang, "account.parents.signed_in", &[("when", when)])
+                }
+                Some((when, Some(ip))) => t_params(
+                    lang,
+                    "account.parents.signed_in_from",
+                    &[("when", when), ("ip", ip)],
+                ),
+                None => t(lang, "account.parents.not_signed_in").to_string(),
             }
         } else {
             match account
@@ -309,14 +314,23 @@ pub async fn rows(
                 .map(|e| (e, crate::display_time::parse_db_utc(e)))
             {
                 Some((stored, Some(until))) if until > now => {
-                    let mut line = format!("Waiting · until {}", zone.until_db(stored, now));
-                    if let Some((when, from)) = &signed_in {
-                        line.push_str(&format!(" · signed in {when}{from}"));
+                    let until = zone.until_db(stored, now);
+                    match &signed_in {
+                        None => t_params(lang, "account.parents.waiting", &[("until", &until)]),
+                        Some((when, None)) => t_params(
+                            lang,
+                            "account.parents.waiting_signed_in",
+                            &[("until", &until), ("when", when)],
+                        ),
+                        Some((when, Some(ip))) => t_params(
+                            lang,
+                            "account.parents.waiting_signed_in_from",
+                            &[("until", &until), ("when", when), ("ip", ip)],
+                        ),
                     }
-                    line
                 }
-                Some(_) => "One-time password expired".to_string(),
-                None => "Waiting for sign-in".to_string(),
+                Some(_) => t(lang, "account.parents.expired").to_string(),
+                None => t(lang, "account.parents.waiting_sign_in").to_string(),
             }
         };
         rows.push(ParentRow {

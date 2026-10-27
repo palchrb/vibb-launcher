@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 
 use crate::AppState;
 use crate::display_time::{Zone, parse_db_utc};
+use crate::i18n::Lang;
 use crate::models::{BannedIp, SecurityEvent};
 
 /// One event as a row: label · when, "admin · 192.0.2.1" under it, the stored detail behind ⓘ.
@@ -37,6 +38,7 @@ struct BanRow {
 #[derive(Template)]
 #[template(path = "security.html")]
 struct SecurityTemplate {
+    lang: Lang,
     title: String,
     events: Vec<EventRow>,
     bans: Vec<BanRow>,
@@ -47,6 +49,7 @@ struct SecurityTemplate {
     /// The id to page on from, when there may be older events.
     older_than: Option<i64>,
 }
+crate::i18n::words!(SecurityTemplate);
 
 /// Events shown per page; older ones are a link away (security review M7: a flood can't push a
 /// sign-in attempt out of reach).
@@ -242,6 +245,7 @@ pub struct SecurityLogQuery {
 /// The page. A DB error is a 500, never an empty log (an empty log would read "nothing happened").
 pub async fn security_log(
     State(state): State<AppState>,
+    lang: Lang,
     Query(query): Query<SecurityLogQuery>,
 ) -> Response {
     let before = query.before;
@@ -294,6 +298,7 @@ pub async fn security_log(
         .unbanned
         .filter(|ip| !ip.is_empty() && !bans.iter().any(|ban| &ban.ip == ip));
     let page = SecurityTemplate {
+        lang,
         title: "Security Log".to_string(),
         events: events
             .into_iter()

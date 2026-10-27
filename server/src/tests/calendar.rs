@@ -231,8 +231,13 @@ async fn the_page_lists_the_groups_and_the_reported_calendars() {
         !html.contains(r#"<option value="9f3a61c2d84be705">"#),
         "ICSx5 is read-only"
     );
-    // A phone without a report says what to do; Norwegian when the browser asks for it.
+    // A phone without a report says what to do; Norwegian when the browser asks for it and the account has no
+    // language yet (design 70: the account's own wins once stored).
     let (other, _) = app.enrolled_device("Ola").await;
+    sqlx::query("UPDATE admin_users SET lang = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
     let request = axum::http::Request::builder()
         .uri(format!("/devices/{other}/calendar"))
         .header(axum::http::header::COOKIE, &cookie)
@@ -246,13 +251,14 @@ async fn the_page_lists_the_groups_and_the_reported_calendars() {
     assert!(nb.contains(r#"<html lang="nb">"#));
     assert!(nb.contains("Kalendere som vises") && nb.contains(r#"data-calendars="no-report""#));
     assert!(nb.contains("calendar-not-capable"));
-    // The summary row: three reported, none hidden.
+    // That request stored Norwegian as the account's: the summary row is Norwegian too, without the header. Three
+    // reported, none hidden.
     let summary = app
         .get_page(&format!("/devices/{id}"), &cookie)
         .await
         .text();
     assert!(summary.contains(r#"data-row="calendar""#));
-    assert!(summary.contains("3 shown"), "{summary}");
+    assert!(summary.contains("3 vises"), "{summary}");
     assert_eq!(
         app.get_page("/devices/999/calendar", &cookie).await.status,
         StatusCode::NOT_FOUND

@@ -40,6 +40,7 @@ use chrono::{DateTime, Utc};
 
 use super::music::{BELOW_ENTRY_LIMIT, NEXT_SORT, log_event, nudge, server_error};
 use crate::AppState;
+use crate::i18n::Lang;
 use crate::music::{self, MAX_ENTRIES, MAX_NAME_CHARS};
 use crate::music_sweep::parse_stamp;
 use crate::security::CurrentAdmin;
@@ -169,6 +170,7 @@ pub struct NotReady {
 #[derive(Template)]
 #[template(path = "music_spotify.html")]
 struct AddTemplate {
+    lang: Lang,
     title: String,
     /// The setup row's value: "2 accounts", "App saved, no account yet", "Not set up yet".
     setup_value: String,
@@ -177,6 +179,7 @@ struct AddTemplate {
     add: AddView,
     added: Option<AddedView>,
 }
+crate::i18n::words!(AddTemplate);
 
 /// What a refused add brings back: the link, the category, the phones, the error and its field,
 /// the entry it already is.
@@ -240,8 +243,18 @@ async fn render_setup(
     peer_trusted: bool,
     status: StatusCode,
     entered: Entered,
+    lang: Lang,
 ) -> Response {
-    super::music::render_settings(state, headers, peer_trusted, status, (None, None), entered).await
+    super::music::render_settings(
+        state,
+        headers,
+        peer_trusted,
+        status,
+        (None, None),
+        entered,
+        lang,
+    )
+    .await
 }
 
 /// The add page, after a refused add with what was entered.
@@ -250,8 +263,9 @@ async fn render_add(
     status: StatusCode,
     entered: Option<AddEntered>,
     query: &HashMap<String, String>,
+    lang: Lang,
 ) -> Response {
-    match add_page(state, entered, query).await {
+    match add_page(state, entered, query, lang).await {
         Ok(page) => (status, Html(page.render().unwrap())).into_response(),
         Err(err) => server_error(err, "couldn't load the Spotify page"),
     }
@@ -261,6 +275,7 @@ async fn add_page(
     state: &AppState,
     entered: Option<AddEntered>,
     query: &HashMap<String, String>,
+    lang: Lang,
 ) -> Result<AddTemplate, sqlx::Error> {
     let app = spotify::app(state).await?;
     let rows = spotify::accounts(&state.db).await?;
@@ -299,6 +314,7 @@ async fn add_page(
         (true, n) => format!("{n} accounts"),
     };
     Ok(AddTemplate {
+        lang,
         title: "Add from Spotify".to_string(),
         setup_value,
         not_ready,
@@ -582,9 +598,10 @@ async fn added_view(
 /// `GET /music/spotify[?added=<id>...]`: Add from Spotify.
 pub async fn show(
     State(state): State<AppState>,
+    lang: Lang,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    render_add(&state, StatusCode::OK, None, &query).await
+    render_add(&state, StatusCode::OK, None, &query, lang).await
 }
 
 /// `POST /music/spotify/app` (`client_id`, `redirect_uri`, `replace_accounts`): the family's
@@ -594,6 +611,7 @@ pub async fn show(
 /// (their logins belong to the old app) - only with the box ticked.
 pub async fn save_app(
     State(state): State<AppState>,
+    lang: Lang,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -630,6 +648,7 @@ pub async fn save_app(
             peer_trusted,
             StatusCode::BAD_REQUEST,
             entered,
+            lang,
         )
         .await;
     }
@@ -648,6 +667,7 @@ pub async fn save_app(
             peer_trusted,
             StatusCode::BAD_REQUEST,
             entered,
+            lang,
         )
         .await;
     }
@@ -678,6 +698,7 @@ pub async fn save_app(
             peer_trusted,
             StatusCode::BAD_REQUEST,
             entered,
+            lang,
         )
         .await;
     }
@@ -720,6 +741,7 @@ pub async fn save_app(
 /// forgotten (§2.1). The environment's client ID, if set, stays in effect.
 pub async fn clear_app(
     State(state): State<AppState>,
+    lang: Lang,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -738,6 +760,7 @@ pub async fn clear_app(
             trusted(&state, peer),
             StatusCode::BAD_REQUEST,
             entered,
+            lang,
         )
         .await;
     }
@@ -788,6 +811,7 @@ fn sent_login_cookie(headers: &HeaderMap) -> Option<String> {
 /// with the `spotify_login` cookie.
 pub async fn login(
     State(state): State<AppState>,
+    lang: Lang,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -822,7 +846,15 @@ pub async fn login(
         None
     };
     if let Some((status, entered)) = refused {
-        return render_setup(&state, &headers, trusted(&state, peer), status, entered).await;
+        return render_setup(
+            &state,
+            &headers,
+            trusted(&state, peer),
+            status,
+            entered,
+            lang,
+        )
+        .await;
     }
     let (client, redirect) = ready.expect("checked above");
     // Spotify sends the browser back to the redirect URI's host, and the `spotify_login` cookie
@@ -847,6 +879,7 @@ pub async fn login(
             peer_trusted,
             StatusCode::BAD_REQUEST,
             entered,
+            lang,
         )
         .await;
     }
@@ -953,13 +986,14 @@ pub async fn callback(
 /// `GET /music/spotify/done?login=<outcome>`: no session needed and nothing secret - the browser
 /// arrived here by the callback's 303 in a navigation Spotify's page started, so the Strict admin
 /// cookie isn't sent yet; this page's own navigation to Music › Settings is same-site, so it is.
-pub async fn done(Query(params): Query<HashMap<String, String>>) -> Response {
+pub async fn done(lang: Lang, Query(params): Query<HashMap<String, String>>) -> Response {
     let code = params
         .get("login")
         .filter(|code| LoginOutcome::text(code, None).is_some())
         .map(String::as_str)
         .unwrap_or("expired");
     let page = DoneTemplate {
+        lang,
         title: "Spotify Login".to_string(),
         target: format!("/music/settings?login={code}#spotify-accounts"),
     };
@@ -974,10 +1008,12 @@ pub async fn done(Query(params): Query<HashMap<String, String>>) -> Response {
 #[derive(Template)]
 #[template(path = "music_spotify_done.html")]
 struct DoneTemplate {
+    lang: Lang,
     title: String,
     /// `/music/settings?login=<outcome>#spotify-accounts`; the outcome is one of the known codes.
     target: String,
 }
+crate::i18n::words!(DoneTemplate);
 
 /// The pasted address (§2.3, the loopback redirect): exactly `http://127.0.0.1:43117/callback`
 /// with `state` and `code` (or `error`); its query, else `None`.
@@ -1007,6 +1043,7 @@ fn pasted(text: &str) -> Option<HashMap<String, String>> {
 /// loopback redirect - the callback's code path, for the admin who started that login.
 pub async fn paste(
     State(state): State<AppState>,
+    lang: Lang,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -1032,6 +1069,7 @@ pub async fn paste(
             trusted(&state, peer),
             StatusCode::BAD_REQUEST,
             entered,
+            lang,
         )
         .await;
     };
@@ -1048,6 +1086,7 @@ pub async fn paste(
 /// (its token and name), forgets its cached token (§2.2).
 pub async fn remove_account(
     State(state): State<AppState>,
+    lang: Lang,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
@@ -1078,6 +1117,7 @@ pub async fn remove_account(
             trusted(&state, peer),
             StatusCode::BAD_REQUEST,
             entered,
+            lang,
         )
         .await;
     }
@@ -1212,6 +1252,7 @@ const MAX_ADD_FIELDS: usize = 200;
 /// Spotify unreachable, a full library.
 pub async fn add(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
     Form(form): Form<Vec<(String, String)>>,
 ) -> Response {
@@ -1254,6 +1295,7 @@ pub async fn add(
                 StatusCode::BAD_REQUEST,
                 Some(refuse($error.to_string(), $field, $existing)),
                 &HashMap::new(),
+                lang,
             )
             .await
         };

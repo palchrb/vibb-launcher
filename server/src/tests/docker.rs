@@ -456,6 +456,7 @@ fn the_updates_page_says_how_to_update_the_image() {
         app_data(Some("v0.24.0"), true),
         system_maintenance::not_managed(),
         None,
+        crate::i18n::Lang::En,
     )
     .0;
     assert!(page.contains("Version 0.24.0 is out"), "{page}");
@@ -483,6 +484,7 @@ fn the_updates_page_says_how_to_update_the_image() {
         app_data(Some("v0.23.0"), false),
         system_maintenance::not_managed(),
         None,
+        crate::i18n::Lang::En,
     )
     .0;
     assert!(current.contains("Up to date"));
@@ -494,6 +496,7 @@ fn the_updates_page_says_how_to_update_the_image() {
         app_data(Some("v0.24.0"), true),
         system_maintenance::not_managed(),
         None,
+        crate::i18n::Lang::En,
     )
     .0;
     assert!(!pi.contains("HANDY_VERSION"));
@@ -533,6 +536,7 @@ fn an_updates_result_shows_in_its_own_group() {
             app_data(Some("v0.23.0"), false),
             system_maintenance::not_managed(),
             Some(Flash::done(at, "Probe result.")),
+            crate::i18n::Lang::En,
         )
         .0;
         let flash = page.find("Probe result.").expect(at);
@@ -546,6 +550,7 @@ fn an_updates_result_shows_in_its_own_group() {
         app_data(Some("v0.23.0"), false),
         system_maintenance::not_managed(),
         Some(Flash::refused("app", "Nothing was started").because("Probe reason.")),
+        crate::i18n::Lang::En,
     )
     .0;
     let flash = &page[page.find("data-flash=\"app\"").unwrap()..];
