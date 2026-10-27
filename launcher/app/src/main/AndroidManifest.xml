@@ -209,20 +209,25 @@
             android:taskAffinity="${applicationId}.pinlock"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:turnScreenOn="true" />
-        <!-- Dagen (design 69): the kid's day, an event's own page, the kid's own event. Not exported. -->
+        <!-- Dagen (design 69): the kid's day, an event's own page, the kid's own event. Not exported. A task of its
+             own (2026-10-27), as any app's: in Home's task it had no Recents card, and Home/Back were an in-task
+             switch without Android's task-close animation. In Recents (no excludeFromRecents, no FLAG_SECURE). -->
         <activity
             android:name=".ui.day.DayActivity"
             android:configChanges="orientation|screenSize"
             android:exported="false"
-            android:launchMode="singleTop" />
+            android:launchMode="singleTop"
+            android:taskAffinity="${applicationId}.day" />
         <activity
             android:name=".ui.day.EventActivity"
             android:configChanges="orientation|screenSize"
-            android:exported="false" />
+            android:exported="false"
+            android:taskAffinity="${applicationId}.day" />
         <activity
             android:name=".ui.day.EventEditActivity"
             android:configChanges="orientation|screenSize"
             android:exported="false"
+            android:taskAffinity="${applicationId}.day"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".ui.kidsettings.KidSettingsActivity"

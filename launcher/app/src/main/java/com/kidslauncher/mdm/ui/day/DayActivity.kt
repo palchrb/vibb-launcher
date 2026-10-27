@@ -1,5 +1,6 @@
 package com.kidslauncher.mdm.ui.day
 
+import android.app.ActivityManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -22,8 +23,11 @@ import com.kidslauncher.mdm.day.TodayJump
 import com.kidslauncher.mdm.day.dayAt
 import com.kidslauncher.mdm.day.positionOf
 import com.kidslauncher.mdm.day.todayJump
+import com.kidslauncher.mdm.preferences.LauncherPreferences
+import com.kidslauncher.mdm.server.LockReason
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
+import com.kidslauncher.mdm.ui.LockActivity
 import com.kidslauncher.mdm.ui.UIObjectActivity
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -65,6 +69,14 @@ class DayActivity : UIObjectActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Dagen is a task of its own (2026-10-27): its Recents card carries Dagen's name and the launcher's icon,
+        // as an app's would (the root's description serves the whole task; minSdk 34 always has the Builder).
+        setTaskDescription(
+            ActivityManager.TaskDescription.Builder()
+                .setLabel(getString(R.string.day_title))
+                .setIcon(R.mipmap.ic_launcher)
+                .build(),
+        )
         binding = ActivityDayBinding.inflate(layoutInflater)
         setContentView(binding.root)
         KidInsets.apply(binding.root)
@@ -132,6 +144,9 @@ class DayActivity : UIObjectActivity() {
             finish()
             return
         }
+        // In its own task Dagen outlives Home's clearTaskOnLaunch, so Recents can bring it over the time-rule
+        // screen (which lives in Home's task): under a time rule that screen comes back on top, as Kid Settings does.
+        if (redirectIfLocked(this)) return
         CalendarStore.requestSyncIfDue()
         adapter.refreshBound()
         renderReminder()
@@ -208,12 +223,27 @@ class DayActivity : UIObjectActivity() {
         /** The pager's side padding (dp); with the page's 3 dp the neighbours' cards peek 10 dp. */
         const val PAGER_PAD_DP = 13
 
+        /**
+         * The one way to open Dagen - Home's tile and the lock's glance (the reminder row, after the code): a task of
+         * its own (`FLAG_ACTIVITY_NEW_TASK` with the manifest's `.day` affinity, 2026-10-27), as the missed calls'
+         * intent - started from `PinLockActivity`'s task it would be destroyed with the lock (E5's H1). Without a
+         * [day] a task already there comes back as it was (an event page on top stays, as any app's task); with one
+         * (the reminder's) `FLAG_ACTIVITY_CLEAR_TOP` lands on the day view itself (singleTop: `onNewIntent`).
+         */
         fun intent(context: Context, day: LocalDate? = null): Intent =
-            Intent(context, DayActivity::class.java).apply { day?.let { putExtra(EXTRA_DAY, it.toEpochDay()) } }
+            Intent(context, DayActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).apply {
+                if (day != null) {
+                    putExtra(EXTRA_DAY, day.toEpochDay())
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+            }
 
-        /** Dagen from the lock's glance (the reminder row, after the code): a task of its own, as the missed calls'
-         * intent - started from `PinLockActivity`'s task it would be destroyed with the lock (E5's H1). */
-        fun glanceIntent(context: Context, day: LocalDate?): Intent = intent(context, day).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        /** Under a time rule the time-rule screen comes back on top (Kid Settings' rule); true when it did. */
+        internal fun redirectIfLocked(activity: android.app.Activity): Boolean {
+            if (LauncherPreferences.mdm().lockReason() == LockReason.NONE) return false
+            LockActivity.start(activity)
+            return true
+        }
 
         /** The day on one line ("Tuesday, October 27" / "Tirsdag 27. oktober"; with the year when it isn't this
          * year's): the locale's own order and punctuation (E5's L4). */
