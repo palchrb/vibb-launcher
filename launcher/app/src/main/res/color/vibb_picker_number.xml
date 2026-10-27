@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A day number in the date picker, a number on the time picker's clock face (VibbPickerDialog): night on the peach
+     selection (activated), dim when it can't be picked, our ink otherwise. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@color/kid_ground" android:state_activated="true" />
+    <item android:color="@color/kid_core_dim" android:state_enabled="false" />
+    <item android:color="@color/kid_ink" />
+</selector>

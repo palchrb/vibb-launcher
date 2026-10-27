@@ -116,14 +116,14 @@ class EventEditActivity : UIObjectActivity() {
     }
 
     private fun pickDay() {
-        DatePickerDialog(this, { _, y, mo, d ->
+        DatePickerDialog(this, R.style.VibbPickerDialog, { _, y, mo, d ->
             day = LocalDate.of(y, mo + 1, d)
             render()
         }, day.year, day.monthValue - 1, day.dayOfMonth).show()
     }
 
     private fun pickStart() {
-        TimePickerDialog(this, { _, h, m ->
+        TimePickerDialog(this, R.style.VibbPickerDialog, { _, h, m ->
             start = LocalTime.of(h, m)
             render()
         }, start.hour, start.minute, ClockFormat.systemIs24(this)).show()
