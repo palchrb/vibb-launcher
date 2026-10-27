@@ -623,6 +623,27 @@ summary.row:active {
     line-height: 1.3;
 }
 
+/* Device › Calendar's "Colour" row (2026-10-27): the swatch before the label is the dot Dagen draws before the time.
+   The eight values are calendar::COLORS's, the same ARGB the launcher's CalendarColor keeps; peach (the kid's own)
+   is never one of them. */
+.cal-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: 0;
+}
+
+.cal-sky { background: #6FA8DC; }
+.cal-forest { background: #7FC28F; }
+.cal-sun { background: #E8B86D; }
+.cal-berry { background: #E8908C; }
+.cal-sea { background: #7FC9C4; }
+.cal-lavender { background: #C98BD1; }
+.cal-sand { background: #D9C4A6; }
+.cal-slate { background: #B0B0BC; }
+
 .row-value {
     flex: 0 1 auto;
     min-width: 0;

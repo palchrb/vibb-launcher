@@ -26,8 +26,14 @@ sealed interface Remind {
 /** The minutes "N min before" may say; anything else is no reminder. */
 val REMIND_MINUTES = setOf(5, 10, 15, 30, 60)
 
-/** One calendar as the parent set it. A calendar without a row is shown, reminders off, not the kid's. */
-data class CalendarSetting(val shown: Boolean = true, val remind: Remind = Remind.Off, val writableForKid: Boolean = false)
+/** One calendar as the parent set it. A calendar without a row is shown, reminders off, not the kid's, no colour. */
+data class CalendarSetting(
+    val shown: Boolean = true,
+    val remind: Remind = Remind.Off,
+    val writableForKid: Boolean = false,
+    /** The dot's colour (2026-10-27), `null` = none; the kid's own calendar is peach whatever this says. */
+    val color: CalendarColor? = null,
+)
 
 data class CalendarPolicy(
     /** A usable policy: `false` = none (a corrupt or missing cache) - no Dagen at all, never "everything shown". */
@@ -69,8 +75,8 @@ private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimiti
 /**
  * `PolicyResponse.calendar` field by field: missing or JSON `null` = an older server ([CalendarPolicy.OLDER_SERVER]);
  * anything but an object = [CalendarPolicy.UNKNOWN]. A switch that isn't a JSON boolean is its default; a calendar row
- * without a string key is dropped; a rule without a numeric id is dropped, one this launcher can't use is dropped and
- * its id reported.
+ * without a string key is dropped, its `color` a name this launcher doesn't know (or none) is no colour; a rule without
+ * a numeric id is dropped, one this launcher can't use is dropped and its id reported.
  */
 fun calendarPolicy(element: JsonElement?): CalendarPolicy {
     val obj = when (element) {
@@ -88,7 +94,10 @@ fun calendarPolicy(element: JsonElement?): CalendarPolicy {
             "before" -> if (minutes in REMIND_MINUTES) Remind.Before(minutes!!) else Remind.Off
             else -> Remind.Off
         }
-        calendars.putIfAbsent(key, CalendarSetting(r.bool("shown") ?: true, remind, r.bool("writable_for_kid") == true))
+        calendars.putIfAbsent(
+            key,
+            CalendarSetting(r.bool("shown") ?: true, remind, r.bool("writable_for_kid") == true, CalendarColor.of(r.string("color"))),
+        )
     }
     val rules = ArrayList<TitleRule>()
     val skipped = ArrayList<Long>()

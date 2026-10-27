@@ -67,4 +67,32 @@ class CalendarPolicyTest {
         assertNull(read("""{"lock_reminders": "loud"}""").kidCalendarKey)
         assertFalse(read("""{"lock_reminders": "loud", "glance_next": "true"}""").let { it.lockReminders || it.glanceNext })
     }
+
+    /** A colour per calendar (2026-10-27): the eight names read, anything else - absent, null, a newer server's name,
+     * not a string - is no colour (never a wrong dot); peach is never a policy value. */
+    @Test
+    fun `a calendar's colour - known, unknown, absent`() {
+        val p = read(
+            """{"calendars": [
+                 {"key": "9f3a61c2d84be705", "color": "sky"},
+                 {"key": "c04e7b19a2f6d853", "color": "slate"},
+                 {"key": "aaaaaaaaaaaaaaaa", "color": "neon"},
+                 {"key": "bbbbbbbbbbbbbbbb", "color": null},
+                 {"key": "cccccccccccccccc", "color": 5},
+                 {"key": "dddddddddddddddd"}
+               ]}""",
+        )
+        assertEquals(CalendarColor.SKY, p.setting("9f3a61c2d84be705").color)
+        assertEquals(CalendarColor.SLATE, p.setting("c04e7b19a2f6d853").color)
+        for (key in listOf("aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", "cccccccccccccccc", "dddddddddddddddd", "not saved")) {
+            assertNull(key, p.setting(key).color)
+        }
+        assertEquals(listOf("sky", "forest", "sun", "berry", "sea", "lavender", "sand", "slate"), CalendarColor.entries.mapNotNull { it.wire })
+        assertNull(CalendarColor.of("peach"))
+        assertNull(CalendarColor.of(null))
+        // The kid's own calendar's peach is the one accent (colors_kid.xml's kid_accent).
+        val colors = java.io.File("src/main/res/values/colors_kid.xml").readText()
+        val accent = Regex("""name="kid_accent">(#[0-9A-Fa-f]{6})<""").find(colors)!!.groupValues[1]
+        assertEquals(accent.uppercase(), "#%06X".format(CalendarColor.OWN.argb and 0xFFFFFF))
+    }
 }

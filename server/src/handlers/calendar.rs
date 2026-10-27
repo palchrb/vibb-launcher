@@ -28,8 +28,8 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use crate::AppState;
 use crate::calendar::{
-    self, Action, CalendarReport, Field, MAX_RULES, Match, Outcome, PATTERN_MAX, PolicyCalendar,
-    REMIND_MINUTES, Rule, TEXT_MAX,
+    self, Action, COLORS, CalendarReport, Field, MAX_RULES, Match, Outcome, PATTERN_MAX,
+    PolicyCalendar, REMIND_MINUTES, Rule, TEXT_MAX,
 };
 use crate::handlers::schedules::form_pairs;
 use crate::i18n::{Lang, Words, t, t_params};
@@ -107,6 +107,25 @@ pub struct RemindChoice {
     pub selected: bool,
 }
 
+/// One colour choice of a calendar's select: the name (`calendar::COLORS`) and its word.
+pub struct ColorChoice {
+    pub value: &'static str,
+    pub label: String,
+    pub selected: bool,
+}
+
+/// The catalog key of each colour's word, by name - literals, so `i18n::tests::every_key_used_exists` sees them.
+const COLOR_WORDS: [(&str, &str); 8] = [
+    ("sky", "calendar.color.sky"),
+    ("forest", "calendar.color.forest"),
+    ("sun", "calendar.color.sun"),
+    ("berry", "calendar.color.berry"),
+    ("sea", "calendar.color.sea"),
+    ("lavender", "calendar.color.lavender"),
+    ("sand", "calendar.color.sand"),
+    ("slate", "calendar.color.slate"),
+];
+
 /// One calendar on the page.
 pub struct CalendarView {
     pub key: String,
@@ -117,6 +136,11 @@ pub struct CalendarView {
     pub reminds: Vec<RemindChoice>,
     /// In the phone's last report; else saved here and "Not on the phone now", with Remove.
     pub on_phone: bool,
+    /// The Colour row: every calendar but the kid's own pick (peach, never a choice).
+    pub color_row: bool,
+    /// The saved colour's name (the swatch `cal-<name>`), none = no dot yet.
+    pub color: Option<String>,
+    pub colors: Vec<ColorChoice>,
 }
 
 /// One title rule in the list.
@@ -229,6 +253,24 @@ fn remind_choices(lang: Lang, current: &str) -> Vec<RemindChoice> {
         });
     }
     out
+}
+
+/// The eight colours, the saved one selected; none saved yet = "Pick for me" first (value `""`, which the save reads
+/// as unchanged and the auto-pick fills) - a select of the eight alone would post the first for every calendar at
+/// the first autosave of anything on the form.
+fn color_choices(lang: Lang, current: Option<&str>) -> Vec<ColorChoice> {
+    let auto = current.is_none().then(|| ColorChoice {
+        value: "",
+        label: t(lang, "calendar.color.auto").to_string(),
+        selected: true,
+    });
+    auto.into_iter()
+        .chain(COLOR_WORDS.iter().map(|(value, word)| ColorChoice {
+            value,
+            label: t(lang, word).to_string(),
+            selected: current == Some(*value),
+        }))
+        .collect()
 }
 
 /// A rule in words: "Starts with «Gruppe 2-» · Skolen · show as «Skole:» + the rest".
@@ -351,6 +393,9 @@ pub async fn view_calendar(
                 shown: saved.is_none_or(|s| s.shown),
                 reminds: remind_choices(lang, &remind_value(saved)),
                 on_phone: true,
+                color_row: !saved.is_some_and(|s| s.writable_for_kid),
+                color: saved.and_then(|s| s.color.clone()),
+                colors: color_choices(lang, saved.and_then(|s| s.color.as_deref())),
             });
         }
     }
@@ -363,6 +408,9 @@ pub async fn view_calendar(
                 shown: s.shown,
                 reminds: remind_choices(lang, &remind_value(Some(s))),
                 on_phone: false,
+                color_row: !s.writable_for_kid,
+                color: s.color.clone(),
+                colors: color_choices(lang, s.color.as_deref()),
             });
         }
     }
@@ -527,6 +575,15 @@ pub async fn save_dagen(
                 .execute(&mut *tx)
                 .await?;
             }
+            // The kid's calendar is peach: its colour goes back to the pool, and a calendar that stopped being the
+            // kid's gets the first free one.
+            sqlx::query(
+                "UPDATE device_calendars SET color = NULL WHERE device_id = ? AND writable_for_kid = 1",
+            )
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+            assign_free_colors(&mut tx, id, &[]).await?;
             prune_default_rows(&mut tx, id).await?;
         }
         tx.commit().await
@@ -538,19 +595,59 @@ pub async fn save_dagen(
     }
 }
 
-/// A saved calendar that says only the defaults (shown, no reminder, not the kid's) is no row.
+/// A saved calendar that says only the defaults (shown, no reminder, not the kid's, no colour) is no row.
 async fn prune_default_rows(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     id: i64,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "DELETE FROM device_calendars WHERE device_id = ? AND shown = 1 AND remind = 'off' \
-         AND writable_for_kid = 0",
+         AND writable_for_kid = 0 AND color IS NULL",
     )
     .bind(id)
     .execute(&mut **tx)
     .await
     .map(|_| ())
+}
+
+/// The auto-pick: every shown calendar without a colour that isn't the kid's gets the first of [COLORS] no other
+/// shown calendar of this phone has - in the order of [first] (the page's rows as posted), then by key -, so two
+/// feeds ticked at once get two colours and a parent who never opens the select still sees distinct dots. Eight in
+/// use: no colour. Hidden calendars keep theirs and don't count.
+async fn assign_free_colors(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: i64,
+    first: &[&str],
+) -> Result<(), sqlx::Error> {
+    let rows: Vec<(String, Option<String>, bool)> = sqlx::query_as(
+        "SELECT calendar_key, color, writable_for_kid FROM device_calendars \
+         WHERE device_id = ? AND shown = 1 ORDER BY calendar_key",
+    )
+    .bind(id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut used: Vec<&str> = rows.iter().filter_map(|r| r.1.as_deref()).collect();
+    let mut wanting: Vec<&str> = rows
+        .iter()
+        .filter(|(_, color, kid)| color.is_none() && !kid)
+        .map(|(key, _, _)| key.as_str())
+        .collect();
+    wanting.sort_by_key(|key| first.iter().position(|k| k == key).unwrap_or(first.len()));
+    for key in wanting {
+        let Some(color) = COLORS.iter().find(|c| !used.contains(c)) else {
+            break;
+        };
+        used.push(color);
+        sqlx::query(
+            "UPDATE device_calendars SET color = ? WHERE device_id = ? AND calendar_key = ?",
+        )
+        .bind(color)
+        .bind(id)
+        .bind(key)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }
 
 /// POST `/devices/{id}/calendar/lock`: `glance_next` (missing = off) and `reminders` (`off` or `row`, the select
@@ -586,8 +683,10 @@ pub async fn save_lock(
 }
 
 /// POST `/devices/{id}/calendar/calendars`: one form, exactly the rows it was sent (design 31 §5.6) - each `key`
-/// (16 hex, at most 100) with `shown_<key>` (missing = hidden) and `remind_<key>` (`off`, `own`, 5/10/15/30/60;
-/// missing = unchanged). The kid's choice is kept. Back to `#calendars`.
+/// (16 hex, at most 100) with `shown_<key>` (missing = hidden), `remind_<key>` (`off`, `own`, 5/10/15/30/60;
+/// missing = unchanged) and `color_<key>` (one of the eight names; missing = unchanged; anything else a 400, nothing
+/// written). Then every shown calendar without a colour gets the first free one ([assign_free_colors]). The kid's
+/// choice is kept. Back to `#calendars`.
 pub async fn save_calendars(
     State(state): State<AppState>,
     lang: Lang,
@@ -604,9 +703,17 @@ pub async fn save_calendars(
         .map(|(_, v)| v.as_str())
         .take(100)
         .collect();
+    let mut colors: Vec<(&str, &str)> = Vec::new();
+    for key in &keys {
+        match field(&fields, &format!("color_{key}")) {
+            "" => {}
+            name if calendar::valid_color(name) => colors.push((key, name)),
+            _ => return bad(lang, "calendar.error.color"),
+        }
+    }
     let result = async {
         let mut tx = state.db.begin().await?;
-        for key in keys {
+        for key in &keys {
             let remind = field(&fields, &format!("remind_{key}"));
             let (remind, minutes): (Option<&str>, Option<i64>) = match remind {
                 "" => (None, None),
@@ -632,6 +739,18 @@ pub async fn save_calendars(
             .execute(&mut *tx)
             .await?;
         }
+        for (key, color) in &colors {
+            sqlx::query(
+                "UPDATE device_calendars SET color = ? WHERE device_id = ? AND calendar_key = ? \
+                 AND writable_for_kid = 0",
+            )
+            .bind(color)
+            .bind(id)
+            .bind(key)
+            .execute(&mut *tx)
+            .await?;
+        }
+        assign_free_colors(&mut tx, id, &keys).await?;
         prune_default_rows(&mut tx, id).await?;
         tx.commit().await
     }

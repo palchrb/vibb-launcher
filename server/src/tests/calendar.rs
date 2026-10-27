@@ -150,7 +150,7 @@ async fn the_policy_carries_the_rules_and_the_calendars() {
             "glance_next": true,
             "lock_reminders": "row",
             "calendars": [{"key": "c04e7b19a2f6d853", "shown": true, "remind": "before", "remind_minutes": 15,
-                           "writable_for_kid": true}],
+                           "writable_for_kid": true, "color": null}],
             "rules": [
                 {"id": 9, "calendar": null, "field": "description", "match": "contains",
                  "pattern": "6. og 7. trinn", "action": "hide", "text": ""},
@@ -297,7 +297,8 @@ async fn the_switches_and_the_calendars_save_back_to_their_groups() {
     .await;
     assert_eq!(feed.status, StatusCode::BAD_REQUEST);
     // One form, exactly the rows sent: the feed hidden with a 15-minute reminder; the family calendar sent without
-    // its reminder keeps it (and stays the kid's); a key that isn't one is ignored.
+    // its reminder keeps it (and stays the kid's); a key that isn't one is ignored. The one shown calendar that isn't
+    // the kid's gets the first colour by itself (the hidden feed and the kid's own none).
     let calendars = post(
         format!("{page}/calendars"),
         vec![
@@ -318,14 +319,15 @@ async fn the_switches_and_the_calendars_save_back_to_their_groups() {
         json!({
             "on_home": false, "kid_adds": true, "glance_next": true, "lock_reminders": "row",
             "calendars": [
-                {"key": "51d8e0aa3b7c9462", "shown": true, "remind": "own", "remind_minutes": null, "writable_for_kid": false},
-                {"key": "9f3a61c2d84be705", "shown": false, "remind": "before", "remind_minutes": 15, "writable_for_kid": false},
-                {"key": "c04e7b19a2f6d853", "shown": true, "remind": "off", "remind_minutes": null, "writable_for_kid": true}
+                {"key": "51d8e0aa3b7c9462", "shown": true, "remind": "own", "remind_minutes": null, "writable_for_kid": false, "color": "sky"},
+                {"key": "9f3a61c2d84be705", "shown": false, "remind": "before", "remind_minutes": 15, "writable_for_kid": false, "color": null},
+                {"key": "c04e7b19a2f6d853", "shown": true, "remind": "off", "remind_minutes": null, "writable_for_kid": true, "color": null}
             ],
             "rules": []
         })
     );
-    // Off for the kid; a calendar gone from the phone shows so and is removed.
+    // Off for the kid (the family calendar, no longer the kid's, gets the next free colour and so stays a row); a
+    // calendar gone from the phone shows so and is removed.
     post(
         format!("{page}/dagen"),
         vec![("on_home", "on"), ("kid", "off")],
@@ -355,7 +357,95 @@ async fn the_switches_and_the_calendars_save_back_to_their_groups() {
         .iter()
         .map(|c| c["key"].as_str().unwrap())
         .collect();
-    assert_eq!(keys, ["51d8e0aa3b7c9462", "9f3a61c2d84be705"]);
+    assert_eq!(
+        keys,
+        ["51d8e0aa3b7c9462", "9f3a61c2d84be705", "c04e7b19a2f6d853"]
+    );
+    assert_eq!(policy["calendar"]["calendars"][2]["color"], json!("forest"));
+}
+
+/// A colour per calendar (2026-10-27): a chosen colour is saved and read back in the policy; the auto-pick gives every
+/// other shown calendar the first colour no shown calendar has (never peach: it isn't one of the eight); an unknown
+/// name is a 400 that writes nothing; the kid's own pick has no Colour row and no colour.
+#[tokio::test]
+async fn a_colour_is_saved_picked_and_refused() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = reported(&app).await;
+    let page = format!("/devices/{id}/calendar");
+    assert!(!crate::calendar::COLORS.contains(&"peach"));
+    // Before any save: "Pick for me" first in every select, no swatch.
+    let fresh = app.get_page(&page, &cookie).await.text();
+    assert!(fresh.contains("name=\"color_9f3a61c2d84be705\""));
+    assert!(fresh.contains("<option value=\"\" selected>Pick for me</option>"));
+    assert!(!fresh.contains("cal-dot"));
+    let colors = |fields: Vec<(&'static str, &'static str)>| {
+        let (app, cookie, path) = (&app, cookie.clone(), format!("{page}/calendars"));
+        async move {
+            app.request_form(Method::POST, &path, Some(&cookie), &fields)
+                .await
+        }
+    };
+    // The feed takes "sea" by hand; the two others, shown, get "sky" and "forest" in the form's order.
+    let saved = colors(vec![
+        ("key", "c04e7b19a2f6d853"),
+        ("shown_c04e7b19a2f6d853", "on"),
+        ("key", "9f3a61c2d84be705"),
+        ("shown_9f3a61c2d84be705", "on"),
+        ("color_9f3a61c2d84be705", "sea"),
+        ("key", "51d8e0aa3b7c9462"),
+        ("shown_51d8e0aa3b7c9462", "on"),
+    ])
+    .await;
+    super::assert_redirect(&saved, &page, Some("calendars"));
+    let by_key = |policy: &Value| -> Vec<(String, Value)> {
+        policy["calendar"]["calendars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| (c["key"].as_str().unwrap().to_string(), c["color"].clone()))
+            .collect()
+    };
+    let picked = by_key(&app.policy(&token).await);
+    assert_eq!(
+        picked,
+        [
+            ("51d8e0aa3b7c9462".to_string(), json!("forest")),
+            ("9f3a61c2d84be705".to_string(), json!("sea")),
+            ("c04e7b19a2f6d853".to_string(), json!("sky")),
+        ]
+    );
+    // An unknown name: refused, nothing changed.
+    let bad = colors(vec![
+        ("key", "c04e7b19a2f6d853"),
+        ("shown_c04e7b19a2f6d853", "on"),
+        ("color_c04e7b19a2f6d853", "pink"),
+    ])
+    .await;
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    assert_eq!(by_key(&app.policy(&token).await), picked);
+    // The page: the swatch and the saved choice, no "Pick for me" any more.
+    let shown = app.get_page(&page, &cookie).await.text();
+    assert!(shown.contains("cal-dot cal-sea"));
+    assert!(shown.contains("<option value=\"sea\" selected>Sea</option>"));
+    assert!(!shown.contains("Pick for me"));
+    // The family calendar as the kid's own: its colour goes, its Colour row too.
+    let kid = app
+        .request_form(
+            Method::POST,
+            &format!("{page}/dagen"),
+            Some(&cookie),
+            &[("on_home", "on"), ("kid", "c04e7b19a2f6d853")],
+        )
+        .await;
+    super::assert_redirect(&kid, &page, Some("dagen"));
+    assert_eq!(
+        app.policy(&token).await["calendar"]["calendars"][2]["color"],
+        Value::Null
+    );
+    let kids = app.get_page(&page, &cookie).await.text();
+    assert!(!kids.contains("name=\"color_c04e7b19a2f6d853\""));
+    assert!(kids.contains("name=\"color_51d8e0aa3b7c9462\""));
 }
 
 #[tokio::test]

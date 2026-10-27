@@ -1277,10 +1277,14 @@ fn css_classes(css: &str) -> std::collections::HashSet<String> {
 /// allowlist holds the names that have no rule on purpose.
 #[test]
 fn every_class_a_template_uses_is_in_style_css() {
-    const NO_RULE: [(&str, &str); 11] = [
+    const NO_RULE: [(&str, &str); 12] = [
         (
             "attention-",
             "a dynamic prefix (attention-{{ level }}): the levels have the rules",
+        ),
+        (
+            "cal-",
+            "a dynamic prefix (cal-{{ name }}): the eight calendar colours have the rules",
         ),
         (
             "dot-",

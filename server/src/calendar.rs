@@ -31,6 +31,17 @@ pub const DESCRIPTION_MAX: usize = 2000;
 pub const REMIND_MINUTES: [i64; 5] = [5, 10, 15, 30, 60];
 /// Calendars a report may list.
 pub const MAX_REPORTED_CALENDARS: usize = 50;
+/// The eight calendar colours (`calendars[].color`), in the order the auto-pick tries them: names, never hex - the
+/// phone keeps the values (its `CalendarColor`), the PWA's `static/style.css` the swatches (`.cal-<name>`). Peach is
+/// the kid's own calendar's and is never one of these. Migration 0106's CHECK lists the same eight.
+pub const COLORS: [&str; 8] = [
+    "sky", "forest", "sun", "berry", "sea", "lavender", "sand", "slate",
+];
+
+/// One of the eight colour names.
+pub fn valid_color(name: &str) -> bool {
+    COLORS.contains(&name)
+}
 
 // ---- the grammar -------------------------------------------------------------------------------
 
@@ -302,6 +313,8 @@ pub struct PolicyCalendar {
     pub remind: String,
     pub remind_minutes: Option<i64>,
     pub writable_for_kid: bool,
+    /// One of [COLORS], `null` = no dot (the kid's own calendar is peach whatever this says).
+    pub color: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -347,7 +360,7 @@ pub async fn calendars(
     device_id: i64,
 ) -> Result<Vec<PolicyCalendar>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT calendar_key AS key, shown, remind, remind_minutes, writable_for_kid \
+        "SELECT calendar_key AS key, shown, remind, remind_minutes, writable_for_kid, color \
          FROM device_calendars WHERE device_id = ? ORDER BY calendar_key",
     )
     .bind(device_id)
