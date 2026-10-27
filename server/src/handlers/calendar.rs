@@ -33,7 +33,7 @@ use crate::calendar::{
 };
 use crate::calendar_feeds;
 use crate::handlers::schedules::form_pairs;
-use crate::i18n::{Lang, Words, t, t_params};
+use crate::i18n::{Lang, Words, t, t_count, t_params};
 
 fn field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
     fields
@@ -587,19 +587,12 @@ fn link_view(
             ),
             true,
         ),
-        None if link.events == 1 => (
-            t_params(
-                lang,
-                "calendar.links.status.fetched_one",
-                &[("when", &when)],
-            ),
-            false,
-        ),
         None => (
-            t_params(
+            t_count(
                 lang,
                 "calendar.links.status.fetched",
-                &[("when", &when), ("count", &link.events.to_string())],
+                link.events,
+                &[("when", &when)],
             ),
             false,
         ),
@@ -610,7 +603,7 @@ fn link_view(
     } else if !on_phone {
         lines.push(t(lang, "calendar.links.waiting").to_string());
     }
-    let count = |key: &str, n: i64| t_params(lang, key, &[("count", &n.to_string())]);
+    let count = |key: &str, n: i64| t_count(lang, key, n, &[]);
     if let Some(refused) = applied.map(|a| a.refused).filter(|n| *n > 0) {
         lines.push(count("calendar.links.status.refused", refused));
     }
