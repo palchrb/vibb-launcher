@@ -46,7 +46,9 @@ class CalendarPolicyTest {
                  {"id": 11, "field": "title", "match": "starts", "pattern": "  ", "action": "hide", "text": ""},
                  {"id": 12, "field": "title", "match": "starts", "pattern": "Tur", "action": "replace", "text": ""},
                  {"id": "13", "field": "title", "match": "starts", "pattern": "x", "action": "hide"},
-                 {"id": 14, "calendar": 5, "field": "title", "match": "starts", "pattern": "x", "action": "hide"}
+                 {"id": 14, "calendar": 5, "field": "title", "match": "starts", "pattern": "x", "action": "hide"},
+                 {"id": 15, "field": "title", "match": "starts", "pattern": "x", "action": "rename", "text": "y"},
+                 {"id": 16, "field": "location", "match": "contains", "pattern": "x", "action": "hide", "text": ""}
                ]}""",
         )
         assertFalse(full.onHome)
@@ -59,7 +61,7 @@ class CalendarPolicyTest {
         assertEquals(CalendarSetting(), full.setting("not saved"))
         assertEquals("c04e7b19a2f6d853", full.kidCalendarKey)
         assertEquals(listOf(7L, 9L, 14L), full.rules.map { it.id })
-        assertEquals(listOf(8L, 10L, 11L, 12L), full.rulesSkipped)
+        assertEquals(listOf(8L, 10L, 11L, 12L, 15L, 16L), full.rulesSkipped)
         // A calendar that isn't a key applies to nothing.
         assertEquals("-", full.rules.last().calendar)
         assertNull(read("""{"lock_reminders": "loud"}""").kidCalendarKey)

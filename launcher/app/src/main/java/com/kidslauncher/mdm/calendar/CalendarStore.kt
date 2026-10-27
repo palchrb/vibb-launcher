@@ -20,6 +20,7 @@ import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
 import android.provider.CalendarContract.Instances
 import android.provider.CalendarContract.Reminders
+import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.kidslauncher.mdm.R
@@ -27,6 +28,7 @@ import com.kidslauncher.mdm.day.CalendarInfo
 import com.kidslauncher.mdm.day.CalendarPolicy
 import com.kidslauncher.mdm.day.DayView
 import com.kidslauncher.mdm.day.InstanceRow
+import com.kidslauncher.mdm.day.TitleRules
 import com.kidslauncher.mdm.day.TodayCalendar
 import com.kidslauncher.mdm.day.ownReminderEvents
 import com.kidslauncher.mdm.day.calendarKey
@@ -61,6 +63,8 @@ object CalendarStore {
     /** The local calendar Vibb One makes for the kid's own events (PLAN L7 (a)). */
     const val LOCAL_ACCOUNT = "Vibb One"
     const val LOCAL_NAME = "vibb-kid-calendar"
+    private const val UID_PREFS = "calendar_uid"
+    private const val UID_INSTALL_ID = "install_id"
 
     /** What the provider holds: whether it can be read, and its calendars that sync events. */
     data class CalendarsState(val readable: Boolean, val calendars: List<CalendarInfo>, val accounts: Map<Long, Account> = emptyMap()) {
@@ -209,6 +213,7 @@ object CalendarStore {
                         syncEvents = c.getInt(5) == 1,
                         accessLevel = c.getInt(6),
                         vibbLocal = type == CalendarContract.ACCOUNT_TYPE_LOCAL && account == LOCAL_ACCOUNT && name == LOCAL_NAME,
+                        name = name,
                     )
                     if (type.isNotEmpty() && account.isNotEmpty()) accounts[id] = Account(account, type)
                 }
@@ -265,10 +270,13 @@ object CalendarStore {
         }
     }
 
-    /** The day as the kid sees it, now (off the main thread); `null` = the provider can't be read. */
+    /** The day as the kid sees it, now (off the main thread); `null` = the provider can't be read, an empty day once
+     * Dagen is off or the policy unusable (QA L3: an open Dagen must not fall open). */
     fun dayBlocking(context: Context, day: LocalDate, now: Long = System.currentTimeMillis()): DayView? {
+        val policy = policy()
+        if (!policy.usable || !policy.onHome) return DayView.EMPTY
         val list = rowsBlocking(context, day) ?: return null
-        return dayView(list, state.byId, policy(), day, ZoneId.systemDefault(), now, context.packageName)
+        return dayView(list, state.byId, policy, day, ZoneId.systemDefault(), now, context.packageName, phoneTag(context))
     }
 
     /** Today for the lock's glance (design 69 §5): the day, and the own reminder minutes of the events whose calendar
@@ -383,18 +391,16 @@ object CalendarStore {
         val now = readCalendars(context.applicationContext)
         state = now
         if (!now.readable) return CalendarReport(false, emptyList(), policy.rulesSkipped)
-        val names = HashMap<Long, String?>()
-        try {
-            context.contentResolver.query(Calendars.CONTENT_URI, arrayOf(Calendars._ID, Calendars.NAME), null, null, null)
-                ?.use { c -> while (c.moveToNext()) names[c.getLong(0)] = c.getString(1) }
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "Couldn't read the calendars' sources: ${e.javaClass.simpleName}")
-        }
         val rows = now.calendars.filter { it.syncEvents }.distinctBy { it.key }.take(50).map {
-            CalendarReportRow(it.key, it.accountType, it.displayName.take(100), calendarSource(names[it.id]), it.accessLevel)
+            // Cleaned by code points, so a cut never splits a surrogate pair (QA nit 3).
+            CalendarReportRow(it.key, it.accountType, TitleRules.clean(it.displayName, 100), calendarSource(it.name), it.accessLevel)
         }
         return CalendarReport(true, rows, policy.rulesSkipped)
     }
+
+    /** Dagen is there for the kid: a usable policy with Dagen on Home. An open Dagen or event page closes without it
+     * (QA L3). */
+    fun dagenOn(): Boolean = policy().let { it.usable && it.onHome }
 
     /** Dagen's Home tile: a usable policy with Dagen on Home, a readable provider, and a calendar shown - or the kid's
      * own calendar to come (the "+" from day one). */
@@ -406,16 +412,10 @@ object CalendarStore {
     }
 
     /** The kid's calendar now: the parent's pick when the phone has it and may write to it, else the phone's own; `null`
-     * when the kid may add nothing. */
-    fun kidCalendar(policy: CalendarPolicy = policy(), now: CalendarsState = state): CalendarInfo? {
-        if (!policy.usable || !policy.kidAdds) return null
-        val key = policy.kidCalendarKey
-        return if (key != null) {
-            now.calendars.firstOrNull { it.key == key && it.accessLevel >= Calendars.CAL_ACCESS_CONTRIBUTOR }
-        } else {
-            now.calendars.firstOrNull { it.vibbLocal }
-        }
-    }
+     * when the kid may add nothing, or the calendar isn't shown (a calendar the parent hid takes no new event the kid
+     * then can't see; QA nit 9). */
+    fun kidCalendar(policy: CalendarPolicy = policy(), now: CalendarsState = state): CalendarInfo? =
+        com.kidslauncher.mdm.day.kidCalendarOf(policy, now.calendars, Calendars.CAL_ACCESS_CONTRIBUTOR)
 
     /** At Dagen's open: the phone's own "Min kalender" is made when the kid may add events and the parent picked no
      * calendar (`ACCOUNT_TYPE_LOCAL` through the sync-adapter URI, which a plain app may use for a local calendar). Off
@@ -502,7 +502,7 @@ object CalendarStore {
                 put(Events.DTSTART, input.beginMs)
                 put(Events.DTEND, input.endMs)
                 put(Events.EVENT_TIMEZONE, ZoneId.systemDefault().id)
-                put(Events.UID_2445, com.kidslauncher.mdm.day.kidEventUid(java.util.UUID.randomUUID().toString()))
+                put(Events.UID_2445, com.kidslauncher.mdm.day.kidEventUid(phoneTag(context), java.util.UUID.randomUUID().toString()))
                 put(Events.CUSTOM_APP_PACKAGE, context.packageName)
                 put(Events.HAS_ALARM, 0)
             }
@@ -517,7 +517,9 @@ object CalendarStore {
     /** Whether the kid may change or delete [eventId] now: Vibb One's, in the kid's calendar (read again). */
     fun kidMayEditBlocking(context: Context, eventId: Long): Boolean {
         val detail = eventBlocking(context, eventId) ?: return false
-        return com.kidslauncher.mdm.day.kidMayEdit(detail.uid, detail.customApp, context.packageName, detail.calendarId, kidCalendar()?.id)
+        return com.kidslauncher.mdm.day.kidMayEdit(
+            detail.uid, detail.customApp, context.packageName, phoneTag(context), detail.calendarId, kidCalendar()?.id,
+        )
     }
 
     /** The kid's change of their own event (off the main thread); `false` when it isn't theirs (any more). */
@@ -548,6 +550,29 @@ object CalendarStore {
         } catch (e: Exception) {
             Log.w(LOG_TAG, "Couldn't delete the kid's event: ${e.javaClass.simpleName}")
             false
+        }
+    }
+
+    @Volatile
+    private var tag: String? = null
+
+    /** This phone's tag in its events' UIDs ([com.kidslauncher.mdm.day.phoneTag]): from `ANDROID_ID` (stable for this
+     * signing key across a reinstall), or an id kept at the first ask when the phone has none. */
+    fun phoneTag(context: Context): String = tag ?: synchronized(this) {
+        tag ?: run {
+            val app = context.applicationContext
+            val android = try {
+                Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID)
+            } catch (e: Exception) {
+                null
+            }
+            val id = android?.takeIf { it.isNotBlank() } ?: run {
+                val prefs = app.getSharedPreferences(UID_PREFS, Context.MODE_PRIVATE)
+                prefs.getString(UID_INSTALL_ID, null) ?: java.util.UUID.randomUUID().toString().also {
+                    prefs.edit().putString(UID_INSTALL_ID, it).commit()
+                }
+            }
+            com.kidslauncher.mdm.day.phoneTag(id).also { tag = it }
         }
     }
 

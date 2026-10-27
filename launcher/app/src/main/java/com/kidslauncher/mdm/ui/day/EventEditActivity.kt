@@ -12,6 +12,7 @@ import com.kidslauncher.mdm.calendar.CalendarStore
 import com.kidslauncher.mdm.databinding.ActivityEventEditBinding
 import com.kidslauncher.mdm.day.KID_EVENT_DEFAULT_MINUTES
 import com.kidslauncher.mdm.day.KID_EVENT_MINUTES
+import com.kidslauncher.mdm.day.kidEventDefaultStart
 import com.kidslauncher.mdm.day.kidEventInput
 import com.kidslauncher.mdm.day.kidEventMinutes
 import com.kidslauncher.mdm.ui.ClockFormat
@@ -20,6 +21,7 @@ import com.kidslauncher.mdm.ui.KidInsets
 import com.kidslauncher.mdm.ui.UIObjectActivity
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
 
@@ -34,7 +36,7 @@ class EventEditActivity : UIObjectActivity() {
     private lateinit var binding: ActivityEventEditBinding
     private var eventId: Long? = null
     private var day: LocalDate = LocalDate.now()
-    private var start: LocalTime = LocalTime.of(LocalTime.now().hour, 0).plusHours(1)
+    private var start: LocalTime = LocalTime.NOON
     private var minutes = KID_EVENT_DEFAULT_MINUTES
     private var saving = false
 
@@ -45,6 +47,10 @@ class EventEditActivity : UIObjectActivity() {
         KidInsets.apply(binding.root)
         eventId = intent.getLongExtra(EXTRA_EVENT, 0L).takeIf { it != 0L }
         intent.getLongExtra(DayActivity.EXTRA_DAY, Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE }?.let { day = LocalDate.ofEpochDay(it) }
+        kidEventDefaultStart(day, LocalDateTime.now()).let {
+            day = it.toLocalDate()
+            start = it.toLocalTime()
+        }
         savedInstanceState?.let {
             day = LocalDate.ofEpochDay(it.getLong(STATE_DAY))
             start = LocalTime.ofSecondOfDay(it.getLong(STATE_START))
@@ -58,6 +64,12 @@ class EventEditActivity : UIObjectActivity() {
         render()
         val id = eventId
         if (id != null && savedInstanceState == null) loadOwn(id)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // QA L3: Dagen turned off (or the policy unusable) while the form was open - it closes, nothing saved.
+        if (!CalendarStore.dagenOn()) finish()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

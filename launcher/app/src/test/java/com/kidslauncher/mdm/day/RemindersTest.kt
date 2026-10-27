@@ -30,7 +30,7 @@ class RemindersTest {
     private val holiday = InstanceRow(12, at(0), at(0) + 86_400_000, true, "Fri", null, null, 1)
 
     private fun today(p: CalendarPolicy, own: Map<Long, List<Int>> = emptyMap(), now: Long = 0) = TodayCalendar(
-        dayView(listOf(training, math, holiday), mapOf(1L to football, 2L to school), p, day, oslo, now, "me.vibb.launcher"),
+        dayView(listOf(training, math, holiday), mapOf(1L to football, 2L to school), p, day, oslo, now, "me.vibb.launcher", "1b2c3d4e"),
         own,
     )
 
@@ -87,7 +87,7 @@ class RemindersTest {
                 {"key": "9f3a61c2d84be705", "remind": "before", "remind_minutes": 60}]}""",
         )
         val early = InstanceRow(13, at(17, 40), at(18), false, "Etterpå", null, null, 2)
-        val view = dayView(listOf(training, math, holiday, early), mapOf(1L to football, 2L to school), both, day, oslo, 0, "x")
+        val view = dayView(listOf(training, math, holiday, early), mapOf(1L to football, 2L to school), both, day, oslo, 0, "x", "1b2c3d4e")
         assertEquals(11L, reminderNow(TodayCalendar(view, emptyMap()), both, at(8))!!.eventId)
         assertEquals(10L, reminderNow(TodayCalendar(view, emptyMap()), both, at(17))!!.eventId)
     }

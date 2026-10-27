@@ -50,7 +50,11 @@ class DayActivity : UIObjectActivity() {
             tick.postDelayed(this, 60_000L - System.currentTimeMillis() % 60_000L + 200)
         }
     }
-    private val calendarListener: () -> Unit = {
+    private val calendarListener: () -> Unit = listener@{
+        if (!CalendarStore.dagenOn()) {
+            finish()
+            return@listener
+        }
         adapter.refreshBound()
         renderReminder()
         renderAdd()
@@ -121,6 +125,11 @@ class DayActivity : UIObjectActivity() {
 
     override fun onResume() {
         super.onResume()
+        // QA L3: Dagen turned off (or the policy unusable) while it was open - it closes, never falls open.
+        if (!CalendarStore.dagenOn()) {
+            finish()
+            return
+        }
         CalendarStore.requestSyncIfDue()
         adapter.refreshBound()
         renderReminder()

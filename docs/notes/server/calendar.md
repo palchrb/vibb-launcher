@@ -41,11 +41,16 @@ copies). Regex rules are design 69 §3.5's later step (RE2/J on the phone).
 
 `GET /devices/{id}/calendar` (`device_calendar.html`, `Section::Calendar`, the summary's "Calendar · N shown" row): Dagen
 (`#dagen`: on Home; the kid's calendar - off, the phone's own, or a reported calendar it may write to: contributor or
-more, not ICSx5, not phone-local), On the lock screen (`#lock`: the "Next" line; the reminders' master switch, off or
+more, not ICSx5, not phone-local; a saved pick the last report doesn't list - a re-login, a sync turned off, an
+unreadable provider - stays the selected choice, "The chosen calendar - not on the phone now", and a save keeps it,
+`tests::calendar::the_kids_calendar_survives_a_report_without_it`), On the lock screen (`#lock`: the "Next" line; the reminders' master switch, off or
 the calm row), Calendars shown (`#calendars`: the phone's last report, one auto-saving form writing exactly the rows it
 was sent - a missing `remind_<key>` keeps it -, a saved calendar gone from the phone greyed with Remove, the setup
 steps without a report), Title rules (`#rules`: the list in order, up/down back to `#rule-<id>`, "Add a rule…").
 "This phone's Vibb One doesn't know Dagen yet" until the last report claims `calendar_v1`.
+
+Every route is behind the full session (`require_full_auth`; `tests::calendar::every_calendar_route_needs_a_session`:
+signed out, each GET and POST is the login redirect and writes nothing).
 
 The rule editor (`/rules/new`, `/rules/{rule}`, `device_calendar_rule.html`): look in, when it, the text, then (show as
 with "Keep the rest", or hide), in; Save to `/devices/{id}/calendar#rule-<id>`; a refusal re-renders the editor as typed
@@ -55,6 +60,18 @@ rule as typed on a pasted title and description, in its position among the phone
 rule's calendar), and names a rule that matches first; with `fragment=1` (`static/calendar-preview.js`, 400 ms after
 typing stops, the newest answer wins; `jstest/calendar-preview.test.js`) it answers only `partials/calendar_preview.html`,
 else the editor with the preview filled (the noscript Preview button). It writes nothing and logs nothing.
+
+## The kid's own events (design 69 step 3; the phone alone)
+
+The server never sees them; the format is here because it is the one mark a CalDAV round trip keeps. An event the kid
+adds in Vibb One gets `Events.UID_2445` = `vibb-<phone tag>-<random UUID>`, the tag being the first 8 hex (4 bytes) of
+SHA-256 over `vibb-calendar-uid:` + the phone's stable id (`Settings.Secure.ANDROID_ID`, the same for the app across a
+reinstall; an id kept in the app's `calendar_uid` prefs when the phone has none) - the id itself never leaves the
+phone. The kid may change or delete only an event in the kid's calendar whose UID carries this phone's tag, or a
+`vibb-` UID together with this phone's app as `CUSTOM_APP_PACKAGE` (a column a sync doesn't carry): two siblings whose
+parent picked the same family calendar see each other's events, but neither may change the other's (QA L1;
+`launcher/.../day/KidEvent.kt`, `KidEventTest`). On Dagen's list the kid's own event says its place when it has one,
+else the calendar's name (mockup §1b shows the name always; the place is the more useful line).
 
 ## "On Home" (design 69 §4.4)
 
@@ -66,4 +83,6 @@ stays allowed, and a time rule never suspends ICSx5 or DAVx5 while allowed.
 ## Words
 
 Every word of these pages goes through `src/i18n.rs` (`docs/notes/server/pwa.md`, "Words"): the page's language from
-`Accept-Language`, `self.t("calendar.…")` in the templates, `t`/`t_params` in the handler.
+`Accept-Language`, `self.t("calendar.…")` in the templates, `t`/`t_params` in the handler - the 400 and 500 bodies too
+(`calendar.error.*`). The Apps page's "On Home" switch, its sub-line and the summary's "· not on Home" are
+`apps.on_home*`/`apps.not_on_home`, handed to the pre-i18n form (`AppDisplayForm.on_home_words`).

@@ -17,6 +17,7 @@ class DayModelTest {
     private val oslo = ZoneId.of("Europe/Oslo")
     private val newYork = ZoneId.of("America/New_York")
     private val own = "me.vibb.launcher"
+    private val tag = "1b2c3d4e"
     private val school = CalendarInfo(1, "9f3a61c2d84be705", "at.bitfire.icsdroid", "Skolen")
     private val family = CalendarInfo(2, "c04e7b19a2f6d853", "bitfire.at.davdroid", "Familie")
     private val calendars = mapOf(1L to school, 2L to family)
@@ -30,7 +31,16 @@ class DayModelTest {
         InstanceRow(id, begin, end, allDay, title, location, description, calendar, status, self, uid)
 
     private fun view(rows: List<InstanceRow>, day: LocalDate, zone: ZoneId = oslo, now: Long = 0, policy: CalendarPolicy = CalendarPolicy.OLDER_SERVER) =
-        dayView(rows, calendars, policy, day, zone, now, own)
+        dayView(rows, calendars, policy, day, zone, now, own, tag)
+
+    @Test
+    fun `an event page's day - an all-day event's UTC date west of UTC too (QA L4)`() {
+        assertEquals(LocalDate.of(2026, 11, 3), eventDay(utc(2026, 11, 3), true, newYork))
+        assertEquals(LocalDate.of(2026, 11, 2), eventDay(utc(2026, 11, 3), false, newYork))
+        assertEquals(LocalDate.of(2026, 11, 3), eventDay(at(2026, 11, 3, 0, 30), false, oslo))
+        val holiday = row(1, utc(2026, 11, 3), utc(2026, 11, 4), "Planleggingsdag", allDay = true)
+        assertTrue(view(listOf(holiday), LocalDate.of(2026, 11, 3), newYork).allDay.single().allDayEvent)
+    }
 
     @Test
     fun `an all-day event is on its UTC dates in every zone`() {
@@ -87,7 +97,7 @@ class DayModelTest {
         assertEquals(listOf("Skole: Matte"), view(rows, day, policy = policy).timed.map { it.title })
         // A calendar that doesn't sync events is not shown either.
         val noSync = mapOf(1L to school.copy(syncEvents = false))
-        assertTrue(dayView(rows.takeLast(1), noSync, CalendarPolicy.OLDER_SERVER, day, oslo, 0, own).empty)
+        assertTrue(dayView(rows.takeLast(1), noSync, CalendarPolicy.OLDER_SERVER, day, oslo, 0, own, tag).empty)
     }
 
     @Test
@@ -137,12 +147,15 @@ class DayModelTest {
     }
 
     @Test
-    fun `the kid's own events are known by the uid prefix or the app`() {
-        assertTrue(ownedByVibb("vibb-1b2c", null, own))
-        assertTrue(ownedByVibb(null, "me.vibb.launcher.debug", own))
-        assertFalse(ownedByVibb("abc@itslearning", "at.bitfire.davdroid", own))
-        val mine = row(1, at(2026, 10, 31, 14), at(2026, 10, 31, 16), "Besøk hos Ola", uid = "vibb-x")
-        assertTrue(view(listOf(mine), LocalDate.of(2026, 10, 31)).timed.single().ownedByVibb)
+    fun `the kid's own events are known by this phone's uid tag`() {
+        assertTrue("this phone's, after a CalDAV round trip", ownedByVibb("vibb-$tag-0f9e", null, own, tag))
+        assertTrue("a Vibb uid this phone's app wrote", ownedByVibb("vibb-0f9e8d7c-aaaa", "me.vibb.launcher.debug", own, tag))
+        assertFalse("a sibling's phone, in a shared calendar (QA L1)", ownedByVibb("vibb-99999999-0f9e", null, own, tag))
+        assertFalse("no Vibb uid", ownedByVibb(null, "me.vibb.launcher", own, tag))
+        assertFalse(ownedByVibb("abc@itslearning", "at.bitfire.davdroid", own, tag))
+        val mine = row(1, at(2026, 10, 31, 14), at(2026, 10, 31, 16), "Besøk hos Ola", uid = "vibb-$tag-x")
+        val sibling = row(2, at(2026, 10, 31, 17), at(2026, 10, 31, 18), "Trening", uid = "vibb-99999999-x")
+        assertEquals(listOf(true, false), view(listOf(mine, sibling), LocalDate.of(2026, 10, 31)).timed.map { it.ownedByVibb })
         assertEquals(2461340, julianDay(LocalDate.of(2026, 10, 26)))
     }
 }

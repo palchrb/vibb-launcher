@@ -1411,22 +1411,28 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   "›"; `FirstSentenceTest`), `DayPager.kt` (`DAY_CENTER`, `dayAt`/`positionOf`, `todayJump`: "← I dag" on a later day,
   "I dag →" on an earlier one; `DayPagerTest`), `Reminders.kt` (§5: `reminderStart` off / before N / own - the earliest
   alarm at most 120 min before, `MINUTES_DEFAULT` none -, `reminderNow` only under the master switch and Dagen on Home,
-  `glanceNext`, `nextReminderBoundary`; `RemindersTest`), `KidEvent.kt` (step 3: the form's input, `kidMayEdit` -
-  Vibb One's by the `vibb-` UID or our package, in the kid's calendar; `KidEventTest`).
+  `glanceNext`, `nextReminderBoundary`; `RemindersTest`), `KidEvent.kt` (step 3: the form's input, its default start -
+  the next whole hour, tomorrow's midnight past 23:00 today -, `kidCalendarOf`, `kidMayEdit` - this phone's by the
+  `vibb-<phone tag>-<uuid>` UID, or a `vibb-` UID with our `CUSTOM_APP_PACKAGE`, in the kid's calendar: a sibling's
+  event in a shared calendar is not the kid's; `phoneTag` = 8 hex of SHA-256 over `vibb-calendar-uid:` + ANDROID_ID,
+  `docs/notes/server/calendar.md`; `KidEventTest`).
 - **`calendar/CalendarStore`** (one worker thread; every provider call): the calendars that sync events, a day's
   instances (`Instances.CONTENT_BY_DAY_URI` for the day and its neighbours, filtered by the model), an LRU of 9 days, the
   events' own reminders, an event by id; the provider's change notification debounced to one reload a second; the
-  report; `tileShown`; the kid's calendar (`kidCalendar`: the parent's writable pick, else the local "Min kalender" it
+  report; `tileShown`; `dagenOn` (a usable policy with Dagen on Home: else `dayBlocking` is an empty day and an open
+  Dagen, event page or form closes on resume or the next change); the kid's calendar (`kidCalendar`: the parent's
+  writable pick, else the local "Min kalender" it
   makes at Dagen's open while the kid may add events - `ACCOUNT_TYPE_LOCAL` through the sync-adapter URI, NAME
-  `vibb-kid-calendar`); `requestSyncIfDue` (Dagen's open, at most every 30 min); the kid's three guarded writes (insert,
+  `vibb-kid-calendar`; only while that calendar is shown - a hidden one takes no new event); `requestSyncIfDue` (Dagen's open, at most every 30 min); the kid's three guarded writes (insert,
   and update/delete only of an event still theirs - the provider's only writes, `KidEventTest`). `READ_CALENDAR` and
   `WRITE_CALENDAR` are self-granted by `AppEnforcer.apply` while managed and at the store's start as device owner.
 - **UI** (`ui/day/`): `DayActivity` (KidHeader's second line: the weekday over the date, always; the jump back off today;
   `ViewPager2` over `Int.MAX_VALUE` days, a 10 dp peek; a page shows nothing until its day is read; a date/time/zone
   change keeps the page's date; a minute tick; a reminder that is up under the header; the "+" while the kid may add
-  events), `DayListAdapter` (two lines of title and second line, the "›" only when cut - `cutByRule` or an ellipsis after
+  events), `DayListAdapter` (two lines of title and second line - the kid's own event's second line is its place,
+  else the calendar's name -, the "›" only when cut - `cutByRule` or an ellipsis after
   layout -, the ongoing ring and "Pågår nå", one TalkBack node "Pågår nå, 14:45 til 15:30, SFO: Leksehjelp" with
-  "Åpne hendelsen"), `EventActivity` (read again by id, rules applied, the whole description in a plain TextView, no
+  "Åpne hendelsen"), `EventActivity` (the header's day: an all-day event's UTC date, `eventDay`; read again by id, rules applied, the whole description in a plain TextView, no
   links; Change and Delete only for the kid's own), `EventEditActivity` ("Ny avtale": what, day, from, length, place).
   Home: `GridTile.Day` right after the phone book (`tileShown`: Dagen on Home, a readable provider, a calendar shown or
   the kid's own to come). `KidScreensEscapeTest` scans `ui/day` and `calendar`.

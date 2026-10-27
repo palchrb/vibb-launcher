@@ -13,6 +13,7 @@ import com.kidslauncher.mdm.day.DESCRIPTION_MAX
 import com.kidslauncher.mdm.day.DayRow
 import com.kidslauncher.mdm.day.TITLE_MAX
 import com.kidslauncher.mdm.day.TitleRules
+import com.kidslauncher.mdm.day.eventDay
 import com.kidslauncher.mdm.ui.ClockFormat
 import com.kidslauncher.mdm.ui.KidHeader
 import com.kidslauncher.mdm.ui.KidInsets
@@ -44,13 +45,18 @@ class EventActivity : UIObjectActivity() {
         eventId = intent.getLongExtra(EXTRA_EVENT, 0L)
         begin = intent.getLongExtra(EXTRA_BEGIN, 0L)
         end = intent.getLongExtra(EXTRA_END, 0L)
-        val day = Instant.ofEpochMilli(begin).atZone(ZoneId.systemDefault()).toLocalDate()
+        val day = eventDay(begin, intent.getBooleanExtra(EXTRA_ALL_DAY, false), ZoneId.systemDefault())
         val (weekday, date) = DayActivity.dayTexts(this, day)
         KidHeader.bind(this, binding.eventHeader, weekday, date, null, null)
     }
 
     override fun onResume() {
         super.onResume()
+        // QA L3: Dagen turned off (or the policy unusable) while the page was open - it closes.
+        if (!CalendarStore.dagenOn()) {
+            finish()
+            return
+        }
         load()
     }
 
@@ -65,6 +71,10 @@ class EventActivity : UIObjectActivity() {
 
     private fun render(detail: CalendarStore.EventDetail?, mine: Boolean) {
         if (isDestroyed) return
+        if (!CalendarStore.dagenOn()) {
+            finish()
+            return
+        }
         val calendar = detail?.let { CalendarStore.state.byId[it.calendarId] }
         val policy = CalendarStore.policy()
         val shown = if (detail != null && calendar != null) {
@@ -128,6 +138,7 @@ class EventActivity : UIObjectActivity() {
         const val EXTRA_EVENT = "me.vibb.launcher.extra.EVENT"
         const val EXTRA_BEGIN = "me.vibb.launcher.extra.BEGIN"
         const val EXTRA_END = "me.vibb.launcher.extra.END"
+        const val EXTRA_ALL_DAY = "me.vibb.launcher.extra.ALL_DAY"
         private const val GONE_BACK_MS = 2_000L
 
         fun intent(context: Context, row: DayRow): Intent =
@@ -135,5 +146,6 @@ class EventActivity : UIObjectActivity() {
                 .putExtra(EXTRA_EVENT, row.eventId)
                 .putExtra(EXTRA_BEGIN, row.begin)
                 .putExtra(EXTRA_END, row.end)
+                .putExtra(EXTRA_ALL_DAY, row.allDayEvent)
     }
 }
