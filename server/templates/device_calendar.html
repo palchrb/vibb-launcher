@@ -96,7 +96,7 @@
                 <form method="post" action="/devices/{{ device_id }}/calendar/links/{{ l.uid }}/name#link-{{ l.uid }}">
                     <label class="row">
                         <span class="row-label">{{ self.t("calendar.links.name") }}</span>
-                        <input type="text" class="row-input row-input-end" name="name" value="{{ l.name }}" maxlength="200" autocomplete="off" data-autosave>
+                        <input type="text" class="row-input row-input-end" name="name" value="{{ l.name }}" maxlength="60" autocomplete="off" data-autosave>
                     </label>
                     <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
                 </form>
@@ -123,7 +123,7 @@
                 </label>
                 <label class="row row-stacked">
                     <span class="row-label">{{ self.t("calendar.links.name_optional") }}</span>
-                    <input type="text" class="row-input" name="name" value="{{ add.name }}" maxlength="200" autocomplete="off">
+                    <input type="text" class="row-input" name="name" value="{{ add.name }}" maxlength="60" autocomplete="off">
                 </label>
                 <button type="submit" class="row row-button">{{ self.t("calendar.links.add") }}</button>
             </form>

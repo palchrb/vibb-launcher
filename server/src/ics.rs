@@ -45,6 +45,8 @@ pub const ALARM_MAX_MINUTES: i64 = 10_080;
 pub const PAST_DAYS: i64 = 60;
 /// ... and one that starts more than this many days ahead.
 pub const AHEAD_DAYS: i64 = 400;
+/// The longest DURATION or alarm TRIGGER read; a longer one is `bad` (the event takes its fallback length).
+pub const MAX_DURATION_DAYS: i64 = 400;
 /// Events served per link (a master and each override count one).
 pub const MAX_EVENTS: usize = 2000;
 /// The served document's size cap.
@@ -282,14 +284,15 @@ fn unescape(value: &str) -> String {
     out
 }
 
-/// A text field: unescaped, tabs as spaces, every other control character but `\n` out, trimmed, at most `max` code
-/// points.
+/// A text field: unescaped, tabs as spaces, every other control character but `\n` out, and the invisible marks the
+/// title rules drop (a BOM mid-line, zero-width spaces, bidi marks; `calendar::is_dropped`, QA L8), trimmed, at most
+/// `max` code points.
 fn text(raw: Option<&str>, max: usize) -> String {
     let unescaped = unescape(raw.unwrap_or(""));
     let kept: String = unescaped
         .chars()
         .map(|c| if c == '\t' { ' ' } else { c })
-        .filter(|c| *c == '\n' || !c.is_control())
+        .filter(|c| *c == '\n' || !(c.is_control() || crate::calendar::is_dropped(*c)))
         .collect();
     let cut: String = kept.trim().chars().take(max).collect();
     cut.trim_end().to_string()
@@ -418,10 +421,16 @@ impl Moment {
         }
     }
 
+    /// `self` moved on by `by` (a day at least for a date, never back); checked - at chrono's edge it stays put.
     fn plus(self, by: TimeDelta) -> Moment {
         match self {
-            Moment::Day(d) => Moment::Day(d + TimeDelta::days(by.num_days().max(1))),
-            Moment::At(t) => Moment::At(t + by.max(TimeDelta::zero())),
+            Moment::Day(d) => {
+                let days = u64::try_from(by.num_days().max(1)).unwrap_or(1);
+                Moment::Day(d.checked_add_days(chrono::Days::new(days)).unwrap_or(d))
+            }
+            Moment::At(t) => {
+                Moment::At(t.checked_add_signed(by.max(TimeDelta::zero())).unwrap_or(t))
+            }
         }
     }
 
@@ -439,7 +448,7 @@ fn instant(tz: Tz, at: NaiveDateTime) -> chrono::DateTime<Tz> {
     tz.from_local_datetime(&at)
         .earliest()
         .or_else(|| {
-            tz.from_local_datetime(&(at + TimeDelta::hours(1)))
+            tz.from_local_datetime(&at.checked_add_signed(TimeDelta::hours(1))?)
                 .earliest()
         })
         .unwrap_or_else(|| tz.from_utc_datetime(&at))
@@ -495,14 +504,11 @@ fn parse_duration(value: &str) -> Option<TimeDelta> {
             _ => return None,
         }
     }
-    if !number.is_empty() || !any {
+    // Longer than [MAX_DURATION_DAYS] is no duration we use (QA H1: chrono's own bound panics far below i64).
+    if !number.is_empty() || !any || seconds > MAX_DURATION_DAYS * 86_400 {
         return None;
     }
-    Some(TimeDelta::seconds(if negative {
-        -seconds
-    } else {
-        seconds
-    }))
+    TimeDelta::try_seconds(if negative { -seconds } else { seconds })
 }
 
 /// An RRULE we pass through (§2.2): `[A-Z0-9=;,+-]{1,300}` with a `FREQ`; `UNTIL` made UTC `Z` (timed) or a date
@@ -703,24 +709,46 @@ fn end_of(
     start: Moment,
     zone: SeriesZone,
     fallback: TimeDelta,
-    ctx: &Ctx,
+    ctx: &mut Ctx,
 ) -> Moment {
     let dtend = raw
         .dtend
         .as_ref()
         .and_then(|p| parse_when(&p.value, p, ctx.vtimezones))
-        .map(|w| in_zone(w, zone, NaiveTime::MIN));
+        .and_then(|w| converted(w, zone, NaiveTime::MIN, ctx));
     match dtend {
         Some(end) if end > start => end,
         Some(_) => start.plus(TimeDelta::zero()),
-        None => match raw.duration.as_deref().and_then(parse_duration) {
-            Some(d) => start.plus(match start {
-                Moment::Day(_) => TimeDelta::days((d.num_seconds() + 86_399) / 86_400),
+        None => match raw.duration.as_deref().map(parse_duration) {
+            Some(Some(d)) => start.plus(match start {
+                Moment::Day(_) => {
+                    TimeDelta::try_days((d.num_seconds() + 86_399) / 86_400).unwrap_or_default()
+                }
                 Moment::At(_) => d,
             }),
+            // A DURATION that doesn't read, or longer than MAX_DURATION_DAYS (QA H1).
+            Some(None) => {
+                ctx.counts.bad += 1;
+                start.plus(fallback)
+            }
             None => start.plus(fallback),
         },
     }
+}
+
+/// [in_zone], but `None` (and `bad`) for a UTC value in a floating series: there is no zone to convert it into, and
+/// read as local it would land an offset off - an exclusion that misses, an override that detaches (QA L3).
+fn converted(
+    when: When,
+    zone: SeriesZone,
+    time_of_day: NaiveTime,
+    ctx: &mut Ctx,
+) -> Option<Moment> {
+    if zone == SeriesZone::Floating && matches!(when, When::Utc(_)) {
+        ctx.counts.bad += 1;
+        return None;
+    }
+    Some(in_zone(when, zone, time_of_day))
 }
 
 /// RDATE or EXDATE values in the series' zone (each property's values comma-separated; `VALUE=PERIOD` dropped, `bad`).
@@ -738,7 +766,11 @@ fn dates_in(
         }
         for value in prop.value.split(',').filter(|v| !v.trim().is_empty()) {
             match parse_when(value, prop, ctx.vtimezones) {
-                Some(when) => out.push(in_zone(when, zone, time_of_day).wire()),
+                Some(when) => {
+                    if let Some(at) = converted(when, zone, time_of_day, ctx) {
+                        out.push(at.wire());
+                    }
+                }
                 None => ctx.counts.bad += 1,
             }
         }
@@ -762,10 +794,15 @@ fn series(raw: RawEvent, standalone: bool, ctx: &mut Ctx) -> Option<Series> {
         When::Date(_) => SeriesZone::AllDay,
         When::Utc(_) => SeriesZone::Zoned(Tz::UTC),
         When::Local(_, Some(tz), _) => SeriesZone::Zoned(tz),
-        When::Local(_, None, true) => {
-            ctx.counts.unknown_tz += 1;
-            SeriesZone::Floating
-        }
+        // An unknown TZID is floating, and a floating series takes the feed's X-WR-TIMEZONE when it is an IANA
+        // name (§2.3's 3 then 4, QA L2); only one left to the phone's zone is counted.
+        When::Local(_, None, true) => match ctx.wr_timezone {
+            Some(tz) => SeriesZone::Zoned(tz),
+            None => {
+                ctx.counts.unknown_tz += 1;
+                SeriesZone::Floating
+            }
+        },
         When::Local(_, None, false) => ctx
             .wr_timezone
             .map_or(SeriesZone::Floating, SeriesZone::Zoned),
@@ -844,12 +881,16 @@ fn override_of(raw: &RawEvent, master: &Series, ctx: &mut Ctx) -> Option<WireOve
         ctx.counts.bad += 1;
         return None;
     };
-    let recurrence_id = in_zone(recurrence, master.zone, master.time_of_day);
-    let start = raw
+    // A UTC recurrence id or start on a floating series can't be placed: the override is dropped (QA L3).
+    let recurrence_id = converted(recurrence, master.zone, master.time_of_day, ctx)?;
+    let start = match raw
         .dtstart
         .as_ref()
         .and_then(|p| parse_when(&p.value, p, ctx.vtimezones))
-        .map_or(recurrence_id, |w| in_zone(w, master.zone, NaiveTime::MIN));
+    {
+        Some(w) => converted(w, master.zone, NaiveTime::MIN, ctx)?,
+        None => recurrence_id,
+    };
     let length = master.end.since(master.start);
     let end = end_of(raw, start, master.zone, length, ctx);
     let or_master = |own: &Option<String>, max: usize, theirs: &str| match own {
@@ -940,6 +981,11 @@ pub fn parse(
     content_type: Option<&str>,
     today: NaiveDate,
 ) -> Result<Parsed, NotCalendar> {
+    // The scheduler's panic guard is tested with this marker (`calendar_feeds::run_due`).
+    #[cfg(test)]
+    if body.windows(17).any(|w| w == b"X-VIBB-TEST-PANIC") {
+        panic!("a test body asked the parser to panic");
+    }
     let text = text_of(body, content_type);
     let mut lines = text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l));
     let first = lines
@@ -1459,5 +1505,77 @@ mod tests {
         let mut changed = training.clone();
         changed.summary.push('!');
         assert_ne!(series_rev(&changed), training.rev);
+    }
+
+    /// QA H1: hostile values never panic; a DURATION or TRIGGER past MAX_DURATION_DAYS is `bad`, the event kept with
+    /// its fallback length.
+    #[test]
+    fn hostile_values_never_panic() {
+        let today = day("2026-10-27");
+        let body = |props: &str| {
+            format!(
+                "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:h\r\nSUMMARY:H\r\n{props}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+            )
+        };
+        let start = "DTSTART:20261105T100000Z";
+        let rows = [
+            format!("{start}\r\nDURATION:PT9223372036854775807S"),
+            format!("{start}\r\nDURATION:PT9000000000000000S"),
+            format!("{start}\r\nDURATION:P100000000000D"),
+            format!("DTSTART;VALUE=DATE:20261105\r\nDURATION:P100000000000D"),
+            format!("{start}\r\nDURATION:P401D"),
+            format!(
+                "{start}\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT9223372036854775807S\r\nEND:VALARM"
+            ),
+            format!(
+                "{start}\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-P100000000000D\r\nEND:VALARM"
+            ),
+            format!("{start}\r\nDURATION:-PT1H"),
+            format!("{start}\r\nDURATION:"),
+            format!("{start}\r\nDURATION:P"),
+            format!("{start}\r\nDURATION:PT"),
+            format!("{start}\r\nRRULE:FREQ=DAILY;COUNT=99999999999999999999999"),
+            format!("{start}\r\nRRULE:FREQ=DAILY;UNTIL=99991231T235959Z"),
+            "DTSTART:99991231T230000Z\r\nDURATION:P400D\r\nRRULE:FREQ=YEARLY".to_string(),
+            "DTSTART;VALUE=DATE:99991231\r\nDURATION:P400D\r\nRRULE:FREQ=YEARLY".to_string(),
+            "DTSTART;TZID=Europe/Oslo:99991231T233000\r\nDTEND;TZID=Europe/Oslo:99991231T235959"
+                .to_string(),
+            "DTSTART:00000101T000000Z\r\nRRULE:FREQ=YEARLY;UNTIL=00010101".to_string(),
+        ];
+        for (i, props) in rows.iter().enumerate() {
+            let parsed = parse(body(props).as_bytes(), None, today);
+            assert!(parsed.is_ok(), "row {i}");
+        }
+        for props in &rows[..5] {
+            let parsed = parse(body(props).as_bytes(), None, today).unwrap();
+            assert!(parsed.counts.bad >= 1, "{props}");
+            if let Some(e) = parsed.events.first() {
+                assert!(e.end.as_str() <= "20261106", "{props}: {}", e.end);
+            }
+        }
+        let alarm = parse(body(&rows[5]).as_bytes(), None, today).unwrap();
+        assert!(alarm.events[0].alarms.is_empty());
+        assert_eq!(parse_duration("PT9223372036854775807S"), None);
+        assert_eq!(parse_duration("P400D"), Some(TimeDelta::days(400)));
+    }
+
+    /// QA L2, L3, L8: an unknown TZID takes X-WR-TIMEZONE; a UTC value on a floating series is dropped (`bad`), not
+    /// read as local; invisible marks leave the text.
+    #[test]
+    fn floating_unknown_zones_and_invisible_marks() {
+        let today = day("2026-10-27");
+        let wr = "BEGIN:VCALENDAR\r\nX-WR-TIMEZONE:Europe/Oslo\r\nBEGIN:VEVENT\r\nUID:u\r\nSUMMARY:\u{FEFF}Mat\u{200B}te\u{202E}\r\nDTSTART;TZID=\"(UTC+01:00) Amsterdam\":20261105T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let parsed = parse(wr.as_bytes(), None, today).unwrap();
+        assert_eq!(parsed.events[0].tz.as_deref(), Some("Europe/Oslo"));
+        assert_eq!(parsed.events[0].start, "20261105T100000");
+        assert_eq!(parsed.counts.unknown_tz, 0);
+        assert_eq!(parsed.events[0].summary, "Matte");
+        let floating = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:f\r\nDTSTART:20261105T100000\r\nRRULE:FREQ=WEEKLY\r\nEXDATE:20261112T090000Z\r\nEXDATE:20261119T100000\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:f\r\nRECURRENCE-ID:20261126T090000Z\r\nDTSTART:20261126T120000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let parsed = parse(floating.as_bytes(), None, today).unwrap();
+        let series = &parsed.events[0];
+        assert_eq!(series.tz, None);
+        assert_eq!(series.exdates, ["20261119T100000"]);
+        assert!(series.overrides.is_empty());
+        assert!(parsed.counts.bad >= 2);
     }
 }

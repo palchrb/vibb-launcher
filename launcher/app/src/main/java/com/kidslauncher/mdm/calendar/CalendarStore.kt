@@ -694,7 +694,8 @@ object CalendarStore {
             put(Calendars.CALENDAR_DISPLAY_NAME, feed.name)
             put(Calendars.CALENDAR_COLOR, feedColour(calendarKey(CalendarContract.ACCOUNT_TYPE_LOCAL, FEED_ACCOUNT, name)))
             put(Calendars.CALENDAR_ACCESS_LEVEL, FEED_ACCESS_LEVEL)
-            put(Calendars.OWNER_ACCOUNT, FEED_ACCOUNT)
+            // The kid's calendar's owner too (QA nit 3): one owner for every calendar Vibb One makes.
+            put(Calendars.OWNER_ACCOUNT, LOCAL_ACCOUNT)
             put(Calendars.SYNC_EVENTS, 1)
             put(Calendars.VISIBLE, 1)
             put(Calendars.CALENDAR_TIME_ZONE, ZoneId.systemDefault().id)

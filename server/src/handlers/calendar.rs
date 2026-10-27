@@ -527,8 +527,10 @@ async fn render_page(
 
 // ---- calendar links (design 72 §5) -------------------------------------------------------------
 
-/// A stored stamp as the parent reads it: the clock today, else "27.10. 14:05".
+/// A stored stamp as the parent reads it: the clock today, else the date and the clock (`calendar.links.when_date`:
+/// "27.10. 14:05", "10/27 14:05").
 fn when_text(
+    lang: Lang,
     zone: &crate::display_time::Zone,
     stored: Option<&str>,
     now: chrono::DateTime<chrono::Utc>,
@@ -541,7 +543,15 @@ fn when_text(
         return zone.clock(at);
     }
     let local = zone.local(at);
-    format!("{}.{}. {}", local.day(), local.month(), zone.clock(at))
+    t_params(
+        lang,
+        "calendar.links.when_date",
+        &[
+            ("day", &local.day().to_string()),
+            ("month", &local.month().to_string()),
+            ("time", &zone.clock(at)),
+        ],
+    )
 }
 
 /// A fetch error's code (`calendar_feeds::FeedError`) in words, never the link or the body.
@@ -555,6 +565,7 @@ pub fn why_text(lang: Lang, code: &str, status: Option<i64>) -> String {
         "private_address" => "calendar.links.why.private_address",
         "key_lost" => "calendar.links.why.key_lost",
         "insecure" => "calendar.links.why.insecure",
+        "unreadable" => "calendar.links.why.unreadable",
         _ => "calendar.links.why.network",
     };
     t_params(lang, key, &[("status", &status.unwrap_or(0).to_string())])
@@ -570,7 +581,7 @@ fn link_view(
     on_phone: bool,
     applied: Option<&calendar::ReportedFeed>,
 ) -> LinkView {
-    let when = when_text(zone, link.ok_at.as_deref(), now);
+    let when = when_text(lang, zone, link.ok_at.as_deref(), now);
     let (first, failing) = match link.error.as_deref() {
         Some("empty") => (
             t_params(lang, "calendar.links.status.held_empty", &[("when", &when)]),

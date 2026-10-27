@@ -655,3 +655,207 @@ async fn the_caps_per_phone() {
     let res = add(&app, &cookie, id, "https://skole.example.no/x.ics", "").await;
     assert_eq!(res.status, StatusCode::BAD_REQUEST);
 }
+
+async fn source_error(app: &TestApp, id: i64) -> Option<String> {
+    sqlx::query_scalar("SELECT error FROM calendar_sources WHERE id = ?")
+        .bind(id)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// QA M1: after a key change the parent adds the link again (on a sibling, or the same phone): the source is sealed
+/// with the current key and fetches again, for every phone with it.
+#[tokio::test]
+async fn adding_the_link_again_mends_a_lost_key() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (anna, _) = app.enrolled_device("Anna").await;
+    let (ola, _) = app.enrolled_device("Ola").await;
+    app.fetch.answer(LINK, 200, one_event("a", "First"));
+    add(&app, &cookie, anna, LINK, "").await;
+    let id = source_id(&app, &uid()).await.unwrap();
+    let mut rotated = app.state.clone();
+    rotated.music_key = Some(std::sync::Arc::new(
+        crate::music_secret::MusicKey::from_bytes(&[7; 32]),
+    ));
+    assert!(matches!(
+        calendar_feeds::refresh(&rotated, id, Utc::now())
+            .await
+            .unwrap(),
+        Outcome::Failed(_)
+    ));
+    assert_eq!(source_error(&app, id).await.as_deref(), Some("key_lost"));
+    calendar_feeds::add(&rotated, ola, LINK, "", Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(source_error(&app, id).await, None);
+    app.fetch.answer(LINK, 200, one_event("a", "Again"));
+    assert_eq!(
+        calendar_feeds::refresh(&rotated, id, Utc::now())
+            .await
+            .unwrap(),
+        Outcome::Changed
+    );
+    assert_eq!(sources(&app).await, 1);
+    // The same phone adding it again mends it too.
+    let mut third = app.state.clone();
+    third.music_key = Some(std::sync::Arc::new(
+        crate::music_secret::MusicKey::from_bytes(&[9; 32]),
+    ));
+    calendar_feeds::add(&third, anna, LINK, "", Utc::now())
+        .await
+        .unwrap();
+    app.fetch.answer(LINK, 200, one_event("a", "Third"));
+    assert_eq!(
+        calendar_feeds::refresh(&third, id, Utc::now())
+            .await
+            .unwrap(),
+        Outcome::Changed
+    );
+}
+
+/// QA L5: a LAN link whose name now resolves publicly goes public for good; plain http's warning follows what the
+/// name resolves to at each fetch; a LAN link's redirect to another host is refused.
+#[tokio::test]
+async fn the_address_rules_are_judged_at_each_fetch() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let https = "https://nas.home.arpa/k.ics";
+    let http = "http://box.home.arpa/k.ics";
+    app.fetch.dns("nas.home.arpa", &["192.168.1.10"]);
+    app.fetch.dns("box.home.arpa", &["192.168.1.11"]);
+    app.fetch.answer(https, 200, one_event("a", "A"));
+    app.fetch.answer(http, 200, one_event("b", "B"));
+    assert_eq!(
+        add(&app, &cookie, id, https, "").await.status,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        add(&app, &cookie, id, http, "").await.status,
+        StatusCode::SEE_OTHER
+    );
+    let nas = source_id(&app, &calendar_feeds::uid_of(https))
+        .await
+        .unwrap();
+    let boxed = source_id(&app, &calendar_feeds::uid_of(http))
+        .await
+        .unwrap();
+    let state_of = |src: i64| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_as::<_, (bool, bool, Option<String>)>(
+                "SELECT lan, lan_http, error FROM calendar_sources WHERE id = ?",
+            )
+            .bind(src)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(state_of(nas).await, (true, false, None));
+    assert_eq!(state_of(boxed).await, (true, true, None));
+    // The https LAN name now public: fetched as public, and public for good - back on the LAN it is refused.
+    app.fetch.dns("nas.home.arpa", &["93.184.216.34"]);
+    app.fetch.clear_calls();
+    calendar_feeds::refresh(&app.state, nas, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(state_of(nas).await, (false, false, None));
+    assert!(
+        app.fetch
+            .reaches
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, r)| *r == crate::music_net::Reach::Public)
+    );
+    app.fetch.dns("nas.home.arpa", &["192.168.1.10"]);
+    calendar_feeds::refresh(&app.state, nas, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(state_of(nas).await.2.as_deref(), Some("private_address"));
+    // Plain http: on the tailnet now - no warning; back on the LAN - the warning again.
+    app.fetch.dns("box.home.arpa", &["100.101.1.2"]);
+    calendar_feeds::refresh(&app.state, boxed, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(state_of(boxed).await, (true, false, None));
+    app.fetch.dns("box.home.arpa", &["192.168.1.11"]);
+    calendar_feeds::refresh(&app.state, boxed, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(state_of(boxed).await, (true, true, None));
+    // A LAN link redirected to another host: refused, nothing asked of that host.
+    app.fetch.clear_calls();
+    app.fetch
+        .redirect(http, 302, "http://elsewhere.example/k.ics");
+    app.fetch
+        .answer("http://elsewhere.example/k.ics", 200, one_event("c", "C"));
+    calendar_feeds::refresh(&app.state, boxed, Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(state_of(boxed).await.2.as_deref(), Some("network"));
+    assert!(
+        !app.fetch
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|u| u.contains("elsewhere"))
+    );
+    // ... while one on its own host and port is followed.
+    app.fetch.redirect(http, 302, "/moved.ics");
+    app.fetch.answer(
+        "http://box.home.arpa/moved.ics",
+        200,
+        one_event("b", "Moved"),
+    );
+    assert_eq!(
+        calendar_feeds::refresh(&app.state, boxed, Utc::now())
+            .await
+            .unwrap(),
+        Outcome::Changed
+    );
+}
+
+/// QA H1: a body that makes the parser panic is that link's failure (`unreadable`), and the pass goes on to the next.
+#[tokio::test]
+async fn a_panicking_parse_leaves_the_next_source_running() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, _) = app.enrolled_device("Anna").await;
+    let bad = "https://bad.example.no/k.ics";
+    let good = "https://good.example.no/k.ics";
+    app.fetch.answer(bad, 200, one_event("a", "A"));
+    app.fetch.answer(good, 200, one_event("b", "B"));
+    add(&app, &cookie, id, bad, "").await;
+    add(&app, &cookie, id, good, "").await;
+    app.fetch
+        .answer(bad, 200, one_event("a", "X-VIBB-TEST-PANIC"));
+    app.fetch.answer(good, 200, one_event("b", "Changed"));
+    // Both due, the panicking one first.
+    sqlx::query(
+        "UPDATE calendar_sources SET next_at = CASE WHEN host = 'bad.example.no' \
+         THEN '2000-01-01 00:00:00' ELSE '2000-01-02 00:00:00' END",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    calendar_feeds::run_due(&app.state, std::time::Duration::ZERO).await;
+    let rows: Vec<(String, Option<String>, String)> =
+        sqlx::query_as("SELECT host, error, feed_json FROM calendar_sources ORDER BY host")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(rows[0].0, "bad.example.no");
+    assert_eq!(rows[0].1.as_deref(), Some("unreadable"));
+    assert_eq!(rows[1].1, None);
+    assert!(rows[1].2.contains("Changed"));
+    let page = app
+        .get_page(&format!("/devices/{id}/calendar"), &cookie)
+        .await
+        .text();
+    assert!(page.contains("be read. Showing what was fetched"), "{page}");
+}

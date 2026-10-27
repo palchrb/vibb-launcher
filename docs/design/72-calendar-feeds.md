@@ -2,7 +2,8 @@
 
 Status: design note, architect 2026-10-27, on `main` at b6a8b858; revised 2026-10-27 after `docs/review/qa-72-design.md`
 (every finding taken: H1-H2, M1-M5, L1-L12, N1-N8; the QA agrees with the five decisions, defaults until the user says
-otherwise). Not built. Both directories; step 2 is server only. PLAN: "Calendars without ICSx5/DAVx5". The user,
+otherwise). Step 1 built on branch `calendar-feeds-1` (2026-10-27; code QA `docs/review/qa-calendar-feeds-1-code.md`
+and its fix round); step 2 not built. Both directories; step 2 is server only. PLAN: "Calendars without ICSx5/DAVx5". The user,
 2026-10-27: "Er det DAVx5 og ICSx5 gjør vanskelig nok til at det rettferdiggjør to ekstra installerte apper?? Hadde
 vært mye lettere om det bare var å lime inn lenker i PWA for ical/caldav and that's it." Then: "Og kjør! Ics er pri 1,
 dav pri 2." Accepted shape: **the server fetches and parses; Vibb One writes the events into a local calendar through

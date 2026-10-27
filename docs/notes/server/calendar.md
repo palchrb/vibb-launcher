@@ -104,13 +104,14 @@ The parent pastes a calendar's ICS link (https or webcal) on Device › Calendar
 the phone writes the events into a local read-only calendar of its own (`launcher/CLAUDE.md`, "Calendar links").
 ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server) is not built.
 
-- **Model** (migration `0105_calendar_feeds.sql`; 0104 is the unmerged `pwa-i18n-1`'s): `calendar_sources` - one row per
+- **Model** (migration `0105_calendar_feeds.sql`, after S-i18n slice 1's `0104_admin_lang.sql`): `calendar_sources` - one row per
   normalized link (`calendar_feeds::normalize`: scheme and host lowercased, webcal(s) as https, the default port and
   the fragment dropped, path and query byte for byte), `uid` = 32 hex of SHA-256 over `vibb-feed:` + it (a link removed
   and added again is the same calendar: its key's settings and rules come back), the link **sealed** with the music
   key (`url_sealed`/`url_nonce`/`url_key_fp`, associated data `calendar-v1:<fingerprint>:<uid>`), `host` (the only part
   ever shown or logged), `lan` (judged as the music sweep judges a pasted feed; a LAN link judged again each fetch and
-  public for good once it resolves publicly), `lan_http` (plain http on the home LAN: the row's warning), the
+  public for good once it resolves publicly), `lan_http` (plain http on the home LAN: the row's warning; judged at the add and again at every fetch from the
+  route it took - a tailnet answer clears it, a LAN one sets it, QA L5), the
   validators, `rev` and `feed_json` (the served document), `feed_name` (`X-WR-CALNAME`), the fetch state (`ok_at`,
   `tried_at`, `failures`, `next_at`, `error` - a code -, `error_status`, `empty_count`/`empty_since`, `churn`,
   `fetch_now_at`) and the counts (`events`, `cut`, `unknown_tz`, `bad`). `device_calendar_feeds` (device, source, the
@@ -120,23 +121,28 @@ ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server
   historical is kept: every accepted fetch replaces the set; a backup holds the set as of then and the link sealed.
 - **The parser** (`src/ics.rs`, our own): the folds taken out of the **bytes** first (a generator folds inside a UTF-8
   sequence), then the whole decoded - BOM, else the `Content-Type` charset, else UTF-8 lossy; it must begin with
-  `BEGIN:VCALENDAR` (else `not_calendar`: an HTML login page). Content lines with quoted parameters, TEXT unescaped,
+  `BEGIN:VCALENDAR` (else `not_calendar`: an HTML login page). Content lines with quoted parameters, TEXT unescaped (control and invisible marks - `calendar::is_dropped`: BOM, zero-width, bidi - dropped, `\n`
+  kept; QA L8),
   a stack 4 deep, a line cut at 64 KB, at most 20 000 VEVENTs. Zones: `Z` = `UTC`, an IANA TZID as is, else its
   VTIMEZONE's `X-LIC-LOCATION`, a known prefix stripped (`/mozilla.org/<n>/`, `/freeassociation.sourceforge.net/`,
   `/softwarestudio.org/`), a Windows name through CLDR's table (`src/windows_zones.txt`, CLDR 49, NOTICE.md); else
-  unknown - floating, counted `unknown_tz`, shown in the phone's time. Floating takes `X-WR-TIMEZONE` when it is an
-  IANA name, else `tz: null` (the phone's zone). EXDATE, RDATE, RECURRENCE-ID and an override's own times are converted
+  unknown - counted `unknown_tz`. A TZID-less time and an unknown TZID alike take `X-WR-TIMEZONE` when it is an IANA
+  name (QA L2), else float: `tz: null`, shown in the phone's time. In a floating series a `Z` EXDATE, RECURRENCE-ID or
+  DTEND has no zone to land in: dropped and counted `bad` (QA L3). EXDATE, RDATE, RECURRENCE-ID and an override's own times are converted
   into the series' zone (QA M4). UIDs never lose an event (missing → a hash; > 255 bytes → its hash; two singles with
   one UID and different starts both kept, `uid~<8 hex>`; else the higher SEQUENCE, the later LAST-MODIFIED, the later
   in the body). An override without its master, or whose all-day-ness differs, stands alone (`uid#<recurrence id>`);
   THISANDFUTURE is a single-instance override. Cancelled: a single or a series dropped (with its overrides), an override
   kept as `cancelled`. RRULE passed through (`[A-Z0-9=;,+-]{1,300}` with a FREQ) with a known zone's `UNTIL` made UTC
-  (a date all-day); a floating `UNTIL` stays local for the phone. `RDATE;VALUE=PERIOD` and an EMAIL, `RELATED=END` or
+  (a date all-day); a floating `UNTIL` stays local for the phone. A DURATION past `ics::MAX_DURATION_DAYS` (400 days) or one that doesn't read is `bad` (the default length then), a
+  huge TRIGGER or COUNT can't overflow (every sum checked, QA H1). `RDATE;VALUE=PERIOD` and an EMAIL, `RELATED=END` or
   absolute alarm are dropped. The horizon: a single event that ended over 60 days ago or starts over 400 ahead goes, a
   series whole unless its UNTIL is over 60 days ago. Caps 2000 events and 2 MB served, the farthest from today first.
   A series' rev = 16 hex of SHA-256 over its JSON without the rev; the feed's over the events array.
-- **The fetch** (`src/calendar_feeds.rs`): `run` (spawned in `main`, its first pass 30 s on) fetches each due source,
-  most overdue first, 4 s apart, through `music_fetch` (one request in flight server-wide) with `Kind::Calendar` (5 MB,
+- **The fetch** (`src/calendar_feeds.rs`): `run` (spawned in `main`, its first pass 30 s on, then `run_due` every
+  minute) fetches each due source, most overdue first, `SPACING` 4 s apart, each in its own task - a parse that panics
+  is caught (`catch_unwind`: the source's `unreadable`), a task that panics anyway is stored as that source's
+  `unreadable` failure, and the pass goes on (QA H1); a fetch that couldn't be stored waits the interval (nit 6) - through `music_fetch` (one request in flight server-wide) with `Kind::Calendar` (5 MB,
   60 s; `SourceResponse.content_type` since design 72). Redirects are followed in `get`, one hop at a time (at most 5):
   never https → http (`insecure`), a LAN link only on its own host and port. Conditional GET; a 304 keeps the set; a
   failure keeps it and backs off by `music_sweep::backoff` (15 min · 4^(n-1), capped at the hour; daily after 7 days of
@@ -145,14 +151,16 @@ ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server
   three fetches in a row - fetches every 6 h. A new rev is stored (`WHERE id AND uid`: a source removed mid-fetch
   writes nothing) and nudges exactly the phones with the link. Error codes, worded at render
   (`calendar.links.why.*`): `not_found`, `status`, `network`, `timeout`, `too_big`, `not_calendar`,
-  `private_address`, `key_lost` (the key changed: add the link again), `insecure`, `empty`.
+  `private_address`, `key_lost` (the key changed: add the link again - the add re-seals the source under today's key
+  and clears the error, QA M1), `insecure`, `empty`, `unreadable` (the parser failed on the body).
 - **Delivery**: the policy's `calendar.feeds` (`[{id, name, rev}]`, always sent, `[]` without one;
   `policy_json_keys_snapshot`) and `GET /api/devices/calendar/feeds/{uid}` (bearer; `handlers::calendar::device_feed`
   through `music_api::versioned_json`: `ETag` = rev, 304, gzip; 404 unless this phone has the link). The report's
-  `calendar.feeds` (`[{id, applied_rev, refused, unknown_zone}]`, `calendar::sanitize_report`, at most 10 rows) says
+  `calendar.feeds` (`[{id, applied_rev, refused, unknown_zone}]`, `calendar::sanitize_report`, at most 10 rows with a valid id, the counts capped at 2000 - QA L1) says
   what the phone applied. Contract `testdata/calendar_feeds.json` (root `CLAUDE.md`). Capability `calendar_feeds_v1`.
 - **The page** (`#links`, above "Calendars shown"): each link's name (auto-saving, back to `#link-<uid>`), its host, its
-  status lines ("Hentet 14:05 · 182 hendelser", the error in words with the set's age, "Venter på telefonen" until the
+  status lines ("Hentet 27.10. 14:05 · 182 hendelser" - the date's form is the catalog's `calendar.links.when_date`,
+  "10/27 14:05" in English -, the error in words with the set's age, "Venter på telefonen" until the
   report lists its key, "Oppdater Vibb One …" without `calendar_feeds_v1`, the phone's refused series, `unknown_tz`,
   `cut`, churn, the LAN warning), "Hent nå" (`/fetch`: at most once per source per 5 minutes - else
   `?notice=fetch_wait` -, the fetch before the answer, in `settings_log::NOT_SAVES`), "Fjern…" (confirmed, back to

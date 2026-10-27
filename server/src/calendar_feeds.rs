@@ -269,8 +269,19 @@ pub async fn fetch(
     if answer.truncated {
         return Err(FeedError::code("too_big"));
     }
-    let parsed = ics::parse(&answer.body, answer.content_type.as_deref(), today)
-        .map_err(|_| FeedError::code("not_calendar"))?;
+    // A parser over untrusted bytes: a panic in it is this link's failure, never the scheduler's or the add's end
+    // (QA H1).
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ics::parse(&answer.body, answer.content_type.as_deref(), today)
+    }));
+    let parsed = match read {
+        Ok(Ok(parsed)) => parsed,
+        Ok(Err(_)) => return Err(FeedError::code("not_calendar")),
+        Err(_) => {
+            tracing::error!("a calendar link's body made the parser panic");
+            return Err(FeedError::code("unreadable"));
+        }
+    };
     Ok(Fetched::Body {
         parsed,
         etag: answer.etag,
@@ -407,6 +418,14 @@ pub async fn refresh(
             Err(err) => Err((err, row.lan)),
             Ok(route) => {
                 let lan = matches!(route, Route::Lan(_));
+                // Plain http on the LAN is warned of as its name resolves now, not as it did at the add (QA L5).
+                let lan_http = url.starts_with("http://")
+                    && matches!(&route, Route::Lan(addrs) if !addrs.iter().all(|ip| tailscale(*ip)));
+                sqlx::query("UPDATE calendar_sources SET lan_http = ? WHERE id = ?")
+                    .bind(lan_http)
+                    .bind(id)
+                    .execute(&state.db)
+                    .await?;
                 fetch(
                     state.music_fetch.as_ref(),
                     &url,
@@ -562,25 +581,62 @@ pub async fn refresh(
 pub async fn run(state: AppState) {
     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
     loop {
-        let due: Result<Vec<i64>, sqlx::Error> = sqlx::query_scalar(
-            "SELECT id FROM calendar_sources WHERE next_at <= ? ORDER BY next_at LIMIT ?",
-        )
-        .bind(stamp(Utc::now()))
-        .bind(MAX_SOURCES)
-        .fetch_all(&state.db)
-        .await;
-        match due {
-            Ok(ids) => {
-                for id in ids {
-                    if let Err(err) = refresh(&state, id, Utc::now()).await {
-                        tracing::error!(source_id = id, %err, "couldn't store a calendar link's fetch");
-                    }
-                    tokio::time::sleep(SPACING).await;
+        run_due(&state, SPACING).await;
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    }
+}
+
+/// One pass over the sources due, `spacing` apart. Each fetch is its own task: one that panics is stored as that
+/// source's failure (`unreadable`) and the pass goes on (QA H1).
+pub async fn run_due(state: &AppState, spacing: std::time::Duration) {
+    let due: Result<Vec<i64>, sqlx::Error> = sqlx::query_scalar(
+        "SELECT id FROM calendar_sources WHERE next_at <= ? ORDER BY next_at LIMIT ?",
+    )
+    .bind(stamp(Utc::now()))
+    .bind(MAX_SOURCES)
+    .fetch_all(&state.db)
+    .await;
+    let ids = match due {
+        Ok(ids) => ids,
+        Err(err) => {
+            tracing::error!(%err, "couldn't read the calendar links due");
+            return;
+        }
+    };
+    for id in ids {
+        let task = tokio::spawn({
+            let state = state.clone();
+            async move { refresh(&state, id, Utc::now()).await }
+        });
+        match task.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => {
+                tracing::error!(source_id = id, %err, "couldn't store a calendar link's fetch");
+                // Not again every minute (QA nit 6): the next try at the next interval; best effort.
+                let _ = sqlx::query("UPDATE calendar_sources SET next_at = ? WHERE id = ?")
+                    .bind(stamp(Utc::now() + INTERVAL))
+                    .bind(id)
+                    .execute(&state.db)
+                    .await;
+            }
+            Err(err) => {
+                tracing::error!(source_id = id, %err, "a calendar link's fetch panicked");
+                let now = Utc::now();
+                let marked = sqlx::query(
+                    "UPDATE calendar_sources SET failures = failures + 1, error = 'unreadable', \
+                     error_status = NULL, tried_at = ?, next_at = ? WHERE id = ?",
+                )
+                .bind(stamp(now))
+                .bind(stamp(now + INTERVAL))
+                .bind(id)
+                .execute(&state.db)
+                .await;
+                if let Err(err) = marked {
+                    tracing::error!(source_id = id, %err, "couldn't mark a calendar link's failed fetch");
                 }
             }
-            Err(err) => tracing::error!(%err, "couldn't read the calendar links due"),
         }
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        tokio::time::sleep(spacing).await;
     }
 }
 
@@ -618,6 +674,34 @@ pub async fn add(
     let url = normalize(raw_url).map_err(AddError::Refused)?;
     let uid = uid_of(&url);
     let host = crate::music_net::host_of(&url).unwrap_or_default();
+    let existing: Option<(i64, Option<String>, String)> =
+        sqlx::query_as("SELECT id, feed_name, url_key_fp FROM calendar_sources WHERE uid = ?")
+            .bind(&uid)
+            .fetch_optional(&state.db)
+            .await?;
+    if let Some((source_id, _, sealed_with)) = &existing {
+        // A source sealed with a key the server no longer has (`key_lost`): the parent pasted the same link (its
+        // hash is the uid), so it is sealed again onto that row and fetched at once (QA M1) - the siblings that
+        // have it get it back too.
+        if *sealed_with != key.fingerprint {
+            let (sealed, nonce) = key.seal_with(&aad(&key.fingerprint, &uid), url.as_bytes());
+            sqlx::query(
+                "UPDATE calendar_sources SET url_sealed = ?, url_nonce = ?, url_key_fp = ?, error = NULL, \
+                 error_status = NULL, failures = 0, next_at = ? WHERE id = ?",
+            )
+            .bind(sealed)
+            .bind(nonce)
+            .bind(&key.fingerprint)
+            .bind(stamp(now))
+            .bind(*source_id)
+            .execute(&state.db)
+            .await?;
+            tracing::info!(
+                source_id = *source_id,
+                "a calendar link was sealed again with the current key"
+            );
+        }
+    }
     let mine: Vec<String> = sqlx::query_scalar(
         "SELECT s.uid FROM device_calendar_feeds d JOIN calendar_sources s ON s.id = d.source_id \
          WHERE d.device_id = ?",
@@ -631,12 +715,7 @@ pub async fn add(
     if mine.len() as i64 >= MAX_LINKS_PER_PHONE {
         return Err(AddError::Refused("calendar.links.error.too_many"));
     }
-    let existing: Option<(i64, Option<String>)> =
-        sqlx::query_as("SELECT id, feed_name FROM calendar_sources WHERE uid = ?")
-            .bind(&uid)
-            .fetch_optional(&state.db)
-            .await?;
-    if let Some((source_id, feed_name)) = existing {
+    if let Some((source_id, feed_name, _)) = existing {
         attach(
             &state.db,
             device_id,

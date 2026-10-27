@@ -99,7 +99,12 @@ data class PassResult(val gone: Boolean, val refused: Int, val refusedIndexes: L
 }
 
 /** Runs the batches (deletes first): a refused insert batch is retried one series at a time, one still refused is
- * counted; a refused delete chunk or the provider gone ends the pass without the rev. */
+ * counted; a refused delete chunk or the provider gone ends the pass without the rev.
+ *
+ * A refused delete is kept as an end (QA L4), not counted and passed over: the inserts that follow would put a new
+ * master next to an old one the delete left (a uid twice), and the next pass plans the deletes again. It can't
+ * happen in practice: every delete is by `_ID` through the sync-adapter URI, and the provider's refusals
+ * (IllegalArgumentException, a constraint) are value checks on an insert or update - a delete has no values. */
 fun runPass(
     batches: FeedBatches,
     indexOf: (SeriesRows) -> Int,

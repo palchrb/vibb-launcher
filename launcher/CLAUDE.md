@@ -1493,7 +1493,8 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   calendar is missing, its `CAL_SYNC1` isn't the policy's rev - `If-None-Match` the old rev -, `CAL_SYNC2` isn't
   `FEED_MAPPING`, or `CAL_SYNC5`'s floating zone isn't the phone's; `feedCalendarsGone`).
 - **Glue**: `calendar/CalendarFeeds.refreshIfNeeded(context, api, freshPolicy.calendar)` in `MdmSyncWorker` right
-  after `CalendarStore.policyChanged()` (a fresh policy only; never throws): the calendars made or renamed (from the
+  after `dispatchPendingCommand` (so a `lock` or `locate` never waits behind a first apply, QA L6) and before the
+  status report (a fresh policy only; never throws): the calendars made or renamed (from the
   policy alone), the links gone deleted (their events with them), each link that needs it fetched
   (`MdmApi.calendarFeed(id, ifNoneMatch)`; a failed GET, a 304 or a document that doesn't read changes nothing), planned
   and applied, then `CAL_SYNC1` the body's rev (N2), `CAL_SYNC2`, `CAL_SYNC3` the refused series, `CAL_SYNC4` the
@@ -1510,7 +1511,8 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   section), `PolicyResponseCompatTest`.
 - **Not device-tested** (`docs/testing/emulator.md` §6y): the provider taking the LOCAL calendar and the sync columns
   from a plain app, the EXDATE forms (else flip `EXDATE_COLUMN`), UNTIL, the override linking by ORIGINAL_SYNC_ID and
-  the back reference, the first apply of 2000 events (timed), a kill mid-apply.
+  the back reference, the first apply of 2000 events (timed), a kill mid-apply. Also still to do: the server's
+  itslearning fixture folds a synthesised body - the real feed's bytes are still to be captured (QA N7).
 
 ## Building without tsnet.aar
 

@@ -164,6 +164,8 @@
   "calendar.links.why.private_address": "The link led to a private address.",
   "calendar.links.why.key_lost": "The server's key has changed - add the link again.",
   "calendar.links.why.insecure": "Plain http to the internet is refused - use https.",
+  "calendar.links.why.unreadable": "The calendar couldn't be read.",
+  "calendar.links.when_date": "{month}/{day} {time}",
   "calendar.links.error.fetch": "{why} Nothing was added.",
   "calendar.links.error.no_key": "Nothing can be stored without the server's key. Check the server log (MUSIC_SECRET_KEY).",
   "calendar.links.error.not_link": "That isn't a link - paste the calendar's address (https:// or webcal://).",

@@ -164,6 +164,8 @@
   "calendar.links.why.private_address": "Lenken førte til en privat adresse.",
   "calendar.links.why.key_lost": "Serverens nøkkel er byttet - legg til lenken på nytt.",
   "calendar.links.why.insecure": "Ren http ut på internett blir avvist - bruk https.",
+  "calendar.links.why.unreadable": "Kalenderen kunne ikke leses.",
+  "calendar.links.when_date": "{day}.{month}. {time}",
   "calendar.links.error.fetch": "{why} Ingenting ble lagt til.",
   "calendar.links.error.no_key": "Ingenting kan lagres uten serverens nøkkel. Sjekk serverloggen (MUSIC_SECRET_KEY).",
   "calendar.links.error.not_link": "Det er ikke en lenke - lim inn kalenderens adresse (https:// eller webcal://).",

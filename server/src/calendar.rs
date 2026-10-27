@@ -43,7 +43,7 @@ fn is_space(c: char) -> bool {
 }
 
 /// Removed outright: the other control characters, the bidi marks, overrides and isolates, and the invisible ones.
-fn is_dropped(c: char) -> bool {
+pub(crate) fn is_dropped(c: char) -> bool {
     matches!(c,
         '\u{0}'..='\u{1F}' | '\u{7F}'..='\u{9F}' | '\u{61C}' | '\u{200B}' | '\u{200E}' | '\u{200F}'
         | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
@@ -468,7 +468,8 @@ pub const FEED_ROW_FIELDS: &[(&str, crate::handlers::device_api::Field)] = &[
 ];
 
 /// A report's `feeds` (design 72 §4): at most [crate::calendar_feeds::MAX_LINKS_PER_PHONE] rows, each with a valid
-/// uid (once), its rev 16 lowercase hex or null, the counts non-negative ints (else 0).
+/// uid (once), its rev 16 lowercase hex or null, the counts ints within 0..=ics::MAX_EVENTS (else 0; QA L1). The
+/// first ten rows that read are kept - a phone has at most ten links.
 fn sanitize_feeds(value: Option<&serde_json::Value>) -> Vec<ReportedFeed> {
     let mut seen = HashSet::new();
     let hex16 =
@@ -490,7 +491,12 @@ fn sanitize_feeds(value: Option<&serde_json::Value>) -> Vec<ReportedFeed> {
             if !seen.insert(id.to_string()) {
                 return None;
             }
-            let count = |key: &str| kept.get(key).and_then(|v| v.as_i64()).unwrap_or(0).max(0);
+            let count = |key: &str| {
+                kept.get(key)
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+                    .clamp(0, crate::ics::MAX_EVENTS as i64)
+            };
             Some(ReportedFeed {
                 id: id.to_string(),
                 applied_rev: kept
@@ -674,6 +680,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ours, theirs);
+    }
+
+    /// Design 72 QA L1: the report's link rows - a valid uid once, the counts within 0..=2000, at most ten.
+    #[test]
+    fn the_reported_feeds_are_kept_within_limits() {
+        let uid = |n: usize| format!("{n:032x}");
+        let mut rows = vec![
+            serde_json::json!({"id": "NOT-A-UID", "applied_rev": null, "refused": 1, "unknown_zone": 0}),
+            serde_json::json!({"id": uid(1), "applied_rev": "0123456789abcdef", "refused": -5,
+                               "unknown_zone": 9_223_372_036_854_775_807i64}),
+            serde_json::json!({"id": uid(1), "applied_rev": null, "refused": 3, "unknown_zone": 0}),
+            serde_json::json!({"id": uid(2), "applied_rev": "NOT HEX", "refused": "7", "unknown_zone": 0}),
+        ];
+        rows.extend((3..20).map(|n| serde_json::json!({"id": uid(n), "applied_rev": null, "refused": 0, "unknown_zone": 0})));
+        let report = sanitize_report(
+            &serde_json::json!({"readable": true, "calendars": [], "feeds": rows}),
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            report.feeds.len(),
+            crate::calendar_feeds::MAX_LINKS_PER_PHONE as usize
+        );
+        assert!(
+            report
+                .feeds
+                .iter()
+                .all(|f| crate::calendar_feeds::valid_uid(&f.id))
+        );
+        let first = &report.feeds[0];
+        assert_eq!((first.id.as_str(), first.refused), (uid(1).as_str(), 0));
+        assert_eq!(first.unknown_zone, crate::ics::MAX_EVENTS as i64);
+        assert_eq!(report.feeds[1].applied_rev, None);
+        assert_eq!(report.feeds[1].refused, 0);
     }
 
     #[test]

@@ -141,8 +141,6 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         com.kidslauncher.mdm.badges.GlanceStore.refreshPolicy(freshPolicy.lockGlance, fresh = true)
         // Dagen (design 69): the rules and the calendars' settings apply to the shown day at once.
         com.kidslauncher.mdm.calendar.CalendarStore.policyChanged()
-        // Design 72: the calendar links whose set moved, written into their own local calendars (never throws).
-        com.kidslauncher.mdm.calendar.CalendarFeeds.refreshIfNeeded(context, api, freshPolicy.calendar)
         // Round 7 §3: the parent's "Wake the screen for a notification" (memory, read by the lock).
         com.kidslauncher.mdm.lock.PinLockRuntime.noticeWakeSwitch(freshPolicy.launcherUi)
         // Real server contact just succeeded - the offline override's whole job (bridging the gap
@@ -166,6 +164,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // been delivered and consumed server-side, and replaying it from cache while offline would
         // re-run an old command (harmless for ring, not for lock/wipe).
         ranCommand = dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand, freshPolicy.kidLock)
+        // Design 72: the calendar links whose set moved, written into their own local calendars (never throws) -
+        // after the command, so a lock or locate never waits behind a first apply (QA L6), before the report.
+        com.kidslauncher.mdm.calendar.CalendarFeeds.refreshIfNeeded(context, api, freshPolicy.calendar)
         // Design 59 §1: `set_kid_pin`'s Child PIN goes no further than its command - the policy
         // applied and held in memory from here on has none, like the cached one.
         freshPolicy = cacheablePolicy(freshPolicy)
