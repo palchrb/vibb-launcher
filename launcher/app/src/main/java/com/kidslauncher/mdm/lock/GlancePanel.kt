@@ -567,8 +567,9 @@ class GlancePanel(
     private var swipeVelocity: VelocityTracker? = null
     private var swipeBlocked = false
 
-    /** What the gesture became (r11 §3.2; a plain "taken" flag before): nothing yet, the unlock, or a row's dismiss. */
-    private enum class SwipeMode { NONE, UNLOCK, DISMISS }
+    /** What the gesture became (r11 §3.2; a plain "taken" flag before): nothing yet, the unlock, a row's dismiss, or a
+     * sideways swipe on a row that can't be swiped away (the calendar row), which does nothing at all (E5's L2). */
+    private enum class SwipeMode { NONE, UNLOCK, DISMISS, HELD }
 
     private var swipeMode = SwipeMode.NONE
 
@@ -636,6 +637,10 @@ class GlancePanel(
             return SwipeTouch.CONSUME
         }
         if (swipeMode == SwipeMode.DISMISS) return dismissTouch(ev, down, covered)
+        if (swipeMode == SwipeMode.HELD) {
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) swipeReset()
+            return SwipeTouch.CONSUME
+        }
         if (action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_CANCEL) {
             // A second finger or the system took it (a gesture from the edge): no swipe of ours.
             swipeReset()
@@ -663,7 +668,13 @@ class GlancePanel(
                     follow(drag, dx)
                     return SwipeTouch.CANCEL_VIEWS
                 }
-                if (dismissRow != null) swipeBlocked = true
+                if (dismissRow != null) {
+                    // E5's L2: a row it can't take (the calendar row) - the sideways swipe is nothing: no dismiss, no
+                    // tap (the row gets a cancel, so no click on the lift), no unlock.
+                    swipeBlocked = true
+                    swipeMode = SwipeMode.HELD
+                    return SwipeTouch.CANCEL_VIEWS
+                }
             }
         }
         val verdict = glanceSwipeStep(
@@ -1270,7 +1281,7 @@ class GlancePanel(
     private fun bindNext() {
         val next = calendar.next()
         nextWanted = next?.takeIf { rows.none { it is GlanceCalendarRow } }?.let { (title, begin) ->
-            activity.getString(R.string.glance_next, title, ClockFormat.formatTime(activity, begin))
+            activity.getString(R.string.glance_next, title, ClockFormat.formatClock(activity, begin))
         }
         glance.lockGlanceNext.text = nextWanted
         fitNext()
@@ -1305,7 +1316,7 @@ class GlancePanel(
      * last minute), the start time; TalkBack "Påminnelse: Fotball, om 15 minutter, 17:30". Never dismissable. */
     private fun bindCalendar(view: ViewLockGlanceRowBinding, row: GlanceCalendarRow) {
         val res = activity.resources
-        val time = ClockFormat.formatTime(activity, row.beginMs)
+        val time = ClockFormat.formatClock(activity, row.beginMs)
         view.root.visibility = View.VISIBLE
         view.glanceRowTitle.text = if (row.minutesLeft <= 1) {
             activity.getString(R.string.glance_reminder_now, row.title)

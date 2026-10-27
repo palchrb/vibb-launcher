@@ -1427,19 +1427,26 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   and update/delete only of an event still theirs - the provider's only writes, `KidEventTest`). `READ_CALENDAR` and
   `WRITE_CALENDAR` are self-granted by `AppEnforcer.apply` while managed and at the store's start as device owner.
 - **UI** (`ui/day/`): `DayActivity` (KidHeader's second line: the weekday over the date, always; the jump back off today;
-  `ViewPager2` over `Int.MAX_VALUE` days, a 10 dp peek; a page shows nothing until its day is read; a date/time/zone
+  `ViewPager2` over `Int.MAX_VALUE` days, a 10 dp peek of the neighbours' cards - the pager's list padded
+  `PAGER_PAD_DP` 13 dp, each page 3 dp, the root `clipToPadding=false` (E5's L1); a page shows nothing until its day is read; a date/time/zone
   change keeps the page's date; a minute tick; a reminder that is up under the header; the "+" while the kid may add
-  events), `DayListAdapter` (two lines of title and second line - the kid's own event's second line is its place,
-  else the calendar's name -, the "›" only when cut - `cutByRule` or an ellipsis after
+  events; started from the glance's reminder row by `glanceIntent`, `FLAG_ACTIVITY_NEW_TASK` - from the lock's task it
+  died with the lock, E5's H1), `DayListAdapter` (two lines of title and second line - the kid's own event's second
+  line is its place, else the calendar's name -; the time column 56 dp, widened per page to its widest one-line time
+  by `timeColumnPx`, an all-day row "Hele" over "dagen"; times by `ClockFormat.formatClock` - AM/PM in 12 h, E5's
+  L4 -, the "›" only when cut - `cutByRule` or an ellipsis after
   layout -, the ongoing ring and "Pågår nå", one TalkBack node "Pågår nå, 14:45 til 15:30, SFO: Leksehjelp" with
   "Åpne hendelsen"), `EventActivity` (the header's day: an all-day event's UTC date, `eventDay`; read again by id, rules applied, the whole description in a plain TextView, no
-  links; Change and Delete only for the kid's own), `EventEditActivity` ("Ny avtale": what, day, from, length, place).
+  links; Change and Delete only for the kid's own), `EventEditActivity` ("Ny avtale": what, day - `DayActivity.dayLine`, the locale's best pattern for "EEEEdMMMM", en-US
+  "Tuesday, October 27" -, from, length, place). `KidHeader`'s row is at least 56 dp and grows with the second line
+  (E5's M1). Pure `day/DayText.kt` (`dayLineSkeleton`/`dayLineText`, `timeColumnPx`; `DayTextTest`).
   Home: `GridTile.Day` right after the phone book (`tileShown`: Dagen on Home, a readable provider, a calendar shown or
   the kid's own to come). `KidScreensEscapeTest` scans `ui/day` and `calendar`.
 - **The glance** (step 2, `lock/GlanceCalendar`, `GlancePanel`): today read off the main thread at the page's start and on
   every provider or policy change, one main-thread callback at the next boundary - no alarm, no notification, no wake.
   C: `GlanceCalendarRow` first in the list (the calendar glyph in the peach disc, "Fotball om 15 min" / "… nå", the
-  start; never dismissable; the tap is `GlanceTarget.Day` through the keypad, `GlanceOpen.DAY`, none under a time rule).
+  start; never dismissable, and a sideways swipe on it does nothing - `SwipeMode.HELD`: the row gets a cancel, so no
+  tap, E5's L2; the tap is `GlanceTarget.Day` through the keypad, `GlanceOpen.DAY`, none under a time rule).
   A: `lock_glance_next` under the alarm line in its style, yielding while C is up and when `glanceNextFits` (the third
   row keeps 16 dp in sight) says no - read from the laid-out page with the line taken out.
 - **Enforcement and Home**: `CALENDAR_SYNC_APPS` (ICSx5, DAVx5) are never suspended by a time rule while allowed

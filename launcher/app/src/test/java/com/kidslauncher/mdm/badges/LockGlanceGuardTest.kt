@@ -340,8 +340,13 @@ class LockGlanceGuardTest {
         val horizontal = swipe.substringAfter("if (swipeAxis == GlanceAxis.HORIZONTAL) {").substringBefore("\n            }\n        }")
         assertTrue(horizontal, horizontal.contains("swipeMode = SwipeMode.DISMISS") && horizontal.contains("return SwipeTouch.CANCEL_VIEWS"))
         // Q-8 (narrowed): a sideways start blocks the unlock only on a row it couldn't take; elsewhere the unlock's rule.
-        assertTrue(horizontal, horizontal.contains("if (dismissRow != null) swipeBlocked = true"))
+        assertTrue(horizontal, horizontal.contains("if (dismissRow != null) {"))
         assertEquals(horizontal, 1, Regex("""swipeBlocked = true""").findAll(horizontal).count())
+        // E5's L2: there the sideways swipe is nothing - the row gets a cancel (no click), the rest is consumed.
+        val held = horizontal.substringAfter("if (dismissRow != null) {")
+        assertTrue(held, held.contains("swipeBlocked = true\n                    swipeMode = SwipeMode.HELD\n                    return SwipeTouch.CANCEL_VIEWS"))
+        assertTrue(swipe.contains("if (swipeMode == SwipeMode.HELD) {\n            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) swipeReset()\n            return SwipeTouch.CONSUME"))
+        assertTrue(panel.contains("it !is GlanceCalendarRow }?.let { Dragged("))
         // A message row needs the listener before it slides off; else it springs back.
         assertTrue(body(panel, "release").contains("if (drag.row is GlanceMessageRow && !GlanceReader.canDismiss()) {"))
         // TalkBack's "Fjern" on the rows only; the timer tile keeps openAction.
@@ -604,7 +609,10 @@ class LockGlanceGuardTest {
         assertEquals(1, Regex("""\.send\(""").findAll(opener).count())
         assertTrue(opener.contains("intent.send(activity, 0, null, null, null, null, VisibleSender.options())"))
         assertEquals(3, Regex("""\bstartActivity\(""").findAll(opener).count())
-        assertTrue(opener.contains("activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(activity, day))"))
+        assertTrue(opener.contains("activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.glanceIntent(activity, day))"))
+        // E5's H1: started from the lock's task without NEW_TASK, Dagen is destroyed with the lock.
+        assertTrue(code("DayActivity.kt").contains("fun glanceIntent(context: Context, day: LocalDate?): Intent = intent(context, day).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
+        assertTrue(code("PhoneBookActivity.kt").contains(".addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)"))
         assertTrue(opener.contains("activity.startActivity(PhoneBookActivity.missedCallsIntent(activity, number))"))
         assertTrue(opener.contains("activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))"))
         // Only the app's own content intent - never an action, a reply or a delete intent.

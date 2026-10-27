@@ -21,9 +21,13 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     private var rows: List<DayRow> = emptyList()
     private var empty = false
 
+    /** The page's time column (px), measured at the first bind after a submit; 0 = not yet. */
+    private var columnPx = 0
+
     fun submit(view: DayView?) {
         rows = view?.let { it.allDay + it.timed }.orEmpty()
         empty = view?.empty == true
+        columnPx = 0
         notifyDataSetChanged()
     }
 
@@ -41,7 +45,10 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        if (holder is Row) holder.bind(rows[position])
+        if (holder is Row) {
+            if (columnPx == 0) columnPx = holder.columnFor(rows)
+            holder.bind(rows[position], columnPx)
+        }
     }
 
     class Row(view: View) : RecyclerView.ViewHolder(view) {
@@ -50,6 +57,7 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private val title: TextView = view.findViewById(R.id.day_event_title)
         private val second: TextView = view.findViewById(R.id.day_event_second)
         private val more: View = view.findViewById(R.id.day_event_more)
+        private val column: View = view.findViewById(R.id.day_event_time)
         private var cutByRule = false
 
         init {
@@ -67,18 +75,24 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             return layout.lineCount > 0 && layout.getEllipsisCount(layout.lineCount - 1) > 0
         }
 
-        fun bind(row: DayRow) {
+        /** The widest time text of [rows] at this row's paints (each text one line), as [timeColumnPx] wants it. */
+        fun columnFor(rows: List<DayRow>): Int {
             val context = itemView.context
-            val time = { ms: Long -> ClockFormat.formatTime(context, ms) }
-            val arrow = context.getString(R.string.day_continues)
-            val (from, until) = when (row.kind) {
-                RowKind.ALL_DAY -> context.getString(R.string.day_all_day) to ""
-                RowKind.TIMED -> time(row.begin) to if (row.end > row.begin) time(row.end) else ""
-                RowKind.FIRST_DAY -> time(row.begin) to arrow
-                RowKind.LAST_DAY -> arrow to time(row.end)
+            val widest = rows.maxOfOrNull { row ->
+                val (from, until) = times(context, row)
+                maxOf(start.paint.measureText(from), end.paint.measureText(until))
+            } ?: 0f
+            val density = context.resources.displayMetrics.density
+            return com.kidslauncher.mdm.day.timeColumnPx(widest, (TIME_COLUMN_MIN_DP * density).toInt(), density.toInt().coerceAtLeast(1))
+        }
+
+        fun bind(row: DayRow, columnPx: Int) {
+            val context = itemView.context
+            val (from, until) = times(context, row)
+            if (columnPx > 0 && column.layoutParams.width != columnPx) {
+                column.layoutParams = column.layoutParams.also { it.width = columnPx }
             }
             start.text = from
-            start.maxLines = if (row.kind == RowKind.ALL_DAY) 2 else 1
             start.setTextColor(
                 context.getColor(
                     when {
@@ -106,8 +120,11 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             itemView.setBackgroundResource(if (row.ongoing) R.drawable.bg_day_event_now else R.drawable.bg_day_event)
             more.visibility = if (cutByRule) View.VISIBLE else View.INVISIBLE
             // One TalkBack node: "Pågår nå, 14:45 til 15:30, SFO: Leksehjelp".
-            val spokenTime = if (until.isEmpty() || row.kind == RowKind.ALL_DAY) from
-            else context.getString(R.string.day_spoken_time, from, until)
+            val spokenTime = when {
+                row.kind == RowKind.ALL_DAY -> context.getString(R.string.day_all_day)
+                until.isEmpty() -> from
+                else -> context.getString(R.string.day_spoken_time, from, until)
+            }
             val spoken = listOfNotNull(context.getString(R.string.day_ongoing).takeIf { row.ongoing }, spokenTime, row.title)
             itemView.contentDescription = spoken.joinToString(", ")
             ViewCompat.replaceAccessibilityAction(
@@ -123,5 +140,21 @@ class DayListAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     private companion object {
         const val EMPTY = 0
         const val ROW = 1
+
+        /** The time column's least width (dp): a 24-hour "14:45" at font 1.0. */
+        const val TIME_COLUMN_MIN_DP = 56
+
+        /** A row's two time lines: the start (or "Hele") over the end (or "dagen"); a multi-day row's arrow. Times in
+         * 12 h carry their AM/PM (E5's L4). */
+        fun times(context: android.content.Context, row: DayRow): Pair<String, String> {
+            val time = { ms: Long -> ClockFormat.formatClock(context, ms) }
+            val arrow = context.getString(R.string.day_continues)
+            return when (row.kind) {
+                RowKind.ALL_DAY -> context.getString(R.string.day_all_day_top) to context.getString(R.string.day_all_day_bottom)
+                RowKind.TIMED -> time(row.begin) to if (row.end > row.begin) time(row.end) else ""
+                RowKind.FIRST_DAY -> time(row.begin) to arrow
+                RowKind.LAST_DAY -> arrow to time(row.end)
+            }
+        }
     }
 }

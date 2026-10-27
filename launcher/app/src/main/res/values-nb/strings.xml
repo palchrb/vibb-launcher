@@ -391,6 +391,8 @@
     <string name="day_jump_back">← I dag</string>
     <string name="day_jump_forward">I dag →</string>
     <string name="day_all_day">Hele dagen</string>
+    <string name="day_all_day_top">Hele</string>
+    <string name="day_all_day_bottom">dagen</string>
     <string name="day_ongoing">Pågår nå</string>
     <string name="day_ongoing_with">Pågår nå · %1$s</string>
     <string name="day_continues">→</string>
