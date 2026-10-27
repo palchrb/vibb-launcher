@@ -522,6 +522,18 @@ Notifications (B; kiosk LOCKED, block on unless noted):
   cell-broadcast test alert (`adb emu cbs ...` / the emulator's extended controls) and the Play services earthquake-alert
   demo stay. The device page lists the removed package/channel counts. **The `notification_auto_cancel` switch may
   default on only after this passes.**
+- [ ] **B6 the kept lines** (the 2026-10-27 diagnostic, branch `nf-keep-log`; `adb logcat -s NotificationRule`): with the
+  filter ON, `adb shell cmd notification post -S bigtext -t 'Test' tag1 'hei'` vanishes within 1 s and the log has
+  `cancel com.android.shell / shell_cmd (1 since the last report)`; with the filter OFF it stays (no line: `SWITCHED_OFF`
+  is never logged). A notification the rule would have cancelled but kept is logged as
+  `kept <package> / <channel>: <REASON> (N so far)` - `ESSENTIAL_PACKAGE`, `ESSENTIAL_CATEGORY`, `ESSENTIAL_CHANNEL`,
+  `ALLOWED via allowlist|messaging|lock-usable` (the set that allowed it), `GROUP_CHILD_KEPT` or
+  `FACTS_FAILED <Exception>` on the 1st/10th/100th keep of that (package, channel, reason) in the process;
+  `ONGOING`/`NOT_CLEARABLE`/`FULL_SCREEN`/`INSISTENT` once per (package, channel); never `POLICY_UNKNOWN`,
+  `SWITCHED_OFF`, `UNMANAGED` or `OWN`. One second after each cancel the listener looks again: a notification still
+  there with the same post time logs `platform kept <package> / <channel>` once (Android refused the listener's cancel).
+  **A Google nag that stays (PLAN: Play services' `multidevice...WELCOME_CHANNEL_ID`) is diagnosed from this line**: its
+  `kept com.google.android.gms / ... : <REASON>` names why, or `platform kept` says the cancel was refused; paste it.
 
 Fix round (qa-11-code) and user requests, 2026-10-06:
 - [ ] **Orphan sweep**: with the fence up (A4, during the window) `adb shell run-as $P rm shared_prefs/update_fence.xml`,

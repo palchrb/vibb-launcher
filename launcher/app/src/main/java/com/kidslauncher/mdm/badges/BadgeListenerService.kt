@@ -108,21 +108,37 @@ class BadgeListenerService : NotificationListenerService() {
         val facts = try {
             facts(sbn)
         } catch (e: Exception) {
+            // The 2026-10-27 diagnostic: every silent return names itself (package and channel only).
+            val channel = runCatching { sbn.notification.channelId }.getOrNull()
+            NotificationRuleRuntime.keptFactsFailed(sbn.packageName, channel, e.javaClass.simpleName)
             return
         }
         val policy = NotificationRuleRuntime.policy
-        if (nagVerdict(facts, policy) != NagVerdict.Cancel) return
+        when (val verdict = nagVerdict(facts, policy)) {
+            is NagVerdict.Keep -> {
+                NotificationRuleRuntime.kept(facts, verdict.reason)
+                return
+            }
+            NagVerdict.Cancel -> {}
+        }
         if (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) {
             // Cancelling a summary takes its non-ongoing children with it (qa-11-code #6). The
             // group key stays in memory here - never logged or reported.
             val children = (active ?: activeOrNull() ?: return)
                 .filter { it.key != sbn.key && it.groupKey == sbn.groupKey && it.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0 }
                 .mapNotNull { child -> runCatching { facts(child) }.getOrNull()?.let { it to nagVerdict(it, policy) } }
-            if (!groupSummaryCancellable(children)) return
+            if (!groupSummaryCancellable(children)) {
+                NotificationRuleRuntime.keptGroupChild(facts)
+                return
+            }
         }
         try {
             when (NotificationRuleRuntime.act(facts)) {
-                NagAction.CANCEL -> cancelNotification(sbn.key)
+                NagAction.CANCEL -> {
+                    cancelNotification(sbn.key)
+                    // Did the cancel take? Android 15/16 can refuse a listener's cancel (the 2026-10-27 diagnostic).
+                    NotificationRuleRuntime.checkAfterCancel(this, sbn.key, sbn.postTime, facts)
+                }
                 NagAction.SNOOZE -> snoozeNotification(sbn.key, NAG_SNOOZE_MS)
             }
         } catch (e: Exception) {
@@ -162,6 +178,10 @@ class BadgeListenerService : NotificationListenerService() {
         Log.w("BadgeListener", "Couldn't read active notifications: ${e.javaClass.simpleName}")
         null
     }
+
+    /** The post time of [key]'s notification if it is still active - `null` when gone or when the
+     * listener can't answer (the post-cancel check, [NotificationRuleRuntime.checkAfterCancel]). */
+    internal fun activePostTime(key: String): Long? = activeOrNull(arrayOf(key))?.firstOrNull { it.key == key }?.postTime
 
     private fun recount() {
         val active = activeOrNull() ?: return

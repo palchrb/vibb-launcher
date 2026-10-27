@@ -49,6 +49,11 @@ data class NagPolicy(
     val essential: Set<String>,
     /** Ours and the `.debug`/release sibling. */
     val own: Set<String>,
+    /** The three parts of [allowed], kept apart only so a kept notification's log line can name the
+     * set that allowed it (the 2026-10-27 diagnostic; the verdict reads [allowed] alone). */
+    val allowlist: Set<String> = emptySet(),
+    val messaging: Set<String> = emptySet(),
+    val lockUsable: Set<String> = emptySet(),
 )
 
 /** `Notification.CATEGORY_*` values that always stay (literal strings: Android-free). */
@@ -235,4 +240,101 @@ fun nagLogDue(totalSoFar: Int): Boolean {
     var n = totalSoFar
     while (n % 10 == 0) n /= 10
     return n == 1
+}
+
+// ---- the kept notifications' log (the 2026-10-27 diagnostic) ---------------------------------
+//
+// Play services' cross-device welcome nag stayed with the switch on and no `cancel` line in the
+// log, so the verdict was a Keep for a reason nothing named. A kept notification now gets a log
+// line too: package, channel id and the reason - never its key, title or text.
+
+/** Keep reasons that are never logged: they hold for every notification on the phone at once
+ * (no policy yet, the switch off, a pause or override, our own), so a line per post would only
+ * repeat the `Rule inactive` line. */
+val NAG_KEEP_SILENT: Set<NagKeep> = setOf(NagKeep.POLICY_UNKNOWN, NagKeep.SWITCHED_OFF, NagKeep.UNMANAGED, NagKeep.OWN)
+
+/** Keep reasons logged once per (package, channel) in a process: a foreground service's ongoing
+ * notification is re-posted on every progress tick, and the flags that keep it don't change
+ * between two posts - the first line says what there is to know. (A nag with an FSI or
+ * `FLAG_INSISTENT` would show here once too, so the family isn't silenced outright.) */
+val NAG_KEEP_ONCE: Set<NagKeep> = setOf(NagKeep.ONGOING, NagKeep.NOT_CLEARABLE, NagKeep.FULL_SCREEN, NagKeep.INSISTENT)
+
+/** Whether the [totalSoFar]th keep of a (package, channel) for [reason] is logged: never for
+ * [NAG_KEEP_SILENT], the first only for [NAG_KEEP_ONCE], else the cancel lines' 1st/10th/100th
+ * rule ([nagLogDue]) - ESSENTIAL_PACKAGE, ESSENTIAL_CATEGORY, ESSENTIAL_CHANNEL and ALLOWED are
+ * the reasons the diagnostic is for. */
+fun keepLogDue(reason: NagKeep, totalSoFar: Int): Boolean = when (reason) {
+    in NAG_KEEP_SILENT -> false
+    in NAG_KEEP_ONCE -> totalSoFar == 1
+    else -> nagLogDue(totalSoFar)
+}
+
+/** Which of the policy's three allowed sets hold [packageName], for an ALLOWED line: "allowlist",
+ * "messaging", "lock-usable", joined with "+"; "unknown" when none names it (an older
+ * [NagPolicy] built without the parts). */
+fun allowedBy(policy: NagPolicy?, packageName: String): String {
+    if (policy == null) return "unknown"
+    val parts = buildList {
+        if (packageName in policy.allowlist) add("allowlist")
+        if (packageName in policy.messaging) add("messaging")
+        if (packageName in policy.lockUsable) add("lock-usable")
+    }
+    return if (parts.isEmpty()) "unknown" else parts.joinToString("+")
+}
+
+/**
+ * Counts the keeps per (package, channel, reason) for the whole process - never reset by a status
+ * report ([NagCounts.take] leaves it alone, so the report's numbers don't change and the
+ * once-per-process reasons stay once), bounded at [maxKeys] triples with the oldest forgotten (a
+ * forgotten triple starts over at 1: at most one more line per eviction, never silence).
+ */
+class KeepCounts(private val maxKeys: Int = 128) {
+    private val counts = LinkedHashMap<Triple<String, String?, String>, Int>()
+
+    /** One more keep of [reason] for (package, channel); returns the new total. */
+    @Synchronized
+    fun record(packageName: String, channelId: String?, reason: String): Int {
+        val key = Triple(packageName, channelId, reason)
+        val total = (counts.remove(key) ?: 0) + 1
+        counts[key] = total
+        while (counts.size > maxKeys) counts.remove(counts.keys.first())
+        return total
+    }
+}
+
+/** How long after a cancel the listener looks whether the notification is still there. */
+const val POST_CANCEL_CHECK_MS = 1_000L
+
+/** At most this many post-cancel checks wait at once (a sweep cancels in bursts; the rest go unchecked). */
+const val POST_CANCEL_CHECKS_MAX = 8
+
+/**
+ * After `cancelNotification(key)`: the platform kept it when the same key is still active with a
+ * post time no later than the cancelled one's ([activePostTime] `null` = gone, or the listener
+ * couldn't answer: not kept). A newer post time is the app's re-post after our cancel (the
+ * re-post budget's case), which the next `onNotificationPosted` handles - not a refusal.
+ */
+fun platformKeptAfterCancel(activePostTime: Long?, cancelledPostTime: Long): Boolean =
+    activePostTime != null && activePostTime <= cancelledPostTime
+
+/** The post-cancel checks in flight: [take] admits one while fewer than [max] wait, [done] gives it back. */
+class PostCancelChecks(private val max: Int = POST_CANCEL_CHECKS_MAX) {
+    private var pending = 0
+
+    @Synchronized
+    fun take(): Boolean {
+        if (pending >= max) return false
+        pending++
+        return true
+    }
+
+    @Synchronized
+    fun done() {
+        if (pending > 0) pending--
+    }
+
+    @Synchronized
+    fun clear() {
+        pending = 0
+    }
 }
