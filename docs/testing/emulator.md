@@ -384,6 +384,12 @@ adb shell cmd package resolve-activity -a android.intent.action.VIEW -t vnd.andr
     READ_PHONE_STATE has no `POLICY_FIXED` (the grant itself stays until revoked in Settings). A pause changes
     neither. After a pause's end the re-suspended apps stay in `adb shell dumpsys meminfo` as cached processes: expected
     (no device-owner API ends another app's process on API 34+, `launcher/CLAUDE.md` "Non-obvious gotchas").
+12. Home's fold (PLAN "Home's fold at four rows"): `jelly36` (§3), three Home contacts, 11 tiles in 3 columns (four
+    rows), font scale 1.0 and 1.3 (§3b), each with gesture and 3-button navigation (`adb shell cmd overlay
+    enable-exclusive --category com.android.internal.systemui.navbar.threebutton`, `.gestural` back). With the grid at
+    its top the fourth row is either whole with its label readable above the fade, or cut through its icon (at most the
+    top half, fading out) - never a whole icon whose label is under the fade or the edge. Scroll down and back up:
+    the same.
 
 Then the full checklists in `docs/design/01`–`07`, `09`, `10` and `11` (§6d below).
 
