@@ -459,6 +459,9 @@
     <string name="day_jump_back">← Today</string>
     <string name="day_jump_forward">Today →</string>
     <string name="day_all_day">All day</string>
+    <!-- A row's time column: the all-day mark on two lines, as the mockup's "Hele" over "dagen". -->
+    <string name="day_all_day_top">All</string>
+    <string name="day_all_day_bottom">day</string>
     <string name="day_ongoing">Happening now</string>
     <string name="day_ongoing_with">Happening now · %1$s</string>
     <string name="day_continues">→</string>

@@ -65,7 +65,9 @@ In design 34's look (night ground, Nunito, the one peach accent, `kid_tile`s, no
   position maps to a day by an offset: `day = anchor + (position - CENTER)`, `CENTER = Int.MAX_VALUE / 2`, `anchor` =
   today when the page was built. A page binds lazily: it asks `CalendarStore.day(day)` (single-thread executor, an LRU
   of 9 days), shows nothing until the answer lands (no empty-day flash), and the adapter prefetches the two neighbours
-  (`offscreenPageLimit = 1`, a 10 dp peek with `clipToPadding=false`). A day the provider can't answer (an
+  (`offscreenPageLimit = 1`, a 10 dp peek with `clipToPadding=false`; as built: the pager's list padded 13 dp, each
+page 3 dp, so the card starts 16 dp in and 10 dp of the neighbour's card shows, and Dagen's root doesn't clip to its
+padding - E5's L1). A day the provider can't answer (an
   out-of-range year) is an empty day [verify: 2040]. `ACTION_DATE_CHANGED`/`TIME_SET`/`TIMEZONE_CHANGED` move `anchor`
   and keep the page's date: `notifyDataSetChanged()` + `setCurrentItem(CENTER + (date - newAnchor), false)`. The pager is
   pure in `day/DayPager.kt` (position <-> day, "today?"), tested. A swipe from the very edge stays Android's Back gesture.

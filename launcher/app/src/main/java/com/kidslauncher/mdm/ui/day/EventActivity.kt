@@ -126,8 +126,8 @@ class EventActivity : UIObjectActivity() {
         val zone = ZoneId.systemDefault()
         val first = Instant.ofEpochMilli(begin).atZone(zone).toLocalDate()
         val last = Instant.ofEpochMilli(if (end > begin) end - 1 else begin).atZone(zone).toLocalDate()
-        val from = ClockFormat.formatTime(this, begin)
-        val until = ClockFormat.formatTime(this, end)
+        val from = ClockFormat.formatClock(this, begin)
+        val until = ClockFormat.formatClock(this, end)
         if (first == last) return if (end > begin) getString(R.string.event_time_range, from, until) else from
         val locale = resources.configuration.locales[0]
         val weekday = { d: LocalDate -> d.format(DateTimeFormatter.ofPattern("EEE", locale)) }

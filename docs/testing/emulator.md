@@ -202,6 +202,11 @@ token included - glance-topinset run, 2026-10-23. Since write-settings-row the f
 phone, `firstLaunchResetDue`, design 59d §8.17; the order no longer matters.) In its Settings (open until the first policy arrives): server URL `http://10.0.2.2:3100`, enrollment code
 from step 2. Take a snapshot ("enrolled").
 
+**Nudging a sync** (E4/E5, 2026-10-27): the phone sends a status report with every sync, so a report "after the next
+sync" can be had at once by saving any setting on the device page - but **never by unticking and re-ticking an app
+under Device › Apps**: unticking uninstalls it (`AppInstaller.uninstallSilently`, by design). The safe nudge is the
+Apps page's "Download apps on Wi-Fi only" off and on again (`POST /devices/<id>/app-updates`).
+
 ## 5. Simulated calls (emulator console via adb)
 
 Always give numbers in international form with `+` (e.g. `+4781549300`): without it the
@@ -2119,25 +2124,33 @@ feature itself - the seed is a test shortcut; the real path is ICSx5 from the ca
    adb shell "content insert --uri content://com.android.calendar/events --bind calendar_id:i:<id> --bind title:s:'Gruppe 2- skoleåret 2026/2027: Matte' --bind description:s:'Viktig at man er klar 08.30. Ta med gymtøy.' --bind dtstart:l:<ms> --bind dtend:l:<ms> --bind eventTimezone:s:Europe/Oslo"
    ```
    A weekly one: `--bind rrule:s:'FREQ=WEEKLY;BYDAY=MO' --bind duration:s:PT6H15M` instead of `dtend`; all-day:
-   `allDay:i:1`, `eventTimezone:s:UTC`, UTC midnights. `date +%s000` gives now in ms.
+   `allDay:i:1`, `eventTimezone:s:UTC`, UTC midnights. `date +%s000` gives now in ms. **A colon inside a `--bind`
+   value must be escaped as `\:`** (`title:s:'Skole\: Matte'`), else `content` answers "Binding not well formed".
 2. **The tile and the page**: after a sync Home has "Dagen" right after the phone book (the blue tile); the PWA's Device ›
    Calendar lists "Skolen · Phone" (the report) and the local "Min kalender" once Dagen was opened (the kid may add events
    by default). Dagen: the heading is the weekday over the date on every page, today too; "← I dag" on a later day,
    "I dag →" on an earlier one, none on today; swipe a year out and back (endless both ways, a 10 dp peek of the
-   neighbours); "Pågår nå" and the peach ring on an ongoing event; "Ingenting i kalenderen." on an empty day; a far-future
+   neighbours' cards at rest: their edges show at x 0-10 dp on both sides, the card 16 dp in); "Pågår nå" and the peach ring on an ongoing event; "Ingenting i kalenderen." on an empty day; a far-future
    day (2040) is an empty day, no error.
 3. **Caps and "›"** at font 1.0 and 1.3 (§3b): a long title and a long description wrap to two lines each with "…", and
-   only those rows show the small "›"; a row whose text fits has none. A tap opens the event's page with the whole
+   only those rows show the small "›"; a row whose text fits has none. At 1.3 the header's date under the weekday is
+   whole (the header grows), an all-day row's time column is "All" over "day" ("Hele" over "dagen"), and in en-US every
+   time carries AM/PM ("12:38 AM", the column as wide as the page's widest time); "Ny avtale"'s day reads "Tuesday,
+   October 27". A tap opens the event's page with the whole
    description; a URL in it is not a link. TalkBack: one node per row, "Pågår nå, 14:45 til 15:30, …", action "Åpne
    hendelsen".
 4. **Rules from the PWA**: add "Starts with «Gruppe 2- skoleåret 2026/2027:» · Skole: + the rest"; the preview shows
    "Skole: Matte" while typing (no page jump, no `settings_saved` line); after the next sync Dagen shows "Skole: Matte";
-   a "Contains" hide on the description ("gymtøy") hides the event.
+   a "Contains" hide on the description ("gymtøy") hides the event - **move the hide rule above the "Starts with" rule
+   first** (Title rules' up arrow): the first rule that matches wins, and added last the "Starts with" rule matches the
+   title before the hide is asked (as designed, design 69 §3.4).
 5. **The real path**: ICSx5 from the catalog's F-Droid source, ticked for this phone, On Home off under Apps (it stays
    allowed, gone from Home and the drawer; in a pause it shows); in a pause add a feed from the host (`python3 -m
    http.server 8088`, `http://10.0.2.2:8088/dagen.ics`) with a weekly series with an `EXDATE` and a moved instance, an
    all-day event, a weekend camp, a UTC RRULE across 2026-10-25, a `VALARM` of 15 min, and the itslearning shapes ("R
-   omerriket", long descriptions, "5. trinn"). Check the [verify] items: the calendar's NAME is the feed URL (the key
+   omerriket", long descriptions, "5. trinn"). **ICSx5 syncs only after its own "Calendar access - GRANT" card on its
+   start screen is granted** (in the pause; until then its sync fails silently - from adb: `requestsync -n
+   "'Calendar subscriptions'" -t at.bitfire.icsdroid -a com.android.calendar -F --is --ib --ex`). Check the [verify] items: the calendar's NAME is the feed URL (the key
    stays across a rename of the display name), its account type `at.bitfire.icsdroid`, access level 200; with a time
    rule on, ICSx5 is not suspended (`dumpsys package at.bitfire.icsdroid | grep suspended`) and still syncs; Dagen's
    open asks a sync (`dumpsys content` shows a manual sync of the account); `DISALLOW_MODIFY_ACCOUNTS` doesn't stop
@@ -2147,8 +2160,9 @@ feature itself - the seed is a test shortcut; the real path is ICSx5 from the ca
    navigation it yields (row 3 stays partly in sight). Reminders "The calm row" and the calendar's reminder "15 min
    before": 15 minutes before the event the row comes first ("… om 15 min", the start under it), silent - no sound, no
    vibration, no heads-up, nothing in the shade, the screen stays dark until pressed; it counts down to "nå" and is gone
-   at the start; a swipe sideways doesn't take it, TalkBack has no "Fjern"; its tap asks the keypad ("Skriv koden for å
-   åpne Dagen") and the code opens Dagen on that day; under a time rule the tap gives the plain keypad. The master
+   at the start; a swipe sideways does nothing at all (not dismissed, no keypad), TalkBack has no "Fjern"; its tap asks
+   the keypad ("Skriv koden for å åpne Dagen") and the code opens Dagen on that day (its own task, `wm_destroy_activity`
+   shows no `DayActivity`); under a time rule the tap gives the plain keypad. The master
    switch off removes it whatever the calendar says; the "Neste" line yields while the row is up. "own": a `VALARM` of
    15 min gives the row at 15, a day-before alarm none. Dagen open while a reminder is up shows it under the header.
 7. **The kid's own events**: the "+" is there from day one (the local "Min kalender"); "Ny avtale" with what, day (the
@@ -2163,7 +2177,9 @@ the header's date line is clipped at font 1.3, and the 10 dp peek doesn't show. 
 with ICSx5 2.4.3 from the catalog (grant its calendar access on its own start card in the pause, or it never syncs). The
 "Contains" hide of step 4 works once moved above the "Starts with" rule (first match wins). A `--bind` value with a
 colon needs `\:`. Device checks: Dagen on 2040 (the provider answers), TalkBack's action words, music + 3 rows with
-3-button navigation, the DAVx5/Radicale half.
+3-button navigation, the DAVx5/Radicale half. **Fixed on `day-view` after the run** (to re-check in the next run): the
+reminder row's Dagen in its own task (H1), the header and the time column at 1.3 (M1), the peek (L1), a sideways swipe
+on the reminder row doing nothing (L2), AM/PM and "Tuesday, October 27" in en-US (L4).
 
 ## 7. Reporting back
 

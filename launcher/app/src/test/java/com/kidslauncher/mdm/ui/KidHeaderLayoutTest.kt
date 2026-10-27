@@ -57,7 +57,15 @@ class KidHeaderLayoutTest {
     @Test
     fun `the header is a compact row with a 48 dp back button and a centred title`() {
         val root = parse("include_kid_header")
-        assertEquals("56dp", root.getAttributeNS(ns, "layout_height"))
+        // At least 56 dp, growing with Dagen's second line (E5's M1); nothing inside has a fixed height.
+        assertEquals("wrap_content", root.getAttributeNS(ns, "layout_height"))
+        assertEquals("56dp", root.getAttributeNS(ns, "minHeight"))
+        val lines = setOf("@+id/kid_header_title", "@+id/kid_header_subtitle")
+        assertEquals(2, root.all().count { it.getAttributeNS(ns, "id") in lines })
+        for (text in root.all().filter { it.getAttributeNS(ns, "id") in lines }) {
+            assertEquals(text.getAttributeNS(ns, "id"), "wrap_content", text.getAttributeNS(ns, "layout_height"))
+            assertEquals(text.getAttributeNS(ns, "id"), "", text.getAttributeNS(ns, "lineHeight"))
+        }
         assertEquals("center_vertical", root.getAttributeNS(ns, "gravity"))
         val back = root.all().single { it.getAttributeNS(ns, "id") == "@+id/kid_header_back" }
         assertEquals("48dp", back.getAttributeNS(ns, "layout_width"))

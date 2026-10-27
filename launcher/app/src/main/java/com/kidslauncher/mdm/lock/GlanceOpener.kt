@@ -138,7 +138,7 @@ object GlanceOpener {
             GlanceOpen.SEND -> Log.i(LOG_TAG, "Glance: sent the intent of $what")
             GlanceOpen.DAY -> {
                 val day = (target as? GlanceTarget.Day)?.epochDay?.let(java.time.LocalDate::ofEpochDay)
-                activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.intent(activity, day))
+                activity.startActivity(com.kidslauncher.mdm.ui.day.DayActivity.glanceIntent(activity, day))
                 Log.i(LOG_TAG, "Glance: opened Dagen")
             }
             GlanceOpen.LAUNCH -> launch(activity, what, conversation)

@@ -164,6 +164,11 @@ object ClockFormat {
 
     fun formatTime(context: Context, t: LocalDateTime): String = render(context, t, amPm = false)
 
+    /** A time in a list or a line of text (Dagen's rows, its pages and form, the glance's calendar lines): in 12 h
+     * always with AM/PM - "12:38" alone is either half of the day (E5's L4); 24 h as the face. */
+    fun formatClock(context: Context, ms: Long, zone: ZoneId = ZoneId.systemDefault()): String =
+        render(context, at(ms, zone), amPm = true)
+
     /** An end time - "until 21:30" / "until 9:30 PM": in 12 h always with AM/PM (L1). */
     fun formatUntil(context: Context, ms: Long, zone: ZoneId = ZoneId.systemDefault()): String =
         formatUntil(context, at(ms, zone))

@@ -71,9 +71,11 @@ class DayActivity : UIObjectActivity() {
         adapter = DayPagerAdapter(this) { anchor }
         binding.dayPager.adapter = adapter
         binding.dayPager.offscreenPageLimit = 1
-        // A 10 dp peek of the neighbours: the pager's own list keeps its padding.
+        // A 10 dp peek of the neighbours' cards (E5's L1): the pager's own list is padded 13 dp and each page 3 dp
+        // (item_day_page), so the card starts 16 dp in and 13 - 3 = 10 dp of the next day's card shows; the root
+        // doesn't clip to its padding, which the pager reaches into.
         (binding.dayPager.getChildAt(0) as? RecyclerView)?.let { list ->
-            val peek = (10 * resources.displayMetrics.density).toInt()
+            val peek = (PAGER_PAD_DP * resources.displayMetrics.density).toInt()
             list.setPadding(peek, 0, peek, 0)
             list.clipToPadding = false
         }
@@ -193,7 +195,7 @@ class DayActivity : UIObjectActivity() {
             if (up != null) {
                 val line = if (up.minutesLeft <= 1) getString(R.string.glance_reminder_now, up.title)
                 else getString(R.string.glance_reminder_in, up.title, up.minutesLeft)
-                binding.dayReminder.text = getString(R.string.day_reminder_line, line, com.kidslauncher.mdm.ui.ClockFormat.formatTime(this, up.beginMs))
+                binding.dayReminder.text = getString(R.string.day_reminder_line, line, com.kidslauncher.mdm.ui.ClockFormat.formatClock(this, up.beginMs))
             }
         }
     }
@@ -203,8 +205,23 @@ class DayActivity : UIObjectActivity() {
         const val EXTRA_DAY = "me.vibb.launcher.extra.DAY"
         private const val STATE_DAY = "day"
 
+        /** The pager's side padding (dp); with the page's 3 dp the neighbours' cards peek 10 dp. */
+        const val PAGER_PAD_DP = 13
+
         fun intent(context: Context, day: LocalDate? = null): Intent =
             Intent(context, DayActivity::class.java).apply { day?.let { putExtra(EXTRA_DAY, it.toEpochDay()) } }
+
+        /** Dagen from the lock's glance (the reminder row, after the code): a task of its own, as the missed calls'
+         * intent - started from `PinLockActivity`'s task it would be destroyed with the lock (E5's H1). */
+        fun glanceIntent(context: Context, day: LocalDate?): Intent = intent(context, day).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        /** The day on one line ("Tuesday, October 27" / "Tirsdag 27. oktober"; with the year when it isn't this
+         * year's): the locale's own order and punctuation (E5's L4). */
+        fun dayLine(context: Context, day: LocalDate, today: LocalDate = LocalDate.now()): String {
+            val locale = context.resources.configuration.locales[0]
+            val pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, com.kidslauncher.mdm.day.dayLineSkeleton(day, today))
+            return com.kidslauncher.mdm.day.dayLineText(pattern, day, locale)
+        }
 
         /** The weekday ("Mandag") and the date ("26. oktober"; with the year when it isn't this year's), in Vibb's
          * language. */

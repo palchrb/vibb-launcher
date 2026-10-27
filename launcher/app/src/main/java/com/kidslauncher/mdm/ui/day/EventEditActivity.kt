@@ -103,9 +103,9 @@ class EventEditActivity : UIObjectActivity() {
     }
 
     private fun render() {
-        binding.eventEditDay.text = DayActivity.dayTexts(this, day).let { (weekday, date) -> "$weekday $date" }
+        binding.eventEditDay.text = DayActivity.dayLine(this, day)
         val at = day.atTime(start).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        binding.eventEditFrom.text = ClockFormat.formatTime(this, at)
+        binding.eventEditFrom.text = ClockFormat.formatClock(this, at)
         binding.eventEditLength.text = lengthText(minutes)
     }
 
