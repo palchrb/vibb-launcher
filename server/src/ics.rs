@@ -1522,7 +1522,7 @@ mod tests {
             format!("{start}\r\nDURATION:PT9223372036854775807S"),
             format!("{start}\r\nDURATION:PT9000000000000000S"),
             format!("{start}\r\nDURATION:P100000000000D"),
-            format!("DTSTART;VALUE=DATE:20261105\r\nDURATION:P100000000000D"),
+            "DTSTART;VALUE=DATE:20261105\r\nDURATION:P100000000000D".to_string(),
             format!("{start}\r\nDURATION:P401D"),
             format!(
                 "{start}\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT9223372036854775807S\r\nEND:VALARM"
