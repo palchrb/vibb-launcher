@@ -330,13 +330,14 @@ pub async fn setup_view(
     headers: &HeaderMap,
     peer_trusted: bool,
     entered: Entered,
+    lang: Lang,
 ) -> Result<SpotifySetup, sqlx::Error> {
     let app = spotify::app(state).await?;
     let rows = spotify::accounts(&state.db).await?;
     let now = state.music_sweep.now();
     let suggested = spotify::suggested_redirect(headers, peer_trusted);
     let query = &entered.query;
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let phones: Vec<(i64, String, Option<i64>)> = sqlx::query_as(
         "SELECT d.id, d.name, p.music_spotify_account FROM devices d \
          JOIN device_policy p ON p.device_id = d.id ORDER BY d.name, d.id",

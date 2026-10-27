@@ -1046,7 +1046,7 @@ async fn render_locate_page(
     let devices = sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY name, id")
         .fetch_all(&state.db)
         .await?;
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let device = selected_id
         .and_then(|id| devices.iter().find(|d| d.id == id))
@@ -1603,7 +1603,7 @@ pub async fn show_locations(
     };
     let span = span_of(params.get("span"));
     let before = before_of(params.get("before"));
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let page = async {
         let (_, map) = map_data(&state, id, span, &zone, now).await?;

@@ -447,7 +447,7 @@ async fn music_page(
 
     let category_of = |id: i64| categories.iter().find(|c| c.id == id);
     let count = entries.len();
-    let view = SweepView::load(state, state.music_sweep.now()).await?;
+    let view = SweepView::load(state, state.music_sweep.now(), lang).await?;
     let entry_rows = entries
         .iter()
         .enumerate()
@@ -610,7 +610,7 @@ pub(crate) async fn render_settings(
     let open = spotify.query_value("storytel") == Some("phones");
     let page = async {
         let spotify =
-            super::music_spotify::setup_view(state, headers, peer_trusted, spotify).await?;
+            super::music_spotify::setup_view(state, headers, peer_trusted, spotify, lang).await?;
         settings_page(state, storytel_error, storytel_notice, open, spotify, lang).await
     }
     .await;
@@ -659,7 +659,7 @@ async fn settings_page(
     .fetch_all(&state.db)
     .await?;
     let storytel_phones = storytel_switches.iter().filter(|(_, _, on)| *on).count() as i64;
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let saved_on = stored.0.as_ref().map(|_| {
         stored
             .2
@@ -1783,7 +1783,7 @@ async fn render_picker(
             Ok(groups) => (false, None, groups),
             Err(StorytelError::NotConfigured) => (true, None, Default::default()),
             Err(err) => {
-                let zone = crate::display_time::Zone::load(&state.db).await;
+                let zone = crate::display_time::Zone::load(&state.db, lang).await;
                 let text = err.message(&zone, state.music_sweep.now());
                 (false, Some(text), Default::default())
             }
@@ -2217,7 +2217,7 @@ async fn render_entry(
         .bind(id)
         .fetch_all(&state.db)
         .await?;
-        let view = SweepView::load(state, state.music_sweep.now()).await?;
+        let view = SweepView::load(state, state.music_sweep.now(), lang).await?;
         let mut lines: HashMap<i64, String> = view.phone_lines(&entry).into_iter().collect();
         let phones = devices
             .iter()
@@ -3203,7 +3203,11 @@ struct SweepView {
 }
 
 impl SweepView {
-    async fn load(state: &AppState, now: DateTime<Utc>) -> Result<SweepView, sqlx::Error> {
+    async fn load(
+        state: &AppState,
+        now: DateTime<Utc>,
+        lang: Lang,
+    ) -> Result<SweepView, sqlx::Error> {
         use crate::music_sweep::{self as sweep, parse_stamp};
         // Before the rows: a check that ends while they are read still shows (QA 1c #18).
         let current = state.music_sweep.current();
@@ -3300,7 +3304,7 @@ impl SweepView {
         .collect();
         Ok(SweepView {
             now,
-            zone: crate::display_time::Zone::load(&state.db).await,
+            zone: crate::display_time::Zone::load(&state.db, lang).await,
             current,
             listings,
             newest,
@@ -3987,7 +3991,7 @@ pub async fn cards(
         return (StatusCode::BAD_REQUEST, "At most 200 cards at once").into_response();
     }
     let built: Result<Vec<serde_json::Value>, sqlx::Error> = async {
-        let view = SweepView::load(&state, state.music_sweep.now()).await?;
+        let view = SweepView::load(&state, state.music_sweep.now(), lang).await?;
         let entries: Vec<MusicEntry> = sqlx::query_as(
             "SELECT id, name, category_id, source, target, key, play_order, cache, resume, \
              cover_hash, sort FROM music_entries \
@@ -4343,6 +4347,7 @@ pub(crate) async fn device_card(
     latest_status: Option<&DeviceStatus>,
     notice: Option<&str>,
     notice_entry: Option<i64>,
+    lang: Lang,
 ) -> Result<MusicCard, sqlx::Error> {
     // A refused Spotify binding goes by its select (design 26c §2.5), as Sonos's by its rooms.
     let spotify_notice = notice
@@ -4555,6 +4560,7 @@ pub(crate) async fn device_card(
         state_report.as_ref().and_then(|r| r.spotify.as_deref()),
         spotify_ticked,
         spotify_notice,
+        lang,
     )
     .await?;
 
@@ -4632,6 +4638,7 @@ async fn spotify_binding_card(
     reported: Option<&str>,
     ticked: usize,
     notice: Option<&'static str>,
+    lang: Lang,
 ) -> Result<Option<SpotifyBindingCard>, sqlx::Error> {
     let configured = crate::spotify::app(state).await?.is_some();
     let rows = crate::spotify::accounts(&state.db).await?;
@@ -4642,7 +4649,7 @@ async fn spotify_binding_card(
         return Ok(None);
     }
     let now = state.music_sweep.now();
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let day = |t: chrono::DateTime<chrono::Utc>, year: bool| {
         let local = zone.local(t);
         if year {

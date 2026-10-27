@@ -316,7 +316,7 @@ pub async fn page(
         Ok(read) => read,
         Err(err) => return read_error(err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let older_than = (raw.len() as i64 > parent_events::PAGE)
         .then(|| raw.get(parent_events::PAGE as usize - 1).map(|r| r.0))
         .flatten();
@@ -374,7 +374,7 @@ pub async fn settings_page(
         Ok(read) => read,
         Err(err) => return read_error(err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let switches = Kind::switches()
         .into_iter()
         .zip(settings)
@@ -428,6 +428,7 @@ struct DeviceRowJson {
 /// a Test to re-render them in place. No-store like every `/notifications` path.
 pub async fn subscriptions_json(
     State(state): State<AppState>,
+    lang: Lang,
     Extension(CurrentAdmin(admin)): Extension<CurrentAdmin>,
 ) -> Response {
     let now = chrono::Utc::now();
@@ -435,7 +436,7 @@ pub async fn subscriptions_json(
         Ok(subscriptions) => subscriptions,
         Err(err) => return read_error(err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let rows: Vec<DeviceRowJson> = subscriptions
         .iter()
         .map(|s| {

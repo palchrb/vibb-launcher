@@ -254,6 +254,7 @@ pub async fn add(
         username,
         &otp,
         &expires_at,
+        lang,
     )
     .await;
     let answer = AccountAnswer {
@@ -271,8 +272,9 @@ async fn otp_shown(
     username: String,
     otp: &str,
     expires_at: &str,
+    lang: Lang,
 ) -> OtpShown {
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let chars: Vec<char> = otp.chars().collect();
     OtpShown {
         title,
@@ -384,7 +386,7 @@ pub async fn reset(
             } else {
                 "account.otp.first"
             };
-            let shown = otp_shown(&state, title, name, username, &otp, &expires_at).await;
+            let shown = otp_shown(&state, title, name, username, &otp, &expires_at, lang).await;
             let answer = AccountAnswer {
                 otp: Some(shown),
                 ..AccountAnswer::default()

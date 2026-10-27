@@ -1476,7 +1476,7 @@ async fn render_device_time(
         Ok(report) => report.problems(),
         Err(err) => return read_failed(err, "the call report"),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let lifts =
         match crate::handlers::lifts::recent(&state.db, id, latest.as_ref(), &zone, now).await {

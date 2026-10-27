@@ -828,7 +828,7 @@ pub(crate) async fn render_account(
     answer: AccountAnswer,
     lang: Lang,
 ) -> axum::response::Response {
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let parents = match crate::parents::rows(&state.db, admin, &zone, now, lang).await {
         Ok(rows) => rows,

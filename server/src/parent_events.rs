@@ -202,7 +202,7 @@ impl Phone {
             name,
             battery_low_since,
             enrolled_at,
-            zone: Zone::load(db).await,
+            zone: Zone::load(db, crate::i18n::Lang::default()).await,
             now: Utc::now(),
         })
     }

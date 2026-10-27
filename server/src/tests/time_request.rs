@@ -81,7 +81,7 @@ async fn steady_zone(app: &TestApp) -> Zone {
                 .execute(&app.db)
                 .await
                 .unwrap();
-            assert_eq!(Zone::load(&app.db).await, zone);
+            assert_eq!(Zone::load(&app.db, crate::i18n::Lang::En).await, zone);
             return zone;
         }
     }
@@ -91,7 +91,9 @@ async fn steady_zone(app: &TestApp) -> Zone {
 /// A status report saying how much screen time is left today: the day is Phone Setup's today
 /// (Q-8: never the UTC date).
 async fn report(app: &TestApp, token: &str, lock_reason: &str, used: i64, budget: i64) {
-    let day = Zone::load(&app.db).await.today(Utc::now());
+    let day = Zone::load(&app.db, crate::i18n::Lang::En)
+        .await
+        .today(Utc::now());
     let res = app
         .request(
             Method::POST,

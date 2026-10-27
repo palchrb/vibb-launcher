@@ -453,6 +453,7 @@ async fn phone_lines(
     state: &AppState,
     lookups: Lookups<'_>,
     devices: &[Device],
+    lang: Lang,
 ) -> Result<(Vec<(i64, String)>, Vec<(i64, String)>), sqlx::Error> {
     type Row = (
         i64,
@@ -475,7 +476,7 @@ async fn phone_lines(
     )
     .fetch_all(&state.db)
     .await?;
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let (mut server, mut bypass) = (Vec::new(), Vec::new());
     for (id, name, filter_on, reported_at, caps, upstream, allowlist) in &rows {
@@ -623,7 +624,7 @@ async fn render_page(
         // Cloudflare, also for a stored Custom without a valid pair (the phones use it then).
         _ => Lookups::Provider("Cloudflare"),
     };
-    let (phones, bypass) = match phone_lines(state, lookups, &devices).await {
+    let (phones, bypass) = match phone_lines(state, lookups, &devices, lang).await {
         Ok(lines) => lines,
         Err(err) => return read_failed(err),
     };
@@ -1132,7 +1133,7 @@ pub async fn show_dns_log(
     if let Some(id) = old_device_param(&params) {
         return Redirect::to(&format!("/devices/{id}/filter#log")).into_response();
     }
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let since = crate::handlers::settings_hub::utc_start_of_day(zone.local(chrono::Utc::now()));
     let phones = sqlx::query_as::<_, (i64, String, Option<bool>, i64)>(
         "SELECT d.id, d.name, p.dns_log_enabled, \

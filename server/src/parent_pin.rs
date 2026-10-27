@@ -468,9 +468,12 @@ fn end_text(zone: &Zone, until_ms: i64, at_ms: i64) -> String {
         {
             zone.clock(until)
         }
-        (Some(until), _) => format!(
+        (Some(until), at) => format!(
             "{} {}",
-            zone.local(until).format("%-d %b"),
+            zone.date_of(
+                zone.local(until).date_naive(),
+                zone.local(at.unwrap_or(until)).date_naive()
+            ),
             zone.clock(until)
         ),
         _ => "unknown".to_string(),

@@ -374,7 +374,7 @@ async fn render_page(
         Ok(found) => found,
         Err(err) => return read_failed(lang, err, "the calendar settings"),
     };
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let feeds_capable = capabilities.iter().any(|c| c == calendar_feeds::CAPABILITY);
     let link_keys: HashMap<String, &calendar_feeds::LinkRow> = links

@@ -646,10 +646,12 @@ async fn the_route_refuses_what_isnt_a_power_report() {
         [(
             "phone_off".to_string(),
             "Anna was turned off".to_string(),
-            crate::display_time::Zone::load(&app.db).await.at(
-                DateTime::from_timestamp_millis(ms(now)).unwrap(),
-                Utc::now()
-            )
+            crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En)
+                .await
+                .at(
+                    DateTime::from_timestamp_millis(ms(now)).unwrap(),
+                    Utc::now()
+                )
         )]
     );
 }
@@ -679,10 +681,12 @@ async fn the_device_page_says_off_since_until_the_start() {
     assert!(!page().await.contains("data-power-off"));
     held_over().await;
     let html = page().await;
-    let when = crate::display_time::Zone::load(&app.db).await.at(
-        DateTime::from_timestamp_millis(ms(shutdown)).unwrap(),
-        Utc::now(),
-    );
+    let when = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En)
+        .await
+        .at(
+            DateTime::from_timestamp_millis(ms(shutdown)).unwrap(),
+            Utc::now(),
+        );
     assert!(
         html.contains(&format!(
             "<span class=\"summary-screen\" data-power-off>Off since {when} · battery was 2 %</span>"

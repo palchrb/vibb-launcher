@@ -279,7 +279,7 @@ pub async fn security_log(
         Ok(names) => names,
         Err(err) => return server_error(err),
     };
-    let zone = Zone::load(&state.db).await;
+    let zone = Zone::load(&state.db, lang).await;
     let now = Utc::now();
     let bans: Vec<BanRow> = bans
         .into_iter()

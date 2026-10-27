@@ -74,7 +74,7 @@ pub async fn list_devices(
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
 
     let mut rows = Vec::with_capacity(devices.len());
@@ -523,7 +523,7 @@ pub async fn regenerate_code(
         Some(&format!("{} (device {id}), typed code", device.name)),
     )
     .await;
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let page = EnrollCodeTemplate {
         lang,
@@ -1307,6 +1307,7 @@ pub(crate) async fn app_rows(
     id: i64,
     policy: &DevicePolicy,
     latest: Option<&DeviceStatus>,
+    lang: Lang,
 ) -> Result<AppRows, sqlx::Error> {
     // A corrupt stored allowlist is shown as a warning, not silently as "nothing allowed" -
     // `build_policy` answers the phone with a 500 for it.
@@ -1361,7 +1362,7 @@ pub(crate) async fn app_rows(
     // What the phone said about its downloads (design 13): waiting for Wi-Fi since when, how far.
     // A fresh progress row above still wins for the live percentage - but not over a release the
     // phone refused (security review M10): its reason beats "Install failed".
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let downloads =
         crate::app_downloads::parse(latest.and_then(|s| s.app_downloads_json.as_deref()));
@@ -1521,7 +1522,7 @@ async fn render_device(
                 .into_response();
         }
     };
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let lifts =
         match crate::handlers::lifts::today(&state.db, id, latest.as_ref(), &zone, now).await {
@@ -1594,7 +1595,7 @@ async fn render_device(
 
     // The Apps row (design 31 step 6): the switches on under Device › Apps, the launcher not
     // counted - the number the Apps tab shows.
-    let rows = app_rows(state, id, &policy, latest.as_ref())
+    let rows = app_rows(state, id, &policy, latest.as_ref(), lang)
         .await
         .map_err(|err| tracing::error!(device_id = id, %err, "can't read the phone's apps"))
         .ok();

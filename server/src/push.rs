@@ -528,7 +528,7 @@ pub async fn send_due(state: &AppState, now: DateTime<Utc>) -> Result<(), sqlx::
     let mut due: Vec<Due> = Vec::new();
     // A kind told from its parameters (design 64's zones) gets its words here, in the Phone Setup
     // zone at the pass's time.
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, crate::i18n::Lang::default()).await;
     for row in rows {
         let DueRow {
             id,

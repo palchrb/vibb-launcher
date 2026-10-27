@@ -510,7 +510,7 @@ async fn render_backups(
     lang: Lang,
 ) -> Response {
     let docker = state.net.deploy_kind == crate::net::DeployKind::Docker;
-    let zone = crate::display_time::Zone::load(&state.db).await;
+    let zone = crate::display_time::Zone::load(&state.db, lang).await;
     let now = chrono::Utc::now();
     let mut backups: Vec<BackupRow> = Vec::new();
     if let Ok(mut entries) = tokio::fs::read_dir(state.data_dir.join(BACKUP_DIR)).await {
