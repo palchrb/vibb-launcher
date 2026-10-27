@@ -52,8 +52,9 @@ jobs:
           # time_request compares it), and the status body's installed versions (2026-10-25;
           # app_updates compares it); and the apps' copies of Storytel's token answers
           # (design 58 §8; music_storytel compares them); and the launcher's built-in secure-DNS
-          # hosts (design 67, testdata/doh_hosts.txt; dns_server compares them).
-          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$)' <<<"$files"; then
+          # hosts (design 67, testdata/doh_hosts.txt; dns_server compares them); and the calendar
+          # links' contract (design 72, calendar_feeds.json; calendar_feeds compares it).
+          if grep -qE '^(server/|\.github/workflows/server-ci\.yml$|(launcher|music)/app/src/test/resources/spotify_hosts\.json$|launcher/app/src/test/resources/(time_status_report|dns_upstream_status|power_report|zone_status_report|launcher_tag_codes|time_request|installed_apps_report|calendar_title_rules|calendar_status_report|calendar_feeds)\.json$|(launcher|music)/app/src/test/resources/storytel_token_answers\.json$|launcher/app/src/main/assets/dns/doh_hosts\.txt$)' <<<"$files"; then
             changed=true
           else
             changed=false

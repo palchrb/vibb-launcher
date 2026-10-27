@@ -83,6 +83,65 @@
         </div>
     </section>
 
+    {#- Design 72 §5: the phone's calendar links. Each row's name saves on change and returns to it (#link-<uid>);
+        Fetch now and Remove too (Remove back to #links). The link itself is sealed on the server and never shown
+        again - only its host. A refused add renders this page again (400) with the form as typed. -#}
+    <section id="links" aria-labelledby="links-title">
+        <h2 class="group-header" id="links-title">{{ self.t("calendar.links.title") }}</h2>
+        {% if let Some(key) = links_notice %}<p class="flash" role="status" data-flash="fetch-wait">{{ self.t(key) }}</p>{% endif %}
+        {% if let Some(why) = add.error %}<p class="flash flash-error" role="alert" data-flash="link-refused">{{ why }}</p>{% endif %}
+        <div class="group">
+            {% for l in links %}
+            <div class="cell" id="link-{{ l.uid }}" data-link="{{ l.uid }}">
+                <form method="post" action="/devices/{{ device_id }}/calendar/links/{{ l.uid }}/name#link-{{ l.uid }}">
+                    <label class="row">
+                        <span class="row-label">{{ self.t("calendar.links.name") }}</span>
+                        <input type="text" class="row-input row-input-end" name="name" value="{{ l.name }}" maxlength="60" autocomplete="off" data-autosave>
+                    </label>
+                    <noscript><button type="submit" class="row row-button">{{ self.t("common.save") }}</button></noscript>
+                </form>
+                <div class="row"><span class="row-label">{{ l.host }}{% for line in l.lines %}<span class="row-sub"{% if loop.first && l.failing %} data-link-failing{% endif %}>{{ line }}</span>{% endfor %}</span></div>
+                <form method="post" action="/devices/{{ device_id }}/calendar/links/{{ l.uid }}/fetch#link-{{ l.uid }}">
+                    <button type="submit" class="row row-button">{{ self.t("calendar.links.fetch_now") }}</button>
+                </form>
+                <details class="confirm cell">
+                    <summary class="row row-danger">{{ self.t("calendar.links.remove") }}&hellip;</summary>
+                    <form method="post" action="/devices/{{ device_id }}/calendar/links/{{ l.uid }}/remove#links" class="confirm-body">
+                        <p>{{ self.t("calendar.links.remove_confirm") }}</p>
+                        <button type="submit" class="button-destructive">{{ self.t("calendar.links.remove") }}</button>
+                    </form>
+                </details>
+            </div>
+            {% endfor %}
+            {% if links_off %}
+            <p class="row row-sub" data-links="off">{{ self.t("calendar.links.no_key") }}</p>
+            {% else if can_add_link %}
+            <form method="post" action="/devices/{{ device_id }}/calendar/links#links" data-links="add">
+                <label class="row row-stacked">
+                    <span class="row-label">{{ self.t("calendar.links.url") }}</span>
+                    <input type="url" class="row-input" name="url" value="{{ add.url }}" maxlength="2100" placeholder="webcal://…" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" required{% if add.error.is_some() %} autofocus{% endif %}>
+                </label>
+                <label class="row row-stacked">
+                    <span class="row-label">{{ self.t("calendar.links.name_optional") }}</span>
+                    <input type="text" class="row-input" name="name" value="{{ add.name }}" maxlength="60" autocomplete="off">
+                </label>
+                <button type="submit" class="row row-button">{{ self.t("calendar.links.add") }}</button>
+            </form>
+            {% else %}
+            <p class="row row-sub" data-links="full">{{ self.t("calendar.links.full") }}</p>
+            {% endif %}
+        </div>
+        <div class="group-footer" data-footer="links">{{ self.t("calendar.links.footer") }}
+            <details class="info">
+                <summary aria-label="{{ self.t("calendar.links.info_label") }}"><svg class="info-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 9v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="6.2" r="1.1" fill="currentColor"/></svg></summary>
+                <div class="info-panel">
+                    <p>{{ self.t("calendar.links.info") }}</p>
+                    <p>{{ self.t("calendar.links.info_privacy") }}</p>
+                </div>
+            </details>
+        </div>
+    </section>
+
     <section id="calendars" aria-labelledby="calendars-title">
         <h2 class="group-header" id="calendars-title">{{ self.t("calendar.calendars.title") }}</h2>
         {% match state %}

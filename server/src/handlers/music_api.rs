@@ -79,7 +79,7 @@ pub async fn library(
         &headers,
         &library.version,
         &library.json,
-        "library",
+        "music library",
     )
 }
 
@@ -101,13 +101,13 @@ pub async fn listing(
         &headers,
         &listing.version,
         &listing.json,
-        "listing",
+        "music listing",
     )
 }
 
 /// A JSON document under its version: `ETag`, `If-None-Match` -> 304, `no-cache`, gzip when asked
-/// for.
-fn versioned_json(
+/// for. The music library and listings, and a calendar link's set (design 72 §3).
+pub(crate) fn versioned_json(
     device_id: i64,
     headers: &HeaderMap,
     version: &str,
@@ -135,7 +135,7 @@ fn versioned_json(
                 response_headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
                 return (response_headers, body).into_response();
             }
-            Err(err) => tracing::warn!(device_id, %err, "couldn't gzip the music {what}"),
+            Err(err) => tracing::warn!(device_id, %err, "couldn't gzip the {what}"),
         }
     }
     (response_headers, json.to_vec()).into_response()

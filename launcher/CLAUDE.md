@@ -1468,6 +1468,56 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   level, the local calendar's insert as a plain app, the two-line caps and "›" at font 1.0 and 1.3, the glance
   geometry, DAVx5's round trip of the `vibb-` UID, `requestSync`, a far-future day.
 
+## Calendar links: the server's calendars in a local calendar (design 72 step 1, `docs/design/72-calendar-feeds.md`, at the monorepo root)
+
+- **What**: the parent pastes a calendar's link in the PWA; the server fetches and parses it
+  (`docs/notes/server/calendar.md`, "Calendar links") and Vibb One writes the set into **one LOCAL read-only calendar
+  per link** - account `Vibb One` (`FEED_ACCOUNT`), NAME `vibb-feed-<uid>` (`feedCalendarName`; the server computes the
+  same key, `calendarKey("LOCAL", "Vibb One", NAME)`), the policy's name as its display name, `CAL_ACCESS_READ` 200
+  (`FEED_ACCESS_LEVEL`: the kid-write rules - >= 500, not LOCAL - never pick it, `FeedPlanTest`), `SYNC_EVENTS` and
+  `VISIBLE` 1, a calm colour by its key (`feedColour`). Dagen reads it like any calendar; the report lists it among
+  `calendar.calendars[]` (no `source`), and `vibbLocal` checks NAME, so "Min kalender" is still made.
+- **Pure** (`day/`): `CalendarPolicy.feeds` (`FeedRef(id, name, rev)`, a row that doesn't read dropped) and
+  `feedsComplete` (an array every element of which read - QA L9: only then may a calendar the policy doesn't name be
+  deleted; missing, a bad element, `UNKNOWN`/`OLDER_SERVER` delete nothing); `FeedEvents.kt` (`feedDocument`, the wire
+  DTOs; `seriesRows(event, phoneZone)`: the master - `_SYNC_ID` = `UID_2445` = uid, `SYNC_DATA1` the series' rev,
+  `SYNC_DATA2` the zone a floating (or unknown-zone) series is written in; single DTSTART + DTEND; recurring DTSTART +
+  DURATION (`PT<n>S`, all-day `P<n>D`) + RRULE with a local `UNTIL` made UTC in the zone written (`ruleWithUtcUntil`,
+  QA L6) + RDATE + EXDATE (UTC `yyyyMMdd'T'HHmmss'Z'`, all-day `yyyyMMdd`, comma-joined); EVENT_TIMEZONE the series'
+  zone, the phone's when floating or unknown, UTC all-day at UTC midnights - then each override: `_SYNC_ID` = uid `#`
+  recurrence id, ORIGINAL_SYNC_ID, ORIGINAL_INSTANCE_TIME, ORIGINAL_ALL_DAY, a cancelled one `STATUS_CANCELED`; the
+  alarms as `Reminders` rows, METHOD_ALERT, read by Dagen's "own" mode; `EXDATE_COLUMN` - EXDATE's fallback, each
+  exclusion a cancelled override row, the switch §6y may flip, QA L7; `FeedColumns` spells CalendarContract's column
+  names, pinned by `FeedEventsTest`), `FeedPlan.kt` (`feedPlan`: a uid gone -> its master and, by ORIGINAL_SYNC_ID,
+  its overrides deleted; a new rev, a floating series written in another zone, two masters of a uid or a mapping bump
+  (`FEED_MAPPING`, `CAL_SYNC2`) -> deleted and inserted; a row of no series deleted; `feedBatches`: the deletes first
+  in chunks, the inserts whole-series in `applyBatch` calls of at most `FEED_BATCH_OPS` 200 operations, never split;
+  `runPass`: a refused batch retried series by series, one still refused counted - logged by its index -, the provider
+  gone ends the pass with the rev left (`PassResult.writeRev`, QA M2); `feedFetch`: a set is fetched only when the
+  calendar is missing, its `CAL_SYNC1` isn't the policy's rev - `If-None-Match` the old rev -, `CAL_SYNC2` isn't
+  `FEED_MAPPING`, or `CAL_SYNC5`'s floating zone isn't the phone's; `feedCalendarsGone`).
+- **Glue**: `calendar/CalendarFeeds.refreshIfNeeded(context, api, freshPolicy.calendar)` in `MdmSyncWorker` right
+  after `dispatchPendingCommand` (so a `lock` or `locate` never waits behind a first apply, QA L6) and before the
+  status report (a fresh policy only; never throws): the calendars made or renamed (from the
+  policy alone), the links gone deleted (their events with them), each link that needs it fetched
+  (`MdmApi.calendarFeed(id, ifNoneMatch)`; a failed GET, a 304 or a document that doesn't read changes nothing), planned
+  and applied, then `CAL_SYNC1` the body's rev (N2), `CAL_SYNC2`, `CAL_SYNC3` the refused series, `CAL_SYNC4` the
+  unknown zones, `CAL_SYNC5` the floating zone - written only after a pass the provider stayed for (idempotent and
+  resumable: a killed pass is planned again). `CalendarStore` stays the provider's only writer: its section "calendar
+  links (design 72)" holds every link write, **each through the sync-adapter URI with the account parameters**
+  (`asFeedAdapter`, QA L10; a plain delete only marks DELETED); `applyFeedBatch` reads IllegalArgumentException,
+  SQLiteException and OperationApplicationException as refused, anything else (no client, a dead provider) as gone. The
+  report's `calendar.feeds` (`CalendarFeeds.report`, `CalendarFeedReportRow(id, applied_rev, refused, unknown_zone)`;
+  left out when empty). Capability `calendar_feeds_v1` (`CALENDAR_FEEDS_CAPABILITY`).
+- Tests: `CalendarFeedsTest` (the shared `calendar_feeds.json`: `feed` maps to exactly `provider` in its zone, the key,
+  the policy's and the report's rows, both copies), `FeedPlanTest`, `FeedEventsTest` (the columns, all-day, floating,
+  an unknown zone, EXDATE's fallback, the sync-adapter URI by source), `KidEventTest` (the kid's four writes above the
+  section), `PolicyResponseCompatTest`.
+- **Not device-tested** (`docs/testing/emulator.md` §6y): the provider taking the LOCAL calendar and the sync columns
+  from a plain app, the EXDATE forms (else flip `EXDATE_COLUMN`), UNTIL, the override linking by ORIGINAL_SYNC_ID and
+  the back reference, the first apply of 2000 events (timed), a kill mid-apply. Also still to do: the server's
+  itslearning fixture folds a synthesised body - the real feed's bytes are still to be captured (QA N7).
+
 ## Building without tsnet.aar
 
 `libs/tsnet.aar` only exists where the Go + NDK toolchain ran (CI, x86_64). When it's missing, `app/build.gradle.kts` compiles `app/src/tsnetStub/java/tsembed/` into the **debug** variant instead - same API as the gomobile binding, every connect fails - so `./gradlew assembleDebug testDebugUnitTest` works on any machine; Gradle logs a warning when the stub is used. A **release** build never gets the stub, whatever the flags (security review L13): `checkReleaseHasTsnet` (a dependency of `preReleaseBuild`) fails it without the aar, and the stub isn't in the release source set anyway. CI also passes `-PrequireTsnet=true`, which fails any build without the aar. To build a release locally without Go (an APK that is never for a phone), pack the stub's classes into a throwaway `libs/tsnet.aar` (gitignored). If `mobile/tsembed`'s exported API changes, update the stub to match.

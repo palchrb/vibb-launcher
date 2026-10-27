@@ -164,6 +164,9 @@ suspend fun performMdmSync(context: Context): Boolean = syncMutex.withLock {
         // been delivered and consumed server-side, and replaying it from cache while offline would
         // re-run an old command (harmless for ring, not for lock/wipe).
         ranCommand = dispatchPendingCommand(context, api, dpm, admin, freshPolicy.pendingCommand, freshPolicy.kidLock)
+        // Design 72: the calendar links whose set moved, written into their own local calendars (never throws) -
+        // after the command, so a lock or locate never waits behind a first apply (QA L6), before the report.
+        com.kidslauncher.mdm.calendar.CalendarFeeds.refreshIfNeeded(context, api, freshPolicy.calendar)
         // Design 59 §1: `set_kid_pin`'s Child PIN goes no further than its command - the policy
         // applied and held in memory from here on has none, like the cached one.
         freshPolicy = cacheablePolicy(freshPolicy)

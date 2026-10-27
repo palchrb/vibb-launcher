@@ -31,8 +31,9 @@ use crate::calendar::{
     self, Action, CalendarReport, Field, MAX_RULES, Match, Outcome, PATTERN_MAX, PolicyCalendar,
     REMIND_MINUTES, Rule, TEXT_MAX,
 };
+use crate::calendar_feeds;
 use crate::handlers::schedules::form_pairs;
-use crate::i18n::{Lang, Words, t, t_params};
+use crate::i18n::{Lang, Words, t, t_count, t_params};
 
 fn field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
     fields
@@ -119,6 +120,25 @@ pub struct CalendarView {
     pub on_phone: bool,
 }
 
+/// One calendar link on the page (design 72 §5): its name, its host (the link itself is sealed, never shown again)
+/// and its status lines, the first the fetch's.
+pub struct LinkView {
+    pub uid: String,
+    pub name: String,
+    pub host: String,
+    pub lines: Vec<String>,
+    /// The first line says something failed (or a held empty answer).
+    pub failing: bool,
+}
+
+/// The add form as typed (a refusal renders it again).
+#[derive(Default)]
+pub struct AddForm {
+    pub url: String,
+    pub name: String,
+    pub error: Option<String>,
+}
+
 /// One title rule in the list.
 pub struct RuleView {
     pub id: i64,
@@ -163,6 +183,12 @@ struct CalendarTemplate {
     rules_skipped: Vec<i64>,
     can_add_rule: bool,
     notice: Option<&'static str>,
+    links: Vec<LinkView>,
+    can_add_link: bool,
+    /// No music key: nothing can be sealed, the form says why and has no submit (QA L11).
+    links_off: bool,
+    add: AddForm,
+    links_notice: Option<&'static str>,
 }
 crate::i18n::words!(CalendarTemplate);
 
@@ -316,7 +342,20 @@ pub async fn view_calendar(
     Path(id): Path<i64>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let device_name = match phone(&state, lang, id).await {
+    let notice = query.get("notice").map(String::as_str);
+    render_page(&state, lang, id, notice, AddForm::default(), StatusCode::OK).await
+}
+
+/// The page, with a notice from the query and the add form as typed.
+async fn render_page(
+    state: &AppState,
+    lang: Lang,
+    id: i64,
+    notice: Option<&str>,
+    add: AddForm,
+    status: StatusCode,
+) -> Response {
+    let device_name = match phone(state, lang, id).await {
         Ok(name) => name,
         Err(answer) => return *answer,
     };
@@ -327,13 +366,21 @@ pub async fn view_calendar(
             calendar::rules(&state.db, id).await?,
             calendar::last_report(&state.db, id).await?,
             crate::handlers::device_api::last_capabilities(&state.db, id).await?,
+            calendar_feeds::links(&state.db, id).await?,
         ))
     }
     .await;
-    let (switches, saved, rules, report, capabilities) = match loaded {
+    let (switches, saved, rules, report, capabilities, links) = match loaded {
         Ok(found) => found,
         Err(err) => return read_failed(lang, err, "the calendar settings"),
     };
+    let zone = crate::display_time::Zone::load(&state.db).await;
+    let now = chrono::Utc::now();
+    let feeds_capable = capabilities.iter().any(|c| c == calendar_feeds::CAPABILITY);
+    let link_keys: HashMap<String, &calendar_feeds::LinkRow> = links
+        .iter()
+        .map(|l| (calendar_feeds::calendar_key(&l.uid), l))
+        .collect();
     let (on_home, kid_adds, glance_next, lock_reminders) =
         switches.unwrap_or_else(calendar::default_switches);
     let saved_by_key: BTreeMap<&str, &PolicyCalendar> =
@@ -344,18 +391,52 @@ pub async fn view_calendar(
         for c in &report.calendars {
             names.insert(c.key.as_str(), c.name.as_str());
             let saved = saved_by_key.get(c.key.as_str()).copied();
+            let mut sub = calendar_sub(lang, &c.account_type, c.source.as_deref());
+            if link_keys.contains_key(&c.key) {
+                sub = t(lang, "calendar.links.kind").to_string();
+            } else if let Some(link) = c
+                .source
+                .as_deref()
+                .and_then(|host| links.iter().find(|l| l.host == host))
+            {
+                // Dagen shows an identical copy once (`DayModel`); the parent may want only one of them.
+                sub = format!(
+                    "{sub} · {}",
+                    t_params(lang, "calendar.links.maybe_same", &[("name", &link.name)])
+                );
+            }
             calendars.push(CalendarView {
                 key: c.key.clone(),
                 name: c.name.clone(),
-                sub: calendar_sub(lang, &c.account_type, c.source.as_deref()),
+                sub,
                 shown: saved.is_none_or(|s| s.shown),
                 reminds: remind_choices(lang, &remind_value(saved)),
                 on_phone: true,
             });
         }
     }
+    // A link's calendar at once, by its key: its controls work before the phone has it (design 72 §5).
+    for link in &links {
+        let key = calendar_feeds::calendar_key(&link.uid);
+        if names.contains_key(key.as_str()) {
+            continue;
+        }
+        let saved = saved_by_key.get(key.as_str()).copied();
+        calendars.push(CalendarView {
+            name: link.name.clone(),
+            sub: format!(
+                "{} · {}",
+                t(lang, "calendar.links.kind"),
+                t(lang, "calendar.links.waiting")
+            ),
+            shown: saved.is_none_or(|s| s.shown),
+            reminds: remind_choices(lang, &remind_value(saved)),
+            on_phone: true,
+            key,
+        });
+    }
     for s in &saved {
-        if !names.contains_key(s.key.as_str()) {
+        if !names.contains_key(s.key.as_str()) && !link_keys.contains_key(&s.key) {
             calendars.push(CalendarView {
                 key: s.key.clone(),
                 name: t(lang, "calendar.calendars.gone_name").to_string(),
@@ -385,6 +466,20 @@ pub async fn view_calendar(
         })
         .collect();
     let ids: HashSet<i64> = rules.iter().map(|r| r.id).collect();
+    let reported_keys: HashSet<&str> = report
+        .iter()
+        .flat_map(|r| &r.calendars)
+        .map(|c| c.key.as_str())
+        .collect();
+    let link_views = links
+        .iter()
+        .map(|l| {
+            let on_phone = reported_keys.contains(calendar_feeds::calendar_key(&l.uid).as_str());
+            let applied = report.iter().flat_map(|r| &r.feeds).find(|f| f.id == l.uid);
+            link_view(lang, &zone, now, l, feeds_capable, on_phone, applied)
+        })
+        .collect();
+    let can_add_link = links.len() < calendar_feeds::MAX_LINKS_PER_PHONE as usize;
     render(
         lang,
         CalendarTemplate {
@@ -413,13 +508,323 @@ pub async fn view_calendar(
                 })
                 .unwrap_or_default(),
             can_add_rule: count < MAX_RULES,
-            notice: match query.get("notice").map(String::as_str) {
+            notice: match notice {
                 Some("rule_gone") => Some("calendar.rules.gone"),
                 _ => None,
             },
+            links: link_views,
+            can_add_link,
+            links_off: state.music_key.is_none(),
+            add,
+            links_notice: match notice {
+                Some("fetch_wait") => Some("calendar.links.fetch_wait"),
+                _ => None,
+            },
         },
-        StatusCode::OK,
+        status,
     )
+}
+
+// ---- calendar links (design 72 §5) -------------------------------------------------------------
+
+/// A stored stamp as the parent reads it: the clock today, else the date and the clock (`calendar.links.when_date`:
+/// "27.10. 14:05", "10/27 14:05").
+fn when_text(
+    lang: Lang,
+    zone: &crate::display_time::Zone,
+    stored: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    use chrono::Datelike;
+    let Some(at) = stored.and_then(crate::music_sweep::parse_stamp) else {
+        return "-".to_string();
+    };
+    if zone.is_today(at, now) {
+        return zone.clock(at);
+    }
+    let local = zone.local(at);
+    t_params(
+        lang,
+        "calendar.links.when_date",
+        &[
+            ("day", &local.day().to_string()),
+            ("month", &local.month().to_string()),
+            ("time", &zone.clock(at)),
+        ],
+    )
+}
+
+/// A fetch error's code (`calendar_feeds::FeedError`) in words, never the link or the body.
+pub fn why_text(lang: Lang, code: &str, status: Option<i64>) -> String {
+    let key = match code {
+        "not_found" => "calendar.links.why.not_found",
+        "status" => "calendar.links.why.status",
+        "timeout" => "calendar.links.why.timeout",
+        "too_big" => "calendar.links.why.too_big",
+        "not_calendar" => "calendar.links.why.not_calendar",
+        "private_address" => "calendar.links.why.private_address",
+        "key_lost" => "calendar.links.why.key_lost",
+        "insecure" => "calendar.links.why.insecure",
+        "unreadable" => "calendar.links.why.unreadable",
+        _ => "calendar.links.why.network",
+    };
+    t_params(lang, key, &[("status", &status.unwrap_or(0).to_string())])
+}
+
+/// A link's status lines (§5): the fetch (or its error with the set's age), then the phone, the counts, the warning.
+fn link_view(
+    lang: Lang,
+    zone: &crate::display_time::Zone,
+    now: chrono::DateTime<chrono::Utc>,
+    link: &calendar_feeds::LinkRow,
+    capable: bool,
+    on_phone: bool,
+    applied: Option<&calendar::ReportedFeed>,
+) -> LinkView {
+    let when = when_text(lang, zone, link.ok_at.as_deref(), now);
+    let (first, failing) = match link.error.as_deref() {
+        Some("empty") => (
+            t_params(lang, "calendar.links.status.held_empty", &[("when", &when)]),
+            true,
+        ),
+        Some(code) => (
+            t_params(
+                lang,
+                "calendar.links.status.failing",
+                &[
+                    ("why", &why_text(lang, code, link.error_status)),
+                    ("when", &when),
+                ],
+            ),
+            true,
+        ),
+        None => (
+            t_count(
+                lang,
+                "calendar.links.status.fetched",
+                link.events,
+                &[("when", &when)],
+            ),
+            false,
+        ),
+    };
+    let mut lines = vec![first];
+    if !capable {
+        lines.push(t(lang, "calendar.links.update_phone").to_string());
+    } else if !on_phone {
+        lines.push(t(lang, "calendar.links.waiting").to_string());
+    }
+    let count = |key: &str, n: i64| t_count(lang, key, n, &[]);
+    if let Some(refused) = applied.map(|a| a.refused).filter(|n| *n > 0) {
+        lines.push(count("calendar.links.status.refused", refused));
+    }
+    if link.unknown_tz > 0 {
+        lines.push(count("calendar.links.status.unknown_tz", link.unknown_tz));
+    }
+    if link.cut > 0 {
+        lines.push(count("calendar.links.status.cut", link.cut));
+    }
+    if link.churn >= calendar_feeds::CHURN_FETCHES {
+        lines.push(t(lang, "calendar.links.status.churn").to_string());
+    }
+    if link.lan_http {
+        lines.push(t(lang, "calendar.links.status.lan_http").to_string());
+    }
+    LinkView {
+        uid: link.uid.clone(),
+        name: link.name.clone(),
+        host: link.host.clone(),
+        lines,
+        failing,
+    }
+}
+
+/// The link `uid` of this phone: its source id, `None` when the phone hasn't it (removed meanwhile).
+async fn link_of(state: &AppState, id: i64, uid: &str) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT s.id FROM calendar_sources s JOIN device_calendar_feeds d ON d.source_id = s.id \
+         WHERE s.uid = ? AND d.device_id = ?",
+    )
+    .bind(uid)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+}
+
+fn back_to_links(id: i64) -> Response {
+    Redirect::to(&format!("/devices/{id}/calendar#links")).into_response()
+}
+
+/// POST `/devices/{id}/calendar/links`: `url` and an optional `name` (design 72 §5). Added (or attached to the
+/// source the link already is) → 303 to `#link-<uid>`; refused → the page again as typed (400, the reason in the
+/// group, never the body). The phone is nudged.
+pub async fn add_link(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path(id): Path<i64>,
+    body: Bytes,
+) -> Response {
+    let fields = form_pairs(&body);
+    if let Err(answer) = phone(&state, lang, id).await {
+        return *answer;
+    }
+    let (url, name) = (field(&fields, "url"), field(&fields, "name"));
+    let error = match calendar_feeds::add(&state, id, url, name, chrono::Utc::now()).await {
+        Ok(uid) => return saved(&state, id, &format!("link-{uid}")),
+        Err(calendar_feeds::AddError::Db(err)) => {
+            return failed(lang, err, "couldn't add a calendar link");
+        }
+        Err(calendar_feeds::AddError::Refused(key)) => t(lang, key).to_string(),
+        Err(calendar_feeds::AddError::Fetch(err)) => t_params(
+            lang,
+            "calendar.links.error.fetch",
+            &[("why", &why_text(lang, err.code, err.status.map(i64::from)))],
+        ),
+    };
+    let add = AddForm {
+        url: crate::audit::clip(url, calendar_feeds::MAX_URL_CHARS).to_string(),
+        name: crate::audit::clip(name, 200).to_string(),
+        error: Some(error),
+    };
+    render_page(&state, lang, id, None, add, StatusCode::BAD_REQUEST).await
+}
+
+/// POST `/devices/{id}/calendar/links/{uid}/name`: `name` (1-60 after cleaning; empty → the feed's, else the host),
+/// back to `#link-<uid>`; the phone renames its calendar from the policy alone.
+pub async fn rename_link(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, uid)): Path<(i64, String)>,
+    body: Bytes,
+) -> Response {
+    let fields = form_pairs(&body);
+    if let Err(answer) = phone(&state, lang, id).await {
+        return *answer;
+    }
+    let found: Result<Option<(i64, Option<String>, String)>, sqlx::Error> = sqlx::query_as(
+        "SELECT s.id, s.feed_name, s.host FROM calendar_sources s JOIN device_calendar_feeds d \
+         ON d.source_id = s.id WHERE s.uid = ? AND d.device_id = ?",
+    )
+    .bind(&uid)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await;
+    let (source_id, feed_name, host) = match found {
+        Ok(Some(found)) => found,
+        Ok(None) => return back_to_links(id),
+        Err(err) => return read_failed(lang, err, "a calendar link"),
+    };
+    let name = calendar_feeds::name_of(field(&fields, "name"), feed_name.as_deref(), &host);
+    match sqlx::query(
+        "UPDATE device_calendar_feeds SET name = ? WHERE device_id = ? AND source_id = ?",
+    )
+    .bind(&name)
+    .bind(id)
+    .bind(source_id)
+    .execute(&state.db)
+    .await
+    {
+        Ok(_) => saved(&state, id, &format!("link-{uid}")),
+        Err(err) => failed(lang, err, "couldn't rename a calendar link"),
+    }
+}
+
+/// POST `/devices/{id}/calendar/links/{uid}/fetch`: "Fetch now", at most once per source per 5 minutes (else back
+/// with `?notice=fetch_wait`); the fetch runs before the answer (at most 60 s), back to `#link-<uid>`. Not a save.
+pub async fn fetch_link(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, uid)): Path<(i64, String)>,
+) -> Response {
+    if let Err(answer) = phone(&state, lang, id).await {
+        return *answer;
+    }
+    let source_id = match link_of(&state, id, &uid).await {
+        Ok(Some(source)) => source,
+        Ok(None) => return back_to_links(id),
+        Err(err) => return read_failed(lang, err, "a calendar link"),
+    };
+    let now = chrono::Utc::now();
+    // One claim: two taps at once fetch once.
+    let claimed = sqlx::query(
+        "UPDATE calendar_sources SET fetch_now_at = ? WHERE id = ? \
+         AND (fetch_now_at IS NULL OR fetch_now_at <= ?)",
+    )
+    .bind(crate::music_sweep::stamp(now))
+    .bind(source_id)
+    .bind(crate::music_sweep::stamp(
+        now - calendar_feeds::FETCH_NOW_GAP,
+    ))
+    .execute(&state.db)
+    .await;
+    match claimed {
+        Ok(done) if done.rows_affected() == 0 => {
+            return Redirect::to(&format!(
+                "/devices/{id}/calendar?notice=fetch_wait#link-{uid}"
+            ))
+            .into_response();
+        }
+        Ok(_) => {}
+        Err(err) => return failed(lang, err, "couldn't start a calendar link's fetch"),
+    }
+    if let Err(err) = calendar_feeds::refresh(&state, source_id, now).await {
+        return failed(lang, err, "couldn't store a calendar link's fetch");
+    }
+    Redirect::to(&format!("/devices/{id}/calendar#link-{uid}")).into_response()
+}
+
+/// POST `/devices/{id}/calendar/links/{uid}/remove`: the link goes off this phone (its calendar with it, at the
+/// phone's next sync); a source no phone names goes at once (the migration's trigger). The calendar's settings and
+/// rules stay, by its key, and come back with the same link. Back to `#links`.
+pub async fn remove_link(
+    State(state): State<AppState>,
+    lang: Lang,
+    Path((id, uid)): Path<(i64, String)>,
+) -> Response {
+    if let Err(answer) = phone(&state, lang, id).await {
+        return *answer;
+    }
+    match sqlx::query(
+        "DELETE FROM device_calendar_feeds WHERE device_id = ? \
+         AND source_id = (SELECT id FROM calendar_sources WHERE uid = ?)",
+    )
+    .bind(id)
+    .bind(&uid)
+    .execute(&state.db)
+    .await
+    {
+        Ok(_) => saved(&state, id, "links"),
+        Err(err) => failed(lang, err, "couldn't remove a calendar link"),
+    }
+}
+
+/// `GET /api/devices/calendar/feeds/{uid}` (design 72 §3, bearer): the link's set for a phone that has it - else
+/// 404, as an unknown one -, `ETag` = its rev, 304, gzip when asked for.
+pub async fn device_feed(
+    State(state): State<AppState>,
+    Path(uid): Path<String>,
+    axum::Extension(crate::security::AuthedDevice(device)): axum::Extension<
+        crate::security::AuthedDevice,
+    >,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    if !calendar_feeds::valid_uid(&uid) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match calendar_feeds::device_feed(&state.db, device.id, &uid).await {
+        Ok(Some((rev, json))) => crate::handlers::music_api::versioned_json(
+            device.id,
+            &headers,
+            &rev,
+            json.as_bytes(),
+            "calendar link's set",
+        ),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(err) => {
+            tracing::error!(device_id = device.id, %err, "couldn't read a calendar link's set");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 /// The summary row's value (the phone's page, "Calendar · 3 shown").

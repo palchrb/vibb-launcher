@@ -121,6 +121,11 @@ pub fn device_routes(state: AppState) -> Router<AppState> {
                 handlers::music_api::STORYTEL_TOKEN_BODY_LIMIT,
             )),
         )
+        // Design 72 §3: a calendar link's set, for a phone that has the link.
+        .route(
+            "/api/devices/calendar/feeds/{uid}",
+            get(handlers::calendar::device_feed),
+        )
         .layer(from_fn_with_state(
             state.clone(),
             security::require_device_token,

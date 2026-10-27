@@ -2215,6 +2215,40 @@ colon needs `\:`. Device checks: Dagen on 2040 (the provider answers), TalkBack'
 reminder row's Dagen in its own task (H1), the header and the time column at 1.3 (M1), the peek (L1), a sideways swipe
 on the reminder row doing nothing (L2), AM/PM and "Tuesday, October 27" in en-US (L4).
 
+## 6y. Calendar links: a link pasted in the PWA, the phone's own calendar of it (design 72 step 1)
+
+Branch `calendar-feeds-1`; `jelly36`, `wm density 240`. Logcat: `CalendarFeeds`, `CalendarStore`. No ICSx5. The feed is
+served from the host as in §6w step 5: `python3 -m http.server 8088` in a scratch directory holding `school.ics` (start
+from `server/testdata/calendar_feeds/series.ics` and `itslearning.ics`), the link `http://10.0.2.2:8088/school.ics`.
+
+1. **Add**: Device › Calendar › Calendar links (Kalenderlenker): paste the link, no name -> the page lands on the
+   link's row (`#link-<uid>`), the name is the feed's `X-WR-CALNAME` (else the host), the row says "Hentet hh:mm · N
+   hendelser" and, since `10.0.2.2` is the host's LAN, the plain-http warning. "Calendars shown" lists it at once:
+   "Kalenderlenke · Venter på telefonen". A `webcal://` link works the same; `http://` to a public host is refused,
+   the form as typed. Without the music key (rename `data/keys/music-secret.key`, restart) the form says why.
+2. **The phone**: at the next sync (the add nudges) a LOCAL calendar `vibb-feed-<uid>` under account `Vibb One`
+   appears: `adb shell "content query --uri content://com.android.calendar/calendars --projection _id:account_name:account_type:name:calendar_displayName:calendar_access_level:cal_sync1:cal_sync2"`
+   - access level 200, `cal_sync1` = the policy's rev. The PWA's row loses "Venter på telefonen"; Dagen shows the
+   events: the weekly series without its EXDATE day, the moved instance on its new day and time, the cancelled one
+   gone, the all-day camp on its dates, "skoleåret" whole and "R omerriket" as the feed has it, a title rule on it.
+   The VALARM's minutes show in Dagen's "own" reminder mode.
+3. **[verify] the provider's forms**: `adb shell "content query --uri content://com.android.calendar/events --projection _id:_sync_id:original_sync_id:original_id:originalInstanceTime:rrule:exdate:duration:eventTimezone:eventStatus --where \"calendar_id=<id>\""`
+   - overrides linked (`original_id` = the master's `_id`), the EXDATE honoured (no instance that day - else set
+   `EXDATE_COLUMN = false` in `day/FeedEvents.kt` and check the cancelled override rows instead), UNTIL ends the series
+   on its day, the cancelled override makes no instance (`Instances` for that day).
+4. **DST**: the itslearning `Z` weekly series moves an hour locally across 2026-10-25 (faithful); a `TZID=Europe/Oslo`
+   one stays at its time across 2027-03-28.
+5. **A change**: edit `school.ics` (a title), "Hent nå" -> the row's time updates, the next sync rewrites only that
+   series (logcat `Applied a calendar link: 1 rows deleted, 1 series written`); a second sync makes no request.
+   "Hent nå" again within 5 minutes: "Hentet for et øyeblikk siden".
+6. **Empty**: replace the file with an empty `VCALENDAR` -> the row says "Lenken ga ingen hendelser - viser forrige";
+   the day keeps its events (until the third empty fetch or 24 h).
+7. **2000 events**: a generated feed of 2000 events (as `ics::tests::the_caps`) -> time the first apply (logcat
+   timestamps from `Made a calendar link's calendar` to `Applied a calendar link`); kill the process mid-apply
+   (`am kill`), the next sync completes it.
+8. **Remove**: Fjern… -> the calendar goes from the phone at the next sync, its "Calendars shown" row greys (settings
+   kept); add the same link again -> the same calendar key, its settings back.
+
 ## 7. Reporting back
 
 For anything odd, paste into the chat:

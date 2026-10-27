@@ -391,7 +391,25 @@ fn the_field_tables_keep_every_contract_key() {
                     .entry("source")
                     .or_insert(serde_json::Value::Null);
             }
+            // A launcher before design 72 sends no `feeds`; it is stored as `[]`.
+            expected
+                .as_object_mut()
+                .unwrap()
+                .entry("feeds")
+                .or_insert(serde_json::json!([]));
             assert_eq!(kept, expected, "{}'s calendar", path.display());
+            checked += 1;
+        }
+        // Design 72 §4: the calendar links' rows of the report (`calendar_feeds.json`'s `report`), every key kept.
+        if let Some(feeds) = json.get("report").and_then(|r| r.get("feeds")) {
+            let blob = serde_json::json!({"readable": true, "calendars": [], "feeds": feeds});
+            let kept = crate::calendar::sanitize_report(&blob, &Default::default()).unwrap();
+            assert_eq!(
+                &serde_json::to_value(&kept.feeds).unwrap(),
+                feeds,
+                "{}'s feeds",
+                path.display()
+            );
             checked += 1;
         }
     }
