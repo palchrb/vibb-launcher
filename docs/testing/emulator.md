@@ -2169,7 +2169,10 @@ feature itself - the seed is a test shortcut; the real path is ICSx5 from the ca
    shown day), from, length, place → Lagre → the row with a green start and "Min kalender" as its second line; its page
    has Endre and Slett; a feed's event has neither. In the PWA pick a DAVx5 calendar the kid may write to (a CalDAV test
    server, e.g. Radicale): the new event uploads with its `vibb-` UID, comes back on the next sync and can still be
-   changed; "Nowhere (no +)" removes the "+".
+   changed; "Nowhere (no +)" removes the "+". **The pickers** (the user's jellystar2, 2026-10-27): "Ny avtale"'s day and
+   time pickers at font 1.0 and 1.3, with the system in light and in dark mode (`adb shell cmd uimode night yes|no`):
+   every day number, the weekday row and both month arrows visible on the night panel, the chosen day night on peach;
+   the time picker's clock-face numbers visible, the chosen one night on peach.
 
 **Run 2026-10-27, E5** (`docs/testing/2026-10-27-e4-e5-run.md`): steps 1-7 on `jelly36` (en-US, UTC) passed except: the
 reminder row's tap + code lands on Home, not Dagen (`DayActivity` started from the PIN lock without a new task - High),

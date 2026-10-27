@@ -1442,7 +1442,9 @@ Pure rules in `music/MusicMediaPlan.kt` (`MusicMediaPlanTest`), `music/MusicWind
   layout -, the ongoing ring and "Pågår nå", one TalkBack node "Pågår nå, 14:45 til 15:30, SFO: Leksehjelp" with
   "Åpne hendelsen"), `EventActivity` (the header's day: an all-day event's UTC date, `eventDay`; read again by id, rules applied, the whole description in a plain TextView, no
   links; Change and Delete only for the kid's own), `EventEditActivity` ("Ny avtale": what, day - `DayActivity.dayLine`, the locale's best pattern for "EEEEdMMMM", en-US
-  "Tuesday, October 27" -, from, length, place). `KidHeader`'s row is at least 56 dp and grows with the second line
+  "Tuesday, October 27" -, from - the framework's date and time pickers with our `VibbPickerDialog` (the dark Material dialog with every colour
+  named: before it the system's light dialog took our white text, and the day numbers were white on white; `PickerThemeTest`)
+  -, length, place). `KidHeader`'s row is at least 56 dp and grows with the second line
   (E5's M1). Pure `day/DayText.kt` (`dayLineSkeleton`/`dayLineText`, `timeColumnPx`; `DayTextTest`).
   Home: `GridTile.Day` right after the phone book (`tileShown`: Dagen on Home, a readable provider, a calendar shown or
   the kid's own to come). `KidScreensEscapeTest` scans `ui/day` and `calendar`.
