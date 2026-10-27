@@ -591,14 +591,18 @@ async fn remove_and_a_deleted_phone_delete_the_source() {
     add(&app, &cookie, anna, LINK, "").await;
     add(&app, &cookie, ola, LINK, "").await;
     let uid = uid();
-    // A setting on the link's calendar, by its key: it stays and comes back with the link.
+    // A setting on the link's calendar, by its key: it stays and comes back with the link (the add's auto-pick made
+    // the row with its colour already - the colours branch, 2026-10-27).
     let key = calendar_feeds::calendar_key(&uid);
-    sqlx::query("INSERT INTO device_calendars (device_id, calendar_key, shown) VALUES (?, ?, 0)")
-        .bind(anna)
-        .bind(&key)
-        .execute(&app.db)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO device_calendars (device_id, calendar_key, shown) VALUES (?, ?, 0) \
+         ON CONFLICT(device_id, calendar_key) DO UPDATE SET shown = 0",
+    )
+    .bind(anna)
+    .bind(&key)
+    .execute(&app.db)
+    .await
+    .unwrap();
     let remove = format!("/devices/{anna}/calendar/links/{uid}/remove");
     let mut nudges = app.state.command_notify.subscribe();
     let res = app

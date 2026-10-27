@@ -28,15 +28,21 @@ kalender" - and is never stored or offered: the pick's row has no Colour row, an
 clears its colour. Device › Calendar's "Colour" row under each calendar's Reminder (`color_<key>`, a plain autosaving
 select, back to `#calendars`) offers the eight; before the first save it says "Pick for me" (value `""`, read as
 unchanged - a select of the eight alone would post the first for every calendar at the first autosave). The auto-pick
-(`handlers::calendar::assign_free_colors`, after every save of the calendars form and of Dagen's switches): every
-shown calendar without a colour that isn't the kid's gets the first name no other shown calendar of the phone has, in
-the form's order, so two feeds ticked at once get two colours and a parent who never opens the select still sees
-distinct dots; eight in use - none; a hidden calendar keeps its colour and doesn't count. An unknown name is a 400
+(`calendar::assign_free_colors`): every calendar the phone shows without a colour - a saved row that is shown, a
+reported calendar with no row, or a calendar link's own calendar (its key is the server's, `calendar_key(uid)`, before
+the phone has it), the last two getting a row holding only the colour - that isn't the kid's gets the first
+name no other shown calendar of the phone has, in the form's order (then by key), so two feeds ticked at once get two
+colours and a parent who never opens the select still sees distinct dots; eight in use - none; a hidden calendar keeps
+its colour and doesn't count. It runs after **every save on the Calendar page** - the calendars form, Dagen's switches,
+and the links forms (add, rename, fetch now, remove; `colors_after_link_save`, best effort after the link's own
+write) - and once at the report intake (`store_report`) when a report brings a calendar with no row to a phone that
+already has at least one coloured row (a link's calendar arrives on the phone only with its report): the scheme
+extends to it; a phone without a scheme gets no row from a report alone. An unknown name is a 400
 (`calendar.error.color`) that writes nothing. A row with a colour is never pruned as "the defaults". The phone's own
 "Min kalender" is reported like any calendar, so the PWA can't tell it from another LOCAL one (Fossify Calendar's, say)
-and offers it a colour too; the phone draws it peach whatever the policy says (the ⓘ says so). Test:
-`tests::calendar::a_colour_is_saved_picked_and_refused`; the row's shape in
-`the_policy_carries_the_rules_and_the_calendars` and the launcher's `PolicyResponseCompatTest`.
+and offers it a colour too; the phone draws it peach whatever the policy says (the ⓘ says so). Tests:
+`tests::calendar::a_colour_is_saved_picked_and_refused`, `a_link_save_and_a_new_report_extend_the_colours`; the row's
+shape in `the_policy_carries_the_rules_and_the_calendars` and the launcher's `PolicyResponseCompatTest`.
 
 ## The report's `calendar` (`calendar::sanitize_report`, `store_report`)
 

@@ -28,8 +28,8 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 
 use crate::AppState;
 use crate::calendar::{
-    self, Action, COLORS, CalendarReport, Field, MAX_RULES, Match, Outcome, PATTERN_MAX,
-    PolicyCalendar, REMIND_MINUTES, Rule, TEXT_MAX,
+    self, Action, CalendarReport, Field, MAX_RULES, Match, Outcome, PATTERN_MAX, PolicyCalendar,
+    REMIND_MINUTES, Rule, TEXT_MAX, assign_free_colors,
 };
 use crate::calendar_feeds;
 use crate::handlers::schedules::form_pairs;
@@ -477,6 +477,9 @@ async fn render_page(
             shown: saved.is_none_or(|s| s.shown),
             reminds: remind_choices(lang, &remind_value(saved)),
             on_phone: true,
+            color_row: !saved.is_some_and(|s| s.writable_for_kid),
+            color: saved.and_then(|s| s.color.clone()),
+            colors: color_choices(lang, saved.and_then(|s| s.color.as_deref())),
             key,
         });
     }
@@ -703,6 +706,22 @@ fn back_to_links(id: i64) -> Response {
     Redirect::to(&format!("/devices/{id}/calendar#links")).into_response()
 }
 
+/// The auto-pick after a links form's save (add, rename, fetch now, remove): a parent who sets the phone up from the
+/// links alone may never touch the calendars form, so every calendar the phone reports - and every link's own
+/// calendar, whose key the server knows before the phone has it - gets its colour here too. Best effort: the link's
+/// write is done, so a failure here is logged, never a 500.
+async fn colors_after_link_save(state: &AppState, id: i64) {
+    let result = async {
+        let mut tx = state.db.begin().await?;
+        assign_free_colors(&mut tx, id, &[]).await?;
+        tx.commit().await
+    }
+    .await;
+    if let Err(err) = result {
+        tracing::warn!(device_id = id, %err, "couldn't pick the calendars' colours after a link save");
+    }
+}
+
 /// POST `/devices/{id}/calendar/links`: `url` and an optional `name` (design 72 §5). Added (or attached to the
 /// source the link already is) → 303 to `#link-<uid>`; refused → the page again as typed (400, the reason in the
 /// group, never the body). The phone is nudged.
@@ -718,7 +737,10 @@ pub async fn add_link(
     }
     let (url, name) = (field(&fields, "url"), field(&fields, "name"));
     let error = match calendar_feeds::add(&state, id, url, name, chrono::Utc::now()).await {
-        Ok(uid) => return saved(&state, id, &format!("link-{uid}")),
+        Ok(uid) => {
+            colors_after_link_save(&state, id).await;
+            return saved(&state, id, &format!("link-{uid}"));
+        }
         Err(calendar_feeds::AddError::Db(err)) => {
             return failed(lang, err, "couldn't add a calendar link");
         }
@@ -772,7 +794,10 @@ pub async fn rename_link(
     .execute(&state.db)
     .await
     {
-        Ok(_) => saved(&state, id, &format!("link-{uid}")),
+        Ok(_) => {
+            colors_after_link_save(&state, id).await;
+            saved(&state, id, &format!("link-{uid}"))
+        }
         Err(err) => failed(lang, err, "couldn't rename a calendar link"),
     }
 }
@@ -818,6 +843,7 @@ pub async fn fetch_link(
     if let Err(err) = calendar_feeds::refresh(&state, source_id, now).await {
         return failed(lang, err, "couldn't store a calendar link's fetch");
     }
+    colors_after_link_save(&state, id).await;
     Redirect::to(&format!("/devices/{id}/calendar#link-{uid}")).into_response()
 }
 
@@ -841,7 +867,10 @@ pub async fn remove_link(
     .execute(&state.db)
     .await
     {
-        Ok(_) => saved(&state, id, "links"),
+        Ok(_) => {
+            colors_after_link_save(&state, id).await;
+            saved(&state, id, "links")
+        }
         Err(err) => failed(lang, err, "couldn't remove a calendar link"),
     }
 }
@@ -1013,46 +1042,6 @@ async fn prune_default_rows(
     .execute(&mut **tx)
     .await
     .map(|_| ())
-}
-
-/// The auto-pick: every shown calendar without a colour that isn't the kid's gets the first of [COLORS] no other
-/// shown calendar of this phone has - in the order of [first] (the page's rows as posted), then by key -, so two
-/// feeds ticked at once get two colours and a parent who never opens the select still sees distinct dots. Eight in
-/// use: no colour. Hidden calendars keep theirs and don't count.
-async fn assign_free_colors(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    id: i64,
-    first: &[&str],
-) -> Result<(), sqlx::Error> {
-    let rows: Vec<(String, Option<String>, bool)> = sqlx::query_as(
-        "SELECT calendar_key, color, writable_for_kid FROM device_calendars \
-         WHERE device_id = ? AND shown = 1 ORDER BY calendar_key",
-    )
-    .bind(id)
-    .fetch_all(&mut **tx)
-    .await?;
-    let mut used: Vec<&str> = rows.iter().filter_map(|r| r.1.as_deref()).collect();
-    let mut wanting: Vec<&str> = rows
-        .iter()
-        .filter(|(_, color, kid)| color.is_none() && !kid)
-        .map(|(key, _, _)| key.as_str())
-        .collect();
-    wanting.sort_by_key(|key| first.iter().position(|k| k == key).unwrap_or(first.len()));
-    for key in wanting {
-        let Some(color) = COLORS.iter().find(|c| !used.contains(c)) else {
-            break;
-        };
-        used.push(color);
-        sqlx::query(
-            "UPDATE device_calendars SET color = ? WHERE device_id = ? AND calendar_key = ?",
-        )
-        .bind(color)
-        .bind(id)
-        .bind(key)
-        .execute(&mut **tx)
-        .await?;
-    }
-    Ok(())
 }
 
 /// POST `/devices/{id}/calendar/lock`: `glance_next` (missing = off) and `reminders` (`off` or `row`, the select

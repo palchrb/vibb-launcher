@@ -44,6 +44,99 @@ pub fn valid_color(name: &str) -> bool {
     COLORS.contains(&name)
 }
 
+/// The auto-pick (2026-10-27): every calendar the phone shows without a colour - a saved row that is shown, a
+/// reported calendar with no row (shown by default), or a calendar link's own calendar (its key is the server's,
+/// `calendar_feeds::calendar_key`, before the phone has it) - that isn't the kid's gets the first of [COLORS] no
+/// other shown calendar of this phone has, in the order of [first] (a form's rows as posted), then by key; a
+/// calendar without a row gets a row holding only the colour. Run after every save on the Calendar page (the
+/// calendars form, Dagen's switches, the links forms), so a parent who never opens a Colour select still sees
+/// distinct dots, and by [store_report] when a report brings a new calendar to a phone that already has a colour
+/// scheme. Eight in use: no colour. Hidden calendars keep theirs and don't count.
+pub async fn assign_free_colors(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: i64,
+    first: &[&str],
+) -> Result<(), sqlx::Error> {
+    let rows: Vec<(String, Option<String>, bool, bool)> = sqlx::query_as(
+        "SELECT calendar_key, color, writable_for_kid, shown FROM device_calendars \
+         WHERE device_id = ? ORDER BY calendar_key",
+    )
+    .bind(device_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let mut reported = reported_keys(&mut *tx, device_id).await?;
+    let link_uids: Vec<String> = sqlx::query_scalar(
+        "SELECT s.uid FROM calendar_sources s JOIN device_calendar_feeds d ON d.source_id = s.id \
+         WHERE d.device_id = ? ORDER BY s.uid",
+    )
+    .bind(device_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    for uid in &link_uids {
+        let key = crate::calendar_feeds::calendar_key(uid);
+        if !reported.contains(&key) {
+            reported.push(key);
+        }
+    }
+    let mut used: Vec<&str> = rows
+        .iter()
+        .filter(|(_, _, _, shown)| *shown)
+        .filter_map(|(_, color, _, _)| color.as_deref())
+        .collect();
+    // (key, has a row)
+    let mut wanting: Vec<(&str, bool)> = rows
+        .iter()
+        .filter(|(_, color, kid, shown)| *shown && color.is_none() && !kid)
+        .map(|(key, _, _, _)| (key.as_str(), true))
+        .collect();
+    for key in &reported {
+        if !rows.iter().any(|(k, _, _, _)| k == key) {
+            wanting.push((key.as_str(), false));
+        }
+    }
+    wanting.sort_by_key(|(key, _)| {
+        (
+            first.iter().position(|k| k == key).unwrap_or(first.len()),
+            key.to_string(),
+        )
+    });
+    for (key, has_row) in wanting {
+        let Some(color) = COLORS.iter().find(|c| !used.contains(c)) else {
+            break;
+        };
+        used.push(color);
+        let sql = if has_row {
+            "UPDATE device_calendars SET color = ? WHERE device_id = ? AND calendar_key = ?"
+        } else {
+            "INSERT INTO device_calendars (device_id, calendar_key, color) VALUES (?2, ?3, ?1)"
+        };
+        sqlx::query(sql)
+            .bind(color)
+            .bind(device_id)
+            .bind(key)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
+/// The keys of the phone's last report's calendars (none before a report).
+async fn reported_keys(
+    db: &mut sqlx::SqliteConnection,
+    device_id: i64,
+) -> Result<Vec<String>, sqlx::Error> {
+    let stored: Option<Option<String>> =
+        sqlx::query_scalar("SELECT calendar_report FROM devices WHERE id = ?")
+            .bind(device_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(stored
+        .flatten()
+        .and_then(|json| serde_json::from_str::<CalendarReport>(&json).ok())
+        .map(|report| report.calendars.into_iter().map(|c| c.key).collect())
+        .unwrap_or_default())
+}
+
 // ---- the grammar -------------------------------------------------------------------------------
 
 /// Unicode's White_Space, spelled out so the launcher's copy is the same set.
@@ -619,12 +712,35 @@ pub async fn store_report(db: &SqlitePool, device_id: i64, value: Option<&serde_
         let Some(report) = sanitize_report(value, &ids.into_iter().collect()) else {
             return Ok(());
         };
+        let mut tx = db.begin().await?;
+        let known: Vec<String> =
+            sqlx::query_scalar("SELECT calendar_key FROM device_calendars WHERE device_id = ?")
+                .bind(device_id)
+                .fetch_all(&mut *tx)
+                .await?;
+        let colored: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM device_calendars WHERE device_id = ? AND color IS NOT NULL",
+        )
+        .bind(device_id)
+        .fetch_one(&mut *tx)
+        .await?;
         sqlx::query("UPDATE devices SET calendar_report = ? WHERE id = ?")
             .bind(serde_json::to_string(&report).expect("a report serializes"))
             .bind(device_id)
-            .execute(db)
-            .await
-            .map(|_| ())
+            .execute(&mut *tx)
+            .await?;
+        // A new calendar on a phone that already has a colour scheme (a link's calendar arriving after the parent
+        // set the others up) extends it; a phone without one gets nothing from a report alone.
+        let new: Vec<&str> = report
+            .calendars
+            .iter()
+            .map(|c| c.key.as_str())
+            .filter(|key| !known.iter().any(|k| k == key))
+            .collect();
+        if colored > 0 && !new.is_empty() {
+            assign_free_colors(&mut tx, device_id, &new).await?;
+        }
+        tx.commit().await
     }
     .await;
     if let Err(err) = result {

@@ -298,8 +298,9 @@ async fn the_switches_and_the_calendars_save_back_to_their_groups() {
     .await;
     assert_eq!(feed.status, StatusCode::BAD_REQUEST);
     // One form, exactly the rows sent: the feed hidden with a 15-minute reminder; the family calendar sent without
-    // its reminder keeps it (and stays the kid's); a key that isn't one is ignored. The one shown calendar that isn't
-    // the kid's gets the first colour by itself (the hidden feed and the kid's own none).
+    // its reminder keeps it (and stays the kid's); a key that isn't one is ignored. The Dagen save above already gave
+    // the two reported calendars that aren't the kid's their colours (by key: sky, forest); the feed keeps its colour
+    // hidden, the kid's own has none.
     let calendars = post(
         format!("{page}/calendars"),
         vec![
@@ -321,7 +322,7 @@ async fn the_switches_and_the_calendars_save_back_to_their_groups() {
             "on_home": false, "kid_adds": true, "glance_next": true, "lock_reminders": "row",
             "calendars": [
                 {"key": "51d8e0aa3b7c9462", "shown": true, "remind": "own", "remind_minutes": null, "writable_for_kid": false, "color": "sky"},
-                {"key": "9f3a61c2d84be705", "shown": false, "remind": "before", "remind_minutes": 15, "writable_for_kid": false, "color": null},
+                {"key": "9f3a61c2d84be705", "shown": false, "remind": "before", "remind_minutes": 15, "writable_for_kid": false, "color": "forest"},
                 {"key": "c04e7b19a2f6d853", "shown": true, "remind": "off", "remind_minutes": null, "writable_for_kid": true, "color": null}
             ],
             "rules": [],
@@ -363,6 +364,7 @@ async fn the_switches_and_the_calendars_save_back_to_their_groups() {
         keys,
         ["51d8e0aa3b7c9462", "9f3a61c2d84be705", "c04e7b19a2f6d853"]
     );
+    // The hidden feed's forest doesn't count as used: the family calendar takes it.
     assert_eq!(policy["calendar"]["calendars"][2]["color"], json!("forest"));
 }
 
@@ -448,6 +450,88 @@ async fn a_colour_is_saved_picked_and_refused() {
     let kids = app.get_page(&page, &cookie).await.text();
     assert!(!kids.contains("name=\"color_c04e7b19a2f6d853\""));
     assert!(kids.contains("name=\"color_51d8e0aa3b7c9462\""));
+}
+
+/// The auto-pick's other triggers: a save on a links form (a parent who sets the phone up from the links alone never
+/// touches the calendars form) colours every calendar the phone reports, by key when no form order says otherwise;
+/// a report that brings a new calendar to a phone with a colour scheme gives it the next free colour (the link's
+/// calendar arriving later); a report alone, on a phone without a scheme, makes no row.
+#[tokio::test]
+async fn a_link_save_and_a_new_report_extend_the_colours() {
+    let app = TestApp::new().await;
+    let cookie = app.admin_cookie().await;
+    let (id, token) = reported(&app).await;
+    let colors = |policy: &Value| -> Vec<(String, Value)> {
+        policy["calendar"]["calendars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| (c["key"].as_str().unwrap().to_string(), c["color"].clone()))
+            .collect()
+    };
+    assert!(colors(&app.policy(&token).await).is_empty());
+    let link = "https://skole.example.no/kalender/5b.ics";
+    app.fetch.answer(
+        link,
+        200,
+        std::fs::read("testdata/calendar_feeds/contract.ics").unwrap(),
+    );
+    let added = app
+        .request_form(
+            Method::POST,
+            &format!("/devices/{id}/calendar/links"),
+            Some(&cookie),
+            &[("url", link), ("name", "Skolen")],
+        )
+        .await;
+    assert_eq!(added.status, StatusCode::SEE_OTHER, "{}", added.text());
+    // The three reported calendars and the link's own (its key is the server's before the phone has it), by key.
+    let link_key = crate::calendar_feeds::calendar_key(&crate::calendar_feeds::uid_of(
+        &crate::calendar_feeds::normalize(link).unwrap(),
+    ));
+    let mut keys = [
+        "51d8e0aa3b7c9462".to_string(),
+        "9f3a61c2d84be705".to_string(),
+        "c04e7b19a2f6d853".to_string(),
+        link_key.clone(),
+    ];
+    keys.sort();
+    let expected: Vec<(String, Value)> = keys
+        .iter()
+        .zip(["sky", "forest", "sun", "berry"])
+        .map(|(key, color)| (key.clone(), json!(color)))
+        .collect();
+    assert_eq!(colors(&app.policy(&token).await), expected);
+    // The phone reports a fifth calendar: the scheme extends to it, the others keep theirs.
+    let mut report: Value = serde_json::from_str(CALENDAR_REPORT).unwrap();
+    report["calendar"]["calendars"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "key": "aaaaaaaaaaaaaaaa", "account_type": "at.bitfire.icsdroid", "name": "Fotball",
+            "source": "fotball.example.no", "access_level": 200
+        }));
+    app.request(
+        Method::POST,
+        "/api/devices/status",
+        Some(&token),
+        Some(report.clone()),
+    )
+    .await;
+    let mut extended = expected.clone();
+    extended.push(("aaaaaaaaaaaaaaaa".to_string(), json!("sea")));
+    extended.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(colors(&app.policy(&token).await), extended);
+    // Another phone, no scheme: its reports make no row.
+    let (_, other) = app.enrolled_device("Ola").await;
+    app.request(
+        Method::POST,
+        "/api/devices/status",
+        Some(&other),
+        Some(report),
+    )
+    .await;
+    assert!(colors(&app.policy(&other).await).is_empty());
 }
 
 #[tokio::test]
@@ -664,14 +748,14 @@ async fn the_kids_calendar_survives_a_report_without_it() {
     let policy = app.policy(&token).await;
     assert_eq!(policy["calendar"]["on_home"], json!(false));
     assert_eq!(policy["calendar"]["kid_adds"], json!(true));
-    assert_eq!(
-        policy["calendar"]["calendars"][0]["key"],
-        json!("c04e7b19a2f6d853")
-    );
-    assert_eq!(
-        policy["calendar"]["calendars"][0]["writable_for_kid"],
-        json!(true)
-    );
+    // (The pick's save coloured the other reported calendars, so the rows are three; the kid's by its key.)
+    let kids_row = policy["calendar"]["calendars"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["key"] == json!("c04e7b19a2f6d853"))
+        .expect("the kid's calendar is a row");
+    assert_eq!(kids_row["writable_for_kid"], json!(true));
     // A key that is neither reported writable nor the saved pick is still refused.
     let other = app
         .request_form(

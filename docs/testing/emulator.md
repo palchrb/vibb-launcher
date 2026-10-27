@@ -2209,7 +2209,9 @@ feature itself - the seed is a test shortcut; the real path is ICSx5 from the ca
    the kid's own pick has a "Colour" row ("Farge") under its Reminder: before any save its select says "Pick for me"
    and no swatch shows; change anything on the form (a reminder) - the page comes back at the same place, not the top,
    and every shown calendar now has a swatch and its name selected, each a different colour (Skolen Sky, Fotball
-   Forest, the kid's "Min kalender" none - peach is its own); pick "Sea" for Fotball and the swatch follows. After the
+   Forest, the kid's "Min kalender" none - peach is its own); pick "Sea" for Fotball and the swatch follows. A save on
+   the links group alone does the same (add a link, §6y, without touching the calendars form: every reported calendar
+   gets a swatch), and once the phone reports the link's own calendar it gets the next free colour by itself. After the
    sync Dagen's rows: an 8 dp dot in the calendar's colour in its own column before the time, the start **and** the
    end time of every row at one left edge (a row of a calendar without a colour keeps the empty column), the kid's own
    event's dot peach; under the list the key "● Skolen   ● Fotball   ● Min kalender" only on a day with events from
