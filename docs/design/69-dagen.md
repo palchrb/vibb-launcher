@@ -24,7 +24,9 @@ Decided:
 - The calendar lives in the parent's tools (the school's ICS feed, Spond, a family Nextcloud). Two F-Droid sync apps
   feed Android's calendar provider: **ICSx5** (`at.bitfire.icsdroid`, subscribed feeds) and **DAVx5**
   (`at.bitfire.davdroid`, CalDAV). Vibb One only reads the provider. **No event, title or description ever leaves the
-  phone.**
+  phone.** (Amended by design 72, 2026-10-27: a calendar link pasted in the PWA is fetched and parsed by the server,
+  which so holds that calendar's events while the link exists and sends them only to the phones with it; the
+  sentence above still holds - no event ever leaves the phone, the kid's own included.)
 - **Title rules per phone**, set in the PWA, applied on the phone wherever a title is shown: Dagen, the glance line,
   every reminder. Step 1: "starts with" and "contains" only (§3.4); regex is a later step (§3.5).
 - **Nothing on the lock screen until the parent chooses** (§3.1): the "Next" line (A) and the reminder row (C) are two

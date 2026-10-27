@@ -1,8 +1,10 @@
 # Dagen on the server (design 69)
 
 The kid's day view lives in Vibb One (`launcher/CLAUDE.md`, "Dagen"); the calendar lives in the parent's tools (a school's
-ICS feed through ICSx5, a family Nextcloud through DAVx5). **The server never sees an event**: it keeps the parent's
-choices and the title rules, sends them as `PolicyResponse.calendar`, and stores which calendars the phone has.
+ICS feed through ICSx5, a family Nextcloud through DAVx5) - or, since design 72, a link pasted on the phone's Calendar
+page, which the server fetches itself ("Calendar links" below). **No event ever leaves the phone**: the server keeps the
+parent's choices and the title rules, sends them as `PolicyResponse.calendar`, and stores which calendars the phone has;
+a calendar link's events are the only ones it holds (while the link exists, sent only to the phones with it).
 
 ## The policy's `calendar` (`calendar::policy_calendar`, always sent)
 
@@ -95,3 +97,76 @@ Every word of these pages goes through `src/i18n.rs` (`docs/notes/server/pwa.md`
 `Accept-Language`, `self.t("calendar.…")` in the templates, `t`/`t_params` in the handler - the 400 and 500 bodies too
 (`calendar.error.*`). The Apps page's "On Home" switch, its sub-line and the summary's "· not on Home" are
 `apps.on_home*`/`apps.not_on_home`, handed to the pre-i18n form (`AppDisplayForm.on_home_words`).
+
+## Calendar links (design 72 step 1, `docs/design/72-calendar-feeds.md`)
+
+The parent pastes a calendar's ICS link (https or webcal) on Device › Calendar; the server fetches and parses it, and
+the phone writes the events into a local read-only calendar of its own (`launcher/CLAUDE.md`, "Calendar links").
+ICSx5/DAVx5 stay possible. Step 2 (CalDAV, read-only, the password on the server) is not built.
+
+- **Model** (migration `0105_calendar_feeds.sql`; 0104 is the unmerged `pwa-i18n-1`'s): `calendar_sources` - one row per
+  normalized link (`calendar_feeds::normalize`: scheme and host lowercased, webcal(s) as https, the default port and
+  the fragment dropped, path and query byte for byte), `uid` = 32 hex of SHA-256 over `vibb-feed:` + it (a link removed
+  and added again is the same calendar: its key's settings and rules come back), the link **sealed** with the music
+  key (`url_sealed`/`url_nonce`/`url_key_fp`, associated data `calendar-v1:<fingerprint>:<uid>`), `host` (the only part
+  ever shown or logged), `lan` (judged as the music sweep judges a pasted feed; a LAN link judged again each fetch and
+  public for good once it resolves publicly), `lan_http` (plain http on the home LAN: the row's warning), the
+  validators, `rev` and `feed_json` (the served document), `feed_name` (`X-WR-CALNAME`), the fetch state (`ok_at`,
+  `tried_at`, `failures`, `next_at`, `error` - a code -, `error_status`, `empty_count`/`empty_since`, `churn`,
+  `fetch_now_at`) and the counts (`events`, `cut`, `unknown_tz`, `bad`). `device_calendar_feeds` (device, source, the
+  link's `name`, 1-60). **A link per phone, the fetch shared**: the same link on a sibling's page attaches to its source
+  (no second fetch). The trigger `calendar_sources_orphaned` deletes a source no row names: Remove and a deleted phone
+  (whose cascade reaches only its rows) both end there (QA H2). Caps: 10 links a phone, 50 sources a server. Nothing
+  historical is kept: every accepted fetch replaces the set; a backup holds the set as of then and the link sealed.
+- **The parser** (`src/ics.rs`, our own): the folds taken out of the **bytes** first (a generator folds inside a UTF-8
+  sequence), then the whole decoded - BOM, else the `Content-Type` charset, else UTF-8 lossy; it must begin with
+  `BEGIN:VCALENDAR` (else `not_calendar`: an HTML login page). Content lines with quoted parameters, TEXT unescaped,
+  a stack 4 deep, a line cut at 64 KB, at most 20 000 VEVENTs. Zones: `Z` = `UTC`, an IANA TZID as is, else its
+  VTIMEZONE's `X-LIC-LOCATION`, a known prefix stripped (`/mozilla.org/<n>/`, `/freeassociation.sourceforge.net/`,
+  `/softwarestudio.org/`), a Windows name through CLDR's table (`src/windows_zones.txt`, CLDR 49, NOTICE.md); else
+  unknown - floating, counted `unknown_tz`, shown in the phone's time. Floating takes `X-WR-TIMEZONE` when it is an
+  IANA name, else `tz: null` (the phone's zone). EXDATE, RDATE, RECURRENCE-ID and an override's own times are converted
+  into the series' zone (QA M4). UIDs never lose an event (missing → a hash; > 255 bytes → its hash; two singles with
+  one UID and different starts both kept, `uid~<8 hex>`; else the higher SEQUENCE, the later LAST-MODIFIED, the later
+  in the body). An override without its master, or whose all-day-ness differs, stands alone (`uid#<recurrence id>`);
+  THISANDFUTURE is a single-instance override. Cancelled: a single or a series dropped (with its overrides), an override
+  kept as `cancelled`. RRULE passed through (`[A-Z0-9=;,+-]{1,300}` with a FREQ) with a known zone's `UNTIL` made UTC
+  (a date all-day); a floating `UNTIL` stays local for the phone. `RDATE;VALUE=PERIOD` and an EMAIL, `RELATED=END` or
+  absolute alarm are dropped. The horizon: a single event that ended over 60 days ago or starts over 400 ahead goes, a
+  series whole unless its UNTIL is over 60 days ago. Caps 2000 events and 2 MB served, the farthest from today first.
+  A series' rev = 16 hex of SHA-256 over its JSON without the rev; the feed's over the events array.
+- **The fetch** (`src/calendar_feeds.rs`): `run` (spawned in `main`, its first pass 30 s on) fetches each due source,
+  most overdue first, 4 s apart, through `music_fetch` (one request in flight server-wide) with `Kind::Calendar` (5 MB,
+  60 s; `SourceResponse.content_type` since design 72). Redirects are followed in `get`, one hop at a time (at most 5):
+  never https → http (`insecure`), a LAN link only on its own host and port. Conditional GET; a 304 keeps the set; a
+  failure keeps it and backs off by `music_sweep::backoff` (15 min · 4^(n-1), capped at the hour; daily after 7 days of
+  failing). A 200 with no events while the set had some is held (`empty`) until the third such answer in a row or 24 h
+  after the first (its validators aren't kept, so the next fetch asks again; QA M1). UID churn - every series new at
+  three fetches in a row - fetches every 6 h. A new rev is stored (`WHERE id AND uid`: a source removed mid-fetch
+  writes nothing) and nudges exactly the phones with the link. Error codes, worded at render
+  (`calendar.links.why.*`): `not_found`, `status`, `network`, `timeout`, `too_big`, `not_calendar`,
+  `private_address`, `key_lost` (the key changed: add the link again), `insecure`, `empty`.
+- **Delivery**: the policy's `calendar.feeds` (`[{id, name, rev}]`, always sent, `[]` without one;
+  `policy_json_keys_snapshot`) and `GET /api/devices/calendar/feeds/{uid}` (bearer; `handlers::calendar::device_feed`
+  through `music_api::versioned_json`: `ETag` = rev, 304, gzip; 404 unless this phone has the link). The report's
+  `calendar.feeds` (`[{id, applied_rev, refused, unknown_zone}]`, `calendar::sanitize_report`, at most 10 rows) says
+  what the phone applied. Contract `testdata/calendar_feeds.json` (root `CLAUDE.md`). Capability `calendar_feeds_v1`.
+- **The page** (`#links`, above "Calendars shown"): each link's name (auto-saving, back to `#link-<uid>`), its host, its
+  status lines ("Hentet 14:05 · 182 hendelser", the error in words with the set's age, "Venter på telefonen" until the
+  report lists its key, "Oppdater Vibb One …" without `calendar_feeds_v1`, the phone's refused series, `unknown_tz`,
+  `cut`, churn, the LAN warning), "Hent nå" (`/fetch`: at most once per source per 5 minutes - else
+  `?notice=fetch_wait` -, the fetch before the answer, in `settings_log::NOT_SAVES`), "Fjern…" (confirmed, back to
+  `#links`). The add form (`POST /devices/{id}/calendar/links`): the link and an optional name (empty → the feed's
+  `X-WR-CALNAME`, else the host); plain http judged by what the name resolves to (`lan_addresses`: LAN or tailnet only -
+  the tailnet without the warning -, else refused); no userinfo; at most 2000 characters; without the music key the
+  form says why and has no submit (QA L11); the add check is one fetch that must give a VCALENDAR (an empty one is
+  fine); a refusal renders the page again as typed (400), never the body; a link already a source is attached with no
+  fetch; a save is a 303 to `#link-<uid>`. "Calendars shown" lists a link's calendar at once by its computed key
+  (`calendar_feeds::calendar_key`: LOCAL, `Vibb One`, `vibb-feed-<uid>`), "Kalenderlenke · Venter på telefonen" until
+  reported, then "Kalenderlenke"; an ICSx5 calendar with a link's host says "Kan være den samme som kalenderlenken …".
+  The kid's calendar is never a link's (LOCAL, access 200). Every route behind the full session
+  (`every_calendar_route_needs_a_session`); the settings log names routes and ids, never the link.
+- Tests: `ics::tests` (the fixtures in `testdata/calendar_feeds/`: itslearning - its fold through "å" and the producer's
+  broken "R omerriket" -, Outlook, Google, series, cancelled, empty, html, contract; the caps, a 70 KB line, Latin-1),
+  `calendar_feeds::tests` (the contract, normalization, names), `tests::calendar_feeds` (the add and its refusals, the
+  address rules, the page, the endpoint, the fetch cycle, a removal mid-fetch, Remove and a deleted phone, the caps).
