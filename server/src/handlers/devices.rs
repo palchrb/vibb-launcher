@@ -1544,8 +1544,9 @@ async fn render_device(
     // of -1, a dropped start). `happened_at` is RFC 3339 and `reported_at` SQLite's `datetime`
     // text: compared through `datetime()`, never as raw strings. A minute's slack for the phone's
     // clock and a report racing the shutdown (no start reports within a minute of its shutdown).
-    let off: Result<Option<(String, String, String, String)>, sqlx::Error> = sqlx::query_as(
-        "SELECT o.happened_at, o.created_at, o.title, o.summary FROM parent_events o \
+    let off: Result<Option<(String, String, String, String, Option<String>)>, sqlx::Error> =
+        sqlx::query_as(
+            "SELECT o.happened_at, o.created_at, o.title, o.summary, o.params FROM parent_events o \
          WHERE o.device_id = ?1 AND o.kind = 'phone_off' AND o.happened_at > \
              COALESCE((SELECT MAX(n.happened_at) FROM parent_events n \
                        WHERE n.device_id = ?1 AND n.kind = 'phone_on'), '') \
@@ -1553,15 +1554,23 @@ async fn render_device(
                        FROM device_status s \
                        WHERE s.device_id = ?1), '') \
          ORDER BY o.happened_at DESC, o.id DESC LIMIT 1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await;
+        )
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await;
     let power_off = match off {
-        Ok(off) => off.and_then(|(at, created, title, summary)| {
+        Ok(off) => off.and_then(|(at, created, title, summary, params)| {
             let at = crate::display_time::parse_db_utc(&at)?;
             let created = crate::display_time::parse_db_utc(&created)?;
-            crate::parent_events::off_since_line(at, created, &title, &summary, &zone, now)
+            crate::parent_events::off_since_line(
+                at,
+                created,
+                &title,
+                &summary,
+                params.as_deref(),
+                &zone,
+                now,
+            )
         }),
         Err(err) => {
             tracing::error!(device_id = id, %err, "can't read the phone's power events");

@@ -345,22 +345,23 @@ const BEFORE_OFF_SLACK_SECONDS: i64 = 60;
 /// Locate's "Last position before the phone went off" (2026-10-25): the newest fix is a shutdown's
 /// (`shutdown_at`, migration 0097), no status report came after that shutdown - once the phone
 /// reports again it is on, whatever fix it re-sends - and the off's event may be said
-/// (`off_row`: its title and arrival; `parent_events::off_said`, the device page's "Off since"
-/// exclusions - not for a known restart, not while its push is held; qa-last-position-code Q-5). An
-/// event gone with the inbox's 90 days leaves the line to the other two.
+/// (`off_row`: its title, parameters and arrival; `parent_events::off_said`, the device page's
+/// "Off since" exclusions - not for a known restart, not while its push is held;
+/// qa-last-position-code Q-5). An event gone with the inbox's 90 days leaves the line to the other
+/// two.
 fn before_off(
     shutdown_at: Option<DateTime<Utc>>,
     last_report: Option<DateTime<Utc>>,
-    off_row: Option<(&str, DateTime<Utc>)>,
+    off_row: Option<(&str, Option<&str>, DateTime<Utc>)>,
     now: DateTime<Utc>,
 ) -> bool {
     let Some(off) = shutdown_at else {
         return false;
     };
-    off_row.is_none_or(|(title, created)| crate::parent_events::off_said(title, created, now))
-        && last_report.is_none_or(|report| {
-            report <= off + chrono::Duration::seconds(BEFORE_OFF_SLACK_SECONDS)
-        })
+    off_row.is_none_or(|(title, params, created)| {
+        crate::parent_events::off_said(title, params, created, now)
+    }) && last_report
+        .is_none_or(|report| report <= off + chrono::Duration::seconds(BEFORE_OFF_SLACK_SECONDS))
 }
 
 /// The newest Update Location's row under the fix (2026-10-25, PLAN "Locate: the \"Answer to
@@ -1142,15 +1143,15 @@ async fn locate_view(
             .as_deref()
             .and_then(parse_db_utc);
             // The off's event by its key (the shutdown's instant, as `shutdown_at` is stored).
-            let row = sqlx::query_as::<_, (String, String)>(
-                "SELECT title, created_at FROM parent_events WHERE device_id = ? \
+            let row = sqlx::query_as::<_, (String, Option<String>, String)>(
+                "SELECT title, params, created_at FROM parent_events WHERE device_id = ? \
                  AND kind = 'phone_off' AND dedup_key = ?",
             )
             .bind(id)
             .bind(crate::zones::instant(off))
             .fetch_optional(&state.db)
             .await?
-            .and_then(|(title, created)| Some((title, parse_db_utc(&created)?)));
+            .and_then(|(title, params, created)| Some((title, params, parse_db_utc(&created)?)));
             (last, row)
         }
         None => (None, None),
@@ -1158,7 +1159,9 @@ async fn locate_view(
     let fix_before_off = before_off(
         shutdown_at,
         last_report,
-        off_row.as_ref().map(|(title, at)| (title.as_str(), *at)),
+        off_row
+            .as_ref()
+            .map(|(title, params, at)| (title.as_str(), params.as_deref(), *at)),
         now,
     );
     let fix = newest.as_ref().map(|l| {
@@ -2016,7 +2019,7 @@ mod tests {
         let now = off + chrono::Duration::minutes(10);
         let at = |secs: i64| Some(off + chrono::Duration::seconds(secs));
         let line = |report, event| super::before_off(Some(off), report, event, now);
-        let told = Some(("Anna was turned off", off));
+        let told = Some(("Anna was turned off", None, off));
         assert!(line(None, told));
         assert!(line(at(-600), told), "a report before it");
         assert!(line(at(60), told), "racing it");
@@ -2025,11 +2028,17 @@ mod tests {
             !super::before_off(None, None, told, now),
             "not a shutdown's fix"
         );
-        // Q-5: as the device page's "Off since" - not for a known restart, not while held.
+        // Q-5: as the device page's "Off since" - not for a known restart (an older row's stored
+        // words, a newer row's parameters - design 70 §4), not while held.
         assert!(
-            !line(None, Some(("Anna is restarting", off))),
+            !line(None, Some(("Anna is restarting", None, off))),
             "a known restart"
         );
+        assert!(
+            !line(None, Some(("", Some(r#"{"reason":"restart"}"#), off))),
+            "a known restart, from the parameters"
+        );
+        assert!(line(None, Some(("", Some(r#"{"reason":"user"}"#), off))));
         let held = off + crate::parent_events::OFF_HOLD - chrono::Duration::seconds(1);
         assert!(
             !super::before_off(Some(off), None, told, held),

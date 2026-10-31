@@ -313,6 +313,19 @@ impl Zone {
     }
 }
 
+/// A length of time in minutes as a value: "45 min", "2 h", "1 h 30 min" (nb "1 t 30 min") -
+/// design 70 §6's `duration`, here since slice 2 for the events' words (`lifts::minutes_text`'s
+/// callers move onto it in slice 4).
+pub fn duration(lang: Lang, minutes: i64) -> String {
+    let (h, m) = (minutes / 60, minutes % 60);
+    let (h, m) = (h.to_string(), m.to_string());
+    match (minutes / 60, minutes % 60) {
+        (0, _) => t_params(lang, "time.duration.min", &[("min", &m)]),
+        (_, 0) => t_params(lang, "time.duration.h", &[("h", &h)]),
+        _ => t_params(lang, "time.duration.h_min", &[("h", &h), ("min", &m)]),
+    }
+}
+
 /// A stored time: SQLite's `datetime('now')` text (UTC, no zone, optional fraction), or RFC 3339
 /// (the locations' `captured_at`). `None` for anything else.
 pub fn parse_db_utc(text: &str) -> Option<DateTime<Utc>> {
@@ -544,6 +557,20 @@ mod tests {
         let other_year = NaiveDate::from_ymd_opt(2025, 3, 5).unwrap();
         assert_eq!(oslo().date_of(other_year, today), "5 Mar 2025");
         assert_eq!(nb().date_of(other_year, today), "5. mars 2025");
+    }
+
+    #[test]
+    fn a_duration_in_both_languages() {
+        for (minutes, en, nb) in [
+            (0, "0 min", "0 min"),
+            (45, "45 min", "45 min"),
+            (60, "1 h", "1 t"),
+            (90, "1 h 30 min", "1 t 30 min"),
+            (150, "2 h 30 min", "2 t 30 min"),
+        ] {
+            assert_eq!(duration(Lang::En, minutes), en);
+            assert_eq!(duration(Lang::Nb, minutes), nb);
+        }
     }
 
     #[test]

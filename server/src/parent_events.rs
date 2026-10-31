@@ -16,7 +16,8 @@ use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::display_time::Zone;
-use crate::models::{BatteryReport, PowerOff, PowerOn, PowerReport};
+use crate::i18n::{Lang, t, t_count, t_params};
+use crate::models::{PowerOff, PowerOn, PowerReport};
 use crate::window_relock::ForeignAccess;
 
 /// A title is at most this many characters, a summary at most [SUMMARY_MAX] (design 35 §2.2): they
@@ -169,7 +170,7 @@ impl Kind {
 /// The "App updates" switch's `notification_prefs` column (migration 0099), off by default.
 pub const APP_UPDATES_SWITCH: &str = "push_app_updates";
 
-/// The phone an event is about, and how its times are told: read once per intake ([Phone::load]).
+/// The phone an event is about: read once per intake ([Phone::load]).
 #[derive(Clone, Debug)]
 pub struct Phone {
     pub id: i64,
@@ -179,6 +180,8 @@ pub struct Phone {
     /// `devices.enrolled_at`: part of a `phone_on` key (design 38 §3.2, a re-enrollment starts
     /// another count).
     pub enrolled_at: Option<String>,
+    /// The Phone Setup zone, for day arithmetic only: an intake has no reader, so the words are
+    /// made when an event is read, in the reader's language and zone (design 70 §4, [told]).
     pub zone: Zone,
     pub now: DateTime<Utc>,
 }
@@ -202,21 +205,9 @@ impl Phone {
             name,
             battery_low_since,
             enrolled_at,
-            zone: Zone::load(db, crate::i18n::Lang::default()).await,
+            zone: Zone::load(db, Lang::default()).await,
             now: Utc::now(),
         })
-    }
-
-    /// "14:02" today, "yesterday 21:40", else "12 Oct 14:02": when something happened, with its
-    /// clock time (an event may arrive days late, from a phone that was off).
-    fn at(&self, t: DateTime<Utc>) -> String {
-        self.zone.at(t, self.now)
-    }
-
-    /// `words` with the phone's name in it, the name cut ("…") so the whole is at most `max`
-    /// characters.
-    fn named(&self, max: usize, words: impl Fn(&str) -> String) -> String {
-        fit_name(&self.name, max, words)
     }
 
     fn event(&self, kind: Kind, dedup_key: String, happened_at: DateTime<Utc>) -> NewEvent {
@@ -236,85 +227,69 @@ impl Phone {
         }
     }
 
-    /// A push's short words (the shorter push texts, 2026-10-25): "Anna: turned on" / "07:02 ·
-    /// battery 64 %" - the fact after the name, then the time and at most one number. The inbox
-    /// keeps the long words in `title`/`summary`.
-    fn pushed(&self, fact: &str, at: DateTime<Utc>, number: Option<String>) -> (String, String) {
-        (
-            self.named(TITLE_MAX, |name| format!("{name}: {fact}")),
-            push_body(&capitalized(&self.at(at)), number),
-        )
+    /// An event told from its parameters (design 70 §4): `params` stored, every word left to
+    /// [told], [pushed] and [detail] - the `title`, `summary`, `push_title`, `push_body` and
+    /// `detail` columns stay empty.
+    fn with_params<P: serde::Serialize>(
+        &self,
+        kind: Kind,
+        dedup_key: String,
+        happened_at: DateTime<Utc>,
+        params: &P,
+    ) -> NewEvent {
+        NewEvent {
+            params: Some(serde_json::to_string(params).expect("strings serialize")),
+            ..self.event(kind, dedup_key, happened_at)
+        }
     }
 
     /// An emergency call the phone reported (`call_state.last_emergency_call_at`).
     pub fn emergency_call(&self, at: DateTime<Utc>) -> NewEvent {
-        let when = self.at(at);
-        let summary = if self.zone.is_today(at, self.now) {
-            format!("At {when}")
-        } else {
-            capitalized(&when)
+        let params = PhoneAtParams {
+            phone: self.name.clone(),
+            at: instant(at),
         };
-        let (push_title, push_body) = self.pushed("emergency call", at, None);
         NewEvent {
-            title: self.named(TITLE_MAX, |name| {
-                format!("{name} called an emergency number")
-            }),
-            summary,
             target: format!("/devices/{}/calls", self.id),
-            push_title,
-            push_body,
-            ..self.event(Kind::EmergencyCall, instant(at), at)
+            ..self.with_params(Kind::EmergencyCall, instant(at), at, &params)
         }
     }
 
     /// A newly stored parent-PIN use or lockout from the phone's `pin-events` (`None` for a wrong
     /// try, which is no event). Happened at the phone's time, or at its arrival when its clock was
-    /// off (`clean_event` set it so).
+    /// off (`clean_event` set it so). A lockout keeps its end only while it is ahead at the raise:
+    /// one already over says when it happened.
     pub fn pin_event(&self, event: &crate::parent_pin::PinEvent) -> Option<NewEvent> {
         use crate::parent_pin::{Entry, Kind as PinKind};
         let at = DateTime::from_timestamp_millis(event.occurred_at_ms).unwrap_or(self.now);
-        let (kind, title, summary, (push_title, push_body)) = match event.kind {
+        let (kind, until) = match event.kind {
             PinKind::Wrong => return None,
-            PinKind::Unlocked => {
-                let entry = match event.entry {
-                    Entry::Override => "Time lock",
-                    Entry::PinLock => "Lock screen",
-                    Entry::Settings => "Vibb One's Settings",
-                    Entry::Pause => "Pause",
-                    Entry::InstallMode => "Play install mode",
-                };
-                (
-                    Kind::PinUsed,
-                    self.named(TITLE_MAX, |name| format!("Parent PIN used on {name}")),
-                    format!("{entry} · {}", self.at(at)),
-                    self.pushed("parent PIN used", at, None),
-                )
-            }
-            PinKind::Lockout => {
-                let until = event
+            PinKind::Unlocked => (Kind::PinUsed, None),
+            PinKind::Lockout => (
+                Kind::PinLockout,
+                event
                     .until_ms
                     .and_then(DateTime::from_timestamp_millis)
                     .filter(|until| *until > self.now)
-                    .map(|until| format!("until {}", self.zone.until(until, self.now)))
-                    .unwrap_or_else(|| self.at(at));
-                (
-                    Kind::PinLockout,
-                    self.named(TITLE_MAX, |name| format!("Parent PIN locked on {name}")),
-                    format!("Too many wrong tries · {until}"),
-                    (
-                        self.named(TITLE_MAX, |name| format!("{name}: parent PIN locked")),
-                        capitalized(&until),
-                    ),
-                )
-            }
+                    .map(instant),
+            ),
+        };
+        let entry = match event.entry {
+            Entry::Override => "override",
+            Entry::PinLock => "pin_lock",
+            Entry::Settings => "settings",
+            Entry::Pause => "pause",
+            Entry::InstallMode => "install_mode",
+        };
+        let params = PinParams {
+            phone: self.name.clone(),
+            at: instant(at),
+            entry: entry.to_string(),
+            until,
         };
         Some(NewEvent {
-            title,
-            summary,
-            push_title,
-            push_body,
             target: format!("/devices/{}/lock#parent-pin", self.id),
-            ..self.event(kind, event.event_id.clone(), at)
+            ..self.with_params(kind, event.event_id.clone(), at, &params)
         })
     }
 
@@ -329,53 +304,32 @@ impl Phone {
         previous_status_id: i64,
         names: &std::collections::HashMap<String, String>,
     ) -> NewEvent {
-        let mut apps = found.admins.clone();
-        apps.extend(
-            found
+        let count = found.admins.len()
+            + found
                 .accessibility
                 .iter()
                 .filter(|p| !found.admins.contains(p))
-                .cloned(),
-        );
-        let what = match (found.admins.is_empty(), found.accessibility.is_empty()) {
-            (false, true) => "with device admin",
-            (true, false) => "with accessibility on",
-            _ => "with device admin or accessibility",
-        };
-        let count = if apps.len() == 1 {
-            "1 app".to_string()
-        } else {
-            format!("{} apps", apps.len())
-        };
+                .count();
         let named = |list: &[String]| {
             list.iter()
                 .map(|p| names.get(p).cloned().unwrap_or_else(|| p.clone()))
                 .collect::<Vec<_>>()
-                .join(", ")
         };
-        let mut detail = Vec::new();
-        if !found.admins.is_empty() {
-            detail.push(format!("Device admin: {}.", named(&found.admins)));
-        }
-        if !found.accessibility.is_empty() {
-            detail.push(format!("Accessibility: {}.", named(&found.accessibility)));
-        }
+        let params = ForeignAccessParams {
+            phone: self.name.clone(),
+            at: instant(self.now),
+            count: count as i64,
+            admins: named(&found.admins),
+            accessibility: named(&found.accessibility),
+        };
         let digest = hex::encode(Sha256::digest(stored.as_bytes()));
-        let (push_title, push_body) =
-            self.pushed("an app may read the PIN", self.now, Some(count.clone()));
         NewEvent {
-            push_title,
-            push_body,
-            title: self.named(TITLE_MAX, |name| {
-                format!("An app may read the PIN on {name}")
-            }),
-            summary: format!("{count} {what}"),
             target: format!("/devices/{}#foreign-access", self.id),
-            detail: Some(detail.join(" ")),
-            ..self.event(
+            ..self.with_params(
                 Kind::ForeignAccess,
                 format!("{previous_status_id}:{}", &digest[..16]),
                 self.now,
+                &params,
             )
         }
     }
@@ -386,17 +340,17 @@ impl Phone {
             .and_then(DateTime::from_timestamp_millis)
             .filter(|at| *at <= self.now)
             .unwrap_or(self.now);
-        let (push_title, push_body) = self.pushed("started without Vibb One", at, None);
+        let params = PhoneAtParams {
+            phone: self.name.clone(),
+            at: instant(at),
+        };
         NewEvent {
-            push_title,
-            push_body,
-            title: self.named(TITLE_MAX, |name| format!("{name} started without Vibb One")),
-            summary: "Safe mode or a start cut short".to_string(),
             target: format!("/devices/{}/about#diagnostics", self.id),
-            ..self.event(
+            ..self.with_params(
                 Kind::UnseenBoot,
                 format!("{count}:{}", last_at_ms.unwrap_or(0)),
                 at,
+                &params,
             )
         }
     }
@@ -407,177 +361,179 @@ impl Phone {
         battery: &crate::models::BatteryReport,
         since: DateTime<Utc>,
     ) -> NewEvent {
-        let level = battery.level;
-        let charging = if battery.charging {
-            "Charging"
-        } else {
-            "Not charging"
+        let params = LowBatteryParams {
+            phone: self.name.clone(),
+            at: instant(since),
+            level: battery.level,
+            charging: battery.charging,
         };
-        let (push_title, push_body) =
-            self.pushed("battery low", since, Some(format!("battery {level} %")));
-        NewEvent {
-            push_title,
-            push_body,
-            title: self.named(TITLE_MAX, |name| {
-                format!("Battery low on {name} ({level} %)")
-            }),
-            summary: format!("{charging} · {}", self.at(since)),
-            ..self.event(Kind::LowBattery, instant(since), since)
-        }
+        self.with_params(Kind::LowBattery, instant(since), since, &params)
     }
 
-    /// A shutdown the phone saw (design 38 §3.2): "Anna was turned off" / "21:14 · battery 2 %,
-    /// probably flat". `late`: it reached the server only with the next boot's start (" · told at
-    /// the next start", never pushed). Pushed after [OFF_HOLD] (a restart's start drops it), never
-    /// for a restart the phone knew of. With the phone's last stored fix (2026-10-25) the event's
-    /// parameters carry it (`{"location": ..}`, never the words: the push stays as it is) and the
-    /// inbox's detail says "Last position from 21:10: shown on Locate" - no coordinates in any text.
+    /// A shutdown the phone saw (design 38 §3.2): told as "Anna was turned off" / "21:14 · battery
+    /// 2 %, probably flat". `late`: it reached the server only with the next boot's start (" · told
+    /// at the next start", never pushed). Pushed after [OFF_HOLD] (a restart's start drops it),
+    /// never for a restart the phone knew of. The phone's last stored fix (2026-10-25) rides in the
+    /// parameters (`location`, never in any text) for the inbox's "Last position from 21:10: shown
+    /// on Locate", until retention removes it with the location history.
     pub fn phone_off(&self, off: &PowerOff, at: DateTime<Utc>, late: bool) -> NewEvent {
         let restarting = off.reboot == Some(true);
-        let reason = off_reason_words(off.reason.as_deref());
-        let level = off.battery.map(|b| format!("battery {} %", b.level));
-        // The push: the fact, the time and the level at most (never "probably flat").
-        let (title, battery, (push_title, push_body)) = match (restarting, reason) {
-            (true, _) => (
-                self.named(TITLE_MAX, |name| format!("{name} is restarting")),
-                off.battery.map(|b| battery_words(&b, FLAT_LEVEL)),
-                self.pushed("restarting", at, None),
-            ),
-            (false, Some(OffReason::Battery)) => (
-                self.named(TITLE_MAX, |name| format!("{name} shut down: battery flat")),
-                level.clone(),
-                self.pushed("battery flat, shut down", at, level),
-            ),
-            (false, Some(OffReason::Thermal)) => (
-                self.named(TITLE_MAX, |name| format!("{name} shut down: too hot")),
-                level,
-                self.pushed("too hot, shut down", at, None),
-            ),
-            (false, None) => (
-                self.named(TITLE_MAX, |name| format!("{name} was turned off")),
-                off.battery.map(|b| battery_words(&b, FLAT_LEVEL)),
-                self.pushed("turned off", at, level),
-            ),
+        let reason = if restarting {
+            OffReason::Restart
+        } else {
+            OffReason::of(off.reason.as_deref())
         };
-        let mut summary = capitalized(&self.at(at));
-        if let Some(battery) = battery {
-            summary.push_str(&format!(" · {battery}"));
-        }
-        if late {
-            summary.push_str(" · told at the next start");
-        }
         let push = if restarting || late {
             Push::No
         } else {
             Push::Held(self.now + OFF_HOLD)
         };
-        let (detail, params) = match &off.location {
-            Some(location) => (
-                Some(match DateTime::from_timestamp_millis(location.at_ms) {
-                    Some(fix_at) => {
-                        format!("Last position from {}: shown on Locate", self.at(fix_at))
-                    }
-                    None => "Last position: shown on Locate".to_string(),
-                }),
-                serde_json::to_string(&serde_json::json!({ "location": location })).ok(),
-            ),
-            None => (None, None),
+        let params = PhoneOffParams {
+            phone: self.name.clone(),
+            at: instant(at),
+            reason: Some(reason.code().to_string()),
+            battery: off.battery.map(|b| b.level),
+            charging: off.battery.map(|b| b.charging),
+            late,
+            location: off.location.clone(),
         };
         NewEvent {
-            title,
-            summary,
-            push_title,
-            push_body,
             push,
-            detail,
-            params,
-            ..self.event(Kind::PhoneOff, instant(at), at)
+            ..self.with_params(Kind::PhoneOff, instant(at), at, &params)
         }
     }
 
-    /// The boot's start (design 38 §3.2), always pushed at once: "Anna restarted" / "07:02 ·
-    /// battery 64 %", "Anna was turned on" / "07:02 · off since 21:14, battery was 3 %", or with no
-    /// shutdown seen the newest report before the boot.
+    /// The boot's start (design 38 §3.2), always pushed at once: told as "Anna restarted" / "07:02
+    /// · battery 64 %", "Anna was turned on" / "07:02 · off since 21:14, battery was 3 %", or with
+    /// no shutdown seen the newest report before the boot.
     pub fn phone_on(&self, on: &PowerOn, at: DateTime<Utc>, start: &Start) -> NewEvent {
-        let mut when = capitalized(&self.at(at));
         // Design 59 §2.3: with Android's lock the phone waits at "type the PIN to start" after a
         // restart; "· unlocked 07:15" once that took more than [UNLOCK_SAID_AFTER].
-        if let Some(unlocked) = on
+        let unlocked = on
             .unlocked_at_ms
             .and_then(DateTime::from_timestamp_millis)
             .filter(|u| *u - at > UNLOCK_SAID_AFTER && *u <= self.now + POWER_FUTURE)
-        {
-            when.push_str(&format!(" · unlocked {}", self.at(unlocked)));
-        }
-        // The push: the start, its time and the battery now (never the off's, "no shutdown seen",
-        // the last report or the unlock - the inbox keeps those).
-        let fact = match start {
-            Start::Restart => "restarted",
-            _ => "turned on",
-        };
-        let (push_title, push_body) = self.pushed(
-            fact,
-            at,
-            on.battery.map(|b| format!("battery {} %", b.level)),
-        );
-        let (title, summary) = match start {
-            Start::Restart => (
-                self.named(TITLE_MAX, |name| format!("{name} restarted")),
-                match on.battery {
-                    Some(b) => format!("{when} · battery {} %", b.level),
-                    None => when,
-                },
+            .map(instant);
+        let (start_code, off_at, off_battery, last) = match start {
+            Start::Restart => ("restart", None, None, None),
+            Start::AfterOff { off, at: off_at } => (
+                "after_off",
+                Some(instant(*off_at)),
+                off.battery.map(|b| b.level),
+                None,
             ),
-            Start::AfterOff { off, at: off_at } => {
-                let battery = off
-                    .battery
-                    .map(|b| format!(", battery was {} %", b.level))
-                    .unwrap_or_default();
-                (
-                    self.named(TITLE_MAX, |name| format!("{name} was turned on")),
-                    format!("{when} · off since {}{battery}", self.at(*off_at)),
-                )
-            }
-            Start::NoShutdownSeen(last) => {
-                let last = last
-                    .as_ref()
-                    .map(|last| {
-                        let battery = last
-                            .level
-                            .map(|level| {
-                                let battery = BatteryReport {
-                                    level,
-                                    charging: last.charging == Some(true),
-                                    low: false,
-                                };
-                                format!(", {}", battery_words(&battery, LAST_REPORT_FLAT_LEVEL))
-                            })
-                            .unwrap_or_default();
-                        format!(" · last report {}{battery}", self.at(last.at))
-                    })
-                    .unwrap_or_default();
-                (
-                    self.named(TITLE_MAX, |name| format!("{name} was turned on")),
-                    format!("{when} · no shutdown seen{last}"),
-                )
-            }
+            Start::NoShutdownSeen(last) => ("no_shutdown", None, None, last.as_ref()),
         };
-        NewEvent {
-            title,
-            summary,
-            push_title,
-            push_body,
-            ..self.event(
-                Kind::PhoneOn,
-                format!(
-                    "boot:{}:{}",
-                    self.enrolled_at.as_deref().unwrap_or(""),
-                    on.boot_count
-                ),
-                at,
-            )
-        }
+        let params = PhoneOnParams {
+            phone: self.name.clone(),
+            at: instant(at),
+            battery: on.battery.map(|b| b.level),
+            unlocked,
+            start: start_code.to_string(),
+            off_at,
+            off_battery,
+            last_at: last.map(|l| instant(l.at)),
+            last_battery: last.and_then(|l| l.level),
+            last_charging: last.and_then(|l| l.charging),
+        };
+        self.with_params(
+            Kind::PhoneOn,
+            format!(
+                "boot:{}:{}",
+                self.enrolled_at.as_deref().unwrap_or(""),
+                on.boot_count
+            ),
+            at,
+            &params,
+        )
     }
+}
+
+/// The parameters of an event with a phone and an instant (`emergency_call`, `unseen_boot`): the
+/// phone's name as it was when it was raised and when (RFC 3339). Design 70 §4: every stored-words
+/// kind raises so since slice 2, and is worded when read ([told]).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PhoneAtParams {
+    pub phone: String,
+    pub at: String,
+}
+
+/// A parent-PIN use or lockout: where the PIN was typed (`override`, `pin_lock`, `settings`,
+/// `pause`, `install_mode`) and, for a lockout still ahead at the raise, its end.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PinParams {
+    pub phone: String,
+    pub at: String,
+    pub entry: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+}
+
+/// A foreign app: how many apps in all, and the phone's names for the device admins and the
+/// accessibility services (the inbox's detail).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ForeignAccessParams {
+    pub phone: String,
+    pub at: String,
+    pub count: i64,
+    pub admins: Vec<String>,
+    pub accessibility: Vec<String>,
+}
+
+/// The battery latched low: its level and whether it was charging.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LowBatteryParams {
+    pub phone: String,
+    pub at: String,
+    pub level: i64,
+    pub charging: bool,
+}
+
+/// A shutdown (design 38 §3.2; H2 of design 70's review): the reason as a code (`user`, `battery`,
+/// `heat`, `restart`), the battery and whether it charged, whether it was told only at the next
+/// start, and the phone's last stored fix - the one field a `phone_off` from before slice 2 has
+/// (with its words stored), so `reason` is `None` on such a row and its text is read instead.
+/// Retention removes `location` alone (`json_remove`), so the words outlive the position.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PhoneOffParams {
+    #[serde(default)]
+    pub phone: String,
+    #[serde(default)]
+    pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charging: Option<bool>,
+    #[serde(default)]
+    pub late: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<crate::models::PowerLocation>,
+}
+
+/// A boot's start (design 38 §3.2): the battery now, the unlock when it was late (design 59
+/// §2.3), how the start is told (`restart`, `after_off` with the shutdown's instant and battery,
+/// `no_shutdown` with the newest report before the boot).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PhoneOnParams {
+    pub phone: String,
+    pub at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub battery: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlocked: Option<String>,
+    pub start: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub off_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub off_battery: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_battery: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_charging: Option<bool>,
 }
 
 /// A `phone_off`'s push waits this long on the server's clock for the next boot's `phone_on`
@@ -601,33 +557,70 @@ const POWER_FUTURE: chrono::Duration = chrono::Duration::minutes(5);
 const POWER_MAX_AGE: chrono::Duration = chrono::Duration::days(30);
 
 /// "battery 2 %, probably flat" (at or below `flat_level`, not charging), "battery 64 %,
-/// charging", "battery 64 %, not charging".
-pub fn battery_words(battery: &BatteryReport, flat_level: i64) -> String {
-    let state = if battery.charging {
-        "charging"
-    } else if battery.level <= flat_level {
-        "probably flat"
+/// charging", "battery 64 %, not charging" - in `lang`.
+pub fn battery_state(lang: Lang, level: i64, charging: bool, flat_level: i64) -> String {
+    let key = if charging {
+        "events.battery.charging"
+    } else if level <= flat_level {
+        "events.battery.flat"
     } else {
-        "not charging"
+        "events.battery.not_charging"
     };
-    format!("battery {} %, {state}", battery.level)
+    t_params(lang, key, &[("level", &level.to_string())])
 }
 
-/// The shutdown reasons worded (design 38 §3.2), from `sys.shutdown.requested`'s text.
+/// "battery 64 %" (a push's one number, a start's level).
+fn battery_level(lang: Lang, level: i64) -> String {
+    t_params(
+        lang,
+        "events.battery.level",
+        &[("level", &level.to_string())],
+    )
+}
+
+/// Why a phone shut down (design 38 §3.2), from `sys.shutdown.requested`'s text or the phone's
+/// restart flag; stored in a `phone_off`'s parameters as [OffReason::code].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OffReason {
+    /// `userrequested`, and anything unknown: no more than "turned off".
+    User,
     /// `battery`: Android shut down for a flat battery.
     Battery,
     /// `thermal-shutdown`, `thermal`.
     Thermal,
+    /// The phone said it was restarting.
+    Restart,
 }
 
-/// The known reasons; `userrequested` and anything else say nothing more than "turned off".
-pub fn off_reason_words(reason: Option<&str>) -> Option<OffReason> {
-    match reason? {
-        "battery" => Some(OffReason::Battery),
-        "thermal-shutdown" | "thermal" => Some(OffReason::Thermal),
-        _ => None,
+impl OffReason {
+    /// The known reasons; `userrequested` and anything else are [OffReason::User].
+    pub fn of(reason: Option<&str>) -> OffReason {
+        match reason {
+            Some("battery") => OffReason::Battery,
+            Some("thermal-shutdown" | "thermal") => OffReason::Thermal,
+            _ => OffReason::User,
+        }
+    }
+
+    /// The code in the parameters.
+    pub fn code(self) -> &'static str {
+        match self {
+            OffReason::User => "user",
+            OffReason::Battery => "battery",
+            OffReason::Thermal => "heat",
+            OffReason::Restart => "restart",
+        }
+    }
+
+    pub fn from_code(code: &str) -> Option<OffReason> {
+        [
+            OffReason::User,
+            OffReason::Battery,
+            OffReason::Thermal,
+            OffReason::Restart,
+        ]
+        .into_iter()
+        .find(|reason| reason.code() == code)
     }
 }
 
@@ -734,41 +727,62 @@ pub fn power_events(report: &PowerReport, last: Option<&LastReport>, phone: &Pho
     plan
 }
 
+/// A `phone_off`'s parameters, if the row has any that read.
+fn off_params(params: Option<&str>) -> Option<PhoneOffParams> {
+    params.and_then(|p| serde_json::from_str(p).ok())
+}
+
 /// A pages' line about a `phone_off` may say it (the device page's "Off since", Locate's "Last
 /// position before the phone went off" - qa-last-position-code Q-5): not for a restart the phone
-/// announced ("Anna is restarting"), not while the off's push is still held ([OFF_HOLD] from its
-/// arrival, `created_at`) - the pages say no more than the pushes.
-pub fn off_said(title: &str, created_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
-    !title.ends_with(" is restarting") && now - created_at >= OFF_HOLD
+/// announced (the parameters' `reason` since design 70, "Anna is restarting" in an older row's
+/// stored words), not while the off's push is still held ([OFF_HOLD] from its arrival,
+/// `created_at`) - the pages say no more than the pushes.
+pub fn off_said(
+    title: &str,
+    params: Option<&str>,
+    created_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> bool {
+    let restart = match off_params(params).and_then(|p| p.reason) {
+        Some(reason) => reason == OffReason::Restart.code(),
+        None => title.ends_with(" is restarting"),
+    };
+    !restart && now - created_at >= OFF_HOLD
 }
 
 /// The device page's header line between a shutdown and the next start (design 38 §3.4): "Off
-/// since 21:14 · battery was 3 %", the battery read from the off's stored words. Nothing for a
-/// restart the phone announced ("Anna is restarting") or while the off's push is still held
-/// ([OFF_HOLD] from its arrival, `created_at`): a restart's start may still fold it (qa-38-code
-/// nit 1), and the page says no more than the pushes.
+/// since 21:14 · battery was 3 %", the battery from the off's parameters (design 70), or read from
+/// an older row's stored words. Nothing for a restart the phone announced or while the off's push
+/// is still held ([OFF_HOLD] from its arrival, `created_at`): a restart's start may still fold it
+/// (qa-38-code nit 1), and the page says no more than the pushes.
 pub fn off_since_line(
     happened_at: DateTime<Utc>,
     created_at: DateTime<Utc>,
     title: &str,
     summary: &str,
+    params: Option<&str>,
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> Option<String> {
-    if !off_said(title, created_at, now) {
+    if !off_said(title, params, created_at, now) {
         return None;
     }
-    let level = summary.split(" · ").find_map(|part| {
-        let rest = part.strip_prefix("battery ")?;
-        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-        (!digits.is_empty() && rest[digits.len()..].starts_with(" %")).then_some(digits)
-    });
+    let level = match off_params(params).filter(|p| p.reason.is_some()) {
+        Some(p) => p.battery.map(|level| level.to_string()),
+        None => summary.split(" · ").find_map(|part| {
+            let rest = part.strip_prefix("battery ")?;
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            (!digits.is_empty() && rest[digits.len()..].starts_with(" %")).then_some(digits)
+        }),
+    };
+    let at = zone.at(happened_at, now);
     Some(match level {
-        Some(level) => format!(
-            "Off since {} · battery was {level} %",
-            zone.at(happened_at, now)
+        Some(level) => t_params(
+            zone.lang(),
+            "events.phone_off.off_since_battery",
+            &[("at", &at), ("level", &level)],
         ),
-        None => format!("Off since {}", zone.at(happened_at, now)),
+        None => t_params(zone.lang(), "events.phone_off.off_since", &[("at", &at)]),
     })
 }
 
@@ -1274,45 +1288,46 @@ fn extra_time_told(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> (String, String) {
+    let lang = zone.lang();
     let at = crate::display_time::parse_db_utc(&p.at)
         .map(|at| capitalized(&zone.at(at, now)))
         .unwrap_or_default();
     let left = || {
         p.left_minutes
             .filter(|m| *m > 0 && p.state == "left")
-            .map(|m| format!("{} left", crate::handlers::lifts::minutes_text(m)))
+            .map(|m| {
+                t_params(
+                    lang,
+                    "events.extra_time_request.left",
+                    &[("left", &crate::display_time::duration(lang, m))],
+                )
+            })
     };
+    let title = titled(
+        lang,
+        &format!("events.extra_time_request.{}.title", form.key()),
+        &p.phone,
+    );
     if form == Form::Push {
-        let title = fit_name(&p.phone, TITLE_MAX, |name| {
-            format!("{name}: asks for more time")
-        });
-        return (
-            crate::audit::clip(&title, TITLE_MAX).to_string(),
-            push_body(&at, left()),
-        );
+        return (title, push_body(&at, left()));
     }
-    let title = fit_name(&p.phone, TITLE_MAX, |name| {
-        format!("{name} asks for more screen time")
-    });
     let state = match p.state.as_str() {
         "left" => left(),
-        "used_up" => Some("Screen time used up".to_string()),
+        "used_up" => Some(t(lang, "events.extra_time_request.used_up").to_string()),
         "rule" => Some(
-            match p.rule.as_deref() {
-                Some("SCHOOL") => "School",
-                Some("BEDTIME") => "Bedtime",
-                _ => "A time rule",
-            }
+            t(
+                lang,
+                match p.rule.as_deref() {
+                    Some("SCHOOL") => "events.extra_time_request.rule.school",
+                    Some("BEDTIME") => "events.extra_time_request.rule.bedtime",
+                    _ => "events.extra_time_request.rule.any",
+                },
+            )
             .to_string(),
         ),
         _ => None,
     };
-    let summary = match state {
-        Some(state) if !at.is_empty() => format!("{at} · {state}"),
-        Some(state) => state,
-        None => at,
-    };
-    (crate::audit::clip(&title, TITLE_MAX).to_string(), summary)
+    (title, push_body(&at, state))
 }
 
 /// The request still open for Device › Time's "Asked for more time at 17:21" (design r13 §2.7):
@@ -1453,21 +1468,25 @@ fn app_update_told(
     let at = crate::display_time::parse_db_utc(&p.at)
         .map(|at| capitalized(&zone.at(at, now)))
         .unwrap_or_default();
+    let lang = zone.lang();
     let (app, to) = (p.app.as_str(), p.to.as_str());
     let phone = p.phone.as_deref().unwrap_or("");
-    let title = match (kind, form) {
-        (Kind::AppUpdateAvailable, Form::Inbox) => {
-            fit_name(app, TITLE_MAX, |a| format!("{a} {to} is available"))
-        }
-        (Kind::AppUpdateAvailable, Form::Push) => {
-            fit_name(app, TITLE_MAX, |a| format!("{a}: update available"))
-        }
-        (_, Form::Inbox) => fit_name(phone, TITLE_MAX, |n| format!("{app} updated on {n}")),
-        (_, Form::Push) => fit_name(phone, TITLE_MAX, |n| format!("{n}: {app} updated")),
+    let key = format!("events.{}.{}.title", kind.wire(), form.key());
+    // The catalog app's name is cut for a new release, the phone's for an installed one.
+    let title = match kind {
+        Kind::AppUpdateAvailable => fit_name(app, TITLE_MAX, |a| {
+            t_params(lang, &key, &[("app", a), ("to", to)])
+        }),
+        _ => fit_name(phone, TITLE_MAX, |n| {
+            t_params(lang, &key, &[("name", n), ("app", app)])
+        }),
     };
     let body = match form {
         Form::Inbox => push_body(&at, p.from.as_ref().map(|from| format!("{from} → {to}"))),
-        Form::Push => push_body(&at, Some(format!("version {to}"))),
+        Form::Push => push_body(
+            &at,
+            Some(t_params(lang, "events.app_update.version", &[("to", to)])),
+        ),
     };
     (crate::audit::clip(&title, TITLE_MAX).to_string(), body)
 }
@@ -1480,6 +1499,16 @@ pub enum Form {
     Push,
 }
 
+impl Form {
+    /// The segment of a key: `events.<kind>.inbox.*` or `events.<kind>.push.*`.
+    fn key(self) -> &'static str {
+        match self {
+            Form::Inbox => "inbox",
+            Form::Push => "push",
+        }
+    }
+}
+
 /// A push's body: the time, then at most one number ("07:02 · battery 64 %").
 fn push_body(at: &str, number: Option<String>) -> String {
     match number {
@@ -1489,10 +1518,10 @@ fn push_body(at: &str, number: Option<String>) -> String {
     }
 }
 
-/// An event's words as shown (the inbox, Activity): a kind told from parameters gets them made
-/// here, in English, at `now` in `zone` ("Sverre arrived at Home" / "15:42", "Yesterday 21:14");
-/// any other row keeps its stored `title` and `summary`. Parameters that don't read leave them
-/// too.
+/// An event's words as shown (the inbox, Activity), made from its parameters at `now` in `zone`
+/// and its language ("Sverre arrived at Home" / "15:42", "Yesterday 21:14"; nb "I går 21:14"). A
+/// row with stored words - every stored-words kind raised before design 70's slice 2 - keeps its
+/// `title` and `summary`. Parameters that don't read leave them too.
 pub fn told(
     kind: &str,
     title: String,
@@ -1504,9 +1533,10 @@ pub fn told(
     told_as(Form::Inbox, kind, title, summary, params, zone, now)
 }
 
-/// An event's words as pushed (2026-10-25): the row's stored push words when it has them (every
-/// stored-words kind raised since migration 0098), else the short form of a kind told from
-/// parameters, else - a row from before 0098 - the inbox's words.
+/// An event's words as pushed (2026-10-25): the row's stored push words when it has them (a
+/// stored-words kind raised between migration 0098 and design 70's slice 2), else the short form
+/// of its parameters in the subscriber's language, else - a row from before 0098 - the inbox's
+/// words.
 #[allow(clippy::too_many_arguments)]
 pub fn pushed(
     kind: &str,
@@ -1524,7 +1554,8 @@ pub fn pushed(
     }
 }
 
-fn told_as(
+/// [told] in either form.
+pub fn told_as(
     form: Form,
     kind: &str,
     title: String,
@@ -1533,35 +1564,347 @@ fn told_as(
     zone: &Zone,
     now: DateTime<Utc>,
 ) -> (String, String) {
-    if Kind::of(kind) == Some(Kind::ExtraTimeRequest) {
-        return match params.and_then(|p| serde_json::from_str::<ExtraTimeParams>(p).ok()) {
-            Some(p) => extra_time_told(form, &p, zone, now),
-            None => (title, summary),
-        };
-    }
-    if let Some(kind @ (Kind::AppUpdateAvailable | Kind::AppUpdated)) = Kind::of(kind) {
-        return match params.and_then(|p| serde_json::from_str::<AppUpdateParams>(p).ok()) {
-            Some(p) => app_update_told(form, kind, &p, zone, now),
-            None => (title, summary),
-        };
-    }
-    let Some(kind @ (Kind::ZoneArrived | Kind::ZoneLeft)) = Kind::of(kind) else {
+    let Some(kind) = Kind::of(kind) else {
         return (title, summary);
     };
-    let Some(p) = params.and_then(|p| serde_json::from_str::<ZoneParams>(p).ok()) else {
-        return (title, summary);
+    let worded = match kind {
+        Kind::ExtraTimeRequest => params
+            .and_then(|p| serde_json::from_str::<ExtraTimeParams>(p).ok())
+            .map(|p| extra_time_told(form, &p, zone, now)),
+        Kind::AppUpdateAvailable | Kind::AppUpdated => params
+            .and_then(|p| serde_json::from_str::<AppUpdateParams>(p).ok())
+            .map(|p| app_update_told(form, kind, &p, zone, now)),
+        Kind::ZoneArrived | Kind::ZoneLeft => params
+            .and_then(|p| serde_json::from_str::<ZoneParams>(p).ok())
+            .map(|p| zone_told(form, kind, &p, zone, now)),
+        // An older row's words are stored (design 70 §4: one whose title is not empty).
+        _ if !title.is_empty() => None,
+        _ => params.and_then(|p| phone_event_told(form, kind, p, zone, now)),
     };
+    worded.unwrap_or((title, summary))
+}
+
+/// An event's detail, inbox only (never pushed): a stored-words kind raised since design 70's
+/// slice 2 words it from its parameters - the foreign apps by the phone's names, a shutdown's
+/// last position (nothing once retention removed it); an older row shows its stored detail.
+pub fn detail(
+    kind: &str,
+    title: &str,
+    stored: Option<String>,
+    params: Option<&str>,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Option<String> {
+    if !title.is_empty() {
+        return stored.filter(|d| !d.trim().is_empty());
+    }
+    let lang = zone.lang();
+    match Kind::of(kind)? {
+        Kind::ForeignAccess => {
+            let p: ForeignAccessParams = serde_json::from_str(params?).ok()?;
+            let mut parts = Vec::new();
+            if !p.admins.is_empty() {
+                parts.push(t_params(
+                    lang,
+                    "events.foreign_access.detail.admin",
+                    &[("apps", &p.admins.join(", "))],
+                ));
+            }
+            if !p.accessibility.is_empty() {
+                parts.push(t_params(
+                    lang,
+                    "events.foreign_access.detail.accessibility",
+                    &[("apps", &p.accessibility.join(", "))],
+                ));
+            }
+            (!parts.is_empty()).then(|| parts.join(" "))
+        }
+        Kind::PhoneOff => {
+            let location = off_params(params)?.location?;
+            Some(match DateTime::from_timestamp_millis(location.at_ms) {
+                Some(fix_at) => t_params(
+                    lang,
+                    "events.phone_off.detail.position_at",
+                    &[("at", &zone.at(fix_at, now))],
+                ),
+                None => t(lang, "events.phone_off.detail.position").to_string(),
+            })
+        }
+        _ => stored.filter(|d| !d.trim().is_empty()),
+    }
+}
+
+/// A title with the phone's name in it, the name cut so the whole fits [TITLE_MAX].
+fn titled(lang: Lang, key: &str, name: &str) -> String {
+    let title = fit_name(name, TITLE_MAX, |n| t_params(lang, key, &[("name", n)]));
+    crate::audit::clip(&title, TITLE_MAX).to_string()
+}
+
+/// A zone crossing's words (design 64 §3.4): "Anna arrived at Home" / "14:02", pushed "Anna:
+/// arrived at Home".
+fn zone_told(
+    form: Form,
+    kind: Kind,
+    p: &ZoneParams,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> (String, String) {
     let place = crate::audit::clip(&p.zone, crate::zones::NAME_MAX).to_string();
-    let title = fit_name(&p.phone, TITLE_MAX, |name| match (kind, form) {
-        (Kind::ZoneArrived, Form::Inbox) => format!("{name} arrived at {place}"),
-        (Kind::ZoneArrived, Form::Push) => format!("{name}: arrived at {place}"),
-        (_, Form::Inbox) => format!("{name} left {place}"),
-        (_, Form::Push) => format!("{name}: left {place}"),
+    let key = format!("events.{}.{}.title", kind.wire(), form.key());
+    let title = fit_name(&p.phone, TITLE_MAX, |name| {
+        t_params(zone.lang(), &key, &[("name", name), ("zone", &place)])
     });
     let summary = crate::display_time::parse_db_utc(&p.at)
         .map(|at| capitalized(&zone.at(at, now)))
         .unwrap_or_default();
     (crate::audit::clip(&title, TITLE_MAX).to_string(), summary)
+}
+
+/// A stored-words kind's words from its parameters (design 70 §4), in the zone's language: design
+/// 35 §2.2's table for the inbox, "Push wording"'s for the push. `None` when the parameters don't
+/// read.
+fn phone_event_told(
+    form: Form,
+    kind: Kind,
+    params: &str,
+    zone: &Zone,
+    now: DateTime<Utc>,
+) -> Option<(String, String)> {
+    let lang = zone.lang();
+    let wire = kind.wire();
+    let title_key = |variant: &str| format!("events.{wire}.{}.title{variant}", form.key());
+    let at_of =
+        |stored: &str| crate::display_time::parse_db_utc(stored).map(|at| (at, zone.at(at, now)));
+    Some(match kind {
+        Kind::EmergencyCall => {
+            let p: PhoneAtParams = serde_json::from_str(params).ok()?;
+            let (at, when) = at_of(&p.at)?;
+            let summary = match form {
+                Form::Inbox if zone.is_today(at, now) => t_params(
+                    lang,
+                    "events.emergency_call.inbox.at_today",
+                    &[("at", &when)],
+                ),
+                _ => capitalized(&when),
+            };
+            (titled(lang, &title_key(""), &p.phone), summary)
+        }
+        Kind::PinUsed => {
+            let p: PinParams = serde_json::from_str(params).ok()?;
+            let (_, when) = at_of(&p.at)?;
+            let summary = match form {
+                Form::Inbox => t_params(
+                    lang,
+                    "events.pin_used.inbox.summary",
+                    &[
+                        (
+                            "entry",
+                            t(lang, &format!("events.pin_used.entry.{}", p.entry)),
+                        ),
+                        ("at", &when),
+                    ],
+                ),
+                Form::Push => capitalized(&when),
+            };
+            (titled(lang, &title_key(""), &p.phone), summary)
+        }
+        Kind::PinLockout => {
+            let p: PinParams = serde_json::from_str(params).ok()?;
+            let (_, at) = at_of(&p.at)?;
+            let until = p
+                .until
+                .as_deref()
+                .and_then(crate::display_time::parse_db_utc)
+                .map(|until| {
+                    t_params(
+                        lang,
+                        "events.pin_lockout.until",
+                        &[("until", &zone.until(until, now))],
+                    )
+                })
+                .unwrap_or(at);
+            let summary = match form {
+                Form::Inbox => t_params(
+                    lang,
+                    "events.pin_lockout.inbox.summary",
+                    &[("when", &until)],
+                ),
+                Form::Push => capitalized(&until),
+            };
+            (titled(lang, &title_key(""), &p.phone), summary)
+        }
+        Kind::ForeignAccess => {
+            let p: ForeignAccessParams = serde_json::from_str(params).ok()?;
+            let (_, when) = at_of(&p.at)?;
+            let summary = match form {
+                Form::Inbox => {
+                    let what = match (p.admins.is_empty(), p.accessibility.is_empty()) {
+                        (false, true) => "admin",
+                        (true, false) => "accessibility",
+                        _ => "both",
+                    };
+                    t_count(
+                        lang,
+                        &format!("events.foreign_access.inbox.{what}"),
+                        p.count,
+                        &[],
+                    )
+                }
+                Form::Push => push_body(
+                    &capitalized(&when),
+                    Some(t_count(
+                        lang,
+                        "events.foreign_access.push.apps",
+                        p.count,
+                        &[],
+                    )),
+                ),
+            };
+            (titled(lang, &title_key(""), &p.phone), summary)
+        }
+        Kind::UnseenBoot => {
+            let p: PhoneAtParams = serde_json::from_str(params).ok()?;
+            let (_, when) = at_of(&p.at)?;
+            let summary = match form {
+                Form::Inbox => t(lang, "events.unseen_boot.inbox.summary").to_string(),
+                Form::Push => capitalized(&when),
+            };
+            (titled(lang, &title_key(""), &p.phone), summary)
+        }
+        Kind::LowBattery => {
+            let p: LowBatteryParams = serde_json::from_str(params).ok()?;
+            let (_, when) = at_of(&p.at)?;
+            let level = p.level.to_string();
+            match form {
+                Form::Inbox => {
+                    let title = fit_name(&p.phone, TITLE_MAX, |name| {
+                        t_params(
+                            lang,
+                            "events.low_battery.inbox.title",
+                            &[("name", name), ("level", &level)],
+                        )
+                    });
+                    let state = if p.charging {
+                        "events.low_battery.inbox.charging"
+                    } else {
+                        "events.low_battery.inbox.not_charging"
+                    };
+                    (
+                        crate::audit::clip(&title, TITLE_MAX).to_string(),
+                        t_params(lang, state, &[("at", &when)]),
+                    )
+                }
+                Form::Push => (
+                    titled(lang, "events.low_battery.push.title", &p.phone),
+                    push_body(&capitalized(&when), Some(battery_level(lang, p.level))),
+                ),
+            }
+        }
+        Kind::PhoneOff => {
+            let p = off_params(Some(params))?;
+            let reason = OffReason::from_code(p.reason.as_deref()?)?;
+            let (_, when) = at_of(&p.at)?;
+            let title = titled(lang, &title_key(&format!(".{}", reason.code())), &p.phone);
+            // The push: the fact, the time and the level at most (never "probably flat").
+            let battery = match (form, reason, p.battery) {
+                (_, _, None) => None,
+                (Form::Push, OffReason::User | OffReason::Battery, Some(level)) => {
+                    Some(battery_level(lang, level))
+                }
+                (Form::Push, _, Some(_)) => None,
+                (Form::Inbox, OffReason::Battery | OffReason::Thermal, Some(level)) => {
+                    Some(battery_level(lang, level))
+                }
+                (Form::Inbox, _, Some(level)) => Some(battery_state(
+                    lang,
+                    level,
+                    p.charging.unwrap_or(false),
+                    FLAT_LEVEL,
+                )),
+            };
+            let mut summary = push_body(&capitalized(&when), battery);
+            if form == Form::Inbox && p.late {
+                summary.push_str(" · ");
+                summary.push_str(t(lang, "events.phone_off.late"));
+            }
+            (title, summary)
+        }
+        Kind::PhoneOn => {
+            let p: PhoneOnParams = serde_json::from_str(params).ok()?;
+            let (_, when) = at_of(&p.at)?;
+            let variant = if p.start == "restart" {
+                ".restart"
+            } else {
+                ".on"
+            };
+            let title = titled(lang, &title_key(variant), &p.phone);
+            if form == Form::Push {
+                // The start, its time and the battery now (never the off's, "no shutdown seen",
+                // the last report or the unlock - the inbox keeps those).
+                return Some((
+                    title,
+                    push_body(
+                        &capitalized(&when),
+                        p.battery.map(|level| battery_level(lang, level)),
+                    ),
+                ));
+            }
+            let mut parts = vec![capitalized(&when)];
+            if let Some((_, unlocked)) = p.unlocked.as_deref().and_then(at_of) {
+                parts.push(t_params(
+                    lang,
+                    "events.phone_on.unlocked",
+                    &[("at", &unlocked)],
+                ));
+            }
+            match p.start.as_str() {
+                "restart" => {
+                    if let Some(level) = p.battery {
+                        parts.push(battery_level(lang, level));
+                    }
+                }
+                "after_off" => {
+                    let (_, off_at) = at_of(p.off_at.as_deref()?)?;
+                    parts.push(match p.off_battery {
+                        Some(level) => t_params(
+                            lang,
+                            "events.phone_on.off_since_battery",
+                            &[("at", &off_at), ("level", &level.to_string())],
+                        ),
+                        None => t_params(lang, "events.phone_on.off_since", &[("at", &off_at)]),
+                    });
+                }
+                _ => {
+                    parts.push(t(lang, "events.phone_on.no_shutdown").to_string());
+                    if let Some((_, last_at)) = p.last_at.as_deref().and_then(at_of) {
+                        parts.push(match p.last_battery {
+                            Some(level) => t_params(
+                                lang,
+                                "events.phone_on.last_report_battery",
+                                &[
+                                    ("at", &last_at),
+                                    (
+                                        "battery",
+                                        &battery_state(
+                                            lang,
+                                            level,
+                                            p.last_charging == Some(true),
+                                            LAST_REPORT_FLAT_LEVEL,
+                                        ),
+                                    ),
+                                ],
+                            ),
+                            None => {
+                                t_params(lang, "events.phone_on.last_report", &[("at", &last_at)])
+                            }
+                        });
+                    }
+                }
+            }
+            (title, parts.join(" · "))
+        }
+        _ => return None,
+    })
 }
 
 /// RFC 3339 with milliseconds, UTC: how an instant is stored and keyed.
@@ -1597,6 +1940,29 @@ mod tests {
             // 14:30 in Oslo.
             now: utc("2026-10-18 12:30:00"),
         }
+    }
+
+    /// An event's inbox words as a reader sees them, in Anna's zone (English) at her `now`.
+    fn inbox(phone: &Phone, event: &NewEvent) -> (String, String) {
+        told(
+            event.kind.wire(),
+            event.title.clone(),
+            event.summary.clone(),
+            event.params.as_deref(),
+            &phone.zone,
+            phone.now,
+        )
+    }
+
+    fn inbox_detail(phone: &Phone, event: &NewEvent) -> Option<String> {
+        detail(
+            event.kind.wire(),
+            &event.title,
+            event.detail.clone(),
+            event.params.as_deref(),
+            &phone.zone,
+            phone.now,
+        )
     }
 
     fn pin(kind: PinKind, entry: Entry, at: &str, until: Option<&str>) -> PinEvent {
@@ -1710,10 +2076,12 @@ mod tests {
                 Push::No,
             ),
         ] {
+            let (told_title, told_summary) = inbox(&phone, &event);
             assert_eq!(
-                (event.title.as_str(), event.summary.as_str(), event.push),
+                (told_title.as_str(), told_summary.as_str(), event.push),
                 (title, summary, push),
             );
+            assert!(event.title.is_empty() && event.summary.is_empty());
             assert_eq!(
                 (event.kind, event.dedup_key.as_str()),
                 (Kind::PhoneOff, instant(event.happened_at).as_str())
@@ -1756,13 +2124,14 @@ mod tests {
             (Start::NoShutdownSeen(None), "14:20 · no shutdown seen"),
         ] {
             let event = phone.phone_on(&on(None), start, &how);
-            assert_eq!(event.summary, summary);
+            let (told_title, told_summary) = inbox(&phone, &event);
+            assert_eq!(told_summary, summary);
             let title = if how == Start::Restart {
                 "Anna restarted"
             } else {
                 "Anna was turned on"
             };
-            assert_eq!((event.title.as_str(), event.push), (title, Push::Now));
+            assert_eq!((told_title.as_str(), event.push), (title, Push::Now));
             assert_eq!(event.dedup_key, "boot:2026-10-01 08:00:00:42");
         }
         // Design 59 §2.3: the minutes at "type the PIN to start", when there were more than 2;
@@ -1783,7 +2152,7 @@ mod tests {
                 at,
             };
             assert_eq!(
-                phone.phone_on(&on, start, &how).summary,
+                inbox(&phone, &phone.phone_on(&on, start, &how)).1,
                 summary,
                 "{unlocked}"
             );
@@ -1795,13 +2164,19 @@ mod tests {
             (10, LAST_REPORT_FLAT_LEVEL, "battery 10 %, probably flat"),
             (11, LAST_REPORT_FLAT_LEVEL, "battery 11 %, not charging"),
         ] {
-            assert_eq!(
-                battery_words(&battery(level, false, true), flat_level),
-                words
-            );
+            assert_eq!(battery_state(Lang::En, level, false, flat_level), words);
         }
-        assert_eq!(off_reason_words(None), None);
-        assert_eq!(off_reason_words(Some("Battery")), None);
+        assert_eq!(OffReason::of(None), OffReason::User);
+        assert_eq!(OffReason::of(Some("Battery")), OffReason::User);
+        assert_eq!(OffReason::of(Some("thermal")), OffReason::Thermal);
+        for reason in [
+            OffReason::User,
+            OffReason::Battery,
+            OffReason::Thermal,
+            OffReason::Restart,
+        ] {
+            assert_eq!(OffReason::from_code(reason.code()), Some(reason));
+        }
     }
 
     fn report(off: Option<PowerOff>, on: Option<PowerOn>) -> PowerReport {
@@ -1860,7 +2235,11 @@ mod tests {
             &phone,
         );
         assert_eq!(shape(&start), (vec![(on_kind, Push::Now)], false, false));
-        assert!(start.events[0].summary.contains("no shutdown seen"));
+        assert!(
+            inbox(&phone, &start.events[0])
+                .1
+                .contains("no shutdown seen")
+        );
 
         // Paired one boot apart: a restart within the 3-minute gap (the flag unknown), or with the
         // flag whatever the gap; not with the flag false, nor past the gap.
@@ -1883,10 +2262,10 @@ mod tests {
                     false
                 )
             );
-            assert_eq!(plan.events[1].title, "Anna restarted");
+            assert_eq!(inbox(&phone, &plan.events[1]).0, "Anna restarted");
             assert!(
-                plan.events[0]
-                    .summary
+                inbox(&phone, &plan.events[0])
+                    .1
                     .ends_with(" · told at the next start")
             );
         };
@@ -1899,10 +2278,10 @@ mod tests {
                     true
                 )
             );
-            assert_eq!(plan.events[1].title, "Anna was turned on");
+            assert_eq!(inbox(&phone, &plan.events[1]).0, "Anna was turned on");
             assert!(
-                plan.events[1]
-                    .summary
+                inbox(&phone, &plan.events[1])
+                    .1
                     .contains("off since 14:00, battery was 3 %")
             );
         };
@@ -1987,33 +2366,96 @@ mod tests {
         assert!(recent.dropped.is_empty());
     }
 
+    /// Design 38 §3.4's line from a `phone_off`'s parameters (design 70), or from an older
+    /// row's stored words; nothing while the push is held or for a restart - told either way.
     #[test]
     fn the_off_since_line() {
         let phone = anna();
         let at = utc("2026-10-17 19:14:00");
-        let line = |created: DateTime<Utc>, title: &str, summary: &str| {
-            off_since_line(at, created, title, summary, &phone.zone, phone.now)
-        };
         let arrived = phone.now - OFF_HOLD;
-        let off = "Anna was turned off";
+        let b = |level, charging| Some(battery(level, charging, false));
+        let line = |event: &NewEvent, created: DateTime<Utc>, zone: &Zone| {
+            off_since_line(
+                at,
+                created,
+                &event.title,
+                &event.summary,
+                event.params.as_deref(),
+                zone,
+                phone.now,
+            )
+        };
+        let flat = phone.phone_off(&off(b(3, false), None, None), at, false);
         assert_eq!(
-            line(arrived, off, "21:14 · battery 3 %, probably flat").as_deref(),
+            line(&flat, arrived, &phone.zone).as_deref(),
             Some("Off since yesterday 21:14 · battery was 3 %")
         );
         assert_eq!(
-            line(arrived, off, "Yesterday 21:14 · told at the next start").as_deref(),
-            Some("Off since yesterday 21:14")
+            line(&flat, arrived, &phone.zone.in_lang(Lang::Nb)).as_deref(),
+            Some("Av siden i går 21:14 · batteriet var 3 %")
         );
+        let no_battery = phone.phone_off(&off(None, None, None), at, true);
         assert_eq!(
-            line(arrived, off, "21:14 · battery x %").as_deref(),
+            line(&no_battery, arrived, &phone.zone).as_deref(),
             Some("Off since yesterday 21:14")
         );
         // Not while the push is held (a restart's start may still fold it), not for a restart.
         let held = phone.now - OFF_HOLD + chrono::Duration::seconds(1);
-        assert_eq!(line(held, off, "21:14 · battery 3 %"), None);
+        assert_eq!(line(&flat, held, &phone.zone), None);
+        let restart = phone.phone_off(&off(b(64, true), Some(true), None), at, false);
+        assert_eq!(line(&restart, arrived, &phone.zone), None);
+        assert!(!off_said("", restart.params.as_deref(), arrived, phone.now));
+        assert!(off_said("", flat.params.as_deref(), arrived, phone.now));
+        // An older row (its words stored, its parameters the location at most): the text is read.
+        let older = |title: &str, summary: &str| NewEvent {
+            title: title.to_string(),
+            summary: summary.to_string(),
+            params: Some(r#"{"location":{"lat":1.0,"lng":2.0,"at_ms":1}}"#.to_string()),
+            ..flat.clone()
+        };
+        let off = "Anna was turned off";
         assert_eq!(
-            line(arrived, "Anna is restarting", "21:14 · battery 3 %"),
+            line(
+                &older(off, "21:14 · battery 3 %, probably flat"),
+                arrived,
+                &phone.zone
+            )
+            .as_deref(),
+            Some("Off since yesterday 21:14 · battery was 3 %")
+        );
+        assert_eq!(
+            line(
+                &older(off, "Yesterday 21:14 · told at the next start"),
+                arrived,
+                &phone.zone
+            )
+            .as_deref(),
+            Some("Off since yesterday 21:14")
+        );
+        assert_eq!(
+            line(&older(off, "21:14 · battery x %"), arrived, &phone.zone).as_deref(),
+            Some("Off since yesterday 21:14")
+        );
+        assert_eq!(
+            line(
+                &older("Anna is restarting", "21:14 · battery 3 %"),
+                arrived,
+                &phone.zone
+            ),
             None
+        );
+        // The older row's words stay its own, in any language.
+        let (title, summary) = told(
+            "phone_off",
+            off.to_string(),
+            "21:14 · battery 3 %".to_string(),
+            None,
+            &phone.zone.in_lang(Lang::Nb),
+            phone.now,
+        );
+        assert_eq!(
+            (title.as_str(), summary.as_str()),
+            (off, "21:14 · battery 3 %")
         );
     }
 
@@ -2126,23 +2568,39 @@ mod tests {
             ),
         ];
         for (event, title, summary, target) in &rows {
-            assert_eq!(
-                (
-                    event.title.as_str(),
-                    event.summary.as_str(),
-                    event.target.as_str()
-                ),
-                (*title, *summary, *target),
+            // Nothing is stored as words any more (design 70 §4): every kind is told from its
+            // parameters, here in English - "" where the table has no inbox words to pin.
+            assert!(
+                event.title.is_empty() && event.summary.is_empty() && event.params.is_some(),
                 "{:?}",
                 event.kind
             );
+            if !title.is_empty() {
+                let (told_title, told_summary) = inbox(&phone, event);
+                assert_eq!(
+                    (told_title.as_str(), told_summary.as_str()),
+                    (*title, *summary),
+                    "{:?}",
+                    event.kind
+                );
+            }
+            assert_eq!(event.target.as_str(), *target, "{:?}", event.kind);
             assert!(local_target(&event.target));
         }
         let kinds: Vec<Kind> = rows.iter().map(|(e, ..)| e.kind).collect();
         assert_eq!(kinds, Kind::ALL);
-        // Only the foreign apps have a detail, by the phone's names.
-        assert_eq!(rows[3].0.detail.as_deref(), Some("Device admin: Helper."));
-        assert!(rows.iter().filter(|(e, ..)| e.detail.is_some()).count() == 1);
+        // Only the foreign apps have a detail, by the phone's names - told from the parameters.
+        assert_eq!(
+            inbox_detail(&phone, &rows[3].0).as_deref(),
+            Some("Device admin: Helper.")
+        );
+        assert!(rows.iter().all(|(e, ..)| e.detail.is_none()));
+        assert_eq!(
+            rows.iter()
+                .filter(|(e, ..)| inbox_detail(&phone, e).is_some())
+                .count(),
+            1
+        );
         // The keys (§2.1).
         assert_eq!(rows[0].0.dedup_key, "2026-10-18T12:02:00.000Z");
         assert_eq!(rows[1].0.dedup_key, "0123456789abcdef0123456789abcdef");
@@ -2669,11 +3127,11 @@ mod tests {
     fn other_days_long_names_and_variants() {
         let mut phone = anna();
         assert_eq!(
-            phone.emergency_call(utc("2026-10-17 19:40:00")).summary,
+            inbox(&phone, &phone.emergency_call(utc("2026-10-17 19:40:00"))).1,
             "Yesterday 21:40"
         );
         assert_eq!(
-            phone.emergency_call(utc("2026-10-12 06:12:00")).summary,
+            inbox(&phone, &phone.emergency_call(utc("2026-10-12 06:12:00"))).1,
             "12 Oct 08:12"
         );
         // A lockout already over says when it happened; a wrong try is no event.
@@ -2684,7 +3142,7 @@ mod tests {
             Some("2026-10-18 10:15:00"),
         );
         assert_eq!(
-            phone.pin_event(&over).unwrap().summary,
+            inbox(&phone, &phone.pin_event(&over).unwrap()).1,
             "Too many wrong tries · 12:00"
         );
         assert!(
@@ -2702,22 +3160,29 @@ mod tests {
             accessibility: vec!["a.b".to_string(), "c.d".to_string()],
         };
         let event = phone.foreign_access(&both, "x", 0, &Default::default());
-        assert_eq!(event.summary, "2 apps with device admin or accessibility");
         assert_eq!(
-            event.detail.as_deref(),
+            inbox(&phone, &event).1,
+            "2 apps with device admin or accessibility"
+        );
+        assert_eq!(
+            inbox_detail(&phone, &event).as_deref(),
             Some("Device admin: a.b. Accessibility: a.b, c.d.")
         );
         assert_eq!(
-            phone
-                .low_battery(&battery(9, true, false), phone.now)
-                .summary,
+            inbox(
+                &phone,
+                &phone.low_battery(&battery(9, true, false), phone.now)
+            )
+            .1,
             "Charging · 14:30"
         );
         // A 40-character name is cut so the title fits, the level kept.
         phone.name = "Annabelle-Sofie Marie Kristiansen Olsen!".to_string();
-        let title = phone
-            .low_battery(&battery(14, false, true), phone.now)
-            .title;
+        let title = inbox(
+            &phone,
+            &phone.low_battery(&battery(14, false, true), phone.now),
+        )
+        .0;
         assert_eq!(title.chars().count(), TITLE_MAX);
         assert!(title.starts_with("Battery low on Annabelle") && title.ends_with("… (14 %)"));
         for event in [
@@ -2725,8 +3190,179 @@ mod tests {
             phone.unseen_boot(1, None),
             phone.foreign_access(&both, "x", 0, &Default::default()),
         ] {
-            assert!(event.title.chars().count() <= TITLE_MAX, "{}", event.title);
+            let (title, _) = inbox(&phone, &event);
+            assert!(title.chars().count() <= TITLE_MAX, "{title}");
         }
+    }
+
+    /// Design 70 §8: every kind, each of its variants, in both forms and both languages - worded
+    /// (no key shows), within `TITLE_MAX`/`SUMMARY_MAX` with a 20-character name, and the two
+    /// languages' titles differ (nothing left in English on an nb row).
+    #[test]
+    fn every_kind_is_worded_in_both_languages() {
+        let phone = Phone {
+            name: "Anna-Sofie Kristians".to_string(),
+            ..anna()
+        };
+        assert_eq!(phone.name.chars().count(), 20);
+        let two = utc("2026-10-18 12:02:00");
+        let yesterday = utc("2026-10-17 17:14:00");
+        let b = |level, charging| Some(battery(level, charging, false));
+        let two_apps = ForeignAccess {
+            admins: vec!["org.example.spy".to_string()],
+            accessibility: vec!["org.example.reader".to_string()],
+        };
+        let last = LastReport {
+            at: utc("2026-10-18 12:00:00"),
+            level: Some(5),
+            charging: Some(false),
+        };
+        let mut late_unlock = on(b(64, false));
+        late_unlock.unlocked_at_ms = Some(utc("2026-10-18 12:23:00").timestamp_millis());
+        let events = [
+            phone.emergency_call(two),
+            phone.emergency_call(yesterday),
+            phone
+                .pin_event(&pin(
+                    PinKind::Unlocked,
+                    Entry::Pause,
+                    "2026-10-18 12:02:00",
+                    None,
+                ))
+                .unwrap(),
+            phone
+                .pin_event(&pin(
+                    PinKind::Lockout,
+                    Entry::PinLock,
+                    "2026-10-18 12:15:00",
+                    Some("2026-10-18 12:45:00"),
+                ))
+                .unwrap(),
+            phone
+                .pin_event(&pin(
+                    PinKind::Lockout,
+                    Entry::Settings,
+                    "2026-10-18 10:00:00",
+                    Some("2026-10-18 10:15:00"),
+                ))
+                .unwrap(),
+            phone.foreign_access(&two_apps, "{}", 7, &Default::default()),
+            phone.unseen_boot(2, Some(two.timestamp_millis())),
+            phone.low_battery(&battery(14, false, true), two),
+            phone.low_battery(&battery(9, true, false), two),
+            phone.phone_off(&off(b(3, false), None, None), two, false),
+            phone.phone_off(&off(b(1, false), None, Some("battery")), two, false),
+            phone.phone_off(&off(b(64, false), None, Some("thermal")), two, false),
+            phone.phone_off(&off(b(64, true), Some(true), None), two, false),
+            phone.phone_off(&off(None, None, None), two, true),
+            phone.phone_on(&on(b(64, false)), two, &Start::Restart),
+            phone.phone_on(
+                &late_unlock,
+                two,
+                &Start::AfterOff {
+                    off: off(b(3, false), None, None),
+                    at: yesterday,
+                },
+            ),
+            phone.phone_on(&on(None), two, &Start::NoShutdownSeen(Some(last))),
+            phone.phone_on(&on(None), two, &Start::NoShutdownSeen(None)),
+            zone_crossing(3, &phone.name, 5, "Home", true, two, Push::Now),
+            zone_crossing(3, &phone.name, 6, "School", false, two, Push::Now),
+            extra_time_request(3, &phone.name, "ab12", two, &TimeAsk::UsedUp, Push::Now),
+            extra_time_request(3, &phone.name, "ab13", two, &TimeAsk::Left(80), Push::Now),
+            extra_time_request(
+                3,
+                &phone.name,
+                "ab14",
+                two,
+                &TimeAsk::Rule("BEDTIME".into()),
+                Push::Now,
+            ),
+            app_update_available(9, "Signal", "v7.2.0@41", Some("7.1.4"), "7.2.0", two),
+            app_updated(3, &phone.name, 1, "Vibb One", 360_009, None, "0.36.0", two),
+        ];
+        let kinds: std::collections::BTreeSet<&str> =
+            events.iter().map(|e| e.kind.wire()).collect();
+        assert_eq!(kinds.len(), Kind::ALL.len(), "every kind");
+        for event in &events {
+            let mut titles = Vec::new();
+            for lang in Lang::ALL {
+                let zone = phone.zone.in_lang(lang);
+                for form in [Form::Inbox, Form::Push] {
+                    let (title, summary) = told_as(
+                        form,
+                        event.kind.wire(),
+                        event.title.clone(),
+                        event.summary.clone(),
+                        event.params.as_deref(),
+                        &zone,
+                        phone.now,
+                    );
+                    let what = format!("{:?} {lang:?} {form:?}: {title} / {summary}", event.kind);
+                    assert!(!title.is_empty(), "{what}");
+                    assert!(title.chars().count() <= TITLE_MAX, "{what}");
+                    assert!(summary.chars().count() <= SUMMARY_MAX, "{what}");
+                    assert!(
+                        !title.contains("events.") && !summary.contains("events."),
+                        "a key shows: {what}"
+                    );
+                    assert!(
+                        !title.contains("time.") && !summary.contains("time."),
+                        "a key shows: {what}"
+                    );
+                    titles.push(title);
+                }
+                if let Some(detail) = detail(
+                    event.kind.wire(),
+                    &event.title,
+                    None,
+                    event.params.as_deref(),
+                    &zone,
+                    phone.now,
+                ) {
+                    assert!(!detail.contains("events."), "{detail}");
+                }
+            }
+            // en inbox, en push, nb inbox, nb push: each language's own words.
+            assert_ne!(titles[0], titles[2], "{:?}", event.kind);
+            assert_ne!(titles[1], titles[3], "{:?}", event.kind);
+        }
+        // A few of the nb rows, read.
+        let nb = phone.zone.in_lang(Lang::Nb);
+        let told_nb = |event: &NewEvent| {
+            told(
+                event.kind.wire(),
+                String::new(),
+                String::new(),
+                event.params.as_deref(),
+                &nb,
+                phone.now,
+            )
+        };
+        assert_eq!(
+            told_nb(&events[1]),
+            (
+                "Anna-Sofie Kristians ringte et nødnummer".to_string(),
+                "I går 19:14".to_string()
+            )
+        );
+        assert_eq!(told_nb(&events[9]).1, "14:02 · batteri 3 %, trolig tomt");
+        assert_eq!(
+            told_nb(&events[15]).1,
+            "14:02 · låst opp 14:23 · av siden i går 19:14, batteriet var 3 %"
+        );
+        assert_eq!(told_nb(&events[21]).1, "14:02 · 1 t 20 min igjen");
+        assert_eq!(
+            inbox_detail(
+                &Phone {
+                    zone: nb,
+                    ..phone.clone()
+                },
+                &events[5]
+            )
+            .as_deref(),
+            Some("Enhetsadministrator: org.example.spy. Tilgjengelighet: org.example.reader.")
+        );
     }
 
     #[test]

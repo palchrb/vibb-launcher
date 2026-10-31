@@ -248,7 +248,9 @@ pub(crate) fn inbox_row(
         params,
         avatar_hash,
     ) = raw;
-    // A zone event is told from its parameters (design 64), every other kind as stored.
+    // Told from its parameters in the reader's language (design 64's zones, every kind since
+    // design 70 §4); a row raised before that keeps its stored words.
+    let detail = parent_events::detail(&kind, &title, detail, params.as_deref(), zone, now);
     let (title, summary) = parent_events::told(&kind, title, summary, params.as_deref(), zone, now);
     let at = crate::display_time::parse_db_utc(&happened_at);
     // A catalog event has no phone: a grey avatar with the app's letter (its title starts with it).

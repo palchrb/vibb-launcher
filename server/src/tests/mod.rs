@@ -730,6 +730,31 @@ pub enum Section {
     Advanced,
 }
 
+/// `(kind, title, summary)` of a phone's events, oldest first, worded in `lang` as the inbox
+/// words them (design 70 §4: nothing is stored as words any more).
+pub async fn told_events(
+    app: &TestApp,
+    device: i64,
+    lang: crate::i18n::Lang,
+) -> Vec<(String, String, String)> {
+    let zone = crate::display_time::Zone::load(&app.db, lang).await;
+    let now = chrono::Utc::now();
+    sqlx::query_as::<_, (String, String, String, Option<String>)>(
+        "SELECT kind, title, summary, params FROM parent_events WHERE device_id = ? ORDER BY id",
+    )
+    .bind(device)
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(kind, title, summary, params)| {
+        let (title, summary) =
+            crate::parent_events::told(&kind, title, summary, params.as_deref(), &zone, now);
+        (kind, title, summary)
+    })
+    .collect()
+}
+
 pub fn device_page(id: i64, section: Section) -> String {
     match section {
         Section::Summary => format!("/devices/{id}"),

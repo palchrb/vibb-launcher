@@ -7,13 +7,13 @@ use serde_json::{Value, json};
 use super::settings_pages::check_forms;
 use super::{Section, TestApp, assert_redirect, device_page};
 
-/// `(kind, title)` of a phone's events, oldest first.
+/// `(kind, title)` of a phone's events, oldest first, worded in English.
 async fn events(app: &TestApp, device: i64) -> Vec<(String, String)> {
-    sqlx::query_as("SELECT kind, title FROM parent_events WHERE device_id = ? ORDER BY id")
-        .bind(device)
-        .fetch_all(&app.db)
+    super::told_events(app, device, crate::i18n::Lang::En)
         .await
-        .unwrap()
+        .into_iter()
+        .map(|(kind, title, _)| (kind, title))
+        .collect()
 }
 
 async fn kinds(app: &TestApp, device: i64) -> Vec<String> {
@@ -87,12 +87,108 @@ async fn each_kind_is_raised_once_from_its_real_input() {
         ]
         .map(|(k, t)| (k.to_string(), t.to_string()))
     );
-    let detail: Option<String> =
-        sqlx::query_scalar("SELECT detail FROM parent_events WHERE kind = 'foreign_access'")
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
-    assert_eq!(detail.as_deref(), Some("Device admin: Helper."));
+    // Design 70 §4: nothing stored as words - the columns are empty, the parameters hold the facts,
+    // and the inbox words each row in the reader's language, the detail too.
+    let stored: Vec<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT title, summary, detail, push_title, params FROM parent_events ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(stored.len(), 5);
+    for (title, summary, detail, push_title, params) in &stored {
+        assert!(title.is_empty() && summary.is_empty(), "{title:?}");
+        assert!(detail.is_none() && push_title.is_none());
+        assert!(params.is_some());
+    }
+    let cookie = app.admin_cookie().await;
+    let en = app.get_page("/notifications", &cookie).await.text();
+    let nb = app.get_page("/notifications?lang=nb", &cookie).await.text();
+    for (en_words, nb_words) in [
+        (
+            "Anna called an emergency number",
+            "Anna ringte et nødnummer",
+        ),
+        (
+            "Anna started without Vibb One",
+            "Anna startet uten Vibb One",
+        ),
+        (
+            "An app may read the PIN on Anna",
+            "En app kan lese PIN-koden på Anna",
+        ),
+        ("1 app with device admin", "1 app med enhetsadministrator"),
+        ("Device admin: Helper.", "Enhetsadministrator: Helper."),
+        ("Parent PIN used on Anna", "Foreldre-PIN brukt på Anna"),
+        ("Time lock · ", "Tidslås · "),
+        ("Parent PIN locked on Anna", "Foreldre-PIN sperret på Anna"),
+        (
+            "Too many wrong tries · until ",
+            "For mange feil forsøk · til ",
+        ),
+        (
+            "Safe mode or a start cut short",
+            "Sikker modus eller en avbrutt start",
+        ),
+    ] {
+        assert!(en.contains(en_words), "{en_words}");
+        assert!(nb.contains(nb_words), "{nb_words}");
+        assert!(!nb.contains(en_words), "{en_words} on the nb page");
+    }
+    // The push words per kind, in both languages (the sender words at send time).
+    let zone = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En).await;
+    let now = chrono::Utc::now();
+    let pushed = |lang: crate::i18n::Lang| {
+        stored
+            .iter()
+            .zip([
+                "emergency_call",
+                "unseen_boot",
+                "foreign_access",
+                "pin_used",
+                "pin_lockout",
+            ])
+            .map(|((title, summary, _, push_title, params), kind)| {
+                crate::parent_events::pushed(
+                    kind,
+                    title.clone(),
+                    summary.clone(),
+                    push_title.clone(),
+                    None,
+                    params.as_deref(),
+                    &zone.in_lang(lang),
+                    now,
+                )
+                .0
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        pushed(crate::i18n::Lang::En),
+        [
+            "Anna: emergency call",
+            "Anna: started without Vibb One",
+            "Anna: an app may read the PIN",
+            "Anna: parent PIN used",
+            "Anna: parent PIN locked",
+        ]
+    );
+    assert_eq!(
+        pushed(crate::i18n::Lang::Nb),
+        [
+            "Anna: nødanrop",
+            "Anna: startet uten Vibb One",
+            "Anna: en app kan lese PIN-koden",
+            "Anna: foreldre-PIN brukt",
+            "Anna: foreldre-PIN sperret",
+        ]
+    );
 
     // The same again after it went away is a new event; a rising count is a new start.
     app.post_status(&token, json!({})).await;
@@ -199,11 +295,12 @@ async fn the_battery_latches_once() {
 
     app.post_status(&token, battery(14, false, true)).await;
     assert_eq!(low_events().await, 1);
-    let title: String =
-        sqlx::query_scalar("SELECT title FROM parent_events WHERE kind = 'low_battery'")
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
+    let title = events(&app, id)
+        .await
+        .into_iter()
+        .find(|(kind, _)| kind == "low_battery")
+        .unwrap()
+        .1;
     assert_eq!(title, "Battery low on Anna (14 %)");
     // Plugged in (Android clears `low`), unplugged at 12 % (`low` again): still the one latch.
     app.post_status(&token, battery(13, true, false)).await;

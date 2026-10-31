@@ -295,8 +295,9 @@ mod tests {
                             .bytes()
                             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
                 })
-                // A template's or a file's name ("account.html", "music.rs").
-                && !["html", "js", "rs", "json", "css", "sql"]
+                // A template's or a file's name ("account.html", "music.rs"), a host's
+                // ("push.apple.com").
+                && !["html", "js", "rs", "json", "css", "sql", "com", "org", "net"]
                     .contains(&text.rsplit('.').next().unwrap())
         };
         let exists = |key: &str| {

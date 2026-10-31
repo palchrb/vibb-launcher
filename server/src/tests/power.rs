@@ -48,13 +48,9 @@ fn on(at: DateTime<Utc>, boot: i64) -> Value {
             "battery": { "level": 60, "charging": true, "low": false } })
 }
 
-/// `(kind, title, summary)` of a phone's events, oldest first.
+/// `(kind, title, summary)` of a phone's events, oldest first, worded in English.
 async fn events(app: &TestApp, device: i64) -> Vec<(String, String, String)> {
-    sqlx::query_as("SELECT kind, title, summary FROM parent_events WHERE device_id = ? ORDER BY id")
-        .bind(device)
-        .fetch_all(&app.db)
-        .await
-        .unwrap()
+    super::told_events(app, device, crate::i18n::Lang::En).await
 }
 
 /// `(status, reason, next_try_at)` of the deliveries of a phone's events of `kind`.
@@ -247,11 +243,21 @@ async fn the_shutdowns_last_position_is_on_locate() {
         Some(crate::zones::instant(shutdown).as_str())
     );
     // The event: its words as before (no coordinates, the push unchanged), the position in its
-    // parameters, the inbox's detail without a place.
-    let (params, detail) = off_params(&app, id).await;
+    // parameters, the inbox's detail without a place - worded when read (design 70 §4).
+    let (params, stored_detail) = off_params(&app, id).await;
     assert_eq!(params["location"]["lat"], 59.9139);
     assert_eq!(params["location"]["at_ms"], ms(fix_at));
-    let detail = detail.unwrap();
+    assert_eq!(stored_detail, None);
+    let zone = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En).await;
+    let detail = crate::parent_events::detail(
+        "phone_off",
+        "",
+        None,
+        Some(&params.to_string()),
+        &zone,
+        Utc::now(),
+    )
+    .unwrap();
     assert!(
         detail.starts_with("Last position from ") && detail.ends_with(": shown on Locate"),
         "{detail}"
@@ -349,7 +355,11 @@ async fn a_bad_shutdown_position_costs_the_position_only() {
             StatusCode::NO_CONTENT,
             "{n}"
         );
-        assert_eq!(off_params(&app, id).await, (Value::Null, None), "{n}");
+        let (params, detail) = off_params(&app, id).await;
+        assert!(
+            params.get("location").is_none() && detail.is_none(),
+            "{n}: {params}"
+        );
     }
     assert_eq!(events(&app, id).await.len(), 4);
     assert!(shutdown_fixes(&app, id).await.is_empty());
@@ -440,7 +450,10 @@ async fn the_shutdowns_position_goes_with_the_location_retention() {
         .await
         .unwrap();
     crate::retention::prune(&app.db).await;
-    assert_eq!(off_params(&app, id).await, (Value::Null, None));
+    // The position alone goes; the words (design 70 §4) and the event stay.
+    let (params, detail) = off_params(&app, id).await;
+    assert!(params.get("location").is_none(), "{params}");
+    assert_eq!((params["reason"].as_str(), detail), (Some("user"), None));
     assert_eq!(events(&app, id).await.len(), 1, "the event stays");
 }
 
@@ -654,6 +667,166 @@ async fn the_route_refuses_what_isnt_a_power_report() {
                 )
         )]
     );
+}
+
+/// Design 70 §4 (H2 of its review): a `phone_off` raised since slice 2 holds its reason and
+/// battery in its parameters, and the four readers of what used to be its English - the inbox
+/// (title and detail), the device page's "Off since", Locate's "Last position before the phone
+/// went off" and the push - read right in both languages, before and after retention removed the
+/// position (the words outlive it). A restart says nothing in the two page lines; a battery-flat
+/// shutdown says it all.
+#[tokio::test]
+async fn a_shutdowns_words_read_in_all_four_places_before_and_after_the_prune() {
+    let (app, anna, anna_token) = setup().await;
+    let (bea, bea_token) = app.enrolled_device("Bea").await;
+    let cookie = app.admin_cookie().await;
+    let shutdown = Utc::now() - Duration::minutes(30);
+    let fix_at = shutdown - Duration::minutes(3);
+    let location = json!({ "lat": 59.9139, "lng": 10.7522, "accuracy_m": 25.0,
+                           "at_ms": ms(fix_at), "provider": "fused" });
+    let restart = off(
+        shutdown,
+        41,
+        json!({ "reboot": true, "location": location }),
+    );
+    assert_eq!(
+        post(&app, &anna_token, json!({ "off": restart })).await,
+        StatusCode::NO_CONTENT
+    );
+    let mut flat = off(
+        shutdown,
+        41,
+        json!({ "reason": "battery", "location": location }),
+    );
+    flat["battery"] = json!({ "level": 1, "charging": false, "low": true });
+    assert_eq!(
+        post(&app, &bea_token, json!({ "off": flat })).await,
+        StatusCode::NO_CONTENT
+    );
+    // The offs' pushes held no more: they arrived longer than OFF_HOLD ago.
+    sqlx::query("UPDATE parent_events SET created_at = datetime('now', '-6 minutes')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let when = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::En)
+        .await
+        .at(shutdown, Utc::now());
+    let when_nb = crate::display_time::Zone::load(&app.db, crate::i18n::Lang::Nb)
+        .await
+        .at(shutdown, Utc::now());
+
+    let four_places = |pruned: bool| {
+        let (app, cookie, when, when_nb) = (&app, &cookie, &when, &when_nb);
+        async move {
+            // 1. The inbox, in each language; the detail while the position is kept.
+            let en = app.get_page("/notifications", cookie).await.text();
+            let nb = app.get_page("/notifications?lang=nb", cookie).await.text();
+            assert!(en.contains("Anna is restarting"), "{en}");
+            assert!(en.contains("Bea shut down: battery flat"), "{en}");
+            assert!(
+                en.contains(&format!("{} · battery 1 %", capitalized(when))),
+                "{en}"
+            );
+            assert!(nb.contains("Anna starter på nytt"), "{nb}");
+            assert!(nb.contains("Bea slo seg av: tomt batteri"), "{nb}");
+            assert!(
+                nb.contains(&format!("{} · batteri 1 %", capitalized(when_nb))),
+                "{nb}"
+            );
+            assert_eq!(
+                en.contains("shown on Locate"),
+                !pruned,
+                "pruned {pruned}: {en}"
+            );
+            assert_eq!(
+                nb.contains("vist under Finn"),
+                !pruned,
+                "pruned {pruned}: {nb}"
+            );
+            // 2. The device page's "Off since": the battery-flat phone's alone.
+            let anna_page = app
+                .get_page(&device_page(anna, Section::Summary), cookie)
+                .await
+                .text();
+            assert!(!anna_page.contains("data-power-off"), "a known restart");
+            let bea_page = app
+                .get_page(&device_page(bea, Section::Summary), cookie)
+                .await
+                .text();
+            assert!(
+                bea_page.contains(&format!(
+                    "data-power-off>Off since {when} · battery was 1 %<"
+                )),
+                "{bea_page}"
+            );
+            let bea_nb = app
+                .get_page(
+                    &format!("{}?lang=nb", device_page(bea, Section::Summary)),
+                    cookie,
+                )
+                .await
+                .text();
+            assert!(
+                bea_nb.contains(&format!(
+                    "data-power-off>Av siden {when_nb} · batteriet var 1 %<"
+                )),
+                "{bea_nb}"
+            );
+            // 3. Locate's line: the battery-flat phone's (its shutdown fix stays the phone's last
+            // known one through the prune; the event's copy of the position is what goes).
+            let anna_locate = app
+                .get_page(&format!("/devices/locate?device={anna}"), cookie)
+                .await
+                .text();
+            assert!(
+                !anna_locate.contains("data-fix-before-off"),
+                "a known restart"
+            );
+            let bea_locate = app
+                .get_page(&format!("/devices/locate?device={bea}"), cookie)
+                .await
+                .text();
+            assert!(
+                bea_locate.contains("data-fix-before-off"),
+                "pruned {pruned}: {bea_locate}"
+            );
+        }
+    };
+    four_places(false).await;
+    // 4. The push: the battery-flat shutdown's, worded at send time (a restart's is never sent).
+    assert_eq!(
+        send_at(&app, Utc::now() + Duration::minutes(6)).await,
+        ["Bea: battery flat, shut down"]
+    );
+
+    // Retention removes the event's position alone (the location history's days): the words
+    // stay, and so does the phone's last known fix.
+    sqlx::query("UPDATE parent_events SET created_at = datetime('now', '-8 days')")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    crate::retention::prune(&app.db).await;
+    assert_eq!(shutdown_fixes(&app, bea).await.len(), 1);
+    let (params, detail) = off_params(&app, bea).await;
+    assert!(params.get("location").is_none(), "{params}");
+    assert_eq!(
+        (
+            params["reason"].as_str(),
+            params["battery"].as_i64(),
+            detail
+        ),
+        (Some("battery"), Some(1), None)
+    );
+    assert_eq!(off_params(&app, anna).await.0["reason"], "restart");
+    four_places(true).await;
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// §3.4: the summary's "Off since 21:14 · battery was 2 %" while the newest off is later than the
